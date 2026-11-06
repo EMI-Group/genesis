@@ -32,27 +32,30 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
 
   # This is an explicit handoff by the ORIGINAL tool, not re-authorization of
   # an unlinked guardian as if it were a tool. Keep context.tool_pid unchanged.
-  def start(context, tier, controller \\ self())
+  def start(context, tier, controller \\ self(), timeout \\ 5_000)
 
-  def start(context, tier, controller)
+  def start(context, tier, controller, timeout)
       when tier in [:read, :write, :sudo, "read", "write", "sudo"] and is_pid(controller) do
     with :ok <- Authorization.revalidate(context),
          true <- context.tool_pid == self(),
          true <- node(controller) == node() and Process.alive?(controller),
          cap when is_integer(cap) and cap > 0 and cap <= @max_output_cap <-
            Map.get(context, :max_output_bytes, 16_384) do
-      GenServer.start(__MODULE__, {context, tier, self(), controller, cap})
+      GenServer.start(__MODULE__, {context, tier, self(), controller, cap}, timeout: timeout)
     else
       _ -> @unavailable
     end
   end
 
-  def start(_, _, _), do: @unavailable
-  def attach(pid, worker_pid), do: safe_call(pid, {:attach, worker_pid})
-  def stop(pid), do: safe_call(pid, :stop)
+  def start(_, _, _, _), do: @unavailable
 
-  def output(pid) do
-    case safe_call(pid, :output) do
+  def attach(pid, worker_pid, timeout \\ 5_000),
+    do: safe_call(pid, {:attach, worker_pid}, timeout)
+
+  def stop(pid, timeout \\ 5_000), do: safe_call(pid, :stop, timeout)
+
+  def output(pid, timeout \\ 5_000) do
+    case safe_call(pid, :output, timeout) do
       output when is_binary(output) -> output
       _ -> ""
     end
@@ -67,9 +70,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
 
   # This is the IPC boundary: never include server exit reasons, which can
   # contain request arguments, exception values or configuration secrets.
-  defp safe_call(pid, message) do
+  defp safe_call(pid, message, timeout \\ 5_000) do
     try do
-      GenServer.call(pid, message, 5_000)
+      GenServer.call(pid, message, timeout)
     catch
       :exit, _ -> @unavailable
     end

@@ -2,34 +2,44 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
   @moduledoc """
   An unlinked, monitored guardian for one evaluation and all of its BEAM descendants.
 
-  Spawn tracing is enabled BEFORE execution and inherited across Dune's Task/proc_lib
-  children (including its unlinked reductions checker). Cleanup kills descendants,
-  drains spawn events and waits for a trace-delivery barrier before replying.
+  Spawn tracing belongs to an independent custodian, installed on the waiting
+  guardian BEFORE it can spawn any evaluation code. It is inherited across Dune's
+  Task/proc_lib children, including unlinked helpers, and survives guardian death.
+  Cleanup kills descendants and confirms their deaths plus a trace-delivery barrier
+  within its own 1s budget; an incomplete cleanup is an error, never success.
   The guardian monitors both the tool caller and optional context owner_pid/agent_pid.
+  The caller has an absolute result deadline and bounded finalization (at most the
+  execution budget plus 6,350 ms of scheduled waiting, not a real-time guarantee).
 
   Reduction/memory limits are sampled every 5 ms, not OS resource isolation: a native
   BIF can transiently overshoot a sample, and an approved sudo program has full VM
   authority, including the ability to interfere with this guardian or tracing.
   """
-  alias EvoGit.Agent.Tools.ElixirEval.{Broker, Render}
+  alias EvoGit.Agent.Tools.ElixirEval.{Broker, Custodian, Render}
   @max_heap_words 2_000_000
   @max_tree_bytes 64 * 1_024 * 1_024
   @max_reductions 20_000_000
   @max_processes 64
   @sample_ms 5
+  @overhead_ms 5_000
+  @broker_call_ms 1_200
+  @broker_stop_ms 250
 
   def run(context, tier, limits, fun) do
     caller = self()
     ref = make_ref()
+    deadline = now() + limits.timeout_ms + @overhead_ms
 
     {pid, monitor} =
       spawn_monitor(fn -> guard(caller, ref, limits, fun, context) end)
+
+    {custodian, custody_monitor} = Custodian.start(pid, caller, ref, deadline)
 
     # Only the original authorized tool creates the broker. It explicitly hands
     # control to this waiting guardian without replacing tool_pid/owner_pid or
     # pretending the unlinked guardian is a Task descendant of the tool.
     try do
-      case Broker.start(context, tier, pid) do
+      case Broker.start(context, tier, pid, @broker_call_ms) do
         {:ok, broker} ->
           try do
             send(pid, {ref, :broker, broker})
@@ -37,9 +47,11 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
             receive do
               {^ref, result} -> result
               {:DOWN, ^monitor, :process, ^pid, _} -> {:error, "Evaluation guardian failed."}
+            after
+              max(deadline - now(), 0) -> {:error, "Evaluation infrastructure timed out."}
             end
           after
-            Broker.stop(broker)
+            stop_broker(broker)
           end
 
         _ ->
@@ -52,11 +64,38 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
       _, _ -> {:error, "Evaluation infrastructure failed."}
     after
       Process.exit(pid, :kill)
+      # Do not kill the independent custodian with the guardian: it owns the
+      # unlinked descendants, including spawn events the guardian never consumed.
+      send(custodian, {ref, :cleanup, self()})
+
+      receive do
+        {:DOWN, ^custody_monitor, :process, ^custodian, _} -> :ok
+      after
+        Custodian.cleanup_ms() + 100 -> :ok
+      end
+
+      Process.demonitor(custody_monitor, [:flush])
       Process.demonitor(monitor, [:flush])
     end
   end
 
+  defp stop_broker(broker) do
+    Broker.stop(broker, @broker_stop_ms)
+    # A suspended/unresponsive broker cannot extend the caller's wait. Its linked
+    # pending Task dies with this kill; unlinked evaluation workers belong to custody.
+    Process.exit(broker, :kill)
+  end
+
   defp guard(caller, ref, limits, fun, context) do
+    receive do
+      {^ref, :custodian, custodian} ->
+        guard_broker(caller, ref, limits, fun, context, custodian)
+    after
+      @overhead_ms -> :ok
+    end
+  end
+
+  defp guard_broker(caller, ref, limits, fun, context, custodian) do
     owners =
       [caller, Map.get(context, :owner_pid), Map.get(context, :agent_pid)]
       |> Enum.filter(&is_pid/1)
@@ -69,26 +108,29 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
         # inspect an exception, exit reason, context or stacktrace into a reply.
         result =
           try do
-            execute(broker, owners, limits, fun)
+            execute(broker, owners, limits, fun, custodian, ref)
           rescue
             _ -> {:error, "Evaluation infrastructure failed."}
           catch
             _, _ -> {:error, "Evaluation infrastructure failed."}
           after
-            Broker.stop(broker)
+            stop_broker(broker)
           end
 
         send(caller, {ref, result})
 
       {:DOWN, monitor, :process, _, _} when is_map_key(owners, monitor) ->
         :ok
+    after
+      @overhead_ms -> :ok
     end
   end
 
-  defp execute(broker, owners, limits, fun) do
+  defp execute(broker, owners, limits, fun, custodian, custody_token) do
     guardian = self()
     token = make_ref()
     broker_ref = Process.monitor(broker)
+    custody_ref = Process.monitor(custodian)
 
     {worker, monitor} =
       :erlang.spawn_opt(
@@ -123,6 +165,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
       workers: %{worker => monitor},
       owners: owners,
       broker_ref: broker_ref,
+      custody_ref: custody_ref,
       token: token,
       deadline: now() + limits.timeout_ms,
       spawned: 1,
@@ -134,25 +177,33 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
     # Even attach/trace failure must reap the already spawned (waiting) worker.
     result =
       try do
-        :erlang.trace(worker, true, [:procs, :set_on_spawn, {:tracer, self()}])
-
         with :ok <- await_ready(state),
-             :ok <- Broker.attach(broker, worker) do
+             :ok <- Broker.attach(broker, worker, @broker_call_ms) do
           send(worker, {:execute, token})
           watch(state)
         else
           _ -> {:error, "Evaluation worker authorization failed."}
         end
       after
-        cleanup(state.workers)
+        # Covers exceptions before normal custody handoff. Guardian death also
+        # activates the independent custodian, even if this after never runs.
+        Process.exit(worker, :kill)
+        Enum.each(state.workers, fn {_, monitor} -> Process.demonitor(monitor, [:flush]) end)
         Process.demonitor(broker_ref, [:flush])
+        Process.demonitor(custody_ref, [:flush])
       end
 
-    output = Render.text(Broker.output(broker), limits.max_output_bytes)
+    case Custodian.finish(custodian, custody_token) do
+      :ok ->
+        output = Render.text(Broker.output(broker, @broker_call_ms), limits.max_output_bytes)
 
-    case result do
-      {:ok, text} -> {:ok, Render.text(output <> text, limits.max_output_bytes)}
-      {:error, text} -> {:error, Render.text(output <> text, limits.max_output_bytes)}
+        case result do
+          {:ok, text} -> {:ok, Render.text(output <> text, limits.max_output_bytes)}
+          {:error, text} -> {:error, Render.text(output <> text, limits.max_output_bytes)}
+        end
+
+      :error ->
+        {:error, "Evaluation cleanup did not complete within its budget."}
     end
   end
 
@@ -182,6 +233,13 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
   end
 
   defp watch(state) do
+    # A permanently nonempty trace mailbox must not starve the execution timer.
+    if now() >= state.deadline,
+      do: {:error, "Evaluation timed out."},
+      else: watch_until_deadline(state)
+  end
+
+  defp watch_until_deadline(state) do
     remaining = max(state.deadline - now(), 0)
 
     receive do
@@ -200,6 +258,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
 
       {:DOWN, ref, :process, _, _} when ref == state.broker_ref ->
         {:error, "Evaluation broker stopped."}
+
+      {:DOWN, ref, :process, _, _} when ref == state.custody_ref ->
+        {:error, "Evaluation custodian stopped."}
 
       {:DOWN, _, :process, worker, _} when worker == state.worker ->
         {:error, "Evaluation worker stopped (memory limit or runtime failure)."}
@@ -233,8 +294,6 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
       state
     else
       monitor = Process.monitor(child)
-      known = Process.get(:evogit_eval_descendants, %{})
-      Process.put(:evogit_eval_descendants, Map.put(known, child, monitor))
       %{state | workers: Map.put(state.workers, child, monitor), spawned: state.spawned + 1}
     end
   end
@@ -253,47 +312,6 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
           {bytes + info[:memory] + binary_bytes, Map.put(reds, pid, count), total + delta}
       end
     end)
-  end
-
-  defp cleanup(workers) do
-    Enum.each(workers, fn {pid, _} -> Process.exit(pid, :kill) end)
-    # The initial map only contains the root. Re-discover EVERY descendant via
-    # inherited trace messages, even if watch/1 consumed its spawn notification.
-    # Tracees are retained separately in the guardian's dictionary for this purpose.
-    known = Process.delete(:evogit_eval_descendants) || %{}
-
-    workers =
-      Map.merge(workers, known)
-      |> Map.new(fn {pid, old_monitor} ->
-        Process.demonitor(old_monitor, [:flush])
-        {pid, Process.monitor(pid)}
-      end)
-
-    Enum.each(workers, fn {pid, _} -> Process.exit(pid, :kill) end)
-    drain(workers, nil)
-  end
-
-  defp drain(workers, barrier) do
-    barrier =
-      if map_size(workers) == 0 and is_nil(barrier),
-        do: :erlang.trace_delivered(:all),
-        else: barrier
-
-    receive do
-      {:trace, _, :spawn, child, _} ->
-        monitor = Process.monitor(child)
-        Process.exit(child, :kill)
-        drain(Map.put(workers, child, monitor), nil)
-
-      {:DOWN, _, :process, pid, _} ->
-        drain(Map.delete(workers, pid), barrier)
-
-      {:trace_delivered, :all, ref} when ref == barrier ->
-        if map_size(workers) == 0, do: :ok, else: drain(workers, nil)
-
-      _ ->
-        drain(workers, barrier)
-    end
   end
 
   defp now, do: System.monotonic_time(:millisecond)

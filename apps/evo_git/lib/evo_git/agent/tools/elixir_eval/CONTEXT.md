@@ -18,8 +18,9 @@ No filename containing `eval` is present under `apps/evo_git/test/` in this chec
 | `authorization.ex` / `Authorization` | `authorize/0,1`, `assistant_owner?/0`, `revalidate/1` bind permission to the original assistant owner and tool process. |
 | `ancestry.ex` / `Ancestry` | `includes?/2` and `broker/1` inspect bounded local Task/proc_lib ancestry. |
 | `engine.ex` / `Engine` | `run(code, tier, context, limits)` returns `{:ok, binary}` or `{:error, binary}`; `max_code_bytes/0` exposes the engine ceiling. |
-| `worker_tree.ex` / `WorkerTree` | `run(context, tier, limits, fun)` creates a guardian, authorized broker and traced evaluation subtree. |
-| `broker.ex` / `Broker` | `start/2,3`, `attach/2`, `call/2`, `output/1`, `stop/1` implement one unregistered capability broker per evaluation. |
+| `worker_tree.ex` / `WorkerTree` | `run(context, tier, limits, fun)` creates a guardian, authorized broker and independently owned traced evaluation subtree, with bounded execution, cleanup and caller waits. |
+| `custodian.ex` / `Custodian` | Internal independent trace owner; `start/4`, `finish/2` and `cleanup_ms/0` support bounded reaping even after abrupt guardian/tool death. |
+| `broker.ex` / `Broker` | `start/2,3,4`, `attach/2,3`, `call/2`, `output/1,2`, `stop/1,2` implement one unregistered capability broker per evaluation, with optional lifecycle-call timeout overrides. |
 | `allowlist.ex` | `ReadAllowlist` extends Dune defaults with Read; `WriteAllowlist` additionally admits Write, with explicit IO shims and dbg rejection. |
 | `read.ex` / `Read`, `Write` | Fixed broker-backed runtime inspection and mutation APIs, not direct access to runtime structs or configuration. |
 | `projection.ex` / `Projection` | Scalar runtime projections, paginated task options, task-id validation and scalar normalization. |
@@ -54,12 +55,22 @@ Unqualified dbg AST nodes are rejected before interpretation because sanitizer-g
 Default Dune pure operations remain available, but raw TaskRegistry, AgentScheduler, CommandShell, Broker and arbitrary native APIs are not added to the allowlist.
 Sudo runs `Code.eval_string(code, [])` with full VM authority only after the external approval gate; it can access secrets, mutate the VM, spawn OS children or interfere with tracing.
 WorkerTree uses an unlinked monitored guardian, monitors caller and optional owner/agent pids, and monitors the broker separately.
-Tracing is enabled before execution with inherited spawn tracing, including Dune's unlinked helper descendants.
+An independent unlinked Custodian owns inherited spawn tracing, installed on the waiting guardian before it may spawn the root, and monitors both guardian and caller.
+The custodian forwards spawn events to the guardian for resource accounting but retains its own monitored worker set, so abrupt guardian death cannot abandon unlinked root/child/grandchild processes.
+Tracing covers Dune's unlinked helper descendants before execution begins.
 The root worker has a 2,000,000-word killing heap limit including shared binaries; the guardian samples tree memory and cumulative observed reductions every five milliseconds.
 Tree budgets are 64 MiB of sampled process/binary memory, 20,000,000 sampled reductions and 64 total observed spawned processes including the root.
 These are best-effort BEAM limits rather than OS isolation; native BIFs can overshoot and full-authority sudo cannot be contained against deliberate interference.
-On normal completion, failure, timeout or owner loss, cleanup kills known descendants, drains further spawn events and waits for a trace-delivery barrier before replying.
-The cleanup drain has no separate wall-clock deadline, so the supplied execution timeout is not a guaranteed whole-call upper bound.
+On normal completion, failure, timeout or owner loss, custody kills known descendants, drains further spawn events and waits for a trace-delivery barrier before acknowledging cleanup.
+Cleanup has its own 1,000 ms monotonic budget, independent of the execution deadline; budget checks run even under a continuously nonempty mailbox.
+Successful cleanup requires every known descendant's DOWN plus a trace-delivery barrier, so normal success leaves no known descendant alive.
+On cleanup expiry every known pid receives another kill, the custodian exits and the result is an explicit generic cleanup error, never a successful evaluation with unconfirmed cleanup.
+Guardian cleanup-ack waits are capped at 1,100 ms; caller result waits and the independent custody watchdog share an absolute deadline of run-entry time plus the requested execution timeout plus 5,000 ms.
+WorkerTree broker initialization/attach/output calls use 1,200 ms IPC deadlines (initial authorization separately has its existing one-second deadline), and broker shutdown waits at most 250 ms before a kill; existing Broker callers retain their five-second defaults.
+Caller finalization kills the guardian but deliberately leaves custody alive to finish reaping, then waits at most another 1,100 ms for custody DOWN.
+The caller's maximum scheduled waiting budget is therefore execution timeout plus 6,350 ms (5,000 ms result overhead, 250 ms broker stop, 1,100 ms final custody wait), excluding scheduler starvation or non-preemptible native work; this is not a hard real-time guarantee.
+A suspended custodian may finish after the caller has returned an error, and a stuck native BIF may defer death after kill; cleanup expiry, deliberate tracer/custodian tampering and OS children cannot guarantee no survivors.
+Unexpected custodian exceptions also kill the guardian and all pids in its last known worker snapshot without leaking exception terms.
 The broker independently monitors original owner, tool, controller and attached worker; trusted runtime operations run in a separate pending Task so lifecycle messages remain serviceable.
 Worker loss cancels a pending operation, and broker termination cancels its pending Task and kills its attached worker; committed side effects cannot be rolled back.
 
