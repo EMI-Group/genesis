@@ -43,6 +43,12 @@ defmodule EvoGit.SelfReflectiveToolsTest do
     assert schema["properties"]["tier"]["default"] == "read"
     assert schema["properties"]["timeout_ms"]["default"] == 2_000
     assert schema["properties"]["max_output_bytes"]["default"] == 16_384
+    assert tool.description =~ "Inspect source with read/glob/rg, then call"
+
+    assert tool.description =~
+             "explicitly admitted real APIs in Dune at read (default) or write tier"
+
+    assert tool.description =~ "facades are optional conveniences"
     assert tool.description =~ "Write requires manual approval of the exact code"
     assert tool.description =~ "UNSANDBOXED full VM"
     assert tool.description =~ "Never auto-escalate"
@@ -80,6 +86,33 @@ defmodule EvoGit.SelfReflectiveToolsTest do
     assert prompt =~ "current authenticated runtime node"
   end
 
+  test "persona recommends source inspection followed by admitted actual APIs, not facade translation" do
+    prompt = SelfReflective.system_prompt()
+
+    assert prompt =~ "**Source then API:**"
+    assert prompt =~ "read the raw implementation with `read`/`rg`"
+    assert prompt =~ "call the explicitly admitted actual module/function through `elixir_eval`"
+    assert prompt =~ "apps/evo_git/lib/evo_git/task_registry.ex"
+    assert prompt =~ ~s|code: "EvoGit.TaskRegistry.list_tasks_page()"|
+    assert prompt =~ ~s(tier: "read")
+    assert prompt =~ "Convenience `Read`/`Write` facades in the embedded help are optional"
+    assert prompt =~ "do not translate every actual API call into a facade call"
+  end
+
+  test "persona limits source-discovered APIs to exact tier-specific MFAs without namespace grants" do
+    prompt = SelfReflective.system_prompt()
+
+    assert prompt =~ "Only the exact module/function/arity entries admitted for the chosen tier"
+
+    assert prompt =~
+             "A public function found in source, another arity, or another function in an admitted module is not automatically authorized"
+
+    assert prompt =~ "Use the embedded help as the authoritative catalog"
+
+    assert prompt =~
+             "source inspection does not expand the allowlist or bypass exact-code approval for writes"
+  end
+
   test "persona warns that sudo is explicitly confirmed unrestricted VM execution, not OS root" do
     prompt = SelfReflective.system_prompt()
 
@@ -100,7 +133,45 @@ defmodule EvoGit.SelfReflectiveToolsTest do
     assert length(:binary.matches(prompt, catalog)) == 1
     assert catalog =~ "EvoGit.Agent.Tools.ElixirEval.Read"
     assert catalog =~ "EvoGit.Agent.Tools.ElixirEval.Write"
+    assert catalog =~ "Read/Write facades are optional convenience APIs, not the sole path"
+    assert catalog =~ "Direct local APIs (fully qualified calls, no alias declarations)"
+
+    assert catalog =~
+             "EvoGit.TaskRegistry.list_tasks_page/0, EvoGit.TaskRegistry.list_tasks_page/1"
+
+    assert catalog =~ "EvoGit.AgentScheduler.get_config/1"
+    assert catalog =~ "Write (exact-code approval required): EvoGit.TaskRegistry.start_task/2"
+
+    assert catalog =~
+             "only these exact MFAs are admitted, never an entire module or another arity"
+
+    assert catalog =~ "unchanged arguments and return values, not projected facade substitutes"
+    assert catalog =~ "These reads are not facade-row-bounded or secret-redacted"
+    assert catalog =~ "output caps are not redaction"
+
+    assert catalog =~
+             "Write and sudo require manual approval of the EXACT submitted code every call"
+
     assert catalog =~ "Use fully qualified module names; Dune does not support alias declarations"
     assert catalog =~ "no persistent REPL state"
+  end
+
+  test "public guidance distinguishes runtime config updates from whole-file persistence and reload" do
+    prompt = SelfReflective.system_prompt()
+    catalog = ElixirEval.help()
+
+    assert prompt =~ "`EvoGit.AgentScheduler.update_config/1` changes runtime settings only"
+    assert prompt =~ "it does not persist config.toml"
+
+    assert prompt =~
+             "Do not describe it as a saved configuration change or promise it survives a restart"
+
+    assert catalog =~ "EvoGit.Config.save_user_config/1"
+    assert catalog =~ "EvoGit.AgentScheduler.RemoteAPI.reload_config/0"
+    assert catalog =~ "REPLACES the whole config.toml (not a patch)"
+    assert catalog =~ "saving the full map in the SAME approved call"
+    assert catalog =~ "it does NOT reload the scheduler"
+    assert catalog =~ "Save success does not guarantee reload success"
+    assert catalog =~ "reload is not a restart"
   end
 end
