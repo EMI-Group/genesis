@@ -15,8 +15,8 @@ defmodule EvoGit.Agent.TurnWarning do
   | Level | Purpose | Trigger |
   |-------|---------|---------|
   | `:beginning` | Early-stage delegation guidance (suppressed in a merge conflict) | ~25% of budget (min 6 turns) |
-  | `:end` | Wrap up and prepare to complete | ≤ N turns remaining (adaptive) |
-  | `:critical` | Call complete_task immediately | ≤ M turns remaining (adaptive) |
+  | `:end` | Wrap up and prepare to deliver your final report as a plain-text reply | ≤ N turns remaining (adaptive) |
+  | `:critical` | Stop and reply with your final report — no more tool calls | ≤ M turns remaining (adaptive) |
 
   ### Periodic (fires repeatedly)
 
@@ -275,7 +275,7 @@ defmodule EvoGit.Agent.TurnWarning do
     You are approaching the end of your turn budget. Shift focus to wrapping up:
     1. Commit any uncommitted changes NOW — uncommitted changes will be LOST when your process terminates. Committing is the only way to preserve your work.
     2. If critical work remains, delegate it to subagents for parallel completion
-    3. Prepare to call complete_task with a clear status report
+    3. Prepare to deliver your final status report as a plain-text reply — a reply with no tool calls ends the run and its text IS the report. complete_task remains available but is optional; use it only when you want an explicit structured result.
 
     A partial completion with a clear explanation of what remains is perfectly acceptable.
     """
@@ -286,7 +286,7 @@ defmodule EvoGit.Agent.TurnWarning do
     [URGENT] Turn #{w.turn}/#{w.max_turns} — only #{w.turns_remaining} #{turn_word(w.turns_remaining)} remaining!
 
     You are about to hit the turn limit. Do not start any new work.
-    Commit any uncommitted changes IMMEDIATELY — uncommitted work will be LOST when your process terminates. Then call complete_task with your best answer.
+    Commit any uncommitted changes IMMEDIATELY — uncommitted work will be LOST when your process terminates. Then STOP and reply with your final report as plain text: a reply with no tool calls ends the run, and that text IS the report. Make no further tool calls.
     """
   end
 

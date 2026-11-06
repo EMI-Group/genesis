@@ -217,17 +217,22 @@ defmodule EvoGit.Agent.TurnWarningTest do
       assert msg =~ "Turn 118/128"
       assert msg =~ "10 turns remaining"
       assert msg =~ "wrapping up"
-      assert msg =~ "complete_task"
+      assert msg =~ "no tool calls"
+      assert msg =~ "ends the run"
+      # complete_task stays optional — never presented as THE way to end a run
+      refute msg =~ "call complete_task"
     end
 
-    test "critical message is urgent and mentions complete_task" do
+    test "critical message is urgent and tells the agent to stop and reply" do
       {:ok, warning} = TurnWarning.check_positional(125, 128, :end)
       msg = TurnWarning.message(warning)
       assert msg =~ "[URGENT]"
       assert msg =~ "Turn 125/128"
       assert msg =~ "3 turns remaining"
-      assert msg =~ "complete_task"
+      assert msg =~ "no tool calls"
+      assert msg =~ "that text IS the report"
       assert msg =~ "IMMEDIATELY"
+      refute msg =~ "complete_task"
     end
 
     test "uses singular 'turn' when 1 turn remaining" do
