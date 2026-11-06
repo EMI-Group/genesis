@@ -98,6 +98,18 @@ Note the `describe "recheck_task resolution"` `setup` creates/deletes `:evogit_s
    - No test asserts TWO writable repos joined with ", " (only single-writable + read-only-exclusion cases exist).
    - The advanced-commit-carry-forward is asserted only at the OPTS-BUILDER level (merge_context_test.exs:186 `old_sha`→`new_sha`; resume_context_test.exs:84 `old_sha`→`new_sha`); no end-to-end real-git test (the `execute_task(:evolve, ...)` hook is deliberately untested — see item 4).
 
+## Reflect / Restricted-Evaluation Coverage Boundaries
+
+`task_executor_reflect_test.exs` has three tests: two direct `execute_task(:reflect, ...)` error-path calls (missing `:path`, unexpected opts) and one public `start_task(:reflect, ...)` lifecycle ending in `:failed` with `{:error, :llm_not_configured}`.
+Its only runtime control seam is `without_model_profiles/1`, which snapshots and empties the global scheduler profiles and restores them in `after`; this prevents agent dispatch rather than exercising any assistant tool or successful conversation.
+Its terminal wait subscribes before enqueue, pins the task id, and waits for `:completed`/`:failed`/`:cancelled` with a 5-second receive budget, so it is not an evaluator execution-timeout test.
+No test in this directory exercises `CommandApproval`, sudo confirmation, restricted Elixir evaluation, or runtime-MFA allowlisting, and none combines a reflect task with a pending approval or an executing evaluator.
+`persistence_test.exs:1176-1617` pins cancellation using genesis rows and manually seeded scheduler structs or fake wrappers, not an actual reflect agent: running cancellation marks `:cancelling` and notifies agents, repeated cancellation sends no duplicate message, pending cancellation blocks restart, and both completed/failed grace outcomes become `:cancelled` with result preserved and error cleared.
+The same cancellation tests pin force kill from running/cancelling as `:failed` with nil result and cleared wrapper/marker state, but do not monitor the fake wrapper to assert its death or assert termination of any separately spawned evaluation worker.
+`finalizing_watchdog_test.exs` bounds stuck finalization, not approval waits or tool execution, and pins rejection of late wrapper replies after watchdog resolution.
+`read_offload_test.exs` supplies a narrower deadline-containment precedent: manually settling a deadline kills a wedged read worker, replies with a degraded value, and monitors worker death, but does not exercise an elapsed evaluator timer or evaluator side effects.
+The watchdog's timer-driven paths currently use a bounded 10-ms polling helper with `Process.sleep/1`, despite this directory's event-driven-wait policy; its late-result negative assertion is FIFO-synchronized and zero-wait.
+
 ## Notes for Agents
 
 - **NEVER put pure-function tests inside the fixture case.** The fixture starts two extra processes (~30-35 ms) and exists only to provide an isolated Store + registry. Pure tests (helpers over a locally-built `%TaskInfo{}`, string builders, option builders) belong in an `async: true` plain `ExUnit.Case` module — `merge_context_block_test.exs` / `resume_context_block_test.exs` are the precedent.
