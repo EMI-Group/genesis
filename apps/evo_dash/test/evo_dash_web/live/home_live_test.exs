@@ -258,6 +258,16 @@ defmodule EvoDashWeb.HomeLiveTest do
     |> Floki.find(selector) != []
   end
 
+  # Scope the page-alive/name pin to its heading: assistant entries and the
+  # composer also carry the assistant's name, but cannot replace the page title.
+  defp page_heading(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find("h1")
+    |> Floki.text()
+    |> String.trim()
+  end
+
   # Polls `fun` until it returns truthy (or the timeout elapses) — the
   # tasks_live_test.exs pattern for observing async results (the real
   # supervised fetches, the PubSub debounce) without fixed sleeps. The poll
@@ -405,7 +415,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "renders the idle chat page", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/help")
 
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
       assert html =~ "Start a conversation"
 
       # The message input and Send button are present and ENABLED on idle
@@ -967,7 +977,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       send(view.pid, {:agent_removed, 1, node()})
 
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
     end
 
     test "real AgentState ETS row flows through the real get_agent_history path", %{conn: conn} do
@@ -2099,10 +2109,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       # The exact production event sequence, rendering after each step.
       send(view.pid, {:task_updated, "t_crash", :running, node()})
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
       send(view.pid, {:agent_updated, agent_id, [message_count: 2], node()})
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
 
       send(
         view.pid,
@@ -2118,7 +2128,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       )
 
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
       # The real history fetch lands: 6 messages (5 real + the empty-content
       # assistant) — nil metadata, thinking parts, tool_calls and all.
       wait_until(fn -> assigns(view)[:agent_message_count] == 6 end)
@@ -2143,7 +2153,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       send(view.pid, {:task_updated, "t_crash", :completed, node()})
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
       wait_until(fn -> assigns(view).chat_status == :idle end)
       html = render(view)
       assert html =~ "final reflect answer"
@@ -2260,7 +2270,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
 
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
     end
 
     test "nil-status (review-mutation) broadcast is a no-op", %{conn: conn} do
@@ -2268,7 +2278,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       seed_running_chat(view)
       send(view.pid, {:task_updated, "t1", nil, node()})
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
       assert assigns(view).chat_status == :running
       assert assigns(view).chat_task_id == "t1"
       assert assigns(view).chat_task_status == nil

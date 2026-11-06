@@ -133,6 +133,9 @@ Two production behaviours the tests work around: the commits-view right-hand det
 
 ## Notes for Agents — Home chat suite (`home_live_test.exs`)
 
+The page-alive/name assertions use `page_heading/1` to pin the `h1` to "Genesis Assistant", not a loose name match that could be satisfied by an assistant entry or composer label.
+The async `home_live_render_test.exs` fixture supplies `approval_error: nil` for the page's approval-state branch and pins the same assistant name in the heading, composer accessible label/placeholder and empty-chat disclaimer.
+
 Chat state is SEEDED (`seed_chat_state/2`, `seed_running_chat/1`, synthetic `{:task_updated, …}` events) and terminal paths are driven with `finalize_failed/2` / `insert_task_fixture!` — NOT by submitting `send_message` to start a real `:reflect` task.
 Exactly ONE real-send canonical pin ("starts a reflect task with the right opts") remains: it asserts synchronous `chat_task_id` tracking (non-nil, matching the persisted reflect row) and NO "Failed to start the task" bubble, and it is network-free by construction because the suite setup pushes `model_profiles: []` into the AgentScheduler (`update_config`, restored in `on_exit`), so `run_agent` rejects every spawn synchronously with `{:error, :llm_not_configured}` before registration or HTTP.
 Counterintuitive, verified: a BOGUS `model_id` does NOT fail fast — `Dispatch.resolve_model_for_agent/2` warns and falls back to the FIRST real profile, which would hit the ambient (expired-key) LLM.
