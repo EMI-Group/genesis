@@ -8,8 +8,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   the original tool, owner and controller independently. Sandboxed requests must
   descend from the attached worker via Task/proc_lib ancestry, seeded by the
   trusted worker entry, never by evaluated code. The broker is not allowlisted.
-  Caps: 128 requests (including IO), 32 reads, 500 projected rows, 16 writes,
-  four task starts, requested stdout bytes (at most 65,536); registry calls have a 1s deadline.
+  Caps: 128 requests (including IO), 32 reads, 500 accounting rows, 16 writes,
+  four task starts, requested stdout bytes (at most 65,536). Facades use 1s
+  registry deadlines; direct calls retain the actual public API deadlines.
   Engine applies its own timeout and final output limit as well.
   """
   use GenServer
@@ -27,15 +28,15 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
            :model_profiles,
            :configuration_status
          ] ++ DirectAPI.read_operations()
-  @direct_reads DirectAPI.read_operations()
   @writes [
-    :start_task,
-    :cancel_task,
-    :force_kill_task,
-    :delete_task,
-    :guide,
-    :update_scheduler_config
-  ]
+            :start_task,
+            :cancel_task,
+            :force_kill_task,
+            :delete_task,
+            :guide,
+            :update_scheduler_config
+          ] ++ DirectAPI.write_operations()
+  @starts [:start_task, {EvoGit.TaskRegistry, :start_task, 2}]
   @unavailable {:error, "Evaluation capability unavailable or expired."}
   @max_output_cap 65_536
 
@@ -154,7 +155,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
 
   defp process_operation({:direct, operation}, args, from, state) do
     case DirectAPI.prepare(operation, args) do
-      {:ok, canonical, validated} -> process_validated(canonical, validated, from, state, :direct)
+      {:ok, mfa, arguments} -> process_validated(mfa, arguments, from, state, :direct)
       error -> {:reply, error, state}
     end
   end
@@ -171,7 +172,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
 
       operation in @writes and
           (state.tier not in [:write, :sudo, "write", "sudo"] or state.writes >= 16 or
-             (operation == :start_task and state.starts >= 4)) ->
+             (operation in @starts and state.starts >= 4)) ->
         {:reply, {:error, "Write capability unavailable or write limit reached."}, state}
 
       operation == :stdio ->
@@ -190,7 +191,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
              reads: state.reads + if(operation in @reads, do: 1, else: 0),
              rows: state.rows + cost,
              writes: state.writes + if(operation in @writes, do: 1, else: 0),
-             starts: state.starts + if(operation == :start_task, do: 1, else: 0)
+             starts: state.starts + if(operation in @starts, do: 1, else: 0)
          }}
 
       true ->
@@ -293,9 +294,6 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   defp execute(:model_profiles, [], _), do: Projection.model_profiles()
   defp execute(:configuration_status, [], _), do: Projection.configuration_status()
 
-  defp execute(operation, args, context) when operation in @direct_reads,
-    do: DirectAPI.execute_read(operation, args, context)
-
   defp execute(:guide, [message, options], context) do
     with {:ok, payload} <- EvoGit.Agent.Tools.ElixirEval.Validation.guide(message, options),
          :ok <- Authorization.revalidate(context) do
@@ -314,7 +312,13 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
 
   defp execute(_, _, _), do: {:error, "Invalid operation arguments."}
 
-  defp execute(:update_scheduler_config, [options], context, mode) do
+  # Direct operations are exact MFA tokens, never facade operation names.
+  # Authorization is revalidated around this call by execute_safely/4, and the
+  # real API alone owns argument validation, effects and returned terms.
+  defp execute(operation, args, context, :direct),
+    do: DirectAPI.execute(operation, args, context)
+
+  defp execute(:update_scheduler_config, [options], context, :facade) do
     with {:ok, opts} <-
            EvoGit.Agent.Tools.ElixirEval.Validation.scheduler_options(options),
          :ok <- Authorization.revalidate(context) do
@@ -329,9 +333,6 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
         end
 
       case GenServer.call(EvoGit.AgentScheduler, request, 1_000) do
-        :ok when mode == :direct ->
-          :ok
-
         :ok ->
           %{status: :updated, scope: :runtime, persisted: false, settings: Map.new(opts)}
 
@@ -342,16 +343,13 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
     end
   end
 
-  defp execute(:start_task, [type, options], context, mode) do
+  defp execute(:start_task, [type, options], context, :facade) do
     with {:ok, task_type, opts} <-
            EvoGit.Agent.Tools.ElixirEval.Validation.start_options(type, options),
          :ok <- Authorization.revalidate(context) do
       id = TaskExecutor.generate_id()
 
       case GenServer.call(context.registry, {:start_task, id, task_type, opts}, 1_000) do
-        {:ok, task} when is_map(task) and mode == :direct ->
-          {:ok, Projection.task_detail(task)}
-
         {:ok, task} when is_map(task) ->
           %{task_id: Projection.text(Map.get(task, :id), 128), status: :submitted}
 
@@ -361,7 +359,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
     end
   end
 
-  defp execute(operation, [id], context, mode)
+  defp execute(operation, [id], context, :facade)
        when operation in [:cancel_task, :force_kill_task, :delete_task] do
     allowed =
       case operation do
@@ -379,19 +377,14 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
         :delete_task ->
           GenServer.cast(context.registry, {:delete_task, id})
 
-          if mode == :direct do
-            :ok
-          else
-            %{
-              task_id: id,
-              status: :queued,
-              acknowledgement: "Deletion queued; persistence is not acknowledged."
-            }
-          end
+          %{
+            task_id: id,
+            status: :queued,
+            acknowledgement: "Deletion queued; persistence is not acknowledged."
+          }
 
         _ ->
           case GenServer.call(context.registry, {operation, id}, 1_000) do
-            :ok when mode == :direct -> :ok
             :ok -> %{task_id: id, status: :requested}
             _ -> {:error, "Task action refused; refresh its current state."}
           end
@@ -403,8 +396,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
 
   defp execute(operation, args, context, _mode), do: execute(operation, args, context)
 
-  defp read_cost(operation, [options])
-       when operation in [:list_tasks, :task_page] and is_map(options) do
+  defp read_cost(:list_tasks, [options]) when is_map(options) do
     case Projection.page_options(options) do
       {:ok, opts} -> opts[:limit]
       _ -> 0
@@ -412,7 +404,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   end
 
   defp read_cost(operation, _)
-       when operation in [:list_agents, :agent_page, :slots, :model_profiles], do: 100
+       when operation in [:list_agents, :model_profiles], do: 100
 
   defp read_cost(operation, _) when operation in @reads, do: 1
   defp read_cost(_, _), do: 0
