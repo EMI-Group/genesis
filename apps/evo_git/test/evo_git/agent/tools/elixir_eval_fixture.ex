@@ -4,7 +4,7 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
 
   Require this file before defining the test module:
 
-      Code.require_file("elixir_eval_fixture.exs", __DIR__)
+      Code.require_file("elixir_eval_fixture.ex", __DIR__)
 
       # Inside a test using EvoGit.TaskRegistryCase:
       fixture = ElixirEvalFixture.start!(self(), store, registry)
@@ -182,7 +182,7 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
   end
 
   def stop(fixture) do
-    if Process.alive?(fixture.supervisor), do: Supervisor.stop(fixture.supervisor)
+    stop_supervisor(fixture.supervisor)
     Process.demonitor(fixture.owner.ref, [:flush])
     delete_row(:evogit_agent_state, fixture.agent_id)
     delete_row(:evogit_sched_meta, fixture.agent_id)
@@ -192,6 +192,18 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
     end
 
     :ok
+  end
+
+  defp stop_supervisor(supervisor) do
+    # The private supervisor can die with its linked test owner before or during
+    # on_exit cleanup; an alive? check cannot make the stop atomic.
+    try do
+      Supervisor.stop(supervisor)
+    catch
+      :exit, {reason, {GenServer, :stop, [^supervisor, :normal, :infinity]}}
+      when reason in [:noproc, :normal] ->
+        :ok
+    end
   end
 
   defp put_identity(fixture, owner_pid) do

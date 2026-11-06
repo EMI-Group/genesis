@@ -1,4 +1,4 @@
-Code.require_file("elixir_eval_fixture.exs", __DIR__)
+Code.require_file("elixir_eval_fixture.ex", __DIR__)
 
 defmodule EvoGit.Agent.Tools.ElixirEval.WrapperTest do
   @moduledoc """

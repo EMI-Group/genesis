@@ -1,4 +1,4 @@
-Code.require_file("elixir_eval_fixture.exs", __DIR__)
+Code.require_file("elixir_eval_fixture.ex", __DIR__)
 
 defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
   @moduledoc """
@@ -20,6 +20,43 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
     fixture = Fixture.start!(self(), store, registry)
     on_exit(fn -> Fixture.stop(fixture) end)
     {:ok, fixture: fixture}
+  end
+
+  describe "fixture cleanup" do
+    test "repeated cleanup stops live descendants and removes the fixture records", %{
+      fixture: fixture
+    } do
+      handle = Fixture.call_async(fixture, fn -> receive do: (:release -> :ok) end)
+      tool_monitor = Process.monitor(handle.tool_pid)
+      owner_monitor = Process.monitor(fixture.owner_pid)
+      supervisor_monitor = Process.monitor(fixture.supervisor)
+
+      assert :ok = Fixture.stop(fixture)
+      assert :ok = Fixture.stop(fixture)
+
+      assert_receive {:DOWN, ^tool_monitor, :process, _, _}, 15_000
+      assert_receive {:DOWN, ^owner_monitor, :process, _, _}, 15_000
+      assert_receive {:DOWN, ^supervisor_monitor, :process, _, :normal}, 15_000
+      assert :ets.lookup(:evogit_agent_state, fixture.agent_id) == []
+      assert :ets.lookup(:evogit_sched_meta, fixture.agent_id) == []
+      assert Store.get_task(fixture.store, fixture.task_id) == nil
+    end
+
+    test "cleanup remains repeat-safe after the private supervisor dies asynchronously", %{
+      fixture: fixture
+    } do
+      supervisor = fixture.supervisor
+      monitor = Process.monitor(supervisor)
+      Process.unlink(supervisor)
+      Process.exit(supervisor, :shutdown)
+      assert_receive {:DOWN, ^monitor, :process, ^supervisor, :shutdown}, 15_000
+
+      assert :ok = Fixture.stop(fixture)
+      assert :ok = Fixture.stop(fixture)
+      assert :ets.lookup(:evogit_agent_state, fixture.agent_id) == []
+      assert :ets.lookup(:evogit_sched_meta, fixture.agent_id) == []
+      assert Store.get_task(fixture.store, fixture.task_id) == nil
+    end
   end
 
   test "a real descendant captures the original assistant, tool and isolated registry", %{
