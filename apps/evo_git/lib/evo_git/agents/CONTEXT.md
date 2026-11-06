@@ -59,6 +59,8 @@ This explicit list does not inherit `ReadOnlyTools.available_tools/1`, does not 
 `system_prompt/0` concatenates two local raw-string literals around `EvoGit.CommandShell.help/0`, so the detailed command catalog is runtime-generated even though the capability bullets and examples are manually maintained here (lines 46–102).
 The local prompt says `run_command` accepts the task-control command language, describes confirmation for task mutations and guides, and forbids file modification and OS-shell access (lines 62–94).
 The source-analysis prohibition concerns modifying Genesis itself, while task-control commands are explicitly allowed side effects, so `:read` here is not a promise that every available command is side-effect-free.
+The prompt identifies `repo_path` as the Genesis source root but does not identify an execution node, selected dashboard node, or authenticated runtime target, so runtime authority cannot be inferred from the persona or source path.
+The approval paragraph asks for a conversational confirmation before the command, but a text-only answer ends the current run under the completion contract, so actual approval is the command tool's blocking gate rather than prose alone.
 
 ### ReadOnlyTools — Shared Read-Only Tool Set
 
