@@ -111,6 +111,13 @@ It is adopted by `EvoGit.TaskRegistryCase` (per-BEAM `setup_all` in its `using` 
 Helpers: `store/0`, `trigger_cleanup!/0` (direct `Cleanup.cleanup_expired_tasks/1` against the isolated store), `cleanup_process/1`, `old_age_days/0`, `within_age_days/0`.
 No `EvoGit.Supervisor` child is ever terminated or restarted.
 
+## Evaluator Test Strategy
+Evaluator suites use genuine Dune plus production-shaped owner/spec/ETS authority and isolated running reflective tasks rather than mocked authorization or interpreter stubs.
+The explicitly required `evo_git/agent/tools/elixir_eval_fixture_helper.exs` owns its private supervisor through ExUnit and monitors teardown without accepting unexpected shutdown failures.
+Cold-facade tests must run without preloading evaluator allowlists because lazy initialization failures are part of the tested production boundary.
+The evaluator regressions intentionally require embedded scheduler IDs to match their ETS lookup key, including revalidation after a held sudo approval.
+Ordinary Mix execution requires the declared Dune dependency; temporary validation against externally compiled genuine Dune can eagerly load only its dependency beams before invoking `Mix.CLI.main` with `--no-deps-check`, never substitute evaluator production beams.
+
 ## Known Issues
 **`EvoGit.SystemSampler` interval can only be changed via restart**: the sampler starts before `test_helper.exs`, so setting `:system_sample_interval_ms` there is too late; a test needing a fast tick sets the env then calls `Supervisor.terminate_child/2` + `Supervisor.restart_child/2` so `init/1` re-reads it (`terminate_child/2` alone leaves a permanent child `:undefined`).
 **No fake-LLM harness**: no Mox/Meck and no injectable LLM runner, so a macro-driven agent cannot be run to completion; the only no-real-LLM idioms are error paths (empty the scheduler `model_profiles` → `{:error, :llm_not_configured}`, or point a model at an unreachable `base_url`) plus hand-built `%ReqLLM.ToolCall{}` fed to pure functions.
