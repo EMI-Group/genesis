@@ -16,13 +16,13 @@ Legacy pagination counts undecodable rows even when its per-row decoder skips th
 `Tasks.get_task_status/2` distinguishes missing nil from existing unreadable `{:unknown, raw}`; `select_task_update_info/2` returns `%{status, opts, finished_at, lease_expires_at}` or nil using two SELECTs.
 
 ## Constraints and Audit Hazards
-Despite the introductory Pages moduledoc, `get_task_lite/2` is NOT blob-light and must not be used as a safe bounded inspection projection.
+Despite the introductory Pages moduledoc, `get_task_lite/2` is a full-detail read, not a blob-light or inherently bounded inspection projection.
 Summary/page row limits do not bound payload bytes because `opts` remains whole, potentially containing long objectives, foreign-repo metadata, media attachments, or caller-provided sensitive values.
 `Filters` uses exact stored string equality for status/path/review filters, with literal `"all"` disabling each filter and `"pending"` review meaning completed plus NULL review status plus non-NULL branch name.
 Search matches escaped literal substrings in `id`, raw JSON `opts`, `project_path`, and `branch_name`, never `result`, and imposes no input-length bound.
 Filters expect keyword lists and correctly typed strings; they do not normalize arbitrary Assistant input or validate enum values.
 Page count and selection are separate statements without a shared snapshot, and `started_at DESC` has no tie-breaker.
-Do not infer legacy pagination bounds or get-task-lite payload safety from parent documentation; consult the implementation.
+Do not infer legacy pagination bounds or get-task-lite payload bounds from its name; the contracts above describe the actual operation returns, not evaluator-specific substitutes.
 
 ## Routing Table
 There are no child subdirectories.
