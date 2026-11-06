@@ -133,8 +133,7 @@ Guides require a message of at most 2,000 bytes, an allowlisted local page, opti
 ## Projection and Output Contracts
 Facade task reads retain only id, type, status, review_status, timestamps and agent_count.
 The following projection rules apply to convenience facades, not admitted direct APIs, which retain actual return values as described above.
-Error/exit terms and failed/nonterminal binary crash fallbacks are omitted, and opts, attachments, errors, usage, histories and credential fields are never returned.
-Intentionally supplied objective/report text is readable and is not secret-redacted.
+Facade task reads omit objective, opts, result, attachments, errors, usage, histories and credential fields.
 Task pages default to limit 25/offset 0/status all, accept limit 1..50 and offset 0..10,000, and validate status against literal enums; task ids are 1..128 bytes of ASCII letters, digits, underscore or hyphen.
 Facade agent listing projects five fields inside ETS without copying agent contexts and returns one unsorted page of at most 100 plus a continuation flag; direct RemoteAPI.list_agents/0 instead returns its actual list.
 Scheduler status totals used/waiting/capacity across at most 100 model-slot entries and separately reads only paused, never the full scheduler configuration.

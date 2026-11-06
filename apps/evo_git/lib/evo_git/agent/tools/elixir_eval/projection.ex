@@ -24,54 +24,6 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Projection do
 
   def task(_), do: nil
 
-  # Direct detail reads add only useful text, never the containing opts/result
-  # maps (which can carry attachments, secrets or provider exception blobs).
-  def task_detail(row) when is_map(row) do
-    opts = Map.get(row, :opts)
-    objective = task_option(opts, :objective) || task_option(opts, :prompt)
-    result = task_result(Map.get(row, :result), Map.get(row, :status))
-
-    Map.merge(task(row), %{
-      objective: detail_text(objective),
-      objective_truncated: is_binary(objective) and byte_size(objective) > 8_000,
-      result: detail_text(result),
-      result_truncated: is_binary(result) and byte_size(result) > 8_000
-    })
-  end
-
-  def task_detail(_), do: nil
-
-  # Select only the successful report, never inspect arbitrary result/error terms.
-  defp task_result({:ok, data}, _) when is_map(data),
-    do: Map.get(data, :result) || Map.get(data, "result")
-
-  defp task_result(data, _) when is_map(data),
-    do: Map.get(data, :result) || Map.get(data, "result")
-
-  defp task_result(value, status)
-       when is_binary(value) and status in [:completed, :cancelled],
-       do: value
-
-  defp task_result(_, _), do: nil
-
-  defp task_option(opts, key) when is_map(opts), do: option(opts, key)
-
-  defp task_option(opts, key) when is_list(opts) do
-    Enum.find_value(opts, fn
-      {k, value} when k == key -> value
-      {k, value} when is_binary(k) -> if k == Atom.to_string(key), do: value
-      _ -> nil
-    end)
-  end
-
-  defp task_option(_, _), do: nil
-
-  defp detail_text(value) when is_binary(value) do
-    if String.valid?(value), do: EvoGit.Agent.Tools.ElixirEval.Render.text(value, 8_000)
-  end
-
-  defp detail_text(_), do: nil
-
   def tasks(context, options) do
     with {:ok, opts} <- page_options(options),
          %{rows: rows, total: total} when is_list(rows) <-
