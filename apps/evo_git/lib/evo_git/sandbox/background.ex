@@ -606,7 +606,7 @@ defmodule EvoGit.Sandbox.Background do
   # A transient systemd unit name embedding the OWNING BEAM's OS pid, so a
   # later boot can prove ownership of a unit a crashed runtime left behind.
   # Characters systemd rejects in unit names are folded to "_" (job ids are
-  # `"bash-<16 hex>"` in practice, so this is purely defensive).
+  # `"bash-<n>"` in practice, so this is purely defensive).
   @spec unit_name(String.t()) :: String.t()
   def unit_name(job_id) when is_binary(job_id) do
     "genesis-job-b#{System.pid()}-#{String.replace(job_id, ~r/[^A-Za-z0-9_.:-]/, "_")}"

@@ -354,7 +354,10 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
       # STRING keys: this schema is JSON, and the implementation reads strings.
       assert Enum.all?(Map.keys(properties), &is_binary/1)
-      assert parameter_schema["required"] == ["job_id"]
+      # `job_id` is OPTIONAL: it may be omitted when this agent has exactly one
+      # background job, so nothing is required.
+      assert parameter_schema["required"] == []
+      assert properties["job_id"]["description"] =~ "May be omitted"
     end
 
     test "job_list takes no arguments" do
@@ -393,6 +396,93 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
       second = JobOutput.execute(%{"job_id" => job.id}, cwd, cwd)
       assert second == "(no new output)\n[status: completed, exit code: 0]"
+    end
+
+    test "omitted job_id reads this agent's only background job", %{tmp_dir: cwd} do
+      job = start_job("echo only-job", cwd)
+      await_job_status(job.id, :completed)
+
+      assert JobOutput.execute(%{}, cwd, cwd) =~ "only-job"
+      # A blank or non-string id takes the SAME auto-selected path (the only job
+      # is read, so the second read is an empty delta with the status line).
+      assert JobOutput.execute(%{"job_id" => "   "}, cwd, cwd) ==
+               "(no new output)\n[status: completed, exit code: 0]"
+
+      assert JobOutput.execute(%{"job_id" => 123}, cwd, cwd) ==
+               "(no new output)\n[status: completed, exit code: 0]"
+    end
+
+    test "omitted job_id still honours wait: true", %{tmp_dir: cwd} do
+      start_job("echo waited", cwd)
+
+      text = JobOutput.execute(%{"wait" => true, "timeout_ms" => 5_000}, cwd, cwd)
+
+      # The full omitted-id shape: the delta, the byte-identical status line and
+      # the wait marker that proves the wait path (not just a read) ran.
+      assert text =~
+               ~r/\Awaited\n\[status: completed, exit code: 0\]\n\[wait: finished after \d+ ms, status: completed\]\z/
+    end
+
+    test "omitted job_id with no jobs explains how to start one", %{tmp_dir: cwd} do
+      assert BackgroundJobs.list(owner_pid: self()) == []
+
+      result = JobOutput.execute(%{}, cwd, cwd)
+
+      assert String.starts_with?(result, "Error: ")
+      assert result =~ "no background jobs"
+      assert result =~ "run_in_background: true"
+    end
+
+    test "omitted job_id with no owning agent keeps the explicit-id error", %{tmp_dir: cwd} do
+      # Without an owning agent pid the job cannot be inferred, and an UNSCOPED
+      # lookup would read another agent's job — so the explicit-id error is kept.
+      Process.delete(:evogit_agent_pid)
+
+      try do
+        assert JobOutput.execute(%{}, cwd, cwd) =~ "Missing required argument 'job_id'"
+      after
+        Process.put(:evogit_agent_pid, self())
+      end
+    end
+
+    test "omitted job_id with several jobs names every id, newest first", %{tmp_dir: cwd} do
+      finished = start_job("echo first-done", cwd)
+      await_job_status(finished.id, :completed)
+      running = start_job("sleep 5", cwd)
+      await_job_status(running.id, :running)
+
+      result = JobOutput.execute(%{}, cwd, cwd)
+
+      assert String.starts_with?(result, "Error: ")
+      assert result =~ "Multiple background jobs"
+      assert result =~ ~s|#{running.id} (running, "sleep 5")|
+      assert result =~ ~s|#{finished.id} (completed, "echo first-done")|
+      assert result =~ "Call job_list for details."
+
+      # Newest first: the running job (started second) is named before the
+      # finished one.
+      {running_at, _} = :binary.match(result, running.id)
+      {finished_at, _} = :binary.match(result, finished.id)
+      assert running_at < finished_at
+
+      # The error path advances NO read cursor: an explicit read still returns
+      # the finished job's whole output.
+      assert JobOutput.execute(%{"job_id" => finished.id}, cwd, cwd) =~ "first-done"
+
+      kill_and_reap(running, cwd)
+    end
+
+    test "an explicit job_id is still used when several jobs exist", %{tmp_dir: cwd} do
+      first = start_job("echo one", cwd)
+      second = start_job("echo two", cwd)
+      await_job_status(first.id, :completed)
+      await_job_status(second.id, :completed)
+
+      # Short sequential ids in one isolated registry.
+      assert {first.id, second.id} == {"bash-1", "bash-2"}
+
+      assert JobOutput.execute(%{"job_id" => first.id}, cwd, cwd) =~ "one"
+      assert JobOutput.execute(%{"job_id" => second.id}, cwd, cwd) =~ "two"
     end
 
     test "a capped read reports more output pending and loses nothing", %{tmp_dir: cwd} do
@@ -477,7 +567,10 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
       missing = JobOutput.execute(%{}, cwd, cwd)
       assert String.starts_with?(missing, "Error: ")
-      assert missing =~ "job_id"
+      # No id and NO jobs of this agent's own: an actionable zero-job error, not
+      # an argument-missing one.
+      assert missing =~ "no background jobs"
+      assert missing =~ "run_in_background: true"
 
       # A non-string id is coerced to a string by `Shared.fetch_string_arg/2` and
       # then simply is not a known job — only the Error: shape is pinned here.
@@ -883,7 +976,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       assert length(lines) == 2
 
       for line <- lines do
-        assert line =~ ~r/\Abash-[0-9a-f]{16} \[bash\] (running|completed|killed|failed) — .+/
+        assert line =~ ~r/\Abash-\d+ \[bash\] (running|completed|killed|failed) — .+/
         # The separator is the EM DASH (U+2014), not a hyphen.
         assert line =~ "—"
         # The label is the command's first line.
@@ -1049,7 +1142,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       command = "echo bg-hi\nsleep 5"
 
       result = ShellTool.execute(%{"command" => command, "run_in_background" => true}, cwd, cwd)
-      assert result =~ ~r/\Astarted background job bash-[0-9a-f]{16}\z/
+      assert result =~ ~r/\Astarted background job bash-\d+\z/
 
       id = String.replace_prefix(result, "started background job ", "")
 
@@ -1076,7 +1169,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
         )
 
       refute String.starts_with?(result, "Error: ")
-      assert result =~ ~r/\Astarted background job bash-[0-9a-f]{16}\z/
+      assert result =~ ~r/\Astarted background job bash-\d+\z/
 
       id = String.replace_prefix(result, "started background job ", "")
       job = await_job_status(id, :running)
