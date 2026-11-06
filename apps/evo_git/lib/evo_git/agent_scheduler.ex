@@ -478,7 +478,7 @@ defmodule EvoGit.AgentScheduler do
   # The cancel notification message injected into every agent of a task that
   # is being gracefully cancelled. The runner drains pending user messages at
   # the top of each turn, so the agent sees this before its next LLM call.
-  @cancel_message "The task is being cancelled by the user. Please immediately save your work: commit any uncommitted changes, then call complete_task with a summary of what was accomplished. You are in a grace period and must call complete_task now."
+  @cancel_message "The task is being cancelled by the user. Please immediately save your work: commit any uncommitted changes, then reply with a summary of what was accomplished as plain text — a reply with no tool calls ends the run and its text IS the report, so no tool call is required. You are in a grace period: finish now."
 
   @doc """
   Returns the cancel notification message text injected into agents of a task

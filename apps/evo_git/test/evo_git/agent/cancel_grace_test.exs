@@ -309,7 +309,11 @@ defmodule EvoGit.Agent.CancelGraceTest do
 
       [text] = message_texts(grace_state.context)
       assert text =~ "You have exceeded the execution limit (max turns (128) exceeded)."
-      assert text =~ "Your priority is to call `complete_task` NOW with your best answer"
+
+      assert text =~
+               "Your priority is to FINISH now by replying with your final report as plain text"
+
+      assert text =~ "Calling `complete_task` is an OPTIONAL alternative"
       assert text =~ "Your already-committed work is safe."
       refute text =~ "Your original objective was:"
     end

@@ -19,8 +19,10 @@ defmodule EvoGit.Agent.Runner do
   @complete_tool "complete_task"
 
   # Grace-turn budget for a user-requested graceful cancellation (cancel-grace).
-  # The agent may wrap up and call `complete_task` for up to this many turns
-  # before the run hard-stops with `{:error, :recovery_failed}`.
+  # The agent may wrap up and finish (a plain-text reply with no tool calls ends
+  # the run and its text is the report, or an optional `complete_task` call) for
+  # up to this many turns before the run hard-stops with
+  # `{:error, :recovery_failed}`.
   @cancel_grace_turns 3
 
   # Grace-turn budget for turn-limit recovery — exactly 1, preserving the
@@ -706,7 +708,7 @@ defmodule EvoGit.Agent.Runner do
     if objective do
       """
       You have exceeded the execution limit (#{reason}).
-      Your priority is to call `#{@complete_tool}` NOW with your best answer, or simply reply with your report as plain text — a text reply with no tool calls finishes the task, so no tool call is required.
+      Your priority is to FINISH now by replying with your final report as plain text — a text reply with no tool calls ends the run and its text IS the report, so no tool call is required. Calling `#{@complete_tool}` is an OPTIONAL alternative when you want an explicit structured result.
 
       If you have critical uncommitted changes, commit them first, then finish immediately. Your already-committed work is safe.
 
@@ -718,7 +720,7 @@ defmodule EvoGit.Agent.Runner do
     else
       """
       You have exceeded the execution limit (#{reason}).
-      Your priority is to call `#{@complete_tool}` NOW with your best answer explaining the situation, or simply reply with your report as plain text — a text reply with no tool calls finishes the task, so no tool call is required.
+      Your priority is to FINISH now by replying with your final report as plain text explaining the situation — a text reply with no tool calls ends the run and its text IS the report, so no tool call is required. Calling `#{@complete_tool}` is an OPTIONAL alternative when you want an explicit structured result.
 
       If you have critical uncommitted changes, commit them first, then finish immediately. Your already-committed work is safe.
       """
