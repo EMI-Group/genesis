@@ -79,19 +79,53 @@ defmodule EvoGit.Agent.Tools.ElixirEval do
     """
     Elixir evaluator capabilities (local node only):
     Read facade (EvoGit.Agent.Tools.ElixirEval.Read):
-      help, system_info, list_tasks, get_task, list_agents, scheduler_status, model_profiles.
-    Write facade (EvoGit.Agent.Tools.ElixirEval.Write):
-      start_task, cancel_task, force_kill_task, delete_task, guide.
+      help/0 (this contract), system_info/0, list_tasks/0, list_tasks/1,
+      get_task/1 (task id), list_agents/0, scheduler_status/0, model_profiles/0.
+    Write facade (EvoGit.Agent.Tools.ElixirEval.Write; write tier required):
+      start_task/2 (type string, options map), cancel_task/1 (task id),
+      force_kill_task/1 (task id), delete_task/1 (task id),
+      guide/1 (message), guide/2 (message, options map).
     Use fully qualified module names; Dune does not support alias declarations.
-    EvoGit.Agent.Tools.ElixirEval.Read.help() documents facade signatures;
-    list_tasks() uses defaults and list_tasks(map) accepts pagination/filter options.
-    There is no source-access facade.
+    list_tasks/1 accepts %{limit: 25, offset: 0, status: "all"} (defaults);
+    list_tasks/0 is equivalent. Limit: integer 1..50; offset: integer 0..10000.
+    Status: "all" or pending/running/finalizing/cancelling/completed/failed/cancelled
+    (status string or atom). Only limit/offset/status atom or string keys are accepted.
+    Task ids: 1..128 bytes, ASCII letters/digits/underscore/hyphen only.
+
+    start_task/2: type is "genesis", "evolve", "reflect" or "extract_skills".
+    Only %{path: ..., mode: ..., objective: ..., prompt: ..., model_id: ...} options
+    are accepted (atom or string keys, no duplicate spellings). All supplied values
+    must be nonblank UTF-8 strings without NUL, <=8000 bytes each.
+    Genesis mode defaults to "new"; valid modes: "new"/"existing". Supply prompt or
+    objective (prompt wins if both supplied). Evolve mode defaults to and only accepts
+    "simple"; reflect mode defaults to and only accepts "reflect"; both need objective
+    and reject prompt. Extract_skills accepts only path/model_id, no mode/objective/prompt.
+    Non-reflect tasks require an absolute path <=1024 bytes to an existing directory,
+    except genesis-new may create a new directory. Reflect rejects path entirely.
+    Optional model_id must name a configured profile and locks that model choice.
+    Custom/merge/resume/foreign-repo options are not exposed.
+    Mutations cannot target the calling assistant's own task. Cancel accepts only
+    pending/running tasks; force-kill only running/cancelling; delete only terminal
+    completed/failed/cancelled tasks. Delete is a CAST queued acknowledgement, NOT
+    confirmation of persisted deletion. On uncertain submission, inspect before retrying.
+
+    guide/2: message is nonblank UTF-8 without NUL, <=2000 bytes.
+    Only page/selector/dismissible atom or string keys, no duplicate spellings.
+    Page defaults to nil; allowed: nil, "/", "/help", "/projects", "/tasks", "/agents",
+    "/settings", "/system". Selector defaults to nil, otherwise a simple #id <=80 bytes:
+    # followed by an ASCII letter, then ASCII letters/digits/underscore/hyphen only.
+    Dismissible is boolean, default true. guide/1 uses these defaults.
+    Fixed per-evaluation facade quotas: 128 broker requests (including IO), 32 reads,
+    500 charged projected rows, 16 writes, four task starts; one pending runtime operation.
+    Row charges: requested task-page limit, 100 per agent/model-profile read, one otherwise.
+
     Examples (read tier):
       EvoGit.Agent.Tools.ElixirEval.Read.help()
-      EvoGit.Agent.Tools.ElixirEval.Read.list_tasks()
-      EvoGit.Agent.Tools.ElixirEval.Read.list_tasks(%{limit: 10})
+      EvoGit.Agent.Tools.ElixirEval.Read.list_tasks(%{limit: 10, offset: 0, status: "running"})
       EvoGit.Agent.Tools.ElixirEval.Read.system_info()
-    Example (write tier, requires approval):
+    Examples (write tier, require approval):
+      EvoGit.Agent.Tools.ElixirEval.Write.start_task("reflect", %{objective: "Explain task status"})
+      EvoGit.Agent.Tools.ElixirEval.Write.guide("Open Tasks", %{page: "/tasks", dismissible: true})
       EvoGit.Agent.Tools.ElixirEval.Write.cancel_task("task_id")
     Read/write run in Dune: pure Elixir plus the explicit facades only, not direct
     TaskRegistry, AgentScheduler, CommandShell, Tools.execute or other runtime APIs.
