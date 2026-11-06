@@ -242,7 +242,7 @@ defmodule EvoGit.Agents.SelfReflective do
     | Page | Path |
     | --- | --- |
     | Projects (open or create) | `/projects` (also `/`) |
-    | Home / this help chat | `/help` |
+    | Assistant chat (this page) | `/help` |
     | Tasks (all tasks, status filters) | `/tasks` |
     | Agents (agent tree inspector) | `/agents` |
     | Settings (config, models, agents) | `/settings` |

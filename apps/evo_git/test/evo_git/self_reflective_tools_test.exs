@@ -297,7 +297,7 @@ defmodule EvoGit.SelfReflectiveToolsTest do
     prompt = SelfReflective.system_prompt()
 
     assert prompt =~ "| Projects (open or create) | `/projects` (also `/`) |"
-    assert prompt =~ "| Home / this help chat | `/help` |"
+    assert prompt =~ "| Assistant chat (this page) | `/help` |"
     assert prompt =~ "| Tasks (all tasks, status filters) | `/tasks` |"
     assert prompt =~ "| Agents (agent tree inspector) | `/agents` |"
     assert prompt =~ "| Settings (config, models, agents) | `/settings` |"
