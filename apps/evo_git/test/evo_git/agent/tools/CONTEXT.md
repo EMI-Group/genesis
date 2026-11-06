@@ -30,7 +30,7 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | `html_to_markdown_test.exs` | `EvoGit.Agent.Tools.HtmlToMarkdown` |
 | `lsp_test.exs` | `EvoGit.Agent.Tools.Lsp` (config-gated `lsp` tool, driven with per-call `opts` overrides against the fake language server) |
 | `web_fetch_lsp_registration_test.exs` | the schema-registration / dispatch contract for `web_fetch` and `lsp` |
-| `reflect_tools_test.exs` | the self-reflective task-control command handlers |
+| `reflect_tools_test.exs` | direct self-reflective task-control handlers plus three repo-less `run_command` read-command dispatch cases; no evaluator or approval tests |
 | `spawn_investigator_probe_test.exs` | `Tools.SpawnInvestigatorProbe.investigate/2` |
 
 ## Async-Safety Rationale
@@ -44,6 +44,20 @@ Every module carries an `@moduledoc` naming why it is `async: true` / `async: fa
 - `async: true` — `web_fetch_lsp_registration_test.exs` and `commit_files_test.exs` (each isolates its config dir PER PROCESS through `EvoGit.TestSupport.ConfigDir`, so the `[lsp]` schema gate / repo template is pinned independent of the developer's real `~/.config/genesis/config.toml` without touching a process-wide env var).
 - `async: true` — `lsp_test.exs` (nothing global: every execute-level test spawns its own fake language server escript in a UNIQUE temp dir and every `Lsp.execute/4,5` call passes `enabled:`/`command:` explicitly, the unconfigured cases included).
 - `async: true` — every other file: pure helpers, per-test `:tmp_dir` fixtures, or process-local `Process.put` state only.
+
+## Reflect / Command Dispatch Coverage and Gaps
+
+`reflect_tools_test.exs` calls the ten control handlers directly through `execute/3`; its only `run_command` dispatch cases are `ListRecentProjects.list_recent_projects`, `SystemInfo.system_info`, and `ListTasks.list_tasks`, all under the process-local `:repo_less` flag.
+These dispatch cases pin the `%{"command" => <legacy command string>}` argument and formatted text output, not ordinary Elixir syntax or evaluation.
+The repo-less guard cases pin blocked `write_file` / `edit_file` / `skill_add`, JSON-string write arguments, a permitted file read, and restoration of writes after deleting `:repo_less`.
+The suite has no `RunCommand` schema tests, direct `CommandShell` calls, restricted-evaluation allowlist tests, sudo/approval interactions, evaluator context/binding isolation, evaluator cancellation/timeout cleanup, or audit assertions.
+Control-handler cancellation coverage is only a pending task becoming `:cancelled`; the force-kill case asserts the seeded running task becomes `:failed`, but does not assert the wrapper pid has died.
+`StartTask` coverage enqueues a real reflect task with global scheduler profiles temporarily emptied and waits for an id-pinned terminal PubSub event inside that profile override before restoring profiles.
+That test asserts a nonempty returned task id and persisted `type: :reflect`, but not terminal outcome, evaluated code, returned result, or runtime context propagation.
+Current test seams are `EvoGit.TaskRegistryCase`'s isolated Store/TaskRegistry and `store()` / `TaskRegistry.server()`, direct Store task seeding, temporary unregister/re-register of the isolated registry name for unavailable-system errors, `:sys.replace_state` of the isolated registry's `task_refs` with a live wrapper, and process-local `:repo_less`.
+There is no config-dir isolation helper in `reflect_tools_test.exs`; its SystemInfo case compares the reported data directory with the live `EvoGit.Platform.data_dir/0`.
+`spawn_investigator_probe_test.exs` tests the deterministic read-only filesystem report over unique temp git fixtures, including nested CONTEXT.md excerpts and malformed/nonexistent inputs, not assistant evaluation-context isolation or permission enforcement.
+Sibling parser/approval suites route to `test/evo_git/{command_shell,command_approval}_test.exs`, the runtime suite routes to `test/evo_git/runtime/`, and production command-handler/evaluator architecture routes to `lib/evo_git/agent/tools/` and the core runtime's CONTEXT.md.
 
 ## Notes for Agents
 
