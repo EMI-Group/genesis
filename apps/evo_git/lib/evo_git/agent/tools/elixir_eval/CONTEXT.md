@@ -56,6 +56,9 @@ Both public allowlist wrappers load their generated Base allowlist in an `@on_lo
 Deferring Base loading until `fun_status/3` is too late: Dune 0.3.18 encodes unknown alias segments before function authorization, preventing fully qualified facades from resolving on cold first use.
 Unqualified dbg AST nodes are rejected before interpretation because sanitizer-generated debug IO can bypass normal allowlist shims; Kernel.dbg is also restricted by the allowlist.
 Default Dune pure operations remain available, but raw TaskRegistry, AgentScheduler, CommandShell, Broker and arbitrary native APIs are not added to the allowlist.
+Dune's generated `allow(..., only: [...])` entries select function names rather than exact MFAs; the outer `fun_status/3` wrappers already demonstrate explicit arity checks and `{:shimmed, module, function}` interception for IO.
+A native allowlist entry alone would bypass broker authorization, quotas, projection and one-second operation deadlines; real runtime API admission must preserve those boundaries independently of its public module spelling.
+The restricted-operation engine error explicitly directs callers to Read/Write facades, so it is a separate guidance site from the public tool help/schema.
 Sudo runs `Code.eval_string(code, [])` with full VM authority only after the external approval gate; it can access secrets, mutate the VM, spawn OS children or interfere with tracing.
 WorkerTree uses an unlinked monitored guardian, monitors caller and optional owner/agent pids, and monitors the broker separately.
 An independent unlinked Custodian owns inherited spawn tracing, installed on the waiting guardian before it may spawn the root, and monitors both guardian and caller.
