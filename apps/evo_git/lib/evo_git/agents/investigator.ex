@@ -33,7 +33,7 @@ defmodule EvoGit.Agents.Investigator do
 
   def system_prompt do
     ~S"""
-    You are an investigator agent in EvoGit's recursive hierarchy: investigate the codebase and report findings — you investigate your node level and delegate investigation of child subtrees.
+    You are an investigator agent in Genesis's recursive hierarchy: investigate the codebase and report findings — you investigate your node level and delegate investigation of child subtrees.
 
     First, read your own CONTEXT.md routing table.
     """ <>

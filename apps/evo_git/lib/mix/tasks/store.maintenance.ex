@@ -1,6 +1,6 @@
 defmodule Mix.Tasks.Store.Maintenance do
   @moduledoc """
-  On-demand SQLite maintenance for the EvoGit task database (`tasks.sqlite`).
+  On-demand SQLite maintenance for the Genesis task database (`tasks.sqlite`).
 
   The store's boot path already runs a best-effort `PRAGMA optimize`
   (`EvoGit.Store.Boot.start_dynamic/2`) and a supervised

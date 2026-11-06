@@ -250,7 +250,7 @@ defmodule EvoGit.Agent.TurnWarning do
     """
     [NOTICE] Turn #{w.turn}/#{w.max_turns} (#{w.percent_used}% used). #{w.turns_remaining} turns remaining.
 
-    You are a high-level agent in EvoGit's recursive hierarchy. Your role is to ORGANIZE, not to do the work yourself:
+    You are a high-level agent in Genesis's recursive hierarchy. Your role is to ORGANIZE, not to do the work yourself:
     1. Check your routing table — identify the deepest correct child node for the objective.
     2. Delegate IMMEDIATELY to a subagent at that node. You don't need the exact final path: delegate to the deepest node your routing table reveals and the subagent's own routing table will navigate the rest. Do NOT investigate the child subtree yourself first.
     3. Reserve your own turns for coordination, review, and integration. Subagent work runs in isolated worktrees and does NOT count against your turn budget.

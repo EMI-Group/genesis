@@ -336,8 +336,8 @@ defmodule EvoGit.ProjectConfigTest do
 
       contents = File.read!(Path.join(tmp_dir, "genesis.toml"))
 
-      assert contents =~ "genesis.toml — EvoGit project configuration file."
-      assert contents =~ "EvoGit agents read this file automatically"
+      assert contents =~ "genesis.toml — Genesis project configuration file."
+      assert contents =~ "Genesis agents read this file automatically"
     end
 
     test "writes worktree section comment block", %{tmp_dir: tmp_dir} do
@@ -445,7 +445,7 @@ defmodule EvoGit.ProjectConfigTest do
       contents = File.read!(Path.join(tmp_dir, "genesis.toml"))
 
       # Count occurrences of the top-level comment first line
-      first_line = "# genesis.toml — EvoGit project configuration file."
+      first_line = "# genesis.toml — Genesis project configuration file."
       count = contents |> String.split("\n") |> Enum.count(&(&1 == first_line))
 
       assert count == 1

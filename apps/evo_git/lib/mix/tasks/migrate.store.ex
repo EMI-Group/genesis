@@ -1,6 +1,6 @@
 defmodule Mix.Tasks.Migrate.Store do
   @moduledoc """
-  Run pending Ecto migrations for the EvoGit task database (`tasks.sqlite`).
+  Run pending Ecto migrations for the Genesis task database (`tasks.sqlite`).
 
   The store auto-migrates at boot — `EvoGit.Store.Boot` runs the Ecto
   migrations in `priv/repo/migrations/` (baseline schema adoption + data
@@ -35,7 +35,7 @@ defmodule Mix.Tasks.Migrate.Store do
 
   use Mix.Task
 
-  @shortdoc "Migrate the EvoGit task database (run pending Ecto migrations)"
+  @shortdoc "Migrate the Genesis task database (run pending Ecto migrations)"
 
   @requirements ["app.config"]
 
