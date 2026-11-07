@@ -52,6 +52,10 @@ Model and peak-window row actions must preserve unsaved nested fields and numeri
 `SettingsLiveParentAdapterTest` renders the actual `SettingsComponents.category_section/1` boundary and calls actual parent change/row/cancel handlers without a mounted page; its third test pins persisted-model connection resolution, inherited generation, API key and provider options through `ConfigIO.resolve_model_spec/2`.
 The mounted suite retains per-process config directories, local-only ActiveTasks invalidation, the owner-aware mount funnel and the original 25-test sync module's global-state ownership.
 All production sources are read-only from this test node.
+Mounted Projects, Assistant and Welcome canonical contracts already exist in their page files, so helper-only success must not be mistaken for their integration validation.
+Settings page tests cover provider CRUD, single-model nested generation reopening, row preservation and validation failure, but do not pin a two-distinct-model save followed by authoritative reload/remount, configuration-writer failure and retry, canonical reset behavior, or stale asynchronous save/reload completion handling.
+The Settings foreign-node NodeData rejection and OAuth-status sequence guards are narrower than same-node generation ordering and in-flight save scope changes.
+Keep mounted Settings additions with the owner of `settings_live_test.exs`, while pure provider transformations belong in `settings_live/` and core atomic-write/cache-failure assertions belong in the core config test node.
 
 ### Integration prerequisites
 
