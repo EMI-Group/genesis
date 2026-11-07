@@ -59,10 +59,9 @@ defmodule EvoDashWeb.SettingsLive.SearchEvents do
     key_path = ConfigIO.parse_key_path(path_str, socket.assigns.schemas_by_category)
     schema = ConfigIO.find_schema(key_path, socket.assigns.schemas_by_category)
 
-    # An unknown or stale key_path / schema means untrusted client input did not
-    # resolve to a known setting — surface a friendly flash instead of crashing
-    # on put_in with a nil path or a nil schema.default.
-    if is_nil(key_path) or is_nil(schema) do
+    # Only complete generic schema paths resolve here; dedicated provider/model
+    # paths are rejected even when a client sends a forged reset event.
+    if is_nil(schema) do
       {:noreply, put_flash(socket, :error, gettext("Invalid key path."))}
     else
       config = put_in(socket.assigns.file_config, key_path, schema.default)
@@ -73,5 +72,9 @@ defmodule EvoDashWeb.SettingsLive.SearchEvents do
         gettext("Reset %{key} to default.", key: path_str)
       )
     end
+  end
+
+  def handle_reset_key(socket, _params) do
+    {:noreply, put_flash(socket, :error, gettext("Invalid key path."))}
   end
 end
