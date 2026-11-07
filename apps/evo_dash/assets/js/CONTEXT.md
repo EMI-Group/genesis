@@ -18,6 +18,16 @@ Client-side JavaScript for the EvoDash dashboard: the main entry (`app.js`, Live
 - **JS-added classes are structural or token-based only**: verified examples — SidebarCollapse width/translate/opacity layout classes, NodeSwitchFade `.node-switch-fade` (CSS opacity keyframes), Guide `.guide-highlight` (CSS `var(--color-primary)` outline), ClipboardCopy's 2s `text-success` icon tint (`app.js:539`; `--color-success` defined per theme in `css/app.css`, dark L46 / light L94; class round-tripped from `origClass`), AdaptiveInput `--app-vh` var sync on `documentElement` (`adaptive_input.js:87`).
 - DiffViewer injects ONLY highlight.js `<span class="hljs-*">` token markup (`diff_viewer.js:83`) — `.hljs-*` colors live in CSS for both themes; never add inline colors to the hook.
 
+## Projects State Persistence
+
+`StatePersistence` in `app.js` stores one JSON object in `sessionStorage` under `dashboard_state` and sends that object back through `restore_state` on mount.
+The `persist_model_selection` server event carries `{node, model_spec}`, where `model_spec` is a string-keyed map containing `provider_profile_id`, `model`, and optional `reasoning_effort`, or the explicit empty map `{}` for Auto.
+The handler merges only `node` and `model_spec`, leaving the saved prompt and unrelated fields untouched, and accepts an event only for the root's current `data-node-id` (default `local`) and the saved state's node when storage already exists.
+Node-less legacy state belongs to `local`, and a picker-only event must never relabel another node's pending saved state.
+The debounced form watcher reads the latest saved object when it runs, preserving canonical selection including `{}`, and writes `selected_model_id` only when a legacy `[name="model_id"]` selector actually exists.
+The full `persist_state` event still replaces the saved object while taking `task_prompt` from the DOM to protect unsent typing.
+Run focused hook regressions with `node --test apps/evo_dash/assets/js/state_persistence.test.cjs` from the repository root; they use Node's built-in test runner and VM to exercise the actual inline hook without browser-bundle dependencies.
+
 ## Known Issues
 
 - `js/CONTEXT.md` routing note: the parent `assets/CONTEXT.md` routes `./js/` → `js/hooks/CONTEXT.md` for behavior detail; this file exists only since the theme audit — keep it lean (per-file detail belongs in code comments / hooks/CONTEXT.md).
