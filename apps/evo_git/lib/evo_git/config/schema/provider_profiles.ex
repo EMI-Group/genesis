@@ -27,7 +27,7 @@ defmodule EvoGit.Config.Schema.ProviderProfiles do
   alias EvoGit.Config.Schema.LLM
   alias EvoGit.Config.Schema.ProviderProfiles.Normalize
 
-  @runtime_keys ~w(id model auth_mode oauth_file temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty provider_options context_window concurrency peak_concurrency peak_hours timezone off_peak_days)a
+  @runtime_keys ~w(id model auth_mode oauth_file api_key_env_var temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty provider_options context_window concurrency peak_concurrency peak_hours timezone off_peak_days)a
   @schedule_keys ~w(concurrency peak_concurrency peak_hours timezone off_peak_days)a
 
   @spec provider_profiles(term()) :: [map()]
@@ -46,16 +46,9 @@ defmodule EvoGit.Config.Schema.ProviderProfiles do
     config = Normalize.stringify(config)
     profiles = provider_profiles(config)
 
-    with {:ok, spec} <- normalize_spec(spec),
-         {:ok, profile} <- find_profile(config, profiles, spec),
-         {:ok, model} <- find_model(profile, spec),
-         {:ok, effort} <- resolve_effort(profile, model, spec) do
+    with {:ok, {profile, model, effort}} <- resolve_selection(config, profiles, spec) do
       runtime_profile = runtime_profile(profile, model, effort)
-
-      params =
-        runtime_profile
-        |> LLM.profile_generation_params()
-        |> with_api_key(profile)
+      params = LLM.profile_generation_params(runtime_profile)
 
       resolved =
         selection(profile, model)
@@ -73,6 +66,30 @@ defmodule EvoGit.Config.Schema.ProviderProfiles do
   end
 
   def resolve_model_spec(_, _), do: {:error, :invalid_config}
+
+  # Runtime compatibility reads must not assemble generation params: scheduler
+  # boot deliberately leaves cold catalog loading to CatalogWarmup.
+  @doc false
+  @spec resolve_runtime_profile(term(), term()) :: {:ok, map()} | {:error, term()}
+  def resolve_runtime_profile(%{} = config, spec) do
+    config = Normalize.stringify(config)
+
+    with {:ok, {profile, model, effort}} <-
+           resolve_selection(config, provider_profiles(config), spec) do
+      {:ok, runtime_profile(profile, model, effort)}
+    end
+  end
+
+  def resolve_runtime_profile(_, _), do: {:error, :invalid_config}
+
+  defp resolve_selection(config, profiles, spec) do
+    with {:ok, spec} <- normalize_spec(spec),
+         {:ok, profile} <- find_profile(config, profiles, spec),
+         {:ok, model} <- find_model(profile, spec),
+         {:ok, effort} <- resolve_effort(profile, model, spec) do
+      {:ok, {profile, model, effort}}
+    end
+  end
 
   defp normalize_spec(nil), do: {:ok, %{}}
 
@@ -202,17 +219,6 @@ defmodule EvoGit.Config.Schema.ProviderProfiles do
       |> Map.put(:id, model["model"])
     end
   end
-
-  defp with_api_key(params, %{"auth_mode" => "oauth"}), do: params
-
-  defp with_api_key(params, %{"api_key_env_var" => name}) when is_binary(name) and name != "" do
-    case System.get_env(name) do
-      value when is_binary(value) and value != "" -> Keyword.put(params, :api_key, value)
-      _ -> params
-    end
-  end
-
-  defp with_api_key(params, _), do: params
 
   # The existing config path also converts known option keys to existing atoms.
   # Unknown keys stay strings rather than growing the atom table on user input.
