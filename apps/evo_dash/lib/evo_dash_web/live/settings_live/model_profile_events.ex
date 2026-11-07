@@ -265,7 +265,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
     do: gettext("Model IDs must be unique within a provider profile.")
 
   defp error_message("default_model_invalid"),
-    do: gettext("Select a default model from this provider profile's models.")
+    do: gettext("Enter a default model or add a model override.")
 
   defp error_message("reasoning_default_invalid"),
     do: gettext("Default reasoning effort must be one of the configured reasoning efforts.")

@@ -4,7 +4,7 @@ ExUnit.start()
 
 defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
   use ExUnit.Case, async: true
-  alias EvoDashWeb.SettingsLive.{AuthStatus, ConfigIO, ProviderProfiles}
+  alias EvoDashWeb.SettingsLive.{AuthStatus, ConfigIO, ModelProfileEvents, ProviderProfiles}
 
   defp params, do: %{"provider" => "openai", "models" => [%{"model" => "example"}]}
 
@@ -129,9 +129,69 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
 
     assert {:error, "invalid_extra_json"} =
              ProviderProfiles.parse(Map.put(params(), "extra", "{"), "test")
+  end
+
+  test "default-only profiles round-trip without manufacturing model overrides" do
+    for models <- [%{}, %{"models" => []}] do
+      input = Map.merge(models, %{"provider" => "openai", "default_model" => " default "})
+      assert {:ok, profile} = ProviderProfiles.parse(input, "test")
+      assert profile["default_model"] == "default"
+      refute Map.has_key?(profile, "models")
+      assert ProviderProfiles.draft(profile)["models"] == []
+      assert {:ok, ^profile} = ProviderProfiles.parse(%{}, "test", profile)
+    end
+  end
+
+  test "models are overrides and do not restrict the default model" do
+    input = Map.put(params(), "default_model", "unlisted")
+    assert {:ok, profile} = ProviderProfiles.parse(input, "test")
+    assert profile["default_model"] == "unlisted"
+    assert profile["models"] == [%{"model" => "example"}]
 
     assert {:error, "default_model_invalid"} =
-             ProviderProfiles.parse(Map.put(params(), "default_model", "missing"), "test")
+             ProviderProfiles.parse(%{"provider" => "openai"}, "empty")
+
+    assert {:error, "default_model_invalid"} =
+             ProviderProfiles.parse(
+               %{"provider" => "openai", "default_model" => " ", "models" => []},
+               "empty"
+             )
+  end
+
+  test "reasoning defaults respect effective inventories, including unrestricted overrides" do
+    input = %{
+      "provider" => "openai",
+      "default_model" => "default",
+      "reasoning_efforts" => ["low", "high"],
+      "default_reasoning_effort" => "high",
+      "models" => [%{"model" => "other", "reasoning_efforts" => ["low"]}]
+    }
+
+    assert {:error, "reasoning_default_invalid"} = ProviderProfiles.parse(input, "test")
+
+    restricted = %{"model" => "other", "default_reasoning_effort" => "other"}
+
+    assert {:error, "reasoning_default_invalid"} =
+             ProviderProfiles.parse(Map.put(input, "models", [restricted]), "test")
+
+    for unrestricted <- [[], ""] do
+      row = Map.put(restricted, "reasoning_efforts", unrestricted)
+      assert {:ok, profile} = ProviderProfiles.parse(Map.put(input, "models", [row]), "test")
+      assert hd(profile["models"])["reasoning_efforts"] == []
+      assert hd(profile["models"])["default_reasoning_effort"] == "other"
+    end
+
+    assert {:ok, profile} =
+             ProviderProfiles.parse(
+               %{
+                 "provider" => "openai",
+                 "default_model" => "default",
+                 "default_reasoning_effort" => "custom"
+               },
+               "test"
+             )
+
+    refute Map.has_key?(profile, "reasoning_efforts")
   end
 
   test "dedicated fields never enter generic flat-category deletion" do
@@ -150,10 +210,65 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
     assert submitted["models"] == params()["models"]
 
     emptied = ProviderProfiles.submission(%{"provider" => "openai"}, draft)
-    assert {:error, "model_id_empty"} = ProviderProfiles.parse(emptied, "test", params())
+    assert {:error, "default_model_invalid"} = ProviderProfiles.parse(emptied, "test", params())
+
+    default_only = Map.put(draft, "default_model", "keep")
+
+    submitted =
+      ProviderProfiles.submission(
+        %{"provider" => "openai", "default_model" => "keep"},
+        default_only
+      )
+
+    assert {:ok, profile} = ProviderProfiles.parse(submitted, "test", params())
+    refute Map.has_key?(profile, "models")
 
     legacy = ProviderProfiles.submission(%{"provider" => "openai", "model_id" => "new"}, draft)
     assert {:ok, %{"models" => [%{"model" => "new"}]}} = ProviderProfiles.parse(legacy, "test")
+  end
+
+  test "form changes and row buttons only mutate detached drafts and cancel discards them" do
+    config = %{llm: %{providers: [%{"id" => "saved", "default_model" => "example"}]}}
+
+    socket = %Phoenix.LiveView.Socket{
+      assigns: %{
+        __changed__: %{},
+        file_config: config,
+        editing_profile_id: "saved",
+        profile_form_draft: %{},
+        profile_advanced_open: nil
+      }
+    }
+
+    assert {:noreply, socket} =
+             ModelProfileEvents.model_profile_form_change(
+               socket,
+               %{"default_model" => "typed", "models" => [], "temperature" => "0.7"}
+             )
+
+    assert {:noreply, socket} = ModelProfileEvents.add_profile_model(socket, %{})
+    assert socket.assigns.profile_form_draft["models"] == [%{"model" => ""}]
+    assert socket.assigns.profile_form_draft["default_model"] == "typed"
+    assert socket.assigns.file_config == config
+
+    assert {:noreply, ^socket} =
+             ModelProfileEvents.remove_profile_model(socket, %{"index" => "-1"})
+
+    assert {:noreply, socket} = ModelProfileEvents.remove_profile_model(socket, %{"index" => "0"})
+    assert socket.assigns.profile_form_draft["models"] == []
+    assert {:noreply, socket} = ModelProfileEvents.toggle_profile_advanced(socket, %{})
+    assert socket.assigns.profile_advanced_open == false
+    assert {:noreply, socket} = ModelProfileEvents.cancel_edit_model_profile(socket, %{})
+    assert socket.assigns.file_config == config
+    assert socket.assigns.profile_form_draft == nil
+    assert socket.assigns.profile_advanced_open == nil
+    assert socket.assigns.editing_profile_id == nil
+  end
+
+  test "advanced auto-open considers nested model overrides" do
+    refute ModelProfileEvents.advanced_open?(%{"models" => []})
+    assert ModelProfileEvents.advanced_open?(%{"models" => [%{"extra" => "{}"}]})
+    refute ModelProfileEvents.advanced_open?(nil)
   end
 
   test "draft rows are ordered, detached, and preserve blank input" do

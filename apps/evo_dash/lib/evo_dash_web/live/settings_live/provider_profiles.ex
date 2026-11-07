@@ -148,7 +148,8 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
         |> Map.drop(~w(peak_concurrency peak_hours timezone off_peak_days model reasoning_effort))
         |> Map.merge(stringify(peak))
         |> Map.put("name", nonblank(params["name"]) || id)
-        |> Map.put("models", models)
+        |> Map.delete("models")
+        |> put_optional("models", if(models != [], do: models))
 
       profile =
         if auth_mode == "oauth",
@@ -158,8 +159,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
       default = nonblank(profile["default_model"]) || (List.first(models) || %{})["model"]
       profile = put_optional(profile, "default_model", default)
 
-      with :ok <- required(models != [], "model_id_empty"),
-           :ok <- required(Enum.any?(models, &(&1["model"] == default)), "default_model_invalid"),
+      # Nested models are optional overrides, not a saved-model allowlist.
+      # A default-only account must remain default-only after an untouched save.
+      with :ok <- required(not is_nil(default), "default_model_invalid"),
            :ok <- validate_inherited_reasoning(profile, models) do
         {:ok, profile}
       end
@@ -297,7 +299,10 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
       {:ok,
        profile
        |> Map.drop(~w(reasoning_efforts default_reasoning_effort))
-       |> put_optional("reasoning_efforts", if(efforts != [], do: efforts))
+       |> put_optional(
+         "reasoning_efforts",
+         if(Map.has_key?(params, "reasoning_efforts"), do: efforts)
+       )
        |> put_optional("default_reasoning_effort", default)}
     end
   end
