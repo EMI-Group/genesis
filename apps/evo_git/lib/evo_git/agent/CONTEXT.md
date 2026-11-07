@@ -64,7 +64,8 @@ The ordinary LLM call and compression consume those effective fields without re-
 `SubagentProcessing` forwards a locked parent's complete resolved selection as explicit `model_spec`, while an unlocked parent's selection travels as `default_model_spec` so each spawn still consults the model-selection script.
 The builder preserves `model_id_locked`, falls back to the original spec/opts for older state shapes, and omits absent canonical selectors so legacy-only inheritance never sends an explicit `model_spec: nil`.
 `Cost.recompute_for_agent/2` prices effective `llm_model` and obtains the peak/off-peak period from `model_spec["provider_profile_id"]`, falling back to legacy `model_id` only when the selection profile is absent.
-`Cost.period_for_provider_profile_id/1` names that account lookup explicitly, and `period_for_model_id/1` remains a compatible alias.
+`Cost.period_for_provider_profile_id/1` reads the scheduler's canonical `provider_profiles` account schedules, with legacy `model_profiles` used only when no canonical accounts exist; an unknown canonical account never borrows a stale legacy schedule.
+`period_for_model_id/1` remains a compatible alias, and schedule/window/day/timezone math stays delegated to `PeakHours` independently of the effective model being priced.
 Completion retains the complete selection in `llm_settings.model_spec` alongside effective model, generation parameters, legacy profile identity and compression threshold.
 The Assistant task-start facade validates explicit selectors through `Schema.resolve_model_spec/2`, forwards them unchanged and locks accepted selections; its exact admission rules belong to `tools/elixir_eval/CONTEXT.md`.
 
