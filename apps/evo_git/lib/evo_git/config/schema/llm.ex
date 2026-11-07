@@ -618,6 +618,11 @@ defmodule EvoGit.Config.Schema.LLM do
 
   Precedence, highest first: the profile's explicit `provider_options` keys →
   the profile-derived OAuth defaults → the model-derived options.
+
+  API-key profiles with a nonempty `api_key_env_var` use that exact name:
+  a nonempty environment value wins over a nonempty persisted credential.
+  Missing custom credentials emit an empty `:api_key` so ReqLLM rejects the
+  request rather than falling back to a provider-wide key; OAuth is excluded.
   """
   @spec profile_generation_params(map()) :: keyword()
   def profile_generation_params(profile) when is_map(profile) do
@@ -645,9 +650,17 @@ defmodule EvoGit.Config.Schema.LLM do
     name = Map.get(profile, :api_key_env_var)
 
     if is_binary(name) and name != "" and not oauth_profile?(profile) do
-      case System.get_env(name) do
+      key =
+        case System.get_env(name) do
+          value when is_binary(value) and value != "" -> value
+          _ -> Map.get(EvoGit.Config.credentials(), name)
+        end
+
+      # An explicit empty key makes ReqLLM reject missing account credentials
+      # instead of silently using another account's provider-wide default key.
+      case key do
         value when is_binary(value) and value != "" -> Keyword.put(params, :api_key, value)
-        _ -> params
+        _ -> Keyword.put(params, :api_key, "")
       end
     else
       params

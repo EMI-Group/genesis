@@ -23,7 +23,8 @@ defmodule EvoGit.CustomAgents do
   prompt = "You are..."           # system prompt (required)
   agent_type = "read"             # optional: "read" | "read_write" (default "read_write")
   delegation_level = "low"        # optional: "high" | "low" (default "low")
-  model_id = "gpt-5"              # optional: default model PROFILE id (nil = auto/default)
+  model_id = "gpt-5"              # optional: legacy default model PROFILE id
+  model_spec = { provider_profile_id = "account", model = "reasoner", reasoning_effort = "high" }
   max_turns = 40                  # optional: per-agent turn cap override
   tools = ["read_file", "run_bash"] # optional whitelist; absent = all standard tools
   subagents = ["executor", "investigator"] # optional built-in type names this agent may spawn
@@ -39,7 +40,8 @@ defmodule EvoGit.CustomAgents do
   | `prompt` | string | **yes** | — | System prompt |
   | `agent_type` | `:read` \| `:read_write` | no | `:read_write` | Read-only vs read-write capability |
   | `delegation_level` | `:high` \| `:low` | no | `:low` | Subagent delegation level |
-  | `model_id` | string | no | `nil` | Default model PROFILE id (`nil` = auto/default) |
+  | `model_id` | string | no | `nil` | Legacy default model PROFILE id (`nil` = auto/default), retained as a fallback |
+  | `model_spec` | map | no | `nil` | Canonical selection: nonempty `provider_profile_id` and `model`, optional `reasoning_effort` |
   | `max_turns` | pos_integer | no | `nil` | Per-agent turn cap override |
   | `tools` | [string] | no | `nil` | Tool whitelist; absent = all standard tools |
   | `subagents` | [string] | no | `[]` | Built-in agent type names this agent may spawn |
@@ -48,12 +50,18 @@ defmodule EvoGit.CustomAgents do
   serialized to TOML. `agent_type`/`delegation_level` are normalized from TOML
   strings to atoms on read (`"read"` → `:read`); unknown values are left
   as-is on read and rejected by `save/1`. Unknown keys are ignored.
+  Nested `model_spec` keys stay strings; atom input keys are accepted (and win
+  over duplicate string keys), and reasoning effort atoms normalize to strings.
+  Selection existence and supported reasoning efforts are resolved at runtime,
+  not by this store; saving a selection never removes the legacy `model_id`.
 
   The `[model_selection]` section is **always preserved** by agent saves and
   deletes — only the `agents` array is modified.
   """
 
   require Logger
+
+  alias EvoGit.Config.Schema.ProviderProfiles.Normalize
 
   @config_filename "agents.toml"
 
@@ -67,6 +75,7 @@ defmodule EvoGit.CustomAgents do
     "agent_type" => :agent_type,
     "delegation_level" => :delegation_level,
     "model_id" => :model_id,
+    "model_spec" => :model_spec,
     "max_turns" => :max_turns,
     "tools" => :tools,
     "subagents" => :subagents
@@ -148,6 +157,9 @@ defmodule EvoGit.CustomAgents do
       (atom or string `"read"`/`"read_write"`) nor nil
     * `:invalid_delegation_level` — `:delegation_level` is neither
       `:high`/`:low` (atom or string) nor nil
+    * `:invalid_model_spec` — selection is not a map with nonempty binary
+      `provider_profile_id` and `model`, or its optional `reasoning_effort` is
+      neither a nonempty string nor a non-nil atom
     * `:invalid_max_turns` — `:max_turns` present but non-integer or
       non-positive
     * `:invalid_tools` — `:tools` present but not a list of strings
@@ -383,6 +395,9 @@ defmodule EvoGit.CustomAgents do
       not valid_delegation_level?(Map.get(agent, :delegation_level)) ->
         {:error, :invalid_delegation_level}
 
+      not valid_model_spec?(Map.get(agent, :model_spec)) ->
+        {:error, :invalid_model_spec}
+
       not valid_max_turns?(Map.get(agent, :max_turns)) ->
         {:error, :invalid_max_turns}
 
@@ -407,6 +422,39 @@ defmodule EvoGit.CustomAgents do
   defp valid_delegation_level?(value) when value in ["high", "low"], do: true
   defp valid_delegation_level?(_), do: false
 
+  defp valid_model_spec?(nil), do: true
+
+  defp valid_model_spec?(%{} = spec) do
+    profile_id = model_spec_field(spec, :provider_profile_id)
+    model = model_spec_field(spec, :model)
+    effort = model_spec_field(spec, :reasoning_effort)
+
+    is_binary(profile_id) and profile_id != "" and is_binary(model) and model != "" and
+      (is_nil(effort) or not is_nil(Normalize.string_effort(effort)))
+  end
+
+  defp valid_model_spec?(_), do: false
+
+  # Keep selection keys string-keyed like the canonical task/config contract.
+  # Reads remain lenient; save/1 validates before normalization.
+  defp normalize_model_spec(%{} = spec) do
+    Map.new([:provider_profile_id, :model, :reasoning_effort], fn key ->
+      value = model_spec_field(spec, key)
+
+      value =
+        if key == :reasoning_effort, do: Normalize.string_effort(value) || value, else: value
+
+      {Atom.to_string(key), value}
+    end)
+    |> stringify_keys()
+  end
+
+  defp normalize_model_spec(other), do: other
+
+  defp model_spec_field(spec, key) do
+    Map.get(spec, key, Map.get(spec, Atom.to_string(key)))
+  end
+
   defp valid_max_turns?(nil), do: true
   defp valid_max_turns?(value), do: is_integer(value) and value > 0
 
@@ -424,6 +472,7 @@ defmodule EvoGit.CustomAgents do
       agent_type: normalize_agent_type(Map.get(agent, :agent_type)),
       delegation_level: normalize_delegation_level(Map.get(agent, :delegation_level)),
       model_id: Map.get(agent, :model_id),
+      model_spec: normalize_model_spec(Map.get(agent, :model_spec)),
       max_turns: Map.get(agent, :max_turns),
       tools: Map.get(agent, :tools),
       subagents: Map.get(agent, :subagents) || []

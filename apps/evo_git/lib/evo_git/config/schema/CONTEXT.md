@@ -104,7 +104,10 @@ Errors are `:invalid_config`, `:invalid_model_spec`, `{:provider_profile_not_fou
 Invalid canonical selections are logged and omitted, and canonical presence suppresses legacy fallback even when all canonical entries are invalid.
 `LLM.default_model_profile/1` uses the canonical default selector directly, and `LLM.effective_model_profiles/1` preserves the model-less flat fallback only when canonical providers are absent or empty.
 Legacy `llm.models` profiles remain unchanged, and the flat profile builder never calls ProviderProfiles, preventing recursive normalization.
-Runtime profiles retain `api_key_env_var`; `LLM.profile_generation_params/1` is the single assembly boundary for resolving that environment variable on API-key profiles, with OAuth profiles always excluded.
+Runtime profiles retain `api_key_env_var`; `LLM.profile_generation_params/1` is the single assembly boundary for resolving account-specific keys on API-key profiles, with OAuth profiles always excluded.
+For a nonempty configured `api_key_env_var`, a nonempty environment value wins, followed by a nonempty `EvoGit.Config.credentials()` value under that exact string key, without consulting provider/catalog credential names.
+If neither source has a nonempty binary value, assembly emits `api_key: ""`, which ReqLLM rejects instead of falling back to provider-wide credentials, preserving isolation between accounts using the same provider.
+Profiles without a nonempty custom key name retain the existing provider-default lookup behavior.
 `Definitions` describes `llm.providers` as `:provider_profiles` with default `[]` and `llm.default_provider_profile` as an optional `:string` with default nil, alongside the legacy schema entries.
 Parent integration must add `Schema.provider_profiles/1`, `Schema.model_selections/1` and `Schema.resolve_model_spec/2` delegates, delegate `Schema.effective_model_profiles/1` to LLM instead of its legacy-only fallback, normalize/persist the nested config shape, implement `:provider_profiles` validation and update schema count pins.
 Until that integration, the parent validator has no composite-type clause and its effective-profile helper can still synthesize a stale legacy fallback for invalid canonical selections.

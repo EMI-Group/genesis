@@ -362,7 +362,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       :error ->
         requested = effective_model_id(state, spec, parent_id, depth, task_id)
 
-        if is_map(state.model_selection_config) do
+        if is_map(requested) or is_map(state.model_selection_config) do
           case ModelSelection.resolve(state, requested) do
             {:ok, _} = result ->
               result
@@ -470,7 +470,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
   # --- Effective Model / Max-Turns Resolution ---
 
-  # Computes the effective model id for a newly-registered agent.
+  # Computes the effective selection (legacy id or canonical map) for an agent.
   #
   # Priority order (highest wins):
   #
@@ -478,9 +478,9 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   #    CLI `-m` flag): the user's explicit model choice wins over everything, so
   #    `spec.model_id` is returned immediately without consulting the script.
   # 2. **Model-selection script** — the user Elixir script from `agents.toml`
-  #    (`EvoGit.CustomAgents.ModelSelector.select_model/1`): its returned id is
-  #    used as-is. An unknown id keeps `resolve_model_for_agent/2`'s existing
-  #    warn-and-fall-back-to-default behavior.
+  #    (`EvoGit.CustomAgents.ModelSelector.select_model/1`): a returned selection
+  #    map goes through schema validation, never legacy id lookup or fallback.
+  #    An unknown legacy id retains the warn-and-fall-back-to-default behavior.
   # 3. **`spec.model_id` / custom-agent default** — the caller-supplied model id;
   #    when nil/empty and the spec carries a `:custom_agent_id`, the custom agent
   #    definition's `:model_id` is used instead.
@@ -497,7 +497,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
           pos_integer() | nil,
           non_neg_integer(),
           String.t() | nil
-        ) :: String.t() | nil
+        ) :: String.t() | map() | nil
   defp effective_model_id(_state, %AgentSpec{} = spec, parent_id, depth, task_id) do
     base_id =
       case spec.model_id do

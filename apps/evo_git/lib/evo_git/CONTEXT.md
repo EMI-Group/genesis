@@ -186,7 +186,9 @@ ReqLLMPool sums the scheduler's account-keyed `model_concurrency` map once per a
 SystemCheck resolves default selections, provider-profile ids and explicit task selection maps through the schema before testing the resolved ReqLLM identifier and generation params, while retaining support for raw ReqLLM identifiers.
 CatalogWarmup's `effective_model_profiles/1` path remains provider-compatible through the schema's default-model runtime projections, which warm the shared catalog in its throwaway process before scheduler boot.
 `CLI.configured_model_profiles/0` still reads only `llm.models` and `resolve_model_opt/1` resolves against that list, so a canonical-only `llm.providers` configuration rejects every explicit `-m` before enqueue despite being runnable with the default selection.
-`CustomAgents` definition persistence and `CustomAgents.ModelSelector` still expose only legacy model-id selection rather than a first-class canonical `model_spec`; exact dropped/rejected-map cases are documented in `custom_agents/CONTEXT.md`.
+`CustomAgents` persists an optional canonical `model_spec` with string-keyed `provider_profile_id`, `model` and optional `reasoning_effort`, accepts atom input keys and normalizes effort atoms to strings, and retains `model_id` as a legacy fallback.
+Definition saves reject structurally malformed selections with `:invalid_model_spec` without resolving account/model existence; reads remain lenient and `ModelSelector` also accepts canonical selection maps.
+`Runtime.Helpers.resolve_root_agent/2` currently passes only `custom_agent_id`, so custom-root definition defaults still need runtime integration in the child runtime node.
 `Auth.managed_file_unwritable_remedy/2` still instructs users to put `oauth_file` in `[[llm.models]]`, although canonical accounts require the setting on the matching `[[llm.providers]]` entry and suppress legacy fallback.
 `PeakHours.effective_concurrency/2,3` intentionally consumes atom-keyed concurrency fields; `PeakHourEngine.effective_for_profile/3` translates canonical string-keyed account schedules before calling it, so that low-level shape alone is not an integration defect.
 

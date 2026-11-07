@@ -54,7 +54,7 @@ RemoteAPI wrappers install no deadlines or exit containment of their own, and ET
 
 ## Reload and runtime-update contracts
 `RemoteAPI.reload_config/0` calls `Config.resolve/0`, `build_reload_opts/1`, then `AgentScheduler.update_config/1`, with no local validation, exception containment, file write or transaction.
-`RemoteAPI.build_reload_opts/1` requires only an outer map and expects atom-keyed nested maps; it emits `model_profiles` from `Schema.effective_model_profiles/1`, plus scheduler `default_llm_max_concurrency`, `max_tool_concurrency`, `agent_max_retries`, `max_depth` (from `max_agent_depth`), `max_retries`, `max_turns`, `max_turns_root`, and sandbox `sandbox_mode`, `sandbox_resources`, `sandbox_process_resources` (from `mode`, `resources`, `process`), dropping only nil values.
+`RemoteAPI.build_reload_opts/1` requires only an outer map and expects atom-keyed scheduler/sandbox maps; it emits `ModelSelection.config_opts/1`'s model options (legacy `Schema.effective_model_profiles/1` shape or canonical selection inventory plus account profiles/snapshot), plus scheduler `default_llm_max_concurrency`, `max_tool_concurrency`, `agent_max_retries`, `max_depth` (from `max_agent_depth`), `max_retries`, `max_turns`, `max_turns_root`, and sandbox `sandbox_mode`, `sandbox_resources`, `sandbox_process_resources` (from `mode`, `resources`, `process`), dropping only nil values.
 `RemoteAPI.save_user_config/1` persists via `Config.save_user_config/1`, then calls reload but discards a returned reload error and returns `:ok`; a reload raise/exit still escapes, and the saved file has no rollback.
 `RemoteAPI.save_credentials/1` delegates only to `Config.save_credentials/1`, with no scheduler reload.
 `State.do_update_config/2` consumes the reload keys plus `llm_model`, `llm_generation_params`, `model_concurrency` and `model_concurrency_skip_floor`, ignores unknown keyword keys, and provides no type/range/schema validation of its own.
@@ -113,7 +113,9 @@ The repo-less self-reflective agent (`EvoGit.Agents.SelfReflective`, `spec.opts[
 ## Provider/account selections and resource pools
 
 `ModelSelection.config_opts/1` and `State.from_config/2` share the schema snapshot used by reload and dispatch.
-When `Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` are available, options carry canonical string-keyed `provider_profiles`, atom-keyed selections in the historical `model_profiles` field, and `model_selection_config` for resolution without re-reading disk.
+When `Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` are available, options carry canonical string-keyed `provider_profiles` and `model_selection_config` for resolution without re-reading disk.
+A nonempty atom- or string-keyed `llm.providers` inventory supplies canonical selections in the historical `model_profiles` field, while legacy populated, flat and empty configurations preserve `Schema.effective_model_profiles/1` exactly.
+A legacy configuration without any normalized provider account emits only legacy `model_profiles` options, clearing any previous account snapshot on reload and preserving its model-less default profile and boot path rather than raising during schema resolution.
 Without that schema API, legacy model profiles and scripts retain their existing behavior, while explicit model_spec fails closed rather than silently using a different model.
 `State.from_model_profiles/2` accepts the same three configuration keys as options and initializes resource maps from unique provider ids when provider profiles are supplied.
 `model_concurrency`, `llm_holders`, `llm_waiting`, `llm_backoff_until` and `llm_last_granted` keep their historical field names but use provider/account ids in the new configuration path.
@@ -125,6 +127,8 @@ Provider-profile reloads preserve live holder/waiter/backoff/last-granted maps a
 Legacy-only replacements clear `provider_profiles` and `model_selection_config` together, restoring the legacy resolver and script-returned model ids rather than resolving new ids against stale boot accounts; an empty replacement also clears the snapshot.
 Canonical selection-only inventories retain the account/config snapshot, configured defaults and shared account pools, while explicitly supplied `provider_profiles` or `model_selection_config` keys take precedence over legacy classification.
 `Dispatch.resolve_selection/5` resolves an explicit STRING map from `AgentSpec.model_spec` or `spec.opts[:model_spec]` before any legacy id or script, rejects malformed or invalid explicit selections without fallback, and otherwise preserves script/custom-agent/legacy-id precedence.
+`CustomAgents.ModelSelector` atom-keyed account/model/effort map returns use `ModelSelection.resolve/2` and `Schema.resolve_model_spec/2`, never legacy id lookup or unknown-id fallback; schema errors propagate and a state without a resolution snapshot returns `:model_spec_schema_unavailable` rather than crashing or silently changing models.
+Locked inherited parent selections and explicit task selections bypass the script, and a locked legacy id retains its existing precedence.
 `Schema.resolve_model_spec/2` returns top-level `provider_profile_id`, unqualified `model`, `reasoning_effort`, `runtime_profile` and `generation_params`; its `model_spec` is the ReqLLM-ready qualified string or custom-endpoint map, NEVER the canonical task selection.
 `ModelSelection` constructs the canonical STRING-keyed task selection from the top-level provider/model/effort fields, copies the ReqLLM identifier into `llm_model`, takes `generation_params` verbatim and reads the configured context window from `runtime_profile` rather than catalog metadata.
 Legacy-id/default requests retain the resolved provider id as `model_id`, while explicit selection maps have no legacy alias (`model_id: nil`).
@@ -134,7 +138,7 @@ Only an unknown legacy string id falls back to the configured default; invalid m
 `register_agent/7` returns `{integer_agent_id, state}` or `{:error, reason}` and resolves before any counter or ETS mutation.
 Subagent registration handles errors per child and inherits a locked parent's entire model_spec and lock before selection; legacy locked parents retain id/lock inheritance.
 The parent hub owns boot wiring through `State.from_config/2`, root registration error propagation, exposing the new config fields and any provider-oriented peak-engine/RPC integration outside this node.
-Regression coverage in this node is exercised through the existing sibling scheduler suites and standalone assertions because test-file writes are outside this node's assignment.
+`model_selection_regression_test.exs` is leaf-local async ExUnit coverage runnable explicitly with `mix test apps/evo_git/lib/evo_git/agent_scheduler/model_selection_regression_test.exs`; it covers legacy projection/empty boot compatibility, canonical account pools, script-map resolution/errors and explicit/locked-parent precedence alongside the sibling scheduler suites without editing sibling tests.
 
 ## Slot Management (Slots module)
 
@@ -161,7 +165,8 @@ Two independent pools of agent-ID `MapSet`s; capacity = `capacity - map_size(hol
 
 ### LLM-model resolution gotchas (scheduler state vs config file)
 
-- **Init always produces non-empty `model_profiles`** — `Schema.effective_model_profiles/1` (the ONE shared resolution: `Schema.model_profiles(config)`, with `[]` → `[Schema.LLM.build_legacy_default_profile(config)]`); `RemoteAPI.build_reload_opts/1` and `EvoGit.CatalogWarmup` resolve through the same helper, so boot, reload and the catalog warm-up can never disagree. Init `llm_model` = first-profile `:model` when non-nil, else flat `config[:llm][:model]`; the boot warning "AgentScheduler: LLM model not configured" fires only when BOTH are nil/falsy.
+- **Boot/reload share `ModelSelection.config_opts/1`** — legacy `model_profiles` preserves `Schema.effective_model_profiles/1` (including one model-less `"default"` profile when unconfigured), while a canonical nonempty `llm.providers` configuration uses the canonical selection inventory and schema-configured default, never stale flat keys.
+`EvoGit.CatalogWarmup` uses `Schema.effective_model_profiles/1`'s per-account runtime projection rather than the scheduler's canonical inventory, so it remains provider-compatible without changing the scheduler's public legacy profile shape.
 - **Runtime `:model_profiles` updates have NO flat fallback**: `llm_model` comes from `Map.get(first_profile, :model)` only, so nil/absent silently sets `state.llm_model = nil` and the update is ACCEPTED (nil-rejection checks only an explicit `:llm_model => nil` OPTS key). Reload paths never push `:llm_model`.
 - **Dispatch selection**: `resolve_selection/5` resolves a task `model_spec` first and never falls back on its errors; otherwise `effective_model_id/5` applies the user lock → script → legacy/custom default order, and schema-backed state resolves the resulting provider/legacy id through `ModelSelection`.
 Legacy fixtures with no `model_selection_config` retain `resolve_model_for_agent/2` (unknown id → warn + first profile; nil id → first profile), with model = `Map.get(profile, :model, state.llm_model)` (fallback only when the key is ABSENT).
