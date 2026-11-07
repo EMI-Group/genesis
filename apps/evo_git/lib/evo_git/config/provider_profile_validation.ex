@@ -2,6 +2,7 @@ defmodule EvoGit.Config.ProviderProfileValidation do
   @moduledoc false
 
   alias EvoGit.Config.EctoValidation
+  alias EvoGit.Config.Schema
   alias EvoGit.Config.Schema.Definitions
   alias EvoGit.Config.Schema.ProviderProfiles.Normalize
   alias EvoGit.Config.Schema.ValidationError
@@ -24,6 +25,35 @@ defmodule EvoGit.Config.ProviderProfileValidation do
         :provider_profiles
       )
     ]
+  end
+
+  # Only canonical inventories constrain this selector here; legacy-only config
+  # retains its existing validation contract. Scalar type errors belong to EctoValidation.
+  def cross_field_errors(config) do
+    profiles = Schema.safe_get_in(config, [:llm, :providers])
+    selector = Schema.safe_get_in(config, [:llm, :default_provider_profile])
+
+    if is_list(profiles) and profiles != [] and is_binary(selector) do
+      ids =
+        Enum.flat_map(profiles, fn
+          %{} = profile ->
+            id = string_keys(profile)["id"]
+            if nonblank?(id), do: [id], else: []
+
+          _ ->
+            []
+        end)
+
+      membership_errors(
+        [:llm, :default_provider_profile],
+        selector,
+        ids,
+        "default_provider_profile",
+        selector
+      )
+    else
+      []
+    end
   end
 
   defp profile_errors(path, %{} = raw) do

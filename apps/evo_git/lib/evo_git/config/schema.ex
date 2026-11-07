@@ -108,7 +108,7 @@ defmodule EvoGit.Config.Schema do
           }
   end
 
-  alias EvoGit.Config.EctoValidation
+  alias EvoGit.Config.{EctoValidation, ProviderProfileValidation}
   alias EvoGit.Config.Schema.{Definitions, LLM, ProviderProfiles}
 
   # ── Public API ──────────────────────────────────────────────────────
@@ -196,6 +196,7 @@ defmodule EvoGit.Config.Schema do
   - **Type compatibility** — is the value the right kind of data?
   - **Range constraints** — does the value satisfy min/max rules?
   - **Enum membership** — is the value in the allowed set?
+  - **Provider default selection** — does an explicit selector name a configured canonical account?
 
   All errors are collected — validation does not stop at the first error.
   nil values are always accepted (they represent "not configured").
@@ -220,7 +221,7 @@ defmodule EvoGit.Config.Schema do
           value ->
             EctoValidation.errors_for(schema.key_path, schema.type, schema.validation, value)
         end
-      end)
+      end) ++ ProviderProfileValidation.cross_field_errors(config)
 
     if errors == [] do
       {:ok, config}
@@ -284,16 +285,5 @@ defmodule EvoGit.Config.Schema do
   never disagree about which profiles exist.
   """
   @spec effective_model_profiles(map()) :: [map()]
-  def effective_model_profiles(config) when is_map(config) do
-    case LLM.model_profiles(config) do
-      [] ->
-        case safe_get_in(config, [:llm, :providers]) do
-          providers when is_list(providers) and providers != [] -> []
-          _ -> [LLM.build_legacy_default_profile(config)]
-        end
-
-      profiles ->
-        profiles
-    end
-  end
+  defdelegate effective_model_profiles(config), to: LLM
 end
