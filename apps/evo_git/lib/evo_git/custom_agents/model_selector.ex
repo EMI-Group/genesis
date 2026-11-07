@@ -6,8 +6,9 @@ defmodule EvoGit.CustomAgents.ModelSelector do
   The script is a plain Elixir expression body evaluated once per agent spawn
   to pick which LLM model the agent should use. It runs in the scheduler
   GenServer process (`EvoGit.AgentScheduler.Dispatch` calls `select_model/1`),
-  so it must never raise — every failure mode is returned as an error tuple
-  and the caller falls back to the default model.
+  so ordinary compilation and runtime exceptions are returned as error tuples
+  and the caller falls back to the default model. This is trusted user code,
+  not a sandbox: throws, exits, blocking code and side effects are not contained.
 
   ## The `agent` map
 
@@ -26,13 +27,26 @@ defmodule EvoGit.CustomAgents.ModelSelector do
 
   The value of the **last expression** in the script is the result:
 
-    * a binary → used as the model id: `{:ok, model_id}`
+    * a nonempty binary → legacy model/profile id: `{:ok, model_id}`
+    * a map with nonempty binary `provider_profile_id` and `model` fields →
+      `{:ok, selection}` with atom keys; atom or string input keys are accepted
+    * optional `reasoning_effort` → a nonempty string or atom, normalized to a
+      string; absent/nil effort is omitted so the schema uses its configured default
     * `nil`, `""` or `false` → default model: `{:ok, nil}`
     * anything else → `{:error, {:invalid_result, inspect(value)}}` (default model)
 
-  Example script:
+  Only selection fields are retained from maps; atom keys take precedence when
+  both key forms are present. Profile/model existence and supported effort
+  inventories are checked later by the configuration schema,
+  not by this evaluator (just as with legacy ids).
 
-      if agent.depth == 0, do: "default", else: "fast"
+  Example script (replace the account/model names with configured values):
+
+      if agent.depth == 0 do
+        %{provider_profile_id: "primary-account", model: "reasoner", reasoning_effort: :high}
+      else
+        %{provider_profile_id: "fast-account", model: "fast-model"}
+      end
 
   ## Caching
 
@@ -48,6 +62,14 @@ defmodule EvoGit.CustomAgents.ModelSelector do
   after the first call (the TOML parse is not repeated). `invalidate/0` erases
   the cache entry (called by `EvoGit.CustomAgents.reload/0`).
   """
+
+  alias EvoGit.Config.Schema.ProviderProfiles.Normalize
+
+  @type selection :: %{
+          required(:provider_profile_id) => String.t(),
+          required(:model) => String.t(),
+          optional(:reasoning_effort) => String.t()
+        }
 
   @doc """
   Compiles a script body into a callable function.
@@ -94,14 +116,15 @@ defmodule EvoGit.CustomAgents.ModelSelector do
         objective: String.t()
       }
 
-  Returns `{:ok, model_id}` when the script yields a binary, `{:ok, nil}` when
-  no script is configured (missing/blank) or the script yields `nil`/`""`/
-  `false` (default model), and an error tuple otherwise. This function is
-  called in the scheduler GenServer process and MUST NEVER raise — user-script
-  errors always come back as `{:error, ...}`.
+  Returns `{:ok, model_id}` for a legacy binary or `{:ok, selection}` for a
+  canonical account/model map (see the module return contract).
+  Returns `{:ok, nil}` when no script is configured (missing/blank) or the
+  script yields `nil`/`""`/`false` (default model), and an error tuple otherwise.
+  Ordinary user-script exceptions are returned as `{:error, ...}`; throws and
+  exits retain the trusted-script behavior and are not caught.
   """
   @spec select_model(map()) ::
-          {:ok, String.t() | nil}
+          {:ok, String.t() | selection() | nil}
           | {:error,
              {:script_raised, String.t()}
              | {:invalid_result, String.t()}
@@ -163,12 +186,22 @@ defmodule EvoGit.CustomAgents.ModelSelector do
       agent.objective        the task objective string
 
     The value of the LAST expression is the result:
-      a binary            → used as the model id
+      a binary            → legacy model/profile id
+      a selection map     → provider_profile_id and model (nonempty strings),
+                            optional reasoning_effort (nonempty string or atom)
       nil, "" or false    → default model
       anything else       → invalid_result error (default model is used)
 
-    Example:
-      if agent.depth == 0, do: "default", else: "fast"
+    Selection maps accept atom or string keys and return only atom-keyed selection
+    fields, with effort normalized to a string (absent/nil effort is omitted).
+    The configuration schema checks account/model existence and supported efforts.
+
+    Example (use your configured account/model names):
+      if agent.depth == 0 do
+        %{provider_profile_id: "primary-account", model: "reasoner", reasoning_effort: :high}
+      else
+        %{provider_profile_id: "fast-account", model: "fast-model"}
+      end
     """
   end
 
@@ -212,7 +245,32 @@ defmodule EvoGit.CustomAgents.ModelSelector do
   defp normalize_result(""), do: {:ok, nil}
   defp normalize_result(false), do: {:ok, nil}
   defp normalize_result(model) when is_binary(model), do: {:ok, model}
+
+  defp normalize_result(%{} = selection) do
+    profile_id = selection_field(selection, :provider_profile_id)
+    model = selection_field(selection, :model)
+    effort = selection_field(selection, :reasoning_effort)
+    normalized_effort = Normalize.string_effort(effort)
+
+    if is_binary(profile_id) and profile_id != "" and is_binary(model) and model != "" and
+         (is_nil(effort) or not is_nil(normalized_effort)) do
+      normalized = %{provider_profile_id: profile_id, model: model}
+
+      {:ok,
+       if(is_nil(normalized_effort),
+         do: normalized,
+         else: Map.put(normalized, :reasoning_effort, normalized_effort)
+       )}
+    else
+      {:error, {:invalid_result, inspect(selection)}}
+    end
+  end
+
   defp normalize_result(other), do: {:error, {:invalid_result, inspect(other)}}
+
+  defp selection_field(selection, key) do
+    Map.get(selection, key, Map.get(selection, Atom.to_string(key)))
+  end
 
   # --- Caching (stat-validated, mirroring EvoGit.Config.cached_file_read/2) ---
 
