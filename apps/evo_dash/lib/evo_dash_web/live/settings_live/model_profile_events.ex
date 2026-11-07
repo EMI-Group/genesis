@@ -145,7 +145,10 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
 
   def move_model_profile(socket, %{"direction" => direction, "id" => id}) do
     config = ProviderProfiles.move(socket.assigns.file_config, id, direction)
-    persist(config, socket, gettext("Provider profile moved."))
+
+    if config == socket.assigns.file_config,
+      do: {:noreply, socket},
+      else: persist(config, socket, gettext("Provider profile moved."))
   end
 
   def set_default_provider_profile(socket, params) do
@@ -193,6 +196,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
       ~w(temperature max_tokens top_p top_k frequency_penalty presence_penalty extra provider_options)
 
     Enum.any?(keys, &(draft[&1] not in [nil, "", %{}])) or
+      advanced_open?(draft["generation"]) or
       Enum.any?(ProviderProfiles.rows(draft["models"]), &advanced_open?/1)
   end
 

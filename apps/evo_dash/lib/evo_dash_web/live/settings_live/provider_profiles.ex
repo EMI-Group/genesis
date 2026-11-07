@@ -42,7 +42,11 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
     updated = if found?, do: updated, else: updated ++ [profile]
     default = field(field(config, "llm") || %{}, "default_provider_profile")
     config = put_profiles(config, updated)
-    if default == old_id, do: set_default(config, field(profile, "id")), else: config
+    # Adding to legacy config with no explicit default must keep the first
+    # migrated account selected, not treat nil == nil as a default rename.
+    if found? and default == old_id,
+      do: set_default(config, field(profile, "id")),
+      else: config
   end
 
   def delete(config, id),
@@ -60,7 +64,8 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
   def move(config, id, direction) do
     list = profiles(config)
     index = Enum.find_index(list, &(field(&1, "id") == id))
-    target = if is_integer(index), do: index + Map.get(%{"up" => -1, "down" => 1}, direction, 0)
+    offset = Map.get(%{"up" => -1, "down" => 1}, direction)
+    target = if is_integer(index) and is_integer(offset), do: index + offset
 
     if is_integer(target) and target >= 0 and target < length(list) do
       a = Enum.at(list, index)
