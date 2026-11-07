@@ -24,6 +24,9 @@ Fake remote nodes exercise RPC degradation or pure scope checks only, not succes
 `ProjectFlowTest` snapshot-restores the global `:evo_dash, :remote_path_expand_runner` seam for tilde expansion.
 Minimal sockets for foreign-repository StatePersistence tests include `assigns.__changed__: nil`, `remote?: false`, and `current_node: node()` before overrides.
 Canonical persistence and async-result sockets also initialize `private.live_temp` so emitted push-event payloads can be asserted directly.
+`StatePersistence.maybe_persist_model_selection/1` requires an owned ready canonical bundle, no load error and no pending restore, so a remote positive fixture needs `current_node` different from `node()`, matching `model_selection_scope: {current_node_id, current_node}`, `model_selection: selection()`, `model_selection_ready?: true` and `model_selection_error: nil`.
+The partial-persistence positive case in `model_selection_persistence_test.exs` currently supplies a remote target id but retains the socket helper's local BEAM node and nil bundle, which describes a pending remote target and must emit no persistence event under the ownership contract.
+Missing ownership/readiness fields remain compatible only for valid unstamped local bundles; adding a blanket false-readiness default to the socket helper changes the existing loaded-local restore fixtures' meaning.
 
 ## Coverage Boundaries
 
