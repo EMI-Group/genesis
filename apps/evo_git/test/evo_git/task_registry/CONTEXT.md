@@ -4,7 +4,7 @@
 
 ExUnit tests for `EvoGit.TaskRegistry` and `EvoGit.Store` persistence/lifecycle behavior: status transitions & guards, lease/heartbeat, the liveness contract for a persisted status outside the store's codec whitelist, cleanup, skip-and-log of undecodable rows, per-agent archive persistence, restart durability, the merge/resume/runtime-opts context builders, the `:reflect` task-type routing, failed-transition diagnostics, and the managed per-task tmpdir reclaim lifecycle.
 
-19 files / 213 tests.
+The subtree contains 343 tests, including 130 async provider-selection admission and persistence regressions in two focused files.
 
 Measured whole-directory baseline at `--seed 0`: ~1.9 s (1.1 s async, 0.8 s sync).
 
@@ -77,6 +77,16 @@ Also `async: true`, no fixture (pure/isolated): `runtime_opts`, `diagnostics`, `
 - Runtime emits ONLY `:finalizing` on the `"tasks"` topic (`Helpers.notify_finalizing/1`); a `:failed` received on PubSub triggers `Diagnostics.log_failed_transition(..., :task_updated_pubsub, ...)`.
 - A local-node `:finalizing` PubSub broadcast now ALSO schedules the ONE-SHOT stuck-`:finalizing` grace watchdog (lib `task_registry.ex` handler → `schedule_finalizing_watchdog/1`, only on the successful `put_task` `:ok` arm — never the disk-full path): `Process.send_after(self(), {:recheck_task, task_id}, trunc(minutes * 60_000))`. Grace = `Application.get_env(:evo_git, :finalizing_watchdog_grace_minutes)`, declared in `config/`: 60 in `config/config.exs` (prod default; module fallback 60 when unset), **1 in `config/test.exs`**. `false` → disabled (no timer); numeric ≥ 0 → minutes (0 = immediate).
 
+## Provider-Profile Selection Regressions
+
+`provider_model_selection_opts_test.exs` contains 80 async tests for explicit account/model/effort identity, lock and legacy precedence, Auto, defaults, strict malformed-input rejection, changed-snapshot readmission and credential-free projection.
+`model_selection_persistence_test.exs` contains 50 async tests across isolated persistence and registry-admission modules covering SQLite identity round-trip, distinct same-provider accounts, effort, registry restart, reloaded runtime opts and rejection before any task row, wrapper ref or running broadcast exists.
+Registry-side configuration is isolated by binding `:evogit_config_dir` inside the fixture registry through a `:sys.replace_state` callback, so these tests need neither global XDG changes nor scheduler mutations.
+Persisted `model_spec` is a string-keyed identity map built from resolved `provider_profile_id`, `model` and optional `reasoning_effort`, never the ReqLLM request identifier in `resolved.model_spec` or credential-bearing `generation_params`.
+Current source defects leave 46 regressions failing: admission retains unsanitized caller maps rather than a canonical resolved identity, permits malformed partial maps that scheduler dispatch rejects, and Codec does not atomize the outer `:model_spec` option on reload.
+These failures must be resolved in the source siblings by their owning agent rather than by weakening, skipping or removing the regression assertions.
+The explicit missing-provider test in `task_executor_reflect_test.exs` establishes executor admission rejection; implicit-selection tests retain the missing-path reflect runtime route coverage.
+
 ## Known Test Gaps
 
 1. **No restart-recovery test for an unowned expired-lease `:running` row.** The `:finalizing` case IS covered (`describe "startup reconciliation of orphaned :finalizing tasks"`, incl. orphaned `:cancelling` → `:cancelled`): seeds a `:finalizing` row + a `:running` control row (both with future leases), restarts the registry, and asserts the orphaned `:finalizing` row → `:failed` (finished_at set, lease cleared, result a binary) while the `:running` row with a valid lease is left untouched (orphaned-`:running` sweeping is the `:lease_sweep` path). Untested: a fresh registry against a `:running` row with a valid lease leaves it untouched (only pinned as the startup-reconciliation control row); expired-lease unowned `:running` rows get swept only by the one-shot sweep 150 s after init (or `{:recheck_task, id}` resolution). The restart/backfill tests only use `:completed` tasks. Closest analogues: `lease_heartbeat_test.exs` (seeds an expired-lease unowned `:running` row and sends `:lease_sweep` DIRECTLY — no restart; the startup sweep is one-shot at `(@lease_duration + 30) * 1000` and never fires during a test run); `store_test.exs` (status field round-trips as atom for all known values incl. `:finalizing`).
@@ -100,7 +110,7 @@ Note the `describe "recheck_task resolution"` `setup` creates/deletes `:evogit_s
 
 ## Reflect / Restricted-Evaluation Coverage Boundaries
 
-`task_executor_reflect_test.exs` has three tests: two direct `execute_task(:reflect, ...)` error-path calls (missing `:path`, unexpected opts) and one public `start_task(:reflect, ...)` lifecycle ending in `:failed` with `{:error, :llm_not_configured}`.
+`task_executor_reflect_test.exs` has three tests: direct `execute_task(:reflect, ...)` calls cover implicit-selection runtime routing without `:path` and early explicit missing-provider rejection, while public `start_task(:reflect, ...)` covers the implicit-selection lifecycle ending in `:failed` with `{:error, :llm_not_configured}`.
 Its only runtime control seam is `without_model_profiles/1`, which snapshots and empties the global scheduler profiles and restores them in `after`; this prevents agent dispatch rather than exercising any assistant tool or successful conversation.
 Its terminal wait subscribes before enqueue, pins the task id, and waits for `:completed`/`:failed`/`:cancelled` with a 5-second receive budget, so it is not an evaluator execution-timeout test.
 No test in this directory exercises `CommandApproval`, sudo confirmation, restricted Elixir evaluation, or runtime-MFA allowlisting, and none combines a reflect task with a pending approval or an executing evaluator.
