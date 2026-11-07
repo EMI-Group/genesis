@@ -96,7 +96,7 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
       end
     end
 
-    test "default events and payload names reach each picker control inside the submit form" do
+    test "picker controls retain explicit submit-form ownership, nesting, default events and payload names" do
       doc = render_picker()
 
       for {suffix, name, event} <- [
@@ -107,7 +107,7 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
         selector = "#task-form #task-llm-selection-" <> suffix
         assert attr(doc, selector, "name") == [name]
         assert attr(doc, selector, "phx-change") == [event]
-        assert attr(doc, selector, "form") == []
+        assert attr(doc, selector, "form") == ["task-form"]
       end
 
       assert attr(doc, "#task-llm-selection-reasoning", "type") == ["range"]
