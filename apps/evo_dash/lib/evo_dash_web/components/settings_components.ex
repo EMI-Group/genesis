@@ -20,8 +20,8 @@ defmodule EvoDashWeb.SettingsComponents do
   import EvoDashWeb.SettingsComponents.SettingCard,
     only: [setting_card: 1, flat_llm_schemas: 1]
 
-  import EvoDashWeb.SettingsComponents.ModelProfilesEditor,
-    only: [model_profiles_editor: 1]
+  import EvoDashWeb.SettingsComponents.ProviderProfilesEditor,
+    only: [provider_profiles_editor: 1]
 
   import EvoDashWeb.SettingsComponents.SectionHeader, only: [section_header: 1]
 
@@ -30,7 +30,7 @@ defmodule EvoDashWeb.SettingsComponents do
   # ── Delegates for public APIs NOT already imported above.
   #    Functions imported above (category_display_name, category_icon,
   #    category_description, api_key_prefix_hint, setting_card,
-  #    model_profiles_editor, flat_llm_schemas) are already callable
+  #    provider_profiles_editor, flat_llm_schemas) are already callable
   #    as EvoDashWeb.SettingsComponents.func/arity via import. ──
 
   defdelegate schema_matches?(schema, search_text),
@@ -57,7 +57,8 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:selected_variant_id, :atom, default: nil)
   attr(:selected_model_string, :string, default: nil)
   attr(:llm_test_status, :any, default: :idle)
-  attr(:model_profiles, :list, default: [])
+  attr(:provider_profiles, :list, default: [])
+  attr(:model_selections, :list, default: [])
   attr(:editing_profile_id, :any, default: nil)
   attr(:profile_form_draft, :any, default: nil)
   # User-authoritative open state of the profile edit form's "Advanced settings"
@@ -141,10 +142,15 @@ defmodule EvoDashWeb.SettingsComponents do
                   end %>
                 <% has_variants = is_list(variants) and length(variants) > 0 %>
                 <% show_models = not has_variants or @selected_variant_id != nil %>
-                <% models = get_in(@file_config, [:llm, :models]) || [] %>
-                <% first_profile = Enum.at(models, 0) %>
+                <% first_selection = List.first(@model_selections) %>
+                <% first_profile =
+                  Enum.find(@provider_profiles, fn profile ->
+                    first_selection && profile["id"] == first_selection.provider_profile_id
+                  end) || %{} %>
                 <% current_model =
-                  if first_profile, do: first_profile[:model] || first_profile["model"], else: nil %>
+                  if first_selection,
+                    do: "#{first_selection.provider}:#{first_selection.model}",
+                    else: nil %>
                 <% show_custom_input = provider[:custom_model] == true %>
                 <% show_model_buttons = show_models and not show_custom_input %>
                 <%!-- Variant selection (only if provider has variants) --%>
@@ -214,21 +220,7 @@ defmodule EvoDashWeb.SettingsComponents do
                     <%= if @selected_model_string != nil do %>
                       <% requires_base_url =
                         EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
-                      <% shortcut_prefill_base_url =
-                        cond do
-                          is_map(current_model) ->
-                            to_string(current_model[:base_url] || current_model["base_url"] || "")
-
-                          is_tuple(current_model) and tuple_size(current_model) == 2 ->
-                            opts = elem(current_model, 1)
-
-                            if is_list(opts),
-                              do: to_string(Keyword.get(opts, :base_url, "")),
-                              else: ""
-
-                          true ->
-                            ""
-                        end %>
+                      <% shortcut_prefill_base_url = to_string(first_profile["base_url"] || "") %>
                       <% selected_model_display =
                         Enum.find_value(@selected_provider_models, fn model ->
                           if "#{resolved_atom}:#{model.id}" == @selected_model_string,
@@ -277,38 +269,9 @@ defmodule EvoDashWeb.SettingsComponents do
                 <%= if show_custom_input do %>
                   <% requires_base_url =
                     EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
-                  <%!-- Pre-fill helpers: read the current flat model for the selected provider --%>
-                  <% custom_prefill_id =
-                    cond do
-                      is_map(current_model) ->
-                        to_string(current_model[:id] || current_model["id"] || "")
-
-                      is_tuple(current_model) and tuple_size(current_model) == 2 ->
-                        opts = elem(current_model, 1)
-                        if is_list(opts), do: to_string(Keyword.get(opts, :id, "")), else: ""
-
-                      is_binary(current_model) and String.contains?(current_model, ":") ->
-                        [_provider, id] = :binary.split(current_model, ":")
-                        id
-
-                      is_binary(current_model) ->
-                        current_model
-
-                      true ->
-                        ""
-                    end %>
-                  <% custom_prefill_base_url =
-                    cond do
-                      is_map(current_model) ->
-                        to_string(current_model[:base_url] || current_model["base_url"] || "")
-
-                      is_tuple(current_model) and tuple_size(current_model) == 2 ->
-                        opts = elem(current_model, 1)
-                        if is_list(opts), do: to_string(Keyword.get(opts, :base_url, "")), else: ""
-
-                      true ->
-                        ""
-                    end %>
+                  <%!-- Prefill from the canonical account and model selection. --%>
+                  <% custom_prefill_id = if first_selection, do: first_selection.model, else: "" %>
+                  <% custom_prefill_base_url = to_string(first_profile["base_url"] || "") %>
                   <form phx-submit="save_custom_model" class="mb-5 space-y-4">
                     <input type="hidden" name="provider_id" value={@selected_provider_id} />
                     <div class="form-control">
@@ -456,12 +419,12 @@ defmodule EvoDashWeb.SettingsComponents do
               <% end %>
             </div>
 
-            <%!-- Model Profiles List Editor --%>
-            <.model_profiles_editor
-              profiles={@model_profiles}
+            <%!-- Canonical provider accounts; model choices are a separate projection. --%>
+            <.provider_profiles_editor
+              provider_profiles={Enum.map(@provider_profiles, &provider_editor_fields/1)}
+              default_provider_profile={get_in(@file_config, [:llm, :default_provider_profile])}
               editing_profile_id={@editing_profile_id}
-              profile_form_draft={@profile_form_draft}
-              profile_advanced_open={@profile_advanced_open}
+              profile_form_draft={provider_editor_fields(@profile_form_draft)}
               auth_statuses={Map.get(assigns, :auth_statuses, %{})}
             />
 
@@ -481,7 +444,7 @@ defmodule EvoDashWeb.SettingsComponents do
               <div class="flex flex-wrap items-center gap-3">
                 <%= case @llm_test_status do %>
                   <% :idle -> %>
-                    <%= if @model_profiles == [] do %>
+                    <%= if @model_selections == [] do %>
                       <span class="text-sm text-base-content/70 italic">{gettext(
                         "No model profiles configured — add a profile first"
                       )}</span>
@@ -490,14 +453,15 @@ defmodule EvoDashWeb.SettingsComponents do
                         {gettext("Test Connection")}
                       </button>
                     <% else %>
-                      <% profile_id_val = selected_test_profile_id(@model_profiles, @test_profile_id) %>
+                      <% profile_id_val =
+                        selected_test_profile_id(@model_selections, @test_profile_id) %>
                       <form phx-submit="noop" class="contents">
                         <select
                           name="profile_id"
                           phx-change="select_test_profile"
                           class="select select-bordered select-sm rounded-md max-w-[300px]"
                         >
-                          <%= for profile <- @model_profiles do %>
+                          <%= for profile <- @model_selections do %>
                             <% pid = profile_id_str(profile) %>
                             <option value={pid} selected={pid == profile_id_val}>
                               {profile_option_label(profile)}
@@ -519,7 +483,7 @@ defmodule EvoDashWeb.SettingsComponents do
                     <span class="loading loading-spinner loading-sm text-primary-standalone"></span>
                     <span class="text-sm text-base-content/80">{gettext("Testing LLM connection...")}</span>
                   <% {:ok, data} -> %>
-                    <% profile_id_val = selected_test_profile_id(@model_profiles, @test_profile_id) %>
+                    <% profile_id_val = selected_test_profile_id(@model_selections, @test_profile_id) %>
                     <div class="flex flex-col gap-3 w-full">
                       <div class="flex items-center gap-2">
                         <.icon name="hero-check-circle" class="size-5 text-success" />
@@ -536,7 +500,7 @@ defmodule EvoDashWeb.SettingsComponents do
                           phx-change="select_test_profile"
                           class="select select-bordered select-sm rounded-md max-w-[300px]"
                         >
-                          <%= for profile <- @model_profiles do %>
+                          <%= for profile <- @model_selections do %>
                             <% pid = profile_id_str(profile) %>
                             <option value={pid} selected={pid == profile_id_val}>
                               {profile_option_label(profile)}
@@ -555,7 +519,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       </form>
                     </div>
                   <% {:error, reason} -> %>
-                    <% profile_id_val = selected_test_profile_id(@model_profiles, @test_profile_id) %>
+                    <% profile_id_val = selected_test_profile_id(@model_selections, @test_profile_id) %>
                     <div class="flex flex-col gap-3 w-full">
                       <div class="flex items-center gap-2">
                         <.icon name="hero-x-circle" class="size-5 text-error" />
@@ -567,7 +531,7 @@ defmodule EvoDashWeb.SettingsComponents do
                           phx-change="select_test_profile"
                           class="select select-bordered select-sm rounded-md max-w-[300px]"
                         >
-                          <%= for profile <- @model_profiles do %>
+                          <%= for profile <- @model_selections do %>
                             <% pid = profile_id_str(profile) %>
                             <option value={pid} selected={pid == profile_id_val}>
                               {profile_option_label(profile)}
@@ -872,29 +836,42 @@ defmodule EvoDashWeb.SettingsComponents do
 
   # ── Connection test profile selector helpers ──
 
-  # Safely extracts the id from a profile map (handles both atom and string keys).
-  defp profile_id_str(profile) when is_map(profile) do
-    case Map.get(profile, :id) || Map.get(profile, "id") do
-      nil -> ""
-      id -> to_string(id)
-    end
+  # Stable HTML option values identify BOTH account and model. Never join with
+  # a delimiter: either field may itself contain punctuation.
+  @doc false
+  def model_selection_value(selection) do
+    Jason.encode!(%{
+      "provider_profile_id" => selection.provider_profile_id,
+      "model" => selection.model
+    })
   end
 
-  defp profile_id_str(_), do: ""
+  defp profile_id_str(selection), do: model_selection_value(selection)
 
-  # Builds a human-readable option label for the profile dropdown.
-  defp profile_option_label(profile) do
-    pid = profile_id_str(profile)
-    model_label = profile_model_label(profile)
-    "#{pid} — #{model_label}"
+  defp profile_option_label(selection),
+    do: "#{selection.provider_profile_id} — #{selection.model}"
+
+  # Adapt the parser's flat generation draft to the editor's nested input
+  # names, retaining explicit blank UI values and JSON text across rerenders.
+  defp provider_editor_fields(nil), do: nil
+
+  defp provider_editor_fields(profile) do
+    profile = EvoDashWeb.SettingsLive.ProviderProfiles.draft(profile)
+
+    keys =
+      ~w(temperature max_tokens top_p top_k frequency_penalty presence_penalty provider_options extra)
+
+    profile
+    |> Map.put(
+      "generation",
+      Map.merge(Map.take(profile, keys), Map.get(profile, "generation", %{}))
+    )
+    |> Map.update(
+      "models",
+      [],
+      &Enum.map(&1, fn model -> provider_editor_fields(model) |> Map.delete("models") end)
+    )
   end
-
-  defp profile_model_label(profile) when is_map(profile) do
-    model = Map.get(profile, :model) || Map.get(profile, "model")
-    model_display(model)
-  end
-
-  defp profile_model_label(_), do: gettext("No model")
 
   # Returns the currently selected test profile id, defaulting to the first
   # profile when @test_profile_id is nil or doesn't match any profile.

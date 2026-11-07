@@ -52,9 +52,13 @@ maybe_put_gen_opt/3 remains for legacy parent connection tests.
 
 ## Exact Parent and Components Wiring Handoff
 
-These are sibling requirements, not changes made by this leaf.
-The current parent already delegates CRUD, model_profile_form_change, toggle_profile_advanced and peak-row events, but still has legacy llm.models reads and flat component wiring.
-Add direct delegates for set_default_provider_profile, add_profile_model and remove_profile_model; all event helpers return their own LiveView tuples.
+The parent adapts canonical add/edit/delete/save/cancel provider-profile UI names to ModelProfileEvents' legacy CRUD helpers, and maps provider model/peak-row names to the existing detached row helpers.
+set_default_provider_profile and add_profile_model/remove_profile_model also route directly through the parent.
+provider_profile_form_change preserves nested UI drafts, while save_provider_profile flattens generation at provider/model levels and removes override_reasoning sentinels before parsing, preserving absent-inventory inheritance.
+The Settings parent is deliberately long because it co-locates the page shell/HEEx and node-aware persistence transport; editor/parser/loader logic remains in this leaf.
+The parent's single persist_config boundary canonicalizes every local/remote config save, including Quick Setup and generic category/search/reset operations.
+Editor and OAuth loads use Schema.provider_profiles, while warnings/test choices use model_selections and connection tests consume the full resolve_model_spec result on the viewed node.
+Custom-agent model_id remains an account/default-model selector under its existing string-only core contract, so its choices are canonical selections deduplicated by provider_profile_id rather than fabricated per-model ids.
 
 | Event | Params |
 | --- | --- |
@@ -69,8 +73,8 @@ Add direct delegates for set_default_provider_profile, add_profile_model and rem
 | save_custom_model | provider_id, model_name, optional base_url |
 | save_quick_setup | provider_id, model_string, optional base_url/variant_id |
 
-The canonical form uses phx-submit="save_model_profile" and phx-change="model_profile_form_change".
-Shared inputs use top-level names provider/name/auth_mode/api_key/api_key_env_var/oauth_file/base_url/concurrency/default_model/context_window/reasoning_efforts/default_reasoning_effort, generation fields, extra and provider_options.
+The canonical form uses phx-submit="save_provider_profile" and phx-change="provider_profile_form_change", adapted by the parent to the legacy helper names listed above.
+Shared inputs use top-level identity/auth/endpoint/capacity/reasoning names, nested generation request fields and per-model generation maps; the parent flattens the known generation keys only for Save.
 api_key_env is a legacy form alias only; use api_key_env_var in new markup, and canonical key presence wins when both are submitted.
 Nested names are models[0][model], models[0][context_window], models[0][reasoning_efforts], models[0][default_reasoning_effort] and analogous generation/JSON overrides.
 Peak names stay peak_hours[index][start|end|days] and off_peak_days[], with blank checkbox seed inputs.

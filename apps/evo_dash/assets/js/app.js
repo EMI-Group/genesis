@@ -556,6 +556,19 @@ const StatePersistence = {
       sessionStorage.setItem('dashboard_state', JSON.stringify(state));
     });
 
+    // Picker-only updates must not replace the prompt or a pending node restore.
+    this.handleEvent("persist_model_selection", ({node, model_spec}) => {
+      if (node !== (this.el.dataset.nodeId || "local")) return;
+      const saved = sessionStorage.getItem('dashboard_state');
+      let existing = {};
+      // A malformed browser-stored JSON value cannot be merged; start fresh.
+      try { existing = JSON.parse(saved || '{}'); } catch (e) {}
+      if (saved && (existing.node || "local") !== node) return;
+      sessionStorage.setItem('dashboard_state', JSON.stringify({
+        ...existing, node, model_spec
+      }));
+    });
+
     // Client-side form field watching — debounced persistence to sessionStorage
     let debounceTimer;
     const persistFormState = () => {
@@ -574,8 +587,9 @@ const StatePersistence = {
           task_node_path: this.el.querySelector('[name="node_path"]')?.value || '',
           task_seeds: this.el.querySelector('[name="seeds"]')?.value || '',
           task_starting_commit: this.el.querySelector('[name="starting_commit"]')?.value || '',
-          selected_model_id: this.el.querySelector('[name="model_id"]')?.value || '',
         });
+        const legacyModel = this.el.querySelector('[name="model_id"]');
+        if (legacyModel) state.selected_model_id = legacyModel.value;
         sessionStorage.setItem('dashboard_state', JSON.stringify(state));
       }, 300);
     };

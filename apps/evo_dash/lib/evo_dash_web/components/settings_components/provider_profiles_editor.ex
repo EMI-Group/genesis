@@ -92,6 +92,12 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
         {gettext("The default provider profile is unavailable: %{id}", id: @default_provider_profile)}
       </p>
 
+      <.edit_form
+        :if={@editing_profile_id == "new" and is_map(@profile_form_draft)}
+        profile={%{"id" => "new"}}
+        draft={@profile_form_draft}
+        errors={@errors}
+      />
       <%= for {profile, index} <- Enum.with_index(@profiles) do %>
         <.edit_form
           :if={@editing_profile_id == value(profile, "id")}
@@ -233,7 +239,6 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
       |> assign(:auth_status, if(same_credential_scope?, do: assigns.auth_status, else: nil))
       |> assign(:fields, fields)
       |> assign(:models, models)
-      |> assign(:model_names, Enum.map(models, fn {model, _} -> value(model, "model") end))
 
     ~H"""
     <form
@@ -342,43 +347,13 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
           required
           help={gettext("All models in this provider profile share this capacity.")}
         />
-        <div>
-          <label
-            for="provider-default-model"
-            class="mb-1 block text-xs font-medium text-base-content/70"
-          >{gettext("Default model")}</label>
-          <select
-            id="provider-default-model"
-            name="default_model"
-            class="select select-sm w-full min-w-0"
-            required
-          >
-            <option value="" selected={value(@fields, "default_model") == ""}>
-              {gettext("Choose a configured model")}
-            </option>
-            <option
-              :if={
-                value(@fields, "default_model") != "" and
-                  value(@fields, "default_model") not in @model_names
-              }
-              value={value(@fields, "default_model")}
-              selected
-            >
-              {gettext("Unavailable model: %{model}", model: value(@fields, "default_model"))}
-            </option>
-            <option
-              :for={model <- Enum.uniq(@model_names)}
-              :if={model != ""}
-              value={model}
-              selected={model == value(@fields, "default_model")}
-            >
-              {model}
-            </option>
-          </select>
-          <p class="mt-1 text-xs text-base-content/70">
-            {gettext("Used when a task does not select a model explicitly.")}
-          </p>
-        </div>
+        <.profile_field
+          name="default_model"
+          label={gettext("Default model")}
+          value={value(@fields, "default_model")}
+          required
+          help={gettext("Any model served by this provider; override rows below are optional.")}
+        />
       </div>
       <.reasoning_fields prefix="" fields={@fields} />
       <.provider_schedule fields={@fields} />
@@ -400,7 +375,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
           :if={@models == []}
           class="rounded-lg border border-dashed border-base-300 p-4 text-sm text-base-content/70"
         >
-          {gettext("Add at least one model and choose the default model before saving.")}
+          {gettext("Model overrides are optional. Enter a default model above to save this profile.")}
         </p>
         <.model_fields
           :for={{model, index} <- @models}
