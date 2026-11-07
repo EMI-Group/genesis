@@ -10,9 +10,12 @@ defmodule EvoDashWeb.SettingsLive do
   alias EvoDashWeb.SettingsLive.ConfigIO
   alias EvoDashWeb.SettingsLive.CustomAgentEvents
   alias EvoDashWeb.SettingsLive.ModelProfileEvents
-  alias EvoDashWeb.SettingsLive.ModelProfileHelpers
   alias EvoDashWeb.SettingsLive.NodeData
   alias EvoDashWeb.SettingsLive.SearchEvents
+
+  # This deliberately long page keeps the Settings shell/HEEx and node-aware
+  # transport boundary together; detached editors, parsing and loaders live in
+  # settings_live/. Canonical UI event aliases belong here, not in those helpers.
 
   # Tag for the async node-data load result message (see
   # EvoDashWeb.SettingsLive.NodeData). Tests that deliver results
@@ -100,9 +103,7 @@ defmodule EvoDashWeb.SettingsLive do
           <%!-- No LLM Model Warning (gated off while a remote config load error is
            shown — otherwise "No LLM Model Configured" would render on top of
            the real problem) --%>
-          <%= if @remote_config_error == nil and
-              (is_nil(get_in(@file_config, [:llm, :models])) or
-                 Enum.empty?(get_in(@file_config, [:llm, :models]) || [])) do %>
+          <%= if @remote_config_error == nil and ConfigIO.model_selections(@file_config) == [] do %>
             <div class="mb-4 shrink-0 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
               <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
               <div>
@@ -700,7 +701,7 @@ defmodule EvoDashWeb.SettingsLive do
                       <EvoDashWeb.SettingsComponents.CustomAgentsEditor.custom_agents_editor
                         agents={@custom_agents}
                         editing_agent_id={@editing_agent_id}
-                        model_profiles={@file_config[:llm][:models] || []}
+                        model_profiles={custom_agent_model_choices(@file_config)}
                         custom_tool_names={
                           EvoDashWeb.SettingsComponents.CustomToolsPanel.custom_tool_names(
                             @custom_tools_status
@@ -743,7 +744,8 @@ defmodule EvoDashWeb.SettingsLive do
                     selected_variant_id={@selected_variant_id}
                     selected_model_string={@selected_model_string}
                     llm_test_status={@llm_test_status}
-                    model_profiles={@file_config[:llm][:models] || []}
+                    provider_profiles={Schema.provider_profiles(@file_config)}
+                    model_selections={ConfigIO.model_selections(@file_config)}
                     editing_profile_id={@editing_profile_id}
                     profile_form_draft={@profile_form_draft}
                     profile_advanced_open={@profile_advanced_open}
@@ -774,8 +776,13 @@ defmodule EvoDashWeb.SettingsLive do
     file_config = ConfigIO.load_file_config()
     schemas_by_category = Schema.schemas_by_category()
 
-    models = get_in(file_config, [:llm, :models]) || []
-    test_profile_id = if models != [], do: ModelProfileHelpers.profile_id(hd(models))
+    selections = ConfigIO.model_selections(file_config)
+
+    test_profile_id =
+      case selections do
+        [selection | _] -> EvoDashWeb.SettingsComponents.model_selection_value(selection)
+        [] -> nil
+      end
 
     schemas_by_category = Map.put(schemas_by_category, :remote_connections, [])
     schemas_by_category = Map.put(schemas_by_category, :agents, [])
@@ -1624,6 +1631,61 @@ defmodule EvoDashWeb.SettingsLive do
     ModelProfileEvents.save_quick_setup(socket, params)
   end
 
+  # The provider editor uses canonical UI names; the detached event module
+  # retains its legacy public names for existing callers.
+  @impl true
+  def handle_event("add_provider_profile", params, socket),
+    do: ModelProfileEvents.add_model_profile(socket, params)
+
+  @impl true
+  def handle_event("edit_provider_profile", params, socket),
+    do: ModelProfileEvents.edit_model_profile(socket, params)
+
+  @impl true
+  def handle_event("delete_provider_profile", params, socket),
+    do: ModelProfileEvents.delete_model_profile(socket, params)
+
+  @impl true
+  def handle_event("set_default_provider_profile", params, socket),
+    do: ModelProfileEvents.set_default_provider_profile(socket, params)
+
+  @impl true
+  def handle_event("cancel_edit_provider_profile", params, socket),
+    do: ModelProfileEvents.cancel_edit_model_profile(socket, params)
+
+  @impl true
+  def handle_event("provider_profile_form_change", params, socket),
+    do: ModelProfileEvents.model_profile_form_change(socket, params)
+
+  @impl true
+  def handle_event("save_provider_profile", params, socket) do
+    # Preserve the nested UI draft for rerenders, adapting only at parse time.
+    params =
+      params
+      |> EvoDashWeb.SettingsLive.ProviderProfiles.submission(socket.assigns[:profile_form_draft])
+      |> provider_form_params()
+
+    ModelProfileEvents.save_model_profile(socket, params)
+  end
+
+  @impl true
+  def handle_event(event, params, socket)
+      when event in ["add_provider_model", "add_profile_model"],
+      do: ModelProfileEvents.add_profile_model(socket, params)
+
+  @impl true
+  def handle_event(event, params, socket)
+      when event in ["remove_provider_model", "remove_profile_model"],
+      do: ModelProfileEvents.remove_profile_model(socket, params)
+
+  @impl true
+  def handle_event("add_provider_peak_hours_row", params, socket),
+    do: ModelProfileEvents.add_peak_hours_row(socket, params)
+
+  @impl true
+  def handle_event("remove_provider_peak_hours_row", params, socket),
+    do: ModelProfileEvents.remove_peak_hours_row(socket, params)
+
   @impl true
   def handle_event("add_model_profile", params, socket) do
     ModelProfileEvents.add_model_profile(socket, params)
@@ -1767,47 +1829,68 @@ defmodule EvoDashWeb.SettingsLive do
     # remains clickable on a remote node. When viewing a remote node, route
     # the test through the remote node's LLM instead of testing the local LLM
     # (which would return a misleading result).
-    profile_id = params["profile_id"]
-    models = get_in(socket.assigns.file_config, [:llm, :models]) || []
+    # Resolve the persisted selection on the VIEWED node: OAuth import, named
+    # API-key env vars, inherited generation and provider options must all come
+    # from that machine, never from the dashboard's local credentials.
+    profile_id = params["profile_id"] || socket.assigns.test_profile_id
 
-    profile = Enum.find(models, fn p -> ModelProfileHelpers.profile_id(p) == profile_id end)
+    selections = ConfigIO.model_selections(socket.assigns.file_config)
 
-    # Extract the raw model value as-is (map spec with base_url, or binary string).
-    model = if profile, do: Map.get(profile, :model) || Map.get(profile, "model")
+    selection =
+      Enum.find(selections, fn selection ->
+        EvoDashWeb.SettingsComponents.model_selection_value(selection) == profile_id
+      end)
 
-    if model do
-      # Collect profile-specific generation params to pass alongside the model spec.
-      gen_opts =
-        []
-        |> ModelProfileEvents.maybe_put_gen_opt(:temperature, profile)
-        |> ModelProfileEvents.maybe_put_gen_opt(:max_tokens, profile)
-        |> ModelProfileEvents.maybe_put_gen_opt(:top_p, profile)
-        |> ModelProfileEvents.maybe_put_gen_opt(:top_k, profile)
-        |> ModelProfileEvents.maybe_put_gen_opt(:frequency_penalty, profile)
-        |> ModelProfileEvents.maybe_put_gen_opt(:presence_penalty, profile)
+    spec =
+      cond do
+        selection -> Map.take(selection, [:provider_profile_id, :model])
+        Enum.any?(selections, &(&1.provider_profile_id == profile_id)) -> profile_id
+        true -> nil
+      end
 
+    if spec do
+      config = socket.assigns.file_config
       parent = self()
       remote? = socket.assigns.current_node != node()
       node = socket.assigns.current_node
 
-      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-        # The call crosses the node boundary (remote) or hits the provider
-        # stack (local), so it runs inside the EvoDash.SafeCall boundary: an
-        # exit (dead node, timed-out :erpc) arrives as a value and the result
-        # message is ALWAYS sent, so the button can never wedge on :testing.
-        result =
-          EvoDash.SafeCall.run(fn ->
-            if remote? do
-              EvoGit.RemoteNode.llm_test(node, model, gen_opts)
-            else
-              EvoGit.SystemCheck.llm_test(model, gen_opts)
-            end
-          end)
+      case Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+             result =
+               EvoDash.SafeCall.run(fn ->
+                 resolved =
+                   if remote? do
+                     case EvoDash.NodeContext.call_remote(node, Schema, :resolve_model_spec, [
+                            config,
+                            spec
+                          ]) do
+                       {:ok, result} -> result
+                       {:error, _} = error -> error
+                     end
+                   else
+                     ConfigIO.resolve_model_spec(config, spec)
+                   end
 
-        send(parent, {:llm_test_result, normalize_llm_test_result(result)})
-      end)
+                 with {:ok, resolved} <- resolved do
+                   if remote? do
+                     EvoGit.RemoteNode.llm_test(
+                       node,
+                       resolved.model_spec,
+                       resolved.generation_params
+                     )
+                   else
+                     EvoGit.SystemCheck.llm_test(resolved.model_spec, resolved.generation_params)
+                   end
+                 end
+               end)
 
-      {:noreply, assign(socket, :llm_test_status, :testing)}
+             send(parent, {:llm_test_result, normalize_llm_test_result(result)})
+           end) do
+        {:ok, _pid} ->
+          {:noreply, assign(socket, :llm_test_status, :testing)}
+
+        {:error, reason} ->
+          {:noreply, assign(socket, :llm_test_status, {:error, inspect(reason)})}
+      end
     else
       {:noreply, put_flash(socket, :error, gettext("Selected profile has no model configured."))}
     end
@@ -2087,6 +2170,63 @@ defmodule EvoDashWeb.SettingsLive do
     {:noreply, socket}
   end
 
+  # The custom-agent store still accepts only a provider/legacy id, selecting
+  # that account's default model. Deduplicate the canonical model inventory by
+  # account rather than manufacturing unsupported per-model model_id strings.
+  defp custom_agent_model_choices(config) do
+    config
+    |> ConfigIO.model_selections()
+    |> Enum.uniq_by(& &1.provider_profile_id)
+    |> Enum.map(&%{id: &1.provider_profile_id})
+  end
+
+  # The new presentation nests generation inputs while the canonical parser
+  # deliberately accepts flat request fields. Keep UI sentinels out of storage.
+  defp provider_form_params(params) do
+    params
+    |> flatten_generation_params()
+    |> Map.update("models", [], fn rows ->
+      rows
+      |> EvoDashWeb.SettingsLive.ProviderProfiles.rows()
+      |> Enum.map(fn row ->
+        row = flatten_generation_params(row)
+
+        row =
+          case row["override_reasoning"] do
+            value when value in [false, "false"] ->
+              # Absence means inherit; [] would explicitly override inventory.
+              Map.delete(row, "reasoning_efforts")
+
+            value when value in [true, "true"] ->
+              if EvoDashWeb.SettingsLive.ProviderProfiles.string_list(row["reasoning_efforts"]) ==
+                   [] do
+                row
+                |> Map.put("reasoning_efforts", [])
+                |> Map.delete("default_reasoning_effort")
+              else
+                row
+              end
+
+            _ ->
+              row
+          end
+
+        Map.delete(row, "override_reasoning")
+      end)
+    end)
+  end
+
+  defp flatten_generation_params(params) do
+    generation = Map.get(params, "generation", %{})
+
+    keys =
+      ~w(temperature max_tokens top_p top_k frequency_penalty presence_penalty provider_options extra)
+
+    params
+    |> Map.delete("generation")
+    |> Map.merge(Map.take(generation, keys))
+  end
+
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: Config persistence
   # ───────────────────────────────────────────────────────────────────────────
@@ -2118,6 +2258,10 @@ defmodule EvoDashWeb.SettingsLive do
   # `runtime?` says whether the LOCAL scheduler must be updated from the saved
   # config (LLM / scheduler keys changed).
   defp persist_config(socket, config, success_msg, runtime?) do
+    # ONE boundary for CRUD, Quick Setup, category/search and reset saves.
+    # Canonicalize on both transports, preserving unrelated config sections.
+    config = ConfigIO.canonicalize_file_config(config)
+    socket = assign(socket, :file_config, config)
     node = socket.assigns.current_node
 
     if node == node() do
@@ -2523,7 +2667,7 @@ defmodule EvoDashWeb.SettingsLive do
   defp start_auth_status_load(socket) do
     seq = socket.assigns.auth_status_seq + 1
     socket = assign(socket, :auth_status_seq, seq)
-    profiles = EvoGit.Config.Schema.model_profiles(socket.assigns.file_config || %{})
+    profiles = Schema.provider_profiles(socket.assigns.file_config || %{})
     :ok = AuthStatus.start(socket, profiles)
     socket
   end
@@ -2556,18 +2700,9 @@ defmodule EvoDashWeb.SettingsLive do
     end
   end
 
-  # Maps the flat scheduler config map (from get_remote_config/1) into the nested
-  # %{scheduler: ..., llm: ...} structure the schema-driven setting cards expect.
-  # Only the keys present in the scheduler config are populated; the rest fall
-  # back to schema defaults when rendered. This is best-effort display data for
-  # the remote config view.
-  #
-  # LEGACY — the navigation load path now fetches the FULL resolved config via
-  # `EvoDash.NodeContext.get_resolved_config/1` (which includes `llm.models`,
-  # tools, evolution, truncation, nix, ...) and so do the persist paths. This
-  # converter remains ONLY for the remaining remote re-fetch callers that still
-  # use the flat scheduler-map shape: `save_category`/`save_search`
-  # (settings_live.ex) and `SearchEvents.handle_reset_key/2`.
+  # Compatibility adapter for callers holding a legacy FLAT scheduler map.
+  # Normal navigation and save reconciliation use the FULL resolved file config;
+  # runtime :model_profiles are converted here, never used as editor rows.
   def remote_config_to_file_config(remote_cfg) when is_map(remote_cfg) do
     scheduler =
       %{}
@@ -2583,7 +2718,7 @@ defmodule EvoDashWeb.SettingsLive do
       %{}
       |> maybe_put(:model, remote_cfg[:llm_model])
 
-    # Model profiles come as a list of maps; surface them for display.
+    # Feed legacy runtime rows through the migration boundary, not the editor.
     llm =
       case remote_cfg[:model_profiles] do
         nil -> llm
@@ -2594,6 +2729,7 @@ defmodule EvoDashWeb.SettingsLive do
     %{}
     |> Map.put(:scheduler, scheduler)
     |> Map.put(:llm, llm)
+    |> ConfigIO.canonicalize_file_config()
   end
 
   def remote_config_to_file_config(_), do: %{}

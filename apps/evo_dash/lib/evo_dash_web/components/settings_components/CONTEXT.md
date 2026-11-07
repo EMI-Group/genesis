@@ -52,19 +52,10 @@ The existing legacy editor is unchanged and must not be mounted alongside this e
 
 ### Wiring in the sibling `settings_components.ex` (owned by the parent)
 
-Import `EvoDashWeb.SettingsComponents.ProviderProfilesEditor`, only `provider_profiles_editor: 1`, add `provider_profiles` / `default_provider_profile` / `provider_profile_errors` attrs to `category_section/1`, and replace the legacy model-editor call in the LLM scroll body with the following call outside the flat `save_category` form.
-The owning SettingsLive must supply these projections from its node-scoped configuration and pass the existing edit/draft/auth assigns through `category_section/1`.
-
-```heex
-<.provider_profiles_editor
-  provider_profiles={@provider_profiles}
-  default_provider_profile={@default_provider_profile}
-  editing_profile_id={@editing_profile_id}
-  profile_form_draft={@profile_form_draft}
-  auth_statuses={@auth_statuses}
-  errors={@provider_profile_errors}
-/>
-```
+`SettingsComponents.category_section/1` imports the provider editor outside the flat `save_category` form and accepts separate `provider_profiles` and `model_selections` projections from SettingsLive.
+The default account comes from `file_config[:llm][:default_provider_profile]`, and edit/draft/auth assigns pass through unchanged except for the parent's flat-to-nested generation display adapter.
+The editor renders a standalone detached form for `editing_profile_id="new"`, and `default_model` is an independent text input because model override rows are optional.
+Connection-test option values JSON-encode the account/model identity through public `SettingsComponents.model_selection_value/1`; they never identify a model by account id alone.
 
 ### Events and submitted fields
 
@@ -82,8 +73,9 @@ When true, a blank inventory means explicit `[]` (reasoning unsupported) and its
 Blank optional numeric/model-generation fields mean inherit, not nil or zero; explicit numeric zero must survive parsing.
 `off_peak_days[]` and `peak_hours[index][days][]` use hidden blank sentinels so clearing all days is submitted, and window times use `peak_hours[index][start|end]`.
 Remove sentinel blanks before core validation, drop fully blank windows, numerically order indexed maps and preserve complete drafts across add/remove events.
-The owner validates unique profile/model ids, supported reasoning defaults, JSON objects, numeric ranges, scheduling and membership of `default_model` before saving; component HTML ranges are not provider-specific validation.
-Unknown or removed default providers/models and unsupported saved reasoning defaults remain visibly unavailable, never silently replaced.
+The owner validates unique profile/model ids, supported reasoning defaults, JSON objects, numeric ranges and scheduling before saving; component HTML ranges are not provider-specific validation.
+`default_model` is independent of optional override rows and is never restricted to membership in those rows.
+Unknown default providers and unsupported saved reasoning defaults remain visibly unavailable, never silently replaced.
 Unknown generation/config keys must be preserved by the owner when applying edits.
 
 ### Auth and presentation boundaries
