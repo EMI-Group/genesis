@@ -63,6 +63,8 @@ Scheduler admission owns `Schema.resolve_model_spec/2` and must populate the mut
 The ordinary LLM call and compression consume those effective fields without re-resolving selection each turn, preserving provider options/OAuth and the configured context window rather than the catalog context limit.
 `SubagentProcessing` forwards a locked parent's complete resolved selection as explicit `model_spec`, while an unlocked parent's selection travels as `default_model_spec` so each spawn still consults the model-selection script.
 The builder preserves `model_id_locked`, falls back to the original spec/opts for older state shapes, and omits absent canonical selectors so legacy-only inheritance never sends an explicit `model_spec: nil`.
+Inherited selection precedence is live `parent_state.model_spec` → original `parent_spec.model_spec` → original `opts[:model_spec]` → original `opts[:default_model_spec]`, so the effective selected parent remains the fallback rather than only its provider-account id.
+Builder-level assertions for unlocked inheritance must inspect `child.opts[:default_model_spec]` and absence of an explicit `:model_spec` key; only locked inheritance populates the child's explicit `model_spec` field and option.
 `Cost.recompute_for_agent/2` prices effective `llm_model` and obtains the peak/off-peak period from `model_spec["provider_profile_id"]`, falling back to legacy `model_id` only when the selection profile is absent.
 `Cost.period_for_provider_profile_id/1` names that account lookup explicitly, and `period_for_model_id/1` remains a compatible alias.
 Completion retains the complete selection in `llm_settings.model_spec` alongside effective model, generation parameters, legacy profile identity and compression threshold.
