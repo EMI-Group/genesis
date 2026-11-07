@@ -282,6 +282,7 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
       register!(ctx.snapshot, root_spec(ctx.repo, model_spec: selection, model_id_locked: true))
 
     child = child_spec(root, ctx.repo)
+    assert_inherited(child, selection, true)
     conflict = wire("backup", "small", "low")
 
     child = %{
@@ -311,14 +312,23 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
     end
     """)
 
+    inherited = wire("work", "wide", "high")
+    reselected = wire("backup", "small", "low")
     {root, state} = register!(ctx.snapshot, root_spec(ctx.repo))
-    assert_selected(root, wire("work", "wide", "high"), ctx.work.url)
+    assert_selected(root, inherited, ctx.work.url)
     child = child_spec(root, ctx.repo)
-    refute Keyword.fetch!(child.opts, :model_id_locked)
-    {id, _} = register!(state, child, root, 1)
+    assert_inherited(child, inherited, false)
+    {id, state} = register!(state, child, root, 1)
     # Inheritance is a fallback, not an explicit user choice: only a lock may
     # suppress the documented per-spawn script opportunity.
-    assert_selected(id, wire("backup", "small", "low"), ctx.backup.url)
+    assert_selected(id, reselected, ctx.backup.url)
+    assert_selected(root, inherited, ctx.work.url)
+    refute agent!(id).model_id_locked
+
+    grandchild = child_spec(id, ctx.repo)
+    assert_inherited(grandchild, reselected, false)
+    {grandchild_id, _} = register!(state, grandchild, id, 2)
+    assert_selected(grandchild_id, reselected, ctx.backup.url)
   end
 
   test "an unlocked grandchild can be reselected without changing its parent's effective selection",
@@ -331,9 +341,13 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
     if agent.depth == 2, do: %{provider_profile_id: "backup", model: "small", reasoning_effort: "low"}, else: nil
     """)
 
-    {grandchild, _} = register!(state, child_spec(child, ctx.repo), child, 2)
+    grandchild_spec = child_spec(child, ctx.repo)
+    assert_inherited(grandchild_spec, inherited, false)
+    {grandchild, _} = register!(state, grandchild_spec, child, 2)
     assert_selected(grandchild, wire("backup", "small", "low"), ctx.backup.url)
     assert_selected(child, inherited, ctx.work.url)
+    assert_selected(root, inherited, ctx.work.url)
+    refute agent!(grandchild).model_id_locked
   end
 
   test "legacy-only parent ids remain usable after real builder delegation", ctx do
@@ -347,6 +361,8 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
     child = child_spec(root, ctx.repo)
     assert child.model_id == "legacy"
     assert child.model_spec == nil
+    refute Keyword.has_key?(child.opts, :model_spec)
+    refute Keyword.has_key?(child.opts, :default_model_spec)
     {id, _} = register!(state, child, root, 1)
     assert agent!(id).model_id == "legacy"
     assert agent!(id).llm_model == "openai:legacy-model"
@@ -627,9 +643,18 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
   end
 
   defp assert_inherited(spec, selection, locked) do
-    assert spec.model_spec == selection
-    assert Keyword.fetch!(spec.opts, :model_spec) == selection
     assert Keyword.fetch!(spec.opts, :model_id_locked) == locked
+
+    if locked do
+      assert spec.model_spec == selection
+      assert Keyword.fetch!(spec.opts, :model_spec) == selection
+    else
+      # A complete fallback preserves account/model/effort without suppressing
+      # the next spawn's script, unlike an explicit :model_spec (even nil).
+      assert spec.model_spec == nil
+      refute Keyword.has_key?(spec.opts, :model_spec)
+      assert Keyword.fetch!(spec.opts, :default_model_spec) == selection
+    end
   end
 
   defp assert_selected(id, selection, url) do
