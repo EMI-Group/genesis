@@ -75,7 +75,7 @@ defmodule EvoGit.AgentScheduler.ModelSelection do
     if schema_available?() and is_map(state.model_selection_config) do
       case apply(Schema, :resolve_model_spec, [state.model_selection_config, requested]) do
         {:ok, resolved} ->
-          selection = normalize(state, requested, resolved)
+          selection = normalize(requested, resolved)
 
           if is_binary(selection.provider_profile_id) and selection.provider_profile_id != "" and
                is_binary(selection.model_spec["model"]) and
@@ -94,33 +94,28 @@ defmodule EvoGit.AgentScheduler.ModelSelection do
     end
   end
 
-  defp normalize(state, requested, resolved) do
-    selection = value(resolved, :model_spec, resolved)
-    provider_id = value(selection, :provider_profile_id) || value(resolved, :provider_profile_id)
-    model = value(selection, :model) || value(resolved, :model)
-    effort = value(selection, :reasoning_effort)
-    model_spec = %{"provider_profile_id" => provider_id, "model" => model}
+  defp normalize(requested, resolved) do
+    # Schema's model_spec is a ReqLLM identifier (qualified string or endpoint
+    # map), NOT the task selection. Keep these two wire contracts separate.
+    provider_id = value(resolved, :provider_profile_id)
+    effort = value(resolved, :reasoning_effort)
+    model_spec = %{"provider_profile_id" => provider_id, "model" => value(resolved, :model)}
 
     model_spec =
       if is_nil(effort), do: model_spec, else: Map.put(model_spec, "reasoning_effort", effort)
 
-    profile =
-      if requested in [nil, ""],
-        do: List.first(state.model_profiles) || %{},
-        else: Enum.find(state.model_profiles, &(value(&1, :id) == requested)) || %{}
+    runtime_profile = value(resolved, :runtime_profile)
 
     %{
-      model_id: value(resolved, :model_id) || value(resolved, :id) || value(profile, :id),
+      # Schema migrates legacy ids one-for-one to provider ids; explicit task
+      # maps have no legacy alias. Default resolution must honor configured
+      # provider/model defaults, not the first enumerated selection.
+      model_id: if(is_map(requested), do: nil, else: provider_id),
       provider_profile_id: provider_id,
       model_spec: model_spec,
-      llm_model: value(resolved, :llm_model, value(resolved, :model)),
-      llm_generation_params:
-        value(
-          resolved,
-          :llm_generation_params,
-          value(resolved, :generation_params, value(resolved, :params, []))
-        ),
-      llm_context_window: value(resolved, :context_window, Schema.LLM.context_window(profile))
+      llm_model: value(resolved, :model_spec),
+      llm_generation_params: value(resolved, :generation_params),
+      llm_context_window: Schema.LLM.context_window(runtime_profile)
     }
   end
 
