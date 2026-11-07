@@ -14,7 +14,7 @@ Every store/registry/`EvoDash.NodeContext` read runs in a supervised `EvoDash.Ta
 - `project.ex` → pure project/path helpers + local config & filesystem reads (`load_project_config/1`, `load_model_profiles/1`, `path_suggestions/3`, `task_notification_content/1`)
 - `project_flow.ex` → project activation flows (`register_and_open_project/2`, `open_project/2`, `select_project/2`, `close_project/1`, remote activation via `spawn_remote_project_activation/2,3`), foreign-repo struct construction
 - `assigns.ex` → deliberately PURE assign helpers (`assign_form_defaults/1`); no store calls, no RPC
-- `state_persistence.ex` → per-node form-state persistence, canonical model-spec restoration and legacy-id migration (assigns + `push_event`, no I/O)
+- `state_persistence.ex` → per-node form-state persistence, canonical model-spec restoration and legacy-id migration, plus model-only `persist_model_selection` events (assigns + `push_event`, no I/O)
 - `launch_options.ex` → pure `LaunchOptions.apply/2`, shared model-spec lock, custom-agent and quality options for normal submissions and GitHub fixes
 - `attach_file.ex` → the objective attach-file pipeline (local file reads only)
 - `github.ex` → GitHub upstream/issues/fix-issue async flows + the local `start_task` branch
@@ -99,6 +99,10 @@ The lookup is deliberately the LOCAL `TaskRegistry.get_task_lite/1` (same struct
 - `project_flow.ex` — local recent-project writes (`add_recent_project` + `list_recent_projects`) and `File.dir?`/`Path.expand` stay synchronous (cheap, user-initiated); remote activation is async.
 - `project.ex` — local TOML/FS reads; `path_suggestions/3` calls `EvoGit.PathSuggestions.suggest/1` locally and `NodeContext.list_path_suggestions/2` for remote nodes.
 - `github.ex` — all `gh` work runs through the `:github_runner`/`:github_issues_runner`/`:github_issue_markdown_runner` seams in supervised tasks (resolved at spawn time).
+GitHub dispatch and result application require a usable target; a pending/gated remote target never falls back to local RPC or task launch.
+The public GitHub message tuples retain their arity, but their result element is an opaque request-scoped envelope carrying target identity and a unique request token; handlers ignore unscoped results and validate target, BEAM node, path and request identity.
+Closing/reopening the modal, changing filters or superseding an issue fix invalidates earlier replies, including repeated requests for the same issue, and accepted results are consumed once.
+GitHub runners and task dispatch use `SafeCall` so an exit becomes a reported result instead of a wedged loading state.
 - `remote_view.ex`, `assigns.ex`, `state_persistence.ex` — pure render / pure assigns; zero RPC.
 - `attach_file.ex` — local file reads only (remote reads unsupported: the read runs on the LOCAL node's filesystem, and the node dropdown does not proxy it).
 
@@ -107,6 +111,7 @@ The lookup is deliberately the LOCAL `TaskRegistry.get_task_lite/1` (same struct
 The canonical task-picker assign is `selected_model_spec`, a STRING-keyed map containing only `provider_profile_id`, `model` and optional `reasoning_effort`; `%{}` is explicit Auto, while nil means uninitialized/use the node default.
 `Project.load_model_selection/0,1,2` returns a shared `LLMSelection.from_config(config, rules_enabled)` bundle for the executing node, and `load_model_selection_from_config/2` is its pure projection seam.
 Local loading honors the process-local `:memo_config_resolve`; remote loading uses the target's resolved config and degrades to an empty-config bundle on transport failure, never borrowing the dashboard's local models.
+A pending remote target (`current_node_id != nil` while its BEAM node is local) never reads local custom agents/config through `AsyncLoad.default_batch/6`, never applies batch results and preserves its pending model restore until a remote bundle is available.
 Passing the already-loaded rules flag avoids a second remote custom-agent read; `AsyncLoad.default_batch/6` uses this path.
 The old `Project.load_model_profiles/0,1` and `load_model_profiles_from_config/2` tuple APIs remain untouched for legacy callers and editing compatibility.
 
@@ -128,6 +133,8 @@ Unstamped legacy result maps carrying `model_profiles`/`default_selected_model_i
 A restore arriving before the picker bundle is stored as `pending_model_selection` and validated when the canonical async bundle lands.
 Node switches clear the bundle, picker projections and pending restore before fetching the new node; a carried canonical selection is validated against the new bundle.
 `model_selection_state/1` serializes only the three canonical spec keys, never credentials or bundle metadata; legacy-only/pending-legacy callers keep `selected_model_id` until canonical migration completes.
+`maybe_persist_model_selection/1` emits the model-only `persist_model_selection` event after canonical reconciliation/restoration, with `%{node: target_id_or_local, model_spec: spec}`; this event requires the browser consumer to merge those fields into the same node's saved state rather than replacing DOM-owned prompt/form data.
+Full-form `persist_state` remains a separate replacement event, and an explicit empty model-spec map must survive both event paths.
 The parent's provider/model/reasoning change handlers must clear `pending_model_selection` so an earlier restore cannot override a newer interaction.
 
 ### Launch and parent-page wiring
