@@ -23,6 +23,8 @@ defmodule EvoDashWeb.LLMSelection do
   Provider/model changes reset downstream defaults; reasoning changes accept
   the component's zero-based range index or an already resolved effort string.
   Core resolution owns schema validation; the component owns slider decoding.
+  Models without an advertised effort inventory omit the task-level reasoning
+  override, while an inventory without a default starts at its first effort.
   No client input is converted to an atom.
   """
 
@@ -126,91 +128,27 @@ defmodule EvoDashWeb.LLMSelection do
 
   defp resolve(bundle, candidate)
        when is_nil(candidate) or is_binary(candidate) or is_map(candidate) do
-    # Resolution validates the original input, including legacy ids. Its return
-    # value is runtime data (possibly containing credentials), NOT a task spec.
-    with {:ok, _resolved} <- Schema.resolve_model_spec(bundle.config, candidate),
-         {:ok, spec} <- canonical_spec(bundle, candidate),
-         {:ok, _resolved} <- Schema.resolve_model_spec(bundle.config, spec) do
-      {:ok, spec}
+    # Core owns legacy migration, provider/model defaults and validation. Project
+    # only picker fields: the remaining resolved runtime data can hold credentials.
+    with {:ok, resolved} <- Schema.resolve_model_spec(bundle.config, candidate) do
+      {:ok, canonical_spec(resolved)}
     end
   end
 
   defp resolve(_bundle, _candidate), do: {:error, :invalid_model_spec}
 
-  defp canonical_spec(bundle, candidate) do
-    requested = input_spec(candidate)
-    llm = field(bundle.config, :llm) || %{}
+  defp canonical_spec(resolved) do
+    spec = %{"provider_profile_id" => resolved.provider_profile_id, "model" => resolved.model}
 
-    provider_id =
-      requested["provider_profile_id"] || field(llm, :default_provider_profile) ||
-        first_provider_id(bundle.provider_profiles)
+    case resolved.reasoning_efforts do
+      efforts when is_list(efforts) and efforts != [] ->
+        # Match the component's initial slider position when core has no default.
+        Map.put(spec, "reasoning_effort", resolved.reasoning_effort || List.first(efforts))
 
-    profile = Enum.find(bundle.provider_profiles, &(&1["id"] == provider_id))
-
-    with %{} <- profile do
-      model = requested["model"] || profile["default_model"]
-
-      selection =
-        Enum.find(bundle.model_selections, fn selection ->
-          selection.provider_profile_id == provider_id and
-            (selection.model == model or selection.provider <> ":" <> selection.model == model)
-        end)
-
-      case selection do
-        nil -> {:error, {:model_not_found, provider_id, model}}
-        selection -> with_effort(bundle, selection, requested["reasoning_effort"])
-      end
-    else
-      nil -> {:error, {:provider_profile_not_found, provider_id}}
+      _ ->
+        # No slider means no task-level reasoning override, even if the provider
+        # has a shared default. Core retains responsibility for runtime defaults.
+        spec
     end
   end
-
-  defp with_effort(bundle, selection, requested) do
-    spec = %{"provider_profile_id" => selection.provider_profile_id, "model" => selection.model}
-    efforts = selection.reasoning_efforts || []
-    default = selection.default_reasoning_effort
-
-    effort =
-      cond do
-        not is_nil(requested) -> requested
-        default in efforts -> default
-        efforts != [] -> List.first(efforts)
-        true -> default
-      end
-
-    cond do
-      is_nil(effort) ->
-        {:ok, spec}
-
-      efforts == [] ->
-        # No advertised inventory means no slider constraint; the core alone
-        # decides whether an explicit/default effort is legal for this model.
-        {:ok, Map.put(spec, "reasoning_effort", effort)}
-
-      true ->
-        with {:ok, value} <-
-               LLMSelectionComponents.resolve_reasoning_effort(
-                 bundle.model_selections,
-                 spec,
-                 effort
-               ) do
-          {:ok, Map.put(spec, "reasoning_effort", value)}
-        end
-    end
-  end
-
-  defp input_spec(nil), do: %{}
-  defp input_spec(id) when is_binary(id), do: %{"provider_profile_id" => id}
-
-  defp input_spec(spec) do
-    Map.new([:provider_profile_id, :model, :reasoning_effort], fn key ->
-      {Atom.to_string(key), field(spec, key)}
-    end)
-  end
-
-  defp first_provider_id([profile | _]), do: profile["id"]
-  defp first_provider_id([]), do: nil
-
-  defp field(map, key) when is_map(map), do: Map.get(map, Atom.to_string(key), Map.get(map, key))
-  defp field(_other, _key), do: nil
 end

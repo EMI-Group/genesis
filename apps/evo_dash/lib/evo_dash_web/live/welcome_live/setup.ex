@@ -13,6 +13,10 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
   @reasoning_efforts ~w(none minimal low medium high xhigh default)
   def reasoning_efforts, do: @reasoning_efforts
 
+  # The inventory and the default are independent: selecting a default must
+  # never make the other advertised efforts unavailable to later task picks.
+  def reasoning_efforts(entry), do: Map.get(entry, :reasoning_efforts, @reasoning_efforts)
+
   def flatten_models(providers) do
     providers
     |> Enum.reject(&(&1[:custom_model] == true))
@@ -29,6 +33,7 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
           credential_key: if(variant, do: variant.credential_key, else: provider.credential_key),
           model_id: model.id,
           model_display_name: model.display_name,
+          reasoning_efforts: value(model, :reasoning_efforts) || @reasoning_efforts,
           resolved_atom: resolved,
           model_string: "#{resolved}:#{model.id}"
         }
@@ -101,7 +106,11 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
         {:error, gettext("Base URL cannot be empty.")}
 
       Enum.any?(selected, fn entry ->
-        Map.get(assigns.model_reasoning, entry.model_string, "") not in ["" | @reasoning_efforts]
+        effort = Map.get(assigns.model_reasoning, entry.model_string, "")
+        inventory = reasoning_efforts(entry)
+
+        effort not in ["" | @reasoning_efforts] or
+            (effort != "" and inventory != [] and effort not in inventory)
       end) ->
         {:error, gettext("Invalid reasoning effort.")}
 
@@ -139,15 +148,12 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
     models =
       Enum.map(entries, fn entry ->
         effort = Map.get(reasoning, entry.model_string, "")
-        model = %{"model" => entry.model_id}
+        model = %{"model" => entry.model_id, "reasoning_efforts" => reasoning_efforts(entry)}
 
         if effort == "" do
           model
         else
-          Map.merge(model, %{
-            "reasoning_efforts" => [effort],
-            "default_reasoning_effort" => effort
-          })
+          Map.put(model, "default_reasoning_effort", effort)
         end
       end)
 
