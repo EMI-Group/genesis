@@ -29,6 +29,15 @@ No test may make a real LLM request or rely on shared credentials, scheduler mut
 The larger helper file intentionally keeps the legacy parser with its shared peak/day edge-case matrix, while the canonical contract file keeps parse/draft/CRUD round trips together without additional test modules or shared fixtures.
 Production source and core modules are read-only from this node.
 
+## Coverage Boundaries
+
+Multi-model contracts here exercise pure parsing/draft round trips and sparse inheritance, not a mounted multi-model Save → remount/reload cycle.
+Auth save contracts assert live canonical providers and `EvoGit.Config.user_config()` persistence with no legacy shadow, but do not remount to prove restored editor state.
+The stale-result tests here cover OAuth credential-status node/sequence guards only, not config reload or writer completion generations.
+No suite here injects a configuration-writer failure or exercises category reset/reset-all preservation of canonical providers and defaults.
+The `:managed_file_unwritable` classification tests concern OAuth credential files, not `config.toml` write failures.
+Mounted canonical editor save/reload/reset regressions belong with the parent `settings_live_test.exs`; pure shape and draft regressions belong in `provider_profiles_contract_test.exs`, and config writer atomicity belongs to the core-owned configuration tests.
+
 ## Validation and Integration Boundary
 
 Normal `mix test apps/evo_dash/test/evo_dash_web/live/settings_live` and its `--no-start` variant abort before ExUnit because runtime config calls `EvoGit.Config.EctoValidation.type_errors/3` with unsupported `:provider_profiles`.
