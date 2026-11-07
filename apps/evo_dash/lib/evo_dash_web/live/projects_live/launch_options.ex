@@ -8,6 +8,7 @@ defmodule EvoDashWeb.ProjectsLive.LaunchOptions do
   """
 
   alias EvoDashWeb.LLMSelection
+  alias EvoDashWeb.ProjectsLive.ModelSelectionScope
 
   @doc """
   Adds the current picker options to an existing launch payload.
@@ -17,6 +18,9 @@ defmodule EvoDashWeb.ProjectsLive.LaunchOptions do
   helper resolves defaults and validates membership/reasoning. Legacy model
   options are removed, including for Auto, so a resumed payload cannot leak a
   previous lock or profile id into a new task.
+  Ownership must match `{current_node_id, current_node || node()}` and the
+  picker must be ready, without a load error or pending browser restore.
+  Unstamped local mount bundles remain compatible; remote ones never do.
   """
   def apply(opts, assigns) when is_list(opts) and is_map(assigns) do
     with {:ok, model_opts} <- model_opts(assigns) do
@@ -31,11 +35,15 @@ defmodule EvoDashWeb.ProjectsLive.LaunchOptions do
     end
   end
 
-  defp model_opts(%{model_selection: data} = assigns) when is_map(data) do
-    LLMSelection.task_opts(data, Map.get(assigns, :selected_model_spec))
+  defp model_opts(assigns) do
+    with {:ok, data} <- ModelSelectionScope.bundle(assigns) do
+      if is_nil(assigns[:pending_model_selection]) do
+        LLMSelection.task_opts(data, Map.get(assigns, :selected_model_spec))
+      else
+        {:error, :model_selection_restore_pending}
+      end
+    end
   end
-
-  defp model_opts(_assigns), do: {:error, :model_selection_not_loaded}
 
   defp put_agent(opts, agent) when is_binary(agent) and agent != "",
     do: Keyword.put(opts, :agent, agent)

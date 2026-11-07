@@ -32,9 +32,8 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   `fn -> default_batch(node, remote?, current_node_id, path, seed_terminal_ids?,
   auto_activate?) end`) and runs inside `EvoDash.SafeCall.run/1`, so an injected
   batch that exits/raises (e.g. `fn -> exit(:boom) end`) cannot crash anything.
-  On failure NO message is sent — the page simply keeps the defaults `mount/3`
-  seeded (empty recent projects / notified ids) instead of filling them a frame
-  later.
+  Failure is reported through the same scoped message and invalidates picker
+  readiness without reconciling or persisting the selected/pending choice.
   """
 
   alias EvoGit.Platform
@@ -43,6 +42,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   alias EvoDash.NodeContext
   alias EvoDashWeb.LLMSelection
   alias EvoDashWeb.ProjectsLive.Notifications
+  alias EvoDashWeb.ProjectsLive.ModelSelectionScope
   alias EvoDashWeb.ProjectsLive.Project
   alias EvoDashWeb.ProjectsLive.ProjectFlow
   alias EvoDashWeb.ProjectsLive.StatePersistence
@@ -83,40 +83,48 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
       auto_activate? = socket.assigns[:auto_activate_candidate?] == true
       seq = System.unique_integer([:positive, :monotonic])
       selection_snapshot = selection_candidate(socket.assigns)
-      socket = assign(socket, :projects_load_seq, seq)
+
+      socket =
+        socket
+        |> assign(:projects_load_seq, seq)
+        |> assign(:model_selection_ready?, false)
+
       parent = self()
 
-      # Resolved AT SPAWN TIME (dashboard runner-seam idiom): a test can swap
-      # the whole batch body for an exiting fun and assert the page keeps its
-      # seeded defaults. Default = today's loads (default_batch/6).
+      # Resolved at spawn time so runner failures use the same scoped delivery
+      # path as production store/RPC failures.
       runner =
         Application.get_env(:evo_dash, :projects_async_load_runner, fn ->
           default_batch(node, remote?, current_node_id, path, seed_terminal_ids?, auto_activate?)
         end)
 
-      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-        # EXIT-SAFE: the batch performs store reads and (for remote nodes)
-        # `:erpc` round-trips whose target can be dead/hung — either EXITS the
-        # task. `EvoDash.SafeCall.run/1` captures that as a value, so a failing
-        # batch sends nothing at all (see the moduledoc) and the LiveView keeps
-        # its seeded defaults instead of crashing.
-        case EvoDash.SafeCall.run(runner) do
-          {:ok, results} ->
-            # Keep the public five-tuple message shape; freshness metadata lives
-            # inside the result rather than changing every page handler.
-            results =
-              Map.put(results, :load_scope, %{
-                seq: seq,
-                node_id: current_node_id,
-                selection: selection_snapshot
-              })
+      scope = %{seq: seq, node_id: current_node_id, selection: selection_snapshot}
 
-            send(parent, {:async_project_load, node, prev_node_id, path, results})
+      deliver = fn results ->
+        send(
+          parent,
+          {:async_project_load, node, prev_node_id, path, Map.put(results, :load_scope, scope)}
+        )
+      end
 
-          {:error, _reason} ->
-            :ok
-        end
-      end)
+      case EvoDash.SafeCall.run(fn ->
+             Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+               # Store/RPC exits must always settle the picker, never leave the
+               # old bundle launchable or a loading flag stuck.
+               results =
+                 case EvoDash.SafeCall.run(runner) do
+                   {:ok, results} when is_map(results) -> results
+                   {:ok, _invalid} -> %{batch_error: :invalid_batch_result}
+                   {:error, reason} -> %{batch_error: reason}
+                 end
+
+               deliver.(results)
+             end)
+           end) do
+        {:ok, {:ok, _pid}} -> :ok
+        {:ok, {:error, reason}} -> deliver.(%{batch_error: reason})
+        {:error, reason} -> deliver.(%{batch_error: reason})
+      end
 
       socket
     else
@@ -137,8 +145,8 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
 
   # A pending remote target still resolves to the dashboard's local BEAM node.
   # Do not read its agents/config or consume a pending remote model restore.
-  def default_batch(_node, false, current_node_id, _path, _seed?, _auto?)
-      when not is_nil(current_node_id) do
+  def default_batch(target_node, _remote?, current_node_id, _path, _seed?, _auto?)
+      when not is_nil(current_node_id) and (is_nil(target_node) or target_node == node()) do
     %{recent_projects: [], terminal_ids: nil, auto_activate?: false}
   end
 
@@ -190,63 +198,68 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   def handle_result(socket, node, prev_node_id, path, results) do
     %{active_project_path: active_path, current_node: current_node} = socket.assigns
 
-    pending_remote? = socket.assigns[:current_node_id] != nil and current_node == node()
+    pending_remote? = ModelSelectionScope.pending_remote?(socket.assigns)
 
-    if pending_remote? or node != current_node or path != active_path or
-         stale_scope?(socket, results) do
-      {socket, false}
-    else
-      socket = apply_model_selection(socket, prev_node_id, results)
+    cond do
+      pending_remote? or node != current_node or path != active_path or
+          stale_scope?(socket, results) ->
+        {socket, false}
 
-      socket =
-        case Map.get(results, :terminal_ids) do
-          %MapSet{} = terminal_ids ->
-            socket
-            |> assign(
-              :notified_task_ids,
-              MapSet.union(socket.assigns[:notified_task_ids] || MapSet.new(), terminal_ids)
-            )
-            |> assign(:notified_task_ids_ready?, true)
+      Map.has_key?(results, :batch_error) ->
+        {ModelSelectionScope.invalidate(socket, results.batch_error), false}
 
-          _ ->
-            socket
-        end
+      true ->
+        socket = apply_model_selection(socket, prev_node_id, results)
 
-      {skip_foreign_repos?, socket} =
-        if socket.assigns[:resume_foreign_repos_guard] == true and
-             Map.has_key?(results, :foreign_repos) do
-          {true, assign(socket, :resume_foreign_repos_guard, false)}
-        else
-          {false, socket}
-        end
+        socket =
+          case Map.get(results, :terminal_ids) do
+            %MapSet{} = terminal_ids ->
+              socket
+              |> assign(
+                :notified_task_ids,
+                MapSet.union(socket.assigns[:notified_task_ids] || MapSet.new(), terminal_ids)
+              )
+              |> assign(:notified_task_ids_ready?, true)
 
-      # Apply every remaining key the task included. Remote-only keys
-      # (`project_config`, `worktree_script`, `commands`,
-      # `foreign_repos`, `task_mode`, `task_mode_info`) are absent from the
-      # results map for local nodes and are skipped here — the local
-      # activate_project flow owns those assigns. `:foreign_repos` is dropped
-      # when the resume-restore guard above fired (its task-derived value must
-      # win over the genesis.toml reload). `:terminal_ids` / `:auto_activate?`
-      # are consumed above (not assign names).
-      results =
-        if skip_foreign_repos? do
-          Map.delete(results, :foreign_repos)
-        else
-          results
-        end
+            _ ->
+              socket
+          end
 
-      socket =
-        Enum.reduce(results, socket, fn
-          {:model_selection, _}, sock -> sock
-          {:load_scope, _}, sock -> sock
-          {:model_profiles, _}, sock -> sock
-          {:default_selected_model_id, _}, sock -> sock
-          {:terminal_ids, _}, sock -> sock
-          {:auto_activate?, _}, sock -> sock
-          {key, value}, sock -> assign(sock, key, value)
-        end)
+        {skip_foreign_repos?, socket} =
+          if socket.assigns[:resume_foreign_repos_guard] == true and
+               Map.has_key?(results, :foreign_repos) do
+            {true, assign(socket, :resume_foreign_repos_guard, false)}
+          else
+            {false, socket}
+          end
 
-      {socket, true}
+        # Apply every remaining key the task included. Remote-only keys
+        # (`project_config`, `worktree_script`, `commands`,
+        # `foreign_repos`, `task_mode`, `task_mode_info`) are absent from the
+        # results map for local nodes and are skipped here — the local
+        # activate_project flow owns those assigns. `:foreign_repos` is dropped
+        # when the resume-restore guard above fired (its task-derived value must
+        # win over the genesis.toml reload). `:terminal_ids` / `:auto_activate?`
+        # are consumed above (not assign names).
+        results =
+          if skip_foreign_repos? do
+            Map.delete(results, :foreign_repos)
+          else
+            results
+          end
+
+        socket =
+          Enum.reduce(results, socket, fn
+            {:model_selection, _}, sock -> sock
+            {:load_scope, _}, sock -> sock
+            {:model_profiles, _}, sock -> sock
+            {:default_selected_model_id, _}, sock -> sock
+            {:terminal_ids, _}, sock -> sock
+            {:auto_activate?, _}, sock -> sock
+            {key, value}, sock -> assign(sock, key, value)
+          end)
+
+        {socket, true}
     end
   end
 
@@ -359,27 +372,47 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   # always carry it. The node/path guard still applies to unstamped payloads.
   defp stale_scope?(_socket, _results), do: false
 
+  defp apply_model_selection(socket, _prev_node_id, %{model_selection: {:error, reason}}) do
+    ModelSelectionScope.invalidate(socket, reason)
+  end
+
   defp apply_model_selection(socket, _prev_node_id, %{model_selection: data} = results) do
-    candidate = selection_candidate(socket.assigns)
     scope = Map.get(results, :load_scope)
 
-    socket =
-      socket
-      |> assign(:model_selection, data)
-      |> assign(:provider_profiles, data.provider_profiles)
-      |> assign(:model_selections, data.model_selections)
+    owned? =
+      is_map(scope) or ModelSelectionScope.current(socket.assigns) == {nil, node()}
 
-    # Reconcile on EVERY refresh, not just node switches. A profile/model or
-    # effort can disappear on the same node. Never overwrite a user/restore
-    # choice made after this load started; submit validates that choice again.
-    if is_nil(scope) or scope.selection == candidate or
-         not is_nil(socket.assigns[:pending_model_selection]) do
-      socket
-      |> assign(:selected_model_spec, LLMSelection.reconcile(data, candidate))
-      |> assign(:pending_model_selection, nil)
-      |> StatePersistence.maybe_persist_model_selection()
+    if ModelSelectionScope.bundle?(data) and owned? do
+      candidate = selection_candidate(socket.assigns)
+
+      socket =
+        socket
+        |> assign(:model_selection, data)
+        |> assign(:model_selection_scope, ModelSelectionScope.current(socket.assigns))
+        |> assign(:model_selection_ready?, true)
+        |> assign(:model_selection_error, nil)
+        |> assign(:provider_profiles, data.provider_profiles)
+        |> assign(:model_selections, data.model_selections)
+
+      # Reconcile on EVERY refresh, but never overwrite a newer user choice.
+      # Pending restores take precedence and are consumed only after ownership
+      # has been established by the guarded load envelope.
+      if is_nil(scope) or scope.selection == candidate or
+           not is_nil(socket.assigns[:pending_model_selection]) do
+        socket
+        |> assign(:selected_model_spec, LLMSelection.reconcile(data, candidate))
+        |> assign(:pending_model_selection, nil)
+        |> StatePersistence.maybe_persist_model_selection()
+      else
+        socket
+      end
     else
-      socket
+      reason =
+        if ModelSelectionScope.bundle?(data),
+          do: :model_selection_scope_mismatch,
+          else: :invalid_model_selection_bundle
+
+      ModelSelectionScope.invalidate(socket, reason)
     end
   end
 
