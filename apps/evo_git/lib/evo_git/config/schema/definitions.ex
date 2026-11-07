@@ -282,6 +282,26 @@ defmodule EvoGit.Config.Schema.Definitions do
         description:
           "Array of model profiles, each defining an LLM model and its generation parameters. Each profile is a TOML table: id (required string), model (required, same format as [llm].model), concurrency (default 3), optional context_window (positive integer, default 200000 — the model's context window in tokens, used as the context-compression window), optional auth_mode (\"api_key\" or \"oauth\", default \"api_key\"; when \"oauth\" the profile authenticates through a subscription OAuth credential instead of an API key), optional oauth_file (path overriding the managed OAuth credential file for this profile), optional generation params (temperature, max_tokens, reasoning_effort, top_p, top_k, frequency_penalty, presence_penalty), and an optional provider_options map for provider-specific options (e.g. {store: false} for OpenAI). When absent, the flat [llm] fields are migrated into a single 'default' profile during resolution."
       },
+      %{
+        key_path: [:llm, :providers],
+        type: :provider_profiles,
+        default: [],
+        validation: [],
+        category: :llm,
+        sub_category: nil,
+        description:
+          "Array of provider account profiles: id, provider, shared auth/concurrency/peak settings, optional generation defaults and an ordered models list. Models may override generation parameters, context_window and reasoning_efforts/default_reasoning_effort. default_model selects the account's runtime model (otherwise the first model). A non-empty providers list takes precedence over legacy llm.models and flat llm.model."
+      },
+      %{
+        key_path: [:llm, :default_provider_profile],
+        type: :string,
+        default: nil,
+        validation: [],
+        category: :llm,
+        sub_category: nil,
+        description:
+          "Default provider account profile id for model selection. Optional; when absent the first provider profile is selected. An explicit id must name an existing provider profile (legacy model profile ids remain supported)."
+      },
       # ── User ───────────────────────────────────────────────────────────
       %{
         key_path: [:user, :github_username],

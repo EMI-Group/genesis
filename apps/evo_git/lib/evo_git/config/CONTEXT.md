@@ -178,7 +178,12 @@ Re-enable: `[lsp]` with `enabled = true` and `command = "lexical"` (plus `args =
 Validation is warning-only at runtime: `EvoGit.Config.resolve/0` logs `Config validation error at [:lsp, ...]` via `Logger.warning` and still returns the merged config; only `save_user_config/1` refuses a malformed value. `EvoGit.Config.lsp_enabled?/0` and the tool's own settings normalize defensively (non-map section → disabled, non-list `args` → `[]`, invalid timeouts → defaults) and accept the STRING `"true"` for `enabled` even though the strict `:boolean` type flags it as a validation error.
 Only two consumers read the section: `lsp_enabled?/0` (the offering gate, via `resolve([:lsp])`) and the tool itself (also `resolve([:lsp])`, treating a non-map result as `%{}`).
 
-**`[[llm.models]]` profile fields**: `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), `context_window` (optional positive integer, default `200_000` — the model's context window in tokens, used as the context-compression window), `auth_mode` + `oauth_file` (optional subscription-auth selection, see "OAuth / Subscription Auth"), plus optional `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`:
+**`[[llm.providers]]` canonical inventory**: each STRING-keyed account has `id`, `provider`, optional `name`, shared auth/endpoint/concurrency/peak/generation settings, ordered `models`, optional `default_model`, `reasoning_efforts` and `default_reasoning_effort`.
+The optional `[llm] default_provider_profile` selects an account by id; absent selectors choose the first account/model, while explicit unknown selectors return resolution errors.
+Nested models accept a model id string or a map with `model` (`id` is an input alias), optional generation/context/effort overrides, and remain recursively string-keyed after config resolution.
+The `Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` APIs delegate to `Schema.ProviderProfiles`; exact maps, precedence and error shapes are documented in `schema/CONTEXT.md`.
+
+**Legacy `[[llm.models]]` profile fields** (still accepted when providers are absent/empty): `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), `context_window` (optional positive integer, default `200_000` — the model's context window in tokens, used as the context-compression window), `auth_mode` + `oauth_file` (optional subscription-auth selection, see "OAuth / Subscription Auth"), plus optional `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`:
 ```toml
 [[llm.models]]
 id = "deepseek"
@@ -326,11 +331,19 @@ Leaf-specific OAuth assembly, atom creation and catalog side effects are documen
 Web search (`[tools.search]`) supports providers `[:tavily, :perplexity, :exa, :bing, :brave]`. The **single source of truth** for that list is `EvoGit.Config.Schema.Definitions.search_providers/0` (module attribute `@search_providers`) — do NOT hardcode it elsewhere. It feeds BOTH the schema `in:` validation (`[:tools, :search, :provider]`) and `EvoGit.Config.atomize_enum_values/1`, which atomizes `provider` and each provider section's `search_depth` against `[:basic, :advanced]` via that accessor. `tools_search_enabled?/0` is provider-generic: it resolves the SELECTED provider's own `api_key_credential_key` (with a tavily fallback).
 
 ## LLM Shape and Normalization Boundaries
-The canonical persisted multi-model shape is currently `[[llm.models]]`, where each entry combines one model with auth, concurrency, peak schedule and generation parameters; there is no provider-profile grouping or ordered model/reasoning-effort inventory.
-`Config.atomize_keys/1` recurses into maps but not list elements, and `normalize_profile_keys/1` normalizes only each model-profile's immediate keys, so introducing nested model lists requires an explicit recursive normalization boundary rather than relying on the existing pass.
-Key normalization uses existing atoms only, with `@model_profile_extra_keys` pinning otherwise-unreferenced allowed atoms; newly introduced nested keys must not depend on unrelated modules having loaded first.
-`Schema.effective_model_profiles/1` is the shared runtime fallback for scheduler boot, reload and catalog warm-up, while `Schema.default_model_profile/1` selects the first entry rather than an explicit default selector.
-The detailed generation/auth/reasoning assembly and its compatibility traps belong to `schema/CONTEXT.md`.
+The canonical persisted account inventory is `[[llm.providers]]`, selected by optional `[llm] default_provider_profile`, with one stable id per account and an ordered nested `models` inventory.
+Provider profiles share provider/auth/endpoint/concurrency/peak fields, generation defaults and an ordered `reasoning_efforts` inventory; nested model maps may override generation/context/effort settings, and `default_model` plus optional `default_reasoning_effort` choose defaults without inventing an effort from inventory order.
+Canonical provider maps and all nested maps use STRING keys, while the surrounding resolved config uses atom schema keys.
+`Config.atomize_enum_values/1` explicitly stringifies the full providers subtree through `Schema.ProviderProfiles.Normalize.stringify/1`, preserving malformed entries for validation rather than silently dropping them.
+Legacy `[[llm.models]]` and flat `[llm] model` remain accepted and retain their established in-memory normalization and save behavior when no nonempty providers list exists.
+`Schema.provider_profiles/1` exposes canonical string-keyed profiles and migrates legacy accounts one-for-one without combining equal provider/model/endpoint accounts or changing ids; this read projection does not rewrite files.
+`Schema.model_selections/1` enumerates ordered model/effort inventory without resolving credentials or metadata, and `Schema.resolve_model_spec/2` resolves a nil/default, provider id, or explicit provider/model/effort selection through `Schema.ProviderProfiles`.
+Canonical providers are authoritative over stale legacy fields, and config resolution does not materialize their derived `llm.models` or flat model mirrors.
+Saving a config with nonempty providers strips legacy `models`, flat generation/model fields and flat auth/provider-options mirrors, retaining the providers and default selector as the sole persisted account inventory.
+Key normalization for legacy model maps uses existing atoms only, with `@model_profile_extra_keys` pinning otherwise-unreferenced allowed atoms.
+`Schema.effective_model_profiles/1` is the shared runtime fallback for scheduler boot, reload and catalog warm-up, and does not fall back to stale flat settings when a configured canonical inventory has no usable runtime profiles.
+Presence and OAuth diagnostics use `Schema.model_profiles/1`'s runtime projection; API-key health also recognizes a canonical API-key account's nonempty configured `api_key_env_var`, never an OAuth account's env-key field.
+The detailed generation/auth/reasoning assembly, selection error contracts and compatibility traps belong to `schema/CONTEXT.md`.
 
 ## LLM Model Presence Decision (config_status `:llm_model` gate)
 
@@ -340,9 +353,12 @@ The detailed generation/auth/reasoning assembly and its compatibility traps belo
 
 **Map-model profiles with override keys pass the gate**: a custom-endpoint map model (e.g. `%{provider: :openai_compatible, id: "x", base_url: "..."}` — kept as a map by `normalize_model_map/1` whenever `base_url`/other override keys are present) counts as configured, matching SystemCheck/ReqLLM acceptance.
 
-**Mirror rule (`migrate_llm_models/1`)**: the flat `[llm] model` is mirrored ONLY from the FIRST profile; if that profile has no/nil model the flat field stays nil even when later profiles carry valid models, so consumers reading `Config.resolve([:llm, :model])` (flat) rather than `Schema.model_profiles/1` see nil. A first-profile model of `""` mirrors as `""`.
+**Legacy mirror rule (`migrate_llm_models/1`)**: when no canonical providers are configured, the flat `[llm] model` is mirrored ONLY from the FIRST legacy profile; if that profile has no/nil model the flat field stays nil even when later profiles carry valid models, so consumers reading `Config.resolve([:llm, :model])` (flat) rather than `Schema.model_profiles/1` see nil.
+A first-profile model of `""` mirrors as `""`; canonical configs do not synthesize a flat mirror.
 
-**Disk shape after save**: `save_user_config/1` validates first, then `strip_flat_llm_fields/1` deletes the flat `[llm]` keys (`model, temperature, max_tokens, reasoning_effort, top_p, top_k, frequency_penalty, presence_penalty`) from the written TOML **only when `llm.models` is a non-empty list** — a profile-based config therefore has NO `[llm] model = ...` line on disk; the flat value reappears purely as a resolve-time mirror. `stringify_keys/1` drops nil values, so a nil-model profile round-trips without a `:model` key.
+**Disk shape after save**: when a nonempty providers list is present, `save_user_config/1` strips legacy `llm.models` and flat model/generation/auth/provider-options mirrors before serialization so only the canonical account inventory persists.
+For legacy-only configs, the same save path preserves `[[llm.models]]` and strips flat generation/model fields only when that legacy list is nonempty.
+`stringify_keys/1` drops nil values at every map level; legacy nil-model profiles therefore round-trip without a model key.
 
 ## OAuth / Subscription Auth
 Subscription (OAuth) auth spends an existing ChatGPT/Claude **login** instead of a per-token API key; the ONLY credential store is the managed file (the profile's `oauth_file`, default `<config_dir>/auth.json`) — ReqLLM-native JSON keyed by provider OAuth id `"openai-codex"` / `"anthropic"`, entries `type`/`access`/`refresh`/`expires`(ms)/`accountId` — `credentials.toml` never carries OAuth data.

@@ -75,6 +75,7 @@ defmodule EvoGit.Config.Schema do
           | :boolean
           | :model_spec
           | :model_profiles
+          | :provider_profiles
 
   @typedoc "A single config key's full schema metadata"
   @type schema_map :: %{
@@ -108,7 +109,7 @@ defmodule EvoGit.Config.Schema do
   end
 
   alias EvoGit.Config.EctoValidation
-  alias EvoGit.Config.Schema.{Definitions, LLM}
+  alias EvoGit.Config.Schema.{Definitions, LLM, ProviderProfiles}
 
   # ── Public API ──────────────────────────────────────────────────────
 
@@ -261,6 +262,10 @@ defmodule EvoGit.Config.Schema do
 
   # ── LLM Delegations ──────────────────────────────────────────────────
 
+  defdelegate provider_profiles(config), to: ProviderProfiles
+  defdelegate model_selections(config), to: ProviderProfiles
+  defdelegate resolve_model_spec(config, spec), to: ProviderProfiles
+
   defdelegate llm_generation_params(config), to: LLM
   defdelegate model_profiles(config), to: LLM
   defdelegate get_model_profile(config, id), to: LLM
@@ -268,9 +273,10 @@ defmodule EvoGit.Config.Schema do
 
   @doc """
   Returns the model profiles the runtime actually runs with for a resolved
-  config map: every `[[llm.models]]` profile, or a single synthesized legacy
-  `"default"` profile built from the flat `[llm]` / `[scheduler]` keys when no
-  profile is configured.
+  config map: canonical providers' default-model runtime projections, legacy
+  `[[llm.models]]` profiles, or a synthesized legacy `"default"` profile when
+  neither inventory is configured.
+  An invalid canonical inventory never falls back to stale legacy settings.
 
   This is the single source of truth for that fallback — `AgentScheduler.init/1`,
   `RemoteAPI.build_reload_opts/1` and `EvoGit.CatalogWarmup` all resolve model
@@ -280,8 +286,14 @@ defmodule EvoGit.Config.Schema do
   @spec effective_model_profiles(map()) :: [map()]
   def effective_model_profiles(config) when is_map(config) do
     case LLM.model_profiles(config) do
-      [] -> [LLM.build_legacy_default_profile(config)]
-      profiles -> profiles
+      [] ->
+        case safe_get_in(config, [:llm, :providers]) do
+          providers when is_list(providers) and providers != [] -> []
+          _ -> [LLM.build_legacy_default_profile(config)]
+        end
+
+      profiles ->
+        profiles
     end
   end
 end
