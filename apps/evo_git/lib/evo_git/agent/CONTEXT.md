@@ -61,7 +61,8 @@ A parent hands work to a child ONLY via the spawn call's `objective` STRING plus
 `model_spec` is the complete string-keyed selection (`provider_profile_id`, `model`, optional `reasoning_effort`), while the provider profile identifies account/slot ownership rather than a model-catalog entry.
 Scheduler admission owns `Schema.resolve_model_spec/2` and must populate the mutually consistent effective `llm_model`, `llm_generation_params`, configured `llm_context_window` and complete `model_spec` in agent state.
 The ordinary LLM call and compression consume those effective fields without re-resolving selection each turn, preserving provider options/OAuth and the configured context window rather than the catalog context limit.
-`SubagentProcessing` forwards the complete resolved parent selection and explicit `model_id_locked` flag through child `AgentSpec.new/5` opts, falling back to original spawn opts for older state shapes.
+`SubagentProcessing` forwards a locked parent's complete resolved selection as explicit `model_spec`, while an unlocked parent's selection travels as `default_model_spec` so each spawn still consults the model-selection script.
+The builder preserves `model_id_locked`, falls back to the original spec/opts for older state shapes, and omits absent canonical selectors so legacy-only inheritance never sends an explicit `model_spec: nil`.
 `Cost.recompute_for_agent/2` prices effective `llm_model` and obtains the peak/off-peak period from `model_spec["provider_profile_id"]`, falling back to legacy `model_id` only when the selection profile is absent.
 `Cost.period_for_provider_profile_id/1` names that account lookup explicitly, and `period_for_model_id/1` remains a compatible alias.
 Completion retains the complete selection in `llm_settings.model_spec` alongside effective model, generation parameters, legacy profile identity and compression threshold.

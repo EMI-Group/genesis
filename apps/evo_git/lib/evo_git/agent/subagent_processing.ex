@@ -230,12 +230,11 @@ defmodule EvoGit.Agent.SubagentProcessing do
     end)
   end
 
-  # Inherit the resolved selection, not just the provider-profile/slot id: two
-  # agents can use different catalog models or reasoning efforts on one account.
-  # The original spawn opts retain the task's explicit-selection lock, including
-  # on older AgentState shapes that do not carry that flag. Keep these values in
-  # AgentSpec.new/5's opts so both legacy and model_spec-aware schedulers can read
-  # them without requiring new struct fields at this boundary.
+  # Inherit the full effective selection, but only a locked choice is explicit:
+  # unlocked inheritance is a fallback so each spawn still consults the script.
+  # Original spawn opts retain the lock/selection for older AgentState shapes.
+  # Omit an absent canonical selection: model_spec: nil is an explicit invalid
+  # choice to the scheduler, not a request to inherit the legacy model id.
   defp inherited_model_opts(agent_id, parent_state) do
     parent_spec =
       case AgentScheduler.Store.get_sched_meta(agent_id) do
@@ -245,15 +244,22 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
     parent_opts = Map.get(parent_spec, :opts, [])
 
-    [
-      model_id: Map.get(parent_state, :model_id),
-      model_spec:
-        Map.get(parent_state, :model_spec) || Map.get(parent_spec, :model_spec) ||
-          Keyword.get(parent_opts, :model_spec),
-      model_id_locked:
-        Map.get(parent_state, :model_id_locked) == true or
-          Keyword.get(parent_opts, :model_id_locked, false) == true
-    ]
+    selection =
+      Map.get(parent_state, :model_spec) || Map.get(parent_spec, :model_spec) ||
+        Keyword.get(parent_opts, :model_spec) || Keyword.get(parent_opts, :default_model_spec)
+
+    locked? =
+      Map.get(parent_state, :model_id_locked) == true or
+        Keyword.get(parent_opts, :model_id_locked, false) == true
+
+    opts = [model_id: Map.get(parent_state, :model_id), model_id_locked: locked?]
+
+    if is_nil(selection) do
+      opts
+    else
+      key = if locked?, do: :model_spec, else: :default_model_spec
+      Keyword.put(opts, key, selection)
+    end
   end
 
   @doc """
