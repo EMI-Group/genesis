@@ -484,6 +484,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
         save_new_profile(view, %{
           "provider" => "anthropic",
           "default_model" => "claude-opus-5-5",
+          "models" => %{"0" => %{"model" => "claude-opus-5-5"}},
           "auth_mode" => "oauth",
           "oauth_file" => creds
         })
@@ -492,12 +493,14 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       assert html =~ "Provider profile saved."
 
       [profile] = current_models(view)
+      assert profile["models"] == [%{"model" => "claude-opus-5-5"}]
       assert profile["provider"] == "anthropic"
       assert profile["default_model"] == "claude-opus-5-5"
       assert profile["auth_mode"] == "oauth"
       assert profile["oauth_file"] == creds
 
       assert [persisted] = persisted_models()
+      assert persisted["models"] == profile["models"]
       assert persisted["auth_mode"] == "oauth"
       assert persisted["oauth_file"] == creds
     end
@@ -512,6 +515,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
         save_new_profile(view, %{
           "provider" => "anthropic",
           "default_model" => "claude-opus-5-5",
+          "models" => %{"0" => %{"model" => "claude-opus-5-5"}},
           "auth_mode" => "api_key",
           "oauth_file" => Path.join(dir, "claude-creds.json")
         })
@@ -520,10 +524,12 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       assert html =~ "Provider profile saved."
 
       [profile] = current_models(view)
+      assert profile["models"] == [%{"model" => "claude-opus-5-5"}]
       assert profile["auth_mode"] == "api_key"
       refute Map.has_key?(profile, "oauth_file")
 
       assert [persisted] = persisted_models()
+      assert persisted["models"] == profile["models"]
       assert persisted["auth_mode"] == "api_key"
       refute Map.has_key?(persisted, "oauth_file")
     end
@@ -556,6 +562,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
         save_new_profile(view, %{
           "provider" => "anthropic",
           "default_model" => "claude-opus-5-5",
+          "models" => %{"0" => %{"model" => "claude-opus-5-5"}},
           "auth_mode" => "oauth",
           "oauth_file" => "   "
         })
@@ -564,10 +571,12 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       assert html =~ "Provider profile saved."
 
       [profile] = current_models(view)
+      assert profile["models"] == [%{"model" => "claude-opus-5-5"}]
       assert profile["auth_mode"] == "oauth"
       refute Map.has_key?(profile, "oauth_file")
 
       assert [persisted] = persisted_models()
+      assert persisted["models"] == profile["models"]
       assert persisted["auth_mode"] == "oauth"
       refute Map.has_key?(persisted, "oauth_file")
     end
@@ -578,17 +587,23 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html =
-        save_new_profile(view, %{"provider" => "openai_codex", "default_model" => "gpt-5.6-terra"})
+        save_new_profile(view, %{
+          "provider" => "openai_codex",
+          "default_model" => "gpt-5.6-terra",
+          "models" => %{"0" => %{"model" => "gpt-5.6-terra"}}
+        })
 
       assert assigns(view).flash == %{"info" => "Provider profile saved."}
       assert html =~ "Provider profile saved."
 
       [profile] = current_models(view)
+      assert profile["models"] == [%{"model" => "gpt-5.6-terra"}]
       assert profile["provider"] == "openai_codex"
       assert profile["default_model"] == "gpt-5.6-terra"
       assert profile["auth_mode"] == "oauth"
 
       assert [persisted] = persisted_models()
+      assert persisted["models"] == profile["models"]
       assert persisted["auth_mode"] == "oauth"
       refute Map.has_key?(persisted, "oauth_file")
     end
@@ -742,9 +757,6 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     assert assigns(view).file_config == before
     assert assigns(view).editing_profile_id == :new
     draft = assigns(view).profile_form_draft
-    # Default-only providers are valid: model rows are optional overrides, not
-    # an allowlist. Do not fabricate one to appease core validation.
-    assert draft["models"] == []
 
     render_hook(
       view,
