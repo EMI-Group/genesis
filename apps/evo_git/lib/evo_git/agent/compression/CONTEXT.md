@@ -41,6 +41,17 @@ Usage is charged wherever the request was billed: the adopted-prune path leaves 
 | `EvoGit.Agent.Compression.Checkpoint` | `checkpoint.ex` | `split(messages, opts \\ [])` → `%{head:, old:, recent:}` (opts `:keep_recent_turns`, `:context_window`, `:tail_budget_fraction`, `:tail_budget_tokens`); `build(messages, summary, opts \\ [])` → `%{messages:, replaced:, kept:, estimated_tokens:, pre_estimate:, budget:, shrunk:}` (the SAME opts plus `:keep_recent_turns`; a `:turn` opt is ignored); `checkpoint_message(summary, _turn \\ nil)` (never turn-tagged, carries `metadata[:checkpoint] = true`); `checkpoint?/1` (delegates to `Recency.synthetic?/1`); `prior_summary/1` |
 | `EvoGit.Agent.Compression.LlmRetry` | `llm_retry.ex` | `summarise(agent_id, llm_model, context, gen_opts)` → `{:ok, response} \| {:error, {:llm_request_rejected, message}}`; `max_attempts/0` |
 
+## Prompt-Cache Stability (which bytes change, and when)
+
+- **Nothing in this directory runs on a turn that does not cross the threshold** — `compress_if_needed/2` returns the caller's own `%LoopState{}` untouched (`context_compression.ex:180`), and `ToolResultPruner.prune/1`, `Checkpoint.split|build/2,3` and `Recency.shrink_to_budget/2` have NO caller outside `context_compression.ex`, so the request bytes are append-only between compression events.
+- **The trigger reads the LATEST provider-reported count, replaced each turn** (`ToolDispatch.update_turn_usage/2`, not a running sum), and both rebuild paths reset `state.total_tokens` to 0 — so compression re-fires only after the transcript regrows by roughly `threshold − post-compression size`.
+- **A compaction storm is the one shape that changes bytes EVERY turn**: a rebuilt transcript still above the threshold crosses again on the very next turn, and each event writes a fresh LLM summary, rewrites the MIDDLE and swaps the refresh.
+- **Every event — including the "nothing older to replace" and blank-summary paths — deletes the previous refresh message from the MIDDLE** (`keep_context/5` → `drop_stale_refreshes/1`), so even a no-op compaction shifts every position after that message.
+- **Stage 2 is the only whole-history reset**: `head ++ [checkpoint] ++ recent` inserts ONE new UNTAGGED `:user` message at index 2 and drops everything between index 2 and the boundary, so the provider's cacheable prefix is invalid from message #3 onward.
+- **Stage 1, when adopted, rewrites MIDDLE `:tool` text in place** (head + marker + tail, media collapsed to a placeholder); when it is rejected the pruned list is DISCARDED, so a rejected prune costs no cache.
+- **`Recency` never decides what the provider sees on its own**: `boundary/3` is recomputed inside each event and never cached, and `shrink_to_budget/2` runs only from `Checkpoint.fit_tail/4`, so boundary drift between turns cannot break a prefix.
+- **`[system, first_user]` is byte-stable, its run-start `Current local time:` line included** (`@head_size 2`); only an appended refresh carries a newer clock.
+
 ## Constraints
 
 - **`[system, first_user]` stays BYTE-IDENTICAL** and the last K turns stay VERBATIM (metadata, turn tags, `tool_call_id`/`tool_calls` pairing intact) — while the retained tail FITS `Recency.tail_budget/1` the provider's cached prefix survives every compression.
