@@ -2,7 +2,7 @@
 
 ## Intent
 
-ExUnit suites for the function components in `apps/evo_dash/lib/evo_dash_web/components/` (one test file per component module, 369 tests total).
+ExUnit suites for the function components in `apps/evo_dash/lib/evo_dash_web/components/`, including isolated shared-picker and task-form provider-selection integration contracts.
 All suites are `async: true`, import `Phoenix.LiveViewTest`, and render with `render_component/2` + Floki — Floki is always fed a PARSED tree (each file has its own `parse/1` = `Floki.parse_document!/1`, because `Floki.find/2` + `attribute/2` reject a raw binary).
 There is **no `live(...)` call anywhere in this directory**: every component is rendered in ISOLATION.
 
@@ -25,14 +25,16 @@ There is **no `live(...)` call anywhere in this directory**: every component is 
 | `custom_agents_editor_test.exs` | `EvoDashWeb.SettingsComponents.CustomAgentsEditorTest` | 2 / 7 — the editor's extra "Custom tools" chip group + alias-aware comparisons |
 | `custom_tools_panel_test.exs` | `EvoDashWeb.CustomToolsPanelTest` | 2 / 22 — `custom_tools_panel/1` render contract + pure `custom_tool_names/1` |
 | `layouts_test.exs` | `EvoDashWeb.LayoutsTest` | 3 / 7 — `Layouts.app/1` sidebar task grouping, Assistant navigation, keyboard focus, and responsive configuration warning |
+| `llm_selection_components_test.exs` | `EvoDashWeb.LLMSelectionComponentsTest` | 27 async tests — reasoning range rendering/resolution, provider scoping, fallback, unavailable/empty states, events and accessibility |
+| `task_form_provider_selection_test.exs` | `EvoDashWeb.TaskFormProviderSelectionTest` | 20 async tests — provider-picker activation/placement, legacy fallback/suppression, forwarding, scoping and quality independence |
 | `category_metadata_test.exs` | `EvoDashWeb.CategoryMetadataTest` | 2 / 4 — pure `SettingsComponents.CategoryMetadata` units |
 
 ## Coverage Boundary — shared LLM selection
-There is no dedicated `llm_selection_components_test.exs` in this directory and no component test references `LLMSelectionComponents`, `resolve_reasoning_effort/3`, `provider_profiles`, `model_selections`, or `model_spec`.
-Existing selection render pins in `task_form_components_test.exs` exercise only the legacy `model_profiles` / `selected_model_id` toolbar select, not the provider-profile picker branch.
+`llm_selection_components_test.exs` pins `LLMSelectionComponents.llm_selection/1` and `resolve_reasoning_effort/3` against string-keyed provider profiles/model specs and atom-keyed model-selection projections.
+Shared-picker coverage includes first/middle/last integer and string indices, invalid-index rejection, singleton disabled ranges, empty inventories, default/first-effort fallback, exact provider-profile scoping for duplicate model names, unavailable selections, event overrides and unique accessibility ids.
+`task_form_provider_selection_test.exs` pins the `#task-llm-selection` row above `.input-controls`, independent activation by all three data attrs, legacy-select suppression/fallback, event/Auto forwarding, disabled-state hiding and reasoning-effort independence from `quality_level`.
+Existing selection render pins in `task_form_components_test.exs` preserve the legacy `model_profiles` / `selected_model_id` toolbar-select contract.
 Settings field/disclosure pins in `model_profiles_editor_test.exs` and subscription credential-state pins in `model_profiles_editor_auth_test.exs` exercise the legacy `ModelProfilesEditor`, not `SettingsComponents.ProviderProfilesEditor`.
-Missing shared-picker coverage includes first/middle/last reasoning indices, invalid-index rejection, singleton disabled-range behavior, default-effort fallback, exact provider-profile scoping for duplicate model names, unavailable selections, empty states, event overrides, and unique/accessibility ids.
-Missing task-form integration render pins include the `#task-llm-selection` row above `.input-controls`, all three branch-enabling attrs, legacy-select suppression, event/Auto forwarding, disabled-state hiding, and reasoning-effort independence from `quality_level`.
 Component suites own isolated markup, event payload attributes and pure helper contracts; mounted event handling, persistence, node-aware loading and task-option threading belong to the separate LiveView test subtree.
 ## Coverage Boundary — review-page components
 
