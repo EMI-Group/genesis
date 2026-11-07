@@ -102,7 +102,11 @@ defmodule EvoGit.AgentScheduler.ModelSelection do
   end
 
   def inherit(spec, %{model_id_locked: true} = parent) do
-    %{spec | model_id: parent.model_id, opts: Keyword.put(spec.opts, :model_id_locked, true)}
+    # A legacy lock has no canonical selection to copy. Remove both child
+    # selection sources so explicit-spec resolution cannot override the lock.
+    opts = spec.opts |> Keyword.delete(:model_spec) |> Keyword.put(:model_id_locked, true)
+    spec = %{spec | model_id: parent.model_id, opts: opts}
+    if Map.has_key?(spec, :model_spec), do: Map.put(spec, :model_spec, nil), else: spec
   end
 
   def inherit(spec, _parent), do: spec
