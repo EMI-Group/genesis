@@ -81,8 +81,8 @@ defmodule EvoGit.CLI.Parser do
   @doc """
   Parses task-level model selection without reading configuration.
 
-  `--provider-profile <id> --model <model>` selects an arbitrary model under
-  a configured provider profile, optionally with `--reasoning-effort <effort>`.
+  `--provider-profile <id> --model <model>` selects a model from a configured
+  provider profile's inventory, optionally with `--reasoning-effort <effort>`.
   The model is kept verbatim (including colons); profile/model resolution and
   effort validation belong to `Schema.resolve_model_spec`, not this parser.
 

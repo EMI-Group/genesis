@@ -18,6 +18,9 @@ Parsing stays pure and setup persists only through `EvoGit.Config` and imports s
 - Setup saves canonical `[llm].default_provider_profile` and `[[llm.providers]]`, without a legacy `llm.model` mirror or top-level `llm.models` list.
 - `Schema.provider_profiles/1` is the migration boundary for existing flat/model-profile configurations; setup consumes its list of canonical profiles instead of duplicating migration logic.
 - A setup run updates the configured default account when it belongs to the selected provider, preserving concurrency, peak settings, effort/generation defaults, account settings and nested model overrides.
+- With no explicit default-provider ID, setup follows Schema's first-account default rather than privileging an account named `default`, and an unresolved explicit ID never falls back to overwriting an unrelated account.
+- The chosen model must appear in the provider's ordered `models` inventory: setup appends it only when absent, preserves an existing model entry verbatim, and sets `default_model` to that model.
+- New profiles carry an empty `reasoning_efforts` list matching Schema normalization so repeated setup does not add normalization-only fields or duplicate inventory entries.
 - A different provider gets a new unique profile ID, preserving existing accounts and making the new profile the default; an empty configuration starts with ID `default` and concurrency 3.
 - The chosen model becomes the provider profile's `default_model`, with `provider` stored as a string and catalog endpoint options copied onto that provider profile.
 - Real TOML string-keyed maps recurse through lists as well as maps before profile lookup, preventing duplicate profiles on repeated setup.

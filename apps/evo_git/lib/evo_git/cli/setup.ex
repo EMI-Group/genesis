@@ -438,14 +438,17 @@ defmodule EvoGit.CLI.Setup do
     model = setup_model(model)
     provider = to_string(model.provider)
     default_id = Map.get(llm, :default_provider_profile)
-    current = Enum.find(profiles, &(&1[:id] == default_id))
+    # Match Schema's default selection: absent an explicit ID, the FIRST
+    # account wins, not an unrelated account that happens to be named "default".
+    current =
+      if is_nil(default_id),
+        do: List.first(profiles),
+        else: Enum.find(profiles, &(&1[:id] == default_id))
 
     # Updating an account on the same provider preserves its shared limits,
     # generation defaults, nested model overrides and custom OAuth path.
     # Choosing a different provider creates another profile rather than
     # overwriting an existing account's endpoint/authentication settings.
-    current =
-      current || Enum.find(profiles, &(&1[:id] == "default")) || List.first(profiles)
 
     {profile, profiles} =
       if current && to_string(current[:provider]) == provider do
@@ -453,7 +456,14 @@ defmodule EvoGit.CLI.Setup do
         {profile, Enum.map(profiles, fn p -> if p[:id] == current[:id], do: profile, else: p end)}
       else
         id = available_profile_id(profiles, if(profiles == [], do: "default", else: provider))
-        profile = update_provider_profile(%{id: id, concurrency: 3}, model, auth_mode)
+
+        profile =
+          update_provider_profile(
+            %{id: id, concurrency: 3, reasoning_efforts: []},
+            model,
+            auth_mode
+          )
+
         {profile, profiles ++ [profile]}
       end
 
@@ -467,9 +477,19 @@ defmodule EvoGit.CLI.Setup do
   end
 
   defp update_provider_profile(profile, model, auth_mode) do
+    models = Map.get(profile, :models, [])
+
+    # The default must belong to the account's ordered inventory. Keep an
+    # existing entry verbatim so its per-model limits/efforts are not erased.
+    models =
+      if Enum.any?(models, &(&1[:model] == model.id)),
+        do: models,
+        else: models ++ [%{model: model.id}]
+
     profile
     |> Map.merge(Map.drop(model, [:id]))
     |> Map.put(:provider, to_string(model.provider))
+    |> Map.put(:models, models)
     |> Map.put(:default_model, model.id)
     |> apply_auth_mode(auth_mode)
   end
