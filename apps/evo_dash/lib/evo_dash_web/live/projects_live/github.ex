@@ -27,6 +27,7 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
   alias EvoDash.SafeCall
   alias EvoDashWeb.GitHubComponents
   alias EvoDashWeb.LiveHooks.NodeAware
+  alias EvoDashWeb.ProjectsLive.LaunchOptions
 
   @doc """
   The default `:github_issues` assign — modal closed, filter "open".
@@ -277,8 +278,9 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
   end
 
   # Starts the `:evolve` fix task exactly following the existing `task_submit`
-  # start flow: path/mode/objective opts, foreign repos and the selected model
-  # id threaded when present, local vs remote start split. The objective is an
+  # start flow: path/mode/objective opts, foreign repos and the shared
+  # LaunchOptions model-spec lock/agent/quality policy, then local vs remote
+  # start split. The objective is an
   # agent prompt — plain string interpolation, NOT gettext. The markdown
   # already embeds the issue's title, URL, state, labels, and body so the
   # agent has full context.
@@ -300,28 +302,23 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
         do: Keyword.put(opts, :foreign_repos, foreign_repos),
         else: opts
 
-    selected_model_id = socket.assigns[:selected_model_id]
-
-    opts =
-      if is_binary(selected_model_id) and selected_model_id != "",
-        do: Keyword.put(opts, :model_id, selected_model_id),
-        else: opts
-
     # Exit-safe launch: the local store / remote `:erpc` call can EXIT this
     # LiveView (dead/timed-out target), so it goes through `EvoDash.SafeCall`
     # and lands on the existing "Failed to start task" flash. The wrapper is
     # FLATTENED so the result keeps `start_task`'s `{:ok, task} | {:error, _}`
     # shape.
     start_result =
-      case SafeCall.run(fn ->
-             if socket.assigns.remote? do
-               NodeContext.start_task(socket.assigns.current_node, :evolve, opts)
-             else
-               TaskRegistry.start_task(:evolve, opts)
-             end
-           end) do
-        {:ok, start_result} -> start_result
-        {:error, reason} -> {:error, reason}
+      with {:ok, opts} <- LaunchOptions.apply(opts, socket.assigns) do
+        case SafeCall.run(fn ->
+               if socket.assigns.remote? do
+                 NodeContext.start_task(socket.assigns.current_node, :evolve, opts)
+               else
+                 TaskRegistry.start_task(:evolve, opts)
+               end
+             end) do
+          {:ok, start_result} -> start_result
+          {:error, reason} -> {:error, reason}
+        end
       end
 
     case start_result do
