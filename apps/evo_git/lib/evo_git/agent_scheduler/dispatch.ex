@@ -81,7 +81,18 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     # identity stays separate from the legacy selection id and request model.
     resolved_model_id = selection.model_id
     resolved_model = selection.llm_model
-    resolved_params = selection.llm_generation_params
+
+    # A per-AGENT-RUN cache/routing identity: every turn of this agent (and
+    # every retry/compression call it makes) shares one provider cache key,
+    # while distinct agents/subagents get distinct ones. Provider-gated inside
+    # the helper, so non-OpenAI params stay byte-identical.
+    resolved_params =
+      EvoGit.Config.Schema.LLM.with_cache_identity(
+        selection.llm_generation_params,
+        cache_identity_scope(task_id, id),
+        resolved_model
+      )
+
     resolved_context_window = selection.llm_context_window
 
     Store.put_agent_state(id, %AgentState{
@@ -134,6 +145,15 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     state = %{state | next_agent_id: id + 1}
     {id, state}
   end
+
+  # The conversation scope for a registered agent: the task id (16-hex GUID)
+  # plus the scheduler-unique agent id makes it stable across every turn of the
+  # run and distinct across agents/subagents. A missing task id still gets a
+  # per-agent scope rather than none.
+  defp cache_identity_scope(task_id, agent_id) when is_binary(task_id) and task_id != "",
+    do: "genesis-#{task_id}-#{agent_id}"
+
+  defp cache_identity_scope(_task_id, agent_id), do: "genesis-agent-#{agent_id}"
 
   @doc """
   Computes the next task number by scanning the `.genesis/workers/` directory.

@@ -494,6 +494,81 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
     end
   end
 
+  describe "register_agent/7 provider prompt-cache identity" do
+    # A legacy OpenAI selection is enough to exercise the injection: the
+    # provider-gating itself is covered by
+    # `test/evo_git/config/schema/llm_cache_identity_test.exs`.
+    defp cache_state do
+      %{
+        State.from_model_profiles([
+          %{id: "openai", model: "openai:gpt-4o", concurrency: 3}
+        ])
+        | next_agent_id: :erlang.unique_integer([:positive, :monotonic])
+      }
+    end
+
+    defp cache_spec do
+      %AgentSpec{
+        context_node: %ContextNode{path: "./", repo: "/home/user/primary"},
+        phylo_node: %PhyloGraphNode{
+          repo: "/home/user/primary",
+          base_commit: "abc123",
+          current_commit: "abc123"
+        },
+        agent_module: DummyAgent,
+        objective: "cache identity",
+        repo_id: "primary",
+        model_id: "openai",
+        opts: [model_id_locked: true]
+      }
+    end
+
+    defp register_with_cache(state, task_id, task_number) do
+      {agent_id, state} =
+        Dispatch.register_agent(state, cache_spec(), nil, nil, 0, task_id, task_number)
+
+      on_exit(fn ->
+        Store.delete_agent_state(agent_id)
+        Store.delete_sched_meta(agent_id)
+      end)
+
+      {:ok, agent_state} = Store.get_agent_state(agent_id)
+      {agent_id, state, agent_state}
+    end
+
+    test "persists a :prompt_cache_key in the provider options" do
+      task_id = "task-cache-#{:erlang.unique_integer([:positive])}"
+      {_id, _state, agent_state} = register_with_cache(cache_state(), task_id, 1)
+
+      provider_options = Keyword.fetch!(agent_state.llm_generation_params, :provider_options)
+      key = Keyword.fetch!(provider_options, :prompt_cache_key)
+
+      assert key =~ task_id
+      # `session_id` is NOT part of the :openai provider schema.
+      refute Keyword.has_key?(provider_options, :session_id)
+      # The existing native-OpenAI default survives.
+      assert Keyword.fetch!(provider_options, :store) == false
+    end
+
+    test "two registered agents of the SAME task get DISTINCT cache keys" do
+      task_id = "task-cache-#{:erlang.unique_integer([:positive])}"
+      state = cache_state()
+      {first_id, state, first} = register_with_cache(state, task_id, 1)
+      {second_id, _state, second} = register_with_cache(state, task_id, 2)
+
+      assert first_id != second_id
+
+      first_options = Keyword.fetch!(first.llm_generation_params, :provider_options)
+      second_options = Keyword.fetch!(second.llm_generation_params, :provider_options)
+      first_key = Keyword.fetch!(first_options, :prompt_cache_key)
+      second_key = Keyword.fetch!(second_options, :prompt_cache_key)
+
+      refute first_key == second_key
+      assert first_key =~ task_id
+      assert second_key =~ task_id
+    end
+  end
+
   # --- try_dispatch: no worktree I/O ---
 
   describe "try_dispatch/2 performs no worktree I/O" do

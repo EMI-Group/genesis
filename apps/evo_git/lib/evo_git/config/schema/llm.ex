@@ -50,6 +50,12 @@ defmodule EvoGit.Config.Schema.LLM do
   # Default context window (tokens) for context-compression decisions when a
   # model profile carries no explicit `context_window`.
   @default_context_window 200_000
+  # Providers whose request path understands a prompt-cache/routing identity.
+  # An UNDECLARED `provider_options` key is a hard request-time validation
+  # error for every other provider, so this gate is mandatory.
+  @cache_identity_providers [:openai, :openai_codex]
+  @cache_identity_prefix "genesis-"
+  @cache_identity_max_length 64
 
   # Normalizes the metadata-source result (app-env seam or catalog lookup) to the
   # documented `%{limits:, capabilities:}` / `nil` contract.
@@ -418,6 +424,87 @@ defmodule EvoGit.Config.Schema.LLM do
   end
 
   def provider_from_model(_other), do: nil
+
+  @doc """
+  Attaches a stable, per-conversation cache/routing identity to request params.
+  OpenAI's prompt cache is keyed by the request PREFIX **and** a cache/routing
+  identity. ReqLLM derives none of its own — it sends `prompt_cache_key` only
+  when the caller supplies one (`provider_options[:prompt_cache_key] ||
+  provider_options[:session_id]`), and codex's `session-id`/`thread-id` headers
+  likewise exist only when supplied — so without an identity every turn of an
+  otherwise byte-stable conversation misses the cache.
+  The identity is derived from `conversation_id` and is stable for the whole
+  life of that conversation (one agent run), which is exactly the granularity
+  the provider caches at.
+  ## Provider gating
+  Only `:openai` and `:openai_codex` understand these options; an undeclared
+  `provider_options` key is a hard request-time error everywhere else, so every
+  other provider's params are returned byte-identical.
+  - `:openai_codex` gets `prompt_cache_key:` AND `session_id:` (the latter also
+    emits the `session-id` header, matching Codex CLI parity).
+  - `:openai` gets `prompt_cache_key:` only (`session_id` is not in the
+    `:openai` provider schema and would fail validation).
+  ## Explicit user configuration wins
+  When `provider_options` already carries `:prompt_cache_key` (or, for
+  `:openai_codex`, `:session_id`, which already implies the cache key), the
+  params are returned untouched. Otherwise the appended keys extend the EXISTING
+  `provider_options` list — they never replace it, so `auth_mode: :oauth` and
+  `oauth_file:` survive.
+  """
+  @spec with_cache_identity(keyword(), String.t() | nil, term()) :: keyword()
+  def with_cache_identity(params, conversation_id, model) do
+    provider = provider_from_model(model)
+
+    if Keyword.keyword?(params) and is_binary(conversation_id) and conversation_id != "" and
+         provider in @cache_identity_providers do
+      provider_options = Keyword.get(params, :provider_options, [])
+
+      cond do
+        # An option list we do not understand is left byte-identical rather
+        # than guessed at.
+        not Keyword.keyword?(provider_options) ->
+          params
+
+        # Explicit user configuration always wins.
+        Keyword.has_key?(provider_options, :prompt_cache_key) ->
+          params
+
+        provider == :openai_codex and Keyword.has_key?(provider_options, :session_id) ->
+          params
+
+        true ->
+          key = cache_identity(conversation_id)
+
+          additions =
+            case provider do
+              :openai_codex -> [prompt_cache_key: key, session_id: key]
+              :openai -> [prompt_cache_key: key]
+            end
+
+          Keyword.put(params, :provider_options, provider_options ++ additions)
+      end
+    else
+      params
+    end
+  end
+
+  # Deterministic, ASCII, <= 64 characters. The readable `genesis-<id>` form is
+  # used when it fits; otherwise (too long, or non-ASCII) the SHA-256 digest is
+  # url-base64 encoded so the provider key is always well-formed and bounded.
+  defp cache_identity(conversation_id) do
+    readable = @cache_identity_prefix <> conversation_id
+
+    if byte_size(readable) <= @cache_identity_max_length and ascii?(readable) do
+      readable
+    else
+      @cache_identity_prefix <>
+        Base.url_encode64(:crypto.hash(:sha256, conversation_id), padding: false)
+    end
+  end
+
+  defp ascii?(binary) do
+    Enum.all?(:binary.bin_to_list(binary), fn byte -> byte >= 0x20 and byte <= 0x7E end)
+  end
 
   @doc """
   Returns the appropriate `provider_options` keyword list for a given model spec.
