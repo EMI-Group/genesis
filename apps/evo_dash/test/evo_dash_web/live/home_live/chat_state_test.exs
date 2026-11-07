@@ -137,10 +137,192 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
     end
   end
 
+  describe "provider-profile selection persistence" do
+    test "round-trips only picker fields, never the credential-bearing snapshot or bundle" do
+      scope = {nil, node()}
+
+      spec = %{
+        "provider_profile_id" => "work-account",
+        "model" => "reasoned-model",
+        "reasoning_effort" => "high"
+      }
+
+      state =
+        ChatState.build(%{
+          model_spec: spec,
+          model_selection_scope: scope,
+          selected_model_id: "obsolete-id",
+          model_snapshot: %{config: %{api_key: "secret"}},
+          model_selection_bundle: %{config: %{api_key: "secret"}},
+          provider_profiles: [%{"api_key" => "secret"}],
+          model_selections: [%{model: "reasoned-model"}],
+          model_select_loading: true,
+          model_select_seq: 7,
+          model_select_load_error: :unavailable
+        })
+
+      expected =
+        Map.merge(@default_state, %{
+          model_spec: spec,
+          model_selection_scope: scope,
+          model_selection_error: nil
+        })
+
+      assert state == expected
+      assert ChatState.restore(state) == expected
+      assert ChatState.restore_selection(state, scope) == Map.take(expected, selection_keys())
+    end
+
+    test "nil is uninitialized, an empty map is explicit Auto, and neither is malformed" do
+      scope = {nil, node()}
+
+      for spec <- [nil, %{}] do
+        state = ChatState.build(%{model_spec: spec, model_selection_scope: scope})
+        restored = ChatState.restore(state)
+        assert restored.model_spec == spec
+        assert restored.model_selection_error == nil
+        assert ChatState.restore_selection(restored, scope).model_spec == spec
+      end
+
+      auto = ChatState.build(%{model_spec: %{}, selected_model_id: "old-pin"})
+      assert auto.selected_model_id == nil
+      assert ChatState.restore(auto).model_spec == %{}
+    end
+
+    test "malformed specs remain errors across repeated persistence, never becoming Auto" do
+      scope = {nil, node()}
+
+      for spec <- [
+            false,
+            "work-account",
+            [],
+            %{"model" => 42},
+            %{provider_profile_id: "work-account"},
+            %{"provider_profile_id" => "work-account", "api_key" => "secret"}
+          ] do
+        state =
+          ChatState.build(%{
+            model_spec: spec,
+            model_selection_scope: scope,
+            selected_model_id: "old-pin"
+          })
+
+        expected = %{
+          model_spec: nil,
+          model_selection_scope: scope,
+          model_selection_error: :invalid_model_spec,
+          selected_model_id: nil
+        }
+
+        assert Map.take(state, selection_keys()) == expected
+        assert ChatState.restore_selection(state, scope) == expected
+
+        # A normalized nil spec must not erase the error on the next save/mount.
+        assert state |> ChatState.restore() |> ChatState.build() |> ChatState.restore() == state
+      end
+    end
+
+    test "persistence validates shape only, leaving defaults and stale membership to the resolver" do
+      scope = {nil, node()}
+
+      for spec <- [
+            %{"provider_profile_id" => "removed-account"},
+            %{"provider_profile_id" => "", "model" => ""},
+            %{"model" => "removed-model", "reasoning_effort" => "unsupported"}
+          ] do
+        state = ChatState.build(%{model_spec: spec, model_selection_scope: scope})
+        assert state.model_spec == spec
+        assert state.model_selection_error == nil
+        assert ChatState.restore_selection(state, scope).model_spec == spec
+      end
+    end
+  end
+
+  describe "restore_selection/2 node scoping and legacy migration" do
+    test "a saved choice survives only the exact target-id and BEAM-node pair" do
+      scope = {"server-a", :assistant_remote@host}
+
+      state = %{
+        model_spec: %{"provider_profile_id" => "work-account", "model" => "fast-model"},
+        model_selection_scope: scope
+      }
+
+      assert ChatState.restore_selection(state, scope) ==
+               Map.merge(state, %{selected_model_id: nil, model_selection_error: nil})
+
+      for other_scope <- [
+            {nil, node()},
+            {"server-b", :assistant_remote@host},
+            {"server-a", :replacement@host},
+            # Disconnected targets share a local fallback node but NOT an id.
+            {"server-a", node()}
+          ] do
+        assert ChatState.restore_selection(state, other_scope) == empty_selection(other_scope)
+      end
+    end
+
+    test "pending remote ids do not borrow each other's or the local pin" do
+      scope = {"pending-a", node()}
+      state = %{model_spec: %{}, model_selection_scope: scope}
+      assert ChatState.restore_selection(state, scope).model_spec == %{}
+
+      assert ChatState.restore_selection(state, {"pending-b", node()}) ==
+               empty_selection({"pending-b", node()})
+
+      assert ChatState.restore_selection(state, {nil, node()}) == empty_selection({nil, node()})
+    end
+
+    test "unscoped legacy ids migrate locally only, without inventing a canonical spec" do
+      for id <- ["legacy:account:with:colons", "removed-id"] do
+        state = %{selected_model_id: id}
+        restored = ChatState.restore(state)
+        refute Map.has_key?(restored, :model_spec)
+        refute Map.has_key?(restored, :model_selection_scope)
+
+        assert ChatState.restore_selection(restored, {nil, node()}) ==
+                 %{empty_selection({nil, node()}) | selected_model_id: id}
+
+        for scope <- [{"remote", :assistant_remote@host}, {"pending", node()}] do
+          assert ChatState.restore_selection(restored, scope) == empty_selection(scope)
+        end
+      end
+    end
+
+    test "an explicit unscoped spec cannot use the legacy-local migration exception" do
+      state = %{model_spec: %{}, selected_model_id: "legacy-id"}
+      assert ChatState.restore_selection(state, {nil, node()}) == empty_selection({nil, node()})
+    end
+
+    test "malformed scopes and non-map state cannot restore a pin" do
+      for scope <- [nil, "remote", {"", node()}, {false, node()}, {nil, nil}, {nil, "node"}] do
+        state = %{model_spec: %{}, model_selection_scope: scope, selected_model_id: "legacy-id"}
+        assert ChatState.restore_selection(state, scope) == empty_selection(nil)
+        assert ChatState.restore(state).model_selection_scope == nil
+      end
+
+      for state <- [nil, false, 42, [], "garbage"] do
+        assert ChatState.restore_selection(state, {nil, node()}) == empty_selection({nil, node()})
+      end
+    end
+  end
+
+  defp selection_keys do
+    [:model_spec, :selected_model_id, :model_selection_scope, :model_selection_error]
+  end
+
+  defp empty_selection(scope) do
+    %{
+      model_spec: nil,
+      selected_model_id: nil,
+      model_selection_scope: scope,
+      model_selection_error: nil
+    }
+  end
+
   describe "normalize_model_id/1" do
-    test "non-empty binaries are kept as-is; everything else becomes nil (Auto)" do
-      # Auto is the empty string from the select; whitespace ids are NOT trimmed
-      # by design — a whitespace-only binary IS a non-empty binary.
+    test "non-empty legacy ids are kept as migration input; everything else becomes nil" do
+      # This validates shape, not membership: nil is uninitialized, not explicit
+      # Auto (%{}). Whitespace ids survive for the resolver to reject.
       for {input, expected} <- [
             {nil, nil},
             {"", nil},
