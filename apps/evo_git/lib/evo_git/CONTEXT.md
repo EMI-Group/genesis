@@ -185,6 +185,10 @@ PeakHourEngine accepts canonical string keys for profile ids and schedule fields
 ReqLLMPool sums the scheduler's account-keyed `model_concurrency` map once per account, never the number of model selections in an account inventory.
 SystemCheck resolves default selections, provider-profile ids and explicit task selection maps through the schema before testing the resolved ReqLLM identifier and generation params, while retaining support for raw ReqLLM identifiers.
 CatalogWarmup's `effective_model_profiles/1` path remains provider-compatible through the schema's default-model runtime projections, which warm the shared catalog in its throwaway process before scheduler boot.
+`CLI.configured_model_profiles/0` still reads only `llm.models` and `resolve_model_opt/1` resolves against that list, so a canonical-only `llm.providers` configuration rejects every explicit `-m` before enqueue despite being runnable with the default selection.
+`CustomAgents` definition persistence and `CustomAgents.ModelSelector` still expose only legacy model-id selection rather than a first-class canonical `model_spec`; exact dropped/rejected-map cases are documented in `custom_agents/CONTEXT.md`.
+`Auth.managed_file_unwritable_remedy/2` still instructs users to put `oauth_file` in `[[llm.models]]`, although canonical accounts require the setting on the matching `[[llm.providers]]` entry and suppress legacy fallback.
+`PeakHours.effective_concurrency/2,3` intentionally consumes atom-keyed concurrency fields; `PeakHourEngine.effective_for_profile/3` translates canonical string-keyed account schedules before calling it, so that low-level shape alone is not an integration defect.
 
 ## Assistant direct runtime APIs (top-level wrapper contracts)
 The evaluator admits individual MFAs explicitly, never whole namespaces; the authoritative tier-specific lists live in `agent/tools/elixir_eval/CONTEXT.md`, and documenting neighboring APIs below does not grant access to them.
