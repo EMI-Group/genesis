@@ -421,6 +421,40 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   end
 
   describe "profile save round-trip (auth_mode / oauth_file persistence)" do
+    test "editing a legacy OAuth row writes providers and removes the legacy shadow", %{
+      conn: conn,
+      config_root: dir
+    } do
+      seed_oauth_profiles(dir)
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "edit_model_profile", %{"profile_id" => @oauth_profile})
+      draft = assigns(view).profile_form_draft
+      assert draft["provider"] == "anthropic"
+      assert draft["default_model"] == "claude-opus-5-5"
+      assert draft["auth_mode"] == "oauth"
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => @oauth_profile,
+          "profile_id_new" => "renamed",
+          "name" => "Edited subscription"
+        })
+
+      assert html =~ "Provider profile saved."
+      assert assigns(view).editing_profile_id == nil
+      assert length(current_models(view)) == 4
+      persisted = persisted_models()
+      assert Enum.map(persisted, & &1["id"]) == ["renamed", "profile-2", "profile-3", "profile-4"]
+      edited = hd(persisted)
+      assert edited["provider"] == "anthropic"
+      assert edited["default_model"] == "claude-opus-5-5"
+      assert edited["models"] == [%{"model" => "claude-opus-5-5"}]
+      assert edited["name"] == "Edited subscription"
+      assert edited["auth_mode"] == "oauth"
+      assert edited["oauth_file"] == draft["oauth_file"]
+      refute Map.has_key?(edited, "model")
+    end
+
     test "an OAuth anthropic profile persists both keys to config.toml", %{
       conn: conn,
       config_root: dir
@@ -431,24 +465,25 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       html =
         save_new_profile(view, %{
           "provider" => "anthropic",
-          "model_id" => "claude-opus-5-5",
+          "default_model" => "claude-opus-5-5",
           "auth_mode" => "oauth",
           "oauth_file" => creds
         })
 
-      assert html =~ "Model profile saved."
+      assert html =~ "Provider profile saved."
 
       [profile] = current_models(view)
-      assert profile.model == "anthropic:claude-opus-5-5"
-      assert profile.auth_mode == "oauth"
-      assert profile.oauth_file == creds
+      assert profile["provider"] == "anthropic"
+      assert profile["default_model"] == "claude-opus-5-5"
+      assert profile["auth_mode"] == "oauth"
+      assert profile["oauth_file"] == creds
 
       assert [persisted] = persisted_models()
       assert persisted["auth_mode"] == "oauth"
       assert persisted["oauth_file"] == creds
     end
 
-    test "the API-key default persists NEITHER key (clean TOML)", %{
+    test "the API-key default is explicit and drops a stale OAuth path", %{
       conn: conn,
       config_root: dir
     } do
@@ -457,42 +492,41 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       html =
         save_new_profile(view, %{
           "provider" => "anthropic",
-          "model_id" => "claude-opus-5-5",
+          "default_model" => "claude-opus-5-5",
           "auth_mode" => "api_key",
           "oauth_file" => Path.join(dir, "claude-creds.json")
         })
 
-      assert html =~ "Model profile saved."
+      assert html =~ "Provider profile saved."
 
       [profile] = current_models(view)
-      refute Map.has_key?(profile, :auth_mode)
-      refute Map.has_key?(profile, :oauth_file)
+      assert profile["auth_mode"] == "api_key"
+      refute Map.has_key?(profile, "oauth_file")
 
       assert [persisted] = persisted_models()
-      refute Map.has_key?(persisted, "auth_mode")
+      assert persisted["auth_mode"] == "api_key"
       refute Map.has_key?(persisted, "oauth_file")
     end
 
-    test "an OAuth-unsupported provider persists NEITHER key", %{conn: conn} do
+    test "an OAuth-unsupported provider rejects the invalid mode without persisting", %{
+      conn: conn
+    } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html =
         save_new_profile(view, %{
           "provider" => "deepseek",
-          "model_id" => "deepseek-v4-pro",
+          "default_model" => "deepseek-v4-pro",
           "auth_mode" => "oauth",
           "oauth_file" => "/tmp/genesis/auth.json"
         })
 
-      assert html =~ "Model profile saved."
-
-      [profile] = current_models(view)
-      refute Map.has_key?(profile, :auth_mode)
-      refute Map.has_key?(profile, :oauth_file)
-
-      assert [persisted] = persisted_models()
-      refute Map.has_key?(persisted, "auth_mode")
-      refute Map.has_key?(persisted, "oauth_file")
+      assert html =~ "Select a supported authentication mode for this provider."
+      refute html =~ "Provider profile saved."
+      assert current_models(view) == []
+      assert persisted_models() == []
+      assert assigns(view).editing_profile_id == "new"
+      assert assigns(view).profile_form_draft["auth_mode"] == "oauth"
     end
 
     test "a blank oauth_file keeps auth_mode and omits only the path", %{conn: conn} do
@@ -501,16 +535,16 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       html =
         save_new_profile(view, %{
           "provider" => "anthropic",
-          "model_id" => "claude-opus-5-5",
+          "default_model" => "claude-opus-5-5",
           "auth_mode" => "oauth",
           "oauth_file" => "   "
         })
 
-      assert html =~ "Model profile saved."
+      assert html =~ "Provider profile saved."
 
       [profile] = current_models(view)
-      assert profile.auth_mode == "oauth"
-      refute Map.has_key?(profile, :oauth_file)
+      assert profile["auth_mode"] == "oauth"
+      refute Map.has_key?(profile, "oauth_file")
 
       assert [persisted] = persisted_models()
       assert persisted["auth_mode"] == "oauth"
@@ -523,13 +557,14 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html =
-        save_new_profile(view, %{"provider" => "openai_codex", "model_id" => "gpt-5.6-terra"})
+        save_new_profile(view, %{"provider" => "openai_codex", "default_model" => "gpt-5.6-terra"})
 
-      assert html =~ "Model profile saved."
+      assert html =~ "Provider profile saved."
 
       [profile] = current_models(view)
-      assert profile.model == "openai_codex:gpt-5.6-terra"
-      assert profile.auth_mode == "oauth"
+      assert profile["provider"] == "openai_codex"
+      assert profile["default_model"] == "gpt-5.6-terra"
+      assert profile["auth_mode"] == "oauth"
 
       assert [persisted] = persisted_models()
       assert persisted["auth_mode"] == "oauth"
@@ -653,23 +688,28 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     render(view)
   end
 
-  defp current_models(view), do: get_in(assigns(view).file_config, [:llm, :models]) || []
+  defp current_models(view), do: get_in(assigns(view).file_config, [:llm, :providers]) || []
 
-  # The persisted config.toml, string-keyed (a TOML decode — what the next boot
-  # reads back).
+  # The persisted canonical config, not the read-side migration projection:
+  # saving must remove the legacy shadow rather than merely prefer providers.
   defp persisted_models do
-    get_in(EvoGit.Config.user_config(), ["llm", "models"]) || []
+    llm = EvoGit.Config.user_config()["llm"] || %{}
+    refute Map.has_key?(llm, "models")
+    llm["providers"] || []
   end
 
-  # Drives the REAL editor flow: add a draft profile, then submit its edit form.
+  # Add creates a detached draft; only Save may put it in file_config.
   defp save_new_profile(view, params) do
+    before = assigns(view).file_config
     render_hook(view, "add_model_profile", %{})
-    [draft] = current_models(view)
+    assert assigns(view).file_config == before
+    assert assigns(view).editing_profile_id == "new"
+    draft = assigns(view).profile_form_draft
 
     render_hook(
       view,
       "save_model_profile",
-      Map.merge(%{"profile_id" => draft.id, "profile_id_new" => draft.id}, params)
+      Map.merge(%{"profile_id" => draft["id"], "profile_id_new" => draft["id"]}, params)
     )
   end
 

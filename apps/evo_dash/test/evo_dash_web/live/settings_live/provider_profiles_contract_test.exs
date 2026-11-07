@@ -1,5 +1,8 @@
 defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
   use ExUnit.Case, async: true
+
+  # One pure editor-boundary suite keeps parse → draft → CRUD round trips
+  # together; detached sockets below never start a LiveView or shared services.
   alias EvoDashWeb.SettingsLive.{AuthStatus, ConfigIO, ModelProfileEvents, ProviderProfiles}
 
   defp params, do: %{"provider" => "openai", "models" => [%{"model" => "example"}]}
@@ -36,6 +39,84 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
 
     assert {:error, "reasoning_default_invalid"} =
              ProviderProfiles.parse(Map.put(input, "default_reasoning_effort", "other"), "test")
+  end
+
+  test "nested generation overrides are typed, sparse and survive untouched editing" do
+    input = %{
+      "provider" => "openai",
+      "default_model" => "inherited",
+      "temperature" => "0.9",
+      "max_tokens" => "4096",
+      "top_p" => "0.8",
+      "provider_options" => ~s({"parallel_tool_calls":true}),
+      "models" => [
+        %{"model" => "inherited"},
+        %{
+          "model" => "overridden",
+          "temperature" => "0",
+          "max_tokens" => "2048",
+          "top_p" => "0.5",
+          "top_k" => "4",
+          "frequency_penalty" => "-0.2",
+          "presence_penalty" => "0.1",
+          "extra" => ~s({"flag":false}),
+          "provider_options" => ~s({"parallel_tool_calls":false})
+        }
+      ]
+    }
+
+    assert {:ok, profile} = ProviderProfiles.parse(input, "test")
+    assert profile["temperature"] == 0.9
+    assert profile["max_tokens"] == 4096
+    assert profile["top_p"] == 0.8
+    assert profile["provider_options"] == %{"parallel_tool_calls" => true}
+    assert [inherited, overridden] = profile["models"]
+    assert inherited == %{"model" => "inherited"}
+
+    assert overridden == %{
+             "model" => "overridden",
+             "temperature" => 0.0,
+             "max_tokens" => 2048,
+             "top_p" => 0.5,
+             "top_k" => 4,
+             "frequency_penalty" => -0.2,
+             "presence_penalty" => 0.1,
+             "extra" => %{"flag" => false},
+             "provider_options" => %{"parallel_tool_calls" => false}
+           }
+
+    assert {:ok, ^profile} =
+             ProviderProfiles.parse(ProviderProfiles.draft(profile), "test", profile)
+
+    # Blank model overrides restore inheritance, never copy provider defaults
+    # into the nested row or erase the provider's own generation settings.
+    cleared = Map.new(overridden, fn {key, _} -> {key, ""} end) |> Map.put("model", "overridden")
+
+    assert {:ok, updated} =
+             ProviderProfiles.parse(%{"models" => [inherited, cleared]}, "test", profile)
+
+    assert updated["models"] == [inherited, %{"model" => "overridden"}]
+    assert Map.drop(updated, ["models"]) == Map.drop(profile, ["models"])
+  end
+
+  test "nested invalid values fail instead of dropping a malformed override" do
+    for {key, value, reason} <- [
+          {"max_tokens", "3.5", "numeric_invalid"},
+          {"temperature", "hot", "numeric_invalid"},
+          {"extra", "[]", "extra_must_be_object"},
+          {"provider_options", "{", "invalid_provider_options_json"}
+        ] do
+      row = %{"model" => "example", key => value}
+
+      assert {:error, ^reason} =
+               ProviderProfiles.parse(Map.put(params(), "models", [row]), "test")
+    end
+
+    assert {:error, "model_id_empty"} =
+             ProviderProfiles.parse(
+               Map.put(params(), "models", [%{"temperature" => "0.5"}]),
+               "test"
+             )
   end
 
   test "credential env inputs emit only the canonical key, with canonical presence winning" do
@@ -168,6 +249,98 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
 
     assert updated["scheduler"] == config["scheduler"]
     assert ProviderProfiles.put_profiles(updated, profiles) == updated
+  end
+
+  test "canonical CRUD preserves order and default identity across rename, move and deletion" do
+    profile = fn id ->
+      %{
+        "id" => id,
+        "name" => id,
+        "provider" => "openai",
+        "auth_mode" => "api_key",
+        "concurrency" => 3,
+        "default_model" => "example",
+        "reasoning_efforts" => [],
+        "models" => [%{"model" => "example"}]
+      }
+    end
+
+    a = profile.("a")
+    b = profile.("b")
+    c = profile.("c")
+
+    config = %{
+      scheduler: %{max_turns: 12},
+      llm: %{providers: [a, b], default_provider_profile: "b", tool_result_pruning: false}
+    }
+
+    renamed = Map.put(b, "id", "renamed")
+    updated = ProviderProfiles.update(config, "b", renamed)
+    assert updated.llm.providers == [a, renamed]
+    assert updated.llm.default_provider_profile == "renamed"
+    assert updated.scheduler == config.scheduler
+    assert updated.llm.tool_result_pruning == false
+    refute Map.has_key?(updated.llm, :models)
+    refute Map.has_key?(updated.llm, "models")
+
+    added = ProviderProfiles.update(updated, nil, c)
+    assert added.llm.providers == [a, renamed, c]
+    assert added.llm.default_provider_profile == "renamed"
+    moved = ProviderProfiles.move(added, "c", "up")
+    assert moved.llm.providers == [a, c, renamed]
+    assert moved.llm.default_provider_profile == "renamed"
+    assert ProviderProfiles.set_default(moved, "a").llm.default_provider_profile == "a"
+
+    for {id, direction} <- [{"a", "up"}, {"renamed", "down"}, {"missing", "up"}] do
+      assert ProviderProfiles.move(moved, id, direction) == moved
+    end
+
+    assert ProviderProfiles.set_default(moved, "missing") == moved
+    assert ProviderProfiles.delete(moved, "missing") == moved
+    deleted = ProviderProfiles.delete(moved, "renamed")
+    assert deleted.llm.providers == [a, c]
+    assert deleted.llm.default_provider_profile == "a"
+    assert ProviderProfiles.delete(deleted, "c").llm.providers == [a]
+    empty = deleted |> ProviderProfiles.delete("c") |> ProviderProfiles.delete("a")
+    assert empty.llm.providers == []
+    refute Map.has_key?(empty.llm, :default_provider_profile)
+    assert config.llm.providers == [a, b]
+  end
+
+  test "legacy read and edit migrate accounts one-for-one without rewriting the input" do
+    old = %{
+      id: "legacy",
+      model: %{provider: :openai, id: "example", base_url: "https://example.test/v1"},
+      concurrency: 6,
+      temperature: 0.2,
+      reasoning_effort: "high"
+    }
+
+    config = %{llm: %{models: [old]}, scheduler: %{max_turns: 12}}
+    assert [profile] = ProviderProfiles.profiles(config)
+    assert profile["id"] == "legacy"
+    assert profile["provider"] == "openai"
+    assert profile["default_model"] == "example"
+    assert profile["base_url"] == "https://example.test/v1"
+    assert profile["models"] == [%{"model" => "example"}]
+    assert profile["default_reasoning_effort"] == "high"
+    assert profile["reasoning_efforts"] == ["high"]
+    assert config.llm.models == [old]
+
+    assert {:ok, edited} =
+             ProviderProfiles.parse(%{"name" => "Edited"}, "renamed", profile)
+
+    assert edited["concurrency"] == 6
+    assert edited["temperature"] == 0.2
+    assert edited["models"] == profile["models"]
+    assert edited["base_url"] == profile["base_url"]
+    refute Map.has_key?(edited, "model")
+    refute Map.has_key?(edited, "reasoning_effort")
+    saved = ProviderProfiles.update(config, "legacy", edited)
+    assert saved.llm.providers == [edited]
+    assert saved.llm.default_provider_profile == "renamed"
+    refute Map.has_key?(saved.llm, :models)
+    assert saved.scheduler == config.scheduler
   end
 
   test "editing preserves shared fields and numeric values from the core" do
