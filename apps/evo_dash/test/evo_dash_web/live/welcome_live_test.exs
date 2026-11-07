@@ -8,6 +8,10 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   alias EvoDashWeb.WelcomeLive.Setup
   alias EvoGit.Config.LLMCatalog, as: Catalog
 
+  # Canonical resolution can cold-load the model catalog before reaching the
+  # stub; keep that startup budget separate from the blocked runner's reply.
+  @runner_start_timeout 15_000
+
   setup do
     EvoDash.Test.ConfigDir.isolate!("evogit_welcome_test_config")
     File.mkdir_p!(EvoGit.Config.config_dir())
@@ -439,7 +443,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       render_change(view, "welcome_auth_changed", %{"auth_mode" => "api_key"})
       assert assigns(view).auth_mode == "oauth"
       render_click(view, "test_llm")
-      assert_receive {:welcome_test_started, pid, model, opts}, 5_000
+      assert_receive {:welcome_test_started, pid, model, opts}, @runner_start_timeout
       assert model == model_string(:openai_codex)
       assert opts[:provider_options][:auth_mode] == :oauth
       assert opts[:provider_options][:oauth_file] == EvoGit.Auth.default_oauth_file()
@@ -643,9 +647,11 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       seq = socket.assigns.llm_test_seq
 
+      # SafeCall wraps the worker result; even a current sequence cannot apply
+      # a local onboarding result after the viewed target changes to remote.
       assert {:noreply, unchanged} =
                EvoDashWeb.WelcomeLive.handle_info(
-                 {:welcome_llm_test_result, seq, {:ok, %{}}},
+                 {{:welcome_llm_test_result, seq}, {:ok, {:ok, %{}}}},
                  socket
                )
 
@@ -691,7 +697,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert html =~ "Testing LLM connection..."
       assert html =~ "loading loading-spinner"
       assert has_element?(view, "button[phx-click=test_llm][disabled]")
-      assert_receive {:welcome_test_started, pid, model, opts}, 5_000
+      assert_receive {:welcome_test_started, pid, model, opts}, @runner_start_timeout
       assert model == model_string(:anthropic)
       assert is_list(opts)
       assert EvoGit.Config.credentials()["anthropic_api_key"] == "sk-ant-typed"
@@ -704,7 +710,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       refute has_element?(view, "button[phx-click=test_llm][disabled]")
 
       render_click(view, "test_llm")
-      assert_receive {:welcome_test_started, retry_pid, ^model, _}, 5_000
+      assert_receive {:welcome_test_started, retry_pid, ^model, _}, @runner_start_timeout
       html = finish_test(view, retry_pid, {:error, "Invalid API key"})
       assert html =~ "Invalid API key"
       refute html =~ "Connected"
@@ -727,20 +733,20 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       })
 
       render_click(view, "test_llm")
-      assert_receive {:welcome_test_started, pid, ^second, opts}, 5_000
+      assert_receive {:welcome_test_started, pid, ^second, opts}, @runner_start_timeout
       assert opts[:reasoning_effort] == String.to_existing_atom(effort)
       assert opts[:provider_options][:auth_mode] == :oauth
       seq = assigns(view).llm_test_seq
       success = {:ok, %{response: "hello"}}
       send(view.pid, {:llm_test_result, success})
-      send(view.pid, {:welcome_llm_test_result, seq - 1, success})
+      send(view.pid, {{:welcome_llm_test_result, seq - 1}, {:ok, success}})
       assert assigns(view).llm_test_status == :testing
       finish_test(view, pid, success)
 
       render_click(view, "select_welcome_model", %{"model_string" => model_string(:anthropic)})
       assert assigns(view).llm_test_status == :idle
       render_click(view, "select_welcome_model", %{"model_string" => model_string(:anthropic)})
-      send(view.pid, {:welcome_llm_test_result, assigns(view).llm_test_seq, success})
+      send(view.pid, {{:welcome_llm_test_result, assigns(view).llm_test_seq}, {:ok, success}})
       assert render(view) =~ "Connected"
 
       render_change(view, "welcome_defaults_changed", %{
@@ -748,9 +754,9 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       })
 
       assert assigns(view).llm_test_status == :idle
-      send(view.pid, {:welcome_llm_test_result, seq, success})
+      send(view.pid, {{:welcome_llm_test_result, seq}, {:ok, success}})
       assert assigns(view).llm_test_status == :idle
-      send(view.pid, {:welcome_llm_test_result, assigns(view).llm_test_seq, success})
+      send(view.pid, {{:welcome_llm_test_result, assigns(view).llm_test_seq}, {:ok, success}})
       assert render(view) =~ "Connected"
       render_click(view, "select_welcome_provider", %{"provider_id" => "google"})
       assert assigns(view).llm_test_status == :idle

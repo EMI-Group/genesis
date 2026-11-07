@@ -51,7 +51,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     # Per-process config isolation through the `:config_dir_fun` seam (installed
     # by `test/test_helper.exs`): every mount + load task inherits it via
     # `$callers`, so nothing is BEAM-global and no env restore is needed.
-    dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_auth_status_test")
+    dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_auth_status_test-#{System.pid()}")
     on_exit(fn -> File.rm_rf!(dir) end)
 
     # Process-less public ETS table shared by the whole run — clear ONLY the
@@ -180,8 +180,8 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "edit_model_profile", %{"profile_id" => @oauth_profile})
 
-      # `login_instructions: nil` makes the editor resolve the provider's own
-      # guidance through `EvoGit.Auth.login_instructions/1`.
+      # `login_instructions: nil` exercises the canonical editor's own
+      # node-aware fallback before the supplied-instructions assertion below.
       entry = %{
         state: :missing,
         expires: nil,
@@ -193,7 +193,19 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       html = inject_statuses(view, %{@oauth_profile => entry})
 
       assert html =~ "No subscription login found"
-      assert html =~ EvoGit.Auth.login_instructions(:anthropic)
+      # A nil instruction uses the canonical editor's node-aware fallback.
+      assert html =~
+               "Run claude to sign in on the selected node, or use claude setup-token, then recheck."
+
+      # A real loader supplies the core's full vendor instructions; pin every
+      # word of that guidance too, normalizing serialized HTML whitespace only.
+      instructions = EvoGit.Auth.login_instructions(:anthropic)
+
+      html =
+        inject_statuses(view, %{@oauth_profile => %{entry | login_instructions: instructions}})
+
+      text = html |> Floki.parse_fragment!() |> Floki.text() |> normalize_whitespace()
+      assert text =~ normalize_whitespace(instructions)
       # The injected managed path is the proof the payload reached the render:
       # the pre-injection baseline reports a different (per-test) path.
       assert html =~ "Managed credential file: /tmp/genesis/missing-auth.json"
@@ -233,7 +245,8 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
       # The deepseek API-key profile renders no status line of any kind.
       row = profile_row(html, @deepseek_profile)
-      assert row =~ "deepseek:deepseek-v4-pro"
+      assert row =~ "profile-4 · deepseek"
+      assert row =~ "deepseek-v4-pro"
       refute row =~ "Recheck"
       refute row =~ "Login detected"
       refute row =~ "No subscription login found"
@@ -376,16 +389,20 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
       seq = assigns(view).auth_status_seq
 
-      send(
-        view.pid,
-        {:settings_auth_status_loaded, node(), seq + 5, %{@oauth_profile => @ok_entry}}
-      )
+      # An older result and an unrequested future result are both stale: only
+      # the exact active load sequence may replace a credential verdict.
+      for stale_seq <- [seq - 1, seq + 5] do
+        send(
+          view.pid,
+          {:settings_auth_status_loaded, node(), stale_seq, %{@oauth_profile => @ok_entry}}
+        )
 
-      html = render(view)
+        html = render(view)
 
-      assert assigns(view).auth_statuses == baseline
-      refute html =~ "/tmp/genesis/auth.json"
-      refute html =~ "Login detected"
+        assert assigns(view).auth_statuses == baseline
+        refute html =~ "/tmp/genesis/auth.json"
+        refute html =~ "Login detected"
+      end
     end
 
     test "the matching node + seq DOES apply (positive control)", %{
@@ -433,13 +450,14 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       assert draft["default_model"] == "claude-opus-5-5"
       assert draft["auth_mode"] == "oauth"
 
-      html =
-        render_hook(view, "save_model_profile", %{
-          "profile_id" => @oauth_profile,
-          "profile_id_new" => "renamed",
-          "name" => "Edited subscription"
-        })
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => @oauth_profile,
+        "profile_id_new" => "renamed",
+        "name" => "Edited subscription"
+      })
 
+      html = await_profile_save(view)
+      assert assigns(view).flash == %{"info" => "Provider profile saved."}
       assert html =~ "Provider profile saved."
       assert assigns(view).editing_profile_id == nil
       assert length(current_models(view)) == 4
@@ -470,6 +488,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
           "oauth_file" => creds
         })
 
+      assert assigns(view).flash == %{"info" => "Provider profile saved."}
       assert html =~ "Provider profile saved."
 
       [profile] = current_models(view)
@@ -497,6 +516,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
           "oauth_file" => Path.join(dir, "claude-creds.json")
         })
 
+      assert assigns(view).flash == %{"info" => "Provider profile saved."}
       assert html =~ "Provider profile saved."
 
       [profile] = current_models(view)
@@ -525,7 +545,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       refute html =~ "Provider profile saved."
       assert current_models(view) == []
       assert persisted_models() == []
-      assert assigns(view).editing_profile_id == "new"
+      assert assigns(view).editing_profile_id == :new
       assert assigns(view).profile_form_draft["auth_mode"] == "oauth"
     end
 
@@ -540,6 +560,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
           "oauth_file" => "   "
         })
 
+      assert assigns(view).flash == %{"info" => "Provider profile saved."}
       assert html =~ "Provider profile saved."
 
       [profile] = current_models(view)
@@ -559,6 +580,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       html =
         save_new_profile(view, %{"provider" => "openai_codex", "default_model" => "gpt-5.6-terra"})
 
+      assert assigns(view).flash == %{"info" => "Provider profile saved."}
       assert html =~ "Provider profile saved."
 
       [profile] = current_models(view)
@@ -634,25 +656,32 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     {:ok, view, html}
   end
 
-  defp settle_mount_loads(view, rounds \\ 4) do
-    pids = mount_async_task_pids(view.pid)
-    Enum.each(Enum.map(pids, &Process.monitor/1), &await_task_down/1)
-
-    # `render/1` is a synchronous round-trip: everything queued before it (the
-    # tasks' result messages) is processed first, and that apply is what may
-    # spawn the NEXT load.
-    _ = render(view)
-
-    if pids == [] or rounds == 0, do: :ok, else: settle_mount_loads(view, rounds - 1)
+  defp settle_mount_loads(view) do
+    settle_mount_loads(view, System.monotonic_time(:millisecond) + 5_000)
   end
 
-  # A task that already exited delivers its :DOWN immediately (`:noproc`); the
-  # send/2 carrying its result always happens BEFORE the process exits.
-  defp await_task_down(ref) do
-    receive do
-      {:DOWN, ^ref, :process, _pid, _reason} -> :ok
-    after
-      5_000 -> :ok
+  defp settle_mount_loads(view, deadline) do
+    # Drain applies BEFORE enumerating: an applied node-data result can spawn
+    # the OAuth load, which must also finish before a test injects a verdict.
+    _ = render(view)
+    pids = mount_async_task_pids(view.pid)
+
+    if pids != [] do
+      Enum.each(pids, fn pid ->
+        ref = Process.monitor(pid)
+        remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+        after
+          remaining -> flunk("Settings async loader did not settle")
+        end
+      end)
+
+      assert System.monotonic_time(:millisecond) < deadline,
+             "Settings async load chain did not settle"
+
+      settle_mount_loads(view, deadline)
     end
   end
 
@@ -661,7 +690,8 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     |> DynamicSupervisor.which_children()
     |> Enum.flat_map(fn
       {_, pid, _, _} when is_pid(pid) ->
-        if view_pid in task_callers(pid), do: [pid], else: []
+        callers = task_callers(pid)
+        if is_nil(callers) or view_pid in callers, do: [pid], else: []
 
       _ ->
         []
@@ -670,7 +700,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
   defp task_callers(pid) do
     case Process.info(pid, :dictionary) do
-      {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
+      {:dictionary, dict} -> Keyword.get(dict, :"$callers")
       _ -> []
     end
   end
@@ -683,8 +713,15 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   # the CURRENT seq (both stale guards pass), then drains the mailbox via
   # render — the established direct-send pattern for async-loaded content.
   defp inject_statuses(view, statuses, target_node \\ nil) do
-    seq = assigns(view).auth_status_seq
-    send(view.pid, {:settings_auth_status_loaded, target_node || node(), seq, statuses})
+    settle_mount_loads(view)
+    state = assigns(view)
+
+    send(
+      view.pid,
+      {:settings_auth_status_loaded, target_node || state.current_node, state.auth_status_seq,
+       statuses}
+    )
+
     render(view)
   end
 
@@ -703,14 +740,43 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     before = assigns(view).file_config
     render_hook(view, "add_model_profile", %{})
     assert assigns(view).file_config == before
-    assert assigns(view).editing_profile_id == "new"
+    assert assigns(view).editing_profile_id == :new
     draft = assigns(view).profile_form_draft
+    # Default-only providers are valid: model rows are optional overrides, not
+    # an allowlist. Do not fabricate one to appease core validation.
+    assert draft["models"] == []
 
     render_hook(
       view,
       "save_model_profile",
       Map.merge(%{"profile_id" => draft["id"], "profile_id_new" => draft["id"]}, params)
     )
+
+    await_profile_save(view)
+  end
+
+  # Save dispatch is not persistence: wait for the owned writer receipt to
+  # clear its marker, then drain the receipt's OAuth refresh before assertions
+  # (and before teardown removes the config directory).
+  defp await_profile_save(view) do
+    deadline = System.monotonic_time(:millisecond) + 5_000
+    await_profile_save(view, deadline)
+    settle_mount_loads(view)
+    render(view)
+  end
+
+  defp await_profile_save(view, deadline) do
+    state = assigns(view)
+
+    if state.config_saving or state.config_save_request != nil do
+      assert System.monotonic_time(:millisecond) < deadline,
+             "provider save did not receive its authoritative completion"
+
+      receive do
+      after
+        2 -> await_profile_save(view, deadline)
+      end
+    end
   end
 
   defp select_quick_setup_model(view, provider_id, model_string) do
@@ -718,20 +784,29 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     render_hook(view, "select_llm_model", %{"model_string" => model_string})
   end
 
+  defp normalize_whitespace(text), do: text |> String.split() |> Enum.join(" ")
+
   # One "Recheck" trigger per rendered credential status line.
   defp count_status_lines(html) do
     html |> String.split(~s(phx-click="refresh_auth_status")) |> length() |> Kernel.-(1)
   end
 
-  # The markup of ONE model-profile summary row (the editor wraps every profile
-  # in a `group relative flex items-start gap-4 …` div), selected by the profile
-  # id that row displays — so per-profile presence/absence can be asserted
-  # without depending on the row order.
+  # Select the actual canonical account article by its Edit control, never by
+  # legacy row classes or a substring spanning neighbouring accounts.
   defp profile_row(html, profile_id) do
-    html
-    |> String.split("group relative flex items-start gap-4")
-    |> Enum.find(fn chunk -> String.contains?(chunk, ">#{profile_id}</code>") end) ||
-      flunk("no model-profile row rendered for #{profile_id}")
+    rows =
+      html
+      |> Floki.parse_fragment!()
+      |> Floki.find("article")
+      |> Enum.filter(fn article ->
+        article
+        |> Floki.find(~s(button[phx-click="edit_provider_profile"]))
+        |> Floki.attribute("phx-value-profile_id")
+        |> Enum.member?(profile_id)
+      end)
+
+    assert [row] = rows, "expected one canonical provider row for #{profile_id}"
+    Floki.raw_html(row)
   end
 
   # The pre-injection baseline must be the REAL load's map for both seeded OAuth

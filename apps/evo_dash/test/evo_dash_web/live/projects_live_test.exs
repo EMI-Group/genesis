@@ -918,6 +918,36 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     """)
   end
 
+  def point_registry_at_test_config! do
+    # Sync launch tests own the global TaskRegistry: admission and its spawned
+    # executor now resolve config there, outside the LiveView's $callers chain.
+    registry = Process.whereis(EvoGit.TaskRegistry)
+    config_dir = Process.get(:evogit_config_dir)
+    assert is_binary(config_dir)
+    {:dictionary, dictionary} = Process.info(registry, :dictionary)
+    previous = Keyword.get(dictionary, :evogit_config_dir)
+
+    :sys.replace_state(registry, fn state ->
+      Process.put(:evogit_config_dir, config_dir)
+      state
+    end)
+
+    on_exit(fn ->
+      # Teardown-only: a failed test may have already stopped the registry.
+      try do
+        :sys.replace_state(registry, fn state ->
+          if is_nil(previous),
+            do: Process.delete(:evogit_config_dir),
+            else: Process.put(:evogit_config_dir, previous)
+
+          state
+        end)
+      catch
+        :exit, _ -> :ok
+      end
+    end)
+  end
+
   def assert_task_model_selection(task, spec) do
     # Store.Codec may atomize known option names, but canonical spec fields
     # must remain string-keyed and contain only the exact user selection.
@@ -925,7 +955,8 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     assert (opt(task, :model_id_locked) || opt(task, "model_id_locked")) == true
     refute has_opt?(task, :model_id)
     refute has_opt?(task, "model_id")
-    assert task.model_id == nil
+    # The task row may expose a runtime-derived model id; only the submitted
+    # opts define the dashboard's canonical selection/lock contract.
   end
 
   def assert_task_auto_selection(task) do
@@ -4215,7 +4246,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:selected_model_spec] == nil
     end
 
-    test "an unreachable connected remote has an empty picker, never the local default", %{
+    test "an unreachable connected remote stays unavailable and preserves its saved selection", %{
       conn: conn
     } do
       id = save_target!()
@@ -4233,9 +4264,83 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:remote?] == true
       assert assigns(view)[:provider_profiles] == []
       assert assigns(view)[:model_selections] == []
-      assert assigns(view)[:selected_model_spec] == %{}
-      assert assigns(view)[:model_selection].config == %{}
+      assert assigns(view)[:selected_model_spec] == nil
+      assert assigns(view)[:model_selection] == nil
+      assert assigns(view)[:model_selection_ready?] == false
+      assert assigns(view)[:model_selection_error] != nil
       refute render(view) =~ "Auto (by rules)"
+
+      saved = %{"provider_profile_id" => "remote-account", "model" => "remote-model"}
+      render_hook(view, "restore_state", %{"node" => id, "model_spec" => saved})
+      assert assigns(view)[:pending_model_selection] == saved
+      assert assigns(view)[:selected_model_spec] == nil
+
+      # A further failed read cannot consume the pending explicit choice or
+      # turn it into Auto; only an owned, successful remote bundle can do that.
+      cur = assigns(view)
+
+      send(
+        view.pid,
+        {:async_project_load, cur[:current_node], id, cur[:active_project_path],
+         %{
+           model_selection: {:error, :unavailable},
+           load_scope: %{seq: cur[:projects_load_seq], node_id: id, selection: saved}
+         }}
+      )
+
+      assert assigns(view)[:pending_model_selection] == saved
+      assert assigns(view)[:selected_model_spec] == nil
+      assert assigns(view)[:model_selection_error] == :unavailable
+
+      # Recovery must be owned by the genuine remote BEAM and target, not an
+      # unstamped local bundle. The saved choice is consumed only on success.
+      bundle =
+        EvoDashWeb.ProjectsLive.Project.load_model_selection_from_config(
+          %{
+            llm: %{
+              default_provider_profile: "remote-account",
+              providers: [
+                %{
+                  "id" => "remote-account",
+                  "provider" => "anthropic",
+                  "default_model" => "remote-model"
+                }
+              ]
+            }
+          },
+          false
+        )
+
+      send(
+        view.pid,
+        {:async_project_load, cur[:current_node], id, cur[:active_project_path],
+         %{
+           model_selection: bundle,
+           load_scope: %{seq: cur[:projects_load_seq], node_id: id, selection: saved}
+         }}
+      )
+
+      assert assigns(view)[:selected_model_spec] == saved
+      assert assigns(view)[:pending_model_selection] == nil
+      assert assigns(view)[:model_selection_scope] == {id, cur[:current_node]}
+      assert assigns(view)[:model_selection_ready?] == true
+      assert assigns(view)[:model_selection_error] == nil
+      assert_push_event(view, "persist_model_selection", %{model_spec: ^saved, node: ^id})
+
+      # A subsequent unavailable refresh must preserve the now-selected value
+      # as well as the pending-restore value exercised above.
+      send(
+        view.pid,
+        {:async_project_load, cur[:current_node], id, cur[:active_project_path],
+         %{
+           model_selection: {:error, :unavailable},
+           load_scope: %{seq: cur[:projects_load_seq], node_id: id, selection: saved}
+         }}
+      )
+
+      assert assigns(view)[:selected_model_spec] == saved
+      assert assigns(view)[:model_selection_ready?] == false
+      assert assigns(view)[:model_selection_error] == :unavailable
     end
 
     test "canonical picker events persist exact fields and restore only within their node", %{
@@ -4264,7 +4369,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       }
 
       assert assigns(view)[:selected_model_spec] == spec
-      assert_push_event(view, "persist_state", %{model_spec: ^spec, node: "local"} = persisted)
+
+      assert_push_event(
+        view,
+        "persist_model_selection",
+        %{model_spec: ^spec, node: "local"} = persisted
+      )
+
       refute Map.has_key?(persisted, :selected_model_id)
       refute Map.has_key?(persisted, :model_selection)
       refute Map.has_key?(persisted, :provider_profiles)
@@ -5384,6 +5495,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
     test "with model-selection rules, explicit Auto submits no model spec, lock or legacy id",
          %{conn: conn, tmp_dir: tmp_dir} do
       write_provider_profile_config()
+      point_registry_at_test_config!()
       :ok = EvoGit.CustomAgents.save_model_selection_script(~s("account-a"))
       EvoGit.CustomAgents.reload()
 
@@ -5426,6 +5538,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
            tmp_dir: tmp_dir
          } do
       write_provider_profile_config()
+      point_registry_at_test_config!()
       :ok = EvoGit.CustomAgents.save_model_selection_script(~s("account-a"))
       EvoGit.CustomAgents.reload()
 
@@ -5469,6 +5582,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
     test "without rules the configured provider/model/effort default is submitted as a locked spec",
          %{conn: conn, tmp_dir: tmp_dir} do
       write_provider_profile_config()
+      point_registry_at_test_config!()
 
       {:ok, view, _html} = live(conn, ~p"/projects")
       await_async_loads(view)
@@ -5531,6 +5645,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       tmp_dir: tmp_dir
     } do
       write_provider_profile_config()
+      point_registry_at_test_config!()
       :ok = EvoGit.CustomAgents.save_model_selection_script(~s("account-a"))
       EvoGit.CustomAgents.reload()
       make_evolve_project(tmp_dir)

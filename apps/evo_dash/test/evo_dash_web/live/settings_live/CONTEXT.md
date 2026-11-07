@@ -16,8 +16,9 @@ The five suites declare 108 tests and preserve `async: true`; pure helpers neith
 - Canonical Add writes `llm.providers` with string-keyed profiles and explicit `auth_mode`; nil/empty selections leave config unchanged and new drafts remain detached.
 - The legacy `parse_model_profile_params/2` API still returns atom-keyed single-model profiles with its older clean-TOML auth rules; these compatibility assertions must not be confused with canonical provider persistence.
 - `config_io_test.exs` holds 10 pure category-conversion contracts for list-of-strings, boolean and float values.
-- `auth_status_test.exs` holds 28 credential-status classification/page contracts, including verdict forwarding, node/sequence guards, refresh, canonical auth persistence and editing a legacy OAuth row into `llm.providers` without a shadow `llm.models` table.
-- Auth page fixtures deliberately seed legacy `[[llm.models]]` rows to exercise migration; new-profile submissions use canonical `default_model` and detached draft ids, assert the Provider-profile success message and inspect the actual persisted provider table.
+- `auth_status_test.exs` holds 28 credential-status classification/page contracts, including verdict forwarding, exact fallback and supplied vendor guidance, node/sequence guards, refresh, canonical auth persistence and editing a legacy OAuth row into `llm.providers` without a shadow `llm.models` table.
+- Auth page fixtures deliberately seed legacy `[[llm.models]]` rows to exercise migration, while row assertions select the actual mounted canonical provider article by its Edit control and profile id.
+- New-profile submissions use canonical `default_model` and the atom `:new` detached-editor sentinel, assert that override rows remain empty, and require the exact Provider-profile success message plus persisted provider fields.
 - Canonical auth persistence explicitly stores `auth_mode: "api_key"`, drops stale OAuth paths and rejects unsupported OAuth modes while retaining the failed draft without writing it.
 - `model_ids_test.exs` holds six retired-id matcher, catalog and mounted-page guards.
 
@@ -25,6 +26,11 @@ The five suites declare 108 tests and preserve `async: true`; pure helpers neith
 
 Pure suites use the shared test bootstrap, never standalone `ExUnit.start/0` calls, and never patch missing core functions or skip failing integration contracts.
 Mounted suites retain per-process `EvoDash.Test.ConfigDir.isolate!/1`, local-only ActiveTasks invalidation and owner-aware async mount settling.
+Auth config-directory labels include the OS pid so interrupted or concurrent BEAM runs cannot reuse another run's blocker fixture.
+The auth mount funnel drains the view before enumerating owned tasks, monitors every node-data/OAuth load chain under a bounded deadline and fails rather than silently timing out.
+Credential injection waits for real loaders to finish and sends the mounted node's current `auth_status_seq`; older and unrequested future sequences and foreign nodes must not replace the baseline.
+Auth save assertions wait for `config_saving` and `config_save_request` to clear through the authoritative writer receipt, then settle the receipt's OAuth refresh before rendering or reading persistence.
+Every login verdict, managed-file path and writable-path remedy stays asserted; full supplied vendor instructions normalize only HTML whitespace, not their wording.
 No test may make a real LLM request or rely on shared credentials, scheduler mutation or global ChatHistory.
 The larger helper file intentionally keeps the legacy parser with its shared peak/day edge-case matrix, while the canonical contract file keeps parse/draft/CRUD round trips together without additional test modules or shared fixtures.
 Production source and core modules are read-only from this node.
@@ -40,13 +46,12 @@ Mounted canonical editor save/reload/reset regressions belong with the parent `s
 
 ## Validation and Integration Boundary
 
-Normal `mix test apps/evo_dash/test/evo_dash_web/live/settings_live` and its `--no-start` variant abort before ExUnit because runtime config calls `EvoGit.Config.EctoValidation.type_errors/3` with unsupported `:provider_profiles`.
-The core facade also lacks `EvoGit.Config.Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2`, although the implementation module `Schema.ProviderProfiles` exists.
-Standalone execution against compiled test BEAMs runs the three pure files with 63 of 74 tests passing; the remaining 11 fail specifically on the missing public `Schema.provider_profiles/1` facade, so CRUD/legacy integration is not yet validated.
-Standalone classification/matcher/catalog selection runs seven tests successfully, with 27 mounted tests explicitly excluded; ConfigIO alone passes all 10 tests.
-A standalone pure run uses `elixir -pa '_build/test/lib/*/ebin' -r apps/evo_dash/test/test_helper.exs -r <test-file> -e 'Application.ensure_all_started(:jason)'` after compilation, bypassing runtime configuration without modifying application code.
-Mounted-page execution must be rerun after source/core integration; standalone passes do not establish mounted-suite success.
-A misplaced duplicate contract test still exists at `apps/evo_dash/lib/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs` and belongs to the source-owning parent, not this node.
+Normal `mix test apps/evo_dash/test/evo_dash_web/live/settings_live` boots successfully and runs all 108 tests under seeds 0 and 1, with 104 passing and four default-only provider persistence tests blocked by core validation.
+Core rejects `[:llm, :providers, 0, :default_model]` with `default_model must be one of [], got "claude-opus-5-5"` (or `"gpt-5.6-terra"`) when the canonical provider has no model override rows.
+The blocked auth cases cover OAuth Anthropic credentials, explicit API-key auth with stale-path removal, blank OAuth path omission and OAuth-only Codex defaults.
+Default-only providers are a valid contract, so these assertions remain active and must not be bypassed by fabricating model rows or expecting the validation failure.
+All pure contracts, mounted credential verdict/guidance/path/remedy contracts, stale guards, unsupported-auth rejection and legacy OAuth migration pass in the normal directory run.
+The source-owning parent must resolve the default-only core validation blocker, then rerun the entire directory and broader Settings/dashboard suites.
 
 ## Routing Table
 
