@@ -1,9 +1,11 @@
 defmodule EvoGit.Agent.Tools.ElixirEval.Validation do
   @moduledoc false
 
-  alias EvoGit.Agent.Tools.ElixirEval.Projection
+  alias EvoGit.Config
+  alias EvoGit.Config.Schema
 
-  @start_keys [:path, :mode, :objective, :prompt, :model_id]
+  @start_keys [:path, :mode, :objective, :prompt, :model_id, :model_spec]
+  @model_spec_keys ["provider_profile_id", "model", "reasoning_effort"]
   @types %{
     "genesis" => :genesis,
     "evolve" => :evolve,
@@ -49,7 +51,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Validation do
 
     with true <- task_type != nil,
          {:ok, opts} <- normalize(options, @start_keys),
-         true <- Enum.all?(opts, fn {_key, value} -> valid_string?(value, 8_000) end),
+         true <- Enum.all?(opts, &valid_start_option?/1),
          {:ok, opts} <- validate_mode(task_type, opts),
          {:ok, opts} <- validate_path(task_type, opts),
          {:ok, opts} <- validate_text(task_type, opts),
@@ -147,17 +149,37 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Validation do
     end
   end
 
+  # Bound the wire shape without normalizing or resolving its fields here.
+  # The shared resolver owns provider/profile/model compatibility decisions.
+  defp valid_start_option?({:model_spec, spec}) when is_map(spec) and map_size(spec) <= 3 do
+    Enum.all?(spec, fn {key, value} ->
+      key in @model_spec_keys and valid_string?(value, 8_000)
+    end)
+  end
+
+  defp valid_start_option?({:model_spec, _}), do: false
+  defp valid_start_option?({_key, value}), do: valid_string?(value, 8_000)
+
   defp validate_model(opts) do
-    case Keyword.get(opts, :model_id) do
-      nil ->
+    cond do
+      Keyword.has_key?(opts, :model_spec) and Keyword.has_key?(opts, :model_id) ->
+        {:error, "Provide only one of model_spec or model_id, not both."}
+
+      Keyword.has_key?(opts, :model_spec) ->
+        validate_model_selector(opts, Keyword.fetch!(opts, :model_spec))
+
+      Keyword.has_key?(opts, :model_id) ->
+        validate_model_selector(opts, Keyword.fetch!(opts, :model_id))
+
+      true ->
         {:ok, opts}
+    end
+  end
 
-      id ->
-        profiles = Projection.model_profiles()
-
-        if is_list(profiles) and Enum.any?(profiles, &(&1.id == id)),
-          do: {:ok, Keyword.put(opts, :model_id_locked, true)},
-          else: {:error, "Unknown model profile id."}
+  defp validate_model_selector(opts, selector) do
+    case Schema.resolve_model_spec(Config.resolve(), selector) do
+      {:ok, _resolved} -> {:ok, Keyword.put(opts, :model_id_locked, true)}
+      {:error, _reason} -> {:error, "Invalid model selector for the configured profiles."}
     end
   end
 

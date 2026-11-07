@@ -27,7 +27,8 @@ defmodule EvoGit.Config.EctoValidation do
 
   ## What stays hand-written (and why)
 
-  - **Composite, multi-error recursion** — `:model_spec`, `:model_profiles`
+  - **Composite, multi-error recursion** — `:model_spec`, `:model_profiles`,
+    `:provider_profiles` (via `EvoGit.Config.ProviderProfileValidation`)
     and the optional peak profile fields (`peak_concurrency`, `peak_hours`,
     `timezone`, `off_peak_days`) produce multiple, sub-path-aware errors
     (e.g. one per `llm.models` list index, `indexed_path/3` window indices)
@@ -68,6 +69,7 @@ defmodule EvoGit.Config.EctoValidation do
           EctoTypes.scalar_type()
           | :model_spec
           | :model_profiles
+          | :provider_profiles
 
   @doc """
   Validates one schema entry's value.
@@ -254,6 +256,10 @@ defmodule EvoGit.Config.EctoValidation do
     end
   end
 
+  defp type_errors(key_path, :provider_profiles, value) do
+    EvoGit.Config.ProviderProfileValidation.errors(key_path, value)
+  end
+
   defp type_errors(key_path, :model_profiles, value) do
     cond do
       is_list(value) ->
@@ -353,6 +359,28 @@ defmodule EvoGit.Config.EctoValidation do
 
       _ ->
         []
+    end)
+  end
+
+  # Reuse the legacy field adapters for canonical provider profiles without
+  # changing legacy messages, ordering, or optional-field behavior.
+  @doc false
+  def provider_profile_shared_errors(path, profile) do
+    validators = [
+      peak_concurrency: &validate_peak_concurrency/2,
+      peak_hours: &validate_peak_hours/2,
+      timezone: &validate_timezone_field/2,
+      context_window: &validate_context_window/2,
+      off_peak_days: &validate_off_peak_days/2,
+      auth_mode: &validate_auth_mode/2,
+      oauth_file: &validate_oauth_file/2
+    ]
+
+    Enum.flat_map(validators, fn {key, validate} ->
+      case profile_field(profile, key) do
+        nil -> []
+        value -> validate.(path, value)
+      end
     end)
   end
 

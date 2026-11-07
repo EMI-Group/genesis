@@ -123,9 +123,15 @@ Timeout or lost authority can occur after an effect committed, so errors do not 
 Each evaluation permits at most 128 broker requests including IO, 32 reads, 500 charged projected rows, 16 writes and four task starts, with at most one pending runtime operation.
 Facade row charging uses requested task-page limit, 100 for agent/model-profile reads and one for other reads, rather than counting actual returned rows; direct reads each charge one accounting row.
 Runtime operations revalidate original authority before and after execution, and facade mutations revalidate again immediately before dispatch; facade registry calls use one-second deadlines, direct calls use their public API deadlines and broker IPC uses five seconds.
-Task start accepts only literal genesis/evolve/reflect/extract_skills types and at most five distinct supported atom/string keys: path, mode, objective, prompt and model_id.
+Facade task start accepts only literal genesis/evolve/reflect/extract_skills types and at most five distinct supported atom/string keys drawn from path, mode, objective, prompt, model_id and model_spec.
+`Validation.start_options/2` accepts model_spec only as a map of at most three STRING keys drawn from provider_profile_id, model and reasoning_effort, with nonblank valid UTF-8 strings without NUL of at most 8,000 bytes per supplied value.
+Explicit model_spec and legacy model_id selectors both validate against the FULL `EvoGit.Config.resolve/0` result through `EvoGit.Config.Schema.resolve_model_spec/2`, accepting only its tagged success and refusing its tagged error without inspecting resolved fields or exposing raw failure terms.
+Accepted selectors are forwarded unchanged and add model_id_locked: true; an absent selector remains automatic and performs no model resolution.
+Supplying both selectors is explicitly refused as ambiguous because this integration has no established runtime model_spec-precedence contract.
+The shared Schema resolver is an integration dependency owned by the configuration node; until that API is present, explicit-selector execution cannot be verified and raises an undefined-function error rather than falling back to truncated Projection membership.
+These restrictions apply only to `Write.start_task/2`; admitted direct `TaskRegistry.start_task/2` calls bypass facade validators and preserve actual arguments and API returns.
 Start strings are nonblank valid UTF-8 without NUL and at most 8,000 bytes; non-reflect tasks require an absolute path of at most 1,024 bytes, existing except for genesis-new, while reflect rejects path.
-Modes are genesis new/existing, evolve simple and reflect reflect; custom, merge/resume and foreign-repo options are not exposed, extraction rejects objective/prompt, and a known model profile adds `model_id_locked: true`.
+Modes are genesis new/existing, evolve simple and reflect reflect; custom, merge/resume and foreign-repo options are not exposed, extraction rejects objective/prompt, and a valid explicit model selector adds `model_id_locked: true`.
 Self-targeting mutations are refused; cancel permits pending/running, force-kill running/cancelling and delete completed/failed/cancelled tasks.
 Deletion returns an explicit queued-cast acknowledgement, never a persisted-deletion guarantee, and submission failures instruct inspection before retrying because timeout does not prove absence of side effects.
 Guides require a message of at most 2,000 bytes, an allowlisted local page, optional simple `#id` selector of at most 80 bytes and boolean dismissible flag.

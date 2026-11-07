@@ -8,7 +8,7 @@ Helpers are pure over `State.t()` except the GenServers (`WorktreeManager`, `Pub
 
 ## Routing Table
 
-Leaf directory: `state.ex`, `agent_state.ex`, `sched_meta.ex`, `slots.ex`, `store.ex`, `worktrees.ex`, `worktree_manager.ex`, `worktree_retry.ex`, `foreign_worktree.ex`, `dispatch.ex`, `subagents.ex`, `lifecycle.ex`, `pubsub.ex`, `throttle.ex`, `remote_api.ex`; hub `../agent_scheduler.ex`.
+Leaf directory: `model_selection.ex` (schema/dispatch adapter), `state.ex`, `agent_state.ex`, `sched_meta.ex`, `slots.ex`, `store.ex`, `worktrees.ex`, `worktree_manager.ex`, `worktree_retry.ex`, `foreign_worktree.ex`, `dispatch.ex`, `subagents.ex`, `lifecycle.ex`, `pubsub.ex`, `throttle.ex`, `remote_api.ex`; hub `../agent_scheduler.ex`.
 
 ## API Surface
 
@@ -41,8 +41,8 @@ These guardrails target accidental self-corruption, not containment of a malicio
 Direct calls invoke the actual public APIs with unchanged arguments and actual return values under broker authorization/lifecycle checks and evaluation quotas/limits; compatible convenience facades retain their separate projections, validators and shorter deadlines.
 Direct `get_config/1` preserves arbitrary key semantics, nested values and nil for unknown keys; actual direct reads are not projected or secret-safe, and output truncation is not redaction.
 `RemoteAPI.get_agent_state/1` returns the native `%AgentState{}` with ONLY `context` set to nil (the field is not removed), leaving `llm_generation_params`, foreign-repo metadata and multimodal pending messages untouched, while `get_agent_history/1` exposes full native message content, so neither is a redacted assistant-safe projection.
-`RemoteAPI.list_agents/0` returns an unordered, unpaged bare list of 25-key atom-keyed summaries per SchedMeta row, joining two separately copied whole ETS tables and computing compression thresholds; its metadata includes arbitrary objective text, repo/worktree paths and native module atoms rather than an Assistant-specific bounded projection.
-Each summary has `id, task_local_id, repo_id, status, depth, parent_id, usage, total_tokens, compression_count, message_count, objective, result, agent_module, started_at, model_id, repo_root, context_path, worktree, current_commit, base_commit, task_id, task_number, retries, compression_threshold, context_window`, with `result` and `started_at` always nil and `usage` a native `%Usage{}`.
+`RemoteAPI.list_agents/0` returns an unordered, unpaged bare list of 28-key atom-keyed summaries per SchedMeta row, joining two separately copied whole ETS tables and computing compression thresholds; its metadata includes arbitrary objective text, repo/worktree paths and native module atoms rather than an Assistant-specific bounded projection.
+Each summary has `id, task_local_id, repo_id, status, depth, parent_id, usage, total_tokens, compression_count, message_count, objective, result, agent_module, started_at, model_id, provider_profile_id, model_spec, llm_model, repo_root, context_path, worktree, current_commit, base_commit, task_id, task_number, retries, compression_threshold, context_window`, with `result` and `started_at` always nil and `usage` a native `%Usage{}`.
 Missing sched-meta table returns `[]`, but a missing agent-state table still yields fallback summaries for existing metadata; the two-table join is not an atomic snapshot, and absent agent-state rows get zero usage/token/message counters plus nil model/repo/task-local identifiers.
 RemoteAPI wrappers install no deadlines or exit containment of their own, and ETS whereis→lookup/tab2list checks have a table-deletion race; `get_agent_history/1` accepts only nil or `%ReqLLM.Context{}` context shapes and raises on other stored shapes.
 `State.from_model_profiles/1,2` retains incoming profile maps verbatim as `model_profiles` and accepts a raw `:llm_generation_params` override, so neither field is a redacted inspection surface; only convenience facades project explicit safe keys, not admitted direct configuration reads.
@@ -110,6 +110,25 @@ The repo-less self-reflective agent (`EvoGit.Agents.SelfReflective`, `spec.opts[
 **Hard-dereferences (repo-less must guard/avoid):** `resolve_agent_repo_root/2`'s primary branch splits `spec.phylo_node.repo` on `"/.genesis/workers/"` (nil → FunctionClauseError); `do_try_dispatch`'s `Path.join([agent_repo_root, ".genesis/workers", ...])`; `maybe_init_repo/3` → `workers_dir/1`; `Runner.setup_dispatch_context/1` calls `create_worktree_for_agent/6` unconditionally and raises `"Failed to create worktree..."`; `assign_and_prepare_worktree/3` bare-matches `{:ok, meta}`/`{:ok, %AgentState{}}`.
 **Repo-less specifics:** `resolve_agent_repo_root/2` resolves repo-less roots via the SHARED chain `EvoGit.SelfReflectiveSource.reference_path/0` (`:self_reflective_source_root` → `GENESIS_SOURCE_ROOT` → managed clone at `<data_dir>/genesis-source`), fallback `File.cwd!()`, else `"[system]"` (`EvoGit.Runtime.SelfReflective.source_root/0` delegates); `do_try_dispatch` appends `repo_less: true` + `repo_less_repo_path: <root>` (used as `:repo_path`; worktree creation SKIPPED). `dispatch_ctx` keys (all `Keyword.fetch!`'d): `[agent_id:, depth:, repo_root:, repo_id:, worktree_path:, retries:, spec:, meta:]`.
 
+## Provider/account selections and resource pools
+
+`ModelSelection.config_opts/1` and `State.from_config/2` share the schema snapshot used by reload and dispatch.
+When `Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` are available, options carry canonical string-keyed `provider_profiles`, atom-keyed selections in the historical `model_profiles` field, and `model_selection_config` for resolution without re-reading disk.
+Without that schema API, legacy model profiles and scripts retain their existing behavior, while explicit model_spec fails closed rather than silently using a different model.
+`State.from_model_profiles/2` accepts the same three configuration keys as options and initializes resource maps from unique provider ids when provider profiles are supplied.
+`model_concurrency`, `llm_holders`, `llm_waiting`, `llm_backoff_until` and `llm_last_granted` keep their historical field names but use provider/account ids in the new configuration path.
+`Slots.resolve_model_id/2` likewise keeps its historical name but returns the immutable dispatch-assigned provider id, with legacy-id-to-pool mapping only for old ETS rows lacking that field.
+Distinct model or reasoning selections on one provider profile therefore share capacity and backoff, whereas separately configured provider/account profiles remain isolated.
+The default-concurrency floor and PeakHourEngine skip-floor contract operate on those provider keys and preserve explicit zero-capacity pauses.
+Provider-profile reloads preserve live holder/waiter/backoff/last-granted maps and stale resource pools exactly as legacy reloads do.
+`Dispatch.resolve_selection/5` resolves an explicit STRING map from `AgentSpec.model_spec` or `spec.opts[:model_spec]` before any legacy id or script, rejects malformed or invalid explicit selections without fallback, and otherwise preserves script/custom-agent/legacy-id precedence.
+Resolved schema results provide provider_profile_id, a canonical model_spec (or top-level model/reasoning_effort), runtime llm_model, generation parameters via llm_generation_params/generation_params/params, and optional context_window.
+`AgentState` stores the canonical model_spec, runtime model/params/context window, legacy model_id, provider_profile_id and model_id_locked independently.
+`register_agent/7` returns `{integer_agent_id, state}` or `{:error, reason}` and resolves before any counter or ETS mutation.
+Subagent registration handles errors per child and inherits a locked parent's entire model_spec and lock before selection; legacy locked parents retain id/lock inheritance.
+The parent hub owns boot wiring through `State.from_config/2`, root registration error propagation, exposing the new config fields and any provider-oriented peak-engine/RPC integration outside this node.
+Regression coverage in this node is exercised through the existing sibling scheduler suites and standalone assertions because test-file writes are outside this node's assignment.
+
 ## Slot Management (Slots module)
 
 Two independent pools of agent-ID `MapSet`s; capacity = `capacity - map_size(holders)` — leaks impossible, `release_agent_slots/2` removes the holder from both sets.
@@ -142,9 +161,9 @@ Two independent pools of agent-ID `MapSet`s; capacity = `capacity - map_size(hol
 - **`get_llm_slot_status/0` is keyed by model-PROFILE-ID string**: `{id, %{used: holders, waiting: queue_len, capacity: concurrency_for}}` over `State.all_model_ids/1`; an idle model appears only if it is a `model_concurrency` key or has a non-empty pool/backoff entry.
 - **`run_agent` rejection clauses**: (a) `%State{model_profiles: []}` — reachable only via `update_config(model_profiles: [])` (tests use this, `test/evo_git/runtime/evolution_test.exs`); (b) `llm_model: nil` with `model_profiles == nil` — effectively DEAD. Both reply `{:error, :llm_not_configured}`.
 - **No file-watching**: config changes ONLY via `update_config/1` (dashboard save → reload_config; evo_dash ConfigIO; `PeakHourEngine`); `get_config` serves in-memory values while `Config.resolve()`/`config_status()` are file-fresh.
-- **Selection identity and resource identity are currently coupled**: `AgentState.model_id` is both a configured model-profile id and the LLM capacity/backoff pool key, while `llm_model` separately holds the concrete request model; distinct configured ids sharing a provider do not share capacity or backoff.
-- `Subagents.spawn_validated_subagents/5` passes incoming specs unchanged to `Dispatch.register_agent/7`; inheritance of model selection and lock flags must happen in the caller constructing those specs, not this scheduler helper.
-- `RemoteAPI.list_agents/0` summaries expose `model_id` but not `llm_model`, so consumers cannot discover the concrete request model independently of the configured profile from that projection.
+- **Selection and resource identity are separate**: `AgentState.model_id` retains the optional legacy selection id, `model_spec` is the full canonical string-keyed selection, and immutable `provider_profile_id` keys shared provider/account capacity and backoff independently of concrete request model or reasoning effort.
+- `Dispatch.register_agent/7` applies `ModelSelection.inherit/2` at the scheduler boundary, so a locked parent's entire canonical selection and lock override child-supplied picks before scripts or legacy ids are considered.
+- `RemoteAPI.list_agents/0` summaries expose `model_id`, `provider_profile_id`, `model_spec` and `llm_model`, allowing consumers to distinguish configured aliases, resource pools and concrete requests.
 
 ## Worktree Lifecycle (WorktreeManager + Worktrees)
 

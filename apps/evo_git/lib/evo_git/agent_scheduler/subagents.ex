@@ -83,21 +83,26 @@ defmodule EvoGit.AgentScheduler.Subagents do
                      Map.put(invalid_acc, idx, {:error, reason}), true, state_acc}
 
                   true ->
-                    {sub_id, state_acc} =
-                      Dispatch.register_agent(
-                        state_acc,
-                        spec,
-                        _from = nil,
-                        parent_id,
-                        parent.depth + 1,
-                        parent.task_id,
-                        parent.task_number
-                      )
+                    case Dispatch.register_agent(
+                           state_acc,
+                           spec,
+                           _from = nil,
+                           parent_id,
+                           parent.depth + 1,
+                           parent.task_id,
+                           parent.task_number
+                         ) do
+                      {:error, reason} ->
+                        {sub_ids_rev, sub_agent_indices_acc,
+                         Map.put(invalid_acc, idx, {:error, reason}), writable_accepted,
+                         state_acc}
 
-                    {[sub_id | sub_ids_rev], Map.put(sub_agent_indices_acc, sub_id, idx),
-                     invalid_acc,
-                     writable_accepted || writable_foreign_repo_spec?(parent_repo_id, spec),
-                     state_acc}
+                      {sub_id, state_acc} ->
+                        {[sub_id | sub_ids_rev], Map.put(sub_agent_indices_acc, sub_id, idx),
+                         invalid_acc,
+                         writable_accepted || writable_foreign_repo_spec?(parent_repo_id, spec),
+                         state_acc}
+                    end
                 end
 
               {:error, reason} ->

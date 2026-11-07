@@ -16,6 +16,12 @@ The compression ORCHESTRATION tests live one node up (`../` — `context_compres
 | `threshold_test.exs` | `Threshold` window-relative threshold selection (window from the CONFIGURED profile, never catalog metadata) |
 | `summary_prompt_test.exs` | `SummaryPrompt` delimiters/instruction text |
 
+## Model-Selection Coverage Boundary
+
+`threshold_test.exs` calls `Threshold.for_model/2` with `nil` or raw provider-qualified model strings plus explicit `context_window` options; it creates no provider/account profiles and exercises no `Schema.resolve_model_spec/2` selection resolution.
+Its `stub_metadata/1` helper discards the metadata lookup argument (`fn _model -> metadata end`), so its numeric reservation assertions cannot detect an account/profile ID being passed instead of the selected actual model.
+The other suites use message fixtures and numeric window/budget options only, with no model/profile selection or catalog lookup fixtures.
+
 ## Constraints
 
 `recency_test.exs` is `async: false` because its seam tests mutate the app-env keys `:compression_tail_budget_fraction` / `:compression_tail_budget_tokens`, read at CALL time by `Recency.tail_budget/1` and exercised concurrently by `checkpoint_test` / `tool_result_pruner_test`; `setup` clears both and `on_exit` restores the operator's values.

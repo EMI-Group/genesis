@@ -7,7 +7,50 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
   """
 
   @doc """
+  Admits a task's explicit model selection against a configuration snapshot.
+
+  A present `:model_spec` takes precedence over legacy `:model_id`, including
+  when the spec is invalid; it must never silently fall back to the legacy id.
+  The schema owns validation and resolution. Its resolved value is deliberately
+  opaque here: task opts retain the serializable selection, not runtime profile
+  data or credentials. Call before persisting/enqueuing the task, and again at
+  execution time in case configuration changed since admission.
+
+  Auto (no spec and nil/empty legacy id) omits both selection keys and the lock.
+  A model spec forces `model_id_locked: true`; a legacy id only keeps an existing
+  truthy lock (normalized to true), so model-selection scripts still apply to
+  unlocked legacy tasks. Unrelated task opts are preserved.
+  """
+  @spec admit_model_selection(keyword(), map()) :: {:ok, keyword()} | {:error, term()}
+  def admit_model_selection(opts, config) do
+    selection =
+      if Keyword.has_key?(opts, :model_spec),
+        do: {:model_spec, Keyword.get(opts, :model_spec)},
+        else: legacy_selection(Keyword.get(opts, :model_id))
+
+    case selection do
+      :auto ->
+        {:ok, Keyword.drop(opts, [:model_spec, :model_id, :model_id_locked])}
+
+      {:model_spec, value} when not is_map(value) ->
+        {:error, :invalid_model_spec}
+
+      {_kind, value} ->
+        case EvoGit.Config.Schema.resolve_model_spec(config, value) do
+          {:ok, _resolved} -> {:ok, put_model_selection(opts, opts)}
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
+
+  defp legacy_selection(value) when value in [nil, ""], do: :auto
+  defp legacy_selection(value), do: {:explicit, value}
+
+  @doc """
   Builds common runtime options for genesis and evolve tasks.
+
+  Model selections must already have passed `admit_model_selection/2` at task
+  admission/execution; this builder preserves the existing tuple-return API.
 
   Returns `{nil, runtime_opts}` — the first element is `nil` (the input arg,
   unused for genesis/evolve; resume-from tasks prepend context to the objective
@@ -33,19 +76,9 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
 
     archive = Keyword.get(opts, :archive)
 
-    # Per-task model selection: threads the selected model profile id into
-    # the runtime opts so the scheduler uses that profile for this task.
-    # If nil/empty, the runtime falls back to the default (first) profile.
-    model_id = Keyword.get(opts, :model_id)
-
     # Custom agent selection: thread the agents.toml agent id through to the
     # runtime so genesis/evolve spawn the custom agent as the root agent.
     agent = Keyword.get(opts, :agent)
-
-    # Explicit model-lock pass-through (see Helpers.model_id_locked?/1).
-    # Note: dashboard tasks with an explicit model_id are locked implicitly
-    # by Helpers.model_id_locked?/1 at the spawn site.
-    model_id_locked = Keyword.get(opts, :model_id_locked)
 
     # Per-task build system selection: threads the selected build system atom
     # into the runtime opts for genesis tasks.
@@ -71,14 +104,34 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
       |> put_if(:starting_commit, starting_commit)
       |> put_if(:foreign_repos, foreign_repos)
       |> put_if(:archive, archive)
-      |> put_if(:model_id, model_id, fn value -> value && value != "" end)
+      |> put_model_selection(opts)
       |> put_if(:agent, agent, fn value -> is_binary(value) and value != "" end)
-      |> put_if_true(:model_id_locked, model_id_locked)
       |> put_if(:build_system, build_system)
       |> put_if(:attachments, attachments, fn value -> value not in [nil, []] end)
       |> put_if(:quality_level, quality_level, fn value -> value != "balanced" end)
 
     {nil, runtime_opts}
+  end
+
+  # Never interpret the schema's resolved profile shape in this layer.
+  # Admission removes Auto locks; direct builders retain legacy truthy locks.
+  defp put_model_selection(target, source) do
+    target = Keyword.drop(target, [:model_spec, :model_id, :model_id_locked])
+
+    cond do
+      Keyword.has_key?(source, :model_spec) ->
+        target
+        |> Keyword.put(:model_spec, Keyword.fetch!(source, :model_spec))
+        |> Keyword.put(:model_id_locked, true)
+
+      legacy_selection(Keyword.get(source, :model_id)) != :auto ->
+        target
+        |> Keyword.put(:model_id, Keyword.fetch!(source, :model_id))
+        |> put_if_true(:model_id_locked, Keyword.get(source, :model_id_locked))
+
+      true ->
+        put_if_true(target, :model_id_locked, Keyword.get(source, :model_id_locked))
+    end
   end
 
   # Puts `key => value` when `predicate.(value)` is truthy; the default

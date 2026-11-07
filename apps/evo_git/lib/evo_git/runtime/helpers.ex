@@ -539,7 +539,9 @@ defmodule EvoGit.Runtime.Helpers do
   @doc """
   Determines whether the model-selection script must be skipped for this task.
 
-  Returns true when either:
+  Returns true when any of the following holds:
+  - `:model_spec` is non-nil — an explicit provider-profile/model selection
+    takes precedence over a legacy `:model_id` and must not be overridden; or
   - `:model_id` is a non-nil value — a non-nil `:model_id` in runtime opts means
     a user/dashboard explicitly chose a model, so the model-selection script must
     NOT override it; or
@@ -548,7 +550,31 @@ defmodule EvoGit.Runtime.Helpers do
   """
   @spec model_id_locked?(keyword()) :: boolean()
   def model_id_locked?(opts) do
-    Keyword.get(opts, :model_id_locked, false) || not is_nil(Keyword.get(opts, :model_id))
+    Keyword.get(opts, :model_id_locked, false) ||
+      not is_nil(Keyword.get(opts, :model_spec)) ||
+      not is_nil(Keyword.get(opts, :model_id))
+  end
+
+  @doc """
+  Threads task model selection into agent opts without resolving provider settings.
+
+  A non-nil `:model_spec` is forwarded verbatim (string keys
+  `provider_profile_id`, `model`, and optional `reasoning_effort`), removes the
+  legacy `:model_id`, and forces `:model_id_locked` to true. Otherwise legacy
+  model ids and explicit locks retain their semantics. Auto has no model_spec.
+  Validation and runtime parameter resolution belong to the config/scheduler
+  boundary, not the phase wrappers.
+  """
+  @spec normalize_model_selection_opts(keyword()) :: keyword()
+  def normalize_model_selection_opts(opts) do
+    locked = model_id_locked?(opts)
+    opts = Keyword.update(opts, :model_id_locked, locked, fn _ -> locked end)
+
+    if is_nil(Keyword.get(opts, :model_spec)) do
+      Keyword.delete(opts, :model_spec)
+    else
+      Keyword.delete(opts, :model_id)
+    end
   end
 
   @doc """
@@ -596,9 +622,11 @@ defmodule EvoGit.Runtime.Helpers do
         archive: Keyword.get(opts, :archive, false),
         task_id: Keyword.get(opts, :task_id),
         model_id: Keyword.get(opts, :model_id),
+        model_spec: Keyword.get(opts, :model_spec),
         model_id_locked: model_id_locked?(opts),
         quality_level: Keyword.get(opts, :quality_level)
       ]
+      |> normalize_model_selection_opts()
       |> maybe_put_attachments(attachments)
       |> Kernel.++(agent_opts)
 

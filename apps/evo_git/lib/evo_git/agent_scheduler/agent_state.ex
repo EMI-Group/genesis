@@ -14,7 +14,10 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `llm_model` — the LLM model string for this agent to use
   - `llm_generation_params` — the LLM generation parameters (temperature, max_tokens, etc.) passed to ReqLLM calls
   - `llm_context_window` — the agent's configured LLM context window in tokens (from its model profile's `context_window`), used for the compression threshold and the stage-1 pruning target; defaults to 200_000
-  - `model_id` — the model profile id this agent is bound to (determines which per-model slot pool is used). Defaults to `"default"`.
+  - `model_id` — optional legacy selection id for compatibility/display, not resource identity.
+  - `provider_profile_id` — immutable provider/account resource key for shared concurrency and backoff.
+  - `model_spec` — canonical string-keyed provider/model/optional reasoning-effort selection, independent of runtime credentials and parameters.
+  - `model_id_locked` — a task-level selection lock inherited together with the full model_spec by descendants.
   - `max_retries` — maximum LLM call retries for this agent
   - `max_depth` — maximum agent recursion depth
   - `max_turns` — maximum turns per agent loop
@@ -54,6 +57,9 @@ defmodule EvoGit.AgentScheduler.AgentState do
     :task_local_id,
     :turn,
     model_id: "default",
+    provider_profile_id: nil,
+    model_spec: nil,
+    model_id_locked: false,
     archive: false,
     usage: nil,
     compression_count: 0,
@@ -75,7 +81,10 @@ defmodule EvoGit.AgentScheduler.AgentState do
           llm_model: ReqLLM.model_input(),
           llm_generation_params: keyword(),
           llm_context_window: pos_integer(),
-          model_id: String.t(),
+          model_id: String.t() | nil,
+          provider_profile_id: String.t() | nil,
+          model_spec: map() | nil,
+          model_id_locked: boolean(),
           max_retries: pos_integer(),
           max_depth: pos_integer(),
           max_turns: pos_integer(),

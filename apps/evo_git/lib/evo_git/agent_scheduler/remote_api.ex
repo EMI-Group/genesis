@@ -207,32 +207,31 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   # Builds the keyword list passed to `AgentScheduler.update_config/1` from
   # a resolved config map. Extracted for testability.
   #
-  # Follows the same model-profile construction as `AgentScheduler.init/1`:
-  # when `[[llm.models]]` is empty/unset, a single legacy "default" profile
-  # is synthesized from the flat `llm.model` / `scheduler.default_llm_max_concurrency`.
+  # Uses ModelSelection.config_opts/1, shared with State.from_config/2, so
+  # selections, provider pools and their schema-resolution snapshot stay coherent.
   @spec build_reload_opts(map()) :: keyword()
   def build_reload_opts(config) when is_map(config) do
     scheduler = Map.get(config, :scheduler, %{})
 
     # Build model profiles (same helper as AgentScheduler.init/1, which applies
     # the legacy single-"default"-profile fallback when [[llm.models]] is empty)
-    model_profiles = EvoGit.Config.Schema.effective_model_profiles(config)
+    model_opts = EvoGit.AgentScheduler.ModelSelection.config_opts(config)
 
     sandbox = Map.get(config, :sandbox, %{})
 
-    [
-      model_profiles: model_profiles,
-      default_llm_max_concurrency: Map.get(scheduler, :default_llm_max_concurrency),
-      max_tool_concurrency: Map.get(scheduler, :max_tool_concurrency),
-      agent_max_retries: Map.get(scheduler, :agent_max_retries),
-      max_depth: Map.get(scheduler, :max_agent_depth),
-      max_retries: Map.get(scheduler, :max_retries),
-      max_turns: Map.get(scheduler, :max_turns),
-      max_turns_root: Map.get(scheduler, :max_turns_root),
-      sandbox_mode: Map.get(sandbox, :mode),
-      sandbox_resources: Map.get(sandbox, :resources),
-      sandbox_process_resources: Map.get(sandbox, :process)
-    ]
+    (model_opts ++
+       [
+         default_llm_max_concurrency: Map.get(scheduler, :default_llm_max_concurrency),
+         max_tool_concurrency: Map.get(scheduler, :max_tool_concurrency),
+         agent_max_retries: Map.get(scheduler, :agent_max_retries),
+         max_depth: Map.get(scheduler, :max_agent_depth),
+         max_retries: Map.get(scheduler, :max_retries),
+         max_turns: Map.get(scheduler, :max_turns),
+         max_turns_root: Map.get(scheduler, :max_turns_root),
+         sandbox_mode: Map.get(sandbox, :mode),
+         sandbox_resources: Map.get(sandbox, :resources),
+         sandbox_process_resources: Map.get(sandbox, :process)
+       ])
     |> Enum.reject(fn {_k, v} -> is_nil(v) end)
   end
 
@@ -1181,6 +1180,9 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       agent_module: spec.agent_module,
       started_at: nil,
       model_id: nil,
+      provider_profile_id: nil,
+      model_spec: nil,
+      llm_model: nil,
       repo_root: nil,
       context_path: safe_context_path(spec.context_node),
       worktree: meta.worktree,
@@ -1230,6 +1232,9 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       agent_module: meta.spec.agent_module,
       started_at: nil,
       model_id: state.model_id,
+      provider_profile_id: state.provider_profile_id,
+      model_spec: state.model_spec,
+      llm_model: state.llm_model,
       repo_root: state.repo_root,
       context_path: safe_context_path(state.context_node),
       worktree: meta.worktree,
