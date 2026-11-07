@@ -276,7 +276,18 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
   test "a locked parent overrides conflicting child selectors and a configured per-spawn script",
        ctx do
     selection = wire("work", "wide", "high")
-    script!(~s(%{provider_profile_id: "backup", model: "small", reasoning_effort: "low"}))
+
+    script!("""
+    send(self(), {:locked_selection_script_invoked, agent.depth})
+    %{provider_profile_id: "backup", model: "small", reasoning_effort: "low"}
+    """)
+
+    # Prove the configured script's marker is observable before checking that
+    # locked registration bypasses it, rather than evaluating and discarding it.
+    assert {:ok, %{provider_profile_id: "backup", model: "small", reasoning_effort: "low"}} =
+             EvoGit.CustomAgents.ModelSelector.select_model(%{depth: 0})
+
+    assert_received {:locked_selection_script_invoked, 0}
 
     {root, state} =
       register!(ctx.snapshot, root_spec(ctx.repo, model_spec: selection, model_id_locked: true))
@@ -300,25 +311,38 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
     {grandchild_id, _} = register!(state, grandchild, id, 2)
     assert_selected(grandchild_id, selection, ctx.work.url)
     assert agent!(grandchild_id).model_id_locked
+    refute_received {:locked_selection_script_invoked, _}
   end
 
-  test "an unlocked inherited canonical selection gives the script a fresh opportunity for a child",
+  test "an unlocked child is reselected by script and its grandchild retains the full fallback on nil",
        ctx do
     script!("""
-    if agent.depth == 0 do
-      %{provider_profile_id: "work", model: "wide", reasoning_effort: "high"}
-    else
-      %{provider_profile_id: "backup", model: "small", reasoning_effort: "low"}
-    end
+    selection =
+      case agent.depth do
+        0 -> %{provider_profile_id: "work", model: "wide", reasoning_effort: "high"}
+        1 -> %{provider_profile_id: "backup", model: "small", reasoning_effort: "low"}
+        2 -> nil
+      end
+
+    send(self(), {:inheritance_script_result, agent.depth, selection})
+    selection
     """)
 
     inherited = wire("work", "wide", "high")
     reselected = wire("backup", "small", "low")
     {root, state} = register!(ctx.snapshot, root_spec(ctx.repo))
+
+    assert_received {:inheritance_script_result, 0,
+                     %{provider_profile_id: "work", model: "wide", reasoning_effort: "high"}}
+
     assert_selected(root, inherited, ctx.work.url)
     child = child_spec(root, ctx.repo)
     assert_inherited(child, inherited, false)
     {id, state} = register!(state, child, root, 1)
+
+    assert_received {:inheritance_script_result, 1,
+                     %{provider_profile_id: "backup", model: "small", reasoning_effort: "low"}}
+
     # Inheritance is a fallback, not an explicit user choice: only a lock may
     # suppress the documented per-spawn script opportunity.
     assert_selected(id, reselected, ctx.backup.url)
@@ -328,7 +352,11 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
     grandchild = child_spec(id, ctx.repo)
     assert_inherited(grandchild, reselected, false)
     {grandchild_id, _} = register!(state, grandchild, id, 2)
+    assert_received {:inheritance_script_result, 2, nil}
     assert_selected(grandchild_id, reselected, ctx.backup.url)
+    refute agent!(grandchild_id).model_id_locked
+    assert_selected(id, reselected, ctx.backup.url)
+    assert_selected(root, inherited, ctx.work.url)
   end
 
   test "an unlocked grandchild can be reselected without changing its parent's effective selection",
