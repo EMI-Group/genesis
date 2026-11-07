@@ -75,7 +75,7 @@ Focused remote validation targets the three positive URL/resume tests by their c
 The cases are "resume landing URL activates the remote project, restores the previous task's foreign repos, and keeps the resume form state (regression)", "plain remote ?project= URL activates the project through the remote normalize path", and "remote ?project= tilde path expands via the remote seam, never the local HOME".
 The first two belong to async `ProjectsLiveTest`; the tilde case belongs to `ProjectsLiveSyncTest` because its expansion runner is shared globally.
 ProjectFlow's real supervised tasks use the integrated, source-owned, default-inert call-time arity-2 `:remote_project_load_runner` (`node, path`, default `remote_project_load/2`) and `:remote_resume_task_runner` (`node, task_id`, default `NodeContext.get_task_lite/2`); this test node owns their activation fixtures, not production sources.
-The parent ran `mix test apps/evo_dash/test/evo_dash_web/live/projects_live_test.exs:3070 apps/evo_dash/test/evo_dash_web/live/projects_live_test.exs:3175 apps/evo_dash/test/evo_dash_web/live/projects_live_test.exs:5247`: 4 tests passed, 146 excluded (an extra test was selected), which establishes focused coverage only, not full-suite validation.
+Line-filtered remote validation may select an extra test and establishes focused coverage only, not full-suite validation.
 Do not bypass the pending-remote guard or replace real supervised orchestration with direct result injection to make these tests pass.
 
 ## Notes for Agents — deterministic waits (the single rule future edits must not break)
