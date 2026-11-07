@@ -168,8 +168,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 104 schemas" do
-      assert length(Schema.all_schemas()) == 104
+    test "has exactly 106 schemas" do
+      assert length(Schema.all_schemas()) == 106
     end
 
     test "search_providers/0 returns all supported providers" do
@@ -347,7 +347,7 @@ defmodule EvoGit.Config.SchemaTest do
     test "each category has expected count" do
       grouped = Schema.schemas_by_category()
       assert length(grouped[:scheduler]) == 11
-      assert length(grouped[:llm]) == 12
+      assert length(grouped[:llm]) == 14
       assert length(grouped[:user]) == 1
       assert length(grouped[:sandbox]) == 19
       assert length(grouped[:truncation]) == 4
