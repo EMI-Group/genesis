@@ -188,8 +188,8 @@ CatalogWarmup's `effective_model_profiles/1` path remains provider-compatible th
 `CLI.configured_model_profiles/0` still reads only `llm.models` and `resolve_model_opt/1` resolves against that list, so a canonical-only `llm.providers` configuration rejects every explicit `-m` before enqueue despite being runnable with the default selection.
 `CustomAgents` persists an optional canonical `model_spec` with string-keyed `provider_profile_id`, `model` and optional `reasoning_effort`, accepts atom input keys and normalizes effort atoms to strings, and retains `model_id` as a legacy fallback.
 Definition saves reject structurally malformed selections with `:invalid_model_spec` without resolving account/model existence; reads remain lenient and `ModelSelector` also accepts canonical selection maps.
-`Runtime.Helpers.resolve_root_agent/2` currently passes only `custom_agent_id`, so custom-root definition defaults still need runtime integration in the child runtime node.
-`Auth.managed_file_unwritable_remedy/2` still instructs users to put `oauth_file` in `[[llm.models]]`, although canonical accounts require the setting on the matching `[[llm.providers]]` entry and suppress legacy fallback.
+`Runtime.Helpers.resolve_root_agent/2` forwards a custom definition's canonical selection as unlocked `default_model_spec`, preserving explicit/locked task → script → definition selection → legacy definition id → configured-default priority.
+`Auth.managed_file_unwritable_remedy/2` directs `oauth_file` to the matching `[[llm.providers]]` account entry.
 `PeakHours.effective_concurrency/2,3` intentionally consumes atom-keyed concurrency fields; `PeakHourEngine.effective_for_profile/3` translates canonical string-keyed account schedules before calling it, so that low-level shape alone is not an integration defect.
 
 ## Assistant direct runtime APIs (top-level wrapper contracts)
