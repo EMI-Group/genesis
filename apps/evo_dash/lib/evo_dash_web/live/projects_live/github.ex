@@ -12,8 +12,8 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
   the dashboard never touches gh/git directly). Nothing here blocks the page
   load: every call runs in a supervised `EvoDash.TaskSupervisor` task (the
   runner is resolved from application env AT SPAWN TIME so tests can stub
-  it) and reports back via a message that is stale-guarded on project path +
-  node before being applied.
+  it) and reports back via a message stale-guarded on project path, target,
+  node and request identity before being applied.
   """
 
   use Gettext, backend: EvoDashWeb.Gettext
@@ -27,6 +27,8 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
   alias EvoDash.SafeCall
   alias EvoDashWeb.GitHubComponents
   alias EvoDashWeb.LiveHooks.NodeAware
+  alias EvoDashWeb.ProjectsLive.LaunchOptions
+  alias EvoDashWeb.RemoteGateComponents
 
   @doc """
   The default `:github_issues` assign — modal closed, filter "open".
@@ -34,11 +36,8 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
   def idle_issues, do: %{status: :idle, error: nil, state_filter: "open", issues: []}
 
   @doc """
-  Kicks off the async GitHub-upstream detection when a project is active and
-  its task mode implies an existing git repo (`genesis_new` has no repo to
-  check). No-ops when a status is already present, so a check is spawned only
-  once per project activation; the result arrives later as a
-  `{:github_status_result, path, node, result}` message.
+  Kicks off async upstream detection for an active existing repo on a usable
+  node. The result arrives as `{:github_status_result, path, node, result}`.
   """
   def maybe_check(socket) do
     %{
@@ -48,49 +47,27 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
       current_node: current_node
     } = socket.assigns
 
-    if connected?(socket) and is_binary(path) and mode != "genesis_new" and is_nil(status) do
-      parent = self()
-
-      # Test seam: the runner is resolved from application env at spawn time
-      # so tests can stub out the real (gh-touching) upstream check. The
-      # default is the real `EvoDash.NodeContext.github_upstream/2`.
+    if connected?(socket) and usable_node?(socket) and is_binary(path) and
+         mode != "genesis_new" and is_nil(status) do
       runner = Application.get_env(:evo_dash, :github_runner) || (&NodeContext.github_upstream/2)
 
-      socket = assign(socket, :github_status, %{state: :checking, owner: nil, repo: nil})
-
-      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-        result =
-          try do
-            runner.(current_node, path)
-          rescue
-            # The repo can vanish mid-check (e.g. temp-repo teardown in
-            # tests) — report a failed check instead of crashing silently and
-            # leaving the status stuck at :checking.
-            _ -> {:error, :check_failed}
-          end
-
-        send(parent, {:github_status_result, path, current_node, result})
-      end)
-
       socket
+      |> assign(:github_status, %{state: :checking, owner: nil, repo: nil})
+      |> dispatch(:github_status_request, {:github_status_result, path, current_node}, fn ->
+        runner.(current_node, path)
+      end)
     else
       socket
     end
   end
 
   @doc """
-  Applies an async upstream-detection result to `:github_status`, ignoring
-  stale results (different project path or node). A successful check with
-  `gh_available: true` marks the status `:ok` (which renders the top-bar
-  GitHub button); anything else marks it `:error` (button hidden — there is
-  deliberately no error UI in the top bar).
+  Applies the current upstream-detection result; stale or unscoped results
+  are ignored. Failed checks hide the top-bar button.
   """
-  def handle_status_result(socket, path, result_node, result) do
-    %{active_project_path: active_path, current_node: current_node} = socket.assigns
-
-    if path != active_path or result_node != current_node do
-      socket
-    else
+  def handle_status_result(socket, path, result_node, {:github_request, scope, result}) do
+    if current_request?(socket, :github_status_request, scope, path, result_node) and
+         match?(%{state: :checking}, socket.assigns[:github_status]) do
       status =
         case result do
           {:ok, %{gh_available: true, owner: owner, repo: repo}}
@@ -101,22 +78,28 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
             %{state: :error, owner: nil, repo: nil}
         end
 
-      assign(socket, :github_status, status)
+      socket
+      |> assign(:github_status_request, nil)
+      |> assign(:github_status, status)
+    else
+      socket
     end
   end
 
+  def handle_status_result(socket, _path, _result_node, _result), do: socket
+
   @doc """
-  Opens the issues modal and fetches the issue list with the default
-  "open" filter. The list result arrives as a
-  `{:github_issues_result, path, node, state, result}` message.
+  Opens the issues modal and fetches the default "open" list on a usable node.
+  Results keep the `{:github_issues_result, path, node, state, result}` shape.
   """
   def open_modal(socket) do
     %{active_project_path: path, current_node: current_node} = socket.assigns
 
-    if is_binary(path) do
+    if usable_node?(socket) and is_binary(path) do
       socket
       |> assign(:github_modal_open, true)
       |> assign(:github_fixing, nil)
+      |> assign(:github_fix_request, nil)
       |> fetch_issues(path, current_node, "open")
     else
       socket
@@ -124,24 +107,25 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
   end
 
   @doc """
-  Closes the issues modal and resets the issue list to idle.
+  Closes the modal and invalidates its pending list and fix requests.
   """
   def close_modal(socket) do
     socket
     |> assign(:github_modal_open, false)
     |> assign(:github_issues, idle_issues())
     |> assign(:github_fixing, nil)
+    |> assign(:github_issues_request, nil)
+    |> assign(:github_fix_request, nil)
   end
 
   @doc """
-  Re-fetches the issue list with a new state filter
-  (`"open"`/`"closed"`/`"all"`), via the same async fetch as `open_modal/1`.
+  Re-fetches the issue list with a new "open"/"closed"/"all" state filter.
   """
   def filter_state(socket, state) when state in ["open", "closed", "all"] do
     %{active_project_path: path, current_node: current_node, github_modal_open: open?} =
       socket.assigns
 
-    if open? and is_binary(path) do
+    if open? and usable_node?(socket) and is_binary(path) do
       fetch_issues(socket, path, current_node, state)
     else
       socket
@@ -151,87 +135,78 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
   def filter_state(socket, _state), do: socket
 
   @doc """
-  Fetches a single issue's Markdown in the background (the per-row "Fix"
-  button flow). `number` arrives as a string from `phx-value-number`. The
-  result arrives as a `{:github_fix_result, path, node, number, result}`
-  message.
+  Fetches a positive issue number's Markdown in the background. Results keep
+  the `{:github_fix_result, path, node, number, result}` message shape.
   """
-  def fix_issue(socket, number) do
+  def fix_issue(socket, number) when is_binary(number) do
     %{active_project_path: path, current_node: current_node, github_modal_open: open?} =
       socket.assigns
 
-    with {issue_number, ""} <- Integer.parse(number),
-         true <- open?,
-         true <- is_binary(path) do
-      parent = self()
-
-      # Test seam: resolved from application env at spawn time (same pattern
-      # as `:github_runner`). The default is the real
-      # `EvoDash.NodeContext.github_issue_markdown/3`.
+    with {issue_number, ""} when issue_number > 0 <- Integer.parse(number),
+         true <- open? and usable_node?(socket) and is_binary(path),
+         false <- socket.assigns[:github_fixing] == issue_number do
       runner =
         Application.get_env(:evo_dash, :github_issue_markdown_runner) ||
           (&NodeContext.github_issue_markdown/3)
 
-      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-        result =
-          try do
-            runner.(current_node, path, issue_number)
-          rescue
-            _ -> {:error, :fetch_failed}
-          end
-
-        send(parent, {:github_fix_result, path, current_node, issue_number, result})
-      end)
-
-      assign(socket, :github_fixing, issue_number)
+      socket
+      |> assign(:github_fixing, issue_number)
+      |> dispatch(
+        :github_fix_request,
+        {:github_fix_result, path, current_node, issue_number},
+        fn -> runner.(current_node, path, issue_number) end
+      )
     else
       _ -> socket
     end
   end
 
+  def fix_issue(socket, _number), do: socket
+
   @doc """
-  Applies an async issue-list result, ignoring stale results (different
-  project path, node, or filter state — out-of-order responses for older
-  filters are dropped). `{:ok, issues}` marks the list `:ok`; `{:error,
-  reason}` marks it `:error` with the reason surfaced in the modal.
+  Applies only the current open modal's issue-list request, matching its node,
+  target, project and filter. Older requests for the same filter are dropped.
   """
-  def handle_issues_result(socket, path, result_node, state, result) do
-    %{
-      active_project_path: active_path,
-      current_node: current_node,
-      github_issues: issues
-    } = socket.assigns
+  def handle_issues_result(socket, path, result_node, state, {:github_request, scope, result}) do
+    issues = socket.assigns.github_issues
 
-    if path != active_path or result_node != current_node or state != issues.state_filter do
+    if current_request?(socket, :github_issues_request, scope, path, result_node) and
+         socket.assigns.github_modal_open and issues.status == :loading and
+         state == issues.state_filter do
+      issues =
+        case result do
+          {:ok, list} when is_list(list) ->
+            %{issues | status: :ok, error: nil, issues: list}
+
+          {:error, reason} ->
+            %{issues | status: :error, error: reason, issues: []}
+
+          _ ->
+            %{issues | status: :error, error: :fetch_failed, issues: []}
+        end
+
       socket
+      |> assign(:github_issues_request, nil)
+      |> assign(:github_issues, issues)
     else
-      case result do
-        {:ok, list} when is_list(list) ->
-          assign(socket, :github_issues, %{issues | status: :ok, error: nil, issues: list})
-
-        {:error, reason} ->
-          assign(socket, :github_issues, %{issues | status: :error, error: reason, issues: []})
-
-        _ ->
-          socket
-      end
+      socket
     end
   end
 
-  @doc """
-  Applies an async issue-markdown fetch result: on `{:ok, markdown}` starts
-  an `:evolve` fix task (mirroring `task_submit`'s start flow) and closes the
-  modal; on `{:error, reason}` flashes the surfaced error. `:github_fixing`
-  is cleared on every non-stale path. Stale results (different project path
-  or node) are dropped untouched.
-  """
-  def handle_fix_result(socket, path, result_node, number, result) do
-    %{active_project_path: active_path, current_node: current_node} = socket.assigns
+  def handle_issues_result(socket, _path, _result_node, _state, _result), do: socket
 
-    if path != active_path or result_node != current_node do
-      socket
-    else
-      socket = assign(socket, :github_fixing, nil)
+  @doc """
+  Starts a fix task only for the current open modal's in-flight issue fetch.
+  Closing/reopening the modal or superseding the fix invalidates older results.
+  """
+  def handle_fix_result(socket, path, result_node, number, {:github_request, scope, result}) do
+    if current_request?(socket, :github_fix_request, scope, path, result_node) and
+         socket.assigns.github_modal_open and is_integer(number) and number > 0 and
+         socket.assigns[:github_fixing] == number do
+      socket =
+        socket
+        |> assign(:github_fixing, nil)
+        |> assign(:github_fix_request, nil)
 
       case result do
         {:ok, markdown} when is_binary(markdown) ->
@@ -239,50 +214,96 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
 
         {:error, reason} ->
           put_flash(socket, :error, GitHubComponents.error_message(reason))
+
+        _ ->
+          put_flash(socket, :error, GitHubComponents.error_message(:fetch_failed))
       end
+    else
+      socket
     end
   end
 
-  # Spawns the issue-list fetch for `state` in a supervised Task (same async
-  # pattern as `EvoDashWeb.ReviewLive.MergeCheck`). The requested filter is
-  # echoed back with the result so stale-filter responses are dropped by
-  # `handle_issues_result/5`.
-  defp fetch_issues(socket, path, current_node, state) do
-    parent = self()
+  def handle_fix_result(socket, _path, _result_node, _number, _result), do: socket
 
+  defp fetch_issues(socket, path, current_node, state) do
     runner =
       Application.get_env(:evo_dash, :github_issues_runner) ||
         (&NodeContext.list_github_issues/3)
 
-    socket =
-      assign(socket, :github_issues, %{
-        status: :loading,
-        error: nil,
-        state_filter: state,
-        issues: []
-      })
-
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      result =
-        try do
-          runner.(current_node, path, state: state)
-        rescue
-          _ -> {:error, :fetch_failed}
-        end
-
-      send(parent, {:github_issues_result, path, current_node, state, result})
-    end)
-
     socket
+    |> assign(:github_issues, %{
+      status: :loading,
+      error: nil,
+      state_filter: state,
+      issues: []
+    })
+    |> dispatch(:github_issues_request, {:github_issues_result, path, current_node, state}, fn ->
+      runner.(current_node, path, state: state)
+    end)
   end
 
-  # Starts the `:evolve` fix task exactly following the existing `task_submit`
-  # start flow: path/mode/objective opts, foreign repos and the selected model
-  # id threaded when present, local vs remote start split. The objective is an
-  # agent prompt — plain string interpolation, NOT gettext. The markdown
-  # already embeds the issue's title, URL, state, labels, and body so the
-  # agent has full context.
+  # Keep parent message tuples unchanged; only their opaque result carries
+  # request identity. Target ids matter even when two targets share a BEAM node.
+  defp dispatch(socket, key, tag, fun) do
+    scope = {make_ref(), socket.assigns[:current_node_id]}
+    parent = self()
+
+    deliver = fn result ->
+      send(parent, Tuple.insert_at(tag, tuple_size(tag), {:github_request, scope, result}))
+    end
+
+    case SafeCall.run(fn ->
+           Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+             deliver.(guarded_result(fun))
+           end)
+         end) do
+      {:ok, {:ok, _pid}} -> :ok
+      {:ok, {:error, reason}} -> deliver.({:error, reason})
+      {:error, reason} -> deliver.({:error, reason})
+    end
+
+    assign(socket, key, scope)
+  end
+
+  defp guarded_result(fun) do
+    case SafeCall.run(fun) do
+      {:ok, result} -> result
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp current_request?(socket, key, {ref, target_id} = scope, path, result_node)
+       when is_reference(ref) do
+    usable_node?(socket) and socket.assigns[key] == scope and
+      target_id == socket.assigns[:current_node_id] and
+      path == socket.assigns.active_project_path and result_node == socket.assigns.current_node
+  end
+
+  defp current_request?(_socket, _key, _scope, _path, _result_node), do: false
+
+  # A selected but disconnected target resolves to the LOCAL node. Never use
+  # remote? alone to choose a registry: it is false in that pending context.
+  defp usable_node?(socket) do
+    if is_nil(socket.assigns[:current_node_id]) do
+      socket.assigns[:current_node] == node()
+    else
+      socket.assigns[:current_node] not in [nil, node()] and
+        not RemoteGateComponents.gate_active?(socket.assigns)
+    end
+  end
+
+  # Same LaunchOptions policy as task_submit: canonical model-spec locking,
+  # custom agent and quality, with foreign repos preserved. The objective is
+  # an agent prompt, NOT gettext; Markdown includes title/URL/state/body.
   defp start_fix_task(socket, number, markdown) do
+    if usable_node?(socket) do
+      do_start_fix_task(socket, number, markdown)
+    else
+      put_flash(socket, :error, gettext("Connect to the remote node before starting a task."))
+    end
+  end
+
+  defp do_start_fix_task(socket, number, markdown) do
     %{github_issues: %{issues: issues}, active_project_path: path} = socket.assigns
 
     title =
@@ -300,28 +321,15 @@ defmodule EvoDashWeb.ProjectsLive.GitHub do
         do: Keyword.put(opts, :foreign_repos, foreign_repos),
         else: opts
 
-    selected_model_id = socket.assigns[:selected_model_id]
-
-    opts =
-      if is_binary(selected_model_id) and selected_model_id != "",
-        do: Keyword.put(opts, :model_id, selected_model_id),
-        else: opts
-
-    # Exit-safe launch: the local store / remote `:erpc` call can EXIT this
-    # LiveView (dead/timed-out target), so it goes through `EvoDash.SafeCall`
-    # and lands on the existing "Failed to start task" flash. The wrapper is
-    # FLATTENED so the result keeps `start_task`'s `{:ok, task} | {:error, _}`
-    # shape.
     start_result =
-      case SafeCall.run(fn ->
-             if socket.assigns.remote? do
-               NodeContext.start_task(socket.assigns.current_node, :evolve, opts)
-             else
-               TaskRegistry.start_task(:evolve, opts)
-             end
-           end) do
-        {:ok, start_result} -> start_result
-        {:error, reason} -> {:error, reason}
+      with {:ok, opts} <- LaunchOptions.apply(opts, socket.assigns) do
+        guarded_result(fn ->
+          if is_nil(socket.assigns[:current_node_id]) do
+            TaskRegistry.start_task(:evolve, opts)
+          else
+            NodeContext.start_task(socket.assigns.current_node, :evolve, opts)
+          end
+        end)
       end
 
     case start_result do

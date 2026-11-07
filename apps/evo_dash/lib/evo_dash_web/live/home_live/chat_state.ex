@@ -16,7 +16,10 @@ defmodule EvoDashWeb.HomeLive.ChatState do
         chat_task_status: nil | :pending | :running | :finalizing | :cancelling
                           | :completed | :failed | :cancelled,
         chat_node: node() | nil,
-        selected_model_id: String.t() | nil,
+        model_spec: map() | nil,
+        selected_model_id: String.t() | nil, # migration input only
+        model_selection_scope: {String.t() | nil, node()} | nil,
+        model_selection_error: nil | :invalid_model_spec,
         thought_process: [Messages.to_entries/1 entry]
       }
 
@@ -43,13 +46,11 @@ defmodule EvoDashWeb.HomeLive.ChatState do
       agent_message_count: assigns[:agent_message_count],
       chat_task_status: assigns[:chat_task_status],
       chat_node: assigns[:chat_node],
-      # The chat's pinned model profile id (nil = Auto — the runtime's
-      # model-selection script or default decides). NOT validated against the
-      # configured profiles: a stored id that no longer exists just threads an
-      # unknown id on the next send (the core falls back gracefully).
+      # Legacy migration input only; new submissions never emit :model_id.
       selected_model_id: assigns[:selected_model_id],
       thought_process: assigns[:thought_process] || []
     }
+    |> persist_selection(assigns)
   end
 
   @doc """
@@ -70,9 +71,107 @@ defmodule EvoDashWeb.HomeLive.ChatState do
       selected_model_id: normalize_model_id(Map.get(state, :selected_model_id)),
       thought_process: normalize_thought_process(Map.get(state, :thought_process))
     }
+    |> persist_selection(state)
   end
 
   def restore(_state), do: restore(%{})
+
+  @doc """
+  Restores ONLY the LLM choice after the page has resolved its node context.
+
+  Scope is `{current_node_id, current_node || node()}`; a remote target id is
+  retained even while disconnected so it never borrows the local node's pin.
+  A different scope clears the choice to an uninitialized nil spec, which the
+  shared helper reconciles to that node's configured default. An empty map is
+  explicit Auto; false is malformed, never Auto. New chat on the same scope may
+  retain this result; node switches must run it before sending or persisting.
+
+  Old chats have only selected_model_id and were persisted locally: keep that
+  id as migration input on the local scope only. The shared selection helper
+  must resolve it against the freshly loaded config before it becomes a spec;
+  an invalid/stale id is NOT Auto. A malformed explicit spec is similarly
+  retained as an error, never silently reinterpreted as Auto.
+  """
+  @spec restore_selection(term(), {String.t() | nil, node()}) :: map()
+  def restore_selection(state, scope) when is_map(state) do
+    saved_scope = normalize_scope(Map.get(state, :model_selection_scope))
+
+    legacy_local? =
+      not Map.has_key?(state, :model_spec) and
+        not Map.has_key?(state, :model_selection_scope) and scope == {nil, node()}
+
+    if valid_scope?(scope) and (saved_scope == scope or legacy_local?) do
+      state
+      |> selection_fields()
+      |> Map.put(:model_selection_scope, scope)
+    else
+      empty_selection(scope)
+    end
+  end
+
+  def restore_selection(_state, scope), do: empty_selection(scope)
+
+  defp persist_selection(state, source) do
+    # Keep pre-redesign ChatHistory maps readable without inventing a scope.
+    # The parent opts in by seeding model_spec and model_selection_scope.
+    if Map.has_key?(source, :model_spec) or Map.has_key?(source, :model_selection_scope) do
+      Map.merge(state, selection_fields(source))
+    else
+      state
+    end
+  end
+
+  defp selection_fields(source) do
+    {spec, error} = persisted_spec(Map.get(source, :model_spec))
+
+    %{
+      model_spec: spec,
+      model_selection_scope: normalize_scope(Map.get(source, :model_selection_scope)),
+      model_selection_error:
+        if(Map.get(source, :model_selection_error) == :invalid_model_spec,
+          do: :invalid_model_spec,
+          else: error
+        ),
+      selected_model_id:
+        if(is_nil(spec) and is_nil(error),
+          do: normalize_model_id(Map.get(source, :selected_model_id))
+        )
+    }
+  end
+
+  # Persistence validates shape only, never catalog membership/defaults. Those
+  # depend on the node's current config and belong in the shared helper.
+  defp persisted_spec(nil), do: {nil, nil}
+
+  defp persisted_spec(spec) when is_map(spec) do
+    keys = ["provider_profile_id", "model", "reasoning_effort"]
+    known = Map.take(spec, keys)
+
+    if map_size(known) == map_size(spec) and Enum.all?(known, fn {_k, v} -> is_binary(v) end) do
+      {known, nil}
+    else
+      {nil, :invalid_model_spec}
+    end
+  end
+
+  defp persisted_spec(_spec), do: {nil, :invalid_model_spec}
+
+  defp empty_selection(scope) do
+    %{
+      model_spec: nil,
+      selected_model_id: nil,
+      model_selection_scope: normalize_scope(scope),
+      model_selection_error: nil
+    }
+  end
+
+  defp valid_scope?({id, target_node}) do
+    (is_nil(id) or (is_binary(id) and id != "")) and
+      is_atom(target_node) and not is_nil(target_node)
+  end
+
+  defp valid_scope?(_scope), do: false
+  defp normalize_scope(scope), do: if(valid_scope?(scope), do: scope)
 
   defp normalize_draft(draft) when is_binary(draft), do: draft
   defp normalize_draft(_draft), do: ""
@@ -93,14 +192,11 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   defp normalize_chat_node(_node), do: nil
 
   @doc """
-  Normalizes a (possibly untrusted) model profile id for the chat's
-  `selected_model_id` pin: a non-empty binary → itself; anything else → `nil`
-  (Auto — the runtime's model-selection script or default decides).
-
-  Shared by `restore/1` AND the LiveView's `select_chat_model` event handler so
-  both paths apply the same semantics ("" from the Auto option → nil). NOT
-  validated against the configured profiles: a stored id that no longer exists
-  just threads an unknown id on the next send (the core falls back gracefully).
+  Preserves a legacy profile id as migration input; blank/nil becomes nil
+  (uninitialized, reconciled to the configured default by the shared helper).
+  This is shape normalization only, not membership validation. Before sending,
+  the shared helper must resolve every retained id against the node's current
+  config and reject unknown ids; it must never emit a legacy :model_id pin.
   """
   @spec normalize_model_id(term()) :: String.t() | nil
   def normalize_model_id(id) when is_binary(id) and id != "", do: id

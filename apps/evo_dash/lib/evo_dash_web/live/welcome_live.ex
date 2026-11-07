@@ -1,17 +1,13 @@
 defmodule EvoDashWeb.WelcomeLive do
   @moduledoc """
-  Onboarding page for new users.
-
-  The primary onboarding action is configuring a first LLM inline via a
-  stepwise flow: pick a provider → choose a model → enter credentials, with a
-  merged single-action save. When a model profile already exists, the page
-  shows a friendly "you're ready" state.
+  Local-only onboarding for a provider profile with multiple models, a default
+  model and per-model reasoning defaults, using API-key or subscription auth.
   """
-
   use EvoDashWeb, :live_view
 
   alias EvoDashWeb.SettingsLive.ConfigIO
-  alias EvoDashWeb.SettingsLive.ModelProfileHelpers
+  alias EvoDashWeb.WelcomeLive.Setup
+  alias EvoGit.Config.LLMCatalog, as: Catalog
 
   @impl true
   def render(assigns) do
@@ -29,411 +25,303 @@ defmodule EvoDashWeb.WelcomeLive do
       guide={@guide}
       accent_color={assigns[:accent_color] || "blue"}
     >
-      <div class="min-h-screen lg:h-screen lg:overflow-hidden max-w-5xl mx-auto px-4 lg:px-6 py-3 lg:py-4 flex flex-col">
-        <!-- Back navigation: pure client-side (browser history back with a
-               dashboard fallback) — visible in both setup and all-set states -->
-        <div class="shrink-0 mb-2">
-          <button
-            type="button"
-            onclick="if (window.history.length > 1) { history.back(); } else { window.location.href = '/'; }"
-            class="btn btn-ghost btn-sm rounded-xl gap-2 px-3"
-          >
-            <.icon name="hero-arrow-left" class="size-4" />
-            {gettext("Back")}
-          </button>
-        </div>
+      <div class="min-h-screen max-w-5xl mx-auto px-4 lg:px-6 py-4 space-y-5">
+        <button
+          type="button"
+          onclick="if (window.history.length > 1) { history.back(); } else { window.location.href = '/'; }"
+          class="btn btn-ghost btn-sm gap-2"
+        >
+          <.icon name="hero-arrow-left" class="size-4" />{gettext("Back")}
+        </button>
+        <header>
+          <h2 class="text-xl font-bold">
+            {if @has_model?, do: gettext("You're All Set!"), else: gettext("Welcome to Genesis")}
+          </h2>
+          <p class="text-sm text-base-content/70 mt-1">
+            {gettext("Configure a provider and its models to start building with Genesis.")}
+          </p>
+        </header>
 
-        <!-- Header (non-scrolling) -->
-        <div class="flex items-center gap-3 mb-3 shrink-0">
-          <div class="text-3xl shrink-0">
-            {if @has_model?, do: "✨", else: "🚀"}
-          </div>
-          <div class="min-w-0">
-            <h2 class="text-xl font-bold leading-tight">
-              {if @has_model?,
-                do: gettext("You're All Set!"),
-                else: gettext("Welcome to Genesis")}
-            </h2>
-            <p class="text-sm text-base-content/60 leading-snug">
-              {if @has_model?,
-                do:
-                  gettext(
-                    "Your LLM is configured and ready. You can now start building and evolving codebases with Genesis."
-                  ),
-                else:
-                  gettext(
-                    "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
-                  )}
-            </p>
-          </div>
-        </div>
-
-        <%= if @has_model? do %>
-          <!-- All-set state: ready to go -->
-          <div class="flex flex-col items-center gap-6">
-            <div class="bg-success/10 border border-success/20 rounded-xl p-6 flex items-center gap-3 w-full">
-              <.icon name="hero-check-circle" class="size-8 text-success shrink-0" />
-              <div class="text-left">
-                <p class="font-bold text-success">
-                  {gettext("Ready to build!")}
-                </p>
-                <p class="text-sm text-base-content/60 mt-1">
+        <%= cond do %>
+          <% @current_node_id != nil -> %>
+            <div class="alert alert-info">
+              {gettext(
+                "Welcome setup configures this machine only. Switch to Local or use Settings for the remote node."
+              )}
+            </div>
+            <a href={~p"/welcome"} class="btn btn-primary btn-sm">{gettext("Switch to Local")}</a>
+          <% @has_model? -> %>
+            <div class="bg-success/10 border border-success/20 rounded-lg p-5 flex gap-3">
+              <.icon name="hero-check-circle" class="size-7 text-success" />
+              <div>
+                <p class="font-bold text-success">{gettext("Ready to build!")}</p>
+                <p class="text-sm text-base-content/70">
                   {gettext("Your LLM is configured. You can manage it anytime in Settings.")}
                 </p>
               </div>
             </div>
-
-            <div class="flex items-center gap-3 w-full justify-center">
-              <button phx-click="get_started" class="btn btn-primary rounded-xl px-8">
-                {gettext("Go to Dashboard")}
-              </button>
-              <a href={~p"/settings"} class="btn btn-ghost rounded-xl">
-                {gettext("Open Settings")}
-              </a>
+            <div class="flex gap-3">
+              <button phx-click="get_started" class="btn btn-primary btn-sm">{gettext(
+                "Go to Dashboard"
+              )}</button>
+              <a href={~p"/settings"} class="btn btn-ghost btn-sm">{gettext("Open Settings")}</a>
             </div>
-          </div>
-        <% else %>
-          <!-- Setup state: stepwise flow — provider first, then model,
-                 credentials only after a model is chosen -->
-          <div class="shrink-0 mb-4">
-            <h3 class="text-lg font-bold mb-1">
-              {gettext("Add your first LLM")}
-            </h3>
-            <p class="text-sm text-base-content/60">
-              {gettext(
-                "Pick a provider, choose a model, then enter your API key. Keys are stored locally, never sent anywhere."
-              )}
-            </p>
-          </div>
-
-          <!-- Steps 1 + 2: provider + model selection — scrolls internally on
-                 large screens, page-scrolls on small screens -->
-          <div class="lg:flex-1 lg:overflow-y-auto lg:min-h-0 lg:pr-1">
-            <!-- STEP 1: Provider selection -->
-            <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-2 shrink-0">
-              {gettext("Choose a provider:")}
-            </p>
-            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 mb-3">
-              <%= for provider <- welcome_providers(@llm_providers) do %>
-                <% selected = @selected_provider_id == provider.id %>
-                <button
-                  phx-click="select_welcome_provider"
-                  phx-value-provider_id={provider.id}
-                  class={[
-                    "btn btn-xs rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-1.5",
-                    selected && "btn-primary shadow-md",
-                    !selected && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary-standalone"
-                  ]}
-                >
-                  <%!-- zh: provider names — see t_provider/1 for Chinese references --%>
-                  <span class="font-semibold text-xs">{t_provider(provider.display_name)}</span>
-                </button>
-              <% end %>
-            </div>
-
-            <!-- STEP 2: Model selection for the chosen provider -->
-            <%= if @selected_provider_id != nil do %>
-              <% selected_provider =
-                Enum.find(@llm_providers, &(&1.id == @selected_provider_id)) %>
-              <% variants = selected_provider[:variants] %>
-
-              <%= if is_list(variants) and variants != [] do %>
-                <!-- Variant selector (mirrors the Settings page pattern) -->
-                <div class="mb-4">
-                  <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-2">
-                    {gettext("Select a variant:")}
-                  </p>
-                  <div class="flex flex-wrap gap-2">
-                    <%= for variant <- variants do %>
-                      <button
-                        type="button"
-                        phx-click="select_welcome_variant"
-                        phx-value-variant_id={variant.id}
-                        class={[
-                          "btn btn-xs rounded-xl font-medium transition-all duration-200",
-                          @selected_variant_id == variant.id && "btn-secondary shadow-md",
-                          @selected_variant_id != variant.id &&
-                            "btn-ghost bg-secondary/10 hover:bg-secondary/20 text-secondary"
-                        ]}
-                      >
-                        {variant.display_name}
-                      </button>
-                    <% end %>
-                  </div>
-                </div>
-              <% end %>
-
-              <!-- Search box: scoped to the selected provider's models -->
-              <div class="relative mb-3">
-                <.icon
-                  name="hero-magnifying-glass"
-                  class="size-4 text-base-content/60 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                />
-                <form id="welcome-search" class="contents" phx-submit="noop">
-                  <input
-                    type="text"
-                    phx-change="search_models"
-                    phx-debounce="150"
-                    name="search_query"
-                    value={@search_query}
-                    placeholder={gettext("Search models…")}
-                    class="input input-bordered rounded-xl w-full pl-9 pr-9 shadow-sm bg-base-100 hover:bg-base-100/80 transition-all duration-200"
-                  />
-                </form>
-                <%= if @search_query != "" do %>
+          <% true -> %>
+            <section class="space-y-3">
+              <h3 class="text-lg font-bold">{gettext("Add your first LLM")}</h3>
+              <p class="text-sm text-base-content/70">
+                {gettext(
+                  "Pick a provider, select one or more models, then choose API key or subscription authentication."
+                )}
+              </p>
+              <p class="text-xs font-bold uppercase text-base-content/70">
+                {gettext("Choose a provider:")}
+              </p>
+              <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                <%= for provider <- welcome_providers(@llm_providers) do %>
                   <button
                     type="button"
-                    phx-click="search_models"
-                    phx-value-search_query=""
-                    class="absolute inset-y-0 right-0 flex items-center pr-3 text-base-content/60 hover:text-base-content transition-colors"
+                    phx-click="select_welcome_provider"
+                    phx-value-provider_id={provider.id}
+                    class={[
+                      "btn btn-sm h-auto py-2 text-left",
+                      @selected_provider_id == provider.id && "btn-primary",
+                      @selected_provider_id != provider.id &&
+                        "btn-ghost bg-primary/10 text-primary-standalone"
+                    ]}
                   >
-                    <.icon name="hero-x-mark" class="size-4" />
+                    {t_provider(provider.display_name)}
                   </button>
                 <% end %>
               </div>
 
-              <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-2 shrink-0">
-                {gettext("Choose a model:")}
-              </p>
-
-              <% entries =
-                provider_models(@flat_models, @selected_provider_id, @selected_variant_id) %>
-              <%= if filtered_provider_models(entries, @search_query) == [] do %>
-                <!-- Zero search results -->
-                <div class="py-6 text-center">
-                  <.icon
-                    name="hero-magnifying-glass"
-                    class="size-8 text-base-content/40 mx-auto mb-2"
+              <%= if @selected_provider_id do %>
+                <% provider = Enum.find(@llm_providers, &(&1.id == @selected_provider_id)) %>
+                <%= if provider[:variants] do %>
+                  <p class="text-xs font-bold text-base-content/70">{gettext("Select a variant:")}</p>
+                  <div class="flex flex-wrap gap-2">
+                    <%= for variant <- provider.variants do %>
+                      <button
+                        type="button"
+                        phx-click="select_welcome_variant"
+                        phx-value-variant_id={variant.id}
+                        class={["btn btn-xs", @selected_variant_id == variant.id && "btn-secondary"]}
+                      >{variant.display_name}</button>
+                    <% end %>
+                  </div>
+                <% end %>
+                <form id="welcome-search" phx-submit="noop">
+                  <input
+                    type="search"
+                    name="search_query"
+                    value={@search_query}
+                    phx-change="search_models"
+                    phx-debounce="150"
+                    placeholder={gettext("Search models…")}
+                    class="input input-bordered w-full"
                   />
-                  <p class="text-sm text-base-content/70">
+                </form>
+                <p class="text-xs font-bold text-base-content/70">{gettext("Choose a model:")}</p>
+                <% entries =
+                  Setup.provider_models(@flat_models, @selected_provider_id, @selected_variant_id) %>
+                <% filtered = Setup.filtered_models(entries, @search_query) %>
+                <%= if filtered == [] do %>
+                  <p class="text-sm text-base-content/70 py-4">
                     {gettext("No models match your search.")}
                   </p>
-                </div>
-              <% else %>
-                <!-- Models for the chosen provider (+ variant) -->
-                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-                  <%= for entry <- filtered_provider_models(entries, @search_query) do %>
-                    <% selected =
-                      @selected_entry && @selected_entry.model_string == entry.model_string %>
-                    <button
-                      phx-click="select_welcome_model"
-                      phx-value-model_string={entry.model_string}
-                      class={[
-                        "btn btn-xs rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-1.5",
-                        selected && "btn-primary shadow-md",
-                        !selected &&
-                          "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary-standalone"
-                      ]}
-                    >
-                      <span class="font-semibold text-xs">{entry.model_display_name}</span>
-                      <span class={[
-                        "text-xs leading-tight",
-                        selected && "text-primary-content/80",
-                        !selected && "text-base-content/60"
-                      ]}>
-                        {t_provider(entry.provider_display_name)}{variant_suffix(entry)}
-                      </span>
-                    </button>
-                  <% end %>
-                </div>
-              <% end %>
-
-              <!-- End-of-list guidance -->
-              <div class="mt-3 mb-2 bg-base-200/50 rounded-xl p-3 text-center">
-                <p class="text-xs text-base-content/70 leading-relaxed">
-                  {gettext(
-                    "Need a different model, a custom API base URL, or advanced settings? Skip this page and visit the full"
-                  )}
-                  <a href={~p"/settings"} class="link link-primary font-semibold">
-                    {gettext("Settings page")}
-                  </a>
-                  .
-                </p>
-              </div>
-            <% end %>
-          </div>
-
-          <!-- STEP 3: Credentials — rendered ONLY after a model is chosen
-                 (pinned at bottom on large screens) -->
-          <div class="mt-4 lg:shrink-0 lg:pt-4 lg:border-t lg:border-base-300">
-            <%= if @selected_entry do %>
-              <div class="bg-base-200 rounded-xl border border-base-300 p-5">
-                <% key_is_set = Map.get(@credentials, @selected_entry.credential_key) not in [nil, ""] %>
-                <% can_save = @api_key_input != "" or key_is_set %>
-                <% requires_base_url =
-                  EvoGit.Config.LLMCatalog.requires_base_url?(@selected_entry.provider_id) %>
-
-                <div class="flex items-center gap-2 mb-4">
-                  <.icon name="hero-key" class="size-4 text-primary-standalone" />
-                  <span class="text-sm font-semibold">
-                    {gettext("Enter your API key")}
-                  </span>
-                </div>
-
-                <!-- Merged save: API key + model profile in ONE action -->
-                <form phx-submit="save_welcome_setup">
-                  <input type="hidden" name="credential_key" value={@selected_entry.credential_key} />
-                  <input type="hidden" name="model_string" value={@selected_entry.model_string} />
-                  <input
-                    type="hidden"
-                    name="provider_id"
-                    value={Atom.to_string(@selected_entry.provider_id)}
-                  />
-                  <input
-                    type="hidden"
-                    name="variant_id"
-                    value={
-                      if(@selected_entry.variant_id,
-                        do: Atom.to_string(@selected_entry.variant_id),
-                        else: ""
-                      )
-                    }
-                  />
-                  <label class="label">
-                    <span class="label-text font-semibold text-sm">
-                      {@selected_entry.credential_key}
-                    </span>
-                    <%= if key_is_set do %>
-                      <span class="label-text-alt text-success text-xs font-bold">✓ {gettext("Set")}</span>
+                <% else %>
+                  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                    <%= for entry <- filtered do %>
+                      <% selected = entry.model_string in @selected_models %>
+                      <button
+                        type="button"
+                        phx-click="select_welcome_model"
+                        phx-value-model_string={entry.model_string}
+                        aria-pressed={to_string(selected)}
+                        class={[
+                          "btn btn-xs h-auto py-2 flex-col items-start text-left",
+                          selected && "btn-primary",
+                          !selected && "btn-ghost bg-primary/10 text-primary-standalone"
+                        ]}
+                      >
+                        <span>{entry.model_display_name}</span>
+                        <%= if entry.variant_display_name do %>
+                          <span class="text-xs">{t_provider(entry.provider_display_name)} · {entry.variant_display_name}</span>
+                        <% end %>
+                      </button>
                     <% end %>
-                  </label>
-                  <input
-                    type="password"
-                    name="api_key"
-                    phx-change="api_key_changed"
-                    value={@api_key_input}
-                    placeholder={
-                      if key_is_set,
-                        do: gettext("API key is already set"),
-                        else: gettext("Enter your API key")
-                    }
-                    class={[
-                      "input input-bordered w-full rounded-xl shadow-sm bg-base-100",
-                      key_is_set && "input-success"
-                    ]}
-                  />
-                  <p class="text-xs text-base-content/70 mt-1.5">
-                    {gettext("Enter your API key for %{provider}.",
-                      provider: t_provider(@selected_entry.provider_display_name)
+                  </div>
+                <% end %>
+                <p class="text-xs text-base-content/70">
+                  {gettext("Need a custom model or advanced settings?")}
+                  <a href={~p"/settings"} class="link link-primary">{gettext("Settings page")}</a>
+                </p>
+              <% end %>
+            </section>
+
+            <%= if @selected_entry do %>
+              <section class="bg-base-200 border border-base-300 rounded-lg p-5 space-y-4">
+                <form id="welcome-defaults" phx-change="welcome_defaults_changed" class="space-y-3">
+                  <label class="block text-sm font-semibold" for="welcome-default-model">{gettext(
+                    "Default model"
+                  )}</label>
+                  <select
+                    id="welcome-default-model"
+                    name="default_model"
+                    class="select select-bordered w-full"
+                  >
+                    <%= for entry <- selected_entries(assigns) do %>
+                      <option
+                        value={entry.model_string}
+                        selected={@default_model == entry.model_string}
+                      >
+                        {entry.model_display_name}
+                      </option>
+                    <% end %>
+                  </select>
+                  <%= for entry <- selected_entries(assigns) do %>
+                    <label class="block text-sm text-base-content/80">
+                      {gettext("Default reasoning for %{model}", model: entry.model_display_name)}
+                      <select
+                        name={"reasoning[#{entry.model_string}]"}
+                        class="select select-bordered select-sm w-full mt-1"
+                      >
+                        <option
+                          value=""
+                          selected={Map.get(@model_reasoning, entry.model_string, "") == ""}
+                        >
+                          {gettext("Provider default")}
+                        </option>
+                        <%= for effort <- Setup.reasoning_efforts(entry) do %>
+                          <option
+                            value={effort}
+                            selected={Map.get(@model_reasoning, entry.model_string) == effort}
+                          >
+                            {effort}
+                          </option>
+                        <% end %>
+                      </select>
+                    </label>
+                  <% end %>
+                </form>
+
+                <%= if Catalog.supports_oauth?(@selected_entry.resolved_atom) do %>
+                  <%= if Catalog.oauth_only?(@selected_entry.resolved_atom) do %>
+                    <span class="badge badge-info">{gettext("Subscription (OAuth)")}</span>
+                  <% else %>
+                    <form id="welcome-auth" phx-change="welcome_auth_changed">
+                      <label class="block text-sm font-semibold" for="welcome-auth-mode">{gettext(
+                        "Authentication"
+                      )}</label>
+                      <select
+                        id="welcome-auth-mode"
+                        name="auth_mode"
+                        class="select select-bordered w-full"
+                      >
+                        <option value="api_key" selected={@auth_mode == "api_key"}>
+                          {gettext("API key")}
+                        </option>
+                        <option value="oauth" selected={@auth_mode == "oauth"}>
+                          {gettext("Subscription (OAuth)")}
+                        </option>
+                      </select>
+                    </form>
+                  <% end %>
+                <% end %>
+                <%= if @auth_mode == "oauth" do %>
+                  <p class="text-sm text-base-content/80">
+                    {gettext(
+                      "Log in once with the vendor CLI on this machine, then test the connection. No API key is required."
                     )}
                   </p>
+                  <pre class="text-xs whitespace-pre-wrap bg-base-100 p-3 rounded-md">{EvoGit.Auth.login_instructions(@selected_entry.resolved_atom)}</pre>
+                <% end %>
 
-                  <!-- Base URL: shown only for providers that require a custom
-                         endpoint (catalog function, NOT the dead
-                         provider[:requires_base_url] map field). -->
-                  <%= if requires_base_url do %>
-                    <label class="label mt-3">
-                      <span class="label-text font-semibold text-sm">
-                        {gettext("Base URL")}
-                        <span class="text-error">*</span>
-                      </span>
+                <% key_is_set = Map.get(@credentials, @selected_entry.credential_key) not in [nil, ""] %>
+                <% can_save = Setup.can_save?(assigns) %>
+                <form id="welcome-save" phx-submit="save_welcome_setup" class="space-y-3">
+                  <%= if @auth_mode == "api_key" do %>
+                    <label class="block text-sm font-semibold" for="welcome-api-key">
+                      {gettext("Enter your API key")} · {@selected_entry.credential_key}
+                      <%= if key_is_set do %>
+                        <span class="text-success">✓ {gettext("Set")}</span>
+                      <% end %>
                     </label>
                     <input
-                      type="text"
+                      id="welcome-api-key"
+                      type="password"
+                      name="api_key"
+                      phx-change="api_key_changed"
+                      value={@api_key_input}
+                      placeholder={
+                        if key_is_set,
+                          do: gettext("API key is already set"),
+                          else: gettext("Enter your API key")
+                      }
+                      class="input input-bordered w-full"
+                    />
+                    <p class="text-xs text-base-content/70">
+                      {gettext("Enter your API key for %{provider}.",
+                        provider: t_provider(@selected_entry.provider_display_name)
+                      )}
+                    </p>
+                  <% end %>
+                  <%= if Catalog.requires_base_url?(@selected_entry.provider_id) do %>
+                    <label class="block text-sm font-semibold">{gettext("Base URL")}</label>
+                    <input
+                      type="url"
                       name="base_url"
                       phx-change="base_url_changed"
                       value={@base_url_input}
                       placeholder={gettext("https://...")}
-                      class="input input-bordered w-full rounded-xl shadow-sm bg-base-100"
+                      class="input input-bordered w-full"
                     />
-                    <p class="text-xs text-base-content/70 mt-1.5">
+                    <p class="text-xs text-base-content/70">
                       {gettext("Required for this provider.")}
                     </p>
                   <% else %>
                     <input type="hidden" name="base_url" value={@base_url_input} />
                   <% end %>
-
-                  <!-- Single button: saves API key (if entered) AND model profile -->
-                  <button
-                    type="submit"
-                    disabled={!can_save}
-                    class={[
-                      "btn btn-primary btn-sm rounded-xl w-full mt-4",
-                      !can_save && "btn-disabled opacity-50 cursor-not-allowed"
-                    ]}
-                  >
-                    {gettext("Save & Use this model")}
-                    <span class="text-primary-content/80 font-normal ml-1">
-                      {@selected_entry.model_display_name}
-                    </span>
-                  </button>
+                  <button type="submit" disabled={!can_save} class="btn btn-primary btn-sm w-full">{gettext(
+                    "Save provider and models"
+                  )}</button>
                 </form>
-
-                <!-- LLM connection test (compact) — a sibling of the save
-                       form, NOT inside it, so the button is not a form submit.
-                       Tests the resolved model value with the already-saved key
-                       (or the key typed above, which is saved first). -->
-                <div class="mt-4 pt-3 border-t border-base-300/70">
+                <div class="border-t border-base-300 pt-3">
                   <%= case @llm_test_status do %>
-                    <% :idle -> %>
-                      <button
-                        phx-click="test_llm"
-                        class="btn btn-ghost btn-sm rounded-xl gap-2 w-full"
-                      >
-                        <.icon name="hero-signal" class="size-4" />
-                        {gettext("Test Connection")}
-                      </button>
                     <% :testing -> %>
-                      <div class="flex items-center justify-center gap-2 text-sm text-base-content/80">
-                        <span class="loading loading-spinner loading-sm text-primary-standalone"></span>
-                        <span>{gettext("Testing LLM connection...")}</span>
-                      </div>
-                    <% {:ok, _data} -> %>
-                      <div class="flex items-center justify-center gap-2 text-sm">
-                        <.icon name="hero-check-circle" class="size-4 text-success shrink-0" />
-                        <span class="text-success font-medium">{gettext("Connected")}</span>
-                        <span class="text-xs text-base-content/70 truncate">
-                          ({@selected_entry.model_display_name})
-                        </span>
-                      </div>
-                      <button
-                        phx-click="test_llm"
-                        class="btn btn-ghost btn-xs rounded-xl gap-1 w-full mt-2"
-                      >
-                        <.icon name="hero-arrow-path" class="size-3.5" />
-                        {gettext("Retest")}
-                      </button>
+                      <p class="text-sm text-base-content/80">
+                        <span class="loading loading-spinner loading-sm"></span> {gettext(
+                          "Testing LLM connection..."
+                        )}
+                      </p>
+                    <% {:ok, _} -> %>
+                      <p class="text-sm text-success">
+                        {gettext("Connected")} ({@selected_entry.model_display_name})
+                      </p>
                     <% {:error, reason} -> %>
-                      <div class="flex items-start justify-center gap-2 text-sm">
-                        <.icon name="hero-x-circle" class="size-4 text-error shrink-0 mt-0.5" />
-                        <span class="text-error">{reason}</span>
-                      </div>
-                      <button
-                        phx-click="test_llm"
-                        class="btn btn-ghost btn-xs rounded-xl gap-1 w-full mt-2"
-                      >
-                        <.icon name="hero-arrow-path" class="size-3.5" />
-                        {gettext("Retry")}
-                      </button>
+                      <p class="text-sm text-error">{reason}</p>
+                    <% _ -> %>
                   <% end %>
+                  <button
+                    type="button"
+                    phx-click="test_llm"
+                    disabled={!can_save or @llm_test_status == :testing}
+                    class="btn btn-ghost btn-sm gap-2 w-full"
+                  >
+                    <.icon name="hero-signal" class="size-4" />{gettext("Test Connection")}
+                  </button>
                 </div>
-              </div>
+              </section>
             <% else %>
-              <!-- Placeholder when no model is selected -->
-              <div class="bg-base-200/30 rounded-xl border border-dashed border-base-300 p-5 text-center">
-                <.icon name="hero-cursor-arrow-rays" class="size-5 text-base-content/50 mx-auto mb-1" />
-                <p class="text-xs text-base-content/70">
-                  {gettext("Select a provider and a model above to enter your API key.")}
-                </p>
-              </div>
+              <p class="text-sm text-base-content/70">
+                {gettext("Select a provider and models above to configure authentication.")}
+              </p>
             <% end %>
-          </div>
         <% end %>
-
-        <!-- Skip link -->
-        <div class="flex justify-center mt-6 shrink-0">
-          <button
-            phx-click="skip"
-            class="text-sm text-base-content/70 hover:text-base-content transition-colors"
-          >
-            {gettext("Skip")}
-          </button>
-        </div>
-
-        <!-- Version footer -->
-        <div class="mt-6 text-xs text-base-content/60 shrink-0">
+        <button phx-click="skip" class="btn btn-ghost btn-sm">{gettext("Skip")}</button>
+        <footer class="text-xs text-base-content/60">
           {gettext("Genesis %{version}", version: @current_version)}
-        </div>
+        </footer>
       </div>
     </EvoDashWeb.Layouts.app>
     """
@@ -441,554 +329,313 @@ defmodule EvoDashWeb.WelcomeLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    file_config = ConfigIO.load_file_config()
-    model_profiles = get_in(file_config, [:llm, :models]) || []
-    llm_providers = EvoGit.Config.LLMCatalog.providers()
-    flat_models = flatten_models(llm_providers)
+    config = ConfigIO.load_file_config()
+    providers = Catalog.providers()
 
-    current_version = Application.spec(:evo_git, :vsn) |> to_string()
+    {:ok,
+     assign(socket,
+       file_config: config,
+       has_model?: Setup.has_model?(config),
+       credentials: EvoGit.Config.credentials(),
+       llm_providers: providers,
+       flat_models: Setup.flatten_models(providers),
+       search_query: "",
+       selected_provider_id: nil,
+       selected_variant_id: nil,
+       selected_entry: nil,
+       selected_models: [],
+       default_model: nil,
+       model_reasoning: %{},
+       auth_mode: "api_key",
+       api_key_input: "",
+       base_url_input: "",
+       llm_test_status: :idle,
+       llm_test_seq: 0,
+       current_version: Application.spec(:evo_git, :vsn) |> to_string()
+     )}
+  end
+
+  @impl true
+  def handle_params(params, _uri, socket) do
+    previous = socket.assigns.current_node_id
+    socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
 
     socket =
-      assign(socket,
-        file_config: file_config,
-        model_profiles: model_profiles,
-        has_model?: model_profiles != [],
-        credentials: EvoGit.Config.credentials(),
-        llm_providers: llm_providers,
-        flat_models: flat_models,
-        search_query: "",
-        selected_provider_id: nil,
-        selected_variant_id: nil,
-        selected_entry: nil,
-        api_key_input: "",
-        base_url_input: "",
-        llm_test_status: :idle,
-        current_version: current_version
+      if previous == socket.assigns.current_node_id, do: socket, else: invalidate_test(socket)
+
+    {:noreply, socket}
+  end
+
+  # Onboarding is deliberately local-only. In particular a disconnected remote
+  # target resolving temporarily to node() must never write the local config.
+  @impl true
+  def handle_event(event, _params, %{assigns: %{current_node_id: id}} = socket)
+      when not is_nil(id) and event not in ["skip", "get_started", "noop"] do
+    {:noreply, put_flash(socket, :error, gettext("Use Settings to configure the remote node."))}
+  end
+
+  def handle_event("noop", _, socket), do: {:noreply, socket}
+
+  def handle_event("search_models", params, socket),
+    do: {:noreply, assign(socket, :search_query, params["search_query"] || "")}
+
+  def handle_event("api_key_changed", params, socket) do
+    {:noreply, socket |> invalidate_test() |> assign(:api_key_input, params["api_key"] || "")}
+  end
+
+  def handle_event("base_url_changed", params, socket) do
+    {:noreply, socket |> invalidate_test() |> assign(:base_url_input, params["base_url"] || "")}
+  end
+
+  def handle_event("select_welcome_provider", params, socket) do
+    provider =
+      Enum.find(
+        welcome_providers(socket.assigns.llm_providers),
+        &(Atom.to_string(&1.id) == params["provider_id"])
       )
 
-    {:ok, socket}
-  end
-
-  @impl true
-  def handle_event("search_models", %{"search_query" => query}, socket) do
-    {:noreply, assign(socket, :search_query, query || "")}
-  end
-
-  # Prevents page reload when the user presses Enter inside the search form.
-  @impl true
-  def handle_event("noop", _params, socket), do: {:noreply, socket}
-
-  @impl true
-  def handle_event("api_key_changed", %{"api_key" => key}, socket) do
-    {:noreply, assign(socket, :api_key_input, key || "")}
-  end
-
-  @impl true
-  def handle_event("base_url_changed", %{"base_url" => url}, socket) do
-    {:noreply, assign(socket, :base_url_input, url || "")}
-  end
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Stepwise quick setup: provider → variant → model
-  # ───────────────────────────────────────────────────────────────────────────
-
-  # STEP 1: provider selection. Whitelist lookup against the catalog ids
-  # (never String.to_existing_atom on client input). Switching providers resets
-  # ALL downstream selection state so stale credentials never leak across
-  # providers: selected entry, typed API key, typed base URL, search query, and
-  # any connection-test result.
-  @impl true
-  def handle_event("select_welcome_provider", %{"provider_id" => provider_id_str}, socket) do
-    provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
-
     if provider do
-      # Variant providers default to their first variant so the model list is
-      # immediately usable; non-variant providers keep nil.
-      variant_id =
+      variant =
         case provider[:variants] do
           [first | _] -> first.id
           _ -> nil
         end
 
-      {:noreply,
-       assign(socket,
-         selected_provider_id: provider.id,
-         selected_variant_id: variant_id,
-         selected_entry: nil,
-         api_key_input: "",
-         base_url_input: "",
-         search_query: "",
-         llm_test_status: :idle
-       )}
+      {:noreply, reset_selection(socket, provider.id, variant)}
     else
-      {:noreply,
-       socket
-       |> assign(
-         selected_provider_id: nil,
-         selected_variant_id: nil,
-         selected_entry: nil,
-         api_key_input: "",
-         base_url_input: "",
-         search_query: "",
-         llm_test_status: :idle
-       )
-       |> put_flash(:error, gettext("Unknown provider."))}
+      {:noreply, put_flash(socket, :error, gettext("Unknown provider."))}
     end
   end
 
-  # Variant selector (variant providers like Alibaba / Z.ai). Whitelist lookup
-  # against the currently selected provider's variants. Switching the variant
-  # changes every model_string (resolved_atom differs), so the previously
-  # selected model and typed credentials are stale — reset them.
-  @impl true
-  def handle_event("select_welcome_variant", %{"variant_id" => variant_id_str}, socket) do
-    variant_id =
-      case socket.assigns.selected_provider_id do
-        nil -> nil
-        provider_id -> Map.get(ConfigIO.variant_id_by_str(provider_id), variant_id_str)
-      end
+  def handle_event("select_welcome_variant", params, socket) do
+    provider =
+      Enum.find(socket.assigns.llm_providers, &(&1.id == socket.assigns.selected_provider_id))
 
-    {:noreply,
-     assign(socket,
-       selected_variant_id: variant_id,
-       selected_entry: nil,
-       api_key_input: "",
-       base_url_input: "",
-       llm_test_status: :idle
-     )}
+    variant =
+      Enum.find(
+        (provider && provider[:variants]) || [],
+        &(Atom.to_string(&1.id) == params["variant_id"])
+      )
+
+    {:noreply, if(variant, do: reset_selection(socket, provider.id, variant.id), else: socket)}
   end
 
-  # STEP 2: model selection (existing event; entry comes from the canonical
-  # flat_models list). Resets the typed key/base URL and any stale
-  # connection-test result — the credential_key context changes per model.
-  @impl true
   def handle_event("select_welcome_model", params, socket) do
-    model_string = params["model_string"]
+    entries =
+      Setup.provider_models(
+        socket.assigns.flat_models,
+        socket.assigns.selected_provider_id,
+        socket.assigns.selected_variant_id
+      )
 
-    entry =
-      Enum.find(socket.assigns.flat_models, fn e ->
-        e.model_string == model_string
-      end)
-
-    {:noreply,
-     assign(socket,
-       selected_entry: entry,
-       api_key_input: "",
-       base_url_input: "",
-       llm_test_status: :idle
-     )}
-  end
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Merged save: API key + model profile in one action
-  # ───────────────────────────────────────────────────────────────────────────
-
-  @impl true
-  def handle_event(
-        "save_welcome_setup",
-        %{
-          "credential_key" => credential_key,
-          "api_key" => api_key,
-          "model_string" => model_string,
-          "provider_id" => provider_id_str,
-          "variant_id" => variant_id_str
-        } = params,
-        socket
-      ) do
-    base_url = Map.get(params, "base_url", "")
-    api_key = String.trim(api_key || "")
-    key_already_set = Map.get(socket.assigns.credentials, credential_key) not in [nil, ""]
-
-    cond do
-      # No new key typed AND no existing key → block the save (button should be
-      # disabled, but guard server-side too).
-      api_key == "" and not key_already_set ->
-        {:noreply, put_flash(socket, :error, gettext("Please enter your API key first."))}
-
-      # Save the credential if a new key was entered.
-      api_key != "" ->
-        case safe_config_write(fn ->
-               EvoGit.Config.save_credentials(%{credential_key => api_key})
-             end) do
-          :ok ->
-            socket =
-              socket
-              |> assign(:credentials, EvoGit.Config.credentials())
-              |> assign(:api_key_input, "")
-
-            do_save_model_profile(model_string, provider_id_str, variant_id_str, base_url, socket)
-
-          {:error, reason} ->
-            {:noreply,
-             put_flash(
-               socket,
-               :error,
-               gettext("Failed to save API key: %{reason}", reason: inspect(reason))
-             )}
-        end
-
-      # An existing key is already set — skip credential save, just save model.
-      true ->
-        do_save_model_profile(model_string, provider_id_str, variant_id_str, base_url, socket)
-    end
-  end
-
-  @impl true
-  def handle_event("skip", _, socket) do
-    {:noreply, redirect(socket, to: "/welcome/complete")}
-  end
-
-  @impl true
-  def handle_event("get_started", _, socket) do
-    {:noreply, redirect(socket, to: "/welcome/complete")}
-  end
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # LLM connection test
-  # ───────────────────────────────────────────────────────────────────────────
-
-  @impl true
-  def handle_event("test_llm", _params, socket) do
-    entry = socket.assigns.selected_entry
+    entry = Enum.find(entries, &(&1.model_string == params["model_string"]))
 
     if entry do
-      provider_id_str = Atom.to_string(entry.provider_id)
-      variant_id_str = if(entry.variant_id, do: Atom.to_string(entry.variant_id), else: "")
-      base_url = socket.assigns.base_url_input
+      selected = socket.assigns.selected_models
 
-      with {:ok, model_value} <-
-             resolve_welcome_model_value(
-               entry.model_string,
-               provider_id_str,
-               variant_id_str,
-               base_url
-             ),
-           {:ok, socket} <- save_typed_key_for_test(entry.credential_key, socket) do
-        parent = self()
+      selected =
+        if entry.model_string in selected,
+          do: List.delete(selected, entry.model_string),
+          else: selected ++ [entry.model_string]
 
-        # The test runs OUTSIDE this LiveView, so its failure modes must become
-        # VALUES: an unguarded exit would kill the child BEFORE it sends its
-        # result, wedging `llm_test_status` at `:testing` forever (a spinner
-        # with no way back). EvoDash.SafeCall.run captures exits/raises and the
-        # result is normalized to the `{:ok, data} | {:error, reason}` shape the
-        # handler understands.
-        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-          result =
-            case EvoDash.SafeCall.run(fn -> EvoGit.SystemCheck.llm_test(model_value) end) do
-              {:ok, value} -> value
-              {:error, reason} -> {:error, llm_test_failure_message(reason)}
-            end
+      default =
+        if socket.assigns.default_model in selected,
+          do: socket.assigns.default_model,
+          else: List.first(selected)
 
-          send(parent, {:llm_test_result, result})
-        end)
+      default_entry = Enum.find(entries, &(&1.model_string == default))
 
-        {:noreply, assign(socket, :llm_test_status, :testing)}
-      else
-        {:error, msg} ->
-          {:noreply, put_flash(socket, :error, msg)}
-      end
+      {:noreply,
+       socket
+       |> invalidate_test()
+       |> assign(
+         selected_models: selected,
+         default_model: default,
+         selected_entry: default_entry,
+         model_reasoning: Map.take(socket.assigns.model_reasoning, selected)
+       )}
     else
-      # The button only renders when a model is selected; guard defensively.
       {:noreply, socket}
     end
   end
 
-  @impl true
-  def handle_info({:llm_test_result, result}, socket) do
-    # Every shape settles on a TERMINAL status — including an unexpected payload
-    # (it can only come from a future/changed producer): the page must never sit
-    # on `:testing` with no way to retry.
-    status =
-      case result do
-        {:ok, data} -> {:ok, data}
-        {:error, reason} -> {:error, llm_test_display_reason(reason)}
-        other -> {:error, llm_test_failure_message({:unexpected, other})}
-      end
+  def handle_event("welcome_defaults_changed", params, socket) do
+    default = Map.get(params, "default_model", socket.assigns.default_model)
+    reasoning = Map.get(params, "reasoning", socket.assigns.model_reasoning)
+    selected = socket.assigns.selected_models
 
-    {:noreply, assign(socket, :llm_test_status, status)}
-  end
+    if default in selected and is_map(reasoning) and
+         Enum.all?(reasoning, fn {model, effort} ->
+           entry = Enum.find(socket.assigns.flat_models, &(&1.model_string == model))
 
-  @impl true
-  def handle_info({:task_updated, _task_id, _status, _node} = msg, socket) do
-    # Node-identity task broadcast — node-filtered (foreign-node events are
-    # dropped BEFORE the debounce is scheduled) and debounced (300ms trailing
-    # edge) inside NodeAware.handle_task_info/2, which already returns
-    # {:noreply, socket}.
-    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
-  end
+           model in selected and not is_nil(entry) and
+             effort in ["" | Setup.reasoning_efforts(entry)]
+         end) do
+      entry = Enum.find(socket.assigns.flat_models, &(&1.model_string == default))
 
-  @impl true
-  def handle_info({:task_deleted, _task_id, _node} = msg, socket) do
-    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
-  end
-
-  @impl true
-  def handle_info(:node_aware_reload_tasks, socket) do
-    # Debounce timer fired — reload the sidebar's running/pending tasks.
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
-  end
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Private: exit-safe calls
-  # ───────────────────────────────────────────────────────────────────────────
-
-  # Runs a LOCAL config-file write through the exit-safe boundary and unwraps it
-  # back to the plain `:ok | {:error, reason}` contract those writes already
-  # return, so an unexpected exit/exception lands on the EXISTING error-flash
-  # path instead of crashing the LiveView. Config writes stay synchronous —
-  # only their failure modes are captured.
-  defp safe_config_write(fun) do
-    case EvoDash.SafeCall.run(fun) do
-      {:ok, result} -> result
-      {:error, reason} -> {:error, reason}
+      {:noreply,
+       socket
+       |> invalidate_test()
+       |> assign(default_model: default, selected_entry: entry, model_reasoning: reasoning)}
+    else
+      {:noreply, socket}
     end
   end
 
-  # Renders a captured failure reason as a DISPLAYABLE string (`llm_test/1`
-  # already returns a human-readable `{:error, msg}`, so binaries pass through
-  # verbatim). Never returns a non-string, because the template interpolates it.
-  defp llm_test_display_reason(reason) when is_binary(reason), do: reason
-  defp llm_test_display_reason(reason), do: llm_test_failure_message(reason)
+  def handle_event("welcome_auth_changed", %{"auth_mode" => mode}, socket) do
+    entry = socket.assigns.selected_entry
 
-  defp llm_test_failure_message({:exception, exception}) when is_exception(exception) do
-    gettext("Connection test failed: %{reason}", reason: Exception.message(exception))
+    if entry && mode in ["api_key", "oauth"] && Catalog.supports_oauth?(entry.resolved_atom) &&
+         not Catalog.oauth_only?(entry.resolved_atom) do
+      {:noreply, socket |> invalidate_test() |> assign(auth_mode: mode, api_key_input: "")}
+    else
+      {:noreply, socket}
+    end
   end
 
-  defp llm_test_failure_message({:unexpected, payload}) do
-    gettext("Connection test failed with an unexpected result: %{reason}",
-      reason: inspect(payload)
+  def handle_event("save_welcome_setup", params, socket) do
+    with {:ok, current} <- Setup.read_config(),
+         {:ok, config, _profile, entry, key} <- Setup.prepare(current, socket.assigns, params),
+         :ok <- save_key(entry, key, socket.assigns.auth_mode),
+         :ok <- Setup.write(fn -> EvoGit.Config.save_user_config(config) end) do
+      config = ConfigIO.load_file_config()
+
+      socket =
+        socket
+        |> invalidate_test()
+        |> assign(
+          file_config: config,
+          has_model?: true,
+          api_key_input: "",
+          credentials: EvoGit.Config.credentials()
+        )
+
+      {:noreply,
+       config
+       |> ConfigIO.update_runtime_from_file_config(socket)
+       |> put_flash(:info, gettext("Provider and models saved. You're all set!"))}
+    else
+      {:error, reason} -> {:noreply, put_flash(socket, :error, display_error(reason))}
+    end
+  end
+
+  def handle_event("test_llm", _params, socket) do
+    with {:ok, current} <- Setup.read_config(),
+         {:ok, _config, profile, entry, key} <- Setup.prepare(current, socket.assigns, %{}),
+         :ok <- save_key(entry, key, socket.assigns.auth_mode) do
+      seq = socket.assigns.llm_test_seq + 1
+      reasoning = socket.assigns.model_reasoning
+
+      started =
+        EvoDash.SafeCall.start(self(), {:welcome_llm_test_result, seq}, fn ->
+          {model, opts} = Setup.test_request(profile, entry, reasoning)
+
+          runner =
+            Application.get_env(
+              :evo_dash,
+              :welcome_llm_test_runner,
+              &EvoGit.SystemCheck.llm_test/2
+            )
+
+          runner.(model, opts)
+        end)
+
+      status =
+        case started do
+          {:ok, _pid} -> :testing
+          {:error, reason} -> {:error, display_error(reason)}
+        end
+
+      {:noreply,
+       assign(socket,
+         llm_test_seq: seq,
+         llm_test_status: status,
+         api_key_input: "",
+         credentials: EvoGit.Config.credentials()
+       )}
+    else
+      {:error, reason} -> {:noreply, put_flash(socket, :error, display_error(reason))}
+    end
+  end
+
+  def handle_event(event, _, socket) when event in ["skip", "get_started"] do
+    {:noreply, redirect(socket, to: "/welcome/complete")}
+  end
+
+  @impl true
+  def handle_info({{:welcome_llm_test_result, seq}, guarded}, socket) do
+    result =
+      case guarded do
+        {:ok, value} -> value
+        {:error, reason} -> {:error, reason}
+      end
+
+    handle_info({:welcome_llm_test_result, seq, result}, socket)
+  end
+
+  def handle_info({:welcome_llm_test_result, seq, result}, socket) do
+    if seq == socket.assigns.llm_test_seq and socket.assigns.current_node_id == nil do
+      status =
+        case result do
+          {:ok, data} -> {:ok, data}
+          {:error, reason} -> {:error, display_error(reason)}
+          other -> {:error, display_error(other)}
+        end
+
+      {:noreply, assign(socket, :llm_test_status, status)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Old/unscoped results cannot establish connectivity for the current draft.
+  def handle_info({:llm_test_result, _}, socket), do: {:noreply, socket}
+
+  def handle_info({:task_updated, _, _, _} = msg, socket),
+    do: EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
+
+  def handle_info({:task_deleted, _, _} = msg, socket),
+    do: EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
+
+  def handle_info(:node_aware_reload_tasks, socket),
+    do: {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
+
+  def handle_info({:node_selected, id}, socket),
+    do: EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, id)
+
+  def handle_info({:remote_connection_status, _, _} = msg, socket),
+    do: EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
+
+  defp reset_selection(socket, provider, variant) do
+    socket
+    |> invalidate_test()
+    |> assign(
+      selected_provider_id: provider,
+      selected_variant_id: variant,
+      selected_entry: nil,
+      selected_models: [],
+      default_model: nil,
+      model_reasoning: %{},
+      auth_mode: Setup.auth_mode(provider),
+      api_key_input: "",
+      base_url_input: "",
+      search_query: ""
     )
   end
 
-  defp llm_test_failure_message(reason) do
-    gettext("Connection test failed: %{reason}", reason: inspect(reason))
-  end
+  defp invalidate_test(socket),
+    do: assign(socket, llm_test_seq: socket.assigns.llm_test_seq + 1, llm_test_status: :idle)
 
-  # Saves a newly-typed API key before running the connection test, so the
-  # test exercises the key the user just entered (`EvoGit.SystemCheck.llm_test`
-  # reads credentials from the saved credentials file). Returns `{:ok, socket}`
-  # with refreshed credentials + cleared input, or `{:error, msg}` (the test is
-  # then NOT started).
-  defp save_typed_key_for_test(credential_key, socket) do
-    api_key = String.trim(socket.assigns.api_key_input || "")
+  defp selected_entries(assigns),
+    do: Enum.filter(assigns.flat_models, &(&1.model_string in assigns.selected_models))
 
-    if api_key == "" do
-      {:ok, socket}
-    else
-      case safe_config_write(fn ->
-             EvoGit.Config.save_credentials(%{credential_key => api_key})
-           end) do
-        :ok ->
-          {:ok,
-           socket
-           |> assign(:credentials, EvoGit.Config.credentials())
-           |> assign(:api_key_input, "")}
+  defp welcome_providers(providers),
+    do:
+      providers
+      |> Enum.reject(&(&1[:custom_model] == true))
+      |> Enum.sort_by(&String.downcase(&1.display_name))
 
-        {:error, reason} ->
-          {:error, gettext("Failed to save API key: %{reason}", reason: inspect(reason))}
-      end
-    end
-  end
-
-  # Resolves the model value (the exact form the save flow stores) from the
-  # flat-grid entry data + the currently-typed base URL. Shared by
-  # `save_welcome_setup` and the connection test so the test verifies precisely
-  # what will be configured.
-  #
-  # The base_url requirement is validated with the catalog function
-  # (EvoGit.Config.LLMCatalog.requires_base_url?/1) — NOT the dead
-  # provider[:requires_base_url] map field.
-  defp resolve_welcome_model_value(model_string, provider_id_str, variant_id_str, base_url) do
-    provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
-
-    cond do
-      is_nil(provider) ->
-        {:error, gettext("Unknown provider.")}
-
-      String.trim(model_string || "") == "" ->
-        {:error, gettext("Model name cannot be empty.")}
-
-      true ->
-        model_name =
-          if String.contains?(model_string, ":") do
-            [_provider_prefix, name] = :binary.split(model_string, ":")
-            name
-          else
-            model_string
-          end
-
-        requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(provider.id)
-
-        if requires_base_url and String.trim(base_url || "") == "" do
-          {:error, gettext("Base URL cannot be empty.")}
-        else
-          provider_atom = hd(provider.provider_atoms)
-
-          # Variant resolution: canonical atom + :variant opt (resolve_model_spec
-          # applies the variant internally). Passing a pre-resolved variant atom
-          # (e.g. :alibaba_cn) would be downgraded back to the canonical atom.
-          opts =
-            if variant_id_str != nil and variant_id_str != "" do
-              variant_atom = Map.get(ConfigIO.variant_id_by_str(provider_atom), variant_id_str)
-              Keyword.put([], :variant, variant_atom)
-            else
-              []
-            end
-
-          # Include base_url in the saved spec only when non-empty.
-          opts =
-            if String.trim(base_url || "") == "" do
-              opts
-            else
-              Keyword.put(opts, :base_url, String.trim(base_url))
-            end
-
-          {:ok, EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_name, opts)}
-        end
-    end
-  end
-
-  # Resolves the model spec from provider + model + variant + base URL, then
-  # adds the model profile, mirrors the default, and persists. Shows a combined
-  # success flash. Returns {:noreply, socket}.
-  defp do_save_model_profile(model_string, provider_id_str, variant_id_str, base_url, socket) do
-    case resolve_welcome_model_value(model_string, provider_id_str, variant_id_str, base_url) do
-      {:error, msg} ->
-        {:noreply, put_flash(socket, :error, msg)}
-
-      {:ok, model_value} ->
-        file_config =
-          socket.assigns.file_config
-          |> ModelProfileHelpers.add_model_profile(model_value)
-
-        persist_file_config(
-          file_config,
-          socket,
-          gettext("Model and API key saved. You're all set!")
-        )
-    end
-  end
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Private: provider / model data helpers
-  # ───────────────────────────────────────────────────────────────────────────
-
-  # Preset providers only, sorted alphabetically by display name. Providers
-  # with `custom_model: true` (OpenRouter, OpenAI-Compatible API) have empty
-  # model lists and are excluded — the end-of-list guidance card directs users
-  # to the Settings page for custom needs.
-  defp welcome_providers(providers) do
-    providers
-    |> Enum.reject(&(&1[:custom_model] == true))
-    |> Enum.sort_by(fn p -> String.downcase(p.display_name) end)
-  end
-
-  # Models for the chosen provider (+ variant), from the canonical flat list.
-  # For non-variant providers `variant_id` is nil and every entry matches.
-  defp provider_models(flat_models, provider_id, variant_id) do
-    Enum.filter(flat_models, fn entry ->
-      entry.provider_id == provider_id and
-        (variant_id == nil or entry.variant_id == variant_id)
-    end)
-  end
-
-  # Scoped search: case-insensitive substring match against model display name
-  # or variant display name. The provider-name filter no longer applies — the
-  # list is already provider-scoped.
-  defp filtered_provider_models(entries, query) do
-    trimmed = String.trim(query || "")
-
-    if trimmed == "" do
-      entries
-    else
-      needle = String.downcase(trimmed)
-
-      Enum.filter(entries, fn entry ->
-        String.downcase(entry.model_display_name) =~ needle or
-          (entry.variant_display_name != nil and
-             String.downcase(entry.variant_display_name) =~ needle)
-      end)
-    end
-  end
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Private: model flattening
-  # ───────────────────────────────────────────────────────────────────────────
-
-  # Flattens the LLMCatalog provider list into a single flat list of model
-  # entries, each carrying enough data to render a button and drive the
-  # `save_welcome_setup` params. Providers with variants are expanded so each
-  # variant is a separate entry (each variant has its own credential_key).
-  # Custom-model-only providers (OpenRouter, OpenAI-Compatible) have empty
-  # model lists and are omitted from the flat grid — the focus is preset
-  # models.
-  defp flatten_models(providers) do
-    providers
-    |> Enum.reject(&(&1[:custom_model] == true))
-    |> Enum.flat_map(&flatten_provider/1)
-  end
-
-  defp flatten_provider(provider) do
-    variants = provider[:variants]
-
-    if variants do
-      # Expand each variant as a separate entry for each model.
-      Enum.flat_map(variants, fn variant ->
-        Enum.map(provider.models, fn model ->
-          build_flat_entry(provider, model, variant)
-        end)
-      end)
-    else
-      Enum.map(provider.models, fn model ->
-        build_flat_entry(provider, model, nil)
-      end)
-    end
-  end
-
-  defp build_flat_entry(provider, model, variant) do
-    provider_atom = hd(provider.provider_atoms)
-
-    resolved_atom =
-      if variant do
-        EvoGit.Config.LLMCatalog.resolve_provider_atom(provider_atom, variant.id)
-      else
-        EvoGit.Config.LLMCatalog.resolve_provider_atom(provider_atom)
-      end
-
-    model_string = "#{resolved_atom}:#{model.id}"
-
-    %{
-      provider_id: provider.id,
-      provider_display_name: provider.display_name,
-      variant_id: variant && variant.id,
-      variant_display_name: variant && variant.display_name,
-      credential_key: if(variant, do: variant.credential_key, else: provider.credential_key),
-      model_id: model.id,
-      model_display_name: model.display_name,
-      resolved_atom: resolved_atom,
-      model_string: model_string
-    }
-  end
-
-  # Renders a subtle suffix for variant providers (e.g. " · Global").
-  defp variant_suffix(%{variant_display_name: nil}), do: ""
-  defp variant_suffix(%{variant_display_name: name}), do: " · #{name}"
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Private: provider name i18n
-  # ───────────────────────────────────────────────────────────────────────────
-
-  # Provider display names — wrapped in gettext for i18n.
-  #
-  # Most LLM provider brand names are NOT translated in practice — "OpenAI"
-  # stays "OpenAI" in most languages. That's fine; leave them untranslated
-  # (the gettext call is still present so the extractor picks them up and a
-  # translator CAN localize them if an established localized name exists).
-  #
-  # The clauses below are intentionally one-per-literal-name so that each
-  # `gettext("…")` call uses a literal msgid (the extractor only harvests
-  # literal msgids — `gettext(variable)` is ignored). Chinese references are
-  # provided as inline comments for translators.
+  # Provider names retain the existing localized brand labels.
   defp t_provider("Anthropic"), do: gettext("Anthropic")
   # zh: 谷歌
   defp t_provider("Google"), do: gettext("Google")
@@ -1007,38 +654,16 @@ defmodule EvoDashWeb.WelcomeLive do
   # zh: OpenAI 兼容 API
   defp t_provider("OpenAI-Compatible API"), do: gettext("OpenAI-Compatible API")
   defp t_provider("OpenAI"), do: gettext("OpenAI")
-  # Fallback for any provider not explicitly listed above.
   defp t_provider(name), do: name
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # Private: config persistence
-  # ───────────────────────────────────────────────────────────────────────────
+  defp save_key(_, _, "oauth"), do: :ok
+  defp save_key(_, "", _), do: :ok
 
-  defp persist_file_config(file_config, socket, success_msg) do
-    # Always update in-memory state so the UI reflects the change immediately.
-    socket = assign(socket, :file_config, file_config)
+  defp save_key(entry, key, _),
+    do: Setup.write(fn -> EvoGit.Config.save_credentials(%{entry.credential_key => key}) end)
 
-    case safe_config_write(fn -> EvoGit.Config.save_user_config(file_config) end) do
-      :ok ->
-        file_config = ConfigIO.load_file_config()
-        model_profiles = get_in(file_config, [:llm, :models]) || []
+  defp display_error(reason) when is_binary(reason), do: reason
 
-        socket =
-          socket
-          |> assign(:file_config, file_config)
-          |> assign(:model_profiles, model_profiles)
-          |> assign(:has_model?, model_profiles != [])
-          |> put_flash(:info, success_msg)
-
-        {:noreply, ConfigIO.update_runtime_from_file_config(file_config, socket)}
-
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> put_flash(
-           :error,
-           gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
-         )}
-    end
-  end
+  defp display_error(reason),
+    do: gettext("Configuration or connection failed: %{reason}", reason: inspect(reason))
 end

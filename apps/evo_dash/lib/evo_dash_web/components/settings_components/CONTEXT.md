@@ -6,7 +6,7 @@ Sub-component modules extracted from `EvoDashWeb.SettingsComponents` to keep eac
 
 ## Routing Table
 
-None — leaf directory (twelve module files).
+None — leaf directory containing the reusable settings presentation modules.
 
 ## API Surface
 
@@ -16,6 +16,8 @@ None — leaf directory (twelve module files).
 |--------|---------|
 | `CategoryMetadata` | Pure helper functions (display names, icons, schema matching, API key hints) |
 | `SettingCard` | Schema-driven form field component with type-dispatched input controls |
+| `ProviderProfilesEditor` | Presentation-only canonical `[[llm.providers]]` editor with shared connection/auth/capacity, multiple models, default selection and per-model overrides; the legacy `ModelProfilesEditor` remains independent. |
+| `ProviderProfileFields` | Pure provider-editor building blocks for labeled inputs, ordered reasoning inventories/defaults, generation parameters, peak/day controls and node-correct OAuth guidance. |
 | `ModelProfilesEditor` | List editor for `[[llm.models]]` profiles with inline edit form |
 | `CustomAgentsEditor` | List editor for `agents.toml` custom agents (`custom_agents_editor/1`): rows with id/type/level/model badges + prompt preview, inline edit form (name, description, prompt, agent_type, delegation_level, model_id select, max_turns, tools/subagents checkboxes), delete with data-confirm. Optional `attr(:custom_tool_names, :list, default: [])` — the loaded custom tool names (see `CustomToolsPanel.custom_tool_names/1`), threaded into the edit form as an additional tools-whitelist chip group + an unknown-name warning |
 | `CustomToolsPanel` | `custom_tools_panel/1` — read-only status panel (CardShell) for the custom tool modules discovered in `<config_dir>/tools/`: tool rows (name/module/file + read-only or write badge), per-file load errors, empty state, `{:error, term()}` banner, and a Refresh action. Also exposes the pure `custom_tool_names/1` helper |
@@ -37,6 +39,65 @@ None — leaf directory (twelve module files).
 - **`custom_tool_names/1`** (public, pure) — extracts the loaded custom tool names from a status value: `ok` entries → `:name` (atom-or-string key) → drops blank/non-binary names → order-preserving `Enum.uniq/1`. Any non-map input, `{:error, _}`, or odd shape → `[]`. `SettingsLive` (outside this node) calls it to feed the agents editor.
 - **`CustomAgentsEditor.custom_agents_editor/1`'s `:custom_tool_names` attr** (default `[]`): a non-empty, deduped-against-`tool_names()` list renders an ADDITIONAL "Custom tools" chip group under the built-in Tools chips — visually distinct (`border-primary-standalone/40 bg-primary/5`), but with the SAME `<input type="checkbox" name="tools[]" value={name} class="checkbox checkbox-xs">` markup so the save path and `save_custom_agent` parsing are UNCHANGED; order follows the incoming list (documented in a code comment). Any name in `agent_tools(@agent)` that matches NEITHER a built-in nor a loaded custom tool renders a `text-warning` diagnostic line (`Unknown tool names: %{names}. …`) — UI-ONLY, no validation (`agents.toml` stays lenient; core `:invalid_tools` semantics unchanged).
 - **Every tool-name comparison is ALIAS-AWARE via `EvoGit.Agent.ToolNames`** (`matches_any?/2` + `normalize/1`) — never exact string equality: (a) the amber unknown-name warning treats a legacy spelling (`read_file`, `run_bash`, `search_web`, …) as KNOWN; (b) the custom-chip-vs-built-in collision dedupe drops a loaded custom tool literally named after a built-in alias (`read_file` → the built-in `read` concept chip covers it); (c) a built-in chip's `checked` state lights up for ANY accepted spelling of that concept. Built-in chip LABELS are the model-facing names from `EvoGit.Agent.Tools.schemas()` → `EvoGit.Agent.tool_name/1` (label `read`), while each chip's submitted `value` preserves the agent's OWN saved spelling (`value="read_file"` when `agents.toml` carries the legacy spelling, else the built-in name) — a UI re-save never silently rewrites user config. No save-blocking dashboard validation is added.
+
+## Provider-profile editor — parent integration contract
+
+`ProviderProfilesEditor.provider_profiles_editor/1` accepts canonical string-keyed provider maps without calling the new schema APIs, and `ProviderProfileFields` supplies its pure controls.
+The attrs are `provider_profiles: []`, `default_provider_profile: nil`, `editing_profile_id: nil`, `profile_form_draft: nil`, `auth_statuses: %{}` and `errors: %{}` (form-field name to translated message).
+Each provider map exposes `id`, `name`, `provider`, `auth_mode`, `oauth_file`, `base_url`, `concurrency`, `peak_concurrency`, `timezone`, `off_peak_days`, `peak_hours`, `default_model`, `reasoning_efforts`, `default_reasoning_effort`, `generation` and `models`.
+Each model map exposes `model`, optional `context_window`, optional `reasoning_efforts`, optional `default_reasoning_effort` and `generation` overrides.
+A draft shallow-merges over its provider, and explicit blank strings or empty collections remain authoritative, so the owner must keep complete nested model/generation drafts during row mutations.
+At most one provider may be edited; the stable form id is `provider-profile-edit-form`, with `phx-change="provider_profile_form_change"` and `phx-submit="save_provider_profile"`.
+The existing legacy editor is unchanged and must not be mounted alongside this editor against the same edit assigns.
+
+### Wiring in the sibling `settings_components.ex` (owned by the parent)
+
+Import `EvoDashWeb.SettingsComponents.ProviderProfilesEditor`, only `provider_profiles_editor: 1`, add `provider_profiles` / `default_provider_profile` / `provider_profile_errors` attrs to `category_section/1`, and replace the legacy model-editor call in the LLM scroll body with the following call outside the flat `save_category` form.
+The owning SettingsLive must supply these projections from its node-scoped configuration and pass the existing edit/draft/auth assigns through `category_section/1`.
+
+```heex
+<.provider_profiles_editor
+  provider_profiles={@provider_profiles}
+  default_provider_profile={@default_provider_profile}
+  editing_profile_id={@editing_profile_id}
+  profile_form_draft={@profile_form_draft}
+  auth_statuses={@auth_statuses}
+  errors={@provider_profile_errors}
+/>
+```
+
+### Events and submitted fields
+
+`add_provider_profile`, `cancel_edit_provider_profile`, `add_provider_model` and `add_provider_peak_hours_row` have no payload requirements.
+`edit_provider_profile`, `delete_provider_profile` and `set_default_provider_profile` submit `profile_id`; the latter updates `[llm] default_provider_profile` and is not a provider-form field.
+`remove_provider_model` and `remove_provider_peak_hours_row` submit zero-based `index` strings.
+`refresh_auth_status` keeps its existing event name and also supplies `profile_id`, which a handler that refreshes all statuses may ignore.
+The change/save payload has original `profile_id`, editable `profile_id_new`, and flat `name`, `provider`, `base_url`, `auth_mode`, `oauth_file`, `concurrency`, `default_model`, `peak_concurrency`, `timezone`, `reasoning_efforts` and `default_reasoning_effort` fields.
+`reasoning_efforts` is an ordered comma-separated string, not a range index; normalize by trimming/filtering blanks/deduplicating while retaining order.
+`generation[temperature|max_tokens|top_p|top_k|frequency_penalty|presence_penalty]` carries optional numeric strings, and `generation[provider_options]` carries JSON object text.
+Models submit `models[index][model|context_window|override_reasoning|reasoning_efforts|default_reasoning_effort]` plus `models[index][generation][...]` using the same generation field names.
+The `override_reasoning` hidden false sentinel plus checked true checkbox is UI-only and must not persist in canonical config.
+When false, omit the model inventory so it inherits provider support but retain a validated model default if explicitly selected.
+When true, a blank inventory means explicit `[]` (reasoning unsupported) and its default must be omitted; a nonempty inventory enables a validated optional default.
+Blank optional numeric/model-generation fields mean inherit, not nil or zero; explicit numeric zero must survive parsing.
+`off_peak_days[]` and `peak_hours[index][days][]` use hidden blank sentinels so clearing all days is submitted, and window times use `peak_hours[index][start|end]`.
+Remove sentinel blanks before core validation, drop fully blank windows, numerically order indexed maps and preserve complete drafts across add/remove events.
+The owner validates unique profile/model ids, supported reasoning defaults, JSON objects, numeric ranges, scheduling and membership of `default_model` before saving; component HTML ranges are not provider-specific validation.
+Unknown or removed default providers/models and unsupported saved reasoning defaults remain visibly unavailable, never silently replaced.
+Unknown generation/config keys must be preserved by the owner when applying edits.
+
+### Auth and presentation boundaries
+
+OAuth availability comes from existing `LLMCatalog` metadata via a whitelist of catalog-owned provider atoms, never dynamic atom creation or a new schema API.
+OAuth-only providers emit hidden `auth_mode=oauth` and never show an API-key prompt; other providers have API-key guidance without rendering any key/token field.
+`auth_statuses` remains keyed by profile id with `state`, `expires`, `login_instructions` and `oauth_file`; states `ok`, `missing`, `unwritable` and `unknown` accept atom or string forms.
+The owner must clear/reload statuses on node changes; unsaved provider/auth/path changes additionally suppress a saved credential verdict inside the editor.
+Unknown status makes no detected/missing claim, and unwritable status withholds login instructions in favor of the writable-path remedy.
+Managed paths come only from the node-scoped status or an explicitly configured profile path, never `EvoGit.Auth.default_oauth_file/0` on the dashboard machine.
+Generation and scheduling disclosures are native details with all fields still submitted while collapsed, and every input has an associated label or enclosing checkbox label.
+All user-facing text uses Gettext with no catalog edits, responsive grids and theme tokens, and task quality stays separate from reasoning support.
+Persistent new-editor tests belong to the parent-owned test node; they must pin nested payload parsing, add/remove draft preservation, defaults/membership validation, explicit unsupported inventories, numeric zero, node-status invalidation, missing/unwritable/unknown guidance and no credential leakage.
+Render-only checks can run without starting the dashboard using `MIX_ENV=test mix run --no-start` plus `Phoenix.LiveViewTest.render_component/2`, while existing legacy regression tests are `model_profiles_editor_test.exs` and `model_profiles_editor_auth_test.exs`.
 
 ## Notes for Agents — Model Profiles Editor: edit-form layout
 

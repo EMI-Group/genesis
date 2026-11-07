@@ -7,6 +7,7 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
   """
 
   alias EvoGit.Core.ForeignRepo
+  alias EvoDashWeb.LLMSelection
   alias EvoDashWeb.ProjectsLive.ProjectFlow
   import Phoenix.Component, only: [assign: 2, assign: 3]
   import Phoenix.LiveView, only: [push_event: 3]
@@ -20,7 +21,6 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
     state = %{
       project: socket.assigns.active_project_path,
       task_mode: socket.assigns.task_mode,
-      selected_model_id: socket.assigns.selected_model_id,
       selected_agent_id: socket.assigns.selected_agent_id,
       quality_level: socket.assigns[:quality_level],
       task_prompt: socket.assigns.task_prompt,
@@ -38,7 +38,88 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
       node: socket.assigns[:current_node_id] || "local"
     }
 
-    push_event(socket, "persist_state", state)
+    push_event(socket, "persist_state", Map.merge(state, model_selection_state(socket.assigns)))
+  end
+
+  @doc """
+  Persists a reconciled canonical picker without replacing unrelated form state.
+
+  The browser must merge this event's `model_spec` and `node` into its existing
+  dashboard state, preserving the DOM-owned prompt and any pending restore.
+  Do not send this through `persist_state`, whose browser handler replaces the
+  whole stored object. An empty canonical map is an explicit Auto selection.
+  """
+  def maybe_persist_model_selection(socket) do
+    if is_map(socket.assigns[:selected_model_spec]) and
+         is_nil(socket.assigns[:pending_model_selection]) do
+      state =
+        socket.assigns
+        |> model_selection_state()
+        |> Map.put(:node, socket.assigns[:current_node_id] || "local")
+
+      push_event(socket, "persist_model_selection", state)
+    else
+      socket
+    end
+  end
+
+  @doc """
+  Serializes only the three canonical model-spec fields, never the picker
+  bundle, credentials or resolved runtime options. Legacy page callers retain
+  their old id until migrated; canonical state never writes that stale id.
+  """
+  def model_selection_state(%{pending_model_selection: spec}) when is_map(spec) do
+    %{model_spec: Map.take(spec, ~w(provider_profile_id model reasoning_effort))}
+  end
+
+  def model_selection_state(%{pending_model_selection: legacy_id}) when is_binary(legacy_id),
+    do: %{selected_model_id: legacy_id}
+
+  def model_selection_state(%{selected_model_spec: spec}) when is_map(spec) do
+    %{model_spec: Map.take(spec, ~w(provider_profile_id model reasoning_effort))}
+  end
+
+  def model_selection_state(assigns), do: %{selected_model_id: assigns[:selected_model_id]}
+
+  @doc """
+  Restores canonical `model_spec` or, when absent, an old `selected_model_id`.
+  Key presence matters: an empty canonical map or legacy empty string is an
+  explicit Auto choice, not a missing value. Canonical state wins over a stale
+  legacy id left in browser storage.
+
+  The page must perform its existing node-identity check BEFORE calling this.
+  If the async picker load has not landed, the candidate is kept separately
+  until that load can validate it (never against a different node's config).
+  """
+  def maybe_restore_model_selection(socket, state) when is_map(state) do
+    candidate =
+      cond do
+        Map.has_key?(state, "model_spec") -> {:present, state["model_spec"]}
+        Map.has_key?(state, "selected_model_id") -> {:present, state["selected_model_id"]}
+        true -> :absent
+      end
+
+    case candidate do
+      {:present, value} when is_map(value) or is_binary(value) ->
+        # Pending remote targets resolve locally until connected. A mount's
+        # local bundle must never validate (and clear) that target's restore.
+        pending_remote? =
+          socket.assigns[:current_node_id] != nil and socket.assigns[:current_node] == node()
+
+        case {socket.assigns[:model_selection], pending_remote?} do
+          {data, false} when is_map(data) ->
+            socket
+            |> assign(:selected_model_spec, LLMSelection.reconcile(data, value))
+            |> assign(:pending_model_selection, nil)
+            |> maybe_persist_model_selection()
+
+          _ ->
+            assign(socket, :pending_model_selection, value)
+        end
+
+      _ ->
+        socket
+    end
   end
 
   @doc """
@@ -62,6 +143,10 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
       show_advanced: false,
       task_archive: false,
       selected_agent_id: nil,
+      model_selection: nil,
+      provider_profiles: [],
+      model_selections: [],
+      pending_model_selection: nil,
       active_project: nil,
       active_project_path: nil,
       foreign_repos: [],

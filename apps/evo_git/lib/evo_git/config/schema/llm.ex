@@ -45,6 +45,7 @@ defmodule EvoGit.Config.Schema.LLM do
   alias EvoGit.Auth
   alias EvoGit.Config.LLMCatalog
   alias EvoGit.Config.Schema.LLMConstraints
+  alias EvoGit.Config.Schema.ProviderProfiles
 
   # Default context window (tokens) for context-compression decisions when a
   # model profile carries no explicit `context_window`.
@@ -79,7 +80,7 @@ defmodule EvoGit.Config.Schema.LLM do
         profile_generation_params(config)
 
       # Resolved config map: delegate to default profile
-      Map.has_key?(config, :llm) ->
+      Map.has_key?(config, :llm) or Map.has_key?(config, "llm") ->
         case default_model_profile(config) do
           {:ok, profile} -> profile_generation_params(profile)
           {:error, :not_found} -> []
@@ -91,10 +92,14 @@ defmodule EvoGit.Config.Schema.LLM do
   end
 
   @doc """
-  Returns the list of model profiles from a resolved config map.
+  Returns legacy-compatible runtime profiles from a resolved config map.
 
-  Defensive against malformed config: if `:llm` is not a map (e.g. user wrote
-  `llm = "claude"` — a scalar — instead of a `[llm]` table), returns `[]`.
+  A non-empty `llm.providers` list supplies one profile per provider account,
+  using that account's default model and reasoning effort. This projection does
+  not import credentials or read catalog metadata. Invalid selections are logged
+  and omitted; they never fall through to stale legacy configuration.
+  With no canonical providers, `llm.models` retains its legacy shape unchanged.
+  Malformed `llm` sections return `[]`.
 
   ## Example
 
@@ -103,9 +108,62 @@ defmodule EvoGit.Config.Schema.LLM do
   """
   @spec model_profiles(map()) :: [map()]
   def model_profiles(config) when is_map(config) do
-    llm = Map.get(config, :llm)
-    models = if is_map(llm), do: Map.get(llm, :models), else: nil
-    if is_list(models), do: models, else: []
+    llm = llm_section(config)
+
+    if canonical_providers?(llm) do
+      config
+      |> ProviderProfiles.provider_profiles()
+      |> Enum.flat_map(fn profile ->
+        case ProviderProfiles.resolve_runtime_profile(config, profile["id"]) do
+          {:ok, runtime_profile} ->
+            [runtime_profile]
+
+          {:error, reason} ->
+            Logger.warning("Invalid LLM provider profile selection: #{inspect(reason)}")
+            []
+        end
+      end)
+    else
+      case profile_field(llm, :models) do
+        models when is_list(models) -> models
+        _ -> []
+      end
+    end
+  end
+
+  def model_profiles(_config), do: []
+
+  @doc """
+  Runtime profiles with the model-less legacy fallback used by scheduler boot.
+
+  Canonical providers never fall back to flat keys, even when every selection is
+  invalid. The parent Schema entry point must delegate here for that guarantee.
+  """
+  @spec effective_model_profiles(map()) :: [map()]
+  def effective_model_profiles(config) when is_map(config) do
+    case model_profiles(config) do
+      [] ->
+        if canonical_providers?(llm_section(config)),
+          do: [],
+          else: [build_legacy_default_profile(config)]
+
+      profiles ->
+        profiles
+    end
+  end
+
+  defp llm_section(config) do
+    case profile_field(config, :llm) do
+      %{} = llm -> llm
+      _ -> %{}
+    end
+  end
+
+  defp canonical_providers?(llm) do
+    case profile_field(llm, :providers) do
+      providers when is_list(providers) and providers != [] -> true
+      _ -> false
+    end
   end
 
   @doc """
@@ -120,16 +178,22 @@ defmodule EvoGit.Config.Schema.LLM do
   """
   @spec get_model_profile(map(), String.t()) :: {:ok, map()} | {:error, :not_found}
   def get_model_profile(config, id) when is_map(config) and is_binary(id) do
-    case Enum.find(model_profiles(config), fn p -> Map.get(p, :id) == id end) do
+    case Enum.find(model_profiles(config), fn
+           %{} = profile -> profile_field(profile, :id) == id
+           _ -> false
+         end) do
       nil -> {:error, :not_found}
       profile -> {:ok, profile}
     end
   end
 
   @doc """
-  Returns the first (default) model profile from a resolved config map.
+  Returns the configured default runtime profile.
 
-  Returns `{:ok, profile}` if at least one profile exists, or `{:error, :not_found}`.
+  `llm.default_provider_profile` selects an account by id for both canonical and
+  legacy profiles. Absent a selector, the first account/profile is selected.
+  An invalid explicit selector returns `{:error, :not_found}`, never the first
+  profile as a silent fallback.
 
   ## Example
 
@@ -138,9 +202,27 @@ defmodule EvoGit.Config.Schema.LLM do
   """
   @spec default_model_profile(map()) :: {:ok, map()} | {:error, :not_found}
   def default_model_profile(config) when is_map(config) do
-    case model_profiles(config) do
-      [] -> {:error, :not_found}
-      [profile | _] -> {:ok, profile}
+    llm = llm_section(config)
+
+    if canonical_providers?(llm) do
+      case ProviderProfiles.resolve_runtime_profile(config, nil) do
+        {:ok, profile} -> {:ok, profile}
+        {:error, _reason} -> {:error, :not_found}
+      end
+    else
+      case profile_field(llm, :default_provider_profile) do
+        nil ->
+          case model_profiles(config) do
+            [] -> {:error, :not_found}
+            [profile | _] -> {:ok, profile}
+          end
+
+        id when is_binary(id) ->
+          get_model_profile(config, id)
+
+        _ ->
+          {:error, :not_found}
+      end
     end
   end
 
@@ -554,6 +636,22 @@ defmodule EvoGit.Config.Schema.LLM do
     |> maybe_param(:presence_penalty, Map.get(profile, :presence_penalty))
     |> maybe_provider_options(profile)
     |> LLMConstraints.filter(model, model_metadata(model))
+    |> maybe_api_key(profile)
+  end
+
+  # Keep account-specific API keys at the same assembly boundary as generation
+  # and OAuth options, including callers using the runtime compatibility profile.
+  defp maybe_api_key(params, profile) do
+    name = Map.get(profile, :api_key_env_var)
+
+    if is_binary(name) and name != "" and not oauth_profile?(profile) do
+      case System.get_env(name) do
+        value when is_binary(value) and value != "" -> Keyword.put(params, :api_key, value)
+        _ -> params
+      end
+    else
+      params
+    end
   end
 
   @doc false
