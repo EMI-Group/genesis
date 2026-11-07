@@ -66,7 +66,8 @@ The builder preserves `model_id_locked`, falls back to the original spec/opts fo
 Inherited selection precedence is live `parent_state.model_spec` → original `parent_spec.model_spec` → original `opts[:model_spec]` → original `opts[:default_model_spec]`, so the effective selected parent remains the fallback rather than only its provider-account id.
 Builder-level assertions for unlocked inheritance must inspect `child.opts[:default_model_spec]` and absence of an explicit `:model_spec` key; only locked inheritance populates the child's explicit `model_spec` field and option.
 `Cost.recompute_for_agent/2` prices effective `llm_model` and obtains the peak/off-peak period from `model_spec["provider_profile_id"]`, falling back to legacy `model_id` only when the selection profile is absent.
-`Cost.period_for_provider_profile_id/1` names that account lookup explicitly, and `period_for_model_id/1` remains a compatible alias.
+`Cost.period_for_provider_profile_id/1` reads the scheduler's canonical `provider_profiles` account schedules, with legacy `model_profiles` used only when no canonical accounts exist; an unknown canonical account never borrows a stale legacy schedule.
+`period_for_model_id/1` remains a compatible alias, and schedule/window/day/timezone math stays delegated to `PeakHours` independently of the effective model being priced.
 Completion retains the complete selection in `llm_settings.model_spec` alongside effective model, generation parameters, legacy profile identity and compression threshold.
 The Assistant task-start facade validates explicit selectors through `Schema.resolve_model_spec/2`, forwards them unchanged and locks accepted selections; its exact admission rules belong to `tools/elixir_eval/CONTEXT.md`.
 

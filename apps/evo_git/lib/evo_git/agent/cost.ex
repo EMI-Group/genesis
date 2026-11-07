@@ -214,8 +214,8 @@ defmodule EvoGit.Agent.Cost do
   @doc """
   Pricing period (`"peak"` | `"off_peak"`) for a configured model profile id.
 
-  Looks the id up in `EvoGit.AgentScheduler.get_config(:model_profiles)` (atom-
-  or string-keyed ids tolerated) and delegates to `period_for_profile/1`.
+  Compatibility alias for `period_for_provider_profile_id/1`; canonical provider
+  accounts take precedence over legacy model profiles (atom- or string-keyed).
   No profile / no peak configuration / ANY error → `"off_peak"` (the normal
   tariff).
   """
@@ -225,8 +225,9 @@ defmodule EvoGit.Agent.Cost do
   @doc """
   Pricing period for the configured provider account/profile, not a catalog model.
 
-  Uses the scheduler's `:model_profiles` configuration, as the legacy
-  `period_for_model_id/1` does.
+  Uses the scheduler's canonical `:provider_profiles` account schedules, falling
+  back to legacy `:model_profiles` only when no provider accounts are configured.
+  A missing account never borrows a stale legacy profile's schedule.
   """
   @spec period_for_provider_profile_id(term()) :: period()
   def period_for_provider_profile_id(provider_profile_id) do
@@ -616,9 +617,9 @@ defmodule EvoGit.Agent.Cost do
   end
 
   defp profiles do
-    case AgentScheduler.get_config(:model_profiles) do
-      list when is_list(list) -> list
-      _other -> []
+    case AgentScheduler.get_config(:provider_profiles) do
+      [_ | _] = profiles -> profiles
+      _other -> AgentScheduler.get_config(:model_profiles) || []
     end
   end
 
