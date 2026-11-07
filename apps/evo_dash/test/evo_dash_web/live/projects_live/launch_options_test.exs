@@ -147,6 +147,76 @@ defmodule EvoDashWeb.ProjectsLive.LaunchOptionsTest do
     end
   end
 
+  test "an owned ready remote bundle authorizes explicit and Auto launches for either payload" do
+    assigns = %{
+      current_node_id: "remote-target",
+      current_node: :"remote@127.0.0.1",
+      model_selection: selection(),
+      model_selection_scope: {"remote-target", :"remote@127.0.0.1"},
+      model_selection_ready?: true,
+      model_selection_error: nil,
+      pending_model_selection: nil
+    }
+
+    spec = %{
+      "provider_profile_id" => "account-a",
+      "model" => "test-model",
+      "reasoning_effort" => "high"
+    }
+
+    for payload <- payloads() do
+      assert {:ok, opts} =
+               LaunchOptions.apply(payload, Map.put(assigns, :selected_model_spec, spec))
+
+      assert Keyword.take(opts, Keyword.keys(payload)) == payload
+
+      assert Keyword.drop(opts, Keyword.keys(payload)) == [
+               model_spec: spec,
+               model_id_locked: true
+             ]
+
+      for auto <- [%{}, ""] do
+        assert LaunchOptions.apply(payload, Map.put(assigns, :selected_model_spec, auto)) ==
+                 {:ok, payload}
+      end
+    end
+  end
+
+  test "pending, unowned and unavailable bundles cannot authorize even an Auto launch" do
+    assigns = %{
+      current_node_id: "remote-target",
+      current_node: :"remote@127.0.0.1",
+      model_selection: selection(),
+      model_selection_scope: {"remote-target", :"remote@127.0.0.1"},
+      model_selection_ready?: true,
+      model_selection_error: nil,
+      pending_model_selection: nil
+    }
+
+    for {overrides, error} <- [
+          {%{current_node: node()}, :model_selection_pending_remote},
+          {%{model_selection_scope: nil}, :model_selection_scope_mismatch},
+          {%{model_selection_scope: {"other-target", :"remote@127.0.0.1"}},
+           :model_selection_scope_mismatch},
+          {%{model_selection_scope: {"remote-target", :"old-remote@127.0.0.1"}},
+           :model_selection_scope_mismatch},
+          {%{model_selection_ready?: false}, :model_selection_not_loaded},
+          {%{model_selection_error: :unavailable}, {:model_selection_load_failed, :unavailable}},
+          {%{pending_model_selection: %{}}, :model_selection_restore_pending},
+          {%{pending_model_selection: "legacy-profile"}, :model_selection_restore_pending}
+        ],
+        selected <- [
+          nil,
+          %{},
+          "",
+          %{"provider_profile_id" => "account-a", "model" => "test-model"}
+        ],
+        payload <- payloads() do
+      blocked = assigns |> Map.merge(overrides) |> Map.put(:selected_model_spec, selected)
+      assert LaunchOptions.apply(payload, blocked) == {:error, error}
+    end
+  end
+
   test "a picker that has not loaded cannot launch, including an explicit Auto" do
     for assigns <- [%{}, %{model_selection: nil, selected_model_spec: %{}}] do
       assert LaunchOptions.apply([], assigns) == {:error, :model_selection_not_loaded}
