@@ -66,6 +66,7 @@ API: `resolve/0` (the installed fun — own `:evogit_config_dir` dictionary entr
 Both apps' helpers share the same process-dictionary key, so a root `mix test` resolves identically whichever helper installed the fun last.
 `$callers` inheritance covers `GenServer`/`Task`/`Supervisor` children started from the test process (`Task.Supervisor.start_child/2` included — the `EvoDash.SafeCall` path) and a `Phoenix.LiveViewTest` view (its channel sets `$callers` to the test pid, `deps/phoenix_live_view/lib/phoenix_live_view/channel.ex:1297`); it does NOT cover a raw `spawn/1` or the boot-time app-global singletons (`EvoGit.AgentScheduler`, `EvoGit.TaskRegistry`, `EvoGit.Store`, `EvoGit.PeakHourEngine`, `EvoDash.ChatHistory`, `EvoDash.UpdateStatus`), so modules whose config reads happen inside those stay `async: false`.
 Proof + usage contract, all three levels asserted empirically: `config_dir_test.exs` (`EvoDash.Test.ConfigDirTest`, `async: true`, 3 tests) — the view process' `$callers` contains the test pid, a temp-dir-only config file changes a real page render, `EvoDash.SafeCall`/`Task.Supervisor` children (nested ones included) resolve the override, and both a raw `spawn/1` and the no-override case fall back to the ambient dir.
+The mounted proof uses a valid canonical `[[llm.providers]]` fixture, waits with a bounded poll for Projects' `model_selection_ready?`, checks its sole `provider_profiles` id and selected canonical spec, and verifies Settings' config path plus that provider's rendered editor action.
 
 ### Migrated-sqlite template
 

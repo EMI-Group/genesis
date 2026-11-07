@@ -30,7 +30,7 @@ defmodule EvoDash.Test.ConfigDirTest do
   alias EvoDash.Test.ConfigDir
 
   # Only ever present in this test's temp config dir.
-  @probe_model_id "config-dir-seam-probe"
+  @probe_provider_id "config-dir-seam-probe"
 
   setup context do
     # The negative-control test wants NO active override (it proves the fallback
@@ -48,13 +48,20 @@ defmodule EvoDash.Test.ConfigDirTest do
       # the negative control in the first test).
       File.write!(Path.join(genesis_dir, "version_state.toml"), "version = \"0.0.0-seam\"\n")
 
-      # A valid single-profile config whose id exists NOWHERE else: whichever
-      # process resolves the config dir surfaces this id through
-      # `EvoGit.Config.resolve/0`.
+      # A valid canonical provider config whose id exists NOWHERE else:
+      # whichever process resolves the config dir surfaces this id through
+      # `EvoGit.Config.resolve/0` (no legacy-profile migration involved).
       File.write!(Path.join(genesis_dir, "config.toml"), """
-      [[llm.models]]
-      id = "#{@probe_model_id}"
-      model = {provider = "anthropic", id = "claude-sonnet-5"}
+      [llm]
+      default_provider_profile = "#{@probe_provider_id}"
+
+      [[llm.providers]]
+      id = "#{@probe_provider_id}"
+      name = "Config directory seam probe"
+      provider = "anthropic"
+      api_key_env_var = "EVOGIT_CONFIG_DIR_SEAM_API_KEY"
+      models = ["claude-sonnet-5"]
+      default_model = "claude-sonnet-5"
       concurrency = 3
       """)
 
@@ -97,17 +104,23 @@ defmodule EvoDash.Test.ConfigDirTest do
     assert self() in Keyword.get(view_dict, :"$callers", [])
     refute Keyword.has_key?(view_dict, :evogit_config_dir)
 
-    # State: `ProjectsLive.mount/3` resolves the config INSIDE the view process
-    # (`EvoGit.Config.resolve/0` → `@model_profiles`), whose only profile is the
-    # one in this test's temp config dir.
-    assert @probe_model_id in Enum.map(assigns(view)[:model_profiles], & &1.id)
+    # State: Projects loads its canonical picker bundle asynchronously in a
+    # supervised task spawned by the view. Wait for that real load to apply,
+    # then prove its ONLY provider came from this test's config directory.
+    page_assigns = await_model_selection(view)
+    assert Enum.map(page_assigns.provider_profiles, & &1["id"]) == [@probe_provider_id]
+    assert page_assigns.selected_model_spec["provider_profile_id"] == @probe_provider_id
 
-    # Render: the Settings page resolves the config file in ITS view process on
-    # mount (`SettingsLive.mount/3` → `ConfigIO.load_file_config/0` →
-    # `EvoGit.Config.resolve/0`) and the LLM category renders one editable
-    # profile-id input per profile — so the probe id reaches a real page render.
+    # Render: Settings resolves the config in ITS view process on mount
+    # (`ConfigIO.load_file_config/0`). The canonical editor renders an edit
+    # action for this exact provider id, so the probe reaches a real page too.
     {:ok, settings_view, _html} = live(build_conn(), "/settings")
-    assert render(settings_view) =~ ~s(value="#{@probe_model_id}")
+    assert assigns(settings_view).config_path == Path.join(config_dir, "config.toml")
+
+    assert has_element?(
+             settings_view,
+             ~s(#provider-profiles-editor [phx-click="edit_provider_profile"][phx-value-profile_id="#{@probe_provider_id}"])
+           )
   end
 
   @tag no_override: true
@@ -185,6 +198,29 @@ defmodule EvoDash.Test.ConfigDirTest do
       fun.()
     after
       if override, do: Process.put(:evogit_config_dir, override)
+    end
+  end
+
+  # A synchronous state read drains queued results; bounded polling waits for
+  # the supervised picker load without a fixed sleep or a forged result.
+  defp await_model_selection(view) do
+    deadline = System.monotonic_time(:millisecond) + 5_000
+    await_model_selection(view, deadline)
+  end
+
+  defp await_model_selection(view, deadline) do
+    page_assigns = assigns(view)
+
+    cond do
+      page_assigns[:model_selection_ready?] ->
+        page_assigns
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("Timed out waiting for the mounted page's canonical model selection")
+
+      true ->
+        Process.sleep(2)
+        await_model_selection(view, deadline)
     end
   end
 
