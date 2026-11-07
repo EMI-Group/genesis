@@ -2,8 +2,9 @@
 
 ## Intent
 
-This directory tests the pure support modules and assistant component used by the `/help` reading-first chat page.
-All suites use `async: true` and avoid mounting HomeLive; only the single runner suite owns the app-env seams documented below.
+This directory tests the support modules and assistant component used by the `/help` reading-first chat page.
+All suites use `async: true` and avoid mounting HomeLive; only the approval runner suite owns the app-env seams documented below.
+ModelSelect config-loading tests use the existing per-process ConfigDir seam and unique files, never process-global environment changes.
 
 ## API Surface
 
@@ -20,6 +21,23 @@ The raw toggle binds `toggle_assistant_raw` and the correct entry id, with mode-
 Action buttons retain touch-sized mobile targets, smaller desktop targets, button semantics and visible keyboard-focus styling.
 These component tests pin rendered bindings and classes, not browser clipboard execution or LiveView event-handler behavior, which belong outside this node.
 No production files or translation catalogs are maintained here.
+
+## Provider-Profile Selection Coverage
+
+`chat_state_test.exs` preserves the legacy whole-state shape and normalization assertions while testing canonical string-keyed `model_spec` persistence and `restore_selection/2` separately.
+Persisted selection contains only provider-profile id, model, optional reasoning effort, exact `{target_id, BEAM_node}` scope and error state; credential-bearing config snapshots, picker bundles and load counters never enter ChatHistory.
+Nil is uninitialized, `%{}` is explicit Auto, and false or malformed specs remain `:invalid_model_spec` across repeated save/restore rather than falling back to Auto or a legacy pin.
+Persistence validates shape only, leaving current account/model/effort membership to the shared resolver.
+Unscoped legacy ids remain whole migration inputs on the local scope only; explicit unscoped specs never use that exception.
+Exact target-id and BEAM-node matching includes pending remote targets with local-node fallbacks, so one target cannot borrow another target's pin.
+`model_select_test.exs` exercises the actual `ModelSelect.task_opts/4` and shared resolver with canonical multi-account config and legacy config, without spawning any reflect task or touching the scheduler/network.
+Task options must use only canonical string-keyed `model_spec` plus `model_id_locked: true`, remove legacy pins, preserve unrelated task options and omit credential-bearing account fields.
+Nil selects configured defaults even with rules enabled, Auto removes all model pins, advertised reasoning defaults or first-inventory efforts resolve before submission, and models without inventories omit task reasoning overrides.
+Stale accounts/models/efforts and legacy ids return errors, explicit specs outrank migration inputs, and fresh config revalidates restored pins.
+Snapshot-node/full-scope mismatch, pending remote contexts, missing snapshots and persisted invalid-spec errors are tested independently of successful resolver calls.
+Local load tests expect tagged full-config snapshots and configured-but-broken rules to remain enabled; an unreachable remote load preserves its error within the real supervised SafeCall envelope.
+These tests rely on the public `EvoGit.Config.Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` APIs called by `LLMSelection`, and on config validation accepting the `:provider_profiles` schema type.
+Missing public delegates or provider-profile config validation are production integration defects, not reasons to substitute stubs, skip tests or weaken assertions.
 
 ## ApprovalWorkflow Coverage
 
