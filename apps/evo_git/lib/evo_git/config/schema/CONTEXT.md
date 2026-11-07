@@ -100,6 +100,9 @@ Empty-string candidates fail with `:invalid_model_spec`, while a map with no pro
 Resolution precedence is provider defaults, then model overrides, then explicit task effort, and the provider default selector is `llm.default_provider_profile`.
 Success is `{:ok, resolved}` with all selection fields plus `reasoning_effort`, canonical `provider_profile`, atom-keyed legacy-compatible `runtime_profile`, ReqLLM `model_spec`, shared concurrency/peak keys and `generation_params`.
 Selection `model` stays an unqualified id, whereas `model_spec` and `runtime_profile.model` are the actual qualified string or custom-endpoint ReqLLM map.
+For dashboard/task picker persistence, reconstruct `%{"provider_profile_id" => resolved.provider_profile_id, "model" => resolved.model}` and add `"reasoning_effort" => resolved.reasoning_effort` only when non-nil, rather than persisting `resolved.model_spec` (`provider_profiles.ex:53–62,135–144,208–220`).
+The resolved outer map is atom-keyed, its `provider_profile` is recursively string-keyed, and its top-level `reasoning_effort` is the selected normalized string or nil, independent of later ReqLLM generation-parameter conversion/filtering (`provider_profiles.ex:171–200`, `llm.ex:628–644`).
+An omitted or nil input effort selects the configured default, so nil cannot explicitly suppress a configured effort default (`provider_profiles.ex:171–175`).
 Runtime generation uses `LLM.profile_generation_params/1` for OAuth import, provider-option precedence, constraint filtering and optional `api_key_env_var` resolution for API-key profiles only.
 Resolved generation parameters may therefore contain secrets and must not be treated as a dashboard projection.
 Enumeration does not import OAuth credentials or read model metadata, but resolution can do both through the existing LLM choke point.
