@@ -5,8 +5,9 @@ defmodule EvoGit.TaskRegistry.ProviderModelSelectionOptsTest do
   All configuration is passed as a snapshot; no scheduler, Store, credentials,
   environment variables or application-env seams are mutated. The builder's
   ensure_all_started/1 is safe against the already-running test application.
-  Explicit task specs use the scheduler's full string-keyed identity wire shape,
-  not the schema's permissive default selector or ReqLLM model identifier.
+  Explicit task selectors accept the schema's partial and atom/mixed-key maps;
+  admission must resolve them to the scheduler's full string-keyed identity,
+  never a ReqLLM model identifier or credential-bearing runtime profile.
   """
 
   use ExUnit.Case, async: true
@@ -271,6 +272,42 @@ defmodule EvoGit.TaskRegistry.ProviderModelSelectionOptsTest do
     end
   end
 
+  describe "permissive selectors become canonical identities before scheduler dispatch" do
+    # ProviderProfiles defaults missing/nil/false account and model fields and
+    # normalizes atom/mixed keys; strict scheduler identities are the OUTPUT.
+    for {spec, expected} <- [
+          {%{}, {"team", "reasoner", "medium"}},
+          {%{"provider_profile_id" => "team"}, {"team", "reasoner", "medium"}},
+          {%{"provider_profile_id" => "personal"}, {"personal", "plain", "low"}},
+          {%{"model" => "reasoner"}, {"team", "reasoner", "medium"}},
+          {%{"model" => "plain"}, {"team", "plain", "low"}},
+          {%{"reasoning_effort" => "high"}, {"team", "reasoner", "high"}},
+          {%{"provider_profile_id" => nil, "model" => "reasoner"},
+           {"team", "reasoner", "medium"}},
+          {%{"provider_profile_id" => false, "model" => "reasoner"},
+           {"team", "reasoner", "medium"}},
+          {%{"provider_profile_id" => "team", "model" => nil}, {"team", "reasoner", "medium"}},
+          {%{"provider_profile_id" => "team", "model" => false}, {"team", "reasoner", "medium"}},
+          {%{provider_profile_id: "team", model: "reasoner"}, {"team", "reasoner", "medium"}},
+          {%{"provider_profile_id" => "team", model: "reasoner"}, {"team", "reasoner", "medium"}}
+        ] do
+      test "canonicalizes selector #{inspect(spec)} using resolved defaults, not a competing legacy id" do
+        spec = unquote(Macro.escape(spec))
+        {account, model, effort} = unquote(Macro.escape(expected))
+        assert {:ok, resolved} = Schema.resolve_model_spec(config(), spec)
+        assert identity(resolved) == selection(account, model, effort)
+
+        assert {:ok, admitted} =
+                 admit(model_spec: spec, model_id: "personal", model_id_locked: false)
+
+        assert Keyword.fetch!(admitted, :model_spec) == identity(resolved)
+        assert Keyword.fetch!(admitted, :model_id_locked) == true
+        refute Keyword.has_key?(admitted, :model_id)
+        assert Enum.sort(Keyword.keys(admitted)) == [:model_id_locked, :model_spec]
+      end
+    end
+  end
+
   describe "invalid explicit selections never fall back to defaults or legacy ids" do
     for value <- [
           nil,
@@ -291,37 +328,21 @@ defmodule EvoGit.TaskRegistry.ProviderModelSelectionOptsTest do
       end
     end
 
-    # The schema accepts partial maps as default selectors, but admission is the
-    # stricter task-wire boundary shared with ModelSelection.resolve_explicit/2.
-    for spec <- [
-          %{},
-          %{"provider_profile_id" => "team"},
-          %{"model" => "reasoner"},
-          %{"reasoning_effort" => "high"},
-          %{"provider_profile_id" => nil, "model" => "reasoner"},
-          %{"provider_profile_id" => false, "model" => "reasoner"},
-          %{"provider_profile_id" => "team", "model" => nil},
-          %{"provider_profile_id" => "team", "model" => false},
-          %{provider_profile_id: "team", model: "reasoner"},
-          %{"provider_profile_id" => "team", model: "reasoner"}
-        ] do
-      test "rejects malformed or partial wire identity #{inspect(spec)} before schema defaults fill it" do
-        assert {:error, :invalid_model_spec} =
-                 admit(model_spec: unquote(Macro.escape(spec)), model_id: "team")
-      end
-    end
-
-    for {field, value} <- [
-          {"provider_profile_id", ""},
-          {"provider_profile_id", "   "},
-          {"provider_profile_id", 123},
-          {"model", ""},
-          {"model", "   "},
-          {"model", 123}
+    # Invalid field values use the resolver's account/model-specific errors,
+    # not the top-level non-map :invalid_model_spec error.
+    for {field, value, reason} <- [
+          {"provider_profile_id", "", {:provider_profile_not_found, ""}},
+          {"provider_profile_id", "   ", {:provider_profile_not_found, "   "}},
+          {"provider_profile_id", 123, {:provider_profile_not_found, 123}},
+          {"model", "", {:model_not_found, "team", nil}},
+          {"model", "   ", {:model_not_found, "team", "   "}},
+          {"model", 123, {:model_not_found, "team", nil}}
         ] do
       test "rejects invalid identity field #{field}=#{inspect(value)}" do
         spec = Map.put(selection("team", "reasoner"), unquote(field), unquote(value))
-        assert {:error, :invalid_model_spec} = admit(model_spec: spec, model_id: "personal")
+        reason = unquote(Macro.escape(reason))
+        assert Schema.resolve_model_spec(config(), spec) == {:error, reason}
+        assert admit(model_spec: spec, model_id: "personal") == {:error, reason}
       end
     end
 

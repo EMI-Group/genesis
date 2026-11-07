@@ -100,6 +100,7 @@ defmodule EvoGit.TaskRegistry.ModelSelectionFixtures do
        {:unsupported_reasoning_effort, "medium", ["low", "high"]}},
       {"malformed effort", spec("account-b", "gpt-5", %{"invalid" => true}),
        {:invalid_reasoning_effort, %{"invalid" => true}}},
+      {"empty explicit effort", spec("account-b", "gpt-5", ""), {:invalid_reasoning_effort, ""}},
       {"explicit nil", nil, :invalid_model_spec},
       {"ReqLLM string in place of identity map", "openai:gpt-5", :invalid_model_spec}
     ]
@@ -526,12 +527,13 @@ end
 
 defmodule EvoGit.TaskRegistry.ModelSelectionAdmissionProjectionTest do
   @moduledoc """
-  Pure admission projection and malformed-map regressions, kept outside the
-  Store/registry fixture. Config and credentials are per-process isolated.
+  Pure admission projection, default-selector and malformed-input regressions,
+  kept outside the Store/registry fixture. Config and credentials are per-process isolated.
   """
   use ExUnit.Case, async: true
 
   import EvoGit.TaskRegistry.ModelSelectionFixtures
+  alias EvoGit.Config.Schema
   alias EvoGit.TaskRegistry.RuntimeOpts
 
   setup do
@@ -541,10 +543,13 @@ defmodule EvoGit.TaskRegistry.ModelSelectionAdmissionProjectionTest do
   test "atom-key input is canonicalized to exactly three string identity keys", context do
     input = %{provider_profile_id: "account-b", model: "gpt-5", reasoning_effort: "high"}
 
+    assert {:ok, resolved} = Schema.resolve_model_spec(context.config, input)
+    assert identity(resolved) == spec()
+
     assert {:ok, admitted} =
              RuntimeOpts.admit_model_selection([model_spec: input], context.config)
 
-    assert admitted[:model_spec] == spec()
+    assert admitted[:model_spec] == identity(resolved)
     assert admitted[:model_id_locked] == true
   end
 
@@ -584,23 +589,58 @@ defmodule EvoGit.TaskRegistry.ModelSelectionAdmissionProjectionTest do
     assert admitted[:model_spec] == spec()
   end
 
-  for {label, input} <- [
-        {"empty map", %{}},
-        {"model without account", %{"model" => "gpt-5"}},
-        {"effort without account", %{"reasoning_effort" => "high"}},
-        {"nil account", %{"provider_profile_id" => nil, "model" => "gpt-5"}},
-        {"non-string account", %{"provider_profile_id" => 42, "model" => "gpt-5"}},
-        {"nil explicit model", %{"provider_profile_id" => "account-b", "model" => nil}},
-        {"non-string explicit model", %{"provider_profile_id" => "account-b", "model" => []}}
+  # Missing/nil account and model fields are selectors for configured defaults,
+  # not malformed scheduler identities: admission resolves before projecting.
+  for {label, input, expected} <- [
+        {"empty map", %{}, {"account-a", "gpt-5", "low"}},
+        {"account without model", %{"provider_profile_id" => "account-b"},
+         {"account-b", "gpt-5-mini", "high"}},
+        {"model without account", %{"model" => "gpt-5"}, {"account-a", "gpt-5", "low"}},
+        {"nondefault model without account", %{"model" => "gpt-5-mini"},
+         {"account-a", "gpt-5-mini", "low"}},
+        {"effort without account", %{"reasoning_effort" => "high"},
+         {"account-a", "gpt-5", "high"}},
+        {"nil account", %{"provider_profile_id" => nil, "model" => "gpt-5"},
+         {"account-a", "gpt-5", "low"}},
+        {"nil explicit model", %{"provider_profile_id" => "account-b", "model" => nil},
+         {"account-b", "gpt-5-mini", "high"}},
+        {"mixed keys", %{"provider_profile_id" => "account-b", model: "gpt-5"},
+         {"account-b", "gpt-5", "high"}}
       ] do
-    test "malformed partial identity #{label} is not admitted using valid defaults", context do
+    test "selector #{label} becomes a resolved canonical identity", context do
       input = unquote(Macro.escape(input))
+      {account, model, effort} = unquote(Macro.escape(expected))
+      assert {:ok, resolved} = Schema.resolve_model_spec(context.config, input)
+      assert identity(resolved) == spec(account, model, effort)
 
-      assert {:error, _reason} =
+      assert {:ok, admitted} =
                RuntimeOpts.admit_model_selection(
-                 [model_spec: input, model_id: "account-a"],
+                 [model_spec: input, model_id: "account-a", model_id_locked: false],
                  context.config
                )
+
+      assert admitted[:model_spec] == identity(resolved)
+      assert admitted[:model_id_locked] == true
+      assert Enum.sort(Keyword.keys(admitted)) == [:model_id_locked, :model_spec]
+      refute Keyword.has_key?(admitted, :model_id)
+    end
+  end
+
+  for {label, input, reason} <- [
+        {"non-string account", %{"provider_profile_id" => 42, "model" => "gpt-5"},
+         {:provider_profile_not_found, 42}},
+        {"non-string explicit model", %{"provider_profile_id" => "account-b", "model" => []},
+         {:model_not_found, "account-b", nil}}
+      ] do
+    test "invalid identity #{label} returns its specific resolver error", context do
+      input = unquote(Macro.escape(input))
+      reason = unquote(Macro.escape(reason))
+      assert Schema.resolve_model_spec(context.config, input) == {:error, reason}
+
+      assert RuntimeOpts.admit_model_selection(
+               [model_spec: input, model_id: "account-a"],
+               context.config
+             ) == {:error, reason}
     end
   end
 
