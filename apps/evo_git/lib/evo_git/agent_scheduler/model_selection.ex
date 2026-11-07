@@ -13,11 +13,31 @@ defmodule EvoGit.AgentScheduler.ModelSelection do
   @doc "Returns the model configuration options shared by boot and reload."
   def config_opts(config) do
     if schema_available?() do
-      [
-        model_profiles: apply(Schema, :model_selections, [config]),
-        provider_profiles: apply(Schema, :provider_profiles, [config]),
-        model_selection_config: config
-      ]
+      providers = apply(Schema, :provider_profiles, [config])
+
+      canonical? =
+        case value(config, :llm) do
+          %{} = llm -> match?([_ | _], value(llm, :providers))
+          _ -> false
+        end
+
+      profiles =
+        if canonical?,
+          do: apply(Schema, :model_selections, [config]),
+          else: Schema.effective_model_profiles(config)
+
+      if canonical? or providers != [] do
+        [
+          model_profiles: profiles,
+          provider_profiles: providers,
+          model_selection_config: config
+        ]
+      else
+        # An unconfigured legacy default has a nil model and cannot be resolved
+        # through the account schema. Use the legacy replacement path on reload
+        # too, so nil filtering cannot leave an old account snapshot installed.
+        [model_profiles: profiles]
+      end
     else
       [model_profiles: Schema.effective_model_profiles(config)]
     end
