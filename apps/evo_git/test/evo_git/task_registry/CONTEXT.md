@@ -4,7 +4,7 @@
 
 ExUnit tests for `EvoGit.TaskRegistry` and `EvoGit.Store` persistence/lifecycle behavior: status transitions & guards, lease/heartbeat, the liveness contract for a persisted status outside the store's codec whitelist, cleanup, skip-and-log of undecodable rows, per-agent archive persistence, restart durability, the merge/resume/runtime-opts context builders, the `:reflect` task-type routing, failed-transition diagnostics, and the managed per-task tmpdir reclaim lifecycle.
 
-The subtree contains 343 tests, including 130 async provider-selection admission and persistence regressions in two focused files.
+The subtree contains 350 tests, including 137 async provider-selection admission and persistence regressions in two focused files.
 
 Measured whole-directory baseline at `--seed 0`: ~1.9 s (1.1 s async, 0.8 s sync).
 
@@ -79,11 +79,15 @@ Also `async: true`, no fixture (pure/isolated): `runtime_opts`, `diagnostics`, `
 
 ## Provider-Profile Selection Regressions
 
-`provider_model_selection_opts_test.exs` contains 80 async tests for explicit account/model/effort identity, lock and legacy precedence, Auto, defaults, strict malformed-input rejection, changed-snapshot readmission and credential-free projection.
-`model_selection_persistence_test.exs` contains 50 async tests across isolated persistence and registry-admission modules covering SQLite identity round-trip, distinct same-provider accounts, effort, registry restart, reloaded runtime opts and rejection before any task row, wrapper ref or running broadcast exists.
+`provider_model_selection_opts_test.exs` covers explicit account/model/effort identity, lock and legacy precedence, Auto, resolved defaults, permissive selector canonicalization, invalid-value rejection, changed-snapshot readmission and credential-free projection.
+`model_selection_persistence_test.exs` covers SQLite identity round-trip, distinct same-provider accounts, effort, registry restart, reloaded runtime opts, canonical admission projections and invalid-selection rejection before any task row, wrapper ref or running broadcast exists.
+The two files contain 137 async tests in total.
 Registry-side configuration is isolated by binding `:evogit_config_dir` inside the fixture registry through a `:sys.replace_state` callback, so these tests need neither global XDG changes nor scheduler mutations.
 Persisted `model_spec` is a string-keyed identity map built from resolved `provider_profile_id`, `model` and optional `reasoning_effort`, never the ReqLLM request identifier in `resolved.model_spec` or credential-bearing `generation_params`.
-Current source defects leave 46 regressions failing: admission retains unsanitized caller maps rather than a canonical resolved identity, permits malformed partial maps that scheduler dispatch rejects, and Codec does not atomize the outer `:model_spec` option on reload.
+Resolver input intentionally accepts partial selectors and atom/mixed identity keys, with missing or nil account/model fields using configured defaults, so admission must resolve these inputs before projecting a canonical string-keyed identity for strict scheduler dispatch.
+Explicit empty effort, unknown accounts/models and unsupported effort remain invalid, and their rejection tests also guard against task creation.
+Two source defects remain exposed by 45 regressions: 34 require `RuntimeOpts.admit_model_selection/2` to persist the resolved identity rather than retain caller maps (including default effort, canonical keys/model spelling and credential stripping), and 11 require Codec to atomize the outer `:model_spec` option on reload so keyword consumers retain selections and readmission validates changed inventories.
+The complete subtree produces the same 305 passing and 45 failing tests at seeds 0 and 42; the failures belong exclusively to these two defect groups.
 These failures must be resolved in the source siblings by their owning agent rather than by weakening, skipping or removing the regression assertions.
 The explicit missing-provider test in `task_executor_reflect_test.exs` establishes executor admission rejection; implicit-selection tests retain the missing-path reflect runtime route coverage.
 
