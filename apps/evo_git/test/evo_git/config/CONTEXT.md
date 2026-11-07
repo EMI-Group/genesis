@@ -3,6 +3,7 @@
 ## Intent
 ExUnit suites for the config schema/metadata layer, canonical provider-account normalization and model selection, generation-parameter filtering, static LLM catalog and version-state file.
 Whole-app config resolution, TOML roundtrips, save/load and legacy migration through `EvoGit.Config.resolve/0` belong to the parent `../config_test.exs`, not this node.
+Disk-backed `Config.config_status/0` regressions, including invalid canonical defaults and validation-error snapshot preservation across nested resolves, also belong to `../config_test.exs`; this node owns the pure `Schema.validate/1` and `Schema.resolve_model_spec/2` selector contracts.
 
 ## API Surface
 This is a test-only node with no production code.
