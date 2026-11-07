@@ -379,8 +379,8 @@ defmodule EvoGit.AgentScheduler.Slots do
   end
 
   @doc """
-  Grants all pending LLM and tool slots that are available.
-  Used when resuming from a paused state.
+  Grants all pending LLM and tool slots that are available unless globally paused.
+  Used on resume and config updates; paused sweeps leave waiters queued.
 
   Returns `{state, status_updates}` where status_updates is a list of
   `{agent_id, :running}` pairs for each agent that was unblocked.
@@ -538,6 +538,10 @@ defmodule EvoGit.AgentScheduler.Slots do
     end)
   end
 
+  # Guard at the grant boundary so releases, config updates, death cleanup and
+  # retry timers all respect pause without preventing holder/backoff cleanup.
+  defp grant_llm_from_queue(%State{paused: true} = state, _model_id), do: {state, []}
+
   # Grants pending LLM slots for a single model pool.
   # Uses holder sets: grants while map_size(holders) < capacity.
   # The recency/depth prioritization stays the same, just scoped to this model's queue.
@@ -680,6 +684,9 @@ defmodule EvoGit.AgentScheduler.Slots do
   defp grant_pending_tool_slots(%State{} = state) do
     grant_tool_from_queue(state)
   end
+
+  # The same pause gate covers tool releases, death cleanup and config sweeps.
+  defp grant_tool_from_queue(%State{paused: true} = state), do: {state, []}
 
   defp grant_tool_from_queue(%State{} = state) do
     if MapSet.size(state.tool_holders) >= state.max_tool_concurrency do

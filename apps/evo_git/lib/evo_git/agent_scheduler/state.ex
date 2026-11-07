@@ -500,7 +500,8 @@ defmodule EvoGit.AgentScheduler.State do
     # Grant any newly-available slots to waiting agents. This sweep runs for
     # EVERY update (including :model_concurrency replacements), so a capacity
     # increase from a new per-model map — or from the :default_llm_max_concurrency
-    # floor — is granted automatically. Do NOT add a second sweep call here.
+    # floor — is granted automatically unless globally paused. The slot grant
+    # boundaries preserve queues until resume. Do NOT add a second sweep here.
     {state, status_updates} = Slots.grant_pending_on_resume(state)
     Lifecycle.apply_status_updates(status_updates)
 
