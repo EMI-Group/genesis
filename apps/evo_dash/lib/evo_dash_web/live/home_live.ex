@@ -87,16 +87,17 @@ defmodule EvoDashWeb.HomeLive do
               )}
             </h1>
           </div>
-          <.llm_selection
-            id="chat-llm-selection"
-            provider_profiles={@provider_profiles}
-            model_selections={@model_selections}
-            model_spec={@model_spec || %{}}
-            show_auto_option={@model_selection_enabled}
-            disabled={@model_select_loading or is_nil(@model_snapshot)}
-            compact
-            class="basis-full order-last"
-          />
+          <form id="chat-llm-selection-form" class="basis-full order-last">
+            <.llm_selection
+              id="chat-llm-selection"
+              provider_profiles={@provider_profiles}
+              model_selections={@model_selections}
+              model_spec={@model_spec || %{}}
+              show_auto_option={@model_selection_enabled}
+              disabled={@model_select_loading or is_nil(@model_snapshot)}
+              compact
+            />
+          </form>
           <p
             :if={@model_select_load_error || @model_selection_error}
             role="alert"
@@ -378,11 +379,16 @@ defmodule EvoDashWeb.HomeLive do
         apply_model_snapshot(socket, ModelSelect.load(target_node))
 
       connected?(socket) ->
-        EvoDash.SafeCall.start(self(), {:model_select_loaded, seq, target_node}, fn ->
-          ModelSelect.load(target_node)
-        end)
+        case EvoDash.SafeCall.start(self(), {:model_select_loaded, seq, target_node}, fn ->
+               ModelSelect.load(target_node)
+             end) do
+          {:ok, _pid} ->
+            assign(socket, model_select_loading: true)
 
-        assign(socket, model_select_loading: true)
+          {:error, reason} ->
+            # No result message is sent when the supervisor cannot start the task.
+            apply_model_snapshot(socket, {:error, reason})
+        end
 
       true ->
         socket
