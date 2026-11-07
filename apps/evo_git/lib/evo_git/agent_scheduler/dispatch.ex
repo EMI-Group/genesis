@@ -367,12 +367,15 @@ defmodule EvoGit.AgentScheduler.Dispatch do
             {:ok, _} = result ->
               result
 
-            {:error, reason} ->
+            {:error, {:provider_profile_not_found, id}} when is_binary(requested) ->
               Logger.warning(
-                "AgentScheduler: legacy selection #{inspect(requested)} failed: #{inspect(reason)}; using default"
+                "AgentScheduler: legacy selection #{inspect(id)} not found; using default"
               )
 
               ModelSelection.resolve(state, nil)
+
+            {:error, _} = error ->
+              error
           end
         else
           {id, model, params} = resolve_model_for_agent(state, requested)

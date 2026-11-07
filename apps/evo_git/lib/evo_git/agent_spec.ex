@@ -24,6 +24,7 @@ defmodule EvoGit.AgentSpec do
     :agent_module,
     :objective,
     :model_id,
+    :model_spec,
     repo_id: "primary",
     opts: [],
     foreign_repos: [],
@@ -36,6 +37,7 @@ defmodule EvoGit.AgentSpec do
           agent_module: module(),
           objective: String.t(),
           model_id: String.t() | nil,
+          model_spec: map() | nil,
           repo_id: String.t(),
           opts: keyword(),
           foreign_repos: [ForeignRepo.t()],
@@ -48,7 +50,8 @@ defmodule EvoGit.AgentSpec do
   ## Options
 
   - `:repo_id` — string identifying which repo this agent belongs to (`"primary"` for main, or a foreign repo id)
-  - `:model_id` — the model profile id to bind this agent to (`nil` → scheduler resolves the default profile)
+  - `:model_id` — legacy provider/model profile id (`nil` → configured default)
+  - `:model_spec` — task selection map with `provider_profile_id`, `model`, and optional `reasoning_effort` (not a ReqLLM model identifier)
   - `:foreign_repos` — list of foreign repos available to this agent
   - `:repo_notes` — the already-rendered git-submodules note block (markdown text) for this agent's repo tree, or `nil` when the repo has no submodules (or detection failed)
   - `:archive` — whether task archiving is enabled
@@ -62,6 +65,7 @@ defmodule EvoGit.AgentSpec do
       agent_module: agent_module,
       objective: objective,
       model_id: Keyword.get(opts, :model_id),
+      model_spec: Keyword.get(opts, :model_spec),
       repo_id: Keyword.get(opts, :repo_id, "primary"),
       opts: opts,
       foreign_repos: Keyword.get(opts, :foreign_repos, []),

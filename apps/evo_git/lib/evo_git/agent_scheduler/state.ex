@@ -131,12 +131,15 @@ defmodule EvoGit.AgentScheduler.State do
         }
 
   @doc """
-  Returns the default model profile id from the state's `model_profiles`.
+  Returns the default legacy selection/provider id.
 
-  The default profile is the first in the list. Returns `"default"` if no
-  profiles are configured.
+  Schema-backed state honors the configured default provider; legacy state uses
+  the first profile id, or `"default"` when no profiles are configured.
   """
   @spec default_model_id(t()) :: String.t()
+  def default_model_id(%__MODULE__{model_selection_config: config} = state) when is_map(config),
+    do: default_pool_id(state)
+
   def default_model_id(%__MODULE__{model_profiles: []}), do: "default"
 
   def default_model_id(%__MODULE__{model_profiles: [profile | _]}) do
@@ -146,7 +149,11 @@ defmodule EvoGit.AgentScheduler.State do
   @doc "Builds scheduler model/pool state from the same config snapshot as reload."
   def from_config(config, opts \\ []) do
     model_opts = ModelSelection.config_opts(config)
-    default = get_in(config, [:scheduler, :default_llm_max_concurrency])
+
+    default =
+      config
+      |> ModelSelection.value(:scheduler, %{})
+      |> ModelSelection.value(:default_llm_max_concurrency)
 
     opts =
       if is_nil(default),
@@ -173,10 +180,15 @@ defmodule EvoGit.AgentScheduler.State do
 
   @doc "The default resource pool (not necessarily the default legacy model id)."
   def default_pool_id(%__MODULE__{} = state) do
-    case List.first(state.model_profiles) || List.first(state.provider_profiles) do
-      nil -> "default"
-      profile -> ModelSelection.pool_id(profile)
-    end
+    configured_id =
+      if is_map(state.model_selection_config) do
+        state.model_selection_config
+        |> ModelSelection.value(:llm, %{})
+        |> ModelSelection.value(:default_provider_profile)
+      end
+
+    profile = List.first(state.provider_profiles) || List.first(state.model_profiles)
+    configured_id || if(is_nil(profile), do: "default", else: ModelSelection.pool_id(profile))
   end
 
   @doc """
@@ -221,10 +233,10 @@ defmodule EvoGit.AgentScheduler.State do
     selection_config = Keyword.get(opts, :model_selection_config)
 
     {default_model, default_params, default_concurrency} =
-      if is_map(selection_config) and default_profile != nil do
+      if is_map(selection_config) and (default_profile != nil or provider_profiles != []) do
         seed = %__MODULE__{model_profiles: profiles, model_selection_config: selection_config}
 
-        case ModelSelection.resolve(seed, ModelSelection.value(default_profile, :id)) do
+        case ModelSelection.resolve(seed, nil) do
           {:ok, resolved} ->
             {resolved.llm_model, resolved.llm_generation_params,
              Map.get(model_concurrency, resolved.provider_profile_id, 3)}
@@ -538,8 +550,9 @@ defmodule EvoGit.AgentScheduler.State do
   0 → State stores 0 → re-broadcast → engine re-checks `effective_concurrency`
   → no-op.
 
-  Note: this floor applies to runtime `update_config` only. At init, the file
-  semantics remain "profile wins" (`from_model_profiles/2` does not floor).
+  Schema-backed provider pools also apply an explicitly supplied default floor
+  at construction; legacy `from_model_profiles/2` fixtures retain profile-wins
+  initialization semantics.
 
   This floor is bypassed ONLY when the caller passes `model_concurrency_skip_floor:
   true` on a `model_concurrency` update (the PeakHourEngine sets it — the engine

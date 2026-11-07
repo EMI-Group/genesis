@@ -175,6 +175,17 @@ A model profile can spend a ChatGPT/Claude **subscription login** instead of a p
 - **`EvoGit.SandboxSlice`** owns live `evogit.slice` writes (`systemctl --user set-property evogit.slice CPUWeight=… MemoryMax=… TasksMax=…`), Linux + systemd backend only; every call is bounded by `run_systemctl_bounded/4` (`@systemctl_timeout_ms` 5000, seams `:sandbox_slice_systemctl_timeout_ms` / `:sandbox_slice_systemctl_fun`; timeout → `{:error, :timeout}`, raising runner → `{:error, {:runner_crashed, reason}}`); `update_resources/1` (sync 10s call) vs `update_resources_async/1` (cast, `:ok` even when down) — `AgentScheduler` uses the ASYNC one → `sandbox/` + `agent_scheduler/`.
 - **No `try/rescue` anti-pattern**: prefer `case`/`if`/`cond`/`with` + non-crashing variants (`Regex.compile`, `:persistent_term.get/2`, `Integer.parse/1`); justified only for `terminate/2` cleanup, centralized boundaries (`safe_llm_call/2`), `SystemCheck` diagnostics, `String.to_existing_atom/1` on untrusted keys, and `try/catch` around functions with no non-crashing variant (`Path.wildcard`). **Every remaining `try/rescue` MUST have a justifying comment.**
 
+## Provider-profile top-level integration
+Scheduler boot uses `AgentScheduler.State.from_config/2`, sharing `ModelSelection.config_opts/1`'s canonical provider profiles, ordered selections and resolution snapshot with reload.
+Root registration handles `{:error, reason}` before the successful `{agent_id, state}` tuple so invalid explicit selections return an error without crashing the scheduler.
+`AgentSpec.new/5` retains `opts[:model_spec]` both in its `model_spec` field and in `opts`; this is the task selection map, not a ReqLLM model identifier.
+`Config.Schema.resolve_model_spec/2` returns top-level selection fields plus `provider_profile`, `runtime_profile`, ReqLLM-ready `model_spec` and `generation_params`; consumers must not mistake the resolved `model_spec` for the task selection map.
+`AgentScheduler.get_config(:provider_profiles)` and the full config map expose canonical account profiles, and PeakHourEngine prefers these profiles over the legacy `model_profiles` fallback.
+PeakHourEngine accepts canonical string keys for profile ids and schedule fields, emits one concurrency entry per provider/account, preserves explicit peak exemptions and zero capacity, and schedules transitions from those same account windows.
+ReqLLMPool sums the scheduler's account-keyed `model_concurrency` map once per account, never the number of model selections in an account inventory.
+SystemCheck resolves default selections, provider-profile ids and explicit task selection maps through the schema before testing the resolved ReqLLM identifier and generation params, while retaining support for raw ReqLLM identifiers.
+CatalogWarmup's `effective_model_profiles/1` path remains provider-compatible through the schema's default-model runtime projections, which warm the shared catalog in its throwaway process before scheduler boot.
+
 ## Assistant direct runtime APIs (top-level wrapper contracts)
 The evaluator admits individual MFAs explicitly, never whole namespaces; the authoritative tier-specific lists live in `agent/tools/elixir_eval/CONTEXT.md`, and documenting neighboring APIs below does not grant access to them.
 Admitted reads return the real APIs' values without evaluator-specific projections or secret filtering, and approved writes call the real mutators.

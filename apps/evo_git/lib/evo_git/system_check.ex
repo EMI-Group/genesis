@@ -148,12 +148,12 @@ defmodule EvoGit.SystemCheck do
   """
   @spec llm_test() :: {:ok, map()} | {:error, String.t()}
   def llm_test do
-    model = EvoGit.Config.resolve([:llm, :model])
-    llm_test(model)
+    guarded_llm_test(nil, [], "llm_test/0")
   end
 
   @doc """
-  Tests LLM connectivity for a specific model string.
+  Tests LLM connectivity for a provider-profile id, an explicit task selection
+  map, or a raw ReqLLM model identifier.
 
   Returns `{:ok, %{model: String.t(), response: String.t()}}` on success,
   or `{:error, String.t()}` on failure.
@@ -334,7 +334,39 @@ defmodule EvoGit.SystemCheck do
     # previously loaded credentials).
     EvoGit.Config.credentials()
 
-    case oauth_credential_blocker(model) do
+    config = EvoGit.Config.resolve()
+
+    if is_nil(model) or selection_map?(model) or provider_profile_id?(config, model) do
+      case EvoGit.Config.Schema.resolve_model_spec(config, model) do
+        {:ok, resolved} ->
+          test_profile(
+            resolved.runtime_profile,
+            resolved.model_spec,
+            Keyword.merge(resolved.generation_params, opts)
+          )
+
+        {:error, reason} ->
+          {:error, "Cannot resolve LLM selection: #{inspect(reason)}"}
+      end
+    else
+      # Raw ReqLLM identifiers remain supported for the legacy connection UI.
+      test_profile(oauth_profile_for_model(config, model), model, opts)
+    end
+  end
+
+  defp selection_map?(model) when is_map(model),
+    do: Map.has_key?(model, :provider_profile_id) or Map.has_key?(model, "provider_profile_id")
+
+  defp selection_map?(_model), do: false
+
+  defp provider_profile_id?(config, model) when is_binary(model) do
+    Enum.any?(EvoGit.Config.Schema.provider_profiles(config), &(&1["id"] == model))
+  end
+
+  defp provider_profile_id?(_config, _model), do: false
+
+  defp test_profile(profile, model, opts) do
+    case oauth_credential_blocker(profile) do
       nil -> run_connection_test(model, opts)
       message -> {:error, message}
     end
@@ -344,9 +376,7 @@ defmodule EvoGit.SystemCheck do
   # sandbox, a bad `oauth_file` path) is reported INSTEAD of running the test:
   # the request would only surface ReqLLM's raw "OAuth file not found", hiding
   # the real cause and suggesting the wrong remedy.
-  defp oauth_credential_blocker(model) do
-    profile = oauth_profile_for_model(model)
-
+  defp oauth_credential_blocker(profile) do
     if EvoGit.Config.Schema.LLM.oauth_profile?(profile) do
       case EvoGit.Config.Schema.LLM.ensure_profile_credentials(profile) do
         {:error, {:managed_file_unwritable, _} = error} ->
@@ -371,8 +401,8 @@ defmodule EvoGit.SystemCheck do
   # profile degrades to a bare `%{model: model}` spec (and the default file).
   # No try/rescue here: `guarded_llm_test/3` is the centralized rescue boundary
   # for this whole path, so a bad config read surfaces as `{:error, message}`.
-  defp oauth_profile_for_model(model) do
-    profiles = EvoGit.Config.resolve() |> EvoGit.Config.Schema.model_profiles()
+  defp oauth_profile_for_model(config, model) do
+    profiles = EvoGit.Config.Schema.effective_model_profiles(config)
 
     case Enum.find(profiles, fn profile -> Map.get(profile, :model) == model end) do
       nil -> %{model: model}
@@ -385,7 +415,7 @@ defmodule EvoGit.SystemCheck do
 
     stream_opts =
       Keyword.merge([max_tokens: 10], opts)
-      |> Keyword.put(
+      |> Keyword.put_new(
         :provider_options,
         EvoGit.Config.Schema.LLM.provider_options_for_model(model)
       )

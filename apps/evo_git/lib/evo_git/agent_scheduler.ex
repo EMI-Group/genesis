@@ -554,31 +554,12 @@ defmodule EvoGit.AgentScheduler do
       max_turns_root: max_turns_root
     } = scheduler_config
 
-    # Load model profiles from config (Step 2: per-model slot pools).
-    # Each profile becomes its own slot pool; `effective_model_profiles/1`
-    # applies the legacy single-"default"-profile fallback derived from the flat
-    # llm.model / scheduler.default_llm_max_concurrency keys.
-    # `EvoGit.CatalogWarmup` starts before this process and resolves the SAME
-    # list through the SAME helper, so the llm_db catalog is already warm and
-    # the metadata lookups below are cheap `:persistent_term` reads.
-    model_profiles = EvoGit.Config.Schema.effective_model_profiles(config)
-
-    # Build per-model pool state from profiles
-    pool_state = State.from_model_profiles(model_profiles)
-
-    # Override default model/params from flat config if profiles don't specify them.
-    # The flat llm.model still serves as the default model string.
-    default_model =
-      case List.first(model_profiles) do
-        %{model: model} when model != nil -> model
-        _ -> config[:llm] |> Map.get(:model)
-      end
-
-    default_params =
-      case List.first(model_profiles) do
-        nil -> EvoGit.Config.Schema.llm_generation_params(config)
-        profile -> EvoGit.Config.Schema.llm_generation_params(profile)
-      end
+    # Boot and reload share one selection snapshot and provider/account pool
+    # identities. Multiple models on an account must never create extra capacity.
+    # CatalogWarmup resolves these selections in a throwaway process first.
+    pool_state = State.from_config(config, opts)
+    default_model = pool_state.llm_model
+    default_params = pool_state.llm_generation_params
 
     sandbox_mode = Map.get(sandbox_config, :mode)
     sandbox_resources = Map.get(sandbox_config, :resources)
@@ -698,28 +679,23 @@ defmodule EvoGit.AgentScheduler do
       repo_root = Dispatch.resolve_agent_repo_root(spec, state)
       task_number = Dispatch.next_task_number(repo_root)
 
-      {agent_id, state} =
-        Dispatch.register_agent(
-          state,
-          spec,
-          from,
-          _parent_id = nil,
-          _depth = 0,
-          task_id,
-          task_number
-        )
+      case Dispatch.register_agent(state, spec, from, nil, 0, task_id, task_number) do
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
 
-      Logger.info(
-        "AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id}, number #{task_number})"
-      )
+        {agent_id, state} ->
+          Logger.info(
+            "AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id}, number #{task_number})"
+          )
 
-      if state.paused do
-        # Queue the agent for dispatch when resumed
-        state = %{state | queue: :queue.in(agent_id, state.queue)}
-        {:noreply, state}
-      else
-        state = Dispatch.try_dispatch(state, agent_id)
-        {:noreply, state}
+          if state.paused do
+            # Queue the agent for dispatch when resumed
+            state = %{state | queue: :queue.in(agent_id, state.queue)}
+            {:noreply, state}
+          else
+            state = Dispatch.try_dispatch(state, agent_id)
+            {:noreply, state}
+          end
       end
     end
   end
@@ -1030,6 +1006,7 @@ defmodule EvoGit.AgentScheduler do
     :llm_model,
     :llm_generation_params,
     :model_profiles,
+    :provider_profiles,
     :paused,
     :sandbox_mode,
     :sandbox_resources,
