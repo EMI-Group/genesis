@@ -245,12 +245,17 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
       id="provider-profile-edit-form"
       phx-submit="save_provider_profile"
       phx-change="provider_profile_form_change"
+      aria-labelledby="provider-profile-settings-title"
+      aria-describedby={map_size(@errors) > 0 && "provider-profile-errors"}
       class="min-w-0 space-y-5 rounded-lg border border-primary-standalone/50 bg-base-100 p-4"
     >
       <input type="hidden" name="profile_id" value={value(@profile, "id")} />
-      <h4 class="text-sm font-semibold">{gettext("Provider profile settings")}</h4>
+      <h4 id="provider-profile-settings-title" class="text-sm font-semibold">
+        {gettext("Provider profile settings")}
+      </h4>
       <div
         :if={map_size(@errors) > 0}
+        id="provider-profile-errors"
         role="alert"
         class="rounded-lg border border-error/30 bg-error/10 p-3 text-sm text-error"
       >
@@ -337,7 +342,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
         </p>
       </fieldset>
 
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <.profile_field
           name="concurrency"
           label={gettext("Shared concurrency")}
@@ -353,6 +358,14 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
           value={value(@fields, "default_model")}
           required
           help={gettext("Any model served by this provider; override rows below are optional.")}
+        />
+        <.profile_field
+          name="context_window"
+          label={gettext("Shared context window (optional)")}
+          value={value(@fields, "context_window")}
+          type="number"
+          min={1024}
+          help={gettext("Leave blank for the runtime default. Models may override this value.")}
         />
       </div>
       <.reasoning_fields prefix="" fields={@fields} />
@@ -438,7 +451,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
           value={value(@model, "context_window")}
           type="number"
           min={1024}
-          help={gettext("Leave blank to use the runtime default.")}
+          help={gettext("Leave blank to inherit the shared context window or runtime default.")}
         />
       </div>
       <label class="flex items-center gap-2 text-xs font-medium text-base-content/80">
