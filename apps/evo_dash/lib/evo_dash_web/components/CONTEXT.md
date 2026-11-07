@@ -129,8 +129,10 @@ Core notices use a single subtle ring and shadow, wrapping text, and a translate
 
 `category_section/1` renders the canonical `ProviderProfilesEditor` with provider accounts, the default provider id, detached draft/edit state and OAuth status.
 Its `provider_profile_errors` map defaults to `%{}` and forwards as the editor's `errors`, separately from generic schema-card errors.
+The canonical editor's creation discriminator is atom `:new`, while every saved provider id, including string `"new"`, is an ordinary row-edit discriminator.
 Quick Setup, provider editing and Connection Test own separate forms outside the flat `settings-form-llm` form, which contains only global compression/pruning cards.
-The generic `:provider_profiles` SettingCard descriptor is summary-only, including in search: it renders a count and editor guidance, never account-map serialization or credential-bearing inputs.
+Generic search results, match counts and sidebar denominators exclude the dedicated-editor paths `llm.models`, `llm.providers` and `llm.default_provider_profile` through the shared `CategoryMetadata` search boundary.
+The generic `:provider_profiles` SettingCard descriptor is summary-only when rendered directly, never serializes account maps or credentials, and dedicated-editor paths have no generic reset controls.
 Provider editor details live in `settings_components/CONTEXT.md`; shared task selection uses `LLMSelectionComponents`, not the account editor or Quick Setup.
 Quick Setup remains a select-then-save catalog flow with provider/variant/model events and separate `save_quick_setup`, `save_custom_model` and `save_api_key` forms.
 Preset providers gate credentials on `selected_model_string`; custom-model providers expose their custom-model and credential forms after provider selection.
@@ -206,12 +208,6 @@ The project-settings foreign-repo editor implements the multi-repo read-write UI
 - **File-size policy**: `project_components.ex` is deliberately EXTENDED (not split) past the nominal per-file line policy to carry this UI; a split into a `project_components/` subdirectory is the sanctioned refactor. Component tests: `project_components_test.exs` ("foreign repo writable/base_sha UI").
 
 ## Known Issues
-
-### Provider id `"new"` collides with the edit sentinel
-
-`ProviderProfilesEditor` uses `editing_profile_id == "new"` for its creation form and compares the same value against persisted provider ids for row editing.
-A provider whose id is `"new"` collides with that sentinel, so creation and existing-account editing cannot be distinguished reliably.
-Resolution requires a coordinated LiveView/component edit-state contract fix, not a component-only special case.
 
 ### Command Palette (`project_omnibox`) — client-side wiring
 
