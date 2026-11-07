@@ -37,6 +37,9 @@ Projects normal submission and GitHub issue launches share canonical `model_spec
 Explicit Auto omits all three override keys rather than locking the configured default.
 Mounted Projects tests pin picker events, reasoning inventories, canonical session-state restore, pending remote contexts and node/path/target/generation stale-result rejection.
 Pure LaunchOptions, StatePersistence and AsyncLoad coverage lives in `./projects_live/`.
+The mounted launch assertions share `assert_task_model_selection/2` at `projects_live_test.exs:921`, including an independent `task.model_id == nil` assertion beyond exact canonical opts and absence of legacy option keys; three explicit/default/GitHub launch tests depend on that persisted-row assumption.
+The same-node-as-remote resume fixture at `projects_live_test.exs:2943` uses a non-nil target id with `current_node == node()` and injects unstamped `:async_project_load` foreign-repo maps, so it cannot also stand in for an owned connected-remote picker under the pending-remote ownership contract.
+The unreachable-connected-remote test at `projects_live_test.exs:4218` currently expects a successful empty bundle and explicit Auto, although the helper ownership contract represents transport failure as an unavailable bundle with an error and preserves the prior nil or explicit choice.
 Mounted Assistant tests pin provider/model/reasoning controls, typed and suggestion sends, explicit locks versus Auto, ChatHistory migration/remount/new-chat persistence, node-scope resets and stale snapshot rejection.
 Pure ChatState and ModelSelect contracts live in `./home_live/`, while `home_live_render_test.exs` remains async without mounting the global chat hub.
 Welcome tests exercise canonical provider setup with multiple models, a default model, reasoning defaults, API-key and OAuth branches, concurrent config preservation, malformed-file protection and deterministic generation-guarded connection results.
