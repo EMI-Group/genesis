@@ -23,7 +23,8 @@ Web-layer tests reference those singletons directly; per-test Store/TaskRegistry
 - `evo_dash_web/live_hooks/` → the on-mount hook suites (NodeAware, Guide, Appearance, DesktopQuit, UpdateStatus) — detail: `live_hooks/CONTEXT.md`.
 - `evo_dash_web/components/` → function-component render/contract suites (all `async: true`, `render_component/2` + Floki), including task-form/profile-editor integration pins and the shared LLM-selection coverage boundary — detail: `components/CONTEXT.md`.
 - `evo_dash_web/controllers/` → error templates + the streamed task-archive export endpoint — detail: `controllers/CONTEXT.md`.
-- No CONTEXT.md exists at `evo_dash_web/` or at the individual page subdirectories (`projects_live/`, `home_live/`, `settings_live/`, `system_live/`, `tasks_live/`, `review_live/`).
+- Provider-profile selection contracts → `evo_dash_web/components/CONTEXT.md` and `evo_dash_web/live/CONTEXT.md`, with focused support-module contracts documented under `live/projects_live/`, `live/home_live/` and `live/settings_live/`.
+- No CONTEXT.md exists at `evo_dash_web/`; consult the nearest documented child node for page-specific coverage.
 
 ## API Surface
 
@@ -190,6 +191,18 @@ The helper test node's `CONTEXT.md` and the LiveView test context document the d
 
 ### Speed ↔ quality control
 The task form's segmented control is covered at component level (`task_form_components_test.exs`, `#quality-level-control` markup + exact active/inactive class strings) and at page level (`projects_live_test.exs`, `select_quality_level` assign movement and `:quality_level` opt threading).
+
+## Provider-profile redesign regression coverage
+
+Shared component contracts cover provider-scoped model choices, slider indices 0/middle/last, invalid and singleton inventories, task-form forwarding, accessibility and independent reasoning/quality controls.
+Projects contracts cover normal/GitHub canonical `model_spec` locks versus explicit Auto, session-state persistence and node/path/target/generation stale-result rejection.
+Assistant contracts cover provider/model/reasoning options, typed and suggestion sends, ChatState migration, remount/new-chat persistence and node isolation.
+Welcome contracts cover canonical multiple-model/default/reasoning setup, API-key/OAuth paths, unrelated-setting preservation and deterministic connection-result guards.
+Settings contracts cover canonical serialization without legacy shadows, unrelated-setting preservation, default-only models, multiple overrides and OAuth credential handling.
+All new pure contracts are async; mounted task-launch and chat tests retain existing process-global ownership constraints.
+Normal `mix test apps/evo_dash/test` currently aborts before ExUnit because core `EvoGit.Config.EctoValidation.type_errors/3` lacks `:provider_profiles` support, and dashboard callers require `EvoGit.Config.Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` delegates.
+The source-owning parent must remove the misplaced duplicate `apps/evo_dash/lib/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs`; the real suite lives under this test node without standalone `ExUnit.start`.
+Rerun the full dashboard suite after those integrations; standalone pure/render checks do not establish mounted-suite success.
 
 ## Known Issues
 
