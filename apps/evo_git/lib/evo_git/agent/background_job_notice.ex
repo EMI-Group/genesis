@@ -48,8 +48,8 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
 
       ## Background Jobs
       These are THIS agent's background shell jobs (live or finished). …
-      - `bash-0123456789abcdef` — running — `mix test`
-      - `bash-fedcba9876543210` — completed (exit code: 0) — `mix format --check-formatted`
+      - `bash-1` — running — `mix test`
+      - `bash-2` — completed (exit code: 0) — `mix format --check-formatted`
 
   Each job line is `- `id` — status (detail) — label`; the parenthesised
   `detail` is omitted when absent/blank, and the ` — label` segment is omitted
@@ -83,8 +83,8 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
   Shape:
 
       [NOTICE] 2 background shell jobs finished:
-      - `bash-0123456789abcdef` — completed (exit code: 0) — `mix test`
-      - `bash-fedcba9876543210` — failed (exit code: 1) — `mix credo`
+      - `bash-1` — completed (exit code: 0) — `mix test`
+      - `bash-2` — failed (exit code: 1) — `mix credo`
       Call `job_output` with a job id to read its output, or `job_list` to see all of this agent's jobs.
 
   Never raises on a malformed/missing job key, and the whole text is capped at

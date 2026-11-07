@@ -100,7 +100,7 @@ defmodule EvoGit.CLI do
     else
       if mode == "custom" do
         IO.puts(
-          "Error: custom mode is evolve-only; use: evogit evolve --mode custom --agent <id> <objective>"
+          "Error: custom mode is evolve-only; use: genesis evolve --mode custom --agent <id> <objective>"
         )
       else
         IO.puts("Error: Invalid mode for genesis. Use 'new' or 'existing'.")
@@ -327,7 +327,7 @@ defmodule EvoGit.CLI do
     case profiles do
       [] ->
         "model '#{value}' could not be resolved: no LLM models are configured. " <>
-          "Run `evogit setup` or add [[llm.models]] to config.toml."
+          "Run `genesis setup` or add [[llm.models]] to config.toml."
 
       _ ->
         ids = profiles |> Enum.map(& &1[:id]) |> Enum.reject(&is_nil/1) |> Enum.join(", ")
@@ -379,7 +379,7 @@ defmodule EvoGit.CLI do
     command = rest |> Enum.join(" ") |> String.trim()
 
     if command == "" do
-      IO.puts("Error: run requires a command string, e.g. evogit run 'ListTasks.list_tasks'")
+      IO.puts("Error: run requires a command string, e.g. genesis run 'ListTasks.list_tasks'")
       :ok
     else
       case EvoGit.CommandShell.execute(command, approval: :auto) do
@@ -561,7 +561,7 @@ defmodule EvoGit.CLI do
 
   defp print_version do
     version = Application.spec(:evo_git, :vsn) |> to_string()
-    IO.puts("evogit #{version}")
+    IO.puts("genesis #{version}")
   end
 
   defp print_help do
@@ -569,10 +569,10 @@ defmodule EvoGit.CLI do
     Genesis CLI - Evolutionary Software Development
 
     Usage:
-      evogit genesis [options] [<prompt>]
-      evogit evolve [options] <objective>
-      evogit reflect [options] <objective>
-      evogit run '<command>'
+      genesis genesis [options] [<prompt>]
+      genesis evolve [options] <objective>
+      genesis reflect [options] <objective>
+      genesis run '<command>'
 
     Commands:
       genesis    Bootstrap the Context Tree and Phylogenetic Graph.
@@ -593,9 +593,9 @@ defmodule EvoGit.CLI do
       run        Execute a task-control command string directly from the
                  terminal (approvals are granted to you — you are the human
                  authorizer). Examples:
-                   evogit run 'StartTask.start_task evolve "Fix bug"'
-                   evogit run 'ListTasks.list_tasks'
-                   evogit run 'help'
+                   genesis run 'StartTask.start_task evolve "Fix bug"'
+                   genesis run 'ListTasks.list_tasks'
+                   genesis run 'help'
 
       genesis, evolve, and reflect run as registered background tasks through
       the shared task system: each prints "Task <id> started", then blocks
@@ -624,7 +624,7 @@ defmodule EvoGit.CLI do
       -n, --node <path>           Starting node path for evolution (subdirectory within
                                   repo, default: root). Only used with 'evolve'.
       -h, --help                  Show this help message.
-      -v, --version               Print the evogit version and exit.
+      -v, --version               Print the genesis version and exit.
 
       The scheduler override flags (-c/--concurrency, --tool-concurrency,
       -r/--retries, -t/--max-turns, --max-turns-root) were removed.
@@ -639,7 +639,7 @@ defmodule EvoGit.CLI do
 
     Getting Started:
       Quick setup (recommended):
-        evogit setup
+        genesis setup
 
       Manual setup:
         Step 1: Create the config directory
@@ -659,7 +659,7 @@ defmodule EvoGit.CLI do
           echo 'github_username = "your-username"'         >> config.toml
 
         Step 4: Run Genesis!
-          evogit genesis "your prompt"
+          genesis genesis "your prompt"
 
     Configuration:
       Genesis requires API keys to communicate with LLM providers. Keys are stored
@@ -697,15 +697,15 @@ defmodule EvoGit.CLI do
       agents.toml lives next to config.toml and defines custom agents plus an
       optional model-selection script (select one with --agent <id>). Run a
       custom agent as the root agent via:
-        evogit evolve --mode custom --agent <id> <objective>
+        genesis evolve --mode custom --agent <id> <objective>
 
     Examples:
-      evogit genesis "Create a snake game in Python" --mode new
-      evogit genesis --mode existing -p /path/to/legacy/repo
-      evogit evolve "Fix the login bug" --mode simple
-      evogit evolve "Fix the login bug" --mode custom --agent code-reviewer
-      evogit evolve "Fix the login bug" -m default
-      evogit run 'StartTask.start_task evolve "Fix bug"'
+      genesis genesis "Create a snake game in Python" --mode new
+      genesis genesis --mode existing -p /path/to/legacy/repo
+      genesis evolve "Fix the login bug" --mode simple
+      genesis evolve "Fix the login bug" --mode custom --agent code-reviewer
+      genesis evolve "Fix the login bug" -m default
+      genesis run 'StartTask.start_task evolve "Fix bug"'
     """)
   end
 end

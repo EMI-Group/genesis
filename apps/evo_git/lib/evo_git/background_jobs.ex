@@ -72,6 +72,13 @@ defmodule EvoGit.BackgroundJobs do
   # Per-owner cap on `snapshot/1` (the per-turn read; a full `list/1` stays uncapped).
   @snapshot_limit 20
 
+  # Job ids are SHORT and predictable — `@id_prefix` plus a per-registry
+  # monotonically increasing counter (`bash-1`, `bash-2`, …) — because an agent
+  # has to repeat one in `job_output`/`job_kill`. The counter lives in the
+  # GenServer state and `generate_id/2` skips any candidate still held by
+  # `state.jobs` (finished records are retained, live ones are never pruned), so
+  # an id is never reused while a record carries it. `bash-<n>` is also safe as a
+  # systemd unit-name component (`Sandbox.Background.unit_name/1`).
   @id_prefix "bash-"
 
   @type status :: :running | :stopping | :completed | :killed | :failed
@@ -480,7 +487,7 @@ defmodule EvoGit.BackgroundJobs do
       end)
     end
 
-    {:ok, %{jobs: %{}, owners: %{}, tick_timer: nil, unknown_since: %{}}}
+    {:ok, %{jobs: %{}, owners: %{}, tick_timer: nil, unknown_since: %{}, next_id: 1}}
   end
 
   @impl true
@@ -744,7 +751,7 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   defp do_start_job(spec, handle_override, state) do
-    id = generate_id(state.jobs)
+    {id, next_id} = generate_id(state.jobs, state.next_id)
     output_path = Path.join(scratch_dir(), "genesis_job_#{id}.log")
 
     with :ok <- prepare_output_file(output_path),
@@ -755,6 +762,7 @@ defmodule EvoGit.BackgroundJobs do
              output_path: output_path,
              job_id: id
            }) do
+      state = %{state | next_id: next_id}
       {ref, state} = ensure_owner_monitor(state, spec.owner_pid)
 
       # `spec.repo_root` is accepted for caller context only — the job record has no slot for it (its `cwd` is what `reap_under/1` matches on).
@@ -805,9 +813,13 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   # Non-bang on purpose: a permission problem must surface as prose, never as a crash of the shared registry.
+  # The file is CREATED/TRUNCATED to empty (never merely `touch`ed): ids are short
+  # and sequential, so a reused id in a reused scratch dir (the system tmpdir when
+  # no per-task tmpdir is installed) would otherwise leak a previous job's output
+  # into this job's reads.
   defp prepare_output_file(path) do
     with :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.touch(path) do
+         :ok <- File.write(path, "") do
       :ok
     else
       {:error, reason} ->
@@ -839,13 +851,18 @@ defmodule EvoGit.BackgroundJobs do
        "Could not start the background job (#{kind}: #{describe(reason)}). Retry; if it keeps failing, run the command in the foreground instead."}
   end
 
-  defp generate_id(jobs) do
-    candidate = @id_prefix <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+  # Returns the next FREE id and the counter value that follows it. The counter is
+  # monotonic per registry, so ids read `bash-1`, `bash-2`, … in start order; a
+  # candidate still present in `jobs` is skipped (retained finished records are
+  # capped, live ones never are), and the same loop finds a free id even if the
+  # counter starts at 0.
+  defp generate_id(jobs, counter) do
+    candidate = @id_prefix <> Integer.to_string(counter)
 
     if Map.has_key?(jobs, candidate) do
-      generate_id(jobs)
+      generate_id(jobs, counter + 1)
     else
-      candidate
+      {candidate, counter + 1}
     end
   end
 

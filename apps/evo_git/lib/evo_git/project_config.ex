@@ -46,10 +46,10 @@ defmodule EvoGit.ProjectConfig do
   @config_filename "genesis.toml"
 
   @top_level_comment """
-  # genesis.toml — EvoGit project configuration file.
-  # This file controls per-project settings for EvoGit agents, including worktree
+  # genesis.toml — Genesis project configuration file.
+  # This file controls per-project settings for Genesis agents, including worktree
   # initialization scripts, foreign repository references, and dashboard commands.
-  # EvoGit agents read this file automatically; most users do not need to edit it.
+  # Genesis agents read this file automatically; most users do not need to edit it.
   """
 
   @worktree_comment """
@@ -64,7 +64,7 @@ defmodule EvoGit.ProjectConfig do
   #   TARGET_WORKTREE_PATH  — newly created worktree (copy destination)
   #
   # WARNING: Do NOT modify or remove this section unless you know what you are
-  # doing. EvoGit manages it automatically based on the build system selected
+  # doing. Genesis manages it automatically based on the build system selected
   # during project creation. Removing it will cause every new worktree to build
   # from scratch (much slower).
   """

@@ -496,7 +496,10 @@ authoritative comparison.
 ### 9.5 Shipped — background jobs, sandbox-integrated (proposal 3.5, minus PTY)
 
 - `bash` gained `run_in_background`; companion tools `job_output` (delta reads + optional bounded `wait`),
-  `job_list`, `job_kill` mirror `dsh`'s names, job-id shape and envelopes. `job_output`/`job_list`/`job_kill`
+  `job_list`, `job_kill` mirror `dsh`'s names and envelopes; deliberately NOT `dsh`'s job-id shape — ids are
+  short per-registry sequential strings (`bash-1`, `bash-2`, …) so a model can repeat one, and `job_output`
+  also accepts an omitted `job_id` when the agent owns exactly one job (an error naming every id otherwise).
+  `job_output`/`job_list`/`job_kill`
   are control tools (in both schema lists, never write, never serial); **starting** a background process is
   classified as a write CALL (`Tools.write_call?/2`) — it can mutate anything a foreground command can, so a
   repo-less or read-only-foreign-repo agent must not start one, while it may still collect and kill its own

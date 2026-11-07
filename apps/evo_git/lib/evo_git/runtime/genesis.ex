@@ -256,7 +256,7 @@ defmodule EvoGit.Runtime.Genesis do
       mode when mode in [:custom, "custom"] ->
         raise ArgumentError,
               "custom mode is evolve-only; use an evolve task " <>
-                "(evogit evolve --mode custom --agent <id>)"
+                "(genesis evolve --mode custom --agent <id>)"
 
       _ ->
         if Helpers.new_codebase?(repo_path), do: :new, else: :existing

@@ -232,7 +232,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
 
           <p class="text-sm text-base-content/70 mb-5">
             {gettext(
-              "Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
+              "Analyze the changes in this PR and distill reusable knowledge into Genesis skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
             )}
           </p>
 

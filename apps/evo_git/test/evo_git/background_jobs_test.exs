@@ -104,7 +104,9 @@ defmodule EvoGit.BackgroundJobsTest do
                  task_id: "42"
                })
 
-      assert job.id =~ ~r/\Abash-[0-9a-f]{16}\z/
+      # Short, predictable ids: `@id_prefix` + a per-registry monotonic counter,
+      # so an agent can repeat one without copying 16 random hex chars.
+      assert job.id == "bash-1"
       assert job.kind == "bash"
       assert job.status == :running
       assert job.cursor == 0
@@ -130,6 +132,45 @@ defmodule EvoGit.BackgroundJobsTest do
       # pinned by "records an integer os_pid for a job that is still running".
       assert %{kind: :port, backend: EvoGit.Sandbox.Linux} = job.handle
       assert job.handle.os_pid == nil or is_integer(job.handle.os_pid)
+    end
+
+    test "ids are short and sequential, and an id already present is skipped", %{
+      tmp_dir: tmp_dir
+    } do
+      first = start_job!(%{command: "echo one", cwd: tmp_dir})
+      second = start_job!(%{command: "echo two", cwd: tmp_dir})
+
+      assert first.id == "bash-1"
+      assert second.id == "bash-2"
+
+      # Re-seed the counter to 1: `bash-1` is still held by the first job's
+      # retained record, so the collision loop must advance to the next free id
+      # instead of reusing it.
+      :sys.replace_state(registry(), fn state -> %{state | next_id: 1} end)
+
+      third = start_job!(%{command: "echo three", cwd: tmp_dir})
+      assert third.id == "bash-3"
+    end
+
+    test "truncates a stale output file left behind under the same id", %{tmp_dir: tmp_dir} do
+      # Ids restart at `bash-1` for every registry and the scratch dir is shared
+      # host-wide, so a file from an earlier lifetime of the same id must never
+      # leak into a new job's reads.
+      path = Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis_job_bash-1.log")
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, "STALE OUTPUT\n")
+      on_exit(fn -> _ = File.rm(path) end)
+
+      job = start_job!(%{command: "echo fresh", cwd: tmp_dir})
+      assert job.id == "bash-1"
+      # Truncation is deterministic (it happens BEFORE the spawn): the stale
+      # bytes are gone even while the child is still writing its own output.
+      refute File.read!(job.output_path) =~ "STALE OUTPUT"
+
+      await_status!(job.id, :completed)
+      assert {:ok, %{text: text}} = BackgroundJobs.read(job.id)
+      refute text =~ "STALE OUTPUT"
+      assert text =~ "fresh"
     end
 
     test "records an integer os_pid for a job that is still running", %{tmp_dir: tmp_dir} do

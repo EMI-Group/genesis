@@ -1,5 +1,5 @@
 defmodule EvoGit.Runtime.SkillExtraction do
-  @moduledoc "Skill Extraction Phase: analyzes a completed PR and distills findings into EvoGit skills"
+  @moduledoc "Skill Extraction Phase: analyzes a completed PR and distills findings into Genesis skills"
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Core.ContextNode
   alias EvoGit.AgentScheduler
@@ -79,7 +79,7 @@ defmodule EvoGit.Runtime.SkillExtraction do
       end
 
     """
-    Extract reusable knowledge from this completed PR and distill it into EvoGit skills.
+    Extract reusable knowledge from this completed PR and distill it into Genesis skills.
 
     #{diff_instruction}
 

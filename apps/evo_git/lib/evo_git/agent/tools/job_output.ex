@@ -69,6 +69,16 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
   The marker follows the `[status: …]` line byte-identically — the status line
   itself is unchanged.
+
+  ## Omitting `job_id`
+
+  `job_id` is OPTIONAL. When it is missing, blank or not a string, the tool
+  resolves the CALLING agent's own background jobs (the same ownership fence the
+  read uses): exactly one job is read as if its id had been passed (the full
+  `wait: true` / `timeout_ms` / `max_bytes` behaviour included), zero jobs and
+  several jobs both yield an actionable `Error: …` string — the several-jobs one
+  names every job id with its status and label, newest first, so the agent can
+  simply retry with one of them.
   """
 
   alias EvoGit.Agent.Tools.Failure
@@ -77,6 +87,11 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
   # Statuses a wait keeps polling through.
   @live_statuses [:running, :stopping]
+
+  # Upper bound on the job ids NAMED by the "multiple jobs" error, so a
+  # pathological per-owner list cannot balloon the tool result (the remainder is
+  # summarized; `job_list` has the full list).
+  @max_named_jobs 10
 
   # The wait-budget spellings honoured by `wait: true`, in priority order:
   # `timeout_ms` is canonical, `timeout` is the generic convention used by the
@@ -97,7 +112,8 @@ defmodule EvoGit.Agent.Tools.JobOutput do
         "properties" => %{
           "job_id" => %{
             "type" => "string",
-            "description" => "Job id returned by the tool that started the background work."
+            "description" =>
+              "Job id returned by the tool that started the background work. May be omitted when this agent has exactly one background job (its output is then read automatically); with several jobs the error lists every id."
           },
           "wait" => %{
             "type" => "boolean",
@@ -120,7 +136,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
             "default" => 16_384
           }
         },
-        "required" => ["job_id"]
+        "required" => []
       },
       callback: fn _ -> {:ok, nil} end
     )
@@ -129,14 +145,17 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   @doc """
   Executes the job_output tool.
 
-  Reads `job_id` (required) and optionally honours `wait`, the wait budget
-  (`timeout_ms` / `timeout` / `timeoutMs`) and `max_bytes`. Never raises: a
-  missing/non-string argument returns the shared descriptive error string,
-  every registry failure is rendered as an `Error: ...` string, and an
-  unexpected raise/exit at the tool boundary is caught too.
+  Resolves `job_id` (`resolve_job_id/1`): an explicit, non-blank id is used
+  as-is; otherwise this agent's OWN jobs are consulted — exactly one is read
+  automatically, while zero or several produce an actionable error naming what to
+  do next. Optionally honours `wait`, the wait budget (`timeout_ms` / `timeout` /
+  `timeoutMs`) and `max_bytes`. Never raises: a non-map `args` returns the
+  shared descriptive error string, every registry failure is rendered as an
+  `Error: ...` string, and an unexpected raise/exit at the tool boundary is
+  caught too.
   """
   def execute(args, _repo_path, _repo_root) do
-    with {:ok, job_id} <- Shared.fetch_string_arg(args, "job_id") do
+    with {:ok, job_id} <- resolve_job_id(args) do
       read_job(job_id, args)
     else
       {:error, message} -> Failure.error(message)
@@ -146,6 +165,66 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   catch
     :exit, reason -> Failure.error(inspect(reason))
   end
+
+  ## Job-id resolution (explicit id, else this agent's only job)
+
+  defp resolve_job_id(args) when not is_map(args),
+    do: {:error, "Arguments must be a map/object"}
+
+  defp resolve_job_id(args) do
+    case Map.get(args, "job_id") do
+      id when is_binary(id) ->
+        if String.trim(id) == "", do: resolve_only_job_id(), else: {:ok, id}
+
+      _missing_or_non_string ->
+        resolve_only_job_id()
+    end
+  end
+
+  # The omitted-id path. Ownership is the SAME fence `read/2` applies, and a
+  # nil owner is NOT treated as "unscoped" (that would read another agent's job):
+  # without an owning agent there is nothing to infer from, so the explicit-id
+  # error is kept.
+  defp resolve_only_job_id do
+    case BackgroundJobs.current_owner_pid() do
+      nil ->
+        {:error, missing_job_id_error()}
+
+      owner ->
+        case BackgroundJobs.list(owner_pid: owner) do
+          [%{id: id}] -> {:ok, id}
+          [] -> {:error, no_jobs_error()}
+          jobs -> {:error, multiple_jobs_error(jobs)}
+        end
+    end
+  end
+
+  defp multiple_jobs_error(jobs) do
+    named = jobs |> Enum.take(@max_named_jobs) |> Enum.map_join(", ", &describe_job/1)
+    remaining = length(jobs) - @max_named_jobs
+    suffix = if remaining > 0, do: ", … and #{remaining} more", else: ""
+
+    "Multiple background jobs exist — pass job_id: #{named}#{suffix}. " <>
+      "Call job_list for details."
+  end
+
+  defp describe_job(job) do
+    status = status_text(job)
+
+    case label_text(job) do
+      nil -> "#{job.id} (#{status})"
+      label -> "#{job.id} (#{status}, #{inspect(label)})"
+    end
+  end
+
+  defp label_text(%{label: label}) when is_binary(label) do
+    case label |> String.replace(~r/\s+/, " ") |> String.trim() do
+      "" -> nil
+      text -> String.slice(text, 0, 60)
+    end
+  end
+
+  defp label_text(_job), do: nil
 
   @doc false
   # The ONE status-line renderer for background jobs — shared with
@@ -430,6 +509,19 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   defp detail_text(_job), do: nil
 
   ## Errors
+
+  # Only reachable when `job_id` was omitted AND no owning agent pid is
+  # installed, so there is no job list to infer a single job from.
+  defp missing_job_id_error do
+    "Missing required argument 'job_id'. Please provide a valid value — the id " <>
+      "returned by the tool that started the background work (call job_list to see them)."
+  end
+
+  defp no_jobs_error do
+    "This agent has no background jobs yet, so there is no output to read. " <>
+      "Start one with the `bash` tool and `run_in_background: true`, then call " <>
+      "job_output again (job_id may be omitted while exactly one job exists)."
+  end
 
   defp error_message(:not_found, job_id) do
     "No background job with id #{inspect(job_id)} is known to this agent. " <>
