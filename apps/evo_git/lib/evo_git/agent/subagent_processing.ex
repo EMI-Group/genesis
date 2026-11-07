@@ -147,6 +147,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
     # threaded value is identical at every level. `nil` (e.g. direct/test
     # callers) leaves the child to compute it.
     task_tmpdir = EvoGit.TaskTmpdir.current()
+    model_opts = inherited_model_opts(state.agent_id, parent_state)
 
     Enum.map(indexed_calls, fn {call, index} ->
       name = ReqLLM.ToolCall.name(call)
@@ -205,13 +206,18 @@ defmodule EvoGit.Agent.SubagentProcessing do
                  same_repo?
                ) do
             {:ok, sub_phylo_node} ->
-              AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective,
-                repo_id: target_repo_id,
-                foreign_repos: foreign_repos,
-                repo_notes: repo_notes,
-                archive: parent_state.archive,
-                model_id: parent_state.model_id,
-                task_tmpdir: task_tmpdir
+              AgentSpec.new(
+                sub_context_node,
+                sub_phylo_node,
+                mod,
+                objective,
+                Keyword.merge(model_opts,
+                  repo_id: target_repo_id,
+                  foreign_repos: foreign_repos,
+                  repo_notes: repo_notes,
+                  archive: parent_state.archive,
+                  task_tmpdir: task_tmpdir
+                )
               )
 
             {:error, error_msg} ->
@@ -222,6 +228,32 @@ defmodule EvoGit.Agent.SubagentProcessing do
           {:error, {call, index, error_msg}}
       end
     end)
+  end
+
+  # Inherit the resolved selection, not just the provider-profile/slot id: two
+  # agents can use different catalog models or reasoning efforts on one account.
+  # The original spawn opts retain the task's explicit-selection lock, including
+  # on older AgentState shapes that do not carry that flag. Keep these values in
+  # AgentSpec.new/5's opts so both legacy and model_spec-aware schedulers can read
+  # them without requiring new struct fields at this boundary.
+  defp inherited_model_opts(agent_id, parent_state) do
+    parent_spec =
+      case AgentScheduler.Store.get_sched_meta(agent_id) do
+        {:ok, meta} -> Map.get(meta, :spec) || %{}
+        :error -> %{}
+      end
+
+    parent_opts = Map.get(parent_spec, :opts, [])
+
+    [
+      model_id: Map.get(parent_state, :model_id),
+      model_spec:
+        Map.get(parent_state, :model_spec) || Map.get(parent_spec, :model_spec) ||
+          Keyword.get(parent_opts, :model_spec),
+      model_id_locked:
+        Map.get(parent_state, :model_id_locked) == true or
+          Keyword.get(parent_opts, :model_id_locked, false) == true
+    ]
   end
 
   @doc """
