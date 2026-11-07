@@ -616,6 +616,120 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     end)
   end
 
+  # These URL fixtures keep a genuinely distinct BEAM identity throughout the
+  # real supervised activation, resume read and batch delivery paths. No runner
+  # reads local config, task storage or the filesystem on the remote's behalf.
+  def install_remote_activation_fixture!(path, resume_task \\ nil) do
+    id = save_target!()
+    remote_node = String.to_atom("projects_url_#{id}@127.0.0.1")
+    test_pid = self()
+
+    start_supervised!(
+      {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+       {id, %{phase: :connected, node: to_string(remote_node), last_error: nil}}}
+    )
+
+    bundle =
+      EvoDashWeb.ProjectsLive.Project.load_model_selection_from_config(
+        %{
+          llm: %{
+            default_provider_profile: "remote-account",
+            providers: [
+              %{
+                "id" => "remote-account",
+                "provider" => "anthropic",
+                "default_model" => "remote-model",
+                "models" => [%{"model" => "remote-model"}]
+              }
+            ]
+          }
+        },
+        false
+      )
+
+    results = %{
+      recent_projects: [%{path: path, name: Path.basename(path)}],
+      active_project: %{path: path, name: Path.basename(path)},
+      active_project_path: path,
+      task_mode: "genesis_new",
+      task_mode_info: EvoDashWeb.Helpers.mode_info_message("genesis_new"),
+      project_config: %{},
+      worktree_script: "",
+      commands: [],
+      foreign_repos: []
+    }
+
+    runners = %{
+      remote_project_load_runner: fn ^remote_node, ^path ->
+        send(
+          test_pid,
+          {:remote_project_loaded, self(), Process.get(:"$callers"), remote_node, path}
+        )
+
+        {:ok, results}
+      end,
+      remote_resume_task_runner: fn ^remote_node, task_id ->
+        assert resume_task != nil
+        assert task_id == resume_task.id
+
+        send(
+          test_pid,
+          {:remote_resume_read, self(), Process.get(:"$callers"), remote_node, task_id}
+        )
+
+        resume_task
+      end,
+      projects_async_load_runner: fn ->
+        # AsyncLoad supplies the target/node/generation envelope itself. Omit
+        # foreign_repos here so the resume test can drive its one-shot guard
+        # explicitly after the real activation and patch batches settle.
+        %{
+          model_selection: bundle,
+          custom_agents: [],
+          model_selection_enabled: false,
+          recent_projects: results.recent_projects,
+          terminal_ids: nil,
+          auto_activate?: false
+        }
+      end
+    }
+
+    for {key, runner} <- runners do
+      previous = Application.fetch_env(:evo_dash, key)
+      Application.put_env(:evo_dash, key, runner)
+
+      on_exit(fn ->
+        case previous do
+          {:ok, value} -> Application.put_env(:evo_dash, key, value)
+          :error -> Application.delete_env(:evo_dash, key)
+        end
+      end)
+    end
+
+    {id, remote_node}
+  end
+
+  def assert_remote_activation_loaded(view, id, remote_node, path) do
+    view_pid = view.pid
+
+    assert_receive {:remote_project_loaded, loader, [^view_pid | _], ^remote_node, ^path}, 2_000
+    assert loader != self()
+    assert loader != view.pid
+    wait_assigns(view, &(&1[:active_project_path] == path))
+    await_async_loads(view)
+    assert remote_node != node()
+    assert assigns(view)[:current_node] == remote_node
+    assert assigns(view)[:current_node_id] == id
+    assert assigns(view)[:remote?] == true
+    assert assigns(view)[:model_selection_ready?] == true
+    assert assigns(view)[:model_selection_scope] == {id, remote_node}
+
+    assert assigns(view)[:selected_model_spec] == %{
+             "provider_profile_id" => "remote-account",
+             "model" => "remote-model"
+           }
+  end
+
   # Safety net for tests that freeze the shared, serialized task registry: a
   # failed assertion must never leave it suspended for the next suite.
   # Teardown-only rescue (the registry can already be gone at teardown time).
@@ -2950,33 +3064,17 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
   end
 
-  describe "remote URL-driven project activation (local node as remote target)" do
-    # Regression coverage for the remote `?project=`/`?resume_from=` URL
-    # landing (e5c5e0ebf): a `?project=` URL naming a remote path must be
-    # routed through the async remote-activation machinery
-    # (`ProjectFlow.spawn_remote_project_activation/2` + the resume-aware
-    # `/3` variant) instead of the local expansion/file-existence branch.
-    #
-    # Seam mechanism: every test registers a fake ConnectionManager in
-    # `EvoGit.RemoteConnection.Registry` reporting phase `:connected` with
-    # `node: to_string(node())`. NodeAware then resolves `?node=<id>` to a
-    # NON-NIL `current_node_id` (so handle_params takes the REMOTE branch)
-    # while `current_node == node()` makes every NodeContext call
-    # (dir?/get_task/add_recent_project/...) short-circuit to the real LOCAL
-    # implementation — the only way to run the real supervised activation task
-    # (incl. the NodeContext.get_task resume restore) end-to-end
-    # deterministically.
-    setup do
-      clear_recent_projects()
-      :ok
-    end
-
+  describe "remote URL-driven project activation" do
+    # Exercise the real supervised URL activation with target-owned loader,
+    # resume-reader and batch fixtures, never a local BEAM posing as remote.
     test "resume landing URL activates the remote project, restores the previous task's foreign repos, and keeps the resume form state (regression)",
          %{conn: conn, tmp_dir: tmp_dir} do
-      root = Path.join(tmp_dir, "orig-repo")
+      remote_path = "/remote/projects/#{Path.basename(tmp_dir)}"
+      root = Path.join(remote_path, "orig-repo")
 
       task =
-        insert_task_fixture!(
+        %TaskInfo{
+          id: "remote-resume-#{System.unique_integer([:positive])}",
           opts: [
             foreign_repos: [
               %{
@@ -2988,30 +3086,33 @@ defmodule EvoDashWeb.ProjectsLiveTest do
               }
             ]
           ]
-        )
+        }
 
-      id = save_target!()
-
-      start_supervised!(
-        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
-         {id, %{phase: :connected, node: to_string(node()), last_error: nil}}}
-      )
+      {id, remote_node} = install_remote_activation_fixture!(remote_path, task)
 
       {:ok, view, _html} =
         live(
           conn,
           "/projects?project=" <>
-            URI.encode(tmp_dir) <>
+            URI.encode(remote_path) <>
             "&resume_from=" <> task.id <> "&starting_commit=deadbeef&node=" <> id
         )
 
-      # The activation runs in a supervised Task; wait for it to land.
-      wait_assigns(view, &(&1[:active_project_path] == tmp_dir))
+      assert_remote_activation_loaded(view, id, remote_node, remote_path)
+      view_pid = view.pid
+      assert_receive {:remote_resume_read, reader, [^view_pid | _], ^remote_node, task_id}, 2_000
+      assert task_id == task.id
+      assert reader != self()
+      assert reader != view.pid
 
-      # Remote branch routed + activation continuation applied remote_project_load.
+      # Remote branch routed + activation continuation applied the loader data.
       assert assigns(view)[:current_node_id] == id
       assert assigns(view)[:task_mode] == "genesis_new"
-      assert assigns(view)[:active_project] == %{path: tmp_dir, name: Path.basename(tmp_dir)}
+
+      assert assigns(view)[:active_project] == %{
+               path: remote_path,
+               name: Path.basename(remote_path)
+             }
 
       # Resume params preserved — the continuation's push_patch re-runs
       # handle_params WITHOUT resume_from/starting_commit, which must NOT
@@ -3020,8 +3121,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:task_starting_commit] == "deadbeef"
       assert assigns(view)[:show_advanced] == true
 
-      # Task foreign repos restored (resume-aware activation override ran
-      # inside the activation task via NodeContext.get_task + repos_from_task_data).
+      # Task foreign repos restored by the target-owned resume reader inside
+      # the activation task, then converted through repos_from_task_data/2.
       repo = Enum.find(assigns(view)[:foreign_repos], &(&1.id == "orig"))
 
       assert %ForeignRepo{root: ^root, writable: true, base_sha: "abc123", description: "d"} =
@@ -3032,17 +3133,22 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # task-restored repos with genesis.toml values.
       assert assigns(view)[:resume_foreign_repos_guard] == true
 
-      # AsyncLoad remote_extras reload (what the push_patch re-run spawns; with
-      # node == node() the real spawn carries no :foreign_repos key, so the
-      # guard-drop must be exercised via an injected message) — the guard must
-      # drop the genesis.toml foreign_repos once (regression).
+      # Drive a target-owned remote_extras reload after the actual activation
+      # and push_patch batches settle; the guard drops genesis.toml repos once.
       cur = assigns(view)
       toml_repo = %ForeignRepo{id: "toml", root: "/Source/toml-repo", description: "t"}
 
       send(
         view.pid,
-        {:async_project_load, node(), cur[:current_node_id], tmp_dir,
-         %{foreign_repos: [toml_repo]}}
+        {:async_project_load, remote_node, id, remote_path,
+         %{
+           foreign_repos: [toml_repo],
+           load_scope: %{
+             seq: cur[:projects_load_seq],
+             node_id: id,
+             selection: cur[:selected_model_spec]
+           }
+         }}
       )
 
       wait_assigns(view, &(&1[:resume_foreign_repos_guard] == false))
@@ -3052,8 +3158,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # A second such reload applies normally — the guard is one-shot.
       send(
         view.pid,
-        {:async_project_load, node(), assigns(view)[:current_node_id], tmp_dir,
-         %{foreign_repos: [toml_repo]}}
+        {:async_project_load, remote_node, id, remote_path,
+         %{
+           foreign_repos: [toml_repo],
+           load_scope: %{
+             seq: cur[:projects_load_seq],
+             node_id: id,
+             selection: cur[:selected_model_spec]
+           }
+         }}
       )
 
       wait_assigns(view, &Enum.any?(&1[:foreign_repos], fn r -> r.id == "toml" end))
@@ -3063,23 +3176,18 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      id = save_target!()
-
-      start_supervised!(
-        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
-         {id, %{phase: :connected, node: to_string(node()), last_error: nil}}}
-      )
+      remote_path = "/remote/projects/#{Path.basename(tmp_dir)}"
+      {id, remote_node} = install_remote_activation_fixture!(remote_path)
 
       {:ok, view, _html} =
-        live(conn, "/projects?project=" <> URI.encode(tmp_dir) <> "&node=" <> id)
+        live(conn, "/projects?project=" <> URI.encode(remote_path) <> "&node=" <> id)
 
-      wait_assigns(view, &(&1[:active_project_path] == tmp_dir))
+      assert_remote_activation_loaded(view, id, remote_node, remote_path)
 
       assert assigns(view)[:current_node_id] == id
-      # Only the activation continuation assigns task_mode (remote_project_load);
-      # the empty dir auto-detects as a new codebase.
+      # Only the supervised activation continuation assigns this detected mode.
       assert assigns(view)[:task_mode] == "genesis_new"
-      assert assigns(view)[:active_project_path] == tmp_dir
+      assert assigns(view)[:active_project_path] == remote_path
       assert assigns(view)[:task_resume_from] == ""
     end
   end
@@ -5135,47 +5243,37 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
     end
   end
 
-  describe "remote URL-driven project activation (local node as remote target)" do
-    setup do
-      clear_recent_projects()
-      :ok
-    end
-
+  describe "remote URL-driven project activation" do
     test "remote ?project= tilde path expands via the remote seam, never the local HOME", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      remote_home = Path.join(tmp_dir, "remote-home")
-      File.mkdir_p!(remote_home)
+      remote_home = "/remote/home/#{Path.basename(tmp_dir)}/remote-proj"
+      {id, remote_node} = install_remote_activation_fixture!(remote_home)
+      test_pid = self()
 
-      on_exit(fn ->
-        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
-        try do
-          EvoGit.TaskRegistry.remove_recent_project(remote_home)
-        rescue
-          _ -> :ok
-        end
-      end)
+      # Read at call time in both dead-render normalization and activation.
+      # Match the target identity and input exactly: no local HOME fallback.
+      previous = Application.fetch_env(:evo_dash, :remote_path_expand_runner)
 
-      # The remote_path_expand_runner seam is read at call time (both in the
-      # dead render's handle_params and inside the activation task).
-      Application.put_env(:evo_dash, :remote_path_expand_runner, fn _node, _path ->
+      Application.put_env(:evo_dash, :remote_path_expand_runner, fn ^remote_node,
+                                                                    "~/remote-proj" ->
+        send(test_pid, {:remote_path_expanded, remote_node, "~/remote-proj"})
         {:ok, remote_home}
       end)
 
-      on_exit(fn -> Application.delete_env(:evo_dash, :remote_path_expand_runner) end)
-
-      id = save_target!()
-
-      start_supervised!(
-        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
-         {id, %{phase: :connected, node: to_string(node()), last_error: nil}}}
-      )
+      on_exit(fn ->
+        case previous do
+          {:ok, value} -> Application.put_env(:evo_dash, :remote_path_expand_runner, value)
+          :error -> Application.delete_env(:evo_dash, :remote_path_expand_runner)
+        end
+      end)
 
       {:ok, view, _html} =
         live(conn, "/projects?project=" <> URI.encode("~/remote-proj") <> "&node=" <> id)
 
-      wait_assigns(view, &(&1[:active_project_path] == remote_home))
+      assert_remote_activation_loaded(view, id, remote_node, remote_home)
+      assert_receive {:remote_path_expanded, ^remote_node, "~/remote-proj"}, 2_000
       assert assigns(view)[:active_project_path] == remote_home
     end
   end
