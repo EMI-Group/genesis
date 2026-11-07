@@ -200,6 +200,8 @@ Symptom: the "Model profile saved." flash is missing and/or the profile is absen
 Both modules are `async: true` and both save LLM model profiles through `EvoGit.Config.save_user_config/1` under the per-process `:config_dir_fun` → `EvoDash.Test.ConfigDir` seam, so the likely-but-unproven suspicion is concurrent config-save/cache interference between the two async settings modules under full-suite load.
 Reproduction signature: each file passes in isolation (27 passed, repeated 3×), the two modules pass together (180 passed), and `--max-cases 4` is sometimes green (1922 passed) and sometimes not — a load/concurrency race, not a deterministic break.
 It reproduces at the pre-merge commit with the involved test and production files unchanged, so it predates the current tree and is not caused by any single feature.
+The failing module can also CHANGE between runs: on a heavily loaded shared host one full `mix test` run failed `test/evo_dash_web/live/agents_live_test.exs` ("send_agent_message optimistic display missing agent shows a failure flash instead of a false success") while two consecutive isolation runs of that file passed (`mix test test/evo_dash_web/live/agents_live_test.exs` → 65 passed each), and the global scheduler ETS tables that module seeds are the likely cross-module interference channel.
+A full-suite failure that disappears when its module is re-run in isolation is load/global-state interference, not a regression, so the first diagnostic step before treating ANY single failing module as a real regression is to re-run that file alone and then the whole suite again.
 A future fix must keep every assertion in both suites pinned at full strength — do not relax them to make the race stop showing.
 
 ## Constraints
