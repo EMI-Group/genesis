@@ -213,9 +213,11 @@ defmodule EvoDashWeb.HomeLive.ModelSelectTest do
 
   describe "load/1 node-scoped snapshots" do
     setup do
-      config_dir = EvoDash.Test.ConfigDir.isolate!("assistant_provider_selection")
+      EvoDash.Test.ConfigDir.isolate!("assistant_provider_selection")
+      config_dir = EvoGit.Config.config_dir()
+      File.mkdir_p!(config_dir)
 
-      File.write!(Path.join(config_dir, "config.toml"), """
+      File.write!(EvoGit.Config.config_path(), """
       [llm]
       default_provider_profile = "assistant-account"
 
@@ -234,7 +236,16 @@ defmodule EvoDashWeb.HomeLive.ModelSelectTest do
       assert loaded.node == node()
       assert loaded.model_selection_enabled == false
       assert loaded.config.llm.default_provider_profile == "assistant-account"
-      assert Enum.map(loaded.config.llm.providers, & &1.id) == ["assistant-account"]
+
+      assert loaded.config.llm.providers == [
+               %{
+                 "id" => "assistant-account",
+                 "provider" => "openai",
+                 "base_url" => "https://example.invalid/v1",
+                 "models" => ["assistant-model"]
+               }
+             ]
+
       assert ModelSelect.load(node()) == {:ok, loaded}
 
       assert {:ok, opts} = ModelSelect.task_opts(loaded, selection(nil), scope())

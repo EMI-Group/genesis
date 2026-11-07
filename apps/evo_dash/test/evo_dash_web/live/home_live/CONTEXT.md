@@ -5,6 +5,7 @@
 This directory tests the support modules and assistant component used by the `/help` reading-first chat page.
 All suites use `async: true` and avoid mounting HomeLive; only the approval runner suite owns the app-env seams documented below.
 ModelSelect config-loading tests use the existing per-process ConfigDir seam and unique files, never process-global environment changes.
+Fixtures resolve the concrete paths through `EvoGit.Config.config_dir/0` and `config_path/0`, because the isolation helper returns the override root rather than the final application directory.
 
 ## API Surface
 
@@ -35,9 +36,8 @@ Task options must use only canonical string-keyed `model_spec` plus `model_id_lo
 Nil selects configured defaults even with rules enabled, Auto removes all model pins, advertised reasoning defaults or first-inventory efforts resolve before submission, and models without inventories omit task reasoning overrides.
 Stale accounts/models/efforts and legacy ids return errors, explicit specs outrank migration inputs, and fresh config revalidates restored pins.
 Snapshot-node/full-scope mismatch, pending remote contexts, missing snapshots and persisted invalid-spec errors are tested independently of successful resolver calls.
-Local load tests expect tagged full-config snapshots and configured-but-broken rules to remain enabled; an unreachable remote load preserves its error within the real supervised SafeCall envelope.
-These tests rely on the public `EvoGit.Config.Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` APIs called by `LLMSelection`, and on config validation accepting the `:provider_profiles` schema type.
-Missing public delegates or provider-profile config validation are production integration defects, not reasons to substitute stubs, skip tests or weaken assertions.
+Local load tests expect tagged full-config snapshots with string-keyed canonical provider rows and configured-but-broken rules to remain enabled; an unreachable remote load preserves its error within the real supervised SafeCall envelope.
+These tests exercise the public `EvoGit.Config.Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` APIs called by `LLMSelection` and normal config validation of the `:provider_profiles` schema type without stubs or skipped integration checks.
 
 ## ApprovalWorkflow Coverage
 
