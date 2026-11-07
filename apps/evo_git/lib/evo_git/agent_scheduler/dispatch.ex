@@ -352,6 +352,8 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   @doc """
   Resolves selection without mutating scheduler state.
   Explicit model_spec wins over legacy ids, defaults and scripts and never falls back.
+  Otherwise locked legacy ids bypass scripts and definition defaults; unlocked
+  selections prefer the script, opts[:default_model_spec], then legacy/default ids.
   Errors are returned to the caller before registration; the hub must propagate them.
   """
   def resolve_selection(state, spec, parent_id, depth, task_id) do
@@ -361,35 +363,43 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
       :error ->
         requested = effective_model_id(state, spec, parent_id, depth, task_id)
+        resolve_requested_selection(state, requested)
+    end
+  end
 
-        if is_map(requested) or is_map(state.model_selection_config) do
-          case ModelSelection.resolve(state, requested) do
-            {:ok, _} = result ->
-              result
+  # Definition defaults use the canonical wire validator, never legacy-id fallback.
+  defp resolve_requested_selection(state, {:default_model_spec, requested}) do
+    ModelSelection.resolve_explicit(state, requested)
+  end
 
-            {:error, {:provider_profile_not_found, id}} when is_binary(requested) ->
-              Logger.warning(
-                "AgentScheduler: legacy selection #{inspect(id)} not found; using default"
-              )
+  defp resolve_requested_selection(state, requested) do
+    if is_map(requested) or is_map(state.model_selection_config) do
+      case ModelSelection.resolve(state, requested) do
+        {:ok, _} = result ->
+          result
 
-              ModelSelection.resolve(state, nil)
+        {:error, {:provider_profile_not_found, id}} when is_binary(requested) ->
+          Logger.warning(
+            "AgentScheduler: legacy selection #{inspect(id)} not found; using default"
+          )
 
-            {:error, _} = error ->
-              error
-          end
-        else
-          {id, model, params} = resolve_model_for_agent(state, requested)
+          ModelSelection.resolve(state, nil)
 
-          {:ok,
-           %{
-             model_id: id,
-             provider_profile_id: State.pool_id(state, id),
-             model_spec: nil,
-             llm_model: model,
-             llm_generation_params: params,
-             llm_context_window: resolve_context_window(state, id)
-           }}
-        end
+        {:error, _} = error ->
+          error
+      end
+    else
+      {id, model, params} = resolve_model_for_agent(state, requested)
+
+      {:ok,
+       %{
+         model_id: id,
+         provider_profile_id: State.pool_id(state, id),
+         model_spec: nil,
+         llm_model: model,
+         llm_generation_params: params,
+         llm_context_window: resolve_context_window(state, id)
+       }}
     end
   end
 
@@ -481,23 +491,25 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   #    (`EvoGit.CustomAgents.ModelSelector.select_model/1`): a returned selection
   #    map goes through schema validation, never legacy id lookup or fallback.
   #    An unknown legacy id retains the warn-and-fall-back-to-default behavior.
-  # 3. **`spec.model_id` / custom-agent default** — the caller-supplied model id;
-  #    when nil/empty and the spec carries a `:custom_agent_id`, the custom agent
-  #    definition's `:model_id` is used instead.
-  # 4. **Default profile** — `nil` reaches `resolve_model_for_agent/2`, which
-  #    picks the scheduler's default profile.
+  # 3. **Definition selection** — `opts[:default_model_spec]` is a canonical
+  #    custom-definition fallback, not an explicit choice or lock. Its presence
+  #    requires canonical wire/schema validation, even if its value is invalid.
+  # 4. **Legacy `spec.model_id` / custom-agent default** — when nil/empty,
+  #    the custom definition's legacy `:model_id` is used instead.
+  # 5. **Configured default** — nil uses schema defaults when available, or
+  #    the first legacy profile otherwise.
   #
   # This runs in the scheduler GenServer and NEVER raises: a missing custom
   # agent definition is logged and treated as nil; script failures surface as
   # `{:error, reason}` from `select_model/1` and are logged with a fallback to
-  # the base id.
+  # the definition selection or base id (validated later by resolve_selection/5).
   @spec effective_model_id(
           State.t(),
           AgentSpec.t(),
           pos_integer() | nil,
           non_neg_integer(),
           String.t() | nil
-        ) :: String.t() | map() | nil
+        ) :: String.t() | map() | nil | {:default_model_spec, term()}
   defp effective_model_id(_state, %AgentSpec{} = spec, parent_id, depth, task_id) do
     base_id =
       case spec.model_id do
@@ -528,6 +540,12 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     if Keyword.get(spec.opts, :model_id_locked, false) == true do
       base_id
     else
+      fallback =
+        case Keyword.fetch(spec.opts, :default_model_spec) do
+          {:ok, selection} -> {:default_model_spec, selection}
+          :error -> base_id
+        end
+
       attrs = %{
         agent_type: if(custom_id?(spec), do: :custom, else: spec.agent_module),
         custom_agent_id: custom_agent_id(spec),
@@ -539,7 +557,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
       case EvoGit.CustomAgents.ModelSelector.select_model(attrs) do
         {:ok, nil} ->
-          base_id
+          fallback
 
         {:ok, model_id} ->
           model_id
@@ -547,10 +565,10 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         {:error, reason} ->
           Logger.warning(
             "AgentScheduler: model selection script failed for agent " <>
-              "(task #{inspect(task_id)}): #{inspect(reason)}; using default model"
+              "(task #{inspect(task_id)}): #{inspect(reason)}; using definition/default model"
           )
 
-          base_id
+          fallback
       end
     end
   end
