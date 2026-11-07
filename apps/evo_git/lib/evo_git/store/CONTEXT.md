@@ -257,6 +257,8 @@ Because `put_task` is delete + full-row insert, every task write maintains SIX i
 
 ## Known Issues
 
+- **Canonical task selection outer key is not atomized**: `Codec.@atomized_opt_keys` and `@string_opt_keys` both omit `model_spec`, so `encode_opts/1` preserves its JSON value but `decode_opts/1` returns `{"model_spec", selection_map}` rather than `{:model_spec, selection_map}`; atom-keyed runtime consumers must normalize this outer key or they cannot see the persisted explicit selection.
+
 - **`tasks.id` and `projects.path` are NULLABLE TEXT primary keys**: `PRAGMA table_info` reports `notnull = 0` for both (SQLite only implies NOT NULL for INTEGER primary keys), so the DDL allows a NULL id that every read would then miss (all of them compare ids). Only hand-edited/adopted rows can produce one — `Codec.validate_task/1` and `Operations.Archives.validate_entry/1` reject a missing id before any write.
 - **The same `%EvoGit.Agent.Usage{}` is stored TWICE per task**: embedded in an `{:ok, …}` result's `data.usage` and again in the `usage` column, so one `get_task/2` pays two JSON decodes of the same numbers and one `put_task/2` two encodes (the summary/page projections avoid it by never selecting either).
 - **`put_task/2` rewrites the whole row by design** (delete + full 19-key insert): a single status change through the full-row path re-writes every column and all six index entries; the targeted `update_task_columns/3` path exists to avoid that.
