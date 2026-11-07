@@ -399,7 +399,9 @@ defmodule EvoGit.Store.Codec do
   # `known_opt_keys/0` is the UNION — the persisted-opts registry the invariant
   # test (`test/evo_git/store/store_invariants_test.exs`) pins so a NEW
   # unregistered key cannot slip in unnoticed.
-  @atomized_opt_keys ~w(path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from attachments quality_level)a
+  # Only the outer :model_spec key is atomized; its canonical selection map
+  # keeps string keys. Admission owns projecting identity without credentials.
+  @atomized_opt_keys ~w(path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from attachments quality_level model_spec)a
   @string_opt_keys ~w(model_id model_id_locked agent build_system merge_from merge_target)a
   @known_opt_keys @atomized_opt_keys ++ @string_opt_keys
   @atomized_opt_key_strings MapSet.new(@atomized_opt_keys, &Atom.to_string/1)
