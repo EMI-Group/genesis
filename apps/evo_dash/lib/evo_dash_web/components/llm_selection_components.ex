@@ -7,7 +7,10 @@ defmodule EvoDashWeb.LLMSelectionComponents do
   Provider profiles use `"id"`, `"name"` and `"provider"`; selections use the
   schema's atom-keyed projection. No credentials are rendered or fetched.
 
-  The controls live inside the caller's form (never a nested form). Events
+  The controls need a caller-owned form (never a nested form). Render them
+  inside that form, or pass its HTML id as `form` to associate every control
+  with it from elsewhere on the page. LiveView input change events require a
+  form owner even when `phx-change` is bound directly to the input. Events
   default to `select_provider_profile`, `select_model`, and
   `select_reasoning_effort`; override `provider_event`, `model_event`, and
   `reasoning_event` to reuse the picker on another page. Payload field names
@@ -33,6 +36,7 @@ defmodule EvoDashWeb.LLMSelectionComponents do
   use EvoDashWeb, :html
 
   attr(:id, :string, default: "llm-selection")
+  attr(:form, :string, default: nil)
   attr(:provider_profiles, :list, default: [])
   attr(:model_selections, :list, default: [])
   attr(:model_spec, :map, default: %{})
@@ -72,7 +76,7 @@ defmodule EvoDashWeb.LLMSelectionComponents do
       id={@id}
       disabled={@disabled}
       class={[
-        "min-w-0 rounded-lg border border-base-300 bg-base-200/40",
+        "min-w-0 shrink-0 rounded-lg border border-base-300 bg-base-200/40",
         if(@compact, do: "p-3", else: "p-4"),
         @class
       ]}
@@ -94,7 +98,9 @@ defmodule EvoDashWeb.LLMSelectionComponents do
           <select
             id={@id <> "-provider"}
             name="provider_profile_id"
+            form={@form}
             phx-change={@provider_event}
+            aria-invalid={if(@provider_id != "" and not @known_provider?, do: "true")}
             disabled={@disabled or @provider_profiles == []}
             class="select select-sm w-full min-w-0 truncate rounded-lg border-base-300 bg-base-100 focus-visible:outline-primary-standalone"
             aria-describedby={if(@provider_profiles == [], do: @id <> "-empty")}
@@ -133,7 +139,15 @@ defmodule EvoDashWeb.LLMSelectionComponents do
           <select
             id={@id <> "-model"}
             name="model"
+            form={@form}
             phx-change={@model_event}
+            title={@selected_model}
+            aria-invalid={if(@selected_model != "" and not @known_model?, do: "true")}
+            aria-describedby={
+              if(@provider_id != "" and @known_provider? and @available_models == [],
+                do: @id <> "-model-empty"
+              )
+            }
             disabled={@disabled or @available_models == []}
             class="select select-sm w-full min-w-0 truncate rounded-lg border-base-300 bg-base-100 focus-visible:outline-primary-standalone"
           >
@@ -173,7 +187,7 @@ defmodule EvoDashWeb.LLMSelectionComponents do
             <output
               id={@id <> "-reasoning-value"}
               for={@id <> "-reasoning"}
-              class="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary-standalone"
+              class="min-w-0 max-w-[50%] rounded-md bg-primary/10 px-1.5 py-0.5 text-right font-medium wrap-break-word text-primary-standalone"
             >
               {effort_label(@effort)}
             </output>
@@ -182,6 +196,7 @@ defmodule EvoDashWeb.LLMSelectionComponents do
             id={@id <> "-reasoning"}
             type="range"
             name="reasoning_effort"
+            form={@form}
             min="0"
             max={length(@efforts) - 1}
             step="1"
@@ -216,6 +231,7 @@ defmodule EvoDashWeb.LLMSelectionComponents do
       </p>
       <p
         :if={@provider_id != "" and @known_provider? and @available_models == []}
+        id={@id <> "-model-empty"}
         class="mt-3 text-xs text-base-content/70"
       >
         {gettext("No models are available for this provider profile.")}
