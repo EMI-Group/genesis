@@ -123,7 +123,10 @@ Timeout or lost authority can occur after an effect committed, so errors do not 
 Each evaluation permits at most 128 broker requests including IO, 32 reads, 500 charged projected rows, 16 writes and four task starts, with at most one pending runtime operation.
 Facade row charging uses requested task-page limit, 100 for agent/model-profile reads and one for other reads, rather than counting actual returned rows; direct reads each charge one accounting row.
 Runtime operations revalidate original authority before and after execution, and facade mutations revalidate again immediately before dispatch; facade registry calls use one-second deadlines, direct calls use their public API deadlines and broker IPC uses five seconds.
-Task start accepts only literal genesis/evolve/reflect/extract_skills types and at most five distinct supported atom/string keys: path, mode, objective, prompt and model_id.
+Facade task start accepts only literal genesis/evolve/reflect/extract_skills types and at most five distinct supported atom/string keys: path, mode, objective, prompt and model_id.
+`Validation.start_options/2` rejects a task `model_spec` twice independently: it is absent from `@start_keys`, and every admitted option value must pass the nonblank-string validator, so merely adding a key cannot admit a nested selection map.
+`Validation.validate_model/1` recognizes only legacy `model_id`, checking membership against `Projection.model_profiles/0`'s first 100 scalar id/model/concurrency projections rather than a shared configuration model-spec resolver.
+These restrictions apply only to `Write.start_task/2`; admitted direct `TaskRegistry.start_task/2` calls bypass facade validators and preserve actual arguments and API returns.
 Start strings are nonblank valid UTF-8 without NUL and at most 8,000 bytes; non-reflect tasks require an absolute path of at most 1,024 bytes, existing except for genesis-new, while reflect rejects path.
 Modes are genesis new/existing, evolve simple and reflect reflect; custom, merge/resume and foreign-repo options are not exposed, extraction rejects objective/prompt, and a known model profile adds `model_id_locked: true`.
 Self-targeting mutations are refused; cancel permits pending/running, force-kill running/cancelling and delete completed/failed/cancelled tasks.
