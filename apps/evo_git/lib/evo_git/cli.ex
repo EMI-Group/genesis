@@ -17,9 +17,9 @@ defmodule EvoGit.CLI do
   # and prints a pointer to config.toml instead.
   @removed_flag_notices [
     {"--concurrency",
-     "option --concurrency was removed; set concurrency in config.toml ([scheduler] default_llm_max_concurrency or [[llm.models]] concurrency) instead"},
+     "option --concurrency was removed; set concurrency in config.toml ([[llm.providers]] concurrency (shared per provider/account)) instead"},
     {"-c",
-     "option -c (--concurrency) was removed; set concurrency in config.toml ([scheduler] default_llm_max_concurrency or [[llm.models]] concurrency) instead"},
+     "option -c (--concurrency) was removed; set concurrency in config.toml ([[llm.providers]] concurrency (shared per provider/account)) instead"},
     {"--tool-concurrency",
      "option --tool-concurrency was removed; set max_tool_concurrency in config.toml ([scheduler]) instead"},
     {"--retries",
@@ -265,28 +265,94 @@ defmodule EvoGit.CLI do
     (opts[:path] || File.cwd!()) |> Path.expand()
   end
 
-  # ── -m/--model task-level model selection ─────────────────────────────────
+  # ── Task-level provider/model selection ───────────────────────────────────
 
-  # Resolves the -m/--model flag against the configured [[llm.models]] profiles
-  # into task-level model keys. Runs BEFORE enqueue — a failed resolution
-  # prints an error and never enqueues.
-  defp resolve_model_opt(opts) do
-    case opts[:model] do
-      nil ->
+  # Runs BEFORE enqueue for every task type; invalid selections never start a task.
+  defp resolve_model_opt(opts), do: resolve_model_opts(opts, EvoGit.Config.resolve())
+
+  @doc """
+  Validates CLI selection flags and returns task-level options.
+
+  Auto returns no model keys or lock, leaving runtime selection rules in control.
+  Explicit `--provider-profile` / `--model` flags take precedence over legacy
+  model ids and are validated against the configured account's inventory.
+  A lone `-m` retains profile-id, `id:provider:model` and model-string compatibility.
+
+  The returned `:model_spec` is a STRING-keyed TASK SELECTION map containing
+  `provider_profile_id`, `model` and optional `reasoning_effort`, NOT the schema's
+  `resolved.model_spec` (a ReqLLM identifier string or provider/id override map).
+  Selection fields come from the resolved top-level fields, never that identifier.
+  """
+  @spec resolve_model_opts(keyword(), map()) :: {:ok, keyword()} | {:error, String.t()}
+  def resolve_model_opts(opts, config) do
+    case EvoGit.CLI.Parser.parse_model_selection(opts) do
+      {:ok, :auto} ->
         {:ok, []}
 
-      value ->
-        case resolve_model_id(value, configured_model_profiles()) do
-          {:ok, profile_id} -> {:ok, [model_id: profile_id, model_id_locked: true]}
-          {:error, msg} -> {:error, msg}
+      {:ok, {:legacy, value}} ->
+        with {:ok, selection} <- resolve_legacy_selection(value, config) do
+          resolve_task_selection(config, selection)
+        end
+
+      {:ok, selection} ->
+        resolve_task_selection(config, selection)
+
+      {:error, message} ->
+        {:error, message}
+    end
+  end
+
+  defp resolve_legacy_selection(value, config) do
+    alias EvoGit.Config.Schema
+
+    profiles = Schema.provider_profiles(config)
+    {id, _model_string} = EvoGit.CLI.Parser.parse_model_flag(value)
+
+    cond do
+      Enum.any?(profiles, &(&1["id"] == value)) ->
+        {:ok, value}
+
+      not is_nil(id) ->
+        if Enum.any?(profiles, &(&1["id"] == id)),
+          do: {:ok, id},
+          else: {:error, model_error_message(value, legacy_profile_ids(profiles), id)}
+
+      true ->
+        case Enum.find(Schema.model_selections(config), fn selection ->
+               value in [selection.model, "#{selection.provider}:#{selection.model}"]
+             end) do
+          nil ->
+            {:error, model_error_message(value, legacy_profile_ids(profiles), nil)}
+
+          selection ->
+            {:ok,
+             %{
+               "provider_profile_id" => selection.provider_profile_id,
+               "model" => selection.model
+             }}
         end
     end
   end
 
-  defp configured_model_profiles do
-    case EvoGit.Config.resolve() do
-      %{llm: %{models: models}} when is_list(models) -> models
-      _ -> []
+  defp legacy_profile_ids(profiles), do: Enum.map(profiles, &%{id: &1["id"]})
+
+  defp resolve_task_selection(config, selection) do
+    case EvoGit.Config.Schema.resolve_model_spec(config, selection) do
+      {:ok, resolved} ->
+        spec = %{
+          "provider_profile_id" => resolved.provider_profile_id,
+          "model" => resolved.model
+        }
+
+        spec =
+          if is_nil(resolved.reasoning_effort),
+            do: spec,
+            else: Map.put(spec, "reasoning_effort", resolved.reasoning_effort)
+
+        {:ok, [model_spec: spec, model_id_locked: true]}
+
+      {:error, reason} ->
+        {:error, "model selection could not be resolved: #{inspect(reason)}"}
     end
   end
 
@@ -327,7 +393,7 @@ defmodule EvoGit.CLI do
     case profiles do
       [] ->
         "model '#{value}' could not be resolved: no LLM models are configured. " <>
-          "Run `genesis setup` or add [[llm.models]] to config.toml."
+          "Run `genesis setup` or add [[llm.providers]] to config.toml."
 
       _ ->
         ids = profiles |> Enum.map(& &1[:id]) |> Enum.reject(&is_nil/1) |> Enum.join(", ")
@@ -604,12 +670,16 @@ defmodule EvoGit.CLI do
     Options:
       -f, --file <path>           Read prompt/objective from a file.
       -p, --path <path>           Path to the git repository (default: current directory).
-      -m, --model <model>         Select the LLM model profile for this task.
-                                  Accepts an exact profile id (e.g. "default"),
-                                  "id:provider:model", or a model string matching
-                                  a configured profile's model. Resolves to a
-                                  configured [[llm.models]] profile or errors.
-                                  Task-level only — never a scheduler override.
+      -m, --model <model>         Select a model for this task (never a scheduler override).
+                                  With --provider-profile, selects from that account's inventory.
+                                  Alone, accepts a profile id, legacy "id:provider:model",
+                                  or a configured model string.
+          --provider-profile <id> Select a configured [[llm.providers]] account; requires --model.
+          --reasoning-effort <effort>
+                                  Optional effort for --provider-profile + --model;
+                                  validated against the configured model's allowed efforts.
+                                  Explicit selection locks this task; omit all selection
+                                  flags for Auto (runtime rules choose the model).
           --agent <id>            Use a custom agent (defined in agents.toml) as the
                                   root agent for the task.
       -d, --mode <mode>           Execution mode (new/existing for genesis, simple/custom for evolve).
@@ -628,10 +698,16 @@ defmodule EvoGit.CLI do
 
       The scheduler override flags (-c/--concurrency, --tool-concurrency,
       -r/--retries, -t/--max-turns, --max-turns-root) were removed.
-      Concurrency, retry counts, and per-agent turn limits are set in
-      config.toml instead:
+      Concurrency belongs to each [[llm.providers]] account and is shared by
+      all models and reasoning efforts in its inventory (not per model).
+      Configure concurrency there; retry counts and turn limits go in [scheduler]:
+        [[llm.providers]]
+        id = "default"
+        provider = "your-provider"
+        models = ["model-name"]
+        default_model = "model-name"
+        concurrency = 3
         [scheduler]
-        default_llm_max_concurrency = 3   # or per-profile [[llm.models]] concurrency
         max_tool_concurrency = 4
         max_retries = 3
         max_turns = 128
@@ -651,9 +727,11 @@ defmodule EvoGit.CLI do
           echo 'GOOGLE_API_KEY = "YOUR_API_KEY_HERE"' > credentials.toml
 
         Step 3: Create config.toml with your LLM model and username
-          echo '[[llm.models]]'                           > config.toml
+          echo '[[llm.providers]]'                        > config.toml
           echo 'id = "default"'                            >> config.toml
-          echo 'model = "provider:model-name"'             >> config.toml
+          echo 'provider = "your-provider"'               >> config.toml
+          echo 'models = ["model-name"]'                   >> config.toml
+          echo 'default_model = "model-name"'              >> config.toml
           echo 'concurrency = 3'                           >> config.toml
           echo '[user]'                                    >> config.toml
           echo 'github_username = "your-username"'         >> config.toml
@@ -705,6 +783,7 @@ defmodule EvoGit.CLI do
       genesis evolve "Fix the login bug" --mode simple
       genesis evolve "Fix the login bug" --mode custom --agent code-reviewer
       genesis evolve "Fix the login bug" -m default
+      genesis evolve "Fix the login bug" --provider-profile default --model model-name --reasoning-effort high
       genesis run 'StartTask.start_task evolve "Fix bug"'
     """)
   end
