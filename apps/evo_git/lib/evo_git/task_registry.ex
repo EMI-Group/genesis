@@ -18,6 +18,7 @@ defmodule EvoGit.TaskRegistry do
   alias EvoGit.TaskRegistry.Diagnostics
   alias EvoGit.TaskRegistry.Lease
   alias EvoGit.TaskRegistry.ReadOffload
+  alias EvoGit.TaskRegistry.RuntimeOpts
   alias EvoGit.TaskRegistry.StoreGuard
   alias EvoGit.TaskRegistry.TaskExecutor
 
@@ -488,61 +489,67 @@ defmodule EvoGit.TaskRegistry do
         {:reply, {:error, :cancelled}, state}
 
       _known_or_absent ->
-        task_ref =
-          Task.Supervisor.async_nolink(
-            EvoGit.TaskSupervisor,
-            TaskExecutor,
-            :execute_task,
-            [task_type, opts, task_id, state.server_name]
-          )
-
-        task = %TaskInfo{
-          id: task_id,
-          type: task_type,
-          status: :running,
-          opts: opts,
-          ref: task_ref,
-          started_at: DateTime.utc_now(),
-          finished_at: nil,
-          logs: [],
-          result: nil,
-          lease_expires_at: System.system_time(:second) + @lease_duration,
-          model_id: Keyword.get(opts, :model_id)
-        }
-
-        # Persist to SQLite with ref nulled (ref is runtime-only data). A
-        # disk-full write must NOT crash the registry: the task still runs
-        # in-memory (unpersisted) and the next status write (terminal or
-        # otherwise) retries the persistence. An UNAVAILABLE store (a dead /
-        # restarting Store process, or an unexpected store fault) degrades the
-        # same way — the registry never exits from a store call.
-        case safe_store_write("start_task put_task", fn ->
-               EvoGit.Store.put_task(state.task_store, %{task | ref: nil})
-             end) do
-          :ok ->
-            :ok
-
-          {:error, :disk_full} ->
-            Logger.warning(
-              "TaskRegistry: disk full — task #{task_id} could not be persisted; " <>
-                "continuing in-memory only"
+        # Admit before spawning or persisting: invalid explicit selections must
+        # not enqueue work, and the stored opts must match the admitted selection.
+        with {:ok, opts} <- RuntimeOpts.admit_model_selection(opts, EvoGit.Config.resolve()) do
+          task_ref =
+            Task.Supervisor.async_nolink(
+              EvoGit.TaskSupervisor,
+              TaskExecutor,
+              :execute_task,
+              [task_type, opts, task_id, state.server_name]
             )
 
-          {:error, :store_unavailable} ->
-            # StoreGuard already logged the fault — keep the task in memory.
-            :ok
+          task = %TaskInfo{
+            id: task_id,
+            type: task_type,
+            status: :running,
+            opts: opts,
+            ref: task_ref,
+            started_at: DateTime.utc_now(),
+            finished_at: nil,
+            logs: [],
+            result: nil,
+            lease_expires_at: System.system_time(:second) + @lease_duration,
+            model_id: Keyword.get(opts, :model_id)
+          }
+
+          # Persist to SQLite with ref nulled (ref is runtime-only data). A
+          # disk-full write must NOT crash the registry: the task still runs
+          # in-memory (unpersisted) and the next status write (terminal or
+          # otherwise) retries the persistence. An UNAVAILABLE store (a dead /
+          # restarting Store process, or an unexpected store fault) degrades the
+          # same way — the registry never exits from a store call.
+          case safe_store_write("start_task put_task", fn ->
+                 EvoGit.Store.put_task(state.task_store, %{task | ref: nil})
+               end) do
+            :ok ->
+              :ok
+
+            {:error, :disk_full} ->
+              Logger.warning(
+                "TaskRegistry: disk full — task #{task_id} could not be persisted; " <>
+                  "continuing in-memory only"
+              )
+
+            {:error, :store_unavailable} ->
+              # StoreGuard already logged the fault — keep the task in memory.
+              :ok
+          end
+
+          # Keep the runtime ref in-memory only
+          state = %{state | task_refs: Map.put(state.task_refs, task_id, task_ref)}
+
+          Phoenix.PubSub.broadcast(
+            EvoGit.PubSub,
+            "tasks",
+            {:task_updated, task_id, :running, node()}
+          )
+
+          {:reply, {:ok, task}, state}
+        else
+          {:error, reason} -> {:reply, {:error, reason}, state}
         end
-
-        # Keep the runtime ref in-memory only
-        state = %{state | task_refs: Map.put(state.task_refs, task_id, task_ref)}
-
-        Phoenix.PubSub.broadcast(
-          EvoGit.PubSub,
-          "tasks",
-          {:task_updated, task_id, :running, node()}
-        )
-
-        {:reply, {:ok, task}, state}
     end
   end
 
