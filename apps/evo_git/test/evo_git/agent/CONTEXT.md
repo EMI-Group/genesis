@@ -50,23 +50,18 @@ The pure `context_compression_test.exs` usage tests compose Usage functions dire
 ## Canonical Provider Selection Regressions
 
 `provider_selection_cost_test.exs` covers effective selected-model catalog pricing, nested generation overrides, shared account defaults, credential isolation, reasoning, custom-endpoint catalog fallback, locked/unlocked inheritance, cache pricing and mixed-model totals.
+Its peak-pricing regressions require the selected canonical provider account's schedule, including inherited selections and the inclusive peak boundary, rather than stale legacy model-profile schedules.
 The cost suite is synchronous because it pins the global scheduler profiles and peak-hour clock seams, suspending PeakHourEngine before profile changes and restoring profiles before resuming it.
 `provider_model_inheritance_test.exs` covers real child/grandchild builders and registration, complete canonical selections, locks, live-state precedence, spec/opts fallbacks, legacy compatibility and invalid-selection rejection.
+Unlocked builders retain the complete account/model/effort selection in `opts[:default_model_spec]`, leave `spec.model_spec` nil and omit `opts[:model_spec]`, so each spawn can consult the selection script before the inherited fallback.
+Locked builders retain explicit selections in both `spec.model_spec` and `opts[:model_spec]`, and locked registration overrides conflicting child selectors and scripts through grandchildren.
+Child and grandchild script reselection preserves ancestor effective selections, and a reselected child's complete selection becomes its own unlocked grandchild's fallback.
+Legacy-only inheritance omits both canonical selection options rather than emitting an explicit nil selection.
 Its real SSE helper captures headers and bodies to verify selected-account endpoint/authentication, effective model, effort and nested generation settings through ordinary turns and successful compression.
 The inheritance suite is synchronous because it pins the global scheduler configuration and model-selection script/config integration, with unique production-shaped ETS rows and PeakHourEngine suspension.
 The canonical task selection is a string-keyed provider/account/model/effort map, whereas `resolved.model_spec` is a ReqLLM-ready request identifier and `generation_params` can contain credentials.
 Pure configured-context-window and compression-budget coverage lives in `./compression/provider_profile_test.exs`.
 These suites preserve expected behavior assertions even when production defects make them fail; never skip or weaken those assertions to make the suite green.
-
-### Known Provider Selection Implementation Defects
-
-`Agent.Cost` resolves a selected account's peak schedule through legacy model-profile IDs instead of provider profiles, so canonical selected-model costs use off-peak prices during configured peak periods.
-Five cost regressions expose the account-schedule lookup defect, including inherited selections and the inclusive peak boundary.
-Unlocked canonical inheritance bypasses per-spawn model-selection scripts because the child builder copies the inherited selection into explicit `model_spec` and Dispatch resolves it before consulting scripts.
-Two inheritance regressions require an unlocked child/grandchild script to select its own account/model while locked inheritance remains authoritative.
-Legacy delegation adds `model_spec: nil` to child opts, which `ModelSelection.explicit_spec/1` treats as explicit and rejects with `:invalid_model_spec` rather than resolving the inherited legacy ID.
-The legacy registration regression exposes that nil-option distinction without changing the production builder.
-Production fixes belong to the sibling source nodes and must be coordinated by the parent agent.
 
 ## Cost Recomputation Coverage (`cost_test.exs`)
 
