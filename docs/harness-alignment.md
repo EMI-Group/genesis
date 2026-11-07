@@ -228,7 +228,7 @@ delivered where the model already looks (tool descriptions), not in a role essay
 | | `dsh` | Ours |
 |---|---|---|
 | Measure | `tokenMeter.measure().totalTokens` = last reported usage + signed delta over the surface since then; `CHARS_PER_TOKEN = 4`, **no tokenizer**; includes generation, not just prompt | `state.total_tokens` (system + input + output + reasoning accumulated per turn) |
-| Trigger | `thresholdTokens = min(W*0.8, W − reservedCompletion − 65536)`, `retainTokens = (W − O)*0.16` — **window-relative** | `min(0.8·W, W − reserved − 64K)` floor `min(32K, 0.9·W)`, with `W` read from each `[[llm.models]]` profile's configured `context_window` (**default 200 000**) — config, not the catalog; `[:llm] :compression_threshold_tokens` is an optional explicit override |
+| Trigger | `thresholdTokens = min(W*0.8, W − reservedCompletion − 65536)`, `retainTokens = (W − O)*0.16` — **window-relative** | `min(0.8·W, W − reserved − 64K)` floor `min(32K, 0.9·W)`, with `W` read from the nested `[[llm.providers.models]]` entry's `context_window` override or its provider-profile default (**configured budget, default 200 000**) — never the catalog; `[:llm] :compression_threshold_tokens` is an optional explicit override |
 | Trigger points | 4: `agent/pre-step` over pressure, `CONTEXT_WINDOW_EXCEEDED`, `IMAGE_OFFLOAD_REQUIRED`, `/compact` | 1: `ContextCompression.maybe_compress/1` at the top of `loop/1` |
 
 `W` is deliberately an operator-declared per-profile value rather than the catalog's `limits.context`: models
@@ -524,8 +524,8 @@ authoritative comparison.
 `agent/compression/`:
 
 1. **`Compression.Threshold`** — the trigger is window-relative (`min(0.8·W, W − reserved − 64K)`, floored at
-   `min(32_000, 0.9·W)`), where `W` is the `[[llm.models]]` profile's configured `context_window`
-   (default 200 000). The model catalog is consulted ONLY for the output reservation, never for the window:
+   `min(32_000, 0.9·W)`), where `W` is the nested `[[llm.providers.models]]` entry's `context_window`
+   override or its provider-profile default (configured budget, default 200 000). The model catalog is consulted ONLY for the output reservation, never for the window:
    long-context quality and pricing degrade, so the operator-declared budget is the right one.
    `[:llm] :compression_threshold_tokens` is now an optional explicit override (nil = derive).
 2. **`Compression.ToolResultPruner`** — a model-free stage one: results older than the recency window are cut

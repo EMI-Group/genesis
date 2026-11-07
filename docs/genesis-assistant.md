@@ -30,6 +30,18 @@ The gate is local-only: on a remote node it stays hidden instead of blocking the
 
 For a specific review page, the Assistant reads the task and gives you its `/review/<task_id>` path; the guide overlay itself opens standard dashboard pages.
 
+## Choose a model and reasoning effort
+
+The Assistant uses the same **Provider profile**, **Model** dropdowns and supported **Reasoning effort** slider as Projects.
+Models come from the selected account's explicit inventory; see [LLM provider profiles](llm-profiles.md) for configuration and selection rules.
+The effort slider appears only when the selected model advertises a nonempty supported-effort inventory; with one effort it is disabled.
+It selects the model's configured default effort when available, otherwise the first supported item—this UI fallback does not set a configuration default.
+An explicit `none` effort is a concrete choice, not an omitted value that inherits configured/provider defaults.
+
+**Auto (by rules)** leaves model selection to the existing rules; choosing a concrete provider profile/model locks that choice for the Assistant task you send.
+This does not change saved defaults or other tasks, including tasks the Assistant later starts on your behalf.
+Selection is scoped to the node you are viewing; check the target after switching nodes, and resolve unavailable profiles/models/efforts before sending rather than assuming an automatic fallback.
+
 ## Execution tiers and approval
 
 The Assistant uses one `elixir_eval` tool with three tiers:
@@ -105,7 +117,8 @@ Ask: “Is scheduling paused, and what is the live tool capacity?” Example **r
 }
 ```
 
-`paused?/0` returns a boolean and `get_llm_slot_status/0` a per-model map of live pools.
+`paused?/0` returns a boolean and `get_llm_slot_status/0` a per-provider-profile map of live pools.
+Models and reasoning efforts under the same provider profile share its capacity.
 Scheduler configuration uses **`get_config/1`, not `get_config/0`**.
 `EvoGit.Config.resolve()` reads defaults plus saved configuration, **not live scheduler overrides**.
 For a section use `EvoGit.Config.resolve(:scheduler)`; for one nested value use `EvoGit.Config.resolve([:scheduler, :max_tool_concurrency])`.
@@ -186,7 +199,8 @@ Run the whole snippet in one **write** evaluation, then inspect both saved confi
 `save_user_config/1` validates and replaces the **whole configuration file**; it does not reload it.
 `reload_config/0` applies selected saved settings, not every subsystem's configuration; boot-only settings such as distribution still need a restart.
 This read-modify-save sequence is not atomic and materializes defaults, so coordinate with other configuration editors.
-For model changes, edit the existing `llm.models` profiles rather than overwriting them with an incomplete configuration.
+For model changes, edit the existing `llm.providers` accounts and their nested `models` inventory rather than overwriting them with an incomplete configuration.
+See [LLM provider profiles](llm-profiles.md) for account defaults, model overrides and selection rules.
 
 When uncertain, ask for a source-backed explanation and a read-only check first; review each write's exact code and target before allowing it.
 
