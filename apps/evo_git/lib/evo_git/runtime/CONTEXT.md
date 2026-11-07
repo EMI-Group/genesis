@@ -184,7 +184,7 @@ The scheduler: 1) assigns a unique `task_id` (GUID), `task_number` (short intege
 ### Root-Agent Spec Builder (`Helpers.build_root_agent_spec/7`)
 
 `Helpers.build_root_agent_spec/7` is the shared builder producing the root `AgentSpec` for evolution (simple AND custom) and the genesis phase roots.
-It resolves the default/custom root module via `resolve_root_agent/2` → `{module, opts}` (unknown ids raise `ArgumentError`) and threads `foreign_repos`, `repo_notes`, `archive`, `task_id`, model selection, `quality_level` (absent → `nil`; subagent spec builders never carry the key, so subagent prompts stay unaffected) and `:attachments` (omit-when-nil), then appends the resolved custom-agent opts.
+It resolves the default/custom root module via `resolve_root_agent/2` → `{module, opts}` (unknown ids raise `ArgumentError`) and threads `foreign_repos`, `repo_notes`, `archive`, `task_id`, model selection, `quality_level` (absent → `nil`; subagent spec builders never carry the key, so subagent prompts stay unaffected) and `:attachments` (omit-when-nil), then appends custom-agent identity and canonical default opts and applies the legacy definition fallback without changing the task lock.
 New code constructing a root-agent spec should reuse it instead of hand-assembling specs at call sites.
 
 ### Task Model Selection
@@ -193,15 +193,17 @@ Runtime opts may carry `:model_spec`, a map with STRING keys `provider_profile_i
 Without a spec, legacy ids and explicit locks retain their semantics, nil model_spec is omitted, and Auto adds no model selection.
 `Helpers.model_id_locked?/1` is true for an explicit lock, a non-nil model_spec, or a non-nil legacy model_id.
 The shared root builder (including BOTH Genesis Mode B roots), `SelfReflective.build_spec/2`, and `SkillExtraction.run/1` all apply the same normalization before `AgentSpec.new/5`.
-Custom-agent resolution is unchanged, and Auto leaves the script/custom-agent/default selection to the scheduler.
+Auto leaves selection to the scheduler, with priority: explicit/locked task selection > model-selection script > custom definition canonical default > legacy spec.model_id > configured default.
 Runtime wrappers do not resolve or rewrite provider/model/reasoning fields: validation and `Schema.resolve_model_spec(config, spec_or_legacy_id)` resolution belong to the config/scheduler boundary.
 
-### Known Issue — Custom Root Canonical Model Defaults
-`Helpers.resolve_root_agent/2` forwards only `custom_agent_id`, not the custom root definition's canonical `model_spec`.
-A runtime-only fix is blocked: scheduler `Dispatch.resolve_selection` treats any `AgentSpec`/opts `model_spec` as explicit and bypasses the model-selection script even with `model_id_locked: false`, while `effective_model_id` accepts only binary ids.
-Enabling unlocked canonical definition defaults requires a scheduler contract distinguishing definition defaults from explicit task selections and preserving precedence: locked task selection > script > definition `model_spec` > definition legacy `model_id` > configured default.
-Permanent regression tests belong in the parent-owned test tree, never under `lib/`, and must cover that precedence, Auto with and without a script result, canonical versus legacy definition defaults, explicit locked task overrides, and unchanged built-in roots.
-`AgentSpec` storage and scheduler dispatch, and task-boundary forwarding into runtime opts, are owned outside this directory.
+### Custom Root Model Defaults
+`Helpers.resolve_root_agent/2` forwards the custom definition's canonical string-keyed `model_spec` as opts[:default_model_spec], omitted when absent, plus its legacy model_id when present.
+Definition defaults never use opts[:model_spec] and never introduce a model_id_locked flag.
+`build_root_agent_spec/7` normalizes explicit task selections first, then supplies the legacy definition id only when the task has neither a canonical spec nor a legacy id.
+Scheduler dispatch resolves explicit task model_spec first, then locked task ids, then script selections, then default_model_spec, then legacy spec.model_id, then configured defaults.
+Auto therefore lets a script override either definition default; a nil script result uses the canonical default ahead of the legacy one.
+Both Genesis Mode B roots and custom Evolution roots share this builder, while built-in roots receive no custom definition opts.
+Permanent regression tests belong in the parent-owned test tree, never under lib, and must cover that precedence, Auto with and without a script result, canonical versus legacy definition defaults, explicit locked task overrides, and unchanged built-in roots.
 
 ### Agent Hierarchy by Phase
 
