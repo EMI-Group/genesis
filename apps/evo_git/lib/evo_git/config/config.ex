@@ -656,9 +656,9 @@ defmodule EvoGit.Config do
   Checks for required settings and returns a map with:
   - `:missing` — list of missing critical config keys (as atoms)
   - `:warnings` — list of human-readable warning messages for missing values
-  - `:ok?` — boolean, true if all critical config is present
+  - `:ok?` — boolean, true if all critical config is present and validation succeeds
   - `:validation_errors` — list of `EvoGit.Config.Schema.ValidationError` structs from
-    the last `resolve/0` call, or empty list if none
+    this invocation's initial `resolve/0` call, or empty list if none
 
   The `:api_key` check is OAuth-aware: it passes when an API key is configured
   OR when at least one configured model profile authenticates through a
@@ -680,6 +680,8 @@ defmodule EvoGit.Config do
         }
   def config_status do
     resolved = resolve()
+    # Later health checks may resolve again and overwrite the process-local errors.
+    validation_errors = Process.get(:evo_git_config_validation_errors, [])
     profiles = EvoGit.Config.Schema.model_profiles(resolved)
 
     checks = [
@@ -730,8 +732,8 @@ defmodule EvoGit.Config do
     %{
       missing: Enum.map(failing, &elem(&1, 0)),
       warnings: Enum.map(failing, &elem(&1, 1)),
-      ok?: failing == [],
-      validation_errors: Process.get(:evo_git_config_validation_errors, [])
+      ok?: failing == [] and validation_errors == [],
+      validation_errors: validation_errors
     }
   end
 

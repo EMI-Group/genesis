@@ -16,7 +16,7 @@
 | `user_config/0` | Parsed `config.toml`, or `%{}` if not found. `:persistent_term`-cached with `File.stat` mtime+size validation (see "Config Caching"). |
 | `save_user_config/1` | Validates, then persists a config map to `config.toml` (creates the config dir); invalidates the cache on success. `:ok \| {:error, reason}` |
 | `save_credentials/1` | Merges/persists an API key map to `credentials.toml`; sets keys via `ReqLLM.put_key` for immediate in-process use; invalidates cache. `:ok \| {:error, reason}` |
-| `config_status/0` | Diagnostic map `:missing`/`:warnings`/`:ok?` from LLM-model + credential presence; the `:api_key` check is OAuth-aware (API key present OR an OAuth profile's subscription credential resolves — see "OAuth / Subscription Auth"); GitHub username is optional and NOT checked. |
+| `config_status/0` | Diagnostic map `:missing`/`:warnings` from LLM-model + credential presence, `:validation_errors` from this invocation's initial resolve, and `:ok?` only when both checks pass; the `:api_key` check is OAuth-aware (API key present OR an OAuth profile's subscription credential resolves — see "OAuth / Subscription Auth"); GitHub username is optional and NOT checked. |
 | `credentials/0` | Reads `credentials.toml`, loads each key into ReqLLM's key store, returns the parsed map. Cached (`put_key` runs only on a cache miss). |
 | `defaults/0` | Built-in defaults (scheduler concurrency/retry settings, empty llm/user maps, sandbox mode); three values are CPU-thread-derived (see Configuration Levels). |
 | `config_path/0` | Full path to `config.toml` |
@@ -266,6 +266,8 @@ The permission model protects against accidental self-corruption rather than mal
 `Config.resolve/0,1` and `user_config/0` return unredacted data, including node cookies, model `extra`/`provider_options`, endpoint credentials and arbitrary unknown TOML keys; admitted direct reads are not required to be projected or secret-safe, and output caps do not redact secrets.
 `Config.resolve/0,1` reads defaults plus user configuration, not live scheduler runtime overrides.
 `Config.config_status/0` returns `missing`, `warnings`, `ok?`, and `validation_errors`, but loads credentials into ReqLLM and may lazily import OAuth credentials into a managed file; its validation errors include original values and messages with inspected values.
+`config_status/0` snapshots validation errors immediately after its initial `resolve/0`, before health checks can resolve again and overwrite the calling process's dictionary, and returns that same snapshot.
+`:ok?` requires both no missing critical settings and an empty validation-error snapshot; `missing` and `warnings` remain presence/credential diagnostics and do not include validation values or credentials.
 `Config.resolve/0` also logs invalid values verbatim, and neither its logging nor `Schema.ValidationError` provides redaction.
 Public visibility alone does not grant evaluator access: `user_config/0`, `config_status/0`, `read_toml_file/2,3`, credential helpers and schema APIs remain unlisted.
 `Config.read_toml_file/2,3` reads any supplied file path despite `@doc false`, and `Config.credential_key_to_reqllm_key/1` calls `String.to_atom/1` for arbitrary suffixed input.
