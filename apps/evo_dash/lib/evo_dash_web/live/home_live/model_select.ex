@@ -1,72 +1,110 @@
 defmodule EvoDashWeb.HomeLive.ModelSelect do
   @moduledoc """
-  Model-profile loading for the Home chat page's model selector.
+  Node-aware configuration loading and task-option boundary for Assistant chat.
 
-  The selector lets the user pin which LLM model profile the repo-less
-  `:reflect` task uses for the conversation — threaded as `:model_id` +
-  `:model_id_locked` into `EvoDash.NodeContext.start_task/3` (the same
-  contract as the Projects page task form). Node-aware: the profile list comes
-  from the config of the node that will actually run the task.
+  Selection projection, provider/model changes, legacy-id migration, reasoning
+  defaults and validation belong to the shared `EvoDashWeb.LLMSelection`, not to
+  this page helper. The page projects a loaded snapshot's config with the core
+  `Schema.provider_profiles/1` and `Schema.model_selections/1` APIs (or the shared
+  helper) and renders `LLMSelectionComponents` with a string-keyed `model_spec`.
+
+  `load/1` returns a tagged snapshot, not the old `{profiles, enabled}` tuple.
+  Keep the snapshot ephemeral: its config may contain authentication settings
+  and must never enter ChatHistory, browser data attributes or form payloads.
   """
 
-  alias EvoGit.Config
-  alias EvoGit.Config.Schema
   alias EvoDash.NodeContext
+  alias EvoGit.Config
+
+  @type snapshot :: %{
+          node: node(),
+          config: map(),
+          model_selection_enabled: boolean()
+        }
 
   @doc """
-  Loads `{model_profiles, model_selection_enabled}` for the viewed node.
+  Loads the viewed node's config and model-selection-script state.
 
-  Mirrors the ProjectsLive task-form loading
-  (`EvoDashWeb.ProjectsLive.Project.load_model_profiles/1` +
-  `EvoDashWeb.ProjectsLive.AsyncLoad.load_custom_agents/1`): the LOCAL node
-  resolves its own config + `EvoGit.CustomAgents.ModelSelector.enabled?/0`; a
-  REMOTE node resolves via `EvoDash.NodeContext.get_resolved_config/1` and
-  derives the script state from the remote node's own `agents.toml`
-  (`list_custom_agents/1` — configured-but-broken scripts still count as
-  enabled, matching `ModelSelector.enabled?/0` semantics). On RPC failure
-  degrades to `{[], false}` — never crashes the page.
+  Remote callers MUST use a supervised `EvoDash.SafeCall.start/4` task and guard
+  its nested result message by both model_select_seq and node context. Errors
+  stay errors: a failed load must not silently turn an explicit pin into Auto.
+  A nil node means local, but a pending remote target MUST be blocked by the
+  page before calling this function with its fallback local node.
 
-  A REMOTE call is cross-node `:erpc` work: callers MUST run it inside a
-  supervised task (the `EvoDashWeb.HomeLive` `assign_model_select/1` path uses
-  `EvoDash.SafeCall.start/4`), never in a LiveView process — an unreachable
-  node makes the call block and then EXIT its caller, which `rescue` cannot
-  catch. The local branch is a plain config-file read and stays synchronous.
+  The script's configured-but-broken state still counts as enabled, matching
+  `ModelSelector.enabled?/0`. No scheduler/catalog defaults are substituted for
+  the target node's config.
   """
-  @spec load(node()) :: {[map()], boolean()}
-  def load(node) do
-    if node == node() do
-      {Schema.model_profiles(Config.resolve()), EvoGit.CustomAgents.ModelSelector.enabled?()}
+  @spec load(node() | nil) :: {:ok, snapshot()} | {:error, term()}
+  def load(target_node) when target_node in [nil, node()] do
+    {:ok,
+     %{
+       node: node(),
+       config: Config.resolve(),
+       model_selection_enabled: EvoGit.CustomAgents.ModelSelector.enabled?()
+     }}
+  end
+
+  def load(target_node) do
+    with {:ok, config} <- NodeContext.get_resolved_config(target_node),
+         {:ok, enabled} <- remote_model_selection_enabled(target_node) do
+      {:ok, %{node: target_node, config: config, model_selection_enabled: enabled}}
+    end
+  end
+
+  defp remote_model_selection_enabled(target_node) do
+    # list_custom_agents/1 masks transport failures as a successful empty list.
+    # Query the actual predicate so an unreachable node stays a load error.
+    case NodeContext.call_remote(target_node, EvoGit.CustomAgents.ModelSelector, :enabled?, []) do
+      {:ok, enabled} when is_boolean(enabled) -> {:ok, enabled}
+      {:error, reason} -> {:error, reason}
+      other -> {:error, {:invalid_model_selection_response, other}}
+    end
+  end
+
+  @doc """
+  Prepares reflect-task options against a snapshot for the SAME target node.
+
+  Shared-helper contract: `LLMSelection.task_opts(config, spec_or_legacy_id,
+  opts)` returns `{:ok, keyword}` or `{:error, reason}`. It resolves through
+  `Schema.resolve_model_spec/2`, validates against canonical model selections,
+  and resolves the advertised default reasoning effort before submission.
+  Explicit options contain only a STRING-keyed `:model_spec` and
+  `model_id_locked: true`; Auto strips model_spec/model_id/model_id_locked.
+  Stale profiles/models/efforts are errors, never fallback Auto.
+
+  A parent page must handle the error BEFORE appending a user bubble, clearing
+  the draft or calling start_task. A node switch invalidates the old snapshot
+  even when two nodes happen to use the same provider-profile id.
+  """
+  @spec task_opts(snapshot() | nil, map(), {String.t() | nil, node()}, keyword()) ::
+          {:ok, keyword()} | {:error, term()}
+  def task_opts(snapshot, selection_state, scope, opts \\ [])
+
+  def task_opts(
+        %{node: target_node, config: config},
+        %{model_selection_scope: scope, model_selection_error: nil} = selection_state,
+        {node_id, target_node} = scope,
+        opts
+      )
+      when is_map(config) and
+             (is_nil(node_id) or
+                (is_binary(node_id) and node_id != "" and target_node != node())) do
+    selection = selection_state[:model_spec] || selection_state[:selected_model_id]
+
+    # The shared module is parent-owned and may not yet be shipped by the
+    # integrating branch; fail closed instead of emitting a legacy id.
+    if Code.ensure_loaded?(EvoDashWeb.LLMSelection) and
+         function_exported?(EvoDashWeb.LLMSelection, :task_opts, 3) do
+      apply(EvoDashWeb.LLMSelection, :task_opts, [config, selection, opts])
     else
-      case NodeContext.get_resolved_config(node) do
-        {:ok, config} ->
-          {Schema.model_profiles(config), remote_model_selection_enabled?(node)}
-
-        {:error, _reason} ->
-          {[], false}
-      end
+      {:error, :llm_selection_unavailable}
     end
   end
 
-  defp remote_model_selection_enabled?(node) do
-    case NodeContext.list_custom_agents(node) do
-      {:ok, %{model_selection_script: script}} -> is_binary(script) and script != ""
-      _ -> false
-    end
-  end
+  def task_opts(_snapshot, %{model_selection_error: :invalid_model_spec}, _scope, _opts),
+    do: {:error, :invalid_model_spec}
 
-  @doc """
-  Threads the chat's pinned model into the reflect-task opts (mirrors
-  `projects_live.ex` `task_submit`): a non-empty `selected_model_id` prepends
-  `:model_id => <id>` + `:model_id_locked => true` (the runtime's
-  model-selection script is deferred for this task — the lock is a no-op when
-  no script is configured); `nil`/`""` (Auto) returns `opts` unchanged so the
-  script (or the default model) decides.
-  """
-  @spec task_opts(String.t() | nil, keyword()) :: keyword()
-  def task_opts(selected_model_id, opts)
-      when is_binary(selected_model_id) and selected_model_id != "" do
-    [{:model_id, selected_model_id}, {:model_id_locked, true} | opts]
-  end
-
-  def task_opts(_selected_model_id, opts), do: opts
+  def task_opts(_snapshot, _selection_state, _scope, _opts),
+    do: {:error, :model_selection_not_loaded}
 end

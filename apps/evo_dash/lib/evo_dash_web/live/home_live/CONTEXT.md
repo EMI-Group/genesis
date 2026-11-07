@@ -100,22 +100,25 @@ Text extraction uses `EvoDashWeb.ContentText.text_of/1` so explicit thinking/med
 
 ### Persisted chat and model choice
 
-`ChatState.build/1` and `restore/1` own the map stored in the local in-memory `EvoDash.ChatHistory`, normalizing the transcript, statuses, refs, message count, thought process, chat node and pinned `selected_model_id`.
-Runtime seq counters, raw-view ids, approvals, and source-gate state are deliberately absent from persistence.
-`normalize_model_id/1` accepts nonempty binaries and returns nil for other values, without validating against the configured profile list.
-The pinned model survives New chat and node switches; the parent reset clears chat-specific state but not `selected_model_id` or environment-derived source-gate state.
-`ModelSelect.load/1` returns `{profiles, model_selection_enabled}` using local config or remote `NodeContext` calls, degrading RPC failure to `{[], false}`.
-Remote loads must run off-process with the parent's independent `model_select_seq` and node stale guard; they never overwrite the pinned choice.
-`ModelSelect.task_opts/2` adds `model_id` plus `model_id_locked: true` only for a pinned id, leaving Auto without either key.
-The Auto label is "Auto (by rules)" when the model-selection script is configured, otherwise "Auto".
-`ModelSelect.load/1` returns the core `Schema.model_profiles/1` list unchanged, with no local provider grouping, catalog lookup, model-capability filtering or reasoning-effort enumeration.
-Its local branch matches only `node == node()`; nil follows the remote-call branch rather than being explicitly normalized to local here.
-Remote loading performs `get_resolved_config/1` first and `list_custom_agents/1` second only when the config read succeeds; the script predicate accepts any nonempty binary, including whitespace.
-`task_opts/2` prepends keys without replacing existing `:model_id` or `:model_id_locked` entries, while Auto returns the supplied keyword list unchanged rather than stripping prior selection keys.
-`ChatState.build/1` and `restore/1` construct explicit atom-keyed whitelists, so provider-profile, model-name and reasoning-level fields are not persisted by merely adding them to LiveView assigns or stored maps.
-The sole persisted LLM selection is `selected_model_id`, whose normalization preserves whitespace-only binaries and does not check catalog membership; comments promise a core fallback for unknown ids, but this helper itself implements no fallback.
-`Transcript.normalize/1` similarly reconstructs only `id`, `role`, `text` and `streaming`, so per-message model or reasoning metadata is discarded on restoration and never enters the next task's textual preamble.
-`ChatState.build/1` copies its known assign values without the normalizers used by `restore/1`, and both state and transcript restoration expect atom-keyed outer maps rather than JSON string-keyed state.
+`ChatState.build/1` and `restore/1` own the map stored in the local in-memory `EvoDash.ChatHistory`, preserving transcript, statuses, refs, message count, thought process and chat node.
+New selection fields are `model_spec` (a string-keyed map or nil), `model_selection_scope` (`{current_node_id, current_node || node()}`), and `model_selection_error` (nil or `:invalid_model_spec`); they are persisted when the parent seeds either new selection field.
+The only accepted spec keys are `"provider_profile_id"`, `"model"` and `"reasoning_effort"`, with binary values; malformed explicit data becomes a sticky error rather than silent Auto, while partial provider/model drafts remain intact for shared validation.
+`selected_model_id` remains legacy migration input only, is discarded when an explicit spec is present, and is never emitted by the new task-option boundary.
+`ChatState.restore_selection/2` must run after node resolution: same-scope selection may survive New chat, a different scope clears to Auto, and unscoped legacy ids migrate only on the local scope.
+A scope includes the remote target id even while its node resolves locally, preventing a disconnected target from borrowing the local pin.
+Runtime seq counters, loaded configs, raw-view ids, approvals and source-gate state are never persisted.
+`ModelSelect.load/1` returns `{:ok, %{node: node, config: resolved_config, model_selection_enabled: boolean}}` or an error; nil normalizes to local.
+The remote script predicate is read through `NodeContext.call_remote/4` against `EvoGit.CustomAgents.ModelSelector.enabled?/0`, not `list_custom_agents/1`, whose client wrapper masks transport failures as successful empty data.
+Loaded configs are ephemeral and may contain authentication settings, so they must never enter ChatHistory or rendered attributes.
+Remote loads remain supervised `SafeCall.start/4` work with nested result tags and independent monotonic `model_select_seq` plus node stale guards; the parent must reject pending remote targets before attempting a load or send.
+`ModelSelect.task_opts(snapshot, selection_state, scope, opts \\ [])` requires a matching snapshot node and persisted selection scope, rejects malformed state and pending-remote fallback-local sends, and delegates generic validation to parent-owned `EvoDashWeb.LLMSelection.task_opts/3`.
+The shared helper contract is `task_opts(config, spec_or_legacy_id, opts) -> {:ok, keyword} | {:error, reason}`: resolve through core `Schema.resolve_model_spec/2`, validate canonical selections, resolve the default reasoning effort before submit, emit string-keyed `:model_spec` plus `model_id_locked: true` for explicit choice, strip model_spec/model_id/model_id_locked for Auto, and reject stale profiles/models/efforts rather than silently choosing Auto.
+The shared helper is optional at this leaf's compile boundary; if absent, submission fails closed with `:llm_selection_unavailable` instead of forwarding a legacy id.
+Provider/model event transitions and reasoning-slider conversion belong in the shared parent helper and `LLMSelectionComponents.resolve_reasoning_effort/3`, not duplicated in Assistant code.
+The core projection contract is `Schema.provider_profiles(config)` string maps and `Schema.model_selections(config)` ordered atom maps containing provider_profile_id/profile_name/provider/model/reasoning_efforts/default_reasoning_effort/context_window.
+The parent page must seed the new selection fields, project a loaded config, render `LLMSelectionComponents` with its three events, reconcile migration/defaults against that config, handle task-option errors before appending bubbles or clearing drafts, and replace the old load tuple and task_opts/2 wiring.
+`Transcript.normalize/1` reconstructs only id/role/text/streaming, so selection metadata never enters the next task's textual preamble.
+State and transcript restoration expect atom-keyed outer maps rather than JSON string-keyed state.
 
 ## Constraints
 
@@ -140,3 +143,6 @@ Parent integration tests must assert retained cards while responding and reject 
 The scoped mounted/support suite contains 133 tests, with two mounted resolution tests blocked by the parent's missing source-stamped four-element message route.
 Support coverage and ephemeral real-application regression checks exercise evaluator rendering, recovery races, empty snapshot removal, stale resets, source-stamped ownership, response failures, busy-card retention across snapshots and terminal response outcomes without changing sibling test files.
 Keep business assertions for four suggestion sends, source gate, direct user bubble shape, raw/copy attributes, safe Markdown and streaming markers intact.
+The support-only command `mix test apps/evo_dash/test/evo_dash_web/live/home_live` covers the existing helper contracts without mounting the still-legacy parent selection UI.
+Selection redesign coverage must additionally pin string-spec round trips, malformed-spec sticky errors, legacy local-only migration, same-scope retention, cross-node/target reset, pending-remote rejection, remote load errors, shared-validator delegation and missing-helper fail-closed behavior.
+No sibling tests are modified by helper-only work; isolated inline ExUnit checks exercise these new boundaries, while durable shared/default-reasoning/Auto option tests and mounted three-control event/send/persistence coverage belong to the parent integration.
