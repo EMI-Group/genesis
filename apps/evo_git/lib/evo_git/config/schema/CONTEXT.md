@@ -73,12 +73,34 @@ Schema/defaults APIs and this node's `Definitions`, `LLM` and `LLMConstraints` f
 
 ## Reasoning Selection and Resolution Gotchas
 `LLM.default_model_profile/1` selects the first list entry, while `get_model_profile/2` returns the first matching id without duplicate-id detection or filtering malformed entries (`llm.ex:122–145`).
-There is no ordered reasoning-effort inventory, per-model default-effort selector, or reasoning variant expansion in this directory; each profile has one optional scalar `reasoning_effort`.
+The legacy `LLM` API gives each model profile one optional scalar `reasoning_effort`; ordered provider/model effort inventories and default selection are handled separately by `ProviderProfiles`.
 The flat reasoning schema is a string with nil default and no membership validation (`definitions.ex:225–234`), and generation assembly omits nil instead of inventing a model default (`llm.ex:541–557,729–731`).
 `LLM.convert_reasoning_effort/1` converts none/minimal/low/medium/high/xhigh/default strings to atoms but leaves every other value unchanged, including the documented GLM-5.3 value `"max"` (`llm.ex:737–746`).
 `LLMConstraints` normalizes effort only for comparisons and preserves the original surviving wire value, so accepting `"max"` in the GLM allowlist does not convert it to `:max` (`llm_constraints.ex:283–326`).
 A nonempty metadata capabilities map that omits reasoning, or lacks explicit `reasoning.enabled == true`, removes a configured effort, whereas nil metadata and empty capabilities leave it alone (`llm_constraints.ex:357–373`).
 The constraint table's `reasoning_effort.default` is an allowed-values fallback for unmatched model ids, not a default effort injected into requests (`llm_constraints.ex:101–105,207–239`).
+
+## Canonical Provider Profiles (`ProviderProfiles`)
+`EvoGit.Config.Schema.ProviderProfiles` exposes `provider_profiles/1`, `model_selections/1`, and `resolve_model_spec/2` independently of the legacy `LLM` entry points.
+`ProviderProfiles.Normalize` owns recursive string-key normalization and one-for-one legacy migration, while `ProviderProfiles` owns enumeration, default selection and runtime resolution.
+`provider_profiles(config)` accepts atom- or string-keyed config and returns canonical STRING-keyed maps from `llm.providers`, falling back to legacy `llm.models` or flat `llm.model` only when the provider list is absent or empty.
+Every legacy profile keeps its own exact id and account boundary, even when another profile has the same provider/model/endpoint, and a model-less flat config returns no provider profiles.
+Provider maps carry `id`, optional `name`, `provider` (string), normalized `auth_mode`, `concurrency` (default 3), shared peak fields, optional `api_key_env_var`/`base_url`/`oauth_file`, generation defaults, ordered `reasoning_efforts`, optional `default_reasoning_effort`, `default_model` and nested `models`.
+Nested model strings become maps with a `model` key, maps accept `model` or input alias `id`, and model maps can override generation parameters, context window, effort inventory and effort default.
+An absent model default picks the first model, absent provider default selection picks the first profile, and configured defaults that name missing entries are explicit resolution errors rather than silently falling back.
+`model_selections(config)` returns ordered atom-keyed maps with exactly `provider_profile_id`, `profile_name` (name or id), `provider` (string), `model` (unqualified id), `reasoning_efforts`, `default_reasoning_effort` and `context_window`.
+The inventory preserves effort order and removes duplicates; a model inventory replaces the provider inventory, an explicit empty inventory imposes no restriction, and no effort default is invented from the first inventory entry.
+`resolve_model_spec(config, spec)` accepts nil, a provider/legacy id string, or an atom-/string-keyed map with `provider_profile_id`, optional `model` and optional `reasoning_effort`.
+Resolution precedence is provider defaults, then model overrides, then explicit task effort, and the provider default selector is `llm.default_provider_profile`.
+Success is `{:ok, resolved}` with all selection fields plus `reasoning_effort`, canonical `provider_profile`, atom-keyed legacy-compatible `runtime_profile`, ReqLLM `model_spec`, shared concurrency/peak keys and `generation_params`.
+Selection `model` stays an unqualified id, whereas `model_spec` and `runtime_profile.model` are the actual qualified string or custom-endpoint ReqLLM map.
+Runtime generation uses `LLM.profile_generation_params/1` unchanged for OAuth import, provider-option precedence and constraint filtering, then adds `api_key` from `api_key_env_var` when present for API-key profiles only.
+Resolved generation parameters may therefore contain secrets and must not be treated as a dashboard projection.
+Enumeration does not import OAuth credentials or read model metadata, but resolution can do both through the existing LLM choke point.
+Errors are `:invalid_config`, `:invalid_model_spec`, `{:provider_profile_not_found, id}`, `{:duplicate_provider_profile_id, id}`, `{:model_not_found, profile_id, model}`, `{:duplicate_model, profile_id, model}`, `{:invalid_reasoning_effort, value}` or `{:unsupported_reasoning_effort, effort, allowed}`.
+These APIs do not rewrite files, change existing `LLM` consumers, add parent `Schema` wrappers or introduce the parent-owned composite validator; `Definitions` still describes the legacy public config schema until the parent integration supplies the new provider-profile validation type.
+Parent integration must add `Schema.provider_profiles/1`, `Schema.model_selections/1` and `Schema.resolve_model_spec/2` delegates, normalize/persist the nested config shape, add descriptors for `llm.providers` and `llm.default_provider_profile`, and update schema count pins alongside the provider validator.
+Permanent regression tests belong in the parent-owned test tree and must cover canonical round trips, separate same-provider legacy accounts, defaults/ordering/effort overrides, custom endpoints, OAuth/API-key isolation, constraints, duplicate/unknown selectors and malformed or empty inputs.
 
 ## Constraints
 - `Definitions` describes defaults without reading user configuration, but `LLM` is not a pure read boundary: OAuth option assembly/status can import credentials into a caller-selected managed file, metadata resolution can load the catalog, and provider parsing can create atoms.
