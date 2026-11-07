@@ -39,6 +39,75 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
              ProviderProfiles.parse(Map.put(input, "default_reasoning_effort", "other"), "test")
   end
 
+  test "credential env inputs emit only the canonical key, with canonical presence winning" do
+    for input <- [
+          %{"api_key_env" => " LEGACY_KEY "},
+          %{"api_key_env_var" => " LEGACY_KEY "},
+          %{"api_key_env_var" => " LEGACY_KEY ", "api_key_env" => "IGNORED"}
+        ] do
+      assert {:ok, profile} = ProviderProfiles.parse(Map.merge(params(), input), "test")
+      assert profile["api_key_env_var"] == "LEGACY_KEY"
+      refute Map.has_key?(profile, "api_key_env")
+      assert {:ok, ^profile} = ProviderProfiles.parse(%{}, "test", profile)
+    end
+
+    original = Map.put(params(), "api_key_env", "OLD_KEY")
+
+    for canonical <- ["", " ", nil] do
+      input = %{"api_key_env_var" => canonical, "api_key_env" => "IGNORED"}
+      assert {:ok, profile} = ProviderProfiles.parse(input, "test", original)
+      refute Map.has_key?(profile, "api_key_env_var")
+      refute Map.has_key?(profile, "api_key_env")
+    end
+
+    for key <- ["api_key_env", "api_key_env_var"], empty <- ["", " ", nil] do
+      saved = Map.put(params(), "api_key_env_var", "SAVED_KEY")
+      assert {:ok, profile} = ProviderProfiles.parse(%{key => empty}, "test", saved)
+      refute Map.has_key?(profile, "api_key_env_var")
+      refute Map.has_key?(profile, "api_key_env")
+    end
+
+    assert {:ok, profile} =
+             ProviderProfiles.parse(%{"api_key_env" => "NEW_KEY"}, "test", original)
+
+    assert profile["api_key_env_var"] == "NEW_KEY"
+    refute Map.has_key?(profile, "api_key_env")
+  end
+
+  test "drafts normalize legacy credential env keys without losing blank canonical input" do
+    for normalize <- [&ProviderProfiles.draft/1, &ProviderProfiles.normalize_draft/1] do
+      draft = normalize.(%{api_key_env: "LEGACY_KEY"})
+      assert draft["api_key_env_var"] == "LEGACY_KEY"
+      refute Map.has_key?(draft, "api_key_env")
+
+      for canonical <- ["CANONICAL_KEY", "", nil] do
+        draft = normalize.(%{"api_key_env_var" => canonical, "api_key_env" => "IGNORED"})
+        assert Map.fetch!(draft, "api_key_env_var") == canonical
+        refute Map.has_key?(draft, "api_key_env")
+      end
+    end
+  end
+
+  test "OAuth strips API secrets and both env key spellings from submitted and saved fields" do
+    for provider <- ["openai_codex", "anthropic"],
+        env_fields <- [
+          %{"api_key_env" => "LEGACY_KEY"},
+          %{"api_key_env_var" => "CANONICAL_KEY"},
+          %{"api_key_env" => "LEGACY_KEY", "api_key_env_var" => "CANONICAL_KEY"}
+        ] do
+      original = params() |> Map.merge(env_fields) |> Map.put("api_key", "saved-secret")
+      input = %{"provider" => provider, "auth_mode" => "oauth"}
+
+      for submitted <- [input, Map.merge(original, input)] do
+        assert {:ok, profile} = ProviderProfiles.parse(submitted, "test", original)
+        assert profile["auth_mode"] == "oauth"
+        refute Map.has_key?(profile, "api_key")
+        refute Map.has_key?(profile, "api_key_env")
+        refute Map.has_key?(profile, "api_key_env_var")
+      end
+    end
+  end
+
   test "OAuth-only auth is forced and status adapter carries no API secret" do
     input =
       Map.merge(params(), %{

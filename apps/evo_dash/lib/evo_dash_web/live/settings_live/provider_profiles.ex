@@ -12,7 +12,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
 
   @integer_fields ~w(concurrency context_window max_tokens top_k)
   @float_fields ~w(temperature top_p frequency_penalty presence_penalty)
-  @string_fields ~w(name base_url api_key api_key_env oauth_file default_model)
+  @string_fields ~w(name base_url api_key api_key_env_var oauth_file default_model)
   @json_fields ~w(extra provider_options)
   @generation_fields ~w(temperature max_tokens top_p top_k frequency_penalty presence_penalty)
 
@@ -89,6 +89,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
   def draft(profile) do
     profile
     |> stringify()
+    |> canonical_credentials()
     |> json_draft()
     |> Map.update("models", [], fn models -> Enum.map(rows(models), &json_draft/1) end)
   end
@@ -96,6 +97,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
   def normalize_draft(params) do
     params
     |> stringify()
+    |> canonical_credentials()
     |> Map.update("models", [], &rows/1)
     |> Map.update("peak_hours", [], &Helpers.normalize_peak_hours_draft/1)
     |> Map.update("off_peak_days", [], &Helpers.normalize_days/1)
@@ -113,7 +115,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
 
   @doc "Parses canonical forms, or the old single-model form, into a provider map."
   def parse(params, id, original \\ %{}) do
-    params = legacy_params(params)
+    params = params |> stringify() |> canonical_credentials() |> legacy_params()
     params = Map.merge(draft(original), params)
     provider = text(params["provider"])
     provider_atom = provider_atom(provider)
@@ -134,7 +136,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
          {:ok, profile} <-
            parse_values(
              params,
-             Map.merge(stringify(original), %{
+             Map.merge(canonical_credentials(stringify(original)), %{
                "id" => id,
                "provider" => provider,
                "auth_mode" => auth_mode
@@ -153,7 +155,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
 
       profile =
         if auth_mode == "oauth",
-          do: Map.drop(profile, ~w(api_key api_key_env)),
+          do: Map.drop(profile, ~w(api_key api_key_env api_key_env_var)),
           else: Map.delete(profile, "oauth_file")
 
       default = nonblank(profile["default_model"]) || (List.first(models) || %{})["model"]
@@ -351,6 +353,17 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
   end
 
   def field(_, _), do: nil
+
+  # Key presence matters: an explicitly blank canonical input clears a saved value.
+  defp canonical_credentials(profile) do
+    case Map.fetch(profile, "api_key_env") do
+      :error ->
+        profile
+
+      {:ok, legacy} ->
+        profile |> Map.delete("api_key_env") |> Map.put_new("api_key_env_var", legacy)
+    end
+  end
 
   defp legacy_params(%{"model_id" => model} = params) do
     params

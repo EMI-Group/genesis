@@ -25,7 +25,8 @@ Non-map/duplicate/partially populated model rows, invalid numbers and invalid/no
 Optional generation keys stay absent until supplied; concurrency defaults to 3 and core owns range/context-window defaults.
 Reasoning inventories accept comma/newline strings or lists, trim/deduplicate in order and NEVER imply a default from the first entry.
 Absent model inventory inherits provider; explicit []/blank stays unrestricted, and every nonnil effective default must belong to its effective nonempty inventory.
-Known providers use catalog whitelist, unknown strings survive for core validation; OAuth-only forces oauth, OAuth drops API-key fields and API-key mode drops oauth_file.
+Known providers use catalog whitelist, unknown strings survive for core validation; OAuth-only forces oauth, OAuth drops api_key/api_key_env_var/api_key_env and API-key mode drops oauth_file.
+Credential drafts and parsed profiles emit api_key_env_var; legacy api_key_env input is accepted, with canonical key presence winning even when blank or nil.
 Legacy model_id/context_window/reasoning_effort adapt to canonical fields without old model/reasoning_effort shadows.
 add_model/2 adds complete accounts from qualified strings/ReqLLM maps with collision-safe model-slug ids and concurrency 3.
 Utilities field/2, rows/1, string_list/1 and provider_atom/1 implement key/row/inventory/catalog handling without client-derived atoms.
@@ -69,7 +70,8 @@ Add direct delegates for set_default_provider_profile, add_profile_model and rem
 | save_quick_setup | provider_id, model_string, optional base_url/variant_id |
 
 The canonical form uses phx-submit="save_model_profile" and phx-change="model_profile_form_change".
-Shared inputs use top-level names provider/name/auth_mode/api_key/api_key_env/oauth_file/base_url/concurrency/default_model/context_window/reasoning_efforts/default_reasoning_effort, generation fields, extra and provider_options.
+Shared inputs use top-level names provider/name/auth_mode/api_key/api_key_env_var/oauth_file/base_url/concurrency/default_model/context_window/reasoning_efforts/default_reasoning_effort, generation fields, extra and provider_options.
+api_key_env is a legacy form alias only; use api_key_env_var in new markup, and canonical key presence wins when both are submitted.
 Nested names are models[0][model], models[0][context_window], models[0][reasoning_efforts], models[0][default_reasoning_effort] and analogous generation/JSON overrides.
 Peak names stay peak_hours[index][start|end|days] and off_peak_days[], with blank checkbox seed inputs.
 Pass editing_profile_id/profile_form_draft/profile_advanced_open/auth_statuses through category_section to the provider editor.
@@ -91,7 +93,7 @@ The available core implements the new calls directly on Schema.ProviderProfiles 
 The available core resolver still rejects unlisted models and default_model-only profiles, conflicting with the optional-overrides task contract; core normalization/enumeration/resolution/validation must be aligned for end-to-end operation.
 Core EctoValidation.type_errors/3 also lacks :provider_profiles here, so normal mix test can fail during application boot before tests execute.
 Core owns authoritative provider/range/config validation; do not invent dashboard inventory restrictions as a workaround.
-Core currently consumes api_key_env_var while this parser accepts api_key_env; model-level extra/provider_options runtime merge support also needs core reconciliation.
+Model-level extra/provider_options runtime merge support also needs core reconciliation.
 No reasoning-slider mapping is implemented here; inventories/defaults are explicit strings.
 
 ## ConfigIO and SearchEvents
