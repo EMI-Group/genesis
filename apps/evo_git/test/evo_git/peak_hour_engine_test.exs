@@ -9,7 +9,8 @@ defmodule EvoGit.PeakHourEngineTest do
   with the wall clock injected via the `:peak_hours_now_fun` app-env seam.
 
   `async: false` because the tests push configuration to the global
-  `EvoGit.AgentScheduler` GenServer and mutate app env.
+  `EvoGit.AgentScheduler` GenServer, drive the singleton `PeakHourEngine`, and
+  mutate app env `:peak_hours_now_fun` / `:peak_hours_utc_now_fun`.
   """
 
   use ExUnit.Case, async: false
@@ -17,6 +18,8 @@ defmodule EvoGit.PeakHourEngineTest do
   import ExUnit.CaptureLog
 
   alias EvoGit.AgentScheduler
+  alias EvoGit.AgentScheduler.ModelSelection
+  alias EvoGit.Config.Schema
   alias EvoGit.PeakHourEngine
 
   # Daily window 09:00–12:00 local (raw "HH:MM" form, as in config TOML).
@@ -33,12 +36,10 @@ defmodule EvoGit.PeakHourEngineTest do
 
   defp with_clock(fun) do
     Application.put_env(:evo_git, :peak_hours_now_fun, fun)
-    on_exit(fn -> Application.delete_env(:evo_git, :peak_hours_now_fun) end)
   end
 
   defp with_utc_clock(fun) do
     Application.put_env(:evo_git, :peak_hours_utc_now_fun, fun)
-    on_exit(fn -> Application.delete_env(:evo_git, :peak_hours_utc_now_fun) end)
   end
 
   defp wait_until(fun, timeout) do
@@ -64,22 +65,183 @@ defmodule EvoGit.PeakHourEngineTest do
     assert Process.whereis(EvoGit.AgentScheduler), "AgentScheduler must be running"
     assert Process.whereis(EvoGit.PeakHourEngine), "PeakHourEngine must be supervised"
 
-    # Capture the current scheduler config to restore in on_exit, so tests in
-    # this file (and later files) see a clean baseline.
-    model_profiles = AgentScheduler.get_config(:model_profiles)
-    default_llm = AgentScheduler.get_config(:default_llm_max_concurrency)
-    model_concurrency = AgentScheduler.get_config(:model_concurrency)
+    # Snapshot and restore canonical accounts AND the selection snapshot, not
+    # only the legacy model inventory. Suspend the engine around both operations
+    # so its read-then-apply broadcast handler cannot race the restoration.
+    :sys.suspend(PeakHourEngine)
+
+    state = :sys.get_state(AgentScheduler)
+
+    config =
+      for key <- [
+            :model_profiles,
+            :provider_profiles,
+            :model_selection_config,
+            :default_llm_max_concurrency,
+            :model_concurrency,
+            :llm_model,
+            :llm_generation_params
+          ] do
+        {key, Map.fetch!(state, key)}
+      end
+
+    clocks =
+      for key <- [:peak_hours_now_fun, :peak_hours_utc_now_fun] do
+        {key, Application.fetch_env(:evo_git, key)}
+      end
 
     on_exit(fn ->
-      Application.delete_env(:evo_git, :peak_hours_now_fun)
-      Application.delete_env(:evo_git, :peak_hours_utc_now_fun)
+      :sys.suspend(PeakHourEngine)
 
-      AgentScheduler.update_config(model_profiles: model_profiles)
-      AgentScheduler.update_config(default_llm_max_concurrency: default_llm)
-      AgentScheduler.update_config(model_concurrency: model_concurrency)
+      try do
+        Enum.each(clocks, fn
+          {key, {:ok, value}} -> Application.put_env(:evo_git, key, value)
+          {key, :error} -> Application.delete_env(:evo_git, key)
+        end)
+
+        # The public updater rejects an explicit nil llm_model; rebuilding an
+        # unconfigured profile set derives that nil itself.
+        restore_opts = Enum.reject(config, &(&1 == {:llm_model, nil}))
+
+        assert :ok =
+                 AgentScheduler.update_config(
+                   restore_opts ++ [model_concurrency_skip_floor: true]
+                 )
+      after
+        :sys.resume(PeakHourEngine)
+      end
     end)
 
+    :sys.resume(PeakHourEngine)
     :ok
+  end
+
+  describe "canonical provider accounts and nested model selections" do
+    test "peak pause and explicit low capacity beat floors for every model in an account" do
+      config = provider_config()
+      providers = Schema.provider_profiles(config)
+      selections = Schema.model_selections(config)
+      assert length(selections) == 4
+
+      assert Enum.frequencies_by(selections, & &1.provider_profile_id) == %{
+               "paused" => 2,
+               "limited" => 2
+             }
+
+      # The canonical boundary is string-keyed, including nested model maps.
+      assert Enum.all?(providers, &is_list(&1["models"]))
+
+      assert PeakHourEngine.effective_map(providers, 5, fake_now(10)) == %{
+               "paused" => 0,
+               "limited" => 1
+             }
+
+      assert PeakHourEngine.effective_map(providers, 5, fake_now(12)) == %{
+               "paused" => 5,
+               "limited" => 5
+             }
+
+      with_clock(fn -> fake_now(10) end)
+      install_provider_config(config)
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"paused" => 0, "limited" => 1}
+
+      assert Map.keys(AgentScheduler.get_llm_slot_status()) |> Enum.sort() == [
+               "limited",
+               "paused"
+             ]
+
+      # Repeated checks must retain zero rather than re-flooring it to five.
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"paused" => 0, "limited" => 1}
+
+      with_clock(fn -> fake_now(12) end)
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"paused" => 5, "limited" => 5}
+
+      with_clock(fn -> fake_now(10) end)
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"paused" => 0, "limited" => 1}
+    end
+
+    test "account schedules survive nested model/default changes and suppress pauses on off-peak days" do
+      with_clock(fn -> fake_now(10) end)
+      config = provider_config()
+      install_provider_config(config)
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"paused" => 0, "limited" => 1}
+
+      changed =
+        update_in(config, [:llm, :providers], fn providers ->
+          Enum.map(providers, fn account ->
+            account
+            |> Map.put(:default_model, "gpt-4.1")
+            |> Map.update!(:models, &(&1 ++ [%{model: "gpt-4.1-nano", context_window: 16_000}]))
+          end)
+        end)
+
+      # Exercise the actual reload broadcast path, not only the pure helper.
+      assert :ok = AgentScheduler.update_config(ModelSelection.config_opts(changed))
+
+      wait_until(
+        fn ->
+          AgentScheduler.get_config(:model_concurrency) == %{"paused" => 0, "limited" => 1}
+        end,
+        5000
+      )
+
+      assert length(AgentScheduler.get_config(:model_profiles)) == 6
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"paused" => 0, "limited" => 1}
+
+      with_clock(fn -> ~N[2026-01-17 10:00:00] end)
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"paused" => 5, "limited" => 5}
+    end
+  end
+
+  defp install_provider_config(config) do
+    # Install one coherent account/selection/default snapshot before the engine
+    # can observe a broadcast; resume even if a setup assertion fails.
+    :sys.suspend(PeakHourEngine)
+
+    try do
+      assert :ok =
+               AgentScheduler.update_config(
+                 ModelSelection.config_opts(config) ++ [default_llm_max_concurrency: 5]
+               )
+    after
+      :sys.resume(PeakHourEngine)
+    end
+  end
+
+  defp provider_config do
+    %{
+      llm: %{
+        default_provider_profile: "limited",
+        providers:
+          for {id, peak} <- [{"paused", 0}, {"limited", 1}] do
+            %{
+              id: id,
+              provider: "openai",
+              auth_mode: "api_key",
+              api_key_env_var: "PEAK_ENGINE_TEST_UNUSED_KEY",
+              concurrency: 2,
+              peak_concurrency: peak,
+              peak_hours: @window,
+              off_peak_days: ["sat", "sun"],
+              default_model: "gpt-4.1-mini",
+              temperature: 0.4,
+              reasoning_efforts: ["low", "high"],
+              default_reasoning_effort: "low",
+              models: [
+                %{model: "gpt-4.1", context_window: 64_000, temperature: 0.2},
+                %{model: "gpt-4.1-mini", context_window: 32_000, default_reasoning_effort: "high"}
+              ]
+            }
+          end
+      }
+    }
   end
 
   describe "engine integration (live scheduler + injected clock)" do
