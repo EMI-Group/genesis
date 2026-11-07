@@ -15,8 +15,9 @@ defmodule EvoGit.TaskRegistry.TaskExecutorReflectTest do
   `without_model_profiles/1` is copied from
   `test/evo_git/runtime/evolution_test.exs`: with the scheduler's model
   profiles emptied, `AgentScheduler.run_agent/1` replies
-  `{:error, :llm_not_configured}` immediately instead of dispatching a real
-  LLM-backed agent.
+  `{:error, :llm_not_configured}` for an implicit selection or
+  `{:error, {:provider_profile_not_found, id}}` for an explicit missing profile
+  immediately instead of dispatching a real LLM-backed agent.
 
   `async: false` is required: `without_model_profiles/1` MUTATES the
   app-global `EvoGit.AgentScheduler`'s `:model_profiles` config (via
@@ -34,7 +35,7 @@ defmodule EvoGit.TaskRegistry.TaskExecutorReflectTest do
   alias EvoGit.TaskRegistry.TaskExecutor
 
   describe "execute_task/3 with :reflect" do
-    test "tolerates opts without :path and routes into SelfReflective.run" do
+    test "without :path routes into SelfReflective.run and rejects an explicit missing profile" do
       result =
         without_model_profiles(fn ->
           guarded_call(fn ->
@@ -46,7 +47,7 @@ defmodule EvoGit.TaskRegistry.TaskExecutorReflectTest do
           end)
         end)
 
-      assert_reflect_result(result)
+      assert_reflect_result(result, {:provider_profile_not_found, "m1"})
     end
 
     test "does not crash on unexpected opts keys" do
@@ -98,19 +99,21 @@ defmodule EvoGit.TaskRegistry.TaskExecutorReflectTest do
     end
   end
 
-  defp assert_reflect_result({:returned, result}) do
+  defp assert_reflect_result(result, expected_error \\ :llm_not_configured)
+
+  defp assert_reflect_result({:returned, result}, expected_error) do
     if Process.whereis(EvoGit.AgentScheduler) do
       # SelfReflective.run reached the scheduler, which fails fast on empty
-      # model profiles — proves the routing happened and no KeyError was
-      # raised for the missing :path.
-      assert result == {:error, :llm_not_configured}
+      # model profiles or an explicit missing profile — proves the routing
+      # happened and no KeyError was raised for the missing :path.
+      assert result == {:error, expected_error}
     else
       # No scheduler running: run_agent exits with :noproc.
       assert match?({:exit, _}, result)
     end
   end
 
-  defp assert_reflect_result({:exit, reason}) do
+  defp assert_reflect_result({:exit, reason}, _expected_error) do
     # Without a scheduler the GenServer.call exits — acceptable only when the
     # scheduler is truly absent in this environment.
     refute Process.whereis(EvoGit.AgentScheduler)
@@ -120,8 +123,9 @@ defmodule EvoGit.TaskRegistry.TaskExecutorReflectTest do
   # The scheduler is running in tests (started with the :evo_git app), so
   # AgentScheduler.run_agent/1 reaches the GenServer instead of exiting. With
   # model profiles configured it would dispatch a real LLM-backed agent; force
-  # an empty profile list so run_agent replies {:error, :llm_not_configured}
-  # immediately. The original profiles are restored afterwards.
+  # an empty profile list so run_agent fails fast without dispatching an agent.
+  # An implicit selection returns :llm_not_configured; an explicit missing
+  # profile returns {:provider_profile_not_found, id}. Restore profiles afterwards.
   defp without_model_profiles(fun) do
     scheduler = Process.whereis(EvoGit.AgentScheduler)
 
