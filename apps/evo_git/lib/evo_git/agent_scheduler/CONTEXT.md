@@ -142,6 +142,9 @@ Two independent pools of agent-ID `MapSet`s; capacity = `capacity - map_size(hol
 - **`get_llm_slot_status/0` is keyed by model-PROFILE-ID string**: `{id, %{used: holders, waiting: queue_len, capacity: concurrency_for}}` over `State.all_model_ids/1`; an idle model appears only if it is a `model_concurrency` key or has a non-empty pool/backoff entry.
 - **`run_agent` rejection clauses**: (a) `%State{model_profiles: []}` — reachable only via `update_config(model_profiles: [])` (tests use this, `test/evo_git/runtime/evolution_test.exs`); (b) `llm_model: nil` with `model_profiles == nil` — effectively DEAD. Both reply `{:error, :llm_not_configured}`.
 - **No file-watching**: config changes ONLY via `update_config/1` (dashboard save → reload_config; evo_dash ConfigIO; `PeakHourEngine`); `get_config` serves in-memory values while `Config.resolve()`/`config_status()` are file-fresh.
+- **Selection identity and resource identity are currently coupled**: `AgentState.model_id` is both a configured model-profile id and the LLM capacity/backoff pool key, while `llm_model` separately holds the concrete request model; distinct configured ids sharing a provider do not share capacity or backoff.
+- `Subagents.spawn_validated_subagents/5` passes incoming specs unchanged to `Dispatch.register_agent/7`; inheritance of model selection and lock flags must happen in the caller constructing those specs, not this scheduler helper.
+- `RemoteAPI.list_agents/0` summaries expose `model_id` but not `llm_model`, so consumers cannot discover the concrete request model independently of the configured profile from that projection.
 
 ## Worktree Lifecycle (WorktreeManager + Worktrees)
 
