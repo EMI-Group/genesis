@@ -67,6 +67,27 @@ All LiveViews register the `EvoDashWeb.LiveHooks.NodeAware` on-mount hook (via t
 - Passes `current_node_id` / `current_node_name` (and `remote_targets` / `connection_statuses`) to the `Layouts.app/1` call.
 - Handles `{:node_selected, _}` (delegated to `NodeAware.handle_node_selected/2`) and `{:remote_connection_status, _, _}` messages (delegated to `NodeAware.handle_connection_status/2`).
 
+### LLM selection and configuration boundaries
+The page layer uses flat `llm.models` profiles whose ids simultaneously select the model, generation defaults, concurrency, OAuth settings and peak schedule; it contains no separate provider-profile/model/reasoning task selection contract.
+`projects_live.ex` owns two task-form call sites (local and remote), `select_model` assigning the unvalidated `model_id` string, restore-event threading of `selected_model_id`, and `do_task_submit/4` assembling task opts.
+Normal Projects submissions emit `model_id` plus `model_id_locked: true` for every nonempty binary selection, omit both for Auto, and independently emit `quality_level` only for `fast` or `high_quality`; this speed/quality control is not reasoning effort.
+Projects helper details, async reload hazards, persistence fields and the independent GitHub task-start path belong in `projects_live/CONTEXT.md`.
+`home_live.ex` renders its own header selector (`select_chat_model`, accepting either `model_id` or `value`), keeps the selection across New chat and node switches without profile membership validation, and passes `ModelSelect.task_opts/2` into `NodeContext.start_task(node, :reflect, mode: "reflect", objective: ...)` with no path.
+Home model loads are local synchronous config reads or remote supervised loads guarded by `model_select_seq` and node, but those loads never reconcile the selected id; helper persistence and task-option details belong in `home_live/CONTEXT.md`.
+`settings_live.ex` passes raw `file_config[:llm][:models]` to BOTH the LLM category and CustomAgentsEditor, so replacing the collection also affects custom-agent default-model selection and model-selection scripts.
+Settings quick-setup page assigns (`selected_provider_id`, `selected_provider_models`, `selected_variant_id`, `selected_model_string`) represent catalog selection, not a configured provider-profile object.
+Settings profile-edit events delegate to `ModelProfileEvents`, while the page owns `persist_file_config/3`, the connection test and local/remote transport; helper parser/schema/runtime details belong in `settings_live/CONTEXT.md`.
+Settings whole-config persistence is optimistic, local save re-reads resolved config and calls `ConfigIO.update_runtime_from_file_config/2`, and remote save asynchronously calls `NodeContext.save_user_config`, `reload_remote_config`, `get_resolved_config` and `get_remote_config_status`.
+Settings node-data and remote-save results have node-only freshness checks, not a generation token, so overlapping same-node loads/saves can apply out of order.
+Settings connection tests select a persisted profile by `profile_id` and pass its raw model plus temperature/max_tokens/top_p/top_k/frequency_penalty/presence_penalty, but do not explicitly pass reasoning_effort, provider_options, auth_mode or oauth_file; the task path and test path therefore do not carry identical profile options.
+Settings test results are an unscoped `{:llm_test_result, result}` message with no node/profile/generation stamp.
+`welcome_live.ex` owns onboarding catalog flattening, all provider/variant/model events, credential writes, model-profile creation and config persistence directly; `welcome_complete_live.ex` is teaching/onboarding-completion UI, not an LLM selector.
+Welcome config, credentials, connection tests and runtime pushes are LOCAL even though the common shell is node-aware.
+Welcome model selection searches the whole flattened catalog by model string rather than checking the currently selected provider/variant, and save resolution accepts a nonblank model name through catalog resolution rather than requiring a rendered entry.
+Welcome remains API-key-only: its credential form/save guard require a typed or existing API key and it has no OAuth-mode branch or subscription-login guidance, even for OAuth-capable catalog providers.
+Welcome saves credentials before profile/config validation, so a later failure does not roll back credentials, and testing also persists a typed key before making the request.
+Welcome test results carry no selection or generation stamp, so resetting test status on provider/model changes does not prevent an older request from displaying its result against the new selection.
+New provider-profile/model/reasoning controls require explicit persisted-state migration and a core task-option contract rather than relabeling `model_id` or reusing `quality_level`; shared auth/scheduling and per-model defaults also require updating the schema/runtime/RPC consumers outside this node.
 ### Shared Conventions
 - All LiveViews use `use EvoDashWeb, :live_view` and import `CoreComponents` and `Layouts`.
 - All pages use `EvoDashWeb.Layouts.app/1` layout with `current_page` for nav highlighting.

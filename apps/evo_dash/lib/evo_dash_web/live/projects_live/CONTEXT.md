@@ -29,7 +29,7 @@ Every store/registry/`EvoDash.NodeContext` read runs in a supervised `EvoDash.Ta
 | `EvoDashWeb.ProjectsLive.Project` | `load_project_config/1`, `load_model_profiles/1`, `path_suggestions/3`, `task_notification_content/1`, `project_url/2` | local TOML/FS reads; `path_suggestions/3` is node-aware (`NodeContext.list_path_suggestions/2` for remote) |
 | `EvoDashWeb.ProjectsLive.ProjectFlow` | `register_and_open_project/2`, `open_project/2`, `select_project/2`, `close_project/1`, `build_foreign_repo/2`, `spawn_remote_project_activation/2,3` | local recent-project writes (small, sync); remote activation async → `{:async_remote_project, node, path, result}` |
 | `EvoDashWeb.ProjectsLive.Assigns` | `assign_form_defaults/1` | none — pure |
-| `EvoDashWeb.ProjectsLive.StatePersistence` | `maybe_persist_state/1`, `restore_state/1`, `maybe_restore_quality_level/2`, `maybe_restore_foreign_repos(socket, repos)` (per-node form state round-trip) | assigns + `push_event` only |
+| `EvoDashWeb.ProjectsLive.StatePersistence` | `maybe_persist_state/1`, `maybe_clear_state_on_node_switch/3`, `maybe_restore_assign/3`, `maybe_restore_quality_level/2`, `maybe_restore_foreign_repos(socket, repos)` (per-node form state round-trip; the page owns restore-event wiring) | assigns + `push_event` only |
 | `EvoDashWeb.ProjectsLive.AttachFile` | `pick/3`, `handle_result/3`, `handle_manual/3`, `read_kind/2` | LOCAL file reads (`EvoDash.AttachedFile.read/1`, `File.regular?/1`, `File.read/1`) |
 | `EvoDashWeb.ProjectsLive.GitHub` | `maybe_check/1`, `open_issues/3`, `fetch_and_fix/4`, `start_fix_task/3` | `NodeContext.github_upstream/2`, `github_issues/3`, `github_issue_markdown/3` (async runners); local `TaskRegistry.start_task/2` in the fix path |
 | `EvoDashWeb.ProjectsLive.RemoteView` | `top_bar/1`, remote banner | none — pure render |
@@ -100,9 +100,27 @@ The lookup is deliberately the LOCAL `TaskRegistry.get_task_lite/1` (same struct
 - `remote_view.ex`, `assigns.ex`, `state_persistence.ex` — pure render / pure assigns; zero RPC.
 - `attach_file.ex` — local file reads only (remote reads unsupported: the read runs on the LOCAL node's filesystem, and the node dropdown does not proxy it).
 
+## Model-selection helper contracts
+
+`Project.load_model_profiles/0,1` returns `{profiles, selected_id}`; `profiles` is the full `Schema.model_profiles(config)` result without local projection, and `selected_id` is `""` when a model-selection script is enabled, otherwise `Schema.default_model_profile(config)`'s id or nil.
+Local loading reads `Process.get(:memo_config_resolve) || Config.resolve()` and `CustomAgents.ModelSelector.enabled?/0`; the mount process's memo is not inherited by the supervised async task.
+Remote loading reads the target's `NodeContext.get_resolved_config/1` and `list_custom_agents/1`, degrading a config RPC error to `{[], nil}` rather than borrowing local metadata.
+The async batch separately loads custom agents and model profiles, so remote `list_custom_agents/1` is called twice and the `model_selection_enabled` flag and default selection can reflect different snapshots.
+`AsyncLoad.handle_result/5` assigns `model_profiles`, resolves `selected_model_id`, and assigns every remaining result key except the explicit internal-key exclusions, so future result keys become assigns automatically.
+Its selection validation runs only when the captured previous node id differs from the current node id: a nonempty carried id survives if any new profile has that id, otherwise the new default wins; same-node refresh preserves even an absent/stale selection.
+The batch has only BEAM-node and active-path stale guards, no generation token or target-id guard, so same-node/path results may arrive out of order and a delayed node-switch batch may override a subsequent user choice.
+`Assigns.assign_form_defaults/1` resets prompt/mode/node path/commit/resume/archive/build-system/advanced state but does not reset model selection, selected agent, or quality.
+`StatePersistence.maybe_persist_state/1` emits `selected_model_id`, `selected_agent_id`, and `quality_level` alongside the project/form/repo state via `persist_state`; there are no separately persisted provider-profile, model-value, or reasoning-effort fields.
+`StatePersistence.maybe_restore_assign/3` skips nil and `""` and accepts other binary values without membership validation, so it cannot restore the empty Auto sentinel over a nonempty default.
+`maybe_restore_quality_level/2` whitelists only `"fast"`, `"balanced"`, and `"high_quality"`; these are the existing speed/quality control, not reasoning-effort values.
+`maybe_clear_state_on_node_switch/3` clears the selected agent but preserves `selected_model_id` and `quality_level`, then immediately persists that state before the async model validation arrives.
+`GitHub.start_fix_task/3` is private and builds a separate `:evolve` launch payload containing `path`, `mode: "simple"`, `objective`, optional foreign repos and nonempty `selected_model_id` as `:model_id`; it does not add `:model_id_locked`, quality, selected agent, or reasoning/model overrides.
+The GitHub fix path reads the current selector assigns when the Markdown fetch completes, not when Fix was clicked, and its result handler guards only path and BEAM node, not modal-open state, the current fixing issue, or a generation token.
+Any model-selector payload contract change must cover this independent GitHub launch path as well as the page's normal submit path.
+
 ## Payload-vs-consumed gaps
 
-1. `get_resolved_config` transfers the entire resolved config; only the model-profile ids (+ the first id) are consumed.
+1. `get_resolved_config` transfers the entire resolved config; `Project.load_model_profiles_from_config/2` extracts and returns the full `Schema.model_profiles/1` profile maps unchanged plus the default profile id, so provider/model/generation metadata is available to consumers even though the current selector identifies profiles by id.
 2. `list_custom_agents` transfers full definitions + script + script_status; only agent ids and script non-empty-ness are consumed.
 3. `list_recent_projects` transfers `%RecentProject{path, name, last_opened_at}`; `last_opened_at` is never read here.
 4. `read_project_config` transfers the full parsed genesis.toml; `"worktree"`, `"script"`, `"commands"`, `"foreign_repos"` are consumed.

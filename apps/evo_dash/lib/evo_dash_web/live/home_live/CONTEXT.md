@@ -108,6 +108,14 @@ The pinned model survives New chat and node switches; the parent reset clears ch
 Remote loads must run off-process with the parent's independent `model_select_seq` and node stale guard; they never overwrite the pinned choice.
 `ModelSelect.task_opts/2` adds `model_id` plus `model_id_locked: true` only for a pinned id, leaving Auto without either key.
 The Auto label is "Auto (by rules)" when the model-selection script is configured, otherwise "Auto".
+`ModelSelect.load/1` returns the core `Schema.model_profiles/1` list unchanged, with no local provider grouping, catalog lookup, model-capability filtering or reasoning-effort enumeration.
+Its local branch matches only `node == node()`; nil follows the remote-call branch rather than being explicitly normalized to local here.
+Remote loading performs `get_resolved_config/1` first and `list_custom_agents/1` second only when the config read succeeds; the script predicate accepts any nonempty binary, including whitespace.
+`task_opts/2` prepends keys without replacing existing `:model_id` or `:model_id_locked` entries, while Auto returns the supplied keyword list unchanged rather than stripping prior selection keys.
+`ChatState.build/1` and `restore/1` construct explicit atom-keyed whitelists, so provider-profile, model-name and reasoning-level fields are not persisted by merely adding them to LiveView assigns or stored maps.
+The sole persisted LLM selection is `selected_model_id`, whose normalization preserves whitespace-only binaries and does not check catalog membership; comments promise a core fallback for unknown ids, but this helper itself implements no fallback.
+`Transcript.normalize/1` similarly reconstructs only `id`, `role`, `text` and `streaming`, so per-message model or reasoning metadata is discarded on restoration and never enters the next task's textual preamble.
+`ChatState.build/1` copies its known assign values without the normalizers used by `restore/1`, and both state and transcript restoration expect atom-keyed outer maps rather than JSON string-keyed state.
 
 ## Constraints
 
