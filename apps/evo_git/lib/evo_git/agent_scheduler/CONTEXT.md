@@ -138,7 +138,7 @@ Only an unknown legacy string id falls back to the configured default; invalid m
 `register_agent/7` returns `{integer_agent_id, state}` or `{:error, reason}` and resolves before any counter or ETS mutation.
 Subagent registration handles errors per child and inherits a locked parent's entire model_spec and lock before selection; legacy locked parents retain id/lock inheritance.
 The parent hub owns boot wiring through `State.from_config/2`, root registration error propagation, exposing the new config fields and any provider-oriented peak-engine/RPC integration outside this node.
-`model_selection_regression_test.exs` is leaf-local async ExUnit coverage runnable explicitly with `mix test apps/evo_git/lib/evo_git/agent_scheduler/model_selection_regression_test.exs`; it covers legacy projection/empty boot compatibility, canonical account pools, script-map resolution/errors and explicit/locked-parent precedence alongside the sibling scheduler suites without editing sibling tests.
+Scheduler regression tests belong at `apps/evo_git/test/evo_git/agent_scheduler/model_selection_regression_test.exs`, owned by the parent test tree; tests must never be placed under `lib/` to work around node scope.
 
 ## Slot Management (Slots module)
 
