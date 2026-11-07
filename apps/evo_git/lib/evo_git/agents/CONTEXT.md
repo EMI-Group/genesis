@@ -130,6 +130,15 @@ The WIDTH of fan-out (how many subagents a node spawns) is decided by the LLM fr
 
 No numeric subagent limit appears anywhere in these prompts; the only numeric guard is `context_extractor.ex:128` "Do not exceed 3 passes per node — the cap prevents infinite loops." (per-node re-spawn loop, not fan-out width).
 
+## Prompt / Tool-List Stability (provider prefix caching)
+
+- Every built-in `system_prompt/0` in this directory is a compile-time literal: raw `~S"""` heredocs joined with `PromptFragments.*/0` arity-0 functions that each return a fixed string (`prompt_fragments.ex:50-433`).
+- No `#{}` interpolation exists anywhere in this directory's prompts, and no `DateTime`/`Date`/`System.get_env`/`File.read`/`Application.get_env` call feeds any `system_prompt/0` — so a built-in agent's system message is byte-identical for the whole run AND across runs (the only per-run "date" in a conversation is the first-user `<context>` clock, owned by `../agent/context_builder.ex`).
+- The two non-literal prompts are still constant for one run: `SelfReflective.system_prompt/0` (`self_reflective.ex:48-280`) concatenates two literals around `ElixirEval.help/0` (a static heredoc, `agent/tools/elixir_eval.ex:78`), and `Custom.system_prompt/0` (`custom.ex:163`) reads the user's `agents.toml` `prompt` via the `:custom_agent_id` process-dictionary key (`custom.ex:189-214`).
+- `available_tools/0` is the ONE callback re-evaluated every turn (`runner.ex:768-783`), so it is the only per-turn-variable input to the tool-definition prefix: the default and read-only schema sets append `web_search`/`lsp` behind CALL-TIME config gates (`agent/tools.ex:196-218` → `EvoGit.Config.tools_search_enabled?/0`/`lsp_enabled?/0`), `Custom.available_tools/0` re-resolves its definition plus `CustomTools.schemas/0` per call (`custom.ex:122-161`), and subagent schemas are dropped at max depth from the LIVE `max_depth` (`runner.ex:772-788`).
+- Skill schemas are snapshotted ONCE at run start (`runner.ex:238-248`, `:265`) and never refreshed mid-run, so a skill added during the run does not change the tool list.
+- Per-agent-type-but-constant-within-a-run: `system_prompt/0`, `available_tools/0` output (absent a mid-run config/definition change), `subagent_modules/0`, `agent_type/0`, `delegation_level/0`, `max_turns`, and the model selection.
+
 ## Constraints
 - Every agent module MUST `use EvoGit.Agent` and implement `system_prompt/0`.
 - The behaviour module (`EvoGit.Agent`) lives in `../agent.ex`, NOT in this directory.
