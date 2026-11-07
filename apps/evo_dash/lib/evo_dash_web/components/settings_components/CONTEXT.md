@@ -49,6 +49,8 @@ The optional shared `context_window` is a blank-by-default numeric field with mi
 Each model map exposes `model`, optional `context_window`, optional `reasoning_efforts`, optional `default_reasoning_effort` and `generation` overrides.
 A draft shallow-merges over its provider, and explicit blank strings or empty collections remain authoritative, so the owner must keep complete nested model/generation drafts during row mutations.
 At most one provider may be edited; the stable form id is `provider-profile-edit-form`, with `phx-change="provider_profile_form_change"` and `phx-submit="save_provider_profile"`.
+Creation uses the atom `editing_profile_id: :new` with a map draft and an empty original `profile_id`; every string id, including `"new"`, identifies an ordinary saved provider row.
+The creation discriminator is distinct from persisted string ids, so adding an account while an account named `"new"` exists renders only one form and one copy of every editor id.
 The form is labelled by `provider-profile-settings-title`, references `provider-profile-errors` when the owner supplies errors, and renders only one submit button while row/cancel/recheck actions are explicit non-submit buttons.
 Unsupported reasoning defaults remain selectable for correction and set `aria-invalid="true"` on their labelled select instead of silently changing the saved value.
 The existing legacy editor is unchanged and must not be mounted alongside this editor against the same edit assigns.
@@ -57,7 +59,7 @@ The existing legacy editor is unchanged and must not be mounted alongside this e
 
 `SettingsComponents.category_section/1` imports the provider editor outside the flat `save_category` form and accepts separate `provider_profiles` and `model_selections` projections from SettingsLive.
 The default account comes from `file_config[:llm][:default_provider_profile]`, and edit/draft/auth assigns pass through unchanged except for the parent's flat-to-nested generation display adapter.
-The editor renders a standalone detached form for `editing_profile_id="new"`, and `default_model` is an independent text input because model override rows are optional.
+The editor renders a standalone detached form for `editing_profile_id=:new`, and `default_model` is an independent text input because model override rows are optional.
 Connection-test option values JSON-encode the account/model identity through public `SettingsComponents.model_selection_value/1`; they never identify a model by account id alone.
 
 ### Events and submitted fields
@@ -142,8 +144,14 @@ There is no per-profile error or provider-compatibility warning attr/region in t
 `SettingCard.setting_card/1` accepts `schema`, `value`, optional `error` and `disabled`, names fields with dotted schema paths, and has no own form, submit/change event, or draft storage.
 Its reasoning special case duplicates the profile option list but submits `llm.reasoning_effort`; its `:model_spec` widget is a free-text model string using `model_display/1`, and `:model_profiles` renders only a count badge.
 The remaining flat LLM cards are schema-driven compression/pruning controls: `SettingCard.flat_llm_schemas/1` excludes the dedicated `providers` and `default_provider_profile` keys as well as legacy model/generation fields.
-Search may still render those dedicated schema cards, so `:provider_profiles` renders only a count (nil/non-list values count as zero), and `default_provider_profile` renders only its identifier without a competing generic input.
-Provider maps are never inspected or serialized in the schema-summary card because they may contain credentials.
+### Generic search and reset boundary
+
+`CategoryMetadata.dedicated_provider_path?/1` is the shared predicate for `[:llm, :models]`, `[:llm, :providers]` and `[:llm, :default_provider_profile]`, which belong exclusively to the dedicated provider editor.
+`schema_matches?/2` rejects those paths before text matching, including for an empty query, so `SearchResults` omits them from result cards, per-category counts and its total description.
+`category_match_count/3` uses the same matching policy, and the sidebar derives both its filtered count and denominator through it so no excluded path inflates a search badge.
+`SettingCard` withholds generic `reset_key` buttons for all three paths even when a caller directly renders a dedicated schema summary.
+Direct summary fallback cards never serialize provider maps and render `default_provider_profile` only as an identifier, without a competing generic input.
+Normal generic keys retain their search matching, input widgets and reset controls.
 
 ## Notes for Agents — Model Profiles Editor: Authentication (OAuth / API key)
 

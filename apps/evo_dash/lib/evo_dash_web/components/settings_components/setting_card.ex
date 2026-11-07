@@ -5,6 +5,8 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
 
   use EvoDashWeb, :html
 
+  import EvoDashWeb.SettingsComponents.CategoryMetadata, only: [dedicated_provider_path?: 1]
+
   # ───────────────────────────────────────────────────────────────────────────
   # Appearance accent-color palette ([:appearance, :accent_color])
   # ───────────────────────────────────────────────────────────────────────────
@@ -82,6 +84,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
             "."
           )}</code>
           <button
+            :if={not dedicated_provider_path?(@schema.key_path)}
             type="button"
             phx-click="reset_key"
             phx-value-key_path={Enum.join(@schema.key_path, ".")}
@@ -271,8 +274,8 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                     </p>
                   </div>
                 <% :provider_profiles -> %>
-                  <%!-- Search renders the schema card too; never serialize account
-                       maps here because they may carry credentials. --%>
+                  <%!-- Summary-only fallback for direct callers; generic search
+                       excludes this path. Never serialize credential-bearing maps. --%>
                   <div class="w-full text-right">
                     <span class="badge badge-primary badge-sm gap-1 font-mono">
                       <.icon name="hero-server-stack" class="size-3" />

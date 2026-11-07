@@ -8,6 +8,8 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
   form: flat provider fields, indexed `models`/`peak_hours` maps, nested
   `generation` maps. They are shallow-merged over the saved provider, so an
   explicit blank or empty collection remains authoritative.
+  `editing_profile_id: :new` opens the creation form; string ids (including
+  `"new"`) identify saved profiles, so creation never also opens a saved row.
 
   Events: `add_provider_profile`, `edit_provider_profile` / `delete_provider_profile`
   (`profile_id`), `set_default_provider_profile` (`profile_id`),
@@ -93,8 +95,8 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
       </p>
 
       <.edit_form
-        :if={@editing_profile_id == "new" and is_map(@profile_form_draft)}
-        profile={%{"id" => "new"}}
+        :if={@editing_profile_id == :new and is_map(@profile_form_draft)}
+        profile={%{}}
         draft={@profile_form_draft}
         errors={@errors}
       />
