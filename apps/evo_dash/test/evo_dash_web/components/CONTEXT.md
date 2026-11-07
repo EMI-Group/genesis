@@ -27,6 +27,10 @@ There is **no `live(...)` call anywhere in this directory**: every component is 
 | `layouts_test.exs` | `EvoDashWeb.LayoutsTest` | 3 / 7 — `Layouts.app/1` sidebar task grouping, Assistant navigation, keyboard focus, and responsive configuration warning |
 | `category_metadata_test.exs` | `EvoDashWeb.CategoryMetadataTest` | 2 / 4 — pure `SettingsComponents.CategoryMetadata` units |
 
+## Coverage Boundary — shared LLM selection
+There is no dedicated `llm_selection_components_test.exs` in this directory.
+Existing selection render pins live in `task_form_components_test.exs`, settings field/disclosure pins in `model_profiles_editor_test.exs`, and subscription credential-state pins in `model_profiles_editor_auth_test.exs`.
+Component suites own isolated markup, event payload attributes and pure helper contracts; mounted event handling, persistence, node-aware loading and task-option threading belong to the separate LiveView test subtree.
 ## Coverage Boundary — review-page components
 
 - Component-level coverage of `EvoDashWeb.ReviewComponents` lives in `diff_viewer_test.exs` (`diff_viewer/1`, `file_tree_sidebar/1`, `tree_node/1`, `split_diff_layout/1`, `commit_diff_layout/1`, `commit_detail_header/1`, `parse_hunk_header/1`, `build_split_pairs/1`, plus the rendered-line / rendered-entry caps), `archive_tree_test.exs` (`archive_review_section/1`, `ArchiveComponents.archive_tree/1` + `archive_details/1`) and `blob_caps_test.exs` (`agent_summary/1`, `objective_section/1`, `archive_review_section/1` preview caps).
