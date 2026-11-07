@@ -67,22 +67,21 @@ defmodule EvoGit.AgentScheduler.Slots do
   # --- Model ID Resolution ---
 
   @doc """
-  Resolves the model_id for an agent by reading its AgentState from ETS.
-
-  Falls back to the state's default model_id if the agent has no explicit
-  model_id or is not found in ETS.
+  Resolves the provider/account pool id from the agent's immutable dispatch binding.
+  Legacy ETS rows map their model id through the configured selection aliases;
+  missing rows use the default provider pool. The historical function name remains.
   """
   @spec resolve_model_id(pos_integer(), State.t()) :: String.t()
   def resolve_model_id(agent_id, %State{} = state) do
-    case Store.get_model_id(agent_id) do
-      nil ->
-        State.default_model_id(state)
+    case Store.get_provider_profile_id(agent_id) do
+      id when is_binary(id) and id != "" ->
+        id
 
-      "" ->
-        State.default_model_id(state)
-
-      model_id ->
-        model_id
+      _ ->
+        case Store.get_model_id(agent_id) do
+          id when is_binary(id) and id != "" -> State.pool_id(state, id)
+          _ -> State.default_pool_id(state)
+        end
     end
   end
 

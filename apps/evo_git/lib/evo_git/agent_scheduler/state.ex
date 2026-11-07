@@ -5,9 +5,15 @@ defmodule EvoGit.AgentScheduler.State do
   Holds the full scheduler state including worktree pool configuration,
   slot management queues, agent tracking maps, and run metadata.
 
-  ## Per-Model LLM Slot Pools
+  ## Provider/account LLM Slot Pools
 
-  LLM slots are organized into **per-model pools**. Each model profile gets
+  `provider_profiles` contains canonical string-keyed provider/account profiles;
+  `model_profiles` retains the legacy field name for atom-keyed model selections.
+  `model_selection_config` is their shared schema-resolution snapshot.
+  All resource maps below use provider-profile ids, never concrete model names.
+  Legacy profiles without a provider_profile_id keep their original id as pool key.
+
+  LLM slots are organized into **per-provider/account pools**. Each provider profile gets
   its own concurrency limit, holder set, waiting queue, backoff timer, and
   last-granted tracking. This means a rate-limit on one provider no longer
   blocks agents using a different model.
@@ -60,12 +66,15 @@ defmodule EvoGit.AgentScheduler.State do
 
   require Logger
   alias EvoGit.AgentScheduler.Lifecycle
+  alias EvoGit.AgentScheduler.ModelSelection
   alias EvoGit.AgentScheduler.Slots
 
   @enforce_keys []
   defstruct default_llm_max_concurrency: 3,
             model_concurrency: %{},
             model_profiles: [],
+            provider_profiles: [],
+            model_selection_config: nil,
             agent_max_retries: 3,
             max_depth: 8,
             llm_model: nil,
@@ -94,6 +103,8 @@ defmodule EvoGit.AgentScheduler.State do
           default_llm_max_concurrency: pos_integer(),
           model_concurrency: %{String.t() => non_neg_integer()},
           model_profiles: [map()],
+          provider_profiles: [map()],
+          model_selection_config: map() | nil,
           agent_max_retries: non_neg_integer(),
           max_depth: pos_integer(),
           llm_model: ReqLLM.model_input(),
@@ -132,6 +143,42 @@ defmodule EvoGit.AgentScheduler.State do
     Map.get(profile, :id, "default")
   end
 
+  @doc "Builds scheduler model/pool state from the same config snapshot as reload."
+  def from_config(config, opts \\ []) do
+    model_opts = ModelSelection.config_opts(config)
+    default = get_in(config, [:scheduler, :default_llm_max_concurrency])
+
+    opts =
+      if is_nil(default),
+        do: opts,
+        else: Keyword.put_new(opts, :default_llm_max_concurrency, default)
+
+    from_model_profiles(
+      Keyword.fetch!(model_opts, :model_profiles),
+      Keyword.merge(model_opts, opts)
+    )
+  end
+
+  @doc "Maps a legacy selection id to its provider/account resource identity."
+  def pool_id(%__MODULE__{} = state, id) do
+    if Enum.any?(state.provider_profiles, &(ModelSelection.value(&1, :id) == id)) do
+      id
+    else
+      case Enum.find(state.model_profiles, &(ModelSelection.value(&1, :id) == id)) do
+        nil -> id
+        profile -> ModelSelection.pool_id(profile)
+      end
+    end
+  end
+
+  @doc "The default resource pool (not necessarily the default legacy model id)."
+  def default_pool_id(%__MODULE__{} = state) do
+    case List.first(state.model_profiles) || List.first(state.provider_profiles) do
+      nil -> "default"
+      profile -> ModelSelection.pool_id(profile)
+    end
+  end
+
   @doc """
   Builds a fresh `State` from a list of model profiles, initializing all
   per-model pool maps (holders, waiting queues, backoff, last_granted)
@@ -141,13 +188,13 @@ defmodule EvoGit.AgentScheduler.State do
   """
   @spec from_model_profiles([map()], keyword()) :: t()
   def from_model_profiles(profiles, opts \\ []) do
-    model_ids = Enum.map(profiles, fn p -> Map.get(p, :id, "default") end)
+    provider_profiles = Keyword.get(opts, :provider_profiles, [])
+    pool_profiles = if provider_profiles == [], do: profiles, else: provider_profiles
+    model_ids = Enum.map(pool_profiles, &ModelSelection.pool_id/1) |> Enum.uniq()
 
     model_concurrency =
-      profiles
-      |> Enum.zip(model_ids)
-      |> Map.new(fn {profile, id} ->
-        {id, Map.get(profile, :concurrency, 3)}
+      Map.new(pool_profiles, fn profile ->
+        {ModelSelection.pool_id(profile), ModelSelection.value(profile, :concurrency, 3)}
       end)
 
     empty_pools =
@@ -171,21 +218,36 @@ defmodule EvoGit.AgentScheduler.State do
       end)
 
     default_profile = List.first(profiles)
+    selection_config = Keyword.get(opts, :model_selection_config)
 
     {default_model, default_params, default_concurrency} =
-      case default_profile do
-        nil ->
-          {nil, [], 3}
+      if is_map(selection_config) and default_profile != nil do
+        seed = %__MODULE__{model_profiles: profiles, model_selection_config: selection_config}
 
-        profile ->
-          model = Map.get(profile, :model)
-          params = EvoGit.Config.Schema.llm_generation_params(profile)
-          concurrency = Map.get(profile, :concurrency, 3)
-          {model, params, concurrency}
+        case ModelSelection.resolve(seed, ModelSelection.value(default_profile, :id)) do
+          {:ok, resolved} ->
+            {resolved.llm_model, resolved.llm_generation_params,
+             Map.get(model_concurrency, resolved.provider_profile_id, 3)}
+
+          {:error, reason} ->
+            raise ArgumentError, "invalid default model selection: #{inspect(reason)}"
+        end
+      else
+        case default_profile do
+          nil ->
+            {nil, [], 3}
+
+          profile ->
+            {ModelSelection.value(profile, :model),
+             EvoGit.Config.Schema.llm_generation_params(profile),
+             Map.get(model_concurrency, ModelSelection.pool_id(profile), 3)}
+        end
       end
 
-    %__MODULE__{
+    state = %__MODULE__{
       model_profiles: profiles,
+      provider_profiles: provider_profiles,
+      model_selection_config: selection_config,
       model_concurrency: model_concurrency,
       llm_model: Keyword.get(opts, :llm_model, default_model),
       llm_generation_params: Keyword.get(opts, :llm_generation_params, default_params),
@@ -196,6 +258,12 @@ defmodule EvoGit.AgentScheduler.State do
       llm_backoff_until: empty_pools,
       llm_last_granted: empty_last_granted
     }
+
+    if provider_profiles != [] and Keyword.has_key?(opts, :default_llm_max_concurrency) do
+      apply_default_llm_concurrency_override(state, state.default_llm_max_concurrency)
+    else
+      state
+    end
   end
 
   @doc """
@@ -314,8 +382,24 @@ defmodule EvoGit.AgentScheduler.State do
     # Reload model profiles from config if model_profiles is being updated,
     # or if llm_model is being updated (backward compat: updates default profile)
     state =
-      if Keyword.has_key?(opts, :model_profiles) do
-        profiles = Keyword.get(opts, :model_profiles)
+      if Enum.any?(
+           [:model_profiles, :provider_profiles, :model_selection_config],
+           &Keyword.has_key?(opts, &1)
+         ) do
+        profiles = Keyword.get(opts, :model_profiles, state.model_profiles)
+        # Keep the provider snapshot when a caller replaces only selections.
+        opts =
+          opts
+          |> Keyword.put_new(:provider_profiles, state.provider_profiles)
+          |> Keyword.put_new(:model_selection_config, state.model_selection_config)
+
+        opts =
+          if Keyword.get(opts, :provider_profiles) != [] do
+            Keyword.put_new(opts, :default_llm_max_concurrency, state.default_llm_max_concurrency)
+          else
+            opts
+          end
+
         # Pass opts through so a :default_llm_max_concurrency override in the
         # same update is honored instead of being clobbered by the first
         # profile's concurrency.

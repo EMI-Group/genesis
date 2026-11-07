@@ -13,6 +13,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.ModelSelection
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
@@ -38,7 +39,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
           String.t() | nil,
           pos_integer() | nil
         ) ::
-          {pos_integer(), State.t()}
+          {pos_integer(), State.t()} | {:error, term()}
   def register_agent(
         %State{} = state,
         %AgentSpec{} = spec,
@@ -48,6 +49,14 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         task_id,
         task_number
       ) do
+    spec = inherit_model_selection(spec, parent_id)
+
+    with {:ok, selection} <- resolve_selection(state, spec, parent_id, depth, task_id) do
+      do_register_agent(state, spec, selection, from, parent_id, depth, task_id, task_number)
+    end
+  end
+
+  defp do_register_agent(state, spec, selection, from, parent_id, depth, task_id, task_number) do
     id = state.next_agent_id
 
     # Compute per-task local agent ID (display/branch naming only)
@@ -68,20 +77,12 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     # Resolve repo root from the spec's own data (avoids reading shared mutable state)
     agent_repo_root = resolve_agent_repo_root(spec, state)
 
-    # Resolve the effective model id for this agent (user-locked model >
-    # model-selection script > spec.model_id / custom-agent default), then map
-    # it to a profile, falling back to the default profile from state.model_profiles.
-    spec_model_id = effective_model_id(state, spec, parent_id, depth, task_id)
-
-    {resolved_model_id, resolved_model, resolved_params} =
-      resolve_model_for_agent(state, spec_model_id)
-
-    # Resolve the compression context window from the ALREADY-RESOLVED profile
-    # id: an unknown requested id already warned inside
-    # resolve_model_for_agent/2, and the canonical id always resolves, so
-    # re-resolving never warns twice — and the window and the model are
-    # guaranteed to come from the same profile.
-    resolved_context_window = resolve_context_window(state, resolved_model_id)
+    # Resolve the whole selection before any ETS/counter mutation. Resource
+    # identity stays separate from the legacy selection id and request model.
+    resolved_model_id = selection.model_id
+    resolved_model = selection.llm_model
+    resolved_params = selection.llm_generation_params
+    resolved_context_window = selection.llm_context_window
 
     Store.put_agent_state(id, %AgentState{
       context_node: spec.context_node,
@@ -90,6 +91,9 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       llm_generation_params: resolved_params,
       llm_context_window: resolved_context_window,
       model_id: resolved_model_id,
+      provider_profile_id: selection.provider_profile_id,
+      model_spec: selection.model_spec,
+      model_id_locked: Keyword.get(spec.opts, :model_id_locked, false) == true,
       max_retries: state.max_retries,
       max_depth: state.max_depth,
       max_turns: resolve_max_turns(state, spec, parent_id),
@@ -334,6 +338,57 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   end
 
   # --- Model Profile Resolution ---
+
+  @doc "Inherits a locked parent's full model selection at the scheduler boundary."
+  def inherit_model_selection(spec, nil), do: spec
+
+  def inherit_model_selection(spec, parent_id) do
+    case Store.get_agent_state(parent_id) do
+      {:ok, parent} -> ModelSelection.inherit(spec, parent)
+      :error -> spec
+    end
+  end
+
+  @doc """
+  Resolves selection without mutating scheduler state.
+  Explicit model_spec wins over legacy ids, defaults and scripts and never falls back.
+  Errors are returned to the caller before registration; the hub must propagate them.
+  """
+  def resolve_selection(state, spec, parent_id, depth, task_id) do
+    case ModelSelection.explicit_spec(spec) do
+      {:ok, requested} ->
+        ModelSelection.resolve_explicit(state, requested)
+
+      :error ->
+        requested = effective_model_id(state, spec, parent_id, depth, task_id)
+
+        if is_map(state.model_selection_config) do
+          case ModelSelection.resolve(state, requested) do
+            {:ok, _} = result ->
+              result
+
+            {:error, reason} ->
+              Logger.warning(
+                "AgentScheduler: legacy selection #{inspect(requested)} failed: #{inspect(reason)}; using default"
+              )
+
+              ModelSelection.resolve(state, nil)
+          end
+        else
+          {id, model, params} = resolve_model_for_agent(state, requested)
+
+          {:ok,
+           %{
+             model_id: id,
+             provider_profile_id: State.pool_id(state, id),
+             model_spec: nil,
+             llm_model: model,
+             llm_generation_params: params,
+             llm_context_window: resolve_context_window(state, id)
+           }}
+        end
+    end
+  end
 
   @doc """
   Resolves the model profile for an agent based on the spec's `model_id`.
