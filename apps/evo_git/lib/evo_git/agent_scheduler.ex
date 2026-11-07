@@ -569,17 +569,16 @@ defmodule EvoGit.AgentScheduler do
     unless default_model do
       Logger.warning("""
       AgentScheduler: LLM model not configured. Agent execution will be unavailable until configured.
-      Please set llm.model in your config file:
+      Please configure a provider account and its models in your config file:
 
       ~/.config/genesis/config.toml:
 
-          [llm]
-          model = "provider:model_name"
+          [[llm.providers]]
+          id = "my-provider"
+          provider = "provider"
+          models = ["model_name"]
 
-      Example models:
-      - "anthropic:claude-sonnet-4-20250514"
-      - "google:gemini-2.0-flash-exp"
-      - "zai:glm-5.1"
+      Use your provider's identifier and supported model names.
 
       You can also configure this via the Settings page in the dashboard.
       """)

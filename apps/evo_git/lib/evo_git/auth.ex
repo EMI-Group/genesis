@@ -88,11 +88,11 @@ defmodule EvoGit.Auth do
 
     1. `opts[:oauth_file]` when it is a non-empty binary (a leading `~` is
        expanded against the user's home directory) — callers resolve it from
-       the `[[llm.models]]` profile they are running, via
+       the `[[llm.providers]]` account profile they are running, via
        `EvoGit.Config.Schema.LLM.oauth_file_for/1`
     2. `default_oauth_file/0`
 
-  A model profile may point at its own file through its `oauth_file` setting;
+  A provider account profile may point at its own file through its `oauth_file` setting;
   this function never reads the user config itself, so the path always comes
   from the caller's explicit argument.
   """
@@ -270,7 +270,7 @@ defmodule EvoGit.Auth do
     Genesis found the subscription login but could not write its managed OAuth file
     (#{path}): #{describe_reason(reason)}.
     Remedy: set the OAuth profile's oauth_file to a writable location, e.g.
-    oauth_file = "~/.config/genesis/auth.json" inside the relevant [[llm.models]] profile
+    oauth_file = "~/.config/genesis/auth.json" inside the relevant [[llm.providers]] account profile
     under a writable home — running the vendor login again will not help.\
     """
   end
