@@ -391,19 +391,14 @@ defmodule EvoGit.AgentScheduler.State do
   """
   @spec do_update_config(keyword(), t()) :: {:reply, :ok, t()}
   def do_update_config(opts, %__MODULE__{} = state) do
-    # Reload model profiles from config if model_profiles is being updated,
-    # or if llm_model is being updated (backward compat: updates default profile)
+    # Rebuild model pools when profiles or their selection snapshot are replaced.
     state =
       if Enum.any?(
            [:model_profiles, :provider_profiles, :model_selection_config],
            &Keyword.has_key?(opts, &1)
          ) do
         profiles = Keyword.get(opts, :model_profiles, state.model_profiles)
-        # Keep the provider snapshot when a caller replaces only selections.
-        opts =
-          opts
-          |> Keyword.put_new(:provider_profiles, state.provider_profiles)
-          |> Keyword.put_new(:model_selection_config, state.model_selection_config)
+        opts = ModelSelection.update_opts(state, opts)
 
         opts =
           if Keyword.get(opts, :provider_profiles) != [] do
