@@ -61,6 +61,15 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   The top bar (Zone 1) and the collapsible Project Settings / Advanced Options
   panels live OUTSIDE this component in the dashboard layout.
+
+  Passing `provider_profiles`, `model_selections`, or a non-empty `model_spec`
+  enables the shared `LLMSelectionComponents.llm_selection/1` picker in its own
+  responsive row above the toolbar. Its event attrs (`provider_event`,
+  `model_event`, `reasoning_event`) pass through unchanged. The native reasoning
+  range emits an index; callers resolve it through
+  `LLMSelectionComponents.resolve_reasoning_effort/3` before storing the spec.
+  Speed/quality remains independent. When these new attrs are empty, the legacy
+  `model_profiles` / `selected_model_id` toolbar select remains unchanged.
   """
 
   # zh_CN: Evolution → "演进", Prompt → "提示词", Commit → "提交", Branch → "分支"
@@ -125,6 +134,12 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:show_advanced, :boolean, default: false)
   attr(:disabled, :boolean, default: false)
   attr(:archive, :boolean, default: false)
+  attr(:provider_profiles, :list, default: [])
+  attr(:model_selections, :list, default: [])
+  attr(:model_spec, :map, default: %{})
+  attr(:provider_event, :string, default: "select_provider_profile")
+  attr(:model_event, :string, default: "select_model")
+  attr(:reasoning_event, :string, default: "select_reasoning_effort")
   attr(:model_profiles, :list, default: [])
   attr(:selected_model_id, :string, default: nil)
   attr(:custom_agents, :list, default: [])
@@ -136,6 +151,14 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:quality_level, :string, default: "balanced")
 
   def task_form(assigns) do
+    assigns =
+      assign(
+        assigns,
+        :use_llm_selection?,
+        assigns.provider_profiles != [] or assigns.model_selections != [] or
+          assigns.model_spec not in [nil, %{}]
+      )
+
     ~H"""
     <.form
       for={%{}}
@@ -280,6 +303,23 @@ defmodule EvoDashWeb.TaskFormComponents do
                   <% end %>
                 </div>
               <% end %>
+
+              <%!-- The shared picker gets its own responsive row so provider,
+                   model and reasoning never squeeze the one-line launch toolbar.
+                   Task quality remains a separate policy control below. --%>
+              <EvoDashWeb.LLMSelectionComponents.llm_selection
+                :if={@use_llm_selection?}
+                id="task-llm-selection"
+                provider_profiles={@provider_profiles}
+                model_selections={@model_selections}
+                model_spec={@model_spec}
+                provider_event={@provider_event}
+                model_event={@model_event}
+                reasoning_event={@reasoning_event}
+                show_auto_option={@show_auto_model_option}
+                compact
+                class="mx-3 mb-2"
+              />
 
               <div class="input-controls flex-nowrap">
                 <%!-- Attach-kind dropdown — bottom-LEFT of the toolbar. A
@@ -545,7 +585,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 <% end %>
 
                 <!-- Model switch -->
-                <%= if @model_profiles != [] do %>
+                <%= if not @use_llm_selection? and @model_profiles != [] do %>
                   <select
                     name="model_id"
                     phx-change="select_model"

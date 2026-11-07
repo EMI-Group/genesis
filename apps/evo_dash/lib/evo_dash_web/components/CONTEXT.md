@@ -168,6 +168,23 @@ The launch panel is ONE card (`.input-card`) containing the objective textarea A
 - **Tests** (`task_form_components_test.exs`) assert the bottom-toolbar contract: attach dropdown first with its three `[data-picker-kind]` items, the quality control ids/`type`/`phx-value-level`/`btn-active`, mode/agent/model selects in DOM order with compact classes, `ml-auto` on the MODE select, `#task-launch-button` LAST with no auto margin, `disabled={@disabled}`, mode-option values/order, and the disabled welcome overlay.
 - **Mobile keyboard-aware heights**: `h-dvh` on `body`/`#app-layout`/`#sidebar`, `interactive-widget=resizes-content` in the viewport meta, and the AdaptiveInput hook syncing `--app-vh` from `window.visualViewport` so the `@media (max-width: 640px)` overrides track the area above the virtual keyboard.
 
+### Shared LLM Selection (`llm_selection_components.ex`)
+
+`EvoDashWeb.LLMSelectionComponents.llm_selection/1` is a pure reusable provider-profile/model/discrete-reasoning picker for Projects, Assistant, onboarding and Settings.
+It accepts `provider_profiles` (canonical string-keyed maps with `"id"`, `"name"`, `"provider"`), `model_selections` (the ordered atom-keyed `EvoGit.Config.Schema.model_selections/1` projection) and `model_spec` (string-keyed `"provider_profile_id"`, `"model"`, optional `"reasoning_effort"`); all default to empty.
+Optional attrs are `id` (default `"llm-selection"`, must be unique per page), `provider_event` (default `"select_provider_profile"`), `model_event` (default `"select_model"`), `reasoning_event` (default `"select_reasoning_effort"`), `disabled`, `compact`, `class` and `show_auto_option` (all boolean options default false).
+The provider and model controls submit `provider_profile_id` and `model` respectively; the native range named `reasoning_effort` emits a ZERO-BASED INDEX into the selected model's ordered `reasoning_efforts`, not a provider effort string.
+Call the public `resolve_reasoning_effort(model_selections, model_spec, value)` from change AND submit handlers before persisting the spec: a supported string or valid integer/decimal-string index returns `{:ok, effort_string}`, and a malformed/out-of-range value or unsupported model returns `{:error, :unsupported_reasoning_effort}`.
+The component never nests forms, fetches configuration or renders credentials; callers own state, validate provider/model changes, clear downstream choices and resolve the resulting spec through the core.
+Models are scoped to the exact selected provider profile; unavailable persisted providers/models stay visibly unavailable rather than silently selecting a replacement.
+The slider uses only advertised discrete steps, defaults to the model's supported default (else its first effort), disappears for unsupported models and is disabled for a single supported level.
+Callers should omit reasoning for unsupported models and retain the current/default effort when the disabled single-level slider is absent from submitted form data.
+Controls have unique associated labels, native keyboard navigation, range value text and translated labels; the responsive fieldset uses only theme-token utility classes.
+`TaskFormComponents.task_form/1` accepts the three projection/spec attrs and the three event attrs with the same defaults, rendering the shared picker (`id="task-llm-selection"`) in a responsive row above `.input-controls` when any new projection/spec is non-empty.
+That new row replaces only the legacy toolbar model select; attach, task quality, mode, custom agent and launch retain their existing toolbar order and task quality stays independent from reasoning.
+With all new attrs empty, `model_profiles` / `selected_model_id` / `show_auto_model_option` preserve legacy behavior unchanged.
+Persistent picker tests belong in the sibling test node: cover empty/stale selections, provider model isolation, defaults and explicit effort, unsupported/single-step models, index validation, event/id overrides, disabled state, credential privacy and TaskForm compatibility/quality independence.
+
 ### Foreign Repos — writable + base_sha + edit-in-place (`project_components.ex`)
 
 The project-settings foreign-repo editor implements the multi-repo read-write UI on top of `%EvoGit.Core.ForeignRepo{}` (`{id, root, description, writable: false, base_sha: nil}` — lives in `:evo_git`, do not re-implement).
