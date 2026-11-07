@@ -239,6 +239,8 @@ A `%ForeignRepo{}` carries only `root` (absolute; no worktree field); each spawn
 One `task_agent_archives` row per agent, written STREAMING at agent completion: `EvoGit.Agent.Completion.write_archive_refs/7` (gated `archive && base_commit`) builds the record and calls `TaskRegistry.put_task_archive/1` → `Store.put_task_archive/2` (upsert on `{task_id, agent_id}`, so a crash-retry completing twice REPLACES the row).
 Nothing is buffered in memory, there is no archive in `%Result{}` and none in the task report, and no compression layer exists anywhere on the archive path.
 The same function writes the protecting refs `refs/genesis/archive/T<task>-A<local>-start/-final` (always, before the row) and the metadata note (`add_metadata_note/3`, gated on `base_commit` alone); an unknown task id (`nil`/`0`/`""`) skips the row write and logs a debug line; `started_at`/`completed_at` are ISO-8601 STRINGS.
+Archived `llm_settings` are JSON-normalized by construction: keyword lists, lists of 2-tuples and tuples become STRING-KEYED maps, atoms become strings, and maps are normalized recursively (so `provider_options` archives as `%{"auth_mode" => "oauth", …}` instead of an unencodable tuple list).
+Credentials are NEVER archived: an `:api_key`/`"api_key"` entry is dropped entirely (at any depth), never replaced by a placeholder.
 
 ## Constraints
 - Every agent MUST `use EvoGit.Agent` and implement `system_prompt/0`; system prompts MUST NOT contain dynamic state, objectives or context trees (those are injected as user prompts).

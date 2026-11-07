@@ -26,26 +26,65 @@ defmodule EvoGit.Store.Types.ArchiveColumns do
   corrupt text → `nil` (a single unreadable JSON column must not fail the
   whole archive page — the row is still useful).
 
+  The JSON wire contract of `dump_json/1`:
+  values are encoded as plain JSON TEXT with NO compression, NO prefix tag and
+  NO atom whitelist.
+  Pair-shaped containers — keyword lists, lists of 2-tuples and tuples — are
+  normalized to string-keyed JSON objects BEFORE encoding, because Jason has no
+  Tuple encoder and producers legitimately carry a keyword-list
+  `provider_options`.
+  The normalization is recursive, so a pair list nested in a map or another
+  list is covered too.
+  Structs are left for their own `Jason.Encoder` implementation.
+  Genuinely unencodable terms (pids, refs, functions) still yield `:error`, so
+  the caller sees the violation instead of a silently mangled payload.
+
   Pure module — no Repo, no GenServer, no I/O.
   """
 
   @doc """
   Encodes a JSON column value (`nil` | map | list) to its TEXT form.
 
-  `nil` stays `nil` (SQL NULL). Non-JSON-able values return `:error` so the
-  caller sees the violation instead of silently storing a truncated payload.
+  `nil` stays `nil` (SQL NULL). Pair-shaped containers are normalized to
+  string-keyed maps first (see the module doc). Non-JSON-able values return
+  `:error` so the caller sees the violation instead of silently storing a
+  truncated payload.
   """
   @spec dump_json(nil | map() | list()) :: {:ok, String.t() | nil} | :error
   def dump_json(nil), do: {:ok, nil}
 
   def dump_json(value) when is_map(value) or is_list(value) do
-    case Jason.encode(value) do
+    case Jason.encode(normalize_pairs(value)) do
       {:ok, json} -> {:ok, json}
       {:error, _reason} -> :error
     end
   end
 
   def dump_json(_other), do: :error
+
+  # A struct owns its own encoding (some implement `Jason.Encoder`, some are
+  # genuinely unencodable) — never rebuild it from its fields.
+  defp normalize_pairs(value) when is_struct(value), do: value
+
+  defp normalize_pairs(%{} = map) do
+    Map.new(map, fn {key, value} -> {key, normalize_pairs(value)} end)
+  end
+
+  defp normalize_pairs(list) when is_list(list) do
+    if pairs?(list) do
+      Map.new(list, fn {key, value} -> {key, normalize_pairs(value)} end)
+    else
+      Enum.map(list, &normalize_pairs/1)
+    end
+  end
+
+  defp normalize_pairs(value), do: value
+
+  defp pairs?([{_key, _value} | _rest] = list), do: Enum.all?(list, &pair?/1)
+  defp pairs?(_list), do: false
+
+  defp pair?({_key, _value}), do: true
+  defp pair?(_other), do: false
 
   @doc """
   Decodes a stored JSON TEXT value back to a term.

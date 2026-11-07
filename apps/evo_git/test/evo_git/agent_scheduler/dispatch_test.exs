@@ -538,11 +538,13 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
 
     test "persists a :prompt_cache_key in the provider options" do
       task_id = "task-cache-#{:erlang.unique_integer([:positive])}"
-      {_id, _state, agent_state} = register_with_cache(cache_state(), task_id, 1)
+      {id, _state, agent_state} = register_with_cache(cache_state(), task_id, 1)
 
       provider_options = Keyword.fetch!(agent_state.llm_generation_params, :provider_options)
       key = Keyword.fetch!(provider_options, :prompt_cache_key)
 
+      # EXACTLY one `genesis-` prefix: the helper owns it, the scope does not.
+      assert key == "genesis-#{task_id}-#{id}"
       assert key =~ task_id
       # `session_id` is NOT part of the :openai provider schema.
       refute Keyword.has_key?(provider_options, :session_id)

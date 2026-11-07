@@ -297,20 +297,68 @@ defmodule EvoGit.Agent.Completion do
 
   defp build_llm_settings(model, generation_params, compression_threshold, model_id, model_spec)
        when is_list(generation_params) or is_nil(generation_params) do
-    params_map = Map.new(generation_params || [])
-
     # Keep the full selection alongside the effective request settings: model_id
     # identifies the account/slot pool, not the selected catalog model.
-    Map.merge(
-      %{
-        model: model,
-        context_compression_threshold: compression_threshold,
-        model_id: model_id,
-        model_spec: model_spec
-      },
-      params_map
-    )
+    %{
+      model: model,
+      context_compression_threshold: compression_threshold,
+      model_id: model_id,
+      model_spec: model_spec
+    }
+    |> Map.merge(Map.new(generation_params || []))
+    |> archive_json()
   end
+
+  # The archive row is PLAIN JSON (`Store.Types.ArchiveColumns`), so the
+  # settings must be JSON-clean BY CONSTRUCTION: generation params legitimately
+  # carry a keyword-list `provider_options` (tuples, which Jason cannot
+  # encode), and an account with an explicit `api_key_env_var` carries
+  # `:api_key`. A tuple or a raw secret here used to make the whole archive
+  # write fail, silently dropping the row.
+  defp archive_json(nil), do: nil
+  defp archive_json(value) when is_boolean(value), do: value
+  defp archive_json(value) when is_atom(value), do: Atom.to_string(value)
+  defp archive_json(value) when is_binary(value) or is_number(value), do: value
+  defp archive_json(%_{} = struct), do: struct |> Map.from_struct() |> archive_json()
+
+  # Credentials are NEVER archived: an `api_key` key is dropped outright (at
+  # any depth), never replaced by a placeholder a consumer could mistake for a
+  # value.
+  defp archive_json(%{} = map) do
+    for {key, value} <- map, not credential?(key), into: %{} do
+      {archive_json_key(key), archive_json(value)}
+    end
+  end
+
+  defp archive_json(list) when is_list(list) do
+    if pairs?(list) do
+      for {key, value} <- list, not credential?(key), into: %{} do
+        {archive_json_key(key), archive_json(value)}
+      end
+    else
+      Enum.map(list, &archive_json/1)
+    end
+  end
+
+  # Anything else (a pid, ref or function that should never be in request
+  # settings) is archived as its inspected form so ONE exotic value cannot cost
+  # the whole row.
+  defp archive_json(other), do: inspect(other)
+
+  defp archive_json_key(key) when is_binary(key), do: key
+  defp archive_json_key(key) when is_atom(key), do: Atom.to_string(key)
+  defp archive_json_key(key), do: inspect(key)
+
+  defp credential?(:api_key), do: true
+  defp credential?("api_key"), do: true
+  defp credential?(_key), do: false
+
+  # A keyword list or any other list of 2-tuples: a JSON object, not an array.
+  defp pairs?([{_key, _value} | _rest] = list), do: Enum.all?(list, &is_tuple_of_two?/1)
+  defp pairs?(_list), do: false
+
+  defp is_tuple_of_two?({_key, _value}), do: true
+  defp is_tuple_of_two?(_other), do: false
 
   defp format_foreign_repos(nil), do: []
 

@@ -149,11 +149,12 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   # The conversation scope for a registered agent: the task id (16-hex GUID)
   # plus the scheduler-unique agent id makes it stable across every turn of the
   # run and distinct across agents/subagents. A missing task id still gets a
-  # per-agent scope rather than none.
+  # per-agent scope rather than none. The `genesis-` prefix is NOT applied here
+  # — `EvoGit.Config.Schema.LLM.cache_identity/1` is its single owner.
   defp cache_identity_scope(task_id, agent_id) when is_binary(task_id) and task_id != "",
-    do: "genesis-#{task_id}-#{agent_id}"
+    do: "#{task_id}-#{agent_id}"
 
-  defp cache_identity_scope(_task_id, agent_id), do: "genesis-agent-#{agent_id}"
+  defp cache_identity_scope(_task_id, agent_id), do: "agent-#{agent_id}"
 
   @doc """
   Computes the next task number by scanning the `.genesis/workers/` directory.

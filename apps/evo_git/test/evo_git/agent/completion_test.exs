@@ -495,6 +495,60 @@ defmodule EvoGit.Agent.CompletionTest do
       Process.delete(:evogit_started_at)
     end
 
+    test "persists JSON-clean, credential-free llm_settings for an OAuth account", %{
+      tmp_dir: tmp_dir,
+      base_commit: base_commit,
+      final_commit: final_commit
+    } do
+      Process.put(:repo_path, tmp_dir)
+      task_id = "ct#{System.unique_integer([:positive])}"
+      agent_id = System.unique_integer([:positive])
+      register_agent!(agent_id, task_id, 7, 7)
+
+      Completion.complete(agent_id, "OAuth result", final_commit,
+        base_commit: base_commit,
+        archive: true,
+        llm_model: "openai_codex:gpt-6-luna",
+        model_id: "codex",
+        llm_generation_params: [
+          provider_options: [
+            auth_mode: :oauth,
+            oauth_file: "/tmp/x.json",
+            prompt_cache_key: "k",
+            session_id: "s"
+          ],
+          reasoning_effort: :high,
+          api_key: "sk-never-archive-me"
+        ]
+      )
+
+      # The row MUST exist: a tuple-shaped `provider_options` used to make the
+      # JSON dump fail, which silently dropped the WHOLE archive row.
+      entry = TaskRegistry.get_agent_archive(task_id, agent_id)
+      assert is_map(entry)
+
+      settings = entry["llm_settings"]
+
+      # Keyword list → string-keyed map, OAuth values intact; atom values are
+      # strings, so the column is plain JSON by construction.
+      assert settings["provider_options"] == %{
+               "auth_mode" => "oauth",
+               "oauth_file" => "/tmp/x.json",
+               "prompt_cache_key" => "k",
+               "session_id" => "s"
+             }
+
+      assert settings["reasoning_effort"] == "high"
+
+      # A credential is NEVER archived — the key is dropped, not redacted.
+      refute Map.has_key?(settings, "api_key")
+
+      # What the column holds round-trips as plain JSON.
+      assert {:ok, _json} = Jason.encode(settings)
+
+      Process.delete(:repo_path)
+    end
+
     test "re-completing the same agent REPLACES its archive row (crash-retry idempotency)", %{
       tmp_dir: tmp_dir,
       base_commit: base_commit,

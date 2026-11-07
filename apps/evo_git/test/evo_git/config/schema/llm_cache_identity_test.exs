@@ -24,13 +24,13 @@ defmodule EvoGit.Config.Schema.LLMCacheIdentityTest do
       params = [provider_options: [auth_mode: :oauth, oauth_file: "/tmp/auth.json"]]
 
       result =
-        LLM.with_cache_identity(params, "genesis-task-codex-1", "openai_codex:gpt-6-luna")
+        LLM.with_cache_identity(params, "task-codex-1", "openai_codex:gpt-6-luna")
 
       options = provider_options(result)
       key = Keyword.fetch!(options, :prompt_cache_key)
 
       assert key == Keyword.fetch!(options, :session_id)
-      assert key == "genesis-genesis-task-codex-1"
+      assert key == "genesis-task-codex-1"
       # The existing options are EXTENDED, never replaced.
       assert Keyword.fetch!(options, :auth_mode) == :oauth
       assert Keyword.fetch!(options, :oauth_file) == "/tmp/auth.json"
@@ -39,10 +39,10 @@ defmodule EvoGit.Config.Schema.LLMCacheIdentityTest do
     test ":openai gets prompt_cache_key only (no session_id)" do
       params = [provider_options: [store: false]]
 
-      result = LLM.with_cache_identity(params, "genesis-task-openai-1", "openai:gpt-4o")
+      result = LLM.with_cache_identity(params, "task-openai-1", "openai:gpt-4o")
 
       options = provider_options(result)
-      assert Keyword.fetch!(options, :prompt_cache_key) == "genesis-genesis-task-openai-1"
+      assert Keyword.fetch!(options, :prompt_cache_key) == "genesis-task-openai-1"
       refute Keyword.has_key?(options, :session_id)
       # store: false survives.
       assert Keyword.fetch!(options, :store) == false
