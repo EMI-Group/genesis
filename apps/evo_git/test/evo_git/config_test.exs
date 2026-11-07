@@ -427,7 +427,7 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
-  describe "model profiles resolution" do
+  describe "legacy model profiles resolution" do
     test "flat config migrates into single default profile" do
       # Simulate what resolve does with a flat config
       flat_config =
@@ -548,7 +548,7 @@ defmodule EvoGit.ConfigTest do
       assert get_in(config, [:llm, :model]) == "anthropic:claude-sonnet-4"
     end
 
-    test "returns first profile's model when using new format" do
+    test "returns first legacy profile's model when using the explicit list format" do
       config =
         Config.defaults()
         |> put_in([:llm, :models], [
@@ -563,7 +563,7 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
-  describe "save_user_config/1 LLM format (multi-model)" do
+  describe "save_user_config/1 legacy LLM format (multi-model)" do
     test "strip_flat_llm_fields removes flat gen params when models is non-empty" do
       config =
         Config.defaults()
@@ -937,7 +937,7 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
-  describe "config_status/0 llm_model gate (map-form model health)" do
+  describe "config_status/0 legacy llm_model gate (map-form model health)" do
     # Regression tests for the config-health fix: config_status/0's has_model
     # predicate now counts a profile whose :model is a valid map spec
     # (%{provider: ..., id: ..., base_url: ...} — kept as a map by
@@ -1305,6 +1305,65 @@ defmodule EvoGit.ConfigTest do
       assert message =~ "not run"
     end
 
+    test "canonical OAuth selection never substitutes another account's usable managed file", %{
+      oauth_home: home
+    } do
+      reqllm_key_cleanup()
+      blocked_file = write_unwritable_oauth_config!(home)
+      usable_file = Path.join(Config.config_dir(), "usable-auth.json")
+
+      File.write!(
+        usable_file,
+        Jason.encode!(%{
+          "openai-codex" => %{"type" => "oauth", "access" => "tok", "refresh" => "refresh"}
+        })
+      )
+
+      File.write!(Config.config_path(), """
+      [llm]
+      default_provider_profile = "blocked-account"
+
+      [[llm.providers]]
+      id = "usable-account"
+      provider = "openai_codex"
+      base_url = "http://127.0.0.1:1/v1"
+      auth_mode = "oauth"
+      oauth_file = "#{usable_file}"
+      models = [{model = "gpt-5.6-terra", context_window = 96000}]
+
+      [[llm.providers]]
+      id = "blocked-account"
+      provider = "openai_codex"
+      base_url = "http://127.0.0.1:1/v1"
+      auth_mode = "oauth"
+      oauth_file = "#{blocked_file}"
+      models = [{model = "gpt-5.6-terra", context_window = 96000}]
+      """)
+
+      config = Config.resolve()
+
+      for {id, path} <- [{"usable-account", usable_file}, {"blocked-account", blocked_file}] do
+        assert {:ok, resolved} = EvoGit.Config.Schema.resolve_model_spec(config, id)
+        assert resolved.provider_profile_id == id
+        assert resolved.generation_params[:provider_options][:auth_mode] == :oauth
+        assert resolved.generation_params[:provider_options][:oauth_file] == path
+        refute Keyword.has_key?(resolved.generation_params, :api_key)
+      end
+
+      # Every supported selection shape must stop before the request. The dead
+      # loopback endpoint also keeps an accidental fallback off the real provider.
+      for selection <- ["blocked-account", %{provider_profile_id: "blocked-account"}] do
+        assert {:error, message} = EvoGit.SystemCheck.llm_test(selection)
+        assert message =~ blocked_file
+        assert message =~ ":enotdir"
+        assert message =~ "not run"
+      end
+
+      assert {:error, message} = EvoGit.SystemCheck.llm_test()
+      assert message =~ blocked_file
+      assert message =~ "not run"
+    end
+
     test "no OAuth profile keeps the generic API-key warning byte-identical" do
       reqllm_key_cleanup()
 
@@ -1446,6 +1505,191 @@ defmodule EvoGit.ConfigTest do
 
       assert is_map(config)
       assert is_list(config.llm.models)
+    end
+  end
+
+  describe "canonical provider accounts through the config boundary" do
+    setup do
+      # All config reads happen in this process; no global XDG redirect is needed.
+      EvoGit.TestSupport.ConfigDir.isolate!("evogit-provider-config")
+
+      # Named account credentials and ReqLLM's provider-wide fallback are global.
+      # Restore absence as well as values so later modules see exactly their state.
+      names = ["GENESIS_CONFIG_ACCOUNT_A", "GENESIS_CONFIG_ACCOUNT_B"]
+      env_snapshot = Enum.map(names, &{&1, System.get_env(&1)})
+      reqllm_snapshot = reqllm_key_snapshot()
+      ReqLLM.put_key(:openai_api_key, "provider-wide-key-must-not-leak")
+      System.put_env("GENESIS_CONFIG_ACCOUNT_A", "account-a-secret")
+      System.put_env("GENESIS_CONFIG_ACCOUNT_B", "account-b-secret")
+
+      on_exit(fn ->
+        reqllm_key_restore(reqllm_snapshot)
+
+        for {name, value} <- env_snapshot do
+          if value, do: System.put_env(name, value), else: System.delete_env(name)
+        end
+      end)
+
+      :ok
+    end
+
+    defp canonical_account(id, env_var) do
+      %{
+        id: id,
+        provider: "openai",
+        api_key_env_var: env_var,
+        base_url: "http://127.0.0.1:11434/v1",
+        concurrency: 7,
+        temperature: 0.4,
+        max_tokens: 512,
+        default_model: "reasoner",
+        reasoning_efforts: ["low", "high"],
+        default_reasoning_effort: "low",
+        models: [
+          %{model: "fast", context_window: 32_000},
+          %{model: "reasoner", context_window: 96_000, temperature: 0.2, max_tokens: 1024}
+        ]
+      }
+    end
+
+    defp canonical_config do
+      Config.defaults()
+      |> put_in([:llm, :default_provider_profile], "account-b")
+      |> put_in([:llm, :providers], [
+        canonical_account("account-a", "GENESIS_CONFIG_ACCOUNT_A"),
+        canonical_account("account-b", "GENESIS_CONFIG_ACCOUNT_B")
+      ])
+    end
+
+    test "save/load keeps canonical accounts and nested models, never runtime mirrors or credentials" do
+      config =
+        canonical_config()
+        |> put_in([:llm, :model], "anthropic:stale-flat-model")
+        |> put_in([:llm, :temperature], 0.9)
+        |> put_in([:llm, :models], [%{id: "stale", model: "anthropic:stale-model"}])
+        |> put_in([:llm, :auth_mode], "api_key")
+        |> put_in([:llm, :oauth_file], "/stale/auth.json")
+        |> put_in([:llm, :provider_options], %{store: false})
+        |> put_in([:llm, :compression_threshold_tokens], 90_000)
+        |> put_in([:llm, :tool_result_pruning], false)
+
+      assert :ok = Config.save_user_config(config)
+      contents = File.read!(Config.config_path())
+      assert {:ok, decoded} = TomlElixir.decode(contents)
+      llm = decoded["llm"]
+      assert llm["default_provider_profile"] == "account-b"
+      assert Enum.map(llm["providers"], & &1["id"]) == ["account-a", "account-b"]
+
+      for account <- llm["providers"] do
+        assert account["provider"] == "openai"
+        assert account["concurrency"] == 7
+        assert account["default_model"] == "reasoner"
+        assert account["reasoning_efforts"] == ["low", "high"]
+
+        assert account["models"] == [
+                 %{"model" => "fast", "context_window" => 32_000},
+                 %{
+                   "model" => "reasoner",
+                   "context_window" => 96_000,
+                   "temperature" => 0.2,
+                   "max_tokens" => 1024
+                 }
+               ]
+      end
+
+      for key <-
+            ~w(model models temperature max_tokens reasoning_effort auth_mode oauth_file provider_options) do
+        refute Map.has_key?(llm, key)
+      end
+
+      assert llm["compression_threshold_tokens"] == 90_000
+      assert llm["tool_result_pruning"] == false
+      refute contents =~ "account-a-secret"
+      refute contents =~ "account-b-secret"
+      refute contents =~ "provider-wide-key-must-not-leak"
+
+      resolved_config = Config.resolve()
+      assert {:ok, resolved} = EvoGit.Config.Schema.resolve_model_spec(resolved_config, nil)
+      assert resolved.provider_profile_id == "account-b"
+      assert resolved.model == "reasoner"
+      assert resolved.reasoning_effort == "low"
+      assert resolved.context_window == 96_000
+      assert resolved.concurrency == 7
+      assert resolved.generation_params[:temperature] == 0.2
+      assert resolved.generation_params[:max_tokens] == 1024
+      assert resolved.generation_params[:api_key] == "account-b-secret"
+
+      # model_spec is for ReqLLM, not the persisted task-selection vocabulary.
+      assert resolved.model_spec == %{
+               provider: :openai,
+               id: "reasoner",
+               base_url: "http://127.0.0.1:11434/v1"
+             }
+
+      selection = Map.take(resolved, [:provider_profile_id, :model, :reasoning_effort])
+
+      assert {:ok, selected_again} =
+               EvoGit.Config.Schema.resolve_model_spec(resolved_config, selection)
+
+      assert selected_again == resolved
+
+      assert Config.config_status() == %{
+               ok?: true,
+               missing: [],
+               warnings: [],
+               validation_errors: []
+             }
+    end
+
+    test "same-provider accounts resolve their own keys for every model and explicit effort" do
+      assert :ok = Config.save_user_config(canonical_config())
+      config = Config.resolve()
+
+      for {id, secret} <- [{"account-a", "account-a-secret"}, {"account-b", "account-b-secret"}],
+          model <- ["fast", "reasoner"] do
+        selection = %{provider_profile_id: id, model: model, reasoning_effort: "high"}
+        assert {:ok, resolved} = EvoGit.Config.Schema.resolve_model_spec(config, selection)
+        assert resolved.provider_profile_id == id
+        assert resolved.model_spec.id == model
+        assert resolved.generation_params[:api_key] == secret
+        assert resolved.generation_params[:reasoning_effort] == :high
+        refute resolved.generation_params[:api_key] == "provider-wide-key-must-not-leak"
+      end
+    end
+
+    test "a missing account key never borrows another account or the provider-wide fallback" do
+      assert :ok = Config.save_user_config(canonical_config())
+      System.delete_env("GENESIS_CONFIG_ACCOUNT_B")
+      config = Config.resolve()
+      assert {:ok, missing} = EvoGit.Config.Schema.resolve_model_spec(config, "account-b")
+      assert missing.generation_params[:api_key] == ""
+      assert {:ok, other} = EvoGit.Config.Schema.resolve_model_spec(config, "account-a")
+      assert other.generation_params[:api_key] == "account-a-secret"
+
+      # The exact configured credential name also works in credentials.toml.
+      File.write!(
+        Config.credentials_path(),
+        "GENESIS_CONFIG_ACCOUNT_B = \"file-account-b-secret\"\n"
+      )
+
+      assert {:ok, from_file} =
+               EvoGit.Config.Schema.resolve_model_spec(Config.resolve(), "account-b")
+
+      assert from_file.generation_params[:api_key] == "file-account-b-secret"
+
+      assert {:ok, still_other} =
+               EvoGit.Config.Schema.resolve_model_spec(Config.resolve(), "account-a")
+
+      assert still_other.generation_params[:api_key] == "account-a-secret"
+    end
+
+    test "an invalid canonical default is rejected without replacing the saved config" do
+      assert :ok = Config.save_user_config(canonical_config())
+      original = File.read!(Config.config_path())
+      invalid = put_in(canonical_config(), [:llm, :default_provider_profile], "missing-account")
+      assert {:error, errors} = Config.save_user_config(invalid)
+      assert Enum.any?(errors, &(&1.key_path == [:llm, :default_provider_profile]))
+      assert File.read!(Config.config_path()) == original
     end
   end
 
