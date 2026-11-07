@@ -47,6 +47,27 @@ Its SSE stub forwards request bodies but discards request headers, and assertion
 The stages suite restores scheduler profiles but does not suspend PeakHourEngine, whereas the fail-fast suite explicitly suspends it before pinning profiles.
 The pure `context_compression_test.exs` usage tests compose Usage functions directly rather than exercising successful compression request selection or model-aware cost attribution.
 
+## Canonical Provider Selection Regressions
+
+`provider_selection_cost_test.exs` covers effective selected-model catalog pricing, nested generation overrides, shared account defaults, credential isolation, reasoning, custom-endpoint catalog fallback, locked/unlocked inheritance, cache pricing and mixed-model totals.
+The cost suite is synchronous because it pins the global scheduler profiles and peak-hour clock seams, suspending PeakHourEngine before profile changes and restoring profiles before resuming it.
+`provider_model_inheritance_test.exs` covers real child/grandchild builders and registration, complete canonical selections, locks, live-state precedence, spec/opts fallbacks, legacy compatibility and invalid-selection rejection.
+Its real SSE helper captures headers and bodies to verify selected-account endpoint/authentication, effective model, effort and nested generation settings through ordinary turns and successful compression.
+The inheritance suite is synchronous because it pins the global scheduler configuration and model-selection script/config integration, with unique production-shaped ETS rows and PeakHourEngine suspension.
+The canonical task selection is a string-keyed provider/account/model/effort map, whereas `resolved.model_spec` is a ReqLLM-ready request identifier and `generation_params` can contain credentials.
+Pure configured-context-window and compression-budget coverage lives in `./compression/provider_profile_test.exs`.
+These suites preserve expected behavior assertions even when production defects make them fail; never skip or weaken those assertions to make the suite green.
+
+### Known Provider Selection Implementation Defects
+
+`Agent.Cost` resolves a selected account's peak schedule through legacy model-profile IDs instead of provider profiles, so canonical selected-model costs use off-peak prices during configured peak periods.
+Five cost regressions expose the account-schedule lookup defect, including inherited selections and the inclusive peak boundary.
+Unlocked canonical inheritance bypasses per-spawn model-selection scripts because the child builder copies the inherited selection into explicit `model_spec` and Dispatch resolves it before consulting scripts.
+Two inheritance regressions require an unlocked child/grandchild script to select its own account/model while locked inheritance remains authoritative.
+Legacy delegation adds `model_spec: nil` to child opts, which `ModelSelection.explicit_spec/1` treats as explicit and rejects with `:invalid_model_spec` rather than resolving the inherited legacy ID.
+The legacy registration regression exposes that nil-option distinction without changing the production builder.
+Production fixes belong to the sibling source nodes and must be coordinated by the parent agent.
+
 ## Cost Recomputation Coverage (`cost_test.exs`)
 
 29 tests, one `describe` per public function of `EvoGit.Agent.Cost`. Pins the off-peak and peak formulas against the verified `deepseek:deepseek-v4-flash` catalog rates on one shared usage fixture (`input_tokens: 14_434_811`, `output_tokens: 263_800`, `cached_tokens: 14_164_224` → cache-miss input 270_587): off-peak `0.083081 / 0.15828 / 0.241361`, peak exactly 2× (delta 2e-6, component-wise rounding), `total == round6(input + output)`. Also: the cache discount (cache-read billed 0.003/M instead of the full 14_434_811 input at 0.15/M = 2.165222; `cached_tokens: 0` → derived `input_includes_cached = false` → full input billed), the `token.reasoning` exclusion (a 999_999 `reasoning_tokens` fixture returns the reasoning-free result), the totality contract (`nil` for an unresolvable model spec / non-map usage, the ZERO-cost map for `%{}`, no raise for arbitrary specs), the `apply_to_usage/3` override (only the three cost fields change; the struct stays byte-identical for nil/unknown agent ids and an unusable usage map), and period resolution via the clock seams (`period_for_profile/1`: peak vs off-peak windows incl. the half-open end, `off_peak_days` winning on a Monday, the `timezone` branch and its invalid-tz fallback to local wall clock; `period_for_model_id/1`: the temporary peak profile by id — atom- and string-keyed — plus unknown/nil/non-matching ids → `"off_peak"`).
