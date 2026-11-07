@@ -110,7 +110,8 @@ GitHub runners and task dispatch use `SafeCall` so an exit becomes a reported re
 
 The canonical task-picker assign is `selected_model_spec`, a STRING-keyed map containing only `provider_profile_id`, `model` and optional `reasoning_effort`; `%{}` is explicit Auto, while nil means uninitialized/use the node default.
 `Project.load_model_selection/0,1,2` returns a shared `LLMSelection.from_config(config, rules_enabled)` bundle for the executing node, and `load_model_selection_from_config/2` is its pure projection seam.
-Local loading honors the process-local `:memo_config_resolve`; remote loading uses the target's resolved config and degrades to an empty-config bundle on transport failure, never borrowing the dashboard's local models.
+Local loading honors the process-local `:memo_config_resolve`; remote loading uses the target's resolved config and converts a transport error into `LLMSelection.from_config(%{}, false)`, never borrowing the dashboard's local models.
+This empty-config fallback loses the distinction between failed loading and a successful empty configuration, so AsyncLoad can reconcile and persist an explicit pin as Auto and LaunchOptions can subsequently accept it without a model lock.
 A pending remote target (`current_node_id != nil` while its BEAM node is local) never reads local custom agents/config through `AsyncLoad.default_batch/6`, never applies batch results and preserves its pending model restore until a remote bundle is available.
 Passing the already-loaded rules flag avoids a second remote custom-agent read; `AsyncLoad.default_batch/6` uses this path.
 The old `Project.load_model_profiles/0,1` and `load_model_profiles_from_config/2` tuple APIs remain untouched for legacy callers and editing compatibility.
@@ -122,6 +123,8 @@ The bundle is an in-memory picker value, never persisted into browser storage or
 `reconcile(bundle, candidate)` returns a normalized string-keyed model spec, resolving nil to defaults, recognizing `%{}`/legacy `""` as Auto, migrating legacy ids, and falling back to valid node defaults when a provider/model/effort was removed.
 `task_opts(bundle, candidate)` returns `{:ok, keyword_opts}` or `{:error, reason}`; explicit selections resolve all defaults and yield exactly `model_spec: <canonical string map>, model_id_locked: true`, Auto yields `[]`, and stale/invalid explicit choices must error rather than silently launch as Auto.
 All model membership, reasoning defaults and legacy normalization belong to that shared helper, backed by `Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2`; this leaf does not reproduce them.
+The shared helper reconstructs the canonical selection from resolved `provider_profile_id`, `model` and advertised/default reasoning fields, not `resolved.model_spec`, which is the ReqLLM-ready identifier rather than a persisted picker map.
+LaunchOptions requires only a map-valued bundle and does not independently check target/node ownership or a pending restore, so callers own those launch prerequisites.
 
 ### Async freshness and restoration
 
@@ -139,7 +142,7 @@ The parent's provider/model/reasoning change handlers must clear `pending_model_
 
 ### Launch and parent-page wiring
 
-Normal submission must replace its inline model-id, agent and quality blocks with `LaunchOptions.apply(opts, socket.assigns)` and flash a returned error before making any task-start call.
+Normal submission calls `LaunchOptions.apply(opts, socket.assigns)` before either task-start call and routes validation failures through its existing failure flash.
 `LaunchOptions.apply/2` is pure and preserves unrelated launch fields, removes stale `model_id`/`model_spec`/lock keys before merging validated shared-helper options, emits nonempty custom-agent ids, and omits default balanced quality.
 GitHub fixes use this SAME launch helper before either local or remote task submission, so explicit model specs are locked and agent/quality policy matches normal launches.
 A missing picker bundle fails launch with `:model_selection_not_loaded`, rather than submitting an unintended default.
