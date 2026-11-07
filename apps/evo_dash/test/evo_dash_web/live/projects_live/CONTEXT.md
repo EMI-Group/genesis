@@ -35,6 +35,8 @@ Remote legacy profile loading must ignore a local `:memo_config_resolve` and deg
 Canonical launches distinguish nil/uninitialized selection, which locks the configured default even with rules enabled, from explicit empty-map/empty-string Auto, which removes every model lock.
 LaunchOptions tests exercise normal/GitHub-shaped option payloads through their shared helper but do not prove the mounted normal-submit or GitHub-fix callsites invoke it.
 Pure async-result tests exercise exposed `AsyncLoad` guards directly but do not prove mounted message routing, browser sessionStorage merge behavior or node switching.
+A connected-remote batch fixture stamps `results.load_scope` as `%{seq: projects_load_seq, node_id: current_node_id, selection: selected_model_spec_at_spawn}` and passes the matching remote BEAM node, target id and active project path to `AsyncLoad.handle_result/5`.
+The pending-remote test deliberately retains a non-nil target id while setting `current_node: node()` and proves that even a correctly stamped batch is rejected unchanged, so a stamp cannot turn a same-node placeholder into a connected remote fixture.
 The page owns the node-identity check before `StatePersistence.maybe_restore_model_selection/2`; that precondition requires mounted coverage in the parent test node.
 Source API contracts and mounted submit/restore/stale-message tests belong to the source ProjectsLive node and the parent test node respectively.
 
