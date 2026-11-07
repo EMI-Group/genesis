@@ -419,7 +419,11 @@ defmodule EvoDashWeb.HomeLive do
     if socket.assigns.model_selection_error do
       socket
     else
-      candidate = socket.assigns.model_spec || socket.assigns.selected_model_id
+      candidate =
+        if is_nil(socket.assigns.model_spec),
+          do: socket.assigns.selected_model_id,
+          else: socket.assigns.model_spec
+
       spec = LLMSelection.reconcile(socket.assigns.model_selection_bundle, candidate)
 
       socket

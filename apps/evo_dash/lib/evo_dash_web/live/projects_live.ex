@@ -1204,7 +1204,11 @@ defmodule EvoDashWeb.ProjectsLive do
           project_path = params["project"]
 
           if is_binary(project_path) and project_path != "" and File.dir?(project_path) do
-            activate_project(socket, project_path)
+            # Activation invalidates the initial batch's captured path; replace
+            # it with a fresh generation scoped to the restored project.
+            socket
+            |> activate_project(project_path)
+            |> AsyncLoad.maybe_spawn(socket.assigns[:current_node_id])
           else
             socket
           end

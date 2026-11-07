@@ -192,7 +192,7 @@ defmodule EvoDashWeb.WelcomeLive do
                         >
                           {gettext("Provider default")}
                         </option>
-                        <%= for effort <- Setup.reasoning_efforts() do %>
+                        <%= for effort <- Setup.reasoning_efforts(entry) do %>
                           <option
                             value={effort}
                             selected={Map.get(@model_reasoning, entry.model_string) == effort}
@@ -466,7 +466,10 @@ defmodule EvoDashWeb.WelcomeLive do
 
     if default in selected and is_map(reasoning) and
          Enum.all?(reasoning, fn {model, effort} ->
-           model in selected and effort in ["" | Setup.reasoning_efforts()]
+           entry = Enum.find(socket.assigns.flat_models, &(&1.model_string == model))
+
+           model in selected and not is_nil(entry) and
+             effort in ["" | Setup.reasoning_efforts(entry)]
          end) do
       entry = Enum.find(socket.assigns.flat_models, &(&1.model_string == default))
 
