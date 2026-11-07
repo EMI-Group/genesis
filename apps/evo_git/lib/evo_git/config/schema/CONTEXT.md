@@ -92,6 +92,9 @@ An absent model default picks the first model, absent provider default selection
 `model_selections(config)` returns ordered atom-keyed maps with exactly `provider_profile_id`, `profile_name` (name or id), `provider` (string), `model` (unqualified id), `reasoning_efforts`, `default_reasoning_effort` and `context_window`.
 The inventory preserves effort order and removes duplicates; a model inventory replaces the provider inventory, an explicit empty inventory imposes no restriction, and no effort default is invented from the first inventory entry.
 `resolve_model_spec(config, spec)` accepts nil, a provider/legacy id string, or an atom-/string-keyed map with `provider_profile_id`, optional `model` and optional `reasoning_effort`.
+A nonempty string candidate is always an EXACT provider-profile id, not an encoded selection or qualified model selector; there is no colon-splitting or `id:provider:model` alias matching at this boundary.
+A legacy id containing colons is preserved verbatim by migration and therefore resolves only as that exact profile id; explicit model selection belongs in the map's `model` field, which strips only the selected provider's exact prefix.
+Empty-string candidates fail with `:invalid_model_spec`, while a map with no provider id uses `llm.default_provider_profile` or the first profile and a nil candidate follows the same default path.
 Resolution precedence is provider defaults, then model overrides, then explicit task effort, and the provider default selector is `llm.default_provider_profile`.
 Success is `{:ok, resolved}` with all selection fields plus `reasoning_effort`, canonical `provider_profile`, atom-keyed legacy-compatible `runtime_profile`, ReqLLM `model_spec`, shared concurrency/peak keys and `generation_params`.
 Selection `model` stays an unqualified id, whereas `model_spec` and `runtime_profile.model` are the actual qualified string or custom-endpoint ReqLLM map.
