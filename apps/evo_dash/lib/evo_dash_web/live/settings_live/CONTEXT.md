@@ -115,6 +115,9 @@ SearchEvents resets in memory and delegates parent persistence/reload, handling 
 ConfigSave.start/4 returns {:started, socket}, {:rejected, reason, socket} or {:failed, {:startup, reason}, socket} and never optimistically assigns file_config.
 complete/2 consumes the entire nested SafeCall message and returns {:saved, receipt, socket}, {:failed, receipt, socket} or {:stale, unchanged_socket}.
 Requests bind a unique reference and {target_id, beam_node}, carry an explicit optional editor_token and prevent overlapping writes owned by the same LiveView.
+Both local and remote whole-file saves are asynchronous, so event-return HTML, immediate disk reads and immediate flash assertions are not completion barriers.
+Mounted tests must await the owned settings_config_saved result and its applied file_config or success/failure presentation before inspecting persisted configuration.
+ConfigSave captures the target scope, canonical candidate and explicit callbacks, not arbitrary process dictionary values; process-local test overrides depend on the downstream resolver's caller-chain support across Task.Supervisor children.
 Saved receipts contain authoritative file_config, warnings, scope, success_msg and runtime?, while failed receipts contain reason instead of file_config/warnings.
 A confirmed write followed by failed reload remains saved with the confirmed candidate and a tagged config_reload warning.
 The helper settles matching editor tokens but leaves authoritative config assignment, test-selection reconciliation, status/OAuth refreshes and flashes to the parent.
