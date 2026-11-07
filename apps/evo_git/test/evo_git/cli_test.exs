@@ -1,12 +1,18 @@
 defmodule EvoGit.CLITest do
-  # async: true is safe — this module only exercises PURE helpers
-  # (do_parse_foreign_repos/do_parse_model_flag/do_add_model_profile/
-  # resolve_model_id/Config.Schema) plus CLI error paths that return before any
-  # enqueue. It never mutates env vars/app env, never touches the Store or the
-  # scheduler, and `capture_io` is process-local.
+  # Helpers, per-process config save/load and pre-enqueue CLI error paths only;
+  # no environment/app-env mutations, global Store or scheduler access.
   use ExUnit.Case, async: true
 
   import ExUnit.CaptureIO
+
+  alias EvoGit.Config
+  alias EvoGit.Config.Schema
+  alias EvoGit.TestSupport.ConfigDir
+
+  setup do
+    ConfigDir.isolate!("evogit-cli")
+    :ok
+  end
 
   describe "foreign repo parsing" do
     test "parses name:path format" do
@@ -169,219 +175,119 @@ defmodule EvoGit.CLITest do
     end
   end
 
-  describe "setup wizard model profile writing" do
-    test "adds model to empty config as default profile" do
-      config = %{llm: %{models: []}}
-      result = EvoGit.CLI.do_add_model_profile(config, "anthropic:test-model")
+  describe "setup wizard canonical provider writing" do
+    test "adds a default account with an unqualified model to empty config" do
+      result = EvoGit.CLI.do_add_model_profile(%{llm: %{providers: []}}, "anthropic:test-model")
 
-      models = get_in(result, [:llm, :models])
-      assert length(models) == 1
+      assert result.llm.default_provider_profile == "default"
+      assert [profile] = result.llm.providers
 
-      profile = hd(models)
-      assert profile.id == "default"
-      assert profile.model == "anthropic:test-model"
-      assert profile.concurrency == 3
-    end
-
-    test "updates existing default profile model" do
-      config = %{llm: %{models: [%{id: "default", model: "old-model", concurrency: 5}]}}
-      result = EvoGit.CLI.do_add_model_profile(config, "anthropic:new-model")
-
-      models = get_in(result, [:llm, :models])
-      assert length(models) == 1
-
-      profile = hd(models)
-      assert profile.id == "default"
-      assert profile.model == "anthropic:new-model"
-      # concurrency preserved from existing profile
-      assert profile.concurrency == 5
-    end
-
-    test "appends default profile when only non-default profiles exist" do
-      config = %{llm: %{models: [%{id: "fast", model: "google:flash", concurrency: 2}]}}
-      result = EvoGit.CLI.do_add_model_profile(config, "anthropic:test-model")
-
-      models = get_in(result, [:llm, :models])
-      assert length(models) == 2
-
-      default = Enum.find(models, &(&1.id == "default"))
-      assert default.model == "anthropic:test-model"
-      assert default.concurrency == 3
-
-      fast = Enum.find(models, &(&1.id == "fast"))
-      assert fast.model == "google:flash"
-    end
-
-    test "mirrors model to llm.model for backward compat" do
-      config = %{llm: %{models: []}}
-      result = EvoGit.CLI.do_add_model_profile(config, "anthropic:test-model")
-
-      assert get_in(result, [:llm, :model]) == "anthropic:test-model"
-    end
-
-    test "produces config that passes Schema validation" do
-      config = %{llm: %{models: []}}
-      result = EvoGit.CLI.do_add_model_profile(config, "anthropic:claude-sonnet-4-20250514")
-
-      assert {:ok, _} = EvoGit.Config.Schema.validate(result)
-    end
-
-    test "produces valid [[llm.models]] TOML via save_user_config serialization" do
-      config = %{llm: %{models: []}}
-      result = EvoGit.CLI.do_add_model_profile(config, "anthropic:test-model")
-
-      # Replicate the stringify_keys logic from Config (recurses into maps,
-      # but not lists). Then encode and decode to verify round-trip.
-      stringify = fn
-        map, f when is_map(map) ->
-          Map.new(map, fn
-            {key, value} when is_atom(key) -> {Atom.to_string(key), f.(value, f)}
-            {key, value} -> {key, f.(value, f)}
-          end)
-          |> Enum.reject(fn {_k, v} -> v == nil end)
-          |> Map.new()
-
-        nil, _f ->
-          nil
-
-        v, _f ->
-          v
-      end
-
-      stringified = stringify.(result, stringify)
-      assert {:ok, toml} = TomlElixir.encode(stringified)
-
-      # The TOML should contain the array-of-tables header
-      assert String.contains?(toml, "[[llm.models]]")
-
-      # Round-trip: decode should restore the models list
-      {:ok, decoded} = TomlElixir.decode(toml)
-      decoded_models = get_in(decoded, ["llm", "models"])
-      assert length(decoded_models) == 1
-      assert %{"id" => "default", "model" => "anthropic:test-model"} = hd(decoded_models)
-    end
-  end
-
-  describe "setup wizard model profile writing (map specs)" do
-    # Replicate the stringify_keys logic from Config (recurses into maps and
-    # lists), then encode and decode to verify round-trip.
-    defp stringify(map) when is_map(map) do
-      Map.new(map, fn
-        {key, value} when is_atom(key) -> {Atom.to_string(key), stringify(value)}
-        {key, value} -> {key, stringify(value)}
-      end)
-      |> Enum.reject(fn {_k, v} -> v == nil end)
-      |> Map.new()
-    end
-
-    defp stringify(list) when is_list(list), do: Enum.map(list, &stringify/1)
-    defp stringify(nil), do: nil
-    defp stringify(value), do: value
-
-    test "adds map spec with base_url to empty config as default profile" do
-      config = %{llm: %{models: []}}
-      spec = %{provider: :openai, id: "gpt-5.6-terra", base_url: "https://x/v1"}
-      result = EvoGit.CLI.do_add_model_profile(config, spec)
-
-      models = get_in(result, [:llm, :models])
-      assert length(models) == 1
-
-      profile = hd(models)
-      assert profile.id == "default"
-      assert profile.model == spec
-      assert profile.concurrency == 3
-    end
-
-    test "mirrors map spec to llm.model for backward compat" do
-      config = %{llm: %{models: []}}
-      spec = %{provider: :openai, id: "gpt-5.6-terra", base_url: "https://x/v1"}
-      result = EvoGit.CLI.do_add_model_profile(config, spec)
-
-      assert get_in(result, [:llm, :model]) == spec
-    end
-
-    test "updates existing default profile model, preserving concurrency" do
-      config = %{llm: %{models: [%{id: "default", model: "old-model", concurrency: 5}]}}
-      spec = %{provider: :openai, id: "gpt-5.6-terra", base_url: "https://x/v1"}
-      result = EvoGit.CLI.do_add_model_profile(config, spec)
-
-      models = get_in(result, [:llm, :models])
-      assert length(models) == 1
-
-      profile = hd(models)
-      assert profile.id == "default"
-      assert profile.model == spec
-      assert profile.concurrency == 5
-    end
-
-    test "map spec with base_url passes Schema validation" do
-      config = %{llm: %{models: []}}
-      spec = %{provider: :openai, id: "gpt-5.6-terra", base_url: "https://x/v1"}
-      result = EvoGit.CLI.do_add_model_profile(config, spec)
-
-      assert {:ok, _} = EvoGit.Config.Schema.validate(result)
-    end
-
-    test "map spec with base_url round-trips through TOML serialization" do
-      config = %{llm: %{models: []}}
-      spec = %{provider: :openai, id: "gpt-5.6-terra", base_url: "https://x/v1"}
-      result = EvoGit.CLI.do_add_model_profile(config, spec)
-
-      stringified = stringify(result)
-      assert {:ok, toml} = TomlElixir.encode(stringified)
-
-      assert String.contains?(toml, "[[llm.models]]")
-      assert String.contains?(toml, "[llm.models.model]")
-      assert String.contains?(toml, "base_url = \"https://x/v1\"")
-
-      {:ok, decoded} = TomlElixir.decode(toml)
-      decoded_models = get_in(decoded, ["llm", "models"])
-      assert length(decoded_models) == 1
-
-      profile = hd(decoded_models)
-      assert profile["id"] == "default"
-
-      assert profile["model"] == %{
-               "provider" => "openai",
-               "id" => "gpt-5.6-terra",
-               "base_url" => "https://x/v1"
+      assert profile == %{
+               id: "default",
+               provider: "anthropic",
+               concurrency: 3,
+               reasoning_efforts: [],
+               default_model: "test-model",
+               models: [%{model: "test-model"}]
              }
+
+      refute Map.has_key?(result.llm, :model)
+      refute Map.has_key?(result.llm, :models)
+      assert {:ok, _} = Schema.validate(result)
     end
 
-    test "map spec without base_url to empty config as default profile" do
-      config = %{llm: %{models: []}}
-      spec = %{provider: :anthropic, id: "claude-sonnet-4"}
-      result = EvoGit.CLI.do_add_model_profile(config, spec)
+    test "updates the selected account without losing shared settings or model overrides" do
+      profile = selection_config().llm.providers |> hd()
+      config = %{llm: %{default_provider_profile: profile.id, providers: [profile]}}
+      result = EvoGit.CLI.do_add_model_profile(config, "openai:new-model")
 
-      models = get_in(result, [:llm, :models])
-      assert length(models) == 1
+      assert result.llm.default_provider_profile == profile.id
 
-      profile = hd(models)
-      assert profile.id == "default"
-      assert profile.model == spec
-      assert profile.concurrency == 3
+      assert result.llm.providers == [
+               %{profile | default_model: "new-model"}
+               |> Map.put(:models, profile.models ++ [%{model: "new-model"}])
+             ]
 
-      assert get_in(result, [:llm, :model]) == spec
+      assert {:ok, _} = Schema.validate(result)
     end
 
-    test "map spec without base_url passes Schema validation and round-trips" do
-      config = %{llm: %{models: []}}
-      spec = %{provider: :anthropic, id: "claude-sonnet-4"}
+    test "choosing another provider appends an account and retains existing accounts" do
+      config = selection_config()
+      result = EvoGit.CLI.do_add_model_profile(config, "anthropic:test-model")
+
+      assert [existing, added] = result.llm.providers
+      # Normalization materializes the default API-key auth mode for an
+      # untouched account; all its explicit settings remain unchanged.
+      assert existing == Map.put(hd(config.llm.providers), :auth_mode, "api_key")
+      assert result.llm.default_provider_profile == added.id
+      assert added.provider == "anthropic"
+      assert added.concurrency == 3
+      assert added.default_model == "test-model"
+      assert added.models == [%{model: "test-model"}]
+      assert {:ok, _} = Schema.validate(result)
+    end
+
+    test "legacy inputs migrate to accounts instead of reintroducing flat model mirrors" do
+      for llm <- [
+            %{model: "anthropic:old-model", temperature: 0.4},
+            %{models: [%{id: "default", model: "anthropic:old-model", concurrency: 5}]}
+          ] do
+        result = EvoGit.CLI.do_add_model_profile(%{llm: llm}, "anthropic:new-model")
+
+        assert result.llm.default_provider_profile == "default"
+        assert [profile] = result.llm.providers
+        assert profile.default_model == "new-model"
+        assert profile.models == [%{model: "old-model"}, %{model: "new-model"}]
+        if Map.has_key?(llm, :models), do: assert(profile.concurrency == 5)
+        if Map.has_key?(llm, :temperature), do: assert(profile.temperature == 0.4)
+        refute Map.has_key?(result.llm, :model)
+        refute Map.has_key?(result.llm, :models)
+        refute Map.has_key?(result.llm, :temperature)
+        assert {:ok, _} = Schema.validate(result)
+      end
+    end
+
+    test "string and map specs round-trip through actual canonical config serialization" do
+      for spec <- [
+            "anthropic:test-model",
+            %{provider: :anthropic, id: "claude-sonnet-4"},
+            %{provider: :openai, id: "gpt-5.6-terra", base_url: "https://x/v1"}
+          ] do
+        result = EvoGit.CLI.do_add_model_profile(%{}, spec)
+        assert {:ok, _} = Schema.validate(result)
+        assert :ok = Config.save_user_config(result)
+        toml = File.read!(Path.join(Config.config_dir(), "config.toml"))
+        assert toml =~ "[[llm.providers]]"
+        assert toml =~ "[[llm.providers.models]]"
+        refute toml =~ "[[llm.models]]"
+
+        assert {:ok, decoded} = TomlElixir.decode(toml)
+        assert Schema.provider_profiles(decoded) == Schema.provider_profiles(result)
+        assert Schema.provider_profiles(Config.user_config()) == Schema.provider_profiles(result)
+        assert decoded["llm"]["default_provider_profile"] == "default"
+        refute Map.has_key?(decoded["llm"], "model")
+        refute Map.has_key?(decoded["llm"], "models")
+
+        assert [profile] = result.llm.providers
+        assert profile.models == [%{model: profile.default_model}]
+
+        if is_map(spec) && Map.has_key?(spec, :base_url) do
+          assert profile.base_url == spec.base_url
+          assert profile.provider == "openai"
+          assert profile.default_model == spec.id
+        end
+      end
+    end
+
+    test "map spec update keeps account limits and does not duplicate an existing model" do
+      config = selection_config()
+      spec = %{provider: :openai, id: "review-model", base_url: "https://new.example/v1"}
       result = EvoGit.CLI.do_add_model_profile(config, spec)
 
-      assert {:ok, _} = EvoGit.Config.Schema.validate(result)
-
-      stringified = stringify(result)
-      assert {:ok, toml} = TomlElixir.encode(stringified)
-      assert String.contains?(toml, "[[llm.models]]")
-
-      {:ok, decoded} = TomlElixir.decode(toml)
-      decoded_models = get_in(decoded, ["llm", "models"])
-      assert length(decoded_models) == 1
-
-      profile = hd(decoded_models)
-      assert profile["id"] == "default"
-      assert profile["model"] == %{"provider" => "anthropic", "id" => "claude-sonnet-4"}
+      assert [profile] = result.llm.providers
+      original = hd(config.llm.providers)
+      assert profile == %{original | default_model: spec.id, base_url: spec.base_url}
+      assert {:ok, _} = Schema.validate(result)
     end
   end
 
@@ -414,12 +320,125 @@ defmodule EvoGit.CLITest do
     end
   end
 
-  describe "resolve_model_id/2" do
-    # NOTE: `resolve_model_id/2` is a NEW pure helper added by the CLI +
-    # task data-plane refactor. Per the shared contract it lands on
-    # `EvoGit.CLI` (the parallel CLI executor was told to put it there); if
-    # after the merge it ends up on `EvoGit.CLI.Parser` instead, adjust the
-    # module path below.
+  describe "resolve_model_opts/2 canonical task selections" do
+    test "Auto omits the selection and lock even with a configured default" do
+      assert EvoGit.CLI.resolve_model_opts([], selection_config()) == {:ok, []}
+    end
+
+    test "legacy account ids, id prefixes and model names select from the canonical inventory" do
+      for value <- ["account", "account:ignored:ignored", "openai:fast-model", "fast-model"] do
+        assert {:ok, opts} = EvoGit.CLI.resolve_model_opts([model: value], selection_config())
+
+        assert opts == [
+                 model_spec: %{
+                   "provider_profile_id" => "account",
+                   "model" => "fast-model",
+                   "reasoning_effort" => "low"
+                 },
+                 model_id_locked: true
+               ]
+      end
+    end
+
+    test "explicit flags preserve account, model and effort through the real parser" do
+      {flags, ["evolve", "fix x"]} =
+        EvoGit.CLI.Parser.parse_args([
+          "evolve",
+          "fix x",
+          "--provider-profile",
+          "account",
+          "--model",
+          "review-model",
+          "--reasoning-effort",
+          "high"
+        ])
+
+      config = selection_config()
+      assert :ok = Config.save_credentials(%{"EVOGIT_CLI_ACCOUNT_TEST_KEY" => "private-key"})
+
+      selection = %{
+        "provider_profile_id" => "account",
+        "model" => "review-model",
+        "reasoning_effort" => "high"
+      }
+
+      assert {:ok, resolved} = Schema.resolve_model_spec(config, selection)
+      # This is a ReqLLM identifier/override, NOT the serializable task selection.
+      assert resolved.model_spec == %{
+               provider: :openai,
+               id: "review-model",
+               base_url: "https://cli.example/v1"
+             }
+
+      assert resolved.generation_params[:api_key] == "private-key"
+      assert resolved.generation_params[:temperature] == 0.3
+      assert resolved.context_window == 64_000
+
+      assert {:ok, opts} = EvoGit.CLI.resolve_model_opts(flags, config)
+      assert opts == [model_spec: selection, model_id_locked: true]
+      refute inspect(opts) =~ "private-key"
+      refute inspect(opts) =~ "https://cli.example"
+    end
+
+    test "explicit selection inherits the model's default effort, not the account default" do
+      assert {:ok, opts} =
+               EvoGit.CLI.resolve_model_opts(
+                 [provider_profile: "account", model: "review-model"],
+                 selection_config()
+               )
+
+      assert opts[:model_spec] == %{
+               "provider_profile_id" => "account",
+               "model" => "review-model",
+               "reasoning_effort" => "high"
+             }
+    end
+
+    test "an account with no configured default effort omits effort from the task spec" do
+      config = %{
+        llm: %{
+          default_provider_profile: "plain",
+          providers: [
+            %{
+              id: "plain",
+              provider: "openai",
+              concurrency: 3,
+              default_model: "plain-model",
+              reasoning_efforts: [],
+              models: [%{model: "plain-model", context_window: 32_000}]
+            }
+          ]
+        }
+      }
+
+      assert {:ok, opts} = EvoGit.CLI.resolve_model_opts([model: "plain"], config)
+
+      assert opts == [
+               model_spec: %{"provider_profile_id" => "plain", "model" => "plain-model"},
+               model_id_locked: true
+             ]
+    end
+
+    test "invalid explicit flags and unavailable inventory choices do not fall back" do
+      for flags <- [
+            [provider_profile: "account"],
+            [reasoning_effort: "high", model: "review-model"],
+            [provider_profile: "", model: "review-model"],
+            [provider_profile: "account", model: ""],
+            [provider_profile: "account", model: "review-model", reasoning_effort: ""],
+            [provider_profile: "missing", model: "review-model"],
+            [provider_profile: "account", model: "missing"],
+            [provider_profile: "account", model: "review-model", reasoning_effort: "low"]
+          ] do
+        assert {:error, message} = EvoGit.CLI.resolve_model_opts(flags, selection_config())
+        assert is_binary(message) and message != ""
+      end
+    end
+  end
+
+  # Compatibility helper still accepts legacy model-profile lists; live CLI
+  # selections above use canonical provider accounts instead.
+  describe "resolve_model_id/2 legacy helper" do
     @resolve_profiles [
       %{id: "fast", model: "anthropic:claude-haiku"},
       %{id: "deep", model: "deepseek:deepseek-v4-pro"},
@@ -473,5 +492,36 @@ defmodule EvoGit.CLITest do
       assert EvoGit.CLI.resolve_model_id("mapy", @resolve_profiles) == {:ok, "mapy"}
       assert EvoGit.CLI.resolve_model_id("mapy:openai:gpt-5", @resolve_profiles) == {:ok, "mapy"}
     end
+  end
+
+  defp selection_config do
+    %{
+      llm: %{
+        default_provider_profile: "account",
+        providers: [
+          %{
+            id: "account",
+            provider: "openai",
+            base_url: "https://cli.example/v1",
+            api_key_env_var: "EVOGIT_CLI_ACCOUNT_TEST_KEY",
+            concurrency: 5,
+            temperature: 0.6,
+            default_model: "fast-model",
+            reasoning_efforts: ["low", "high"],
+            default_reasoning_effort: "low",
+            models: [
+              %{model: "fast-model", context_window: 128_000},
+              %{
+                model: "review-model",
+                context_window: 64_000,
+                temperature: 0.3,
+                reasoning_efforts: ["high"],
+                default_reasoning_effort: "high"
+              }
+            ]
+          }
+        ]
+      }
+    }
   end
 end
