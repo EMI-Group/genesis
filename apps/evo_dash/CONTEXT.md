@@ -81,9 +81,9 @@ Users open a Project (a Git repository path) and the dashboard auto-detects the 
 ### Canonical LLM Provider Profiles & Selection
 
 The dashboard's canonical configuration is `llm.providers` plus `llm.default_provider_profile`, not a flat `llm.models` editor.
-Provider profiles hold account identity, authentication/endpoint, shared concurrency and peak schedules, context/generation/reasoning defaults, a `default_model` and optional nested model overrides.
+Provider profiles hold account identity, authentication/endpoint, shared concurrency and peak schedules, context/generation/reasoning defaults, a `default_model` and configured nested models with optional per-model overrides.
 Provider/model maps use string keys; the Settings persistence boundary writes the atom-keyed `:llm` container and canonical collection/default keys.
-Model override rows are not an allowlist: a default-only provider is valid without a fabricated model row.
+Canonical provider profiles require a nonempty `models` list, with `default_model` identifying a configured model; mounted success fixtures must satisfy this inventory contract.
 Legacy `llm.models` and saved model-profile ids are migration inputs handled through core projections/resolution, never by splitting ids in dashboard code.
 
 **Task controls (Projects and Assistant)**
@@ -125,12 +125,6 @@ Authentication belongs to the provider profile: `auth_mode` selects API key or s
 `SettingsLive.AuthStatus` loads credential status off-process for the viewed node with node/sequence stale guards and explicit refresh, never polling or borrowing local login state.
 Guidance distinguishes missing login, an unwritable managed file and unknown status; an unwritable file offers a writable `oauth_file` remedy rather than asking the user to log in again.
 Core metadata owns provider capability and login instructions; detailed status/render contracts live in `live/settings_live/CONTEXT.md` and `components/settings_components/CONTEXT.md`.
-
-**Pending core integration validation**
-
-The dashboard calls the canonical Schema facade, but `EvoGit.Config.Schema` does not yet export `provider_profiles/1`, `model_selections/1` or `resolve_model_spec/2`, although implementations exist in `Schema.ProviderProfiles`.
-Core `EctoValidation.type_errors/3` also lacks the `:provider_profiles` clause required by the canonical schema descriptor, blocking normal configuration boot/validation and full Mix integration tests.
-These are core-owned integration prerequisites, not reasons to add dashboard fallbacks or bypass validation; validate the normal dashboard suite after they land.
 
 ### Custom Tools (Settings → Agents)
 
