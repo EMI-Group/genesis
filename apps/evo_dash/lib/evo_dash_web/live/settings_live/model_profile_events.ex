@@ -9,7 +9,11 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
   `profile_form_errors` maps string input names (or collection names for section
   errors) to translated messages. Save accepts raw nested UI params as its third
   argument when the parent adapts parser params separately.
-  The persistence boundary must capture `profile_save_token` with its own
+  Provider Save and deletion of the open editor call the parent contract
+  `persist_file_config(config, socket, message, editor_token: token)`; all other
+  mutations call `/3` without an editor token. The parent must forward the
+  explicit options to `ConfigSave.start/4`, never infer a token from assigns.
+  The persistence boundary must capture that token with its own
   target/node/request scope and call `persistence_succeeded/2` only after a
   confirmed write, or `persistence_failed/3` on failure (including startup
   failure). Neither flash messages nor optimistic file_config imply success.
@@ -165,8 +169,9 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
           case ProviderProfiles.parse_editor(params, id, original) do
             {:ok, profile} ->
               config = ProviderProfiles.update(socket.assigns.file_config, old_id, profile)
-              socket = assign(socket, :profile_save_token, make_ref())
-              persist(config, socket, gettext("Provider profile saved."))
+              token = make_ref()
+              socket = assign(socket, :profile_save_token, token)
+              persist(config, socket, gettext("Provider profile saved."), editor_token: token)
 
             {:error, errors} ->
               field_errors(
@@ -197,12 +202,13 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
   def delete_model_profile(socket, %{"profile_id" => id}) do
     config = ProviderProfiles.delete(socket.assigns.file_config, id)
 
-    socket =
-      if socket.assigns[:editing_profile_id] == id,
-        do: assign(socket, :profile_save_token, make_ref()),
-        else: socket
-
-    persist(config, socket, gettext("Provider profile deleted."))
+    if socket.assigns[:editing_profile_id] == id do
+      token = make_ref()
+      socket = assign(socket, :profile_save_token, token)
+      persist(config, socket, gettext("Provider profile deleted."), editor_token: token)
+    else
+      persist(config, socket, gettext("Provider profile deleted."))
+    end
   end
 
   def move_model_profile(socket, %{"direction" => direction, "id" => id}) do
@@ -337,6 +343,9 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
 
   defp persist(config, socket, message),
     do: EvoDashWeb.SettingsLive.persist_file_config(config, socket, message)
+
+  defp persist(config, socket, message, opts),
+    do: EvoDashWeb.SettingsLive.persist_file_config(config, socket, message, opts)
 
   defp error(socket, message), do: {:noreply, put_flash(socket, :error, message)}
   defp text(value) when is_binary(value), do: String.trim(value)

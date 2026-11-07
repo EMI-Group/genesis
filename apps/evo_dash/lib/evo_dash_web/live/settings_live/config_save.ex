@@ -21,6 +21,12 @@ defmodule EvoDashWeb.SettingsLive.ConfigSave do
   search, reset, Quick Setup, reorder and default saves must not close an editor.
   ModelProfileEvents callbacks themselves reject tokens from newer edits.
 
+  For a selected target resolving to the local BEAM, the parent must provide
+  the current target's authoritative `remote_status` map (as NodeAware does).
+  Only `%{phase: :connected}` admits such an alias; missing or non-connected
+  status is pending and must never fall through to a local write. Connection
+  status must be refreshed with target changes, not carried from an old target.
+
   Call `invalidate/1` BEFORE replacing a node/target's page state. It detaches
   presentation ownership but retains the live worker guard, so a scope round
   trip cannot revive the old completion or start a concurrent write. A stale
@@ -73,7 +79,7 @@ defmodule EvoDashWeb.SettingsLive.ConfigSave do
       busy?(socket) ->
         reject(socket, :save_in_progress, editor_token)
 
-      pending_scope?(scope(socket)) ->
+      pending_scope?(socket) ->
         reject(socket, :remote_not_connected, editor_token)
 
       true ->
@@ -208,8 +214,12 @@ defmodule EvoDashWeb.SettingsLive.ConfigSave do
   defp reject(socket, reason, editor_token),
     do: {:rejected, reason, ModelProfileEvents.persistence_failed(socket, editor_token)}
 
-  defp pending_scope?({target_id, target_node}),
-    do: not is_nil(target_id) and target_node == node()
+  defp pending_scope?(socket) do
+    {target_id, target_node} = scope(socket)
+
+    not is_nil(target_id) and target_node == node() and
+      not match?(%{phase: :connected}, socket.assigns[:remote_status])
+  end
 
   defp live_owner?(pid) when is_pid(pid), do: Process.alive?(pid)
   defp live_owner?(_), do: false

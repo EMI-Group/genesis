@@ -3,7 +3,7 @@
 ## Intent and Routing
 
 This leaf owns canonical provider-profile transformations, detached editor events, config form conversion, node-data/OAuth loaders, custom-agent events and search resets.
-Files are provider_profiles.ex, model_profile_helpers.ex, model_profile_events.ex, config_io.ex, node_data.ex, auth_status.ex, custom_agent_events.ex and search_events.ex.
+Files are provider_profiles.ex, model_profile_helpers.ex, model_profile_events.ex, config_io.ex, config_save.ex, node_data.ex, auth_status.ex, custom_agent_events.ex and search_events.ex.
 The parent ../settings_live.ex, ../../components/, core schema/runtime and dashboard tests are sibling-owned integration surfaces, not writable here.
 There are no child directories or temporary test handoff files in this leaf.
 
@@ -44,18 +44,19 @@ Compatibility add_model_profile/update_model_profile/put_in_model_profiles/move_
 generate_profile_id/1,2, profile_id/1 and id_collision?/3 support atom/string ids and collision-safe slugs/profile-N names.
 parse_model_profile_params/2 remains the LEGACY atom-keyed flat parser, not canonical Save.
 ModelProfileEvents functions take socket then params and return LiveView tuples, never sockets to double-wrap.
-editing_profile_id is an account id or unsaved "new" sentinel.
-The string sentinel collides with a saved account id of "new": Add then uses that account as the original and ProviderProfiles.update/3 replaces it rather than appending a separate account.
-Creation needs a state discriminator outside the account-id string domain, with a nil original id for collision detection and update.
+editing_profile_id is an account id or the atom :new for an unsaved account, so the saved string id "new" remains an ordinary account.
+Creation uses a nil original id for collision detection and update.
 Add creates only draft state, Edit snapshots/toggles an existing account and unknown ids no-op.
 model_profile_form_change replaces the ENTIRE detached draft; row add/remove changes only draft lists and invalid/negative/out-of-range removal is a no-op.
 Row clicks carry no form input, so phx-change snapshots must preserve typing before rerender.
 Cancel clears editor assigns without changing file_config.
-Save restores omitted collections, checks identity/collision and parses against the original before provider update and parent persistence.
-Parser failure retains the submitted draft, identity errors retain the existing draft and parse success clears the editor before persistence, with no draft rollback on write failure.
-ModelProfileEvents reports parser and identity errors only through flash messages and does not populate a structured field-error assign.
-A persistence failure occurs after clear_editor/1, so retryable submitted editor state is unavailable even though nothing was written.
-Delete persists and clears the editor, while Move persists only a real move and never calls the parent persistence boundary for a no-op.
+Save snapshots submitted drafts before identity/parser validation and retains translated string-keyed profile_form_errors for invalid fields or sections.
+A parsed Save creates profile_save_token and explicitly calls parent persist_file_config(config, socket, success_msg, editor_token: token).
+Delete of the currently edited account creates its own token and uses the same /4 overload; unrelated Delete uses /3 and never captures or replaces an existing editor token.
+Quick Setup, Move and Default also retain /3 with no editor options.
+persistence_succeeded/2 clears only a matching reference token after confirmed persistence; persistence_failed/3 retains its draft and clears the matching token.
+Draft mutations and editor changes invalidate old tokens, so stale callbacks cannot close newer edits.
+Move persists only a real move and never calls the parent persistence boundary for a no-op.
 Default persists through the parent and quick paths resolve catalog variants/models without saving credentials.
 advanced_open?/1 inspects provider and model generation/extra/provider_options in BOTH flat parser drafts and nested UI generation maps.
 An explicit profile_advanced_open boolean overrides the auto rule and resets on add/edit/cancel/success.
@@ -71,7 +72,13 @@ Nested input names are models[index][model|context_window|reasoning_efforts|defa
 Peak inputs are peak_hours[index][start|end|days] and off_peak_days[], including hidden blank checkbox seeds.
 The parent preserves nested drafts during Change and flattens known generation fields only for Save, removing override_reasoning UI sentinels without converting inheritance to an explicit empty inventory.
 Pass editing_profile_id/profile_form_draft/profile_advanced_open/auth_statuses through category_section to the standalone provider editor.
-Render a standalone new-draft form for editing_profile_id="new" because file_config contains no unsaved row.
+Render a standalone new-draft form for editing_profile_id=:new because file_config contains no unsaved row.
+The parent must export persist_file_config(file_config, socket, success_msg, opts) with keyword opts and pass them unchanged to ConfigSave.start(socket, file_config, success_msg, opts).
+The /3 overload must delegate with [] rather than infer editor_token from socket assigns, so generic saves cannot close an unrelated editor.
+The parent owns ConfigSave start/result presentation and authoritative config application; route the complete nested {{:settings_config_saved, token, scope}, result} message to ConfigSave.complete/2 and use ConfigSave.invalidate/1 before replacing target state.
+ConfigSave rejects pending target contexts that resolve to node(), but permits a known same-BEAM alias only when the parent supplies the current target's authoritative remote_status=%{phase: :connected} (NodeAware's contract).
+A missing/non-connected status rejects the same-BEAM alias; the parent must refresh status on target changes and never reuse another target's connected status.
+The parent /4 export and ConfigSave wiring are required integration work outside this leaf; no fallback shim hides a missing overload.
 Render default_model as independent text, not a select restricted to saved override rows.
 Native details open must use the explicit boolean or the SAME ModelProfileEvents.advanced_open?/1 rule, with collapsed inputs remaining in the DOM.
 All save paths, including generic category/search/reset and Quick Setup, must pass through ConfigIO.canonicalize_file_config/1 in the parent persistence boundary.
