@@ -198,7 +198,8 @@ Shared component contracts cover provider-scoped model choices, slider indices 0
 Projects contracts cover normal/GitHub canonical `model_spec` locks versus explicit Auto, session-state persistence and node/path/target/generation stale-result rejection.
 Assistant contracts cover provider/model/reasoning options, typed and suggestion sends, ChatState migration, remount/new-chat persistence and node isolation.
 Welcome contracts cover canonical multiple-model/default/reasoning setup, API-key/OAuth paths, unrelated-setting preservation and deterministic connection-result guards.
-Settings contracts cover canonical serialization without legacy shadows, unrelated-setting preservation, default-only models, multiple overrides and OAuth credential handling.
+Settings contracts cover canonical `llm.providers` persistence without legacy shadows, unrelated-setting preservation, nested generation typing and inheritance, default-only models, multiple overrides, OAuth credential handling, editor CRUD/default/cancel and row actions, Quick Setup, connection-test resolver options and legacy editing.
+The existing Settings page and helper suites use the parent editor adapter contract; mounted persistence and resolver-options assertions require the source integration blockers below to be resolved before they can be validated.
 All new pure contracts are async; mounted task-launch and chat tests retain existing process-global ownership constraints.
 Normal `mix test apps/evo_dash/test` currently aborts before ExUnit because core `EvoGit.Config.EctoValidation.type_errors/3` lacks `:provider_profiles` support, and dashboard callers require `EvoGit.Config.Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` delegates.
 The source-owning parent must remove the misplaced duplicate `apps/evo_dash/lib/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs`; the real suite lives under this test node without standalone `ExUnit.start`.
