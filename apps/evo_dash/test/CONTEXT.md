@@ -122,6 +122,7 @@ The 16 sync modules and the one global that forces each (per-file evidence: the 
 
 | File → module | Tests | Forcing global |
 |---------------|-------|----------------|
+| `support/config_dir_test.exs` → `EvoDash.Test.ConfigDirMountedTest` | 1 | reads the real Projects configuration loader, which async `ProjectsLiveTest` replaces through global `:projects_async_load_runner`; the two non-mounted proofs remain async |
 | `evo_dash/active_tasks_test.exs` | 9 | writes junk sentinel shapes into the `{nil, node()}` `EvoDash.ActiveTasks` key that async whole-page mounts seed from |
 | `evo_dash/isolated_task_store_test.exs` | 3 | terminates/restarts the process-global `EvoGit.Store`+`TaskRegistry` pair and asserts ABSOLUTE properties of the replacement |
 | `evo_dash/runtime_config_test.exs` | 9 | the OS PROCESS ENVIRONMENT (`PHX_SERVER` / `EVOGIT_DESKTOP` / `EVOGIT_SERVER` / `EVOGIT_REMOTE_DAEMON` / `RELEASE_NAME`, plus `HOME` / `XDG_DATA_HOME` / `APPDATA` redirected into a per-test temp dir), the `:evo_dash` `:desktop_release` app-env flag, and the `:evo_git` `:config_dir_fun` seam; evaluates the REAL `config/runtime.exs` with `Config.Reader.read!/2` in the `:test` and `:prod` envs, and pins `EvoDash.Application.children/0`'s mode-invariant endpoint |
@@ -198,27 +199,20 @@ Shared component contracts cover provider-scoped model choices, slider indices 0
 Projects contracts cover normal/GitHub canonical `model_spec` locks versus explicit Auto, session-state persistence and node/path/target/generation stale-result rejection.
 Assistant contracts cover provider/model/reasoning options, typed and suggestion sends, ChatState migration, remount/new-chat persistence and node isolation.
 Welcome contracts cover canonical multiple-model/default/reasoning setup, API-key/OAuth paths, unrelated-setting preservation and deterministic connection-result guards.
-Settings contracts cover canonical `llm.providers` persistence without legacy shadows, unrelated-setting preservation, nested generation typing and inheritance, default-only models, multiple overrides, OAuth credential handling, editor CRUD/default/cancel and row actions, Quick Setup, connection-test resolver options and legacy editing.
-The existing Settings page and helper suites use the parent editor adapter contract; mounted persistence and resolver-options assertions require the source integration blockers below to be resolved before they can be validated.
+Settings contracts cover canonical `llm.providers` persistence without legacy shadows, unrelated-setting preservation, nested generation typing and inheritance, nested model inventories, OAuth credential handling, editor CRUD/default/cancel and row actions, Quick Setup, connection-test resolver options and legacy editing.
+Settings page and helper suites use the parent editor adapter contract and await asynchronous save completion before asserting authoritative persistence.
 All new pure contracts are async; mounted task-launch and chat tests retain existing process-global ownership constraints.
 Normal dashboard Mix execution reaches ExUnit and exercises canonical provider integration through the mounted pages.
-Default-only provider fixtures intentionally omit optional model override rows; core rejection of their own default model is a production integration blocker, never a reason to fabricate rows or weaken successful-save assertions.
+Canonical provider fixtures require nested model rows containing the configured default model; an explicitly emptied model inventory must fail validation without mutating persisted config, and its retained draft must support correction and retry.
 Mounted positive remote URL/resume tests require a distinct BEAM identity and source-owned RPC seams because a non-nil target with the local BEAM identity is intentionally pending.
-The config-dir mounted proof passes in isolation but can still fail in the collective suite, so its fixture/load ownership must be checked before declaring full-suite success.
+The positive mounted config-directory proof runs synchronously because async Projects tests replace the global `:projects_async_load_runner`, which can bypass its real configuration load; the two non-mounted proofs remain async.
 Standalone pure/render checks and individually green helper directories do not establish collective mounted-suite success.
 
 ## Known Issues
 
-**Flaky: concurrent LLM-model-profile config saves (pre-existing, CONFIRMED).**
-Exactly ONE test in a full `apps/evo_dash` run fails non-deterministically (~1921/1922 passed), and its identity moves between runs/seeds.
-The candidates are the "profile save round-trip (auth_mode / oauth_file persistence)" tests in `test/evo_dash_web/live/settings_live/auth_status_test.exs` (e.g. "an OAuth anthropic profile persists both keys to config.toml", "an OAuth-only provider is self-describing without any auth_mode form value", "a blank oauth_file keeps auth_mode and omits only the path") and "model profiles editor save_model_profile persists off_peak_days and per-window days" in `test/evo_dash_web/live/settings_live_test.exs`.
-Symptom: the "Model profile saved." flash is missing and/or the profile is absent from the persisted config right after the save.
-Both modules are `async: true` and both save LLM model profiles through `EvoGit.Config.save_user_config/1` under the per-process `:config_dir_fun` → `EvoDash.Test.ConfigDir` seam, so the likely-but-unproven suspicion is concurrent config-save/cache interference between the two async settings modules under full-suite load.
-Reproduction signature: each file passes in isolation (27 passed, repeated 3×), the two modules pass together (180 passed), and `--max-cases 4` is sometimes green (1922 passed) and sometimes not — a load/concurrency race, not a deterministic break.
-It reproduces at the pre-merge commit with the involved test and production files unchanged, so it predates the current tree and is not caused by any single feature.
-The failing module can also CHANGE between runs: on a heavily loaded shared host one full `mix test` run failed `test/evo_dash_web/live/agents_live_test.exs` ("send_agent_message optimistic display missing agent shows a failure flash instead of a false success") while two consecutive isolation runs of that file passed (`mix test test/evo_dash_web/live/agents_live_test.exs` → 65 passed each), and the global scheduler ETS tables that module seeds are the likely cross-module interference channel.
-A full-suite failure that disappears when its module is re-run in isolation is load/global-state interference, not a regression, so the first diagnostic step before treating ANY single failing module as a real regression is to re-run that file alone and then the whole suite again.
-A future fix must keep every assertion in both suites pinned at full strength — do not relax them to make the race stop showing.
+Three positive Projects remote URL/resume tests remain blocked by source-owned RPC seams: a call-time remote-project loader around `ProjectFlow.remote_project_load/2` and a call-time resume-task reader around `NodeContext.get_task_lite/2` inside the existing supervised tasks.
+Their exact cases and source ownership are documented in `evo_dash_web/live/CONTEXT.md`.
+Tests must retain distinct remote BEAM identities and real supervised orchestration rather than bypassing the pending-remote guard or weakening successful activation assertions.
 
 ## Constraints
 
