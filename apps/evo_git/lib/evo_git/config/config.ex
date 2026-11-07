@@ -755,8 +755,14 @@ defmodule EvoGit.Config do
     |> Enum.any?(fn profile ->
       case {profile["auth_mode"], profile["api_key_env_var"]} do
         {"api_key", name} when is_binary(name) and name != "" ->
-          value = System.get_env(name)
-          is_binary(value) and value != ""
+          case System.get_env(name) do
+            value when is_binary(value) and value != "" ->
+              true
+
+            _ ->
+              value = Map.get(credentials(), name)
+              is_binary(value) and value != ""
+          end
 
         _ ->
           false
