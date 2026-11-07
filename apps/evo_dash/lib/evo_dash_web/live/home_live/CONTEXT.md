@@ -110,12 +110,18 @@ A canonical spec, including the empty Auto map, removes `selected_model_id` duri
 A scope includes the remote target id even while its node resolves locally, preventing a disconnected target from borrowing the local pin.
 Runtime seq counters, loaded configs, raw-view ids, approvals and source-gate state are never persisted.
 `ModelSelect.load/1` returns `{:ok, %{node: node, config: resolved_config, model_selection_enabled: boolean}}` or an error; nil normalizes to local.
+Invalid nonatom or boolean nodes return `:invalid_model_selection_node`, and a remote success with a nonmap config returns `:invalid_model_config_response` rather than becoming a usable snapshot.
+The config snapshot is the full server-only resolved config, not a persisted task selection or browser payload.
 The remote script predicate is read through `NodeContext.call_remote/4` against `EvoGit.CustomAgents.ModelSelector.enabled?/0`, not `list_custom_agents/1`, whose client wrapper masks transport failures as successful empty data.
 Loaded configs are ephemeral and may contain authentication settings, so they must never enter ChatHistory or rendered attributes.
 Remote loads remain supervised `SafeCall.start/4` work with nested result tags and independent monotonic `model_select_seq` plus node stale guards; the parent rejects pending remote targets before attempting a load or send.
 `ModelSelect.task_opts(snapshot, selection_state, scope, opts \\ [])` requires a matching snapshot node and persisted selection scope, rejects malformed state and pending-remote fallback-local sends, and calls parent-owned `EvoDashWeb.LLMSelection.task_opts/3` directly.
+A launch scope is exactly `{nil, node()}` locally or a nonblank target id paired with a nonlocal node atom remotely; nil/nonatom/boolean nodes and remote snapshots without a target id are rejected even for Auto.
+ChatState's shape validation also rejects boolean node values rather than retaining them as valid persisted scopes.
 Only a nil spec may fall back to the legacy migration id; false and other malformed non-nil values reach shared validation unchanged rather than silently becoming Auto or a default.
 The shared helper contract is `task_opts(config, spec_or_legacy_id, opts) -> {:ok, keyword} | {:error, reason}`: resolve through core `Schema.resolve_model_spec/2`, validate canonical selections, resolve the default reasoning effort before submit, emit string-keyed `:model_spec` plus `model_id_locked: true` for explicit choice, strip model_spec/model_id/model_id_locked for Auto, and reject stale profiles/models/efforts rather than silently choosing Auto.
+Core `resolved.model_spec` is a ReqLLM-ready string or endpoint-override map, NOT the persisted task selection map.
+The shared helper reconstructs only provider_profile_id/model/reasoning_effort from the resolved top-level fields; generation_params, runtime_profile and provider_profile can contain credentials and never belong in picker state, browser data or ChatHistory.
 Provider/model event transitions and reasoning-slider conversion belong in the shared parent helper and `LLMSelectionComponents.resolve_reasoning_effort/3`, not duplicated in Assistant code.
 The core projection contract is `Schema.provider_profiles(config)` string maps and `Schema.model_selections(config)` ordered atom maps containing provider_profile_id/profile_name/provider/model/reasoning_efforts/default_reasoning_effort/context_window.
 The parent seeds the selection fields, projects loaded snapshots with `LLMSelection.from_config/2`, renders `LLMSelectionComponents` with provider/model/reasoning events, reconciles migration/defaults and clears the legacy id, and handles task-option errors before appending bubbles or clearing drafts.
@@ -144,13 +150,22 @@ Run `mix test apps/evo_dash/test/evo_dash_web/live/home_live apps/evo_dash/test/
 Sibling test changes require the parent agent; approval feature coverage belongs in new async component/workflow modules, with synchronous tests only where an app-env runner or the singleton CommandApproval service is mutated.
 Approval tests should pin write/sudo wording, full escaped code and target, nil warning, explicit sudo warning, legacy presentation, busy buttons, pending recovery via the actual public API, task/agent/source-node filters, disconnected remote guards, stale seq/scope rejection, snapshot/broadcast races, absent-card submission rejection and retained cards on responder failure.
 Parent integration tests must assert retained cards while responding and reject responses for nonpending ids, rather than expecting optimistic removal.
-The scoped Mix command currently fails before tests because core `EctoValidation.type_errors/3` lacks the `:provider_profiles` case.
-The shared picker also requires core `Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` facade functions that are not yet exported; their implementation exists under `Schema.ProviderProfiles`, but integration belongs outside this leaf.
-Existing pure transcript/chat-state/message tests can run without application startup by loading compiled test beams with `elixir -pa '_build/test/lib/*/ebin'`, starting ExUnit and requiring those three sibling test files.
-Selection boundary checks can run in a disposable VM with an in-memory Schema facade delegating those three missing functions to the real `Schema.ProviderProfiles`, while keeping the real shared helper and leaf source loaded.
-That isolated boundary coverage is not a substitute for mounted coverage after core integration.
+Normal Mix startup supports canonical providers: core exports `Schema.provider_profiles/1`, `model_selections/1`, `resolve_model_spec/2` and validates the `:provider_profiles` descriptor without a facade shim or validation bypass.
+`model_select_test.exs` and `chat_state_test.exs` pin canonical defaults, inventories, explicit Auto, false/sticky errors, whole legacy ids, secret-free task opts, scope rejection and string-spec persistence.
+The two local-load fixtures in `model_select_test.exs` write config.toml and agents.toml to the wrong directory: `EvoDash.Test.ConfigDir.isolate!/1` returns the override ROOT, while `Platform.config_dir/0` appends `/genesis`.
+Those fixtures must create/use `EvoGit.Config.config_dir/0`, write config via `Config.config_path/0`, and write agents.toml inside that actual config directory; production `ModelSelect.load/1` must not read the override root as a fallback.
+Mounted explicit-pin sends require the app-global TaskRegistry admission process to see the same config as the LiveView; a per-test `$callers` directory override does not reach a singleton booted before the test.
+The three mounted canonical-send tests currently find no task because that registry resolves its own empty config and rejects the account before enqueueing; the test harness must align singleton config without removing admission or weakening the stored-options assertions.
+Core Store.Codec atomizes the outer model_spec key while keeping model_id_locked string-keyed, so `HomeLiveTest.assert_task_selection/2` must read `:model_spec` and `"model_id_locked"` instead of its stale string-only spec assertion once admission fixtures are aligned.
+Additional sibling regressions should cover nonatom/nil-node scopes, unscoped remote snapshots and invalid load-node arguments.
 Keep business assertions for four suggestion sends, source gate, direct user bubble shape, raw/copy attributes, safe Markdown and streaming markers intact.
-The support-only Mix command `mix test apps/evo_dash/test/evo_dash_web/live/home_live` shares the same core startup prerequisite.
-Selection redesign coverage must additionally pin string-spec round trips, malformed-spec sticky errors (including false), legacy local-only migration and removal after canonicalization, same-scope retention, cross-node/target reset, pending-remote rejection, remote load errors and direct shared-validator delegation.
-No sibling tests are modified by helper-only work; durable shared/default-reasoning/Auto option tests and mounted three-control event/send/persistence coverage belong to the parent integration.
-Persistent sibling selection regressions are still needed; isolated checks exercise canonical/default specs, explicit Auto without legacy resurrection, false rejection, stale selections, snapshot/scope guards, sticky errors and chat-state round trips.
+No sibling tests are modified by helper-only work; persistent additions and mounted event/send/persistence coverage belong to the parent integration.
+
+### Parent-page integration requirements
+
+The shared picker renders individual phx-change inputs that require a caller-owned form; HomeLive currently puts its header fieldset outside any form, and direct `render_change(view, event, params)` tests do not exercise native browser form wiring.
+Wrap the header picker in a separate form (never the composer or a nested form) while retaining provider/model/reasoning event names and zero-based slider decoding through `LLMSelection.select_reasoning_effort/3`.
+Provider/model transitions, canonical reconstruction and strict pre-send validation already delegate to the shared helper; do not replace them with resolved.model_spec or raw generation_params.
+`assign_model_select/1` must handle `SafeCall.start/4` returning `{:error, reason}` immediately, clearing model_select_loading and setting a retryable load error, because failed task startup sends no result message.
+Successful async loads still arrive as `{{:model_select_loaded, seq, target_node}, {:ok, snapshot_result}}`; the existing seq/node/pending guards reject stale target results, including two target ids sharing one BEAM node.
+A reload invalidates the snapshot and bundle before starting work; do not preserve a previous node's credentials or silently convert a failed load to Auto.
