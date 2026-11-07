@@ -104,7 +104,13 @@ defmodule EvoGit.Store.StoreInvariantsTest do
         "data" => "iVBORw0KGgo="
       }
     ],
-    quality_level: "fast"
+    quality_level: "fast",
+    # Only the outer opt key is atomized; canonical selection fields stay strings.
+    model_spec: %{
+      "provider_profile_id" => "account-a",
+      "model" => "model-a",
+      "reasoning_effort" => "high"
+    }
   ]
 
   @string_opts [
