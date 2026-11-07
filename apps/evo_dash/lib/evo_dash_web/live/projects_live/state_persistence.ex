@@ -9,6 +9,7 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
   alias EvoGit.Core.ForeignRepo
   alias EvoDashWeb.LLMSelection
   alias EvoDashWeb.ProjectsLive.ProjectFlow
+  alias EvoDashWeb.ProjectsLive.ModelSelectionScope
   import Phoenix.Component, only: [assign: 2, assign: 3]
   import Phoenix.LiveView, only: [push_event: 3]
 
@@ -50,7 +51,8 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
   whole stored object. An empty canonical map is an explicit Auto selection.
   """
   def maybe_persist_model_selection(socket) do
-    if is_map(socket.assigns[:selected_model_spec]) and
+    if match?({:ok, _}, ModelSelectionScope.bundle(socket.assigns)) and
+         is_map(socket.assigns[:selected_model_spec]) and
          is_nil(socket.assigns[:pending_model_selection]) do
       state =
         socket.assigns
@@ -101,19 +103,14 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
 
     case candidate do
       {:present, value} when is_map(value) or is_binary(value) ->
-        # Pending remote targets resolve locally until connected. A mount's
-        # local bundle must never validate (and clear) that target's restore.
-        pending_remote? =
-          socket.assigns[:current_node_id] != nil and socket.assigns[:current_node] == node()
-
-        case {socket.assigns[:model_selection], pending_remote?} do
-          {data, false} when is_map(data) ->
+        case ModelSelectionScope.bundle(socket.assigns) do
+          {:ok, data} ->
             socket
             |> assign(:selected_model_spec, LLMSelection.reconcile(data, value))
             |> assign(:pending_model_selection, nil)
             |> maybe_persist_model_selection()
 
-          _ ->
+          {:error, _reason} ->
             assign(socket, :pending_model_selection, value)
         end
 
@@ -131,12 +128,25 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
   """
   def maybe_clear_state_on_node_switch(socket, prev_node_id, current_node_id)
       when prev_node_id == current_node_id do
-    socket
+    case socket.assigns[:model_selection_scope] do
+      nil ->
+        socket
+
+      scope ->
+        if scope == ModelSelectionScope.current(socket.assigns),
+          do: socket,
+          else: clear_node_state(socket)
+    end
   end
 
   def maybe_clear_state_on_node_switch(socket, _prev_node_id, _current_node_id) do
+    clear_node_state(socket)
+  end
+
+  defp clear_node_state(socket) do
     socket
     |> assign(
+      recent_projects: [],
       task_prompt: "",
       task_resume_from: "",
       task_starting_commit: "",
@@ -144,6 +154,11 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
       task_archive: false,
       selected_agent_id: nil,
       model_selection: nil,
+      model_selection_scope: nil,
+      model_selection_ready?: false,
+      model_selection_error: nil,
+      selected_model_spec: nil,
+      selected_model_id: nil,
       provider_profiles: [],
       model_selections: [],
       pending_model_selection: nil,

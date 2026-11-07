@@ -24,10 +24,24 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
     EvoDashWeb.SettingsLive.ProviderProfiles.put_profiles(config, providers)
   end
 
-  @doc "Ordered model choices for task/custom-agent selectors, not provider editor rows."
+  @doc """
+  Credential-free ordered model choices, not provider editor rows.
+
+  Persist only `provider_profile_id`, `model` and optional `reasoning_effort`
+  as string-keyed picker state; never persist a resolved runtime model.
+  """
   def model_selections(config), do: Schema.model_selections(config)
 
-  @doc "Resolves a structured selection or a legacy model-profile id through the core."
+  @doc """
+  Server-only resolution of a canonical selection or legacy profile id.
+
+  The result's `model_spec` is a ReqLLM-ready identifier, NOT the canonical
+  task/picker map. Its `generation_params`, `provider_profile` and
+  `runtime_profile` can contain credentials and must never reach browser state.
+  Connection tests use `resolved.model_spec` and `resolved.generation_params`
+  together. Resolve on the viewed node (via RPC for remote tests), so OAuth
+  import and named API-key environment variables use that node's credentials.
+  """
   def resolve_model_spec(config, spec_or_legacy_id),
     do: Schema.resolve_model_spec(config, spec_or_legacy_id)
 
