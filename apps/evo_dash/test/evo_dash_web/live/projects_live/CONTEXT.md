@@ -2,30 +2,38 @@
 
 ## Intent
 
-This directory contains three async ExUnit suites for ProjectsLive support-module behavior without mounting a page.
+This directory contains six async ExUnit suites for ProjectsLive support-module behavior without mounting a page.
 The mounted ProjectsLive integration suite lives in the parent directory's `projects_live_test.exs`.
 
 ## API Surface
 
-- `project_test.exs` covers `Project.load_model_profiles/0,1` and the injected-config seam `Project.load_model_profiles_from_config/2`.
+- `project_test.exs` covers legacy `Project.load_model_profiles/0,1` and the injected-config seam `Project.load_model_profiles_from_config/2`.
 - `project_flow_test.exs` covers local/remote path normalization, node-aware foreign-repo construction/restoration, and recent-path suggestions.
 - `state_persistence_test.exs` covers `StatePersistence.maybe_restore_foreign_repos/2` and `serialize_foreign_repos/1` on minimal LiveView sockets.
+- `launch_options_test.exs` covers the shared normal/GitHub launch boundary, explicit canonical `model_spec` locking, Auto stripping carried locks, default selection with rules enabled, reasoning omission without an inventory, custom agent/quality options, and strict stale/unloaded-selection errors.
+- `model_selection_persistence_test.exs` covers canonical-field-only serialization, pending canonical/legacy restore precedence, explicit Auto, invalid input, pending-remote isolation, reconciliation, and separate full-state versus node-scoped partial-selection push events.
+- `async_load_selection_test.exs` covers `AsyncLoad.handle_result/5` node/path/target/generation guards, the pending-remote `default_batch/6` early return, canonical bundle projection, late user-choice preservation, pending restore reconciliation and same-node stale-provider removal.
 
 ## Constraints
 
-All three modules use `async: true` and require no LiveView mounts or database fixtures.
+All six modules use `async: true` and require no LiveView mounts or database fixtures.
+The canonical-selection suites use in-memory config maps and sockets, never app-env runner overrides, task launches, network calls or global state mutations.
+Canonical bundle fixtures call the public `Project.load_model_selection_from_config/2` API rather than mocking the core resolver.
 `ProjectTest` isolates configuration per process with `EvoDash.Test.ConfigDir.isolate!/1` and can inject local resolved configuration through `Process.put(:memo_config_resolve, config)`.
-Fake remote nodes exercise RPC degradation only, not successful remote configuration loading.
+Fake remote nodes exercise RPC degradation or pure scope checks only, not successful remote configuration loading.
 `ProjectFlowTest` snapshot-restores the global `:evo_dash, :remote_path_expand_runner` seam for tilde expansion.
-Minimal sockets for StatePersistence tests include `assigns.__changed__: nil`, `remote?: false`, and `current_node: node()` before overrides.
+Minimal sockets for foreign-repository StatePersistence tests include `assigns.__changed__: nil`, `remote?: false`, and `current_node: node()` before overrides.
+Canonical persistence and async-result sockets also initialize `private.live_temp` so emitted push-event payloads can be asserted directly.
 
 ## Coverage Boundaries
 
-Project profile-selection assertions expect the first configured profile id without a selection script, the empty-string Auto sentinel with a script, `{[], nil}` for no profiles without a script, and `{[], ""}` for no profiles with a script.
-Remote profile loading must ignore a local `:memo_config_resolve` and degrade to `{[], nil}` on an unreachable node.
-State-persistence coverage here exercises foreign repositories only, not selected provider/model persistence.
-No test in this directory exercises LaunchOptions, explicit `model_spec` task locks, normal versus GitHub submit wiring, or asynchronous node/sequence stale guards.
-Source API contracts and mounted submit/stale-message tests belong to the source ProjectsLive node and the parent test node respectively.
+Legacy Project profile-selection assertions expect the first configured profile id without a selection script, the empty-string Auto sentinel with a script, `{[], nil}` for no profiles without a script, and `{[], ""}` for no profiles with a script.
+Remote legacy profile loading must ignore a local `:memo_config_resolve` and degrade to `{[], nil}` on an unreachable node.
+Canonical launches distinguish nil/uninitialized selection, which locks the configured default even with rules enabled, from explicit empty-map/empty-string Auto, which removes every model lock.
+LaunchOptions tests exercise normal/GitHub-shaped option payloads through their shared helper but do not prove the mounted normal-submit or GitHub-fix callsites invoke it.
+Pure async-result tests exercise exposed `AsyncLoad` guards directly but do not prove mounted message routing, browser sessionStorage merge behavior or node switching.
+The page owns the node-identity check before `StatePersistence.maybe_restore_model_selection/2`; that precondition requires mounted coverage in the parent test node.
+Source API contracts and mounted submit/restore/stale-message tests belong to the source ProjectsLive node and the parent test node respectively.
 
 ## Routing Table
 
