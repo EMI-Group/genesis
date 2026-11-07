@@ -39,6 +39,10 @@ A connected-remote batch fixture stamps `results.load_scope` as `%{seq: projects
 The pending-remote test deliberately retains a non-nil target id while setting `current_node: node()` and proves that even a correctly stamped batch is rejected unchanged, so a stamp cannot turn a same-node placeholder into a connected remote fixture.
 The page owns the node-identity check before `StatePersistence.maybe_restore_model_selection/2`; that precondition requires mounted coverage in the parent test node.
 Source API contracts and mounted submit/restore/stale-message tests belong to the source ProjectsLive node and the parent test node respectively.
+Canonical `Project.load_model_selection/1` loading is not directly tested here; local memo isolation and unreachable-remote degradation assertions in `project_test.exs` exercise only the legacy profile loader.
+The canonical helper suites do not directly pin failed/unavailable bundle application, recovery after a failed bundle, or partial-persistence rejection for explicit false readiness, mismatched ownership scope and a non-nil load error.
+`LaunchOptionsTest` pins a missing bundle but does not supply node/target ownership or readiness/error assigns, so it does not establish that a present stale or foreign bundle is rejected at launch.
+Browser restore node validation, actual event routing into helpers, sessionStorage partial-merge preservation of prompt data and normal/GitHub callsite wiring require mounted or JavaScript coverage outside this directory.
 
 ## Routing Table
 
