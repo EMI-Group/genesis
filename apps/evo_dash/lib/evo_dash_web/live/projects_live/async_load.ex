@@ -3,8 +3,8 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   Async node-aware loads for `EvoDashWeb.ProjectsLive`.
 
   Coordinator for the node-aware loads that must NOT run in the LiveView
-  process (custom agents, model profiles + the `selected_model_id` switch
-  validation, remote project config/mode, recent projects, and the
+  process (custom agents, canonical provider/model selections, remote project
+  config/mode, recent projects, and the
   notified-terminal-id seed). All loads run in ONE supervised
   `EvoDash.TaskSupervisor` task per connected handle_params run so the
   LiveView process never blocks on cross-node RPCs or on the task store — the
@@ -21,8 +21,9 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   yet; a remote/pending context or an already-seeded socket leaves it nil.
 
   Results arrive as a single `{:async_project_load, node, prev_node_id, path,
-  results}` message; `handle_result/5` drops stale results (the captured node
-  or active project path no longer matches the current socket) and reports
+  results}` message; `handle_result/5` drops stale results using node, target
+  id, active path and monotonic generation. A selection snapshot prevents a
+  delayed batch from replacing a newer user choice. It reports
   whether it applied anything, so the caller only runs post-apply follow-ups
   (auto-activation, GitHub detection) for results that actually landed.
 
@@ -40,6 +41,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   alias EvoGit.TaskRegistry
 
   alias EvoDash.NodeContext
+  alias EvoDashWeb.LLMSelection
   alias EvoDashWeb.ProjectsLive.Notifications
   alias EvoDashWeb.ProjectsLive.Project
   alias EvoDashWeb.ProjectsLive.ProjectFlow
@@ -49,12 +51,11 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
 
   @doc """
   Spawns the grouped async node-aware load for the current handle_params run
-  and returns the socket unchanged.
+  and returns the socket with its new load-generation token.
 
-  Captures the resolved node, the pre-`assign_node` node id (so the
-  continuation can replicate the original node-switch `selected_model_id`
-  validation), whether the context is remote, and the active project path at
-  spawn time. The task body runs OUTSIDE the LiveView process; dead renders
+  Captures the resolved node, target id, generation, current selection,
+  pre-`assign_node` node id, remote state, and active project path at spawn
+  time. The task body runs OUTSIDE the LiveView process; dead renders
   skip the spawn entirely (the assigns are seeded in mount/3 and filled by the
   connected run).
 
@@ -79,6 +80,9 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
         current_node_id == nil and socket.assigns[:notified_task_ids_ready?] != true
 
       auto_activate? = socket.assigns[:auto_activate_candidate?] == true
+      seq = System.unique_integer([:positive, :monotonic])
+      selection_snapshot = selection_candidate(socket.assigns)
+      socket = assign(socket, :projects_load_seq, seq)
       parent = self()
 
       # Resolved AT SPAWN TIME (dashboard runner-seam idiom): a test can swap
@@ -97,6 +101,15 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
         # its seeded defaults instead of crashing.
         case EvoDash.SafeCall.run(runner) do
           {:ok, results} ->
+            # Keep the public five-tuple message shape; freshness metadata lives
+            # inside the result rather than changing every page handler.
+            results =
+              Map.put(results, :load_scope, %{
+                seq: seq,
+                node_id: current_node_id,
+                selection: selection_snapshot
+              })
+
             send(parent, {:async_project_load, node, prev_node_id, path, results})
 
           {:error, _reason} ->
@@ -121,13 +134,12 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   """
   def default_batch(node, remote?, current_node_id, path, seed_terminal_ids?, auto_activate?) do
     {custom_agents, model_selection_enabled} = load_custom_agents(node)
-    {model_profiles, default_selected_model_id} = Project.load_model_profiles(node)
+    model_selection = Project.load_model_selection(node, model_selection_enabled)
 
     %{
       custom_agents: custom_agents,
       model_selection_enabled: model_selection_enabled,
-      model_profiles: model_profiles,
-      default_selected_model_id: default_selected_model_id,
+      model_selection: model_selection,
       recent_projects: load_recent_projects(remote?, current_node_id, node),
       terminal_ids: if(seed_terminal_ids?, do: Notifications.load_terminal_ids()),
       auto_activate?: auto_activate?
@@ -143,12 +155,13 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   the caller can skip every post-apply follow-up (project auto-activation,
   GitHub upstream detection) for a result that never landed.
 
-  The `selected_model_id` validation — originally synchronous in
-  `handle_params/3` — runs HERE in the continuation: when the spawn-time
-  handle_params run was a node switch (`prev_node_id` differs from the
-  current node id), the carried selection is kept only when it names a
-  profile that exists on the (new) node, otherwise the node's default
-  selection is used; same-node runs keep the current selection.
+  Canonical model selections are reconciled against the current node's picker
+  bundle on every refresh, including same-node profile/model/effort removal.
+  The shared helper also migrates a carried legacy profile id and resolves
+  defaults. An explicit Auto is an empty map; nil means uninitialized/default.
+  A pending browser restore is applied when the bundle arrives; a user choice
+  made after the load started is left alone and validated again at submission.
+  Unstamped legacy profile payloads remain supported for old callers.
 
   `terminal_ids` (when present as a `MapSet`) seeds/merges the notified-task-id
   set and marks it READY — the notification scan is skipped entirely until
@@ -167,17 +180,10 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   def handle_result(socket, node, prev_node_id, path, results) do
     %{active_project_path: active_path, current_node: current_node} = socket.assigns
 
-    if node != current_node or path != active_path do
+    if node != current_node or path != active_path or stale_scope?(socket, results) do
       {socket, false}
     else
-      socket = assign(socket, :model_profiles, results.model_profiles)
-
-      socket =
-        assign(
-          socket,
-          :selected_model_id,
-          resolve_selected_model_id(socket, prev_node_id, results)
-        )
+      socket = apply_model_selection(socket, prev_node_id, results)
 
       socket =
         case Map.get(results, :terminal_ids) do
@@ -218,6 +224,8 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
 
       socket =
         Enum.reduce(results, socket, fn
+          {:model_selection, _}, sock -> sock
+          {:load_scope, _}, sock -> sock
           {:model_profiles, _}, sock -> sock
           {:default_selected_model_id, _}, sock -> sock
           {:terminal_ids, _}, sock -> sock
@@ -329,13 +337,58 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
 
   defp remote_extras(_node, false, _path), do: %{}
 
-  # Replicates the original handle_params validation: on a node switch the
-  # selection carried from the previous node is kept only when it names a
-  # profile that exists on the new node, otherwise the new node's default is
-  # used ("" when its model-selection script is enabled, else the first
-  # profile id, or nil). Same-node runs never clobber the user's explicit
-  # choice (that assign is owned by the select_model event / restore_state on
-  # the same node).
+  defp stale_scope?(socket, %{load_scope: scope}) do
+    scope.seq != socket.assigns[:projects_load_seq] or
+      scope.node_id != socket.assigns[:current_node_id]
+  end
+
+  # Legacy test/transport payloads have no scope stamp; actual spawned batches
+  # always carry it. The node/path guard still applies to unstamped payloads.
+  defp stale_scope?(_socket, _results), do: false
+
+  defp apply_model_selection(socket, _prev_node_id, %{model_selection: data} = results) do
+    candidate = selection_candidate(socket.assigns)
+    scope = Map.get(results, :load_scope)
+
+    socket =
+      socket
+      |> assign(:model_selection, data)
+      |> assign(:provider_profiles, data.provider_profiles)
+      |> assign(:model_selections, data.model_selections)
+
+    # Reconcile on EVERY refresh, not just node switches. A profile/model or
+    # effort can disappear on the same node. Never overwrite a user/restore
+    # choice made after this load started; submit validates that choice again.
+    if is_nil(scope) or scope.selection == candidate or
+         not is_nil(socket.assigns[:pending_model_selection]) do
+      socket
+      |> assign(:selected_model_spec, LLMSelection.reconcile(data, candidate))
+      |> assign(:pending_model_selection, nil)
+    else
+      socket
+    end
+  end
+
+  # Compatibility for existing page/test callers while the parent migrates
+  # from the flat profile picker. Canonical batches never enter this branch.
+  defp apply_model_selection(socket, prev_node_id, %{model_profiles: profiles} = results) do
+    socket
+    |> assign(:model_profiles, profiles)
+    |> assign(:selected_model_id, resolve_selected_model_id(socket, prev_node_id, results))
+  end
+
+  defp apply_model_selection(socket, _prev_node_id, _results), do: socket
+
+  defp selection_candidate(assigns) do
+    cond do
+      not is_nil(assigns[:pending_model_selection]) -> assigns.pending_model_selection
+      Map.has_key?(assigns, :selected_model_spec) -> assigns.selected_model_spec
+      true -> assigns[:selected_model_id]
+    end
+  end
+
+  # Legacy-only selection validation; new batches use the shared canonical
+  # reconciler above so provider/model/reasoning validation is never copied.
   defp resolve_selected_model_id(socket, prev_node_id, results) do
     if prev_node_id != socket.assigns[:current_node_id] do
       carried = socket.assigns[:selected_model_id]

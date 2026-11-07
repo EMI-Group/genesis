@@ -14,7 +14,8 @@ Every store/registry/`EvoDash.NodeContext` read runs in a supervised `EvoDash.Ta
 - `project.ex` → pure project/path helpers + local config & filesystem reads (`load_project_config/1`, `load_model_profiles/1`, `path_suggestions/3`, `task_notification_content/1`)
 - `project_flow.ex` → project activation flows (`register_and_open_project/2`, `open_project/2`, `select_project/2`, `close_project/1`, remote activation via `spawn_remote_project_activation/2,3`), foreign-repo struct construction
 - `assigns.ex` → deliberately PURE assign helpers (`assign_form_defaults/1`); no store calls, no RPC
-- `state_persistence.ex` → per-node form-state persistence (assigns + `push_event`, no I/O)
+- `state_persistence.ex` → per-node form-state persistence, canonical model-spec restoration and legacy-id migration (assigns + `push_event`, no I/O)
+- `launch_options.ex` → pure `LaunchOptions.apply/2`, shared model-spec lock, custom-agent and quality options for normal submissions and GitHub fixes
 - `attach_file.ex` → the objective attach-file pipeline (local file reads only)
 - `github.ex` → GitHub upstream/issues/fix-issue async flows + the local `start_task` branch
 - `remote_view.ex` → pure remote-mode render (top bar + banner), zero RPC
@@ -24,9 +25,10 @@ Every store/registry/`EvoDash.NodeContext` read runs in a supervised `EvoDash.Ta
 
 | Module | Key functions | I/O |
 |--------|---------------|-----|
-| `EvoDashWeb.ProjectsLive.AsyncLoad` | `maybe_spawn(socket, prev_node_id)` (connected only), `handle_result(socket, node, prev_node_id, path, results)` → `{socket, applied?}`, `load_recent_projects(remote?, node_id, node)`, `load_custom_agents(node)` | one supervised batch: custom agents + model-selection flag + model profiles + selected model + recent projects (+ terminal ids + auto-activate flag, local only). All calls `SafeCall`-wrapped inside the task |
+| `EvoDashWeb.ProjectsLive.AsyncLoad` | `maybe_spawn(socket, prev_node_id)` (connected only), `handle_result(socket, node, prev_node_id, path, results)` → `{socket, applied?}`, `load_recent_projects(remote?, node_id, node)`, `load_custom_agents(node)` | one supervised batch: custom agents + canonical picker bundle + recent projects (+ terminal ids + auto-activate flag, local only), with generation/target/node/path freshness guards |
 | `EvoDashWeb.ProjectsLive.Notifications` | `load_terminal_ids/0` → `MapSet.t() \| nil`, `spawn_scan(parent, seq, node, known_ids)`, `spawn_scan/4` sends `{:task_notifications, seq, node, result}` where result is `{:ok, {new_ids_list, [{id, title, body}]}} \| {:error, reason}` | terminal-id projection + one lite `TaskRegistry.get_task_lite/1` per NEWLY terminal id |
-| `EvoDashWeb.ProjectsLive.Project` | `load_project_config/1`, `load_model_profiles/1`, `path_suggestions/3`, `task_notification_content/1`, `project_url/2` | local TOML/FS reads; `path_suggestions/3` is node-aware (`NodeContext.list_path_suggestions/2` for remote) |
+| `EvoDashWeb.ProjectsLive.LaunchOptions` | `apply(opts, assigns)` → `{:ok, opts}` or `{:error, reason}` | none — shared strict model/agent/quality launch policy |
+| `EvoDashWeb.ProjectsLive.Project` | `load_model_selection/0,1,2`, `load_model_selection_from_config/2`, legacy `load_model_profiles/0,1`, `load_project_config/1`, `path_suggestions/3`, `task_notification_content/1`, `project_url/2` | canonical picker config loading is node-aware and remote callers run off-process; other helpers use local TOML/FS reads or remote path RPC |
 | `EvoDashWeb.ProjectsLive.ProjectFlow` | `register_and_open_project/2`, `open_project/2`, `select_project/2`, `close_project/1`, `build_foreign_repo/2`, `spawn_remote_project_activation/2,3` | local recent-project writes (small, sync); remote activation async → `{:async_remote_project, node, path, result}` |
 | `EvoDashWeb.ProjectsLive.Assigns` | `assign_form_defaults/1` | none — pure |
 | `EvoDashWeb.ProjectsLive.StatePersistence` | `maybe_persist_state/1`, `maybe_clear_state_on_node_switch/3`, `maybe_restore_assign/3`, `maybe_restore_quality_level/2`, `maybe_restore_foreign_repos(socket, repos)` (per-node form state round-trip; the page owns restore-event wiring) | assigns + `push_event` only |
@@ -44,7 +46,7 @@ Every store/registry/`EvoDash.NodeContext` read runs in a supervised `EvoDash.Ta
 
 | Message | Producer | Seq assign | Stale guard | Effect on arrival |
 |---------|----------|-----------|-------------|-------------------|
-| `{:async_project_load, node, prev_node_id, path, results}` | `AsyncLoad.maybe_spawn/2` (connected mount + node/project change) | none (single batch per navigation) | node + `active_project_path == path` → else `{socket, false}` | applies agents/models/recent projects; when `results[:terminal_ids]` is a `%MapSet{}` unions it in and flips `notified_task_ids_ready?: true`; `auto_activate?` triggers `maybe_auto_activate_recent_project/1`; then `GitHub.maybe_check/1`. **The 5-tuple shape is pinned by tests — do not change it** |
+| `{:async_project_load, node, prev_node_id, path, results}` | `AsyncLoad.maybe_spawn/2` (connected mount + node/project change) | `projects_load_seq` in internal `load_scope` | seq + target id + node + `active_project_path == path` → else `{socket, false}` | applies agents/canonical picker/recent projects, reconciles selection unless a newer interaction owns it, unions terminal ids and marks notification readiness; preserves the five-tuple message shape |
 | `{:task_notifications, seq, node, result}` | `Notifications.spawn_scan/4` (from `:node_aware_reload_tasks`) | `task_notifications_seq` | seq + node + `current_node_id == nil` | `push_event "task_notification"` once per `{id, title, body}`; unions new ids into `notified_task_ids`. `{:error, _}` leaves state alone (next debounced reload retries) |
 | `{:task_history_cleared, seq, node, result}` | `clear_task_history` event | `clear_history_seq` | seq + node | success → union the post-clear id set + `notified_task_ids_ready?: true`; error → readiness restored + error flash |
 | `{:recent_projects_loaded, seq, node_id, node, result}` | `{:recent_projects_updated}` PubSub handler | `recent_projects_seq` | seq + `current_node_id` + node | replaces `recent_projects`; error keeps the current list |
@@ -102,21 +104,42 @@ The lookup is deliberately the LOCAL `TaskRegistry.get_task_lite/1` (same struct
 
 ## Model-selection helper contracts
 
-`Project.load_model_profiles/0,1` returns `{profiles, selected_id}`; `profiles` is the full `Schema.model_profiles(config)` result without local projection, and `selected_id` is `""` when a model-selection script is enabled, otherwise `Schema.default_model_profile(config)`'s id or nil.
-Local loading reads `Process.get(:memo_config_resolve) || Config.resolve()` and `CustomAgents.ModelSelector.enabled?/0`; the mount process's memo is not inherited by the supervised async task.
-Remote loading reads the target's `NodeContext.get_resolved_config/1` and `list_custom_agents/1`, degrading a config RPC error to `{[], nil}` rather than borrowing local metadata.
-The async batch separately loads custom agents and model profiles, so remote `list_custom_agents/1` is called twice and the `model_selection_enabled` flag and default selection can reflect different snapshots.
-`AsyncLoad.handle_result/5` assigns `model_profiles`, resolves `selected_model_id`, and assigns every remaining result key except the explicit internal-key exclusions, so future result keys become assigns automatically.
-Its selection validation runs only when the captured previous node id differs from the current node id: a nonempty carried id survives if any new profile has that id, otherwise the new default wins; same-node refresh preserves even an absent/stale selection.
-The batch has only BEAM-node and active-path stale guards, no generation token or target-id guard, so same-node/path results may arrive out of order and a delayed node-switch batch may override a subsequent user choice.
-`Assigns.assign_form_defaults/1` resets prompt/mode/node path/commit/resume/archive/build-system/advanced state but does not reset model selection, selected agent, or quality.
-`StatePersistence.maybe_persist_state/1` emits `selected_model_id`, `selected_agent_id`, and `quality_level` alongside the project/form/repo state via `persist_state`; there are no separately persisted provider-profile, model-value, or reasoning-effort fields.
-`StatePersistence.maybe_restore_assign/3` skips nil and `""` and accepts other binary values without membership validation, so it cannot restore the empty Auto sentinel over a nonempty default.
-`maybe_restore_quality_level/2` whitelists only `"fast"`, `"balanced"`, and `"high_quality"`; these are the existing speed/quality control, not reasoning-effort values.
-`maybe_clear_state_on_node_switch/3` clears the selected agent but preserves `selected_model_id` and `quality_level`, then immediately persists that state before the async model validation arrives.
-`GitHub.start_fix_task/3` is private and builds a separate `:evolve` launch payload containing `path`, `mode: "simple"`, `objective`, optional foreign repos and nonempty `selected_model_id` as `:model_id`; it does not add `:model_id_locked`, quality, selected agent, or reasoning/model overrides.
-The GitHub fix path reads the current selector assigns when the Markdown fetch completes, not when Fix was clicked, and its result handler guards only path and BEAM node, not modal-open state, the current fixing issue, or a generation token.
-Any model-selector payload contract change must cover this independent GitHub launch path as well as the page's normal submit path.
+The canonical task-picker assign is `selected_model_spec`, a STRING-keyed map containing only `provider_profile_id`, `model` and optional `reasoning_effort`; `%{}` is explicit Auto, while nil means uninitialized/use the node default.
+`Project.load_model_selection/0,1,2` returns a shared `LLMSelection.from_config(config, rules_enabled)` bundle for the executing node, and `load_model_selection_from_config/2` is its pure projection seam.
+Local loading honors the process-local `:memo_config_resolve`; remote loading uses the target's resolved config and degrades to an empty-config bundle on transport failure, never borrowing the dashboard's local models.
+Passing the already-loaded rules flag avoids a second remote custom-agent read; `AsyncLoad.default_batch/6` uses this path.
+The old `Project.load_model_profiles/0,1` and `load_model_profiles_from_config/2` tuple APIs remain untouched for legacy callers and editing compatibility.
+
+### Shared `EvoDashWeb.LLMSelection` dependency
+
+`from_config(config, rules_enabled)` returns a map with at least `provider_profiles` (canonical string maps) and `model_selections` (ordered core atom-map projections), plus whatever default/legacy-alias metadata the shared helper needs.
+The bundle is an in-memory picker value, never persisted into browser storage or sent as task opts.
+`reconcile(bundle, candidate)` returns a normalized string-keyed model spec, resolving nil to defaults, recognizing `%{}`/legacy `""` as Auto, migrating legacy ids, and falling back to valid node defaults when a provider/model/effort was removed.
+`task_opts(bundle, candidate)` returns `{:ok, keyword_opts}` or `{:error, reason}`; explicit selections resolve all defaults and yield exactly `model_spec: <canonical string map>, model_id_locked: true`, Auto yields `[]`, and stale/invalid explicit choices must error rather than silently launch as Auto.
+All model membership, reasoning defaults and legacy normalization belong to that shared helper, backed by `Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2`; this leaf does not reproduce them.
+
+### Async freshness and restoration
+
+Canonical async batches carry `model_selection`; the handler assigns it plus `provider_profiles` and `model_selections`, then reconciles `selected_model_spec` on same-node refreshes as well as node switches.
+The public five-tuple result message remains unchanged, with internal `load_scope` metadata carrying `projects_load_seq`, target id and the captured selection.
+Actual spawned batches reject stale generation, target-id, BEAM-node or path results, and do not overwrite a user choice made after spawning.
+Unstamped legacy result maps carrying `model_profiles`/`default_selected_model_id` remain accepted for existing callers/tests.
+`StatePersistence.maybe_restore_model_selection/2` takes the whole persisted string-keyed state AFTER the parent page's node check; `model_spec` takes precedence over `selected_model_id`, including an explicit empty Auto.
+A restore arriving before the picker bundle is stored as `pending_model_selection` and validated when the canonical async bundle lands.
+Node switches clear the bundle, picker projections and pending restore before fetching the new node; a carried canonical selection is validated against the new bundle.
+`model_selection_state/1` serializes only the three canonical spec keys, never credentials or bundle metadata; legacy-only/pending-legacy callers keep `selected_model_id` until canonical migration completes.
+The parent's provider/model/reasoning change handlers must clear `pending_model_selection` so an earlier restore cannot override a newer interaction.
+
+### Launch and parent-page wiring
+
+Normal submission must replace its inline model-id, agent and quality blocks with `LaunchOptions.apply(opts, socket.assigns)` and flash a returned error before making any task-start call.
+`LaunchOptions.apply/2` is pure and preserves unrelated launch fields, removes stale `model_id`/`model_spec`/lock keys before merging validated shared-helper options, emits nonempty custom-agent ids, and omits default balanced quality.
+GitHub fixes use this SAME launch helper before either local or remote task submission, so explicit model specs are locked and agent/quality policy matches normal launches.
+A missing picker bundle fails launch with `:model_selection_not_loaded`, rather than submitting an unintended default.
+The parent page must seed `model_selection: nil`, `provider_profiles: []`, `model_selections: []`, `selected_model_spec: nil` and `pending_model_selection: nil`, or use `Project.load_model_selection/0` for its local cheap mount seed.
+Both task-form call sites must receive the canonical projections/spec, and restore-state wiring must call the new model-restoration function rather than `maybe_restore_assign(:selected_model_id, ...)`.
+The browser persistence hook must retain the `model_spec` object, including `%{}`, rather than relying on its legacy `selected_model_id` allowlist.
+Quality remains the independent `fast`/`balanced`/`high_quality` task policy, not model reasoning effort.
 
 ## Payload-vs-consumed gaps
 

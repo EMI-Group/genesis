@@ -11,10 +11,58 @@ defmodule EvoDashWeb.ProjectsLive.Project do
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.ProjectConfig
   alias EvoDash.NodeContext
+  alias EvoDashWeb.LLMSelection
   alias EvoDashWeb.ProjectsLive.ProjectFlow
+
   import Phoenix.LiveView, only: [put_flash: 3]
 
   require Logger
+
+  @doc """
+  Loads the task model picker from the executing node, never from the local
+  config when a remote read fails.
+
+  Returns the shared `LLMSelection` data bundle: provider profiles, ordered
+  model selections, default spec, legacy-id aliases and the Auto/rules flag.
+  Remote callers must run this in a supervised loader, not on the LiveView.
+  Passing the already-loaded rules flag avoids another agents.toml/RPC read.
+  """
+  def load_model_selection(node \\ node(), rules_enabled \\ nil)
+
+  def load_model_selection(nil, rules_enabled),
+    do: load_model_selection(node(), rules_enabled)
+
+  def load_model_selection(target_node, rules_enabled) do
+    if target_node == node() do
+      config = Process.get(:memo_config_resolve) || Config.resolve()
+
+      enabled =
+        if is_boolean(rules_enabled),
+          do: rules_enabled,
+          else: EvoGit.CustomAgents.ModelSelector.enabled?()
+
+      load_model_selection_from_config(config, enabled)
+    else
+      case NodeContext.get_resolved_config(target_node) do
+        {:ok, config} ->
+          enabled =
+            if is_boolean(rules_enabled),
+              do: rules_enabled,
+              else: remote_model_selection_enabled?(target_node)
+
+          load_model_selection_from_config(config, enabled)
+
+        {:error, _reason} ->
+          load_model_selection_from_config(%{}, false)
+      end
+    end
+  end
+
+  @doc "Pure canonical picker projection, including migration of legacy profile ids."
+  def load_model_selection_from_config(config, rules_enabled)
+      when is_map(config) and is_boolean(rules_enabled) do
+    LLMSelection.from_config(config, rules_enabled)
+  end
 
   @doc """
   Loads available model profiles from the resolved config and selects the
