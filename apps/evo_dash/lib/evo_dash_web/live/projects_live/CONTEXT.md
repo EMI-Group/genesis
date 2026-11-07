@@ -179,9 +179,17 @@ The page keeps summary maps only — `recent_projects` (paths), `notified_task_i
 ## Test strategy
 
 - `test/evo_dash_web/live/projects_live_test.exs` drives the real store; because mount/handle_params work is async, assertions on `recent_projects`, `active_project_path` and notifications use `wait_assigns(view, predicate)` (~300 attempts) instead of asserting right after `live/2`.
+- Canonical task-admission tests must expose the same provider configuration to the singleton `EvoGit.TaskRegistry` as to the test/LiveView; a process-local `ConfigDir.isolate!/1` override propagates through `$callers` to LiveView/loader processes but not to an already-running singleton.
+- A picker-visible account absent from the registry's config causes `{:provider_profile_not_found, id}` on both normal and GitHub launches; synchronous launch tests need a restored shared config-directory override rather than weaker model-lock assertions.
+- Positive remote persistence fixtures require a distinct remote BEAM identity, an owned bundle and ready state; target-id plus local BEAM identity represents a pending target and must not persist or consume async batches.
+- Unreachable remote tests assert an unavailable bundle, false readiness and a load error, not a successful empty Auto selection; an earlier explicit or pending selection remains preserved on failure.
 - The batch loader's message shape (`{:async_project_load, node, prev_node_id, path, results}`) and `AsyncLoad.handle_result/5`'s `{socket, applied?}` return are test-pinned; keep `handle_result/5` tolerant of result maps built without newer keys (`Map.get/3`).
 - Notification tests seed `notified_task_ids` + `notified_task_ids_ready?: true` explicitly; a test that leaves `ready?` false asserts NO `task_notification` event.
 - Node-switch behaviour (state clearing, `&node=` push_patch, gate states, stale-node restore skip) lives in the same file; `<node>` tests register a fake ConnectionManager in the real `EvoGit.RemoteConnection.Registry`.
+- A fixture with a non-nil target id and `current_node == node()` is pending-remote to `ModelSelectionScope` and `AsyncLoad.handle_result/5`, even if a fake connection manager calls it connected, so it cannot assert successful picker loading or resume-guard consumption.
+- Positive remote persistence fixtures need a distinct BEAM-node atom, a valid bundle, matching `{target_id, beam_node}` scope, readiness true and no load error; local-as-remote and unowned bundles must produce no model-only persistence event.
+- The parent page's `change_model_selection/2` must obtain its bundle through `ModelSelectionScope.bundle/1`; checking only `is_map(model_selection)` bypasses the ownership/readiness boundary used by launch and persistence.
+- Canonical-lock page assertions are not evidence that `resolved.model_spec` belongs in task opts: the shared helper already reconstructs canonical picker maps, core admission preserves them, and the Store codec preserves nested string keys.
 
 ## Constraints
 
