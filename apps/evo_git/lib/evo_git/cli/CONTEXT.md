@@ -1,75 +1,57 @@
 # EvoGit CLI Layer — `lib/evo_git/cli/`
 
 ## Intent
-Argument parsing and the interactive setup wizard for `EvoGit.CLI` (the parent-node module `../cli.ex` holds command dispatch).
-Split out of `cli.ex` to keep parsing (pure) separate from dispatch (IO + task enqueue).
-Both modules are pure/stdlib-only: no `System.cmd`, no `Port.open`, no `System.find_executable`, no filesystem writes of their own (config writes go through `EvoGit.Config`).
+Argument parsing and the interactive setup wizard for `EvoGit.CLI` live here, while the parent `../cli.ex` owns dispatch and task enqueue.
+Parsing stays pure and setup persists only through `EvoGit.Config` and imports subscription credentials through `EvoGit.Auth`.
 
 ## API Surface
-| File / function | Purpose |
-|---|---|
-| `parser.ex` `EvoGit.CLI.Parser.parse_args/1`, `parse_args_full/3` | `OptionParser.parse/3` wrapper. Switches: `help, version, file, path, model, mode, foreign_repo (keep), agent, node, starting_commit, archive, build_system`; aliases `h v f p m d R n b`. The `invalid` list is DISCARDED by `parse_args/1` — unknown flags and malformed values are silently ignored. |
-| `parser.ex` `parse_model_flag/1` | `"id:provider:model"` → `{id, "provider:model"}`; anything else → `{nil, value}`. |
-| `parser.ex` `maybe_put/3` | `nil` value → keyword unchanged. |
-| `parser.ex` `parse_foreign_repos/1` | `-R` (repeatable) → `[%EvoGit.Core.ForeignRepo{}]`, READ-ONLY defaults (`writable: false`, `base_sha: nil`); `-R <id>:<path>` gives an explicit id, a bare path uses `Path.basename/1`. |
-| `parser.ex` `split_foreign_repo_spec/1`, `drive_letter_abs_path?/1` | `id:path` split that never mistakes a Windows drive letter (`C:\...`, `D:/...`, matched by `~r/^[a-zA-Z]:[\\\/]/`) for an id. |
-| `setup.ex` `EvoGit.CLI.Setup.run/0` | Provider → model → variant → API-key wizard; persists via `EvoGit.Config.save_user_config/1` + `save_credentials/1`. |
-| `setup.ex` `do_add_model_profile/2` (`@doc false`) | Test wrapper for the private profile writer. |
+- `Parser.parse_args/1` returns `{opts, argv}` and discards invalid flags, while `parse_args_full/1` also returns OptionParser's invalid list.
+- Switches include `help`, `version`, `file`, `path`, `model`, `provider_profile`, `reasoning_effort`, `mode`, repeatable `foreign_repo`, `agent`, `node`, `starting_commit`, `archive`, and `build_system`, with the existing short aliases unchanged.
+- `Parser.parse_model_selection/1` returns `{:ok, :auto}` for no selection, `{:ok, {:legacy, value}}` for existing `-m` syntax, or `{:ok, spec}` for `--provider-profile <id> --model <model> [--reasoning-effort <effort>]`.
+- Explicit specs have string keys `provider_profile_id`, `model`, and optional `reasoning_effort`, and preserve model names containing colons without legacy splitting.
+- Incomplete explicit selections and blank values return `{:error, message}`, and effort without an explicit provider profile is rejected.
+- The parent dispatch must validate selections with the schema and enqueue an explicit selection as `model_spec: spec, model_id_locked: true`, while Auto omits both keys.
+- `Parser.parse_model_flag/1` preserves legacy `id:provider:model` splitting for the parent's legacy-ID resolver.
+- `Parser.parse_foreign_repos/1` builds read-only `%EvoGit.Core.ForeignRepo{}` values from repeatable `-R`, and Windows drive-letter absolute paths are never split as IDs.
+- `Parser.maybe_put/3` leaves a keyword list unchanged for nil values.
+- `Setup.run/0` guides provider, model, endpoint variant and API-key or subscription authentication selection.
+- Setup saves canonical `[llm].default_provider_profile` and `[[llm.providers]]`, without a legacy `llm.model` mirror or top-level `llm.models` list.
+- `Schema.provider_profiles/1` is the migration boundary for existing flat/model-profile configurations; setup consumes its list of canonical profiles instead of duplicating migration logic.
+- A setup run updates the configured default account when it belongs to the selected provider, preserving concurrency, peak settings, effort/generation defaults, account settings and nested model overrides.
+- With no explicit default-provider ID, setup follows Schema's first-account default rather than privileging an account named `default`, and an unresolved explicit ID never falls back to overwriting an unrelated account.
+- The chosen model must appear in the provider's ordered `models` inventory: setup appends it only when absent, preserves an existing model entry verbatim, and sets `default_model` to that model.
+- New profiles carry an empty `reasoning_efforts` list matching Schema normalization so repeated setup does not add normalization-only fields or duplicate inventory entries.
+- A different provider gets a new unique profile ID, preserving existing accounts and making the new profile the default; an empty configuration starts with ID `default` and concurrency 3.
+- The chosen model becomes the provider profile's `default_model`, with `provider` stored as a string and catalog endpoint options copied onto that provider profile.
+- Real TOML string-keyed maps recurse through lists as well as maps before profile lookup, preventing duplicate profiles on repeated setup.
+- OAuth imports and diagnostics honor the selected profile's existing `oauth_file`, never prompt for an API key and never write OAuth tokens to credentials.toml.
+- Switching back to API-key mode clears the selected profile's stale `auth_mode`, and unrelated configuration and other profiles are retained.
+- `Setup.do_add_model_profile/2,3`, `do_prepare_config/3`, `apply_auth_mode/2`, `resolve_auth_choice/2`, `find_vendor_login/2`, and `oauth_available?/2` are existing public test seams.
 
 ## Constraints
-- Parsing stays pure — no IO, no app-state reads, no env reads.
-- Modes are STRINGS end-to-end (`"new"`/`"existing"`/`"simple"`/`"custom"`); `RuntimeOpts` raises on atoms.
-- `-R` foreign repos from the CLI are always read-only; writable/`base_sha` is TOML-only (`genesis.toml`).
-- `parse_args/1` calls give no feedback on unknown flags (`_invalid` dropped) — diagnostics live in `cli.ex` (`print_removed_flag_notices/1`).
+- No CLI dispatch changes belong here; `../cli.ex` integrates selection parsing, schema resolution, task opts and help text.
+- Parsing performs no IO, filesystem access, configuration reads or application-state mutation.
+- Provider/model/effort validation belongs to `Schema`, not parser-local catalog or window logic.
+- Modes remain strings end-to-end, and CLI foreign repos remain read-only.
+- API-key prompts and writes resolve the prepared config's selected account `api_key_env_var` when nonempty, falling back to the catalog credential key (or the custom provider's derived key) only when absent.
+- API-key writes go through `Config.save_credentials/1` with that exact string key, preserving other same-provider account credentials and unrelated credential entries.
+- Runtime `Schema.LLM.profile_generation_params/1` currently resolves `api_key_env_var` only from the process environment, so consuming custom keys saved in credentials.toml requires the parent-owned Config/schema integration fix.
+- No sibling test files are owned by this node.
+
+## Required Regression Coverage
+- Parser tests must cover explicit provider/model/effort flags, omitted effort, colon-containing model names, Auto, unchanged legacy flags/IDs, and blank/incomplete selections.
+- Dispatch tests must assert schema-validated string-keyed `model_spec` plus lock for explicit selections, no selection keys for Auto, retained legacy-ID resolution, and no enqueue on invalid provider/model/effort.
+- Setup tests must use real string-keyed canonical and legacy input, verify canonical-only output, rerun idempotence, selected-default account updates, unique new-provider IDs, and preservation of unrelated settings, shared limits, efforts/defaults and nested overrides.
+- OAuth tests must retain subscription/API-key choice behavior, verify a configured custom OAuth path reaches credential import and diagnostics, ensure no API-key write on OAuth, and clear stale OAuth mode on an API-key rerun.
+- Setup persistence tests must validate and TOML-round-trip canonical output through the shared schema rather than asserting legacy `llm.models` writes.
+- API-key wizard tests must cover a selected custom `api_key_env_var` in two same-provider accounts, exact prompt/save key agreement on named and custom-provider routes, unchanged catalog fallback when absent, and preservation of existing keys on blank input.
 
 ## Known Issues
+- `Setup.prompt_input/1` and the parent's input helpers still pass `:eof` or `{:error, reason}` from `IO.gets/1` into `String.trim/1`, so redirected stdin can crash instead of selecting a default.
+- The parent's `stdin_tty?/0` probes stdout console width rather than stdin readiness.
+- Parent help text uses POSIX shell quoting and redirects, which are not portable to Windows cmd.exe or PowerShell 5.1 UTF-16 output.
+- Core TOML loading rejects UTF-16 files, and prompt-file loading retains a leading UTF-8 BOM.
+- `-R C:relative` is not recognized as a drive-relative Windows path and is split as an ID plus path.
 
-### `prompt_input/1` crashes on EOF (VERIFIED by execution)
-`setup.ex:215-220` and `cli.ex:509-514` are identical:
-```elixir
-defp prompt_input(prompt) do
-  case IO.gets(prompt) do
-    nil -> ""
-    input -> String.trim(input)
-  end
-end
-```
-`IO.gets/1` NEVER returns `nil` — it returns `:eof` at end of input or `{:error, reason}` (verified: `printf '' | elixir -e 'IO.inspect(IO.gets("p: "))'` → `:eof`), so the `nil -> ""` clause is dead and both EOF and error paths raise.
-Verified: `String.trim(:eof)` → `** (FunctionClauseError) no function clause matching in String.trim/1`.
-Every wizard prompt (`setup.ex:40,81,115,129,134,140,170`) and the genesis build-system prompt (`cli.ex:491`) routes through it.
-Windows relevance: any invocation with stdin at EOF (spawned from a GUI wrapper, `subprocess(stdin=DEVNULL)`, a `.bat` with `< NUL`, a service) dies with an unhandled FunctionClauseError instead of degrading to the empty/default answer.
-`cli.ex:407-419 confirm_non_empty_dir/0` has the same bug, unguarded: `IO.gets/1` → `:eof` is TRUTHY, so `String.trim(:eof)` crashes instead of the intended "abort" — trigger `--mode new -p <non-empty dir>` with EOF stdin.
-
-### `stdin_tty?/0` probes the wrong device (stdout, not stdin)
-`cli.ex:466-471` uses `:io.columns()` as the "is stdin interactive" test, but `:io.columns/0` reports the group leader's console width.
-With stdout on a console and stdin at EOF it returns `{:ok, W}` → the build-system prompt runs → crashes per the issue above.
-It is total (returns `{:error, :enotsup}` when not a console, never raises), so a fully-piped run is protected; a console-with-redirected-stdin run is not.
-
-### `Setup.run/0` writes a DUPLICATE `[[llm.models]] id = "default"` profile on every re-run (VERIFIED by execution)
-`EvoGit.Config.user_config/0` returns TOML-decoded STRING-keyed maps (verified: `%{"llm" => %{"models" => [%{"id" => "default", ...}]}}`).
-`setup.ex:231-247 atomize_config_keys/1` recurses only through MAPS — the catch-all `atomize_config_keys(value), do: value` leaves the `models` LIST (and the maps inside it) string-keyed.
-`setup.ex:291` then looks up the existing profile with `Map.get(p, :id) == "default"` → `nil` for a string-keyed profile → a second `id = "default"` profile is APPENDED.
-Verified against the real compiled function: `EvoGit.CLI.do_add_model_profile(atomized_config, "openai:gpt-5")` on the real shape yields ids `["default", "default"]`.
-`EvoGit.Config.Schema.validate/1` does not check id uniqueness (`config/ecto_validation.ex:372-374` accepts `:id` and `"id"`), so the write succeeds and the wizard prints "✓ Model saved to config.toml" — while runtime resolution keeps the FIRST entry (`config/schema/llm.ex:74` `Enum.find`, `:91-96` head-of-list), i.e. the stale model silently wins.
-Test gap: `test/evo_git/cli_test.exs` only feeds ATOM-keyed configs (`%{llm: %{models: [%{id: "default", ...}]}}`), never the real string-keyed shape; `Setup.run/0` has no test.
-
-### Windows-facing help text is POSIX-shell shaped
-`cli.ex:645-659` teaches `mkdir -p`, `echo 'KEY = "..."' > credentials.toml` and `>>` appends — none of which work in `cmd.exe` (single quotes are not quoting), and the `echo` lines write into the CURRENT directory although the config file is read from `config_dir()`.
-`cli.ex:596-598` and the root/`evo_git` CONTEXT examples use the same single-quoted `genesis run '<command>'` form, which under `cmd.exe` degenerates to a literal-quote argument.
-The repo contains no `genesis` CLI shim for these subcommands: the CLI is invoked as `mix run -e 'EvoGit.CLI.main(System.argv())' -- <cmd>` (dev only, not reachable from the desktop release).
-
-### UTF-16LE config/credentials files are silently ignored
-`EvoGit.Config.read_toml_file/3` (`config/config.ex:465-483`) → `TomlElixir.decode/1`; on error it logs a `Logger.warning` and returns `%{}`.
-Verified: UTF-16LE input → `{:error, %TomlElixir.Parser.Error{reason: "Invalid UTF-8"}}`, while UTF-8-with-BOM and CRLF both decode fine (`deps/toml_elixir/lib/toml_elixir/parser.ex:20-40` strips a leading UTF-8 BOM).
-Windows/`powershell.exe` 5.1 `>`/`Out-File` and some editor "Unicode" modes write UTF-16LE, so the documented manual-setup `echo ... > credentials.toml` step can yield an empty config (no API key / no model) with only a log warning as a signal.
-`-f` prompt files degrade better: `../prompt_file.ex:30-42` rejects invalid UTF-8 with `{:error, {:not_text, ext}}` and a clear message.
-
-### `-f` prompt files keep a leading UTF-8 BOM
-`../prompt_file.ex:30-42` uses `String.valid?/1` + `String.trim/1`; a BOM is valid UTF-8 and `String.trim/1` does not strip U+FEFF (verified: `String.trim("\uFEFFhello\r\n")` → `"\uFEFFhello"`).
-Files saved by Windows Notepad/VS Code as "UTF-8 with BOM" therefore prepend a zero-width no-break space to the objective. Silent, no crash.
-
-## Notes for Agents
-- Console output is cosmetic-risk only: `setup.ex:18-23` box-drawing and `setup.ex:91,190,196,199,207` `✓ ✅ ✗ ⚠` render as mojibake on a legacy Windows console code page, but `IO.puts/1` receives UTF-8 BINARIES (byte-transparent to a `latin1` device; erts substitutes unrepresentable chars in `unicode` mode) — no raise. `rel/vm.args.eex` sets no `+pc unicode`.
-- Windows-safe by construction (do not re-audit): `-R` drive-letter/UNC splitting (`parser.ex:134-148`); `Path.basename/1`/`Path.expand/1` (they delegate to `:filename`, which is separator-aware per `:os.type()` — see Elixir's `path.ex`); TOML backslash escaping (`deps/toml_elixir/lib/toml_elixir/encoder.ex:101`) so Windows path values round-trip; `TomlElixir.encode/2` rescues encoder raises into `{:error, e}` (`deps/toml_elixir/lib/toml_elixir.ex:70-74`); `EvoGit.Config.save_user_config/1` + `save_credentials/1` use plain `File.write` (no temp+rename, so no Windows "rename over existing file" `:eacces` hazard) and surface failures as `{:error, reason}` printed by the wizard.
-- `-R C:relative` (drive-relative, no separator after the colon) is NOT recognized as a path and mis-splits into `{:id, "C", "relative"}` — rare form, degrades to a later descriptive "not a git repository" error.
-- The parent `../CONTEXT.md` is ~89 KB (over the per-file limit and read-truncated) — prefer this file plus `../cli.ex` source over that document for CLI details.
+## Routing Table
+There are no child directories.

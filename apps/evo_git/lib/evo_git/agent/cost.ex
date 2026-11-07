@@ -159,10 +159,12 @@ defmodule EvoGit.Agent.Cost do
   @doc """
   Recomputes the token cost of ONE LLM request for a scheduled agent.
 
-  Resolves the agent's model spec + model profile id from
-  `EvoGit.AgentScheduler.get_agent_state/1` and the pricing period from
-  `period_for_model_id/1`. `nil` (never raising) whenever the agent state is
-  gone or `recompute/3` cannot produce a cost.
+  Prices the agent's effective `llm_model` from
+  `EvoGit.AgentScheduler.get_agent_state/1`, NOT the account/slot identity in
+  its selection `model_spec`. The pricing period comes from that selection's
+  `provider_profile_id` (legacy fallback: `model_id`) through
+  `period_for_provider_profile_id/1`. `nil` (never raising) whenever the agent
+  state is gone or `recompute/3` cannot produce a cost.
   """
   @spec recompute_for_agent(map() | nil, term()) :: costs() | nil
   def recompute_for_agent(usage_map, agent_id) do
@@ -172,9 +174,13 @@ defmodule EvoGit.Agent.Cost do
           nil
 
         state ->
-          model_spec = Map.get(state, :llm_model)
-          period = period_for_model_id(Map.get(state, :model_id))
-          recompute(usage_map, model_spec, period)
+          llm_model = Map.get(state, :llm_model)
+
+          provider_profile_id =
+            field(Map.get(state, :model_spec), :provider_profile_id) || Map.get(state, :model_id)
+
+          period = period_for_provider_profile_id(provider_profile_id)
+          recompute(usage_map, llm_model, period)
       end
     end)
   end
@@ -208,15 +214,25 @@ defmodule EvoGit.Agent.Cost do
   @doc """
   Pricing period (`"peak"` | `"off_peak"`) for a configured model profile id.
 
-  Looks the id up in `EvoGit.AgentScheduler.get_config(:model_profiles)` (atom-
-  or string-keyed ids tolerated) and delegates to `period_for_profile/1`.
+  Compatibility alias for `period_for_provider_profile_id/1`; canonical provider
+  accounts take precedence over legacy model profiles (atom- or string-keyed).
   No profile / no peak configuration / ANY error → `"off_peak"` (the normal
   tariff).
   """
   @spec period_for_model_id(term()) :: period()
-  def period_for_model_id(model_id) do
-    safe("period_for_model_id/1", @off_peak, fn ->
-      case find_profile(model_id) do
+  def period_for_model_id(model_id), do: period_for_provider_profile_id(model_id)
+
+  @doc """
+  Pricing period for the configured provider account/profile, not a catalog model.
+
+  Uses the scheduler's canonical `:provider_profiles` account schedules, falling
+  back to legacy `:model_profiles` only when no provider accounts are configured.
+  A missing account never borrows a stale legacy profile's schedule.
+  """
+  @spec period_for_provider_profile_id(term()) :: period()
+  def period_for_provider_profile_id(provider_profile_id) do
+    safe("period_for_provider_profile_id/1", @off_peak, fn ->
+      case find_profile(provider_profile_id) do
         nil -> @off_peak
         profile -> period_for_profile(profile)
       end
@@ -601,9 +617,9 @@ defmodule EvoGit.Agent.Cost do
   end
 
   defp profiles do
-    case AgentScheduler.get_config(:model_profiles) do
-      list when is_list(list) -> list
-      _other -> []
+    case AgentScheduler.get_config(:provider_profiles) do
+      [_ | _] = profiles -> profiles
+      _other -> AgentScheduler.get_config(:model_profiles) || []
     end
   end
 

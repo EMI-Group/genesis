@@ -11,7 +11,7 @@ defmodule EvoGit.CLI.Setup do
   `EvoGit.Auth` imports into the managed OAuth credential file.
   """
 
-  alias EvoGit.Config.LLMCatalog
+  alias EvoGit.Config.{LLMCatalog, Schema}
 
   @doc """
   Runs the interactive LLM configuration setup wizard.
@@ -70,7 +70,7 @@ defmodule EvoGit.CLI.Setup do
     if LLMCatalog.oauth_only?(provider.id) do
       IO.puts("Authentication: subscription (OAuth) — no API key is used.\n")
     else
-      IO.puts("API key credential key: #{provider.credential_key}\n")
+      IO.puts("Default API key credential key: #{provider.credential_key}\n")
     end
 
     # Step 2: Model selection
@@ -153,19 +153,19 @@ defmodule EvoGit.CLI.Setup do
     end
   end
 
-  # The API-key branch: unchanged behaviour, just a dynamic step number (4 when
-  # the authentication-mode step was shown, 3 otherwise).
+  # Resolve the selected account before prompting, just as for its OAuth path.
   defp prompt_api_key(provider, model_spec, step) do
+    credential_key = setup_credential_key(model_spec, provider.credential_key)
     IO.puts("\nStep #{step}: Enter your API key.")
     IO.puts("  This will be stored in your credentials file.\n")
 
-    api_key = prompt_input("Enter #{provider.credential_key}: ")
+    api_key = prompt_input("Enter #{credential_key}: ")
 
     if api_key == "" do
       IO.puts("\nNo API key entered. API key can be set later in credentials.toml.")
     end
 
-    save_setup_result(model_spec, provider.credential_key, api_key)
+    save_setup_result(model_spec, credential_key, api_key)
   end
 
   # The OAuth branch: reuse the vendor CLI's existing login. Nothing is ever
@@ -174,6 +174,7 @@ defmodule EvoGit.CLI.Setup do
   # store involved, and ReqLLM keeps it fresh.
   defp setup_oauth_credentials(provider, model_spec) do
     provider_atom = model_spec.provider
+    oauth_opts = setup_oauth_opts(model_spec)
 
     IO.puts("\nStep 4: Subscription (OAuth) login")
 
@@ -185,13 +186,13 @@ defmodule EvoGit.CLI.Setup do
         IO.puts("  • Found local login: #{path}")
     end
 
-    case EvoGit.Auth.ensure_credentials(provider_atom, []) do
+    case EvoGit.Auth.ensure_credentials(provider_atom, oauth_opts) do
       :ok ->
-        IO.puts("  ✓ OAuth credentials ready: #{EvoGit.Auth.oauth_file([])}")
+        IO.puts("  ✓ OAuth credentials ready: #{EvoGit.Auth.oauth_file(oauth_opts)}")
         save_setup_result(model_spec, provider.credential_key, "", auth_mode: "oauth")
 
       {:error, reason} ->
-        print_auth_failure(provider_atom, reason)
+        print_auth_failure(provider_atom, reason, oauth_opts)
 
         if confirm("\n  Save the profile with OAuth auth mode anyway? [Y/n]: ") do
           save_setup_result(model_spec, provider.credential_key, "", auth_mode: "oauth")
@@ -204,18 +205,22 @@ defmodule EvoGit.CLI.Setup do
   # A managed-file write failure is NOT a missing login: the vendor login was
   # found, so printing the login instructions would send the user in circles.
   # The writable-path remedy is printed instead, and setup can still finish.
-  defp print_auth_failure(_provider_atom, {:managed_file_unwritable, _} = error) do
+  defp print_auth_failure(_provider_atom, {:managed_file_unwritable, _} = error, oauth_opts) do
     IO.puts("  ⚠ The subscription login was found, but Genesis could not write its")
     IO.puts("  managed OAuth copy.\n")
 
-    IO.puts(indent(EvoGit.Auth.managed_file_unwritable_remedy(error, EvoGit.Auth.oauth_file([]))))
+    IO.puts(
+      indent(
+        EvoGit.Auth.managed_file_unwritable_remedy(error, EvoGit.Auth.oauth_file(oauth_opts))
+      )
+    )
 
     IO.puts("")
     IO.puts("  You can still finish setup: save the profile now and requests start")
     IO.puts("  working once the managed file is writable.")
   end
 
-  defp print_auth_failure(provider_atom, reason) do
+  defp print_auth_failure(provider_atom, reason, _oauth_opts) do
     IO.puts("  ⚠ No usable OAuth credentials yet (#{format_auth_error(reason)}).\n")
     IO.puts(indent(EvoGit.Auth.login_instructions(provider_atom)))
     IO.puts("")
@@ -289,17 +294,16 @@ defmodule EvoGit.CLI.Setup do
           IO.puts("  Base URL: #{base_url}")
         end
 
-        credential_key = String.upcase(provider) <> "_API_KEY"
+        # Build the map model spec before resolving the selected account's key.
+        model_spec =
+          EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_id, base_url: base_url)
+
+        credential_key = setup_credential_key(model_spec, String.upcase(provider) <> "_API_KEY")
         IO.puts("  Expected API key credential key: #{credential_key}")
 
         IO.puts(
           "  (If this is incorrect, check https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html)\n"
         )
-
-        # Build the map model spec. base_url is included only when non-empty
-        # (resolve_model_spec omits nil/"" values).
-        model_spec =
-          EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_id, base_url: base_url)
 
         api_key = prompt_input("Enter #{credential_key}: ")
 
@@ -308,16 +312,12 @@ defmodule EvoGit.CLI.Setup do
     end
   end
 
-  # `opts`:
-  #   * `:auth_mode` — `"oauth"` for the subscription branch; ABSENT means the
-  #     default API-key mode (so the API-key path writes a profile that is
-  #     byte-identical to what earlier versions wrote).
+  # `opts[:auth_mode]` is "oauth" for the subscription branch; nil selects
+  # API-key authentication and clears an earlier OAuth choice.
   defp save_setup_result(model_spec, credential_key, api_key, opts \\ []) do
-    # Save model to config.toml using the [[llm.models]] array format
     existing_config = EvoGit.Config.user_config()
-
-    # Build atom-keyed config with the model added as a profile
     config = prepare_config(existing_config, model_spec, Keyword.get(opts, :auth_mode))
+    credential_key = credential_key_for_config(config, credential_key)
 
     case EvoGit.Config.save_user_config(config) do
       :ok ->
@@ -343,7 +343,9 @@ defmodule EvoGit.CLI.Setup do
         IO.puts("\n  Config file: #{EvoGit.Config.config_path()}")
 
         if Keyword.get(opts, :auth_mode) == "oauth" do
-          IO.puts("  OAuth credentials file: #{EvoGit.Auth.oauth_file([])}")
+          IO.puts(
+            "  OAuth credentials file: #{EvoGit.Auth.oauth_file(oauth_opts_for_config(config))}"
+          )
         else
           IO.puts("  Credentials file: #{EvoGit.Config.credentials_path()}")
         end
@@ -353,6 +355,37 @@ defmodule EvoGit.CLI.Setup do
 
       {:error, reason} ->
         IO.puts("\n  ✗ Failed to save config: #{inspect(reason)}")
+    end
+  end
+
+  defp setup_oauth_opts(model_spec) do
+    EvoGit.Config.user_config()
+    |> prepare_config(model_spec, "oauth")
+    |> oauth_opts_for_config()
+  end
+
+  defp setup_credential_key(model_spec, fallback) do
+    EvoGit.Config.user_config()
+    |> prepare_config(model_spec, nil)
+    |> credential_key_for_config(fallback)
+  end
+
+  # Config.save_credentials/1 merges by the exact string key, so retain account
+  # isolation instead of overwriting the provider-wide catalog credential.
+  defp credential_key_for_config(config, fallback) do
+    case selected_profile(config)[:api_key_env_var] do
+      name when is_binary(name) and name != "" -> name
+      _ -> fallback
+    end
+  end
+
+  defp selected_profile(%{llm: llm}),
+    do: Enum.find(llm.providers, &(&1.id == llm.default_provider_profile))
+
+  defp oauth_opts_for_config(config) do
+    case selected_profile(config)[:oauth_file] do
+      path when is_binary(path) and path != "" -> [oauth_file: path]
+      _ -> []
     end
   end
 
@@ -410,80 +443,102 @@ defmodule EvoGit.CLI.Setup do
     ArgumentError -> key
   end
 
-  defp ensure_llm_section(config) do
-    llm = Map.get(config, :llm, %{})
-    Map.put(config, :llm, Map.put_new(llm, :models, []))
-  end
+  # Schema owns legacy migration: setup never reimplements how flat [llm] or
+  # [[llm.models]] becomes provider profiles, and never saves both formats.
+  @legacy_llm_fields ~w(models model temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty)a
 
-  # Adds a model spec to the [[llm.models]] array.
-  #
-  # `model` may be either:
-  #   * a string in "provider:model" form (legacy — normalized to a map later
-  #     by Config.resolve/0), or
-  #   * a map spec like %{provider: :openai, id: "gpt-6-sol", base_url: "..."}
-  #     (new — stored directly).
-  #
-  # If a profile with the id "default" already exists, its model is updated.
-  # Otherwise a new "default" profile is created/appended. This keeps the
-  # setup wizard simple — it always operates on the default profile.
-  # Each profile gets its own concurrency setting (defaults to 3).
-  #
-  # `auth_mode` is `"oauth"` for the subscription branch and `nil` for the
-  # default API-key mode; `nil` also CLEARS a stale `auth_mode` left behind by
-  # an earlier OAuth run (switching back to an API key must not keep
-  # `auth_mode: "oauth"`).
   defp add_model_profile(config, model, auth_mode \\ nil) do
+    config = atomize_config_keys(config)
     llm = Map.get(config, :llm, %{})
-    models = Map.get(llm, :models, [])
+    profiles = config |> Schema.provider_profiles() |> atomize_config_keys()
+    model = setup_model(model)
+    provider = to_string(model.provider)
+    default_id = Map.get(llm, :default_provider_profile)
+    # Match Schema's default selection: absent an explicit ID, the FIRST
+    # account wins, not an unrelated account that happens to be named "default".
+    current =
+      if is_nil(default_id),
+        do: List.first(profiles),
+        else: Enum.find(profiles, &(&1[:id] == default_id))
 
-    new_profile = %{id: "default", model: model, concurrency: 3} |> apply_auth_mode(auth_mode)
+    # Updating an account on the same provider preserves its shared limits,
+    # generation defaults, nested model overrides and custom OAuth path.
+    # Choosing a different provider creates another profile rather than
+    # overwriting an existing account's endpoint/authentication settings.
 
-    updated_models =
-      case models do
-        [] ->
-          # No profiles yet — create the default profile
-          [new_profile]
+    {profile, profiles} =
+      if current && to_string(current[:provider]) == provider do
+        profile = update_provider_profile(current, model, auth_mode)
+        {profile, Enum.map(profiles, fn p -> if p[:id] == current[:id], do: profile, else: p end)}
+      else
+        id = available_profile_id(profiles, if(profiles == [], do: "default", else: provider))
 
-        existing ->
-          case Enum.find_index(existing, fn p -> Map.get(p, :id) == "default" end) do
-            nil ->
-              # Profiles exist but none is "default" — append a new one
-              existing ++ [new_profile]
+        profile =
+          update_provider_profile(
+            %{id: id, concurrency: 3, reasoning_efforts: []},
+            model,
+            auth_mode
+          )
 
-            idx ->
-              # Update the existing default profile's model (and auth mode)
-              List.update_at(existing, idx, fn p ->
-                p
-                |> Map.put(:model, model)
-                |> apply_auth_mode(auth_mode)
-              end)
-          end
+        {profile, profiles ++ [profile]}
       end
 
-    llm = Map.put(llm, :models, updated_models)
-    # Mirror the default profile's model to llm.model for backward compat
-    llm = Map.put(llm, :model, model)
+    llm =
+      llm
+      |> Map.drop(@legacy_llm_fields)
+      |> Map.put(:providers, profiles)
+      |> Map.put(:default_provider_profile, profile.id)
+
     Map.put(config, :llm, llm)
   end
 
+  defp update_provider_profile(profile, model, auth_mode) do
+    models = Map.get(profile, :models, [])
+
+    # The default must belong to the account's ordered inventory. Keep an
+    # existing entry verbatim so its per-model limits/efforts are not erased.
+    models =
+      if Enum.any?(models, &(&1[:model] == model.id)),
+        do: models,
+        else: models ++ [%{model: model.id}]
+
+    profile
+    |> Map.merge(Map.drop(model, [:id]))
+    |> Map.put(:provider, to_string(model.provider))
+    |> Map.put(:models, models)
+    |> Map.put(:default_model, model.id)
+    |> apply_auth_mode(auth_mode)
+  end
+
+  defp available_profile_id(profiles, base) do
+    ids = MapSet.new(profiles, & &1[:id])
+
+    Stream.iterate(1, &(&1 + 1))
+    |> Enum.find_value(fn n ->
+      id = if n == 1, do: base, else: "#{base}-#{n}"
+      if not MapSet.member?(ids, id), do: id
+    end)
+  end
+
+  defp setup_model(model) when is_map(model), do: atomize_config_keys(model)
+
+  defp setup_model(model) when is_binary(model) do
+    case String.split(model, ":", parts: 2) do
+      [provider, id] when provider != "" and id != "" -> %{provider: provider, id: id}
+      _ -> raise ArgumentError, "setup model must be a provider:model string or model map"
+    end
+  end
+
   @doc false
-  # Public test wrapper for add_model_profile/2 (API-key mode).
+  # Retained public test seams; both now produce canonical provider profiles.
   def do_add_model_profile(config, model), do: add_model_profile(config, model)
 
   @doc false
-  # Public test wrapper for add_model_profile/3 (`auth_mode` may be `nil` or
-  # `"oauth"`).
   def do_add_model_profile(config, model, auth_mode),
     do: add_model_profile(config, model, auth_mode)
 
-  # Pure pipeline behind `save_setup_result/4`: the user config as decoded from
-  # config.toml (string-keyed, with STRING-keyed model profiles) →
-  # atom-keyed config carrying the updated "default" profile.
   defp prepare_config(existing_config, model_spec, auth_mode) do
-    existing_config
-    |> atomize_config_keys()
-    |> ensure_llm_section()
-    |> add_model_profile(model_spec, auth_mode)
+    add_model_profile(existing_config, model_spec, auth_mode)
   end
 
   @doc false

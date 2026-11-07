@@ -1,44 +1,68 @@
 # `evo_git` — Config Test Tree
 
 ## Intent
-ExUnit suites for `EvoGit.Config`'s schema/metadata layer: the schema contract, the Ecto validation engine, the static LLM catalog, the per-model generation-parameter filtering, and the version-state file.
-These are the per-module suites.
-The **whole-app `EvoGit.Config` behaviour** (the `resolve/0` pipeline — `deep_merge` → `atomize_enum_values` → `migrate_llm_models`, TOML loading, credentials, `XDG_CONFIG_HOME` isolation, sandbox-backend atomization, the `[llm]` compression/pruning keys) is pinned by `../config_test.exs`, which lives at the PARENT node (`evo_git/`).
+ExUnit suites for the config schema/metadata layer, canonical provider-account normalization and model selection, generation-parameter filtering, static LLM catalog and version-state file.
+Whole-app config resolution, TOML roundtrips, save/load and legacy migration through `EvoGit.Config.resolve/0` belong to the parent `../config_test.exs`, not this node.
+`config_status_test.exs` owns focused disk-backed public `Config.config_status/0` regressions for invalid canonical defaults, initial validation-error snapshots across a successful nested resolve, and fresh healthy status after repair.
+The parent `../config_test.exs` retains the broader config-health, OAuth and persistence coverage, while this node also owns the pure `Schema.validate/1` and `Schema.resolve_model_spec/2` selector contracts.
 
 ## API Surface
-No source files — test-only node.
+This is a test-only node with no production code.
+Tests call the public `EvoGit.Config.Schema` entry points and schema/metadata helpers.
 
 ## Routing Table
-- No child directories. The parent `../CONTEXT.md` holds the cross-cutting async-safety policy and the top-level `*.exs` map.
+There are no child directories.
+The parent `../CONTEXT.md` and `../../CONTEXT.md` own the cross-cutting async-safety policy.
 
 ## Files
 
-| File | Module | async | Scope |
-|------|--------|-------|-------|
-| `schema_test.exs` | `EvoGit.Config.SchemaTest` | `true` | End-to-end contract of `EvoGit.Config.Schema` — `all_schemas/0` (currently 104 entries — `oauth_file` is a per-profile override only, so there is NO `[llm] oauth_file` schema key), `schemas_by_category/0` (exact per-category counts), `defaults/0` (every default value, incl. CPU-thread-derived ones and the `[llm]` compression/threshold + stage-1 pruning keys), `validate/1` accept/reject + error shapes, and the `Schema.LLM.*` helpers (model spec / profile parsing, peak-hour fields, `llm_generation_params/1`, `provider_from_model/1`; provider options and constraint filtering belong to `llm_generation_params_test.exs`) |
-| `context_window_test.exs` | `EvoGit.Config.ContextWindowTest` | `true` | The context-window resolver in `Schema.LLM` — `default_context_window/0` (`200_000`), `context_window/1` (atom-/string-keyed profile, absent/invalid → default + warning, never raises) and `context_window_for/2` (found profile, unknown id, empty/absent/malformed config → default) |
-| `tmp_schema_test.exs` | `EvoGit.Config.TmpSchemaTest` | `true` | The `[tmp]` section — `[:tmp,:mode]` / `[:tmp,:path]` schema shape (type/default/validation/category), `defaults/0` exposure, `validate/1` accept/reject of the mode enum, and string→atom normalization of the mode |
-| `ecto_validation_test.exs` | `EvoGit.Config.EctoValidationTest` | `true` | `EvoGit.Config.EctoTypes` + `EvoGit.Config.EctoValidation` — the Ecto layer beneath `Schema.validate/1`: strict no-coercion casting, `nil` ≡ absent, type-then-rule error ordering, byte-exact messages/rules/key_paths, unknown-key survival, integer-indexed profile recursion, crash resilience |
-| `llm_catalog_test.exs` | `EvoGit.Config.LLMCatalogTest` | `true` | Static provider/model catalog surface (`EvoGit.Config.LLMCatalog`) — provider entries, model id display names, credential keys, `base_url` / variant rules |
-| `llm_generation_params_test.exs` | `EvoGit.Config.LLMGenerationParamsTest` | `false` | Per-model/-provider generation-parameter filtering: `Schema.LLM.provider_options_for_model/1` + `default_provider_options/0` (native OpenAI keeps `store: false`, compatible endpoints and extra-bearing endpoints do not), `profile_generation_params/1` (temperature / `max_tokens` / `reasoning_effort` clamping), `model_metadata/1` + `constraints_for/1` over the injected `:llm_model_metadata_fun`, and the `LLMConstraints.filter/3` reject tables |
-| `version_state_test.exs` | `EvoGit.Config.VersionStateTest` | `true` | `EvoGit.Config.VersionState` — version-state TOML file, cache, upgrade + onboarding detection |
+| File | Module suffix | async | Scope |
+|------|---------------|-------|-------|
+| `schema_test.exs` | `SchemaTest` | `true` | Existing end-to-end schema contract, exact 106 descriptors and per-category counts (14 LLM), defaults, validation and legacy LLM helpers |
+| `provider_profiles_test.exs` | `ProviderProfilesTest` | `true` | Public `Schema.provider_profiles/1` and `model_selections/1`: canonical-over-legacy precedence, recursive string-key normalization, ordered account/model/effort inventories, same-provider account isolation, legacy string/map/tuple/flat adapters, malformed-input degradation, context inheritance and pure OAuth runtime projections |
+| `provider_profile_resolution_test.exs` | `ProviderProfileResolutionTest` | `true` | Public `Schema.resolve_model_spec/2`: account/model/effort default precedence and explicit overrides, atom/string inputs, exact errors, generation/context inheritance, shared scheduling/auth/endpoint authority, ReqLLM-ready string/map model specs, account credentials and OAuth options |
+| `provider_profile_validation_test.exs` | `ProviderProfileValidationTest` | `true` | Canonical schema descriptors and raw provider/model validation: indexed error paths, type/range failures, duplicate account/model/effort identities and default membership, shared settings, nested context/generation overrides |
+| `config_status_test.exs` | `ConfigStatusTest` | `true` | Public config health: usable canonical account with invalid default, exact selector error with no missing keys, successful nested-resolve snapshot preservation, and healthy subsequent/fresh invocations |
+| `context_window_test.exs` | `ContextWindowTest` | `true` | `Schema.LLM` default 200000 context window, atom/string profile keys, invalid fallback and id lookup |
+| `tmp_schema_test.exs` | `TmpSchemaTest` | `true` | `[tmp]` schema metadata, defaults, enum validation and string-to-atom normalization |
+| `ecto_validation_test.exs` | `EctoValidationTest` | `true` | Strict scalar casting, nil/absent semantics, error ordering/shapes, unknown keys, indexed profile recursion and crash resilience |
+| `llm_catalog_test.exs` | `LLMCatalogTest` | `true` | Static catalog providers/models, credential keys, auth modes, endpoints and variants |
+| `llm_generation_params_test.exs` | `LLMGenerationParamsTest` | `false` | Provider-aware generation/OAuth options, constraints and metadata seam |
+| `version_state_test.exs` | `VersionStateTest` | `true` | Version-state TOML, path-aware cache, upgrade and onboarding detection |
 
 ## Constraints
-- `async: true` for every file here EXCEPT `llm_generation_params_test.exs`.
-- Test module names mirror the source module under test (`EvoGit.Config.Schema` → `…SchemaTest`).
-- No mocks; all assertions are pure data transformations (no git, no temp repos needed in this directory).
-- Never edit files outside this node — `../config_test.exs` and `../CONTEXT.md` belong to the parent node.
+Only `llm_generation_params_test.exs` is synchronous because it mutates the BEAM-global `:llm_model_metadata_fun` and `:auth_home_fun` app-env seams.
+All other modules default to `async: true` and must not mutate shared app env, OS env, scheduler state or ReqLLM provider keys.
+The resolver suite uses per-process `EvoGit.TestSupport.ConfigDir` isolation and unique custom credential names without the `_API_KEY` suffix, so loading their credentials cannot populate ReqLLM's global key store.
+The config-dir seam supplies a parent directory and `Platform.config_dir("genesis")` appends `genesis`, so fixtures obtain the actual credentials directory through `EvoGit.Config.config_dir/0`.
+Resolver generation assertions use catalog-absent test model ids rather than a mutable global metadata seam.
+OAuth resolver option assembly uses an uncatalogued provider to avoid importing the developer's vendor CLI login, while real OAuth-only provider inheritance is covered through pure normalization/runtime-profile projection.
+The config-health suite also uses a custom credential name without an `_API_KEY` suffix so credential loading cannot mutate ReqLLM's global key store.
+Its POSIX-only nested-resolve test uses a test-owned credentials FIFO to hold the health check after initial validation, repairs the config before releasing EOF, and proves the later nested resolve cleared the caller-local errors while the returned status retained the initial exact error.
+Both writer-side file operations use raw I/O because the shared file server is waiting for the credentials read to finish.
+The FIFO rendezvous uses no sleep, timing race, app-env override, global tracing or OS-env mutation and is skipped on Windows; the remaining health tests are cross-platform.
+The environment-over-persisted credential test only reads the existing `PATH` value and never writes an OS environment variable.
+`version_state_test.exs` is async-safe because the version-state cache stores its path and reclassifies whenever the per-process path changes.
+Never edit files outside this node; the parent roundtrip suite and parent context documentation have separate owners.
+Keep new focused suites below roughly 1000 lines and express related input families as table-driven cases without dropping assertions.
+No mocks or real LLM requests are used here.
 
-## Async-Safety Notes
-`version_state_test.exs` is `async: true`: each test gets its own PER-PROCESS config directory (`EvoGit.TestSupport.ConfigDir.isolate!/1`), and the single global `{EvoGit.Config.VersionState, :version_state}` `:persistent_term` cache stores the PATH alongside the classified state, transparently reloading from disk whenever `VersionState.path/0` changes — so concurrent modules with different config directories always observe their own file. No process-wide env var is written.
-`llm_generation_params_test.exs` is `async: false`: its metadata-lookup seam is the BEAM-global app-env key `:llm_model_metadata_fun`, which the module writes per test and deletes in `on_exit`.
-The other six files are `async: true`: everything under test is pure data transformation (`Schema`, `EctoTypes`, `EctoValidation`, `Schema.LLM`'s context-window resolver, the static `LLMCatalog`, the pure `EvoGit.PeakHours` validators) plus the read-only `EvoGit.Platform.cpu_threads/0` — no app env, ETS, process, or application singleton is read or written (the only `:persistent_term` touch is the path-keyed version-state cache described above).
+## Contract Notes
+`llm.providers` and `llm.default_provider_profile` are canonical schema entries alongside legacy `llm.models` and flat `llm.model` adapters.
+A nonempty canonical inventory wins over legacy data even when every canonical entry is malformed.
+Provider profiles normalize to string-keyed maps; selection and resolved envelopes have atom keys.
+Account/model/effort ordering is preserved, one selection is emitted per model rather than per effort, and an effort inventory never invents a default.
+Provider defaults apply before nested model context/generation/effort overrides, while auth, endpoint and concurrency settings remain shared account authority.
+`resolved.model_spec` is a ReqLLM-ready qualified identifier or endpoint-bearing model map, not the persisted task selection map.
+`resolved.generation_params` can contain the selected account's API credential and must not be assumed credential-free.
+Canonical validation checks raw input before normalization can discard malformed values or deduplicate inventories.
+Duplicate effort errors include the duplicate element's index, context-window validation uses rule `:integer`, and auth-mode validation uses rule `:string` for compatibility with the shared legacy validators.
+There is no global `[llm] oauth_file` schema key; OAuth files are per account/profile.
+`Schema.all_schemas/0` has exactly 106 entries and its LLM category has exactly 14, so adding/removing descriptors requires updating both count assertions.
+`Config.__atomize_enum_values__/1` remains a hardcoded per-key-path normalization list rather than schema-derived behavior.
+The `[tmp]` enum is `[:system, :custom, :per_repo]`, with rejected values reported at `[:tmp, :mode]` under the corresponding `{:in, ...}` rule.
 
-## Notes for Agents
-- Test counts: `../config_test.exs` 76, `schema_test.exs` 119, `ecto_validation_test.exs` 39, `llm_generation_params_test.exs` 47, `llm_catalog_test.exs` 28, `version_state_test.exs` 15, `context_window_test.exs` 12, `tmp_schema_test.exs` 7.
-- Ownership boundaries — do NOT re-add a duplicate of a behaviour a sibling already owns: `llm_generation_params_test.exs` owns `provider_options_for_model/1` / `default_provider_options/0` / `profile_generation_params/1` and the `LLMConstraints.filter/3` reject tables; `schema_test.exs`'s `describe "defaults/0"` owns the `Schema.defaults/0` value set (only the scheduler-defaults shape stays in `../config_test.exs`); `ecto_validation_test.exs` owns numeric-string rejection for every integer type.
-- Express a per-input family as ONE table-driven test (a list of `{input, expectation}` cases inside a single `test`) instead of N single-assertion tests; every case still runs.
-- These suites assert sub-millisecond pure functions, so removing tautologies and duplicates buys no measurable wall clock — duplicate pruning here is about ownership clarity, not speed.
-- `schema_test.exs` asserts EXACT counts: `length(Schema.all_schemas()) == 104` and one exact count per category (`grouped[:data] == 3`, `grouped[:sandbox] == 19`, `grouped[:llm] == 12`, …). Adding or removing a schema in `EvoGit.Config.Schema.Definitions` moves BOTH the total and its category count — update both, and re-run the file (do not guess).
-- `EvoGit.Config.__atomize_enum_values__/1` (`lib/evo_git/config/config.ex`, exposed as a `@doc false` test seam) is a hardcoded per-key-path clause list (currently `:sandbox`, `:git`, `:tmp`, `:llm`), NOT derived from `Schema` metadata. A new `type: :atom` schema with `validation: [in: [...]]` needs a matching clause there or its string values never atomize.
-- The `[tmp]` mode enum is `[:system, :custom, :per_repo]`; `Schema.validate/1` reports a rejected value as `rule: {:in, [:system, :custom, :per_repo]}` with `key_path: [:tmp, :mode]`.
+## Test Inventory
+This node contains 360 tests across eleven modules.
+Per-file counts are schema 122, provider normalization/enumeration 14, provider resolution 21, provider validation 12, config health 3, Ecto validation 48, generation parameters 66, catalog 40, version state 15, context window 12 and tmp schema 7.
+Run the complete node with `mix test apps/evo_git/test/evo_git/config` from the umbrella root.

@@ -147,6 +147,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
     # threaded value is identical at every level. `nil` (e.g. direct/test
     # callers) leaves the child to compute it.
     task_tmpdir = EvoGit.TaskTmpdir.current()
+    model_opts = inherited_model_opts(state.agent_id, parent_state)
 
     Enum.map(indexed_calls, fn {call, index} ->
       name = ReqLLM.ToolCall.name(call)
@@ -205,13 +206,18 @@ defmodule EvoGit.Agent.SubagentProcessing do
                  same_repo?
                ) do
             {:ok, sub_phylo_node} ->
-              AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective,
-                repo_id: target_repo_id,
-                foreign_repos: foreign_repos,
-                repo_notes: repo_notes,
-                archive: parent_state.archive,
-                model_id: parent_state.model_id,
-                task_tmpdir: task_tmpdir
+              AgentSpec.new(
+                sub_context_node,
+                sub_phylo_node,
+                mod,
+                objective,
+                Keyword.merge(model_opts,
+                  repo_id: target_repo_id,
+                  foreign_repos: foreign_repos,
+                  repo_notes: repo_notes,
+                  archive: parent_state.archive,
+                  task_tmpdir: task_tmpdir
+                )
               )
 
             {:error, error_msg} ->
@@ -222,6 +228,38 @@ defmodule EvoGit.Agent.SubagentProcessing do
           {:error, {call, index, error_msg}}
       end
     end)
+  end
+
+  # Inherit the full effective selection, but only a locked choice is explicit:
+  # unlocked inheritance is a fallback so each spawn still consults the script.
+  # Original spawn opts retain the lock/selection for older AgentState shapes.
+  # Omit an absent canonical selection: model_spec: nil is an explicit invalid
+  # choice to the scheduler, not a request to inherit the legacy model id.
+  defp inherited_model_opts(agent_id, parent_state) do
+    parent_spec =
+      case AgentScheduler.Store.get_sched_meta(agent_id) do
+        {:ok, meta} -> Map.get(meta, :spec) || %{}
+        :error -> %{}
+      end
+
+    parent_opts = Map.get(parent_spec, :opts, [])
+
+    selection =
+      Map.get(parent_state, :model_spec) || Map.get(parent_spec, :model_spec) ||
+        Keyword.get(parent_opts, :model_spec) || Keyword.get(parent_opts, :default_model_spec)
+
+    locked? =
+      Map.get(parent_state, :model_id_locked) == true or
+        Keyword.get(parent_opts, :model_id_locked, false) == true
+
+    opts = [model_id: Map.get(parent_state, :model_id), model_id_locked: locked?]
+
+    if is_nil(selection) do
+      opts
+    else
+      key = if locked?, do: :model_spec, else: :default_model_spec
+      Keyword.put(opts, key, selection)
+    end
   end
 
   @doc """

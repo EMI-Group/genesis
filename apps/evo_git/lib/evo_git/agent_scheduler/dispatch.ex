@@ -13,6 +13,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.ModelSelection
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
@@ -38,7 +39,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
           String.t() | nil,
           pos_integer() | nil
         ) ::
-          {pos_integer(), State.t()}
+          {pos_integer(), State.t()} | {:error, term()}
   def register_agent(
         %State{} = state,
         %AgentSpec{} = spec,
@@ -48,6 +49,14 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         task_id,
         task_number
       ) do
+    spec = inherit_model_selection(spec, parent_id)
+
+    with {:ok, selection} <- resolve_selection(state, spec, parent_id, depth, task_id) do
+      do_register_agent(state, spec, selection, from, parent_id, depth, task_id, task_number)
+    end
+  end
+
+  defp do_register_agent(state, spec, selection, from, parent_id, depth, task_id, task_number) do
     id = state.next_agent_id
 
     # Compute per-task local agent ID (display/branch naming only)
@@ -68,20 +77,12 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     # Resolve repo root from the spec's own data (avoids reading shared mutable state)
     agent_repo_root = resolve_agent_repo_root(spec, state)
 
-    # Resolve the effective model id for this agent (user-locked model >
-    # model-selection script > spec.model_id / custom-agent default), then map
-    # it to a profile, falling back to the default profile from state.model_profiles.
-    spec_model_id = effective_model_id(state, spec, parent_id, depth, task_id)
-
-    {resolved_model_id, resolved_model, resolved_params} =
-      resolve_model_for_agent(state, spec_model_id)
-
-    # Resolve the compression context window from the ALREADY-RESOLVED profile
-    # id: an unknown requested id already warned inside
-    # resolve_model_for_agent/2, and the canonical id always resolves, so
-    # re-resolving never warns twice — and the window and the model are
-    # guaranteed to come from the same profile.
-    resolved_context_window = resolve_context_window(state, resolved_model_id)
+    # Resolve the whole selection before any ETS/counter mutation. Resource
+    # identity stays separate from the legacy selection id and request model.
+    resolved_model_id = selection.model_id
+    resolved_model = selection.llm_model
+    resolved_params = selection.llm_generation_params
+    resolved_context_window = selection.llm_context_window
 
     Store.put_agent_state(id, %AgentState{
       context_node: spec.context_node,
@@ -90,6 +91,9 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       llm_generation_params: resolved_params,
       llm_context_window: resolved_context_window,
       model_id: resolved_model_id,
+      provider_profile_id: selection.provider_profile_id,
+      model_spec: selection.model_spec,
+      model_id_locked: Keyword.get(spec.opts, :model_id_locked, false) == true,
       max_retries: state.max_retries,
       max_depth: state.max_depth,
       max_turns: resolve_max_turns(state, spec, parent_id),
@@ -335,6 +339,70 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
   # --- Model Profile Resolution ---
 
+  @doc "Inherits a locked parent's full model selection at the scheduler boundary."
+  def inherit_model_selection(spec, nil), do: spec
+
+  def inherit_model_selection(spec, parent_id) do
+    case Store.get_agent_state(parent_id) do
+      {:ok, parent} -> ModelSelection.inherit(spec, parent)
+      :error -> spec
+    end
+  end
+
+  @doc """
+  Resolves selection without mutating scheduler state.
+  Explicit model_spec wins over legacy ids, defaults and scripts and never falls back.
+  Otherwise locked legacy ids bypass scripts and definition defaults; unlocked
+  selections prefer the script, opts[:default_model_spec], then legacy/default ids.
+  Errors are returned to the caller before registration; the hub must propagate them.
+  """
+  def resolve_selection(state, spec, parent_id, depth, task_id) do
+    case ModelSelection.explicit_spec(spec) do
+      {:ok, requested} ->
+        ModelSelection.resolve_explicit(state, requested)
+
+      :error ->
+        requested = effective_model_id(state, spec, parent_id, depth, task_id)
+        resolve_requested_selection(state, requested)
+    end
+  end
+
+  # Definition defaults use the canonical wire validator, never legacy-id fallback.
+  defp resolve_requested_selection(state, {:default_model_spec, requested}) do
+    ModelSelection.resolve_explicit(state, requested)
+  end
+
+  defp resolve_requested_selection(state, requested) do
+    if is_map(requested) or is_map(state.model_selection_config) do
+      case ModelSelection.resolve(state, requested) do
+        {:ok, _} = result ->
+          result
+
+        {:error, {:provider_profile_not_found, id}} when is_binary(requested) ->
+          Logger.warning(
+            "AgentScheduler: legacy selection #{inspect(id)} not found; using default"
+          )
+
+          ModelSelection.resolve(state, nil)
+
+        {:error, _} = error ->
+          error
+      end
+    else
+      {id, model, params} = resolve_model_for_agent(state, requested)
+
+      {:ok,
+       %{
+         model_id: id,
+         provider_profile_id: State.pool_id(state, id),
+         model_spec: nil,
+         llm_model: model,
+         llm_generation_params: params,
+         llm_context_window: resolve_context_window(state, id)
+       }}
+    end
+  end
+
   @doc """
   Resolves the model profile for an agent based on the spec's `model_id`.
 
@@ -412,7 +480,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
   # --- Effective Model / Max-Turns Resolution ---
 
-  # Computes the effective model id for a newly-registered agent.
+  # Computes the effective selection (legacy id or canonical map) for an agent.
   #
   # Priority order (highest wins):
   #
@@ -420,26 +488,28 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   #    CLI `-m` flag): the user's explicit model choice wins over everything, so
   #    `spec.model_id` is returned immediately without consulting the script.
   # 2. **Model-selection script** — the user Elixir script from `agents.toml`
-  #    (`EvoGit.CustomAgents.ModelSelector.select_model/1`): its returned id is
-  #    used as-is. An unknown id keeps `resolve_model_for_agent/2`'s existing
-  #    warn-and-fall-back-to-default behavior.
-  # 3. **`spec.model_id` / custom-agent default** — the caller-supplied model id;
-  #    when nil/empty and the spec carries a `:custom_agent_id`, the custom agent
-  #    definition's `:model_id` is used instead.
-  # 4. **Default profile** — `nil` reaches `resolve_model_for_agent/2`, which
-  #    picks the scheduler's default profile.
+  #    (`EvoGit.CustomAgents.ModelSelector.select_model/1`): a returned selection
+  #    map goes through schema validation, never legacy id lookup or fallback.
+  #    An unknown legacy id retains the warn-and-fall-back-to-default behavior.
+  # 3. **Definition selection** — `opts[:default_model_spec]` is a canonical
+  #    custom-definition fallback, not an explicit choice or lock. Its presence
+  #    requires canonical wire/schema validation, even if its value is invalid.
+  # 4. **Legacy `spec.model_id` / custom-agent default** — when nil/empty,
+  #    the custom definition's legacy `:model_id` is used instead.
+  # 5. **Configured default** — nil uses schema defaults when available, or
+  #    the first legacy profile otherwise.
   #
   # This runs in the scheduler GenServer and NEVER raises: a missing custom
   # agent definition is logged and treated as nil; script failures surface as
   # `{:error, reason}` from `select_model/1` and are logged with a fallback to
-  # the base id.
+  # the definition selection or base id (validated later by resolve_selection/5).
   @spec effective_model_id(
           State.t(),
           AgentSpec.t(),
           pos_integer() | nil,
           non_neg_integer(),
           String.t() | nil
-        ) :: String.t() | nil
+        ) :: String.t() | map() | nil | {:default_model_spec, term()}
   defp effective_model_id(_state, %AgentSpec{} = spec, parent_id, depth, task_id) do
     base_id =
       case spec.model_id do
@@ -470,6 +540,12 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     if Keyword.get(spec.opts, :model_id_locked, false) == true do
       base_id
     else
+      fallback =
+        case Keyword.fetch(spec.opts, :default_model_spec) do
+          {:ok, selection} -> {:default_model_spec, selection}
+          :error -> base_id
+        end
+
       attrs = %{
         agent_type: if(custom_id?(spec), do: :custom, else: spec.agent_module),
         custom_agent_id: custom_agent_id(spec),
@@ -481,7 +557,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
       case EvoGit.CustomAgents.ModelSelector.select_model(attrs) do
         {:ok, nil} ->
-          base_id
+          fallback
 
         {:ok, model_id} ->
           model_id
@@ -489,10 +565,10 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         {:error, reason} ->
           Logger.warning(
             "AgentScheduler: model selection script failed for agent " <>
-              "(task #{inspect(task_id)}): #{inspect(reason)}; using default model"
+              "(task #{inspect(task_id)}): #{inspect(reason)}; using definition/default model"
           )
 
-          base_id
+          fallback
       end
     end
   end

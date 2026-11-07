@@ -1,3 +1,30 @@
+defmodule EvoGit.SystemCheckTest.StreamEndpoint do
+  @moduledoc false
+  # Test-local real HTTP endpoint: capture the outgoing wire request, then send a
+  # minimal successful OpenAI stream. Unlike TestLlmServer, this pins credentials
+  # and the selected model rather than just counting error responses.
+  def init(owner), do: owner
+
+  def call(conn, owner) do
+    {:ok, body, conn} = Plug.Conn.read_body(conn)
+    send(owner, {:health_request, conn.req_headers, Jason.decode!(body)})
+
+    chunks = [
+      %{type: "response.output_text.delta", delta: "hello", output_index: 0, content_index: 0},
+      %{
+        type: "response.completed",
+        response: %{id: "health-response", status: "completed", output: []}
+      }
+    ]
+
+    response = Enum.map_join(chunks, "", &("data: " <> Jason.encode!(&1) <> "\n\n"))
+
+    conn
+    |> Plug.Conn.put_resp_content_type("text/event-stream")
+    |> Plug.Conn.send_resp(200, response <> "data: [DONE]\n\n")
+  end
+end
+
 defmodule EvoGit.SystemCheckTest do
   @moduledoc """
   Tests for `EvoGit.SystemCheck` (dashboard Help-page diagnostics).
@@ -6,10 +33,9 @@ defmodule EvoGit.SystemCheckTest do
   which erases the BEAM-global `:evogit_nix_dev_env_state` `:persistent_term`
   entry — a process-wide mutation any concurrently running module could observe.
 
-  Note: this module does NOT redirect `XDG_CONFIG_HOME` (unlike most config
-  tests), so `SystemCheck.config_check/0` reads the real
-  `~/.config/genesis/config.toml` of the running machine — a read-only
-  dependency on user state, not a global mutation.
+  Config reads use the per-process ConfigDir seam, never the developer's config.
+  Canonical account tests also snapshot/restore the named API-key environment
+  variables, which are BEAM-global and independently require serialization.
   """
 
   use ExUnit.Case, async: false
@@ -23,6 +49,7 @@ defmodule EvoGit.SystemCheckTest do
   @nix_keys [:available, :enabled, :flake_present, :dev_env_built, :error]
 
   setup do
+    EvoGit.TestSupport.ConfigDir.isolate!("evogit-system-check")
     Nix.reset_state()
     on_exit(fn -> Nix.reset_state() end)
     :ok
@@ -139,6 +166,180 @@ defmodule EvoGit.SystemCheckTest do
       result = SystemCheck.config_check()
       assert is_map(result)
       assert Map.has_key?(result, :ok?)
+    end
+  end
+
+  describe "canonical provider selections in llm_test" do
+    setup do
+      names = ["GENESIS_HEALTH_ACCOUNT_A", "GENESIS_HEALTH_ACCOUNT_B"]
+      snapshot = Enum.map(names, &{&1, System.get_env(&1)})
+      Enum.each(names, &System.put_env(&1, "test-account-key"))
+
+      on_exit(fn ->
+        for {name, value} <- snapshot do
+          if value, do: System.put_env(name, value), else: System.delete_env(name)
+        end
+      end)
+
+      # Genuine HTTP errors prove which account endpoint the health request used;
+      # there is no provider call outside loopback and no mocked LLM interpreter.
+      servers =
+        for id <- ["account-a", "account-b"] do
+          body =
+            Jason.encode!(%{
+              error: %{message: "health endpoint #{id}", type: "invalid_request_error"}
+            })
+
+          {id, EvoGit.TestLlmServer.start!(400, body)}
+        end
+        |> Map.new()
+
+      providers =
+        for {id, env_var} <- [
+              {"account-a", "GENESIS_HEALTH_ACCOUNT_A"},
+              {"account-b", "GENESIS_HEALTH_ACCOUNT_B"}
+            ] do
+          %{
+            id: id,
+            provider: "openai",
+            api_key_env_var: env_var,
+            base_url: servers[id].url <> "/v1",
+            concurrency: 3,
+            default_model: "gpt-4.1",
+            models: [%{model: "gpt-4.1"}, %{model: "gpt-4.1-mini"}],
+            reasoning_efforts: ["low", "high"]
+          }
+        end
+
+      config =
+        EvoGit.Config.defaults()
+        |> put_in([:llm, :default_provider_profile], "account-b")
+        |> put_in([:llm, :providers], providers)
+
+      assert :ok = EvoGit.Config.save_user_config(config)
+      %{servers: servers}
+    end
+
+    test "nil, account id and task selection maps use the selected account", %{servers: servers} do
+      assert {:error, default_error} = SystemCheck.llm_test()
+      assert default_error =~ "health endpoint account-b"
+      assert EvoGit.TestLlmServer.request_count(servers["account-b"]) == 1
+      assert EvoGit.TestLlmServer.request_count(servers["account-a"]) == 0
+
+      assert {:error, id_error} = SystemCheck.llm_test("account-a")
+      assert id_error =~ "health endpoint account-a"
+      assert EvoGit.TestLlmServer.request_count(servers["account-a"]) == 1
+
+      for selection <- [
+            %{provider_profile_id: "account-b", model: "gpt-4.1-mini", reasoning_effort: "high"},
+            %{
+              "provider_profile_id" => "account-a",
+              "model" => "gpt-4.1-mini",
+              "reasoning_effort" => "low"
+            }
+          ] do
+        assert {:error, selection_error} = SystemCheck.llm_test(selection, max_tokens: 20)
+
+        assert selection_error =~
+                 "health endpoint #{selection[:provider_profile_id] || selection["provider_profile_id"]}"
+      end
+
+      assert EvoGit.TestLlmServer.request_count(servers["account-a"]) == 2
+      assert EvoGit.TestLlmServer.request_count(servers["account-b"]) == 2
+    end
+
+    test "same-provider accounts sharing an endpoint send only their own key and selected model" do
+      server =
+        start_supervised!(
+          {Bandit,
+           plug: {EvoGit.SystemCheckTest.StreamEndpoint, self()},
+           ip: {127, 0, 0, 1},
+           port: 0,
+           startup_log: false}
+        )
+
+      assert {:ok, {_address, port}} = ThousandIsland.listener_info(server)
+
+      System.put_env("GENESIS_HEALTH_ACCOUNT_A", "health-account-a-secret")
+      System.put_env("GENESIS_HEALTH_ACCOUNT_B", "health-account-b-secret")
+      config = EvoGit.Config.resolve()
+
+      providers =
+        Enum.map(config.llm.providers, &Map.put(&1, "base_url", "http://127.0.0.1:#{port}/v1"))
+
+      assert :ok = EvoGit.Config.save_user_config(put_in(config, [:llm, :providers], providers))
+
+      for {account, model, secret} <- [
+            {"account-a", "gpt-4.1-mini", "health-account-a-secret"},
+            {"account-b", "gpt-4.1", "health-account-b-secret"},
+            {"account-a", "gpt-4.1", "health-account-a-secret"}
+          ] do
+        selection = %{provider_profile_id: account, model: model}
+        assert {:ok, result} = SystemCheck.llm_test(selection, max_tokens: 20)
+        assert result.response == "hello"
+
+        assert result.model == %{
+                 provider: :openai,
+                 id: model,
+                 base_url: "http://127.0.0.1:#{port}/v1"
+               }
+
+        assert_receive {:health_request, headers, body}
+        assert List.keyfind(headers, "authorization", 0) == {"authorization", "Bearer " <> secret}
+        assert body["model"] == model
+        assert body["max_output_tokens"] == 20
+      end
+    end
+
+    test "invalid account, model and effort selections fail before any HTTP request", %{
+      servers: servers
+    } do
+      for {selection, reason} <- [
+            {%{provider_profile_id: "missing"}, "provider_profile_not_found"},
+            {%{provider_profile_id: "account-a", model: "missing"}, "model_not_found"},
+            {%{provider_profile_id: "account-b", reasoning_effort: "extreme"},
+             "unsupported_reasoning_effort"}
+          ] do
+        assert {:error, message} = SystemCheck.llm_test(selection)
+        assert message =~ "Cannot resolve LLM selection"
+        assert message =~ reason
+      end
+
+      for server <- Map.values(servers) do
+        assert EvoGit.TestLlmServer.request_count(server) == 0
+      end
+    end
+
+    test "invalid configured default does not silently test the first account", %{
+      servers: servers
+    } do
+      config = put_in(EvoGit.Config.resolve(), [:llm, :default_provider_profile], "missing")
+      # A hand-edited file bypasses save-time validation; health must still refuse
+      # the invalid selection rather than test an unrelated account successfully.
+      assert {:ok, toml} = config |> EvoGit.Config.__stringify_keys__() |> TomlElixir.encode()
+      File.write!(EvoGit.Config.config_path(), toml)
+
+      assert {:error, message} = SystemCheck.llm_test()
+      assert message =~ "provider_profile_not_found"
+      assert message =~ "missing"
+
+      assert Enum.any?(
+               SystemCheck.config_check().validation_errors,
+               &(&1.key_path == [:llm, :default_provider_profile])
+             )
+
+      for server <- Map.values(servers) do
+        assert EvoGit.TestLlmServer.request_count(server) == 0
+      end
+    end
+
+    test "config health recognizes canonical accounts with nested model defaults" do
+      assert SystemCheck.config_check() == %{
+               ok?: true,
+               missing: [],
+               warnings: [],
+               validation_errors: []
+             }
     end
   end
 

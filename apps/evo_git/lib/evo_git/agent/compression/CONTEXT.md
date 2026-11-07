@@ -76,6 +76,12 @@ Usage is charged wherever the request was billed: the adopted-prune path leaves 
 - **Exactly ONE runtime-context refresh survives any compression**: before appending the freshly built refresh, BOTH rebuild paths run `ContextCompression.drop_stale_refreshes/1`, which drops EVERY message matching `ContextBuilder.refresh_message?/1` (order and every other message preserved, total over malformed shapes) — so repeated compressions can never grow the list through refresh messages and a stale background-jobs snapshot cannot survive inside the protected tail; the stage-1 prune-only path appends the plain refresh with NO job snapshot.
 - **A synthetic checkpoint never influences recency**: `Checkpoint.checkpoint_message/2` ignores any turn argument (it is never turn-tagged) and stamps `metadata[:checkpoint] = true`; `Recency.synthetic?/1` excludes such messages from the turn scan, `Checkpoint.split/2` forces the split past the LAST one so a prior checkpoint always lands in `old`, and `Checkpoint.build/3` rejects any checkpoint from the retained tail — so the rebuilt list holds EXACTLY ONE checkpoint and repeated compactions cannot collapse into "nothing to replace".
 
+## Model Identity Boundaries
+`Threshold.for_model/2` forwards its first argument directly to `Config.Schema.LLM.model_metadata/1` for the output reservation, so it requires actual catalog-model identity rather than a scheduler/account profile id.
+`LlmRetry.summarise/4` forwards its model argument verbatim to `ReqLLM.stream_text/3` and fail-fast diagnostics, and forwards the generation keyword list unchanged on every retry.
+Neither module resolves a selection from configuration or looks up provider-profile credentials itself.
+Slot admission and exhaustion reporting carry only `agent_id`, through `AgentScheduler.with_llm_slot/2` and `report_llm_error/3`, so the scheduler owns account/profile identity independently of the actual request model.
+The parent orchestrator separately supplies a numeric configured context window and charges summary usage through `Cost.apply_to_usage/3`, which obtains model/account identity outside this directory.
 ## Notes for Agents
 
 - **Recency math must never be re-implemented** in a caller — call `Recency.boundary/3` (the two-arity form remains for callers outside the compression pipeline).

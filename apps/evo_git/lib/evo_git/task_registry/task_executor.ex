@@ -28,8 +28,13 @@ defmodule EvoGit.TaskRegistry.TaskExecutor do
   """
   def execute_task(task_type, opts, task_id, server \\ __MODULE__) do
     Process.put(:evogit_task_registry_server, server)
-    ensure_task_tmpdir(task_id, opts)
-    do_execute_task(task_type, opts, task_id)
+
+    # TaskRegistry must admit before persistence. Recheck here so a profile
+    # removed/changed after enqueue cannot silently select a default.
+    with {:ok, opts} <- RuntimeOpts.admit_model_selection(opts, EvoGit.Config.resolve()) do
+      ensure_task_tmpdir(task_id, opts)
+      do_execute_task(task_type, opts, task_id)
+    end
   end
 
   # Creates the shared per-task scratch directory at the SINGLE catch-all choke
@@ -95,7 +100,9 @@ defmodule EvoGit.TaskRegistry.TaskExecutor do
     repo_path = Keyword.fetch!(opts, :path)
     Application.ensure_all_started(:evo_git)
 
-    runtime_opts = [repo_path: repo_path, task_id: task_id]
+    runtime_opts =
+      [repo_path: repo_path, task_id: task_id] ++
+        Keyword.take(opts, [:model_spec, :model_id, :model_id_locked])
 
     # Pass through PR context keys to the runtime
     pr_context_keys = [

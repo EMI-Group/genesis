@@ -348,6 +348,15 @@ defmodule EvoGit.AgentScheduler.Store do
     end
   end
 
+  @doc "Reads the immutable provider/account pool id assigned at registration."
+  @spec get_provider_profile_id(pos_integer()) :: String.t() | nil
+  def get_provider_profile_id(agent_id) do
+    case :ets.lookup_element(@agent_table, agent_id, 2, nil) do
+      nil -> nil
+      agent_state -> Map.get(agent_state, :provider_profile_id)
+    end
+  end
+
   @doc """
   Looks up the recursion depth for the given agent from the scheduler metadata table.
   Returns the depth integer or `nil` if the agent is not found.

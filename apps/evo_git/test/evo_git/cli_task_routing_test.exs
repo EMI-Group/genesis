@@ -1,21 +1,60 @@
+defmodule EvoGit.CLI.TaskRoutingFixture do
+  @moduledoc false
+
+  def isolate_config!(registry) do
+    dir = EvoGit.TestSupport.ConfigDir.isolate!("evogit-cli-task-routing")
+
+    # start_supervised!/1 starts this private registry outside the test's
+    # $callers chain. Bind its config explicitly: admission runs in the
+    # registry, and execution inherits the registry through $callers.
+    :sys.replace_state(registry, fn state ->
+      EvoGit.TestSupport.ConfigDir.activate(dir)
+      state
+    end)
+
+    :ok
+  end
+
+  def save_provider_config! do
+    config = %{
+      llm: %{
+        default_provider_profile: "myprofile",
+        providers: [
+          %{
+            id: "myprofile",
+            provider: "openai",
+            concurrency: 5,
+            api_key_env_var: "EVOGIT_CLI_ROUTING_KEY",
+            base_url: "https://routing.example/v1",
+            temperature: 0.6,
+            default_model: "test-model",
+            reasoning_efforts: ["low", "high"],
+            default_reasoning_effort: "low",
+            models: [
+              %{model: "test-model", context_window: 128_000},
+              %{
+                model: "review-model",
+                context_window: 64_000,
+                temperature: 0.3,
+                reasoning_efforts: ["high"],
+                default_reasoning_effort: "high"
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+    :ok = EvoGit.Config.save_user_config(config)
+    config
+  end
+end
+
 defmodule EvoGit.CLI.TaskRoutingTest do
   @moduledoc """
-  End-to-end tests for the CLI → task data-plane routing (objective F).
-
-  These tests drive `EvoGit.CLI.main/1` through `capture_io` against the real
-  scheduler plus an isolated TaskRegistry/Store (`EvoGit.TaskRegistryCase`)
-  and assert the task rows the CLI enqueues. They are written against the NEW
-  CLI contract (post-refactor): genesis/evolve/reflect no longer run inline —
-  they enqueue through `TaskRegistry.start_task/2` and `main/1` blocks until
-  the task reaches a terminal status.
-
-  Against the PRE-refactor cli.ex these tests fail BEHAVIORALLY (the old CLI
-  runs inline, never prints "Task <id> started ...", and returns `:ok`) —
-  that is expected; they pass once the parallel CLI refactor merges.
-
-  Enqueued tasks are forced to fail fast with the established no-LLM idiom:
-  emptying the scheduler's model profiles makes `run_agent/1` reply
-  `{:error, :llm_not_configured}` immediately (see `without_model_profiles/1`).
+  CLI → isolated TaskRegistry/Store routing with real task admission and execution.
+  The scheduler's model profiles are temporarily emptied so admitted tasks fail
+  at run_agent/1 without a real LLM request.
   """
 
   # async: false is FORCED by ONE remaining piece of BEAM-global state:
@@ -29,18 +68,15 @@ defmodule EvoGit.CLI.TaskRoutingTest do
 
   import ExUnit.CaptureIO
 
-  alias EvoGit.TestSupport.ConfigDir
+  import EvoGit.CLI.TaskRoutingFixture
 
   # Observable-contract regexes from the CLI + task data-plane refactor.
   @started_re ~r/^Task ([0-9a-f]{16}) started \(type: (genesis|evolve|reflect)\)$/m
   @failed_re ~r/^Task [0-9a-f]{16} failed\./
 
-  # Per-process config dir so the -m tests can write a config.toml without
-  # touching the real user config, and so -m resolution is deterministic (no
-  # models configured unless a test saves one).
-  setup do
-    ConfigDir.isolate!("evogit-cli-task-routing")
-    :ok
+  # Bind CLI, registry admission and task execution to one per-test config.
+  setup %{registry: registry} do
+    isolate_config!(registry)
   end
 
   describe "genesis routing" do
@@ -123,6 +159,10 @@ defmodule EvoGit.CLI.TaskRoutingTest do
       assert task_opt(task.opts, :mode) == "simple"
       assert task_opt(task.opts, :objective) == "fix the bug"
       assert Path.expand(task_opt(task.opts, :path)) == Path.expand(repo)
+      # Auto leaves selection rules in control: no spec, legacy id or lock.
+      assert task_opt(task.opts, :model_spec) == nil
+      assert task_opt(task.opts, :model_id) == nil
+      assert task_opt(task.opts, :model_id_locked) == nil
       # evolve tasks carry the objective under :objective, never :prompt.
       assert task_opt(task.opts, :prompt) == nil
     end
@@ -149,68 +189,107 @@ defmodule EvoGit.CLI.TaskRoutingTest do
     end
   end
 
-  describe "model flag (-m) routing" do
-    test "an unknown profile prints an Error and does not enqueue", %{tmp_dir: tmp_dir} do
-      # XDG is isolated per test and no config.toml exists here, so no models
-      # are configured — resolution must fail pre-enqueue. (Wrapped in
-      # without_model_profiles only so a pre-merge inline run would also fail
-      # fast; after the merge the failure happens before any enqueue.)
-      #
-      # A --path under tmp_dir is passed even though post-merge it is ignored
-      # (the -m error short-circuits before any enqueue): against the
-      # PRE-refactor cli.ex this test's args would otherwise dispatch an
-      # inline evolve from the test process cwd (apps/evo_git), polluting the
-      # worktree with a nested .git. The tmp --path keeps that inline run
-      # safely inside the per-test tmp dir.
-      {output, result} =
-        without_model_profiles(fn ->
-          run_cli([
-            "evolve",
-            "fix x",
-            "-m",
-            "no-such-profile",
-            "--path",
-            Path.join(tmp_dir, "m_unknown")
-          ])
-        end)
+  describe "model selection routing" do
+    test "legacy -m forms persist a canonical selection and lock, not a model id", %{
+      tmp_dir: tmp_dir
+    } do
+      save_provider_config!()
 
-      assert output =~ "Error:"
-      refute output =~ @started_re
-      assert result == :ok
+      for {value, index} <-
+            Enum.with_index([
+              "myprofile",
+              "myprofile:ignored:ignored",
+              "openai:test-model",
+              "test-model"
+            ]) do
+        repo = Path.join(tmp_dir, "evolve_m_#{index}")
+
+        {output, result} =
+          without_model_profiles(fn ->
+            run_cli(["evolve", "fix x", "-m", value, "--mode", "simple", "--path", repo])
+          end)
+
+        task = TaskRegistry.get_task(started_task_id!(output))
+        assert {:error, msg} = result
+        assert msg =~ @failed_re
+        assert task.type == :evolve
+        assert task.status == :failed
+        assert inspect(task.result) =~ "llm_not_configured"
+        assert task_opt(task.opts, :mode) == "simple"
+
+        assert task_opt(task.opts, :model_spec) == %{
+                 "provider_profile_id" => "myprofile",
+                 "model" => "test-model",
+                 "reasoning_effort" => "low"
+               }
+
+        assert task_opt(task.opts, :model_id_locked) == true
+        assert task_opt(task.opts, :model_id) == nil
+        assert task.model_id == nil
+      end
     end
 
-    test "-m <profile id> lands model_id + model_id_locked in the enqueued opts",
-         %{tmp_dir: tmp_dir} do
-      # The -m resolution seam was verified empirically: save_user_config/1
-      # under an isolated XDG is reflected immediately by
-      # Config.resolve([:llm, :models]) (the file cache is invalidated on
-      # save), so a clean happy-path e2e is possible.
-      :ok =
-        EvoGit.Config.save_user_config(%{
-          llm: %{models: [%{id: "myprofile", model: "anthropic:test-model"}]}
-        })
+    test "explicit account/model/effort selections survive every CLI task entry point", %{
+      tmp_dir: tmp_dir
+    } do
+      config = save_provider_config!()
+      assert :ok = EvoGit.Config.save_credentials(%{"EVOGIT_CLI_ROUTING_KEY" => "secret-key"})
 
-      assert [%{id: "myprofile"} | _] = EvoGit.Config.resolve([:llm, :models])
+      selection = %{
+        "provider_profile_id" => "myprofile",
+        "model" => "review-model",
+        "reasoning_effort" => "high"
+      }
 
-      repo = Path.join(tmp_dir, "evolve_m")
+      assert {:ok, resolved} = EvoGit.Config.Schema.resolve_model_spec(config, selection)
+      assert resolved.generation_params[:api_key] == "secret-key"
 
-      {output, result} =
-        without_model_profiles(fn ->
-          run_cli(["evolve", "fix x", "-m", "myprofile", "--mode", "simple", "--path", repo])
-        end)
+      assert resolved.model_spec == %{
+               provider: :openai,
+               id: "review-model",
+               base_url: "https://routing.example/v1"
+             }
 
-      id = started_task_id!(output)
-      assert {:error, msg} = result
-      assert msg =~ @failed_re
+      for {command, mode} <- [{"genesis", "new"}, {"evolve", "simple"}, {"reflect", nil}] do
+        path_flags =
+          if mode do
+            dir = Path.join(tmp_dir, command)
+            File.mkdir_p!(dir)
+            ["--mode", mode, "--path", dir]
+          else
+            []
+          end
 
-      task = TaskRegistry.get_task(id)
-      assert task != nil
-      assert task.type == :evolve
-      assert task_opt(task.opts, :mode) == "simple"
-      # The resolved profile id is locked into the task opts ("model_id" and
-      # "model_id_locked" are outside the codec whitelist → string keys).
-      assert task_opt(task.opts, :model_id) == "myprofile"
-      assert task_opt(task.opts, :model_id_locked) == true
+        {output, result} =
+          without_model_profiles(fn ->
+            run_cli(
+              [
+                command,
+                "selected task",
+                "--provider-profile",
+                "myprofile",
+                "--model",
+                "review-model",
+                "--reasoning-effort",
+                "high"
+              ] ++ path_flags
+            )
+          end)
+
+        task = TaskRegistry.get_task(started_task_id!(output))
+        assert {:error, msg} = result
+        assert msg =~ @failed_re
+        assert task.status == :failed
+        assert inspect(task.result) =~ "llm_not_configured"
+        assert Atom.to_string(task.type) == command
+        assert task_opt(task.opts, :model_spec) == selection
+        assert task_opt(task.opts, :model_id_locked) == true
+        assert task_opt(task.opts, :model_id) == nil
+        assert task.model_id == nil
+        refute inspect(task.opts) =~ "secret-key"
+        refute inspect(task.opts) =~ "https://routing.example"
+        if command == "reflect", do: assert(task_opt(task.opts, :path) == nil)
+      end
     end
   end
 
@@ -406,5 +485,90 @@ defmodule EvoGit.CLI.TaskRoutingTest do
       {k, value} when k == key -> value
       _ -> nil
     end)
+  end
+end
+
+defmodule EvoGit.CLI.ModelSelectionRejectionTest do
+  # All failures precede dispatch; only private registry/store processes and
+  # per-process config are touched, so no global scheduler mutation is needed.
+  use EvoGit.TaskRegistryCase, async: true
+
+  import ExUnit.CaptureIO
+  import EvoGit.CLI.TaskRoutingFixture
+
+  @moduletag :tmp_dir
+
+  setup %{registry: registry} do
+    isolate_config!(registry)
+  end
+
+  test "unknown legacy selection with no accounts creates no task row", %{tmp_dir: dir} do
+    output =
+      capture_io(fn ->
+        assert :ok = EvoGit.CLI.main(["evolve", "fix x", "-m", "unknown", "--path", dir])
+      end)
+
+    assert output =~ "no LLM models are configured"
+    refute output =~ "started (type:"
+    assert TaskRegistry.list_tasks() == []
+  end
+
+  test "invalid CLI selections fail before enqueue across all task entry points", %{tmp_dir: dir} do
+    save_provider_config!()
+
+    for command <- ["genesis", "evolve", "reflect"],
+        flags <- [
+          ["-m", "unknown"],
+          ["--provider-profile", "missing", "--model", "test-model"],
+          ["--provider-profile", "myprofile", "--model", "missing"],
+          [
+            "--provider-profile",
+            "myprofile",
+            "--model",
+            "review-model",
+            "--reasoning-effort",
+            "low"
+          ],
+          ["--provider-profile", "myprofile"],
+          ["--model", "test-model", "--reasoning-effort", "high"]
+        ] do
+      path = Path.join(dir, "not-created")
+
+      output =
+        capture_io(fn ->
+          assert :ok = EvoGit.CLI.main([command, "invalid selection", "--path", path] ++ flags)
+        end)
+
+      assert output =~ "Error:"
+      refute output =~ "started (type:"
+      assert TaskRegistry.list_tasks() == []
+      refute File.exists?(path)
+    end
+  end
+
+  test "registry admission rejects an invalid explicit spec even with a valid legacy id" do
+    save_provider_config!()
+
+    for {spec, reason} <- [
+          {"openai:test-model", :invalid_model_spec},
+          {%{"provider_profile_id" => "missing", "model" => "test-model"},
+           {:provider_profile_not_found, "missing"}},
+          {%{"provider_profile_id" => "myprofile", "model" => "missing"},
+           {:model_not_found, "myprofile", "missing"}},
+          {%{
+             "provider_profile_id" => "myprofile",
+             "model" => "review-model",
+             "reasoning_effort" => "low"
+           }, {:unsupported_reasoning_effort, "low", ["high"]}}
+        ] do
+      assert {:error, ^reason} =
+               TaskRegistry.start_task(:reflect,
+                 objective: "invalid spec",
+                 model_spec: spec,
+                 model_id: "myprofile"
+               )
+
+      assert TaskRegistry.list_tasks() == []
+    end
   end
 end

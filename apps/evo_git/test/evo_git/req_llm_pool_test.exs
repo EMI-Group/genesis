@@ -7,6 +7,7 @@ defmodule EvoGit.ReqLLMPoolTest do
   # 127.0.0.1:1 (loopback, no traffic).
   use ExUnit.Case, async: true
 
+  alias EvoGit.AgentScheduler.State
   alias EvoGit.ReqLLMPool
 
   # A tiny standalone Finch (NOT ReqLLM.Finch) so we can exercise the real  # materialization / set_pool_count path against a live pool without touching
@@ -56,6 +57,56 @@ defmodule EvoGit.ReqLLMPoolTest do
 
     test "falls back to default_concurrency for nil" do
       assert ReqLLMPool.effective_concurrency(nil, 5) == 5
+    end
+  end
+
+  describe "canonical provider-account sizing" do
+    test "counts shared-provider accounts once each, not their nested model inventory" do
+      config = account_config()
+      state = State.from_config(config)
+
+      # Both credentials use the same provider and model names, but have
+      # independent slot budgets; models within each account share that budget.
+      assert length(state.model_profiles) == 4
+      assert state.model_concurrency == %{"team" => 7, "personal" => 5}
+      total = ReqLLMPool.effective_concurrency(state.model_concurrency, 3)
+      assert total == 12
+      assert ReqLLMPool.desired_count(total) == 14
+      assert ReqLLMPool.error_target_count(total) == 18
+
+      expanded =
+        update_in(config, [:llm, :providers], fn providers ->
+          Enum.map(providers, fn account ->
+            update_in(account, [:models], &(&1 ++ [%{model: "gpt-4.1-nano"}]))
+          end)
+        end)
+
+      expanded_state = State.from_config(expanded)
+      assert length(expanded_state.model_profiles) == 6
+      assert expanded_state.model_concurrency == state.model_concurrency
+      assert ReqLLMPool.effective_concurrency(expanded_state.model_concurrency, 3) == total
+    end
+
+    test "paused accounts add no demand while the auxiliary-call default remains a floor" do
+      config =
+        update_in(account_config(), [:llm, :providers], fn [team, personal] ->
+          [%{team | concurrency: 0}, %{personal | concurrency: 7}]
+        end)
+
+      state = State.from_config(config)
+      assert state.model_concurrency == %{"team" => 0, "personal" => 7}
+      assert ReqLLMPool.effective_concurrency(state.model_concurrency, 3) == 7
+
+      paused =
+        update_in(config, [:llm, :providers], fn providers ->
+          Enum.map(providers, &%{&1 | concurrency: 0})
+        end)
+
+      paused_state = State.from_config(paused)
+      assert paused_state.model_concurrency == %{"team" => 0, "personal" => 0}
+      total = ReqLLMPool.effective_concurrency(paused_state.model_concurrency, 3)
+      assert total == 3
+      assert ReqLLMPool.desired_count(total) == 8
     end
   end
 
@@ -110,6 +161,32 @@ defmodule EvoGit.ReqLLMPoolTest do
 
   describe "reconcile/2 against a real Finch" do
     setup :start_test_finch
+
+    test "canonical shared-provider account budgets size the private pool, not model count" do
+      materialize_origin!()
+      state = State.from_config(account_config())
+      total = ReqLLMPool.effective_concurrency(state.model_concurrency, 3)
+      assert total == 12
+
+      assert :ok = ReqLLMPool.reconcile(total, @test_finch)
+      assert {:ok, pools} = Finch.get_pool_status(@test_finch, :default)
+      [{_origin, metrics}] = Map.to_list(pools)
+      assert length(metrics) == 14
+
+      assert :ok = ReqLLMPool.bump_for_excess_queuing(state.model_concurrency, 3, @test_finch)
+      assert {:ok, pools} = Finch.get_pool_status(@test_finch, :default)
+      [{_origin, metrics}] = Map.to_list(pools)
+      assert length(metrics) == 18
+
+      # Peak pause reduces slot demand, but must never shrink active HTTP pools.
+      assert :ok =
+               ReqLLMPool.bump_for_excess_queuing(%{"team" => 0, "personal" => 0}, 3, @test_finch)
+
+      assert :ok = ReqLLMPool.reconcile(3, @test_finch)
+      assert {:ok, pools} = Finch.get_pool_status(@test_finch, :default)
+      [{_origin, metrics}] = Map.to_list(pools)
+      assert length(metrics) == 18
+    end
 
     test "grows a materialized origin's pool to the desired count" do
       materialize_origin!()
@@ -190,6 +267,37 @@ defmodule EvoGit.ReqLLMPoolTest do
   end
 
   # --- Helpers ---
+
+  defp account_config do
+    %{
+      scheduler: %{default_llm_max_concurrency: 3},
+      llm: %{
+        default_provider_profile: "personal",
+        providers:
+          for {id, concurrency} <- [{"team", 7}, {"personal", 5}] do
+            %{
+              id: id,
+              provider: "openai",
+              auth_mode: "api_key",
+              api_key_env_var: "REQ_LLM_POOL_TEST_UNUSED_KEY",
+              concurrency: concurrency,
+              temperature: 0.4,
+              default_model: "gpt-4.1-mini",
+              reasoning_efforts: ["low", "high"],
+              default_reasoning_effort: "low",
+              models: [
+                %{model: "gpt-4.1", context_window: 64_000, temperature: 0.2},
+                %{
+                  model: "gpt-4.1-mini",
+                  context_window: 32_000,
+                  default_reasoning_effort: "high"
+                }
+              ]
+            }
+          end
+      }
+    }
+  end
 
   # Starts the shared test Finch (unlinked from the test process so it survives
   # the test's `:shutdown` and can be stopped deterministically in on_exit).

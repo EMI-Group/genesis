@@ -34,6 +34,8 @@ defmodule EvoGit.CLI.Parser do
         file: :string,
         path: :string,
         model: :string,
+        provider_profile: :string,
+        reasoning_effort: :string,
         mode: :string,
         foreign_repo: [:string, :keep],
         agent: :string,
@@ -75,6 +77,58 @@ defmodule EvoGit.CLI.Parser do
         {nil, value}
     end
   end
+
+  @doc """
+  Parses task-level model selection without reading configuration.
+
+  `--provider-profile <id> --model <model>` selects a model from a configured
+  provider profile's inventory, optionally with `--reasoning-effort <effort>`.
+  The model is kept verbatim (including colons); profile/model resolution and
+  effort validation belong to `Schema.resolve_model_spec`, not this parser.
+
+  Returns `{:ok, :auto}` when no selection flags are supplied,
+  `{:ok, {:legacy, value}}` for the existing `-m`/`--model` syntax, or
+  `{:ok, spec}` with STRING keys for an explicit provider/model selection.
+  Dispatch must resolve legacy selections against configured IDs, validate
+  explicit specs through the schema, then enqueue `[model_spec: spec,
+  model_id_locked: true]`; Auto enqueues neither key.
+  """
+  @spec parse_model_selection(keyword()) ::
+          {:ok, :auto | {:legacy, String.t()} | map()} | {:error, String.t()}
+  def parse_model_selection(opts) do
+    provider_profile = opts[:provider_profile]
+    model = opts[:model]
+    effort = opts[:reasoning_effort]
+
+    cond do
+      is_nil(provider_profile) and is_nil(effort) and is_nil(model) ->
+        {:ok, :auto}
+
+      is_nil(provider_profile) and is_nil(effort) ->
+        if nonblank?(model),
+          do: {:ok, {:legacy, model}},
+          else: {:error, "--model must not be empty."}
+
+      is_nil(provider_profile) and not is_nil(effort) ->
+        {:error, "--reasoning-effort requires --provider-profile and --model."}
+
+      not nonblank?(provider_profile) ->
+        {:error, "--provider-profile must name a configured provider profile."}
+
+      not nonblank?(model) ->
+        {:error, "--provider-profile requires --model <model>."}
+
+      not is_nil(effort) and not nonblank?(effort) ->
+        {:error, "--reasoning-effort must not be empty."}
+
+      true ->
+        spec = %{"provider_profile_id" => provider_profile, "model" => model}
+        spec = if is_nil(effort), do: spec, else: Map.put(spec, "reasoning_effort", effort)
+        {:ok, spec}
+    end
+  end
+
+  defp nonblank?(value), do: is_binary(value) and String.trim(value) != ""
 
   @doc false
   # Public test wrapper for parse_model_flag/1

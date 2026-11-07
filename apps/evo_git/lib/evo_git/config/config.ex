@@ -246,7 +246,23 @@ defmodule EvoGit.Config do
               acc
           end
 
-        # Normalize each profile's model map in the models list.
+        # Provider profiles (including nested model/option maps) deliberately
+        # use string keys, independent of which atoms have been loaded.
+        # Keep malformed entries intact so schema validation can report them.
+        acc =
+          case Map.fetch(llm_config, :providers) do
+            {:ok, providers} ->
+              put_in(
+                acc,
+                [:llm, :providers],
+                EvoGit.Config.Schema.ProviderProfiles.Normalize.stringify(providers)
+              )
+
+            :error ->
+              acc
+          end
+
+        # Normalize each legacy profile's model map in the models list.
         # Defensive: skip non-map entries (e.g. `models = "foo"`) — the
         # schema validator reports the type error.
         case Map.get(llm_config, :models) do
@@ -307,13 +323,9 @@ defmodule EvoGit.Config do
     end)
   end
 
-  # Migrates old flat [llm] config into the models list format.
-  #
-  # If config.llm.models already exists (new format), it is used directly.
-  # If config.llm.model is set but models is empty/absent (old flat format),
-  # a single "default" profile is created from the flat fields.
-  #
-  # This always ensures config.llm.models is present after resolution.
+  # Canonical providers take precedence without materializing runtime mirrors.
+  # Otherwise preserve legacy [[llm.models]] profiles verbatim, or migrate a
+  # flat model into a single "default" profile with the original flat fields.
   #
   # Defensive against malformed config: if `:llm` or `:scheduler` is not a map
   # (e.g. user wrote `llm = "claude"` — a scalar — instead of a `[llm]` table),
@@ -323,6 +335,24 @@ defmodule EvoGit.Config do
   defp migrate_llm_models(config) when is_map(config) do
     raw_llm = Map.get(config, :llm, %{})
     llm = if is_map(raw_llm), do: raw_llm, else: %{}
+    # Canonical providers are authoritative. LLM.model_profiles/1 supplies their
+    # legacy-compatible runtime projection lazily; do not materialize that
+    # derived projection here or reinterpret stale legacy mirrors as accounts.
+    if canonical_providers?(llm) do
+      Map.put(config, :llm, llm)
+    else
+      migrate_legacy_llm_models(config, llm)
+    end
+  end
+
+  defp canonical_providers?(llm) do
+    case get_key(llm, :providers) do
+      providers when is_list(providers) and providers != [] -> true
+      _ -> false
+    end
+  end
+
+  defp migrate_legacy_llm_models(config, llm) do
     existing_models = Map.get(llm, :models, [])
 
     models =
@@ -538,21 +568,12 @@ defmodule EvoGit.Config do
     end
   end
 
-  # Strips flat LLM generation-parameter fields from the config before writing
-  # to disk, but ONLY when `llm.models` is present and non-empty. This ensures
-  # the saved TOML uses the multi-model `[[llm.models]]` format exclusively and
-  # does not carry redundant flat `[llm].model` / `.temperature` / etc. mirrors
-  # that `migrate_llm_models/1` adds for backward-compat API access.
-  #
-  # This operates on the resolved config (atom-keyed) but is defensive about
-  # string keys too. It returns a NEW map; it never mutates the caller's config.
-  #
-  # Fields stripped (only when models is non-empty):
-  #   :model, :temperature, :max_tokens, :reasoning_effort,
-  #   :top_p, :top_k, :frequency_penalty, :presence_penalty
-  #
-  # Fields KEPT in llm: :models, :compression_threshold_tokens, and anything else.
+  # Canonical providers own all account/model settings; their legacy runtime
+  # projection and flat mirrors must never become a second persisted inventory.
+  # Legacy-only configs keep the established [[llm.models]] save format.
   @flat_llm_gen_param_keys ~w(model temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty)a
+  @canonical_llm_mirror_keys @flat_llm_gen_param_keys ++
+                               [:models, :auth_mode, :oauth_file, :provider_options]
 
   defp strip_flat_llm_fields(config) when is_map(config) do
     llm = get_key(config, :llm)
@@ -561,18 +582,21 @@ defmodule EvoGit.Config do
       llm when is_map(llm) ->
         models = get_key(llm, :models)
 
-        if is_list(models) and models != [] do
-          stripped_llm =
-            Enum.reduce(@flat_llm_gen_param_keys, llm, fn key, acc ->
-              acc
-              |> Map.delete(key)
-              |> Map.delete(Atom.to_string(key))
-            end)
+        keys =
+          cond do
+            canonical_providers?(llm) -> @canonical_llm_mirror_keys
+            is_list(models) and models != [] -> @flat_llm_gen_param_keys
+            true -> []
+          end
 
-          put_key(config, :llm, stripped_llm)
-        else
-          config
-        end
+        stripped_llm =
+          Enum.reduce(keys, llm, fn key, acc ->
+            acc
+            |> Map.delete(key)
+            |> Map.delete(Atom.to_string(key))
+          end)
+
+        put_key(config, :llm, stripped_llm)
 
       _ ->
         config
@@ -632,9 +656,9 @@ defmodule EvoGit.Config do
   Checks for required settings and returns a map with:
   - `:missing` — list of missing critical config keys (as atoms)
   - `:warnings` — list of human-readable warning messages for missing values
-  - `:ok?` — boolean, true if all critical config is present
+  - `:ok?` — boolean, true if all critical config is present and validation succeeds
   - `:validation_errors` — list of `EvoGit.Config.Schema.ValidationError` structs from
-    the last `resolve/0` call, or empty list if none
+    this invocation's initial `resolve/0` call, or empty list if none
 
   The `:api_key` check is OAuth-aware: it passes when an API key is configured
   OR when at least one configured model profile authenticates through a
@@ -656,6 +680,8 @@ defmodule EvoGit.Config do
         }
   def config_status do
     resolved = resolve()
+    # Later health checks may resolve again and overwrite the process-local errors.
+    validation_errors = Process.get(:evo_git_config_validation_errors, [])
     profiles = EvoGit.Config.Schema.model_profiles(resolved)
 
     checks = [
@@ -682,7 +708,7 @@ defmodule EvoGit.Config do
        end},
       {:api_key, fn -> api_key_warning(profiles) end,
        fn ->
-         not api_key_ok?(profiles)
+         not api_key_ok?(profiles, resolved)
        end},
       {:search_api_key, "Web search is enabled but the API key is not configured.",
        fn ->
@@ -706,8 +732,8 @@ defmodule EvoGit.Config do
     %{
       missing: Enum.map(failing, &elem(&1, 0)),
       warnings: Enum.map(failing, &elem(&1, 1)),
-      ok?: failing == [],
-      validation_errors: Process.get(:evo_git_config_validation_errors, [])
+      ok?: failing == [] and validation_errors == [],
+      validation_errors: validation_errors
     }
   end
 
@@ -720,8 +746,30 @@ defmodule EvoGit.Config do
   # credential that resolves. Everything here is fault-isolated (see
   # `EvoGit.Config.Schema.LLM.oauth_credential_status/1`): a broken or missing
   # auth file degrades to "not configured", never raises.
-  defp api_key_ok?(profiles) do
-    api_key_present?(credentials()) or oauth_credentials_resolve?(profiles)
+  defp api_key_ok?(profiles, config) do
+    api_key_present?(credentials()) or provider_api_key_present?(config) or
+      oauth_credentials_resolve?(profiles)
+  end
+
+  defp provider_api_key_present?(config) do
+    config
+    |> EvoGit.Config.Schema.provider_profiles()
+    |> Enum.any?(fn profile ->
+      case {profile["auth_mode"], profile["api_key_env_var"]} do
+        {"api_key", name} when is_binary(name) and name != "" ->
+          case System.get_env(name) do
+            value when is_binary(value) and value != "" ->
+              true
+
+            _ ->
+              value = Map.get(credentials(), name)
+              is_binary(value) and value != ""
+          end
+
+        _ ->
+          false
+      end
+    end)
   end
 
   defp api_key_warning(profiles) do

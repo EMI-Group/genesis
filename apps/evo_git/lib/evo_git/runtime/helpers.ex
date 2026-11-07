@@ -507,9 +507,10 @@ defmodule EvoGit.Runtime.Helpers do
 
   - `:agent` absent (nil) or an empty string → `{default_module, []}` — the
     phase's built-in root agent runs unchanged.
-  - `:agent` set to a custom agent id → `{EvoGit.Agents.Custom, [custom_agent_id: id]}` —
-    the generic `EvoGit.Agents.Custom` module runs as the root agent and resolves
-    the definition from `agents.toml` at run time.
+  - `:agent` set to a custom agent id → `{EvoGit.Agents.Custom, agent_opts}` —
+    opts carry `:custom_agent_id` and any definition `:default_model_spec` (a
+    string-keyed canonical map) and legacy `:model_id`, without locking them.
+    The generic module resolves the remaining definition at run time.
   - `:agent` set to an UNKNOWN id → raises `ArgumentError` with a descriptive
     message. Crashing loudly is intentional: this runs in the task process (not a
     GenServer), and a bad agent id is a spec error — a silent fallback to the
@@ -530,8 +531,16 @@ defmodule EvoGit.Runtime.Helpers do
                   "Unknown custom agent id '#{id}'. Define it in " <>
                     "#{config_dir}/agents.toml (config dir: #{config_dir})."
 
-          _definition ->
-            {EvoGit.Agents.Custom, [custom_agent_id: id]}
+          definition ->
+            agent_opts =
+              [
+                custom_agent_id: id,
+                default_model_spec: Map.get(definition, :model_spec),
+                model_id: Map.get(definition, :model_id)
+              ]
+              |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+
+            {EvoGit.Agents.Custom, agent_opts}
         end
     end
   end
@@ -539,7 +548,9 @@ defmodule EvoGit.Runtime.Helpers do
   @doc """
   Determines whether the model-selection script must be skipped for this task.
 
-  Returns true when either:
+  Returns true when any of the following holds:
+  - `:model_spec` is non-nil — an explicit provider-profile/model selection
+    takes precedence over a legacy `:model_id` and must not be overridden; or
   - `:model_id` is a non-nil value — a non-nil `:model_id` in runtime opts means
     a user/dashboard explicitly chose a model, so the model-selection script must
     NOT override it; or
@@ -548,7 +559,31 @@ defmodule EvoGit.Runtime.Helpers do
   """
   @spec model_id_locked?(keyword()) :: boolean()
   def model_id_locked?(opts) do
-    Keyword.get(opts, :model_id_locked, false) || not is_nil(Keyword.get(opts, :model_id))
+    Keyword.get(opts, :model_id_locked, false) ||
+      not is_nil(Keyword.get(opts, :model_spec)) ||
+      not is_nil(Keyword.get(opts, :model_id))
+  end
+
+  @doc """
+  Threads task model selection into agent opts without resolving provider settings.
+
+  A non-nil `:model_spec` is forwarded verbatim (string keys
+  `provider_profile_id`, `model`, and optional `reasoning_effort`), removes the
+  legacy `:model_id`, and forces `:model_id_locked` to true. Otherwise legacy
+  model ids and explicit locks retain their semantics. Auto has no model_spec.
+  Validation and runtime parameter resolution belong to the config/scheduler
+  boundary, not the phase wrappers.
+  """
+  @spec normalize_model_selection_opts(keyword()) :: keyword()
+  def normalize_model_selection_opts(opts) do
+    locked = model_id_locked?(opts)
+    opts = Keyword.update(opts, :model_id_locked, locked, fn _ -> locked end)
+
+    if is_nil(Keyword.get(opts, :model_spec)) do
+      Keyword.delete(opts, :model_spec)
+    else
+      Keyword.delete(opts, :model_id)
+    end
   end
 
   @doc """
@@ -556,12 +591,10 @@ defmodule EvoGit.Runtime.Helpers do
 
   Resolves the root agent via `resolve_root_agent/2` — `default_module`, or an
   agents.toml custom agent when `opts[:agent]` is set (unknown ids raise). The
-  resolved `custom_agent_id` is folded into the spec opts BEFORE
-  `AgentSpec.new/5` (appended at the end of the keyword list): since
-  `AgentSpec.new/5` stores opts verbatim and the base list never carries a
-  `:custom_agent_id` key, this is byte-identical to the former
-  `%{spec | opts: Keyword.merge(spec.opts, agent_opts)}` post-step — ordering
-  in the merged opts list is unchanged.
+  resolved custom-agent opts are appended before `AgentSpec.new/5`; definition
+  model defaults remain unlocked fallbacks, never explicit task selections.
+  Task model normalization runs before applying the legacy definition id so
+  only a task selection can introduce a lock.
   """
   @spec build_root_agent_spec(
           EvoGit.Core.ContextNode.t(),
@@ -582,6 +615,7 @@ defmodule EvoGit.Runtime.Helpers do
         repo_notes
       ) do
     {agent_module, agent_opts} = resolve_root_agent(opts, default_module)
+    {default_model_id, agent_opts} = Keyword.pop(agent_opts, :model_id)
 
     # Media attachments (images/audio) for the initial objective — validated at
     # the RuntimeOpts layer; forwarded here when present (omit-when-nil so the
@@ -596,11 +630,24 @@ defmodule EvoGit.Runtime.Helpers do
         archive: Keyword.get(opts, :archive, false),
         task_id: Keyword.get(opts, :task_id),
         model_id: Keyword.get(opts, :model_id),
+        model_spec: Keyword.get(opts, :model_spec),
         model_id_locked: model_id_locked?(opts),
         quality_level: Keyword.get(opts, :quality_level)
       ]
+      |> normalize_model_selection_opts()
       |> maybe_put_attachments(attachments)
       |> Kernel.++(agent_opts)
+
+    # Priority: explicit/locked task > script > default_model_spec > legacy
+    # definition id > configured default. Apply this id AFTER task normalization
+    # so a definition default never locks selection or competes with model_spec.
+    spec_opts =
+      if is_nil(Keyword.get(opts, :model_spec)) and is_nil(Keyword.get(opts, :model_id)) and
+           not is_nil(default_model_id) do
+        Keyword.put(spec_opts, :model_id, default_model_id)
+      else
+        spec_opts
+      end
 
     AgentSpec.new(context_node, phylo_node, agent_module, objective, spec_opts)
   end

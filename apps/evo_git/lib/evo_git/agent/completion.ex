@@ -85,6 +85,7 @@ defmodule EvoGit.Agent.Completion do
         completed_at: DateTime.utc_now(),
         llm_model: Keyword.get(opts, :llm_model),
         model_id: Keyword.get(opts, :model_id),
+        model_spec: Keyword.get(opts, :model_spec),
         llm_generation_params: Keyword.get(opts, :llm_generation_params, []),
         compression_threshold: Keyword.get(opts, :compression_threshold),
         max_turns: Keyword.get(opts, :max_turns),
@@ -237,7 +238,8 @@ defmodule EvoGit.Agent.Completion do
           data[:llm_model],
           data[:llm_generation_params],
           data[:compression_threshold],
-          data[:model_id]
+          data[:model_id],
+          data[:model_spec]
         ),
       agent_settings: %{
         max_turns: data[:max_turns],
@@ -293,12 +295,19 @@ defmodule EvoGit.Agent.Completion do
   defp iso8601(value) when is_binary(value), do: value
   defp iso8601(_other), do: nil
 
-  defp build_llm_settings(model, generation_params, compression_threshold, model_id)
+  defp build_llm_settings(model, generation_params, compression_threshold, model_id, model_spec)
        when is_list(generation_params) or is_nil(generation_params) do
     params_map = Map.new(generation_params || [])
 
+    # Keep the full selection alongside the effective request settings: model_id
+    # identifies the account/slot pool, not the selected catalog model.
     Map.merge(
-      %{model: model, context_compression_threshold: compression_threshold, model_id: model_id},
+      %{
+        model: model,
+        context_compression_threshold: compression_threshold,
+        model_id: model_id,
+        model_spec: model_spec
+      },
       params_map
     )
   end
