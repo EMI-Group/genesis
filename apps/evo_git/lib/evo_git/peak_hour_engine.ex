@@ -161,7 +161,7 @@ defmodule EvoGit.PeakHourEngine do
     d = default || 0
 
     Map.new(profiles, fn p ->
-      id = Map.get(p, :id, "default")
+      id = Map.get(p, :id) || Map.get(p, "id", "default")
       eff = effective_for_profile(p, now, utc_now)
 
       # An explicit in-peak `peak_concurrency` (incl. the hard-pause 0) is an
@@ -323,7 +323,7 @@ defmodule EvoGit.PeakHourEngine do
     )
 
     if scheduler_up do
-      profiles = safe_get_config(:model_profiles, [])
+      profiles = scheduler_profiles()
 
       if is_list(profiles) and profiles != [] do
         default = safe_get_config(:default_llm_max_concurrency, nil)
@@ -362,7 +362,7 @@ defmodule EvoGit.PeakHourEngine do
 
         windows_tz_pairs =
           Enum.flat_map(profiles, fn p ->
-            case PeakHours.validate_windows(Map.get(p, :peak_hours)) do
+            case PeakHours.validate_windows(Map.get(p, :peak_hours) || Map.get(p, "peak_hours")) do
               {:ok, ws} when ws != [] ->
                 [{ws, profile_off_peak_days(p), profile_timezone(p)}]
 
@@ -390,9 +390,9 @@ defmodule EvoGit.PeakHourEngine do
   defp log_next_wakeup(profiles, ms, now, utc_now) do
     transitions =
       Enum.flat_map(profiles, fn p ->
-        case PeakHours.validate_windows(Map.get(p, :peak_hours)) do
+        case PeakHours.validate_windows(Map.get(p, :peak_hours) || Map.get(p, "peak_hours")) do
           {:ok, ws} when ws != [] ->
-            id = Map.get(p, :id, "default")
+            id = Map.get(p, :id) || Map.get(p, "id", "default")
             tz = profile_timezone(p)
             off_days = profile_off_peak_days(p)
 
@@ -439,12 +439,12 @@ defmodule EvoGit.PeakHourEngine do
   # misconfigured profile is visible immediately. Runs in init via the safe
   # config read (scheduler is up at boot; a missing scheduler degrades to []).
   defp log_boot_profiles do
-    profiles = safe_get_config(:model_profiles, [])
+    profiles = scheduler_profiles()
 
     summary =
       Enum.map(profiles, fn p ->
         %{
-          id: Map.get(p, :id, "default"),
+          id: Map.get(p, :id) || Map.get(p, "id", "default"),
           concurrency: Map.get(p, :concurrency) || Map.get(p, "concurrency"),
           peak_concurrency: Map.get(p, :peak_concurrency) || Map.get(p, "peak_concurrency"),
           peak_hours: Map.get(p, :peak_hours) || Map.get(p, "peak_hours"),
@@ -461,14 +461,21 @@ defmodule EvoGit.PeakHourEngine do
   # the local `now` on any resolution error); non-tz profiles use `now`
   # directly.
   defp effective_for_profile(p, now, utc_now) do
+    # Canonical provider profiles are string-keyed; PeakHours' pure concurrency
+    # helper consumes atom-keyed runtime fields. Never atomize arbitrary input.
+    schedule =
+      Map.new([:concurrency, :peak_concurrency, :peak_hours, :off_peak_days], fn key ->
+        {key, Map.get(p, key, Map.get(p, Atom.to_string(key)))}
+      end)
+
     case profile_timezone(p) do
       nil ->
-        PeakHours.effective_concurrency(p, now)
+        PeakHours.effective_concurrency(schedule, now)
 
       tz ->
         case PeakHours.wall_clock_in(tz, utc_now) do
-          {:ok, wall} -> PeakHours.effective_concurrency(p, wall)
-          {:error, _reason} -> PeakHours.effective_concurrency(p, now)
+          {:ok, wall} -> PeakHours.effective_concurrency(schedule, wall)
+          {:error, _reason} -> PeakHours.effective_concurrency(schedule, now)
         end
     end
   end
@@ -500,7 +507,8 @@ defmodule EvoGit.PeakHourEngine do
   # Invalid/empty/absent `peak_hours` → false (never exempt).
   defp peak_exempt?(p, now, utc_now) do
     with {:ok, _peak} <- explicit_peak_concurrency(p),
-         {:ok, ws} <- PeakHours.validate_windows(Map.get(p, :peak_hours)),
+         {:ok, ws} <-
+           PeakHours.validate_windows(Map.get(p, :peak_hours) || Map.get(p, "peak_hours")),
          ws when ws != [] <- ws do
       PeakHours.in_peak?(ws, peak_wall_clock(p, now, utc_now), profile_off_peak_days(p))
     else
@@ -623,6 +631,15 @@ defmodule EvoGit.PeakHourEngine do
           nil -> []
           ms -> [ms]
         end
+    end
+  end
+
+  # Watch accounts, not their model inventory: one schedule and capacity per
+  # provider profile. Legacy scheduler fixtures may only expose model_profiles.
+  defp scheduler_profiles do
+    case safe_get_config(:provider_profiles, []) do
+      [_ | _] = profiles -> profiles
+      _ -> safe_get_config(:model_profiles, []) || []
     end
   end
 

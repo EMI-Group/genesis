@@ -73,22 +73,16 @@ defmodule EvoGit.ReqLLMPool do
   end
 
   @doc """
-  Effective LLM concurrency from a `%{model_id => concurrency}` map.
+  Effective LLM concurrency from a `%{provider_profile_id => concurrency}` map.
 
+  Sum each provider/account pool exactly once, not once per model selection:
+  multiple models on the same profile share capacity, holders and backoff.
+  The scheduler's canonical `model_concurrency` map already has these pool ids
+  as keys (legacy configurations keep their original profile ids).
   When the map is non-empty, returns `max(sum of map values,
   default_concurrency)`; falls back to `default_concurrency` for an empty map
-  or `nil` (e.g. when the scheduler has no per-model concurrency map
-  configured).
-
-  Why the `max`? Each model profile is an **independent** LLM slot pool
-  (see `EvoGit.AgentScheduler.State.concurrency_for/2` and the per-model
-  holder MapSets in `EvoGit.AgentScheduler.Slots`), while unknown model ids
-  (e.g. a `-m` id with no `[[llm.models]]` profile) share the
-  `default_llm_max_concurrency` bucket. Both buckets can be active
-  simultaneously, so the effective concurrency the Finch pool must accommodate
-  is `max(sum of per-profile concurrencies, default_llm_max_concurrency)` —
-  not the sum alone, which would under-size the pool when the default bucket
-  exceeds the profile total.
+  or `nil`. This is a per-origin upper bound for Finch sizing, not a count of
+  models in an account's inventory.
   """
   @spec effective_concurrency(map() | nil, non_neg_integer()) :: non_neg_integer()
   def effective_concurrency(model_concurrency_map, default_concurrency)
