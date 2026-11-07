@@ -46,7 +46,8 @@ Mounted Assistant tests pin provider/model/reasoning controls, typed and suggest
 Pure ChatState and ModelSelect contracts live in `./home_live/`, while `home_live_render_test.exs` remains async without mounting the global chat hub.
 Welcome tests exercise canonical provider setup with multiple models, a default model, reasoning defaults, API-key and OAuth branches, concurrent config preservation, malformed-file protection and deterministic generation-guarded connection results.
 WelcomeComplete tests preserve canonical provider configuration and pin the full example/clipboard objective.
-Settings canonical serialization, shadow removal, unrelated-setting preservation, default-only models, multiple overrides and OAuth contracts live in `./settings_live/provider_profiles_contract_test.exs` and use the shared test bootstrap without `ExUnit.start`.
+Settings canonical serialization, shadow removal, unrelated-setting preservation, nested models and OAuth contracts live in `./settings_live/provider_profiles_contract_test.exs` and use the shared test bootstrap without `ExUnit.start`.
+Canonical provider configuration requires nested `models` rows and a `default_model` matching one of those rows; successful mounted fixtures must satisfy that contract rather than treating rows as optional.
 Settings parent-page wiring contracts stay cohesive in `settings_live_test.exs`, whose folded scenarios use rendered canonical events and assert both live config and persisted `llm.providers` with no `llm.models` shadow except the intentional legacy-input fixture.
 Add creates a detached `"new"` draft, Cancel never writes, failed validation retains the draft, and CRUD/default/rename/delete plus legacy edit/save/reorder aliases retain persistence assertions.
 Generation input names are nested under `generation` and each model's `generation`, while persisted provider/model generation fields are flat; sparse overrides inherit, explicit blank reasoning overrides produce `[]`, and the `override_reasoning` form sentinel must not persist.
@@ -66,18 +67,16 @@ Keep mounted Settings additions with the owner of `settings_live_test.exs`, whil
 ### Integration validation and current blockers
 
 Normal Mix execution reaches ExUnit and the canonical Schema facade; standalone AST extraction is not a substitute for mounted integration tests.
-`mix test apps/evo_dash/test/evo_dash_web/live/*_test.exs --seed 843486` covers the 13 top-level test files without entering child helper directories.
-The scoped result is 739/751 passing: eight Settings failures and one Projects recovery failure expose core rejection/resolution of default-only providers, while three Projects URL/resume fixtures require remote-loading test seams.
-A provider with a valid `default_model` and absent/nil/empty `models` is a valid dashboard contract, so tests must not fabricate model rows to conceal core validation or resolver failures.
-The core-owned blocker is `provider_profile_validation.ex` rejecting nil collections and requiring the default to occur in an empty override collection, together with default-only resolution returning `:model_not_found`.
-The eight affected `settings_live_test.exs` cases all belong to `describe "provider profiles editor — parent adapter"`: "Save, edit, toggle, rename, default and delete use rendered provider actions", "model row actions preserve unsaved nested input and save an explicitly emptied collection", "legacy reorder action persists canonical order and preserves the explicit default", "profile_form_draft is cleared on cancel and on save", "save_model_profile stores a non-blank timezone and omits a blank one", "save_model_profile persists off_peak_days and per-window days", "save_model_profile with single-checked days (bare string params) round-trips", and "save_model_profile omits off_peak_days and per-window days when empty".
-The affected Projects default-only resolution case is "an unreachable connected remote stays unavailable and preserves its saved selection", whose owned recovery bundle declares `remote-account`/`remote-model` without model override rows.
-The three positive remote fixture cases in `projects_live_test.exs` are "resume landing URL activates the remote project, restores the previous task's foreign repos, and keeps the resume form state (regression)", "plain remote ?project= URL activates the project through the remote normalize path", and "remote ?project= tilde path expands via the remote seam, never the local HOME".
+Successful provider save and recovery fixtures include valid nested `models` rows; absent/nil/empty collections are not a core validation defect.
+The Settings parent-adapter row-action test asserts that an empty collection fails validation without mutating disk/live config, retains its draft, and saves after a valid model row is restored.
+Focused validation selects the Settings parent-adapter describe at `settings_live_test.exs:982`, the auth persistence describe at `settings_live/auth_status_test.exs:440`, and the Projects recovery test at `projects_live_test.exs:4249`.
+The three unresolved positive remote fixture cases in `projects_live_test.exs` are "resume landing URL activates the remote project, restores the previous task's foreign repos, and keeps the resume form state (regression)" (`:2974`), "plain remote ?project= URL activates the project through the remote normalize path" (`:3062`), and "remote ?project= tilde path expands via the remote seam, never the local HOME" (`:5144`).
 The first two remote cases belong to async `ProjectsLiveTest`, while the tilde case belongs to `ProjectsLiveSyncTest` because its expansion runner is shared globally.
-The positive remote fixture gap belongs to source-owned `ProjectFlow`: supervised activation calls `remote_project_load/2` directly and resume restoration calls `NodeContext.get_task_lite/2` directly.
-Default-inert call-time runners for those two operations would preserve real orchestration under distinct remote identities without real RPC.
-The Agents page passes in the collective regression-seed run; diagnose its historical flake only when it reproduces.
-Production sources and child helper test directories are outside this node's top-level-page task ownership.
+Their source-owned prerequisite is a default-inert call-time 2-arity remote-project-load runner inside ProjectFlow's existing supervised activation task, replacing the direct `remote_project_load/2` call (`project_flow.ex:550`; private implementation at `:671` starts with `NodeContext.dir?/2`).
+Resume restoration also needs a default-inert call-time 2-arity task reader inside the supervised task around `NodeContext.get_task_lite/2` (`project_flow.ex:644`).
+Both runners must receive the distinct fake remote BEAM identity and retain normal production defaults; the existing async-batch and tilde-expansion runners cannot intercept these RPC boundaries.
+Until those source-owned seams exist, these three fixtures cannot demonstrate real supervised remote success without a real remote node, and their orchestration assertions must not be bypassed.
+Production sources are read-only from this node; escalate these prerequisites to their source owner.
 
 ## Notes for Agents — deterministic waits (the single rule future edits must not break)
 
