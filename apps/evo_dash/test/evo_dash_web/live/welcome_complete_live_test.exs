@@ -28,6 +28,7 @@ defmodule EvoDashWeb.WelcomeCompleteLiveTest do
     # unique temp dir, activates it for this process and registers the
     # `File.rm_rf!` cleanup itself.
     EvoDash.Test.ConfigDir.isolate!("evogit_welcome_complete_test_config")
+    File.mkdir_p!(EvoGit.Config.config_dir())
     :ok
   end
 
@@ -68,6 +69,14 @@ defmodule EvoDashWeb.WelcomeCompleteLiveTest do
       assert html =~
                ~s(data-content="Build a simulated, web-based Windows desktop environment using a single browser page.)
 
+      # The rendered example and clipboard payload must both retain the entire
+      # objective, not just the distinctive opening lines above.
+      document = Floki.parse_document!(html)
+      assert document |> Floki.find("pre") |> Floki.text() == objective
+      assert Floki.attribute(document, "#welcome-example-copy", "data-content") == [objective]
+      assert EvoGit.Config.VersionState.onboarding_needed?()
+      refute File.exists?(EvoGit.Config.config_path())
+
       # Copying pushes an info flash.
       html = render_click(view, "copied", %{})
       assert html =~ "Copied to clipboard"
@@ -75,7 +84,26 @@ defmodule EvoDashWeb.WelcomeCompleteLiveTest do
   end
 
   describe "go to dashboard" do
-    test "completes onboarding and redirects to the dashboard", %{conn: conn} do
+    test "completes onboarding without altering the configured provider models or defaults", %{
+      conn: conn
+    } do
+      model = hd(EvoGit.Config.LLMCatalog.provider_models(:anthropic)).id
+
+      config = """
+      [llm]
+      default_provider_profile = "subscription"
+      [[llm.providers]]
+      id = "subscription"
+      provider = "anthropic"
+      auth_mode = "oauth"
+      default_model = "#{model}"
+      [[llm.providers.models]]
+      model = "#{model}"
+      reasoning_efforts = ["low", "high"]
+      default_reasoning_effort = "high"
+      """
+
+      File.write!(EvoGit.Config.config_path(), config)
       {:ok, view, html} = live(conn, ~p"/welcome/complete")
 
       # Primary CTA is rendered
@@ -98,6 +126,21 @@ defmodule EvoDashWeb.WelcomeCompleteLiveTest do
 
       assert EvoGit.Config.VersionState.get_version() ==
                EvoGit.Config.VersionState.current_version()
+
+      assert File.read!(EvoGit.Config.config_path()) == config
+      refute File.exists?(EvoGit.Config.credentials_path())
+    end
+
+    test "completion after skipping setup records onboarding without inventing a provider", %{
+      conn: conn
+    } do
+      {:ok, view, _} = live(conn, ~p"/welcome/complete")
+      assert EvoGit.Config.VersionState.onboarding_needed?()
+      render_click(view, "go_to_dashboard")
+      assert_redirect(view, "/projects")
+      refute EvoGit.Config.VersionState.onboarding_needed?()
+      refute File.exists?(EvoGit.Config.config_path())
+      refute File.exists?(EvoGit.Config.credentials_path())
     end
   end
 
@@ -125,6 +168,7 @@ defmodule EvoDashWeb.WelcomeCompleteLiveTest.TaskBroadcast do
 
   setup do
     EvoDash.Test.ConfigDir.isolate!("evogit_welcome_complete_test_config")
+    File.mkdir_p!(EvoGit.Config.config_dir())
     :ok
   end
 
