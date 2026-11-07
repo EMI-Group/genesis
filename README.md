@@ -77,7 +77,7 @@ Latest evidence: [EvoX Compiler](https://genesis.evox.group/evidence/evoxc) · 2
 **[Download Genesis →](https://genesis.evox.group/#download)** for macOS, Linux, or Windows. The website selects the installer for your platform; all published builds are available in [GitHub Releases](https://github.com/EMI-Group/genesis/releases/latest).
 
 1. Install and open Genesis.
-2. Choose a model provider and model, and configure your API credentials.
+2. Configure a provider profile in **Settings** (API key or supported subscription OAuth), then choose its default model and, where supported, reasoning effort.
 3. Create a project or select an existing repository, then describe what you want to build.
 
 For example:
@@ -101,6 +101,57 @@ genesis status
 Open **http://127.0.0.1:9999** and configure your model provider in **Settings**. The server listens on localhost by default and has no built-in authentication; use an SSH tunnel for remote access.
 
 [Server installation and service management →](https://genesis.evox.group/getting-started/installation/headless-server/)
+
+### Provider profiles and model selection
+
+A **provider profile** represents an account: its models share authentication, endpoint, concurrency, peak-hour schedules, and rate-limit backoff. Separate account IDs keep separate resource pools, even when they use the same provider and model.
+
+In the task form, select **Provider profile → Model → Reasoning effort**; reasoning is a model-specific slider shown only when supported. An explicit choice locks that concrete selection for the task and its agents. **Auto (by rules)** leaves selection to your configured rules and defaults.
+
+For example, in `~/.config/genesis/config.toml`:
+
+```toml
+[llm]
+default_provider_profile = "openai-main"
+
+[[llm.providers]]
+id = "openai-main"
+provider = "openai"
+auth_mode = "api_key"
+api_key_env_var = "OPENAI_API_KEY"
+concurrency = 3
+default_model = "gpt-5"
+reasoning_efforts = ["low", "medium", "high"]
+default_reasoning_effort = "medium"
+context_window = 200000
+
+# Optional schedule shared by all models in this account:
+peak_concurrency = 1
+peak_hours = [{ start = "09:00", end = "18:00", days = ["weekdays"] }]
+off_peak_days = ["sat", "sun"]
+timezone = "Asia/Hong_Kong"
+
+[[llm.providers.models]]
+model = "gpt-5"
+
+[[llm.providers.models]]
+model = "gpt-5-mini"
+default_reasoning_effort = "low"
+context_window = 128000
+```
+
+Set `OPENAI_API_KEY` on the node running the task; do not put secrets in model rows. Nested model settings override generation, context-window, and reasoning defaults, not account authentication or capacity. The reasoning default is explicit—it is not inferred from the first effort in the list. OAuth uses account-level `auth_mode = "oauth"` and optional `oauth_file`; see [subscription authentication](docs/llm-oauth.md).
+
+From source, the task CLI accepts the same concrete selection:
+
+```bash
+mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "Fix the bug" \
+  --provider-profile openai-main --model gpt-5 --reasoning-effort high
+```
+
+Omit selection flags for Auto; explicit selections are validated before enqueueing and do not change scheduler configuration. Legacy `[[llm.models]]` configuration and lone `-m` selectors remain compatibility inputs; use provider profiles for new configuration.
+
+See [Provider profiles and concrete model selection](docs/llm-profiles.md) for defaults, migration, CLI compatibility, and scheduling details.
 
 ### Remote development
 
