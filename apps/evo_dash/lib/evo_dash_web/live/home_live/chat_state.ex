@@ -81,7 +81,9 @@ defmodule EvoDashWeb.HomeLive.ChatState do
 
   Scope is `{current_node_id, current_node || node()}`; a remote target id is
   retained even while disconnected so it never borrows the local node's pin.
-  A different scope clears the choice to Auto. New chat on the same scope may
+  A different scope clears the choice to an uninitialized nil spec, which the
+  shared helper reconciles to that node's configured default. An empty map is
+  explicit Auto; false is malformed, never Auto. New chat on the same scope may
   retain this result; node switches must run it before sending or persisting.
 
   Old chats have only selected_model_id and were persisted locally: keep that
@@ -190,7 +192,8 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   defp normalize_chat_node(_node), do: nil
 
   @doc """
-  Preserves a legacy profile id as migration input; blank/nil becomes Auto.
+  Preserves a legacy profile id as migration input; blank/nil becomes nil
+  (uninitialized, reconciled to the configured default by the shared helper).
   This is shape normalization only, not membership validation. Before sending,
   the shared helper must resolve every retained id against the node's current
   config and reject unknown ids; it must never emit a legacy :model_id pin.

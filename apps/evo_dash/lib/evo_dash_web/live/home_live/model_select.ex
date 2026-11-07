@@ -4,16 +4,17 @@ defmodule EvoDashWeb.HomeLive.ModelSelect do
 
   Selection projection, provider/model changes, legacy-id migration, reasoning
   defaults and validation belong to the shared `EvoDashWeb.LLMSelection`, not to
-  this page helper. The page projects a loaded snapshot's config with the core
-  `Schema.provider_profiles/1` and `Schema.model_selections/1` APIs (or the shared
-  helper) and renders `LLMSelectionComponents` with a string-keyed `model_spec`.
+  this page helper. The page projects a loaded snapshot's config with
+  `LLMSelection.from_config/2` and renders `LLMSelectionComponents` with a
+  string-keyed `model_spec`.
 
-  `load/1` returns a tagged snapshot, not the old `{profiles, enabled}` tuple.
+  `load/1` returns a tagged snapshot.
   Keep the snapshot ephemeral: its config may contain authentication settings
   and must never enter ChatHistory, browser data attributes or form payloads.
   """
 
   alias EvoDash.NodeContext
+  alias EvoDashWeb.LLMSelection
   alias EvoGit.Config
 
   @type snapshot :: %{
@@ -90,16 +91,15 @@ defmodule EvoDashWeb.HomeLive.ModelSelect do
       when is_map(config) and
              (is_nil(node_id) or
                 (is_binary(node_id) and node_id != "" and target_node != node())) do
-    selection = selection_state[:model_spec] || selection_state[:selected_model_id]
+    # Only nil may fall back to a legacy migration id. In particular, false
+    # is malformed input, not Auto or an uninitialized/default selection.
+    selection =
+      case selection_state[:model_spec] do
+        nil -> selection_state[:selected_model_id]
+        spec -> spec
+      end
 
-    # The shared module is parent-owned and may not yet be shipped by the
-    # integrating branch; fail closed instead of emitting a legacy id.
-    if Code.ensure_loaded?(EvoDashWeb.LLMSelection) and
-         function_exported?(EvoDashWeb.LLMSelection, :task_opts, 3) do
-      apply(EvoDashWeb.LLMSelection, :task_opts, [config, selection, opts])
-    else
-      {:error, :llm_selection_unavailable}
-    end
+    LLMSelection.task_opts(config, selection, opts)
   end
 
   def task_opts(_snapshot, %{model_selection_error: :invalid_model_spec}, _scope, _opts),
