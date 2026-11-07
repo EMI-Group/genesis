@@ -1776,87 +1776,144 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
   end
 
-  describe "model selector" do
-    # All sends in this describe are deterministic-and-quiet under the setup's
-    # fail-fast scheduler config: the wrapper rejects at the AgentScheduler
-    # (:llm_not_configured) BEFORE any model resolution or LLM HTTP call, and
-    # every assertion below reads only the persisted row's opts — written by
-    # NodeContext.start_task before the runtime ever sees the task.
-    #
-    # Writes a config.toml with a single model profile into the test's isolated
-    # config dir (per-process override set by the file-level setup) so
-    # ModelSelect.load/1 — called from mount's assign_model_select — sees a
-    # profile to render and pin. Pattern copied from projects_live_test.exs
-    # ("model selection auto/lock semantics" describe): EvoGit.Config caches by
-    # config_path, and the per-test fresh config dir makes the path unique
-    # so the new file is re-read.
-    defp write_model_profile_config do
-      config_path = EvoGit.Config.config_path()
-      File.mkdir_p!(Path.dirname(config_path))
+  describe "provider-profile model selector" do
+    # All real sends still use the file-level empty scheduler profile seam:
+    # inspect the persisted dashboard→TaskRegistry opts, never contact an LLM.
+    # The config snapshot belongs to ModelSelect.load/1, not the scheduler.
+    defp write_provider_profile_config do
+      File.write!(EvoGit.Config.config_path(), """
+      [llm]
+      default_provider_profile = "work-account"
 
-      File.write!(config_path, """
-      [[llm.models]]
-      id = "profile-a"
-      model = {provider = "anthropic", id = "claude-sonnet-5"}
-      concurrency = 3
+      [[llm.providers]]
+      id = "first-account"
+      name = "Personal"
+      provider = "openai"
+      models = ["fast-model"]
+
+      [[llm.providers]]
+      id = "work-account"
+      name = "Work"
+      provider = "openai"
+      base_url = "https://example.invalid/v1"
+      extra = {account_secret = "server-only-test-secret"}
+      default_model = "reasoned-model"
+      models = ["fast-model", {model = "reasoned-model", reasoning_efforts = ["low", "medium", "high"], default_reasoning_effort = "medium"}]
       """)
     end
 
-    test "selector renders in the header with a profile and an Auto option", %{conn: conn} do
-      write_model_profile_config()
+    defp work_spec(effort \\ "medium") do
+      %{
+        "provider_profile_id" => "work-account",
+        "model" => "reasoned-model",
+        "reasoning_effort" => effort
+      }
+    end
 
+    defp selected_option(html, id) do
+      html
+      |> Floki.parse_document!()
+      |> Floki.find("##{id} option[selected]")
+      |> Floki.attribute("value")
+    end
+
+    defp only_reflect_task do
+      [task] =
+        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+        |> Enum.filter(&(&1.type == :reflect))
+
+      task
+    end
+
+    defp assert_task_selection(task, spec) do
+      # Store.Codec currently decodes these non-whitelisted keys as strings.
+      assert opt(task, "model_spec") == spec
+      assert opt(task, "model_id_locked") == true
+      refute has_opt?(task, :model_id)
+      refute has_opt?(task, "model_id")
+      refute has_opt?(task, :path)
+      refute has_opt?(task, "path")
+    end
+
+    defp assert_auto_task(task) do
+      for key <- [
+            :model_spec,
+            :model_id,
+            :model_id_locked,
+            "model_spec",
+            "model_id",
+            "model_id_locked"
+          ] do
+        refute has_opt?(task, key)
+      end
+    end
+
+    test "header projects canonical provider, model and reasoning defaults without credentials",
+         %{
+           conn: conn
+         } do
+      write_provider_profile_config()
       {:ok, view, html} = live(conn, "/help")
 
-      # The header select is form-less (OUTSIDE #chat-form), so its id travels
-      # via a bare phx-change — asserted through the select's own attributes.
-      assert present?(html, ~s(select[name="model_id"][phx-change="select_chat_model"]))
+      assert present?(
+               html,
+               ~s(#chat-llm-selection-provider[name="provider_profile_id"][phx-change="select_provider_profile"])
+             )
 
-      options =
-        html
-        |> Floki.parse_document!()
-        |> Floki.find(~s(select[name="model_id"] option))
+      assert present?(
+               html,
+               ~s(#chat-llm-selection-model[name="model"][phx-change="select_model"])
+             )
 
-      # Auto option: value="" + selected while nothing is pinned (nil → Auto).
-      # No [model_selection] script is configured in this config, so
-      # model_selection_enabled is false and the label is the plain "Auto" —
-      # "Auto (by rules)" is script-only.
-      auto = Enum.find(options, fn {_, attrs, _} -> {"value", ""} in attrs end)
-      assert auto != nil
-      {_tag, auto_attrs, _children} = auto
-      assert {"selected", ""} in auto_attrs
-      assert Floki.text(auto) |> String.trim() == "Auto"
-      refute html =~ "Auto (by rules)"
-
-      # One option per configured profile (value = the profile id).
-      assert Enum.any?(options, fn {_, attrs, _} -> {"value", "profile-a"} in attrs end)
-
-      # The loaded assigns back the UI (no script → model_selection_enabled
-      # false, exactly like ProjectsLive without a script).
-      assert assigns(view)[:model_profiles] != []
-      assert assigns(view)[:model_selection_enabled] == false
-    end
-
-    test "selector is absent when no model profiles are configured", %{conn: conn} do
-      # NO config written — the fresh empty per-test config dir means
-      # ModelSelect.load/1 sees zero profiles. The contract renders the select
-      # hidden/absent when @model_profiles == [] (there is nothing to choose).
-      {:ok, _view, html} = live(conn, "/help")
+      assert present?(
+               html,
+               ~s(#chat-llm-selection-reasoning[name="reasoning_effort"][phx-change="select_reasoning_effort"][value="1"])
+             )
 
       refute present?(html, ~s(select[name="model_id"]))
+      refute present?(html, "#chat-form #chat-llm-selection")
+      dom = Floki.parse_document!(html)
+
+      assert dom |> Floki.find("#chat-llm-selection-provider option") |> Floki.attribute("value") ==
+               ["", "first-account", "work-account"]
+
+      assert dom |> Floki.find("#chat-llm-selection-model option") |> Floki.attribute("value") ==
+               ["", "fast-model", "reasoned-model"]
+
+      assert selected_option(html, "chat-llm-selection-provider") == ["work-account"]
+      assert selected_option(html, "chat-llm-selection-model") == ["reasoned-model"]
+      assert assigns(view).model_spec == work_spec()
+      assert assigns(view).selected_model_id == nil
+      assert assigns(view).model_selection_scope == {nil, node()}
+
+      assert assigns(view).provider_profiles ==
+               EvoGit.Config.Schema.provider_profiles(assigns(view).model_snapshot.config)
+
+      assert assigns(view).model_selections ==
+               EvoGit.Config.Schema.model_selections(assigns(view).model_snapshot.config)
+
+      refute html =~ "server-only-test-secret"
+      refute html =~ "https://example.invalid/v1"
+      refute html =~ "Auto (by rules)"
     end
 
-    test "pinned model threads :model_id + :model_id_locked into the reflect task", %{
+    test "empty configuration renders disabled provider controls and setup guidance", %{
       conn: conn
     } do
-      write_model_profile_config()
+      {:ok, view, html} = live(conn, "/help")
 
+      assert assigns(view).provider_profiles == []
+      assert present?(html, ~s(#chat-llm-selection-provider[disabled]))
+      assert present?(html, ~s(#chat-llm-selection-model[disabled]))
+      assert html =~ "No provider profiles configured. Add one in Settings to choose a model."
+      refute present?(html, "#chat-llm-selection-reasoning")
+    end
+
+    test "typed submit locks a canonical model_spec and the resolved slider effort", %{conn: conn} do
+      write_provider_profile_config()
       {:ok, view, _html} = live(conn, "/help")
-
-      # Pick a profile via the header select's phx-change. The contract
-      # normalizes the id (non-empty binary → itself) and persists it into
-      # ChatHistory so it survives remounts.
-      render_change(view, "select_chat_model", %{"model_id" => "profile-a"})
-      assert assigns(view)[:selected_model_id] == "profile-a"
+      render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
+      assert assigns(view).model_spec == work_spec("high")
 
       {html, _log} =
         send_and_await_terminal(fn ->
@@ -1864,186 +1921,197 @@ defmodule EvoDashWeb.HomeLiveTest do
         end)
 
       assert html =~ "hello"
-
-      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-      reflect = Enum.filter(tasks, &(&1.type == :reflect))
-      assert length(reflect) == 1
-      task = hd(reflect)
-
-      # The pinned id threads BOTH keys. String-key checks: :model_id /
-      # :model_id_locked are NOT in the codec's @known_opt_keys whitelist, so
-      # the round-tripped opts decode them as STRING keys (same as
-      # projects_live_test.exs "model selection auto/lock semantics"). mode /
-      # objective ARE whitelisted → atom keys.
-      assert opt(task, "model_id") == "profile-a"
-      assert opt(task, "model_id_locked") == true
+      task = only_reflect_task()
+      assert_task_selection(task, work_spec("high"))
       assert opt(task, :mode) == "reflect"
       assert opt(task, :objective) == "hello"
-      refute has_opt?(task, :path)
-      refute has_opt?(task, "path")
-
+      refute inspect(task.opts) =~ "server-only-test-secret"
       cleanup_task_on_exit(task.id)
     end
 
-    test "Auto (no pinned model) threads neither model key", %{conn: conn} do
-      # No model selected — this test mounts with NO config written, so there
-      # is nothing to select and the send must thread only the plain reflect
-      # opts (mode + objective).
+    test "explicit Auto after a pin survives remount and submits no model override", %{conn: conn} do
+      write_provider_profile_config()
       {:ok, view, _html} = live(conn, "/help")
+      assert assigns(view).model_spec == work_spec()
+      render_change(view, "select_provider_profile", %{"provider_profile_id" => ""})
+      assert assigns(view).model_spec == %{}
+      chat_id = assigns(view).chat_id
+      assert EvoDash.ChatHistory.get_state(chat_id).model_spec == %{}
 
-      {html, _log} =
-        send_and_await_terminal(fn ->
-          render_submit(view, "send_message", %{"message" => "auto please"})
-        end)
+      GenServer.stop(view.pid)
+      {:ok, view, html} = live(conn, "/help")
+      assert assigns(view).chat_id == chat_id
+      assert assigns(view).model_spec == %{}
+      assert selected_option(html, "chat-llm-selection-provider") == [""]
+      refute present?(html, "#chat-llm-selection-reasoning")
 
-      assert html =~ "auto please"
+      send_and_await_terminal(fn ->
+        render_submit(view, "send_message", %{"message" => "auto please"})
+      end)
 
-      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-      reflect = Enum.filter(tasks, &(&1.type == :reflect))
-      assert length(reflect) == 1
-      task = hd(reflect)
-
-      # Auto (nil/absent) → NEITHER :model_id NOR :model_id_locked is threaded
-      # (string or atom key) — the runtime's model-selection script (or the
-      # default model) decides. Refute the atom forms too so a future codec
-      # whitelist addition can't silently break the contract. mode / objective
-      # ARE whitelisted codec atoms → atom keys here.
-      refute has_opt?(task, "model_id")
-      refute has_opt?(task, "model_id_locked")
-      refute has_opt?(task, :model_id)
-      refute has_opt?(task, :model_id_locked)
+      task = only_reflect_task()
+      assert_auto_task(task)
       assert opt(task, :mode) == "reflect"
       assert opt(task, :objective) == "auto please"
-
       cleanup_task_on_exit(task.id)
     end
 
-    test "pinned model survives a remount via ChatHistory", %{conn: conn} do
-      write_model_profile_config()
-
-      {:ok, view, _html} = live(conn, "/help")
-      render_change(view, "select_chat_model", %{"model_id" => "profile-a"})
-      assert assigns(view)[:selected_model_id] == "profile-a"
-
-      # "Close the page" (stop the view process) and remount: attach_chat
-      # restores the CURRENT chat — including the pinned model (the
-      # select_chat_model handler persisted it via ChatHistory).
-      GenServer.stop(view.pid)
-      {:ok, view2, _html} = live(conn, "/help")
-      assert assigns(view2)[:selected_model_id] == "profile-a"
-    end
-
-    test "suggestion-chip send threads the pinned model exactly like a typed submit", %{
+    test "provider and model changes reset downstream defaults and reject forged choices", %{
       conn: conn
     } do
-      write_model_profile_config()
-
+      write_provider_profile_config()
       {:ok, view, _html} = live(conn, "/help")
-      render_change(view, "select_chat_model", %{"model_id" => "profile-a"})
-      assert assigns(view)[:selected_model_id] == "profile-a"
+      render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
+      html = render_change(view, "select_model", %{"model" => "fast-model"})
 
-      # Chips render only while the transcript is empty (fresh mount) — click
-      # the REAL chip element. Both send routes share the same
-      # handle_event("send_message", %{"message" => text}) clause → send_chat/2
-      # → ModelSelect.task_opts/2, so the pinned id must thread EXACTLY like
-      # the typed-submit test above.
-      {html, _log} =
-        send_and_await_terminal(fn ->
-          view
-          |> element(~s(button[phx-value-message="Show my running tasks"]))
-          |> render_click()
-        end)
+      assert assigns(view).model_spec == %{
+               "provider_profile_id" => "work-account",
+               "model" => "fast-model"
+             }
 
-      assert html =~ "Show my running tasks"
+      refute present?(html, "#chat-llm-selection-reasoning")
 
-      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-      reflect = Enum.filter(tasks, &(&1.type == :reflect))
-      assert length(reflect) == 1
-      task = hd(reflect)
+      render_change(view, "select_model", %{"model" => "reasoned-model"})
+      assert assigns(view).model_spec == work_spec()
+      render_change(view, "select_provider_profile", %{"provider_profile_id" => "first-account"})
+      expected = %{"provider_profile_id" => "first-account", "model" => "fast-model"}
+      assert assigns(view).model_spec == expected
 
-      # String-key checks: :model_id / :model_id_locked are NOT codec-whitelisted
-      # (round-trip as STRING keys); mode / objective ARE → atom keys.
-      assert opt(task, "model_id") == "profile-a"
-      assert opt(task, "model_id_locked") == true
+      for {event, params} <- [
+            {"select_provider_profile", %{"provider_profile_id" => "removed"}},
+            {"select_model", %{"model" => "reasoned-model"}},
+            {"select_reasoning_effort", %{"reasoning_effort" => "99"}}
+          ] do
+        html = render_change(view, event, params)
+        assert html =~ "Choose a valid provider profile, model and reasoning effort."
+        assert assigns(view).model_spec == expected
+        assert EvoDash.ChatHistory.get_state(assigns(view).chat_id).model_spec == expected
+      end
+    end
+
+    test "legacy ChatHistory id migrates on mount to a canonical same-node selection", %{
+      conn: conn
+    } do
+      write_provider_profile_config()
+      chat_id = EvoDash.ChatHistory.new_chat()
+      EvoDash.ChatHistory.put_state(chat_id, %{selected_model_id: "first-account"})
+
+      {:ok, view, html} = live(conn, "/help")
+      expected = %{"provider_profile_id" => "first-account", "model" => "fast-model"}
+      assert assigns(view).chat_id == chat_id
+      assert assigns(view).model_spec == expected
+      assert assigns(view).selected_model_id == nil
+      assert assigns(view).model_selection_scope == {nil, node()}
+      assert selected_option(html, "chat-llm-selection-provider") == ["first-account"]
+      assert EvoDash.ChatHistory.get_state(chat_id).model_spec == expected
+    end
+
+    test "malformed persisted selection blocks submit without losing the draft until explicitly repaired",
+         %{conn: conn} do
+      write_provider_profile_config()
+      chat_id = EvoDash.ChatHistory.new_chat()
+
+      EvoDash.ChatHistory.put_state(chat_id, %{
+        model_spec: false,
+        model_selection_scope: {nil, node()},
+        chat_draft: "keep this draft"
+      })
+
+      {:ok, view, html} = live(conn, "/help")
+      assert assigns(view).model_selection_error == :invalid_model_spec
+      assert disabled?(html, ~s(#chat-form button[type="submit"]))
+      html = render_submit(view, "send_message", %{"message" => "keep this draft"})
+      assert html =~ "Choose a valid model before sending a message."
+      assert assigns(view).chat_draft == "keep this draft"
+      assert assigns(view).transcript == []
+      assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
+
+      render_change(view, "select_provider_profile", %{"provider_profile_id" => "work-account"})
+      assert assigns(view).model_selection_error == nil
+      assert assigns(view).model_spec == work_spec()
+      saved = EvoDash.ChatHistory.get_state(chat_id)
+      assert saved.model_spec == work_spec()
+      assert saved.model_selection_error == nil
+    end
+
+    test "canonical pin and node scope survive a remount without persisting the snapshot", %{
+      conn: conn
+    } do
+      write_provider_profile_config()
+      {:ok, view, _html} = live(conn, "/help")
+      render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
+      chat_id = assigns(view).chat_id
+      saved = EvoDash.ChatHistory.get_state(chat_id)
+      assert saved.model_spec == work_spec("high")
+      assert saved.model_selection_scope == {nil, node()}
+      assert saved.selected_model_id == nil
+
+      for key <- [:model_snapshot, :model_selection_bundle, :provider_profiles, :model_selections] do
+        refute Map.has_key?(saved, key)
+      end
+
+      refute inspect(saved) =~ "server-only-test-secret"
+
+      GenServer.stop(view.pid)
+      {:ok, view, html} = live(conn, "/help")
+      assert assigns(view).chat_id == chat_id
+      assert assigns(view).model_spec == work_spec("high")
+      assert assigns(view).model_selection_scope == {nil, node()}
+      assert selected_option(html, "chat-llm-selection-provider") == ["work-account"]
+      assert present?(html, ~s(#chat-llm-selection-reasoning[value="2"]))
+    end
+
+    test "suggestion-chip send locks the same canonical selection as typed submit", %{conn: conn} do
+      write_provider_profile_config()
+      {:ok, view, _html} = live(conn, "/help")
+
+      send_and_await_terminal(fn ->
+        view |> element(~s(button[phx-value-message="Show my running tasks"])) |> render_click()
+      end)
+
+      task = only_reflect_task()
+      assert_task_selection(task, work_spec())
       assert opt(task, :mode) == "reflect"
       assert opt(task, :objective) == "Show my running tasks"
-      refute has_opt?(task, :path)
-      refute has_opt?(task, "path")
-
       cleanup_task_on_exit(task.id)
     end
 
-    test "suggestion-chip send on Auto threads neither model key", %{conn: conn} do
-      # No config written — nothing to pin, the chip send must thread only the
-      # plain reflect opts (mode + objective).
+    test "suggestion-chip send on explicit Auto omits all model overrides", %{conn: conn} do
+      write_provider_profile_config()
       {:ok, view, _html} = live(conn, "/help")
+      render_change(view, "select_provider_profile", %{"provider_profile_id" => ""})
 
-      {html, _log} =
-        send_and_await_terminal(fn ->
-          view
-          |> element(~s(button[phx-value-message="Start a task for me"]))
-          |> render_click()
-        end)
+      send_and_await_terminal(fn ->
+        view |> element(~s(button[phx-value-message="Start a task for me"])) |> render_click()
+      end)
 
-      assert html =~ "Start a task for me"
-
-      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-      reflect = Enum.filter(tasks, &(&1.type == :reflect))
-      assert length(reflect) == 1
-      task = hd(reflect)
-
-      # Auto (nil/absent) → NEITHER :model_id NOR :model_id_locked is threaded
-      # (string or atom key). Refute the atom forms too so a future codec
-      # whitelist addition can't silently break the contract.
-      refute has_opt?(task, "model_id")
-      refute has_opt?(task, "model_id_locked")
-      refute has_opt?(task, :model_id)
-      refute has_opt?(task, :model_id_locked)
+      task = only_reflect_task()
+      assert_auto_task(task)
       assert opt(task, :mode) == "reflect"
       assert opt(task, :objective) == "Start a task for me"
-
       cleanup_task_on_exit(task.id)
     end
 
-    test "pinned model survives a new chat and threads into the next send", %{conn: conn} do
-      write_model_profile_config()
-
+    test "new chat retains its same-node canonical pin and locks the next send", %{conn: conn} do
+      write_provider_profile_config()
       {:ok, view, _html} = live(conn, "/help")
-
-      # A fresh first-ever mount (no restored chat) starts on Auto — only
-      # base_assigns/0 seeds selected_model_id (nil).
-      assert assigns(view)[:selected_model_id] == nil
-
-      render_change(view, "select_chat_model", %{"model_id" => "profile-a"})
-      assert assigns(view)[:selected_model_id] == "profile-a"
+      render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
       old_chat_id = assigns(view).chat_id
-      assert old_chat_id != nil
-
-      # New chat while idle: the transcript resets but the PIN survives —
-      # reset_chat/0 deliberately does not clear selected_model_id, and
-      # start_new_chat/1 persists the fresh empty chat carrying the pinned id.
       html = render_click(view, "new_chat", %{})
       assert html =~ "Start a conversation"
-      new_chat_id = assigns(view).chat_id
-      assert new_chat_id != old_chat_id
+      assert assigns(view).chat_id != old_chat_id
       assert assigns(view).transcript == []
-      assert assigns(view)[:selected_model_id] == "profile-a"
+      assert assigns(view).model_spec == work_spec("high")
+      assert EvoDash.ChatHistory.get_state(assigns(view).chat_id).model_spec == work_spec("high")
 
-      # The next (typed) send threads the surviving pin into the reflect task.
       send_and_await_terminal(fn ->
         render_submit(view, "send_message", %{"message" => "after new chat"})
       end)
 
-      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-      reflect = Enum.filter(tasks, &(&1.type == :reflect))
-      assert length(reflect) == 1
-      task = hd(reflect)
-
-      assert opt(task, "model_id") == "profile-a"
-      assert opt(task, "model_id_locked") == true
+      task = only_reflect_task()
+      assert_task_selection(task, work_spec("high"))
       assert opt(task, :mode) == "reflect"
       assert opt(task, :objective) == "after new chat"
-
       cleanup_task_on_exit(task.id)
     end
   end
@@ -3128,19 +3196,22 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).current_node_id == "test-remote"
     end
 
-    test "send routes through NodeContext to the remote and fails fast", %{conn: conn} do
+    test "missing remote model snapshot rejects sends before touching the draft or transcript", %{
+      conn: conn
+    } do
       {:ok, view, _html} = live(conn, "/help?node=test-remote")
+      wait_until(fn -> not assigns(view).model_select_loading end)
+      render_change(view, "chat_input", %{"message" => "hi remote"})
+      html = render_submit(view, "send_message", %{"message" => "hi remote"})
 
-      {html, _log} =
-        send_and_await_terminal(fn ->
-          render_submit(view, "send_message", %{"message" => "hi remote"})
-        end)
-
-      # The synchronous :erpc to the nonexistent remote BEAM node fails fast →
-      # error bubble + back to :idle; NO row is created in the LOCAL store.
-      assert html =~ "Failed to start the task"
+      assert html =~ "Choose a valid model before sending a message."
+      refute html =~ "Failed to start the task"
+      assert assigns(view).model_snapshot == nil
+      assert assigns(view).model_select_load_error != nil
+      assert assigns(view).chat_draft == "hi remote"
+      assert assigns(view).transcript == []
       assert assigns(view).chat_status == :idle
-      assert length(EvoGit.Store.safe_select_all_tasks(EvoGit.Store)) == 0
+      assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
     end
 
     test "node switch starts a NEW persisted chat and keeps the old one", %{conn: conn} do
@@ -3173,33 +3244,53 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert EvoDash.ChatHistory.current_chat_id() == new_id
     end
 
-    test "pinned model survives a node switch", %{conn: conn} do
-      write_model_profile_config()
-
-      # Mount LOCAL first and pin a profile via the header select.
+    test "node switches clear account pins and ignore late snapshots from the old scope", %{
+      conn: conn
+    } do
+      write_provider_profile_config()
       {:ok, view, _html} = live(conn, "/help")
-      render_change(view, "select_chat_model", %{"model_id" => "profile-a"})
-      assert assigns(view)[:selected_model_id] == "profile-a"
+      render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
+      assert assigns(view).model_spec == work_spec("high")
       local_chat_id = assigns(view).chat_id
-      assert local_chat_id != nil
+      local_snapshot = assigns(view).model_snapshot
+      local_seq = assigns(view).model_select_seq
 
-      # Switch to the remote node: handle_params starts a NEW persisted chat
-      # (node change), but reset_chat/0 does NOT clear the pinned model — the
-      # selected_model_id assign must survive. Assert the ASSIGN, not the
-      # rendered select: on the unreachable remote node ModelSelect.load
-      # degrades to {[], false} so the header select is absent.
-      html = render_patch(view, "/help?node=test-remote")
+      render_patch(view, "/help?node=test-remote")
+      wait_until(fn -> not assigns(view).model_select_loading end)
       assert assigns(view).current_node == :"genesis_remote@127.0.0.1"
-      assert html =~ "Start a conversation"
       assert assigns(view).chat_id != local_chat_id
-      assert assigns(view)[:selected_model_id] == "profile-a"
+      remote_chat_id = assigns(view).chat_id
+      assert assigns(view).model_spec == nil
+      assert assigns(view).selected_model_id == nil
+      assert assigns(view).model_selection_scope == {"test-remote", :"genesis_remote@127.0.0.1"}
+      assert assigns(view).model_snapshot == nil
+      assert EvoDash.ChatHistory.get_state(local_chat_id).model_spec == work_spec("high")
+      assert EvoDash.ChatHistory.get_state(remote_chat_id).model_spec == nil
 
-      # Back to local: profiles reload (assign_model_select for the local
-      # node) and the pin is still there.
+      send(view.pid, {{:model_select_loaded, local_seq, node()}, {:ok, {:ok, local_snapshot}}})
+      assert assigns(view).model_snapshot == nil
+      remote_seq = assigns(view).model_select_seq
+
       html = render_patch(view, "/help")
       assert assigns(view).current_node == node()
-      assert html =~ "Start a conversation"
-      assert assigns(view)[:selected_model_id] == "profile-a"
+      assert assigns(view).chat_id not in [local_chat_id, remote_chat_id]
+      # A different node gets its own configured default, NOT the earlier high pin.
+      assert assigns(view).model_spec == work_spec()
+      assert assigns(view).model_selection_scope == {nil, node()}
+      assert present?(html, ~s(#chat-llm-selection-reasoning[value="1"]))
+
+      remote_snapshot = %{local_snapshot | node: :"genesis_remote@127.0.0.1"}
+
+      send(
+        view.pid,
+        {{:model_select_loaded, remote_seq, remote_snapshot.node}, {:ok, {:ok, remote_snapshot}}}
+      )
+
+      assert assigns(view).model_snapshot.node == node()
+      assert assigns(view).model_spec == work_spec()
+      # Sequence guard also rejects an old response even when the node matches.
+      send(view.pid, {{:model_select_loaded, local_seq, node()}, {:ok, {:error, :obsolete}}})
+      assert assigns(view).model_select_load_error == nil
     end
 
     test "source gate never renders on a remote node (local-only)", %{conn: conn} do
@@ -3235,10 +3326,12 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute_receive :availability_runner_called, 50
       assert assigns(view).source_available == nil
 
-      # No gate, no blocked note, composer NOT blocked.
+      # The source gate is local-only, but a missing remote model snapshot
+      # independently disables sending until a valid node-scoped load succeeds.
       refute present?(html, "#genesis-source-gate")
       refute html =~ "Download the Genesis source to start chatting."
       refute disabled?(html, ~s(textarea[name="message"]))
+      assert disabled?(html, ~s(#chat-form button[type="submit"]))
       assert html =~ "Show my running tasks"
     end
   end

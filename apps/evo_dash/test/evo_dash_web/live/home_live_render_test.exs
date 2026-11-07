@@ -17,8 +17,13 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
       desktop_quit_confirm: false,
       update_status: nil,
       guide: nil,
-      model_profiles: [],
-      selected_model_id: nil,
+      provider_profiles: [],
+      model_selections: [],
+      model_spec: %{},
+      model_snapshot: %{node: node(), config: %{}},
+      model_select_loading: false,
+      model_select_load_error: nil,
+      model_selection_error: nil,
       model_selection_enabled: false,
       source_available: true,
       source_busy: nil,
@@ -38,6 +43,66 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
 
   defp text(dom, selector), do: dom |> Floki.find(selector) |> Floki.text() |> String.trim()
   defp attr(dom, selector, name), do: dom |> Floki.find(selector) |> Floki.attribute(name)
+
+  test "header renders the shared picker and rule-controlled Auto label" do
+    profiles = [%{"id" => "work-account", "name" => "Work", "provider" => "openai"}]
+
+    selections = [
+      %{
+        provider_profile_id: "work-account",
+        model: "reasoned-model",
+        reasoning_efforts: ["low", "high"],
+        default_reasoning_effort: "low"
+      }
+    ]
+
+    spec = %{
+      "provider_profile_id" => "work-account",
+      "model" => "reasoned-model",
+      "reasoning_effort" => "high"
+    }
+
+    dom =
+      page(
+        provider_profiles: profiles,
+        model_selections: selections,
+        model_spec: spec,
+        model_selection_enabled: true
+      )
+
+    assert attr(dom, "#chat-llm-selection-provider", "phx-change") == ["select_provider_profile"]
+    assert attr(dom, "#chat-llm-selection-model", "phx-change") == ["select_model"]
+    assert attr(dom, "#chat-llm-selection-reasoning", "phx-change") == ["select_reasoning_effort"]
+    assert attr(dom, "#chat-llm-selection-provider option[selected]", "value") == ["work-account"]
+    assert attr(dom, "#chat-llm-selection-model option[selected]", "value") == ["reasoned-model"]
+    assert attr(dom, "#chat-llm-selection-reasoning", "value") == ["1"]
+    assert text(dom, "#chat-llm-selection-provider option[value='']") == "Auto (by rules)"
+    assert Floki.find(dom, "#chat-form #chat-llm-selection") == []
+    assert Floki.find(dom, "select[name='model_id']") == []
+
+    dom = page(provider_profiles: profiles, model_selections: selections, model_spec: spec)
+
+    assert text(dom, "#chat-llm-selection-provider option[value='']") ==
+             "Choose a provider profile"
+  end
+
+  test "loading, missing snapshots and invalid selections cannot enable sending" do
+    for overrides <- [
+          [model_select_loading: true, model_snapshot: nil],
+          [model_snapshot: nil],
+          [model_selection_error: :invalid_model_spec],
+          [model_snapshot: nil, model_select_load_error: :remote_not_connected]
+        ] do
+      dom = page(overrides)
+      assert Floki.find(dom, "#chat-form button[type='submit'][disabled]") != []
+      # The draft remains editable while the model load/choice is repaired.
+      assert Floki.find(dom, "#chat-form textarea[disabled]") == []
+    end
+
+    dom = page(model_snapshot: nil, model_select_load_error: :remote_not_connected)
+    assert Floki.find(dom, "#chat-llm-selection[disabled]") != []
+    assert text(dom, "[role='alert']") =~ "Model selection is unavailable."
+  end
 
   test "empty chat offers actionable prompts inside the message scroller, not the composer" do
     dom = page()
