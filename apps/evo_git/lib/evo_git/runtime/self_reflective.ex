@@ -80,11 +80,13 @@ defmodule EvoGit.Runtime.SelfReflective do
         %ContextNode{path: node_path, repo: source_root || "[system]"}
       end
 
-    # Strip the keys consumed here; keep :task_id, :model_id (the scheduler
-    # reads them). repo_less: true is put LAST so it always wins.
+    # Strip keys consumed here; retain task/model selection for the scheduler.
+    # Explicit selections are locked, and model_spec beats a legacy model_id.
+    # repo_less: true is put LAST so it always wins.
     spec_opts =
       opts
       |> Keyword.drop([:objective, :source_root, :node_path])
+      |> EvoGit.Runtime.Helpers.normalize_model_selection_opts()
       |> Keyword.put(:repo_less, true)
 
     AgentSpec.new(context_node, nil, EvoGit.Agents.SelfReflective, objective, spec_opts)

@@ -16,7 +16,7 @@ Modules: `../runtime.ex` (`EvoGit.Runtime`), `helpers.ex`, `genesis.ex`, `evolut
 | Module | File | Public API | Role |
 |--------|------|------------|------|
 | `EvoGit.Runtime` | `../runtime.ex` | `ensure_repo/1` | Raises the UNC diagnostic, then `git init` + `/.genesis` `.gitignore` + initial commit when `<repo>/.git` is missing. Phases are invoked by `TaskExecutor.execute_task/3` (CLI/dashboard/shell all enqueue via `TaskRegistry.start_task/2`); there is no combined orchestration entry point. |
-| `EvoGit.Runtime.Helpers` | `helpers.ex` | `merge_and_report/4` (3-arity delegates with `foreign_repos: []`), `resolve_starting_commit/2`, `resolve_foreign_repo_starting_commit/2`, `format_invalid_starting_commit_error/3`, `notify_finalizing/1`, `generate_branch_name/1`, `new_codebase?/1`, `validate_node_path/2`, `validate_repo_path!/1`, `load_foreign_repos/2`, `merge_foreign_repos/2`, `load_repo_notes/2`, `resolve_root_agent/2`, `model_id_locked?/1`, `build_root_agent_spec/7` | Shared phase helpers — branch creation, change detection, node-path/repo-path validation, starting-commit resolution, foreign-repo loading + up-front validation, repo-notes rendering, root-agent spec building. |
+| `EvoGit.Runtime.Helpers` | `helpers.ex` | `merge_and_report/4` (3-arity delegates with `foreign_repos: []`), `resolve_starting_commit/2`, `resolve_foreign_repo_starting_commit/2`, `format_invalid_starting_commit_error/3`, `notify_finalizing/1`, `generate_branch_name/1`, `new_codebase?/1`, `validate_node_path/2`, `validate_repo_path!/1`, `load_foreign_repos/2`, `merge_foreign_repos/2`, `load_repo_notes/2`, `resolve_root_agent/2`, `model_id_locked?/1`, `normalize_model_selection_opts/1`, `build_root_agent_spec/7` | Shared phase helpers — branch creation, change detection, node-path/repo-path validation, starting-commit resolution, foreign-repo loading + up-front validation, repo-notes rendering, root-agent spec building. |
 | `EvoGit.Runtime.Genesis` | `genesis.ex` | `run/2` | Creation/Analysis; mode auto-detected. `{:ok, %{commit_sha, result, tag, branch_name, pr_url, pr_title, usage, agent_count, repos}}` or `{:ok, %{..., no_changes: true}}`, else `{:error, reason}`. |
 | `EvoGit.Runtime.Evolution` | `evolution.ex` | `run/2`, `mode_atom/1` (`@doc false` test wrapper) | Evolutionary loop; modes `:simple`/`:custom`; same return shape as Genesis. |
 | `EvoGit.Runtime.PullRequest` | `pull_request.ex` | `try_create/4`, `generate_title/2`, `format_body/2` | LLM title generation, body formatting, push + PR via `gh`. `try_create/4` returns `{pr_url, pr_title}` or `{nil, nil}`, never raises. |
@@ -28,7 +28,7 @@ Modules: `../runtime.ex` (`EvoGit.Runtime`), `helpers.ex`, `genesis.ex`, `evolut
 `self_reflective.ex` is the only runtime-directory source containing `SelfReflective` or its source-root resolver; no Genesis Assistant module, direct Elixir evaluation, command registry, approval gate, or source-clone setup is implemented under `runtime/`.
 `run/1` reads `opts[:objective]` with default `""`, while `run/2` requires a binary objective and list opts, adds a default `node_path: "./"`, and calls `AgentScheduler.run_agent/1` synchronously.
 Only `{:ok, %EvoGit.Agent.Result{}}` is projected into the four-key success map (`result`, nil `commit_sha`, nil `branch_name`, nil `tag`); usage, agent count, and every other agent-result field are omitted, and any other scheduler response is logged and returned unchanged.
-`build_spec/2` hardcodes `EvoGit.Agents.SelfReflective`, nil phylo node, and forced `repo_less: true`, while forwarding all opts except `:objective`, `:source_root`, and `:node_path` rather than using the shared root-spec builder.
+`build_spec/2` hardcodes `EvoGit.Agents.SelfReflective`, nil phylo node, and forced `repo_less: true`, while forwarding all opts except `:objective`, `:source_root`, and `:node_path` through `Helpers.normalize_model_selection_opts/1` rather than using the shared root-spec builder.
 A nonempty `opts[:source_root]` overrides the context root only when `File.dir?/1` succeeds, without absolute-path expansion or Genesis-checkout validation; an invalid override silently falls back to `source_root/0`.
 The default `source_root/0` calls `EvoGit.SelfReflectiveSource.reference_path/0` and then falls back to `File.cwd!/0`, so a packaged run without a reference checkout may load context from its launcher cwd rather than Genesis source.
 `build_spec/2` passes `node_path` directly to `ContextNode.load/2` when the selected source is a real directory, with no runtime-side `Helpers.validate_node_path/2` call; the minimal `%ContextNode{}` fallback is used only when the selected root is not a directory.
@@ -184,8 +184,18 @@ The scheduler: 1) assigns a unique `task_id` (GUID), `task_number` (short intege
 ### Root-Agent Spec Builder (`Helpers.build_root_agent_spec/7`)
 
 `Helpers.build_root_agent_spec/7` is the shared builder producing the root `AgentSpec` for evolution (simple AND custom) and the genesis phase roots.
-It resolves the default/custom root module via `resolve_root_agent/2` → `{module, opts}` (unknown ids raise `ArgumentError`) and threads `foreign_repos`, `repo_notes`, `archive`, `task_id`, `model_id`, `model_id_locked` (`model_id_locked?/1` = explicit lock OR a non-nil `model_id`), `quality_level` (absent → `nil`; subagent spec builders never carry the key, so subagent prompts stay unaffected) and `:attachments` (omit-when-nil, so no-attachment specs stay byte-identical), then appends the resolved custom-agent opts.
+It resolves the default/custom root module via `resolve_root_agent/2` → `{module, opts}` (unknown ids raise `ArgumentError`) and threads `foreign_repos`, `repo_notes`, `archive`, `task_id`, model selection, `quality_level` (absent → `nil`; subagent spec builders never carry the key, so subagent prompts stay unaffected) and `:attachments` (omit-when-nil), then appends the resolved custom-agent opts.
 New code constructing a root-agent spec should reuse it instead of hand-assembling specs at call sites.
+
+### Task Model Selection
+Runtime opts may carry `:model_spec`, a map with STRING keys `provider_profile_id`, `model`, and optional `reasoning_effort`.
+`Helpers.normalize_model_selection_opts/1` passes a non-nil spec verbatim, removes the competing legacy `:model_id`, and forces `:model_id_locked` true even when the caller supplied false.
+Without a spec, legacy ids and explicit locks retain their semantics, nil model_spec is omitted, and Auto adds no model selection.
+`Helpers.model_id_locked?/1` is true for an explicit lock, a non-nil model_spec, or a non-nil legacy model_id.
+The shared root builder (including BOTH Genesis Mode B roots), `SelfReflective.build_spec/2`, and `SkillExtraction.run/1` all apply the same normalization before `AgentSpec.new/5`.
+Custom-agent resolution is unchanged, and Auto leaves the script/custom-agent/default selection to the scheduler.
+Runtime wrappers do not resolve or rewrite provider/model/reasoning fields: validation and `Schema.resolve_model_spec(config, spec_or_legacy_id)` resolution belong to the config/scheduler boundary.
+`AgentSpec` storage and scheduler dispatch, and task-boundary forwarding into runtime opts, are owned outside this directory.
 
 ### Agent Hierarchy by Phase
 
