@@ -24,7 +24,7 @@ defmodule EvoGit.CLI.Setup do
     IO.puts("""
 
     ╔══════════════════════════════════════════════════════╗
-    ║            EvoGit LLM Configuration Setup           ║
+    ║            Genesis LLM Configuration Setup          ║
     ╚══════════════════════════════════════════════════════╝
     """)
 
@@ -196,7 +196,7 @@ defmodule EvoGit.CLI.Setup do
         if confirm("\n  Save the profile with OAuth auth mode anyway? [Y/n]: ") do
           save_setup_result(model_spec, provider.credential_key, "", auth_mode: "oauth")
         else
-          IO.puts("\nSetup cancelled. Re-run `evogit setup` once you are logged in.")
+          IO.puts("\nSetup cancelled. Re-run `genesis setup` once you are logged in.")
         end
     end
   end
@@ -219,7 +219,7 @@ defmodule EvoGit.CLI.Setup do
     IO.puts("  ⚠ No usable OAuth credentials yet (#{format_auth_error(reason)}).\n")
     IO.puts(indent(EvoGit.Auth.login_instructions(provider_atom)))
     IO.puts("")
-    IO.puts("  Re-run `evogit setup` after logging in — or save the profile now and it")
+    IO.puts("  Re-run `genesis setup` after logging in — or save the profile now and it")
     IO.puts("  starts working as soon as the login exists.")
   end
 
@@ -349,7 +349,7 @@ defmodule EvoGit.CLI.Setup do
         end
 
         IO.puts("\n✅ Setup complete! You can now run:")
-        IO.puts("  evogit genesis \"your prompt here\"")
+        IO.puts("  genesis genesis \"your prompt here\"")
 
       {:error, reason} ->
         IO.puts("\n  ✗ Failed to save config: #{inspect(reason)}")

@@ -3,7 +3,7 @@ defmodule EvoGit.Agents.SkillExtractor do
   Skill extraction agent for distilling reusable knowledge from PRs.
 
   This agent analyzes a completed PR's changes (title, objective, summary,
-  commit history, user note) and creates or updates EvoGit skills
+  commit history, user note) and creates or updates Genesis skills
   (markdown files in `.agents/skills/`) that capture genuinely complex,
   important, and reusable knowledge for future agents.
   """
@@ -16,7 +16,7 @@ defmodule EvoGit.Agents.SkillExtractor do
 
   def system_prompt do
     ~S"""
-    You are a skill extraction agent: analyze a completed PR's changes and distill reusable knowledge into EvoGit skills (markdown files in `.agents/skills/` at the repository root, one per skill, YAML frontmatter with name/description/parameters, kebab-case names).
+    You are a skill extraction agent: analyze a completed PR's changes and distill reusable knowledge into Genesis skills (markdown files in `.agents/skills/` at the repository root, one per skill, YAML frontmatter with name/description/parameters, kebab-case names).
     """ <>
       PromptFragments.worktree_isolation_note_short() <>
       "\n" <>
