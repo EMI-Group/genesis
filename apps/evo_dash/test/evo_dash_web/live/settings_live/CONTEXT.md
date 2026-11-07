@@ -48,7 +48,9 @@ Mounted canonical editor save/reload/reset regressions belong with the parent `s
 
 Normal `mix test apps/evo_dash/test/evo_dash_web/live/settings_live` boots successfully and runs all 108 tests under seeds 0 and 1, with 104 passing and four default-only provider persistence tests blocked by core validation.
 Core rejects `[:llm, :providers, 0, :default_model]` with `default_model must be one of [], got "claude-opus-5-5"` (or `"gpt-5.6-terra"`) when the canonical provider has no model override rows.
-The blocked auth cases cover OAuth Anthropic credentials, explicit API-key auth with stale-path removal, blank OAuth path omission and OAuth-only Codex defaults.
+The four blocked `EvoDashWeb.SettingsLive.AuthStatusTest` cases share the describe prefix `profile save round-trip (auth_mode / oauth_file persistence)` in `auth_status_test.exs`.
+Their test suffixes are `an OAuth anthropic profile persists both keys to config.toml` (line 476), `the API-key default is explicit and drops a stale OAuth path` (line 505), `a blank oauth_file keeps auth_mode and omits only the path` (line 552) and `an OAuth-only provider is self-describing without any auth_mode form value` (line 575).
+All four use `save_new_profile/2`, which explicitly asserts empty optional model override rows; the legacy-edit success case instead retains a model override row, and unsupported-OAuth rejection is an independent passing validation contract.
 Default-only providers are a valid contract, so these assertions remain active and must not be bypassed by fabricating model rows or expecting the validation failure.
 All pure contracts, mounted credential verdict/guidance/path/remedy contracts, stale guards, unsupported-auth rejection and legacy OAuth migration pass in the normal directory run.
 The source-owning parent must resolve the default-only core validation blocker, then rerun the entire directory and broader Settings/dashboard suites.
