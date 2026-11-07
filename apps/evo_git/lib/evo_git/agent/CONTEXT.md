@@ -57,6 +57,16 @@ Two fire-once per-child-dir hints (`DelegationHints.extract_child_paths/4`, `may
 A parent hands work to a child ONLY via the spawn call's `objective` STRING plus the child's checkout; `build_subagent_specs/3` forwards `args["objective"]` VERBATIM to `AgentSpec.new/5`.
 - The `path` arg is a DIRECTORY node — RELATIVE for same-repo targets, ABSOLUTE only for foreign repos; a file path is redirected to its parent dir; an unknown absolute path is rejected with a self-correcting hint. A child finds its dir from a fresh worktree at `spec.phylo_node.current_commit` (= its cwd), hence "Do NOT include worktree paths or `cd` commands in the objective", and parent changes are visible only if COMMITTED before the spawn. Inherited opts: `repo_id`, `foreign_repos`, `repo_notes`, `archive`, `model_id`, `task_tmpdir`; absolute-path rules live on the tool ARG (`Shared.normalize_relpath/1`, `Shared.validate_file_scope/4`).
 
+## Provider-Profile Model Selection
+`model_spec` is the complete string-keyed selection (`provider_profile_id`, `model`, optional `reasoning_effort`), while the provider profile identifies account/slot ownership rather than a model-catalog entry.
+Scheduler admission owns `Schema.resolve_model_spec/2` and must populate the mutually consistent effective `llm_model`, `llm_generation_params`, configured `llm_context_window` and complete `model_spec` in agent state.
+The ordinary LLM call and compression consume those effective fields without re-resolving selection each turn, preserving provider options/OAuth and the configured context window rather than the catalog context limit.
+`SubagentProcessing` forwards the complete resolved parent selection and explicit `model_id_locked` flag through child `AgentSpec.new/5` opts, falling back to original spawn opts for older state shapes.
+`Cost.recompute_for_agent/2` prices effective `llm_model` and obtains the peak/off-peak period from `model_spec["provider_profile_id"]`, falling back to legacy `model_id` only when the selection profile is absent.
+`Cost.period_for_provider_profile_id/1` names that account lookup explicitly, and `period_for_model_id/1` remains a compatible alias.
+Completion retains the complete selection in `llm_settings.model_spec` alongside effective model, generation parameters, legacy profile identity and compression threshold.
+The Assistant task-start facade validates explicit selectors through `Schema.resolve_model_spec/2`, forwards them unchanged and locks accepted selections; its exact admission rules belong to `tools/elixir_eval/CONTEXT.md`.
+
 ## Subagent Merge Conflict Resolution (`EvoGit.Agent.ContextMerge`)
 A parent merges every SAME-REPO child commit into its worktree; `CONTEXT.md` conflicts are ownership-resolved by `ownership_strength/2` over a repo-relative `.../CONTEXT.md` (`3` = the node path IS the file's directory, `2` = a strict segment-wise ancestor, `./` = everybody's, `1` = unrelated). Rationale + contract: root `./CONTEXT.md`.
 - `decide/3`: out of the child's scope (1) → keep OURS + record the dropped edit with its truncated `git diff <base> <child_sha> -- <file>`; child strictly deeper → THEIRS; shallower → OURS; EQUAL ownership ≥ 2 → unresolved.
