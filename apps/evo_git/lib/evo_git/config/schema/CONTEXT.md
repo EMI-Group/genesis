@@ -109,9 +109,18 @@ For a nonempty configured `api_key_env_var`, a nonempty environment value wins, 
 If neither source has a nonempty binary value, assembly emits `api_key: ""`, which ReqLLM rejects instead of falling back to provider-wide credentials, preserving isolation between accounts using the same provider.
 Profiles without a nonempty custom key name retain the existing provider-default lookup behavior.
 `Definitions` describes `llm.providers` as `:provider_profiles` with default `[]` and `llm.default_provider_profile` as an optional `:string` with default nil, alongside the legacy schema entries.
-Parent integration must add `Schema.provider_profiles/1`, `Schema.model_selections/1` and `Schema.resolve_model_spec/2` delegates, delegate `Schema.effective_model_profiles/1` to LLM instead of its legacy-only fallback, normalize/persist the nested config shape, implement `:provider_profiles` validation and update schema count pins.
-Until that integration, the parent validator has no composite-type clause and its effective-profile helper can still synthesize a stale legacy fallback for invalid canonical selections.
+Parent-owned `../schema.ex`, `../provider_profile_validation.ex` and `../config.ex` own schema delegation, canonical composite/cross-field validation and config persistence; verify those files rather than inferring validation from these lenient normalization helpers.
 Permanent regression tests belong in the parent-owned test tree and must cover canonical round trips, separate same-provider legacy accounts, defaults/ordering/effort overrides, custom endpoints, OAuth/API-key isolation, constraints, duplicate/unknown selectors and malformed or empty inputs.
+
+## Health-Check Selection and Credential Boundaries
+`Definitions` declares `[:llm, :default_provider_profile]` as an optional string with nil default and no descriptor-level membership rule; canonical selector membership and blank-value errors belong to the parent validator rather than this descriptor.
+`LLM.model_profiles/1` resolves each canonical account by its explicit id, so a valid account still appears in that projection even when the configured default selector names a missing account.
+Consequently, an any-model/any-credential presence check over that projection cannot establish that the configured default selection is valid, and parent status must account for its existing validation errors independently.
+`ProviderProfiles.resolve_runtime_profile(config, nil)` checks default account/model/effort selection without assembling generation parameters, importing OAuth credentials, reading API-key values or loading catalog metadata; `LLM.default_model_profile/1` wraps its failures as `{:error, :not_found}`.
+Do not use `resolve_model_spec/2` solely to inspect health because its successful result contains the complete canonical profile, runtime profile and potentially secret-bearing generation parameters, and its assembly can import OAuth files and load the catalog.
+`LLM.oauth_credential_status/1` intentionally imports credentials before checking them and preserves managed-file write failures through `managed_file_error`, but its managed-file path comes from the top-level profile `oauth_file`, whereas request assembly permits an explicit `provider_options.oauth_file` override.
+Thus OAuth health and actual request files can differ when that override is supplied; changing the validation-to-status policy need not expand into altering this existing credential contract.
+A status fix should avoid embedding inspected validation values or whole resolved profiles in newly added warning text because custom endpoints, provider options and arbitrary malformed fields may contain secrets.
 
 ## Constraints
 - `Definitions` describes defaults without reading user configuration, but `LLM` is not a pure read boundary: OAuth option assembly/status can import credentials into a caller-selected managed file, metadata resolution can load the catalog, and provider parsing can create atoms.
