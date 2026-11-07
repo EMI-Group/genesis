@@ -42,6 +42,28 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
   end
 
   @doc """
+  Persists a reconciled canonical picker without replacing unrelated form state.
+
+  The browser must merge this event's `model_spec` and `node` into its existing
+  dashboard state, preserving the DOM-owned prompt and any pending restore.
+  Do not send this through `persist_state`, whose browser handler replaces the
+  whole stored object. An empty canonical map is an explicit Auto selection.
+  """
+  def maybe_persist_model_selection(socket) do
+    if is_map(socket.assigns[:selected_model_spec]) and
+         is_nil(socket.assigns[:pending_model_selection]) do
+      state =
+        socket.assigns
+        |> model_selection_state()
+        |> Map.put(:node, socket.assigns[:current_node_id] || "local")
+
+      push_event(socket, "persist_model_selection", state)
+    else
+      socket
+    end
+  end
+
+  @doc """
   Serializes only the three canonical model-spec fields, never the picker
   bundle, credentials or resolved runtime options. Legacy page callers retain
   their old id until migrated; canonical state never writes that stale id.
@@ -79,11 +101,17 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
 
     case candidate do
       {:present, value} when is_map(value) or is_binary(value) ->
-        case socket.assigns[:model_selection] do
-          data when is_map(data) ->
+        # Pending remote targets resolve locally until connected. A mount's
+        # local bundle must never validate (and clear) that target's restore.
+        pending_remote? =
+          socket.assigns[:current_node_id] != nil and socket.assigns[:current_node] == node()
+
+        case {socket.assigns[:model_selection], pending_remote?} do
+          {data, false} when is_map(data) ->
             socket
             |> assign(:selected_model_spec, LLMSelection.reconcile(data, value))
             |> assign(:pending_model_selection, nil)
+            |> maybe_persist_model_selection()
 
           _ ->
             assign(socket, :pending_model_selection, value)
