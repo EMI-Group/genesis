@@ -50,6 +50,11 @@ This mechanism is for trusted user configuration, not a safe evaluator for agent
 `normalize_result/1` accepts any binary as a model id without checking profile existence, maps nil/empty-string/false to default, and inspects other values without a byte/time budget.
 - Consumers: `EvoGit.AgentScheduler.Dispatch.register_agent/7` (calls `select_model/1` per spawn, BEFORE `resolve_model_for_agent/2`; skipped when `spec.opts[:model_id_locked]`) and the `:evo_dash` settings UI (CRUD + script editor + `status/0` surfacing). Tests: `test/evo_git/custom_agents_test.exs`, `test/evo_git/agents/custom_test.exs`.
 
+## Canonical provider-profile migration gap
+`ModelSelector.normalize_result/1` accepts only binaries and nil/empty-string/false fallbacks, so canonical selections such as `%{provider_profile_id: "account", model: "model-name"}` (including string-keyed equivalents) return `{:error, {:invalid_result, inspect(selection)}}` rather than a usable selection.
+`CustomAgents.normalize_definition/1` in `../custom_agents.ex` retains only the legacy `model_id` selector and drops a supplied `model_spec`, so custom-agent definitions have no first-class persisted canonical account/model/effort selector.
+`select_model/1`'s typespec, module/API documentation and `describe_contract/0` UI help describe only legacy string model ids and provide legacy `"default"`/`"fast"` examples, with no provider/account discriminator.
+`status/0` checks compilation only, so a script returning a canonical selection map can report `:ok` and `enabled?/0 == true` while every evaluation rejects its result.
 ## See Also
 
 - User-defined custom tools (the `tools`-whitelist names loaded from `<config_dir>/tools/` — directory layout, `EvoGit.CustomTools.Tool` behaviour, built-in/duplicate collision rules, write classification and security model) → `../custom_tools/CONTEXT.md`.
