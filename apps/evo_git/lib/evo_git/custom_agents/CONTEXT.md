@@ -57,7 +57,7 @@ This mechanism is for trusted user configuration, not a safe evaluator for agent
 `CustomAgents.normalize_definition/1` in `../custom_agents.ex` retains only the legacy `model_id` selector and drops a supplied `model_spec`, so custom-agent definitions have no first-class persisted canonical account/model/effort selector.
 `ModelSelector` accepts canonical selection maps, but scheduler consumers must route map results to the canonical schema resolver rather than use them as legacy model ids.
 `status/0` checks compilation only, not returned selection validity or configured existence.
-Focused canonical-result tests live in `model_selector_selection_test.exs` within this node and can be run explicitly with `mix test apps/evo_git/lib/evo_git/custom_agents/model_selector_selection_test.exs`; existing selector regressions live in `test/evo_git/custom_agents/model_selector_test.exs`.
+Selector regression tests belong under `test/evo_git/custom_agents/`, including the existing `model_selector_test.exs`; test files must not live under `lib/`.
 ## See Also
 
 - User-defined custom tools (the `tools`-whitelist names loaded from `<config_dir>/tools/` — directory layout, `EvoGit.CustomTools.Tool` behaviour, built-in/duplicate collision rules, write classification and security model) → `../custom_tools/CONTEXT.md`.
