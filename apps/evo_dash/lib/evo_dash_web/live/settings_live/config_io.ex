@@ -18,6 +18,19 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
     EvoGit.Config.resolve()
   end
 
+  @doc "Canonical persistence boundary, including legacy provider-profile migration."
+  def canonicalize_file_config(config) do
+    providers = EvoDashWeb.SettingsLive.ProviderProfiles.profiles(config)
+    EvoDashWeb.SettingsLive.ProviderProfiles.put_profiles(config, providers)
+  end
+
+  @doc "Ordered model choices for task/custom-agent selectors, not provider editor rows."
+  def model_selections(config), do: Schema.model_selections(config)
+
+  @doc "Resolves a structured selection or a legacy model-profile id through the core."
+  def resolve_model_spec(config, spec_or_legacy_id),
+    do: Schema.resolve_model_spec(config, spec_or_legacy_id)
+
   @doc """
   Reads the current scheduler configuration from the running AgentScheduler.
 
@@ -114,12 +127,17 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
   delete (for explicitly emptied values).
   """
   def params_to_category_config(params, _category, schemas) do
-    # Skip :model_profiles type schemas entirely. These schemas (e.g. [:llm, :models])
-    # are managed by dedicated event handlers (save_model_profile, delete_model_profile,
-    # add_model_profile) and have no corresponding flat form field. If processed here,
-    # they'd parse as :explicitly_empty (no matching form param) and get queued for
-    # deletion via deep_delete, wiping the entire models list on every save_category.
-    schemas = Enum.reject(schemas, &(&1.type == :model_profiles))
+    # Dedicated provider/model editors own these collections; a flat category
+    # form never submits them and must never interpret their absence as delete.
+    schemas =
+      Enum.reject(schemas, fn schema ->
+        schema.type in [:model_profiles, :provider_profiles] or
+          schema.key_path in [
+            [:llm, :models],
+            [:llm, :providers],
+            [:llm, :default_provider_profile]
+          ]
+      end)
 
     Enum.reduce(schemas, {%{}, []}, fn schema, {config_acc, emptied_acc} ->
       value = Map.get(params, Enum.join(schema.key_path, "."))

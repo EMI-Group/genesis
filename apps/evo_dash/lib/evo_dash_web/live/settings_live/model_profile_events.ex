@@ -1,545 +1,302 @@
 defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
   @moduledoc """
-  Event handlers for LLM model profile management (CRUD + quick setup).
+  Provider-profile CRUD and detached editor drafts for SettingsLive.
 
-  Extracted from SettingsLive to keep the main module focused on category-based
-  config editing and remote-connection management.
+  Existing model-profile event names remain the routing surface. The editing
+  id refers to a PROVIDER profile. New profiles use the `"new"` sentinel until
+  saved. Nothing mutates file_config until a valid Save, Delete, Move or Default.
   """
-
   use Gettext, backend: EvoDashWeb.Gettext
   import Phoenix.Component, only: [assign: 2, assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3]
 
-  alias EvoDashWeb.SettingsComponents.ModelProfilesEditor
-  alias EvoDashWeb.SettingsLive.{ConfigIO, ModelProfileHelpers}
+  alias EvoDashWeb.SettingsLive.{ConfigIO, ModelProfileHelpers, ProviderProfiles}
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # Quick Setup handlers
-  # ───────────────────────────────────────────────────────────────────────────
-
-  def select_llm_model_shortcut(socket, %{"model_string" => model_string}) do
-    # Add a new model profile using the selected model string.
-    file_config =
-      socket.assigns.file_config
-      |> ModelProfileHelpers.add_model_profile(model_string)
-
-    EvoDashWeb.SettingsLive.persist_file_config(
-      file_config,
-      socket,
-      gettext("Model selected and saved.")
-    )
+  def select_llm_model_shortcut(socket, %{"model_string" => model}) do
+    save_quick_model(socket, model, gettext("Model selected and saved."))
   end
 
   def save_custom_model(socket, params) do
-    model_name = params["model_name"]
-    base_url = params["base_url"]
-    provider_id_str = params["provider_id"]
-
-    # Build a whitelist map keyed by the string form of each provider's atom id,
-    # so untrusted POST data is matched without String.to_existing_atom.
-    provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
-
-    result =
-      cond do
-        is_nil(provider) ->
-          {:error, gettext("Unknown provider.")}
-
-        String.trim(model_name || "") == "" ->
-          {:error, gettext("Model name cannot be empty.")}
-
-        true ->
-          # Resolve the canonical provider atom from the catalog entry's
-          # provider_atoms list directly (e.g. :openai_compatible entry → :openai
-          # atom, :openrouter → :openrouter). We use hd/1 on provider_atoms
-          # because resolve_provider_atom/1 looks up by membership, NOT by
-          # catalog id — it would leave :openai_compatible unchanged (the bug).
-          provider_atom = hd(provider.provider_atoms)
-
-          # Validate base_url requirement using the catalog function (NOT the
-          # dead provider[:requires_base_url] struct field).
-          requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(provider.id)
-
-          if requires_base_url and String.trim(base_url || "") == "" do
-            {:error, gettext("Base URL cannot be empty.")}
-          else
-            # Build the map spec via resolve_model_spec/3 — it omits nil/empty
-            # base_url and resolves model shortcuts/variants. Produces a MAP for
-            # ALL providers (including OpenRouter), not a legacy string.
-            opts =
-              if String.trim(base_url || "") == "",
-                do: [],
-                else: [base_url: String.trim(base_url)]
-
-            {:ok, EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_name, opts)}
-          end
-      end
-
-    case result do
-      {:error, msg} ->
-        {:noreply, put_flash(socket, :error, msg)}
-
-      {:ok, model_value} ->
-        file_config =
-          socket.assigns.file_config
-          |> ModelProfileHelpers.add_model_profile(model_value)
-
-        EvoDashWeb.SettingsLive.persist_file_config(
-          file_config,
-          socket,
-          gettext("Custom model saved.")
-        )
-    end
+    quick_setup(socket, params["provider_id"], params["model_name"], params["base_url"], nil)
   end
 
   def save_quick_setup(socket, params) do
-    model_string = params["model_string"]
-    base_url = params["base_url"]
-    provider_id_str = params["provider_id"]
-    variant_id_str = params["variant_id"]
+    quick_setup(
+      socket,
+      params["provider_id"],
+      params["model_string"],
+      params["base_url"],
+      params["variant_id"]
+    )
+  end
 
-    provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
+  defp quick_setup(socket, provider_id, model, base_url, variant_id) do
+    provider = Map.get(ConfigIO.provider_by_id_str(), provider_id)
+    model = text(model)
+    base_url = text(base_url)
 
-    result =
-      cond do
-        is_nil(provider) ->
-          {:error, gettext("Unknown provider.")}
+    cond do
+      is_nil(provider) ->
+        error(socket, gettext("Unknown provider."))
 
-        String.trim(model_string || "") == "" ->
-          {:error, gettext("Model name cannot be empty.")}
+      model == "" ->
+        error(socket, gettext("Model name cannot be empty."))
 
-        true ->
-          # Resolve the canonical provider atom. Start from hd(provider_atoms)
-          # then apply variant resolution if a variant was selected.
-          provider_atom = hd(provider.provider_atoms)
+      EvoGit.Config.LLMCatalog.requires_base_url?(provider.id) and base_url == "" ->
+        error(socket, gettext("Base URL cannot be empty."))
 
-          resolved_atom =
-            if variant_id_str != nil and variant_id_str != "" do
-              # Whitelist variant lookup via variant_id_by_str (safe Map.get,
-              # no String.to_existing_atom on untrusted input). Falls back
-              # to the canonical provider atom for unknown/empty values.
-              variant_atom = Map.get(ConfigIO.variant_id_by_str(provider_atom), variant_id_str)
-              EvoGit.Config.LLMCatalog.resolve_provider_atom(provider_atom, variant_atom)
-            else
-              EvoGit.Config.LLMCatalog.resolve_provider_atom(provider_atom)
-            end
-
-          # The model_string from shortcut buttons is in "provider:model"
-          # format (e.g. "openai:gpt-5.6-terra"). resolve_model_spec expects
-          # just the model id portion, so we strip the provider prefix.
-          model_name =
-            if String.contains?(model_string, ":") do
-              [_provider_prefix, name] = :binary.split(model_string, ":")
-              name
-            else
-              model_string
-            end
-
-          # Validate base_url requirement
-          requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(provider.id)
-
-          if requires_base_url and String.trim(base_url || "") == "" do
-            {:error, gettext("Base URL cannot be empty.")}
-          else
-            opts =
-              if String.trim(base_url || "") == "",
-                do: [],
-                else: [base_url: String.trim(base_url)]
-
-            {:ok, EvoGit.Config.LLMCatalog.resolve_model_spec(resolved_atom, model_name, opts)}
-          end
-      end
-
-    case result do
-      {:error, msg} ->
-        {:noreply, put_flash(socket, :error, msg)}
-
-      {:ok, model_value} ->
-        file_config =
-          socket.assigns.file_config
-          |> ModelProfileHelpers.add_model_profile(model_value)
-
-        EvoDashWeb.SettingsLive.persist_file_config(
-          file_config,
-          socket,
-          gettext("Model selected and saved.")
-        )
+      true ->
+        provider_atom = hd(provider.provider_atoms)
+        variant = Map.get(ConfigIO.variant_id_by_str(provider_atom), variant_id)
+        resolved = EvoGit.Config.LLMCatalog.resolve_provider_atom(provider_atom, variant)
+        model = model |> String.split(":", parts: 2) |> List.last()
+        opts = if base_url == "", do: [], else: [base_url: base_url]
+        model = EvoGit.Config.LLMCatalog.resolve_model_spec(resolved, model, opts)
+        save_quick_model(socket, model, gettext("Model selected and saved."))
     end
   end
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # Model Profiles editor events
-  # ───────────────────────────────────────────────────────────────────────────
+  defp save_quick_model(socket, model, message) do
+    case ProviderProfiles.add_model(socket.assigns.file_config, model) do
+      {:ok, config} -> persist(config, socket, message)
+      {:error, reason} -> error(socket, error_message(reason))
+    end
+  end
 
   def add_model_profile(socket, _params) do
-    # Add the profile to the in-memory file_config (not persisted yet — the
-    # profile has no model until the user fills in the edit form, and persisting
-    # now would fail schema validation). Enter edit mode immediately so the
-    # user can complete the profile, then save.
-    file_config =
-      socket.assigns.file_config
-      |> ModelProfileHelpers.add_model_profile(nil)
-
-    models = get_in(file_config, [:llm, :models]) || []
-    new_id = models |> List.last() |> ModelProfileHelpers.profile_id()
-
-    socket =
-      socket
-      |> assign(:file_config, file_config)
-      |> assign(:editing_profile_id, new_id)
-      |> assign(:profile_form_draft, nil)
-      |> assign(:profile_advanced_open, nil)
-      |> put_flash(:info, gettext("New profile added — fill in the details and save."))
-
-    {:noreply, socket}
+    {:noreply,
+     socket
+     |> assign(
+       editing_profile_id: "new",
+       profile_form_draft: ProviderProfiles.new_draft(socket.assigns.file_config),
+       profile_advanced_open: nil
+     )}
   end
 
   def edit_model_profile(socket, %{"profile_id" => id}) do
-    # Opening a (different) profile's edit form starts a fresh edit session:
-    # clear any draft from a previous session (and the previous session's
-    # advanced-disclosure toggle, so the auto rule applies again).
-    {:noreply,
-     assign(socket,
-       editing_profile_id: if(socket.assigns.editing_profile_id == id, do: nil, else: id),
-       profile_form_draft: nil,
-       profile_advanced_open: nil
-     )}
-  end
+    cond do
+      socket.assigns[:editing_profile_id] == id ->
+        cancel_edit_model_profile(socket, %{})
 
-  def cancel_edit_model_profile(socket, _params) do
-    {:noreply,
-     assign(socket,
-       editing_profile_id: nil,
-       profile_form_draft: nil,
-       profile_advanced_open: nil
-     )}
-  end
+      true ->
+        case find_profile(socket, id) do
+          nil ->
+            {:noreply, socket}
 
-  # Toggles the edit form's "Advanced settings" disclosure. The open state is
-  # USER-AUTHORITATIVE: `:profile_advanced_open` holds the explicit choice and
-  # nil means "follow the auto rule". Flipping reads the EFFECTIVE state (the
-  # same helper the template uses) and stores its opposite, so the re-render
-  # triggered by every phx-change keystroke can never override the click.
-  # Total: no editing profile → no-op.
-  def toggle_profile_advanced(socket, _params) do
-    case socket.assigns[:editing_profile_id] do
-      nil ->
-        {:noreply, socket}
-
-      editing_id ->
-        profile = find_editing_profile(socket.assigns.file_config, editing_id) || %{}
-
-        currently_open? =
-          ModelProfilesEditor.advanced_open?(
-            socket.assigns[:profile_advanced_open],
-            socket.assigns[:profile_form_draft],
-            profile
-          )
-
-        {:noreply, assign(socket, :profile_advanced_open, not currently_open?)}
+          profile ->
+            {:noreply,
+             assign(socket,
+               editing_profile_id: id,
+               profile_form_draft: ProviderProfiles.draft(profile),
+               profile_advanced_open: nil
+             )}
+        end
     end
   end
 
+  def cancel_edit_model_profile(socket, _params), do: {:noreply, clear_editor(socket)}
+
+  @doc "Snapshot of the entire form. Nested models are numerically ordered string-keyed maps."
+  def model_profile_form_change(socket, params) when is_map(params) do
+    if socket.assigns[:editing_profile_id] do
+      {:noreply, assign(socket, :profile_form_draft, ProviderProfiles.normalize_draft(params))}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def model_profile_form_change(socket, _), do: {:noreply, socket}
+
   def save_model_profile(socket, params) do
-    old_id = params["profile_id"]
-    new_id = String.trim(params["profile_id_new"] || "")
+    params = ProviderProfiles.submission(params, socket.assigns[:profile_form_draft])
+    old_id = socket.assigns[:editing_profile_id] || params["profile_id"]
+    id = text(params["profile_id_new"] || params["id"])
+    profiles = ProviderProfiles.profiles(socket.assigns.file_config)
+    original = find_profile(socket, old_id) || %{}
 
-    models = get_in(socket.assigns.file_config, [:llm, :models]) || []
+    cond do
+      is_nil(old_id) ->
+        {:noreply, socket}
 
-    result =
-      cond do
-        new_id == "" ->
-          {:noreply, put_flash(socket, :error, gettext("Profile id cannot be empty."))}
+      id == "" ->
+        error(socket, gettext("Profile id cannot be empty."))
 
-        # Duplicate id check: another profile (with a different old id) already
-        # uses the requested id.
-        ModelProfileHelpers.id_collision?(models, old_id, new_id) ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("A profile with id \"%{id}\" already exists.", id: new_id)
-           )}
+      ModelProfileHelpers.id_collision?(profiles, old_id, id) ->
+        error(socket, gettext("A profile with id \"%{id}\" already exists.", id: id))
 
-        true ->
-          case ModelProfileHelpers.parse_model_profile_params(params, new_id) do
-            {:ok, updated_profile} ->
-              file_config =
-                socket.assigns.file_config
-                |> ModelProfileHelpers.update_model_profile(old_id, updated_profile)
+      true ->
+        case ProviderProfiles.parse(params, id, original) do
+          {:ok, profile} ->
+            config = ProviderProfiles.update(socket.assigns.file_config, old_id, profile)
+            persist(config, clear_editor(socket), gettext("Provider profile saved."))
 
-              socket = socket |> assign(:editing_profile_id, nil)
-
-              EvoDashWeb.SettingsLive.persist_file_config(
-                file_config,
-                socket,
-                gettext("Model profile saved.")
-              )
-
-            {:error, "model_id_empty"} ->
-              {:noreply, put_flash(socket, :error, gettext("Model ID cannot be empty."))}
-
-            {:error, "invalid_extra_json"} ->
-              {:noreply, put_flash(socket, :error, gettext("Extra Config must be valid JSON."))}
-
-            {:error, "extra_must_be_object"} ->
-              {:noreply,
-               put_flash(socket, :error, gettext("Extra Config must be a JSON object (map)."))}
-
-            {:error, "invalid_provider_options_json"} ->
-              {:noreply,
-               put_flash(socket, :error, gettext("Provider Options must be valid JSON."))}
-
-            {:error, "provider_options_must_be_object"} ->
-              {:noreply,
-               put_flash(socket, :error, gettext("Provider Options must be a JSON object (map)."))}
-
-            {:error, "peak_concurrency_invalid"} ->
-              # 峰值并发必须为非负整数（0 表示高峰时段完全暂停该模型 — 0 个并发槽位）
-              {:noreply,
-               put_flash(
-                 socket,
-                 :error,
-                 gettext("Peak concurrency must be a non-negative integer.")
-               )}
-
-            {:error, "peak_hours_invalid_time"} ->
-              # 峰值时段必须使用 HH:MM 24 小时制格式（如 09:00、18:30），且开始与结束时间必须都填写
-              {:noreply,
-               put_flash(socket, :error, gettext("Peak hours must use HH:MM 24-hour format."))}
-
-            {:error, "peak_hours_start_equals_end"} ->
-              # 峰值时段窗口的开始与结束时间不能相同
-              {:noreply,
-               put_flash(socket, :error, gettext("Peak hour window start and end must differ."))}
-
-            {:error, "peak_hours_overlap"} ->
-              # 峰值时段窗口之间不能重叠（首尾相接的相邻时段是允许的）
-              {:noreply,
-               put_flash(socket, :error, gettext("Peak hour windows must not overlap."))}
-          end
-      end
-
-    # The edit session is over either way (saved or rejected): drop the
-    # unsaved-typing draft so the next edit session starts from the profile's
-    # saved values (a rejected save re-renders the row list from file_config),
-    # and forget the advanced-disclosure toggle with it.
-    case result do
-      {:noreply, socket} ->
-        {:noreply,
-         socket |> assign(:profile_form_draft, nil) |> assign(:profile_advanced_open, nil)}
+          {:error, reason} ->
+            # Keep the complete failed draft for correction, including new rows.
+            socket = assign(socket, :profile_form_draft, ProviderProfiles.normalize_draft(params))
+            error(socket, error_message(reason))
+        end
     end
   end
 
   def delete_model_profile(socket, %{"profile_id" => id}) do
-    models = get_in(socket.assigns.file_config, [:llm, :models]) || []
-    new_models = Enum.reject(models, fn p -> ModelProfileHelpers.profile_id(p) == id end)
-
-    file_config =
-      socket.assigns.file_config
-      |> ModelProfileHelpers.put_in_model_profiles(new_models)
-
-    socket =
-      socket
-      |> assign(:editing_profile_id, nil)
-      |> assign(:profile_form_draft, nil)
-      |> assign(:profile_advanced_open, nil)
-
-    EvoDashWeb.SettingsLive.persist_file_config(
-      file_config,
-      socket,
-      gettext("Model profile deleted.")
-    )
+    config = ProviderProfiles.delete(socket.assigns.file_config, id)
+    persist(config, clear_editor(socket), gettext("Provider profile deleted."))
   end
 
   def move_model_profile(socket, %{"direction" => direction, "id" => id}) do
-    file_config =
-      socket.assigns.file_config
-      |> ModelProfileHelpers.move_model_profile(id, direction)
+    config = ProviderProfiles.move(socket.assigns.file_config, id, direction)
+    persist(config, socket, gettext("Provider profile moved."))
+  end
 
-    # 模型配置档已成功上移/下移（"moved" = 已移动）
-    EvoDashWeb.SettingsLive.persist_file_config(
-      file_config,
-      socket,
-      gettext("Model profile moved.")
+  def set_default_provider_profile(socket, params) do
+    config =
+      ProviderProfiles.set_default(
+        socket.assigns.file_config,
+        params["profile_id"] || params["id"]
+      )
+
+    persist(config, socket, gettext("Default provider profile saved."))
+  end
+
+  @doc "Appends an unsaved model override row (`models[index][model]`)."
+  def add_profile_model(socket, _params) do
+    update_rows(socket, "models", fn rows -> rows ++ [%{"model" => ""}] end)
+  end
+
+  def remove_profile_model(socket, params), do: remove_row(socket, "models", params["index"])
+
+  def add_peak_hours_row(socket, _params) do
+    update_rows(socket, "peak_hours", fn rows -> rows ++ [%{"start" => "", "end" => ""}] end)
+  end
+
+  def remove_peak_hours_row(socket, params), do: remove_row(socket, "peak_hours", params["index"])
+
+  def toggle_profile_advanced(socket, _params) do
+    if socket.assigns[:editing_profile_id] do
+      draft = current_draft(socket)
+
+      open =
+        case socket.assigns[:profile_advanced_open] do
+          value when is_boolean(value) -> value
+          _ -> advanced_open?(draft)
+        end
+
+      {:noreply, assign(socket, :profile_advanced_open, not open)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @doc "Shared auto-open rule for the editor component; an explicit boolean overrides it."
+  def advanced_open?(draft) when is_map(draft) do
+    keys =
+      ~w(temperature max_tokens top_p top_k frequency_penalty presence_penalty extra provider_options)
+
+    Enum.any?(keys, &(draft[&1] not in [nil, "", %{}])) or
+      Enum.any?(ProviderProfiles.rows(draft["models"]), &advanced_open?/1)
+  end
+
+  def advanced_open?(_), do: false
+
+  defp remove_row(socket, key, raw_index) do
+    index =
+      case raw_index do
+        value when is_binary(value) ->
+          case Integer.parse(value) do
+            {n, ""} when n >= 0 -> n
+            _ -> nil
+          end
+
+        _ ->
+          nil
+      end
+
+    if is_integer(index),
+      do: update_rows(socket, key, &List.delete_at(&1, index)),
+      else: {:noreply, socket}
+  end
+
+  defp update_rows(socket, key, fun) do
+    if socket.assigns[:editing_profile_id] do
+      draft = current_draft(socket)
+      rows = fun.(ProviderProfiles.rows(draft[key]))
+      {:noreply, assign(socket, :profile_form_draft, Map.put(draft, key, rows))}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  defp current_draft(socket) do
+    case socket.assigns[:profile_form_draft] do
+      %{} = draft ->
+        draft
+
+      _ ->
+        ProviderProfiles.draft(find_profile(socket, socket.assigns[:editing_profile_id]) || %{})
+    end
+  end
+
+  defp find_profile(socket, id) do
+    Enum.find(
+      ProviderProfiles.profiles(socket.assigns.file_config),
+      &(ModelProfileHelpers.profile_id(&1) == id)
     )
   end
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # Peak-hours row editor (in-memory only, mirroring the add_list_entry /
-  # remove_list_entry pattern in settings_live.ex — nothing is persisted until
-  # the enclosing save_model_profile form is submitted)
-  # ───────────────────────────────────────────────────────────────────────────
+  defp clear_editor(socket),
+    do:
+      assign(socket, editing_profile_id: nil, profile_form_draft: nil, profile_advanced_open: nil)
 
-  # phx-change snapshot of the whole edit form. Stored as :profile_form_draft
-  # so the edit form re-renders with every typed value preserved — phx-click
-  # (add/remove row) does NOT send the enclosing form's data, so without the
-  # draft the row buttons would re-render the form from file_config and wipe
-  # all unsaved typing. The nested peak_hours is normalized to the canonical
-  # list form defensively (total — never crashes on partial/odd params), and
-  # off_peak_days is normalized to a day-vocabulary list: Plug collapses a
-  # repeated form param to a BARE STRING when exactly one checkbox is checked
-  # (e.g. `off_peak_days=weekends` → "weekends"), and the template's day-chip
-  # membership test would crash on that binary (Enumerable protocol error) if
-  # the raw value were stored verbatim. Empty/absent → [] (all chips render
-  # unchecked); the seed-filtering + vocabulary whitelist live in
-  # ModelProfileHelpers.normalize_days/1.
-  def model_profile_form_change(socket, params) when is_map(params) do
-    draft =
-      params
-      |> Map.put(
-        "peak_hours",
-        ModelProfileHelpers.normalize_peak_hours_draft(params["peak_hours"])
-      )
-      |> normalize_draft_off_peak_days()
+  defp persist(config, socket, message),
+    do: EvoDashWeb.SettingsLive.persist_file_config(config, socket, message)
 
-    {:noreply, assign(socket, :profile_form_draft, draft)}
-  end
+  defp error(socket, message), do: {:noreply, put_flash(socket, :error, message)}
+  defp text(value) when is_binary(value), do: String.trim(value)
+  defp text(_), do: ""
 
-  def model_profile_form_change(socket, _params), do: {:noreply, socket}
+  defp error_message("provider_empty"), do: gettext("Provider cannot be empty.")
 
-  # The real edit form ALWAYS submits off_peak_days (the hidden seed input
-  # guarantees at least a `""` entry), so the key is present whenever the
-  # change originates from this form. When present it is stored as a NORMALIZED
-  # day list (never a bare string — the crash trigger); when genuinely absent
-  # (synthetic/partial params) the key stays missing so the template's
-  # draft_or_profile/3 falls back to the profile's saved days, as before.
-  defp normalize_draft_off_peak_days(%{"off_peak_days" => raw} = draft) do
-    Map.put(draft, "off_peak_days", ModelProfileHelpers.normalize_days(raw))
-  end
+  defp error_message("auth_mode_invalid"),
+    do: gettext("Select a supported authentication mode for this provider.")
 
-  defp normalize_draft_off_peak_days(draft), do: draft
+  defp error_message("numeric_invalid"), do: gettext("Numeric fields must contain valid numbers.")
 
-  def add_peak_hours_row(socket, _params) do
-    file_config = socket.assigns.file_config
-    editing_id = socket.assigns.editing_profile_id
+  defp error_message("duplicate_model"),
+    do: gettext("Model IDs must be unique within a provider profile.")
 
-    case find_editing_profile(file_config, editing_id) do
-      nil ->
-        {:noreply, socket}
+  defp error_message("default_model_invalid"),
+    do: gettext("Select a default model from this provider profile's models.")
 
-      profile ->
-        peak_hours = current_peak_hours(socket, profile)
-        peak_hours = peak_hours ++ [%{start: "", end: ""}]
+  defp error_message("reasoning_default_invalid"),
+    do: gettext("Default reasoning effort must be one of the configured reasoning efforts.")
 
-        file_config =
-          update_editing_profile(file_config, editing_id, fn p ->
-            p
-            |> Map.delete("peak_hours")
-            |> Map.put(:peak_hours, peak_hours)
-          end)
+  defp error_message("models_invalid"),
+    do: gettext("Each model entry must be a model configuration.")
 
-        draft = maybe_update_draft_peak_hours(socket, peak_hours)
+  defp error_message("model_id_empty"), do: gettext("Model ID cannot be empty.")
+  defp error_message("invalid_extra_json"), do: gettext("Extra Config must be valid JSON.")
 
-        {:noreply,
-         socket |> assign(:file_config, file_config) |> assign(:profile_form_draft, draft)}
-    end
-  end
+  defp error_message("extra_must_be_object"),
+    do: gettext("Extra Config must be a JSON object (map).")
 
-  def remove_peak_hours_row(socket, %{"index" => index_str}) do
-    file_config = socket.assigns.file_config
-    editing_id = socket.assigns.editing_profile_id
+  defp error_message("invalid_provider_options_json"),
+    do: gettext("Provider Options must be valid JSON.")
 
-    # phx-value-* arrives as a string; Integer.parse (not a bare
-    # String.to_integer) so a malformed index can never crash the LiveView.
-    index =
-      case Integer.parse(index_str) do
-        {int, ""} -> int
-        _ -> -1
-      end
+  defp error_message("provider_options_must_be_object"),
+    do: gettext("Provider Options must be a JSON object (map).")
 
-    case find_editing_profile(file_config, editing_id) do
-      nil ->
-        {:noreply, socket}
+  # 高峰并发为 0 时暂停请求；时间字段是每日 24 小时制时段。
+  defp error_message("peak_concurrency_invalid"),
+    do: gettext("Peak concurrency must be a non-negative integer.")
 
-      profile ->
-        peak_hours = current_peak_hours(socket, profile)
+  defp error_message("peak_hours_invalid_time"),
+    do: gettext("Peak hours must use HH:MM 24-hour format.")
 
-        if index >= 0 and index < length(peak_hours) do
-          new_hours = List.delete_at(peak_hours, index)
+  defp error_message("peak_hours_start_equals_end"),
+    do: gettext("Peak hour window start and end must differ.")
 
-          file_config =
-            update_editing_profile(file_config, editing_id, fn p ->
-              p =
-                p
-                |> Map.delete(:peak_hours)
-                |> Map.delete("peak_hours")
+  defp error_message("peak_hours_overlap"), do: gettext("Peak hour windows must not overlap.")
 
-              # Empty list → remove the key entirely (absent = disabled, per
-              # the serialization contract).
-              if new_hours == [], do: p, else: Map.put(p, :peak_hours, new_hours)
-            end)
-
-          draft = maybe_update_draft_peak_hours(socket, new_hours)
-
-          {:noreply,
-           socket |> assign(:file_config, file_config) |> assign(:profile_form_draft, draft)}
-        else
-          {:noreply, socket}
-        end
-    end
-  end
-
-  # The current peak-hours window list for the edited profile. When a form
-  # draft exists (any input has been typed), the draft's peak_hours are
-  # authoritative — they carry the user's typed window values that phx-click
-  # did NOT send. Without a draft, fall back to the profile's saved peak_hours
-  # (the legacy behavior).
-  defp current_peak_hours(socket, profile) do
-    case socket.assigns[:profile_form_draft] do
-      %{} = draft when map_size(draft) > 0 ->
-        case Map.get(draft, "peak_hours") do
-          nil -> profile_peak_hours(profile)
-          hours -> ModelProfileHelpers.normalize_peak_hours_draft(hours)
-        end
-
-      _ ->
-        profile_peak_hours(profile)
-    end
-  end
-
-  defp profile_peak_hours(profile) do
-    case Map.get(profile, :peak_hours) || Map.get(profile, "peak_hours") do
-      hours when is_list(hours) -> hours
-      _ -> []
-    end
-  end
-
-  # Mirrors the updated peak_hours list into the draft when one exists, so the
-  # re-render (which prefers the draft) shows the new row set. Returns nil when
-  # there is no draft — the render falls back to the updated profile instead.
-  defp maybe_update_draft_peak_hours(socket, peak_hours) do
-    case socket.assigns[:profile_form_draft] do
-      %{} = draft when map_size(draft) > 0 -> Map.put(draft, "peak_hours", peak_hours)
-      _ -> nil
-    end
-  end
-
-  # Finds the profile currently being edited by id (atom-or-string key safe),
-  # or nil when none.
-  defp find_editing_profile(file_config, editing_id) do
-    models = get_in(file_config, [:llm, :models]) || []
-    Enum.find(models, fn p -> ModelProfileHelpers.profile_id(p) == editing_id end)
-  end
-
-  # Applies `fun` to the profile whose id matches `editing_id`, returning the
-  # updated file_config (unchanged when no profile matches).
-  defp update_editing_profile(file_config, editing_id, fun) do
-    models = get_in(file_config, [:llm, :models]) || []
-
-    new_models =
-      Enum.map(models, fn p ->
-        if ModelProfileHelpers.profile_id(p) == editing_id, do: fun.(p), else: p
-      end)
-
-    ModelProfileHelpers.put_in_model_profiles(file_config, new_models)
-  end
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Helpers: Generation params
-  # ───────────────────────────────────────────────────────────────────────────
-
-  # Conditionally adds a generation param from a profile map to a keyword list.
-  # Skips keys whose value is nil or absent in the profile.
   def maybe_put_gen_opt(opts, key, profile) do
     value = Map.get(profile, key) || Map.get(profile, to_string(key))
     if value != nil, do: Keyword.put(opts, key, value), else: opts

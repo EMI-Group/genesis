@@ -1,50 +1,52 @@
 defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   @moduledoc """
-  Pure data-transformation functions for model profile CRUD operations.
+  Provider-profile CRUD delegates, shared peak/day form parsers, and the legacy
+  single-model parameter parser retained for compatibility.
 
-  These helpers operate on the file_config map (before persistence) and are used
-  by the SettingsLive LiveView for managing the `[[llm.models]]` profile list.
+  New editors use `parse_provider_profile_params/2,3` and detached drafts.
+  `provider_profiles/1` is the core's canonical migration boundary.
+  CRUD writes only `llm.providers`, never a shadow `llm.models` collection.
   """
 
   alias EvoDash.SettingsUtils
   alias EvoGit.Config.LLMCatalog
   alias EvoGit.Config.Schema.LLM, as: LLMSchema
 
-  @doc """
-  Adds a new model profile to the file_config's `[:llm, :models]` list.
+  @doc "Adds a complete canonical provider profile; blank values leave config unchanged."
+  def add_model_profile(file_config, model_value) when model_value in [nil, ""], do: file_config
 
-  Generates a unique profile id and creates a profile map with default
-  concurrency of 3. When `model_value` is non-nil (e.g. from a shortcut), the
-  `:model` key is included; otherwise it is omitted so the user can fill it in.
-
-  A newly created profile for an OAuth-ONLY provider (e.g. `openai_codex`) is
-  stamped with `auth_mode: "oauth"` — that provider can never be used with an
-  API key, so the persisted TOML is self-describing. Providers that also accept
-  an API key get no `:auth_mode` key (API key stays the default).
-  """
   def add_model_profile(file_config, model_value) do
-    models = get_in(file_config, [:llm, :models]) || []
-
-    # Drop incomplete draft profiles when adding a COMPLETE profile (non-nil).
-    # This prevents stale drafts (from the "Add Profile" button) from
-    # contaminating subsequent saves (quick setup, shortcut, custom model).
-    # Draft creation (nil/empty model_value) preserves existing drafts.
-    models =
-      if draft_model_value?(model_value) do
-        models
-      else
-        Enum.reject(models, &incomplete_profile?/1)
-      end
-
-    id = generate_profile_id(models, base_name_from_model_value(model_value))
-
-    profile =
-      %{id: id, concurrency: 3}
-      |> maybe_put_profile_model(model_value)
-      |> maybe_stamp_oauth_auth_mode(model_value)
-
-    put_in_model_profiles(file_config, models ++ [profile])
+    {:ok, config} = EvoDashWeb.SettingsLive.ProviderProfiles.add_model(file_config, model_value)
+    config
   end
+
+  defdelegate provider_profiles(config),
+    to: EvoDashWeb.SettingsLive.ProviderProfiles,
+    as: :profiles
+
+  defdelegate provider_profile_draft(profile),
+    to: EvoDashWeb.SettingsLive.ProviderProfiles,
+    as: :draft
+
+  defdelegate new_provider_profile_draft(config),
+    to: EvoDashWeb.SettingsLive.ProviderProfiles,
+    as: :new_draft
+
+  defdelegate parse_provider_profile_params(params, id),
+    to: EvoDashWeb.SettingsLive.ProviderProfiles,
+    as: :parse
+
+  defdelegate parse_provider_profile_params(params, id, original),
+    to: EvoDashWeb.SettingsLive.ProviderProfiles,
+    as: :parse
+
+  defdelegate put_in_provider_profiles(config, profiles),
+    to: EvoDashWeb.SettingsLive.ProviderProfiles,
+    as: :put_profiles
+
+  defdelegate set_default_provider_profile(config, id),
+    to: EvoDashWeb.SettingsLive.ProviderProfiles,
+    as: :set_default
 
   @doc """
   Generates a unique profile id like `"profile-2"`, `"profile-3"`, ...
@@ -78,28 +80,19 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   end
 
   @doc """
-  Updates the profile identified by `old_id` in the file_config's model list,
+  Updates the provider profile identified by `old_id` in the configuration,
   replacing it with `updated_profile`.
   """
   def update_model_profile(file_config, old_id, updated_profile) do
-    models = get_in(file_config, [:llm, :models]) || []
-
-    new_models =
-      Enum.map(models, fn profile ->
-        if profile_id(profile) == old_id, do: updated_profile, else: profile
-      end)
-
-    put_in_model_profiles(file_config, new_models)
+    EvoDashWeb.SettingsLive.ProviderProfiles.update(file_config, old_id, updated_profile)
   end
 
   @doc """
-  Replaces the entire `[:llm, :models]` list in the file_config with the given
+  Replaces the entire `[:llm, :providers]` list in the file_config with the given
   `models` list.
   """
-  def put_in_model_profiles(file_config, models) do
-    file_config
-    |> ensure_llm_key()
-    |> put_in([:llm, :models], models)
+  def put_in_model_profiles(file_config, profiles) do
+    put_in_provider_profiles(file_config, profiles)
   end
 
   @doc """
@@ -115,7 +108,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
 
   @doc """
   Moves the profile identified by `id` up or down in the file_config's
-  `[:llm, :models]` list.
+  `[:llm, :providers]` list.
 
   `direction` is `"up"` (swap with the previous element) or `"down"` (swap
   with the next element). The id comparison uses `profile_id/1` string
@@ -126,7 +119,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   empty list, already-first + "up", already-last + "down".
   """
   def move_model_profile(file_config, id, direction) do
-    models = get_in(file_config, [:llm, :models]) || []
+    models = provider_profiles(file_config)
 
     new_models =
       case Enum.find_index(models, fn profile -> profile_id(profile) == id end) do
@@ -386,8 +379,10 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
     Enum.map(rows, fn row ->
       window = %{start: peak_draft_value(row, :start), end: peak_draft_value(row, :end)}
 
-      # Atom-or-string key safe (draft rows round-trip with atom keys).
-      case normalize_days(Map.get(row, "days") || Map.get(row, :days)) do
+      # Atom-or-string key safe, including malformed draft rows.
+      days = if is_map(row), do: Map.get(row, "days") || Map.get(row, :days)
+
+      case normalize_days(days) do
         [] -> window
         days -> Map.put(window, :days, days)
       end
@@ -544,40 +539,6 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   # Private helpers
   # ───────────────────────────────────────────────────────────────────────────
 
-  # Derives a profile-id base name from a model value. Accepts:
-  #   - binary "provider:model_id" → the model_id part (after the FIRST colon);
-  #     a plain binary without a colon → itself
-  #   - map spec %{id: "..."} (or string-keyed "id") → the id value
-  # Then slugifies (downcase, non-alphanumeric runs → single "-", trim "-").
-  # Returns nil when nothing usable can be derived (callers fall back to
-  # the "profile-N" scheme).
-  defp base_name_from_model_value(value) when is_binary(value) do
-    value |> String.split(":", parts: 2) |> List.last() |> slugify_base_name()
-  end
-
-  defp base_name_from_model_value(value) when is_map(value) do
-    model_id = Map.get(value, :id) || Map.get(value, "id")
-    slugify_base_name(model_id)
-  end
-
-  defp base_name_from_model_value(_), do: nil
-
-  defp slugify_base_name(nil), do: nil
-  defp slugify_base_name(""), do: nil
-
-  defp slugify_base_name(value) when is_binary(value) do
-    slug =
-      value
-      |> String.downcase()
-      |> String.replace(~r/[^a-zA-Z0-9]+/, "-")
-      |> String.trim("-")
-
-    case slug do
-      "" -> nil
-      slug -> slug
-    end
-  end
-
   # Converts an untrusted provider id string to a canonical provider atom via a
   # whitelist Map.get lookup built from the LLMCatalog. Returns nil for unknown
   # providers (callers keep the string verbatim so the schema can surface a
@@ -595,31 +556,6 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
     end
   end
 
-  # Only include :model key when a non-nil value is given (e.g. from a shortcut).
-  # For "add_model_profile" with nil, we omit it so the user can fill it in.
-  defp maybe_put_profile_model(profile, nil), do: profile
-  defp maybe_put_profile_model(profile, ""), do: profile
-  defp maybe_put_profile_model(profile, model_value), do: Map.put(profile, :model, model_value)
-
-  # Stamps `auth_mode: "oauth"` on a NEWLY created profile whose provider is
-  # OAuth-only (e.g. `openai_codex`) — such a provider can never be used with
-  # an API key, so the persisted profile is self-describing. Providers that also
-  # accept an API key get no key (API key stays the default), and a nil/empty
-  # model value yields no key at all.
-  defp maybe_stamp_oauth_auth_mode(profile, model_value) do
-    case LLMSchema.provider_from_model(model_value) do
-      nil ->
-        profile
-
-      provider ->
-        if LLMCatalog.oauth_only?(provider) do
-          Map.put(profile, :auth_mode, "oauth")
-        else
-          profile
-        end
-    end
-  end
-
   # Swaps the elements at indices `i` and `j` in the list (both assumed in
   # bounds). Reads both original values before either replacement, so the
   # second List.replace_at/3 never sees a partially-swapped list.
@@ -627,20 +563,6 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
     {a, b} = {Enum.at(list, i), Enum.at(list, j)}
     list |> List.replace_at(i, b) |> List.replace_at(j, a)
   end
-
-  defp draft_model_value?(nil), do: true
-  defp draft_model_value?(""), do: true
-  defp draft_model_value?(_), do: false
-
-  defp incomplete_profile?(profile) when is_map(profile) do
-    case Map.get(profile, :model) do
-      nil -> true
-      "" -> true
-      _ -> false
-    end
-  end
-
-  defp incomplete_profile?(_), do: true
 
   # ── peak/off-peak concurrency parsing helpers ─────────────────────────────
   #
@@ -659,6 +581,8 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   # is NOT an error).
   defp parse_peak_concurrency(nil), do: {:ok, nil}
   defp parse_peak_concurrency(""), do: {:ok, nil}
+
+  defp parse_peak_concurrency(raw) when is_integer(raw) and raw >= 0, do: {:ok, raw}
 
   defp parse_peak_concurrency(raw) do
     case SettingsUtils.parse_int(raw) do
@@ -869,13 +793,5 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
 
   defp overlap?({start_a, end_a}, {start_b, end_b}) do
     start_a < end_b and start_b < end_a
-  end
-
-  defp ensure_llm_key(file_config) do
-    if is_map(get_in(file_config, [:llm])) do
-      file_config
-    else
-      put_in(file_config, [:llm], %{})
-    end
   end
 end

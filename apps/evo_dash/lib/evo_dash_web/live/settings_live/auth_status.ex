@@ -22,6 +22,26 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
 
   alias EvoDash.SafeCall
   alias EvoGit.Config.Schema.LLM, as: LLMSchema
+  alias EvoDashWeb.SettingsLive.ProviderProfiles
+
+  @doc "Credential-only adapter for canonical provider profiles and legacy model profiles."
+  def credential_profile(profile) when is_map(profile) do
+    provider =
+      profile_field(profile, :provider) ||
+        case profile_field(profile, :model) do
+          value when is_binary(value) -> value |> String.split(":", parts: 2) |> List.first()
+          value when is_map(value) -> profile_field(value, :provider)
+          _ -> nil
+        end
+
+    %{
+      model: %{provider: ProviderProfiles.provider_atom(provider), id: "credential-status"},
+      auth_mode: profile_field(profile, :auth_mode),
+      oauth_file: profile_field(profile, :oauth_file)
+    }
+  end
+
+  def credential_profile(_), do: %{}
 
   @doc """
   Spawns a supervised task computing `statuses/2` for the socket's viewed node
@@ -108,7 +128,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
   # The profile id of an OAuth-enabled profile, or nil when the profile is not
   # OAuth-enabled / carries no usable id (such profiles get no entry at all).
   defp oauth_profile_id(profile) when is_map(profile) do
-    with true <- LLMSchema.oauth_profile?(profile),
+    with true <- LLMSchema.oauth_profile?(credential_profile(profile)),
          profile_id when is_binary(profile_id) and profile_id != "" <-
            profile_field(profile, :id) do
       profile_id
@@ -160,6 +180,8 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
   # transport error (including `:undef` for a daemon predating the function)
   # degrades to `:unknown` with no file path.
   defp credential_status(profile, target_node) do
+    profile = credential_profile(profile)
+
     if target_node == node() do
       profile
       |> LLMSchema.oauth_credential_status()
@@ -243,7 +265,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
   end
 
   defp login_instructions_for(profile) do
-    case LLMSchema.provider_from_model(profile_field(profile, :model)) do
+    case LLMSchema.provider_from_model(credential_profile(profile).model) do
       nil -> nil
       provider -> EvoGit.Auth.login_instructions(provider)
     end
