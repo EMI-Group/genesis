@@ -45,6 +45,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   alias EvoDashWeb.ProjectsLive.Notifications
   alias EvoDashWeb.ProjectsLive.Project
   alias EvoDashWeb.ProjectsLive.ProjectFlow
+  alias EvoDashWeb.ProjectsLive.StatePersistence
 
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView, only: [connected?: 1]
@@ -132,6 +133,15 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   the `:projects_async_load_runner` seam's default can reference it and tests
   can call it directly.
   """
+  def default_batch(node, remote?, current_node_id, path, seed_terminal_ids?, auto_activate?)
+
+  # A pending remote target still resolves to the dashboard's local BEAM node.
+  # Do not read its agents/config or consume a pending remote model restore.
+  def default_batch(_node, false, current_node_id, _path, _seed?, _auto?)
+      when not is_nil(current_node_id) do
+    %{recent_projects: [], terminal_ids: nil, auto_activate?: false}
+  end
+
   def default_batch(node, remote?, current_node_id, path, seed_terminal_ids?, auto_activate?) do
     {custom_agents, model_selection_enabled} = load_custom_agents(node)
     model_selection = Project.load_model_selection(node, model_selection_enabled)
@@ -180,7 +190,10 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   def handle_result(socket, node, prev_node_id, path, results) do
     %{active_project_path: active_path, current_node: current_node} = socket.assigns
 
-    if node != current_node or path != active_path or stale_scope?(socket, results) do
+    pending_remote? = socket.assigns[:current_node_id] != nil and current_node == node()
+
+    if pending_remote? or node != current_node or path != active_path or
+         stale_scope?(socket, results) do
       {socket, false}
     else
       socket = apply_model_selection(socket, prev_node_id, results)
@@ -364,6 +377,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
       socket
       |> assign(:selected_model_spec, LLMSelection.reconcile(data, candidate))
       |> assign(:pending_model_selection, nil)
+      |> StatePersistence.maybe_persist_model_selection()
     else
       socket
     end
