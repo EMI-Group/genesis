@@ -191,6 +191,17 @@ The helper test node's `CONTEXT.md` and the LiveView test context document the d
 ### Speed ↔ quality control
 The task form's segmented control is covered at component level (`task_form_components_test.exs`, `#quality-level-control` markup + exact active/inactive class strings) and at page level (`projects_live_test.exs`, `select_quality_level` assign movement and `:quality_level` opt threading).
 
+## Known Issues
+
+**Flaky: concurrent LLM-model-profile config saves (pre-existing, CONFIRMED).**
+Exactly ONE test in a full `apps/evo_dash` run fails non-deterministically (~1921/1922 passed), and its identity moves between runs/seeds.
+The candidates are the "profile save round-trip (auth_mode / oauth_file persistence)" tests in `test/evo_dash_web/live/settings_live/auth_status_test.exs` (e.g. "an OAuth anthropic profile persists both keys to config.toml", "an OAuth-only provider is self-describing without any auth_mode form value", "a blank oauth_file keeps auth_mode and omits only the path") and "model profiles editor save_model_profile persists off_peak_days and per-window days" in `test/evo_dash_web/live/settings_live_test.exs`.
+Symptom: the "Model profile saved." flash is missing and/or the profile is absent from the persisted config right after the save.
+Both modules are `async: true` and both save LLM model profiles through `EvoGit.Config.save_user_config/1` under the per-process `:config_dir_fun` → `EvoDash.Test.ConfigDir` seam, so the likely-but-unproven suspicion is concurrent config-save/cache interference between the two async settings modules under full-suite load.
+Reproduction signature: each file passes in isolation (27 passed, repeated 3×), the two modules pass together (180 passed), and `--max-cases 4` is sometimes green (1922 passed) and sometimes not — a load/concurrency race, not a deterministic break.
+It reproduces at the pre-merge commit with the involved test and production files unchanged, so it predates the current tree and is not caused by any single feature.
+A future fix must keep every assertion in both suites pinned at full strength — do not relax them to make the race stop showing.
+
 ## Constraints
 
 Follow standard Phoenix conventions: mirror `lib/` under `test/`, name files `*_test.exs`, and use `EvoDashWeb.ConnCase` for connection-based tests.
