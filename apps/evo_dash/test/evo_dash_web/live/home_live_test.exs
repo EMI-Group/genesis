@@ -37,8 +37,9 @@
 #      `model_profiles: []` for every test (the documented seam that keeps a
 #      real send from reaching an LLM endpoint), then restored in `on_exit`.
 #   4. Per-test app-env seams (`:approval_responder`, `:approval_pending_runner`,
-#      `:source_availability_runner`, `:source_clone_runner`) are written and
-#      restored by the tests that use them.
+#      `:source_availability_runner`, `:source_clone_runner`, `:config_dir_fun`)
+#      are written and restored by the tests that use them; canonical launch
+#      fixtures must also reach TaskRegistry outside the test's caller chain.
 defmodule EvoDashWeb.HomeLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
@@ -1779,9 +1780,27 @@ defmodule EvoDashWeb.HomeLiveTest do
   describe "provider-profile model selector" do
     # All real sends still use the file-level empty scheduler profile seam:
     # inspect the persisted dashboard→TaskRegistry opts, never contact an LLM.
-    # The config snapshot belongs to ModelSelect.load/1, not the scheduler.
+    # ModelSelect and TaskRegistry admission must read the same canonical file.
+    # The singleton registry has no caller chain back to the test, so expose this
+    # fixture through the call-time directory seam for the duration of the test.
+    # This additional app-global dependency is safe only in this sync module;
+    # it does NOT populate scheduler profiles or permit a provider request.
     defp write_provider_profile_config do
-      File.write!(EvoGit.Config.config_path(), """
+      config_path = EvoGit.Config.config_path()
+      config_root = config_path |> Path.dirname() |> Path.dirname()
+      original_config_dir_fun = Application.fetch_env(:evo_git, :config_dir_fun)
+      Application.put_env(:evo_git, :config_dir_fun, fn -> config_root end)
+
+      on_exit(fn ->
+        case original_config_dir_fun do
+          {:ok, resolver} -> Application.put_env(:evo_git, :config_dir_fun, resolver)
+          :error -> Application.delete_env(:evo_git, :config_dir_fun)
+        end
+      end)
+
+      assert EvoGit.Config.config_path() == config_path
+
+      File.write!(config_path, """
       [llm]
       default_provider_profile = "work-account"
 
@@ -1826,8 +1845,10 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     defp assert_task_selection(task, spec) do
-      # Store.Codec currently decodes these non-whitelisted keys as strings.
-      assert opt(task, "model_spec") == spec
+      # Store.Codec atomizes the outer canonical key, preserving string keys
+      # inside its selection map; the legacy lock key still decodes as a string.
+      assert opt(task, :model_spec) == spec
+      refute has_opt?(task, "model_spec")
       assert opt(task, "model_id_locked") == true
       refute has_opt?(task, :model_id)
       refute has_opt?(task, "model_id")
