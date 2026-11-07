@@ -990,6 +990,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id_new" => "profile-1",
           "provider" => "openai",
           "default_model" => "example",
+          "models" => %{"0" => %{"model" => "example"}},
           "concurrency" => "3"
         },
         overrides
@@ -1015,6 +1016,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
             provider = "#{provider}"
             default_model = "#{model}"
             concurrency = 3
+
+            [[llm.providers.models]]
+            model = "#{model}"
 
             """
           end)
@@ -1061,6 +1065,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     } do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
       settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_model", %{})
       view |> form("#provider-profile-edit-form", provider_params()) |> render_submit()
       html = await_config_save(view)
       assert html =~ "Provider profile saved."
@@ -1071,7 +1076,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert profile["provider"] == "openai"
       assert profile["default_model"] == "example"
       assert profile["concurrency"] == 3
-      refute Map.has_key?(profile, "models")
+      assert profile["models"] == [%{"model" => "example"}]
       assert stored_providers() == [profile]
       refute Map.has_key?(EvoGit.Config.user_config()["llm"], "models")
 
@@ -1278,7 +1283,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert Map.drop(updated, ["models"]) == Map.drop(profile, ["models"])
     end
 
-    test "model row actions preserve unsaved nested input and save an explicitly emptied collection",
+    test "model row actions preserve unsaved nested input, reject an emptied collection and allow correction",
          %{conn: conn} do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
       settings_hook(view, "add_provider_profile", %{})
@@ -1319,10 +1324,48 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert assigns(view).profile_form_draft["models"] == []
       refute has_element?(view, ~s(input[name="models[0][model]"]))
       # The browser omits models entirely after removal; the draft's [] is authoritative.
-      html = settings_hook(view, "save_provider_profile", provider_params())
+      before_config = assigns(view).file_config
+      before_disk = EvoGit.Config.user_config()
+
+      emptied_input =
+        provider_params(%{
+          "name" => "Typed name",
+          "generation" => %{"temperature" => "0.7"}
+        })
+        |> Map.delete("models")
+
+      html = settings_hook(view, "save_provider_profile", emptied_input)
+      refute html =~ "Provider profile saved."
+
+      assert assigns(view).flash["error"] =~
+               ~s(default_model must be one of [], got \\"example\\")
+
+      assert assigns(view).editing_profile_id == :new
+      assert assigns(view).profile_form_draft["models"] == []
+      assert assigns(view).profile_form_draft["name"] == "Typed name"
+      assert assigns(view).profile_form_draft["generation"] == %{"temperature" => "0.7"}
+      assert assigns(view).file_config == before_config
+      assert EvoGit.Config.user_config() == before_disk
+
+      # A provider needs a nested model row even when default_model is present.
+      settings_hook(view, "add_provider_model", %{})
+      assert has_element?(view, ~s(input[name="models[0][model]"][value=""]))
+
+      html =
+        settings_hook(
+          view,
+          "save_provider_profile",
+          Map.put(emptied_input, "models", %{"0" => %{"model" => "example"}})
+        )
+
       assert html =~ "Provider profile saved."
       [saved] = stored_providers()
-      refute Map.has_key?(saved, "models")
+      assert saved["models"] == [%{"model" => "example"}]
+      assert saved["name"] == "Typed name"
+      assert saved["temperature"] == 0.7
+      assert current_providers(view) == [saved]
+      assert assigns(view).editing_profile_id == nil
+      assert assigns(view).profile_form_draft == nil
       settings_hook(view, "add_provider_model", %{})
       settings_hook(view, "add_provider_peak_hours_row", %{})
       assert assigns(view).profile_form_draft == nil
@@ -1932,10 +1975,14 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id_new" => "default",
         "provider" => "anthropic",
         "default_model" => "claude-sonnet-5-5",
+        "models" => [%{"model" => "claude-sonnet-5-5"}],
         "concurrency" => "3"
       })
 
       assert assigns(view).profile_form_draft == nil
+      assert [saved] = stored_providers()
+      assert saved["models"] == [%{"model" => "claude-sonnet-5-5"}]
+      assert current_providers(view) == [saved]
     end
 
     test "profile_form_draft is replaced when opening a different profile's edit form", %{
@@ -1995,6 +2042,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id_new" => "default",
           "provider" => "anthropic",
           "default_model" => "claude-sonnet-5-5",
+          "models" => [%{"model" => "claude-sonnet-5-5"}],
           "concurrency" => "3",
           "timezone" => "Asia/Shanghai"
         })
@@ -2011,6 +2059,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id_new" => "default",
         "provider" => "anthropic",
         "default_model" => "claude-sonnet-5-5",
+        "models" => [%{"model" => "claude-sonnet-5-5"}],
         "concurrency" => "3",
         "timezone" => ""
       })
@@ -2029,6 +2078,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id_new" => "default",
           "provider" => "anthropic",
           "default_model" => "claude-sonnet-5-5",
+          "models" => [%{"model" => "claude-sonnet-5-5"}],
           "concurrency" => "3",
           # Normalization is defensive: trim + downcase + vocab whitelist +
           # order-preserving uniq. " MON " → "mon", "funday" (not in the 9-value
@@ -2068,6 +2118,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id_new" => "default",
           "provider" => "anthropic",
           "default_model" => "claude-sonnet-5-5",
+          "models" => [%{"model" => "claude-sonnet-5-5"}],
           "concurrency" => "3",
           "off_peak_days" => "weekends",
           "peak_hours" => %{
@@ -2097,6 +2148,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id_new" => "default",
           "provider" => "anthropic",
           "default_model" => "claude-sonnet-5-5",
+          "models" => [%{"model" => "claude-sonnet-5-5"}],
           "concurrency" => "3",
           # All chips off → only the hidden-seed "" entry is submitted.
           "off_peak_days" => [""],

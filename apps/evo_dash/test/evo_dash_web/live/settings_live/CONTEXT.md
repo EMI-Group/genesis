@@ -18,7 +18,7 @@ The five suites declare 108 tests and preserve `async: true`; pure helpers neith
 - `config_io_test.exs` holds 10 pure category-conversion contracts for list-of-strings, boolean and float values.
 - `auth_status_test.exs` holds 28 credential-status classification/page contracts, including verdict forwarding, exact fallback and supplied vendor guidance, node/sequence guards, refresh, canonical auth persistence and editing a legacy OAuth row into `llm.providers` without a shadow `llm.models` table.
 - Auth page fixtures deliberately seed legacy `[[llm.models]]` rows to exercise migration, while row assertions select the actual mounted canonical provider article by its Edit control and profile id.
-- New-profile submissions use canonical `default_model` and the atom `:new` detached-editor sentinel, assert that override rows remain empty, and require the exact Provider-profile success message plus persisted provider fields.
+- Successful new-profile auth submissions use canonical `default_model` plus a matching nested `models` row and the atom `:new` detached-editor sentinel, assert the nested shape in live and persisted config, and require the exact Provider-profile success message plus persisted auth fields.
 - Canonical auth persistence explicitly stores `auth_mode: "api_key"`, drops stale OAuth paths and rejects unsupported OAuth modes while retaining the failed draft without writing it.
 - `model_ids_test.exs` holds six retired-id matcher, catalog and mounted-page guards.
 
@@ -46,14 +46,13 @@ Mounted canonical editor save/reload/reset regressions belong with the parent `s
 
 ## Validation and Integration Boundary
 
-Normal `mix test apps/evo_dash/test/evo_dash_web/live/settings_live` boots successfully and runs all 108 tests under seeds 0 and 1, with 104 passing and four default-only provider persistence tests blocked by core validation.
-Core rejects `[:llm, :providers, 0, :default_model]` with `default_model must be one of [], got "claude-opus-5-5"` (or `"gpt-5.6-terra"`) when the canonical provider has no model override rows.
-The four blocked `EvoDashWeb.SettingsLive.AuthStatusTest` cases share the describe prefix `profile save round-trip (auth_mode / oauth_file persistence)` in `auth_status_test.exs`.
-Their test suffixes are `an OAuth anthropic profile persists both keys to config.toml` (line 476), `the API-key default is explicit and drops a stale OAuth path` (line 505), `a blank oauth_file keeps auth_mode and omits only the path` (line 552) and `an OAuth-only provider is self-describing without any auth_mode form value` (line 575).
-All four use `save_new_profile/2`, which explicitly asserts empty optional model override rows; the legacy-edit success case instead retains a model override row, and unsupported-OAuth rejection is an independent passing validation contract.
-Default-only providers are a valid contract, so these assertions remain active and must not be bypassed by fabricating model rows or expecting the validation failure.
-All pure contracts, mounted credential verdict/guidance/path/remedy contracts, stale guards, unsupported-auth rejection and legacy OAuth migration pass in the normal directory run.
-The source-owning parent must resolve the default-only core validation blocker, then rerun the entire directory and broader Settings/dashboard suites.
+Canonical provider configuration requires nested model rows, and successful auth persistence fixtures include the selected default model in that collection.
+The `profile save round-trip (auth_mode / oauth_file persistence)` describe in `auth_status_test.exs` covers OAuth auth/path persistence, explicit API-key mode with stale-path removal, blank-path omission, OAuth-only mode inference, legacy migration and unsupported-auth rejection.
+The four new-profile success cases assert the nested model shape in live config and persistence without relaxing auth verdicts or successful-save assertions.
+The unsupported-auth case retains its invalid authentication fixture and verifies rejection without persistence.
+Focused validation uses `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/auth_status_test.exs --only 'describe:profile save round-trip (auth_mode / oauth_file persistence)' --seed 0` (also seed 1) and passes all six selected tests with 22 excluded in each run.
+This focused run does not establish full-file, directory or broader dashboard-suite success.
+Other pure helper contracts and parent-page regressions require their own separately scoped validation.
 
 ## Routing Table
 
