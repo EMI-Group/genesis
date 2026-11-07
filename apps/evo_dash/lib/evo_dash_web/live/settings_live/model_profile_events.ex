@@ -3,8 +3,21 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
   Provider-profile CRUD and detached editor drafts for SettingsLive.
 
   Existing model-profile event names remain the routing surface. The editing
-  id refers to a PROVIDER profile. New profiles use the `"new"` sentinel until
-  saved. Nothing mutates file_config until a valid Save, Delete, Move or Default.
+  id refers to a PROVIDER profile. Only atom `:new` denotes creation; the string
+  `"new"` is an ordinary saved id. Drafts survive until persistence is confirmed.
+
+  `profile_form_errors` maps string input names (or collection names for section
+  errors) to translated messages. Save accepts raw nested UI params as its third
+  argument when the parent adapts parser params separately.
+  Provider Save and deletion of the open editor call the parent contract
+  `persist_file_config(config, socket, message, editor_token: token)`; all other
+  mutations call `/3` without an editor token. The parent must forward the
+  explicit options to `ConfigSave.start/4`, never infer a token from assigns.
+  The persistence boundary must capture that token with its own
+  target/node/request scope and call `persistence_succeeded/2` only after a
+  confirmed write, or `persistence_failed/3` on failure (including startup
+  failure). Neither flash messages nor optimistic file_config imply success.
+  Draft changes invalidate the token so an old save cannot close a newer edit.
   """
   use Gettext, backend: EvoDashWeb.Gettext
   import Phoenix.Component, only: [assign: 2, assign: 3]
@@ -67,8 +80,10 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
     {:noreply,
      socket
      |> assign(
-       editing_profile_id: "new",
+       editing_profile_id: :new,
        profile_form_draft: ProviderProfiles.new_draft(socket.assigns.file_config),
+       profile_form_errors: %{},
+       profile_save_token: nil,
        profile_advanced_open: nil
      )}
   end
@@ -88,6 +103,8 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
              assign(socket,
                editing_profile_id: id,
                profile_form_draft: ProviderProfiles.draft(profile),
+               profile_form_errors: %{},
+               profile_save_token: nil,
                profile_advanced_open: nil
              )}
         end
@@ -99,7 +116,12 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
   @doc "Snapshot of the entire form. Nested models are numerically ordered string-keyed maps."
   def model_profile_form_change(socket, params) when is_map(params) do
     if socket.assigns[:editing_profile_id] do
-      {:noreply, assign(socket, :profile_form_draft, ProviderProfiles.normalize_draft(params))}
+      {:noreply,
+       assign(socket,
+         profile_form_draft: ProviderProfiles.normalize_draft(params),
+         profile_form_errors: %{},
+         profile_save_token: nil
+       )}
     else
       {:noreply, socket}
     end
@@ -107,40 +129,86 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
 
   def model_profile_form_change(socket, _), do: {:noreply, socket}
 
-  def save_model_profile(socket, params) do
+  @doc "Save parsed params, optionally retaining the unadapted nested UI submission."
+  def save_model_profile(socket, params, submitted_draft \\ nil) do
+    editing_id = socket.assigns[:editing_profile_id]
+    old_id = if editing_id == :new, do: nil, else: editing_id
     params = ProviderProfiles.submission(params, socket.assigns[:profile_form_draft])
-    old_id = socket.assigns[:editing_profile_id] || params["profile_id"]
     id = text(params["profile_id_new"] || params["id"])
     profiles = ProviderProfiles.profiles(socket.assigns.file_config)
-    original = find_profile(socket, old_id) || %{}
+    original = if is_nil(old_id), do: %{}, else: find_profile(socket, old_id) || %{}
 
-    cond do
-      is_nil(old_id) ->
-        {:noreply, socket}
+    if is_nil(editing_id) do
+      {:noreply, socket}
+    else
+      # Snapshot BEFORE all validation, including identity failures and persistence
+      # initiation. The parent must pass raw UI params when it flattens generation.
+      socket =
+        assign(socket,
+          profile_form_draft:
+            ProviderProfiles.normalize_draft(
+              ProviderProfiles.submission(
+                submitted_draft || params,
+                socket.assigns[:profile_form_draft]
+              )
+            ),
+          profile_form_errors: %{},
+          profile_save_token: nil
+        )
 
-      id == "" ->
-        error(socket, gettext("Profile id cannot be empty."))
+      cond do
+        id == "" ->
+          field_errors(socket, %{"profile_id_new" => gettext("Profile id cannot be empty.")})
 
-      ModelProfileHelpers.id_collision?(profiles, old_id, id) ->
-        error(socket, gettext("A profile with id \"%{id}\" already exists.", id: id))
+        ModelProfileHelpers.id_collision?(profiles, old_id, id) ->
+          field_errors(socket, %{
+            "profile_id_new" => gettext("A profile with id \"%{id}\" already exists.", id: id)
+          })
 
-      true ->
-        case ProviderProfiles.parse(params, id, original) do
-          {:ok, profile} ->
-            config = ProviderProfiles.update(socket.assigns.file_config, old_id, profile)
-            persist(config, clear_editor(socket), gettext("Provider profile saved."))
+        true ->
+          case ProviderProfiles.parse_editor(params, id, original) do
+            {:ok, profile} ->
+              config = ProviderProfiles.update(socket.assigns.file_config, old_id, profile)
+              token = make_ref()
+              socket = assign(socket, :profile_save_token, token)
+              persist(config, socket, gettext("Provider profile saved."), editor_token: token)
 
-          {:error, reason} ->
-            # Keep the complete failed draft for correction, including new rows.
-            socket = assign(socket, :profile_form_draft, ProviderProfiles.normalize_draft(params))
-            error(socket, error_message(reason))
-        end
+            {:error, errors} ->
+              field_errors(
+                socket,
+                Map.new(errors, fn {key, reason} -> {key, error_message(reason)} end)
+              )
+          end
+      end
+    end
+  end
+
+  @doc "Clear only the editor submission whose authoritative write succeeded."
+  def persistence_succeeded(socket, token) when is_reference(token) do
+    if socket.assigns[:profile_save_token] == token, do: clear_editor(socket), else: socket
+  end
+
+  def persistence_succeeded(socket, _token), do: socket
+
+  @doc "Retain a failed submission; errors are translated string-name/message pairs."
+  def persistence_failed(socket, token, errors \\ %{}) do
+    if is_reference(token) and socket.assigns[:profile_save_token] == token do
+      assign(socket, profile_save_token: nil, profile_form_errors: errors)
+    else
+      socket
     end
   end
 
   def delete_model_profile(socket, %{"profile_id" => id}) do
     config = ProviderProfiles.delete(socket.assigns.file_config, id)
-    persist(config, clear_editor(socket), gettext("Provider profile deleted."))
+
+    if socket.assigns[:editing_profile_id] == id do
+      token = make_ref()
+      socket = assign(socket, :profile_save_token, token)
+      persist(config, socket, gettext("Provider profile deleted."), editor_token: token)
+    else
+      persist(config, socket, gettext("Provider profile deleted."))
+    end
   end
 
   def move_model_profile(socket, %{"direction" => direction, "id" => id}) do
@@ -223,8 +291,19 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
   defp update_rows(socket, key, fun) do
     if socket.assigns[:editing_profile_id] do
       draft = current_draft(socket)
-      rows = fun.(ProviderProfiles.rows(draft[key]))
-      {:noreply, assign(socket, :profile_form_draft, Map.put(draft, key, rows))}
+      current_rows = ProviderProfiles.rows(draft[key])
+      rows = fun.(current_rows)
+
+      if rows == current_rows do
+        {:noreply, socket}
+      else
+        {:noreply,
+         assign(socket,
+           profile_form_draft: Map.put(draft, key, rows),
+           profile_form_errors: %{},
+           profile_save_token: nil
+         )}
+      end
     else
       {:noreply, socket}
     end
@@ -249,10 +328,24 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
 
   defp clear_editor(socket),
     do:
-      assign(socket, editing_profile_id: nil, profile_form_draft: nil, profile_advanced_open: nil)
+      assign(socket,
+        editing_profile_id: nil,
+        profile_form_draft: nil,
+        profile_form_errors: %{},
+        profile_save_token: nil,
+        profile_advanced_open: nil
+      )
+
+  defp field_errors(socket, errors) do
+    socket = assign(socket, :profile_form_errors, errors)
+    error(socket, errors |> Map.values() |> hd())
+  end
 
   defp persist(config, socket, message),
     do: EvoDashWeb.SettingsLive.persist_file_config(config, socket, message)
+
+  defp persist(config, socket, message, opts),
+    do: EvoDashWeb.SettingsLive.persist_file_config(config, socket, message, opts)
 
   defp error(socket, message), do: {:noreply, put_flash(socket, :error, message)}
   defp text(value) when is_binary(value), do: String.trim(value)

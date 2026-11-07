@@ -120,6 +120,14 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
 
   @doc "Parses canonical forms, or the old single-model form, into a provider map."
   def parse(params, id, original \\ %{}) do
+    case parse_editor(params, id, original) do
+      {:error, errors} -> {:error, errors |> Map.values() |> hd()}
+      result -> result
+    end
+  end
+
+  @doc "Editor parser returning string input names mapped to stable error reasons."
+  def parse_editor(params, id, original \\ %{}) do
     params = params |> stringify() |> canonical_credentials() |> legacy_params()
     params = Map.merge(draft(original), params)
     provider = text(params["provider"])
@@ -147,7 +155,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
                "auth_mode" => auth_mode
              })
            ),
-         {:ok, peak} <- Helpers.parse_peak_fields(params),
+         {:ok, peak} <- parse_peak(params),
          {:ok, models} <- parse_models(params["models"]),
          {:ok, profile} <- reasoning(profile, params) do
       profile =
@@ -169,7 +177,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
       # Nested models are optional overrides, not a saved-model allowlist.
       # A default-only account must remain default-only after an untouched save.
       with :ok <- required(not is_nil(default), "default_model_invalid"),
-           :ok <- validate_inherited_reasoning(profile, models) do
+           :ok <- validate_inherited_reasoning(profile, models, params["models"]) do
         {:ok, profile}
       end
     end
@@ -198,7 +206,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
         case parse_value(key, params[key]) do
           {:ok, nil} -> {:cont, {:ok, Map.delete(acc, key)}}
           {:ok, value} -> {:cont, {:ok, Map.put(acc, key, value)}}
-          error -> {:halt, error}
+          {:error, reason} -> {:halt, field_error(input_name(key), reason)}
         end
       end
     )
@@ -259,18 +267,18 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
   end
 
   defp parse_model_rows(raw) do
-    Enum.reduce_while(rows(raw), {:ok, []}, fn row, {:ok, acc} ->
+    Enum.reduce_while(Enum.with_index(rows(raw)), {:ok, []}, fn {row, index}, {:ok, acc} ->
       model = nonblank(row["model"] || row["model_id"])
 
       cond do
-        is_nil(model) and Enum.all?(Map.values(row), &(&1 in [nil, "", []])) ->
+        blank_model_row?(row) ->
           {:cont, {:ok, acc}}
 
         is_nil(model) ->
-          {:halt, {:error, "model_id_empty"}}
+          {:halt, model_error(index, "model", "model_id_empty")}
 
         Enum.any?(acc, &(&1["model"] == model)) ->
-          {:halt, {:error, "duplicate_model"}}
+          {:halt, model_error(index, "model", "duplicate_model")}
 
         true ->
           with {:ok, parsed} <- parse_values(Map.put(row, "concurrency", ""), %{"model" => model}),
@@ -290,7 +298,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
 
             {:cont, {:ok, acc ++ [parsed]}}
           else
-            error -> {:halt, error}
+            {:error, errors} -> {:halt, prefix_model_errors(index, errors)}
           end
       end
     end)
@@ -301,7 +309,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
     default = nonblank(params["default_reasoning_effort"])
 
     if default && efforts != [] && default not in efforts do
-      {:error, "reasoning_default_invalid"}
+      field_error("default_reasoning_effort", "reasoning_default_invalid")
     else
       {:ok,
        profile
@@ -314,15 +322,31 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
     end
   end
 
-  defp validate_inherited_reasoning(profile, models) do
-    valid? =
-      Enum.all?([profile | models], fn row ->
-        efforts = Map.get(row, "reasoning_efforts", profile["reasoning_efforts"] || [])
-        default = Map.get(row, "default_reasoning_effort", profile["default_reasoning_effort"])
-        is_nil(default) or efforts == [] or default in efforts
-      end)
+  defp blank_model_row?(row) do
+    is_nil(nonblank(row["model"] || row["model_id"])) and
+      Enum.all?(Map.values(row), &(&1 in [nil, "", []]))
+  end
 
-    required(valid?, "reasoning_default_invalid")
+  defp validate_inherited_reasoning(profile, models, raw) do
+    indices =
+      raw
+      |> rows()
+      |> Enum.with_index()
+      |> Enum.reject(fn {row, _} -> blank_model_row?(row) end)
+      |> Enum.map(&elem(&1, 1))
+
+    Enum.reduce_while([{profile, nil} | Enum.zip(models, indices)], :ok, fn {row, index}, :ok ->
+      efforts = Map.get(row, "reasoning_efforts", profile["reasoning_efforts"] || [])
+      default = Map.get(row, "default_reasoning_effort", profile["default_reasoning_effort"])
+
+      if is_nil(default) or efforts == [] or default in efforts do
+        {:cont, :ok}
+      else
+        result = field_error("default_reasoning_effort", "reasoning_default_invalid")
+        result = if is_nil(index), do: result, else: prefix_model_errors(index, elem(result, 1))
+        {:halt, result}
+      end
+    end)
   end
 
   def string_list(value) when is_binary(value),
@@ -408,7 +432,45 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
   defp put_optional(map, _key, nil), do: map
   defp put_optional(map, key, value), do: Map.put(map, key, value)
   defp required(true, _), do: :ok
-  defp required(false, reason), do: {:error, reason}
+
+  defp required(false, reason) do
+    key =
+      case reason do
+        "provider_empty" -> "provider"
+        "auth_mode_invalid" -> "auth_mode"
+        "models_invalid" -> "models"
+        "default_model_invalid" -> "default_model"
+      end
+
+    field_error(key, reason)
+  end
+
+  defp field_error(key, reason), do: {:error, %{key => reason}}
+
+  defp input_name(key) when key in @generation_fields or key in @json_fields,
+    do: "generation[#{key}]"
+
+  defp input_name(key), do: key
+
+  defp model_error(index, key, reason),
+    do: prefix_model_errors(index, %{key => reason})
+
+  defp prefix_model_errors(index, errors) do
+    {:error,
+     Map.new(errors, fn {key, reason} ->
+       suffix = key |> String.split(["[", "]"], trim: true) |> Enum.map_join(&"[#{&1}]")
+       {"models[#{index}]" <> suffix, reason}
+     end)}
+  end
+
+  defp parse_peak(params) do
+    case Helpers.parse_peak_fields(params) do
+      {:error, "peak_concurrency_invalid" = reason} -> field_error("peak_concurrency", reason)
+      {:error, reason} -> field_error("peak_hours", reason)
+      result -> result
+    end
+  end
+
   defp text(value) when is_atom(value) and not is_nil(value), do: Atom.to_string(value)
   defp text(value) when is_binary(value), do: String.trim(value)
   defp text(_), do: ""
