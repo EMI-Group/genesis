@@ -19,6 +19,8 @@ All suites use real git operations on temp dirs; none use mocks.
 - `./skills/` → skills subsystem → `./skills/CONTEXT.md`
 - `./store/` → SQLite store queries / errors → `./store/CONTEXT.md`
 - `./task_registry/` → TaskRegistry lifecycle, runtime-opts, merge/resume context, `:reflect` executor → `./task_registry/CONTEXT.md`
+- `./cli/` → setup auth/profile-writing helper tests (`setup_test.exs`), while top-level `cli_test.exs` owns parser/model-selection/setup-writing coverage and `cli_task_routing_test.exs` owns persisted task selection opts.
+- Provider-profile config integration → top-level `config_test.exs` (resolver, normalization, save/load, legacy migration and config health), `system_check_test.exs` (health), `req_llm_pool_test.exs` (real private Finch), and `peak_hour_engine_test.exs` (live scheduler scheduling); schema/catalog/generation validation belongs in `./config/`, slots/selection in `./agent_scheduler/`, cost/compression in `./agent/`, and runtime opts/archive persistence in `./task_registry/`.
 - Top-level `*.exs` in THIS directory → the async-safety map + notes below.
 
 ## Top-Level Modules — Async-Safety Map
