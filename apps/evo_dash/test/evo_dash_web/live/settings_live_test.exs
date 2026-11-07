@@ -117,21 +117,6 @@ defmodule EvoDashWeb.SettingsLiveTest.Helpers do
     end
   end
 
-  # True when the model-profile edit form's advanced-generation-params
-  # disclosure (`<details id="model-profile-advanced">`) is rendered OPEN.
-  # HEEx drops a boolean attribute whose value is false/nil, so the mere
-  # presence of the `open` attribute IS the open state.
-
-  def advanced_details_open?(html) do
-    open_attributes =
-      html
-      |> Floki.parse_document!()
-      |> Floki.find(~s(details[id="model-profile-advanced"]))
-      |> Floki.attribute("open")
-
-    open_attributes != []
-  end
-
   # In LiveView 1.x the test View struct has no `.assigns` field, so we read
   # them from the underlying LiveView process socket.
   def assigns(view), do: :sys.get_state(view.pid).socket.assigns
@@ -379,6 +364,189 @@ defmodule EvoDashWeb.SettingsLiveTest.ConnectManager do
   defp hold_reply(_delay, _released?), do: :ok
 end
 
+defmodule EvoDashWeb.SettingsLiveParentAdapterTest do
+  # Pure parent-component and handler contracts need neither a mounted page
+  # nor the global scheduler, registry or config-directory seams.
+  use ExUnit.Case, async: true
+  import Phoenix.LiveViewTest
+  alias EvoDashWeb.{SettingsComponents, SettingsLive}
+
+  defp socket(draft, editing \\ "new") do
+    %Phoenix.LiveView.Socket{
+      assigns: %{
+        __changed__: nil,
+        flash: %{},
+        editing_profile_id: editing,
+        profile_form_draft: draft,
+        profile_advanced_open: nil,
+        file_config: %{llm: %{providers: []}}
+      }
+    }
+  end
+
+  test "parent category adapts saved flat generation and nested drafts to editor input names" do
+    profile = %{
+      "id" => "account",
+      "provider" => "openai",
+      "default_model" => "example",
+      "temperature" => 0.7,
+      "provider_options" => %{"store" => false},
+      "models" => [%{"model" => "example", "max_tokens" => 2048}]
+    }
+
+    html =
+      render_component(&SettingsComponents.category_section/1,
+        category: :llm,
+        schemas: [],
+        file_config: %{llm: %{default_provider_profile: "account"}},
+        provider_profiles: [profile],
+        editing_profile_id: "account"
+      )
+
+    doc = Floki.parse_document!(html)
+    assert Floki.attribute(doc, ~s(input[name="generation[temperature]"]), "value") == ["0.7"]
+
+    assert Floki.attribute(doc, ~s(input[name="models[0][generation][max_tokens]"]), "value") == [
+             "2048"
+           ]
+
+    assert Floki.text(Floki.find(doc, ~s(textarea[name="generation[provider_options]"]))) ==
+             ~s({&quot;store&quot;:false})
+
+    assert Floki.find(
+             doc,
+             ~s(form[phx-submit="save_provider_profile"][phx-change="provider_profile_form_change"])
+           ) != []
+
+    refute Floki.find(doc, ~s(input[name="temperature"])) != []
+    assert Floki.find(doc, ~s(button[phx-click="cancel_edit_provider_profile"])) != []
+    draft = %{"generation" => %{"temperature" => ""}, "models" => []}
+
+    html =
+      render_component(&SettingsComponents.category_section/1,
+        category: :llm,
+        schemas: [],
+        file_config: %{llm: %{providers: [profile]}},
+        provider_profiles: [profile],
+        editing_profile_id: "account",
+        profile_form_draft: draft
+      )
+
+    doc = Floki.parse_document!(html)
+    assert Floki.attribute(doc, ~s(input[name="generation[temperature]"]), "value") == [""]
+    assert Floki.find(doc, ~s(input[name="models[0][model]"])) == []
+  end
+
+  test "parent change and row aliases preserve nested generation and numerically order rows" do
+    input = %{
+      "generation" => %{"temperature" => "0.7"},
+      "off_peak_days" => "weekends",
+      "models" => %{
+        "10" => %{"model" => "ten"},
+        "2" => %{"model" => "two", "generation" => %{"max_tokens" => "42"}}
+      },
+      "peak_hours" => %{"0" => %{"start" => "09:00", "end" => "12:00", "days" => "mon"}}
+    }
+
+    assert {:noreply, changed} =
+             SettingsLive.handle_event("provider_profile_form_change", input, socket(%{}))
+
+    assert changed.assigns.profile_form_draft["generation"] == input["generation"]
+    assert Enum.map(changed.assigns.profile_form_draft["models"], & &1["model"]) == ["two", "ten"]
+    assert changed.assigns.profile_form_draft["off_peak_days"] == ["weekends"]
+
+    assert changed.assigns.profile_form_draft["peak_hours"] == [
+             %{start: "09:00", end: "12:00", days: ["mon"]}
+           ]
+
+    assert {:noreply, added} = SettingsLive.handle_event("add_provider_model", %{}, changed)
+
+    assert added.assigns.profile_form_draft["models"] ==
+             changed.assigns.profile_form_draft["models"] ++ [%{"model" => ""}]
+
+    assert {:noreply, ^changed} =
+             SettingsLive.handle_event("remove_provider_model", %{"index" => "2"}, added)
+
+    assert {:noreply, peak} =
+             SettingsLive.handle_event("add_provider_peak_hours_row", %{}, changed)
+
+    assert length(peak.assigns.profile_form_draft["peak_hours"]) == 2
+
+    assert {:noreply, restored} =
+             SettingsLive.handle_event("remove_provider_peak_hours_row", %{"index" => "1"}, peak)
+
+    assert restored.assigns.profile_form_draft["generation"] == input["generation"]
+
+    assert Enum.map(restored.assigns.profile_form_draft["models"], & &1["model"]) == [
+             "two",
+             "ten"
+           ]
+
+    assert {:noreply, cancelled} =
+             SettingsLive.handle_event("cancel_edit_provider_profile", %{}, changed)
+
+    assert cancelled.assigns.profile_form_draft == nil
+    assert cancelled.assigns.editing_profile_id == nil
+    assert cancelled.assigns.file_config == changed.assigns.file_config
+
+    for event <- [
+          "add_provider_model",
+          "add_provider_peak_hours_row",
+          "provider_profile_form_change"
+        ] do
+      assert {:noreply, ^cancelled} = SettingsLive.handle_event(event, %{}, cancelled)
+    end
+  end
+
+  @tag :requires_schema_facade
+  test "connection selection resolves the persisted model's inherited generation and credential opts" do
+    profile = %{
+      "id" => "account",
+      "provider" => "openai",
+      "default_model" => "example",
+      "api_key" => "fixture-not-for-network",
+      "base_url" => "https://example.invalid/v1",
+      "temperature" => 0.7,
+      "max_tokens" => 4096,
+      "provider_options" => %{"store" => false},
+      "models" => [
+        %{"model" => "example"},
+        %{"model" => "override", "temperature" => 0.0, "max_tokens" => 2048}
+      ]
+    }
+
+    config = %{llm: %{providers: [profile], default_provider_profile: "account"}}
+    alias EvoDashWeb.SettingsLive.ConfigIO
+
+    assert {:ok, inherited} =
+             ConfigIO.resolve_model_spec(config, %{
+               provider_profile_id: "account",
+               model: "example"
+             })
+
+    assert inherited.model_spec == %{
+             provider: :openai,
+             id: "example",
+             base_url: "https://example.invalid/v1"
+           }
+
+    assert inherited.generation_params[:temperature] == 0.7
+    assert inherited.generation_params[:max_tokens] == 4096
+    assert inherited.generation_params[:api_key] == "fixture-not-for-network"
+    assert inherited.generation_params[:provider_options][:store] == false
+
+    assert {:ok, overridden} =
+             ConfigIO.resolve_model_spec(config, %{
+               provider_profile_id: "account",
+               model: "override"
+             })
+
+    assert overridden.generation_params[:temperature] == 0.0
+    assert overridden.generation_params[:max_tokens] == 2048
+    assert overridden.generation_params[:api_key] == "fixture-not-for-network"
+  end
+end
+
 defmodule EvoDashWeb.SettingsLiveTest do
   # ASYNC: everything here touches only per-process state — the config
   # directory comes from the `:config_dir_fun` seam (`setup` below), never from
@@ -589,10 +757,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Model selected and saved."
 
-      # The profile is persisted; after the TOML round-trip the model is the
-      # normalized "provider:model" string.
-      models = get_in(assigns(view).file_config, [:llm, :models]) || []
-      assert Enum.any?(models, &(&1.model == model_string(:deepseek)))
+      [profile] = current_providers(view)
+      assert profile["provider"] == "deepseek"
+      assert profile["default_model"] == hd(provider(:deepseek).models).id
+      assert profile["models"] == [%{"model" => hd(provider(:deepseek).models).id}]
+      assert stored_providers() == [profile]
+      refute Map.has_key?(EvoGit.Config.user_config()["llm"], "models")
     end
 
     test "changing provider resets the selected model", %{conn: conn} do
@@ -676,14 +846,18 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "provider_id" => "openrouter"
         })
 
-      # The model is persisted and normalized via config resolve: simple maps
-      # (provider + id only) become "provider:id" strings.
-      models = current_models(view)
-      assert length(models) == 1
-      assert hd(models).model == "openrouter:anthropic/claude-3.5-sonnet"
-      assert html =~ "Custom model saved."
-      # After saving, the re-rendered HTML pre-fills the model_id input from the map
-      assert html =~ ~s(value="anthropic/claude-3.5-sonnet")
+      [profile] = current_providers(view)
+      assert profile["provider"] == "openrouter"
+      assert profile["default_model"] == "anthropic/claude-3.5-sonnet"
+      assert profile["models"] == [%{"model" => "anthropic/claude-3.5-sonnet"}]
+      assert stored_providers() == [profile]
+      assert html =~ "Model selected and saved."
+      render_hook(view, "edit_provider_profile", %{"profile_id" => profile["id"]})
+
+      assert has_element?(
+               view,
+               ~s(input[name="default_model"][value="anthropic/claude-3.5-sonnet"])
+             )
     end
 
     test "saving OpenAI-compatible custom model stores map spec and pre-fills", %{conn: conn} do
@@ -697,845 +871,539 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "provider_id" => "openai_compatible"
         })
 
-      assert html =~ "Custom model saved."
-      assert html =~ ~s(value="my-model")
-      assert html =~ ~s(value="https://api.example.com/v1")
-
-      # openai_compatible catalog entry resolves to the canonical :openai atom.
-      # With base_url, the model has overrides → normalized to a map spec.
-      models = current_models(view)
-
-      assert hd(models).model == %{
-               provider: :openai,
-               id: "my-model",
-               base_url: "https://api.example.com/v1"
-             }
+      assert html =~ "Model selected and saved."
+      [profile] = current_providers(view)
+      assert profile["provider"] == "openai"
+      assert profile["default_model"] == "my-model"
+      assert profile["base_url"] == "https://api.example.com/v1"
+      assert profile["models"] == [%{"model" => "my-model"}]
+      assert stored_providers() == [profile]
+      render_hook(view, "edit_provider_profile", %{"profile_id" => profile["id"]})
+      assert has_element?(view, ~s(input[name="default_model"][value="my-model"]))
+      assert has_element?(view, ~s(input[name="base_url"][value="https://api.example.com/v1"]))
     end
   end
 
-  describe "model profiles editor" do
-    # `assigns/1` (and every other helper shared with the sync module) comes
-    # from `EvoDashWeb.SettingsLiveTest.Helpers`, imported above.
+  describe "provider profiles editor — parent adapter" do
+    defp current_providers(view), do: get_in(assigns(view).file_config, [:llm, :providers]) || []
+    defp stored_providers, do: get_in(EvoGit.Config.user_config(), ["llm", "providers"]) || []
 
-    defp current_models(view) do
-      get_in(assigns(view).file_config, [:llm, :models]) || []
-    end
-
-    test "renders the editor with Add Model button and empty state", %{conn: conn} do
-      # `:llm` is the category mount already seeds, so render the settled page
-      # instead of re-selecting it through a full event round-trip.
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = render(view)
-
-      assert html =~ "Model Profiles"
-      assert html =~ "Add Model"
-      assert html =~ "No model profiles configured"
-    end
-
-    test "add_model_profile creates a new profile with generated id and enters edit mode", %{
-      conn: conn
-    } do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html = render_hook(view, "add_model_profile", %{})
-
-      assert html =~ "fill in the details and save"
-      [profile] = current_models(view)
-      assert profile.id == "profile-1"
-      assert profile.concurrency == 3
-      # Enters edit mode immediately
-      assert assigns(view).editing_profile_id == "profile-1"
-    end
-
-    test "add_model_profile generates sequential unique ids", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      # Add + save the first profile to persist it
-      render_hook(view, "add_model_profile", %{})
-
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => "profile-1",
-        "profile_id_new" => "profile-1",
-        "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
-        "concurrency" => "3"
-      })
-
-      # Add a second profile
-      render_hook(view, "add_model_profile", %{})
-
-      models = current_models(view)
-      ids = Enum.map(models, & &1.id)
-      assert ids == ["profile-1", "profile-2"]
-    end
-
-    test "edit_model_profile toggles the edit form", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-      # add_model_profile already enters edit mode — cancel first
-      render_hook(view, "cancel_edit_model_profile", %{})
-
-      html = render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
-
-      assert assigns(view).editing_profile_id == "profile-1"
-      assert html =~ "Edit Profile"
-      assert html =~ ~s(name="profile_id_new")
-    end
-
-    test "edit_model_profile toggles off when clicked again", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-      # add_model_profile enters edit mode for profile-1
-      assert assigns(view).editing_profile_id == "profile-1"
-
-      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
-
-      assert assigns(view).editing_profile_id == nil
-    end
-
-    test "cancel_edit_model_profile clears editing state", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      # add_model_profile enters edit mode for profile-1
-      render_hook(view, "add_model_profile", %{})
-      assert assigns(view).editing_profile_id == "profile-1"
-
-      render_hook(view, "cancel_edit_model_profile", %{})
-
-      assert assigns(view).editing_profile_id == nil
-    end
-
-    test "save_model_profile updates the profile with typed params", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
-
-      html =
-        render_hook(view, "save_model_profile", %{
-          "profile_id" => "profile-1",
-          "profile_id_new" => "default",
-          "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
-          "concurrency" => "5",
-          "temperature" => "0.7",
-          "max_tokens" => "4096",
-          "reasoning_effort" => "high"
-        })
-
-      assert html =~ "Model profile saved."
-      [profile] = current_models(view)
-      assert profile.id == "default"
-      assert profile.model == "anthropic:claude-sonnet-5-5"
-      assert profile.concurrency == 5
-      assert profile.temperature == 0.7
-      assert profile.max_tokens == 4096
-      assert profile.reasoning_effort == "high"
-    end
-
-    test "save_model_profile persists all advanced generation params, extra and provider_options",
-         %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-
-      html =
-        render_hook(view, "save_model_profile", %{
-          "profile_id" => "profile-1",
-          "profile_id_new" => "advanced-probe",
-          "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
-          "concurrency" => "4",
-          "temperature" => "0.7",
-          "max_tokens" => "4096",
-          "top_p" => "0.9",
-          "top_k" => "40",
-          "frequency_penalty" => "0.25",
-          "presence_penalty" => "0.5",
-          "reasoning_effort" => "medium",
-          "extra" => ~s({"wire": {"protocol": "openai_responses"}}),
-          "provider_options" => ~s({"store": false})
-        })
-
-      assert html =~ "Model profile saved."
-      [profile] = current_models(view)
-      assert profile.id == "advanced-probe"
-      assert profile.concurrency == 4
-      assert profile.temperature == 0.7
-      assert profile.max_tokens == 4096
-      assert profile.top_p == 0.9
-      assert profile.top_k == 40
-      assert profile.frequency_penalty == 0.25
-      assert profile.presence_penalty == 0.5
-      assert profile.reasoning_effort == "medium"
-
-      # A non-blank `extra` forces the ReqLLM-native MAP spec instead of the
-      # compact "provider:id" string. Observed shape after the TOML round-trip:
-      # atom keys + atom provider at the top level, the provider-specific JSON
-      # preserved VERBATIM (string keys, nested) under :extra.
-      assert profile.model == %{
-               provider: :anthropic,
-               id: "claude-sonnet-5-5",
-               extra: %{"wire" => %{"protocol" => "openai_responses"}}
-             }
-
-      # provider_options always stays a PROFILE-level field (sibling of
-      # temperature), never inside the model spec.
-      assert profile.provider_options == %{"store" => false}
-    end
-
-    test "advanced disclosure renders closed for a new profile and open for an edited profile with generation params",
-         %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html = render_hook(view, "add_model_profile", %{})
-
-      # add_model_profile creates a BARE profile (concurrency only), so the
-      # advanced disclosure renders CLOSED — and at most ONE profile is ever in
-      # edit mode, hence exactly one disclosure on the page.
-      assert [_details] =
-               html
-               |> Floki.parse_document!()
-               |> Floki.find(~s(details[id="model-profile-advanced"]))
-
-      refute advanced_details_open?(html)
-
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => "profile-1",
-        "profile_id_new" => "profile-1",
-        "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
-        "concurrency" => "3",
-        "temperature" => "0.7",
-        "top_k" => "40",
-        "extra" => ~s({"wire": {"protocol": "openai_responses"}}),
-        "provider_options" => ~s({"store": false})
-      })
-
-      html = render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
-
-      # A saved generation param auto-opens the disclosure so the user can see
-      # what is already set.
-      assert advanced_details_open?(html)
-
-      # ...and the reopened form pre-fills the advanced values from the profile.
-      # The textareas carry the re-encoded COMPACT JSON, HTML-escaped by HEEx
-      # (&quot; for each quote) — the same escaping the provider_options
-      # pre-fill test above pins.
-      doc = Floki.parse_document!(html)
-
-      assert doc |> Floki.find(~s(input[name="top_k"])) |> Floki.attribute("value") == ["40"]
-
-      assert doc |> Floki.find(~s(textarea[name="extra"])) |> Floki.text() ==
-               "{&quot;wire&quot;:{&quot;protocol&quot;:&quot;openai_responses&quot;}}"
-
-      assert doc |> Floki.find(~s(textarea[name="provider_options"])) |> Floki.text() ==
-               "{&quot;store&quot;:false}"
-    end
-
-    test "toggle_profile_advanced closes an auto-opened disclosure and keeps it closed while typing",
-         %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => "profile-1",
-        "profile_id_new" => "profile-1",
-        "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
-        "concurrency" => "3",
-        "temperature" => "0.7"
-      })
-
-      # The saved `temperature` makes the auto rule open the disclosure.
-      html = render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
-      assert advanced_details_open?(html)
-      assert assigns(view).profile_advanced_open == nil
-
-      # The user closes it: the override now outranks the auto rule.
-      refute advanced_details_open?(render_hook(view, "toggle_profile_advanced", %{}))
-      assert assigns(view).profile_advanced_open == false
-
-      # Typing anywhere re-renders the form (the draft still carries the
-      # advanced `temperature`) — the disclosure must NOT re-open.
-      html =
-        render_hook(view, "model_profile_form_change", %{
-          "profile_id" => "profile-1",
+    defp provider_params(overrides \\ %{}) do
+      Map.merge(
+        %{
+          "profile_id" => "new",
           "profile_id_new" => "profile-1",
-          "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
-          "concurrency" => "5",
-          "temperature" => "0.7"
-        })
-
-      refute advanced_details_open?(html)
-      assert assigns(view).profile_advanced_open == false
-
-      # Toggling again re-opens it (still user-authoritative).
-      assert advanced_details_open?(render_hook(view, "toggle_profile_advanced", %{}))
-      assert assigns(view).profile_advanced_open == true
-    end
-
-    test "toggle_profile_advanced opens a bare profile's disclosure and keeps it open while typing",
-         %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      # A new profile carries no advanced value, so the auto rule keeps the
-      # disclosure collapsed.
-      refute advanced_details_open?(render_hook(view, "add_model_profile", %{}))
-
-      assert advanced_details_open?(render_hook(view, "toggle_profile_advanced", %{}))
-      assert assigns(view).profile_advanced_open == true
-
-      # Typing into a NON-advanced field must not snap it shut.
-      html =
-        render_hook(view, "model_profile_form_change", %{
-          "profile_id" => "profile-1",
-          "profile_id_new" => "profile-1",
-          "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
-          "concurrency" => "5"
-        })
-
-      assert advanced_details_open?(html)
-      assert assigns(view).profile_advanced_open == true
-    end
-
-    test "opening another profile's edit form resets the advanced override", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      # profile-1 and profile-2 BOTH carry an advanced value, so both auto-open;
-      # only a RESET (not a leaked `false`) can render profile-2 open after the
-      # user closed profile-1's disclosure.
-      render_hook(view, "add_model_profile", %{})
-
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => "profile-1",
-        "profile_id_new" => "profile-1",
-        "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
-        "concurrency" => "3",
-        "temperature" => "0.7"
-      })
-
-      render_hook(view, "add_model_profile", %{})
-
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => "profile-2",
-        "profile_id_new" => "profile-2",
-        "provider" => "openai",
-        "model_id" => "gpt-5.6-terra",
-        "concurrency" => "3",
-        "top_k" => "40"
-      })
-
-      assert advanced_details_open?(
-               render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
-             )
-
-      refute advanced_details_open?(render_hook(view, "toggle_profile_advanced", %{}))
-      assert assigns(view).profile_advanced_open == false
-
-      # Switching edit sessions drops the override → the auto rule applies again.
-      assert advanced_details_open?(
-               render_hook(view, "edit_model_profile", %{"profile_id" => "profile-2"})
-             )
-
-      assert assigns(view).profile_advanced_open == nil
-    end
-
-    test "cancel_edit_model_profile and save_model_profile reset the advanced override", %{
-      conn: conn
-    } do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-
-      render_hook(view, "toggle_profile_advanced", %{})
-      assert assigns(view).profile_advanced_open == true
-
-      render_hook(view, "cancel_edit_model_profile", %{})
-      assert assigns(view).profile_advanced_open == nil
-
-      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
-      render_hook(view, "toggle_profile_advanced", %{})
-      assert assigns(view).profile_advanced_open == true
-
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => "profile-1",
-        "profile_id_new" => "profile-1",
-        "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
-        "concurrency" => "3"
-      })
-
-      assert assigns(view).profile_advanced_open == nil
-    end
-
-    test "toggle_profile_advanced is a no-op when no profile is being edited", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      render_hook(view, "toggle_profile_advanced", %{})
-
-      assert assigns(view).profile_advanced_open == nil
-    end
-
-    test "save_model_profile clears editing state after save", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
-
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => "profile-1",
-        "profile_id_new" => "default",
-        "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
-        "concurrency" => "3"
-      })
-
-      assert assigns(view).editing_profile_id == nil
-    end
-
-    test "save_model_profile rejects empty id", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
-
-      html =
-        render_hook(view, "save_model_profile", %{
-          "profile_id" => "profile-1",
-          "profile_id_new" => "  ",
-          "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
+          "provider" => "openai",
+          "default_model" => "example",
           "concurrency" => "3"
-        })
-
-      assert html =~ "Profile id cannot be empty."
+        },
+        overrides
+      )
     end
 
-    test "save_model_profile rejects duplicate id", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => "profile-1",
-        "profile_id_new" => "default",
-        "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
-        "concurrency" => "3"
-      })
-
-      render_hook(view, "add_model_profile", %{})
-
-      html =
-        render_hook(view, "save_model_profile", %{
-          "profile_id" => "profile-2",
-          "profile_id_new" => "default",
-          "provider" => "openai",
-          "model_id" => "gpt-5.6-terra",
-          "concurrency" => "5"
-        })
-
-      assert html =~ "already exists"
-    end
-
-    test "save_model_profile keeps same id when unchanged (no false duplicate)", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-
-      html =
-        render_hook(view, "save_model_profile", %{
-          "profile_id" => "profile-1",
-          "profile_id_new" => "profile-1",
-          "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
-          "concurrency" => "5"
-        })
-
-      assert html =~ "Model profile saved."
-      [profile] = current_models(view)
-      assert profile.id == "profile-1"
-      assert profile.concurrency == 5
-    end
-
-    test "delete_model_profile removes the profile", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => "profile-1",
-        "profile_id_new" => "profile-1",
-        "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
-        "concurrency" => "3"
-      })
-
-      render_hook(view, "add_model_profile", %{})
-
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => "profile-2",
-        "profile_id_new" => "profile-2",
-        "provider" => "openai",
-        "model_id" => "gpt-5.6-terra",
-        "concurrency" => "3"
-      })
-
-      html = render_hook(view, "delete_model_profile", %{"profile_id" => "profile-1"})
-
-      assert html =~ "Model profile deleted."
-      [profile] = current_models(view)
-      assert profile.id == "profile-2"
-    end
-
-    test "select_llm_model_shortcut adds a profile and mirrors flat model", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html =
-        render_hook(view, "select_llm_model_shortcut", %{
-          "model_string" => "anthropic:claude-sonnet-5-5"
-        })
-
-      assert html =~ "Model selected and saved."
-      models = current_models(view)
-      assert length(models) == 1
-      # After save + resolve, the model string is normalized: simple models
-      # (no overrides) become "provider:id" strings.
-      assert hd(models).model == "anthropic:claude-sonnet-5-5"
-      assert hd(models).concurrency == 3
-      # First profile's model (also normalized to string)
-      assert get_in(assigns(view).file_config, [:llm, :models]) |> hd() |> Map.get(:model) ==
-               "anthropic:claude-sonnet-5-5"
-    end
-
-    test "save_custom_model adds a profile for OpenRouter", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html =
-        render_hook(view, "save_custom_model", %{
-          "model_name" => "anthropic/claude-3.5-sonnet",
-          "provider_id" => "openrouter"
-        })
-
-      assert html =~ "Custom model saved."
-      models = current_models(view)
-      assert length(models) == 1
-      assert hd(models).model == "openrouter:anthropic/claude-3.5-sonnet"
-    end
-
-    test "save_model_profile composes map spec with provider, id, and base_url", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-
-      html =
-        render_hook(view, "save_model_profile", %{
-          "profile_id" => "profile-1",
-          "profile_id_new" => "profile-1",
-          "provider" => "openai",
-          "model_id" => "gpt-4o",
-          "base_url" => "https://my-proxy.com/v1",
-          "concurrency" => "3"
-        })
-
-      assert html =~ "Model profile saved."
-      [profile] = current_models(view)
-
-      assert profile.model == %{
-               provider: :openai,
-               id: "gpt-4o",
-               base_url: "https://my-proxy.com/v1"
-             }
-    end
-
-    test "save_model_profile rejects empty model id", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-
-      html =
-        render_hook(view, "save_model_profile", %{
-          "profile_id" => "profile-1",
-          "profile_id_new" => "profile-1",
-          "provider" => "anthropic",
-          "model_id" => "  ",
-          "concurrency" => "3"
-        })
-
-      assert html =~ "Model ID cannot be empty."
-    end
-
-    test "save_model_profile persists provider_options at profile level", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-
-      html =
-        render_hook(view, "save_model_profile", %{
-          "profile_id" => "profile-1",
-          "profile_id_new" => "profile-1",
-          "provider" => "openai",
-          "model_id" => "gpt-4o",
-          "concurrency" => "3",
-          "provider_options" => ~s({"store": false})
-        })
-
-      assert html =~ "Model profile saved."
-      [profile] = current_models(view)
-      # provider_options is a profile-level field (sibling of temperature, max_tokens),
-      # NOT inside the model spec. After TOML round-trip the model spec is normalized
-      # to a string ("openai:gpt-4o"), but provider_options persists as a map at the
-      # profile level.
-      assert profile.provider_options == %{"store" => false}
-    end
-
-    test "save_model_profile rejects invalid provider_options JSON", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-
-      html =
-        render_hook(view, "save_model_profile", %{
-          "profile_id" => "profile-1",
-          "profile_id_new" => "profile-1",
-          "provider" => "openai",
-          "model_id" => "gpt-4o",
-          "concurrency" => "3",
-          "provider_options" => "{not valid json"
-        })
-
-      assert html =~ "Provider Options must be valid JSON."
-    end
-
-    test "save_model_profile rejects non-object provider_options", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-
-      html =
-        render_hook(view, "save_model_profile", %{
-          "profile_id" => "profile-1",
-          "profile_id_new" => "profile-1",
-          "provider" => "openai",
-          "model_id" => "gpt-4o",
-          "concurrency" => "3",
-          "provider_options" => "[1,2,3]"
-        })
-
-      assert html =~ "Provider Options must be a JSON object (map)."
-    end
-
-    test "save_model_profile then edit pre-fills provider_options from profile", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => "profile-1",
-        "profile_id_new" => "profile-1",
-        "provider" => "openai",
-        "model_id" => "gpt-4o",
-        "concurrency" => "3",
-        "provider_options" => ~s({"store": false})
-      })
-
-      # Re-open the edit form and verify provider_options pre-fills
-      html = render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
-
-      assert html =~ ~s(name="provider_options")
-      # HEEx HTML-escapes the JSON in the textarea (&quot; for quotes)
-      assert html =~ "{&quot;store&quot;:false}"
-    end
-
-    test "save_model_profile then edit pre-fills structured fields from map spec", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => "profile-1",
-        "profile_id_new" => "profile-1",
-        "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
-        "base_url" => "https://proxy.example.com/v1",
-        "concurrency" => "3"
-      })
-
-      # Re-open the edit form and verify the structured fields pre-fill from the map spec
-      html = render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
-
-      assert html =~ ~s(value="claude-sonnet-5-5")
-      assert html =~ ~s(value="anthropic")
-      assert html =~ ~s(value="https://proxy.example.com/v1")
-    end
-
-    test "save_custom_model rejects empty name", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html =
-        render_hook(view, "save_custom_model", %{
-          "model_name" => "  ",
-          "provider_id" => "openrouter"
-        })
-
-      assert html =~ "Model name cannot be empty."
-    end
-
-    test "save_custom_model rejects empty base URL for OpenAI-compatible", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html =
-        render_hook(view, "save_custom_model", %{
-          "model_name" => "x",
-          "base_url" => "",
-          "provider_id" => "openai_compatible"
-        })
-
-      assert html =~ "Base URL cannot be empty."
-    end
-
-    # ── move_model_profile (profile re-ordering) ──
-
-    # Seeds complete, saved profiles into config.toml BEFORE the mount — the
-    # same fixture style `seed_write_paths/1` uses. It writes the exact TOML
-    # shape `save_model_profile` persists (`model` = "<provider>:<model_id>",
-    # `concurrency` = 3), so the mounted page renders the identical list.
-    # The profile LIST/re-order operations below need two persisted profiles as
-    # SETUP only — the add/save UI path they used to drive per case is the
-    # subject of the dedicated add_model_profile / save_model_profile tests,
-    # and each of those events costs a full settings-page render.
-    # The explicit on_exit rm is belt-and-braces (the setup already rm_rf!'s
-    # the whole per-test temp dir).
-    defp seed_model_profiles(profiles) do
+    defp seed_provider_profiles(profiles, default_provider_profile \\ nil) do
       path = EvoGit.Config.config_path()
       File.mkdir_p!(Path.dirname(path))
 
+      default =
+        if default_provider_profile,
+          do: "[llm]\ndefault_provider_profile = #{inspect(default_provider_profile)}\n\n",
+          else: ""
+
       File.write!(
         path,
-        Enum.map_join(profiles, "", fn {id, provider, model_id} ->
-          """
-          [[llm.models]]
-          id = "#{id}"
-          model = "#{provider}:#{model_id}"
-          concurrency = 3
+        default <>
+          Enum.map_join(profiles, "", fn {id, provider, model} ->
+            """
+            [[llm.providers]]
+            id = "#{id}"
+            provider = "#{provider}"
+            default_model = "#{model}"
+            concurrency = 3
 
-          """
-        end)
+            """
+          end)
       )
 
-      on_exit(fn ->
-        # Teardown cleanup must not mask test failures.
-        File.rm(path)
-      end)
+      on_exit(fn -> File.rm(path) end)
     end
 
-    defp profile_ids(view) do
-      Enum.map(current_models(view), & &1.id)
+    test "Add renders the canonical form without persisting; cancel discards it", %{conn: conn} do
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+      assert has_element?(view, "#provider-profiles-editor")
+      assert has_element?(view, ~s(button[phx-click="add_provider_profile"]))
+      assert render(view) =~ "Add a provider profile, then choose its models and defaults."
+      before = assigns(view).file_config
+      disk = EvoGit.Config.user_config()
+      view |> element(~s(button[phx-click="add_provider_profile"])) |> render_click()
+      assert assigns(view).editing_profile_id == "new"
+      assert assigns(view).profile_form_draft["id"] == "profile-1"
+      assert assigns(view).profile_form_draft["concurrency"] == 3
+      assert assigns(view).file_config == before
+      assert EvoGit.Config.user_config() == disk
+
+      assert has_element?(
+               view,
+               ~s(form#provider-profile-edit-form[phx-submit="save_provider_profile"][phx-change="provider_profile_form_change"])
+             )
+
+      assert has_element?(view, ~s(input[name="profile_id"][value="new"]))
+      assert has_element?(view, ~s(input[name="profile_id_new"][value="profile-1"]))
+      assert has_element?(view, ~s(input[name="generation[temperature]"]))
+      assert has_element?(view, "details#provider-generation-defaults:not([open])")
+      refute has_element?(view, "#model-profile-advanced")
+      view |> element(~s(button[phx-click="cancel_edit_provider_profile"])) |> render_click()
+      assert assigns(view).editing_profile_id == nil
+      assert assigns(view).profile_form_draft == nil
+      assert assigns(view).profile_advanced_open == nil
+      assert assigns(view).file_config == before
+      assert EvoGit.Config.user_config() == disk
+      refute has_element?(view, "#provider-profile-edit-form")
     end
 
-    test "move_model_profile moves a profile up", %{conn: conn} do
-      seed_model_profiles([
-        {"profile-1", "anthropic", "claude-sonnet-5-5"},
-        {"profile-2", "openai", "gpt-5.6-terra"}
-      ])
+    test "Save, edit, toggle, rename, default and delete use rendered provider actions", %{
+      conn: conn
+    } do
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "add_provider_profile", %{})
+      html = view |> form("#provider-profile-edit-form", provider_params()) |> render_submit()
+      assert html =~ "Provider profile saved."
+      assert assigns(view).editing_profile_id == nil
+      assert assigns(view).profile_form_draft == nil
+      assert [profile] = current_providers(view)
+      assert profile["id"] == "profile-1"
+      assert profile["provider"] == "openai"
+      assert profile["default_model"] == "example"
+      assert profile["concurrency"] == 3
+      refute Map.has_key?(profile, "models")
+      assert stored_providers() == [profile]
+      refute Map.has_key?(EvoGit.Config.user_config()["llm"], "models")
 
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "add_provider_profile", %{})
+      assert assigns(view).profile_form_draft["id"] == "profile-2"
 
-      html = render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-2"})
+      render_hook(
+        view,
+        "save_provider_profile",
+        provider_params(%{"profile_id_new" => "profile-2"})
+      )
 
-      assert html =~ "Model profile moved."
-      assert profile_ids(view) == ["profile-2", "profile-1"]
-    end
+      assert Enum.map(current_providers(view), & &1["id"]) == ["profile-1", "profile-2"]
 
-    test "move_model_profile is a no-op at either boundary", %{conn: conn} do
-      seed_model_profiles([
-        {"profile-1", "anthropic", "claude-sonnet-5-5"},
-        {"profile-2", "openai", "gpt-5.6-terra"}
-      ])
+      view
+      |> element(~s(button[phx-click="edit_provider_profile"][phx-value-profile_id="profile-1"]))
+      |> render_click()
 
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      assert assigns(view).editing_profile_id == "profile-1"
+      assert has_element?(view, ~s(input[name="default_model"][value="example"]))
+      # Legacy callers can still toggle the same edit session off.
+      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+      assert assigns(view).editing_profile_id == nil
+      render_hook(view, "edit_provider_profile", %{"profile_id" => "profile-1"})
+      render_hook(view, "provider_profile_form_change", provider_params(%{"name" => "Unsaved"}))
+      render_hook(view, "edit_provider_profile", %{"profile_id" => "profile-2"})
+      assert assigns(view).profile_form_draft["id"] == "profile-2"
+      refute assigns(view).profile_form_draft["name"] == "Unsaved"
+      render_hook(view, "cancel_edit_provider_profile", %{})
+
+      view
+      |> element(
+        ~s(button[phx-click="set_default_provider_profile"][phx-value-profile_id="profile-2"])
+      )
+      |> render_click()
+
+      assert EvoGit.Config.user_config()["llm"]["default_provider_profile"] == "profile-2"
+      render_hook(view, "edit_provider_profile", %{"profile_id" => "profile-2"})
+
+      render_hook(
+        view,
+        "save_provider_profile",
+        provider_params(%{"profile_id" => "profile-2", "profile_id_new" => "renamed"})
+      )
+
+      assert EvoGit.Config.user_config()["llm"]["default_provider_profile"] == "renamed"
 
       html =
-        render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-1"})
+        view
+        |> element(
+          ~s(button[phx-click="delete_provider_profile"][phx-value-profile_id="renamed"])
+        )
+        |> render_click()
 
-      assert html =~ "Model profile moved."
-      assert profile_ids(view) == ["profile-1", "profile-2"]
-
-      html =
-        render_hook(view, "move_model_profile", %{"direction" => "down", "id" => "profile-2"})
-
-      assert html =~ "Model profile moved."
-      assert profile_ids(view) == ["profile-1", "profile-2"]
+      assert html =~ "Provider profile deleted."
+      assert Enum.map(stored_providers(), & &1["id"]) == ["profile-1"]
+      assert EvoGit.Config.user_config()["llm"]["default_provider_profile"] == "profile-1"
     end
 
-    test "move_model_profile persists the reordered config to disk", %{conn: conn} do
-      seed_model_profiles([
-        {"profile-1", "anthropic", "claude-sonnet-5-5"},
-        {"profile-2", "openai", "gpt-5.6-terra"}
-      ])
+    test "nested generation payload is typed, sparse, inherited and prefilled on reopen", %{
+      conn: conn
+    } do
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "add_provider_profile", %{})
 
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      input =
+        provider_params(%{
+          "base_url" => "https://proxy.example/v1",
+          "concurrency" => "4",
+          "reasoning_efforts" => "low, medium, high",
+          "default_reasoning_effort" => "high",
+          "generation" => %{
+            "temperature" => "0.7",
+            "max_tokens" => "4096",
+            "top_p" => "0.9",
+            "top_k" => "40",
+            "frequency_penalty" => "0.25",
+            "presence_penalty" => "0.5",
+            "extra" => ~s({"wire":{"protocol":"openai_responses"}}),
+            "provider_options" => ~s({"store":false})
+          },
+          "models" => %{
+            "2" => %{
+              "model" => "example",
+              "override_reasoning" => "false",
+              "reasoning_efforts" => "stale",
+              "default_reasoning_effort" => "medium",
+              "generation" => %{"temperature" => "", "max_tokens" => ""}
+            },
+            "10" => %{
+              "model" => "overridden",
+              "context_window" => "128000",
+              "override_reasoning" => "true",
+              "reasoning_efforts" => "low,high",
+              "default_reasoning_effort" => "low",
+              "generation" => %{
+                "temperature" => "0",
+                "max_tokens" => "2048",
+                "top_p" => "0.5",
+                "top_k" => "4",
+                "frequency_penalty" => "-0.2",
+                "presence_penalty" => "0.1",
+                "provider_options" => ~s({"store":true}),
+                "extra" => ~s({"flag":false})
+              }
+            },
+            "20" => %{
+              "model" => "no-reasoning",
+              "override_reasoning" => "true",
+              "reasoning_efforts" => "",
+              "default_reasoning_effort" => "high"
+            }
+          }
+        })
 
-      html =
-        render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-2"})
+      render_hook(view, "provider_profile_form_change", input)
+      # Change keeps the nested browser draft; only Save flattens it at the parent boundary.
+      assert assigns(view).profile_form_draft["generation"] == input["generation"]
 
-      assert html =~ "Model profile moved."
+      assert hd(assigns(view).profile_form_draft["models"])["generation"] == %{
+               "temperature" => "",
+               "max_tokens" => ""
+             }
 
-      # The in-memory file_config assign is reloaded from disk after the save
-      # (persist_file_config → ConfigIO.load_file_config → EvoGit.Config.resolve),
-      # so the swapped order proves the file was written with the new order.
-      assert profile_ids(view) == ["profile-2", "profile-1"]
+      html = render_hook(view, "save_provider_profile", input)
+      assert html =~ "Provider profile saved."
+      [profile] = stored_providers()
+      assert profile["concurrency"] == 4
+      assert profile["base_url"] == "https://proxy.example/v1"
 
-      # File-level check on the raw user config TOML (string-keyed decode).
-      file_models = get_in(EvoGit.Config.user_config(), ["llm", "models"]) || []
-      assert Enum.map(file_models, &Map.get(&1, "id")) == ["profile-2", "profile-1"]
-    end
+      assert Map.take(
+               profile,
+               ~w(temperature max_tokens top_p top_k frequency_penalty presence_penalty extra provider_options)
+             ) == %{
+               "temperature" => 0.7,
+               "max_tokens" => 4096,
+               "top_p" => 0.9,
+               "top_k" => 40,
+               "frequency_penalty" => 0.25,
+               "presence_penalty" => 0.5,
+               "extra" => %{"wire" => %{"protocol" => "openai_responses"}},
+               "provider_options" => %{"store" => false}
+             }
 
-    test "move_model_profile move buttons respect boundary positions", %{conn: conn} do
-      seed_model_profiles([
-        {"profile-1", "anthropic", "claude-sonnet-5-5"},
-        {"profile-2", "openai", "gpt-5.6-terra"}
-      ])
+      assert profile["reasoning_efforts"] == ["low", "medium", "high"]
+      assert profile["default_reasoning_effort"] == "high"
+      assert [inherited, overridden, unsupported] = profile["models"]
+      assert inherited == %{"model" => "example", "default_reasoning_effort" => "medium"}
 
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      assert overridden == %{
+               "model" => "overridden",
+               "context_window" => 128_000,
+               "temperature" => 0.0,
+               "max_tokens" => 2048,
+               "top_p" => 0.5,
+               "top_k" => 4,
+               "frequency_penalty" => -0.2,
+               "presence_penalty" => 0.1,
+               "extra" => %{"flag" => false},
+               "provider_options" => %{"store" => true},
+               "reasoning_efforts" => ["low", "high"],
+               "default_reasoning_effort" => "low"
+             }
 
-      html = render(view)
-
-      # Exactly one move-up button (for the SECOND profile) and one move-down
-      # button (for the FIRST profile) are rendered.
+      assert unsupported == %{"model" => "no-reasoning", "reasoning_efforts" => []}
+      refute Map.has_key?(profile, "generation")
+      refute Enum.any?(profile["models"], &Map.has_key?(&1, "override_reasoning"))
+      html = render_hook(view, "edit_provider_profile", %{"profile_id" => "profile-1"})
       doc = Floki.parse_document!(html)
-      up_buttons = Floki.find(doc, ~s([phx-value-direction="up"]))
-      down_buttons = Floki.find(doc, ~s([phx-value-direction="down"]))
-      assert Floki.attribute(up_buttons, "phx-value-id") == ["profile-2"]
-      assert Floki.attribute(down_buttons, "phx-value-id") == ["profile-1"]
+      assert Floki.attribute(doc, ~s(input[name="generation[top_k]"]), "value") == ["40"]
 
-      # Region check: the first card's markup (from its edit button up to the
-      # second card's edit button) must NOT contain a move-up button...
-      {first_start, _} = :binary.match(html, ~s(phx-value-profile_id="profile-1"))
-      {second_start, _} = :binary.match(html, ~s(phx-value-profile_id="profile-2"))
-      first_card_region = binary_part(html, first_start, second_start - first_start)
-      refute first_card_region =~ ~s(phx-value-direction="up")
+      assert Floki.attribute(doc, ~s(input[name="models[1][generation][max_tokens]"]), "value") ==
+               ["2048"]
 
-      # ...and the last card's markup (from its edit button to the end of the
-      # page) must NOT contain a move-down button.
-      last_card_region = binary_part(html, second_start, byte_size(html) - second_start)
-      refute last_card_region =~ ~s(phx-value-direction="down")
+      assert Floki.attribute(doc, ~s(input[name="models[1][context_window]"]), "value") == [
+               "128000"
+             ]
+
+      assert Floki.text(Floki.find(doc, ~s(textarea[name="generation[provider_options]"]))) ==
+               ~s({&quot;store&quot;:false})
+
+      assert Floki.text(Floki.find(doc, ~s(textarea[name="generation[extra]"]))) ==
+               ~s({&quot;wire&quot;:{&quot;protocol&quot;:&quot;openai_responses&quot;}})
+
+      assert Floki.find(doc, ~s(input[name="models[0][override_reasoning]"][checked])) == []
+      assert Floki.find(doc, ~s(input[name="models[2][override_reasoning]"][checked])) != []
+      assert Floki.find(doc, "details#provider-generation-defaults:not([open])") != []
+      assert Floki.find(doc, "details#provider-model-generation-1:not([open])") != []
+
+      # Clearing model overrides restores inheritance, not nil or copied provider values.
+      cleared =
+        put_in(input, ["models", "10"], %{
+          "model" => "overridden",
+          "context_window" => "",
+          "override_reasoning" => "false",
+          "generation" => %{"temperature" => "", "max_tokens" => ""}
+        })
+
+      html =
+        render_hook(view, "save_provider_profile", Map.put(cleared, "profile_id", "profile-1"))
+
+      assert html =~ "Provider profile saved."
+      [updated] = stored_providers()
+      assert Enum.at(updated["models"], 1) == %{"model" => "overridden"}
+      assert Map.drop(updated, ["models"]) == Map.drop(profile, ["models"])
+    end
+
+    test "model row actions preserve unsaved nested input and save an explicitly emptied collection",
+         %{conn: conn} do
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "add_provider_profile", %{})
+
+      render_hook(
+        view,
+        "provider_profile_form_change",
+        provider_params(%{
+          "name" => "Typed name",
+          "generation" => %{"temperature" => "0.7"},
+          "models" => %{"0" => %{"model" => "typed", "generation" => %{"max_tokens" => "42"}}}
+        })
+      )
+
+      view |> element(~s(button[phx-click="add_provider_model"])) |> render_click()
+      assert has_element?(view, ~s(input[name="models[0][model]"][value="typed"]))
+      assert has_element?(view, ~s(input[name="models[0][generation][max_tokens]"][value="42"]))
+      assert has_element?(view, ~s(input[name="models[1][model]"][value=""]))
+      assert has_element?(view, ~s(input[name="generation[temperature]"][value="0.7"]))
+      assert has_element?(view, ~s(input[name="name"][value="Typed name"]))
+      draft = assigns(view).profile_form_draft
+
+      for index <- ["-1", "garbage", "999"] do
+        render_hook(view, "remove_provider_model", %{"index" => index})
+        assert assigns(view).profile_form_draft == draft
+      end
+
+      view
+      |> element(~s(button[phx-click="remove_provider_model"][phx-value-index="1"]))
+      |> render_click()
+
+      assert assigns(view).profile_form_draft["models"] == [hd(draft["models"])]
+
+      view
+      |> element(~s(button[phx-click="remove_provider_model"][phx-value-index="0"]))
+      |> render_click()
+
+      assert assigns(view).profile_form_draft["models"] == []
+      refute has_element?(view, ~s(input[name="models[0][model]"]))
+      # The browser omits models entirely after removal; the draft's [] is authoritative.
+      html = render_hook(view, "save_provider_profile", provider_params())
+      assert html =~ "Provider profile saved."
+      [saved] = stored_providers()
+      refute Map.has_key?(saved, "models")
+      render_hook(view, "add_provider_model", %{})
+      render_hook(view, "add_provider_peak_hours_row", %{})
+      assert assigns(view).profile_form_draft == nil
+    end
+
+    test "invalid ids, nested values and JSON keep the correction draft without writing", %{
+      conn: conn
+    } do
+      seed_provider_profiles([{"taken", "openai", "example"}])
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+      before = stored_providers()
+      before_config = current_providers(view)
+
+      for {patch, message} <- [
+            {%{"profile_id_new" => "  "}, "Profile id cannot be empty."},
+            {%{"profile_id_new" => "taken"}, "already exists"},
+            {%{"provider" => ""}, "Provider cannot be empty."},
+            {%{"default_model" => "", "models" => []},
+             "Enter a default model or add a model override."},
+            {%{"models" => [%{"model" => "", "context_window" => "2048"}]},
+             "Model ID cannot be empty."},
+            {%{"models" => [%{"model" => "x"}, %{"model" => "x"}]},
+             "Model IDs must be unique within a provider profile."},
+            {%{"generation" => %{"max_tokens" => "3.5"}},
+             "Numeric fields must contain valid numbers."},
+            {%{"generation" => %{"extra" => "{"}}, "Extra Config must be valid JSON."},
+            {%{"generation" => %{"extra" => "[]"}}, "Extra Config must be a JSON object (map)."},
+            {%{"generation" => %{"provider_options" => "{"}},
+             "Provider Options must be valid JSON."},
+            {%{"generation" => %{"provider_options" => "[]"}},
+             "Provider Options must be a JSON object (map)."},
+            {%{"models" => [%{"model" => "x", "generation" => %{"provider_options" => "{"}}]},
+             "Provider Options must be valid JSON."},
+            {%{"reasoning_efforts" => "low,high", "default_reasoning_effort" => "other"},
+             "Default reasoning effort must be one of the configured reasoning efforts."}
+          ] do
+        render_hook(view, "cancel_edit_provider_profile", %{})
+        render_hook(view, "add_provider_profile", %{})
+        input = provider_params(patch)
+        html = render_hook(view, "save_provider_profile", input)
+        assert html =~ message
+        assert assigns(view).editing_profile_id == "new"
+        assert assigns(view).profile_form_draft != nil
+        assert stored_providers() == before
+        assert current_providers(view) == before_config
+      end
+
+      render_hook(view, "cancel_edit_provider_profile", %{})
+      assert assigns(view).profile_form_draft == nil
+    end
+
+    test "legacy flat file and event remain editable but save only canonical providers", %{
+      conn: conn
+    } do
+      path = EvoGit.Config.config_path()
+      File.mkdir_p!(Path.dirname(path))
+
+      File.write!(path, """
+      [user]
+      name = "Keep me"
+      [[llm.models]]
+      id = "legacy"
+      model = "openai:old-model"
+      concurrency = 4
+      temperature = 0.7
+      """)
+
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "edit_model_profile", %{"profile_id" => "legacy"})
+      assert assigns(view).editing_profile_id == "legacy"
+      assert has_element?(view, ~s(input[name="default_model"][value="old-model"]))
+      assert has_element?(view, ~s(input[name="generation[temperature]"][value="0.7"]))
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "legacy",
+          "profile_id_new" => "legacy",
+          "provider" => "openai",
+          "model_id" => "edited-model",
+          "concurrency" => "5",
+          "temperature" => "0.8"
+        })
+
+      assert html =~ "Provider profile saved."
+      [profile] = stored_providers()
+      assert profile["id"] == "legacy"
+      assert profile["default_model"] == "edited-model"
+      assert profile["models"] == [%{"model" => "edited-model"}]
+      assert profile["concurrency"] == 5
+      assert profile["temperature"] == 0.8
+      refute Map.has_key?(EvoGit.Config.user_config()["llm"], "models")
+      assert EvoGit.Config.user_config()["user"]["name"] == "Keep me"
+    end
+
+    test "legacy reorder action persists canonical order and preserves the explicit default", %{
+      conn: conn
+    } do
+      seed_provider_profiles(
+        [{"profile-1", "openai", "one"}, {"profile-2", "anthropic", "two"}],
+        "profile-1"
+      )
+
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+
+      assert render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-2"}) =~
+               "Provider profile moved."
+
+      assert Enum.map(current_providers(view), & &1["id"]) == ["profile-2", "profile-1"]
+      assert Enum.map(stored_providers(), & &1["id"]) == ["profile-2", "profile-1"]
+      assert assigns(view).file_config.llm.default_provider_profile == "profile-1"
+      assert EvoGit.Config.user_config()["llm"]["default_provider_profile"] == "profile-1"
+      before = stored_providers()
+
+      for {id, direction} <- [{"profile-2", "up"}, {"profile-1", "down"}] do
+        render_hook(view, "move_model_profile", %{"direction" => direction, "id" => id})
+        assert stored_providers() == before
+      end
+    end
+
+    test "Quick Setup shortcut writes a provider rather than a flat model shadow", %{conn: conn} do
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+
+      assert render_hook(view, "select_llm_model_shortcut", %{"model_string" => "openai:example"}) =~
+               "Model selected and saved."
+
+      [profile] = stored_providers()
+      assert profile["provider"] == "openai"
+      assert profile["default_model"] == "example"
+      assert profile["models"] == [%{"model" => "example"}]
+      assert profile["concurrency"] == 3
+      refute Map.has_key?(EvoGit.Config.user_config()["llm"], "models")
+    end
+
+    test "custom-model validation rejects empty names and required base URLs", %{conn: conn} do
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+
+      assert render_hook(view, "save_custom_model", %{
+               "model_name" => "  ",
+               "provider_id" => "openrouter"
+             }) =~ "Model name cannot be empty."
+
+      assert render_hook(view, "save_custom_model", %{
+               "model_name" => "x",
+               "base_url" => "",
+               "provider_id" => "openai_compatible"
+             }) =~ "Base URL cannot be empty."
+
+      assert stored_providers() == []
     end
 
     # ── Peak-hours draft-tracking (phx-change → :profile_form_draft) ──────────
     #
     # phx-click (add/remove_peak_hours_row) does NOT send the enclosing form's
     # data, so the edit form re-renders from the :profile_form_draft assign
-    # (stored by phx-change="model_profile_form_change" on every keystroke)
+    # (stored by phx-change="provider_profile_form_change" on every keystroke)
     # instead of file_config — otherwise ALL unsaved typing would be wiped.
 
     test "model_profile_form_change stores the whole form as a draft", %{conn: conn} do
-      # add_model_profile enters edit mode for profile-1 immediately.
+      # Add enters detached edit mode; nothing is persisted until Save.
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "model_profile_form_change", %{
+      render_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
+        "default_model" => "claude-sonnet-5-5",
         "concurrency" => "5",
-        "temperature" => "0.7",
+        "generation" => %{"temperature" => "0.7"},
         "peak_concurrency" => "0",
         "timezone" => "Asia/Shanghai",
         "peak_hours" => %{"0" => %{"start" => "09:00", "end" => "12:00"}}
       })
 
       draft = assigns(view).profile_form_draft
-      assert draft["temperature"] == "0.7"
+      assert draft["generation"]["temperature"] == "0.7"
       assert draft["timezone"] == "Asia/Shanghai"
       assert draft["peak_concurrency"] == "0"
       # peak_hours is normalized to the canonical atom-keyed list form.
@@ -1546,13 +1414,13 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "model_profile_form_change", %{
+      render_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
+        "default_model" => "claude-sonnet-5-5",
         "concurrency" => "3",
         # Multi-checkbox list as the browser submits it: the hidden-seed ""
         # entry rides along with the checked day chips.
@@ -1581,14 +1449,14 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # must normalize it (the raw binary crashed the render's
       # `Enum.member?(off_peak_days, value)` with an Enumerable protocol error).
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "model_profile_form_change", %{
+        render_hook(view, "provider_profile_form_change", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
+          "default_model" => "claude-sonnet-5-5",
           "concurrency" => "3",
           "off_peak_days" => "weekends",
           "peak_hours" => %{
@@ -1612,14 +1480,14 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "model_profile_form_change with all-unchecked days ([] seed entry only)", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "model_profile_form_change", %{
+        render_hook(view, "provider_profile_form_change", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
+          "default_model" => "claude-sonnet-5-5",
           "concurrency" => "3",
           "off_peak_days" => [""]
         })
@@ -1636,31 +1504,31 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "model_profile_form_change never crashes on partial/odd params", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
-      html = render_hook(view, "model_profile_form_change", %{"peak_hours" => "garbage"})
+      html = render_hook(view, "provider_profile_form_change", %{"peak_hours" => "garbage"})
 
-      assert html =~ "Edit Profile"
+      assert html =~ "Provider profile settings"
       assert assigns(view).profile_form_draft["peak_hours"] == []
     end
 
     test "add_peak_hours_row preserves typed values from the draft", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "model_profile_form_change", %{
+      render_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
+        "default_model" => "claude-sonnet-5-5",
         "concurrency" => "5",
-        "temperature" => "0.7",
+        "generation" => %{"temperature" => "0.7"},
         "peak_concurrency" => "0",
         "timezone" => "Asia/Shanghai",
         "peak_hours" => %{"0" => %{"start" => "09:00", "end" => "12:00"}}
       })
 
-      html = render_hook(view, "add_peak_hours_row", %{})
+      html = render_hook(view, "add_provider_peak_hours_row", %{})
       doc = Floki.parse_document!(html)
 
       # Previously-typed window values survive the re-render...
@@ -1671,7 +1539,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert Floki.attribute(doc, ~s(input[name="peak_hours[1][end]"]), "value") == [""]
 
       # Other typed fields are preserved too (the whole form re-renders from the draft).
-      assert Floki.attribute(doc, ~s(input[name="temperature"]), "value") == ["0.7"]
+      assert Floki.attribute(doc, ~s(input[name="generation[temperature]"]), "value") == ["0.7"]
       assert Floki.attribute(doc, ~s(input[name="timezone"]), "value") == ["Asia/Shanghai"]
       assert Floki.attribute(doc, ~s(input[name="peak_concurrency"]), "value") == ["0"]
       assert Floki.attribute(doc, ~s(input[name="concurrency"]), "value") == ["5"]
@@ -1681,13 +1549,13 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "model_profile_form_change", %{
+      render_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
+        "default_model" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "off_peak_days" => ["", "mon", "fri"],
         "peak_hours" => %{
@@ -1695,7 +1563,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         }
       })
 
-      html = render_hook(view, "add_peak_hours_row", %{})
+      html = render_hook(view, "add_provider_peak_hours_row", %{})
       doc = Floki.parse_document!(html)
 
       # The profile-level off-peak day chips survive the re-render...
@@ -1716,20 +1584,20 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert draft["off_peak_days"] == ["mon", "fri"]
 
       assert draft["peak_hours"] == [
-               %{start: "09:00", end: "12:00", days: ["mon", "tue"]},
-               %{start: "", end: ""}
+               %{"start" => "09:00", "end" => "12:00", "days" => ["mon", "tue"]},
+               %{"start" => "", "end" => ""}
              ]
     end
 
     test "remove_peak_hours_row preserves the remaining typed values", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "model_profile_form_change", %{
+      render_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
+        "default_model" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "peak_hours" => %{
           "0" => %{"start" => "09:00", "end" => "12:00"},
@@ -1737,7 +1605,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         }
       })
 
-      html = render_hook(view, "remove_peak_hours_row", %{"index" => "0"})
+      html = render_hook(view, "remove_provider_peak_hours_row", %{"index" => "0"})
       doc = Floki.parse_document!(html)
 
       # The remaining window (14:00–18:00) is now at index 0 with values intact.
@@ -1750,13 +1618,13 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "model_profile_form_change", %{
+      render_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
+        "default_model" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "off_peak_days" => ["", "weekends"],
         "peak_hours" => %{
@@ -1765,7 +1633,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         }
       })
 
-      html = render_hook(view, "remove_peak_hours_row", %{"index" => "0"})
+      html = render_hook(view, "remove_provider_peak_hours_row", %{"index" => "0"})
       doc = Floki.parse_document!(html)
 
       # The remaining window (14:00–18:00) moves to index 0 with its days intact.
@@ -1781,146 +1649,144 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       draft = assigns(view).profile_form_draft
       assert draft["off_peak_days"] == ["weekends"]
-      assert draft["peak_hours"] == [%{start: "14:00", end: "18:00", days: ["wed"]}]
+      assert draft["peak_hours"] == [%{"start" => "14:00", "end" => "18:00", "days" => ["wed"]}]
     end
 
     test "profile_form_draft is cleared on cancel and on save", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+      render_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "model_profile_form_change", %{
+      render_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
+        "default_model" => "claude-sonnet-5-5",
         "concurrency" => "3",
-        "temperature" => "0.7"
+        "generation" => %{"temperature" => "0.7"}
       })
 
       assert assigns(view).profile_form_draft != nil
 
       # Cancel clears the draft.
-      render_hook(view, "cancel_edit_model_profile", %{})
+      render_hook(view, "cancel_edit_provider_profile", %{})
       assert assigns(view).profile_form_draft == nil
 
-      # Re-enter edit mode, type again, then SAVE — the draft is cleared too.
-      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+      # Re-enter Add, type again, then Save — the draft is cleared too.
+      render_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "model_profile_form_change", %{
+      render_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
+        "default_model" => "claude-sonnet-5-5",
         "concurrency" => "3",
-        "temperature" => "0.7"
+        "generation" => %{"temperature" => "0.7"}
       })
 
       assert assigns(view).profile_form_draft != nil
 
-      render_hook(view, "save_model_profile", %{
+      render_hook(view, "save_provider_profile", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
+        "default_model" => "claude-sonnet-5-5",
         "concurrency" => "3"
       })
 
       assert assigns(view).profile_form_draft == nil
     end
 
-    test "profile_form_draft is cleared when opening a different profile's edit form", %{
+    test "profile_form_draft is replaced when opening a different profile's edit form", %{
       conn: conn
     } do
-      seed_model_profiles([
+      seed_provider_profiles([
         {"profile-1", "anthropic", "claude-sonnet-5-5"},
         {"profile-2", "openai", "gpt-5.6-terra"}
       ])
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "edit_provider_profile", %{"profile_id" => "profile-1"})
 
-      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
-
-      render_hook(view, "model_profile_form_change", %{
+      render_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "profile-1",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
+        "default_model" => "claude-sonnet-5-5",
         "concurrency" => "3"
       })
 
       assert assigns(view).profile_form_draft != nil
 
-      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-2"})
-      assert assigns(view).profile_form_draft == nil
+      render_hook(view, "edit_provider_profile", %{"profile_id" => "profile-2"})
+      assert assigns(view).profile_form_draft["id"] == "profile-2"
     end
 
     test "save_model_profile rejects a negative peak_concurrency with the updated flash", %{
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
-      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+      render_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "save_model_profile", %{
+        render_hook(view, "save_provider_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
+          "default_model" => "claude-sonnet-5-5",
           "concurrency" => "3",
           "peak_concurrency" => "-1"
         })
 
       assert html =~ "Peak concurrency must be a non-negative integer."
-      # A rejected save still ends the edit session (draft cleared).
-      assert assigns(view).profile_form_draft == nil
+      # Rejected saves retain the failed draft so it can be corrected.
+      assert assigns(view).editing_profile_id == "new"
+      assert assigns(view).profile_form_draft["peak_concurrency"] == "-1"
     end
 
     test "save_model_profile stores a non-blank timezone and omits a blank one", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "save_model_profile", %{
+        render_hook(view, "save_provider_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
+          "default_model" => "claude-sonnet-5-5",
           "concurrency" => "3",
           "timezone" => "Asia/Shanghai"
         })
 
-      assert html =~ "Model profile saved."
-      [profile] = current_models(view)
+      assert html =~ "Provider profile saved."
+      [profile] = current_providers(view)
       assert (Map.get(profile, :timezone) || Map.get(profile, "timezone")) == "Asia/Shanghai"
 
       # A blank timezone omits the key entirely on the next save.
-      render_hook(view, "edit_model_profile", %{"profile_id" => "default"})
+      render_hook(view, "edit_provider_profile", %{"profile_id" => "default"})
 
-      render_hook(view, "save_model_profile", %{
+      render_hook(view, "save_provider_profile", %{
         "profile_id" => "default",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
+        "default_model" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "timezone" => ""
       })
 
-      [profile] = current_models(view)
+      [profile] = current_providers(view)
       refute Map.has_key?(profile, :timezone) or Map.has_key?(profile, "timezone")
     end
 
     test "save_model_profile persists off_peak_days and per-window days", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "save_model_profile", %{
+        render_hook(view, "save_provider_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
+          "default_model" => "claude-sonnet-5-5",
           "concurrency" => "3",
           # Normalization is defensive: trim + downcase + vocab whitelist +
           # order-preserving uniq. " MON " → "mon", "funday" (not in the 9-value
@@ -1931,16 +1797,16 @@ defmodule EvoDashWeb.SettingsLiveTest do
           }
         })
 
-      assert html =~ "Model profile saved."
-      [profile] = current_models(view)
-      assert profile.off_peak_days == ["mon", "fri"]
+      assert html =~ "Provider profile saved."
+      [profile] = current_providers(view)
+      assert profile["off_peak_days"] == ["mon", "fri"]
 
       # The window keeps exactly start/end plus the normalized days list.
-      [window] = profile.peak_hours
+      [window] = profile["peak_hours"]
       assert (Map.get(window, "days") || Map.get(window, :days)) == ["mon", "tue"]
 
       # File-level check on the raw user config TOML (string-keyed decode).
-      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
+      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
       assert file_profile["off_peak_days"] == ["mon", "fri"]
       assert hd(file_profile["peak_hours"])["days"] == ["mon", "tue"]
     end
@@ -1952,14 +1818,14 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # chip is checked. Save-time parsing must wrap it — previously the day
       # was silently dropped (list-only normalization).
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "save_model_profile", %{
+        render_hook(view, "save_provider_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
+          "default_model" => "claude-sonnet-5-5",
           "concurrency" => "3",
           "off_peak_days" => "weekends",
           "peak_hours" => %{
@@ -1967,115 +1833,116 @@ defmodule EvoDashWeb.SettingsLiveTest do
           }
         })
 
-      assert html =~ "Model profile saved."
-      [profile] = current_models(view)
-      assert profile.off_peak_days == ["weekends"]
-      [window] = profile.peak_hours
+      assert html =~ "Provider profile saved."
+      [profile] = current_providers(view)
+      assert profile["off_peak_days"] == ["weekends"]
+      [window] = profile["peak_hours"]
       assert (Map.get(window, "days") || Map.get(window, :days)) == ["mon"]
 
       # File-level TOML round-trip: the saved profile carries the wrapped lists.
-      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
+      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
       assert file_profile["off_peak_days"] == ["weekends"]
       assert hd(file_profile["peak_hours"])["days"] == ["mon"]
     end
 
     test "save_model_profile omits off_peak_days and per-window days when empty", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "save_model_profile", %{
+        render_hook(view, "save_provider_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
+          "default_model" => "claude-sonnet-5-5",
           "concurrency" => "3",
           # All chips off → only the hidden-seed "" entry is submitted.
           "off_peak_days" => [""],
           "peak_hours" => %{"0" => %{"start" => "09:00", "end" => "12:00"}}
         })
 
-      assert html =~ "Model profile saved."
-      [profile] = current_models(view)
+      assert html =~ "Provider profile saved."
+      [profile] = current_providers(view)
       refute Map.has_key?(profile, :off_peak_days) or Map.has_key?(profile, "off_peak_days")
 
       # A no-days window stays EXACTLY %{start:, end:} (backward compatible).
-      [window] = profile.peak_hours
+      [window] = profile["peak_hours"]
       refute Map.has_key?(window, "days") or Map.has_key?(window, :days)
       assert Map.get(window, "start") == "09:00"
       assert Map.get(window, "end") == "12:00"
 
       # File-level check: the raw TOML omits both keys too.
-      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
+      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
       refute Map.has_key?(file_profile, "off_peak_days")
       assert hd(file_profile["peak_hours"]) == %{"start" => "09:00", "end" => "12:00"}
     end
 
     test "save_model_profile persists context_window as an integer", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "save_model_profile", %{
+        render_hook(view, "save_provider_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
+          "default_model" => "claude-sonnet-5-5",
           "concurrency" => "3",
-          "context_window" => "128000"
+          "models" => [%{"model" => "claude-sonnet-5-5", "context_window" => "128000"}]
         })
 
-      assert html =~ "Model profile saved."
-      [profile] = current_models(view)
-      assert (Map.get(profile, :context_window) || Map.get(profile, "context_window")) == 128_000
+      assert html =~ "Provider profile saved."
+      [profile] = current_providers(view)
+      assert hd(profile["models"])["context_window"] == 128_000
 
       # File-level check: the raw TOML carries a real integer.
-      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
-      assert file_profile["context_window"] == 128_000
+      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
+      assert hd(file_profile["models"])["context_window"] == 128_000
     end
 
     test "save_model_profile omits a blank context_window while keeping other keys", %{
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "save_model_profile", %{
+      render_hook(view, "save_provider_profile", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-5-5",
+        "default_model" => "claude-sonnet-5-5",
         "concurrency" => "3",
-        "temperature" => "0.7",
-        "context_window" => "128000"
+        "generation" => %{"temperature" => "0.7"},
+        "models" => [%{"model" => "claude-sonnet-5-5", "context_window" => "128000"}]
       })
 
-      saved = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
-      assert saved["context_window"] == 128_000
+      saved = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
+      assert hd(saved["models"])["context_window"] == 128_000
 
       # Re-save with a blank context_window — the key must be omitted entirely
       # (never nil), so the core's default applies.
-      render_hook(view, "edit_model_profile", %{"profile_id" => "default"})
+      render_hook(view, "edit_provider_profile", %{"profile_id" => "default"})
 
       html =
-        render_hook(view, "save_model_profile", %{
+        render_hook(view, "save_provider_profile", %{
           "profile_id" => "default",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-5-5",
+          "default_model" => "claude-sonnet-5-5",
           "concurrency" => "3",
-          "temperature" => "0.7",
-          "context_window" => ""
+          "generation" => %{"temperature" => "0.7"},
+          "models" => [%{"model" => "claude-sonnet-5-5", "context_window" => ""}]
         })
 
-      assert html =~ "Model profile saved."
-      [profile] = current_models(view)
-      refute Map.has_key?(profile, :context_window) or Map.has_key?(profile, "context_window")
+      assert html =~ "Provider profile saved."
+      [profile] = current_providers(view)
+      refute Map.has_key?(hd(profile["models"]), "context_window")
 
-      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
-      refute Map.has_key?(file_profile, "context_window")
+      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "providers"]) |> hd()
+      refute Map.has_key?(hd(file_profile["models"]), "context_window")
       # The other profile keys survive the re-save untouched.
-      assert file_profile["model"] == "anthropic:claude-sonnet-5-5"
+      assert file_profile["default_model"] == "claude-sonnet-5-5"
+      assert hd(file_profile["models"])["model"] == "claude-sonnet-5-5"
       assert file_profile["concurrency"] == 3
       assert file_profile["temperature"] == 0.7
     end
@@ -2084,14 +1951,28 @@ defmodule EvoDashWeb.SettingsLiveTest do
   describe "ModelProfileHelpers.move_model_profile/3" do
     alias EvoDashWeb.SettingsLive.ModelProfileHelpers
 
-    defp config_with(models), do: %{llm: %{models: models}}
+    defp config_with(profiles) do
+      %{
+        llm: %{
+          providers:
+            Enum.map(profiles, fn profile ->
+              %{
+                "id" => ModelProfileHelpers.profile_id(profile),
+                "provider" => "openai",
+                "default_model" => "example"
+              }
+            end),
+          default_provider_profile: "a"
+        }
+      }
+    end
 
     test "moves a profile up in the middle of the list" do
       config = config_with([%{id: "a"}, %{id: "b"}, %{id: "c"}])
 
       moved = ModelProfileHelpers.move_model_profile(config, "b", "up")
 
-      assert Enum.map(moved.llm.models, & &1.id) == ["b", "a", "c"]
+      assert Enum.map(moved.llm.providers, &ModelProfileHelpers.profile_id/1) == ["b", "a", "c"]
     end
 
     test "moves a profile down in the middle of the list" do
@@ -2099,7 +1980,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       moved = ModelProfileHelpers.move_model_profile(config, "a", "down")
 
-      assert Enum.map(moved.llm.models, & &1.id) == ["b", "a", "c"]
+      assert Enum.map(moved.llm.providers, &ModelProfileHelpers.profile_id/1) == ["b", "a", "c"]
     end
 
     test "unknown id leaves the config unchanged" do
@@ -2130,9 +2011,16 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "matches string- or atom-keyed profile ids" do
       config = config_with([%{"id" => "a"}, %{id: "b"}])
 
+      config =
+        put_in(config, [:llm, :providers, Access.at(1)], %{
+          id: "b",
+          provider: "openai",
+          default_model: "example"
+        })
+
       moved = ModelProfileHelpers.move_model_profile(config, "b", "up")
 
-      assert Enum.map(moved.llm.models, &ModelProfileHelpers.profile_id/1) == ["b", "a"]
+      assert Enum.map(moved.llm.providers, &ModelProfileHelpers.profile_id/1) == ["b", "a"]
     end
   end
 
@@ -2203,108 +2091,69 @@ defmodule EvoDashWeb.SettingsLiveTest do
   end
 
   describe "LLM connection test" do
-    # The Connection Test button renders outside the disabled form, so it
-    # remains clickable on a remote node. The test_llm handler extracts the
-    # model/gen_opts from the selected profile in the common path, then routes
-    # through EvoGit.RemoteNode.llm_test/3 when remote_config is true (testing
-    # the REMOTE node's LLM) or EvoGit.SystemCheck.llm_test/2 when false
-    # (testing the LOCAL LLM). Both branches set status to :testing.
-    #
-    # NOTE on the profile fixture: these tests only assert the handler's
-    # SYNCHRONOUS behaviour (status → :testing + a spawned task). The handler
-    # spawns a detached `Task.Supervisor` child that runs the real
-    # `SystemCheck.llm_test/2`, which would make an actual streaming provider
-    # request. That task outlives the test, so its ReqLLM
-    # "Streaming provider/API request failed" warning is logged after ExUnit's
-    # log-capture window and leaks into the console as test noise (and the
-    # request is pure waste in a unit test). An EMPTY model value still takes
-    # the handler's "profile has a model" branch (`""` is truthy) but makes
-    # `SystemCheck.guarded_llm_test/3` short-circuit to
-    # `{:error, "No LLM model configured"}` BEFORE any network I/O — so no
-    # request goes out and nothing is logged, while every assertion (and its
-    # intent: the found-profile branch proceeds, unlike the `model: nil` case
-    # below) is preserved.
+    # Never dispatch a real local provider request. A missing remote BEAM
+    # exercises the async handler and its error result without HTTP or ambient
+    # credentials; current_node, NOT the remote_config flag, owns the route.
+    test "canonical model selection starts off-process for either remote_config flag" do
+      alias EvoDashWeb.{SettingsComponents, SettingsLive}
+      alias EvoDashWeb.SettingsLive.ConfigIO
 
-    test "test_llm handler routes through remote node when remote_config is true" do
-      alias EvoDashWeb.SettingsLive
-
-      file_config =
-        EvoDashWeb.SettingsLive.ConfigIO.load_file_config()
-        |> put_in([:llm, :models], [
-          %{id: "test_profile", model: ""}
-        ])
-
-      socket = %Phoenix.LiveView.Socket{
-        assigns: %{
-          __changed__: nil,
-          flash: %{},
-          remote_config: true,
-          llm_test_status: :idle,
-          file_config: file_config,
-          current_node: node()
+      file_config = %{
+        llm: %{
+          providers: [
+            %{
+              "id" => "account",
+              "provider" => "openai",
+              "default_model" => "example",
+              "models" => [%{"model" => "example"}, %{"model" => "other"}]
+            }
+          ]
         }
       }
 
-      assert {:noreply, result_socket} =
-               SettingsLive.handle_event("test_llm", %{"profile_id" => "test_profile"}, socket)
+      selection = Enum.find(ConfigIO.model_selections(file_config), &(&1.model == "other"))
+      selected = SettingsComponents.model_selection_value(selection)
 
-      # Status should move to :testing (the async task was spawned).
-      assert result_socket.assigns.llm_test_status == :testing
+      for flag <- [true, false] do
+        socket = %Phoenix.LiveView.Socket{
+          assigns: %{
+            __changed__: nil,
+            flash: %{},
+            remote_config: flag,
+            llm_test_status: :idle,
+            file_config: file_config,
+            current_node: :"missing_settings_test@127.0.0.1",
+            test_profile_id: selected
+          }
+        }
+
+        assert {:noreply, result} = SettingsLive.handle_event("test_llm", %{}, socket)
+        assert result.assigns.llm_test_status == :testing
+        assert_receive {:llm_test_result, {:error, _}}, 5_000
+      end
     end
 
-    test "test_llm handler proceeds when remote_config is false" do
-      # On the local node, the test should start (status moves to :testing).
-      # We don't verify the actual LLM call (that's in the spawned task), just
-      # that the handler doesn't reject and sets status to :testing.
-      alias EvoDashWeb.SettingsLive
-
-      file_config =
-        EvoDashWeb.SettingsLive.ConfigIO.load_file_config()
-        |> put_in([:llm, :models], [
-          %{id: "test_profile", model: ""}
-        ])
-
+    test "test_llm rejects a removed provider selection without starting work" do
       socket = %Phoenix.LiveView.Socket{
         assigns: %{
           __changed__: nil,
           flash: %{},
-          remote_config: false,
           llm_test_status: :idle,
-          file_config: file_config,
+          file_config: %{llm: %{providers: []}},
           current_node: node()
         }
       }
 
-      assert {:noreply, result_socket} =
-               SettingsLive.handle_event("test_llm", %{"profile_id" => "test_profile"}, socket)
+      assert {:noreply, result} =
+               EvoDashWeb.SettingsLive.handle_event(
+                 "test_llm",
+                 %{"profile_id" => "removed"},
+                 socket
+               )
 
-      assert result_socket.assigns.llm_test_status == :testing
-    end
-
-    test "test_llm handler flashes error when selected profile has no model" do
-      alias EvoDashWeb.SettingsLive
-
-      file_config =
-        EvoDashWeb.SettingsLive.ConfigIO.load_file_config()
-        |> put_in([:llm, :models], [%{id: "empty_profile", model: nil}])
-
-      socket = %Phoenix.LiveView.Socket{
-        assigns: %{
-          __changed__: nil,
-          flash: %{},
-          remote_config: false,
-          llm_test_status: :idle,
-          file_config: file_config,
-          current_node: node()
-        }
-      }
-
-      assert {:noreply, result_socket} =
-               SettingsLive.handle_event("test_llm", %{"profile_id" => "empty_profile"}, socket)
-
-      # Status should remain :idle (no test was started) — the no-model branch
-      # is taken instead of the success branch that sets :testing.
-      assert result_socket.assigns.llm_test_status == :idle
+      assert result.assigns.llm_test_status == :idle
+      assert result.assigns.flash["error"] == "Selected profile has no model configured."
+      refute_receive {:llm_test_result, _}, 0
     end
   end
 
