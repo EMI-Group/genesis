@@ -56,6 +56,9 @@ The cost suite is synchronous because it pins the global scheduler profiles and 
 Unlocked builders retain the complete account/model/effort selection in `opts[:default_model_spec]`, leave `spec.model_spec` nil and omit `opts[:model_spec]`, so each spawn can consult the selection script before the inherited fallback.
 Locked builders retain explicit selections in both `spec.model_spec` and `opts[:model_spec]`, and locked registration overrides conflicting child selectors and scripts through grandchildren.
 Child and grandchild script reselection preserves ancestor effective selections, and a reselected child's complete selection becomes its own unlocked grandchild's fallback.
+The script-override tests feed actual `SubagentProcessing.build_subagent_specs/2` output directly into `Dispatch.register_agent/7`, rather than reconstructing inherited options by hand.
+Complete unlocked fallback is covered when no script is configured, but no test registers an unlocked builder-produced child or grandchild while a configured script returns nil for that spawn; the depth-2 override test installs its script only after registering the child.
+Locked-parent coverage configures a conflicting script and proves the inherited selection wins for child and grandchild, but does not use an invocation marker to distinguish skipping the script from evaluating and discarding its result.
 Legacy-only inheritance omits both canonical selection options rather than emitting an explicit nil selection.
 Its real SSE helper captures headers and bodies to verify selected-account endpoint/authentication, effective model, effort and nested generation settings through ordinary turns and successful compression.
 The inheritance suite is synchronous because it pins the global scheduler configuration and model-selection script/config integration, with unique production-shaped ETS rows and PeakHourEngine suspension.
