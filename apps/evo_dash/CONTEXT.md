@@ -14,9 +14,10 @@ Users open a Project (a Git repository path) and the dashboard auto-detects the 
 - `./lib/evo_dash/` → Domain modules (`EvoDash.Application`, `ChatHistory`, `NodeContext`, `DirectoryPicker` + `Wx` seam, `UpdateStatus`, `DesktopLifetime`, `ConnectionDiagnostics`, `AttachedFile`, `MarkdownRender`, `SettingsUtils`, `SafeCall`) — `lib/evo_dash/CONTEXT.md`
 - `./lib/evo_dash_web/` → Web interface: endpoint, router, `live_view/0` macro (5 on-mount hooks), Gettext, Helpers, Telemetry — `lib/evo_dash_web/CONTEXT.md`
 - `./lib/evo_dash_web/live/` → LiveView pages + support subdirs + `components/` LiveComponents — `live/CONTEXT.md`
-- `./lib/evo_dash_web/live/projects_live/` → `Project`, `ProjectFlow`, `Assigns`, `StatePersistence`, `AttachFile`, `GitHub`, `RemoteView` — `live/projects_live/CONTEXT.md`
-- `./lib/evo_dash_web/live/settings_live/` → `NodeData`, `ModelProfileHelpers`, `ModelProfileEvents`, `ConfigIO`, `SearchEvents`, `CustomAgentEvents` — `live/settings_live/CONTEXT.md`
-- `./lib/evo_dash_web/live/home_live/` → `Transcript`, `Messages`, `AgentStream`, `AssistantMessage`, `ChatState`, `ApprovalCard` — `live/home_live/CONTEXT.md`
+- `./lib/evo_dash_web/live/projects_live/` → `Project`, `ProjectFlow`, `AsyncLoad`, `LaunchOptions`, `Assigns`, `StatePersistence`, `AttachFile`, `GitHub`, `RemoteView` — `live/projects_live/CONTEXT.md`
+- `./lib/evo_dash_web/live/settings_live/` → `ProviderProfiles`, `ModelProfileHelpers`, `ModelProfileEvents`, `ConfigIO`, `NodeData`, `AuthStatus`, `SearchEvents`, `CustomAgentEvents` — `live/settings_live/CONTEXT.md`
+- `./lib/evo_dash_web/live/home_live/` → `Transcript`, `Messages`, `AgentStream`, `AssistantMessage`, `ChatState`, `ModelSelect`, `ApprovalCard`, `ApprovalWorkflow` — `live/home_live/CONTEXT.md`
+- `./lib/evo_dash_web/live/welcome_live/` → `Setup` (local-only canonical provider onboarding, multi-model/default/reasoning/auth draft and connection-test preparation) — `live/welcome_live/CONTEXT.md`
 - Genesis Assistant (sidebar label **Assistant**, route `/help`) operational-assistant design constraints (fresh reflect task per send, bounded lossy transcript preamble, no mid-run follow-up, ephemeral approvals, local-source gate and remote-target caveats) → `live/CONTEXT.md` + `live/home_live/CONTEXT.md`; transient shared chat-cache isolation and approval-routing semantics → `lib/evo_dash/CONTEXT.md`.
 - `./lib/evo_dash_web/live/review_live/` → `LoadData`, `MergeCheck`, `ArchiveLoad`, `Actions` — `live/review_live/CONTEXT.md`
 - `./lib/evo_dash_web/live/system_live/` → `Status`, `Charts`, `UpdateCard`, `SourceCard`, `RuntimeControls` — `live/system_live/CONTEXT.md`
@@ -27,8 +28,9 @@ Users open a Project (a Git repository path) and the dashboard auto-detects the 
 - `./lib/evo_dash_web/components/task_card_components/` → the task card's helper submodules (`result_render`, `repos`, `options`, `archive`, `errors`) + the card's `task`/`detail` contract — `components/task_card_components/CONTEXT.md`
 - Token/cost usage displays ("Input/Output/Total Tokens", "Cached Tokens", "Cache Creation", "Cache Hit Rate", "Input/Output/Total Cost", "Token & Cost Usage") — the 5 display sites, shared `Helpers.format_cost/1`/`format_cache_hit_rate/1`, `<.tip/>` convention, i18n rules, tests → `components/CONTEXT.md` → "Token & Cost Usage Display Sites"
 - Task-form speed ↔ quality control — segmented Fast / Balanced / High quality at the prompt area's bottom-LEFT (`@quality_level`, event `select_quality_level`, task opt `:quality_level` STRING, `"balanced"` omitted, persisted via `StatePersistence`) → `components/CONTEXT.md` + `live/projects_live/CONTEXT.md`
-- LLM selection/configuration boundaries — configured flat model-profile identity versus catalog provider/model navigation, task locks and persistence hazards, Assistant/onboarding differences and profile-editor payloads → `live/CONTEXT.md`, `live/projects_live/CONTEXT.md`, `live/home_live/CONTEXT.md`, `live/settings_live/CONTEXT.md`, `components/CONTEXT.md`, `components/settings_components/CONTEXT.md`; generic RPC and config-map helper constraints → `lib/evo_dash/CONTEXT.md`.
-- OAuth / subscription LLM auth in model profiles — per-profile `auth_mode` (`"api_key"` default / `"oauth"`) + optional `oauth_file`, offered only for OAuth-capable providers (the OAuth-only `:openai_codex` gets a static Subscription badge, `auth_mode: "oauth"` stamped at creation and no API-key prompt); a per-profile credential line (login detected + expiry / no-login guidance with `EvoGit.Auth.login_instructions/1` and the managed path / neutral "unknown") is loaded off-process by `EvoDashWeb.SettingsLive.AuthStatus` with node + seq stale guards → `live/settings_live/CONTEXT.md` + `components/settings_components/CONTEXT.md`
+- Shared LLM provider/model/reasoning controls — `EvoDashWeb.LLMSelection` (`live/llm_selection.ex`) owns core-backed defaults, legacy-id migration, reconciliation and strict launch options; `EvoDashWeb.LLMSelectionComponents` owns the three controls and discrete slider decoding → `live/CONTEXT.md` + `components/CONTEXT.md`.
+- Canonical provider configuration, Settings editor and node-aware selection persistence → `live/settings_live/CONTEXT.md`, `components/settings_components/CONTEXT.md`, `live/projects_live/CONTEXT.md`, `live/home_live/CONTEXT.md` and `live/welcome_live/CONTEXT.md`; generic RPC and config-map helper constraints → `lib/evo_dash/CONTEXT.md`.
+- OAuth / subscription auth belongs to provider profiles; node-correct credential status/guidance is loaded off-process by `EvoDashWeb.SettingsLive.AuthStatus` with node + seq stale guards → `live/settings_live/CONTEXT.md` + `components/settings_components/CONTEXT.md`.
 - Paged task archive (one row per agent archive; page size 100 with `include_results: false`, "Load more" appends, per-agent lazy `NodeContext.get_agent_archive/3` behind a "Show result" control, 300-record render cap, orphan-parent promotion, node-aware JSON export streamed from `list_task_archives(include_results: true, include_settings: true, limit: 200)`); the review page's Archive tab is GATED on the task's `:archive` opt (`ArchiveHelpers.archive_opt?/1`), accumulation is bounded by a 500-entry retention window (`ArchiveHelpers.retain_window/2,3`, offset = cumulative RAW rows fetched), and a short page clamps the total + shows "No more archive entries." (`more_pages?/3`) → `live/review_live/CONTEXT.md`, `live/tasks_live/CONTEXT.md`, `components/review_components/CONTEXT.md`, `components/task_card_components/CONTEXT.md`, `controllers/CONTEXT.md`, `lib/evo_dash/CONTEXT.md` ("Lightweight task reads")
 - `./lib/evo_dash_web/controllers/` → Classic HTTP controllers (`task_export_controller.ex`), error handlers
 - LiveView data-load & exit-safety contract — no LiveView blocks on a task-store / registry / cross-node RPC call, no loading flag can wedge (`:exit`/timeout → retry-able error state), no page renders unbounded blobs; every call goes through `EvoDash.SafeCall` (`run/1,2`, `start/3,4`), loads are async (`EvoDash.TaskSupervisor` + self-message) with monotonic-seq + node stale-guards, caps live in `Helpers.blob_preview/2`/`list_preview/2` + `ArchiveHelpers.build_tree_capped/2` → `live/CONTEXT.md` ("async data-load & exit-safety contract", "Test seams"), `components/CONTEXT.md` ("Blob & Collection Rendering Caps"), `live_hooks/CONTEXT.md`, `lib/evo_dash/CONTEXT.md` (`SafeCall`)
@@ -63,7 +65,7 @@ Users open a Project (a Git repository path) and the dashboard auto-detects the 
 | `GET /` | `ProjectsLive :index` | Projects page (same LiveView/action as `/projects`, no redirect) |
 | `GET /projects` | `ProjectsLive :index` | Projects page — palette selector, task form, settings, task history |
 | `GET /help` | `HomeLive :index` | Genesis Assistant page (general-purpose agent understanding and controlling Genesis; `:reflect` tasks) |
-| `GET /welcome` | `WelcomeLive :index` | First-run quick-LLM-setup |
+| `GET /welcome` | `WelcomeLive :index` | Local-only provider onboarding — multiple models, default/reasoning controls and API-key/OAuth setup |
 | `GET /welcome/complete` | `WelcomeCompleteLive :index` | Example objective + "Go to Dashboard" |
 | `GET /tasks` | `TasksLive :index` | Task history — filters, search, pagination, expandable cards, cancel/force-kill |
 | `GET /agents` | `AgentsLive :index` | Agent tree / commit-graph inspector + chat history + token/cost usage |
@@ -76,23 +78,59 @@ Users open a Project (a Git repository path) and the dashboard auto-detects the 
 | `GET /dashboard` | `ProjectsLive :system_dashboard` | Full-bleed LiveDashboard iframe (no header chrome) |
 | `GET /phoenix/dashboard` | `Phoenix.LiveDashboard` | Built-in metrics/telemetry dashboard |
 
-### Multi-Model LLM Support
+### Canonical LLM Provider Profiles & Selection
 
-The dashboard supports the core's `[[llm.models]]` profile array: per profile id, model, concurrency, gen params, optional `context_window` (blank = core default 200000), optional OAuth fields (`auth_mode`, `oauth_file`) and optional peak/off-peak fields (`peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`, per-window `days`). Absent/empty peak keys are OMITTED from the profile so TOML omits them; `peak_concurrency = 0` is a valid hard pause.
+The dashboard's canonical configuration is `llm.providers` plus `llm.default_provider_profile`, not a flat `llm.models` editor.
+Provider profiles hold account identity, authentication/endpoint, shared concurrency and peak schedules, context/generation/reasoning defaults, a `default_model` and optional nested model overrides.
+Provider/model maps use string keys; the Settings persistence boundary writes the atom-keyed `:llm` container and canonical collection/default keys.
+Model override rows are not an allowlist: a default-only provider is valid without a fabricated model row.
+Legacy `llm.models` and saved model-profile ids are migration inputs handled through core projections/resolution, never by splitting ids in dashboard code.
 
-- **Model profiles editor** (Settings LLM category) — `SettingsComponents.model_profiles_editor/1` + `ModelProfileHelpers`/`ModelProfileEvents`; duplicate ids rejected; day values normalize through the TOTAL `ModelProfileHelpers.normalize_days/1` at every consumption point; the edit form keeps unsaved input in a `:profile_form_draft` assign so peak-row add/remove never wipes typing. Detail: `live/settings_live/CONTEXT.md`.
-- **LLM category layout** — Quick Setup + editor + Connection Test render OUTSIDE the `save_category` form; the flat `[llm]` cards are DATA-DRIVEN from `EvoGit.Config.Schema.schemas_by_category/0` (`flat_llm_schemas/1`), so `compression_threshold_tokens`, `tool_result_pruning` and `tool_result_pruning_target_fraction` need no dashboard code. `update_runtime_from_file_config/2` pushes `:model_profiles` + concurrency keys to `EvoGit.AgentScheduler.update_config/1` (local only; remote saves use `reload_remote_config`).
-- **Per-task agent + model selection** (ProjectsLive + `TaskFormComponents.task_form/1`) — one card: Agent select (only when `@custom_agents != []`), Custom Agent mode (4th task mode → `{:evolve, "custom"}`, `:agent` REQUIRED), Model select ("Auto (by rules)" first when a model-selection script exists). An explicit profile threads `:model_id` + `:model_id_locked => true` unconditionally; "Auto (by rules)"/nil/"" → neither key. Detail: `components/CONTEXT.md` (Task Form) + `live/projects_live/CONTEXT.md`; the System-page example config and FAQ use the `[[llm.models]]` format.
+**Task controls (Projects and Assistant)**
 
-**OAuth / subscription auth (ChatGPT Codex, Anthropic Claude Pro/Max)** — driven entirely by core metadata (`EvoGit.Config.LLMCatalog.supports_oauth?/1` / `oauth_only?/1`, `EvoGit.Config.Schema.LLM.oauth_profile?/1`).
+`EvoDashWeb.LLMSelection` is the shared selection boundary, backed by core `Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2`.
+`EvoDashWeb.LLMSelectionComponents.llm_selection/1` renders provider-profile and model controls plus a discrete reasoning slider for the exact model's ordered effort inventory.
+The slider submits a zero-based index decoded by `resolve_reasoning_effort/3`, not a raw provider effort string; provider/model changes reset downstream defaults, and unsupported reasoning is omitted.
+Picker state contains only string-keyed `provider_profile_id`, `model` and optional `reasoning_effort`; nil means uninitialized/use the node default, while `%{}` (or a legacy empty string) means explicit Auto.
+Display reconciliation migrates legacy ids and falls back to valid node defaults for stale saved choices, but launch validation rejects invalid explicit selections instead of silently changing models.
+Explicit choices emit canonical `:model_spec` plus `model_id_locked: true`; Auto removes `:model_spec`, legacy `:model_id` and the lock.
+Projects uses `LaunchOptions` for both normal submissions and GitHub fixes, preserving custom-agent selection and the independent fast/balanced/high-quality policy.
+Assistant validates through `home_live/ModelSelect` before appending messages or clearing the composer.
+Detailed component, event and launch contracts live in `components/CONTEXT.md`, `live/CONTEXT.md`, `live/projects_live/CONTEXT.md` and `live/home_live/CONTEXT.md`.
 
-- **Profile fields**: `auth_mode` (`"api_key"` = default, `"oauth"`) is offered as a select only when the drafted/selected provider supports OAuth; the OAuth-only `:openai_codex` provider ("ChatGPT Codex (OAuth)") renders a static Subscription badge instead and NEVER an API-key prompt (Quick Setup swaps its credential form for login guidance).
-- **Clean TOML**: `auth_mode` is written only for OAuth-capable providers with an effective `"oauth"` (so an OAuth-only provider is stamped `auth_mode: "oauth"` at the `ModelProfileHelpers.add_model_profile/2` creation choke point); `"api_key"`/blank → key absent; `oauth_file` is written only while the mode is oauth and the value is non-blank after trim (blank = the managed default `EvoGit.Auth.default_oauth_file/0`). Non-OAuth providers never gain either key.
-- **Profile-only `oauth_file`**: `oauth_file` is a per-`[[llm.models]]`-profile override only — there is no global `[llm] oauth_file` key, and a blank value means the managed default `EvoGit.Auth.default_oauth_file/0`.
-- **Flat `[llm]` cards are schema-driven**: they render `EvoGit.Config.Schema.schemas_by_category/0` minus `SettingCard.@flat_llm_excluded_key_paths`, so no dashboard code enumerates the flat `[llm]` keys.
-- **Credential status + guidance**: `EvoDashWeb.SettingsLive.AuthStatus` loads one status per OAuth-enabled profile OFF-process (`EvoDash.TaskSupervisor` + `EvoDash.SafeCall`, message `{:settings_auth_status_loaded, node, seq, statuses}`, assigns `auth_statuses`/`auth_status_seq`, node + seq stale guards, `refresh_auth_status` for a manual recheck, no polling) — rendering "Login detected (expires …)" for `{:ok, _}`, "No subscription login found" + `EvoGit.Auth.login_instructions/1` + the managed path for a missing login, "Login found, managed credential file not writable" (amber) + the managed path + the "Set oauth_file on this profile to a writable location, then recheck." remedy when the core reports `{:error, {:managed_file_unwritable, _}}` (matched atom-precisely; the login guidance is withheld there because the login is not the problem), and neutral guidance with NO verdict for anything else (unknown / older remote daemon).
-- **Node correctness**: on a remote node the SAME core functions run on the remote machine via `EvoDash.NodeContext.call_remote/4`, so the verdict and path describe the remote config + vendor login file; any error, timeout or older daemon lacking the function degrades to unknown rather than borrowing the local machine's verdict.
-- **i18n**: every new string is `gettext`-wrapped (Chinese comments anchor the ambiguous short labels); the changed example-model msgids stay English until the release-time extraction — PO/POT are never hand-edited during feature work.
+**Node-aware persistence**
+
+Loaded config/picker bundles stay server-only because they may contain credentials; browser state and ChatHistory retain only canonical selection fields and scope metadata.
+Projects stores `model_spec` per target node, with canonical state taking precedence over legacy `selected_model_id`, including explicit Auto.
+Its model-only `persist_model_selection` event merges selection fields into the same node's saved form state without replacing prompt/form data; restores can wait for the correct async config bundle.
+Assistant scopes selection by both target id and BEAM node, retains it across same-scope New chat, and resets it on scope changes; unscoped legacy ids migrate locally only.
+Async loads reject stale node/target/generation results, and pending or disconnected remote targets never borrow local models or credentials to launch a task.
+Details belong to `live/projects_live/CONTEXT.md`, `live/home_live/CONTEXT.md` and `assets/CONTEXT.md`.
+
+**Settings and onboarding**
+
+Settings renders `ProviderProfilesEditor` outside the generic category form, with `settings_live/ProviderProfiles`, `ModelProfileHelpers` and `ModelProfileEvents` owning canonical transformations and detached editor events.
+The draft preserves unsaved nested rows; provider CRUD/default/rename and all category/search/reset save paths pass through `ConfigIO.canonicalize_file_config/1`, migrate legacy collections and remove shadow keys while preserving unrelated config.
+The remaining flat `[llm]` cards are schema-driven compression/pruning controls, not provider/model editors.
+Local runtime updates use core effective `Schema.model_profiles/1`; remote saves reload and refetch the viewed node's nested config.
+Settings connection tests resolve the persisted provider/model on the viewed node and pass its full resolved model spec and generation/auth options to the core test API, never local credentials for a remote test.
+Welcome is local-only: provider/variant selection supports multiple models, one default model, per-model reasoning defaults and API-key or supported OAuth authentication.
+`welcome_live/Setup` builds and validates a canonical provider draft before credential/config writes; it reads raw TOML, preserves unrelated config and existing legacy entries verbatim, appends the new account and sets its default without writing resolved migration artifacts.
+Welcome connection tests use the draft's default model/auth/reasoning and reject superseded draft/node results.
+Detailed editor, validation, payload and onboarding contracts live in `live/settings_live/CONTEXT.md`, `components/settings_components/CONTEXT.md` and `live/welcome_live/CONTEXT.md`.
+
+**OAuth / subscription authentication**
+
+Authentication belongs to the provider profile: `auth_mode` selects API key or subscription for supported providers, OAuth-only providers force subscription, and optional `oauth_file` overrides the managed default `EvoGit.Auth.default_oauth_file/0` (there is no global `[llm] oauth_file`).
+`SettingsLive.AuthStatus` loads credential status off-process for the viewed node with node/sequence stale guards and explicit refresh, never polling or borrowing local login state.
+Guidance distinguishes missing login, an unwritable managed file and unknown status; an unwritable file offers a writable `oauth_file` remedy rather than asking the user to log in again.
+Core metadata owns provider capability and login instructions; detailed status/render contracts live in `live/settings_live/CONTEXT.md` and `components/settings_components/CONTEXT.md`.
+
+**Pending core integration validation**
+
+The dashboard calls the canonical Schema facade, but `EvoGit.Config.Schema` does not yet export `provider_profiles/1`, `model_selections/1` or `resolve_model_spec/2`, although implementations exist in `Schema.ProviderProfiles`.
+Core `EctoValidation.type_errors/3` also lacks the `:provider_profiles` clause required by the canonical schema descriptor, blocking normal configuration boot/validation and full Mix integration tests.
+These are core-owned integration prerequisites, not reasons to add dashboard fallbacks or bypass validation; validate the normal dashboard suite after they land.
 
 ### Custom Tools (Settings → Agents)
 
@@ -146,7 +184,15 @@ Opt-in only, and the archive NEVER rides a page load: every page reads a lite ta
 
 ### Genesis Assistant Page (`HomeLive` at `GET /help`)
 
-ChatGPT-style chat that IS the Genesis Assistant — a general-purpose agent that understands Genesis and operates it, wired to the self-reflective agent and the ONLY entry for `:reflect` tasks; sidebar **Assistant** entry (the `/help` route is unchanged). Send flow: `Transcript.build_preamble/1` (last 8 exchanges, 600 chars/entry, 4000-char cap) + message → `EvoDash.NodeContext.start_task(node, :reflect, mode: "reflect", objective: ...)` with NO `:path`; streaming rides `"agents"`/`"tasks"` PubSub + async `get_agent_history/2` (the `:agent_updated` `changed_fields` is a KEYWORD LIST — guard with `is_list`/`Keyword.has_key?`); the terminal render comes from the task result, behind two monotonic stale-guards (`chat_fetch_seq`, `chat_task_fetch_seq`). Each assistant response is a **mini task-card chat message** (`home_live/assistant_message.ex`) reusing `Helpers.task_status_badge/1`, the streamed text, and a collapsible "Thought process" (思考过程) via `AgentsLive.ToolCallDisplay`. Chat state survives remounts via `EvoDash.ChatHistory` (ETS-backed), restored on connected mount (mid-run mounts get a one-shot reconciliation fetch, no polling); New chat = new persisted chat + `prune(10)` (local node only). Enter sends / Shift+Enter newlines, Stop = graceful cancel. The empty state greets with "What would you like Genesis to do?" and offers four operator-flavoured suggestion chips ("Show my running tasks", "Check system status and capacity", "Start a task for me", "Explain how tasks are scheduled") that send their text as the chat message.
+ChatGPT-style chat that IS the Genesis Assistant — a general-purpose agent that understands Genesis and operates it, wired to the self-reflective agent and the ONLY entry for `:reflect` tasks; sidebar **Assistant** entry (the `/help` route is unchanged).
+The header uses the shared provider/model/reasoning picker; the transcript scrolls independently above pinned approval cards and the bottom composer, and New chat is idle-only.
+Send flow: `Transcript.build_preamble/1` (last 8 exchanges, 600 chars/entry, 4000-char cap) + message → `EvoDash.NodeContext.start_task(node, :reflect, mode: "reflect", objective: ...)` with NO `:path`, after canonical node-scoped model-option validation.
+Streaming rides `"agents"`/`"tasks"` PubSub + async `get_agent_history/2` (the `:agent_updated` `changed_fields` is a KEYWORD LIST — guard with `is_list`/`Keyword.has_key?`); the terminal render comes from the task result, behind two monotonic stale-guards (`chat_fetch_seq`, `chat_task_fetch_seq`).
+Each assistant response is a **mini task-card chat message** (`home_live/assistant_message.ex`) reusing `Helpers.task_status_badge/1`, the streamed text, and a collapsible "Thought process" (思考过程) via `AgentsLive.ToolCallDisplay`.
+Chat state survives remounts via `EvoDash.ChatHistory` (ETS-backed), restored on connected mount (mid-run mounts get a one-shot reconciliation fetch, no polling).
+New chat creates a new persisted chat + `prune(10)` (local node only), retaining same-scope selection; node/target changes reset the selection scope as described above.
+Enter sends / Shift+Enter newlines, Stop = graceful cancel.
+The empty state greets with "What would you like Genesis to do?" and offers four operator-flavoured suggestion chips ("Show my running tasks", "Check system status and capacity", "Start a task for me", "Explain how tasks are scheduled") that send their text as the chat message.
 
 **Genesis Assistant approvals** — `home_live/ApprovalWorkflow` loads actual `EvoGit.CommandApproval.pending/0` requests off-process through the existing node-aware RPC boundary after chat restoration, with chat/source-node filtering, monotonic scope guards and broadcast/snapshot race protection.
 Evaluator read-tier requests need no card; write-tier requests show exact original Elixir and target with an Allow once action, while sudo-tier requests prominently warn about unrestricted ordinary Elixir affecting live runtime processes, files and configuration, no rollback, and not OS root.
@@ -165,10 +211,13 @@ UI: the TasksLive card Cancel button (`[:pending, :running]`) → confirmation m
 
 - `HomeLive` — Genesis Assistant page (`GET /help`); see "Genesis Assistant Page".
 - `ProjectsLive` — Projects page (`GET /` + `/projects`): floating sticky top bar (command-palette project selector + Configure dropdown) over a three-zone prompt editor (`TaskFormComponents.task_form/1`) with the adaptive input layout (`data-layout="compact"|"expanded"`, `AdaptiveInput` hook). Detail: `live/projects_live/CONTEXT.md`.
-- `WelcomeLive` / `WelcomeCompleteLive` — onboarding: stepwise quick-LLM-setup (provider → variant → model → credentials) with a merged single-action save, then `/welcome/complete` (copyable example objective). WelcomeLive shows the app version ("Genesis %{version}", `Application.spec(:evo_git, :vsn)`) — the ONLY dashboard version display.
+- `WelcomeLive` / `WelcomeCompleteLive` — local-only onboarding: provider/variant → multiple models → default model and per-model reasoning defaults → API-key or subscription credentials, with validated canonical save and scoped connection test, then `/welcome/complete` (copyable example objective).
+  WelcomeLive shows the app version ("Genesis %{version}", `Application.spec(:evo_git, :vsn)`) — the ONLY dashboard version display.
+  Detail: `live/welcome_live/CONTEXT.md`.
 - `ReviewLive` — code review; see "Code Review Page" + `live/review_live/CONTEXT.md`.
 - `AgentsLive` — dual-view inspector (segmented control): spatial agent tree vs temporal commit-history graph (commit-centric VERTICAL GitLens-style, one lane per agent plus a neutral pre-task lane 0, globally interleaved rows, dashed spawn/merge-back connectors, no pan/zoom); fully async + push-driven. The temporal view fetches TASK-SCOPED (`NodeContext.list_task_commit_graph/5`) so it covers the whole task via durable refs and retains ended agents in-session (`@retained_agents`); compression % bars use each agent's own `compression_threshold`, else `[:llm, :compression_threshold_tokens]`, else `180_000` (`ThresholdCache.threshold_for_agent/2`). — `live/agents_live/CONTEXT.md`.
-- `SettingsLive` — config GUI editor (LLM = model-profiles editor; `:agents` = custom agents + model-selection script + custom-tools panel; Nix category gating via `PlatformInfo.show_nix_category?/1` with a `:nix_available_override` seam); remote loading/saves ASYNC (`NodeData`), local saves synchronous but `SafeCall`-wrapped. Detail: `live/settings_live/CONTEXT.md`.
+- `SettingsLive` — config GUI editor (LLM = canonical provider-profiles editor, catalog Quick Setup and persisted-selection Connection Test; `:agents` = custom agents + model-selection script + custom-tools panel; Nix category gating via `PlatformInfo.show_nix_category?/1` with a `:nix_available_override` seam); remote loading/saves ASYNC (`NodeData`), local saves synchronous but `SafeCall`-wrapped.
+  Detail: `live/settings_live/CONTEXT.md`.
 - `SystemLive` — Software Update card (desktop+local only) → System Self-Check (health banner + check grid incl. the local-only Genesis Source card) → scheduler charts → grouped System Controls (System Dashboard, pause/resume, VM restart/stop — the LAST section). Detail: `live/system_live/CONTEXT.md`.
 - `TasksLive` — task history: ONE page load of summary rows, detail + paged archive fetched lazily, fully push-based, sync per-click mutations. Detail: `live/tasks_live/CONTEXT.md`.
 - All LiveViews register `EvoDashWeb.LiveHooks.NodeAware` on_mount (via the `evo_dash_web.ex` macro), call `assign_node/2` in `handle_params/3`, and pass node context to `Layouts.app`.
@@ -179,7 +228,8 @@ The Projects page surfaces the active project's GitHub issues (existing repos on
 
 ### UI Components (`./lib/evo_dash_web/components/`)
 
-`CoreComponents` (base + flash kinds + `icon/1`), `GitHubComponents` (issues modal), `ProjectComponents` (command palette + project settings), `TaskFormComponents` (single-card two-layout objective editor — see Multi-Model for agent/model selects), `TaskCardComponents` (+ `task_card_components/` helper submodules; summary-map-safe task cards), `ArchiveComponents` (+ `EvoDashWeb.ArchiveHelpers`), `ReviewComponents` (+ `review_components/`), `AgentsComponents` (+ `agents_components/`), `SettingsComponents` (+ `settings_components/`), `RemoteGateComponents` (connection gate, `gate_active?/1`), `Layouts` (sidebar app shell, `simple_nav`, theme toggles, language selector, node selector, `NodeSwitchFade`). Full detail incl. field-usage audit + known issues: `components/CONTEXT.md`.
+`CoreComponents` (base + flash kinds + `icon/1`), `GitHubComponents` (issues modal), `ProjectComponents` (command palette + project settings), `TaskFormComponents` (single-card two-layout objective editor with independent agent/quality controls), `LLMSelectionComponents` (shared canonical provider/model/reasoning controls), `TaskCardComponents` (+ `task_card_components/` helper submodules; summary-map-safe task cards), `ArchiveComponents` (+ `EvoDashWeb.ArchiveHelpers`), `ReviewComponents` (+ `review_components/`), `AgentsComponents` (+ `agents_components/`), `SettingsComponents` (+ `settings_components/`, including `ProviderProfilesEditor` and `ProviderProfileFields`), `RemoteGateComponents` (connection gate, `gate_active?/1`), `Layouts` (sidebar app shell, `simple_nav`, theme toggles, language selector, node selector, `NodeSwitchFade`).
+Full detail incl. field-usage audit + known issues: `components/CONTEXT.md`.
 
 ### Auto-Update (Tauri Updater)
 
@@ -207,18 +257,15 @@ The dashboard consumes the core's writable-foreign-repo feature (core: `apps/evo
 - **Resume/auto-resolve carry foreign repos**: core `ResumeContext.apply_resume_context/3` and `MergeContext.apply_merge_context/4` carry `:foreign_repos`, so the existing dashboard opts suffice.
 - **TasksLive repo dimension**: the COLLAPSED card derives its badge row from the SUMMARY via pure `Repos.task_repos/2` (primary from `commit_sha`/`branch_name`, foreign from `opts[:foreign_repos]`, enriched by the lazy detail's `repos` map, `nil` for single-repo) rendered by `result_repos_badges/1`; the expanded detail and Full Result modal use `result_repos/1`. Card contract: `components/task_card_components/CONTEXT.md`.
 
-### Config-Status Warning Surfaces (no-LLM-model warnings) & Reload Semantics
+### Config Status & Reload Semantics
 
-Three notions of "LLM model configured" can visibly diverge (a working model can still raise "Missing Configuration"):
-
-1. **Core `EvoGit.Config.config_status/0`** requires a resolved profile whose `:model` is a NON-EMPTY BINARY; a ReqLLM map-form `:model` spec (with `base_url`/`extra`, used for OpenAI-compatible endpoints) fails it although the schema, editor dropdowns, scheduler and connection test all accept it — divergence recorded in `apps/evo_git/lib/evo_git/config/CONTEXT.md`.
-2. **Global layout toast** (`components/layouts.ex`) — fixed bottom-right on EVERY page when `@config_status && not @config_status.ok?`; the assign is seeded per page and no page re-runs it on config-save events, so it goes STALE after a Settings save until a full remount.
-3. **Settings banners** (`live/settings_live.ex`) — amber "Missing Configuration" (same `config_status.ok?`), red "Remote Configuration Unavailable" (`@remote_config_error`), red "No LLM Model Configured" (checks ONLY `get_in(@file_config, [:llm, :models])` list presence — silent while config_status warns, and vice versa).
-
-- **Node correctness**: projects/tasks/review compute the LOCAL config_status once at mount BEFORE `?node=` resolution (a remote-node page shows the LOCAL health); agents/system/settings are node-correct (per-page assigns in the respective `live/*/CONTEXT.md`). A Settings save broadcasts only `{:scheduler_config_updated, node}`, whose subscribers refresh paused state — not config_status.
-- **Save plumbing**: local `persist_file_config/3` → `NodeContext.save_user_config` → `EvoGit.Config.save_user_config/1` (writes `Config.config_path()`, the path config_status reads) → re-read + `config_status()` + `update_runtime_from_file_config/2` → `AgentScheduler.update_config` → broadcast. Remote saves use `reload_remote_config(node)` → `get_resolved_config(node)` (FULL nested config, map-form `llm.models` preserved); the legacy FLAT-map `remote_config_to_file_config/1` sets `llm.models` only when `:model_profiles` is non-nil and non-empty, so missing/`[]` fires "No LLM Model Configured".
-- **Connection test** (`test_llm`) tests the persisted profile (never unsaved drafts) via `EvoGit.SystemCheck.llm_test/2` (binary OR map model, real request, per node) and never re-runs config_status — a pass proves reachability, not config-status-green. No launch-time validation exists: the task form hides the model select when `@model_profiles == []` silently and `task_submit` threads no `:model_id`, so the core rejects at agent spawn → `:failed`.
-- **Welcome flow / empty states**: the projects-page first-run gate is `EvoGit.Config.VersionState.onboarding_needed?()` → `push_navigate` to `/welcome` (no `show_welcome` modal); welcome_live's `has_model?` is raw `file_config[:llm][:models] != []`. `Helpers.config_status_badge/1` is DEAD code (no embed sites); a `:model`-empty profile still renders as a selectable row everywhere — only nil/blank `id` is filtered.
+`config_status` drives the global layout warning and the Settings "Missing Configuration" banner; it is a core health verdict, not a replacement for canonical selection validation.
+Settings' "No LLM Model Configured" banner checks `ConfigIO.model_selections(@file_config)`, not raw legacy `llm.models`; remote config-load failures have a separate "Remote Configuration Unavailable" banner.
+All Settings save paths use the canonical persistence boundary described above, then reload authoritative config and refresh Settings health/OAuth state; other mounted pages' health assigns may remain stale until their own reload/remount.
+A successful persisted-selection connection test proves provider reachability, not that every health-warning surface has been recomputed.
+Projects' first-run gate remains `EvoGit.Config.VersionState.onboarding_needed?()` → `/welcome`; Welcome's all-set state uses `Setup.has_model?/1` for canonical or legacy config.
+Projects and Assistant validate explicit canonical selections before launch; missing, stale or pending-remote selection data must not silently fall back to a local/default task.
+Detailed health, save, selection and node-loading contracts belong to `live/CONTEXT.md`, `live/settings_live/CONTEXT.md`, `live/projects_live/CONTEXT.md`, `live/home_live/CONTEXT.md` and `live/welcome_live/CONTEXT.md`.
 
 ## Constraints
 
