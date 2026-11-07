@@ -117,7 +117,8 @@ Census by MODULE (the unit ExUnit parallelises), not by file: 89 case modules ac
 Eight files hold both kinds (`review_live_test.exs` 9 case modules, `node_context_test.exs` 2, `node_aware_test.exs` 2, and `projects_live_test.exs`, `settings_live_test.exs`, `system_live_test.exs`, `welcome_live_test.exs`, `welcome_complete_live_test.exs` with one async + one sync module each); the other 66 files are a single case module.
 The other 24 `defmodule`s in this tree (113 total) are helpers with no case template: 18 in the test files (the review/settings/system/projects `Helpers` modules, the fake `ConnectionManager` GenServers, `SafeCallTest.SlowServer`, the diff-viewer `Foo`) and 6 in `support/`; three of them (`review_live_test`, `system_live_test`, `settings_live_test`) still `use EvoDashWeb.ConnCase` for its imports without running tests.
 ExUnit drains ALL async modules before starting any sync one (`ExUnit.Runner.async_loop/4`), so a flip is unsafe only when a module shares a MUTABLE global with another ASYNC module.
-No `async: false` module is blocked by the config dir: `EvoGit.Platform.config_dir/1` resolves through the `:config_dir_fun` seam per process (own dictionary, then the `$callers` chain — LiveViewTest sets a view's `$callers` to the test pid), so a config-writing module isolates with `setup`-time `EvoDash.Test.ConfigDir.isolate!/1` and stays async.
+Config-directory isolation itself is not a reason for `async: false`: `EvoGit.Platform.config_dir/1` resolves through the `:config_dir_fun` seam per process (own dictionary, then the `$callers` chain — LiveViewTest sets a view's `$callers` to the test pid), so a config-writing module can isolate with `setup`-time `EvoDash.Test.ConfigDir.isolate!/1` and stay async.
+The mounted-only `support/config_dir_test.exs` proof is synchronous because async Projects tests replace the global `:projects_async_load_runner`, which can bypass its real configuration load; its other two proofs remain async.
 The 16 sync modules and the one global that forces each (per-file evidence: the child docs `evo_dash/CONTEXT.md`, `live/CONTEXT.md`, `live_hooks/CONTEXT.md`, `controllers/CONTEXT.md`):
 
 | File → module | Tests | Forcing global |
@@ -203,16 +204,11 @@ Settings contracts cover canonical `llm.providers` persistence without legacy sh
 Settings page and helper suites use the parent editor adapter contract and await asynchronous save completion before asserting authoritative persistence.
 All new pure contracts are async; mounted task-launch and chat tests retain existing process-global ownership constraints.
 Normal dashboard Mix execution reaches ExUnit and exercises canonical provider integration through the mounted pages.
-Canonical provider fixtures require nested model rows containing the configured default model; an explicitly emptied model inventory must fail validation without mutating persisted config, and its retained draft must support correction and retry.
-Mounted positive remote URL/resume tests require a distinct BEAM identity and source-owned RPC seams because a non-nil target with the local BEAM identity is intentionally pending.
+Canonical provider fixtures require a `models` list of nested model rows containing the configured default model; an explicitly emptied model inventory must fail validation without mutating persisted config, and its retained draft must support correction and retry.
+Mounted positive remote URL/resume tests use the source-owned, default-inert arity-2 `:remote_project_load_runner` (`node, path`; default `ProjectFlow.remote_project_load/2`) and `:remote_resume_task_runner` (`node, task_id`; default `NodeContext.get_task_lite/2`) inside real supervised tasks.
+The test helper `install_remote_activation_fixture!/2` supplies target-owned fixtures and verifies distinct remote BEAM identities and exact runner invocation without bypassing pending guards; a non-nil target with the local BEAM identity is intentionally pending.
 The positive mounted config-directory proof runs synchronously because async Projects tests replace the global `:projects_async_load_runner`, which can bypass its real configuration load; the two non-mounted proofs remain async.
 Standalone pure/render checks and individually green helper directories do not establish collective mounted-suite success.
-
-## Known Issues
-
-Three positive Projects remote URL/resume tests remain blocked by source-owned RPC seams: a call-time remote-project loader around `ProjectFlow.remote_project_load/2` and a call-time resume-task reader around `NodeContext.get_task_lite/2` inside the existing supervised tasks.
-Their exact cases and source ownership are documented in `evo_dash_web/live/CONTEXT.md`.
-Tests must retain distinct remote BEAM identities and real supervised orchestration rather than bypassing the pending-remote guard or weakening successful activation assertions.
 
 ## Constraints
 
