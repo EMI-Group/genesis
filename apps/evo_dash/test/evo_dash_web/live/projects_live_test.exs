@@ -4303,7 +4303,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
                 %{
                   "id" => "remote-account",
                   "provider" => "anthropic",
-                  "default_model" => "remote-model"
+                  "default_model" => "remote-model",
+                  "models" => [%{"model" => "remote-model"}]
                 }
               ]
             }
