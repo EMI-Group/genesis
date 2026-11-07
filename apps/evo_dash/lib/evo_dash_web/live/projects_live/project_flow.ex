@@ -546,8 +546,11 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
       view_pid = self()
 
       Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+        load_runner =
+          Application.get_env(:evo_dash, :remote_project_load_runner, &remote_project_load/2)
+
         result =
-          case remote_project_load(node, expanded) do
+          case load_runner.(node, expanded) do
             {:ok, results} ->
               case task_foreign_repos_for_resume(node, resume_task_id) do
                 nil -> {:ok, results}
@@ -641,7 +644,10 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   # the project load produced.
   defp task_foreign_repos_for_resume(node, resume_task_id) do
     if is_binary(resume_task_id) and resume_task_id != "" do
-      case NodeContext.get_task_lite(node, resume_task_id) do
+      task_runner =
+        Application.get_env(:evo_dash, :remote_resume_task_runner, &NodeContext.get_task_lite/2)
+
+      case task_runner.(node, resume_task_id) do
         nil ->
           nil
 
