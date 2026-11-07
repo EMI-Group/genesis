@@ -73,8 +73,7 @@ Generation settings include `temperature`, `max_tokens`, `top_p`, `top_k`, `freq
 `context_window` defaults to **200000** and sets Genesis's configured context-compression budget: it is not automatically taken from catalog metadata.
 Choose a budget appropriate to the endpoint's actual limits.
 
-Lists are replacements, not additions: an overriding model inventory replaces the parent inventory rather than appending to it.
-A model's `reasoning_efforts` list likewise replaces the inherited effort inventory.
+A model's `reasoning_efforts` list replaces the inherited effort inventory.
 A model-level `provider_options` map **replaces** the account map; it does not deep-merge it.
 If overriding that map, include all required non-secret options again.
 
@@ -152,7 +151,6 @@ Make environment variables available to the Genesis process that owns the config
 Do not paste tokens into `provider_options`, provider/model tables in `config.toml`, or browser task selections.
 Use the authentication controls for secret entry.
 For subscription authentication and vendor-CLI login import, see [Subscription (OAuth) LLM Support](llm-oauth.md).
-Its legacy model-profile examples are compatibility examples; use the canonical account/inventory structure here for new configurations.
 
 ## 6. Start a task
 
