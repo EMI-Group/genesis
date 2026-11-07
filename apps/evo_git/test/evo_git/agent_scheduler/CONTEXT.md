@@ -27,6 +27,10 @@ Different models and different efforts share the account's capacity, queue, rece
 Backoff expiry is driven by moving the account deadline and queued deadline copies into the past and invoking the retry handler, never by sleeping for production backoffs or changing global timing seams.
 Release after ETS deletion, cancellation/death purge, canonical reload and removed-account live-pool retention preserve holder counts and reply to queued callers exactly once.
 Pause regressions require releases, floor increases and expired-backoff sweeps to leave account waiters blocked until an explicit resume.
+These permanent LLM pause regressions cover the guarded LLM grant sweep, but no scheduler test combines global pause with tool-holder release, tool-capacity increases or death cleanup followed by resume.
+The legacy model-id-only parent-lock regression supplies conflicting canonical selections through both the child struct and opts and asserts the resolved parent account; the sibling legacy test additionally pins script bypass.
+Unlocked-parent dispatch tests register a blank child or an independently explicit child, and default-model-spec tests manually supply the fallback, so these scheduler tests do not establish that the subagent producer emits unlocked inheritance as `default_model_spec` rather than explicit `model_spec`.
+The unlocked inheritance producer belongs to `EvoGit.Agent.SubagentProcessing`, outside this scheduler-test node.
 `provider_scheduler_api_test.exs` is sync because it replaces the app-global scheduler's state and drives actual public config/status, pause/resume and update APIs.
 It suspends `PeakHourEngine` before pinning state, restores the original scheduler state before resuming the engine, and uses same-sender GenServer requests plus FIFO-ordered status reads to prove pending requests without quiet-window waits.
 Its API assertions cover account-keyed status, shared capacity floors, reload preservation of the runtime floor, zero-capacity hard pauses with in-flight holders retained, and the engine's explicit skip-floor map.
@@ -113,10 +117,5 @@ Per-file state (current):
 
 ## Known Issues
 
-- **Executable legacy-lock regression:** a model-id-only locked parent can be overridden by a child's canonical `model_spec`, because `ModelSelection.inherit/2`'s legacy branch sets only the legacy id and lock while `Dispatch.resolve_selection/5` still prefers the surviving explicit selection.
-The `model_selection_regression_test.exs` case "legacy lock overrides a child's canonical selection as well as its legacy id" intentionally asserts that the parent lock must win and currently fails against this source behavior.
-- **Executable global-pause regressions:** `Slots`' grant sweep does not check `state.paused`, so releasing a holder, increasing a floor through `State.do_update_config/2`, or retrying an expired account backoff grants a queued slot while globally paused.
-The three `provider_pool_regression_test.exs` pause-invariant cases intentionally retain their no-grant-until-resume assertions and currently fail against this source behavior.
-These four failures are source-owned defects, not skipped tests or assertions adjusted to accept the broken behavior.
 
 - **Pre-existing async-safety risks (left untouched):** `dispatch_test.exs` is `async: true` yet mutates BEAM-global app env `:self_reflective_source_root` / `:self_reflective_source_dir` and `System.put_env("GENESIS_SOURCE_ROOT", …)`, all of which are read by `EvoGit.SelfReflectiveSource.reference_path/0` from other modules; `subagents_test.exs` is `async: true` yet inserts/reads the SHARED `:evogit_sched_meta` / `:evogit_agent_state` tables. Both rely on non-colliding agent ids (9000–9101 / `:erlang.unique_integer/0`) rather than isolation — safe only because the other async modules avoid those keys.
