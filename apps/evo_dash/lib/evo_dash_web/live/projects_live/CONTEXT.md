@@ -92,6 +92,9 @@ Every store/registry/`EvoDash.NodeContext` read runs in a supervised `EvoDash.Ta
 
 `start_foreign_repos_restore/2` replaces the old synchronous `maybe_restore_foreign_repos_from_task/2`: it marks `foreign_repos_restoring_from: task_id` and spawns a `SafeCall.run(TaskRegistry.get_task_lite(task_id))` whose only consumed field is `opts[:foreign_repos]`, arriving as `{:foreign_repos_restored, task_id, node, result}`. The handler drops the message unless the task is still the resume target on the same node.
 The lookup is deliberately the LOCAL `TaskRegistry.get_task_lite/1` (same struct as `get_task/1` minus the archive) — the node-aware foreign-repo restore for a remote activation lives in `ProjectFlow.task_foreign_repos_for_resume/2`, inside the supervised remote-activation task.
+Remote activation resolves `Application.get_env(:evo_dash, :remote_project_load_runner, &remote_project_load/2)` at call time INSIDE that supervised task; the two-arity runner receives `(node, path)` and returns the existing `{:ok, results_map}` or error contract unchanged.
+For a nonempty resume task id, the same task resolves `Application.get_env(:evo_dash, :remote_resume_task_runner, &NodeContext.get_task_lite/2)` at call time; the two-arity runner receives `(node, task_id)` and returns the lite task with `opts[:foreign_repos]` or nil.
+Both seams are inert unless configured and preserve pending-target admission, existing result messages/stale guards and task-repos-win precedence; they do not bypass the existing SafeCall boundaries or change RPC behavior by default.
 
 ## RPC / I/O audit (per module)
 
@@ -181,7 +184,8 @@ The page keeps summary maps only — `recent_projects` (paths), `notified_task_i
 - `test/evo_dash_web/live/projects_live_test.exs` drives the real store; because mount/handle_params work is async, assertions on `recent_projects`, `active_project_path` and notifications use `wait_assigns(view, predicate)` (~300 attempts) instead of asserting right after `live/2`.
 - Canonical task-admission tests must expose the same provider configuration to the singleton `EvoGit.TaskRegistry` as to the test/LiveView; a process-local `ConfigDir.isolate!/1` override propagates through `$callers` to LiveView/loader processes but not to an already-running singleton.
 - A picker-visible account absent from the registry's config causes `{:provider_profile_not_found, id}` on both normal and GitHub launches; synchronous launch tests need a restored shared config-directory override rather than weaker model-lock assertions.
-- Positive remote persistence fixtures require a distinct remote BEAM identity, an owned bundle and ready state; target-id plus local BEAM identity represents a pending target and must not persist or consume async batches.
+- Positive remote URL/resume integration fixtures can inject `:remote_project_load_runner` and `:remote_resume_task_runner` without a live distributed node; restore both app-env keys after each test and serialize tests mutating these shared keys.
+- Positive remote persistence fixtures still require a distinct remote BEAM identity, an owned bundle and ready state; target-id plus local BEAM identity represents a pending target and must not persist or consume async batches.
 - Unreachable remote tests assert an unavailable bundle, false readiness and a load error, not a successful empty Auto selection; an earlier explicit or pending selection remains preserved on failure.
 - The batch loader's message shape (`{:async_project_load, node, prev_node_id, path, results}`) and `AsyncLoad.handle_result/5`'s `{socket, applied?}` return are test-pinned; keep `handle_result/5` tolerant of result maps built without newer keys (`Map.get/3`).
 - Notification tests seed `notified_task_ids` + `notified_task_ids_ready?: true` explicitly; a test that leaves `ready?` false asserts NO `task_notification` event.
