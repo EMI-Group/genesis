@@ -3,7 +3,8 @@
 ## Intent
 ExUnit suites for the config schema/metadata layer, canonical provider-account normalization and model selection, generation-parameter filtering, static LLM catalog and version-state file.
 Whole-app config resolution, TOML roundtrips, save/load and legacy migration through `EvoGit.Config.resolve/0` belong to the parent `../config_test.exs`, not this node.
-Disk-backed `Config.config_status/0` regressions, including invalid canonical defaults and validation-error snapshot preservation across nested resolves, also belong to `../config_test.exs`; this node owns the pure `Schema.validate/1` and `Schema.resolve_model_spec/2` selector contracts.
+`config_status_test.exs` owns focused disk-backed public `Config.config_status/0` regressions for invalid canonical defaults, initial validation-error snapshots across a successful nested resolve, and fresh healthy status after repair.
+The parent `../config_test.exs` retains the broader config-health, OAuth and persistence coverage, while this node also owns the pure `Schema.validate/1` and `Schema.resolve_model_spec/2` selector contracts.
 
 ## API Surface
 This is a test-only node with no production code.
@@ -21,6 +22,7 @@ The parent `../CONTEXT.md` and `../../CONTEXT.md` own the cross-cutting async-sa
 | `provider_profiles_test.exs` | `ProviderProfilesTest` | `true` | Public `Schema.provider_profiles/1` and `model_selections/1`: canonical-over-legacy precedence, recursive string-key normalization, ordered account/model/effort inventories, same-provider account isolation, legacy string/map/tuple/flat adapters, malformed-input degradation, context inheritance and pure OAuth runtime projections |
 | `provider_profile_resolution_test.exs` | `ProviderProfileResolutionTest` | `true` | Public `Schema.resolve_model_spec/2`: account/model/effort default precedence and explicit overrides, atom/string inputs, exact errors, generation/context inheritance, shared scheduling/auth/endpoint authority, ReqLLM-ready string/map model specs, account credentials and OAuth options |
 | `provider_profile_validation_test.exs` | `ProviderProfileValidationTest` | `true` | Canonical schema descriptors and raw provider/model validation: indexed error paths, type/range failures, duplicate account/model/effort identities and default membership, shared settings, nested context/generation overrides |
+| `config_status_test.exs` | `ConfigStatusTest` | `true` | Public config health: usable canonical account with invalid default, exact selector error with no missing keys, successful nested-resolve snapshot preservation, and healthy subsequent/fresh invocations |
 | `context_window_test.exs` | `ContextWindowTest` | `true` | `Schema.LLM` default 200000 context window, atom/string profile keys, invalid fallback and id lookup |
 | `tmp_schema_test.exs` | `TmpSchemaTest` | `true` | `[tmp]` schema metadata, defaults, enum validation and string-to-atom normalization |
 | `ecto_validation_test.exs` | `EctoValidationTest` | `true` | Strict scalar casting, nil/absent semantics, error ordering/shapes, unknown keys, indexed profile recursion and crash resilience |
@@ -35,6 +37,10 @@ The resolver suite uses per-process `EvoGit.TestSupport.ConfigDir` isolation and
 The config-dir seam supplies a parent directory and `Platform.config_dir("genesis")` appends `genesis`, so fixtures obtain the actual credentials directory through `EvoGit.Config.config_dir/0`.
 Resolver generation assertions use catalog-absent test model ids rather than a mutable global metadata seam.
 OAuth resolver option assembly uses an uncatalogued provider to avoid importing the developer's vendor CLI login, while real OAuth-only provider inheritance is covered through pure normalization/runtime-profile projection.
+The config-health suite also uses a custom credential name without an `_API_KEY` suffix so credential loading cannot mutate ReqLLM's global key store.
+Its POSIX-only nested-resolve test uses a test-owned credentials FIFO to hold the health check after initial validation, repairs the config before releasing EOF, and proves the later nested resolve cleared the caller-local errors while the returned status retained the initial exact error.
+Both writer-side file operations use raw I/O because the shared file server is waiting for the credentials read to finish.
+The FIFO rendezvous uses no sleep, timing race, app-env override, global tracing or OS-env mutation and is skipped on Windows; the remaining health tests are cross-platform.
 The environment-over-persisted credential test only reads the existing `PATH` value and never writes an OS environment variable.
 `version_state_test.exs` is async-safe because the version-state cache stores its path and reclassifies whenever the per-process path changes.
 Never edit files outside this node; the parent roundtrip suite and parent context documentation have separate owners.
@@ -57,6 +63,6 @@ There is no global `[llm] oauth_file` schema key; OAuth files are per account/pr
 The `[tmp]` enum is `[:system, :custom, :per_repo]`, with rejected values reported at `[:tmp, :mode]` under the corresponding `{:in, ...}` rule.
 
 ## Test Inventory
-This node contains 357 tests across ten modules.
-Per-file counts are schema 122, provider normalization/enumeration 14, provider resolution 21, provider validation 12, Ecto validation 48, generation parameters 66, catalog 40, version state 15, context window 12 and tmp schema 7.
+This node contains 360 tests across eleven modules.
+Per-file counts are schema 122, provider normalization/enumeration 14, provider resolution 21, provider validation 12, config health 3, Ecto validation 48, generation parameters 66, catalog 40, version state 15, context window 12 and tmp schema 7.
 Run the complete node with `mix test apps/evo_git/test/evo_git/config` from the umbrella root.
