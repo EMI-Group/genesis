@@ -45,12 +45,16 @@ generate_profile_id/1,2, profile_id/1 and id_collision?/3 support atom/string id
 parse_model_profile_params/2 remains the LEGACY atom-keyed flat parser, not canonical Save.
 ModelProfileEvents functions take socket then params and return LiveView tuples, never sockets to double-wrap.
 editing_profile_id is an account id or unsaved "new" sentinel.
+The string sentinel collides with a saved account id of "new": Add then uses that account as the original and ProviderProfiles.update/3 replaces it rather than appending a separate account.
+Creation needs a state discriminator outside the account-id string domain, with a nil original id for collision detection and update.
 Add creates only draft state, Edit snapshots/toggles an existing account and unknown ids no-op.
 model_profile_form_change replaces the ENTIRE detached draft; row add/remove changes only draft lists and invalid/negative/out-of-range removal is a no-op.
 Row clicks carry no form input, so phx-change snapshots must preserve typing before rerender.
 Cancel clears editor assigns without changing file_config.
 Save restores omitted collections, checks identity/collision and parses against the original before provider update and parent persistence.
 Parser failure retains the submitted draft, identity errors retain the existing draft and parse success clears the editor before persistence, with no draft rollback on write failure.
+ModelProfileEvents reports parser and identity errors only through flash messages and does not populate a structured field-error assign.
+A persistence failure occurs after clear_editor/1, so retryable submitted editor state is unavailable even though nothing was written.
 Delete persists and clears the editor, while Move persists only a real move and never calls the parent persistence boundary for a no-op.
 Default persists through the parent and quick paths resolve catalog variants/models without saving credentials.
 advanced_open?/1 inspects provider and model generation/extra/provider_options in BOTH flat parser drafts and nested UI generation maps.
@@ -72,12 +76,12 @@ Render default_model as independent text, not a select restricted to saved overr
 Native details open must use the explicit boolean or the SAME ModelProfileEvents.advanced_open?/1 rule, with collapsed inputs remaining in the DOM.
 All save paths, including generic category/search/reset and Quick Setup, must pass through ConfigIO.canonicalize_file_config/1 in the parent persistence boundary.
 Provider editor rows and OAuth loads use ProviderProfiles.profiles(file_config), not runtime Schema.model_profiles/1 or raw llm.models.
-Dedicated provider schemas MUST be excluded from generic setting-card rendering in BOTH category_section and search results; SettingCard has no :provider_profiles case in this checkout.
-The parent owns node/target/generation freshness guards for data loads, saves and connection tests; leaf node-data and remote-save responses currently have node-only freshness checks.
-The current parent connection-test result is unscoped {:llm_test_result, normalized_result}, so a previous selection/node test can overwrite the current test state.
-A pending remote target whose resolved BEAM node is still local must never resolve credentials or test against the local node.
-Reconcile test_profile_id against canonical account/model option values after authoritative reload, rename or deletion; the displayed fallback and submitted selection must identify the same model.
-The parent remote_config_save/2 must unwrap SafeCall's {:ok, {:ok, config}} result for NodeContext.get_resolved_config/1; matching {:ok, config} alone misclassifies every successful remote reload as unexpected_config.
+Dedicated provider schemas must be excluded from generic editing and reset surfaces in both category and search views; ConfigIO.params_to_category_config/3 independently excludes their collection/default paths from flat saves.
+SettingCard supports an informational :provider_profiles summary but does not own provider-account editing.
+The parent owns node/target/generation freshness guards for data loads, saves and connection tests; NodeData and remote-save responses carry node-only freshness checks.
+Connection-test results use nested {{:llm_test_result, seq, scope}, result} tags guarded by sequence, target/BEAM-node/selection scope and testing state, and legacy unscoped results are ignored.
+Pending remote targets cannot start a local connection test, and authoritative config loads reconcile test_profile_id against canonical account/model values.
+Remote config reload unwraps SafeCall's {:ok, {:ok, config}} response; a successful write with a failed authoritative refetch remains a saved config with an unavailable-config warning.
 Custom-agent model_id remains an account/default-model selector under its string-only core contract, so choices deduplicate canonical selections by provider_profile_id rather than inventing per-model ids.
 
 ## ConfigIO and Credential Boundaries
