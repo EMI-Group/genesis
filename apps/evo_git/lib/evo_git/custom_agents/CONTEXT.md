@@ -29,7 +29,10 @@ Pure functions, NO GenServer — every call reads/writes the TOML file directly 
 ### `EvoGit.CustomAgents.ModelSelector` (script evaluator)
 
 - `compile_script/1` (body string) → `{:ok, fun} | {:error, {:compile_error, msg}}`. The body is wrapped as `fn agent -> <body> end` (`agent` variable in scope; last expression is the result).
-- `select_model/1` (agent map) → `{:ok, model_id | nil} | {:error, {:script_raised | {:invalid_result | {:compile_error, msg}}}`.
+- `select_model/1` (agent map) → `{:ok, model_id | selection | nil} | {:error, {:script_raised, message} | {:invalid_result, message} | {:compile_error, message}}`.
+A canonical `selection` requires nonempty binary `provider_profile_id` and `model`, accepts atom or string input keys (atom keys win when both forms are present), and returns only atom-keyed selection fields.
+Optional `reasoning_effort` accepts the schema's nonempty string or non-nil atom values and returns a string via `ProviderProfiles.Normalize.string_effort/1`; absent/nil effort is omitted so the schema chooses its configured default.
+Malformed maps return `:invalid_result`, while account/model existence and supported effort inventories remain the schema resolver's responsibility.
 `nil`/`""`/`false` → default model, and ordinary script exceptions are rescued, but throws/exits are not caught (called inline from the scheduler GenServer).
 - `status/0` → `:ok | {:error, {:compile_error, msg}}` (dashboard surfacing of broken scripts).
 - `enabled?/0` → `boolean()`.
@@ -47,14 +50,14 @@ Pure functions, NO GenServer — every call reads/writes the TOML file directly 
 Both boundaries use `rescue` only, not `catch`, so ordinary exceptions become error tuples but throws/exits, blocking code and VM-global side effects are not contained.
 The string wrapper is not syntactic confinement: supplied source can close the anonymous function and add top-level expressions, and macro expansion can execute code during compilation, including from `status/0` or `enabled?/0` on a cache miss.
 This mechanism is for trusted user configuration, not a safe evaluator for agent-generated expressions.
-`normalize_result/1` accepts any binary as a model id without checking profile existence, maps nil/empty-string/false to default, and inspects other values without a byte/time budget.
+`normalize_result/1` accepts any binary as a legacy model/profile id and structurally valid canonical account/model maps without checking configured existence, maps nil/empty-string/false to default, and inspects invalid values without a byte/time budget.
 - Consumers: `EvoGit.AgentScheduler.Dispatch.register_agent/7` (calls `select_model/1` per spawn, BEFORE `resolve_model_for_agent/2`; skipped when `spec.opts[:model_id_locked]`) and the `:evo_dash` settings UI (CRUD + script editor + `status/0` surfacing). Tests: `test/evo_git/custom_agents_test.exs`, `test/evo_git/agents/custom_test.exs`.
 
-## Canonical provider-profile migration gap
-`ModelSelector.normalize_result/1` accepts only binaries and nil/empty-string/false fallbacks, so canonical selections such as `%{provider_profile_id: "account", model: "model-name"}` (including string-keyed equivalents) return `{:error, {:invalid_result, inspect(selection)}}` rather than a usable selection.
+## Canonical provider-profile persistence and integration
 `CustomAgents.normalize_definition/1` in `../custom_agents.ex` retains only the legacy `model_id` selector and drops a supplied `model_spec`, so custom-agent definitions have no first-class persisted canonical account/model/effort selector.
-`select_model/1`'s typespec, module/API documentation and `describe_contract/0` UI help describe only legacy string model ids and provide legacy `"default"`/`"fast"` examples, with no provider/account discriminator.
-`status/0` checks compilation only, so a script returning a canonical selection map can report `:ok` and `enabled?/0 == true` while every evaluation rejects its result.
+`ModelSelector` accepts canonical selection maps, but scheduler consumers must route map results to the canonical schema resolver rather than use them as legacy model ids.
+`status/0` checks compilation only, not returned selection validity or configured existence.
+Focused canonical-result tests live in `model_selector_selection_test.exs` within this node and can be run explicitly with `mix test apps/evo_git/lib/evo_git/custom_agents/model_selector_selection_test.exs`; existing selector regressions live in `test/evo_git/custom_agents/model_selector_test.exs`.
 ## See Also
 
 - User-defined custom tools (the `tools`-whitelist names loaded from `<config_dir>/tools/` — directory layout, `EvoGit.CustomTools.Tool` behaviour, built-in/duplicate collision rules, write classification and security model) → `../custom_tools/CONTEXT.md`.
