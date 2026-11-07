@@ -9,13 +9,14 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
 
   use Gettext, backend: EvoDashWeb.Gettext
   alias EvoGit.Config.LLMCatalog, as: Catalog
+  alias EvoGit.Config.Schema
 
   @reasoning_efforts ~w(none minimal low medium high xhigh default)
   def reasoning_efforts, do: @reasoning_efforts
 
   # The inventory and the default are independent: selecting a default must
   # never make the other advertised efforts unavailable to later task picks.
-  def reasoning_efforts(entry), do: Map.get(entry, :reasoning_efforts, @reasoning_efforts)
+  def reasoning_efforts(entry), do: value(entry, :reasoning_efforts) || @reasoning_efforts
 
   def flatten_models(providers) do
     providers
@@ -33,7 +34,7 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
           credential_key: if(variant, do: variant.credential_key, else: provider.credential_key),
           model_id: model.id,
           model_display_name: model.display_name,
-          reasoning_efforts: value(model, :reasoning_efforts) || @reasoning_efforts,
+          reasoning_efforts: reasoning_efforts(model),
           resolved_atom: resolved,
           model_string: "#{resolved}:#{model.id}"
         }
@@ -54,13 +55,7 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
     end)
   end
 
-  def has_model?(config) do
-    llm = value(config, :llm) || %{}
-    providers = value(llm, :providers) || []
-    legacy = value(llm, :models) || []
-
-    Enum.any?(providers, fn profile -> (value(profile, :models) || []) != [] end) or legacy != []
-  end
+  def has_model?(config), do: Schema.model_selections(config) != []
 
   def auth_mode(provider) do
     if Catalog.oauth_only?(provider), do: "oauth", else: "api_key"
@@ -130,12 +125,15 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
 
         config = config |> delete_key(:llm) |> Map.put(:llm, llm)
 
-        case EvoGit.Config.Schema.validate(config) do
+        case Schema.validate(config) do
           {:ok, _} ->
             {:ok, config, profile, default, api_key}
 
           {:error, errors} ->
-            {:error, gettext("Invalid configuration: %{reason}", reason: inspect(errors))}
+            # Validation errors carry raw config values, potentially credentials.
+            # Only schema paths are safe to return to the browser-facing caller.
+            paths = errors |> Enum.map(&Enum.join(&1.key_path, ".")) |> Enum.uniq()
+            {:error, gettext("Invalid configuration: %{reason}", reason: Enum.join(paths, ", "))}
         end
     end
   end
@@ -195,19 +193,21 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
     end
   end
 
-  # This is the same per-profile options choke point as task execution; notably
-  # OAuth tests must not fall back to API-key auth or test a different effort.
-  def test_request(profile, entry, reasoning) do
-    model =
-      case profile["base_url"] do
-        nil -> "#{entry.resolved_atom}:#{entry.model_id}"
-        url -> %{provider: entry.resolved_atom, id: entry.model_id, base_url: url}
-      end
+  @doc """
+  Resolves a validated draft into `{reqllm_model, generation_params}` for the
+  server-side connection-test worker, using the same canonical resolver as tasks.
 
-    params = %{model: model, auth_mode: profile["auth_mode"]}
+  Neither the resolved config nor generation params may be pushed to a client.
+  The resolver's `model_spec` is a ReqLLM identifier, NOT a canonical task-picker
+  map. Invalid drafts raise here and are reported by the worker's SafeCall boundary.
+  """
+  def test_request(profile, entry, reasoning) do
+    config = %{llm: %{providers: [profile], default_provider_profile: profile["id"]}}
+    spec = %{"provider_profile_id" => profile["id"], "model" => entry.model_id}
     effort = Map.get(reasoning, entry.model_string, "")
-    params = if effort == "", do: params, else: Map.put(params, :reasoning_effort, effort)
-    {model, EvoGit.Config.Schema.LLM.profile_generation_params(params)}
+    spec = if effort == "", do: spec, else: Map.put(spec, "reasoning_effort", effort)
+    {:ok, resolved} = Schema.resolve_model_spec(config, spec)
+    {resolved.model_spec, resolved.generation_params}
   end
 
   def write(fun) do

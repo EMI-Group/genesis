@@ -21,6 +21,7 @@ defmodule EvoDashWeb.ProjectsLive do
     GitHub,
     AsyncLoad,
     LaunchOptions,
+    ModelSelectionScope,
     Notifications
   }
 
@@ -129,6 +130,29 @@ defmodule EvoDashWeb.ProjectsLive do
             phx-hook="BrowserNotifications"
             class="flex-1 flex flex-col min-h-0"
           >
+            <div
+              :if={not is_nil(@model_selection_error)}
+              id="model-selection-error"
+              role="alert"
+              class="flex items-center gap-3 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm"
+            >
+              <p class="flex-1">
+                {gettext(
+                  "Could not load model selection. Your choice has been kept. Reconnect to the node if needed, then retry before launching a task."
+                )}
+              </p>
+              <button
+                type="button"
+                phx-click="retry_model_selection"
+                disabled={
+                  ModelSelectionScope.pending_remote?(assigns) or
+                    EvoDashWeb.RemoteGateComponents.gate_active?(assigns)
+                }
+                class="btn btn-sm btn-outline"
+              >
+                {gettext("Retry")}
+              </button>
+            </div>
             <%!-- Node-context gate: `phase` drives the render branches below.
                  `@remote_status` is a %{phase: ...} map in ANY remote context
                  (set by NodeAware.assign_node/2); a missing/absent status with
@@ -539,6 +563,9 @@ defmodule EvoDashWeb.ProjectsLive do
           foreign_repo_edit_form: nil,
           show_configure_dropdown: false,
           model_selection: nil,
+          model_selection_scope: nil,
+          model_selection_ready?: false,
+          model_selection_error: nil,
           provider_profiles: [],
           model_selections: [],
           selected_model_spec: nil,
@@ -610,6 +637,7 @@ defmodule EvoDashWeb.ProjectsLive do
   @impl true
   def handle_params(params, _url, socket) do
     prev_node_id = socket.assigns[:current_node_id]
+    prev_scope = ModelSelectionScope.current(socket.assigns)
 
     # NOTE: `remote?` must be derived from the socket AFTER `assign_node/2`
     # re-assigns `current_node` — computing it inside the pipe from the outer
@@ -617,7 +645,10 @@ defmodule EvoDashWeb.ProjectsLive do
     # a connected `?node=` URL would render the error gate on the first pass.
     socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
     socket = assign(socket, :current_path, ~p"/projects")
+
     socket = assign(socket, :remote?, socket.assigns.current_node != node())
+
+    node_context_changed? = prev_scope != ModelSelectionScope.current(socket.assigns)
 
     # Auto-activation candidate: no `?project=` in the URL and a LOCAL context.
     # The actual activation runs in the AsyncLoad continuation once the recent
@@ -646,13 +677,6 @@ defmodule EvoDashWeb.ProjectsLive do
     # dashboard state; switching nodes clears the client-side state and
     # re-persists it under the new node key so no state leaks across nodes.
     socket =
-      if prev_node_id != socket.assigns[:current_node_id] do
-        assign(socket, :selected_model_spec, nil)
-      else
-        socket
-      end
-
-    socket =
       StatePersistence.maybe_clear_state_on_node_switch(
         socket,
         prev_node_id,
@@ -668,7 +692,7 @@ defmodule EvoDashWeb.ProjectsLive do
     # for the wrong node (results are stale-guarded on node, but an already
     # resolved status would survive the switch otherwise).
     socket =
-      if prev_node_id != socket.assigns[:current_node_id] do
+      if node_context_changed? do
         socket
         |> assign(:file_pick_bases, %{})
         # Staged raw attachment binaries are per-node client state too — drop
@@ -676,6 +700,7 @@ defmodule EvoDashWeb.ProjectsLive do
         # must never leak across node contexts).
         |> assign(:staged_attachments, [])
         |> assign(:remote_project_loading, nil)
+        |> assign(:foreign_repos_restoring_from, nil)
         |> assign(:resume_foreign_repos_guard, false)
         |> assign(:github_status, nil)
         |> assign(:github_modal_open, false)
@@ -715,7 +740,8 @@ defmodule EvoDashWeb.ProjectsLive do
         # selection made via the palette must survive same-node handle_params
         # runs; the node-switch clear above is what resets it.
         cond do
-          not EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) and
+          not ModelSelectionScope.pending_remote?(socket.assigns) and
+            not EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) and
             is_binary(project_path) and project_path != "" and
               project_path != socket.assigns[:active_project_path] ->
             case ProjectFlow.normalize_remote_project_path(
@@ -1043,6 +1069,18 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   @impl true
+  def handle_event("retry_model_selection", _params, socket) do
+    if ModelSelectionScope.pending_remote?(socket.assigns) or
+         EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) do
+      {:noreply, socket}
+    else
+      # Reuse the scoped loader; failures retain both the choice and pending
+      # browser restore, and success alone restores launch readiness.
+      {:noreply, AsyncLoad.maybe_spawn(socket, socket.assigns[:current_node_id])}
+    end
+  end
+
+  @impl true
   def handle_event("select_provider_profile", %{"provider_profile_id" => id}, socket) do
     change_model_selection(socket, &LLMSelection.select_provider(&1, &2, id))
   end
@@ -1054,11 +1092,14 @@ defmodule EvoDashWeb.ProjectsLive do
     change_model_selection(socket, &LLMSelection.select_model(&1, &2, model))
   end
 
-  # Older open tabs send the former flat profile id. The shared reconciler
-  # owns that migration, including the empty-string explicit Auto sentinel.
+  # Older open tabs send the former flat profile id. Validate explicit ids
+  # strictly before migration; reconciliation alone would hide an invalid pin.
+  # The empty-string sentinel still means explicit Auto.
   def handle_event("select_model", %{"model_id" => id}, socket) when is_binary(id) do
     change_model_selection(socket, fn bundle, _current ->
-      {:ok, LLMSelection.reconcile(bundle, id)}
+      with {:ok, opts} <- LLMSelection.task_opts(bundle, id) do
+        {:ok, Keyword.get(opts, :model_spec, %{})}
+      end
     end)
   end
 
@@ -1203,14 +1244,43 @@ defmodule EvoDashWeb.ProjectsLive do
 
           project_path = params["project"]
 
-          if is_binary(project_path) and project_path != "" and File.dir?(project_path) do
-            # Activation invalidates the initial batch's captured path; replace
-            # it with a fresh generation scoped to the restored project.
-            socket
-            |> activate_project(project_path)
-            |> AsyncLoad.maybe_spawn(socket.assigns[:current_node_id])
-          else
-            socket
+          cond do
+            not is_binary(project_path) or project_path == "" ->
+              socket
+
+            not is_nil(socket.assigns[:current_node_id]) ->
+              # Saved remote paths belong to the target filesystem, never the
+              # dashboard host. Activation validates them off-process and patches
+              # the URL, which triggers the correctly scoped picker reload.
+              if ModelSelectionScope.pending_remote?(socket.assigns) or
+                   EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) do
+                socket
+              else
+                case ProjectFlow.normalize_remote_project_path(
+                       socket.assigns[:current_node],
+                       project_path
+                     ) do
+                  {:ok, expanded} ->
+                    ProjectFlow.spawn_remote_project_activation(
+                      socket,
+                      expanded,
+                      socket.assigns[:task_resume_from]
+                    )
+
+                  {:error, _reason} ->
+                    socket
+                end
+              end
+
+            File.dir?(project_path) ->
+              # Activation invalidates the initial batch's captured path; replace
+              # it with a fresh generation scoped to the restored project.
+              socket
+              |> activate_project(project_path)
+              |> AsyncLoad.maybe_spawn(socket.assigns[:current_node_id])
+
+            true ->
+              socket
           end
         else
           socket
@@ -2147,8 +2217,9 @@ defmodule EvoDashWeb.ProjectsLive do
   # the project load produced.
   @impl true
   def handle_info({:foreign_repos_restored, task_id, node, result}, socket) do
-    if task_id != socket.assigns[:task_resume_from] or
-         node != (socket.assigns[:current_node] || node()) do
+    if not is_nil(socket.assigns[:current_node_id]) or
+         task_id != socket.assigns[:task_resume_from] or
+         node != node() or node != (socket.assigns[:current_node] || node()) do
       {:noreply, socket}
     else
       socket = assign(socket, :foreign_repos_restoring_from, nil)
@@ -2368,6 +2439,14 @@ defmodule EvoDashWeb.ProjectsLive do
   #   - Fresh `%ForeignRepo{}` structs (from an in-memory task)
   #   - Maps with `"root"` key (Jason-decoded from the DB, via `@derive {Jason.Encoder}`)
   #   - Maps with `"path"` key (sessionStorage serialization format, as a fallback)
+  # Remote resume settings are restored by the remote activation task instead.
+  defp start_foreign_repos_restore(
+         %{assigns: %{current_node_id: target_id, current_node: target_node}} = socket,
+         _task_id
+       )
+       when not is_nil(target_id) or target_node != node(),
+       do: socket
+
   defp start_foreign_repos_restore(socket, task_id) do
     node = socket.assigns[:current_node] || node()
     parent = self()
@@ -2850,15 +2929,15 @@ defmodule EvoDashWeb.ProjectsLive do
   # Invalid events leave the current selection intact; explicit choices discard
   # a pending browser restore so a delayed batch cannot resurrect it.
   defp change_model_selection(socket, transition) do
-    case socket.assigns[:model_selection] do
-      bundle when is_map(bundle) ->
+    case ModelSelectionScope.bundle(socket.assigns) do
+      {:ok, bundle} ->
         case transition.(bundle, socket.assigns[:selected_model_spec]) do
           {:ok, spec} ->
             {:noreply,
              socket
              |> assign(:selected_model_spec, spec)
              |> assign(:pending_model_selection, nil)
-             |> StatePersistence.maybe_persist_state()}
+             |> StatePersistence.maybe_persist_model_selection()}
 
           {:error, _reason} ->
             {:noreply, socket}

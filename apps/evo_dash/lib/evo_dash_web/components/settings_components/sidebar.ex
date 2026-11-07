@@ -71,7 +71,7 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
       <nav class="space-y-2 mt-2 pb-4 flex-1 overflow-y-auto min-h-0 pr-1">
         <%= for {category, schemas} <- sort_categories(@categories) do %>
           <% match_count = category_match_count(category, schemas, @search_text) %>
-          <% total = length(schemas) %>
+          <% total = category_match_count(category, schemas, "") %>
           <button
             type="button"
             phx-click="select_category"

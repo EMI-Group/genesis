@@ -192,7 +192,7 @@ defmodule EvoDashWeb.WelcomeLive do
                         >
                           {gettext("Provider default")}
                         </option>
-                        <%= for effort <- Setup.reasoning_efforts(entry) do %>
+                        <%= for effort <- reasoning_choices(entry) do %>
                           <option
                             value={effort}
                             selected={Map.get(@model_reasoning, entry.model_string) == effort}
@@ -469,7 +469,7 @@ defmodule EvoDashWeb.WelcomeLive do
            entry = Enum.find(socket.assigns.flat_models, &(&1.model_string == model))
 
            model in selected and not is_nil(entry) and
-             effort in ["" | Setup.reasoning_efforts(entry)]
+             effort in ["" | reasoning_choices(entry)]
          end) do
       entry = Enum.find(socket.assigns.flat_models, &(&1.model_string == default))
 
@@ -625,6 +625,15 @@ defmodule EvoDashWeb.WelcomeLive do
 
   defp invalidate_test(socket),
     do: assign(socket, llm_test_seq: socket.assigns.llm_test_seq + 1, llm_test_status: :idle)
+
+  # An empty inventory is unrestricted, not unsupported. Expand it only for
+  # display and event validation; Setup keeps [] in the persisted model row.
+  defp reasoning_choices(entry) do
+    case Setup.reasoning_efforts(entry) do
+      [] -> Setup.reasoning_efforts()
+      efforts -> efforts
+    end
+  end
 
   defp selected_entries(assigns),
     do: Enum.filter(assigns.flat_models, &(&1.model_string in assigns.selected_models))

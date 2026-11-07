@@ -100,6 +100,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
         name={@name}
         class="select select-sm w-full min-w-0 rounded-md border-base-300 bg-base-100"
         aria-describedby={field_id(@name) <> "-help"}
+        aria-invalid={if @selected != "" and @selected not in @efforts, do: "true"}
       >
         <option value="" selected={@selected == ""}>
           {if @inherit, do: gettext("Inherit provider default"), else: gettext("Provider default")}
@@ -122,7 +123,13 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
   attr(:fields, :any, default: %{})
 
   def generation_fields(assigns) do
-    assigns = assign(assigns, :parameters, generation_parameters())
+    assigns =
+      assigns
+      |> assign(:parameters, generation_parameters())
+      |> assign(:json_fields, [
+        {"extra", gettext("Extra config (JSON, optional)")},
+        {"provider_options", gettext("Provider options (JSON, optional)")}
+      ])
 
     ~H"""
     <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -137,21 +144,21 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
         max={max}
       />
     </div>
-    <div class="mt-3">
+    <div :for={{key, label} <- @json_fields} class="mt-3">
       <label
-        for={field_id(nested(@prefix, "provider_options"))}
+        for={field_id(nested(@prefix, key))}
         class="mb-1 block text-xs font-medium text-base-content/70"
-      >{gettext("Provider options (JSON, optional)")}</label>
+      >{label}</label>
       <textarea
-        id={field_id(nested(@prefix, "provider_options"))}
-        name={nested(@prefix, "provider_options")}
+        id={field_id(nested(@prefix, key))}
+        name={nested(@prefix, key)}
         rows="3"
         spellcheck="false"
         class="textarea w-full min-w-0 rounded-md border-base-300 bg-base-100 font-mono text-xs"
-        aria-describedby={field_id(nested(@prefix, "provider_options")) <> "-help"}
-      >{json_text(value(@fields, "provider_options"))}</textarea>
+        aria-describedby={field_id(nested(@prefix, key)) <> "-help"}
+      >{json_text(value(@fields, key))}</textarea>
       <p
-        id={field_id(nested(@prefix, "provider_options")) <> "-help"}
+        id={field_id(nested(@prefix, key)) <> "-help"}
         class="mt-1 text-xs text-base-content/70"
       >
         {gettext(

@@ -61,6 +61,8 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:model_selections, :list, default: [])
   attr(:editing_profile_id, :any, default: nil)
   attr(:profile_form_draft, :any, default: nil)
+  # Detached provider-editor field errors are separate from schema-card errors.
+  attr(:provider_profile_errors, :map, default: %{})
   # User-authoritative open state of the profile edit form's "Advanced settings"
   # disclosure (nil = follow the auto rule). Threaded straight to the editor.
   attr(:profile_advanced_open, :any, default: nil)
@@ -85,14 +87,11 @@ defmodule EvoDashWeb.SettingsComponents do
       />
 
       <%= if @category == :llm do %>
-        <%!-- LLM category: the Quick Setup panel and Model Profiles editor
-             contain their own nested <form> elements (save_api_key,
-             save_custom_model, save_model_profile). They must NOT be nested
-             inside a save_category form (invalid HTML). Only the flat global
-             `[llm]` cards (non-per-profile keys, e.g. the compression-threshold
-             override, the tool-result pruning toggle/target and the flat
-             generation defaults) are wrapped in the save_category form inside
-             the scroll body below. The pinned save bar sits
+        <%!-- LLM category: Quick Setup and the provider editor own separate
+             forms, so they must NOT be nested inside a save_category form
+             (invalid HTML). Only the flat global `[llm]` cards (compression
+             and tool-result pruning controls) are wrapped in the save_category
+             form inside the scroll body below. The pinned save bar sits
              OUTSIDE that form and submits it via the HTML `form`
              association attribute (see the bar after the scroll body). --%>
         <div class="flex-1 overflow-y-auto px-8 py-8 relative">
@@ -425,6 +424,7 @@ defmodule EvoDashWeb.SettingsComponents do
               default_provider_profile={get_in(@file_config, [:llm, :default_provider_profile])}
               editing_profile_id={@editing_profile_id}
               profile_form_draft={provider_editor_fields(@profile_form_draft)}
+              errors={@provider_profile_errors}
               auth_statuses={Map.get(assigns, :auth_statuses, %{})}
             />
 
@@ -564,9 +564,9 @@ defmodule EvoDashWeb.SettingsComponents do
               </p>
             </div>
 
-            <%!-- Flat LLM setting cards (every non-per-profile `[llm]` key
-                 after filtering: compression-threshold override, tool-result
-                 pruning toggle + target fraction, flat generation defaults).
+            <%!-- Flat LLM setting cards (compression and tool-result pruning
+                 controls only; canonical provider/default and legacy generation
+                 descriptors are excluded by flat_llm_schemas/1).
                  Wrapped in their own save_category form (id settings-form-llm);
                  the pinned save bar below the scroll body submits them via the
                  HTML `form` attribute. --%>

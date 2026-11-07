@@ -117,6 +117,35 @@ defmodule EvoDashWeb.SettingsLiveTest.Helpers do
     end
   end
 
+  # Mutations acknowledge dispatch before the off-process write/read completes.
+  # Always assert the authoritative completion, not the dispatch render.
+  def settings_hook(view, event, params) do
+    Phoenix.LiveViewTest.render_hook(view, event, params)
+    await_config_save(view)
+  end
+
+  def await_config_save(view) do
+    wait_settings(view, &(not &1[:config_saving]))
+    render(view)
+  end
+
+  def wait_settings(view, predicate, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + 5_000
+    current = assigns(view)
+
+    if predicate.(current) do
+      current
+    else
+      assert System.monotonic_time(:millisecond) < deadline,
+             "Settings did not reach the expected authoritative state"
+
+      receive do
+      after
+        2 -> wait_settings(view, predicate, deadline)
+      end
+    end
+  end
+
   # In LiveView 1.x the test View struct has no `.assigns` field, so we read
   # them from the underlying LiveView process socket.
   def assigns(view), do: :sys.get_state(view.pid).socket.assigns
@@ -169,10 +198,13 @@ defmodule EvoDashWeb.SettingsLiveTest.Helpers do
   # deterministic values under the override seams) sends its message before
   # ours, so ours is processed last — assertions are race-free.
   def deliver_node_data(view, category_param \\ nil, overrides \\ %{}) do
+    state = assigns(view)
+
     send(
       view.pid,
-      {:settings_node_data_loaded, assigns(view)[:current_node], category_param,
-       default_node_results(view, overrides)}
+      {{:settings_node_data_loaded, state.settings_load_seq,
+        {state.current_node_id, state.current_node}}, state.current_node, category_param,
+       {:ok, default_node_results(view, overrides)}}
     )
 
     render(view)
@@ -364,9 +396,35 @@ defmodule EvoDashWeb.SettingsLiveTest.ConnectManager do
   defp hold_reply(_delay, _released?), do: :ok
 end
 
+defmodule EvoDashWeb.SettingsLiveTest.StreamEndpoint do
+  @moduledoc false
+  # A test-local loopback endpoint captures the FINAL ReqLLM wire request;
+  # no vendor endpoint or ambient account is ever contacted.
+  def init(owner), do: owner
+
+  def call(conn, owner) do
+    {:ok, body, conn} = Plug.Conn.read_body(conn)
+    send(owner, {:settings_llm_request, conn.req_headers, Jason.decode!(body)})
+
+    chunks = [
+      %{type: "response.output_text.delta", delta: "hello", output_index: 0, content_index: 0},
+      %{
+        type: "response.completed",
+        response: %{id: "settings-response", status: "completed", output: []}
+      }
+    ]
+
+    response = Enum.map_join(chunks, "", &("data: " <> Jason.encode!(&1) <> "\n\n"))
+
+    conn
+    |> Plug.Conn.put_resp_content_type("text/event-stream")
+    |> Plug.Conn.send_resp(200, response <> "data: [DONE]\n\n")
+  end
+end
+
 defmodule EvoDashWeb.SettingsLiveParentAdapterTest do
-  # Pure parent-component and handler contracts need neither a mounted page
-  # nor the global scheduler, registry or config-directory seams.
+  # Parent-component/handler contracts plus a loopback-only final-request check;
+  # configuration and custom credentials remain per-process isolated.
   use ExUnit.Case, async: true
   import Phoenix.LiveViewTest
   alias EvoDashWeb.{SettingsComponents, SettingsLive}
@@ -500,18 +558,40 @@ defmodule EvoDashWeb.SettingsLiveParentAdapterTest do
 
   @tag :requires_schema_facade
   test "connection selection resolves the persisted model's inherited generation and credential opts" do
+    dir = EvoDash.Test.ConfigDir.isolate!("settings-final-request")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    File.mkdir_p!(EvoGit.Config.config_dir())
+    # This custom name intentionally has no API_KEY suffix: credential loading
+    # therefore does not write a process-global ReqLLM provider key.
+    File.write!(
+      EvoGit.Config.credentials_path(),
+      ~s(GENESIS_SETTINGS_FIXTURE = "fixture-not-for-network"\n)
+    )
+
+    server =
+      start_supervised!(
+        {Bandit,
+         plug: {EvoDashWeb.SettingsLiveTest.StreamEndpoint, self()},
+         ip: {127, 0, 0, 1},
+         port: 0,
+         startup_log: false}
+      )
+
+    assert {:ok, {_address, port}} = ThousandIsland.listener_info(server)
+    endpoint = "http://127.0.0.1:#{port}/v1"
+
     profile = %{
       "id" => "account",
       "provider" => "openai",
-      "default_model" => "example",
-      "api_key" => "fixture-not-for-network",
-      "base_url" => "https://example.invalid/v1",
+      "default_model" => "gpt-4.1-mini",
+      "api_key_env_var" => "GENESIS_SETTINGS_FIXTURE",
+      "base_url" => endpoint,
       "temperature" => 0.7,
       "max_tokens" => 4096,
       "provider_options" => %{"store" => false},
       "models" => [
-        %{"model" => "example"},
-        %{"model" => "override", "temperature" => 0.0, "max_tokens" => 2048}
+        %{"model" => "gpt-4.1-mini"},
+        %{"model" => "gpt-4.1", "temperature" => 0.0, "max_tokens" => 2048}
       ]
     }
 
@@ -521,29 +601,44 @@ defmodule EvoDashWeb.SettingsLiveParentAdapterTest do
     assert {:ok, inherited} =
              ConfigIO.resolve_model_spec(config, %{
                provider_profile_id: "account",
-               model: "example"
+               model: "gpt-4.1-mini"
              })
 
     assert inherited.model_spec == %{
              provider: :openai,
-             id: "example",
-             base_url: "https://example.invalid/v1"
+             id: "gpt-4.1-mini",
+             base_url: endpoint
            }
 
     assert inherited.generation_params[:temperature] == 0.7
     assert inherited.generation_params[:max_tokens] == 4096
-    assert inherited.generation_params[:api_key] == "fixture-not-for-network"
     assert inherited.generation_params[:provider_options][:store] == false
 
     assert {:ok, overridden} =
              ConfigIO.resolve_model_spec(config, %{
                provider_profile_id: "account",
-               model: "override"
+               model: "gpt-4.1"
              })
 
     assert overridden.generation_params[:temperature] == 0.0
     assert overridden.generation_params[:max_tokens] == 2048
-    assert overridden.generation_params[:api_key] == "fixture-not-for-network"
+
+    for {resolved, model, max_tokens} <- [
+          {inherited, "gpt-4.1-mini", 4096},
+          {overridden, "gpt-4.1", 2048}
+        ] do
+      assert {:ok, %{response: "hello"}} =
+               EvoGit.SystemCheck.llm_test(resolved.model_spec, resolved.generation_params)
+
+      assert_receive {:settings_llm_request, headers, body}, 5_000
+
+      assert List.keyfind(headers, "authorization", 0) ==
+               {"authorization", "Bearer fixture-not-for-network"}
+
+      assert body["model"] == model
+      assert body["max_output_tokens"] == max_tokens
+      assert body["store"] == false
+    end
   end
 end
 
@@ -600,7 +695,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       # The search handler expects %{"value" => text} (the input name is "value").
       # A mismatched key (e.g. %{"search" => text}) would silently fail to match.
-      html = render_hook(view, "search", %{"value" => "scheduler"})
+      html = settings_hook(view, "search", %{"value" => "scheduler"})
 
       # When search_text is non-empty, the search results panel is shown
       # (the render/1 template branches on @search_text != "").
@@ -610,7 +705,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "search handler shows 'no settings found' for a non-matching term", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = render_hook(view, "search", %{"value" => "zzz_nonexistent_xyz"})
+      html = settings_hook(view, "search", %{"value" => "zzz_nonexistent_xyz"})
 
       assert html =~ "No settings found matching"
     end
@@ -619,9 +714,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       # First type a search term
-      _html = render_hook(view, "search", %{"value" => "scheduler"})
+      _html = settings_hook(view, "search", %{"value" => "scheduler"})
       # Then clear it (the clear button sends phx-value-value="")
-      html = render_hook(view, "search", %{"value" => ""})
+      html = settings_hook(view, "search", %{"value" => ""})
 
       # When search_text is empty, the category section is shown instead of
       # the search results panel.
@@ -656,7 +751,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       File.rm(creds_file())
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+      html = settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
 
       assert provider(:deepseek).models != []
 
@@ -685,14 +780,14 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       # The API key form only renders once a model is selected.
-      html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+      html = settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
 
       # Before a model is selected, the key status is not surfaced.
       assert html =~ "Select a model above to configure credentials."
       refute html =~ "API key is already set"
 
       # Selecting a model reveals the API key form; the key is detected.
-      html = render_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
+      html = settings_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
 
       # When key_is_set is true the placeholder is "API key is already set".
       assert html =~ "API key is already set"
@@ -704,10 +799,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
       File.rm(creds_file())
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+      html = settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
       assert html =~ "Select a model above to configure credentials."
 
-      html = render_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
+      html = settings_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
 
       # When the key is NOT set, the hint paragraph reads "Enter your API key".
       # (deepseek has a prefix hint "sk-..." so the input placeholder itself is
@@ -721,9 +816,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       File.rm(creds_file())
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+      settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
 
-      html = render_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
+      html = settings_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
 
       # The Save Model form renders with its hidden inputs.
       assert html =~ "Save Model"
@@ -744,11 +839,11 @@ defmodule EvoDashWeb.SettingsLiveTest do
       File.rm(creds_file())
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
-      render_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
+      settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+      settings_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
 
       html =
-        render_hook(view, "save_quick_setup", %{
+        settings_hook(view, "save_quick_setup", %{
           "model_string" => model_string(:deepseek),
           "provider_id" => "deepseek",
           "variant_id" => "",
@@ -769,14 +864,14 @@ defmodule EvoDashWeb.SettingsLiveTest do
       File.rm(creds_file())
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_llm_provider", %{"provider_id" => "google"})
+      settings_hook(view, "select_llm_provider", %{"provider_id" => "google"})
 
       assert provider(:google).models != []
-      html = render_hook(view, "select_llm_model", %{"model_string" => model_string(:google)})
+      html = settings_hook(view, "select_llm_model", %{"model_string" => model_string(:google)})
       assert html =~ "Save Model"
 
       # Switching provider invalidates any previously chosen model.
-      html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+      html = settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
       refute html =~ "Save Model"
       assert html =~ "Select a model above to configure credentials."
       assert assigns(view).selected_model_string == nil
@@ -786,10 +881,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
       File.rm(creds_file())
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+      settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
 
       html =
-        render_hook(view, "select_llm_model", %{"model_string" => "deepseek:nonexistent-model"})
+        settings_hook(view, "select_llm_model", %{"model_string" => "deepseek:nonexistent-model"})
 
       # Whitelist safety: unknown model strings clear the selection (nil) and
       # never crash; the hint stays visible and the Save Model form stays hidden.
@@ -807,7 +902,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # The mounted category IS `:llm` (SettingsLive.mount/3 seeds :llm), so no
       # category switch is needed as setup.
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = render_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
+      html = settings_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
 
       assert html =~ "Model Name"
       assert html =~ ~s(name="model_name")
@@ -823,7 +918,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
+      html = settings_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
 
       assert html =~ "Model Name"
       assert html =~ "Base URL"
@@ -838,10 +933,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
+      settings_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
 
       html =
-        render_hook(view, "save_custom_model", %{
+        settings_hook(view, "save_custom_model", %{
           "model_name" => "anthropic/claude-3.5-sonnet",
           "provider_id" => "openrouter"
         })
@@ -852,7 +947,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert profile["models"] == [%{"model" => "anthropic/claude-3.5-sonnet"}]
       assert stored_providers() == [profile]
       assert html =~ "Model selected and saved."
-      render_hook(view, "edit_provider_profile", %{"profile_id" => profile["id"]})
+      settings_hook(view, "edit_provider_profile", %{"profile_id" => profile["id"]})
 
       assert has_element?(
                view,
@@ -862,10 +957,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "saving OpenAI-compatible custom model stores map spec and pre-fills", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
+      settings_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
 
       html =
-        render_hook(view, "save_custom_model", %{
+        settings_hook(view, "save_custom_model", %{
           "model_name" => "my-model",
           "base_url" => "https://api.example.com/v1",
           "provider_id" => "openai_compatible"
@@ -878,7 +973,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert profile["base_url"] == "https://api.example.com/v1"
       assert profile["models"] == [%{"model" => "my-model"}]
       assert stored_providers() == [profile]
-      render_hook(view, "edit_provider_profile", %{"profile_id" => profile["id"]})
+      settings_hook(view, "edit_provider_profile", %{"profile_id" => profile["id"]})
       assert has_element?(view, ~s(input[name="default_model"][value="my-model"]))
       assert has_element?(view, ~s(input[name="base_url"][value="https://api.example.com/v1"]))
     end
@@ -891,7 +986,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     defp provider_params(overrides \\ %{}) do
       Map.merge(
         %{
-          "profile_id" => "new",
+          "profile_id" => "",
           "profile_id_new" => "profile-1",
           "provider" => "openai",
           "default_model" => "example",
@@ -936,7 +1031,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       before = assigns(view).file_config
       disk = EvoGit.Config.user_config()
       view |> element(~s(button[phx-click="add_provider_profile"])) |> render_click()
-      assert assigns(view).editing_profile_id == "new"
+      assert assigns(view).editing_profile_id == :new
       assert assigns(view).profile_form_draft["id"] == "profile-1"
       assert assigns(view).profile_form_draft["concurrency"] == 3
       assert assigns(view).file_config == before
@@ -947,7 +1042,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
                ~s(form#provider-profile-edit-form[phx-submit="save_provider_profile"][phx-change="provider_profile_form_change"])
              )
 
-      assert has_element?(view, ~s(input[name="profile_id"][value="new"]))
+      assert has_element?(view, ~s(input[name="profile_id"][value=""]))
       assert has_element?(view, ~s(input[name="profile_id_new"][value="profile-1"]))
       assert has_element?(view, ~s(input[name="generation[temperature]"]))
       assert has_element?(view, "details#provider-generation-defaults:not([open])")
@@ -965,8 +1060,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
-      html = view |> form("#provider-profile-edit-form", provider_params()) |> render_submit()
+      settings_hook(view, "add_provider_profile", %{})
+      view |> form("#provider-profile-edit-form", provider_params()) |> render_submit()
+      html = await_config_save(view)
       assert html =~ "Provider profile saved."
       assert assigns(view).editing_profile_id == nil
       assert assigns(view).profile_form_draft == nil
@@ -979,10 +1075,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert stored_providers() == [profile]
       refute Map.has_key?(EvoGit.Config.user_config()["llm"], "models")
 
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
       assert assigns(view).profile_form_draft["id"] == "profile-2"
 
-      render_hook(
+      settings_hook(
         view,
         "save_provider_profile",
         provider_params(%{"profile_id_new" => "profile-2"})
@@ -997,14 +1093,14 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert assigns(view).editing_profile_id == "profile-1"
       assert has_element?(view, ~s(input[name="default_model"][value="example"]))
       # Legacy callers can still toggle the same edit session off.
-      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+      settings_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
       assert assigns(view).editing_profile_id == nil
-      render_hook(view, "edit_provider_profile", %{"profile_id" => "profile-1"})
-      render_hook(view, "provider_profile_form_change", provider_params(%{"name" => "Unsaved"}))
-      render_hook(view, "edit_provider_profile", %{"profile_id" => "profile-2"})
+      settings_hook(view, "edit_provider_profile", %{"profile_id" => "profile-1"})
+      settings_hook(view, "provider_profile_form_change", provider_params(%{"name" => "Unsaved"}))
+      settings_hook(view, "edit_provider_profile", %{"profile_id" => "profile-2"})
       assert assigns(view).profile_form_draft["id"] == "profile-2"
       refute assigns(view).profile_form_draft["name"] == "Unsaved"
-      render_hook(view, "cancel_edit_provider_profile", %{})
+      settings_hook(view, "cancel_edit_provider_profile", %{})
 
       view
       |> element(
@@ -1012,10 +1108,11 @@ defmodule EvoDashWeb.SettingsLiveTest do
       )
       |> render_click()
 
+      await_config_save(view)
       assert EvoGit.Config.user_config()["llm"]["default_provider_profile"] == "profile-2"
-      render_hook(view, "edit_provider_profile", %{"profile_id" => "profile-2"})
+      settings_hook(view, "edit_provider_profile", %{"profile_id" => "profile-2"})
 
-      render_hook(
+      settings_hook(
         view,
         "save_provider_profile",
         provider_params(%{"profile_id" => "profile-2", "profile_id_new" => "renamed"})
@@ -1023,13 +1120,11 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert EvoGit.Config.user_config()["llm"]["default_provider_profile"] == "renamed"
 
-      html =
-        view
-        |> element(
-          ~s(button[phx-click="delete_provider_profile"][phx-value-profile_id="renamed"])
-        )
-        |> render_click()
+      view
+      |> element(~s(button[phx-click="delete_provider_profile"][phx-value-profile_id="renamed"]))
+      |> render_click()
 
+      html = await_config_save(view)
       assert html =~ "Provider profile deleted."
       assert Enum.map(stored_providers(), & &1["id"]) == ["profile-1"]
       assert EvoGit.Config.user_config()["llm"]["default_provider_profile"] == "profile-1"
@@ -1039,7 +1134,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
       input =
         provider_params(%{
@@ -1091,7 +1186,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           }
         })
 
-      render_hook(view, "provider_profile_form_change", input)
+      settings_hook(view, "provider_profile_form_change", input)
       # Change keeps the nested browser draft; only Save flattens it at the parent boundary.
       assert assigns(view).profile_form_draft["generation"] == input["generation"]
 
@@ -1100,7 +1195,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
                "max_tokens" => ""
              }
 
-      html = render_hook(view, "save_provider_profile", input)
+      html = settings_hook(view, "save_provider_profile", input)
       assert html =~ "Provider profile saved."
       [profile] = stored_providers()
       assert profile["concurrency"] == 4
@@ -1143,7 +1238,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert unsupported == %{"model" => "no-reasoning", "reasoning_efforts" => []}
       refute Map.has_key?(profile, "generation")
       refute Enum.any?(profile["models"], &Map.has_key?(&1, "override_reasoning"))
-      html = render_hook(view, "edit_provider_profile", %{"profile_id" => "profile-1"})
+      html = settings_hook(view, "edit_provider_profile", %{"profile_id" => "profile-1"})
       doc = Floki.parse_document!(html)
       assert Floki.attribute(doc, ~s(input[name="generation[top_k]"]), "value") == ["40"]
 
@@ -1175,7 +1270,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         })
 
       html =
-        render_hook(view, "save_provider_profile", Map.put(cleared, "profile_id", "profile-1"))
+        settings_hook(view, "save_provider_profile", Map.put(cleared, "profile_id", "profile-1"))
 
       assert html =~ "Provider profile saved."
       [updated] = stored_providers()
@@ -1186,9 +1281,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "model row actions preserve unsaved nested input and save an explicitly emptied collection",
          %{conn: conn} do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
-      render_hook(
+      settings_hook(
         view,
         "provider_profile_form_change",
         provider_params(%{
@@ -1207,7 +1302,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       draft = assigns(view).profile_form_draft
 
       for index <- ["-1", "garbage", "999"] do
-        render_hook(view, "remove_provider_model", %{"index" => index})
+        settings_hook(view, "remove_provider_model", %{"index" => index})
         assert assigns(view).profile_form_draft == draft
       end
 
@@ -1224,13 +1319,158 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert assigns(view).profile_form_draft["models"] == []
       refute has_element?(view, ~s(input[name="models[0][model]"]))
       # The browser omits models entirely after removal; the draft's [] is authoritative.
-      html = render_hook(view, "save_provider_profile", provider_params())
+      html = settings_hook(view, "save_provider_profile", provider_params())
       assert html =~ "Provider profile saved."
       [saved] = stored_providers()
       refute Map.has_key?(saved, "models")
-      render_hook(view, "add_provider_model", %{})
-      render_hook(view, "add_provider_peak_hours_row", %{})
+      settings_hook(view, "add_provider_model", %{})
+      settings_hook(view, "add_provider_peak_hours_row", %{})
       assert assigns(view).profile_form_draft == nil
+    end
+
+    test "two distinct models survive save, authoritative reload and remount, including id new",
+         %{
+           conn: conn
+         } do
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+      settings_hook(view, "add_provider_profile", %{})
+      assert assigns(view).editing_profile_id == :new
+
+      input =
+        provider_params(%{
+          "profile_id_new" => "new",
+          "default_model" => "first-model",
+          "generation" => %{"temperature" => "0.7", "max_tokens" => "4096"},
+          "models" => %{
+            "0" => %{"model" => "first-model"},
+            "1" => %{
+              "model" => "second-model",
+              "generation" => %{"temperature" => "0", "max_tokens" => "2048"}
+            }
+          }
+        })
+
+      settings_hook(view, "provider_profile_form_change", input)
+      view |> form("#provider-profile-edit-form", input) |> render_submit()
+      html = await_config_save(view)
+      assert html =~ "Provider profile saved."
+      assert assigns(view).editing_profile_id == nil
+      [saved] = stored_providers()
+      assert saved["id"] == "new"
+      assert saved["default_model"] == "first-model"
+      assert saved["temperature"] == 0.7
+      assert saved["max_tokens"] == 4096
+
+      assert saved["models"] == [
+               %{"model" => "first-model"},
+               %{"model" => "second-model", "temperature" => 0.0, "max_tokens" => 2048}
+             ]
+
+      assert current_providers(view) == [saved]
+      refute Map.has_key?(EvoGit.Config.user_config()["llm"], "models")
+
+      # A real page reload must read disk, not replay the editor's candidate.
+      render_patch(view, ~p"/settings?category=llm")
+      await_mount_async_loads(view)
+      assert current_providers(view) == [saved]
+      settings_hook(view, "edit_provider_profile", %{"profile_id" => "new"})
+      assert assigns(view).editing_profile_id == "new"
+      assert has_element?(view, ~s(input[name="models[1][model]"][value="second-model"]))
+      assert has_element?(view, ~s(input[name="models[1][generation][max_tokens]"][value="2048"]))
+      GenServer.stop(view.pid)
+
+      {:ok, remounted, _} = mount_settings(conn, ~p"/settings")
+      assert current_providers(remounted) == [saved]
+      settings_hook(remounted, "edit_provider_profile", %{"profile_id" => "new"})
+      assert assigns(remounted).editing_profile_id == "new"
+      assert has_element?(remounted, ~s(input[name="models[0][model]"][value="first-model"]))
+
+      assert has_element?(
+               remounted,
+               ~s(input[name="models[1][generation][temperature]"][value="0.0"])
+             )
+    end
+
+    test "a writer failure retains the correction draft and retry confirms the disk write", %{
+      conn: conn
+    } do
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+      settings_hook(view, "add_provider_profile", %{})
+      before = assigns(view).file_config
+      path = EvoGit.Config.config_path()
+      File.mkdir_p!(Path.dirname(path))
+      # A directory at the destination fails atomic replacement on every OS,
+      # without chmod/root assumptions or a process-global writer override.
+      File.mkdir!(path)
+
+      input = provider_params(%{"models" => %{"0" => %{"model" => "example"}}})
+      html = settings_hook(view, "save_provider_profile", input)
+      refute html =~ "Provider profile saved."
+      assert assigns(view).flash["error"] =~ "Failed to save configuration:"
+      assert assigns(view).editing_profile_id == :new
+      assert assigns(view).profile_form_draft["default_model"] == "example"
+      assert assigns(view).file_config == before
+      assert File.dir?(path)
+      assert assigns(view).config_save_request == nil
+      assert assigns(view).config_saving == false
+
+      File.rmdir!(path)
+      html = settings_hook(view, "save_provider_profile", input)
+      assert html =~ "Provider profile saved."
+      assert assigns(view).editing_profile_id == nil
+      assert assigns(view).profile_form_draft == nil
+      assert [saved] = stored_providers()
+      assert saved["models"] == [%{"model" => "example"}]
+      assert current_providers(view) == [saved]
+    end
+
+    test "reset rejects provider paths and stale load/save completions cannot undo a generic reset",
+         %{
+           conn: conn
+         } do
+      seed_write_paths(["/custom"])
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+      before = assigns(view)
+      old_scope = {before.current_node_id, before.current_node}
+      old_results = default_node_results(view, %{})
+
+      for path <- ["llm.providers", "llm.providers.0.models", "llm.default_provider_profile"] do
+        html = settings_hook(view, "reset_key", %{"key_path" => path})
+        assert html =~ "Invalid key path."
+        assert assigns(view).file_config == before.file_config
+      end
+
+      html = settings_hook(view, "reset_key", %{"key_path" => "sandbox.write_paths"})
+      assert html =~ "Reset sandbox.write_paths to default."
+      after_reset = assigns(view).file_config
+      assert get_in(after_reset, [:sandbox, :write_paths]) == nil
+      refute EvoGit.Config.user_config()["sandbox"]["write_paths"] == ["/custom"]
+      assert assigns(view).settings_load_seq > before.settings_load_seq
+
+      send(
+        view.pid,
+        {{:settings_node_data_loaded, before.settings_load_seq, old_scope}, before.current_node,
+         nil, {:ok, old_results}}
+      )
+
+      send(
+        view.pid,
+        {{:settings_config_saved, make_ref(), old_scope}, {:ok, {:saved, before.file_config, []}}}
+      )
+
+      # Correct generation but wrong target identity is equally stale.
+      send(
+        view.pid,
+        {{:settings_node_data_loaded, assigns(view).settings_load_seq,
+          {"obsolete-target", node()}}, node(), nil, {:ok, old_results}}
+      )
+
+      render(view)
+      assert assigns(view).file_config == after_reset
+      assert assigns(view).config_save_request == nil
+      assert assigns(view).config_saving == false
+      assert assigns(view).flash["info"] =~ "Reset sandbox.write_paths to default."
+      refute EvoGit.Config.user_config()["sandbox"]["write_paths"] == ["/custom"]
     end
 
     test "invalid ids, nested values and JSON keep the correction draft without writing", %{
@@ -1264,18 +1504,18 @@ defmodule EvoDashWeb.SettingsLiveTest do
             {%{"reasoning_efforts" => "low,high", "default_reasoning_effort" => "other"},
              "Default reasoning effort must be one of the configured reasoning efforts."}
           ] do
-        render_hook(view, "cancel_edit_provider_profile", %{})
-        render_hook(view, "add_provider_profile", %{})
+        settings_hook(view, "cancel_edit_provider_profile", %{})
+        settings_hook(view, "add_provider_profile", %{})
         input = provider_params(patch)
-        html = render_hook(view, "save_provider_profile", input)
+        html = settings_hook(view, "save_provider_profile", input)
         assert html =~ message
-        assert assigns(view).editing_profile_id == "new"
+        assert assigns(view).editing_profile_id == :new
         assert assigns(view).profile_form_draft != nil
         assert stored_providers() == before
         assert current_providers(view) == before_config
       end
 
-      render_hook(view, "cancel_edit_provider_profile", %{})
+      settings_hook(view, "cancel_edit_provider_profile", %{})
       assert assigns(view).profile_form_draft == nil
     end
 
@@ -1296,13 +1536,13 @@ defmodule EvoDashWeb.SettingsLiveTest do
       """)
 
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "edit_model_profile", %{"profile_id" => "legacy"})
+      settings_hook(view, "edit_model_profile", %{"profile_id" => "legacy"})
       assert assigns(view).editing_profile_id == "legacy"
       assert has_element?(view, ~s(input[name="default_model"][value="old-model"]))
       assert has_element?(view, ~s(input[name="generation[temperature]"][value="0.7"]))
 
       html =
-        render_hook(view, "save_model_profile", %{
+        settings_hook(view, "save_model_profile", %{
           "profile_id" => "legacy",
           "profile_id_new" => "legacy",
           "provider" => "openai",
@@ -1332,7 +1572,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
 
-      assert render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-2"}) =~
+      assert settings_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-2"}) =~
                "Provider profile moved."
 
       assert Enum.map(current_providers(view), & &1["id"]) == ["profile-2", "profile-1"]
@@ -1342,7 +1582,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       before = stored_providers()
 
       for {id, direction} <- [{"profile-2", "up"}, {"profile-1", "down"}] do
-        render_hook(view, "move_model_profile", %{"direction" => direction, "id" => id})
+        settings_hook(view, "move_model_profile", %{"direction" => direction, "id" => id})
         assert stored_providers() == before
       end
     end
@@ -1350,7 +1590,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "Quick Setup shortcut writes a provider rather than a flat model shadow", %{conn: conn} do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
 
-      assert render_hook(view, "select_llm_model_shortcut", %{"model_string" => "openai:example"}) =~
+      assert settings_hook(view, "select_llm_model_shortcut", %{
+               "model_string" => "openai:example"
+             }) =~
                "Model selected and saved."
 
       [profile] = stored_providers()
@@ -1364,12 +1606,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "custom-model validation rejects empty names and required base URLs", %{conn: conn} do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
 
-      assert render_hook(view, "save_custom_model", %{
+      assert settings_hook(view, "save_custom_model", %{
                "model_name" => "  ",
                "provider_id" => "openrouter"
              }) =~ "Model name cannot be empty."
 
-      assert render_hook(view, "save_custom_model", %{
+      assert settings_hook(view, "save_custom_model", %{
                "model_name" => "x",
                "base_url" => "",
                "provider_id" => "openai_compatible"
@@ -1388,9 +1630,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "model_profile_form_change stores the whole form as a draft", %{conn: conn} do
       # Add enters detached edit mode; nothing is persisted until Save.
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "provider_profile_form_change", %{
+      settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
@@ -1414,9 +1656,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "provider_profile_form_change", %{
+      settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
@@ -1449,10 +1691,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # must normalize it (the raw binary crashed the render's
       # `Enum.member?(off_peak_days, value)` with an Enumerable protocol error).
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "provider_profile_form_change", %{
+        settings_hook(view, "provider_profile_form_change", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
@@ -1472,18 +1714,18 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert draft["peak_hours"] == [%{start: "09:00", end: "12:00", days: ["mon"]}]
 
       # The chips render checked accordingly (no Enumerable crash).
-      assert Floki.find(doc, ~s(input[name="off_peak_days"][value="weekends"][checked])) != []
-      refute Floki.find(doc, ~s(input[name="off_peak_days"][value="mon"][checked])) != []
-      assert Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="mon"][checked])) != []
-      refute Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="tue"][checked])) != []
+      assert Floki.find(doc, ~s(input[name="off_peak_days[]"][value="weekends"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="off_peak_days[]"][value="mon"][checked])) != []
+      assert Floki.find(doc, ~s(input[name="peak_hours[0][days][]"][value="mon"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="peak_hours[0][days][]"][value="tue"][checked])) != []
     end
 
     test "model_profile_form_change with all-unchecked days ([] seed entry only)", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "provider_profile_form_change", %{
+        settings_hook(view, "provider_profile_form_change", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
@@ -1497,16 +1739,16 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # Nothing checked → normalized to [] (all chips unchecked, no crash).
       assert assigns(view).profile_form_draft["off_peak_days"] == []
 
-      chips = Floki.find(doc, ~s(input[type="checkbox"][name="off_peak_days"]))
+      chips = Floki.find(doc, ~s(input[type="checkbox"][name="off_peak_days[]"]))
       assert length(chips) == 9
       assert Enum.all?(chips, fn chip -> Floki.attribute(chip, "checked") == [] end)
     end
 
     test "model_profile_form_change never crashes on partial/odd params", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
-      html = render_hook(view, "provider_profile_form_change", %{"peak_hours" => "garbage"})
+      html = settings_hook(view, "provider_profile_form_change", %{"peak_hours" => "garbage"})
 
       assert html =~ "Provider profile settings"
       assert assigns(view).profile_form_draft["peak_hours"] == []
@@ -1514,9 +1756,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "add_peak_hours_row preserves typed values from the draft", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "provider_profile_form_change", %{
+      settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
@@ -1528,7 +1770,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "peak_hours" => %{"0" => %{"start" => "09:00", "end" => "12:00"}}
       })
 
-      html = render_hook(view, "add_provider_peak_hours_row", %{})
+      html = settings_hook(view, "add_provider_peak_hours_row", %{})
       doc = Floki.parse_document!(html)
 
       # Previously-typed window values survive the re-render...
@@ -1549,9 +1791,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "provider_profile_form_change", %{
+      settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
@@ -1563,20 +1805,20 @@ defmodule EvoDashWeb.SettingsLiveTest do
         }
       })
 
-      html = render_hook(view, "add_provider_peak_hours_row", %{})
+      html = settings_hook(view, "add_provider_peak_hours_row", %{})
       doc = Floki.parse_document!(html)
 
       # The profile-level off-peak day chips survive the re-render...
-      assert Floki.find(doc, ~s(input[name="off_peak_days"][value="mon"][checked])) != []
-      assert Floki.find(doc, ~s(input[name="off_peak_days"][value="fri"][checked])) != []
-      refute Floki.find(doc, ~s(input[name="off_peak_days"][value="tue"][checked])) != []
+      assert Floki.find(doc, ~s(input[name="off_peak_days[]"][value="mon"][checked])) != []
+      assert Floki.find(doc, ~s(input[name="off_peak_days[]"][value="fri"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="off_peak_days[]"][value="tue"][checked])) != []
       # ...and the existing window keeps its per-window days checked.
-      assert Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="mon"][checked])) != []
-      assert Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="tue"][checked])) != []
-      refute Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="wed"][checked])) != []
+      assert Floki.find(doc, ~s(input[name="peak_hours[0][days][]"][value="mon"][checked])) != []
+      assert Floki.find(doc, ~s(input[name="peak_hours[0][days][]"][value="tue"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="peak_hours[0][days][]"][value="wed"][checked])) != []
 
       # The appended blank row (index 1) has no days checked.
-      refute Floki.find(doc, ~s(input[name="peak_hours[1][days]"][value="mon"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="peak_hours[1][days][]"][value="mon"][checked])) != []
 
       # The draft still carries both the off_peak_days and the (now two-row)
       # peak_hours with days intact (normalized — seed entry filtered).
@@ -1591,9 +1833,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "remove_peak_hours_row preserves the remaining typed values", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "provider_profile_form_change", %{
+      settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
@@ -1605,7 +1847,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         }
       })
 
-      html = render_hook(view, "remove_provider_peak_hours_row", %{"index" => "0"})
+      html = settings_hook(view, "remove_provider_peak_hours_row", %{"index" => "0"})
       doc = Floki.parse_document!(html)
 
       # The remaining window (14:00–18:00) is now at index 0 with values intact.
@@ -1618,9 +1860,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "provider_profile_form_change", %{
+      settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
@@ -1633,19 +1875,19 @@ defmodule EvoDashWeb.SettingsLiveTest do
         }
       })
 
-      html = render_hook(view, "remove_provider_peak_hours_row", %{"index" => "0"})
+      html = settings_hook(view, "remove_provider_peak_hours_row", %{"index" => "0"})
       doc = Floki.parse_document!(html)
 
       # The remaining window (14:00–18:00) moves to index 0 with its days intact.
       assert Floki.attribute(doc, ~s(input[name="peak_hours[0][start]"]), "value") == ["14:00"]
       assert Floki.attribute(doc, ~s(input[name="peak_hours[0][end]"]), "value") == ["18:00"]
-      assert Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="wed"][checked])) != []
-      refute Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="mon"][checked])) != []
+      assert Floki.find(doc, ~s(input[name="peak_hours[0][days][]"][value="wed"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="peak_hours[0][days][]"][value="mon"][checked])) != []
       refute Floki.find(doc, ~s(input[name="peak_hours[1][start]"])) != []
 
       # Off-peak day chips survive the removal too.
-      assert Floki.find(doc, ~s(input[name="off_peak_days"][value="weekends"][checked])) != []
-      refute Floki.find(doc, ~s(input[name="off_peak_days"][value="mon"][checked])) != []
+      assert Floki.find(doc, ~s(input[name="off_peak_days[]"][value="weekends"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="off_peak_days[]"][value="mon"][checked])) != []
 
       draft = assigns(view).profile_form_draft
       assert draft["off_peak_days"] == ["weekends"]
@@ -1654,9 +1896,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "profile_form_draft is cleared on cancel and on save", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "provider_profile_form_change", %{
+      settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
@@ -1668,13 +1910,13 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert assigns(view).profile_form_draft != nil
 
       # Cancel clears the draft.
-      render_hook(view, "cancel_edit_provider_profile", %{})
+      settings_hook(view, "cancel_edit_provider_profile", %{})
       assert assigns(view).profile_form_draft == nil
 
       # Re-enter Add, type again, then Save — the draft is cleared too.
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "provider_profile_form_change", %{
+      settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
@@ -1685,7 +1927,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert assigns(view).profile_form_draft != nil
 
-      render_hook(view, "save_provider_profile", %{
+      settings_hook(view, "save_provider_profile", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
@@ -1705,9 +1947,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       ])
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "edit_provider_profile", %{"profile_id" => "profile-1"})
+      settings_hook(view, "edit_provider_profile", %{"profile_id" => "profile-1"})
 
-      render_hook(view, "provider_profile_form_change", %{
+      settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "profile-1",
         "provider" => "anthropic",
@@ -1717,7 +1959,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert assigns(view).profile_form_draft != nil
 
-      render_hook(view, "edit_provider_profile", %{"profile_id" => "profile-2"})
+      settings_hook(view, "edit_provider_profile", %{"profile_id" => "profile-2"})
       assert assigns(view).profile_form_draft["id"] == "profile-2"
     end
 
@@ -1725,10 +1967,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "save_provider_profile", %{
+        settings_hook(view, "save_provider_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
@@ -1739,16 +1981,16 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Peak concurrency must be a non-negative integer."
       # Rejected saves retain the failed draft so it can be corrected.
-      assert assigns(view).editing_profile_id == "new"
+      assert assigns(view).editing_profile_id == :new
       assert assigns(view).profile_form_draft["peak_concurrency"] == "-1"
     end
 
     test "save_model_profile stores a non-blank timezone and omits a blank one", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "save_provider_profile", %{
+        settings_hook(view, "save_provider_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
@@ -1762,9 +2004,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert (Map.get(profile, :timezone) || Map.get(profile, "timezone")) == "Asia/Shanghai"
 
       # A blank timezone omits the key entirely on the next save.
-      render_hook(view, "edit_provider_profile", %{"profile_id" => "default"})
+      settings_hook(view, "edit_provider_profile", %{"profile_id" => "default"})
 
-      render_hook(view, "save_provider_profile", %{
+      settings_hook(view, "save_provider_profile", %{
         "profile_id" => "default",
         "profile_id_new" => "default",
         "provider" => "anthropic",
@@ -1779,10 +2021,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "save_model_profile persists off_peak_days and per-window days", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "save_provider_profile", %{
+        settings_hook(view, "save_provider_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
@@ -1818,10 +2060,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # chip is checked. Save-time parsing must wrap it — previously the day
       # was silently dropped (list-only normalization).
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "save_provider_profile", %{
+        settings_hook(view, "save_provider_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
@@ -1847,10 +2089,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "save_model_profile omits off_peak_days and per-window days when empty", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "save_provider_profile", %{
+        settings_hook(view, "save_provider_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
@@ -1879,10 +2121,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "save_model_profile persists context_window as an integer", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
       html =
-        render_hook(view, "save_provider_profile", %{
+        settings_hook(view, "save_provider_profile", %{
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
@@ -1904,9 +2146,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_provider_profile", %{})
 
-      render_hook(view, "save_provider_profile", %{
+      settings_hook(view, "save_provider_profile", %{
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
@@ -1921,10 +2163,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       # Re-save with a blank context_window — the key must be omitted entirely
       # (never nil), so the core's default applies.
-      render_hook(view, "edit_provider_profile", %{"profile_id" => "default"})
+      settings_hook(view, "edit_provider_profile", %{"profile_id" => "default"})
 
       html =
-        render_hook(view, "save_provider_profile", %{
+        settings_hook(view, "save_provider_profile", %{
           "profile_id" => "default",
           "profile_id_new" => "default",
           "provider" => "anthropic",
@@ -2034,28 +2276,69 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "connection test with a map model renders the formatted string, not the raw map",
          %{conn: conn} do
-      # `:llm` is the category mount already seeds — no switch needed.
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      server =
+        start_supervised!(
+          {Bandit,
+           plug: {EvoDashWeb.SettingsLiveTest.StreamEndpoint, self()},
+           ip: {127, 0, 0, 1},
+           port: 0,
+           startup_log: false}
+        )
 
-      # Simulate the LLM connection test result being delivered by the async task
-      # (handle_info({:llm_test_result, result}, socket) stores the status). We send
-      # a result with a MAP model — the exact shape that crashed before the fix.
-      # `render/1` synchronously processes pending messages for the LiveView
-      # process, so the info message is handled before the HTML is produced.
-      send(
-        view.pid,
-        {:llm_test_result,
-         {:ok, %{response: "hello", model: %{id: "deepseek-v4-pro", provider: :deepseek}}}}
+      assert {:ok, {_address, port}} = ThousandIsland.listener_info(server)
+      File.mkdir_p!(EvoGit.Config.config_dir())
+
+      File.write!(
+        EvoGit.Config.credentials_path(),
+        ~s(GENESIS_SETTINGS_FIXTURE = "mounted-fixture"\n)
       )
 
-      html = render(view)
+      File.write!(EvoGit.Config.config_path(), """
+      [[llm.providers]]
+      id = "account"
+      provider = "openai"
+      default_model = "gpt-4.1-mini"
+      api_key_env_var = "GENESIS_SETTINGS_FIXTURE"
+      base_url = "http://127.0.0.1:#{port}/v1"
+      models = ["gpt-4.1-mini"]
+      """)
 
-      # The success state "Connected" (gettext'd) should be present — proving the
-      # {:ok, data} branch rendered without raising.
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      settings_hook(view, "test_llm", %{})
+      wait_settings(view, &match?({:ok, _}, &1.llm_test_status))
+      assert_receive {:settings_llm_request, headers, body}, 5_000
+
+      assert List.keyfind(headers, "authorization", 0) ==
+               {"authorization", "Bearer mounted-fixture"}
+
+      assert body["model"] == "gpt-4.1-mini"
+
+      assert {:ok, %{model: %{id: "gpt-4.1-mini", provider: :openai}}} =
+               assigns(view).llm_test_status
+
+      html = render(view)
       assert html =~ "Connected"
-      # The map model must be rendered as the formatted "provider:id" string rather
-      # than crashing on the raw map.
-      assert html =~ "deepseek:deepseek-v4-pro"
+      assert html =~ "openai:gpt-4.1-mini"
+
+      # The old unscoped envelope, stale generation and wrong-node envelopes
+      # must not replace this authoritative success with a later error.
+      state = assigns(view)
+      scope = {state.current_node_id, state.current_node, state.test_profile_id}
+      send(view.pid, {:llm_test_result, {:error, "unscoped"}})
+
+      send(
+        view.pid,
+        {{:llm_test_result, state.llm_test_seq - 1, scope}, {:ok, {:error, "stale"}}}
+      )
+
+      send(
+        view.pid,
+        {{:llm_test_result, state.llm_test_seq,
+          {nil, :obsolete_settings@host, state.test_profile_id}}, {:ok, {:error, "wrong node"}}}
+      )
+
+      render(view)
+      assert assigns(view).llm_test_status == state.llm_test_status
     end
 
     test "model_display/1 formats a map model into a readable provider:id string" do
@@ -2123,13 +2406,15 @@ defmodule EvoDashWeb.SettingsLiveTest do
             llm_test_status: :idle,
             file_config: file_config,
             current_node: :"missing_settings_test@127.0.0.1",
+            test_config_scope: {nil, :"missing_settings_test@127.0.0.1"},
             test_profile_id: selected
           }
         }
 
         assert {:noreply, result} = SettingsLive.handle_event("test_llm", %{}, socket)
         assert result.assigns.llm_test_status == :testing
-        assert_receive {:llm_test_result, {:error, _}}, 5_000
+        scope = {nil, :"missing_settings_test@127.0.0.1", selected}
+        assert_receive {{:llm_test_result, 1, ^scope}, {:ok, {:error, _}}}, 5_000
       end
     end
 
@@ -2140,6 +2425,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           flash: %{},
           llm_test_status: :idle,
           file_config: %{llm: %{providers: []}},
+          test_config_scope: {nil, node()},
           current_node: node()
         }
       }
@@ -2165,7 +2451,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "sandbox category renders the write_paths card without crashing", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = render_hook(view, "select_category", %{"category" => "sandbox"})
+      html = settings_hook(view, "select_category", %{"category" => "sandbox"})
 
       # Regression: the sandbox category used to hard-filter to [:sandbox, :mode],
       # so any other sub_category == nil schema (write_paths) hit a CaseClauseError
@@ -2181,7 +2467,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "search for write_paths renders the card", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = render_hook(view, "search", %{"value" => "write_paths"})
+      html = settings_hook(view, "search", %{"value" => "write_paths"})
 
       assert html =~ "Search Results"
       assert html =~ "sandbox.write_paths"
@@ -2191,9 +2477,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "add_list_entry appends a blank entry to the in-memory config", %{conn: conn} do
       seed_write_paths(["/tmp/a", "/tmp/b"])
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "sandbox"})
+      settings_hook(view, "select_category", %{"category" => "sandbox"})
 
-      html = render_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
+      html = settings_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
 
       # The implementation appends a trailing "" entry (the "add row").
       assert write_paths(view) == ["/tmp/a", "/tmp/b", ""]
@@ -2205,7 +2491,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "add_list_entry with an unknown key path flashes an error", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = render_hook(view, "add_list_entry", %{"key_path" => "nope.nope"})
+      html = settings_hook(view, "add_list_entry", %{"key_path" => "nope.nope"})
 
       assert html =~ "Invalid key path."
       assert write_paths(view) == nil
@@ -2214,10 +2500,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "remove_list_entry removes the entry at the given index", %{conn: conn} do
       seed_write_paths(["/tmp/a", "/tmp/b"])
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "sandbox"})
+      settings_hook(view, "select_category", %{"category" => "sandbox"})
 
       html =
-        render_hook(view, "remove_list_entry", %{
+        settings_hook(view, "remove_list_entry", %{
           "key_path" => "sandbox.write_paths",
           "index" => "0"
         })
@@ -2235,7 +2521,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       # Malformed index → Integer.parse fails → treated as -1 → no-op
-      render_hook(view, "remove_list_entry", %{
+      settings_hook(view, "remove_list_entry", %{
         "key_path" => "sandbox.write_paths",
         "index" => "abc"
       })
@@ -2243,7 +2529,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert write_paths(view) == ["/tmp/a", "/tmp/b"]
 
       # Out-of-range index → no-op
-      render_hook(view, "remove_list_entry", %{
+      settings_hook(view, "remove_list_entry", %{
         "key_path" => "sandbox.write_paths",
         "index" => "5"
       })
@@ -2256,15 +2542,15 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       # Add a blank entry, then remove the first entry → ["/tmp/b", ""]
-      render_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
+      settings_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
 
-      render_hook(view, "remove_list_entry", %{
+      settings_hook(view, "remove_list_entry", %{
         "key_path" => "sandbox.write_paths",
         "index" => "0"
       })
 
       html =
-        render_hook(view, "save_category", %{
+        settings_hook(view, "save_category", %{
           "category" => "sandbox",
           "sandbox.mode" => "auto",
           # Form submission includes the hidden sentinel "" plus the text inputs;
@@ -2283,10 +2569,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # The UI flow: add one blank entry, then save. The form submits the hidden
       # sentinel "" plus the blank input → parsed to [] (a set-but-empty list
       # that REPLACES the platform defaults, distinct from unset/nil).
-      render_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
+      settings_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
 
       html =
-        render_hook(view, "save_category", %{
+        settings_hook(view, "save_category", %{
           "category" => "sandbox",
           "sandbox.mode" => "auto",
           "sandbox.write_paths" => ["", ""]
@@ -2301,7 +2587,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html =
-        render_hook(view, "save_category", %{
+        settings_hook(view, "save_category", %{
           "category" => "sandbox",
           "sandbox.mode" => "auto"
         })
@@ -3377,7 +3663,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "copied event flashes the confirmation message", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = render_hook(view, "copied", %{})
+      html = settings_hook(view, "copied", %{})
 
       assert html =~ "Copied to clipboard"
     end
@@ -3406,7 +3692,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = render_hook(view, "select_category", %{"category" => "appearance"})
+      html = settings_hook(view, "select_category", %{"category" => "appearance"})
 
       assert assigns(view).active_category == :appearance
       # The active category's content section is rendered.
@@ -3430,14 +3716,14 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "saving the appearance category persists the selected accent color", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "appearance"})
+      settings_hook(view, "select_category", %{"category" => "appearance"})
 
       # The real form submits the hidden input's name/value pair inside the
       # save_category params (mirroring the sandbox write_paths save tests —
       # save_category → params_to_category_config passes the :string value
       # through raw → deep_put [:appearance, :accent_color] => "teal").
       html =
-        render_hook(view, "save_category", %{
+        settings_hook(view, "save_category", %{
           "category" => "appearance",
           "appearance.accent_color" => "teal"
         })
@@ -3451,9 +3737,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "appearance"})
+      settings_hook(view, "select_category", %{"category" => "appearance"})
 
-      html = render_hook(view, "select_appearance_accent", %{"accent" => "teal"})
+      html = settings_hook(view, "select_appearance_accent", %{"accent" => "teal"})
 
       # The pending draft re-renders the card: the hidden input now carries
       # teal (the draft threads via card_value/3 — no form submit involved)
@@ -3490,9 +3776,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "appearance"})
+      settings_hook(view, "select_category", %{"category" => "appearance"})
 
-      html = render_hook(view, "select_appearance_accent", %{"accent" => "chartreuse"})
+      html = settings_hook(view, "select_appearance_accent", %{"accent" => "chartreuse"})
 
       # Unknown value → error flash and no draft set — the card keeps the
       # current (blue) value.
@@ -3538,7 +3824,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute html =~ "h-full bg-base-100/50"
 
       for cat <- ["scheduler", "sandbox", "tools"] do
-        html = render_hook(view, "select_category", %{"category" => cat})
+        html = settings_hook(view, "select_category", %{"category" => cat})
         doc = Floki.parse_document!(html)
 
         # The category root div IS the content column — a direct flex child of
@@ -3569,7 +3855,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "search results column carries overflow-y-auto on the form", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = render_hook(view, "search", %{"value" => "scheduler"})
+      html = settings_hook(view, "search", %{"value" => "scheduler"})
       doc = Floki.parse_document!(html)
 
       # The search form is the content column — explicitly scrollable so
@@ -3593,6 +3879,85 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import EvoDashWeb.SettingsLiveTest.Helpers
+
+  test "in-flight save owns its token across rejected reset and stale completions", %{conn: conn} do
+    # This test belongs to the sync module because it suspends the process-global
+    # AgentScheduler, making the real writer's reload acknowledgement deterministic.
+    seed_write_paths(["/custom"])
+    {:ok, view, _} = mount_settings(conn, ~p"/settings")
+    settings_hook(view, "add_provider_profile", %{})
+    before = assigns(view).file_config
+    :ok = :sys.suspend(EvoGit.AgentScheduler)
+
+    on_exit(fn ->
+      # Teardown must resume the global singleton even if an assertion failed.
+      try do
+        :sys.resume(EvoGit.AgentScheduler)
+      catch
+        :exit, _ -> :ok
+      end
+    end)
+
+    input = %{
+      "profile_id" => "",
+      "profile_id_new" => "owned",
+      "provider" => "openai",
+      "default_model" => "first",
+      "models" => %{"0" => %{"model" => "first"}, "1" => %{"model" => "second"}}
+    }
+
+    render_hook(view, "save_provider_profile", input)
+    request = assigns(view).config_save_request
+    assert request != nil
+    assert assigns(view).config_saving
+    assert assigns(view).file_config == before
+
+    render_hook(view, "reset_key", %{"key_path" => "sandbox.write_paths"})
+    assert assigns(view).config_save_request == request
+    assert assigns(view).file_config == before
+    assert assigns(view).flash["error"] == "Failed to save configuration: :save_in_progress"
+
+    for {token, scope} <- [
+          {make_ref(), request.scope},
+          {request.token, {"obsolete-target", node()}}
+        ] do
+      send(
+        view.pid,
+        {{:settings_config_saved, token, scope}, {:ok, {:saved, %{llm: %{providers: []}}, []}}}
+      )
+    end
+
+    render(view)
+    assert assigns(view).config_save_request == request
+    assert assigns(view).config_saving
+    assert assigns(view).file_config == before
+    assert assigns(view).editing_profile_id == :new
+
+    :ok = :sys.resume(EvoGit.AgentScheduler)
+    html = await_config_save(view)
+    assert html =~ "Provider profile saved."
+    assert assigns(view).editing_profile_id == nil
+    saved = assigns(view).file_config
+    assert Enum.map(saved.llm.providers, & &1["id"]) == ["owned"]
+    assert get_in(saved, [:sandbox, :write_paths]) == ["/custom"]
+    assert EvoGit.Config.user_config()["llm"]["providers"] == saved.llm.providers
+
+    html = settings_hook(view, "reset_key", %{"key_path" => "sandbox.write_paths"})
+    assert html =~ "Reset sandbox.write_paths to default."
+    reset_config = assigns(view).file_config
+    assert get_in(reset_config, [:sandbox, :write_paths]) == nil
+    # A duplicate receipt from the real, completed write cannot undo the reset.
+    send(
+      view.pid,
+      {{:settings_config_saved, request.token, request.scope}, {:ok, {:saved, saved, []}}}
+    )
+
+    render(view)
+    assert assigns(view).file_config == reset_config
+    assert assigns(view).config_saving == false
+    assert assigns(view).config_save_request == nil
+    assert get_in(EvoGit.Config.user_config(), ["sandbox", "write_paths"]) != ["/custom"]
+  end
 
   setup do
     # Same per-process config isolation as the async module: the
@@ -3699,7 +4064,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
   describe "boolean field rendering (nix.enabled)" do
     test "renders a DaisyUI toggle with hidden field for false value submission", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = render_hook(view, "select_category", %{"category" => "nix"})
+      html = settings_hook(view, "select_category", %{"category" => "nix"})
 
       # The hidden field (value="false") must appear BEFORE the checkbox so that
       # unchecked submits "false" and checked submits "true" (checkbox overrides).
@@ -3737,7 +4102,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
     test "unknown category does not crash select_category", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = render_hook(view, "select_category", %{"category" => "totally_fake_category"})
+      html = settings_hook(view, "select_category", %{"category" => "totally_fake_category"})
 
       # Unknown category → active_category stays unchanged (default :llm).
       assert assigns(view).active_category == :llm
@@ -3756,7 +4121,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
     test "valid category conversion still works", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = render_hook(view, "select_category", %{"category" => "nix"})
+      html = settings_hook(view, "select_category", %{"category" => "nix"})
 
       assert assigns(view).active_category == :nix
       assert html =~ ~s(name="category" value="nix")
@@ -3765,7 +4130,8 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
     test "unknown provider does not crash select_llm_provider", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = render_hook(view, "select_llm_provider", %{"provider_id" => "totally_fake_provider"})
+      html =
+        settings_hook(view, "select_llm_provider", %{"provider_id" => "totally_fake_provider"})
 
       # Unknown provider → clears selection and shows flash error.
       assert assigns(view).selected_provider_id == nil
@@ -3776,7 +4142,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
     test "valid provider conversion still works", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
+      settings_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
 
       assert assigns(view).selected_provider_id == :alibaba
     end
@@ -3784,7 +4150,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
     test "unknown variant does not crash select_llm_variant", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      render_hook(view, "select_llm_variant", %{"variant_id" => "totally_fake_variant"})
+      settings_hook(view, "select_llm_variant", %{"variant_id" => "totally_fake_variant"})
 
       # No provider selected → selected_variant_id becomes nil.
       assert assigns(view).selected_variant_id == nil
@@ -3792,18 +4158,18 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
 
     test "unknown variant after valid provider does not crash", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
+      settings_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
 
-      render_hook(view, "select_llm_variant", %{"variant_id" => "fake_variant"})
+      settings_hook(view, "select_llm_variant", %{"variant_id" => "fake_variant"})
 
       assert assigns(view).selected_variant_id == nil
     end
 
     test "valid variant conversion still works", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
+      settings_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
 
-      html = render_hook(view, "select_llm_variant", %{"variant_id" => "global"})
+      html = settings_hook(view, "select_llm_variant", %{"variant_id" => "global"})
 
       assert assigns(view).selected_variant_id == :global
       # The selected variant button gets the active styling.
@@ -3813,7 +4179,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
     test "unknown key path does not crash reset_key", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      html = render_hook(view, "reset_key", %{"key_path" => "nope.nope"})
+      html = settings_hook(view, "reset_key", %{"key_path" => "nope.nope"})
 
       assert html =~ "Invalid key path."
     end
@@ -3885,7 +4251,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
       # Deliver the async platform-filtered schemas before selecting the
       # category (the seed shell shows the UNFILTERED map).
       deliver_node_data(view)
-      html = render_hook(view, "select_category", %{"category" => "sandbox"})
+      html = settings_hook(view, "select_category", %{"category" => "sandbox"})
 
       assert assigns(view).active_category == :sandbox
       # sub_category == nil schemas (mode + write_paths) remain.
@@ -3905,7 +4271,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
       # Deliver the async platform-filtered schemas before selecting the
       # category (the seed shell shows the UNFILTERED map).
       deliver_node_data(view)
-      html = render_hook(view, "select_category", %{"category" => "sandbox"})
+      html = settings_hook(view, "select_category", %{"category" => "sandbox"})
 
       # On Linux the sandbox schemas are unchanged — all sub-sections render.
       assert html =~ "Linux Security"
@@ -3956,7 +4322,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
       assert html =~ ~s(phx-value-category="nix")
       # ...and selecting the category renders its content section (only the
       # active category's section is rendered, so select first).
-      section_html = render_hook(view, "select_category", %{"category" => "nix"})
+      section_html = settings_hook(view, "select_category", %{"category" => "nix"})
 
       assert section_html =~ ~s(id="category-nix")
     end
@@ -3969,7 +4335,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
       html = deliver_node_data(view)
 
       assert html =~ ~s(phx-value-category="nix")
-      section_html = render_hook(view, "select_category", %{"category" => "nix"})
+      section_html = settings_hook(view, "select_category", %{"category" => "nix"})
 
       assert section_html =~ ~s(id="category-nix")
     end
@@ -3984,7 +4350,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
       # An explicit false counts as "configured" — the section must stay
       # editable so the user can turn the feature on.
       assert html =~ ~s(phx-value-category="nix")
-      section_html = render_hook(view, "select_category", %{"category" => "nix"})
+      section_html = settings_hook(view, "select_category", %{"category" => "nix"})
 
       assert section_html =~ ~s(id="category-nix")
     end
@@ -4005,7 +4371,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
 
       # Selecting the hidden category is a no-op — it is not a known category
       # in the filtered map, so active_category stays :llm.
-      select_html = render_hook(view, "select_category", %{"category" => "nix"})
+      select_html = settings_hook(view, "select_category", %{"category" => "nix"})
 
       assert assigns(view).active_category == :llm
       refute select_html =~ ~s(id="category-nix")
@@ -4013,7 +4379,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
       # Search: only the nix schemas ([nix] :enabled / :flake_output) contain
       # "nix" in key_path/description, so with the category removed from
       # @schemas_by_category the search finds zero matches.
-      search_html = render_hook(view, "search", %{"value" => "nix"})
+      search_html = settings_hook(view, "search", %{"value" => "nix"})
 
       assert search_html =~ "No settings found matching"
     end

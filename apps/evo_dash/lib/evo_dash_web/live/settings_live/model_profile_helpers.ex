@@ -118,31 +118,9 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   raises) for boundary/edge cases: unknown id, invalid/missing direction,
   empty list, already-first + "up", already-last + "down".
   """
-  def move_model_profile(file_config, id, direction) do
-    models = provider_profiles(file_config)
-
-    new_models =
-      case Enum.find_index(models, fn profile -> profile_id(profile) == id end) do
-        nil ->
-          models
-
-        idx ->
-          swap_idx =
-            case direction do
-              "up" -> idx - 1
-              "down" -> idx + 1
-              _ -> nil
-            end
-
-          if is_integer(swap_idx) and swap_idx >= 0 and swap_idx < length(models) do
-            swap_elements(models, idx, swap_idx)
-          else
-            models
-          end
-      end
-
-    put_in_model_profiles(file_config, new_models)
-  end
+  defdelegate move_model_profile(file_config, id, direction),
+    to: EvoDashWeb.SettingsLive.ProviderProfiles,
+    as: :move
 
   @doc """
   Parses the form params for a single profile into a normalized map with atom
@@ -554,14 +532,6 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
       nil -> nil
       entry -> hd(entry.provider_atoms)
     end
-  end
-
-  # Swaps the elements at indices `i` and `j` in the list (both assumed in
-  # bounds). Reads both original values before either replacement, so the
-  # second List.replace_at/3 never sees a partially-swapped list.
-  defp swap_elements(list, i, j) do
-    {a, b} = {Enum.at(list, i), Enum.at(list, j)}
-    list |> List.replace_at(i, b) |> List.replace_at(j, a)
   end
 
   # ── peak/off-peak concurrency parsing helpers ─────────────────────────────

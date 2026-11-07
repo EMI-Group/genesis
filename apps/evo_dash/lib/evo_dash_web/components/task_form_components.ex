@@ -310,6 +310,7 @@ defmodule EvoDashWeb.TaskFormComponents do
               <EvoDashWeb.LLMSelectionComponents.llm_selection
                 :if={@use_llm_selection?}
                 id="task-llm-selection"
+                form="task-form"
                 provider_profiles={@provider_profiles}
                 model_selections={@model_selections}
                 model_spec={@model_spec}

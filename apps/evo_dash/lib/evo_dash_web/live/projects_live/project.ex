@@ -23,7 +23,10 @@ defmodule EvoDashWeb.ProjectsLive.Project do
   config when a remote read fails.
 
   Returns the shared `LLMSelection` data bundle: provider profiles, ordered
-  model selections, default spec, legacy-id aliases and the Auto/rules flag.
+  model selections, default spec, legacy-id aliases and the Auto/rules flag,
+  or `{:error, reason}` on a remote config failure (never a successful empty
+  config). The loader binds the bundle to its target-id/BEAM-node scope.
+  Unstamped results may be used directly only by the local mount seed.
   Remote callers must run this in a supervised loader, not on the LiveView.
   Passing the already-loaded rules flag avoids another agents.toml/RPC read.
   """
@@ -52,8 +55,8 @@ defmodule EvoDashWeb.ProjectsLive.Project do
 
           load_model_selection_from_config(config, enabled)
 
-        {:error, _reason} ->
-          load_model_selection_from_config(%{}, false)
+        {:error, reason} ->
+          {:error, reason}
       end
     end
   end

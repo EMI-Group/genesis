@@ -111,9 +111,18 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_description(:appearance),
     do: gettext("Customize the dashboard's accent color.")
 
-  def schema_matches?(_schema, ""), do: true
+  # These paths are managed by the canonical provider editor, never generic
+  # search/reset controls (the account collections may contain credentials).
+  def dedicated_provider_path?(key_path),
+    do: key_path in [[:llm, :models], [:llm, :providers], [:llm, :default_provider_profile]]
 
   def schema_matches?(schema, search_text) do
+    not dedicated_provider_path?(schema.key_path) and text_matches?(schema, search_text)
+  end
+
+  defp text_matches?(_schema, ""), do: true
+
+  defp text_matches?(schema, search_text) do
     lower = String.downcase(search_text)
 
     String.contains?(String.downcase(Enum.join(schema.key_path, ".")), lower) or

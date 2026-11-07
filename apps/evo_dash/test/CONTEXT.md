@@ -201,9 +201,11 @@ Welcome contracts cover canonical multiple-model/default/reasoning setup, API-ke
 Settings contracts cover canonical `llm.providers` persistence without legacy shadows, unrelated-setting preservation, nested generation typing and inheritance, default-only models, multiple overrides, OAuth credential handling, editor CRUD/default/cancel and row actions, Quick Setup, connection-test resolver options and legacy editing.
 The existing Settings page and helper suites use the parent editor adapter contract; mounted persistence and resolver-options assertions require the source integration blockers below to be resolved before they can be validated.
 All new pure contracts are async; mounted task-launch and chat tests retain existing process-global ownership constraints.
-Normal `mix test apps/evo_dash/test` currently aborts before ExUnit because core `EvoGit.Config.EctoValidation.type_errors/3` lacks `:provider_profiles` support, and dashboard callers require `EvoGit.Config.Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` delegates.
-The source-owning parent must remove the misplaced duplicate `apps/evo_dash/lib/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs`; the real suite lives under this test node without standalone `ExUnit.start`.
-Rerun the full dashboard suite after those integrations; standalone pure/render checks do not establish mounted-suite success.
+Normal dashboard Mix execution reaches ExUnit and exercises canonical provider integration through the mounted pages.
+Default-only provider fixtures intentionally omit optional model override rows; core rejection of their own default model is a production integration blocker, never a reason to fabricate rows or weaken successful-save assertions.
+Mounted positive remote URL/resume tests require a distinct BEAM identity and source-owned RPC seams because a non-nil target with the local BEAM identity is intentionally pending.
+The config-dir mounted proof passes in isolation but can still fail in the collective suite, so its fixture/load ownership must be checked before declaring full-suite success.
+Standalone pure/render checks and individually green helper directories do not establish collective mounted-suite success.
 
 ## Known Issues
 

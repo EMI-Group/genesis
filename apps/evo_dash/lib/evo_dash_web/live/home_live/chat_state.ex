@@ -167,7 +167,7 @@ defmodule EvoDashWeb.HomeLive.ChatState do
 
   defp valid_scope?({id, target_node}) do
     (is_nil(id) or (is_binary(id) and id != "")) and
-      is_atom(target_node) and not is_nil(target_node)
+      is_atom(target_node) and target_node not in [nil, true, false]
   end
 
   defp valid_scope?(_scope), do: false

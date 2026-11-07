@@ -5,6 +5,8 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
 
   use EvoDashWeb, :html
 
+  import EvoDashWeb.SettingsComponents.CategoryMetadata, only: [dedicated_provider_path?: 1]
+
   # ───────────────────────────────────────────────────────────────────────────
   # Appearance accent-color palette ([:appearance, :accent_color])
   # ───────────────────────────────────────────────────────────────────────────
@@ -82,6 +84,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
             "."
           )}</code>
           <button
+            :if={not dedicated_provider_path?(@schema.key_path)}
             type="button"
             phx-click="reset_key"
             phx-value-key_path={Enum.join(@schema.key_path, ".")}
@@ -214,13 +217,22 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                     class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-base"
                   />
                 <% :string -> %>
-                  <input
-                    type="text"
-                    name={Enum.join(@schema.key_path, ".")}
-                    value={@value || ""}
-                    placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
-                    class="input input-bordered input-sm rounded-md w-full font-mono text-base"
-                  />
+                  <%= if @schema.key_path == [:llm, :default_provider_profile] do %>
+                    <div class="w-full text-right">
+                      <code class="text-xs break-all">{input_value(@value)}</code>
+                      <p class="text-xs text-base-content/70 mt-1">
+                        {gettext("Configure via the provider profiles editor")}
+                      </p>
+                    </div>
+                  <% else %>
+                    <input
+                      type="text"
+                      name={Enum.join(@schema.key_path, ".")}
+                      value={@value || ""}
+                      placeholder={if is_nil(@value), do: gettext("empty"), else: ""}
+                      class="input input-bordered input-sm rounded-md w-full font-mono text-base"
+                    />
+                  <% end %>
                 <% :atom -> %>
                   <div class="relative w-full sm:w-52">
                     <select
@@ -259,6 +271,20 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                     />
                     <p class="text-[11px] text-base-content/70 mt-1">
                       {gettext("Type a model string or use Quick Setup above")}
+                    </p>
+                  </div>
+                <% :provider_profiles -> %>
+                  <%!-- Summary-only fallback for direct callers; generic search
+                       excludes this path. Never serialize credential-bearing maps. --%>
+                  <div class="w-full text-right">
+                    <span class="badge badge-primary badge-sm gap-1 font-mono">
+                      <.icon name="hero-server-stack" class="size-3" />
+                      {gettext("%{count} provider profiles",
+                        count: if(is_list(@value), do: length(@value), else: 0)
+                      )}
+                    </span>
+                    <p class="text-xs text-base-content/70 mt-1">
+                      {gettext("Configure via the provider profiles editor")}
                     </p>
                   </div>
                 <% :model_profiles -> %>
@@ -341,9 +367,9 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
   # Private Helpers
   # ───────────────────────────────────────────────────────────────────────────
 
-  # LLM key paths that are managed by the Model Profiles editor (per-profile
-  # generation params) or the read-only models badge — they should NOT render as
-  # flat cards. Only [:llm, :compression_threshold_tokens] remains as a flat card.
+  # Collection/default controls belong to the dedicated provider editor, not
+  # the generic category form; search cards show only a read-only summary.
+  # Legacy per-model generation parameters stay excluded as migration inputs.
   @flat_llm_excluded_key_paths [
     [:llm, :model],
     [:llm, :temperature],
@@ -353,7 +379,9 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
     [:llm, :top_k],
     [:llm, :frequency_penalty],
     [:llm, :presence_penalty],
-    [:llm, :models]
+    [:llm, :models],
+    [:llm, :providers],
+    [:llm, :default_provider_profile]
   ]
 
   # Made public because category_section/1 in the parent module calls it.

@@ -37,6 +37,11 @@ Projects normal submission and GitHub issue launches share canonical `model_spec
 Explicit Auto omits all three override keys rather than locking the configured default.
 Mounted Projects tests pin picker events, reasoning inventories, canonical session-state restore, pending remote contexts and node/path/target/generation stale-result rejection.
 Pure LaunchOptions, StatePersistence and AsyncLoad coverage lives in `./projects_live/`.
+The mounted launch assertions share `assert_task_model_selection/2`, pinning exact canonical opts, the explicit lock and absence of legacy option keys without assuming the derived persisted `task.model_id` is nil for an explicit selection.
+The model-only browser persistence event is `persist_model_selection`, separate from prompt/form state persistence.
+Unavailable remote bundles retain nil or a saved canonical choice instead of selecting Auto; the recovery case requires an owned-ready canonical bundle before selection can resume.
+Three positive remote URL/resume fixtures still use a non-nil target id with `current_node == node()`, which the intentional pending-remote ownership guard rejects.
+Preserving their supervised success coverage requires distinct fake BEAM identities plus injectable remote activation/resume reads; the existing async-batch and tilde-expansion seams alone cannot intercept `NodeContext.dir?/2` or the resume task read.
 Mounted Assistant tests pin provider/model/reasoning controls, typed and suggestion sends, explicit locks versus Auto, ChatHistory migration/remount/new-chat persistence, node-scope resets and stale snapshot rejection.
 Pure ChatState and ModelSelect contracts live in `./home_live/`, while `home_live_render_test.exs` remains async without mounting the global chat hub.
 Welcome tests exercise canonical provider setup with multiple models, a default model, reasoning defaults, API-key and OAuth branches, concurrent config preservation, malformed-file protection and deterministic generation-guarded connection results.
@@ -49,15 +54,26 @@ Model and peak-window row actions must preserve unsaved nested fields and numeri
 `SettingsLiveParentAdapterTest` renders the actual `SettingsComponents.category_section/1` boundary and calls actual parent change/row/cancel handlers without a mounted page; its third test pins persisted-model connection resolution, inherited generation, API key and provider options through `ConfigIO.resolve_model_spec/2`.
 The mounted suite retains per-process config directories, local-only ActiveTasks invalidation, the owner-aware mount funnel and the original 25-test sync module's global-state ownership.
 All production sources are read-only from this test node.
+Mounted Projects, Assistant and Welcome canonical contracts already exist in their page files, so helper-only success must not be mistaken for their integration validation.
+Settings page tests pin two-distinct-model save followed by authoritative reload/remount, configuration-writer failure and retry, reset behavior, stale save completions and in-flight save ownership.
+Settings writes are asynchronous: `settings_hook/3` and the file-local settle helpers await authoritative completion before inspecting persisted config or success markup.
+Creation uses atom `:new`, while a persisted string id `"new"` is valid and must not trigger creation semantics.
+Schedule checkbox names use bracketed form fields, and connection/load/save results use their actual node/sequence-scoped envelopes.
+The request-options contract captures the actual final HTTP request at an isolated loopback endpoint, including authentication and inherited generation settings, rather than expecting credentials to leak through resolver output.
+That request contract covers resolver/core/wire behavior rather than mounted Settings event dispatch because this checkout has no Settings/SystemCheck runner seam.
+Keep mounted Settings additions with the owner of `settings_live_test.exs`, while pure provider transformations belong in `settings_live/` and core atomic-write/cache-failure assertions belong in the core config test node.
 
-### Integration prerequisites
+### Integration validation and current blockers
 
-Normal scoped Mix execution, including `mix test --no-start apps/evo_dash/test/evo_dash_web/live/settings_live_test.exs`, currently aborts before ExUnit with `EvoGit.Config.EctoValidation.type_errors([:llm, :providers], :provider_profiles, [])` raising `FunctionClauseError`.
-Dashboard source callers also require the missing public `EvoGit.Config.Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` facade functions whose implementations exist in `Schema.ProviderProfiles`.
-The two app-start-free render/draft-handler contracts in `SettingsLiveParentAdapterTest` can run by extracting that module's AST from the page test file, evaluating it with compiled test ebins on the code path and `Application.load(:gettext)`, and excluding `:requires_schema_facade`.
-That narrow check excludes the resolver-options contract and establishes neither mounted-page nor persistence/save success; after the source integrations, run the full file and dashboard suite without excluding that tag.
-The misplaced duplicate `apps/evo_dash/lib/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs` must be removed by the source-owning parent; the correctly located test module is under this node's `settings_live/` directory.
-Regression suites must be rerun after those source integrations; pre-bootstrap compilation and standalone pure checks do not establish mounted-suite success.
+Normal Mix execution reaches ExUnit and the canonical Schema facade; standalone AST extraction is not a substitute for mounted integration tests.
+`mix test apps/evo_dash/test/evo_dash_web/live/*_test.exs --seed 843486` covers the 13 top-level test files without entering child helper directories.
+The scoped result is 739/751 passing: eight Settings failures and one Projects recovery failure expose core rejection/resolution of default-only providers, while three Projects URL/resume fixtures require remote-loading test seams.
+A provider with a valid `default_model` and absent/nil/empty `models` is a valid dashboard contract, so tests must not fabricate model rows to conceal core validation or resolver failures.
+The core-owned blocker is `provider_profile_validation.ex` rejecting nil collections and requiring the default to occur in an empty override collection, together with default-only resolution returning `:model_not_found`.
+The positive remote fixture gap belongs to source-owned `ProjectFlow`: supervised activation calls `remote_project_load/2` directly and resume restoration calls `NodeContext.get_task_lite/2` directly.
+Default-inert call-time runners for those two operations would preserve real orchestration under distinct remote identities without real RPC.
+The Agents page passes in the collective regression-seed run; diagnose its historical flake only when it reproduces.
+Production sources and child helper test directories are outside this node's top-level-page task ownership.
 
 ## Notes for Agents — deterministic waits (the single rule future edits must not break)
 
@@ -168,7 +184,10 @@ The async `home_live_render_test.exs` fixture supplies `approval_error: nil` for
 Chat state is SEEDED (`seed_chat_state/2`, `seed_running_chat/1`, synthetic `{:task_updated, …}` events) and terminal paths are driven with `finalize_failed/2` / `insert_task_fixture!` — NOT by submitting `send_message` to start a real `:reflect` task.
 Exactly ONE real-send canonical pin ("starts a reflect task with the right opts") remains: it asserts synchronous `chat_task_id` tracking (non-nil, matching the persisted reflect row) and NO "Failed to start the task" bubble, and it is network-free by construction because the suite setup pushes `model_profiles: []` into the AgentScheduler (`update_config`, restored in `on_exit`), so `run_agent` rejects every spawn synchronously with `{:error, :llm_not_configured}` before registration or HTTP.
 Counterintuitive, verified: a BOGUS `model_id` does NOT fail fast — `Dispatch.resolve_model_for_agent/2` warns and falls back to the FIRST real profile, which would hit the ambient (expired-key) LLM.
-Also covered: user-bubble class pins on BOTH send routes (`w-fit bg-base-300 text-left` inside a `flex justify-end` wrapper); the per-chat model `<select>` (`select_chat_model` → `selected_model_id`, threaded as STRING-keyed `"model_id"`/`"model_id_locked"` — the Store codec does NOT whitelist them; Auto threads neither key; remount persistence via `EvoDash.ChatHistory`; the pin SURVIVES `new_chat`); markdown rendering of finalized assistant text (`.md-content`, Floki-scoped — the copy button's `data-content` holds the raw source), plain mid-stream text, the per-message raw toggle (`toggle_assistant_raw`, scoped `#chat-entry-<id>`) and `copied` → info flash; model survival across a local→remote→local node switch (assign-based — the remote header select is absent because `ModelSelect.load` degrades to `{[], false}`); and the command-approval cards (level-2 informational vs level-3 danger, own-request filtering by task/agent/node, `approval_resolved` removal, Confirm/Deny routing through the `:approval_responder` seam, `l2_request/1` / `l3_request/1` payload builders).
+The canonical Assistant launch fixture exposes its config directory to singleton TaskRegistry through the existing config-dir seam and restores that seam after each test; process-local dictionary fixtures alone cannot reach the singleton.
+Store.Codec atomizes the outer canonical `:model_spec` option key while preserving its string-keyed selection map; explicit locks, no legacy override and no repository path remain pinned.
+Also covered are user-bubble classes on both send routes, canonical provider/model/reasoning controls, explicit Auto, ChatHistory remount/new-chat persistence, node-scope isolation, finalized markdown versus mid-stream text, per-message raw toggles and legacy/evaluator approval cards.
+The empty scheduler-profile safeguard remains mandatory so real reflect admissions cannot reach an LLM.
 Approval page contracts preserve legacy command/args/level cards while distinguishing evaluator write grants from sudo authority, including exact escaped code, the target runtime, one-use permission, and sudo's live-runtime/files/configuration/no-rollback/not-OS-root warnings.
 The approval block snapshot-restores `:approval_pending_runner` and `:approval_responder`; restored-chat pending recovery uses an actual list-returning supervised runner and responses stay visible with both controls disabled until asynchronous success.
 Responder failures retain a visible error and retryable card, and absent/resolved/no-longer-owned request ids cannot reach the responder.

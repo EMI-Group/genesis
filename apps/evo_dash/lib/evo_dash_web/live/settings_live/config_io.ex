@@ -24,10 +24,24 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
     EvoDashWeb.SettingsLive.ProviderProfiles.put_profiles(config, providers)
   end
 
-  @doc "Ordered model choices for task/custom-agent selectors, not provider editor rows."
+  @doc """
+  Credential-free ordered model choices, not provider editor rows.
+
+  Persist only `provider_profile_id`, `model` and optional `reasoning_effort`
+  as string-keyed picker state; never persist a resolved runtime model.
+  """
   def model_selections(config), do: Schema.model_selections(config)
 
-  @doc "Resolves a structured selection or a legacy model-profile id through the core."
+  @doc """
+  Server-only resolution of a canonical selection or legacy profile id.
+
+  The result's `model_spec` is a ReqLLM-ready identifier, NOT the canonical
+  task/picker map. Its `generation_params`, `provider_profile` and
+  `runtime_profile` can contain credentials and must never reach browser state.
+  Connection tests use `resolved.model_spec` and `resolved.generation_params`
+  together. Resolve on the viewed node (via RPC for remote tests), so OAuth
+  import and named API-key environment variables use that node's credentials.
+  """
   def resolve_model_spec(config, spec_or_legacy_id),
     do: Schema.resolve_model_spec(config, spec_or_legacy_id)
 
@@ -129,15 +143,7 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
   def params_to_category_config(params, _category, schemas) do
     # Dedicated provider/model editors own these collections; a flat category
     # form never submits them and must never interpret their absence as delete.
-    schemas =
-      Enum.reject(schemas, fn schema ->
-        schema.type in [:model_profiles, :provider_profiles] or
-          schema.key_path in [
-            [:llm, :models],
-            [:llm, :providers],
-            [:llm, :default_provider_profile]
-          ]
-      end)
+    schemas = Enum.filter(schemas, &generic_schema?/1)
 
     Enum.reduce(schemas, {%{}, []}, fn schema, {config_acc, emptied_acc} ->
       value = Map.get(params, Enum.join(schema.key_path, "."))
@@ -204,37 +210,61 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
   end
 
   @doc """
-  Parses a dot-separated path string into a list of atoms, validated against
-  all known schema key_path segments. Returns `nil` when any segment is unknown,
-  so callers can surface a friendly error instead of crashing.
+  Whether a schema belongs to the generic settings forms rather than a
+  dedicated provider/model editor. Dedicated paths and their descendants are
+  excluded even when their schema type is a generic scalar or list type.
   """
-  def parse_key_path(path_str, schemas_by_category) when is_binary(path_str) do
-    valid_segment_str_to_atom =
-      schemas_by_category
-      |> Enum.flat_map(fn {_cat, schemas} -> schemas end)
-      |> Enum.flat_map(fn schema -> schema.key_path end)
-      |> Enum.uniq()
-      |> Map.new(fn atom -> {Atom.to_string(atom), atom} end)
-
-    segments = String.split(path_str, ".")
-
-    if Enum.all?(segments, &Map.has_key?(valid_segment_str_to_atom, &1)) do
-      Enum.map(segments, &Map.fetch!(valid_segment_str_to_atom, &1))
-    else
-      nil
-    end
+  def generic_schema?(schema) do
+    schema.type not in [
+      :model_profiles,
+      :provider_profiles,
+      "model_profiles",
+      "provider_profiles"
+    ] and
+      not dedicated_path?(schema.key_path)
   end
 
+  defp dedicated_path?([llm, key | _rest])
+       when llm in [:llm, "llm"] and
+              key in [
+                :models,
+                "models",
+                :providers,
+                "providers",
+                :default_provider_profile,
+                "default_provider_profile"
+              ],
+       do: true
+
+  defp dedicated_path?(_key_path), do: false
+
   @doc """
-  Finds the schema matching the given key_path in schemas_by_category.
-  Returns `nil` when key_path is nil or not found.
+  Resolves a dot-separated path against complete generic schema paths, never
+  arbitrary combinations of known segments or dedicated editor paths.
+  Returns the schema's own key path (without creating atoms), or `nil` for
+  unknown, dedicated or malformed input.
+  """
+  def parse_key_path(path_str, schemas_by_category) when is_binary(path_str) do
+    schemas_by_category
+    |> Enum.flat_map(fn {_cat, schemas} -> schemas end)
+    |> Enum.find_value(fn schema ->
+      if generic_schema?(schema) and Enum.join(schema.key_path, ".") == path_str,
+        do: schema.key_path
+    end)
+  end
+
+  def parse_key_path(_path_str, _schemas_by_category), do: nil
+
+  @doc """
+  Finds the generic schema matching the given key_path in schemas_by_category.
+  Returns `nil` when key_path is nil, dedicated or not found.
   """
   def find_schema(nil, _schemas_by_category), do: nil
 
   def find_schema(key_path, schemas_by_category) do
     schemas_by_category
     |> Enum.flat_map(fn {_cat, schemas} -> schemas end)
-    |> Enum.find(&(&1.key_path == key_path))
+    |> Enum.find(&(generic_schema?(&1) and &1.key_path == key_path))
   end
 
   @doc """
