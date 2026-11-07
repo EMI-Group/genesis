@@ -32,7 +32,16 @@ defmodule EvoGit.TaskRegistry.TaskExecutorReflectTest do
 
   use EvoGit.TaskRegistryCase, async: false
 
+  import Ecto.Query
+
+  alias EvoGit.Config
+  alias EvoGit.Config.Schema
+  alias EvoGit.Repo
+  alias EvoGit.Store
+  alias EvoGit.Store.RepoScope
+  alias EvoGit.Store.Schemas.TaskRowRaw
   alias EvoGit.TaskRegistry.TaskExecutor
+  alias EvoGit.TestSupport.ConfigDir
 
   describe "execute_task/3 with :reflect" do
     test "without :path routes into SelfReflective.run and rejects an explicit missing profile" do
@@ -80,6 +89,108 @@ defmodule EvoGit.TaskRegistry.TaskExecutorReflectTest do
         assert task.result == {:error, :llm_not_configured}
       end)
     end
+  end
+
+  test "public admission resolves and sanitizes a partial qualified selector before persistence",
+       %{registry: registry} do
+    config_root = ConfigDir.isolate!("reflect_admission")
+    config_dir = Config.config_dir()
+    File.mkdir_p!(config_dir)
+
+    # Keep wrapper creation/reclaim in private scratch space, including the
+    # registry process, which does not inherit this test's process dictionary.
+    File.write!(Path.join(config_dir, "config.toml"), """
+    [tmp]
+    mode = "custom"
+    path = #{inspect(config_dir)}
+
+    [llm]
+    default_provider_profile = "admission-account"
+
+    [[llm.providers]]
+    id = "admission-account"
+    provider = "openai"
+    auth_mode = "api_key"
+    default_model = "gpt-5"
+    default_reasoning_effort = "low"
+    reasoning_efforts = ["low", "high"]
+    models = ["gpt-5", "gpt-5-mini"]
+    """)
+
+    expected = %{
+      "provider_profile_id" => "admission-account",
+      "model" => "gpt-5-mini",
+      "reasoning_effort" => "low"
+    }
+
+    :sys.replace_state(registry, fn state ->
+      Process.put(:evogit_config_dir, config_root)
+      assert Config.config_dir() == config_dir
+      assert {:ok, resolved} = Schema.resolve_model_spec(Config.resolve(), nil)
+      assert resolved.provider_profile_id == expected["provider_profile_id"]
+      state
+    end)
+
+    injected_secret = "injected-admission-secret-#{System.unique_integer([:positive])}"
+
+    # Omitted account/effort must resolve from defaults; the qualified model
+    # must be unqualified, and caller-supplied request data must never survive.
+    selector = %{
+      "model" => "openai:gpt-5-mini",
+      "api_key" => injected_secret,
+      "generation_params" => %{"api_key" => injected_secret},
+      "provider_options" => %{"token" => injected_secret},
+      "unexpected" => "do-not-persist"
+    }
+
+    without_model_profiles(fn ->
+      assert :ok = Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+
+      assert {:ok, %TaskInfo{} = admitted} =
+               TaskRegistry.start_task(:reflect,
+                 objective: "Admit without dispatching an LLM",
+                 model_spec: selector,
+                 model_id: "competing-legacy-account",
+                 model_id_locked: false
+               )
+
+      assert admitted.opts[:model_spec] == expected
+      assert admitted.opts[:model_id_locked] == true
+      refute Keyword.has_key?(admitted.opts, :model_id)
+      assert :ok = await_terminal_status(admitted.id)
+
+      reloaded = TaskRegistry.get_task(admitted.id)
+      assert reloaded.status == :failed
+      assert reloaded.result == {:error, :llm_not_configured}
+      assert Keyword.fetch(reloaded.opts, :model_spec) == {:ok, expected}
+      # Codec intentionally retains the lock's outer string key for dashboard
+      # consumers, while atomizing :model_spec for core keyword consumers.
+      assert List.keyfind(reloaded.opts, "model_id_locked", 0) == {"model_id_locked", true}
+      refute List.keymember?(reloaded.opts, :model_id, 0)
+      refute List.keymember?(reloaded.opts, "model_id", 0)
+
+      json =
+        RepoScope.with_repo(Store.__repo_pid__(store()), fn ->
+          Repo.one!(from(t in TaskRowRaw, where: t.id == ^admitted.id, select: t.opts))
+        end)
+
+      raw = Jason.decode!(json)
+      assert raw["model_spec"] == expected
+      assert raw["model_id_locked"] == true
+      refute Map.has_key?(raw, "model_id")
+
+      for forbidden <- [
+            injected_secret,
+            "api_key",
+            "generation_params",
+            "provider_options",
+            "unexpected",
+            "do-not-persist",
+            "competing-legacy-account"
+          ] do
+        refute json =~ forbidden
+      end
+    end)
   end
 
   # --- helpers -------------------------------------------------------------

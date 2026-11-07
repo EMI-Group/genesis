@@ -311,7 +311,9 @@ defmodule EvoGit.TaskRegistry.ModelSelectionPersistenceTest do
       assert Keyword.fetch(runtime, :model_spec) == {:ok, selection}
       assert {:ok, resolved} = Schema.resolve_model_spec(context.config, runtime[:model_spec])
       assert resolved.reasoning_effort == "low"
-      assert resolved.generation_params[:reasoning_effort] == "low"
+      # Identity stays a string; LLM.profile_generation_params/1 converts it to
+      # the atom accepted by ReqLLM.Provider.Options' canonical effort schema.
+      assert resolved.generation_params[:reasoning_effort] == :low
     end
 
     for {label, overrides, reason} <- [
