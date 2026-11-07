@@ -2,7 +2,7 @@
 
 ## Intent
 
-ExUnit suites for the EvoDash LiveView pages and their support modules (1 001 tests), mirroring `apps/evo_dash/lib/evo_dash_web/live/`.
+ExUnit suites for the EvoDash LiveView pages and their support modules, mirroring `apps/evo_dash/lib/evo_dash_web/live/`.
 The page suites are SPLIT BY MODULE for parallelism, so "is this page suite async?" has no per-file answer — check the module.
 Every page file leads with an `async: true` page module and trails only its global-bound tests in a sync module: `agents_live_test.exs` and `settings_live_agents_test.exs` are entirely async, `review_live_test.exs` holds 6 `async: true` + 3 `async: false`, `projects_live_test`/`settings_live_test`/`system_live_test`/`welcome_live_test`/`welcome_complete_live_test` each pair one async module with a trailing sync module, and `tasks_live_test.exs` and `home_live_test.exs` are a single `async: false` module each; `node_aware_test.exs` (in `../live_hooks/`) holds 1 + 1.
 The pure support-module units under `projects_live/`, `settings_live/`, `system_live/`, `home_live/` and `agents_live/` are `async: true` (see "async policy").
@@ -29,6 +29,26 @@ No page or unit suite writes the config dir BEAM-globally: it is isolated per pr
 - `./welcome_live_test.exs` (898 lines, 26: 25 async + 1 sync `TaskBroadcast`) / `./welcome_complete_live_test.exs` (149 lines, 3: 2 async + 1 sync `TaskBroadcast`) → onboarding pages.
 - `./platform_info_test.exs` (10, `async: true`) → pure `EvoDashWeb.PlatformInfo` platform/nix gating.
 - `../components/`, `../live_hooks/`, `../controllers/` → sibling suites documented in their own CONTEXT.md (read-only from this node).
+
+## Provider-profile selection regression contracts
+
+Projects normal submission and GitHub issue launches share canonical `model_spec` selection and `model_id_locked: true`, never a legacy `model_id` override.
+Explicit Auto omits all three override keys rather than locking the configured default.
+Mounted Projects tests pin picker events, reasoning inventories, canonical session-state restore, pending remote contexts and node/path/target/generation stale-result rejection.
+Pure LaunchOptions, StatePersistence and AsyncLoad coverage lives in `./projects_live/`.
+Mounted Assistant tests pin provider/model/reasoning controls, typed and suggestion sends, explicit locks versus Auto, ChatHistory migration/remount/new-chat persistence, node-scope resets and stale snapshot rejection.
+Pure ChatState and ModelSelect contracts live in `./home_live/`, while `home_live_render_test.exs` remains async without mounting the global chat hub.
+Welcome tests exercise canonical provider setup with multiple models, a default model, reasoning defaults, API-key and OAuth branches, concurrent config preservation, malformed-file protection and deterministic generation-guarded connection results.
+WelcomeComplete tests preserve canonical provider configuration and pin the full example/clipboard objective.
+Settings canonical serialization, shadow removal, unrelated-setting preservation, default-only models, multiple overrides and OAuth contracts live in `./settings_live/provider_profiles_contract_test.exs` and use the shared test bootstrap without `ExUnit.start`.
+All production sources are read-only from this test node.
+
+### Integration prerequisites
+
+Normal scoped Mix execution currently aborts before ExUnit because `EvoGit.Config.EctoValidation.type_errors/3` has no `:provider_profiles` clause for `[:llm, :providers]` with `[]`.
+Dashboard source callers also require the missing public `EvoGit.Config.Schema.provider_profiles/1`, `model_selections/1` and `resolve_model_spec/2` facade functions whose implementations exist in `Schema.ProviderProfiles`.
+The misplaced duplicate `apps/evo_dash/lib/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs` must be removed by the source-owning parent; the correctly located test module is under this node's `settings_live/` directory.
+Regression suites must be rerun after those source integrations; pre-bootstrap compilation and standalone pure checks do not establish mounted-suite success.
 
 ## Notes for Agents — deterministic waits (the single rule future edits must not break)
 
