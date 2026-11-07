@@ -16,8 +16,10 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
   data or credentials. Call before persisting/enqueuing the task, and again at
   execution time in case configuration changed since admission.
 
-  Auto (no spec and nil/empty legacy id) omits both selection keys. Explicit
-  selections carry `model_id_locked: true` and preserve unrelated task opts.
+  Auto (no spec and nil/empty legacy id) omits both selection keys and the lock.
+  A model spec forces `model_id_locked: true`; a legacy id only keeps an existing
+  truthy lock (normalized to true), so model-selection scripts still apply to
+  unlocked legacy tasks. Unrelated task opts are preserved.
   """
   @spec admit_model_selection(keyword(), map()) :: {:ok, keyword()} | {:error, term()}
   def admit_model_selection(opts, config) do
@@ -28,7 +30,7 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
 
     case selection do
       :auto ->
-        {:ok, Keyword.drop(opts, [:model_spec, :model_id])}
+        {:ok, Keyword.drop(opts, [:model_spec, :model_id, :model_id_locked])}
 
       {:model_spec, value} when not is_map(value) ->
         {:error, :invalid_model_spec}
@@ -111,10 +113,10 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
     {nil, runtime_opts}
   end
 
-  # Keep selection plumbing identical at admission and runtime construction.
   # Never interpret the schema's resolved profile shape in this layer.
+  # Admission removes Auto locks; direct builders retain legacy truthy locks.
   defp put_model_selection(target, source) do
-    target = Keyword.drop(target, [:model_spec, :model_id])
+    target = Keyword.drop(target, [:model_spec, :model_id, :model_id_locked])
 
     cond do
       Keyword.has_key?(source, :model_spec) ->
@@ -125,7 +127,7 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
       legacy_selection(Keyword.get(source, :model_id)) != :auto ->
         target
         |> Keyword.put(:model_id, Keyword.fetch!(source, :model_id))
-        |> Keyword.put(:model_id_locked, true)
+        |> put_if_true(:model_id_locked, Keyword.get(source, :model_id_locked))
 
       true ->
         put_if_true(target, :model_id_locked, Keyword.get(source, :model_id_locked))
