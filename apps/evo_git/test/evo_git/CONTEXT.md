@@ -11,7 +11,7 @@ All suites use real git operations on temp dirs; none use mocks.
 - `./agent/tools/` → per-tool tests → `./agent/tools/CONTEXT.md`
 - `./agent_scheduler/` → scheduler dispatch, slots, lifecycle, worktrees, store, subagents, RemoteAPI → `./agent_scheduler/CONTEXT.md`
 - `./agents/` → agent implementation tests (`EvoGit.Agents.Custom`) — no own CONTEXT.md
-- `./config/` → config schema / LLM catalog / version-state / ecto validation — no own CONTEXT.md
+- `./config/` → config schema / LLM catalog / version-state / ecto validation / config health validation and snapshot regressions → `./config/CONTEXT.md`
 - `./core/` → `ContextNode`, `PhyloGraphNode`, `ForeignRepo` → `./core/CONTEXT.md`
 - `./custom_agents/` → custom-agents store + model-selection script → `./custom_agents/CONTEXT.md`
 - `./runtime/` → Genesis / Evolution / Helpers / Prompts / SelfReflective runtimes → `./runtime/CONTEXT.md`
