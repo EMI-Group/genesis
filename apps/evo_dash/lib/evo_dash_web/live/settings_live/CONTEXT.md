@@ -104,12 +104,23 @@ Never send the resolved object or its generation_params to browser state, ChatHi
 Core owns runtime resolution, validation and credential composition; do not add dashboard fallbacks that conceal missing credentials or rejected selections.
 load_scheduler_config/0 uses SafeCall with an empty-map fallback for a stopped scheduler.
 build_config_from_category_params/4 parses supplied schemas, deep-merges and deletes explicitly emptied paths.
-params_to_category_config/3 excludes :model_profiles/:provider_profiles AND llm.models/llm.providers/llm.default_provider_profile paths because dedicated forms own them.
+generic_schema?/1 excludes :model_profiles/:provider_profiles and llm.models/llm.providers/llm.default_provider_profile paths and descendants with mixed atom/string spellings because dedicated forms own them.
+Generic category/search conversion and reset handlers share that guard, and parse_key_path/2 accepts only complete known generic schema paths rather than recombining individually allowed segments.
 Booleans parse before nil/blank and only "true" is true; malformed floats are neither written nor deleted and list_of_strings_value/1 preserves [] while absent/non-list signals deletion.
 update_runtime_from_file_config/2 best-effort pushes scheduler limits plus Schema.model_profiles(file_config), then reloads scheduler_config on success; runtime-push failure does not invalidate an already-written file.
 Category/provider/variant/key-path conversions use schema/catalog whitelists rather than client-derived atoms.
 SearchEvents resets in memory and delegates parent persistence/reload, handling invalid key paths only.
 
+## ConfigSave Ownership
+ConfigSave.start/4 returns {:started, socket}, {:rejected, reason, socket} or {:failed, {:startup, reason}, socket} and never optimistically assigns file_config.
+complete/2 consumes the entire nested SafeCall message and returns {:saved, receipt, socket}, {:failed, receipt, socket} or {:stale, unchanged_socket}.
+Requests bind a unique reference and {target_id, beam_node}, carry an explicit optional editor_token and prevent overlapping writes owned by the same LiveView.
+Saved receipts contain authoritative file_config, warnings, scope, success_msg and runtime?, while failed receipts contain reason instead of file_config/warnings.
+A confirmed write followed by failed reload remains saved with the confirmed candidate and a tagged config_reload warning.
+The helper settles matching editor tokens but leaves authoritative config assignment, test-selection reconciliation, status/OAuth refreshes and flashes to the parent.
+invalidate/1 detaches presentation ownership while retaining a live-worker guard; stale completions change no assigns or loading state.
+Preserve config_save_owner across scope resets, invalidate pre-save config-load generations and refetch authoritative configuration before constructing a new scope's candidate.
+Ownership is per LiveView rather than a distributed file lock, so remounts, other tabs and timed-out remote writes require core-level serialization for cross-page ordering.
 ## NodeData and AuthStatus
 
 NodeData.start/3 captures node/category/all_schemas, loads platform/config/status/agent/tool data under TaskSupervisor + SafeCall and sends {tag, node, category, {:ok, results} | {:error, reason}}.
