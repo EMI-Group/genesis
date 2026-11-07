@@ -22,9 +22,9 @@ Pure functions, NO GenServer — every call reads/writes the TOML file directly 
 - `reload/0` → `:ok` — invalidates BOTH the `ModelSelector` compile cache AND the `EvoGit.CustomTools` custom-tools load cache (each guarded with `Code.ensure_loaded?/1` + `function_exported?/3` + `apply/3`, warning-free when a module is absent).
 - `stringify_keys/1` (public, `@doc false`) → shared map-stringify helper: `EvoGit.RemoteConnections` (`lib/evo_git/remote_connections.ex`) calls it when serializing connection maps to TOML, rather than keeping a local copy. New code needing string-keyed map serialization for config/TOML stores should reuse `CustomAgents.stringify_keys/1` instead of duplicating it.
 
-**Validation error atoms** (`save/1` only — reads never raise): `:missing_name, :missing_prompt, :invalid_agent_type, :invalid_delegation_level, :invalid_max_turns, :invalid_tools, :invalid_subagents, :duplicate_id`.
+**Validation error atoms** (`save/1` only — reads never raise): `:missing_name, :missing_prompt, :invalid_agent_type, :invalid_delegation_level, :invalid_model_spec, :invalid_max_turns, :invalid_tools, :invalid_subagents, :duplicate_id`.
 
-**Definition map** (atom keys, defaults applied on save): `%{id (auto-slugified from name when absent), name (required), description (optional), prompt (required), agent_type (:read_write default | :read), delegation_level (:low default | :high), model_id (default model PROFILE id; nil = auto), max_turns (per-agent turn cap override), tools (whitelist of tool-name STRINGS — built-in tool names or user-defined custom tool names from `<config_dir>/tools/`, resolved by `EvoGit.CustomTools`; nil = built-in tools only, custom tools are opt-in), subagents (default []; built-in type-name STRINGS)}`.
+**Definition map** (atom keys, defaults applied on save): `%{id (auto-slugified from name when absent), name (required), description (optional), prompt (required), agent_type (:read_write default | :read), delegation_level (:low default | :high), model_id (legacy default model PROFILE id; nil = auto), model_spec (optional canonical account/model/effort selection; nested keys are strings), max_turns (per-agent turn cap override), tools (whitelist of tool-name STRINGS — built-in tool names or user-defined custom tool names from `<config_dir>/tools/`, resolved by `EvoGit.CustomTools`; nil = built-in tools only, custom tools are opt-in), subagents (default []; built-in type-name STRINGS)}`.
 
 ### `EvoGit.CustomAgents.ModelSelector` (script evaluator)
 
@@ -54,8 +54,13 @@ This mechanism is for trusted user configuration, not a safe evaluator for agent
 - Consumers: `EvoGit.AgentScheduler.Dispatch.register_agent/7` (calls `select_model/1` per spawn, BEFORE `resolve_model_for_agent/2`; skipped when `spec.opts[:model_id_locked]`) and the `:evo_dash` settings UI (CRUD + script editor + `status/0` surfacing). Tests: `test/evo_git/custom_agents_test.exs`, `test/evo_git/agents/custom_test.exs`.
 
 ## Canonical provider-profile persistence and integration
-`CustomAgents.normalize_definition/1` in `../custom_agents.ex` retains only the legacy `model_id` selector and drops a supplied `model_spec`, so custom-agent definitions have no first-class persisted canonical account/model/effort selector.
-`ModelSelector` accepts canonical selection maps, but scheduler consumers must route map results to the canonical schema resolver rather than use them as legacy model ids.
+`CustomAgents.normalize_definition/1` in `../custom_agents.ex` preserves an optional `model_spec` through save/list/get and TOML round-trips, alongside the legacy `model_id` fallback; saving a canonical selection never removes that legacy id.
+A definition's canonical `model_spec` requires nonempty binary `provider_profile_id` and `model`, with optional `reasoning_effort` as a nonempty string or non-nil atom normalized to a string.
+Nested atom or string input keys are accepted, atom keys win when both are present, and persisted/returned selection keys are strings (unlike `ModelSelector`'s atom-keyed result).
+Absent/nil `model_spec` means no canonical definition default, absent/nil effort is omitted, and unknown selection keys are dropped.
+`save/1` rejects structurally malformed selections with `:invalid_model_spec`, while reads remain lenient and account/model existence and supported reasoning efforts are validated by the runtime schema resolver, not the store.
+Persistence alone does not apply a definition default at spawn: runtime consumers own selection priority and must pass canonical selections to the schema resolver rather than treat maps as legacy model ids.
+An explicit `AgentSpec.model_spec` takes priority over legacy ids, defaults and scripts without fallback; the legacy path otherwise prioritizes a user-locked model over the script, then the caller/custom-agent legacy default, then the scheduler default.
 `status/0` checks compilation only, not returned selection validity or configured existence.
 Selector regression tests belong under `test/evo_git/custom_agents/`, including the existing `model_selector_test.exs`; test files must not live under `lib/`.
 ## See Also
