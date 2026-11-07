@@ -176,6 +176,9 @@ Optional attrs are `id` (default `"llm-selection"`, must be unique per page), `p
 The provider and model controls submit `provider_profile_id` and `model` respectively; the native range named `reasoning_effort` emits a ZERO-BASED INDEX into the selected model's ordered `reasoning_efforts`, not a provider effort string.
 Call the public `resolve_reasoning_effort(model_selections, model_spec, value)` from change AND submit handlers before persisting the spec: a supported string or valid integer/decimal-string index returns `{:ok, effort_string}`, and a malformed/out-of-range value or unsupported model returns `{:error, :unsupported_reasoning_effort}`.
 The component never nests forms, fetches configuration or renders credentials; callers own state, validate provider/model changes, clear downstream choices and resolve the resulting spec through the core.
+LiveView change events require each control to have a form owner: render the picker inside a caller-owned form, or pass the optional `form` HTML id to associate all three controls with an existing form elsewhere on the page.
+TaskForm explicitly associates its picker with `task-form`, and the shared fieldset is non-shrinking so the expanded editor compresses the textarea rather than its controls.
+Stale explicit provider/model selections are marked `aria-invalid`, and a model-empty hint is associated with its disabled model control.
 Models are scoped to the exact selected provider profile; unavailable persisted providers/models stay visibly unavailable rather than silently selecting a replacement.
 The slider uses only advertised discrete steps, defaults to the model's supported default (else its first effort), disappears for unsupported models and is disabled for a single supported level.
 Callers should omit reasoning for unsupported models and retain the current/default effort when the disabled single-level slider is absent from submitted form data.
