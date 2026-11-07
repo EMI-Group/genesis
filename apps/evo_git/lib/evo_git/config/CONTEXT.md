@@ -325,6 +325,13 @@ Leaf-specific OAuth assembly, atom creation and catalog side effects are documen
 
 Web search (`[tools.search]`) supports providers `[:tavily, :perplexity, :exa, :bing, :brave]`. The **single source of truth** for that list is `EvoGit.Config.Schema.Definitions.search_providers/0` (module attribute `@search_providers`) — do NOT hardcode it elsewhere. It feeds BOTH the schema `in:` validation (`[:tools, :search, :provider]`) and `EvoGit.Config.atomize_enum_values/1`, which atomizes `provider` and each provider section's `search_depth` against `[:basic, :advanced]` via that accessor. `tools_search_enabled?/0` is provider-generic: it resolves the SELECTED provider's own `api_key_credential_key` (with a tavily fallback).
 
+## LLM Shape and Normalization Boundaries
+The canonical persisted multi-model shape is currently `[[llm.models]]`, where each entry combines one model with auth, concurrency, peak schedule and generation parameters; there is no provider-profile grouping or ordered model/reasoning-effort inventory.
+`Config.atomize_keys/1` recurses into maps but not list elements, and `normalize_profile_keys/1` normalizes only each model-profile's immediate keys, so introducing nested model lists requires an explicit recursive normalization boundary rather than relying on the existing pass.
+Key normalization uses existing atoms only, with `@model_profile_extra_keys` pinning otherwise-unreferenced allowed atoms; newly introduced nested keys must not depend on unrelated modules having loaded first.
+`Schema.effective_model_profiles/1` is the shared runtime fallback for scheduler boot, reload and catalog warm-up, while `Schema.default_model_profile/1` selects the first entry rather than an explicit default selector.
+The detailed generation/auth/reasoning assembly and its compatibility traps belong to `schema/CONTEXT.md`.
+
 ## LLM Model Presence Decision (config_status `:llm_model` gate)
 
 `config_status/0` reports `missing: [:llm_model]` + the warning "LLM model is not configured. Set [llm] model in config.toml." when NO model profile carries a usable model. The predicate runs over `Schema.model_profiles(resolved)` (ALL profiles): a profile counts as configured when its `:model` is a non-empty binary OR a valid map model spec (non-empty map with non-nil `:provider` and a non-empty binary `:id`) — **nil, empty-string and empty-map `%{}` models all fail the gate**. `config_status/0` calls `resolve()` first in its own process, so its results reflect a fresh stat-validated disk read in the calling process (never another process's `Process.get(:evo_git_config_validation_errors, [])`, set/deleted only by `resolve/0`).
