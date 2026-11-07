@@ -70,7 +70,7 @@ defmodule EvoGit.CLI.Setup do
     if LLMCatalog.oauth_only?(provider.id) do
       IO.puts("Authentication: subscription (OAuth) — no API key is used.\n")
     else
-      IO.puts("API key credential key: #{provider.credential_key}\n")
+      IO.puts("Default API key credential key: #{provider.credential_key}\n")
     end
 
     # Step 2: Model selection
@@ -153,19 +153,19 @@ defmodule EvoGit.CLI.Setup do
     end
   end
 
-  # The API-key branch: unchanged behaviour, just a dynamic step number (4 when
-  # the authentication-mode step was shown, 3 otherwise).
+  # Resolve the selected account before prompting, just as for its OAuth path.
   defp prompt_api_key(provider, model_spec, step) do
+    credential_key = setup_credential_key(model_spec, provider.credential_key)
     IO.puts("\nStep #{step}: Enter your API key.")
     IO.puts("  This will be stored in your credentials file.\n")
 
-    api_key = prompt_input("Enter #{provider.credential_key}: ")
+    api_key = prompt_input("Enter #{credential_key}: ")
 
     if api_key == "" do
       IO.puts("\nNo API key entered. API key can be set later in credentials.toml.")
     end
 
-    save_setup_result(model_spec, provider.credential_key, api_key)
+    save_setup_result(model_spec, credential_key, api_key)
   end
 
   # The OAuth branch: reuse the vendor CLI's existing login. Nothing is ever
@@ -294,17 +294,16 @@ defmodule EvoGit.CLI.Setup do
           IO.puts("  Base URL: #{base_url}")
         end
 
-        credential_key = String.upcase(provider) <> "_API_KEY"
+        # Build the map model spec before resolving the selected account's key.
+        model_spec =
+          EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_id, base_url: base_url)
+
+        credential_key = setup_credential_key(model_spec, String.upcase(provider) <> "_API_KEY")
         IO.puts("  Expected API key credential key: #{credential_key}")
 
         IO.puts(
           "  (If this is incorrect, check https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html)\n"
         )
-
-        # Build the map model spec. base_url is included only when non-empty
-        # (resolve_model_spec omits nil/"" values).
-        model_spec =
-          EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_id, base_url: base_url)
 
         api_key = prompt_input("Enter #{credential_key}: ")
 
@@ -318,6 +317,7 @@ defmodule EvoGit.CLI.Setup do
   defp save_setup_result(model_spec, credential_key, api_key, opts \\ []) do
     existing_config = EvoGit.Config.user_config()
     config = prepare_config(existing_config, model_spec, Keyword.get(opts, :auth_mode))
+    credential_key = credential_key_for_config(config, credential_key)
 
     case EvoGit.Config.save_user_config(config) do
       :ok ->
@@ -364,10 +364,26 @@ defmodule EvoGit.CLI.Setup do
     |> oauth_opts_for_config()
   end
 
-  defp oauth_opts_for_config(%{llm: llm}) do
-    profile = Enum.find(llm.providers, &(&1.id == llm.default_provider_profile))
+  defp setup_credential_key(model_spec, fallback) do
+    EvoGit.Config.user_config()
+    |> prepare_config(model_spec, nil)
+    |> credential_key_for_config(fallback)
+  end
 
-    case profile[:oauth_file] do
+  # Config.save_credentials/1 merges by the exact string key, so retain account
+  # isolation instead of overwriting the provider-wide catalog credential.
+  defp credential_key_for_config(config, fallback) do
+    case selected_profile(config)[:api_key_env_var] do
+      name when is_binary(name) and name != "" -> name
+      _ -> fallback
+    end
+  end
+
+  defp selected_profile(%{llm: llm}),
+    do: Enum.find(llm.providers, &(&1.id == llm.default_provider_profile))
+
+  defp oauth_opts_for_config(config) do
+    case selected_profile(config)[:oauth_file] do
       path when is_binary(path) and path != "" -> [oauth_file: path]
       _ -> []
     end

@@ -33,7 +33,9 @@ Parsing stays pure and setup persists only through `EvoGit.Config` and imports s
 - Parsing performs no IO, filesystem access, configuration reads or application-state mutation.
 - Provider/model/effort validation belongs to `Schema`, not parser-local catalog or window logic.
 - Modes remain strings end-to-end, and CLI foreign repos remain read-only.
-- API-key writes go through `Config.save_credentials/1`, which preserves other credential entries.
+- API-key prompts and writes resolve the prepared config's selected account `api_key_env_var` when nonempty, falling back to the catalog credential key (or the custom provider's derived key) only when absent.
+- API-key writes go through `Config.save_credentials/1` with that exact string key, preserving other same-provider account credentials and unrelated credential entries.
+- Runtime `Schema.LLM.profile_generation_params/1` currently resolves `api_key_env_var` only from the process environment, so consuming custom keys saved in credentials.toml requires the parent-owned Config/schema integration fix.
 - No sibling test files are owned by this node.
 
 ## Required Regression Coverage
@@ -42,6 +44,7 @@ Parsing stays pure and setup persists only through `EvoGit.Config` and imports s
 - Setup tests must use real string-keyed canonical and legacy input, verify canonical-only output, rerun idempotence, selected-default account updates, unique new-provider IDs, and preservation of unrelated settings, shared limits, efforts/defaults and nested overrides.
 - OAuth tests must retain subscription/API-key choice behavior, verify a configured custom OAuth path reaches credential import and diagnostics, ensure no API-key write on OAuth, and clear stale OAuth mode on an API-key rerun.
 - Setup persistence tests must validate and TOML-round-trip canonical output through the shared schema rather than asserting legacy `llm.models` writes.
+- API-key wizard tests must cover a selected custom `api_key_env_var` in two same-provider accounts, exact prompt/save key agreement on named and custom-provider routes, unchanged catalog fallback when absent, and preservation of existing keys on blank input.
 
 ## Known Issues
 - `Setup.prompt_input/1` and the parent's input helpers still pass `:eof` or `{:error, reason}` from `IO.gets/1` into `String.trim/1`, so redirected stdin can crash instead of selecting a default.
