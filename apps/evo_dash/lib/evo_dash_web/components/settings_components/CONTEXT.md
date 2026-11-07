@@ -44,10 +44,13 @@ None — leaf directory containing the reusable settings presentation modules.
 
 `ProviderProfilesEditor.provider_profiles_editor/1` accepts canonical string-keyed provider maps without calling the new schema APIs, and `ProviderProfileFields` supplies its pure controls.
 The attrs are `provider_profiles: []`, `default_provider_profile: nil`, `editing_profile_id: nil`, `profile_form_draft: nil`, `auth_statuses: %{}` and `errors: %{}` (form-field name to translated message).
-Each provider map exposes `id`, `name`, `provider`, `auth_mode`, `oauth_file`, `base_url`, `concurrency`, `peak_concurrency`, `timezone`, `off_peak_days`, `peak_hours`, `default_model`, `reasoning_efforts`, `default_reasoning_effort`, `generation` and `models`.
+Each provider map exposes `id`, `name`, `provider`, `auth_mode`, `oauth_file`, `base_url`, `concurrency`, `context_window`, `peak_concurrency`, `timezone`, `off_peak_days`, `peak_hours`, `default_model`, `reasoning_efforts`, `default_reasoning_effort`, `generation` and `models`.
+The optional shared `context_window` is a blank-by-default numeric field with minimum 1024, and model context windows inherit that shared value before the runtime default.
 Each model map exposes `model`, optional `context_window`, optional `reasoning_efforts`, optional `default_reasoning_effort` and `generation` overrides.
 A draft shallow-merges over its provider, and explicit blank strings or empty collections remain authoritative, so the owner must keep complete nested model/generation drafts during row mutations.
 At most one provider may be edited; the stable form id is `provider-profile-edit-form`, with `phx-change="provider_profile_form_change"` and `phx-submit="save_provider_profile"`.
+The form is labelled by `provider-profile-settings-title`, references `provider-profile-errors` when the owner supplies errors, and renders only one submit button while row/cancel/recheck actions are explicit non-submit buttons.
+Unsupported reasoning defaults remain selectable for correction and set `aria-invalid="true"` on their labelled select instead of silently changing the saved value.
 The existing legacy editor is unchanged and must not be mounted alongside this editor against the same edit assigns.
 
 ### Wiring in the sibling `settings_components.ex` (owned by the parent)
@@ -63,9 +66,10 @@ Connection-test option values JSON-encode the account/model identity through pub
 `edit_provider_profile`, `delete_provider_profile` and `set_default_provider_profile` submit `profile_id`; the latter updates `[llm] default_provider_profile` and is not a provider-form field.
 `remove_provider_model` and `remove_provider_peak_hours_row` submit zero-based `index` strings.
 `refresh_auth_status` keeps its existing event name and also supplies `profile_id`, which a handler that refreshes all statuses may ignore.
-The change/save payload has original `profile_id`, editable `profile_id_new`, and flat `name`, `provider`, `base_url`, `auth_mode`, `oauth_file`, `concurrency`, `default_model`, `peak_concurrency`, `timezone`, `reasoning_efforts` and `default_reasoning_effort` fields.
+The change/save payload has original `profile_id`, editable `profile_id_new`, and flat `name`, `provider`, `base_url`, `auth_mode`, `oauth_file`, `concurrency`, `context_window`, `default_model`, `peak_concurrency`, `timezone`, `reasoning_efforts` and `default_reasoning_effort` fields.
 `reasoning_efforts` is an ordered comma-separated string, not a range index; normalize by trimming/filtering blanks/deduplicating while retaining order.
-`generation[temperature|max_tokens|top_p|top_k|frequency_penalty|presence_penalty]` carries optional numeric strings, and `generation[provider_options]` carries JSON object text.
+`generation[temperature|max_tokens|top_p|top_k|frequency_penalty|presence_penalty]` carries optional numeric strings, and `generation[extra]` and `generation[provider_options]` carry JSON object text.
+Both JSON controls have unique associated labels/help text warning against pasting API keys or login tokens; they intentionally display editable advanced configuration rather than silently redacting or corrupting it.
 Models submit `models[index][model|context_window|override_reasoning|reasoning_efforts|default_reasoning_effort]` plus `models[index][generation][...]` using the same generation field names.
 The `override_reasoning` hidden false sentinel plus checked true checkbox is UI-only and must not persist in canonical config.
 When false, omit the model inventory so it inherits provider support but retain a validated model default if explicitly selected.
@@ -137,8 +141,9 @@ Pre-fill helpers (private, all nil-safe): `profile_peak_concurrency/1` (→ `""`
 There is no per-profile error or provider-compatibility warning attr/region in this component, and core request-time filtering must not be inferred from these HTML controls.
 `SettingCard.setting_card/1` accepts `schema`, `value`, optional `error` and `disabled`, names fields with dotted schema paths, and has no own form, submit/change event, or draft storage.
 Its reasoning special case duplicates the profile option list but submits `llm.reasoning_effort`; its `:model_spec` widget is a free-text model string using `model_display/1`, and `:model_profiles` renders only a count badge.
-`SettingCard.flat_llm_schemas/1` excludes `model`, `models`, `temperature`, `max_tokens`, `reasoning_effort`, `top_p`, `top_k`, `frequency_penalty`, and `presence_penalty`, so these legacy widgets do not appear among normal flat LLM cards.
-Other LLM keys pass through schema-driven type dispatch; do not rely on the stale source comment saying only compression_threshold_tokens remains.
+The remaining flat LLM cards are schema-driven compression/pruning controls: `SettingCard.flat_llm_schemas/1` excludes the dedicated `providers` and `default_provider_profile` keys as well as legacy model/generation fields.
+Search may still render those dedicated schema cards, so `:provider_profiles` renders only a count (nil/non-list values count as zero), and `default_provider_profile` renders only its identifier without a competing generic input.
+Provider maps are never inspected or serialized in the schema-summary card because they may contain credentials.
 
 ## Notes for Agents — Model Profiles Editor: Authentication (OAuth / API key)
 
