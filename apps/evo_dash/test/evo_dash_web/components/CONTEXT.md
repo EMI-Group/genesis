@@ -28,8 +28,11 @@ There is **no `live(...)` call anywhere in this directory**: every component is 
 | `category_metadata_test.exs` | `EvoDashWeb.CategoryMetadataTest` | 2 / 4 — pure `SettingsComponents.CategoryMetadata` units |
 
 ## Coverage Boundary — shared LLM selection
-There is no dedicated `llm_selection_components_test.exs` in this directory.
-Existing selection render pins live in `task_form_components_test.exs`, settings field/disclosure pins in `model_profiles_editor_test.exs`, and subscription credential-state pins in `model_profiles_editor_auth_test.exs`.
+There is no dedicated `llm_selection_components_test.exs` in this directory and no component test references `LLMSelectionComponents`, `resolve_reasoning_effort/3`, `provider_profiles`, `model_selections`, or `model_spec`.
+Existing selection render pins in `task_form_components_test.exs` exercise only the legacy `model_profiles` / `selected_model_id` toolbar select, not the provider-profile picker branch.
+Settings field/disclosure pins in `model_profiles_editor_test.exs` and subscription credential-state pins in `model_profiles_editor_auth_test.exs` exercise the legacy `ModelProfilesEditor`, not `SettingsComponents.ProviderProfilesEditor`.
+Missing shared-picker coverage includes first/middle/last reasoning indices, invalid-index rejection, singleton disabled-range behavior, default-effort fallback, exact provider-profile scoping for duplicate model names, unavailable selections, empty states, event overrides, and unique/accessibility ids.
+Missing task-form integration render pins include the `#task-llm-selection` row above `.input-controls`, all three branch-enabling attrs, legacy-select suppression, event/Auto forwarding, disabled-state hiding, and reasoning-effort independence from `quality_level`.
 Component suites own isolated markup, event payload attributes and pure helper contracts; mounted event handling, persistence, node-aware loading and task-option threading belong to the separate LiveView test subtree.
 ## Coverage Boundary — review-page components
 
