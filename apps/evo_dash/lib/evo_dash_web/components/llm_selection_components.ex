@@ -146,9 +146,7 @@ defmodule EvoDashWeb.LLMSelectionComponents do
 
         <%!-- Layer-1 → Layer-2 entry: current model name + right arrow --%>
         <details class="capsule-sub">
-          <summary
-            class="capsule-subrow flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm cursor-pointer select-none list-none hover:bg-base-200 [&::-webkit-details-marker]:hidden"
-          >
+          <summary class="capsule-subrow flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm cursor-pointer select-none list-none hover:bg-base-200 [&::-webkit-details-marker]:hidden">
             <span class="capsule-subrow-label min-w-0 flex-1 truncate text-base-content/80">
               {@model_label}
             </span>

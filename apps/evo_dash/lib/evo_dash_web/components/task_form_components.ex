@@ -527,7 +527,9 @@ defmodule EvoDashWeb.TaskFormComponents do
                           "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium",
                           @quality_level == "balanced" && "capsule-stop-active"
                         ]}
-                        title={gettext("Balanced — the default trade-off between speed and correctness")}
+                        title={
+                          gettext("Balanced — the default trade-off between speed and correctness")
+                        }
                       >
                         <.icon name="hero-scale" class="size-3.5" />
                         {gettext("Balanced")}
@@ -553,13 +555,14 @@ defmodule EvoDashWeb.TaskFormComponents do
 
                     <%!-- Layer-1 → Layer-2 entry: mode description + right arrow --%>
                     <details class="capsule-sub">
-                      <summary
-                        class="capsule-subrow flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm cursor-pointer select-none list-none hover:bg-base-200 [&::-webkit-details-marker]:hidden"
-                      >
+                      <summary class="capsule-subrow flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm cursor-pointer select-none list-none hover:bg-base-200 [&::-webkit-details-marker]:hidden">
                         <span class="capsule-subrow-label min-w-0 flex-1 truncate text-base-content/80">
                           {mode_description(@mode)}
                         </span>
-                        <span class="capsule-subrow-arrow shrink-0 text-base-content/50" aria-hidden="true">
+                        <span
+                          class="capsule-subrow-arrow shrink-0 text-base-content/50"
+                          aria-hidden="true"
+                        >
                           <.icon name="hero-chevron-right" class="size-4" />
                         </span>
                       </summary>
