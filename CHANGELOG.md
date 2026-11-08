@@ -2,6 +2,63 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.1] - 2026-11-08
+
+### Added
+
+- Introduced canonical LLM provider profiles with provider-account model selection, shared model and reasoning selection components, and integration across Settings, Projects, Assistant, Welcome, config, scheduler, CLI, runtime, and cost accounting.
+- Added OAuth/subscription authentication for LLM model profiles, including auth-mode metadata and an OAuth-only openai_codex provider, credential-file input, per-profile login status with recheck, a setup-wizard OAuth option, and managed credential resolution.
+- Added an OAuth credential-import layer that imports vendor CLI login files (Codex, Claude) into a ReqLLM-native auth entry with atomic 0600 writes and env-token fallback.
+- Added a tiered, brokered Elixir evaluator with exact-code approval support and a recoverable chat approval workflow.
+- Added runtime control for enabling and disabling Erlang distribution via a SIGHUP-triggered file protocol, letting a single server instance toggle distribution without restarting.
+- The genesis CLI gained `remote start/stop/status/logs` commands to launch and manage the headless server release used as the SSH remote-dev daemon.
+- Added support for running tests against remote projects and resuming test runs at call time.
+- Added an animated fused-capsule panel to the dashboard.
+- OpenAI and Codex GPT calls now automatically send a stable per-agent-run prompt-cache identity, improving provider prompt-cache hit rates.
+
+### Changed
+
+- Combined the task form mode/speed and model selectors into unified, drill-down capsule dropdowns, and moved the Assistant LLM picker from the help page header into a control bar beneath the composer.
+- The Assistant is now presented as the "Genesis Assistant" with a rewritten general-purpose operator prompt, new greeting and suggestion chips, and a translatable name label.
+- The remote command family now drives a single shared genesis-server instance with runtime distribution toggling and always-on HTTP, retiring the separate genesis_remote release; remote bootstrap downloads and manages the new genesis_server headless release.
+- The dashboard HTTP endpoint is now always started on every host, even when EVOGIT_REMOTE_DAEMON is set.
+- Background job ids are now short sequential values (e.g. bash-1), job_output can automatically resolve the calling agent's single job, and user-facing strings are renamed from EvoGit to Genesis.
+- The OAuth credential file is now a per-model-profile setting only, removing the global [llm] oauth_file config key and showing per-profile managed paths in config warnings and remedies.
+- Removed the complete_task tool so agents finish only by replying without tool calls, with completion side effects handled internally.
+- Elixir evaluation stdout is now truncated to the remaining output budget instead of failing when the limit is exceeded.
+- Consecutive CONTEXT.md edits from a single agent batch are now squashed into one commit.
+- Refreshed the built-in LLM model catalog per provider, dropping retired and superseded models and ordering entries newest first, and replaced retired model ids in dashboard tests.
+- Refined the dashboard and help chat UI with an answer-first layout, improved reading typography, polished shared control styling, and consistent hover/focus states and pointer cursors across Tasks, Projects, and System pages.
+- Improved desktop shell status pages with a shared, accessible presentation.
+- Updated the assistant system prompt to refer to the help page as "Assistant chat (this page)", matching the sidebar label.
+- Updated translations.
+
+### Fixed
+
+- Fixed embedded-mode release boot crashes by making the elixir_eval allowlist on_load atom-only and deferring module loading to evaluation time.
+- Fixed the model and reasoning capsule in the LLM picker overflowing horizontally, and restored task submission on the projects page with correct mode submission and single-line speed options.
+- Fixed the dashboard task form placeholder so it updates correctly when the active mode or project changes.
+- Fixed the /agents detail panel and task card to show canonical model selections, and labeled /system LLM slots by provider profile with their models.
+- Fixed the agent scheduler fallback and system sampler to resolve defaults from canonical provider profiles, and corrected the llm_pools sample key.
+- Fixed saved model settings to push full canonical model options so the running scheduler keeps its selection snapshot, preventing explicit task model selections from failing with :model_spec_schema_unavailable.
+- Fixed per-agent archive rows being dropped for accounts with tuple-shaped provider options by making archived LLM settings JSON-safe and credentials-redacted.
+- Fixed remote project URLs to preserve the target repository ownership.
+- Fixed the model-profiles editor on /settings so OAuth credential statuses display correctly, and reported unwritable managed credential files with actionable path and remedy guidance instead of falsely prompting users to log in again.
+- Fixed profile-level oauth_file overrides so profile-derived OAuth defaults take precedence over model-derived provider options.
+- Fixed copied protocol consolidation by invalidating it during worktree initialization so stale protocol implementations cannot be reused.
+- Corrected the "remote node already connected" bootstrap dialog text and label to accurately describe distribution re-enabling without stopping the remote server, and added accurate distribution-state messages for the single-instance model.
+- Gave turn-limit recovery a real 3-turn window so the agent can make one bounded final commit and still deliver the tool-free report, and corrected the warning messages to describe the actual consequences.
+- Fixed the welcome-complete example card border so it is visibly drawn on the content surface.
+- Warn when a model-config update drops the canonical snapshot.
+
+### Removed
+
+- Retired the separate genesis_remote release in favor of the genesis_server distribution.
+
+### Security
+
+- Updated ecto to 3.14.3 to fix a security advisory and bumped req_llm to 1.30 with its transitive dependencies, and pinned the xqlite_ecto3 git dependency to a known-good revision.
+
 ## [0.14.0] - 2026-11-02
 
 ### Added
