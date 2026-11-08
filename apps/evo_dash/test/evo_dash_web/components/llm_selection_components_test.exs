@@ -306,14 +306,22 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
   describe "provider/model controls and reusable picker states" do
     test "uses string-keyed profile labels and spec values without leaking credentials" do
       tree = render_picker()
-      assert text(one(tree, ~s(label[for="llm-selection-provider"]))) == "Provider profile"
+      drill = one(tree, "#llm-selection-provider")
+      assert text(one(drill, ".capsule-drill-label")) == "Provider profile"
+      assert text(one(drill, ".capsule-drill-value")) == "Primary account"
 
-      provider = one(tree, "#llm-selection-provider")
-      assert_attr(provider, "name", "provider_profile_id")
-      assert_attr(provider, "phx-change", "select_provider_profile")
-      assert_attr(one(provider, "option[selected]"), "value", "primary")
-      assert text(one(provider, "option[selected]")) == "Primary account"
-      assert text(one(provider, ~s(option[value="secondary"]))) == "secondary"
+      assert provider_values(tree) == ["", "primary", "secondary"]
+
+      assert provider_labels(tree) == [
+               "Choose a provider profile",
+               "Primary account",
+               "secondary"
+             ]
+
+      selected = selected_provider_item(tree)
+      assert_attr(selected, "phx-value-provider_profile_id", "primary")
+      assert_attr(selected, "aria-selected", "true")
+      assert text(selected) == "Primary account"
 
       model = one(tree, "#llm-selection-model")
       assert_attr(model, "role", "listbox")
@@ -335,10 +343,11 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
 
       for id <- ["task-picker", "assistant-picker"] do
         capsule = one(tree, "##{id}")
-        one(capsule, ~s(label[for="#{id}-provider"]))
-        one(capsule, "##{id}-provider")
+        assert text(one(capsule, ".capsule-drill-label")) == "Provider profile"
+        assert_attr(one(capsule, "[data-capsule-drill=\"provider\"]"), "id", "#{id}-provider")
 
         assert_attr(one(capsule, "##{id}-model"), "aria-label", "Model")
+        assert_attr(one(capsule, "##{id}-provider-list"), "aria-label", "Provider profile")
         assert_attr(one(capsule, "##{id}-reasoning"), "aria-label", "Reasoning effort")
         one(capsule, "##{id}-reasoning-value")
       end
@@ -352,9 +361,10 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
           reasoning_event: "choose_effort"
         )
 
-      provider = one(tree, "#llm-selection-provider")
-      assert_attr(provider, "phx-change", "choose_account")
-      assert_attr(provider, "name", "provider_profile_id")
+      assert Enum.map(provider_items(tree), &Floki.attribute(&1, "phx-click")) ==
+               List.duplicate(["choose_account"], 3)
+
+      assert provider_values(tree) == ["", "primary", "secondary"]
 
       model = one(tree, ~s(#llm-selection-model button[aria-selected="true"]))
       assert_attr(model, "phx-click", "choose_model")
@@ -363,6 +373,21 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
       reasoning = one(tree, ~s(#llm-selection-reasoning button[aria-pressed="true"]))
       assert_attr(reasoning, "phx-click", "choose_effort")
       assert_attr(reasoning, "phx-value-reasoning_effort", "1")
+    end
+
+    test "provider list items carry the provider event and profile-id payload, not a select" do
+      tree = render_picker()
+
+      assert Enum.map(provider_items(tree), &Floki.attribute(&1, "phx-click")) ==
+               List.duplicate(["select_provider_profile"], 3)
+
+      assert provider_values(tree) == ["", "primary", "secondary"]
+
+      # The drill-down replaced the select entirely: no form control, no
+      # phx-change — picking a profile is a phx-click on the list item.
+      assert Floki.find(tree, "#llm-selection select") == []
+      assert Floki.find(tree, "#llm-selection [phx-change]") == []
+      assert Floki.find(tree, ~s(#llm-selection [name="provider_profile_id"])) == []
     end
 
     test "disabled disables every control without erasing selection" do
@@ -377,7 +402,7 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
       for control <-
             Floki.find(
               tree,
-              "#llm-selection-provider, #llm-selection-model button, #llm-selection-reasoning button"
+              "#llm-selection-provider, #llm-selection-provider-list button, #llm-selection-model button, #llm-selection-reasoning button"
             ) do
         assert_attr(control, "disabled", "disabled")
       end
@@ -391,10 +416,14 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
       tree =
         render_component(&LLMSelectionComponents.llm_selection/1, []) |> Floki.parse_document!()
 
-      provider = one(tree, "#llm-selection-provider")
-      assert_attr(provider, "disabled", "disabled")
-      assert_attr(provider, "aria-describedby", "llm-selection-empty")
-      assert text(one(provider, "option[selected]")) == "Choose a provider profile"
+      drill = one(tree, "#llm-selection-provider")
+      assert_attr(drill, "disabled", "disabled")
+      assert_attr(drill, "data-capsule-drill", "provider")
+      assert text(one(drill, ".capsule-drill-value")) == "Choose a provider profile"
+
+      blank_provider = selected_provider_item(tree)
+      assert_attr(blank_provider, "phx-value-provider_profile_id", "")
+      assert text(blank_provider) == "Choose a provider profile"
 
       blank = one(tree, ~s(#llm-selection-model button[aria-selected="true"]))
       assert_attr(blank, "disabled", "disabled")
@@ -412,9 +441,10 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
 
     test "Auto is a selected blank profile and never silently selects a model" do
       tree = render_picker(model_spec: %{}, show_auto_option: true)
-      auto = one(tree, "#llm-selection-provider option[selected]")
-      assert_attr(auto, "value", "")
+      auto = selected_provider_item(tree)
+      assert_attr(auto, "phx-value-provider_profile_id", "")
       assert text(auto) == "Auto (by rules)"
+      assert text(one(tree, "#llm-selection-provider .capsule-drill-value")) == "Auto (by rules)"
 
       blank = one(tree, ~s(#llm-selection-model button[aria-selected="true"]))
       assert_attr(blank, "disabled", "disabled")
@@ -451,10 +481,18 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
             spec(%{"provider_profile_id" => "removed-profile", "model" => "removed-model"})
         )
 
-      provider = one(tree, "#llm-selection-provider option[selected]")
-      assert_attr(provider, "value", "removed-profile")
-      assert_attr(provider, "disabled", "disabled")
-      assert text(provider) == "Unavailable profile: removed-profile"
+      stale = one(tree, "#llm-selection-provider-list [aria-invalid]")
+      assert_attr(stale, "phx-value-provider_profile_id", "removed-profile")
+      assert_attr(stale, "disabled", "disabled")
+      assert Floki.attribute(stale, "phx-click") == []
+      assert Floki.attribute(stale, "aria-selected") == []
+      assert text(stale) == "Unavailable profile: removed-profile"
+
+      drill = one(tree, "#llm-selection-provider")
+      assert_attr(drill, "aria-invalid", "true")
+      assert text(one(drill, ".capsule-drill-value")) == "Unavailable profile: removed-profile"
+      assert provider_values(tree) == ["", "removed-profile", "primary", "secondary"]
+      assert Floki.find(tree, ~s(#llm-selection-provider-list [aria-selected="true"])) == []
 
       model = one(tree, ~s(#llm-selection-model button.capsule-item-placeholder))
       assert_attr(model, "disabled", "disabled")
@@ -505,20 +543,61 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
       assert Floki.find(tree, "#llm-selection details") == []
     end
 
+    test "the capsule root carries the CapsulePanel hook and the model view marker" do
+      tree = render_picker()
+      capsule = one(tree, "#llm-selection")
+
+      assert_attr(capsule, "phx-hook", "CapsulePanel")
+      assert_attr(capsule, "data-capsule-view", "model")
+    end
+
+    test "the ONE panel holds the model and provider views as siblings" do
+      tree = render_picker()
+      panel = one(tree, "#llm-selection .capsule-panel")
+
+      # Both client-switched views sit directly inside the same panel: the
+      # hook toggles them, so neither may become a nested disclosure.
+      assert Enum.map(Floki.children(panel, include_text: false), fn child ->
+               Floki.attribute(child, "data-view")
+             end) == [["model"], ["provider"]]
+
+      assert [_] = Floki.find(panel, ~s(.capsule-view[data-view="model"]))
+      assert [_] = Floki.find(panel, ~s(.capsule-view[data-view="provider"]))
+    end
+
+    test "the drill row and the back row wire the two views with no provider select" do
+      tree = render_picker()
+
+      drill = one(tree, ~s(#llm-selection [data-capsule-drill="provider"]))
+      assert_attr(drill, "id", "llm-selection-provider")
+      assert_attr(drill, "type", "button")
+
+      [_] = Floki.find(tree, "#llm-selection [data-capsule-back]")
+
+      provider_list = one(tree, "#llm-selection-provider-list")
+      assert_attr(provider_list, "role", "listbox")
+      assert_attr(provider_list, "aria-label", "Provider profile")
+
+      assert [_] = Floki.find(provider_list, ~s([role="option"][aria-selected="true"]))
+
+      assert Floki.find(tree, "#llm-selection select") == []
+      assert Floki.find(tree, "#llm-selection [phx-change]") == []
+    end
+
     test "the reasoning group is a panel section, not the removed layer-1 hero group" do
       tree = render_picker()
       group = one(tree, "#llm-selection-reasoning")
 
       assert_attr(group, "class", "capsule-stops flex flex-wrap gap-1")
 
-      # Nested one level down inside its own labelled section, so the old
-      # "first thing in the panel" hero group cannot come back.
+      # Nested one level down inside its own labelled section INSIDE the model
+      # view, so the old "first thing in the panel" hero group cannot come back.
       assert Floki.find(tree, "#llm-selection .capsule-panel > #llm-selection-reasoning") == []
 
       assert [_] =
                Floki.find(
                  tree,
-                 "#llm-selection .capsule-panel > div > #llm-selection-reasoning"
+                 ~s(#llm-selection .capsule-view[data-view="model"] > div > #llm-selection-reasoning)
                )
     end
 
@@ -630,6 +709,23 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
   defp text(tree), do: tree |> Floki.text() |> String.trim()
 
   defp assert_attr(node, name, value), do: assert(Floki.attribute(node, name) == [value])
+
+  # The provider view's option rows, in DOM order: the blank/Auto row first,
+  # then a possible stale-profile row, then every configured profile.
+  defp provider_items(tree),
+    do: Floki.find(tree, ~s(#llm-selection-provider-list [role="option"]))
+
+  defp provider_values(tree) do
+    Enum.map(provider_items(tree), fn item ->
+      assert [value] = Floki.attribute(item, "phx-value-provider_profile_id")
+      value
+    end)
+  end
+
+  defp provider_labels(tree), do: Enum.map(provider_items(tree), &text/1)
+
+  defp selected_provider_item(tree),
+    do: one(tree, ~s(#llm-selection-provider-list [role="option"][aria-selected="true"]))
 
   defp assert_unsupported(selections, model_spec, value) do
     assert LLMSelectionComponents.resolve_reasoning_effort(selections, model_spec, value) ==

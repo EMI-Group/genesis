@@ -14,8 +14,8 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
       doc = render_form(provider_profiles: profiles())
 
       assert_picker(doc)
-      assert values(doc, "#task-llm-selection-provider option") == ["", "work", "personal"]
-      assert selected_value(doc, "#task-llm-selection-provider") == ""
+      assert provider_values(doc) == ["", "work", "personal"]
+      assert selected_provider(doc) == ""
       assert attr(doc, "#task-llm-selection-model .capsule-item", "disabled") == ["disabled"]
       assert text(doc, "#task-llm-selection-model .capsule-item") == "Choose a provider first"
       assert Floki.find(doc, "#task-llm-selection-reasoning") == []
@@ -87,13 +87,22 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
       end
     end
 
-    test "picker controls retain explicit submit-form ownership, nesting, default events and payload names" do
+    test "picker controls stay nested in the form, emit default events and payload names, and need no form owner" do
       doc = render_picker()
 
-      provider = "#task-form #task-llm-selection-provider"
-      assert attr(doc, provider, "name") == ["provider_profile_id"]
-      assert attr(doc, provider, "phx-change") == ["select_provider_profile"]
-      assert attr(doc, provider, "form") == ["task-form"]
+      drill = "#task-form #task-llm-selection-provider"
+      assert attr(doc, drill, "data-capsule-drill") == ["provider"]
+      assert attr(doc, "#task-form #task-llm-selection-provider-list", "role") == ["listbox"]
+
+      assert attr(doc, "#task-llm-selection-provider-list .capsule-item", "phx-click") ==
+               List.duplicate("select_provider_profile", 3)
+
+      assert attr(
+               doc,
+               "#task-llm-selection-provider-list .capsule-item",
+               "phx-value-provider_profile_id"
+             ) ==
+               ["", "work", "personal"]
 
       assert attr(doc, "#task-form #task-llm-selection-model", "role") == ["listbox"]
 
@@ -119,6 +128,12 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
                ["0", "1", "2"]
 
       assert text(doc, "#task-llm-selection-reasoning-value") == "Medium"
+
+      # No form owner and no form control: the picker never submits, so it
+      # carries neither a `form` association nor a `phx-change`.
+      assert Floki.find(doc, "#task-llm-selection [form]") == []
+      assert Floki.find(doc, "#task-llm-selection [phx-change]") == []
+      assert Floki.find(doc, "#task-llm-selection select") == []
     end
 
     test "all three event overrides pass through without changing payload names or quality events" do
@@ -129,9 +144,15 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
           reasoning_event: "task_reasoning_changed"
         )
 
-      assert attr(doc, "select[name=provider_profile_id]", "phx-change") == [
-               "task_provider_changed"
-             ]
+      assert attr(doc, "#task-llm-selection-provider-list .capsule-item", "phx-click") ==
+               List.duplicate("task_provider_changed", 3)
+
+      assert attr(
+               doc,
+               "#task-llm-selection-provider-list .capsule-item",
+               "phx-value-provider_profile_id"
+             ) ==
+               ["", "work", "personal"]
 
       assert attr(doc, "#task-llm-selection-model .capsule-item", "phx-click") ==
                List.duplicate("task_model_changed", 3)
@@ -149,15 +170,15 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
     test "Auto forwarding changes the blank provider label, never the chosen profile" do
       for show_auto? <- [false, true] do
         doc = render_picker(show_auto_model_option: show_auto?)
-        [blank | _] = Floki.find(doc, "#task-llm-selection-provider option")
+        [blank | _] = provider_items(doc)
 
-        assert Floki.attribute(blank, "value") == [""]
-        assert Floki.attribute(blank, "selected") == []
+        assert Floki.attribute(blank, "phx-value-provider_profile_id") == [""]
+        assert Floki.attribute(blank, "aria-selected") == ["false"]
 
         assert String.trim(Floki.text(blank)) ==
                  if(show_auto?, do: "Auto (by rules)", else: "Choose a provider profile")
 
-        assert selected_value(doc, "#task-llm-selection-provider") == "work"
+        assert selected_provider(doc) == "work"
         assert selected_model(doc) == "shared-model"
       end
     end
@@ -165,8 +186,12 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
     test "Auto with an empty spec stays blank instead of silently choosing a configured model" do
       doc = render_picker(model_spec: %{}, show_auto_model_option: true)
 
-      assert selected_value(doc, "#task-llm-selection-provider") == ""
-      assert text(doc, "#task-llm-selection-provider option[selected]") == "Auto (by rules)"
+      assert selected_provider(doc) == ""
+
+      assert text(doc, "#task-llm-selection-provider-list [role=option][aria-selected=true]") ==
+               "Auto (by rules)"
+
+      assert text(doc, "#task-llm-selection-provider .capsule-drill-value") == "Auto (by rules)"
       assert selected_model(doc) == ""
       assert attr(doc, "#task-llm-selection-model .capsule-item", "phx-value-model") == [""]
       assert Floki.find(doc, "#task-llm-selection-reasoning") == []
@@ -185,12 +210,44 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
     end
   end
 
+  describe "fused capsule structure" do
+    test "both capsule roots opt into the CapsulePanel hook; only the model capsule is a view pair" do
+      doc = render_picker()
+
+      assert attr(doc, "#task-llm-selection", "phx-hook") == ["CapsulePanel"]
+      assert attr(doc, "#task-llm-selection", "data-capsule-view") == ["model"]
+
+      assert attr(doc, "#mode-speed-capsule", "phx-hook") == ["CapsulePanel"]
+      assert attr(doc, "#mode-speed-capsule", "data-capsule-view") == []
+      assert Floki.find(doc, "#mode-speed-capsule .capsule-view") == []
+    end
+
+    test "the picker drills down inside ONE panel and renders no provider select" do
+      doc = render_picker()
+
+      assert length(Floki.find(doc, "#task-llm-selection .capsule-panel")) == 1
+      assert length(Floki.find(doc, "#task-llm-selection .capsule-view")) == 2
+
+      assert [_] = Floki.find(doc, ~s(#task-llm-selection .capsule-view[data-view="model"]))
+      assert [_] = Floki.find(doc, ~s(#task-llm-selection .capsule-view[data-view="provider"]))
+      assert [_] = Floki.find(doc, ~s(#task-llm-selection [data-capsule-drill="provider"]))
+      assert [_] = Floki.find(doc, "#task-llm-selection [data-capsule-back]")
+
+      assert attr(doc, "#task-llm-selection-provider-list", "role") == ["listbox"]
+      assert attr(doc, "#task-llm-selection-provider-list", "aria-label") == ["Provider profile"]
+
+      assert Floki.find(doc, "#task-llm-selection select") == []
+      assert Floki.find(doc, "select[name=provider_profile_id]") == []
+      assert Floki.find(doc, "#task-llm-selection [phx-change]") == []
+    end
+  end
+
   describe "provider-scoped models and stale persisted specs" do
     test "same model name uses the exact provider profile's model list and reasoning capabilities" do
       work = render_picker()
       personal = render_picker(model_spec: spec("personal", "shared-model", "xhigh"))
 
-      assert selected_value(work, "#task-llm-selection-provider") == "work"
+      assert selected_provider(work) == "work"
 
       assert attr(work, "#task-llm-selection-model .capsule-item", "phx-value-model") == [
                "",
@@ -199,7 +256,7 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
              ]
 
       assert selected_model(work) == "shared-model"
-      assert text(work, "#task-llm-selection-provider option[selected]") == "Work account"
+      assert text(work, "#task-llm-selection-provider .capsule-drill-value") == "Work account"
       assert text(work, "#task-llm-selection-reasoning-value") == "Medium"
 
       assert attr(
@@ -209,7 +266,7 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
              ) ==
                ["0", "1", "2"]
 
-      assert selected_value(personal, "#task-llm-selection-provider") == "personal"
+      assert selected_provider(personal) == "personal"
 
       assert attr(personal, "#task-llm-selection-model .capsule-item", "phx-value-model") == [
                "",
@@ -234,7 +291,7 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
     test "a model belonging only to another profile is retained as unavailable, not borrowed" do
       doc = render_picker(model_spec: spec("work", "personal-only", "xhigh"))
 
-      assert selected_value(doc, "#task-llm-selection-provider") == "work"
+      assert selected_provider(doc) == "work"
       assert_unavailable(doc, "model", "personal-only", "Unavailable model: personal-only")
 
       assert attr(
@@ -263,7 +320,7 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
 
       assert_unavailable(doc, "model", "shared-model", "Unavailable model: shared-model")
 
-      assert values(doc, "#task-llm-selection-provider option:not([disabled])") == [
+      assert provider_values(doc, ":not([disabled])") == [
                "",
                "work",
                "personal"
@@ -279,7 +336,7 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
     test "a removed model on a known provider stays unavailable while valid alternatives remain visible" do
       doc = render_picker(model_spec: spec("work", "retired-model", "high"))
 
-      assert selected_value(doc, "#task-llm-selection-provider") == "work"
+      assert selected_provider(doc) == "work"
       assert_unavailable(doc, "model", "retired-model", "Unavailable model: retired-model")
 
       assert attr(
@@ -306,7 +363,7 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
           model_selections: Enum.reject(selections(), &(&1.provider_profile_id == "work"))
         )
 
-      assert selected_value(doc, "#task-llm-selection-provider") == "work"
+      assert selected_provider(doc) == "work"
       assert_unavailable(doc, "model", "shared-model", "Unavailable model: shared-model")
 
       assert text(doc, "#task-llm-selection") =~
@@ -441,11 +498,13 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
   end
 
   defp assert_unavailable(doc, "provider", value, label) do
-    selector = "#task-llm-selection-provider option[selected]"
-    assert attr(doc, selector, "value") == [value]
+    selector = "#task-llm-selection-provider-list [aria-invalid]"
+    assert attr(doc, selector, "phx-value-provider_profile_id") == [value]
     assert attr(doc, selector, "disabled") == ["disabled"]
+    assert attr(doc, selector, "phx-click") == []
     assert attr(doc, "#task-llm-selection-provider", "aria-invalid") == ["true"]
     assert text(doc, selector) == label
+    assert text(doc, "#task-llm-selection-provider .capsule-drill-value") == label
   end
 
   defp assert_unavailable(doc, "model", _value, label) do
@@ -467,13 +526,39 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
     value
   end
 
+  # Ordered provider-profile rows of the drill-down's provider view: the
+  # blank/Auto row first, then a possible stale-profile row, then every
+  # configured profile.
+  defp provider_items(doc, filter \\ "") do
+    Floki.find(doc, ~s(#task-llm-selection-provider-list [role="option"]) <> filter)
+  end
+
+  defp provider_values(doc, filter \\ "") do
+    doc
+    |> provider_items(filter)
+    |> Enum.map(fn item ->
+      assert [value] = Floki.attribute(item, "phx-value-provider_profile_id")
+      value
+    end)
+  end
+
+  defp selected_provider(doc) do
+    [value] =
+      attr(
+        doc,
+        "#task-llm-selection-provider-list [role=option][aria-selected=true]",
+        "phx-value-provider_profile_id"
+      )
+
+    value
+  end
+
   defp selected_value(doc, selector) do
     [value] = attr(doc, selector <> " option[selected]", "value")
     value
   end
 
   defp attr(doc, selector, name), do: doc |> Floki.find(selector) |> Floki.attribute(name)
-  defp values(doc, selector), do: attr(doc, selector, "value")
   defp text(doc, selector), do: doc |> Floki.find(selector) |> Floki.text() |> String.trim()
 
   defp classes(doc, selector) do
