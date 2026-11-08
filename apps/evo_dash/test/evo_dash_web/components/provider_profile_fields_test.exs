@@ -9,6 +9,71 @@ defmodule EvoDashWeb.ProviderProfileFieldsTest do
 
   alias EvoDashWeb.SettingsComponents.ProviderProfileFields, as: Fields
 
+  describe "exact catalog reasoning suggestions" do
+    test "uses explicit effort metadata only for the exact provider and model identity" do
+      assert Fields.reasoning_suggestions(%{
+               "provider" => "anthropic",
+               "default_model" => "claude-opus-4-5-20251101"
+             }) == ["low", "medium", "high"]
+
+      # The alias resolves to the dated entry, but is not that exact catalog id.
+      for {provider, model} <- [
+            {"anthropic", "claude-opus-4-5"},
+            {"openai", "claude-opus-4-5-20251101"},
+            {"openai_codex", "claude-opus-4-5-20251101"},
+            {"private_gateway", "claude-opus-4-5-20251101"},
+            {"anthropic", "unknown-model"},
+            {"openai", "gpt-5"}
+          ] do
+        assert Fields.reasoning_suggestions(%{"provider" => provider, "default_model" => model}) ==
+                 []
+      end
+    end
+
+    test "shared suggestions intersect every default and nested model, while overrides use their own model" do
+      profile = %{
+        "provider" => "anthropic",
+        "default_model" => "claude-opus-4-6",
+        "models" => %{"4" => %{"model" => "claude-opus-4-5-20251101"}}
+      }
+
+      assert Fields.reasoning_suggestions(profile) == ["low", "medium", "high"]
+
+      assert Fields.reasoning_suggestions(profile, "claude-opus-4-6") == [
+               "low",
+               "medium",
+               "high",
+               "max"
+             ]
+
+      unknown = Map.put(profile, "models", [%{"model" => "unknown-model"}])
+      assert Fields.reasoning_suggestions(unknown) == []
+
+      assert Fields.reasoning_suggestions(unknown, "claude-opus-4-6") == [
+               "low",
+               "medium",
+               "high",
+               "max"
+             ]
+
+      assert Fields.reasoning_suggestions(Map.put(profile, "default_model", "unknown-default")) ==
+               []
+
+      assert Fields.reasoning_suggestions(%{"provider" => "anthropic", "models" => []}) == []
+    end
+
+    test "custom endpoints never borrow the named provider model's catalog efforts" do
+      profile = %{
+        "provider" => "anthropic",
+        "default_model" => "claude-opus-4-5-20251101",
+        "base_url" => "https://private.example/v1"
+      }
+
+      assert Fields.reasoning_suggestions(profile) == []
+      assert Fields.reasoning_suggestions(profile, "claude-opus-4-5-20251101") == []
+    end
+  end
+
   describe "reasoning checkbox serialization" do
     test "configured custom levels precede unchecked vocabulary in their original order" do
       tree =
@@ -37,6 +102,18 @@ defmodule EvoDashWeb.ProviderProfileFieldsTest do
                  &[&1]
                )
 
+      advanced = one(tree, "details")
+      assert attr(advanced, "open") == []
+      assert text(one(advanced, "summary")) == "Advanced reasoning choices"
+
+      assert checkbox_values(advanced, "reasoning_efforts[]") ==
+               ~w(none minimal medium xhigh max default)
+
+      assert checkbox_values(Floki.filter_out(tree, "details"), "reasoning_efforts[]") ==
+               ["high", "vendor-custom", "low"]
+
+      assert text(tree) =~ "No verified catalog level list is available"
+      assert text(advanced) =~ "not verified support for this model or endpoint"
       assert checked_values(tree, "reasoning_efforts[]") == ["high", "vendor-custom", "low"]
       assert attr(hd(inputs), "type") == ["hidden"]
       assert selected(one(tree, ~s(select[name="default_reasoning_effort"]))) == [""]
@@ -47,6 +124,68 @@ defmodule EvoDashWeb.ProviderProfileFieldsTest do
                "vendor-custom",
                "low"
              ]
+    end
+
+    test "catalog suggestions are normalized and offered unchecked without changing saved order or defaults" do
+      tree =
+        render_component(&Fields.reasoning_fields/1,
+          prefix: "models[2]",
+          fields: %{
+            "reasoning_efforts" => ["custom", "high"],
+            "default_reasoning_effort" => "custom"
+          },
+          suggestions: [" low ", "medium", "high", "low", "", nil],
+          model_override: true
+        )
+        |> parse()
+
+      name = "models[2][reasoning_efforts][]"
+
+      assert checkbox_values(Floki.filter_out(tree, "details"), name) ==
+               ["custom", "high", "low", "medium"]
+
+      assert checked_values(tree, name) == ["custom", "high"]
+      assert attr(one(tree, ~s(input[type="hidden"][name="#{name}"])), "value") == [""]
+      advanced = one(tree, "details")
+      assert attr(advanced, "open") == []
+      assert checkbox_values(advanced, name) == ~w(none minimal xhigh max default)
+      assert checked_values(advanced, name) == []
+      select = one(tree, ~s(select[name="models[2][default_reasoning_effort]"]))
+      assert option_values(select) == ["", "custom", "high"]
+      assert selected(select) == ["custom"]
+      assert text(tree) =~ "nothing is selected automatically"
+    end
+
+    test "suggestions alone neither select reasoning levels nor populate the default inventory" do
+      tree =
+        render_component(&Fields.reasoning_fields/1,
+          prefix: "",
+          fields: %{},
+          suggestions: ["low", "medium", "high"]
+        )
+        |> parse()
+
+      assert checkbox_values(Floki.filter_out(tree, "details"), "reasoning_efforts[]") ==
+               ["low", "medium", "high"]
+
+      assert checked_values(tree, "reasoning_efforts[]") == []
+      assert option_values(one(tree, ~s(select[name="default_reasoning_effort"]))) == [""]
+      assert selected(one(tree, ~s(select[name="default_reasoning_effort"]))) == [""]
+      assert attr(one(tree, "details"), "open") == []
+    end
+
+    test "a fully configured vocabulary needs no empty advanced disclosure" do
+      vocabulary = ~w(none minimal low medium high xhigh max default)
+
+      tree =
+        render_component(&Fields.reasoning_fields/1,
+          prefix: "",
+          fields: %{"reasoning_efforts" => vocabulary}
+        )
+        |> parse()
+
+      assert checked_values(tree, "reasoning_efforts[]") == vocabulary
+      assert Floki.find(tree, "details") == []
     end
 
     test "nested empty overrides still submit a blank list sentinel, not a missing field" do
@@ -316,6 +455,9 @@ defmodule EvoDashWeb.ProviderProfileFieldsTest do
   defp text(tree), do: tree |> Floki.text() |> String.replace(~r/\s+/, " ") |> String.trim()
   defp option_values(select), do: select |> Floki.find("option") |> Floki.attribute("value")
   defp selected(select), do: select |> Floki.find("option[selected]") |> Floki.attribute("value")
+
+  defp checkbox_values(tree, name),
+    do: tree |> Floki.find(~s(input[type="checkbox"][name="#{name}"])) |> Floki.attribute("value")
 
   defp checked_values(tree, name),
     do:

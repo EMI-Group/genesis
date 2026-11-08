@@ -43,7 +43,10 @@ defmodule EvoDashWeb.ProviderProfilesEditorTest do
       tree = render_editor(editing_profile_id: :new, profile_form_draft: %{})
       assert selected(one(tree, ~s(select[name="provider"]))) == [""]
       assert option_values(one(tree, ~s(select[name="default_model"]))) == [""]
-      assert text(tree) =~ "Add a model to choose as your default."
+      helper = one(tree, ~s(input[name="default_model_name"]))
+      assert attr(helper, "value") == [""]
+      assert attr(helper, "required") == ["required"]
+      assert text(tree) =~ "Add model rows only when you need per-model overrides."
       assert_closed(tree, "#provider-profile-advanced")
       assert_closed(tree, "#provider-generation-defaults")
       assert_closed(tree, "#provider-peak-schedule")
@@ -86,14 +89,64 @@ defmodule EvoDashWeb.ProviderProfilesEditorTest do
       assert Floki.find(advanced, ~s(select[name="default_model"])) == []
       assert Floki.find(advanced, ~s(select[name="default_reasoning_effort"])) == []
       assert attr(models, "aria-describedby") == ["provider-default-model-help"]
-      assert text(one(tree, "#provider-default-model-help")) =~ "without an explicit model"
+
+      assert text(one(tree, "#provider-default-model-help")) ==
+               "Choose the default model. This does not create a model override."
+
+      assert Floki.find(tree, ~s(input[name="default_model"])) == []
+      assert Floki.find(tree, ~s(input[name="default_model_name"])) == []
     end
 
-    test "default-only saved models remain available without inventing nested rows" do
+    test "default-only accounts expose a required helper without inventing nested rows" do
       tree = edit(profile(%{"default_model" => "legacy-default", "models" => []}))
-      assert option_values(one(tree, ~s(select[name="default_model"]))) == ["", "legacy-default"]
-      assert selected(one(tree, ~s(select[name="default_model"]))) == ["legacy-default"]
+      helper = one(tree, ~s(input[name="default_model_name"]))
+      assert attr(helper, "type") == ["text"]
+      assert attr(helper, "value") == ["legacy-default"]
+      assert attr(helper, "required") == ["required"]
+      assert attr(helper, "disabled") == []
+      assert text(one(tree, ~s(label[for="provider-field-default_model_name"]))) == "Model name"
+      assert attr(helper, "aria-describedby") == ["provider-field-default_model_name-help"]
+
+      assert text(one(tree, "#provider-field-default_model_name-help")) =~
+               "Edit the default model name."
+
+      select = one(tree, ~s(select[name="default_model"]))
+      assert option_values(select) == ["", "legacy-default"]
+      assert selected(select) == ["legacy-default"]
+      assert attr(select, "required") == ["required"]
+      assert Floki.find(tree, ~s(input[name="default_model"])) == []
       assert Floki.find(tree, ~s(input[name$="[model]"])) == []
+      assert Floki.find(tree, "[id^=provider-model-details-]") == []
+
+      assert Floki.find(
+               one(tree, "#provider-profile-advanced"),
+               ~s(input[name="default_model_name"])
+             ) == []
+    end
+
+    test "default-only helper uses the effective draft value and offers it in the real select" do
+      account = profile(%{"default_model" => "saved-model", "models" => []})
+
+      for {draft, helper, options, selected_default} <- [
+            {%{}, "saved-model", ["", "saved-model"], "saved-model"},
+            {%{"default_model" => "draft-default"}, "draft-default", ["", "draft-default"],
+             "draft-default"},
+            {%{"default_model_name" => "helper-model"}, "helper-model",
+             ["", "saved-model", "helper-model"], "saved-model"},
+            {%{"default_model" => "helper-model", "default_model_name" => "helper-model"},
+             "helper-model", ["", "helper-model"], "helper-model"},
+            {%{"default_model" => "", "default_model_name" => " helper-model "}, " helper-model ",
+             ["", "helper-model"], ""},
+            {%{"default_model_name" => ""}, "", ["", "saved-model"], "saved-model"},
+            {%{"default_model_name" => nil}, "saved-model", ["", "saved-model"], "saved-model"}
+          ] do
+        tree = edit(account, draft)
+        assert attr(one(tree, ~s(input[name="default_model_name"])), "value") == [helper]
+        select = one(tree, ~s(select[name="default_model"]))
+        assert option_values(select) == options
+        assert selected(select) == [selected_default]
+        assert Floki.find(tree, ~s(input[name$="[model]"])) == []
+      end
     end
 
     test "live draft names populate defaults once while an explicit blank stays blank" do
@@ -175,6 +228,80 @@ defmodule EvoDashWeb.ProviderProfilesEditorTest do
       advanced = assert_closed(tree, "#provider-profile-advanced")
       assert_efforts(advanced, "reasoning_efforts[]", ["high", "custom-fast", "low"])
       assert Floki.find(tree, ~s(input[type="text"][name="reasoning_efforts"])) == []
+    end
+
+    test "exact catalog suggestions stay unchecked beside saved levels in closed account and model details" do
+      account =
+        profile(%{
+          "provider" => "anthropic",
+          "default_model" => "claude-opus-4-5-20251101",
+          "reasoning_efforts" => ["vendor-custom", "high"],
+          "default_reasoning_effort" => "vendor-custom",
+          "models" => [
+            %{
+              "model" => "claude-opus-4-5-20251101",
+              "reasoning_efforts" => ["model-custom", "low"],
+              "default_reasoning_effort" => "model-custom"
+            }
+          ]
+        })
+
+      tree = edit(account)
+
+      for {scope, name, saved, visible} <- [
+            {assert_closed(tree, "#provider-profile-advanced"), "reasoning_efforts[]",
+             ["vendor-custom", "high"], ["vendor-custom", "high", "low", "medium"]},
+            {assert_closed(tree, "#provider-model-details-0"), "models[0][reasoning_efforts][]",
+             ["model-custom", "low"], ["model-custom", "low", "medium", "high"]}
+          ] do
+        assert_efforts(scope, name, saved)
+        advanced = reasoning_advanced(scope)
+        assert attr(advanced, "open") == []
+        assert checkbox_values(advanced, name) == ["none", "minimal", "xhigh", "max", "default"]
+        assert checkbox_values(Floki.filter_out(elem(scope, 2), "details"), name) == visible
+        assert text(scope) =~ "Catalog suggestions are shown alongside configured levels."
+      end
+    end
+
+    test "generic and custom endpoints keep saved overrides while unverified vocabulary stays closed" do
+      for overrides <- [
+            %{"provider" => "private_gateway"},
+            %{"provider" => "anthropic", "base_url" => "https://private.example/v1"}
+          ] do
+        account =
+          profile(
+            Map.merge(
+              %{
+                "default_model" => "claude-opus-4-5-20251101",
+                "reasoning_efforts" => ["account-custom", "high"],
+                "models" => [
+                  %{
+                    "model" => "claude-opus-4-5-20251101",
+                    "reasoning_efforts" => ["model-custom", "low"]
+                  }
+                ]
+              },
+              overrides
+            )
+          )
+
+        tree = edit(account)
+
+        for {scope, name, saved, vocabulary} <- [
+              {assert_closed(tree, "#provider-profile-advanced"), "reasoning_efforts[]",
+               ["account-custom", "high"], ~w(none minimal low medium xhigh max default)},
+              {assert_closed(tree, "#provider-model-details-0"), "models[0][reasoning_efforts][]",
+               ["model-custom", "low"], ~w(none minimal medium high xhigh max default)}
+            ] do
+          assert_efforts(scope, name, saved)
+          advanced = reasoning_advanced(scope)
+          assert attr(advanced, "open") == []
+          assert checkbox_values(advanced, name) == vocabulary
+          assert checkbox_values(Floki.filter_out(elem(scope, 2), "details"), name) == saved
+          assert text(scope) =~ "No verified catalog level list is available"
+          assert text(advanced) =~ "not verified support for this model or endpoint"
+        end
+      end
     end
 
     test "an explicitly cleared account inventory keeps its sentinel and blank default" do
@@ -359,6 +486,45 @@ defmodule EvoDashWeb.ProviderProfilesEditorTest do
       refute Floki.raw_html(tree) =~ "SECRET-MARKER"
     end
 
+    test "API-key environment override is editable, clearable and retained when omitted from a draft" do
+      account = profile(%{"api_key_env_var" => "ACCOUNT_A_API_KEY", "api_key" => "SECRET-MARKER"})
+
+      for {draft, expected} <- [
+            {nil, "ACCOUNT_A_API_KEY"},
+            {%{"name" => "Changed name"}, "ACCOUNT_A_API_KEY"},
+            {%{"api_key_env_var" => "ACCOUNT_B_API_KEY"}, "ACCOUNT_B_API_KEY"},
+            {%{"api_key_env_var" => ""}, ""}
+          ] do
+        tree = edit(account, draft)
+        advanced = assert_closed(tree, "#provider-profile-advanced")
+        input = one(advanced, ~s(input[name="api_key_env_var"]))
+        assert attr(input, "type") == ["text"]
+        assert attr(input, "value") == [expected]
+        assert attr(input, "disabled") == []
+        assert attr(input, "required") == []
+        assert attr(input, "aria-describedby") == ["provider-field-api_key_env_var-help"]
+        help = text(one(advanced, "#provider-field-api_key_env_var-help"))
+        assert help =~ "Enter the variable name, not the key."
+        assert help =~ "this exact variable is used on the selected node"
+        assert help =~ "no fallback to another account's key"
+        assert help =~ "Clear it to use the provider's default credential source."
+        assert length(Floki.find(tree, ~s(input[name="api_key_env_var"]))) == 1
+        refute Floki.raw_html(tree) =~ "SECRET-MARKER"
+      end
+    end
+
+    test "OAuth mode omits the saved environment override instead of submitting a blank clear" do
+      for account <- [
+            profile(%{"auth_mode" => "oauth", "api_key_env_var" => "ACCOUNT_A_API_KEY"}),
+            profile(%{"provider" => "openai_codex", "api_key_env_var" => "ACCOUNT_A_API_KEY"})
+          ] do
+        tree = edit(account)
+        assert_closed(tree, "#provider-profile-advanced")
+        assert Floki.find(tree, ~s([name="api_key_env_var"])) == []
+        refute Floki.raw_html(tree) =~ "ACCOUNT_A_API_KEY"
+      end
+    end
+
     test "OAuth-capable accounts expose the real auth select and selected-node credential path" do
       tree = edit(profile(%{"auth_mode" => "oauth", "oauth_file" => "~/remote/account.json"}))
       select = one(tree, ~s(select[name="auth_mode"]))
@@ -501,6 +667,20 @@ defmodule EvoDashWeb.ProviderProfilesEditorTest do
     details = one(tree, selector)
     assert elem(details, 0) == "details"
     assert attr(details, "open") == []
+    details
+  end
+
+  defp checkbox_values(tree, name),
+    do: tree |> Floki.find(~s(input[type="checkbox"][name="#{name}"])) |> Floki.attribute("value")
+
+  defp reasoning_advanced(tree) do
+    assert [details] =
+             tree
+             |> Floki.find("details")
+             |> Enum.filter(fn details ->
+               text(hd(Floki.find(details, "summary"))) == "Advanced reasoning choices"
+             end)
+
     details
   end
 
