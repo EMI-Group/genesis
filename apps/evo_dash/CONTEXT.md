@@ -112,7 +112,7 @@ Details belong to `live/projects_live/CONTEXT.md`, `live/home_live/CONTEXT.md` a
 Settings renders `ProviderProfilesEditor` outside the generic category form, with `settings_live/ProviderProfiles`, `ModelProfileHelpers` and `ModelProfileEvents` owning canonical transformations and detached editor events.
 The draft preserves unsaved nested rows; provider CRUD/default/rename and all category/search/reset save paths pass through `ConfigIO.canonicalize_file_config/1`, migrate legacy collections and remove shadow keys while preserving unrelated config.
 The remaining flat `[llm]` cards are schema-driven compression/pruning controls, not provider/model editors.
-Local runtime updates use core effective `Schema.model_profiles/1`; remote saves reload and refetch the viewed node's nested config.
+Local runtime updates push the core's canonical `ModelSelection.config_opts/1` model options (keeping the running scheduler's provider-profile snapshot); remote saves reload and refetch the viewed node's nested config.
 Settings connection tests resolve the persisted provider/model on the viewed node and pass its full resolved model spec and generation/auth options to the core test API, never local credentials for a remote test.
 Welcome is local-only: provider/variant selection supports multiple models, one default model, per-model reasoning defaults and API-key or supported OAuth authentication.
 `welcome_live/Setup` builds and validates a canonical provider draft before credential/config writes; it reads raw TOML, preserves unrelated config and existing legacy entries verbatim, appends the new account and sets its default without writing resolved migration artifacts.
