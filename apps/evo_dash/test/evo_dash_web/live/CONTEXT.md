@@ -87,15 +87,17 @@ Do not bypass the pending-remote guard or replace real supervised orchestration 
 
 ## Notes for Agents — deterministic waits (the single rule future edits must not break)
 
-Every wait is deterministic: a synchronous `assigns/1` read (`:sys.get_state/1`), a monotonic seq/counter written inside the handler, or a bounded poll at a 1–2 ms cadence.
+Every wait is deterministic: a synchronous `assigns/1` read (`:sys.get_state/2` with an EXPLICIT 30 s timeout — never the 5 s default), a monotonic seq/counter written inside the handler, or a bounded poll at a 1–2 ms cadence.
+Every async-load deadline/poll budget in this tree is `@async_wait_budget_ms` (or an equivalent module attribute) = 30 s, sized for this shared host's 10–30× load swings; the budgets stay bounded and assertions keep their full strength, so real breakage still fails loudly.
 Per-suite cadences and budgets:
 
-- `tasks_live_test.exs` — `@wait_poll_ms` = 2 ms via `wait_until/3` (a 2000 ms default deadline; the function's own comment still says "in seconds" — the code compares milliseconds); `flush_tasks_load/2` drains a load chain `flush_loading` → `tasks_loading == false` → `drain_async_loads/2` (a leading `:sys.get_state/1`, then wait out an armed `tasks_reload_pending` debounce, then `await_view_async_loads/2`) → `render/1`.
-- `review_live_test.exs` — `@wait_poll_ms` = 2 ms inside `wait_until/2` (5 s budget).
-- `home_live_test.exs` — `@poll_interval_ms` = 2 ms inside `wait_until/2` (2 s budget); `await_source_available/3` 2 s.
-- `welcome_live_test.exs` — `@llm_test_poll_ms` = 2 ms under a `@llm_test_await_ms` 5 s budget (`await_llm_test_result/1`, `await_spawned_llm_test/0`; neither ever fails the test).
-- `projects_live_test.exs` — `wait_assigns/3`, `wait_for_fake_callers/3` and the GitHub describe's `wait_until/3` poll at 2 ms (3 s / 2 s budgets); `wait_for_task_terminal/2` polls `TaskRegistry.get_task/1` every 2 ms with a 10 s budget and is best-effort (it only keeps a still-spawning git port from racing a temp-dir teardown).
-- `agents_live_test.exs` — `wait_until/2` still polls at 10 ms (5 s budget) and `await_latch/2` polls a shared `:atomics` flag at 1 ms (5 s, never raises).
+- `tasks_live_test.exs` — `@wait_poll_ms` = 2 ms via `wait_until/3` (`@async_wait_budget_ms` 30 s default deadline, compared in milliseconds); `flush_tasks_load/2` drains a load chain `flush_loading` → `tasks_loading == false` (30 s `:sys.get_state/2`) → `drain_async_loads/2` (a leading socket read, then wait out an armed `tasks_reload_pending` debounce, then `await_view_async_loads/2`) → `render/1`.
+- `review_live_test.exs` — `@wait_poll_ms` = 2 ms inside `wait_until/2` (`@async_wait_budget_ms` 30 s).
+- `home_live_test.exs` — `@poll_interval_ms` = 2 ms inside `wait_until/2` (30 s budget); `await_source_available/3` 30 s.
+- `welcome_live_test.exs` — `@runner_start_timeout` and `@async_wait_budget_ms` = 30 s (`assert_receive {:welcome_test_started, …}`, `await_status`).
+- `projects_live_test.exs` — `wait_assigns/3`, `wait_for_fake_callers/3`, `await_async_loads/1` and the GitHub describe's `wait_until/3` poll at 2 ms under 30 s budgets; `wait_for_task_terminal/2` polls `TaskRegistry.get_task/1` every 2 ms with a 10 s budget and is best-effort (it only keeps a still-spawning git port from racing a temp-dir teardown).
+- `agents_live_test.exs` — `wait_until/2` and `await_latch/2` poll at 10 ms / 1 ms under 30 s budgets (`await_latch/2` never raises); `render_until/3` + `submit_until_pending_hint/3` poll `render/1` for out-of-band async applies and always return the LAST render so a persistent failure still fails with the real output.
+- `settings_live_test.exs` / `settings_live_agents_test.exs` / `system_live_test.exs` — 1–2 ms cadence under 30 s budgets (`@settle_timeout_ms`, `wait_settings`, `await_mount_async_loads`, the system awaits).
 
 **The 0 ms rule**: zero-length `refute_receive` / `refute_push_event` probes are allowed ONLY after the mailbox has provably drained — i.e. after a synchronous `:sys.get_state` round-trip, a completed drain helper, or a dead-helper-process await has ALREADY proved the preceding work finished.
 Then the 0 ms probe is conclusive and strictly stronger than any timed window; without such a precedent, use a bounded backstop (a monotonic counter assertion) plus a small margin.
