@@ -2409,6 +2409,151 @@ button, a, input, textarea, select, summary,
   color: var(--color-base-content);
 }
 
+/* --- Capsule panel open/close animation (CapsulePanel hook) ---
+   The panels open UPWARD (daisyUI dropdown-top), so the exit keyframe ends
+   exactly where the entrance keyframe starts — a panel interrupted mid-open
+   then closed looks continuous instead of jumping.
+   These keyframes animate `opacity` + `transform` (NOT daisyUI's `scale`
+   property and never its `dropdown` keyframes) so they compose with the
+   vendored plugin's own transition instead of fighting its @starting-style
+   rule; this file is unlayered, so these author rules win over DaisyUI's
+   layered `.dropdown-content` animation. */
+@keyframes capsule-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.375rem) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes capsule-panel-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(0.375rem) scale(0.98);
+  }
+}
+
+/* The dropdown anchors bottom-up: scale/origin both read from the trigger
+   edge. */
+details.capsule > .capsule-panel {
+  transform-origin: bottom;
+}
+
+/* Entrance: runs on open (140ms).
+   Source ORDER is load-bearing — the closing rule below has the same
+   specificity and must win while the hook holds data-capsule-state="closing"
+   (the panel is still `open` at that moment). */
+details.capsule[open] > .capsule-panel {
+  animation: capsule-panel-in 140ms ease-out;
+}
+
+/* Exit: driven entirely by the CapsulePanel hook's data-capsule-state
+   attribute — a native <details> close cannot animate, so the hook sets
+   "closing" first, waits for this animation (animationend, with a 200ms
+   fallback), and only then removes `open`. `forwards` holds the faded-out
+   frame until that happens, so the panel never flashes back to full opacity. */
+details.capsule[data-capsule-state="closing"] > .capsule-panel {
+  animation: capsule-panel-out 130ms ease-in forwards;
+}
+
+/* --- Capsule views (model ⇄ provider drill-down) ---
+   Exactly one .capsule-view is displayed at a time, selected by the root's
+   data-capsule-view attribute (owned by the CapsulePanel hook; the server only
+   seeds the initial "model"). Hiding the inactive view instead of re-rendering
+   it keeps the panel's width fixed, so switching views causes no layout jump.
+   These rules own `display` for the class, so a .capsule-view must NOT carry a
+   Tailwind display utility of its own (unlayered CSS beats the layered
+   utility) — put the flex/grid layout on an inner wrapper instead.
+   The :not() selector is a first-paint guard: before the hook seeds the
+   attribute the model view must already be visible. */
+.capsule-view {
+  display: none;
+}
+
+details.capsule:not([data-capsule-view]) .capsule-view[data-view="model"],
+details[data-capsule-view="model"] .capsule-view[data-view="model"],
+details[data-capsule-view="provider"] .capsule-view[data-view="provider"] {
+  display: block;
+}
+
+/* View transitions: forward (drilling into the provider list) slides in from
+   the right, the reverse variant slides in from the left when returning to the
+   model list — so the direction of travel reads correctly both ways.
+   The animation restarts on every switch because the switched-in view goes
+   from display: none to displayed. */
+@keyframes capsule-view-in {
+  from {
+    opacity: 0;
+    transform: translateX(0.5rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes capsule-view-in-back {
+  from {
+    opacity: 0;
+    transform: translateX(-0.5rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+details.capsule[data-capsule-view="model"] .capsule-view[data-view="model"] {
+  animation: capsule-view-in-back 120ms ease-out;
+}
+
+details[data-capsule-view="provider"] .capsule-view[data-view="provider"] {
+  animation: capsule-view-in 120ms ease-out;
+}
+
+/* --- Nested Layer-2 submenu entrance (mode+speed capsule) ---
+   The inner <details class="capsule-sub"> keeps its NATIVE toggle (the
+   CapsulePanel hook deliberately never intercepts its summary), so the only
+   polish is a short fade/slide on the submenu list itself. */
+@keyframes capsule-sub-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.25rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+details.capsule-sub[open] > .capsule-list {
+  animation: capsule-sub-in 120ms ease-out;
+}
+
+/* Reduced motion disables BOTH directions of the panel animation, the view
+   switching transitions and the submenu entrance (the hook also short-circuits
+   its animated close, so the panel simply closes on the spot). */
+@media (prefers-reduced-motion: reduce) {
+  details.capsule[open] > .capsule-panel,
+  details.capsule[data-capsule-state="closing"] > .capsule-panel,
+  details.capsule .capsule-view,
+  details.capsule-sub[open] > .capsule-list {
+    animation: none !important;
+  }
+}
+
 /* --- DirectoryPicker manual-entry fallback hint ---
    When neither the Tauri native dialog nor the File System Access API can
    pick a directory (known macOS case: tauri-plugin-dialog 2.7.1 → rfd 0.16.0
