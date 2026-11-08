@@ -125,6 +125,8 @@ The shared helper reconstructs only provider_profile_id/model/reasoning_effort f
 Provider/model event transitions and reasoning-slider conversion belong in the shared parent helper and `LLMSelectionComponents.resolve_reasoning_effort/3`, not duplicated in Assistant code.
 The core projection contract is `Schema.provider_profiles(config)` string maps and `Schema.model_selections(config)` ordered atom maps containing provider_profile_id/profile_name/provider/model/reasoning_efforts/default_reasoning_effort/context_window.
 The parent seeds the selection fields, projects loaded snapshots with `LLMSelection.from_config/2`, renders `LLMSelectionComponents` with provider/model/reasoning events, reconciles migration/defaults and clears the legacy id, and handles task-option errors before appending bubbles or clearing drafts.
+The Assistant header picker is the shared fused `llm_selection` capsule (id `chat-llm-selection`) inside its own `<form id="chat-llm-selection-form">`, with the provider selector nested under Layer 2 of the capsule's two-layer `<details>` structure.
+There is no mode/speed control on the Assistant page; the capsule carries only provider, model and reasoning effort.
 `handle_params/3` restores selection scope before resetting a cross-node chat; `reset_chat/1` clears transcript/runtime refs without clearing the already-scoped selection, so same-scope New chat keeps the choice.
 Config snapshots and loaded bundles remain ephemeral server-only assigns and are never persisted by `ChatState`.
 `Transcript.normalize/1` reconstructs only id/role/text/streaming, so selection metadata never enters the next task's textual preamble.
@@ -163,8 +165,8 @@ No sibling tests are modified by helper-only work; persistent additions and moun
 
 ### Parent-page integration requirements
 
-The shared picker renders individual phx-change inputs that require a caller-owned form; HomeLive currently puts its header fieldset outside any form, and direct `render_change(view, event, params)` tests do not exercise native browser form wiring.
-Wrap the header picker in a separate form (never the composer or a nested form) while retaining provider/model/reasoning event names and zero-based slider decoding through `LLMSelection.select_reasoning_effort/3`.
+The shared fused `llm_selection` capsule renders inside its own caller-owned `<form id="chat-llm-selection-form">`, separate from the composer and never nested in another form.
+Provider/model/reasoning event names and zero-based slider decoding through `LLMSelection.select_reasoning_effort/3` are unchanged.
 Provider/model transitions, canonical reconstruction and strict pre-send validation already delegate to the shared helper; do not replace them with resolved.model_spec or raw generation_params.
 `assign_model_select/1` must handle `SafeCall.start/4` returning `{:error, reason}` immediately, clearing model_select_loading and setting a retryable load error, because failed task startup sends no result message.
 Successful async loads still arrive as `{{:model_select_loaded, seq, target_node}, {:ok, snapshot_result}}`; the existing seq/node/pending guards reject stale target results, including two target ids sharing one BEAM node.

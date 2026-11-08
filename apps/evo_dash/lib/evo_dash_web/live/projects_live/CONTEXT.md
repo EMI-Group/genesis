@@ -163,6 +163,13 @@ Both task-form call sites must receive the canonical projections/spec, and resto
 The browser persistence hook must retain the `model_spec` object, including `%{}`, rather than relying on its legacy `selected_model_id` allowlist.
 Quality remains the independent `fast`/`balanced`/`high_quality` task policy, not model reasoning effort.
 
+## Task-form toolbar layout
+
+The Projects task form keeps a single `.input-controls` toolbar: the attach-kind dropdown and the fused mode+speed capsule form the LEFT cluster, and the model capsule (or custom-agent select, or legacy model select) plus the circular send button form the RIGHT cluster.
+The own-row shared `llm_selection` picker is gone; the model capsule now lives inside the toolbar's right cluster.
+`ml-auto` now sits on the first right-cluster element: the model capsule when `@use_llm_selection?` is true, else the custom-agent select, else the legacy model select.
+Mode, quality (speed) and reasoning remain independent policies, and the existing event payload keys are unchanged: `mode`, `level`, `provider_profile_id`, `model` (plus the legacy `model_id` variant), `reasoning_effort` and `agent`.
+
 ## Payload-vs-consumed gaps
 
 1. `get_resolved_config` transfers the entire resolved config; `Project.load_model_profiles_from_config/2` extracts and returns the full `Schema.model_profiles/1` profile maps unchanged plus the default profile id, so provider/model/generation metadata is available to consumers even though the current selector identifies profiles by id.
