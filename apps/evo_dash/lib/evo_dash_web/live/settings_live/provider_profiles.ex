@@ -90,6 +90,40 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
     }
   end
 
+  @doc "Resolves optional advanced identity fields without renaming saved accounts implicitly."
+  def editor_identity(params, config, editing_id, generated_id \\ nil) do
+    profiles = profiles(config)
+    original = Enum.find(profiles, &(field(&1, "id") == editing_id)) || %{}
+
+    id =
+      if Map.has_key?(params, "profile_id_new"),
+        do: nonblank(params["profile_id_new"]),
+        else: nonblank(params["id"])
+
+    if editing_id == :new do
+      provider = provider_atom(params["provider"])
+      entry = Enum.find(LLMCatalog.providers(), &(provider in &1.provider_atoms))
+      base = if provider, do: slug(Atom.to_string(provider)), else: ""
+
+      id =
+        if is_nil(id) or (not is_nil(generated_id) and id == generated_id),
+          do: Helpers.generate_profile_id(profiles, base),
+          else: id
+
+      names = Enum.map(profiles, &%{"id" => field(&1, "name")})
+      name = nonblank(params["name"])
+
+      name =
+        name || Helpers.generate_profile_id(names, if(entry, do: entry.display_name, else: id))
+
+      params |> Map.put("profile_id_new", id) |> Map.put("name", name)
+    else
+      params
+      |> Map.put("profile_id_new", id || field(original, "id"))
+      |> Map.put("name", nonblank(params["name"]) || field(original, "name"))
+    end
+  end
+
   @doc "Editable snapshot, including JSON text fields and all nested model overrides."
   def draft(profile) do
     profile
@@ -108,14 +142,18 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
     |> Map.update("off_peak_days", [], &Helpers.normalize_days/1)
   end
 
-  @doc "Keeps explicitly emptied draft collections when HTML omits their inputs."
+  @doc "Overlays submitted fields on the detached draft; explicit blanks/lists always win."
   def submission(params, draft) do
-    keys =
+    draft = stringify(draft || %{}) |> canonical_credentials()
+    params = stringify(params) |> canonical_credentials()
+    # Legacy single-model input replaces the old override/default rather than
+    # inheriting them from a detached canonical draft.
+    draft =
       if Map.has_key?(params, "model_id"),
-        do: ~w(peak_hours off_peak_days),
-        else: ~w(models peak_hours off_peak_days)
+        do: Map.drop(draft, ~w(models default_model default_reasoning_effort)),
+        else: draft
 
-    Map.merge(Map.take(draft || %{}, keys), params)
+    Map.merge(draft, params)
   end
 
   @doc "Parses canonical forms, or the old single-model form, into a provider map."
@@ -129,7 +167,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
   @doc "Editor parser returning string input names mapped to stable error reasons."
   def parse_editor(params, id, original \\ %{}) do
     params = params |> stringify() |> canonical_credentials() |> legacy_params()
-    params = Map.merge(draft(original), params)
+    params = Map.merge(draft(original), params) |> editor_values()
     provider = text(params["provider"])
     provider_atom = provider_atom(provider)
     provider = if provider_atom, do: Atom.to_string(provider_atom), else: provider
@@ -268,6 +306,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
 
   defp parse_model_rows(raw) do
     Enum.reduce_while(Enum.with_index(rows(raw)), {:ok, []}, fn {row, index}, {:ok, acc} ->
+      row = editor_values(row)
       model = nonblank(row["model"] || row["model_id"])
 
       cond do
@@ -304,6 +343,29 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
     end)
   end
 
+  # Raw detached forms are authoritative, even when the parent also supplies
+  # adapted params; hidden advanced fields and checkbox lists must not be lost.
+  defp editor_values(params) do
+    generation = params["generation"] || %{}
+
+    params =
+      params
+      |> Map.delete("generation")
+      |> Map.merge(Map.take(generation, @generation_fields ++ @json_fields))
+
+    params =
+      if params["override_reasoning"] in [false, "false"],
+        do: Map.delete(params, "reasoning_efforts"),
+        else: params
+
+    params = Map.delete(params, "override_reasoning")
+
+    case Map.fetch(params, "reasoning_efforts") do
+      {:ok, efforts} -> Map.put(params, "reasoning_efforts", string_list(efforts))
+      :error -> params
+    end
+  end
+
   defp reasoning(profile, params) do
     efforts = string_list(params["reasoning_efforts"])
     default = nonblank(params["default_reasoning_effort"])
@@ -331,6 +393,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
     indices =
       raw
       |> rows()
+      |> Enum.map(&editor_values/1)
       |> Enum.with_index()
       |> Enum.reject(fn {row, _} -> blank_model_row?(row) end)
       |> Enum.map(&elem(&1, 1))

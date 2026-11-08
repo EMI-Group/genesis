@@ -19,7 +19,11 @@ Unknown ids, invalid/missing directions and boundary moves return the ORIGINAL c
 new_draft/1 creates an unsaved profile-N account with blank provider/default_model, api_key mode, concurrency 3 and empty model/peak rows.
 draft/1 stringifies maps, JSON-encodes extra/provider_options at both levels and supplies [] models for iteration without fabricating model overrides.
 normalize_draft/1 numerically orders indexed model rows and normalizes peak/day fields while preserving blank input and nested generation drafts.
-submission/2 preserves omitted draft models/peak_hours/off_peak_days, including explicitly emptied lists, except that models never overrides legacy model_id input.
+submission/2 overlays submitted fields on the whole detached draft, preserving omitted hidden advanced fields and explicitly emptied collections while canonicalizing credential aliases before merging.
+Legacy model_id submissions discard detached models/default_model/default_reasoning_effort so old draft defaults cannot shadow single-model compatibility input.
+editor_identity/4 resolves optional advanced identity: new blank or untouched generated ids use a canonical provider slug with collision-safe -2/-3 suffixes, and blank names use the catalog display name with independently collision-safe suffixes.
+Explicit nonblank ids and names are retained for normal collision validation, while blank or omitted edit identities retain the saved account id/name even when the provider changes.
+A present blank profile_id_new requests automatic new identity rather than falling back to the draft's id.
 parse(params, id, original \\ %{}) overlays the original draft and returns {:ok, string_keyed_provider} or {:error, reason_string}.
 Unknown original provider keys survive, while nested model rows use an allowlist.
 Provider fields include identity, auth/endpoint, shared concurrency/schedules/context, generation defaults, default_model and reasoning inventory/default.
@@ -47,7 +51,9 @@ ModelProfileEvents functions take socket then params and return LiveView tuples,
 editing_profile_id is an account id or the atom :new for an unsaved account, so the saved string id "new" remains an ordinary account.
 Creation uses a nil original id for collision detection and update.
 Add creates only draft state, Edit snapshots/toggles an existing account and unknown ids no-op.
-model_profile_form_change replaces the ENTIRE detached draft; row add/remove changes only draft lists and invalid/negative/out-of-range removal is a no-op.
+model_profile_form_change overlays the form on the detached draft; row add/remove changes only draft lists and invalid/negative/out-of-range removal is a no-op.
+Add records profile_generated_id from its initial profile-N placeholder; explicit id-targeted change events invalidate that marker, and edit/cancel/success clear it.
+Save derives new identity against the current config without replacing the raw detached submission, so validation failures and provider changes never freeze an automatic identity prematurely.
 Row clicks carry no form input, so phx-change snapshots must preserve typing before rerender.
 Cancel clears editor assigns without changing file_config.
 Save snapshots submitted drafts before identity/parser validation and retains translated string-keyed profile_form_errors for invalid fields or sections.
@@ -70,7 +76,12 @@ Move takes id/direction, Edit/Delete take profile_id, Default accepts profile_id
 The entire form is the change payload; there is no wrapper map.
 Nested input names are models[index][model|context_window|reasoning_efforts|default_reasoning_effort] plus per-model generation maps and JSON overrides.
 Peak inputs are peak_hours[index][start|end|days] and off_peak_days[], including hidden blank checkbox seeds.
-The parent preserves nested drafts during Change and flattens known generation fields only for Save, removing override_reasoning UI sentinels without converting inheritance to an explicit empty inventory.
+The parent preserves nested drafts during Change and passes raw nested submissions as Save's third argument, which is authoritative over any separately adapted parser params.
+ProviderProfiles.parse_editor/3 accepts both flat generation fields and nested generation maps at account/model levels and removes override_reasoning UI sentinels without persisting them.
+A model override_reasoning=false removes its inventory key to restore inheritance, while absent inventory, explicit [] and checkbox [""] remain distinct according to key presence.
+Checkbox inventories trim blanks, deduplicate in submitted order and retain unknown custom effort strings; an unrestricted inventory does not discard an explicitly supplied default.
+Wholly blank model rows carrying empty checkbox or generation sentinels are ignored rather than creating overrides.
+The component must include hidden blank checkbox seeds to signal clearing, render existing unknown effort values for round-trip fidelity and submit complete nested model rows when present.
 Pass editing_profile_id/profile_form_draft/profile_advanced_open/auth_statuses through category_section to the standalone provider editor.
 Render a standalone new-draft form for editing_profile_id=:new because file_config contains no unsaved row.
 The parent must export persist_file_config(file_config, socket, success_msg, opts) with keyword opts and pass them unchanged to ConfigSave.start(socket, file_config, success_msg, opts).
@@ -78,7 +89,7 @@ The /3 overload must delegate with [] rather than infer editor_token from socket
 The parent owns ConfigSave start/result presentation and authoritative config application; route the complete nested {{:settings_config_saved, token, scope}, result} message to ConfigSave.complete/2 and use ConfigSave.invalidate/1 before replacing target state.
 ConfigSave rejects pending target contexts that resolve to node(), but permits a known same-BEAM alias only when the parent supplies the current target's authoritative remote_status=%{phase: :connected} (NodeAware's contract).
 A missing/non-connected status rejects the same-BEAM alias; the parent must refresh status on target changes and never reuse another target's connected status.
-The parent /4 export and ConfigSave wiring are required integration work outside this leaf; no fallback shim hides a missing overload.
+The parent exports the /4 persistence overload and routes ConfigSave receipts; this leaf must not add fallback shims that bypass that ownership.
 Render default_model as independent text, not a select restricted to saved override rows.
 Native details open must use the explicit boolean or the SAME ModelProfileEvents.advanced_open?/1 rule, with collapsed inputs remaining in the DOM.
 All save paths, including generic category/search/reset and Quick Setup, must pass through ConfigIO.canonicalize_file_config/1 in the parent persistence boundary.
@@ -160,6 +171,9 @@ normalize_peak_hours_draft assumes map rows in lists and malformed non-map rows 
 
 Existing helper regression suites live in apps/evo_dash/test/evo_dash_web/live/settings_live/{model_profile_helpers,provider_profiles_contract,config_io}_test.exs.
 The canonical contract suite covers typed multi-model overrides, credentials, detached drafts, CRUD/default migration and default-only parser behavior; the flat-parser suite tests compatibility rather than canonical Save.
+Parent-owned new regressions should cover blank/hidden/generated creation identities, explicit ids/names including profile-N, multiple same-provider accounts, saved-identity preservation on provider edits, and invalid-save retries before provider changes.
+Parent-owned inventory regressions should submit ordered checkbox lists with blanks/duplicates/custom values, explicit empty versus inherited rows, raw nested generation maps, wholly blank sentinel rows and hidden advanced draft fields through mounted Save.
+Leaf-only implementation checks may run in-memory ExUnit modules with mix run --no-start without adding test artifacts under production source.
 Auth/node integration lives in sibling auth_status_test.exs and settings_live_test.exs and uses explicit result messages rather than render_async for supervised tasks.
 Core facade APIs and :provider_profiles validation are available; normal Mix tests boot without the former missing-delegate/validation prerequisites.
 Transformations remain pure except documented I/O/runtime/socket boundaries, modules stay cohesive around or below 1000 lines and sibling tests are read-only under this node's scope.
