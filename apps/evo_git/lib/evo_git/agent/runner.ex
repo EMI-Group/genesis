@@ -22,9 +22,14 @@ defmodule EvoGit.Agent.Runner do
   # hard-stops with `{:error, :recovery_failed}`.
   @cancel_grace_turns 3
 
-  # Grace-turn budget for turn-limit recovery — exactly 1, preserving the
-  # pre-budget behavior (enter grace, one continue attempt → hard-stop).
-  @turn_limit_grace_turns 1
+  # Grace-turn budget for turn-limit recovery. A commit is a tool call and
+  # therefore does not finish the run, so the agent needs one turn for a bounded
+  # final commit PLUS at least one more to deliver its plain-text report; the
+  # budget must never be 1, which makes "commit and report" impossible.
+  # The bound stays hard: every turn that ends without completing consumes a
+  # grace turn, and at `grace_turns_remaining <= 1` the next continue hard-stops
+  # with `{:error, :recovery_failed}` (`Agent.grace_period_continue_failed?/1`).
+  @turn_limit_grace_turns 3
 
   @doc """
   Runs the agent synchronously, blocking until it completes.
@@ -617,9 +622,9 @@ defmodule EvoGit.Agent.Runner do
   #
   # `opts`:
   #   - `:message` — `:default` (or omitted) appends the standard hardcoded
-  #     "exceeded the execution limit" recovery message built from `reason` and
-  #     the agent's objective (byte-for-byte identical to the pre-budget
-  #     behavior); `nil` skips the append (cancel-grace — the cancel message
+  #     recovery message built from `reason`, the agent's objective and the
+  #     current turn-limit budget (`recovery_warning_message/2`); `nil` skips
+  #     the append (cancel-grace — the cancel message
   #     was already injected via the `pending_user_messages` drain in
   #     `loop/1`, so a second message would be redundant); a binary appends
   #     that custom message instead.
@@ -699,15 +704,33 @@ defmodule EvoGit.Agent.Runner do
     end
   end
 
-  # The hardcoded "exceeded the execution limit" recovery message appended when
-  # entering a grace period with `message: :default` (turn-limit recovery).
+  # The hardcoded turn-budget recovery message appended when entering a grace
+  # period with `message: :default` (turn-limit recovery).
+  #
+  # Every claim here must hold for the CURRENT budget, so the number of final
+  # turns is interpolated from `@turn_limit_grace_turns` instead of being
+  # hardcoded, and the text spells out the three things an agent gets wrong:
+  #   * the ONE completion rule — a reply with NO tool calls ends the run and its
+  #     text IS the report, while a turn ending in a tool call merely continues;
+  #   * the terminal consequence — using the window up without such a reply stops
+  #     the run immediately with NO report at all;
+  #   * the acceptable outcome — an honest partial report beats "just one more fix".
   defp recovery_warning_message(reason, objective) do
+    budget = @turn_limit_grace_turns
+
     if objective do
       """
-      You have exceeded the execution limit (#{reason}).
-      Your priority is to FINISH now by replying with your final report as plain text — a text reply with no tool calls ends the run and its text IS the report, so no tool call is required.
+      You have exceeded your turn budget (#{reason}). You have #{budget} final #{turn_word(budget)} left before this run stops immediately.
 
-      If you have critical uncommitted changes, commit them first, then finish immediately. Your already-committed work is safe.
+      How this run ends — the ONE completion rule: a reply with NO tool calls ends the run, and its text IS the report. A turn that ends with a tool call does NOT finish the run — it only uses up one of your final turns.
+
+      If you use up all #{budget} final #{turn_word(budget)} without such a reply, this run stops immediately and there will be NO report at all.
+
+      What to do now:
+      1. First turn: make at most ONE final commit, and only if you have genuinely uncommitted work. Your already-committed work is safe, and no commit is needed when the workspace is clean.
+      2. Then STOP working and reply with your final report as plain text. Do not start another change, and do not delegate.
+
+      If you cannot complete the entire objective, that is acceptable: stop and report what you did (with the commit), what remains, and what a follow-up must pick up. Never keep working toward "just one more fix".
 
       Your original objective was:
       #{objective}
@@ -716,17 +739,27 @@ defmodule EvoGit.Agent.Runner do
       """
     else
       """
-      You have exceeded the execution limit (#{reason}).
-      Your priority is to FINISH now by replying with your final report as plain text explaining the situation — a text reply with no tool calls ends the run and its text IS the report, so no tool call is required.
+      You have exceeded your turn budget (#{reason}). You have #{budget} final #{turn_word(budget)} left before this run stops immediately.
 
-      If you have critical uncommitted changes, commit them first, then finish immediately. Your already-committed work is safe.
+      How this run ends — the ONE completion rule: a reply with NO tool calls ends the run, and its text IS the report. A turn that ends with a tool call does NOT finish the run — it only uses up one of your final turns.
+
+      If you use up all #{budget} final #{turn_word(budget)} without such a reply, this run stops immediately and there will be NO report at all.
+
+      What to do now:
+      1. First turn: make at most ONE final commit, and only if you have genuinely uncommitted work. Your already-committed work is safe, and no commit is needed when the workspace is clean.
+      2. Then STOP working and reply with your final report as plain text explaining the situation — what was done (with the commit), what remains, and what a follow-up must pick up.
+
+      If you cannot complete the entire objective, that is acceptable: an honest partial report is exactly what is needed here. Never keep working toward "just one more fix".
       """
     end
   end
 
+  defp turn_word(1), do: "turn"
+  defp turn_word(_), do: "turns"
+
   # Best-effort auto-commit of any uncommitted work just before the grace
   # period, as a safety net so work is not lost if the agent fails to commit
-  # during its single recovery turn. Only commits when the workspace is dirty
+  # during its grace turns. Only commits when the workspace is dirty
   # (non-empty porcelain status); a clean workspace is a silent no-op. Git
   # errors propagate (crash) rather than being swallowed — this is salvage,
   # not error-masking. No try/rescue per repo conventions.

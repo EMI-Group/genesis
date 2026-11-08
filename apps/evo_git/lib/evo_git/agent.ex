@@ -62,9 +62,11 @@ defmodule EvoGit.Agent do
   predicate and, when it returns `false`, decrement `grace_turns_remaining` and
   allow another turn.
 
-  - Turn-limit recovery (budget 1): `grace_turns_remaining == 1` → hard-stop
-    immediately — identical to the pre-budget behavior (`in_grace_period: true
-    → true`). The agent gets exactly one recovery turn.
+  - Turn-limit recovery (budget 3): `grace_turns_remaining` 3 → 2 → 1 → hard-stop.
+    Three turns are what "commit one final bounded change, then deliver the
+    plain-text report" actually costs, because a turn ending in a tool call does
+    not finish the run: at most two turns may end in a tool call, and the third
+    continues only if it completes.
   - Cancel-grace (budget 3): `grace_turns_remaining` 3 → 2 → 1 → hard-stop —
     the agent gets up to 3 grace turns total.
 

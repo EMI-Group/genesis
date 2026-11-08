@@ -15,8 +15,18 @@ defmodule EvoGit.Agent.TurnWarning do
   | Level | Purpose | Trigger |
   |-------|---------|---------|
   | `:beginning` | Early-stage delegation guidance (suppressed in a merge conflict) | ~25% of budget (min 6 turns) |
-  | `:end` | Wrap up and prepare to deliver your final report as a plain-text reply | ≤ N turns remaining (adaptive) |
-  | `:critical` | Commit outstanding work, then reply with your final report as plain text | ≤ M turns remaining (adaptive) |
+  | `:end` | Wrap up: commit before the final turns, then deliver the plain-text report | ≤ N turns remaining (adaptive) |
+  | `:critical` | At most one last commit, then a TOOL-FREE reply — the only way to finish with a report | ≤ M turns remaining (adaptive) |
+
+  Both urgency levels state the same completion contract: a reply with NO tool
+  calls ends the run and its text IS the report, while a turn that ends with a
+  tool call (including a commit) does NOT finish the run — so committing and
+  reporting take two separate turns. Both also state the acceptable outcome of a
+  bounded budget: stop and report what was done and what remains instead of
+  working right up to the hard limit. `:critical` additionally states the
+  terminal consequence — past the hard limit only a few final turns remain (one
+  bounded commit at most), every turn there that ends in a tool call burns one of
+  them, and running them out ends the run with NO report at all.
 
   ### Periodic (fires repeatedly)
 
@@ -273,11 +283,11 @@ defmodule EvoGit.Agent.TurnWarning do
     [WARNING] Turn #{w.turn}/#{w.max_turns} — only #{w.turns_remaining} #{turn_word(w.turns_remaining)} remaining.
 
     You are approaching the end of your turn budget. Shift focus to wrapping up:
-    1. Commit any uncommitted changes NOW — uncommitted changes will be LOST when your process terminates. Committing is the only way to preserve your work.
-    2. If critical work remains, delegate it to subagents for parallel completion
-    3. Prepare to deliver your final status report as a plain-text reply — a reply with no tool calls ends the run and its text IS the report.
+    1. Commit your work NOW — in this turn or the very next one. A commit is a tool call, so it does not finish your run; never leave your commit to your very last turn.
+    2. If critical work remains that a subagent can do in parallel, delegate it now.
+    3. Then finish with a plain-text report: a reply with NO tool calls ends the run and its text IS the report. A turn that ends with a tool call does NOT finish the run.
 
-    A partial completion with a clear explanation of what remains is perfectly acceptable.
+    If you cannot finish the whole objective, that is the normal outcome of a bounded budget: stop and report what was done (with the commit), what remains, and what a follow-up must pick up. A partial completion with a clear explanation of what remains is perfectly acceptable. (Your uncommitted tree is auto-committed when the process exits, but only a commit you make lands as your work with a clear message.)
     """
   end
 
@@ -285,8 +295,14 @@ defmodule EvoGit.Agent.TurnWarning do
     """
     [URGENT] Turn #{w.turn}/#{w.max_turns} — only #{w.turns_remaining} #{turn_word(w.turns_remaining)} remaining!
 
-    You are about to hit the turn limit. Do not start any new work.
-    Commit any uncommitted changes IMMEDIATELY — uncommitted work will be LOST when your process terminates. That commit is the one permitted tool call: after it, STOP and reply with your final report as plain text — a reply with no tool calls ends the run, and that text IS the report. Do not begin anything else.
+    You are about to hit the hard turn limit. Do not start any new work.
+
+    Commit any uncommitted changes IMMEDIATELY — that commit is the one permitted tool call. (An uncommitted tree is auto-committed when the process exits, but only a commit you make lands as your work with a clear message.)
+
+    After that commit, the ONLY way to end this run WITH a report is a reply with NO tool calls.
+    Past the hard limit you get only a few final turns, and every turn that ends in a tool call burns one of them; once those are gone, the run ends immediately with NO report at all.
+
+    If you cannot complete the objective, stop and report what was done (with the commit) and what remains — a truthful partial report is a success here; being hard-killed with no report is a failure.
     """
   end
 

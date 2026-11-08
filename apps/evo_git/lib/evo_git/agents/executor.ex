@@ -49,8 +49,13 @@ defmodule EvoGit.Agents.Executor do
       - Make Targeted Changes: minimal, focused changes that satisfy the objective. Follow existing code patterns and style; avoid unnecessary refactoring; preserve comments and documentation where appropriate. No scope creep — if the objective is "add a nil guard to `token_expired?/1`", do not also refactor the surrounding module.
       - Diagnostics: if an `lsp` tool is available — i.e. the user configured a language server — run it for diagnostics before and after an edit instead of guessing. To read a docs or API page, use `web_fetch` instead of fetching it from a shell.
       - Commit Your Work: once the objective is satisfied, commit with a clear commit message.
-      - Finishing: A reply with no tool calls ends your run, and its text is used as your report.
-      - Running Out of Budget: if you cannot complete the objective within your turn/step budget, do NOT keep working until the budget is exhausted, and do NOT try to hand the task off or re-delegate it to a fresh agent. Instead, commit the good/partial work you have, then report the situation exactly: what you did (with the commit), what remains, and what a follow-up needs to pick up. Committed partial progress plus an honest report is far more valuable than an unfinished worktree or a silent hand-off.
+      - Finishing: a reply with NO tool calls ends your run, and its text is used as your report. A turn that calls any tool — including a commit — does NOT finish the run, so committing and reporting always take TWO turns: commit BEFORE your final turns and never spend your last turns on a tool call.
+
+      ## Turn Budget
+
+      - Your context receives turn-budget notices (`[NOTICE]`, `[WARNING]`, `[URGENT]`) with your turn count and remaining turns. They are authoritative status, not advice — act on them the moment you read them.
+      - When the budget is nearly exhausted, or it becomes clear the objective cannot be finished within it, STOP: commit the good/partial work you have, then reply with a plain-text report — what you did (with the commit), what remains, and what a follow-up needs to pick up. Do NOT "squeeze in" one more change, and do NOT hand the task off or re-delegate it to a fresh agent.
+      - The trade-off is explicit: an honest partial report is a SUCCESS — the work is committed and the caller knows exactly what remains. Running past the limit and being hard-killed is a FAILURE — the work is left unreported and the caller gets nothing usable.
 
       ## Code Quality
 

@@ -210,18 +210,31 @@ defmodule EvoGit.Agent.TurnWarningTest do
       assert msg =~ "delegate"
     end
 
-    test "end message includes urgency, wrap-up steps, and suggestions" do
+    test "end message includes urgency, wrap-up steps, and the completion contract" do
       {:ok, warning} = TurnWarning.check_positional(118, 128, :beginning)
       msg = TurnWarning.message(warning)
       assert msg =~ "[WARNING]"
       assert msg =~ "Turn 118/128"
       assert msg =~ "10 turns remaining"
       assert msg =~ "wrapping up"
-      assert msg =~ "no tool calls"
+      assert msg =~ "NO tool calls"
       assert msg =~ "ends the run"
+      # The tool-free finish rule, spelled out in both directions: only a reply
+      # with NO tool calls finishes the run, and its text IS the report.
+      assert msg =~ "a reply with NO tool calls ends the run and its text IS the report"
+      assert msg =~ "A turn that ends with a tool call does NOT finish the run"
+      # The incremental wrap-up: stop and report what was done and what remains.
+      assert msg =~ "stop and report what was done (with the commit), what remains"
+
+      assert msg =~
+               "A partial completion with a clear explanation of what remains is perfectly acceptable"
+
       # A reply with no tool calls is the ONLY way to end a run, so the warning
       # names no completion tool.
       refute msg =~ "call complete_task"
+      # The false "your work will be LOST" claim is gone: an uncommitted tree is
+      # auto-committed on exit, but only an explicit commit carries a message.
+      refute msg =~ "LOST"
     end
 
     test "critical message is urgent and tells the agent to stop and reply" do
@@ -230,10 +243,25 @@ defmodule EvoGit.Agent.TurnWarningTest do
       assert msg =~ "[URGENT]"
       assert msg =~ "Turn 125/128"
       assert msg =~ "3 turns remaining"
-      assert msg =~ "no tool calls"
-      assert msg =~ "that text IS the report"
+      assert msg =~ "NO tool calls"
+      # The tool-free finish rule in the critical wording: a reply with NO tool
+      # calls is the ONLY way to end this run WITH a report.
+      assert msg =~ "the ONLY way to end this run WITH a report is a reply with NO tool calls"
       assert msg =~ "IMMEDIATELY"
-      refute msg =~ "complete_task"
+      # The terminal consequence: past the hard limit only a short window of
+      # final turns remains, each tool call burns one of them, and running out
+      # of that window ends the run with no report at all — so a truthful
+      # partial report is a success here.
+      assert msg =~ "Past the hard limit you get only a few final turns"
+      assert msg =~ "every turn that ends in a tool call burns one of them"
+      assert msg =~ "the run ends immediately with NO report at all"
+      assert msg =~ "stop and report what was done (with the commit) and what remains"
+
+      assert msg =~
+               "a truthful partial report is a success here; being hard-killed with no report is a failure"
+
+      refute msg =~ "call complete_task"
+      refute msg =~ "LOST"
     end
 
     test "uses singular 'turn' when 1 turn remaining" do
