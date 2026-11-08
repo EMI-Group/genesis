@@ -37,6 +37,8 @@ Parsing stays pure and setup persists only through `EvoGit.Config` and imports s
 - API-key writes go through `Config.save_credentials/1` with that exact string key, preserving other same-provider account credentials and unrelated credential entries.
 - Runtime `Schema.LLM.profile_generation_params/1` currently resolves `api_key_env_var` only from the process environment, so consuming custom keys saved in credentials.toml requires the parent-owned Config/schema integration fix.
 - No sibling test files are owned by this node.
+- `-R` parsing performs NO id uniqueness or emptiness check (an empty id from `-R :/path`, or a blank path from `-R id:`, is accepted); duplicate ids collapse later in `EvoGit.Runtime.Helpers.merge_foreign_repos/2` (`Map.new` per source, CLI entries overriding same-id TOML entries, no error).
+- `reflect` (and `setup`/`run`) accept the global `-R` switch but never call `parse_foreign_repos/1`, so foreign repos are silently dropped for those commands; only `genesis` (`genesis_task_opts/4`) and `evolve` (`evolve_task_opts/3`) attach `foreign_repos:`.
 
 ## Required Regression Coverage
 - Parser tests must cover explicit provider/model/effort flags, omitted effort, colon-containing model names, Auto, unchanged legacy flags/IDs, and blank/incomplete selections.
