@@ -11,7 +11,7 @@ There is **no `live(...)` call anywhere in this directory**: every component is 
 | File | Module | Describes / tests |
 |------|--------|-------------------|
 | `project_components_test.exs` | `EvoDashWeb.ProjectComponentsTest` | 8 / 21 — command palette (`project_omnibox/1`) + `project_settings_tab/1` (directory-picker browse buttons, PathAutocomplete wiring, remote gating, foreign-repo writable/base_sha UI) |
-| `task_form_components_test.exs` | `EvoDashWeb.TaskFormComponentsTest` | 4 / 43 — `layout_for/1` boundaries, `task_form/1` control order/agent/model selects/attach-file, `task_options_tab/1` mode gating, speed ↔ quality segmented control |
+| `task_form_components_test.exs` | `EvoDashWeb.TaskFormComponentsTest` | 4 / 43 — `layout_for/1` boundaries, `task_form/1` control order/agent/model selects/attach-file, `task_options_tab/1` mode gating, speed ↔ quality capsule control |
 | `commit_graph_view_test.exs` | `EvoDashWeb.CommitGraphViewTest` | 12 / 27 — `AgentsComponents.CommitGraphView.commit_graph_view/1` vertical per-agent-lane temporal view |
 | `commit_graph/geometry_test.exs` | `EvoDashWeb.CommitGraphGeometryTest` | 3 / 8 — PURE lane-geometry / jog-staggering units for `CommitGraphView.Geometry` |
 | `diff_viewer_test.exs` | `EvoDashWeb.DiffViewerTest` | 11 / 53 — `ReviewComponents.DiffViewer` pure units + tree/DOM contract + render caps |
