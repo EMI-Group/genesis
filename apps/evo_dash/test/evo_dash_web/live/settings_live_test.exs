@@ -2320,49 +2320,71 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "profile_form_draft is cleared on cancel and on save", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      before = assigns(view).file_config
+      disk = EvoGit.Config.user_config()
 
-      settings_hook(view, "provider_profile_form_change", %{
-        "profile_id" => "profile-1",
-        "profile_id_new" => "default",
-        "provider" => "anthropic",
-        "default_model" => "claude-sonnet-5-5",
-        "concurrency" => "3",
-        "generation" => %{"temperature" => "0.7"}
-      })
+      # Build the draft through the rendered editor, including its new-profile
+      # identity and model row. A synthetic persisted profile_id on Add does not
+      # represent the browser form, and adding models only at Save skips the
+      # draft/default-model interaction this lifecycle is meant to exercise.
+      for action <- [:cancel, :save] do
+        view |> element(~s(button[phx-click="add_provider_profile"])) |> render_click()
+        assert assigns(view).editing_profile_id == :new
+        assert has_element?(view, ~s(input[name="profile_id"][value=""]))
 
-      assert assigns(view).profile_form_draft != nil
+        view
+        |> form("#provider-profile-edit-form", %{
+          provider: "anthropic",
+          generation: %{temperature: "0.7"}
+        })
+        |> render_change()
 
-      # Cancel clears the draft.
-      settings_hook(view, "cancel_edit_provider_profile", %{})
-      assert assigns(view).profile_form_draft == nil
+        view |> element(~s(button[phx-click="add_provider_model"])) |> render_click()
 
-      # Re-enter Add, type again, then Save — the draft is cleared too.
-      settings_hook(view, "add_provider_profile", %{})
+        view
+        |> form("#provider-profile-edit-form", %{
+          models: %{"0" => %{model: "claude-sonnet-5-5"}}
+        })
+        |> render_change()
 
-      settings_hook(view, "provider_profile_form_change", %{
-        "profile_id" => "profile-1",
-        "profile_id_new" => "default",
-        "provider" => "anthropic",
-        "default_model" => "claude-sonnet-5-5",
-        "concurrency" => "3",
-        "generation" => %{"temperature" => "0.7"}
-      })
+        view
+        |> form("#provider-profile-edit-form", %{default_model: "claude-sonnet-5-5"})
+        |> render_change()
 
-      assert assigns(view).profile_form_draft != nil
+        draft = assigns(view).profile_form_draft
+        assert draft["generation"]["temperature"] == "0.7"
+        assert draft["default_model"] == "claude-sonnet-5-5"
+        assert [%{"model" => "claude-sonnet-5-5"}] = draft["models"]
+        assert assigns(view).file_config == before
+        assert EvoGit.Config.user_config() == disk
 
-      settings_hook(view, "save_provider_profile", %{
-        "profile_id" => "profile-1",
-        "profile_id_new" => "default",
-        "provider" => "anthropic",
-        "default_model" => "claude-sonnet-5-5",
-        "models" => [%{"model" => "claude-sonnet-5-5"}],
-        "concurrency" => "3"
-      })
+        case action do
+          :cancel ->
+            view
+            |> element(~s(button[phx-click="cancel_edit_provider_profile"]))
+            |> render_click()
 
-      assert assigns(view).profile_form_draft == nil
+            assert assigns(view).file_config == before
+            assert EvoGit.Config.user_config() == disk
+
+          :save ->
+            view |> form("#provider-profile-edit-form") |> render_submit()
+
+            # Wait for the owned writer receipt, not just the dispatch render or
+            # the shared saving indicator, and expose a failed save at its source.
+            wait_settings(view, &(&1.config_save_request == nil and not &1.config_saving))
+            assert render(view) =~ "Provider profile saved."
+        end
+
+        assert assigns(view).profile_form_draft == nil
+        assert assigns(view).editing_profile_id == nil
+        refute has_element?(view, "#provider-profile-edit-form")
+      end
+
       assert [saved] = stored_providers()
       assert saved["models"] == [%{"model" => "claude-sonnet-5-5"}]
+      assert saved["default_model"] == "claude-sonnet-5-5"
+      assert saved["temperature"] == 0.7
       assert current_providers(view) == [saved]
     end
 
