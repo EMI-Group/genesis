@@ -21,8 +21,9 @@ defmodule EvoDashWeb.LLMSelection do
 
   The three `select_*` functions return `{:ok, spec}` or `{:error, reason}`.
   Provider/model changes reset downstream defaults; reasoning changes accept
-  the component's zero-based range index or an already resolved effort string.
-  Core resolution owns schema validation; the component owns slider decoding.
+  the component's zero-based stop index or an already resolved effort string.
+  Core resolution owns schema validation; the component owns the reasoning-stop
+  index decoding.
   Models without an advertised effort inventory omit the task-level reasoning
   override, while an inventory without a default starts at its first effort.
   No client input is converted to an atom.
@@ -94,7 +95,7 @@ defmodule EvoDashWeb.LLMSelection do
 
   def select_model(_bundle, _current, _model), do: {:error, :invalid_model_spec}
 
-  @doc "Decodes a reasoning slider index (or effort string) for the exact current model."
+  @doc "Decodes a reasoning stop index (or effort string) for the exact current model."
   @spec select_reasoning_effort(bundle(), term(), term()) ::
           {:ok, model_spec()} | {:error, term()}
   def select_reasoning_effort(bundle, current, index) do

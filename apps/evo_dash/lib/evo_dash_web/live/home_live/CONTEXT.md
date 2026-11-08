@@ -166,7 +166,7 @@ No sibling tests are modified by helper-only work; persistent additions and moun
 ### Parent-page integration requirements
 
 The shared fused `llm_selection` capsule renders inside its own caller-owned `<form id="chat-llm-selection-form">`, separate from the composer and never nested in another form.
-Provider/model/reasoning event names and zero-based slider decoding through `LLMSelection.select_reasoning_effort/3` are unchanged.
+Provider/model/reasoning event names and zero-based stop-index decoding through `LLMSelection.select_reasoning_effort/3` are unchanged.
 Provider/model transitions, canonical reconstruction and strict pre-send validation already delegate to the shared helper; do not replace them with resolved.model_spec or raw generation_params.
 `assign_model_select/1` must handle `SafeCall.start/4` returning `{:error, reason}` immediately, clearing model_select_loading and setting a retryable load error, because failed task startup sends no result message.
 Successful async loads still arrive as `{{:model_select_loaded, seq, target_node}, {:ok, snapshot_result}}`; the existing seq/node/pending guards reject stale target results, including two target ids sharing one BEAM node.
