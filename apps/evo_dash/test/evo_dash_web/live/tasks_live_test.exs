@@ -79,7 +79,7 @@ defmodule EvoDashWeb.TasksLiveTest do
   # isolated Store is stopped (its `on_exit`) crashes on the store's vanished
   # Ecto query-cache ETS table and leaks an `[error]` crash report into the
   # between-test gap — outside ExUnit's capture_log window.
-  defp flush_tasks_load(view, timeout \\ 5000) do
+  defp flush_tasks_load(view, timeout \\ @async_wait_budget_ms) do
     EvoDashWeb.TestHelpers.flush_loading(
       view,
       "Loading tasks...",
@@ -88,7 +88,9 @@ defmodule EvoDashWeb.TasksLiveTest do
     )
 
     wait_until(
-      fn -> :sys.get_state(view.pid).socket.assigns[:tasks_loading] == false end,
+      fn ->
+        :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns[:tasks_loading] == false
+      end,
       timeout
     )
 
@@ -114,10 +116,12 @@ defmodule EvoDashWeb.TasksLiveTest do
   # scoped render) themselves, and those ping the proxy first, so the cached
   # tree they read is current.
   defp drain_async_loads(view, timeout) do
-    :sys.get_state(view.pid)
+    :sys.get_state(view.pid, @assigns_timeout_ms)
 
     wait_until(
-      fn -> not :sys.get_state(view.pid).socket.assigns[:tasks_reload_pending] end,
+      fn ->
+        not :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns[:tasks_reload_pending]
+      end,
       timeout
     )
 
@@ -181,11 +185,17 @@ defmodule EvoDashWeb.TasksLiveTest do
   # wait_until/3's third argument.
   @wait_poll_ms 2
 
+  # The shared host swings 10-30x under load (see test/CONTEXT.md); the 5 s
+  # :sys.get_state default and 1-2 s poll budgets exit on a loaded machine.
+  @assigns_timeout_ms 30_000
+  # A load-tolerant deadline for bounded polls / async-result awaits.
+  @async_wait_budget_ms 30_000
+
   # Polls `fun` every @wait_poll_ms until it returns truthy (or the TIMEOUT
   # elapses — deliberately left generous, in seconds, so real breakage still
   # fails loudly). Used to observe the PubSub-driven debounce phases
   # (:tasks_reload_pending true → false) without fixed sleeps.
-  defp wait_until(fun, timeout \\ 2000, poll_ms \\ @wait_poll_ms) do
+  defp wait_until(fun, timeout \\ @async_wait_budget_ms, poll_ms \\ @wait_poll_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
 
     wait_loop = fn wait_loop ->
@@ -292,7 +302,7 @@ defmodule EvoDashWeb.TasksLiveTest do
   # `:sys.get_state/1` is a synchronous round-trip, so every async result
   # already sitting in the LiveView mailbox is applied by the time it returns.
   defp detail_entry(view, task_id) do
-    case :sys.get_state(view.pid).socket.assigns[:task_details] do
+    case :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns[:task_details] do
       %{^task_id => entry} -> entry
       _ -> nil
     end
@@ -903,7 +913,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       # handle_params/3 runs on BOTH the disconnected (static) render and the
       # connected mount; only the connected pass may spawn a load. Exactly one
       # spawn here means the discarded static-render load is gone.
-      assert_receive :page_load_spawned, 500
+      assert_receive :page_load_spawned, @async_wait_budget_ms
 
       # Corroborating evidence: the monotonic PAGE-LOAD spawn counter
       # advanced once (:page_load_seq is the page load's own counter — the
@@ -912,7 +922,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       # `:sys.get_state/1` is a synchronous round-trip through the view — any
       # second spawn's `send/2` would already have landed in THIS mailbox, so the
       # refute needs no observation window at all.
-      assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 1
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.page_load_seq == 1
       refute_receive :page_load_spawned, 0
 
       html = flush_tasks_load(view)
@@ -967,16 +977,16 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
-      assert_receive :page_load_spawned, 500
+      assert_receive :page_load_spawned, @async_wait_budget_ms
 
       _html = render_hook(view, "search_tasks", %{"search_query" => "filtered"})
 
-      assert_receive :page_load_spawned, 500
+      assert_receive :page_load_spawned, @async_wait_budget_ms
       # Same reasoning as the "exactly one page load" test above: the seq check
       # is a synchronous round-trip through the view, so it IS the deterministic
       # backstop for an EXTRA spawn (start_async_page_load/3 is the counter's
       # only writer and the hook's only caller) — no window needed.
-      assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 2
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.page_load_seq == 2
       refute_receive :page_load_spawned, 0
 
       html = flush_tasks_load(view)
@@ -1072,7 +1082,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       # Phase 1: the event is processed and the debounce is scheduled.
       wait_until(fn ->
-        state = :sys.get_state(view.pid)
+        state = :sys.get_state(view.pid, @assigns_timeout_ms)
         state.socket.assigns[:tasks_reload_pending] == true
       end)
 
@@ -1080,7 +1090,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       # the LiveView does not block on the store and the fresh page arrives on
       # a later {:tasks_page_loaded, ...} message. Wait for that result.
       wait_until(fn ->
-        state = :sys.get_state(view.pid)
+        state = :sys.get_state(view.pid, @assigns_timeout_ms)
         state.socket.assigns[:tasks_reload_pending] == false
       end)
 
@@ -1105,34 +1115,36 @@ defmodule EvoDashWeb.TasksLiveTest do
       # sent notification is in the mailbox, which is why the refute window is
       # zero length. `seq_before` is read straight after, and the debounced
       # reload must advance it.
-      assert_receive :page_load_spawned, 500
-      assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 1
+      assert_receive :page_load_spawned, @async_wait_budget_ms
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.page_load_seq == 1
       refute_receive :page_load_spawned, 0
 
       insert_fixture!(opts: [prompt: "async added task"])
 
-      seq_before = :sys.get_state(view.pid).socket.assigns.page_load_seq
+      seq_before = :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.page_load_seq
 
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, "t1", :running, node()})
 
       # Phase 1: node filter matched → debounce scheduled.
       wait_until(fn ->
-        :sys.get_state(view.pid).socket.assigns[:tasks_reload_pending] == true
+        :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns[:tasks_reload_pending] ==
+          true
       end)
 
       # Phase 2: the debounce fires and kicks off an ASYNC page load — the
       # spawn hook fires and the monotonic PAGE-LOAD counter advances (the
       # synchronous sync_apply_page/2 path never touches :page_load_seq, so
       # this proves the reload left the LiveView process).
-      assert_receive :page_load_spawned, 2000
+      assert_receive :page_load_spawned, @async_wait_budget_ms
 
       wait_until(fn ->
-        :sys.get_state(view.pid).socket.assigns.page_load_seq > seq_before
+        :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.page_load_seq > seq_before
       end)
 
       # The debounce flag is cleared immediately (the load runs off-process)...
       wait_until(fn ->
-        :sys.get_state(view.pid).socket.assigns[:tasks_reload_pending] == false
+        :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns[:tasks_reload_pending] ==
+          false
       end)
 
       # ...and the async result lands later and re-renders the list (scoped to
@@ -1148,7 +1160,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       flush_tasks_load(view)
 
       insert_fixture!(opts: [prompt: "block probe added"])
-      seq_before = :sys.get_state(view.pid).socket.assigns.page_load_seq
+      seq_before = :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.page_load_seq
 
       # Freeze the single, serialized task registry. EVERY synchronous read
       # now blocks there (up to the registry's 30s call timeout), which is
@@ -1181,7 +1193,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       # a page load handed to a supervised task) while the store is still
       # frozen — impossible for a synchronous reload.
       wait_until(fn ->
-        assigns = :sys.get_state(view.pid).socket.assigns
+        assigns = :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
 
         assigns[:tasks_reload_pending] == false and assigns.page_load_seq > seq_before
       end)
@@ -1207,7 +1219,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       # The connected mount spawned its single page load. :page_load_seq is
       # bumped ONLY by start_async_page_load/3, so it is also the deterministic
       # backstop for the no-reload assertion at the end of this test.
-      assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 1
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.page_load_seq == 1
 
       # A task seeded after the initial load would only render if a reload
       # wrongly fired.
@@ -1237,7 +1249,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       deadline = System.monotonic_time(:millisecond) + 12
 
       check_no_reload = fn check_no_reload ->
-        state = :sys.get_state(view.pid)
+        state = :sys.get_state(view.pid, @assigns_timeout_ms)
         assert state.socket.assigns[:tasks_reload_pending] == false
 
         if System.monotonic_time(:millisecond) < deadline do
@@ -1250,7 +1262,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       # Deterministic backstop on the SAME side effect: a wrongly triggered
       # reload would have bumped the monotonic page-load spawn counter.
-      assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 1
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.page_load_seq == 1
 
       html = render(view)
       assert html =~ "event visible task"
@@ -1272,14 +1284,14 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       # Phase 1: the event is processed and the debounce is scheduled.
       wait_until(fn ->
-        state = :sys.get_state(view.pid)
+        state = :sys.get_state(view.pid, @assigns_timeout_ms)
         state.socket.assigns[:tasks_reload_pending] == true
       end)
 
       # Phase 2: the debounce fires and kicks off the reload ASYNC — wait until
       # the reloaded page (which no longer holds the deleted row) lands.
       wait_until(fn ->
-        state = :sys.get_state(view.pid)
+        state = :sys.get_state(view.pid, @assigns_timeout_ms)
         state.socket.assigns[:tasks_reload_pending] == false
       end)
 
@@ -1303,8 +1315,12 @@ defmodule EvoDashWeb.TasksLiveTest do
       # `SafeCall.run/1` turned the loader's exit into an error VALUE: the
       # LiveView survives and the loading flag is cleared.
       assert Process.alive?(view.pid)
-      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_loading] == false end)
-      assert :sys.get_state(view.pid).socket.assigns[:tasks_error] != nil
+
+      wait_until(fn ->
+        :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns[:tasks_loading] == false
+      end)
+
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns[:tasks_error] != nil
 
       # Nothing was ever loaded, so the full load-error state renders.
       list = render_tasks_list(view)
@@ -1319,7 +1335,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       html = flush_tasks_load(view)
 
       assert html =~ "recover me"
-      assert :sys.get_state(view.pid).socket.assigns[:tasks_error] == nil
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns[:tasks_error] == nil
       refute html =~ "tasks-load-error"
     end
 
@@ -1329,14 +1345,22 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
 
       assert Process.alive?(view.pid)
-      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_loading] == false end)
-      assert :sys.get_state(view.pid).socket.assigns[:tasks_error] != nil
+
+      wait_until(fn ->
+        :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns[:tasks_loading] == false
+      end)
+
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns[:tasks_error] != nil
       assert render_tasks_list(view) =~ "tasks-load-error"
 
       # Retry with the real runner recovers to the empty state (no fixtures).
       Application.delete_env(:evo_dash, :tasks_page_load_runner)
       render_click(view, "retry_load")
-      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_error] == nil end)
+
+      wait_until(fn ->
+        :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns[:tasks_error] == nil
+      end)
+
       flush_tasks_load(view)
 
       refute render(view) =~ "tasks-load-error"
@@ -1356,7 +1380,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       # background reload (show_loading? false — the rows stay on screen).
       install_tasks_page_load_runner(fn _, _, _, _ -> exit(:boom) end)
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, "t1", :running, node()})
-      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_error] != nil end)
+
+      wait_until(fn ->
+        :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns[:tasks_error] != nil
+      end)
 
       # The previous rows survive; the compact retry strip sits above them and
       # the full-page load-error state is NOT used.
@@ -1369,7 +1396,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       # Restoring the loader and clicking Retry clears the error.
       Application.delete_env(:evo_dash, :tasks_page_load_runner)
       render_click(view, "retry_load")
-      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_error] == nil end)
+
+      wait_until(fn ->
+        :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns[:tasks_error] == nil
+      end)
 
       refute render(view) =~ "tasks-refresh-error"
       assert render_tasks_list(view) =~ "keep me"
@@ -2106,7 +2136,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
-      tasks = :sys.get_state(view.pid).socket.assigns.tasks
+      tasks = :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.tasks
       assert is_list(tasks) and tasks != []
 
       for row <- tasks do
@@ -2132,7 +2162,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
-      page_rows = :sys.get_state(view.pid).socket.assigns.tasks
+      page_rows = :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.tasks
       assert length(page_rows) == 1
 
       # The full-row read of the SAME row for comparison.
@@ -2190,7 +2220,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       # also mention "Agent Message" (the file's h4_header_texts/1 idiom).
       refute "Agent Message" in h4_header_texts(loading_html)
 
-      assert_receive {:detail_fetch, ^id, child}, 2000
+      assert_receive {:detail_fetch, ^id, child}, @async_wait_budget_ms
 
       # A second toggle while the first fetch is in flight is a COLLAPSE: the
       # cache/in-flight guard in TaskDetail.ensure/2 never refetches. Asserted
@@ -2292,7 +2322,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       # count.
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, id, :completed, node()})
 
-      assert_receive {:detail_fetch, ^id}, 2000
+      assert_receive {:detail_fetch, ^id}, @async_wait_budget_ms
       wait_until(fn -> match?(%{state: :ok}, detail_entry(view, id)) end)
       drain_async_loads(view, 5000)
       flush_detail_fetches(id)
@@ -2423,7 +2453,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       render_hook(view, "load_task_archive", %{"task_id" => id})
       wait_for_archive(view, id, &match?(%{state: :ok}, &1))
 
-      assert_receive {:archive_page, node, ^id, opts}, 2000
+      assert_receive {:archive_page, node, ^id, opts}, @async_wait_budget_ms
       assert node == node()
       assert opts[:limit] == 100
       assert opts[:offset] == 0
@@ -2510,7 +2540,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       render_hook(view, "load_task_archive", %{"task_id" => id})
       wait_for_archive(view, id, &match?(%{state: :ok, total: 250}, &1))
-      assert_receive {:archive_page, _node, ^id, first_opts}, 2000
+      assert_receive {:archive_page, _node, ^id, first_opts}, @async_wait_budget_ms
       assert first_opts[:offset] == 0
 
       assert archive_ids(view, id) == Enum.map(1..100, &"agent-#{&1}")
@@ -2524,7 +2554,7 @@ defmodule EvoDashWeb.TasksLiveTest do
         _ -> false
       end)
 
-      assert_receive {:archive_page, _node, ^id, more_opts}, 2000
+      assert_receive {:archive_page, _node, ^id, more_opts}, @async_wait_budget_ms
       assert more_opts[:offset] == 100
       assert more_opts[:limit] == 100
 
@@ -2540,7 +2570,7 @@ defmodule EvoDashWeb.TasksLiveTest do
         _ -> false
       end)
 
-      assert_receive {:archive_page, _node, ^id, last_opts}, 2000
+      assert_receive {:archive_page, _node, ^id, last_opts}, @async_wait_budget_ms
       assert last_opts[:offset] == 200
 
       html = render(view)
@@ -2779,7 +2809,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       render_hook(view, "load_task_archive", %{"task_id" => id})
       wait_for_archive(view, id, &match?(%{state: :ok}, &1))
-      assert_receive {:archive_page, _node, ^id, _opts}, 2000
+      assert_receive {:archive_page, _node, ^id, _opts}, @async_wait_budget_ms
       # No agent result is fetched until its own control is used (drained above).
       refute_receive {:agent_fetch, _, _, _}, 0
 
@@ -2791,7 +2821,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       wait_until(fn -> agent_result_state(view, id, "agent-1") == :ok end)
       drain_async_loads(view, 5000)
 
-      assert_receive {:agent_fetch, node, ^id, "agent-1"}, 2000
+      assert_receive {:agent_fetch, node, ^id, "agent-1"}, @async_wait_budget_ms
       assert node == node()
       # Fetched exactly once.
       refute_receive {:agent_fetch, _, _, "agent-1"}, 0
@@ -2821,7 +2851,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       # Re-opening the disclosure re-reads page 1; the result is fetched again.
       render_hook(view, "load_task_archive", %{"task_id" => id})
       wait_for_archive(view, id, &match?(%{state: :ok}, &1))
-      assert_receive {:archive_page, _node, ^id, _opts}, 2000
+      assert_receive {:archive_page, _node, ^id, _opts}, @async_wait_budget_ms
 
       render_hook(view, "load_task_archive_agent_result", %{
         "task_id" => id,
@@ -2831,7 +2861,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       wait_until(fn -> agent_result_state(view, id, "agent-1") == :ok end)
       drain_async_loads(view, 5000)
 
-      assert_receive {:agent_fetch, _node, ^id, "agent-1"}, 2000
+      assert_receive {:agent_fetch, _node, ^id, "agent-1"}, @async_wait_budget_ms
       assert render(view) =~ "lazy-agent-result-line"
     end
 
@@ -2858,7 +2888,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       set_current_node(view, remote)
 
       render_hook(view, "load_task_archive", %{"task_id" => id})
-      assert_receive {:archive_page_node, ^remote, ^id}, 2000
+      assert_receive {:archive_page_node, ^remote, ^id}, @async_wait_budget_ms
       wait_for_archive(view, id, &match?(%{state: :ok}, &1))
 
       render_hook(view, "load_task_archive_agent_result", %{
@@ -2866,7 +2896,7 @@ defmodule EvoDashWeb.TasksLiveTest do
         "agent_id" => "agent-1"
       })
 
-      assert_receive {:agent_fetch_node, ^remote, ^id, "agent-1"}, 2000
+      assert_receive {:agent_fetch_node, ^remote, ^id, "agent-1"}, @async_wait_budget_ms
       wait_until(fn -> agent_result_state(view, id, "agent-1") == :ok end)
       drain_async_loads(view, 5000)
 
@@ -2896,7 +2926,8 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, "/tasks?node=" <> target_id)
       flush_tasks_load(view)
 
-      assert :sys.get_state(view.pid).socket.assigns.current_node_id == target_id
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.current_node_id ==
+               target_id
 
       _html = expand_card(view, id)
       render_hook(view, "load_task_archive", %{"task_id" => id})

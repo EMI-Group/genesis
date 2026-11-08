@@ -53,6 +53,12 @@ defmodule EvoDashWeb.HomeLiveTest do
   # spins hot.
   @poll_interval_ms 2
 
+  # The shared host swings 10-30x under load (see test/CONTEXT.md); the 5 s
+  # :sys.get_state default and 1-2 s poll budgets exit on a loaded machine.
+  @assigns_timeout_ms 30_000
+  # A load-tolerant deadline for bounded polls / async-result awaits.
+  @async_wait_budget_ms 30_000
+
   setup do
     # Isolated Store + TaskRegistry (pattern from tasks_live_test). The helper
     # owns teardown: it stops the isolated pair FIRST, then restores and
@@ -128,7 +134,7 @@ defmodule EvoDashWeb.HomeLiveTest do
   # The Phoenix.LiveViewTest View struct exposes no assigns accessor in this
   # version, so read the LiveView socket assigns directly from the process
   # state (same pattern as welcome_live_test.exs / settings_live_test.exs).
-  defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
+  defp assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
 
   # Decoded task opts are a list of mixed atom/string-key tuples (the Store
   # codec atomizes only its whitelist), so string keys must be looked up via
@@ -273,7 +279,7 @@ defmodule EvoDashWeb.HomeLiveTest do
   # tasks_live_test.exs pattern for observing async results (the real
   # supervised fetches, the PubSub debounce) without fixed sleeps. The poll
   # interval is @poll_interval_ms (a few ms — see the attribute).
-  defp wait_until(fun, timeout \\ 2000) do
+  defp wait_until(fun, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
 
     wait_loop = fn wait_loop ->
@@ -344,7 +350,7 @@ defmodule EvoDashWeb.HomeLiveTest do
   # socket (its runner resolves at spawn time inside a TaskSupervisor child, so
   # render_async/2 cannot await it — same reason the file polls other async
   # assigns) and then syncs the test proxy via render/1.
-  defp await_source_available(view, expected, timeout \\ 2000) do
+  defp await_source_available(view, expected, timeout \\ @async_wait_budget_ms) do
     wait_until(fn -> assigns(view)[:source_available] == expected end, timeout)
     render(view)
   end
@@ -2815,7 +2821,9 @@ defmodule EvoDashWeb.HomeLiveTest do
           |> element(approval_button(id, decision))
           |> render_click()
 
-        assert_receive {:approval_response_called, worker, source, ^id, ^decision}, 2000
+        assert_receive {:approval_response_called, worker, source, ^id, ^decision},
+                       @async_wait_budget_ms
+
         assert source == node()
         refute worker == view.pid
         assert [%{request_id: ^id}] = assigns(view)[:pending_approvals]
@@ -2865,7 +2873,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       send(view.pid, {:approval_requested, l2_request()})
       render(view)
       view |> element(approval_button("req-1", "approve")) |> render_click()
-      assert_receive {:approval_response_called, worker, source, "req-1", "approve"}, 2000
+
+      assert_receive {:approval_response_called, worker, source, "req-1", "approve"},
+                     @async_wait_budget_ms
+
       assert source == node()
       assert [%{request_id: "req-1"}] = assigns(view).pending_approvals
 
@@ -2882,7 +2893,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute disabled?(html, approval_button("req-1", "deny"))
 
       view |> element(approval_button("req-1", "deny")) |> render_click()
-      assert_receive {:approval_response_called, retry_worker, ^source, "req-1", "deny"}, 2000
+
+      assert_receive {:approval_response_called, retry_worker, ^source, "req-1", "deny"},
+                     @async_wait_budget_ms
+
       assert assigns(view).approval_error == nil
       send(retry_worker, {:respond, :ok})
       wait_until(fn -> assigns(view).pending_approvals == [] end)
@@ -3008,7 +3022,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert [%{request_id: "eval-1"}] = assigns(view).pending_approvals
 
       view |> element(approval_button("eval-1", "approve")) |> render_click()
-      assert_receive {:approval_response_called, worker, source, "eval-1", "approve"}, 2000
+
+      assert_receive {:approval_response_called, worker, source, "eval-1", "approve"},
+                     @async_wait_budget_ms
+
       assert source == node()
       refute source == request.target_node
 
@@ -3022,7 +3039,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # or show an error. Monitor the worker before draining the page mailbox.
       monitor = Process.monitor(worker)
       send(worker, {:respond, {:error, :nodedown}})
-      assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, 2000
+      assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, @async_wait_budget_ms
       render(view)
       assert assigns(view).approval_error == nil
       assert assigns(view).pending_approvals == []
@@ -3036,7 +3053,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       send(view.pid, {:approval_requested, eval_request()})
       render(view)
       view |> element(approval_button("eval-1", "approve")) |> render_click()
-      assert_receive {:approval_response_called, worker, _, "eval-1", "approve"}, 2000
+
+      assert_receive {:approval_response_called, worker, _, "eval-1", "approve"},
+                     @async_wait_budget_ms
+
       assert map_size(assigns(view).approval_responses) == 1
 
       # A completed conversation permits New chat. Drive the REAL reset event
@@ -3050,7 +3070,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       monitor = Process.monitor(worker)
       send(worker, {:respond, {:error, :old_scope_failure}})
-      assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, 2000
+      assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, @async_wait_budget_ms
       html = render(view)
       assert assigns(view).approval_error == nil
       assert assigns(view).pending_approvals == []
@@ -3080,7 +3100,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       end)
 
       {:ok, view, _html} = live(conn, "/help")
-      assert_receive {:approval_snapshot_called, worker, source}, 2000
+      assert_receive {:approval_snapshot_called, worker, source}, @async_wait_budget_ms
       refute worker == view.pid
       assert source == node()
       assert assigns(view).chat_id == chat_id
@@ -3117,7 +3137,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       end)
 
       {:ok, view, _html} = live(conn, "/help")
-      assert_receive {:approval_snapshot_waiting, worker, source}, 2000
+      assert_receive {:approval_snapshot_waiting, worker, source}, @async_wait_budget_ms
       assert source == node()
       assert assigns(view).approval_recovering
       scope = approval_scope(view)
@@ -3171,7 +3191,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       end)
 
       {:ok, view, _html} = live(conn, "/help")
-      assert_receive {:approval_snapshot_waiting, worker}, 2000
+      assert_receive {:approval_snapshot_waiting, worker}, @async_wait_budget_ms
       old_scope = approval_scope(view)
       seq = assigns(view).approval_recovery_seq
       assert is_integer(seq)
@@ -3190,7 +3210,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # The real, late SafeCall reply is equally stale after that rejection.
       monitor = Process.monitor(worker)
       send(worker, :release_snapshot)
-      assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, 2000
+      assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, @async_wait_budget_ms
       html = render(view)
       assert assigns(view).pending_approvals == []
       refute present?(html, approval_button("eval-1", "approve"))
