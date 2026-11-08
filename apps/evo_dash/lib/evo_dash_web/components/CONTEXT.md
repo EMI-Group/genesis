@@ -195,7 +195,7 @@ The provider and model controls submit `provider_profile_id` and `model` respect
 Call the public `resolve_reasoning_effort(model_selections, model_spec, value)` from change AND submit handlers before persisting the spec: a supported string or valid integer/decimal-string index returns `{:ok, effort_string}`, and a malformed/out-of-range value or unsupported model returns `{:error, :unsupported_reasoning_effort}`.
 The component never nests forms, fetches configuration or renders credentials; callers own state, validate provider/model changes, clear downstream choices and resolve the resulting spec through the core.
 LiveView change events require each control to have a form owner: render the picker inside a caller-owned form, or explicitly pass `form` to associate all three controls with an existing form when outside it.
-The Assistant caller should set `form="chat-form"` because its header picker is outside the composer form.
+The Assistant caller renders the picker INSIDE the composer form (`#chat-form`), so it needs no `form` attr; that form's `phx-change="chat_input"` never fires from a picker interaction because the provider `<select>`'s own `phx-change` wins.
 TaskForm sets `form="task-form"`, and the shared fieldset is non-shrinking so the expanded editor compresses the textarea rather than its controls.
 Stale explicit provider/model selections are marked `aria-invalid`, and a model-empty hint is associated with its disabled model control.
 Models are scoped to the exact selected provider profile; unavailable persisted providers/models stay visibly unavailable rather than silently selecting a replacement.
