@@ -124,6 +124,11 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
 
   # The schema's model_spec is a ReqLLM identifier, not the task selection map.
   # Generation params deliberately retain the schema's full credential contract.
+  # Registration appends a per-agent-run prompt-cache identity (prompt_cache_key,
+  # and session_id for codex) that a plain resolved selection does not carry; the
+  # two sides also assemble provider_options in a different keyword order, so the
+  # comparison is a map comparison of every key/value plus a well-formedness check
+  # on the cache identity, which is the ONE expected difference.
   defp assert_binding(binding, config, requested) do
     assert {:ok, resolved} = Schema.resolve_model_spec(config, requested)
 
@@ -140,8 +145,53 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
     assert binding.provider_profile_id == resolved.provider_profile_id
     assert binding.model_spec == expected
     assert binding.llm_model == resolved.model_spec
-    assert binding.llm_generation_params == resolved.generation_params
+
+    assert comparable(drop_cache_identity(binding.llm_generation_params)) ==
+             comparable(resolved.generation_params)
+
     assert binding.llm_context_window == Schema.LLM.context_window(resolved.runtime_profile)
+  end
+
+  # Order-insensitive projection: the top-level keyword list and a nested
+  # keyword-list :provider_options become maps; every other value (including
+  # non-keyword lists such as :stop) is compared exactly as-is. An EMPTY
+  # provider_options list is equivalent to carrying none at all, so that
+  # registration-created empty list cannot distinguish the two sides.
+  defp comparable(params) do
+    params
+    |> Map.new()
+    |> Map.new(fn
+      {:provider_options, opts} -> {:provider_options, comparable_options(opts)}
+      other -> other
+    end)
+    |> Map.reject(fn {key, value} -> key == :provider_options and value in [[], %{}] end)
+  end
+
+  defp comparable_options(opts) when is_list(opts) do
+    if Keyword.keyword?(opts), do: Map.new(opts), else: opts
+  end
+
+  defp comparable_options(opts), do: opts
+
+  defp drop_cache_identity(params) do
+    case Keyword.fetch(params, :provider_options) do
+      {:ok, opts} when is_list(opts) ->
+        if Keyword.keyword?(opts) and Keyword.has_key?(opts, :prompt_cache_key) do
+          assert "genesis-" <> _ = Keyword.fetch!(opts, :prompt_cache_key)
+          assert "genesis-" <> _ = Keyword.get(opts, :session_id, "genesis-")
+
+          Keyword.put(
+            params,
+            :provider_options,
+            Keyword.drop(opts, [:prompt_cache_key, :session_id])
+          )
+        else
+          params
+        end
+
+      _ ->
+        params
+    end
   end
 
   test "legacy populated, flat and empty configurations retain effective runtime profiles" do
