@@ -3,7 +3,7 @@
 ## Intent
 
 Focused helper, canonical provider-editor and credential-status page contracts live here.
-The five suites declare 108 tests and preserve `async: true`; pure helpers neither mount pages nor start shared services.
+The five suites declare 110 tests and preserve `async: true`; pure helpers neither mount pages nor start shared services.
 
 ## API Surface
 
@@ -15,7 +15,8 @@ The five suites declare 108 tests and preserve `async: true`; pure helpers neith
 - `model_profile_helpers_test.exs` holds 41 contracts for canonical Add delegates and the deliberately retained legacy single-model parameter parser, including the comprehensive peak/day/window compatibility matrix.
 - Canonical Add writes `llm.providers` with string-keyed profiles and explicit `auth_mode`; nil/empty selections leave config unchanged and new drafts remain detached.
 - The legacy `parse_model_profile_params/2` API still returns atom-keyed single-model profiles with its older clean-TOML auth rules; these compatibility assertions must not be confused with canonical provider persistence.
-- `config_io_test.exs` holds 10 pure category-conversion contracts for list-of-strings, boolean and float values.
+- `config_io_test.exs` holds 12 pure contracts: ten category conversions for list-of-strings, boolean and float values and two runtime model-option pushes.
+- The canonical runtime push must include `model_profiles`, `provider_profiles` and `model_selection_config`, tested with pure scheduler state update and explicit model resolution; legacy-only pushes must not invent accounts or a selection snapshot.
 - `auth_status_test.exs` holds 28 credential-status classification/page contracts, including verdict forwarding, exact fallback and supplied vendor guidance, node/sequence guards, refresh, canonical auth persistence and editing a legacy OAuth row into `llm.providers` without a shadow `llm.models` table.
 - Auth page fixtures deliberately seed legacy `[[llm.models]]` rows to exercise migration, while row assertions select the actual mounted canonical provider article by its Edit control and profile id.
 - Successful new-profile auth submissions use canonical `default_model` plus a matching nested `models` row and the atom `:new` detached-editor sentinel, assert the nested shape in live and persisted config, and require the exact Provider-profile success message plus persisted auth fields.
@@ -46,13 +47,29 @@ Mounted canonical editor save/reload/reset regressions belong with the parent `s
 
 ## Validation and Integration Boundary
 
-Canonical provider configuration requires nested model rows, and successful auth persistence fixtures include the selected default model in that collection.
+Pure canonical parser contracts accept default-only profiles with absent or empty `models` and omit the stored `models` key; configured model rows are overrides, not an allowlist restricting `default_model`.
+`provider_profiles_contract_test.exs` declares these contracts at lines 402 and 413, and its submission contract at line 474 preserves explicit empty rows while allowing a nonblank default-only profile.
+Mounted auth persistence success fixtures still include nested model rows matching their default, so they do not establish default-only Save → remount behavior.
 The `profile save round-trip (auth_mode / oauth_file persistence)` describe in `auth_status_test.exs` covers OAuth auth/path persistence, explicit API-key mode with stale-path removal, blank-path omission, OAuth-only mode inference, legacy migration and unsupported-auth rejection.
 The four new-profile success cases assert the nested model shape in live config and persistence without relaxing auth verdicts or successful-save assertions.
 The unsupported-auth case retains its invalid authentication fixture and verifies rejection without persistence.
 Focused validation uses `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/auth_status_test.exs --only 'describe:profile save round-trip (auth_mode / oauth_file persistence)' --seed 0` (also seed 1) and passes all six selected tests with 22 excluded in each run.
 This focused run does not establish full-file, directory or broader dashboard-suite success.
 Other pure helper contracts and parent-page regressions require their own separately scoped validation.
+
+## UI Simplification Survey
+
+`auth_status_test.exs` declares apply/render/classification/stale/refresh/save/Quick Setup groups at lines 76, 171, 364, 405, 470, 489 and 661 respectively.
+Auth events use `render_hook` with compatibility names `edit_model_profile`, `add_model_profile`, `save_model_profile`, `refresh_auth_status`, `select_llm_provider` and `select_llm_model`, rather than submitting rendered forms.
+Auth row helper `profile_row/2` at line 857 finds exactly one `article` containing `button[phx-click="edit_provider_profile"]` whose `phx-value-profile_id` matches the saved account id.
+Auth block helpers at lines 876 and 889 locate `[role="status"]` by its `button[phx-click="refresh_auth_status"]` and matching `phx-value-profile_id`; status-line counts also depend on that event attribute.
+The unwritable surface-split test additionally pins `id="provider-profile-edit-form"`, and Quick Setup contracts pin `phx-submit="save_api_key"` and `name="api_key"` presence for API-key-capable providers and absence for OAuth-only providers.
+Auth saves pin the exact `Provider profile saved.` flash, detached `editing_profile_id == :new`, canonical `llm.providers`, absent legacy `llm.models` and authoritative async completion.
+`model_ids_test.exs` declares rendered Quick Setup guards at lines 126 and 136 and drives `select_llm_provider` (`provider_id`) and `select_llm_variant` (`variant_id`) while requiring a real current `provider:model` string for non-custom populated catalogs.
+`provider_profiles_contract_test.exs` declares detached form/row/cancel and advanced-auto-open contracts at lines 498 and 536, including `toggle_profile_advanced`, `profile_advanced_open` and `advanced_open?/1`; these are helper API assertions, not rendered disclosure requirements.
+`model_ids_test.exs` has a one-pass owner-filtered mount wait with a silent 5-second timeout, unlike the auth suite's repeated drain and failing 30-second budget.
+Focused commands from the umbrella root are `mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` or individual filenames, with `--only 'describe:credential status render (injected result)'` and `--only 'describe:Quick Setup OAuth-only provider'` useful for auth UI work.
+The documented six-selected auth-save result above is the only focused baseline recorded here and is not a fresh validation of this checkout.
 
 ## Routing Table
 
