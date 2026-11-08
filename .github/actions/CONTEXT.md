@@ -16,6 +16,6 @@ Each action is a directory with an `action.yml` and, where a shell helper is inv
 ## Constraints
 
 - New network-prone steps should use `./.github/actions/retry` instead of a bare `run:` step.
-- `retry/retry.sh` is both executable (the action runs `bash "$GITHUB_ACTION_PATH/retry.sh" bash -ec …`) and sourceable: the macOS notarization step sources it to reuse `retry()` for `xcrun notarytool`/`xcrun stapler`.
+- `retry/retry.sh` is both executable (the action runs `bash "${{ github.action_path }}/retry.sh" bash -ec …`) and sourceable: the macOS notarization step sources it to reuse `retry()` for `xcrun notarytool`/`xcrun stapler`.
 - `retry.sh` deliberately sets no top-level `set -e` so sourcing it never changes the caller's shell options, and it stays baseline-bash compatible (macOS bash 3.2, Git Bash on Windows) — no arrays.
 - The `retry` action passes the command through the `RETRY_COMMAND` env var and runs it under `bash -ec`, so quoting in the wrapped command is never re-parsed by the outer shell.

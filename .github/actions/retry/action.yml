@@ -32,4 +32,4 @@ runs:
         RETRY_DELAY: ${{ inputs.delay }}
         RETRY_MAX_DELAY: ${{ inputs.max-delay }}
       run: |
-        bash "$GITHUB_ACTION_PATH/retry.sh" bash -ec "${RETRY_COMMAND}"
+        bash "${{ github.action_path }}/retry.sh" bash -ec "${RETRY_COMMAND}"
