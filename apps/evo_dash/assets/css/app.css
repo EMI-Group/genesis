@@ -2345,6 +2345,56 @@ button, a, input, textarea, select, summary,
   }
 }
 
+/* === Fused Capsule Controls === */
+/* ChatGPT-style fused selection capsules (mode+speed and model+reasoning).
+   Layout and resting visuals are inline Tailwind utilities on the markup in
+   llm_selection_components.ex / task_form_components.ex; these semantic rules
+   only add what utilities cannot express — the resting alpha and the
+   active/hover states. The outer <details> carries daisyUI
+   .dropdown.dropdown-top, so the .dropdown-content panel opens UPWARD and
+   escapes .input-card's expanded-mode overflow containment exactly like the
+   sibling attach dropdown (#objective-file-attach) — no positioning is
+   re-invented here. Token grammar only: --color-primary fill via oklch /
+   --color-primary-standalone text / --color-base-* via oklab; never
+   oklch(var(--x) / a) — Known Issue (i). */
+.capsule-stop,
+.capsule-item {
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+/* Layer-1 discrete stop: resting text at 80% alpha; hover raises a neutral
+   base-200 well. */
+.capsule-stop {
+  color: color-mix(in oklab, var(--color-base-content) 80%, transparent);
+}
+.capsule-stop:hover {
+  background: var(--color-base-200);
+}
+
+/* Active Layer-1 stop: subtle fill-token tint + standalone-accent text
+   (mirrors .no-project-hint's role split); hover deepens the tint instead of
+   swapping to base-200, so the active stop never loses its accent on hover. */
+.capsule-stop-active {
+  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+  color: var(--color-primary-standalone);
+}
+.capsule-stop-active:hover {
+  background: color-mix(in oklch, var(--color-primary) 20%, transparent);
+}
+
+/* Layer-2 list item: hover raises a neutral base-200 well. */
+.capsule-item:hover {
+  background: var(--color-base-200);
+}
+
+/* Active Layer-2 item: subtle fill-token tint + base-content text; the
+   checkmark (.capsule-item-check) already renders text-primary-standalone
+   inline, so it stays the selection indicator. */
+.capsule-item-active {
+  background: color-mix(in oklch, var(--color-primary) 10%, transparent);
+  color: var(--color-base-content);
+}
+
 /* --- DirectoryPicker manual-entry fallback hint ---
    When neither the Tauri native dialog nor the File System Access API can
    pick a directory (known macOS case: tauri-plugin-dialog 2.7.1 → rfd 0.16.0
