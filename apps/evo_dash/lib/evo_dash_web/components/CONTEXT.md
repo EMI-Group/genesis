@@ -66,6 +66,9 @@ All component modules use `use EvoDashWeb, :html` (`use Phoenix.Component` + HTM
 - Icons use the Heroicon set via `icon/1` (naming convention: `hero-<name>[-style]`).
 - Layout templates live under `layouts/`; only the root layout exists.
 - Components are pure functions — assigns in, HEEx out; no side effects or direct LiveView process calls.
+- No component in this subtree renders a project's CONTEXT.md, the context tree, or a repository file listing.
+  The only tree/graph renderers are the agent tree (`agents_components.ex` `path_tree/1`), the review page's changed-files sidebar (`review_components/diff_viewer.ex` `file_tree_sidebar/1`, built from a diff, not the repo) and the commit graph (`agents_components/commit_graph_view.ex`).
+  "CONTEXT.md" appears in this layer only as mode copy in `EvoDashWeb.Helpers` (`mode_label/1`, `mode_description/1`, `detect_mode` hint strings) — never as rendered file content.
 - Shared cross-component utilities come from `EvoDashWeb.Helpers` (status badges, formatting, `blob_preview/2`/`list_preview/2`, `tip/1`) to avoid duplication between modules.
 - **Task cancellation UX (graceful + force kill)** (`task_card_components.ex`): the inline Cancel button is GRACEFUL (`phx-click="open_cancel_modal"`, no `phx-confirm` — the modal confirms), visible `[:pending, :running]` only; the three-dot dropdown adds a `text-error` "Force kill" item (`open_force_kill_modal`, `[:running, :cancelling]`) under a `gettext("Danger zone")` menu-title divider (Delete keeps its `phx-confirm`). `:cancelling` renders as IN-PROGRESS (warning pulsing dot + `gettext("Cancelling…")` through the shared `Helpers.task_status_dot_class/1` / `task_status_tint/1`); `layouts.ex` treats `:cancelling` as running and has NO cancel surface — the Tasks page dropdown is the force-kill surface.
 
@@ -187,6 +190,10 @@ Accent decorations sit on the base `.input-card` rule (both layouts); sizing/con
 Values live in the `assets/css/app.css` "Adaptive Input Layout" section (sibling node).
 - **Tests** (`task_form_components_test.exs`) assert the bottom-toolbar contract: attach dropdown first with its three `[data-picker-kind]` items, the fused mode+speed capsule ids/`type`/`phx-value-level`/`phx-value-mode`/active class, the model capsule in the right cluster, `#task-launch-button` LAST with no auto margin, `disabled={@disabled}`, mode-option values/order, and the disabled welcome overlay.
 - **Mobile keyboard-aware heights**: `h-dvh` on `body`/`#app-layout`/`#sidebar`, `interactive-widget=resizes-content` in the viewport meta, and the AdaptiveInput hook syncing `--app-vh` from `window.visualViewport` so the `@media (max-width: 640px)` overrides track the area above the virtual keyboard.
+- **Form field ownership**: `task_form/1` collects ONLY the objective (`textarea name="prompt"`), the hidden `mode` field, the custom-agent select (`name="agent"`), the model/reasoning picker and the attach controls — it has NO project/repo path input.
+  The project comes from the top-bar palette (`ProjectComponents.project_omnibox/1`), foreign repos from `ProjectComponents.project_settings_*`, and build system / archive / starting node / starting commit / resume-from from `TaskFormComponents.task_options_tab/1` (its inputs live outside the form and associate via `form="task-form"`).
+  `task_form/1`'s declared `:mode_info` and `:archive` attrs are INERT (never read in its HEEx; the archive toggle is rendered only by `task_options_tab/1`).
+  `mode_label/1` / `mode_description/1` are imported from `EvoDashWeb.Helpers`, not defined in the component.
 
 ### Shared LLM Selection (`llm_selection_components.ex`)
 
