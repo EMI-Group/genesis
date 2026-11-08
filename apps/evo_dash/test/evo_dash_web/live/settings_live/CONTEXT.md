@@ -3,11 +3,15 @@
 ## Intent
 
 Focused helper, canonical provider-editor and credential-status page contracts live here.
-The five suites declare 110 tests and preserve `async: true`; pure helpers neither mount pages nor start shared services.
+The five suites declare 119 tests and preserve `async: true`; pure helpers neither mount pages nor start shared services.
 
 ## API Surface
 
-- `provider_profiles_contract_test.exs` holds 23 pure contracts for `ProviderProfiles`, `ConfigIO`, `AuthStatus` and detached `ModelProfileEvents` sockets.
+- `provider_profiles_contract_test.exs` holds 32 pure contracts for `ProviderProfiles`, `ConfigIO`, `AuthStatus` and detached `ModelProfileEvents` sockets.
+- Simplified-editor identity contracts distinguish blank or untouched generated ids from explicit identities, allocate provider-derived ids and display names independently across collisions, and preserve saved identity on blank edits including a saved string id `"new"`.
+- Detached form-change contracts pin generated-id tracking and explicit identity edits through `_target` without mounting a page or writing configuration.
+- Checkbox contracts preserve custom reasoning values and order, distinguish omitted inheritance from explicit empty inventories, strip override sentinels, and clear saved schedule-day selections through hidden empty seeds.
+- Minimal-edit round trips retain hidden generation/JSON, OAuth path, endpoint, concurrency, context-window and schedule fields, while invalid nested generation values expose exact input-name error paths and remain intact in drafts.
 - Provider parsing pins string-keyed canonical profiles, numeric ordering of nested models, sparse generation overrides, typed numbers/JSON, blank override clearing back to inheritance and untouched draft round trips.
 - Reasoning contracts distinguish inherited inventories/defaults from explicit unrestricted model inventories and reject incompatible inherited defaults.
 - CRUD contracts pin append/update/rename/move/delete/default semantics, default identity on rename, boundary no-ops, canonical shadow removal, unrelated-setting preservation and legacy one-account-per-row editing.
@@ -48,14 +52,16 @@ Mounted canonical editor save/reload/reset regressions belong with the parent `s
 ## Validation and Integration Boundary
 
 Pure canonical parser contracts accept default-only profiles with absent or empty `models` and omit the stored `models` key; configured model rows are overrides, not an allowlist restricting `default_model`.
-`provider_profiles_contract_test.exs` declares these contracts at lines 402 and 413, and its submission contract at line 474 preserves explicit empty rows while allowing a nonblank default-only profile.
+`provider_profiles_contract_test.exs` declares these contracts as "default-only profiles round-trip without manufacturing model overrides" and "models are overrides and do not restrict the default model", and its submission contract preserves explicit empty rows while allowing a nonblank default-only profile.
 Mounted auth persistence success fixtures still include nested model rows matching their default, so they do not establish default-only Save → remount behavior.
 The `profile save round-trip (auth_mode / oauth_file persistence)` describe in `auth_status_test.exs` covers OAuth auth/path persistence, explicit API-key mode with stale-path removal, blank-path omission, OAuth-only mode inference, legacy migration and unsupported-auth rejection.
 The four new-profile success cases assert the nested model shape in live config and persistence without relaxing auth verdicts or successful-save assertions.
 The unsupported-auth case retains its invalid authentication fixture and verifies rejection without persistence.
 Focused validation uses `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/auth_status_test.exs --only 'describe:profile save round-trip (auth_mode / oauth_file persistence)' --seed 0` (also seed 1) and passes all six selected tests with 22 excluded in each run.
 This focused run does not establish full-file, directory or broader dashboard-suite success.
-Other pure helper contracts and parent-page regressions require their own separately scoped validation.
+The pure canonical helper slice is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/model_profile_helpers_test.exs --seed 1` and contains 85 passing tests.
+The full helper subtree contains 119 tests; two mounted auth render assertions still require the retired concatenated identity text (`profile-4 · deepseek` at `auth_status_test.exs:259` and `profile-2 · openai_codex` at `:337`) even though the rewritten editor renders profile name and provider separately.
+Those identity-markup assertions do not establish a production credential-status defect and remain outside the pure-helper regression coverage.
 
 ## UI Simplification Survey
 
@@ -66,7 +72,7 @@ Auth block helpers at lines 876 and 889 locate `[role="status"]` by its `button[
 The unwritable surface-split test additionally pins `id="provider-profile-edit-form"`, and Quick Setup contracts pin `phx-submit="save_api_key"` and `name="api_key"` presence for API-key-capable providers and absence for OAuth-only providers.
 Auth saves pin the exact `Provider profile saved.` flash, detached `editing_profile_id == :new`, canonical `llm.providers`, absent legacy `llm.models` and authoritative async completion.
 `model_ids_test.exs` declares rendered Quick Setup guards at lines 126 and 136 and drives `select_llm_provider` (`provider_id`) and `select_llm_variant` (`variant_id`) while requiring a real current `provider:model` string for non-custom populated catalogs.
-`provider_profiles_contract_test.exs` declares detached form/row/cancel and advanced-auto-open contracts at lines 498 and 536, including `toggle_profile_advanced`, `profile_advanced_open` and `advanced_open?/1`; these are helper API assertions, not rendered disclosure requirements.
+`provider_profiles_contract_test.exs` keeps detached form/row/cancel and advanced-auto-open contracts, including `toggle_profile_advanced`, `profile_advanced_open` and `advanced_open?/1`; these are helper API assertions, not rendered disclosure requirements.
 `model_ids_test.exs` has a one-pass owner-filtered mount wait with a silent 5-second timeout, unlike the auth suite's repeated drain and failing 30-second budget.
 Focused commands from the umbrella root are `mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` or individual filenames, with `--only 'describe:credential status render (injected result)'` and `--only 'describe:Quick Setup OAuth-only provider'` useful for auth UI work.
 The documented six-selected auth-save result above is the only focused baseline recorded here and is not a fresh validation of this checkout.

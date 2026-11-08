@@ -7,6 +7,356 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
 
   defp params, do: %{"provider" => "openai", "models" => [%{"model" => "example"}]}
 
+  describe "simplified editor identity" do
+    test "blank identity and untouched generated ids derive independent collision-safe ids and names" do
+      config = %{
+        llm: %{
+          providers: [
+            %{"id" => "openai", "name" => "Personal account", "provider" => "openai"},
+            %{"id" => "openai-3", "name" => "OpenAI", "provider" => "openai"},
+            %{"id" => "other", "name" => "OpenAI-2", "provider" => "anthropic"}
+          ]
+        }
+      }
+
+      draft = ProviderProfiles.new_draft(config)
+      assert draft["id"] == "profile-4"
+      assert draft["name"] == ""
+      assert draft["provider"] == ""
+
+      for identity <- [
+            %{},
+            %{"profile_id_new" => " "},
+            %{"profile_id_new" => draft["id"]},
+            %{"id" => draft["id"]}
+          ] do
+        submitted = Map.merge(identity, %{"provider" => "openai", "name" => " "})
+
+        resolved = ProviderProfiles.editor_identity(submitted, config, :new, draft["id"])
+        assert resolved["profile_id_new"] == "openai-2"
+        assert resolved["name"] == "OpenAI-3"
+        assert resolved["provider"] == "openai"
+      end
+
+      # Resolving an identity is detached: it neither writes nor reserves it.
+      assert ProviderProfiles.new_draft(config) == draft
+      assert length(config.llm.providers) == 3
+    end
+
+    test "successive accounts of the same provider receive distinct identities" do
+      {config, profiles} =
+        Enum.reduce(1..3, {%{llm: %{providers: []}}, []}, fn _, {config, profiles} ->
+          draft = ProviderProfiles.new_draft(config)
+          # The rendered checkbox group always sends its empty hidden seed.
+          submitted =
+            ProviderProfiles.submission(Map.put(params(), "reasoning_efforts", [""]), draft)
+
+          identity = ProviderProfiles.editor_identity(submitted, config, :new, draft["id"])
+
+          assert {:ok, profile} =
+                   ProviderProfiles.parse_editor(identity, identity["profile_id_new"])
+
+          {ProviderProfiles.update(config, nil, profile), profiles ++ [profile]}
+        end)
+
+      assert Enum.map(profiles, & &1["id"]) == ["openai", "openai-2", "openai-3"]
+      assert Enum.map(profiles, & &1["name"]) == ["OpenAI", "OpenAI-2", "OpenAI-3"]
+      assert config.llm.providers == profiles
+      assert config.llm.default_provider_profile == "openai"
+    end
+
+    test "explicit new identity wins while blank edits preserve saved identity even for id new" do
+      explicit = %{
+        "provider" => "openai",
+        "id" => "ignored-id",
+        "profile_id_new" => " profile-99 ",
+        "name" => " Work account "
+      }
+
+      resolved = ProviderProfiles.editor_identity(explicit, %{}, :new, "profile-1")
+      assert resolved["profile_id_new"] == "profile-99"
+      assert resolved["name"] == "Work account"
+
+      for id <- ["account", "new", "profile-1"] do
+        original = %{"id" => id, "name" => "Saved name", "provider" => "openai"}
+        config = %{llm: %{providers: [original]}}
+
+        for blanks <- [%{}, %{"profile_id_new" => " ", "name" => " "}] do
+          resolved =
+            blanks
+            |> Map.put("provider", "anthropic")
+            |> ProviderProfiles.editor_identity(config, id, "profile-1")
+
+          assert resolved["profile_id_new"] == id
+          assert resolved["name"] == "Saved name"
+        end
+
+        renamed = ProviderProfiles.editor_identity(explicit, config, id)
+        assert renamed["profile_id_new"] == "profile-99"
+        assert renamed["name"] == "Work account"
+      end
+    end
+
+    test "editing the generated id explicitly stops treating it as an automatic placeholder" do
+      socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, file_config: %{}}}
+      assert {:noreply, socket} = ModelProfileEvents.add_model_profile(socket, %{})
+      assert socket.assigns.editing_profile_id == :new
+      assert socket.assigns.profile_generated_id == "profile-1"
+
+      assert {:noreply, socket} =
+               ModelProfileEvents.model_profile_form_change(socket, %{"provider" => "openai"})
+
+      assert socket.assigns.profile_generated_id == "profile-1"
+
+      automatic =
+        ProviderProfiles.editor_identity(
+          socket.assigns.profile_form_draft,
+          %{},
+          :new,
+          "profile-1"
+        )
+
+      assert automatic["profile_id_new"] == "openai"
+
+      for field <- ["profile_id_new", "id"] do
+        assert {:noreply, edited} =
+                 ModelProfileEvents.model_profile_form_change(socket, %{
+                   "_target" => [field],
+                   field => "profile-1"
+                 })
+
+        assert edited.assigns.profile_generated_id == nil
+
+        explicit =
+          ProviderProfiles.editor_identity(
+            edited.assigns.profile_form_draft,
+            %{},
+            :new,
+            edited.assigns.profile_generated_id
+          )
+
+        assert explicit["profile_id_new"] == "profile-1"
+        assert edited.assigns.file_config == %{}
+      end
+    end
+  end
+
+  describe "checkbox submissions" do
+    test "reasoning retains custom values and order but the hidden empty seed clears all choices" do
+      input =
+        Map.merge(params(), %{
+          "reasoning_efforts" => ["", " custom-first ", "high", "custom-last", "high"],
+          "default_reasoning_effort" => "custom-last"
+        })
+
+      assert {:ok, original} = ProviderProfiles.parse_editor(input, "test")
+      assert original["reasoning_efforts"] == ["custom-first", "high", "custom-last"]
+      draft = ProviderProfiles.draft(original)
+
+      assert {:ok, ^original} =
+               ProviderProfiles.parse_editor(
+                 ProviderProfiles.submission(%{}, draft),
+                 "test",
+                 original
+               )
+
+      cleared =
+        ProviderProfiles.submission(
+          %{"reasoning_efforts" => [""], "default_reasoning_effort" => ""},
+          draft
+        )
+
+      assert {:ok, profile} = ProviderProfiles.parse_editor(cleared, "test", original)
+      assert profile["reasoning_efforts"] == []
+      refute Map.has_key?(profile, "default_reasoning_effort")
+      refute Map.has_key?(profile, "override_reasoning")
+    end
+
+    test "nested checkbox clearing differs from missing or explicitly inherited reasoning" do
+      input = %{
+        "provider" => "openai",
+        "default_model" => "inherited",
+        "reasoning_efforts" => ["custom", "high"],
+        "default_reasoning_effort" => "high",
+        "models" => %{
+          "10" => %{
+            "model" => "cleared",
+            "override_reasoning" => "true",
+            "reasoning_efforts" => [""],
+            "default_reasoning_effort" => ""
+          },
+          "2" => %{"model" => "inherited"},
+          "11" => %{
+            "model" => "custom",
+            "override_reasoning" => "true",
+            "reasoning_efforts" => ["", "custom", "high", "custom"]
+          },
+          "3" => %{
+            "model" => "reset",
+            "override_reasoning" => "false",
+            "reasoning_efforts" => ["stale"]
+          }
+        }
+      }
+
+      assert {:ok, profile} = ProviderProfiles.parse_editor(input, "test")
+
+      assert profile["models"] == [
+               %{"model" => "inherited"},
+               %{"model" => "reset"},
+               %{"model" => "cleared", "reasoning_efforts" => []},
+               %{"model" => "custom", "reasoning_efforts" => ["custom", "high"]}
+             ]
+
+      assert profile["reasoning_efforts"] == ["custom", "high"]
+      assert profile["default_reasoning_effort"] == "high"
+
+      assert {:ok, ^profile} =
+               ProviderProfiles.parse_editor(ProviderProfiles.draft(profile), "test", profile)
+    end
+
+    test "schedule checkbox seeds clear saved days without restoring the original selection" do
+      input =
+        Map.merge(params(), %{
+          "peak_concurrency" => "0",
+          "timezone" => "Asia/Hong_Kong",
+          "off_peak_days" => ["", " SUN ", "weekends", "sun"],
+          "peak_hours" => %{
+            "10" => %{"start" => "14:00", "end" => "15:00", "days" => ["", "fri", "mon", "fri"]},
+            "2" => %{"start" => "09:00", "end" => "10:00", "days" => ["weekdays"]}
+          }
+        })
+
+      assert {:ok, original} = ProviderProfiles.parse_editor(input, "test")
+      assert original["off_peak_days"] == ["sun", "weekends"]
+      assert Enum.map(original["peak_hours"], & &1["days"]) == [["weekdays"], ["fri", "mon"]]
+      assert {:ok, ^original} = ProviderProfiles.parse_editor(%{}, "test", original)
+
+      cleared =
+        ProviderProfiles.submission(
+          %{
+            "off_peak_days" => [""],
+            "peak_hours" => %{"0" => %{"start" => "09:00", "end" => "10:00", "days" => [""]}}
+          },
+          ProviderProfiles.draft(original)
+        )
+
+      assert {:ok, profile} = ProviderProfiles.parse_editor(cleared, "test", original)
+      refute Map.has_key?(profile, "off_peak_days")
+      assert profile["peak_hours"] == [%{"start" => "09:00", "end" => "10:00"}]
+      assert profile["peak_concurrency"] == 0
+      assert profile["timezone"] == "Asia/Hong_Kong"
+    end
+  end
+
+  test "minimal edits round-trip hidden advanced, nested generation, OAuth and schedule settings" do
+    input = %{
+      "provider" => "anthropic",
+      "name" => "Subscription",
+      "auth_mode" => "oauth",
+      "oauth_file" => "/remote/credentials.json",
+      "base_url" => "https://gateway.example.test/v1",
+      "concurrency" => "7",
+      "context_window" => "128000",
+      "default_model" => "inherited",
+      "reasoning_efforts" => ["high", "custom"],
+      "default_reasoning_effort" => "high",
+      "generation" => %{
+        "temperature" => "0.7",
+        "max_tokens" => "8192",
+        "extra" => ~s({"flag":false}),
+        "provider_options" => ~s({"custom_header":"value"})
+      },
+      "models" => %{
+        "10" => %{
+          "model" => "customized",
+          "context_window" => "64000",
+          "reasoning_efforts" => ["custom", "high"],
+          "default_reasoning_effort" => "custom",
+          "generation" => %{
+            "temperature" => "0",
+            "max_tokens" => "2048",
+            "provider_options" => ~s({"enabled":true})
+          }
+        },
+        "2" => %{"model" => "inherited"}
+      },
+      "peak_concurrency" => "0",
+      "timezone" => "Asia/Hong_Kong",
+      "off_peak_days" => ["sun"],
+      "peak_hours" => [%{"start" => "09:00", "end" => "17:00", "days" => ["weekdays"]}]
+    }
+
+    assert {:ok, original} = ProviderProfiles.parse_editor(input, "subscription")
+    assert original["temperature"] == 0.7
+    assert original["max_tokens"] == 8192
+    assert original["extra"] == %{"flag" => false}
+    assert original["provider_options"] == %{"custom_header" => "value"}
+
+    assert Map.take(
+             original,
+             ~w(auth_mode oauth_file base_url concurrency context_window peak_concurrency timezone off_peak_days peak_hours)
+           ) == %{
+             "auth_mode" => "oauth",
+             "oauth_file" => "/remote/credentials.json",
+             "base_url" => "https://gateway.example.test/v1",
+             "concurrency" => 7,
+             "context_window" => 128_000,
+             "peak_concurrency" => 0,
+             "timezone" => "Asia/Hong_Kong",
+             "off_peak_days" => ["sun"],
+             "peak_hours" => [%{"start" => "09:00", "end" => "17:00", "days" => ["weekdays"]}]
+           }
+
+    assert original["models"] == [
+             %{"model" => "inherited"},
+             %{
+               "model" => "customized",
+               "context_window" => 64000,
+               "reasoning_efforts" => ["custom", "high"],
+               "default_reasoning_effort" => "custom",
+               "temperature" => 0.0,
+               "max_tokens" => 2048,
+               "provider_options" => %{"enabled" => true}
+             }
+           ]
+
+    draft = original |> ProviderProfiles.draft() |> ProviderProfiles.normalize_draft()
+    submitted = ProviderProfiles.submission(%{"name" => "Renamed"}, draft)
+    assert {:ok, updated} = ProviderProfiles.parse_editor(submitted, "subscription", original)
+    assert updated == Map.put(original, "name", "Renamed")
+    assert updated["auth_mode"] == "oauth"
+    assert updated["oauth_file"] == "/remote/credentials.json"
+    assert updated["peak_concurrency"] == 0
+
+    assert {:ok, ^updated} =
+             ProviderProfiles.parse_editor(
+               ProviderProfiles.draft(updated),
+               "subscription",
+               updated
+             )
+  end
+
+  test "nested generation failures retain exact input paths without flattening the detached draft" do
+    input =
+      Map.merge(params(), %{
+        "generation" => %{"temperature" => "hot"},
+        "models" => [%{"model" => "example", "generation" => %{"max_tokens" => "3.5"}}]
+      })
+
+    assert {:error, %{"generation[temperature]" => "numeric_invalid"}} =
+             ProviderProfiles.parse_editor(input, "test")
+
+    corrected = put_in(input, ["generation", "temperature"], "0.5")
+
+    assert {:error, %{"models[0][generation][max_tokens]" => "numeric_invalid"}} =
+             ProviderProfiles.parse_editor(corrected, "test")
+
+    draft = ProviderProfiles.normalize_draft(corrected)
+    assert hd(draft["models"])["generation"]["max_tokens"] == "3.5"
+    assert draft["generation"]["temperature"] == "0.5"
+  end
+
   test "minimal canonical profile keeps generation overrides absent" do
     assert {:ok, profile} = ProviderProfiles.parse(params(), "test")
     assert profile["id"] == "test"
