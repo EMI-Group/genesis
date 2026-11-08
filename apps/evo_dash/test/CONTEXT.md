@@ -55,7 +55,9 @@ The one leak class the suite structurally prevents is a `EvoGit.TaskRegistry` re
 Bounded polls run at a 1–2 ms cadence (`@wait_poll_ms 2`, `@poll_ms 1`); a fixed `Process.sleep` is never a wait mechanism.
 `refute_receive`/`refute_push_event` may use a 0 ms window ONLY after a preceding drain or `:sys.get_state` round-trip has provably completed the mailbox.
 Never shorten a window that IS the detection mechanism; positive assertions keep generous second-scale timeouts so real breakage still fails loudly.
-`assigns/1` is a synchronous `:sys.get_state(view.pid)` round-trip and Erlang guarantees per-sender ordering, so `send(view.pid, msg)` followed by any `assigns/1` read is already synchronized.
+`assigns/1` is a synchronous `:sys.get_state(view.pid, 30_000)` round-trip and Erlang guarantees per-sender ordering, so `send(view.pid, msg)` followed by any `assigns/1` read is already synchronized.
+Always pass that explicit timeout: `:sys.get_state/1`'s 5 s default exits the test whenever the LiveView is starved on this shared host.
+Async-load deadlines and poll budgets are module attributes sized at 30 s (`@async_wait_budget_ms`, `@assigns_timeout_ms`, `@runner_start_timeout`, `@settle_timeout_ms`) for the same reason — the waits stay bounded and assertions keep their full strength, so real breakage still fails loudly.
 Debounce-sensitive waits poll the page's own pending flag or reuse the file-local `wait_until/2` / `flush_*_load/2` helper.
 Per-suite wait contracts: `live/CONTEXT.md`, `live_hooks/CONTEXT.md`, `evo_dash/CONTEXT.md`.
 
@@ -63,7 +65,7 @@ Per-suite wait contracts: `live/CONTEXT.md`, `live_hooks/CONTEXT.md`, `evo_dash/
 Some LiveViews spawn an `EvoDash.TaskSupervisor` child at mount or on a `handle_params` patch, and its result message REPLACES assigns with the mount-time snapshot.
 Apply the file-local funnel right after `live/3` (and after the relevant `render_patch/2`), BEFORE driving any event: `settings_live_test.await_mount_async_loads/1`, `review_live_test.flush_review_load/2` + `settle_debounced_task_reload/1`, `projects_live_test.await_async_loads/1`, `tasks_live_test.flush_tasks_load/2`, `settings_live_agents_test`'s `mount_settings/1` → `await_view_async_loads/1`.
 They locate this mount's children by the view pid in the child's `:"$callers"` entry (`mount_async_task_pids/1` + `task_callers/1`) and wait for those pids to exit, after which the queued apply is drained by a `render(view)` (or, for `settings_live_test`'s monitor-only variant, by the test's next synchronous `render`/`:sys.get_state`).
-The `:"$callers"` filter is load-bearing, not cosmetic: `EvoDash.TaskSupervisor` never kills children per test, so a wait on EVERY supervisor child made each `settings_live_agents_test` mount pay its whole deadline whenever any long-lived child existed — the owner-aware poll (2 ms cadence, ~5 s best-effort cap) looks only at this mount's tasks and returns the instant they are gone.
+The `:"$callers"` filter is load-bearing, not cosmetic: `EvoDash.TaskSupervisor` never kills children per test, so a wait on EVERY supervisor child made each `settings_live_agents_test` mount pay its whole deadline whenever any long-lived child existed — the owner-aware poll (2 ms cadence, 30 s best-effort cap) looks only at this mount's tasks and returns the instant they are gone.
 `review_live_test.flush_review_load/2` composes the funnel with `EvoDashWeb.TestHelpers.flush_loading/4` (funnel first, then the loading marker), and `tasks_live_test.flush_tasks_load/2` adds a `tasks_loading == false` poll plus a final `render(view)`.
 Reuse one of these helpers instead of re-deriving the race — a sleep cannot cover it deterministically.
 `render_async/2` does NOT await `Task.Supervisor` children, which is why `EvoDashWeb.TestHelpers.flush_loading/4` and the funnels exist.
