@@ -197,7 +197,7 @@ The task form's fused-capsule speed ↔ quality control is covered at component 
 
 ## Provider-profile redesign regression coverage
 
-Shared component contracts cover provider-scoped model choices, slider indices 0/middle/last, invalid and singleton inventories, task-form forwarding, accessibility and independent reasoning/quality controls.
+Shared component contracts cover provider-scoped model choices, effort-stop indices 0/middle/last, invalid and singleton inventories, task-form forwarding, accessibility and independent reasoning/quality controls.
 Projects contracts cover normal/GitHub canonical `model_spec` locks versus explicit Auto, session-state persistence and node/path/target/generation stale-result rejection.
 Assistant contracts cover provider/model/reasoning options, typed and suggestion sends, ChatState migration, remount/new-chat persistence and node isolation.
 Welcome contracts cover canonical multiple-model/default/reasoning setup, API-key/OAuth paths, unrelated-setting preservation and deterministic connection-result guards.
