@@ -334,7 +334,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
           class="rounded-lg border border-dashed border-base-300 p-4 text-sm text-base-content/70"
         >
           {gettext(
-            "Add a model to choose as your default. An existing default-only model is also kept in the default selector."
+            "Enter a default model below. Add model rows only when you need per-model overrides."
           )}
         </p>
         <.model_fields
@@ -354,26 +354,22 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
           >
             {gettext("Default model")}
           </label>
-          <select
+          <input
             id="provider-field-default_model"
             name="default_model"
+            value={value(@fields, "default_model")}
+            list="provider-default-model-options"
             required
-            class="select select-sm w-full min-w-0"
+            class="input input-sm w-full min-w-0 font-mono"
             aria-describedby="provider-default-model-help"
-          >
-            <option value="" selected={value(@fields, "default_model") == ""}>
-              {gettext("Choose a model")}
-            </option>
-            <option
-              :for={model <- @default_models}
-              value={model}
-              selected={model == value(@fields, "default_model")}
-            >
-              {model}
-            </option>
-          </select>
+          />
+          <datalist id="provider-default-model-options">
+            <option :for={model <- @default_models} value={model} />
+          </datalist>
           <p id="provider-default-model-help" class="mt-1 text-xs text-base-content/70">
-            {gettext("Used when this account is selected without an explicit model.")}
+            {gettext(
+              "Enter a model name or choose an existing row. This does not create a model override."
+            )}
           </p>
         </div>
         <.reasoning_default
@@ -411,6 +407,17 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
               }
             />
             <.profile_field
+              :if={not oauth?(@fields)}
+              name="api_key_env_var"
+              label={gettext("API key environment variable (optional)")}
+              value={value(@fields, "api_key_env_var")}
+              help={
+                gettext(
+                  "Enter the variable name, not the key. In API-key mode this exact variable is used on the selected node, with no fallback to another account's key. Clear it to use the provider's default credential source."
+                )
+              }
+            />
+            <.profile_field
               name="base_url"
               label={gettext("Base URL (optional)")}
               value={value(@fields, "base_url")}
@@ -441,7 +448,12 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
             min={1024}
             help={gettext("Leave blank for the runtime default. Models may override this value.")}
           />
-          <.reasoning_fields prefix="" fields={@fields} show_default={false} />
+          <.reasoning_fields
+            prefix=""
+            fields={@fields}
+            suggestions={reasoning_suggestions(@fields)}
+            show_default={false}
+          />
           <details id="provider-generation-defaults" class="rounded-lg border border-base-300 p-3">
             <summary class="cursor-pointer rounded-md text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary-standalone">
               {gettext("Shared generation defaults")}
@@ -528,7 +540,13 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
             />
             {gettext("Override reasoning levels for this model")}
           </label>
-          <.reasoning_fields :if={@override?} prefix={@prefix} fields={@model} model_override />
+          <.reasoning_fields
+            :if={@override?}
+            prefix={@prefix}
+            fields={@model}
+            suggestions={reasoning_suggestions(@provider, value(@model, "model"))}
+            model_override
+          />
           <div :if={not @override?} class="space-y-2">
             <p class="text-xs text-base-content/70">
               {gettext("Supported levels are inherited from the provider profile.")}
@@ -562,7 +580,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
   end
 
   # Keep default-only accounts editable without inventing model override rows.
-  # Live draft names populate the select; a saved default outside those rows
+  # Live draft names populate the datalist; a saved default outside those rows
   # remains available until the user explicitly replaces it.
   defp default_models(fields, models) do
     ([value(fields, "default_model")] ++
