@@ -20,7 +20,10 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
 
   Save/change payload: `profile_id` is the original id; `profile_id_new` is the
   editable optional id in Advanced; blank new identity/name values are derived
-  by the owner on save. Other names mirror canonical keys; `reasoning_efforts[]`
+  by the owner on save. With no model rows, `default_model_name` is a UI-only
+  editable name: the owner synchronizes it with the `default_model` select and
+  strips it on save without creating override rows. Other names mirror canonical
+  keys; `reasoning_efforts[]`
   submits an ordered checkbox list and model `override_reasoning` is a UI
   boolean sentinel. A false model override omits its reasoning inventory but
   may still set a default from the inherited inventory; true plus a blank
@@ -329,14 +332,19 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
             class="size-4"
           />{gettext("Add model")}</button>
         </div>
-        <p
+        <%!-- UI-only helper: the owner synchronizes default_model without creating models rows. --%>
+        <.profile_field
           :if={@models == []}
-          class="rounded-lg border border-dashed border-base-300 p-4 text-sm text-base-content/70"
-        >
-          {gettext(
-            "Enter a default model below. Add model rows only when you need per-model overrides."
-          )}
-        </p>
+          name="default_model_name"
+          label={gettext("Model name")}
+          value={value(@fields, "default_model_name", value(@fields, "default_model"))}
+          required
+          help={
+            gettext(
+              "Edit the default model name. Add model rows only when you need per-model overrides."
+            )
+          }
+        />
         <.model_fields
           :for={{model, index} <- @models}
           model={model}
@@ -354,22 +362,26 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
           >
             {gettext("Default model")}
           </label>
-          <input
+          <select
             id="provider-field-default_model"
             name="default_model"
-            value={value(@fields, "default_model")}
-            list="provider-default-model-options"
             required
-            class="input input-sm w-full min-w-0 font-mono"
+            class="select select-sm w-full min-w-0"
             aria-describedby="provider-default-model-help"
-          />
-          <datalist id="provider-default-model-options">
-            <option :for={model <- @default_models} value={model} />
-          </datalist>
+          >
+            <option value="" selected={value(@fields, "default_model") == ""}>
+              {gettext("Choose a default model")}
+            </option>
+            <option
+              :for={model <- @default_models}
+              value={model}
+              selected={model == value(@fields, "default_model")}
+            >
+              {model}
+            </option>
+          </select>
           <p id="provider-default-model-help" class="mt-1 text-xs text-base-content/70">
-            {gettext(
-              "Enter a model name or choose an existing row. This does not create a model override."
-            )}
+            {gettext("Choose the default model. This does not create a model override.")}
           </p>
         </div>
         <.reasoning_default
@@ -579,12 +591,14 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
     """
   end
 
-  # Keep default-only accounts editable without inventing model override rows.
-  # Live draft names populate the datalist; a saved default outside those rows
-  # remains available until the user explicitly replaces it.
+  # Retain the current default even outside the override rows. The UI-only
+  # default-only name is also an option; the owner synchronizes the selection
+  # on change/save and strips the helper rather than inventing an override row.
   defp default_models(fields, models) do
+    helper_names = if models == [], do: [value(fields, "default_model_name")], else: []
+
     ([value(fields, "default_model")] ++
-       Enum.map(models, fn {model, _} -> value(model, "model") end))
+       helper_names ++ Enum.map(models, fn {model, _} -> value(model, "model") end))
     |> Enum.filter(&is_binary/1)
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))

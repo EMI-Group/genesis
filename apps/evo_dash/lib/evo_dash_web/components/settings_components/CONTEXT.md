@@ -59,8 +59,8 @@ The existing legacy editor is unchanged and must not be mounted alongside this e
 
 `SettingsComponents.category_section/1` imports the provider editor outside the flat `save_category` form and accepts separate `provider_profiles` and `model_selections` projections from SettingsLive.
 The default account comes from `file_config[:llm][:default_provider_profile]`, and edit/draft/auth assigns pass through unchanged except for the parent's flat-to-nested generation display adapter.
-The editor renders a standalone detached form for `editing_profile_id=:new` with a catalog-backed `select name="provider"`, authentication controls/guidance, compact editable model-name rows, an editable default-model input with datalist suggestions, and a default-reasoning select.
-The default-model input suggests current model-row names and retains an existing default-only model without inventing override rows, so a saved default need not belong to the optional override list.
+The editor renders a standalone detached form for `editing_profile_id=:new` with a catalog-backed `select name="provider"`, authentication controls/guidance, compact editable model-name rows, a real `select name="default_model"`, and a real default-reasoning select.
+The default-model select retains the current default even outside the optional override rows and offers live model-row names, or the UI-only default-model-name helper when there are no rows, without inventing override rows.
 Every model row initially shows its name and remove action, while `details#provider-model-details-<index>` holds context, reasoning inventory/default overrides and nested generation overrides.
 The collapsed `details#provider-profile-advanced` contains optional account ID/display name, endpoint, concurrency, schedules, shared context, shared reasoning support and generation defaults.
 Advanced identity fields remain submitted while collapsed, preserve existing IDs/names and allow blank new values for the owning state layer to derive on save.
@@ -95,7 +95,7 @@ Blank optional numeric/model-generation fields mean inherit, not nil or zero; ex
 `off_peak_days[]` and `peak_hours[index][days][]` use hidden blank sentinels so clearing all days is submitted, and window times use `peak_hours[index][start|end]`.
 Remove sentinel blanks before core validation, drop fully blank windows, numerically order indexed maps and preserve complete drafts across add/remove events.
 The owner validates unique profile/model ids, supported reasoning defaults, JSON objects, numeric ranges and scheduling before saving; component HTML ranges are not provider-specific validation.
-The common `default_model` input retains a saved default outside the optional override rows and offers live row names through its datalist; changing a default never creates an override row automatically.
+The common `default_model` select retains a saved default outside the optional override rows and offers live row names; changing a default never creates an override row automatically.
 Unknown default providers and unsupported saved reasoning defaults remain visibly unavailable, never silently replaced.
 Unknown generation/config keys must be preserved by the owner when applying edits.
 
@@ -103,8 +103,14 @@ Unknown generation/config keys must be preserved by the owner when applying edit
 
 OAuth availability comes from existing `LLMCatalog` metadata via a whitelist of catalog-owned provider atoms, never dynamic atom creation or a new schema API.
 OAuth-only providers emit hidden `auth_mode=oauth` and never show an API-key prompt; other providers have API-key guidance without rendering any key/token field.
-The default-model control is a required free-text input named `default_model`, with a datalist of current row names and the retained default, so default-only accounts can change models directly without creating override rows.
-The same existing `default_model` payload is used for change/save, with no helper field or new event; the owner must preserve absent/empty model overrides on an untouched default-only account.
+The default-model control is a required real select named `default_model` (`id="provider-field-default_model"`), with a blank prompt plus trimmed, nonblank, deduplicated options in current-default → helper-name (only without rows) → live-row-name order.
+The selected option is the draft-over-saved `default_model`, and the default-reasoning control remains the existing real select from `reasoning_default/1`.
+Only when `indexed_rows(fields["models"]) == []`, the Models section renders a separate required compact text input named `default_model_name` (`id="provider-field-default_model_name"`) labelled "Model name".
+This UI-only helper renders the draft's string-keyed `default_model_name` when present (an explicit blank remains authoritative), otherwise the draft-over-saved `default_model`, and never submits a `models[index]` row.
+The parent-owned change handler must use `_target` to synchronize `default_model_name` edits into the selected `default_model` before rerendering, and synchronize explicit default-model select changes back into the helper while there are no rows.
+On save the owner must apply the helper as the no-row model name, preserve validation errors for explicit blanks, strip `default_model_name` from canonical configuration, and leave an untouched absent/empty `models` inventory absent/empty rather than synthesizing an override row.
+When rows are added, the helper disappears and any stale helper draft must be ignored/cleared by the owner so the select and live row names are authoritative; removing the last row must initialize the helper from the retained default.
+The helper uses the existing `provider_profile_form_change` and `save_provider_profile` payloads with no new event or schema field; this component supplies presentation only and parent state/parser coordination is required.
 In API-key mode, Advanced exposes the nonsecret `api_key_env_var` name, never its value, and an explicit blank must remove the configured source so provider-default credential resolution resumes.
 `auth_statuses` remains keyed by profile id with `state`, `expires`, `login_instructions` and `oauth_file`; states `ok`, `missing`, `unwritable` and `unknown` accept atom or string forms.
 The owner must clear/reload statuses on node changes; unsaved provider/auth/path changes additionally suppress a saved credential verdict inside the editor.
