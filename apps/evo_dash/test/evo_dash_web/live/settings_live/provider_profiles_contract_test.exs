@@ -183,7 +183,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
             "model" => "cleared",
             "override_reasoning" => "true",
             "reasoning_efforts" => [""],
-            "default_reasoning_effort" => ""
+            "default_reasoning_effort" => "high"
           },
           "2" => %{"model" => "inherited"},
           "11" => %{
@@ -213,6 +213,51 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
 
       assert {:ok, ^profile} =
                ProviderProfiles.parse_editor(ProviderProfiles.draft(profile), "test", profile)
+    end
+
+    test "explicit empty model reasoning overrides drop a saved high default without blanking it" do
+      assert {:ok, original} =
+               ProviderProfiles.parse_editor(
+                 Map.merge(params(), %{
+                   "reasoning_efforts" => ["low", "high"],
+                   "default_reasoning_effort" => "high",
+                   "models" => [
+                     %{
+                       "model" => "example",
+                       "reasoning_efforts" => ["low", "high"],
+                       "default_reasoning_effort" => "high"
+                     }
+                   ]
+                 }),
+                 "test"
+               )
+
+      assert hd(original["models"])["default_reasoning_effort"] == "high"
+
+      for override <- [true, "true"], empty <- [[""], []] do
+        submitted =
+          ProviderProfiles.submission(
+            %{
+              "models" => %{
+                "0" => %{
+                  "model" => "example",
+                  "override_reasoning" => override,
+                  "reasoning_efforts" => empty,
+                  "default_reasoning_effort" => "high"
+                }
+              }
+            },
+            ProviderProfiles.draft(original)
+          )
+
+        assert submitted["models"]["0"]["default_reasoning_effort"] == "high"
+        assert {:ok, profile} = ProviderProfiles.parse_editor(submitted, "test", original)
+        assert profile["models"] == [%{"model" => "example", "reasoning_efforts" => []}]
+        assert Map.drop(profile, ["models"]) == Map.drop(original, ["models"])
+
+        assert {:ok, ^profile} =
+                 ProviderProfiles.parse_editor(ProviderProfiles.draft(profile), "test", profile)
+      end
     end
 
     test "schedule checkbox seeds clear saved days without restoring the original selection" do
@@ -504,6 +549,42 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
     refute Map.has_key?(profile, "api_key_env")
   end
 
+  test "advanced credential source edits, clears and omitted fields round-trip through detached submissions" do
+    assert {:ok, original} =
+             ProviderProfiles.parse_editor(
+               Map.put(params(), "api_key_env_var", "SAVED_KEY"),
+               "test"
+             )
+
+    draft = ProviderProfiles.draft(original)
+    assert draft["api_key_env_var"] == "SAVED_KEY"
+
+    for {input, expected} <- [
+          {%{"name" => "Renamed"}, "SAVED_KEY"},
+          {%{"api_key_env_var" => " NEW_KEY "}, "NEW_KEY"},
+          {%{"api_key_env_var" => ""}, nil},
+          {%{"api_key_env_var" => " "}, nil}
+        ] do
+      submitted = ProviderProfiles.submission(input, draft)
+      assert {:ok, profile} = ProviderProfiles.parse_editor(submitted, "test", original)
+      assert profile["api_key_env_var"] == expected
+      refute Map.has_key?(profile, "api_key_env")
+      if is_nil(expected), do: refute(Map.has_key?(profile, "api_key_env_var"))
+
+      assert Map.drop(profile, ["name", "api_key_env_var"]) ==
+               Map.drop(original, ["name", "api_key_env_var"])
+
+      assert {:ok, ^profile} =
+               ProviderProfiles.parse_editor(
+                 ProviderProfiles.submission(%{}, ProviderProfiles.draft(profile)),
+                 "test",
+                 profile
+               )
+    end
+
+    assert original["api_key_env_var"] == "SAVED_KEY"
+  end
+
   test "drafts normalize legacy credential env keys without losing blank canonical input" do
     for normalize <- [&ProviderProfiles.draft/1, &ProviderProfiles.normalize_draft/1] do
       draft = normalize.(%{api_key_env: "LEGACY_KEY"})
@@ -750,13 +831,165 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
   end
 
   test "default-only profiles round-trip without manufacturing model overrides" do
-    for models <- [%{}, %{"models" => []}] do
+    for models <- [
+          %{},
+          %{"models" => nil},
+          %{"models" => []},
+          %{"models" => %{}},
+          %{"models" => [%{"model" => ""}]}
+        ] do
       input = Map.merge(models, %{"provider" => "openai", "default_model" => " default "})
       assert {:ok, profile} = ProviderProfiles.parse(input, "test")
       assert profile["default_model"] == "default"
       refute Map.has_key?(profile, "models")
       assert ProviderProfiles.draft(profile)["models"] == []
       assert {:ok, ^profile} = ProviderProfiles.parse(%{}, "test", profile)
+    end
+  end
+
+  describe "default-only model name helper" do
+    test "targeted name edits select the new default without inventing an override row" do
+      for inventory <- [%{}, %{"models" => []}] do
+        original = Map.merge(inventory, %{"provider" => "openai", "default_model" => "saved"})
+        socket = editor_socket(original)
+
+        assert {:noreply, edited} =
+                 ModelProfileEvents.model_profile_form_change(socket, %{
+                   "_target" => ["default_model_name"],
+                   "default_model_name" => "typed",
+                   "default_model" => "saved"
+                 })
+
+        assert edited.assigns.profile_form_draft["default_model_name"] == "typed"
+        assert edited.assigns.profile_form_draft["default_model"] == "typed"
+        assert edited.assigns.profile_form_draft["models"] == []
+        assert edited.assigns.file_config == socket.assigns.file_config
+      end
+    end
+
+    test "explicit default selects replace the no-row helper rather than restoring its old name" do
+      socket =
+        editor_socket(%{
+          "provider" => "openai",
+          "default_model" => "typed",
+          "models" => []
+        })
+
+      assert {:noreply, selected} =
+               ModelProfileEvents.model_profile_form_change(socket, %{
+                 "_target" => ["default_model"],
+                 "default_model_name" => "typed",
+                 "default_model" => "saved"
+               })
+
+      assert selected.assigns.profile_form_draft["default_model_name"] == "saved"
+      assert selected.assigns.profile_form_draft["default_model"] == "saved"
+      assert selected.assigns.profile_form_draft["models"] == []
+      assert selected.assigns.file_config == socket.assigns.file_config
+
+      assert {:ok, profile} =
+               ProviderProfiles.parse_editor(selected.assigns.profile_form_draft, "test")
+
+      assert profile["default_model"] == "saved"
+      refute Map.has_key?(profile, "default_model_name")
+      refute Map.has_key?(profile, "models")
+    end
+
+    test "save applies the helper without a preceding change event and strips the UI-only field" do
+      for inventory <- [%{}, %{"models" => []}] do
+        original = Map.merge(inventory, %{"provider" => "openai", "default_model" => "saved"})
+
+        submitted =
+          ProviderProfiles.submission(
+            %{"default_model_name" => " typed ", "default_model" => "saved"},
+            ProviderProfiles.draft(original)
+          )
+
+        assert {:ok, profile} = ProviderProfiles.parse_editor(submitted, "test", original)
+        assert profile["default_model"] == "typed"
+        refute Map.has_key?(profile, "models")
+        refute Map.has_key?(profile, "default_model_name")
+        assert {:ok, ^profile} = ProviderProfiles.parse_editor(%{}, "test", profile)
+        refute Map.has_key?(ProviderProfiles.draft(profile), "default_model_name")
+      end
+    end
+
+    test "blank helper fails validation instead of restoring a saved default and remains correctable" do
+      original = %{"provider" => "openai", "default_model" => "saved"}
+      socket = editor_socket(original)
+
+      assert {:noreply, blank} =
+               ModelProfileEvents.model_profile_form_change(socket, %{
+                 "_target" => ["default_model_name"],
+                 "default_model_name" => " ",
+                 "default_model" => "saved"
+               })
+
+      submitted = ProviderProfiles.submission(%{}, blank.assigns.profile_form_draft)
+
+      assert {:error, %{"default_model" => "default_model_invalid"}} =
+               ProviderProfiles.parse_editor(submitted, "test", original)
+
+      assert blank.assigns.profile_form_draft["default_model_name"] == " "
+      assert blank.assigns.file_config == socket.assigns.file_config
+
+      assert {:noreply, corrected} =
+               ModelProfileEvents.model_profile_form_change(blank, %{
+                 "_target" => ["default_model_name"],
+                 "default_model_name" => "corrected",
+                 "default_model" => ""
+               })
+
+      assert corrected.assigns.profile_form_draft["default_model"] == "corrected"
+
+      assert {:ok, profile} =
+               ProviderProfiles.parse_editor(
+                 corrected.assigns.profile_form_draft,
+                 "test",
+                 original
+               )
+
+      assert profile["default_model"] == "corrected"
+      refute Map.has_key?(profile, "models")
+      refute Map.has_key?(profile, "default_model_name")
+      assert corrected.assigns.file_config == socket.assigns.file_config
+    end
+
+    test "real rows ignore stale helper names and removing the last row initializes from the retained default" do
+      socket =
+        editor_socket(%{
+          "provider" => "openai",
+          "default_model" => "saved",
+          "models" => [%{"model" => "override", "temperature" => 0.5}]
+        })
+
+      assert {:noreply, edited} =
+               ModelProfileEvents.model_profile_form_change(socket, %{
+                 "_target" => ["default_model"],
+                 "default_model_name" => "stale",
+                 "default_model" => "selected",
+                 "models" => %{"0" => %{"model" => "override", "temperature" => "0.5"}}
+               })
+
+      assert {:ok, profile} =
+               ProviderProfiles.parse_editor(edited.assigns.profile_form_draft, "test")
+
+      assert profile["default_model"] == "selected"
+      assert profile["models"] == [%{"model" => "override", "temperature" => 0.5}]
+      refute Map.has_key?(profile, "default_model_name")
+
+      assert {:noreply, removed} =
+               ModelProfileEvents.remove_profile_model(edited, %{"index" => "0"})
+
+      assert removed.assigns.profile_form_draft["models"] == []
+      assert removed.assigns.profile_form_draft["default_model"] == "selected"
+      assert removed.assigns.profile_form_draft["default_model_name"] == "selected"
+
+      assert {:noreply, added} = ModelProfileEvents.add_profile_model(removed, %{})
+      assert added.assigns.profile_form_draft["models"] == [%{"model" => ""}]
+      assert added.assigns.profile_form_draft["default_model"] == "selected"
+      refute Map.has_key?(added.assigns.profile_form_draft, "default_model_name")
+      assert added.assigns.file_config == socket.assigns.file_config
     end
   end
 
@@ -903,5 +1136,22 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
     assert updated["models"] == [%{"model" => "first"}, %{"model" => ""}]
     assert updated["off_peak_days"] == ["weekends"]
     assert hd(profile["models"])["extra"] == %{"a" => 1}
+  end
+
+  defp editor_socket(profile) do
+    config = %{llm: %{providers: [Map.put(profile, "id", "saved")]}}
+
+    %Phoenix.LiveView.Socket{
+      assigns: %{
+        __changed__: %{},
+        file_config: config,
+        editing_profile_id: "saved",
+        profile_form_draft: ProviderProfiles.draft(profile),
+        profile_generated_id: nil,
+        profile_form_errors: %{},
+        profile_save_token: nil,
+        profile_advanced_open: nil
+      }
+    }
   end
 end

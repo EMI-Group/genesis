@@ -3,14 +3,17 @@
 ## Intent
 
 Focused helper, canonical provider-editor and credential-status page contracts live here.
-The five suites declare 119 tests and preserve `async: true`; pure helpers neither mount pages nor start shared services.
+The five suites declare 126 tests and preserve `async: true`; pure helpers neither mount pages nor start shared services.
 
 ## API Surface
 
-- `provider_profiles_contract_test.exs` holds 32 pure contracts for `ProviderProfiles`, `ConfigIO`, `AuthStatus` and detached `ModelProfileEvents` sockets.
+- `provider_profiles_contract_test.exs` holds 39 pure contracts for `ProviderProfiles`, `ConfigIO`, `AuthStatus` and detached `ModelProfileEvents` sockets.
 - Simplified-editor identity contracts distinguish blank or untouched generated ids from explicit identities, allocate provider-derived ids and display names independently across collisions, and preserve saved identity on blank edits including a saved string id `"new"`.
 - Detached form-change contracts pin generated-id tracking and explicit identity edits through `_target` without mounting a page or writing configuration.
 - Checkbox contracts preserve custom reasoning values and order, distinguish omitted inheritance from explicit empty inventories, strip override sentinels, and clear saved schedule-day selections through hidden empty seeds.
+- Explicit nested reasoning overrides with an empty inventory must remove a stale `high` default even when the submitted default remains `high`, for both boolean and string override flags; legacy unrestricted rows without that UI sentinel retain their defaults.
+- Default-only helper contracts pin `_target`-directed name/select synchronization, save without a prior change event, blank validation and correction, UI-helper stripping, absent/empty/blank model-row preservation and last-row removal followed by Add.
+- Advanced credential-source contracts round-trip `api_key_env_var` through detached submissions, preserving omitted values and clearing explicit blanks without leaking the legacy key.
 - Minimal-edit round trips retain hidden generation/JSON, OAuth path, endpoint, concurrency, context-window and schedule fields, while invalid nested generation values expose exact input-name error paths and remain intact in drafts.
 - Provider parsing pins string-keyed canonical profiles, numeric ordering of nested models, sparse generation overrides, typed numbers/JSON, blank override clearing back to inheritance and untouched draft round trips.
 - Reasoning contracts distinguish inherited inventories/defaults from explicit unrestricted model inventories and reject incompatible inherited defaults.
@@ -64,8 +67,9 @@ The four new-profile success cases assert the nested model shape in live config 
 The unsupported-auth case retains its invalid authentication fixture and verifies rejection without persistence.
 Focused validation uses `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/auth_status_test.exs --only 'describe:profile save round-trip (auth_mode / oauth_file persistence)' --seed 0` (also seed 1) and passes all six selected tests with 22 excluded in each run.
 This focused run does not establish full-file, directory or broader dashboard-suite success.
-The pure canonical helper slice is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/model_profile_helpers_test.exs --seed 1` and contains 85 passing tests.
-The full helper subtree contains 119 tests and passes with `mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` and `--seed 1`.
+The pure canonical helper slice is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/model_profile_helpers_test.exs --seed 1` and selects 92 tests.
+Default-only helper synchronization regressions require the production state/parser implementation; helper-slice success alone does not establish mounted Save → remount success.
+The full helper subtree contains 126 tests and runs with `mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` or `--seed 1`.
 Mounted auth identity assertions pin the profile heading and separate provider text within the account article selected by its Edit control, including the sibling article retained after stripping credential-status blocks.
 These row-scoped identity checks preserve the credential verdict, managed-path, writable-path remedy and vendor-guidance surface-split assertions.
 
