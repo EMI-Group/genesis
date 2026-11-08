@@ -52,13 +52,14 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
 
   # Render smoke tests: data-layout is server-driven. The bottom toolbar
   # (.input-controls) is IDENTICAL in both layouts — DOM order AND visual
-  # order are attach "+" (bottom-left) → free space → a RIGHT-ALIGNED cluster:
-  # mode select → (custom-agent select) → model select → circular icon-only
-  # send button (the cluster's LAST element = the row's far right, with NO
-  # auto margin of its own). The row's auto margin (ml-auto) lives on the MODE
-  # select — it absorbs the free space so the cluster packs at the right edge.
-  # Only the textarea size differs per layout, so the tests assert the unified
-  # classes via Floki.
+  # order are attach "+" (bottom-left) → mode+speed capsule (left) → free
+  # space → a RIGHT-ALIGNED cluster: (custom-agent select) → model capsule /
+  # legacy model select → circular icon-only send button (the cluster's LAST
+  # element = the row's far right, with NO auto margin of its own). The row's
+  # auto margin (ml-auto) lives on the FIRST element of the right cluster —
+  # the model capsule's ml-auto, else the custom-agent select's ml-auto, else
+  # the legacy model select's ml-auto. Only the textarea size differs per
+  # layout, so the tests assert the unified classes via Floki.
   describe "task_form/1 rendering" do
     test "compact layout renders data-layout=compact with the circular send button" do
       html =
@@ -81,33 +82,31 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert html =~ ~s(data-layout="expanded")
     end
 
-    test "Layout A (compact): compact selects + right-aligned cluster (mode select ml-auto)" do
+    test "Layout A (compact): compact controls + right-aligned cluster (legacy model select ml-auto)" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: "Short",
           model_profiles: [%{id: "pro", model: "gpt-x"}]
         )
 
-      # Compact controls: the selects are select-sm scale (no select-md), the
-      # send button is a small filled circle at the row's far right. The
-      # right-aligned cluster [mode | model | send] is packed right by the MODE
-      # select's ml-auto — the launch button carries NO auto margin (no order-*
-      # / mx-auto centering trick anywhere).
-      assert mode_class(html) =~ "select-sm"
-      refute mode_class(html) =~ "select-md"
+      # Compact controls: the legacy model select is select-sm scale (no
+      # select-md) and the send button is a small filled circle at the row's
+      # far right. The right-aligned cluster [model | send] is packed right by
+      # the legacy model select's ml-auto — the launch button carries NO auto
+      # margin (no order-* / mx-auto centering trick anywhere).
       assert model_class(html) =~ "select-sm"
       refute model_class(html) =~ "select-md"
       assert button_class(html) =~ "btn-circle"
       assert button_class(html) =~ "btn-sm"
-      assert mode_class(html) =~ "ml-auto"
+      assert model_class(html) =~ "ml-auto"
       refute button_class(html) =~ "ml-auto"
-      refute mode_class(html) =~ "order-"
-      refute mode_class(html) =~ "mx-auto"
+      refute model_class(html) =~ "order-"
+      refute model_class(html) =~ "mx-auto"
       refute button_class(html) =~ "order-"
       refute button_class(html) =~ "mx-auto"
     end
 
-    test "toolbar DOM order is attach dropdown | mode | model | send (pins real order)" do
+    test "toolbar DOM order is attach dropdown | mode+speed capsule | model | send (pins real order)" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: "Short",
@@ -119,19 +118,20 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
 
       # Interactive controls in document order: the attach-kind dropdown's "+"
       # <summary> trigger first (bottom-left — inside the wrapping
-      # <details#objective-file-attach>), then mode select, model select,
-      # circular send button LAST (rightmost member of the right-aligned
-      # cluster). The hidden .file-manual fallback div is a sibling in the same
-      # row but is not an interactive control.
+      # <details#objective-file-attach>), then the fused mode+speed capsule,
+      # then the legacy model select, then the circular send button LAST
+      # (rightmost member of the right-aligned cluster). The hidden
+      # .file-manual fallback div is a sibling in the same row but is not an
+      # interactive control.
       found =
         Floki.find(
           controls,
-          "summary#objective-file-button, select[name=mode], select[name=model_id], button#task-launch-button"
+          "summary#objective-file-button, details#mode-speed-capsule, select[name=model_id], button#task-launch-button"
         )
 
       assert [
                {"summary", attach_attrs, _},
-               {"select", mode_attrs, _},
+               {"details", capsule_attrs, _},
                {"select", model_attrs, _},
                {"button", launch_attrs, _}
              ] = found
@@ -144,16 +144,23 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       details_class = details |> Floki.attribute("class") |> List.first() |> to_string()
       assert details_class =~ "dropdown"
 
-      assert {"name", "mode"} in mode_attrs
+      # The fused mode+speed capsule is the direct sibling after the attach
+      # dropdown (its hidden .file-manual sibling takes no flex space).
+      assert {"id", "mode-speed-capsule"} in capsule_attrs
+      assert {"class", capsule_class} = List.keyfind(capsule_attrs, "class", 0)
+      assert capsule_class =~ "capsule"
+      assert capsule_class =~ "min-w-0"
+      assert capsule_class =~ "shrink-0"
+
       assert {"name", "model_id"} in model_attrs
       assert {"id", "task-launch-button"} in launch_attrs
       assert {"type", "submit"} in launch_attrs
 
-      # Free-space placement: the row's auto margin lives on the MODE select
-      # (ml-auto — the cluster lead), NOT on the launch button, so the free
-      # space sits before the cluster [mode | model | send] rather than
-      # between model and launch.
-      assert mode_class(html) =~ "ml-auto"
+      # Free-space placement: the row's auto margin lives on the legacy model
+      # select (ml-auto — the cluster lead), NOT on the launch button, so the
+      # free space sits before the cluster [model | send] rather than between
+      # model and launch.
+      assert model_class(html) =~ "ml-auto"
       assert {"class", launch_class} = List.keyfind(launch_attrs, "class", 0)
       refute launch_class =~ "ml-auto"
     end
@@ -192,7 +199,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert pro |> Floki.attribute("value") |> List.first() == "pro"
     end
 
-    test "Layout B (expanded): identical toolbar — right-aligned cluster: mode select ml-auto, send button last" do
+    test "Layout B (expanded): identical toolbar — right-aligned cluster: legacy model select ml-auto, send button last" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: String.duplicate("a", 1300),
@@ -202,28 +209,47 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert html =~ ~s(data-layout="expanded")
 
       # The bottom toolbar is identical in both layouts (only the textarea
-      # size differs): compact selects in a right-aligned cluster — the MODE
-      # select carries the row's ml-auto (cluster lead), the circular send
-      # button is the cluster's last element with no auto margin.
-      assert mode_class(html) =~ "select-sm"
+      # size differs): compact legacy model select in a right-aligned cluster —
+      # the model select carries the row's ml-auto (cluster lead), the circular
+      # send button is the cluster's last element with no auto margin.
       assert model_class(html) =~ "select-sm"
       assert button_class(html) =~ "btn-circle"
-      assert mode_class(html) =~ "ml-auto"
+      assert model_class(html) =~ "ml-auto"
       refute button_class(html) =~ "ml-auto"
-      refute mode_class(html) =~ "mx-auto"
+      refute model_class(html) =~ "mx-auto"
       refute button_class(html) =~ "mx-auto"
     end
 
-    test "right-aligned cluster holds when no model profiles exist (mode select ml-auto)" do
+    test "toolbar holds without a model select: launch button stays last and carries no auto margin" do
       html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
 
-      # No order-* / mx-auto centering: the MODE select's ml-auto still packs
-      # the cluster at the row's right edge even in the 2-control edge case
-      # (no model select); the circular send button carries no auto margin.
-      assert mode_class(html) =~ "ml-auto"
+      # No model select is rendered when no legacy model profiles exist. The
+      # fused mode+speed capsule sits on the LEFT (after the attach dropdown),
+      # and the circular send button is still the row's LAST interactive
+      # control with no auto margin of its own.
       assert button_class(html) =~ "btn-circle"
       refute button_class(html) =~ "ml-auto"
       refute html =~ ~s(name="model_id")
+
+      doc = parse(html)
+      [controls] = Floki.find(doc, ".input-controls")
+
+      found =
+        Floki.find(
+          controls,
+          "summary#objective-file-button, details#mode-speed-capsule, button#task-launch-button"
+        )
+
+      assert [
+               {"summary", attach_attrs, _},
+               {"details", capsule_attrs, _},
+               {"button", launch_attrs, _}
+             ] = found
+
+      assert {"id", "objective-file-button"} in attach_attrs
+      assert {"id", "mode-speed-capsule"} in capsule_attrs
+      assert {"id", "task-launch-button"} in launch_attrs
+      assert {"type", "submit"} in launch_attrs
     end
 
     test "disabled state renders the welcome overlay and suppresses every task-launch placeholder" do
@@ -278,29 +304,68 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert controls_class =~ "flex-nowrap"
       refute controls_class =~ "flex-wrap"
 
-      # Both selects shrink/truncate instead of forcing the row wider.
-      assert mode_class(html) =~ "min-w-0"
-      assert mode_class(html) =~ "truncate"
+      # The fused capsule and the legacy model select shrink/truncate instead
+      # of forcing the row wider: the capsule carries min-w-0 + shrink-0 on its
+      # <details>, with the truncating main label inside, and the legacy model
+      # select carries min-w-0 + truncate directly.
+      [capsule] = Floki.find(doc, "details#mode-speed-capsule")
+      capsule_class = capsule |> Floki.attribute("class") |> List.first() |> to_string()
+      assert capsule_class =~ "min-w-0"
+      assert capsule_class =~ "shrink-0"
+
+      [main] = Floki.find(doc, "#mode-speed-capsule .capsule-main")
+      main_class = main |> Floki.attribute("class") |> List.first() |> to_string()
+      assert main_class =~ "min-w-0"
+      assert main_class =~ "truncate"
+
       assert model_class(html) =~ "min-w-0"
       assert model_class(html) =~ "truncate"
     end
 
-    test "mode select keeps its four options and task_change event" do
+    test "mode capsule keeps its four options, order and task_change event" do
       html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
 
-      assert html =~ ~s(name="mode")
-      assert html =~ ~s(phx-change="task_change")
-      assert html =~ "Initialize existing project"
-      assert html =~ ~s(value="genesis_existing")
-      assert html =~ "Create new project"
-      assert html =~ ~s(value="genesis_new")
-      assert html =~ "Evolve existing project"
-      assert html =~ ~s(value="evolve_simple")
-      assert html =~ "Custom Agent"
-      assert html =~ ~s(value="custom_agent")
+      doc = parse(html)
+      options = Floki.find(doc, "#mode-speed-capsule .capsule-list button")
+      assert length(options) == 4
+
+      assert [
+               {"button", existing_attrs, _},
+               {"button", new_attrs, _},
+               {"button", evolve_attrs, _},
+               {"button", custom_attrs, _}
+             ] = options
+
+      # Same values and order as the removed mode select, now carried as
+      # phx-value-mode on type=button items that fire task_change.
+      assert {"id", "mode-option-genesis_existing"} in existing_attrs
+      assert {"phx-click", "task_change"} in existing_attrs
+      assert {"phx-value-mode", "genesis_existing"} in existing_attrs
+
+      assert {"id", "mode-option-genesis_new"} in new_attrs
+      assert {"phx-click", "task_change"} in new_attrs
+      assert {"phx-value-mode", "genesis_new"} in new_attrs
+
+      assert {"id", "mode-option-evolve_simple"} in evolve_attrs
+      assert {"phx-click", "task_change"} in evolve_attrs
+      assert {"phx-value-mode", "evolve_simple"} in evolve_attrs
+
+      assert {"id", "mode-option-custom_agent"} in custom_attrs
+      assert {"phx-click", "task_change"} in custom_attrs
+      assert {"phx-value-mode", "custom_agent"} in custom_attrs
+
+      labels = Enum.map(options, fn option -> option |> Floki.text() |> String.trim() end)
+
+      assert labels == [
+               "Initialize existing project",
+               "Create new project",
+               "Evolve existing project",
+               "Custom Agent"
+             ]
+
       # The Self-Reflective (reflect) mode was removed with the Home chat page.
       refute html =~ "Self-Reflective"
-      refute html =~ ~s(value="reflect")
+      refute html =~ ~s(phx-value-mode="reflect")
     end
 
     test "Launch button carries the server-rendered data-mode attribute" do
@@ -660,53 +725,58 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
     end
   end
 
-  # Speed ↔ quality segmented control — the bottom-LEFT 3-step `join` group in
-  # .input-controls, sitting between the attach "+" dropdown and the mode
-  # select (which carries the row's ml-auto). Three type="button" steps (NEVER
-  # submit — they live inside <form id="task-form">), each firing
-  # phx-click="select_quality_level" with its phx-value-level. ONLY the step
-  # whose level equals the component attr @quality_level (default "balanced")
-  # carries btn-active + btn-primary and aria-pressed="true"; the other two are
-  # btn-ghost with aria-pressed="false".
+  # Speed ↔ quality segmented control — the fused mode+speed capsule's Layer-1
+  # hero (.capsule-stops, role="group") in #mode-speed-capsule. The capsule
+  # sits on the toolbar LEFT, right after the attach "+" dropdown. It holds
+  # three type="button" steps (NEVER submit — they live inside <form
+  # id="task-form">), each firing phx-click="select_quality_level" with its
+  # phx-value-level. ONLY the step whose level equals the component attr
+  # @quality_level (default "balanced") carries capsule-stop-active and
+  # aria-pressed="true"; the other two have aria-pressed="false".
   describe "speed ↔ quality segmented control" do
-    test "control group is a join group between the attach dropdown and the mode select" do
+    test "control group is the fused capsule between the attach dropdown and the launch button" do
       html = render_component(&TaskFormComponents.task_form/1, prompt: "")
 
       doc = parse(html)
-      [control] = Floki.find(doc, "div#quality-level-control")
-      control_class = control |> Floki.attribute("class") |> List.first() |> to_string()
+      [capsule] = Floki.find(doc, "details#mode-speed-capsule")
+      capsule_class = capsule |> Floki.attribute("class") |> List.first() |> to_string()
 
-      assert control_class =~ "join"
-      assert control_class =~ "shrink-0"
-      assert control |> Floki.attribute("role") |> List.first() == "group"
+      assert capsule_class =~ "capsule"
+      assert capsule_class =~ "min-w-0"
+      assert capsule_class =~ "shrink-0"
+
+      # Layer 1 is the speed/quality hero group (role="group").
+      [stops] = Floki.find(doc, "#mode-speed-capsule .capsule-stops")
+      assert stops |> Floki.attribute("role") |> List.first() == "group"
 
       # Placement contract: a DIRECT child of .input-controls, AFTER the
-      # attach-kind dropdown and BEFORE the mode select (so it stays
-      # bottom-LEFT, left of the mode select's ml-auto).
+      # attach-kind dropdown (and its hidden .file-manual sibling) and BEFORE
+      # the circular send button — the capsule stays bottom-LEFT, left of the
+      # right-aligned cluster.
       [controls] = Floki.find(doc, ".input-controls")
 
       found =
         Floki.find(
           controls,
-          "details#objective-file-attach, div#quality-level-control, select[name=mode]"
+          "details#objective-file-attach, details#mode-speed-capsule, button#task-launch-button"
         )
 
       assert [
                {"details", attach_attrs, _},
-               {"div", quality_attrs, _},
-               {"select", mode_attrs, _}
+               {"details", capsule_attrs, _},
+               {"button", launch_attrs, _}
              ] = found
 
       assert {"id", "objective-file-attach"} in attach_attrs
-      assert {"id", "quality-level-control"} in quality_attrs
-      assert {"name", "mode"} in mode_attrs
+      assert {"id", "mode-speed-capsule"} in capsule_attrs
+      assert {"id", "task-launch-button"} in launch_attrs
     end
 
     test "renders exactly three steps with the contract ids, levels and labels" do
       html = render_component(&TaskFormComponents.task_form/1, prompt: "")
 
       doc = parse(html)
-      steps = Floki.find(doc, "div#quality-level-control button")
+      steps = Floki.find(doc, "#mode-speed-capsule .capsule-stops button")
       assert length(steps) == 3
 
       assert [
@@ -737,13 +807,19 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
     test "default (balanced) highlights the balanced step only" do
       html = render_component(&TaskFormComponents.task_form/1, prompt: "")
 
-      assert quality_class(html, "balanced") == "btn btn-xs join-item btn-active btn-primary"
+      assert quality_class(html, "balanced") ==
+               "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium capsule-stop-active"
+
       assert quality_attr(html, "balanced", "aria-pressed") == "true"
 
-      assert quality_class(html, "fast") == "btn btn-xs join-item btn-ghost"
+      assert quality_class(html, "fast") ==
+               "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium"
+
       assert quality_attr(html, "fast", "aria-pressed") == "false"
 
-      assert quality_class(html, "high_quality") == "btn btn-xs join-item btn-ghost"
+      assert quality_class(html, "high_quality") ==
+               "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium"
+
       assert quality_attr(html, "high_quality", "aria-pressed") == "false"
     end
 
@@ -751,13 +827,18 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       html =
         render_component(&TaskFormComponents.task_form/1, prompt: "", quality_level: "fast")
 
-      assert quality_class(html, "fast") == "btn btn-xs join-item btn-active btn-primary"
+      assert quality_class(html, "fast") ==
+               "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium capsule-stop-active"
+
       assert quality_attr(html, "fast", "aria-pressed") == "true"
 
-      assert quality_class(html, "balanced") == "btn btn-xs join-item btn-ghost"
+      assert quality_class(html, "balanced") ==
+               "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium"
+
       assert quality_attr(html, "balanced", "aria-pressed") == "false"
 
-      assert quality_class(html, "high_quality") == "btn btn-xs join-item btn-ghost"
+      assert quality_class(html, "high_quality") ==
+               "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium"
     end
 
     test "quality_level: high_quality moves the active highlight to the high-quality step" do
@@ -767,11 +848,16 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
           quality_level: "high_quality"
         )
 
-      assert quality_class(html, "high_quality") == "btn btn-xs join-item btn-active btn-primary"
+      assert quality_class(html, "high_quality") ==
+               "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium capsule-stop-active"
+
       assert quality_attr(html, "high_quality", "aria-pressed") == "true"
 
-      assert quality_class(html, "fast") == "btn btn-xs join-item btn-ghost"
-      assert quality_class(html, "balanced") == "btn btn-xs join-item btn-ghost"
+      assert quality_class(html, "fast") ==
+               "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium"
+
+      assert quality_class(html, "balanced") ==
+               "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium"
     end
 
     test "every step is type=button (never submits the enclosing task form)" do
@@ -805,22 +891,21 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
     sel |> Floki.attribute("class") |> List.first() |> to_string()
   end
 
-  defp mode_class(html) do
-    [sel] = Floki.find(parse(html), "select[name=mode]")
-    sel |> Floki.attribute("class") |> List.first() |> to_string()
-  end
-
   # --- speed ↔ quality helpers ---
 
-  # The step button for one segment of the speed ↔ quality control (ids are
-  # quality-level-fast / -balanced / -high_quality).
+  # The step button for one segment of the fused capsule's speed ↔ quality
+  # hero (ids are quality-level-fast / -balanced / -high_quality).
   defp quality_step(html, level) do
     [btn] = Floki.find(parse(html), "button#quality-level-#{level}")
     btn
   end
 
   defp quality_class(html, level) do
-    quality_step(html, level) |> Floki.attribute("class") |> List.first() |> to_string()
+    quality_step(html, level)
+    |> Floki.attribute("class")
+    |> List.first()
+    |> to_string()
+    |> String.trim()
   end
 
   defp quality_attr(html, level, attr) do
