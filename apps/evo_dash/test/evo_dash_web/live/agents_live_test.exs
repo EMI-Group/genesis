@@ -28,8 +28,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # out-of-band renders): the work runs off-process on a shared host whose
   # scheduling swings 10-30x (test/CONTEXT.md), so the previous 5 s budgets
   # intermittently expired. The waits stay bounded and still fail loudly.
-  @async_wait_budget_ms
-  30_000
+  @async_wait_budget_ms 30_000
 
   setup do
     # The scheduler ETS tables (:evogit_sched_meta / :evogit_agent_state) are

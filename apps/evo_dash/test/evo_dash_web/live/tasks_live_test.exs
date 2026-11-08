@@ -23,6 +23,20 @@ defmodule EvoDashWeb.TasksLiveTest do
   import Phoenix.LiveViewTest
 
   alias EvoGit.TaskInfo
+  # Poll interval for wait_until/3. Every poll is a cheap synchronous
+  # round-trip (:sys.get_state / a render) and the fastest transition this file
+  # waits on is the debounce itself — 10ms in the suite
+  # (:node_aware_reload_debounce_ms in test_helper.exs), 300ms in production —
+  # so a 2ms cadence observes any of them within a couple of scheduling quanta
+  # while staying comfortably above 0 (never a hot spin; the previous cadence
+  # was a hardcoded 10ms). A call site can opt into a different cadence with
+  # wait_until/3's third argument.
+  @wait_poll_ms 2
+  # The shared host swings 10-30x under load (see test/CONTEXT.md); the 5 s
+  # :sys.get_state default and 1-2 s poll budgets exit on a loaded machine.
+  @assigns_timeout_ms 30_000
+  # A load-tolerant deadline for bounded polls / async-result awaits.
+  @async_wait_budget_ms 30_000
 
   setup do
     # Isolated Store + TaskRegistry against a temp sqlite file. The helper owns
