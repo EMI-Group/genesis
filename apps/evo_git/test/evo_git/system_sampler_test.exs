@@ -37,9 +37,10 @@ defmodule EvoGit.SystemSamplerTest do
   # A day-long tick interval: the sampler never self-ticks during a test run.
   @high_interval 86_400_000
 
-  # The exact 13-key sample contract, sorted (atom order == alphabetical).
-  # `llm_slots` (the real per-model LLM slot occupancy map) sorts between the
-  # aggregated `llm_capacity` and `llm_used` keys.
+  # The exact 14-key sample contract, sorted (atom order == alphabetical).
+  # `llm_pools` (the cached provider-account pool metadata) and `llm_slots`
+  # (the real per-model LLM slot occupancy map) sort between the aggregated
+  # `llm_capacity` and `llm_used` keys.
   @sorted_keys [
     :agents_blocked,
     :agents_pending,
@@ -47,6 +48,7 @@ defmodule EvoGit.SystemSamplerTest do
     :agents_total,
     :agents_waiting,
     :llm_capacity,
+    :llm_pools,
     :llm_slots,
     :llm_used,
     :llm_waiting,
@@ -167,6 +169,58 @@ defmodule EvoGit.SystemSamplerTest do
     %{llm_capacity: sample.llm_capacity, tool_capacity: sample.tool_capacity}
   end
 
+  # --- Canonical provider-profile fixtures ---
+  #
+  # The scheduler's resolved config carries `:provider_profiles` as the
+  # canonical STRING-keyed `[[llm.providers]]` accounts (one account, several
+  # models). Built by hand — never from the developer's real user config — so
+  # the assertions below pin the sampler's behavior, not the environment.
+  #
+  # Accounts, in order: explicit 4; explicit 2 with a mixed model inventory
+  # (canonical `"model"`, qualified binary, bare binary, legacy `"id"`, and an
+  # unusable `%{}`); absent concurrency (⇒ project default 3); explicit 0
+  # (a hard pause that must be preserved).
+  defp canonical_config do
+    %{
+      provider_profiles: [
+        %{
+          "id" => "acct-main",
+          "name" => "Main Account",
+          "provider" => "openai",
+          "concurrency" => 4,
+          "models" => [%{"model" => "gpt-5"}, %{"model" => "gpt-5-mini"}]
+        },
+        %{
+          "id" => "acct-multi",
+          "provider" => "anthropic",
+          "concurrency" => 2,
+          "models" => [
+            %{"model" => "claude-a"},
+            %{"model" => "anthropic:claude-b"},
+            "claude-c",
+            %{"id" => "claude-d"},
+            %{}
+          ]
+        },
+        %{"id" => "acct-default-concurrency", "provider" => "zai", "models" => []},
+        %{"id" => "acct-paused", "provider" => "deepseek", "concurrency" => 0}
+      ],
+      max_tool_concurrency: 6
+    }
+  end
+
+  defp canonical_pools do
+    %{
+      "acct-main" => %{label: "Main Account", models: ["gpt-5", "gpt-5-mini"]},
+      "acct-multi" => %{
+        label: "acct-multi",
+        models: ["claude-a", "claude-b", "claude-c", "claude-d"]
+      },
+      "acct-default-concurrency" => %{label: "acct-default-concurrency", models: []},
+      "acct-paused" => %{label: "acct-paused", models: []}
+    }
+  end
+
   # --- Scheduler-call failure seam helpers ---
 
   # Injects a failing seam fun under `key` and guarantees the env key is
@@ -206,6 +260,16 @@ defmodule EvoGit.SystemSamplerTest do
       unless is_nil(tid), do: :ets.update_counter(tid, :calls, {2, 1}, {:calls, 0})
 
       exit({:timeout, {GenServer, :call, [EvoGit.AgentScheduler, :get_llm_slot_status, 5000]}})
+    end
+  end
+
+  # A config-fetch seam serving a FIXED map (counting calls in `tid`): the
+  # sampler derives BOTH the capacity totals and the provider-account pools
+  # from this one read, so the counter proves the refresh cadence.
+  defp fixed_config_fun(tid, config) do
+    fn ->
+      :ets.update_counter(tid, :calls, {2, 1}, {:calls, 0})
+      config
     end
   end
 
@@ -285,15 +349,57 @@ defmodule EvoGit.SystemSamplerTest do
       assert counts.ready == 0
     end
 
-    test "config_totals/1 sums per-profile concurrency and max_tool_concurrency" do
-      assert EvoGit.SystemSampler.config_totals(%{
-               model_profiles: [
-                 %{id: "a", concurrency: 3},
-                 %{id: "b", concurrency: 5},
-                 %{id: "c"}
-               ],
-               max_tool_concurrency: 9
-             }) == %{llm_capacity: 8, tool_capacity: 9}
+    test "config_totals/1 keeps the legacy per-model-profile concurrency sum when no provider profiles exist" do
+      legacy = %{
+        model_profiles: [
+          %{id: "a", concurrency: 3},
+          %{id: "b", concurrency: 5},
+          %{id: "c"}
+        ],
+        max_tool_concurrency: 9
+      }
+
+      assert EvoGit.SystemSampler.config_totals(legacy) == %{llm_capacity: 8, tool_capacity: 9}
+
+      # An EMPTY canonical account list is still the legacy shape.
+      assert EvoGit.SystemSampler.config_totals(Map.put(legacy, :provider_profiles, [])) == %{
+               llm_capacity: 8,
+               tool_capacity: 9
+             }
+    end
+
+    test "config_totals/1 sums canonical provider-ACCOUNT concurrency (absent ⇒ 3, explicit 0 preserved)" do
+      assert EvoGit.SystemSampler.config_totals(canonical_config()) == %{
+               # 4 + 2 + default 3 (absent) + 0 (hard pause)
+               llm_capacity: 9,
+               tool_capacity: 6
+             }
+    end
+
+    test "config_totals/1 prefers provider accounts over a stale model_profiles inventory" do
+      # The canonical selection inventory in :model_profiles carries NO
+      # :concurrency, so a canonical config must never be summed through it —
+      # even when legacy entries are still present.
+      config =
+        canonical_config()
+        |> Map.put(:model_profiles, [
+          %{provider_profile_id: "acct-main", model: "gpt-5", profile_name: "Main Account"}
+        ])
+
+      assert EvoGit.SystemSampler.config_totals(config).llm_capacity == 9
+    end
+
+    test "config_totals/1 reads a STRING-keyed provider-account list and string/atom account keys" do
+      config = %{
+        "provider_profiles" => [
+          %{"id" => "a", "concurrency" => 4},
+          %{id: "b", concurrency: 5},
+          %{"id" => "c"}
+        ],
+        max_tool_concurrency: 2
+      }
+
+      assert EvoGit.SystemSampler.config_totals(config) == %{llm_capacity: 12, tool_capacity: 2}
     end
 
     test "config_totals/1 yields zero capacities for missing keys and non-maps" do
@@ -306,16 +412,82 @@ defmodule EvoGit.SystemSamplerTest do
              }
     end
 
-    test "build_sample/3 composes counts, totals and liveness into the exact 13-key map with an empty llm_slots" do
+    test "real schema output feeds config_totals/1 and llm_pools/1 (no assumed key renaming)" do
+      # The scheduler's `:provider_profiles` carries exactly what
+      # `EvoGit.Config.Schema.provider_profiles/1` returns for the `[llm]`-
+      # shaped config: STRING-keyed accounts with a nested `"models"` list
+      # whose ids live under `"model"`, and `"concurrency"` defaulted to 3.
+      accounts =
+        EvoGit.Config.Schema.provider_profiles(%{
+          "llm" => %{
+            "providers" => [
+              %{
+                "id" => "real-acct",
+                "name" => "Real Account",
+                "provider" => "openai",
+                "concurrency" => 4,
+                "models" => ["gpt-5", %{"id" => "gpt-5-mini"}]
+              },
+              %{"id" => "real-default", "provider" => "anthropic", "models" => ["claude-x"]}
+            ]
+          }
+        })
+
+      assert [%{"id" => "real-acct", "models" => models} | _] = accounts
+      assert Enum.map(models, &Map.fetch!(&1, "model")) == ["gpt-5", "gpt-5-mini"]
+
+      config = %{provider_profiles: accounts, max_tool_concurrency: 2}
+
+      # 4 (explicit) + 3 (the schema's injected default) — the sampler's
+      # absent-concurrency default agrees with the schema's.
+      assert EvoGit.SystemSampler.config_totals(config) == %{llm_capacity: 7, tool_capacity: 2}
+
+      assert EvoGit.SystemSampler.llm_pools(config) == %{
+               "real-acct" => %{label: "Real Account", models: ["gpt-5", "gpt-5-mini"]},
+               "real-default" => %{label: "real-default", models: ["claude-x"]}
+             }
+    end
+
+    test "llm_pools/1 maps ONE multi-model account to ONE pool entry with bare models in configured order" do
+      assert EvoGit.SystemSampler.llm_pools(canonical_config()) == canonical_pools()
+    end
+
+    test "llm_pools/1 accepts atom-keyed accounts and skips entries without a usable id" do
+      config = %{
+        provider_profiles: [
+          %{id: :acct_atom, models: [%{model: "m1"}, nil, %{context_window: 1000}, "m2"]},
+          %{name: "no id", models: [%{model: "orphan"}]},
+          %{id: "", models: [%{model: "empty-id"}]},
+          "not-a-map"
+        ]
+      }
+
+      assert EvoGit.SystemSampler.llm_pools(config) == %{
+               "acct_atom" => %{label: "acct_atom", models: ["m1", "m2"]}
+             }
+    end
+
+    test "llm_pools/1 is empty for legacy/empty configs and non-maps" do
+      legacy = %{model_profiles: [%{id: "a", concurrency: 3}], max_tool_concurrency: 9}
+
+      assert EvoGit.SystemSampler.llm_pools(legacy) == %{}
+      assert EvoGit.SystemSampler.llm_pools(Map.put(legacy, :provider_profiles, [])) == %{}
+      assert EvoGit.SystemSampler.llm_pools(%{}) == %{}
+      assert EvoGit.SystemSampler.llm_pools(nil) == %{}
+      assert EvoGit.SystemSampler.llm_pools([%{"id" => "a"}]) == %{}
+    end
+
+    test "build_sample/3 composes counts, totals and liveness into the exact 14-key map with empty llm_slots/llm_pools" do
       counts = %{total: 6, running: 2, blocked: 1, waiting: 1, pending: 1, ready: 1}
       totals = %{llm_capacity: 8, tool_capacity: 9}
 
       sample = EvoGit.SystemSampler.build_sample(counts, totals, true)
 
       assert Map.keys(sample) |> Enum.sort() == @sorted_keys
-      # The backward-compat 3-arity carries no live slot data, so llm_slots
-      # takes the scheduler-dead shape (%{}).
+      # The backward-compat 3-arity carries no live slot data and no cached
+      # pools, so both take the scheduler-dead shape (%{}).
       assert sample.llm_slots == %{}
+      assert sample.llm_pools == %{}
       assert sample.llm_used == 2
       assert sample.tool_used == 2
       assert sample.llm_waiting == 1
@@ -330,7 +502,7 @@ defmodule EvoGit.SystemSamplerTest do
       assert sample.scheduler_alive == true
     end
 
-    test "build_sample/4 threads the live per-model llm_slots map through unchanged" do
+    test "build_sample/4 threads the live per-model llm_slots map through unchanged and defaults llm_pools to %{}" do
       counts = %{total: 6, running: 2, blocked: 1, waiting: 1, pending: 1, ready: 1}
       totals = %{llm_capacity: 8, tool_capacity: 9}
 
@@ -343,8 +515,9 @@ defmodule EvoGit.SystemSamplerTest do
 
       assert Map.keys(sample) |> Enum.sort() == @sorted_keys
       # The 4-arity stores the live per-model map verbatim (this is the shape
-      # the sampler's tick path feeds it).
+      # the sampler's tick path used before llm_pools existed).
       assert sample.llm_slots == llm_slots
+      assert sample.llm_pools == %{}
       assert sample.llm_used == 2
       assert sample.tool_used == 2
       assert sample.llm_waiting == 1
@@ -356,6 +529,28 @@ defmodule EvoGit.SystemSamplerTest do
       assert sample.agents_blocked == 1
       assert sample.agents_waiting == 1
       assert sample.agents_pending == 1
+      assert sample.scheduler_alive == true
+    end
+
+    test "build_sample/5 adds the cached provider-account pools alongside the live slot map" do
+      counts = %{total: 3, running: 1, blocked: 2, waiting: 0, pending: 0, ready: 0}
+      totals = %{llm_capacity: 9, tool_capacity: 6}
+      llm_slots = %{"acct-main" => %{used: 1, waiting: 2, capacity: 4}}
+
+      sample =
+        EvoGit.SystemSampler.build_sample(
+          counts,
+          totals,
+          llm_slots,
+          true,
+          canonical_pools()
+        )
+
+      assert Map.keys(sample) |> Enum.sort() == @sorted_keys
+      assert sample.llm_slots == llm_slots
+      assert sample.llm_pools == canonical_pools()
+      assert sample.llm_capacity == 9
+      assert sample.tool_capacity == 6
       assert sample.scheduler_alive == true
     end
 
@@ -377,7 +572,7 @@ defmodule EvoGit.SystemSamplerTest do
   # branch produces (build_sample/3 with empty counts, zero totals, false).
 
   describe "dead-scheduler sample (pure helpers)" do
-    test "build_sample/3 with a dead scheduler produces the zeroed 13-key contract map" do
+    test "build_sample/3 with a dead scheduler produces the zeroed 14-key contract map" do
       sample =
         EvoGit.SystemSampler.build_sample(
           EvoGit.SystemSampler.status_counts([]),
@@ -387,8 +582,10 @@ defmodule EvoGit.SystemSamplerTest do
 
       assert Map.keys(sample) |> Enum.sort() == @sorted_keys
       assert sample.scheduler_alive == false
-      # Dead scheduler → no live slot data → the empty llm_slots shape.
+      # Dead scheduler → no live slot data and no cached provider-account
+      # metadata → both take the empty shape.
       assert sample.llm_slots == %{}
+      assert sample.llm_pools == %{}
       assert sample.agents_total == 0
       assert sample.agents_running == 0
       assert sample.agents_blocked == 0
@@ -412,7 +609,7 @@ defmodule EvoGit.SystemSamplerTest do
   # ── Broadcast contract ───────────────────────────────────────────
 
   describe "broadcast contract (unregistered instance)" do
-    test "one {:system_sample, node, seq, sample} per tick with the exact 13-key payload" do
+    test "one {:system_sample, node, seq, sample} per tick with the exact 14-key payload" do
       # Known status mix: total 6, running 2, blocked 1, waiting 1, pending 1,
       # ready 1 (ready is not exposed as a named sample key).
       seed_sched_meta([
@@ -424,10 +621,13 @@ defmodule EvoGit.SystemSamplerTest do
         {6, :ready}
       ])
 
-      # Capacities come from the RESOLVED scheduler config — computed BEFORE
-      # the ticks; the config is stable (all config-touching tests are
-      # async: false) so the sampler's cached totals must match.
-      expected_totals = EvoGit.SystemSampler.config_totals(RemoteAPI.get_config())
+      # Capacities AND provider-account pools come from the RESOLVED scheduler
+      # config — computed BEFORE the ticks; the config is stable (all
+      # config-touching tests are async: false) so the sampler's cached values
+      # must match.
+      scheduler_config = RemoteAPI.get_config()
+      expected_totals = EvoGit.SystemSampler.config_totals(scheduler_config)
+      expected_pools = EvoGit.SystemSampler.llm_pools(scheduler_config)
 
       :ok = Phoenix.PubSub.subscribe(EvoGit.PubSub, "system")
       on_exit(fn -> Phoenix.PubSub.unsubscribe(EvoGit.PubSub, "system") end)
@@ -458,6 +658,9 @@ defmodule EvoGit.SystemSamplerTest do
 
         assert sample.llm_capacity == expected_totals.llm_capacity
         assert sample.tool_capacity == expected_totals.tool_capacity
+        # Provider-account pools ride the same cached refresh (a legacy config
+        # with no provider profiles yields the empty map).
+        assert sample.llm_pools == expected_pools
 
         # Real-plumbing coverage for the DEFAULT (no-seam) llm_slots path: no
         # seam is set here, so the sampler reads the LIVE scheduler every tick
@@ -619,6 +822,72 @@ defmodule EvoGit.SystemSamplerTest do
     end
   end
 
+  # ── Canonical provider-profile pools (cached config) ────────────
+  #
+  # The config seam (`@config_seam_key`) serves a hand-built CANONICAL
+  # `[[llm.providers]]` config, so these tests pin the canonical path without
+  # mutating the module-global scheduler config that sibling async: false files
+  # share.
+
+  describe "canonical provider-profile pools (cached config)" do
+    test "capacity and llm_pools come from ONE :get_config read per refresh window" do
+      counter = new_seam_counter()
+      put_seam(@config_seam_key, fixed_config_fun(counter, canonical_config()))
+
+      expected_totals = %{llm_capacity: 9, tool_capacity: 6}
+
+      pid = start_unregistered_sampler()
+
+      # Ticks 1..10 sit inside ONE refresh window: tick 1 loads the totals AND
+      # the provider-account pools, ticks 2..10 are served from that cache —
+      # exactly ONE scheduler config read, never an extra per-tick one.
+      for _ <- 1..10 do
+        :ok = GenServer.call(pid, :tick)
+
+        assert capacities_of(last_sample(pid)) == expected_totals
+        assert last_sample(pid).llm_pools == canonical_pools()
+      end
+
+      assert seam_calls(counter) == 1
+
+      # Tick 11 (rem(11, 10) == 1) is the next refresh tick → one more read.
+      :ok = GenServer.call(pid, :tick)
+      assert seam_calls(counter) == 2
+      assert last_sample(pid).llm_pools == canonical_pools()
+      assert Process.alive?(pid)
+    end
+
+    test "a failed refresh keeps serving the STALE pools together with the stale totals" do
+      counter = new_seam_counter()
+      put_seam(@config_seam_key, fixed_config_fun(counter, canonical_config()))
+
+      pid = start_unregistered_sampler()
+
+      :ok = GenServer.call(pid, :tick)
+      assert last_sample(pid).llm_pools == canonical_pools()
+
+      # Wedged scheduler from tick 2 on: the valid stale cache (totals AND
+      # pools) keeps being served on the non-refresh ticks.
+      put_seam(@config_seam_key, failing_config_fun())
+
+      for _ <- 2..10 do
+        :ok = GenServer.call(pid, :tick)
+
+        assert capacities_of(last_sample(pid)) == %{llm_capacity: 9, tool_capacity: 6}
+        assert last_sample(pid).llm_pools == canonical_pools()
+      end
+
+      # Tick 11 IS a refresh tick: it fails (one rate-limited warning), and the
+      # valid stale cache is kept — never reset to zero/empty.
+      log = capture_log(fn -> :ok = GenServer.call(pid, :tick) end)
+
+      assert log =~ "SystemSampler: AgentScheduler get_config call failed"
+      assert capacities_of(last_sample(pid)) == %{llm_capacity: 9, tool_capacity: 6}
+      assert last_sample(pid).llm_pools == canonical_pools()
+      assert Process.alive?(pid)
+    end
+  end
+
   # ── Scheduler-call failure resilience (seams) ────────────────────
   #
   # Regression tests for the busy/wedged-AgentScheduler hardening (commit
@@ -657,7 +926,7 @@ defmodule EvoGit.SystemSamplerTest do
       # ...logs a clear warning naming the failing call...
       assert log =~ "SystemSampler: AgentScheduler get_config call failed"
 
-      # ...and still broadcasts the exact 13-key contract map with the zero
+      # ...and still broadcasts the exact 14-key contract map with the zero
       # capacity fallback (no cache yet → {:failed_at, _} marker).
       assert_receive {:system_sample, ^current_node, 1, sample}, 1_000
 
