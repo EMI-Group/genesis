@@ -315,9 +315,16 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
       if rows == current_rows do
         {:noreply, socket}
       else
+        draft = ProviderProfiles.submission(%{key => rows}, draft)
+
+        draft =
+          if key == "models" and rows == [],
+            do: Map.put(draft, "default_model_name", draft["default_model"] || ""),
+            else: draft
+
         {:noreply,
          assign(socket,
-           profile_form_draft: Map.put(draft, key, rows),
+           profile_form_draft: draft,
            profile_form_errors: %{},
            profile_save_token: nil
          )}

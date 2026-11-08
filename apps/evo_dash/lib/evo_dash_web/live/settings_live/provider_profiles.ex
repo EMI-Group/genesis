@@ -140,20 +140,50 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
     |> Map.update("models", [], &rows/1)
     |> Map.update("peak_hours", [], &Helpers.normalize_peak_hours_draft/1)
     |> Map.update("off_peak_days", [], &Helpers.normalize_days/1)
+    |> discard_row_helper()
   end
 
   @doc "Overlays submitted fields on the detached draft; explicit blanks/lists always win."
   def submission(params, draft) do
-    draft = stringify(draft || %{}) |> canonical_credentials()
+    draft = stringify(draft || %{}) |> canonical_credentials() |> Map.delete("_target")
     params = stringify(params) |> canonical_credentials()
     # Legacy single-model input replaces the old override/default rather than
-    # inheriting them from a detached canonical draft.
+    # inheriting them from a detached canonical draft, including UI-only state.
     draft =
       if Map.has_key?(params, "model_id"),
-        do: Map.drop(draft, ~w(models default_model default_reasoning_effort)),
+        do: Map.drop(draft, ~w(models default_model default_model_name default_reasoning_effort)),
         else: draft
 
-    Map.merge(draft, params)
+    draft
+    |> Map.merge(params)
+    |> sync_default_model(params)
+    |> Map.delete("_target")
+  end
+
+  # The full form can contain a stale select alongside the newly typed helper
+  # (or vice versa). Only this event's target identifies an explicit select edit;
+  # never inherit a previous event's target from the detached draft.
+  defp sync_default_model(draft, params) do
+    cond do
+      rows(draft["models"]) != [] ->
+        Map.delete(draft, "default_model_name")
+
+      params["_target"] == ["default_model"] and Map.has_key?(params, "default_model") ->
+        Map.put(draft, "default_model_name", params["default_model"])
+
+      Map.has_key?(params, "default_model_name") ->
+        Map.put(draft, "default_model", params["default_model_name"])
+
+      Map.has_key?(params, "default_model") and Map.has_key?(draft, "default_model_name") ->
+        Map.put(draft, "default_model_name", params["default_model"])
+
+      true ->
+        draft
+    end
+  end
+
+  defp discard_row_helper(draft) do
+    if rows(draft["models"]) == [], do: draft, else: Map.delete(draft, "default_model_name")
   end
 
   @doc "Parses canonical forms, or the old single-model form, into a provider map."
@@ -167,7 +197,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
   @doc "Editor parser returning string input names mapped to stable error reasons."
   def parse_editor(params, id, original \\ %{}) do
     params = params |> stringify() |> canonical_credentials() |> legacy_params()
-    params = Map.merge(draft(original), params) |> editor_values()
+    params = submission(params, draft(original)) |> editor_values()
     provider = text(params["provider"])
     provider_atom = provider_atom(provider)
     provider = if provider_atom, do: Atom.to_string(provider_atom), else: provider
@@ -198,7 +228,9 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
          {:ok, profile} <- reasoning(profile, params) do
       profile =
         profile
-        |> Map.drop(~w(peak_concurrency peak_hours timezone off_peak_days model reasoning_effort))
+        |> Map.drop(
+          ~w(peak_concurrency peak_hours timezone off_peak_days model reasoning_effort default_model_name)
+        )
         |> Map.merge(stringify(peak))
         |> Map.put("name", nonblank(params["name"]) || id)
         |> Map.delete("models")
