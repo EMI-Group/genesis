@@ -39,6 +39,8 @@ Commands:
   stop                  Stop the background service
   restart               Stop, then start (reusing the last ip/port)
   status                Show service state and probe /health
+  update                Update the server to the latest release (see below)
+  upgrade               Alias for `update`
   logs [-f]             Show recent logs (-f follows)
   url                   Print the dashboard URL
   version               Print the release version
@@ -52,6 +54,18 @@ Options (serve/start/restart/status/url):
   --host NAME           Optional external hostname for generated URLs (PHX_HOST)
   --no-linger           Do not offer to enable systemd lingering (start)
 
+Options (update/upgrade):
+  --check               Only check for a newer release (exit 10 when there is
+                        one); nothing is downloaded, installed or stopped
+  --json                With --check, print one line of JSON:
+                        {"current":"<v>","latest":"<v>","available":true|false}
+  --version TAG         Install a specific release tag (v0.13.0 or 0.13.0);
+                        default: the latest release
+  --force               Reinstall even when up to date, and bypass the
+                        active-task / foreground-server safety guard
+  --wait N              Seconds to wait for /health after the restart (30)
+  -h, --help            Show the update help (`genesis update --help`)
+
 Both `--flag value` and `--flag=value` are accepted; `start -f` (or
 `--foreground`) behaves like `serve`.
 
@@ -59,6 +73,13 @@ Environment:
   GENESIS_HOME          Release root (default: the parent of this script's dir)
   GENESIS_DATA_DIR      State and log directory override
   GENESIS_LINGER        Linger policy for start: ask|yes|no (default ask)
+  GENESIS_DOWNLOAD_BASE           Release feed base for update
+                                  (default https://genesis.evox.group/dl)
+  GENESIS_DOWNLOAD_FALLBACK_BASE  Fallback feed base for update (default the
+                                  GitHub releases page)
+
+Exit codes: 0 = success (or already up to date), 10 = update available
+(`update --check` only), 1 = failure, 2 = usage error.
 
 Erlang distribution for SSH remote development is a RUNTIME TOGGLE on the ONE
 server instance: `remote start` starts it first when it is not running, then
@@ -1043,22 +1064,876 @@ cmd_url() {
 }
 
 cmd_version() {
-  _v=""
+  printf 'genesis %s\n' "$(release_version)"
+}
+
+# ── Self-update (genesis update) ─────────────────────────────────────────────
+
+# `genesis update` installs a released server build over the tree this script
+# lives in. Everything that can fail — the release feed, the download, the
+# checksum, the extraction and the staged release version — is validated BEFORE
+# the running service is touched, and the swap itself is two renames with the
+# previous tree kept aside until the new version answers /health, so a failed
+# update rolls back instead of leaving a half-installed server.
+#
+# The feed is JSON written by the release job, but this file deliberately
+# depends on nothing beyond coreutils (plus curl-or-wget): the manifest is read
+# line-oriented with sed/awk. A release that publishes no checksum is tolerated
+# exactly like `scripts/install.sh` tolerates it (warn and continue), because a
+# first upgrade away from an older release must still be possible.
+
+UPD_DEFAULT_WAIT=30
+UPD_CHECK=0
+UPD_JSON=0
+UPD_VERSION=""
+UPD_VERSION_TAG=""
+UPD_VERSION_DISPLAY=""
+UPD_FORCE=0
+UPD_WAIT=$UPD_DEFAULT_WAIT
+UPD_PLATFORM=""
+UPD_ASSET=""
+UPD_ASSET_URL=""
+UPD_MANIFEST_URL=""
+# Trailing state of an in-flight update; "" rather than unset (`set -u`).
+UPD_TMP_DIR=""
+UPD_STAGE_DIR=""
+UPD_OLD_DIR=""
+UPD_LOCK_DIR=""
+
+update_usage() {
+  cat <<'EOF'
+Usage: genesis update [options]        (alias: genesis upgrade)
+
+Install the newest Genesis server release (or a pinned one) over this install.
+The feed, the download, the checksum and the extracted tree are all verified
+BEFORE the running server is touched, and the previous tree is kept aside until
+the new version answers /health — a failed update rolls back automatically.
+
+Options:
+  --check              Only check for a newer release; nothing is downloaded,
+                       installed or stopped (exit 10 when one is available)
+  --json               With --check, print ONE line of JSON and nothing else:
+                       {"current":"<v>","latest":"<v>","available":true|false}
+                       (plus "pub_date" when the release publishes one)
+  --version TAG        Install this release tag (v0.13.0 or 0.13.0);
+                       default: the latest release
+  --force              Reinstall even when the target is already installed, and
+                       bypass the active-task / foreground-server safety guard
+  --wait N             Seconds to wait for /health after the restart (default 30)
+  --no-linger          Do not offer to enable systemd lingering when restarting
+  -h, --help           Show this help
+
+Environment (read at run time):
+  GENESIS_DOWNLOAD_BASE           Release feed base
+                                  (default https://genesis.evox.group/dl)
+  GENESIS_DOWNLOAD_FALLBACK_BASE  Fallback feed base
+                                  (default the GitHub releases page:
+                                  https://github.com/EMI-Group/genesis/releases)
+
+Exit codes: 0 = success or already up to date, 10 = update available (--check
+only), 1 = failure, 2 = usage error.
+EOF
+}
+
+update_usage_error() {
+  printf 'genesis: %s\n' "$*" >&2
+  printf 'Run "genesis update --help" for usage.\n' >&2
+  exit 2
+}
+
+# ── Release version and version comparison ───────────────────────────────────
+
+# The installed release version: the boot script's `version` answer first (it
+# needs no BEAM boot), else releases/start_erl.data ("<erts> <release>"), else
+# `unknown`. Shared by `genesis version` and `genesis update`.
+release_version() {
+  _rv_v=""
   if [ -x "$LAUNCHER" ]; then
-    # The release boot script answers `version` without booting the BEAM.
-    _v=$("$LAUNCHER" version 2>/dev/null | head -n 1 || true)
+    _rv_v=$("$LAUNCHER" version 2>/dev/null | head -n 1 || true)
   fi
-  if [ -z "$_v" ]; then
-    # Fallback: releases/start_erl.data holds "<erts version> <release version>".
-    _data=$GENESIS_HOME/releases/start_erl.data
-    if [ -f "$_data" ]; then
-      _v=$(head -n 1 "$_data" | awk '{print $2}')
+  if [ -z "$_rv_v" ]; then
+    _rv_data=$GENESIS_HOME/releases/start_erl.data
+    if [ -f "$_rv_data" ]; then
+      _rv_v=$(head -n 1 "$_rv_data" | awk '{print $2}' || true)
     fi
   fi
-  if [ -z "$_v" ]; then
-    _v=unknown
+  if [ -z "$_rv_v" ]; then _rv_v=unknown; fi
+  printf '%s\n' "$_rv_v"
+}
+
+# Same source as release_version, but for an arbitrary (staged) release tree.
+upd_tree_version() {
+  _tv_data=$1/releases/start_erl.data
+  if [ -f "$_tv_data" ]; then
+    head -n 1 "$_tv_data" | awk 'NF >= 2 { print $2 }'
   fi
-  printf 'genesis %s\n' "$_v"
+  return 0
+}
+
+# Drop a leading `v` and any -prerelease / +build suffix.
+version_normalize() {
+  _vn_v=$1
+  case $_vn_v in v*) _vn_v=${_vn_v#v} ;; esac
+  case $_vn_v in *-*) _vn_v=${_vn_v%%-*} ;; esac
+  case $_vn_v in *+*) _vn_v=${_vn_v%%+*} ;; esac
+  printf '%s\n' "$_vn_v"
+}
+
+# 0 when $1 is strictly newer than $2. Dot-separated numeric components, with
+# missing components read as 0, so 0.13 and 0.13.0 compare equal.
+version_gt() {
+  _vg_a=$(version_normalize "$1")
+  _vg_b=$(version_normalize "$2")
+  _vg_newer=$(awk -v a="$_vg_a" -v b="$_vg_b" 'BEGIN {
+    na = split(a, x, ".")
+    nb = split(b, y, ".")
+    n = (na > nb ? na : nb)
+    for (i = 1; i <= n; i++) {
+      xa = (i <= na ? x[i] + 0 : 0)
+      xb = (i <= nb ? y[i] + 0 : 0)
+      if (xa > xb) { print 1; exit }
+      if (xa < xb) { print 0; exit }
+    }
+    print 0
+  }')
+  [ "$_vg_newer" = 1 ]
+}
+
+# ── Feed, JSON and download helpers ──────────────────────────────────────────
+
+# Bases are joined with "/", so trailing slashes are trimmed; an empty result
+# falls back to the built-in default.
+upd_trim_base() {
+  _tb=$1
+  while [ "${_tb%/}" != "$_tb" ]; do _tb=${_tb%/}; done
+  [ -n "$_tb" ] || _tb=$2
+  printf '%s\n' "$_tb"
+}
+
+upd_download_base() {
+  upd_trim_base "${GENESIS_DOWNLOAD_BASE:-https://genesis.evox.group/dl}" \
+    https://genesis.evox.group/dl
+}
+
+upd_fallback_base() {
+  upd_trim_base \
+    "${GENESIS_DOWNLOAD_FALLBACK_BASE:-https://github.com/EMI-Group/genesis/releases}" \
+    https://github.com/EMI-Group/genesis/releases
+}
+
+# Platform keys of the published server builds: linux_x64, linux_arm64,
+# darwin_arm64. Anything else fails with the list of available builds.
+update_platform_key() {
+  _upk_os=$(uname -s 2>/dev/null || printf 'unknown')
+  _upk_arch=$(uname -m 2>/dev/null || printf 'unknown')
+  case $_upk_os in
+    Linux) _upk_os=linux ;;
+    Darwin) _upk_os=darwin ;;
+    *) _upk_os="" ;;
+  esac
+  case $_upk_arch in
+    x86_64 | amd64) _upk_arch=x64 ;;
+    aarch64 | arm64) _upk_arch=arm64 ;;
+    *) _upk_arch="" ;;
+  esac
+  _upk_key=$(printf '%s_%s' "$_upk_os" "$_upk_arch")
+  if [ -z "$_upk_os" ] || [ -z "$_upk_arch" ]; then
+    die "no Genesis server build for $(uname -s 2>/dev/null || printf 'unknown')/$(uname -m 2>/dev/null || printf 'unknown') (available: linux_x64, linux_arm64, darwin_arm64)"
+  fi
+  case $_upk_key in
+    linux_x64 | linux_arm64 | darwin_arm64) ;;
+    *)
+      die "no Genesis server build for $_upk_key (available: linux_x64, linux_arm64, darwin_arm64)"
+      ;;
+  esac
+  printf '%s\n' "$_upk_key"
+}
+
+update_asset_name() { printf 'genesis_server_%s.tar.xz\n' "$1"; }
+
+# Feed URL(s) for a tag ("" = latest), primary first, then the GitHub fallback.
+update_manifest_urls() {
+  _um_tag=$1
+  _um_base=$(upd_download_base)
+  _um_fb=$(upd_fallback_base)
+  if [ -z "$_um_tag" ]; then
+    printf '%s/latest.json\n' "$_um_base"
+    printf '%s/latest/download/latest.json\n' "$_um_fb"
+  else
+    printf '%s/%s/latest.json\n' "$_um_base" "$_um_tag"
+    printf '%s/download/%s/latest.json\n' "$_um_fb" "$_um_tag"
+  fi
+}
+
+# Tarball URL(s) for a tag ("" = latest), same primary/fallback shapes.
+update_asset_urls() {
+  _ua_tag=$1
+  _ua_asset=$2
+  _ua_base=$(upd_download_base)
+  _ua_fb=$(upd_fallback_base)
+  if [ -z "$_ua_tag" ]; then
+    printf '%s/%s\n' "$_ua_base" "$_ua_asset"
+    printf '%s/latest/download/%s\n' "$_ua_fb" "$_ua_asset"
+  else
+    printf '%s/%s/%s\n' "$_ua_base" "$_ua_tag" "$_ua_asset"
+    printf '%s/download/%s/%s\n' "$_ua_fb" "$_ua_tag" "$_ua_asset"
+  fi
+}
+
+# Fetch a URL into a file. curl runs with -f so an HTTP >= 400 answer is a
+# failure instead of an HTML error page saved as the download.
+update_fetch() {
+  _uf_url=$1
+  _uf_dest=$2
+  case $(probe_tool) in
+    curl)
+      curl -fsSL --retry 2 --retry-delay 1 --connect-timeout 20 \
+        -o "$_uf_dest" "$_uf_url" </dev/null
+      ;;
+    wget)
+      wget -q -O "$_uf_dest" "$_uf_url" </dev/null
+      ;;
+    *)
+      die "neither curl nor wget is available; install one of them and retry"
+      ;;
+  esac
+}
+
+# Extracted STRING value of "key" from a JSON text. Deliberately tolerant and
+# line-oriented: a pretty-printed manifest puts each field on its own line,
+# while a compact JSON body is one line, so both shapes are handled.
+json_field() {
+  _jf_text=$1
+  _jf_key=$2
+  _jf_out=$(printf '%s\n' "$_jf_text" | tr -d '\r' |
+    sed -n "s/.*\"$_jf_key\"[[:space:]]*:[[:space:]]*\"\(.*\)\"[[:space:]]*,\{0,1\}[[:space:]]*$/\1/p" |
+    head -n 1)
+  if [ -z "$_jf_out" ]; then
+    _jf_out=$(printf '%s\n' "$_jf_text" | tr -d '\r' |
+      sed -n "s/.*\"$_jf_key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n 1)
+  fi
+  if [ -n "$_jf_out" ]; then printf '%s\n' "$_jf_out"; fi
+  return 0
+}
+
+# Extracted numeric value of "key" from a JSON text ("" when absent).
+json_number() {
+  _jn_text=$1
+  _jn_key=$2
+  _jn_out=$(printf '%s\n' "$_jn_text" | tr -d '\r' |
+    sed -n "s/.*\"$_jn_key\"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p" | head -n 1)
+  if [ -n "$_jn_out" ]; then printf '%s\n' "$_jn_out"; fi
+  return 0
+}
+
+# sha256 published for a platform entry of the manifest ("" when the release
+# does not publish one). `$3 = 0` searches the whole file instead of only the
+# "server" object, so a manifest without that wrapper is still readable.
+upd_manifest_sha_scope() {
+  _mss_file=$1
+  _mss_plat=$2
+  _mss_scoped=$3
+  awk -v plat="\"$_mss_plat\"" -v want="\"sha256\"" -v scoped="$_mss_scoped" '
+    {
+      if (scoped == 1 && !in_server) {
+        if (index($0, "\"server\"") == 0) next
+        in_server = 1
+      }
+      if (inside == 1) {
+        if ($0 ~ /^[ \t]*}/) exit
+        if (index($0, want) > 0) {
+          v = $0
+          sub(/^[^:]*:[ \t]*/, "", v)
+          sub(/[ \t]*,[ \t]*$/, "", v)
+          gsub(/"/, "", v)
+          print v
+          exit
+        }
+        next
+      }
+      if (index($0, plat) > 0) inside = 1
+    }' "$_mss_file"
+}
+
+upd_manifest_sha() {
+  _ms_file=$1
+  _ms_plat=$2
+  [ -f "$_ms_file" ] || return 0
+  _ms_out=$(upd_manifest_sha_scope "$_ms_file" "$_ms_plat" 1)
+  if [ -z "$_ms_out" ]; then
+    _ms_out=$(upd_manifest_sha_scope "$_ms_file" "$_ms_plat" 0)
+  fi
+  if [ -n "$_ms_out" ]; then printf '%s\n' "$_ms_out"; fi
+  return 0
+}
+
+# 0 = verified, 1 = mismatch, 2 = cannot verify (no sha256sum/shasum).
+upd_verify_sha() {
+  _vs_file=$1
+  _vs_expected=$(printf '%s' "$2" | tr 'A-Z' 'a-z')
+  _vs_actual=""
+  if command -v sha256sum >/dev/null 2>&1; then
+    _vs_actual=$(sha256sum "$_vs_file" 2>/dev/null | awk '{ print $1 }' || true)
+  elif command -v shasum >/dev/null 2>&1; then
+    _vs_actual=$(shasum -a 256 "$_vs_file" 2>/dev/null | awk '{ print $1 }' || true)
+  else
+    return 2
+  fi
+  [ -n "$_vs_actual" ] || return 2
+  _vs_actual=$(printf '%s' "$_vs_actual" | tr 'A-Z' 'a-z')
+  [ "$_vs_actual" = "$_vs_expected" ] || return 1
+  return 0
+}
+
+# ── Lock, cleanup and safety gate ────────────────────────────────────────────
+
+upd_unlock() {
+  if [ -n "${UPD_LOCK_DIR:-}" ] && [ -d "$UPD_LOCK_DIR" ]; then
+    rm -rf "$UPD_LOCK_DIR"
+  fi
+  UPD_LOCK_DIR=""
+}
+
+# Atomic `mkdir` lock stamped with our pid: a concurrent update must never
+# race a swap. A lock whose owner is gone (a killed earlier run) is stale and
+# is recovered instead of wedging updates forever.
+upd_lock() {
+  _lk_dir=$(data_dir)
+  mkdir -p "$_lk_dir"
+  _lk_path="$_lk_dir/update.lock"
+  _lk_try=0
+  while [ "$_lk_try" -lt 3 ]; do
+    if mkdir "$_lk_path" 2>/dev/null; then
+      printf '%s\n' "$$" >"$_lk_path/pid"
+      UPD_LOCK_DIR=$_lk_path
+      return 0
+    fi
+    _lk_pid=$(sed -n '1p' "$_lk_path/pid" 2>/dev/null | tr -d '[:space:]' || true)
+    if [ -z "$_lk_pid" ]; then
+      # The winner writes its pid right after mkdir: give it a moment before
+      # declaring the lock stale.
+      sleep 1
+      _lk_pid=$(sed -n '1p' "$_lk_path/pid" 2>/dev/null | tr -d '[:space:]' || true)
+    fi
+    case $_lk_pid in
+      '' | *[!0-9]*) ;;
+      *)
+        if kill -0 "$_lk_pid" 2>/dev/null; then
+          die "another update is in progress (pid $_lk_pid); wait for it to finish, or remove $_lk_path if that pid is gone"
+        fi
+        ;;
+    esac
+    rm -rf "$_lk_path"
+    _lk_try=$((_lk_try + 1))
+  done
+  die "could not acquire the update lock ($_lk_path)"
+}
+
+# Idempotent teardown shared by the EXIT/INT/TERM traps: it never deletes the
+# live install, and it puts the previous tree back when a kill landed between
+# the two swap renames.
+upd_teardown() {
+  if [ -n "${UPD_OLD_DIR:-}" ] && [ -d "$UPD_OLD_DIR" ] && [ ! -e "$GENESIS_HOME" ]; then
+    mv "$UPD_OLD_DIR" "$GENESIS_HOME" 2>/dev/null || true
+  fi
+  UPD_OLD_DIR=""
+  if [ -n "${UPD_STAGE_DIR:-}" ] && [ -d "$UPD_STAGE_DIR" ]; then
+    rm -rf "$UPD_STAGE_DIR" 2>/dev/null || true
+  fi
+  UPD_STAGE_DIR=""
+  if [ -n "${UPD_TMP_DIR:-}" ] && [ -d "$UPD_TMP_DIR" ]; then
+    rm -rf "$UPD_TMP_DIR" 2>/dev/null || true
+  fi
+  UPD_TMP_DIR=""
+  upd_unlock
+}
+
+upd_cleanup() {
+  _uc_rc=$?
+  trap - EXIT INT TERM
+  upd_teardown
+  exit "$_uc_rc"
+}
+
+upd_abort() {
+  printf 'Genesis update interrupted; cleaning up.\n' >&2
+  upd_teardown
+  exit "$1"
+}
+
+# Active tasks reported by the running instance's /server/status endpoint. An
+# older release that has no such endpoint (or no readable count) only warns:
+# the FIRST upgrade away from it must work.
+upd_check_active_tasks() {
+  _at_url=$1/server/status
+  _at_body=""
+  case $(probe_tool) in
+    curl)
+      _at_body=$(curl -fsS -m "$PROBE_TIMEOUT" "$_at_url" 2>/dev/null || true)
+      ;;
+    wget)
+      _at_body=$(wget -qO- -T "$PROBE_TIMEOUT" "$_at_url" 2>/dev/null || true)
+      ;;
+    *)
+      printf 'Warning: cannot check for running tasks (neither curl nor wget is installed).\n' >&2
+      return 0
+      ;;
+  esac
+  if [ -z "$_at_body" ]; then
+    printf 'Warning: could not read %s; assuming no tasks are running.\n' "$_at_url" >&2
+    return 0
+  fi
+  _at_n=$(json_number "$_at_body" active_tasks)
+  case $_at_n in
+    '')
+      printf 'Warning: %s does not report active_tasks (older release); continuing.\n' "$_at_url" >&2
+      return 0
+      ;;
+    *[!0-9]*)
+      printf 'Warning: %s reported an unreadable active task count; continuing.\n' "$_at_url" >&2
+      return 0
+      ;;
+  esac
+  if [ "$_at_n" -gt 0 ]; then
+    if [ "$UPD_FORCE" = 1 ]; then
+      printf 'Warning: the Genesis server has %s active task(s); updating anyway (--force).\n' "$_at_n" >&2
+      return 0
+    fi
+    printf 'The Genesis server has %s active task(s); updating now would interrupt them.\n' "$_at_n" >&2
+    printf 'Wait for them to finish, or pass --force to update anyway.\n' >&2
+    exit 1
+  fi
+  return 0
+}
+
+# 0 = a service is running (safe to stop and restart), 1 = nothing is running.
+# Refuses (exit 1) unless --force when the update would disturb a live server.
+upd_busy_check() {
+  _bc_url=$(dashboard_url "$(effective_ip)" "$(effective_port)")
+
+  if service_active; then
+    upd_check_active_tasks "$_bc_url"
+    return 0
+  fi
+
+  # No supervised service, yet /health answers: a foreground `genesis serve`
+  # owns the port, so a restart is impossible and stopping would not help.
+  _bc_rc=0
+  probe_health "$_bc_url" >/dev/null 2>&1 || _bc_rc=$?
+  if [ "$_bc_rc" -eq 0 ]; then
+    if [ "$UPD_FORCE" = 1 ]; then
+      printf 'Warning: a foreground Genesis server is running at %s; installing anyway (--force).\n' "$_bc_url" >&2
+      return 1
+    fi
+    printf 'A foreground Genesis server is running at %s (started with `genesis serve`).\n' "$_bc_url" >&2
+    printf 'Stop it (Ctrl-C in its terminal) before updating, or pass --force to replace the files anyway.\n' >&2
+    exit 1
+  fi
+  return 1
+}
+
+# ── Fetching the feed, the tarball and the staged tree ───────────────────────
+
+upd_fetch_manifest() {
+  _fm_tag=$1
+  _fm_dest=$2
+  _fm_prev=""
+  for _fm_url in $(update_manifest_urls "$_fm_tag"); do
+    # A duplicated attempt when both bases resolve to the same URL.
+    if [ -n "$_fm_prev" ] && [ "$_fm_url" = "$_fm_prev" ]; then continue; fi
+    _fm_prev=$_fm_url
+    if update_fetch "$_fm_url" "$_fm_dest" >/dev/null 2>&1 && [ -s "$_fm_dest" ]; then
+      UPD_MANIFEST_URL=$_fm_url
+      return 0
+    fi
+    printf 'Warning: could not fetch %s\n' "$_fm_url" >&2
+  done
+  return 1
+}
+
+upd_fetch_asset() {
+  _fa_asset=$1
+  _fa_tag=$2
+  _fa_dest=$3
+  _fa_prev=""
+  for _fa_url in $(update_asset_urls "$_fa_tag" "$_fa_asset"); do
+    if [ -n "$_fa_prev" ] && [ "$_fa_url" = "$_fa_prev" ]; then continue; fi
+    _fa_prev=$_fa_url
+    if update_fetch "$_fa_url" "$_fa_dest" >/dev/null 2>&1 && [ -s "$_fa_dest" ]; then
+      UPD_ASSET_URL=$_fa_url
+      return 0
+    fi
+    printf 'Warning: download failed: %s\n' "$_fa_url" >&2
+  done
+  return 1
+}
+
+# Take a file's published .sha256 (first field of line 1) when it is a 64-hex
+# digest; "" otherwise.
+upd_read_sha_file() {
+  _rs_file=$1
+  [ -f "$_rs_file" ] || return 0
+  _rs_v=$(awk 'NR == 1 { print $1 }' "$_rs_file" 2>/dev/null || true)
+  _rs_v=$(printf '%s' "$_rs_v" | tr 'A-Z' 'a-z')
+  if [ "${#_rs_v}" -eq 64 ]; then
+    case $_rs_v in
+      *[!0-9a-f]*) ;;
+      *) printf '%s\n' "$_rs_v" ;;
+    esac
+  fi
+  return 0
+}
+
+upd_print_json() {
+  _pj_current=$1
+  _pj_latest=$2
+  _pj_available=$3
+  _pj_pub=$4
+  if [ -n "$_pj_pub" ]; then
+    printf '{"current":"%s","latest":"%s","available":%s,"pub_date":"%s"}\n' \
+      "$_pj_current" "$_pj_latest" "$_pj_available" "$_pj_pub"
+  else
+    printf '{"current":"%s","latest":"%s","available":%s}\n' \
+      "$_pj_current" "$_pj_latest" "$_pj_available"
+  fi
+}
+
+# Release notes are best-effort: literal `\n` escapes become line breaks and
+# escaped quotes are unescaped, then every resulting line is indented by two
+# spaces (sed runs after awk so multi-line notes stay uniformly indented).
+upd_print_notes() {
+  _pn_notes=$1
+  [ -n "$_pn_notes" ] || return 0
+  printf 'Notes:\n'
+  printf '%s\n' "$_pn_notes" |
+    awk '{ gsub(/\\"/, "\""); gsub(/\\n/, "\n"); print }' |
+    sed 's/^/  /'
+}
+
+# ── Update flag parsing and command ──────────────────────────────────────────
+
+# `genesis update` parses its OWN flags: `parse_flags` is shared with the
+# lifecycle commands and rejects everything it does not know.
+parse_update_flags() {
+  UPD_CHECK=0
+  UPD_JSON=0
+  UPD_VERSION=""
+  UPD_VERSION_TAG=""
+  UPD_VERSION_DISPLAY=""
+  UPD_FORCE=0
+  UPD_WAIT=$UPD_DEFAULT_WAIT
+
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --check)
+        UPD_CHECK=1
+        shift
+        ;;
+      --json)
+        UPD_JSON=1
+        shift
+        ;;
+      --force)
+        UPD_FORCE=1
+        shift
+        ;;
+      --version=*)
+        UPD_VERSION=${1#--version=}
+        [ -n "$UPD_VERSION" ] || update_usage_error "--version requires a value"
+        shift
+        ;;
+      --version)
+        [ $# -ge 2 ] || update_usage_error "--version requires a value"
+        [ -n "$2" ] || update_usage_error "--version requires a value"
+        UPD_VERSION=$2
+        shift 2
+        ;;
+      --wait=*)
+        UPD_WAIT=${1#--wait=}
+        [ -n "$UPD_WAIT" ] || update_usage_error "--wait requires a value"
+        shift
+        ;;
+      --wait)
+        [ $# -ge 2 ] || update_usage_error "--wait requires a value"
+        [ -n "$2" ] || update_usage_error "--wait requires a value"
+        UPD_WAIT=$2
+        shift 2
+        ;;
+      --no-linger)
+        # Same meaning as for `start`: the restart path reuses ensure_linger.
+        FLAG_NO_LINGER=1
+        shift
+        ;;
+      -h | --help)
+        update_usage
+        exit 0
+        ;;
+      --)
+        shift
+        break
+        ;;
+      *)
+        update_usage_error "unknown option for 'genesis update': $1"
+        ;;
+    esac
+  done
+
+  case $UPD_WAIT in
+    '' | *[!0-9]*) update_usage_error "invalid --wait (digits only): $UPD_WAIT" ;;
+  esac
+  if [ "$UPD_WAIT" -lt 1 ]; then
+    update_usage_error "--wait must be at least 1 second"
+  fi
+
+  if [ -n "$UPD_VERSION" ]; then
+    # Tags are v-prefixed in URLs and displayed without the prefix.
+    case $UPD_VERSION in
+      v*) UPD_VERSION_TAG=$UPD_VERSION ;;
+      *) UPD_VERSION_TAG=v$UPD_VERSION ;;
+    esac
+    UPD_VERSION_DISPLAY=$(printf '%s' "$UPD_VERSION" | sed 's/^v//')
+    case $UPD_VERSION_DISPLAY in
+      '' | *[!A-Za-z0-9._-]*) update_usage_error "invalid --version: $UPD_VERSION" ;;
+    esac
+  fi
+}
+
+cmd_update() {
+  parse_update_flags "$@"
+
+  # Nothing is mutated before the busy check, the lock and a verified download,
+  # so these traps only ever guard an in-flight swap.
+  trap 'upd_cleanup' EXIT
+  trap 'upd_abort 130' INT
+  trap 'upd_abort 143' TERM
+
+  UPD_PLATFORM=$(update_platform_key)
+  UPD_ASSET=$(update_asset_name "$UPD_PLATFORM")
+  _upd_current=$(release_version)
+
+  UPD_TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/genesis-update.XXXXXX") ||
+    die "cannot create a temporary directory"
+  _upd_manifest=$UPD_TMP_DIR/latest.json
+
+  if ! upd_fetch_manifest "$UPD_VERSION_TAG" "$_upd_manifest"; then
+    die "could not fetch the Genesis release feed (${UPD_VERSION_DISPLAY:-latest}); check your network or set GENESIS_DOWNLOAD_BASE"
+  fi
+
+  _upd_text=$(cat "$_upd_manifest")
+  _upd_manifest_version=$(json_field "$_upd_text" version)
+  if [ -z "$_upd_manifest_version" ]; then
+    die "the Genesis release feed at $UPD_MANIFEST_URL has no version"
+  fi
+  _upd_pub=$(json_field "$_upd_text" pub_date)
+  _upd_notes=$(json_field "$_upd_text" notes)
+
+  if [ -n "$UPD_VERSION_DISPLAY" ]; then
+    _upd_target=$UPD_VERSION_DISPLAY
+  else
+    _upd_target=$_upd_manifest_version
+  fi
+
+  # Latest mode never downgrades; an explicit --version may install any release
+  # (older or newer), and --force reinstalls the same version.
+  _upd_need=0
+  if [ "$UPD_FORCE" = 1 ]; then
+    _upd_need=1
+  elif [ -z "$UPD_VERSION_TAG" ]; then
+    if version_gt "$_upd_target" "$_upd_current"; then
+      _upd_need=1
+    fi
+  elif [ "$(version_normalize "$_upd_target")" != "$(version_normalize "$_upd_current")" ]; then
+    _upd_need=1
+  fi
+  if [ "$_upd_need" = 1 ] && [ "$_upd_current" = unknown ]; then
+    printf 'Warning: could not determine the installed Genesis version; installing %s.\n' "$_upd_target" >&2
+  fi
+
+  if [ "$_upd_need" = 0 ]; then
+    if [ "$UPD_CHECK" = 1 ] && [ "$UPD_JSON" = 1 ]; then
+      upd_print_json "$_upd_current" "$_upd_target" false "$_upd_pub"
+    else
+      printf 'Genesis %s is up to date.\n' "$_upd_current"
+    fi
+    return 0
+  fi
+
+  if [ "$UPD_CHECK" = 1 ]; then
+    if [ "$UPD_JSON" = 1 ]; then
+      upd_print_json "$_upd_current" "$_upd_target" true "$_upd_pub"
+    else
+      printf 'Update available: %s (installed %s)\n' "$_upd_target" "$_upd_current"
+      if [ -n "$_upd_pub" ]; then printf 'Released: %s\n' "$_upd_pub"; fi
+      upd_print_notes "$_upd_notes"
+      printf 'Run `genesis update` to install it.\n'
+    fi
+    return 10
+  fi
+
+  # Fail before any download when the swap could not happen anyway.
+  _upd_parent=$(dirname "$GENESIS_HOME")
+  [ -n "$_upd_parent" ] || _upd_parent=/
+  if [ ! -d "$_upd_parent" ] || [ ! -w "$_upd_parent" ]; then
+    die "the parent of the install directory ($_upd_parent) is not writable; re-run the installer as the user who owns $GENESIS_HOME"
+  fi
+
+  printf 'Update available: %s (installed %s)\n' "$_upd_target" "$_upd_current"
+  if [ -n "$_upd_pub" ]; then printf 'Released: %s\n' "$_upd_pub"; fi
+  upd_print_notes "$_upd_notes"
+
+  upd_lock
+
+  _upd_was_running=1
+  upd_busy_check || _upd_was_running=0
+
+  # ── Download + verification (the server is still untouched) ──
+  _upd_archive=$UPD_TMP_DIR/$UPD_ASSET
+  printf 'Downloading %s (%s)\n' "$UPD_ASSET" "$_upd_target"
+  if ! upd_fetch_asset "$UPD_ASSET" "$UPD_VERSION_TAG" "$_upd_archive"; then
+    die "could not download $UPD_ASSET for $UPD_PLATFORM; the release may not be published yet"
+  fi
+
+  _upd_expected=$(upd_manifest_sha "$_upd_manifest" "$UPD_PLATFORM")
+  _upd_expected=$(printf '%s' "$_upd_expected" | tr 'A-Z' 'a-z')
+  if [ "${#_upd_expected}" -ne 64 ]; then
+    _upd_expected=""
+    # No digest in the manifest: fall back to a published .sha256 beside it.
+    if update_fetch "$UPD_ASSET_URL.sha256" "$UPD_TMP_DIR/$UPD_ASSET.sha256" \
+      >/dev/null 2>&1; then
+      _upd_expected=$(upd_read_sha_file "$UPD_TMP_DIR/$UPD_ASSET.sha256")
+    fi
+  fi
+
+  if [ -n "$_upd_expected" ]; then
+    _upd_vrc=0
+    upd_verify_sha "$_upd_archive" "$_upd_expected" || _upd_vrc=$?
+    case $_upd_vrc in
+      0) printf 'Checksum verified.\n' ;;
+      2) printf 'Warning: no sha256sum/shasum found; skipping checksum verification.\n' >&2 ;;
+      *) die "checksum mismatch for $UPD_ASSET; the download may be corrupt or tampered with (delete it and retry)" ;;
+    esac
+  else
+    printf 'Warning: no published sha256 for %s; skipping checksum verification.\n' "$UPD_ASSET" >&2
+  fi
+
+  # ── Extraction + staged-version check (still nothing swapped) ──
+  _upd_extract=$UPD_TMP_DIR/extract
+  mkdir -p "$_upd_extract"
+  if ! tar -xJf "$_upd_archive" -C "$_upd_extract"; then
+    die "failed to extract $UPD_ASSET (the download may be corrupt, or tar lacks .tar.xz support)"
+  fi
+  # The tarball root is `genesis_server/`; tolerate a flat archive too.
+  if [ -f "$_upd_extract/genesis_server/bin/genesis_server" ]; then
+    _upd_src=$_upd_extract/genesis_server
+  elif [ -f "$_upd_extract/bin/genesis_server" ]; then
+    _upd_src=$_upd_extract
+  else
+    die "the extracted archive does not contain bin/genesis_server; $UPD_ASSET looks wrong"
+  fi
+
+  _upd_staged_version=$(upd_tree_version "$_upd_src")
+  if [ -n "$_upd_staged_version" ] &&
+    [ "$(version_normalize "$_upd_staged_version")" != "$(version_normalize "$_upd_target")" ]; then
+    die "the downloaded release is $_upd_staged_version but $_upd_target was requested; nothing was changed"
+  fi
+
+  _upd_stage=$(mktemp -d "$_upd_parent/.genesis-update.XXXXXX") ||
+    die "cannot create a staging directory next to $GENESIS_HOME"
+  UPD_STAGE_DIR=$_upd_stage
+  cp -R "$_upd_src/." "$UPD_STAGE_DIR/"
+  if [ ! -f "$UPD_STAGE_DIR/bin/genesis_server" ]; then
+    die "the staged install is incomplete (bin/genesis_server missing)"
+  fi
+
+  # ── Stop, swap, restart ──
+  printf 'Installing Genesis %s to %s\n' "$_upd_target" "$GENESIS_HOME"
+
+  _upd_ip=$(effective_ip)
+  _upd_port=$(effective_port)
+  _upd_url=$(dashboard_url "$_upd_ip" "$_upd_port")
+
+  if [ "$_upd_was_running" = 1 ]; then
+    printf 'Stopping the Genesis server.\n'
+    do_stop || true
+    _upd_i=0
+    while [ "$_upd_i" -lt 10 ]; do
+      service_active || break
+      sleep 1
+      _upd_i=$((_upd_i + 1))
+    done
+  fi
+
+  UPD_OLD_DIR="$GENESIS_HOME.old.$$"
+  rm -rf "$UPD_OLD_DIR"
+  if ! mv "$GENESIS_HOME" "$UPD_OLD_DIR"; then
+    die "failed to move the current install aside; nothing was changed"
+  fi
+  if ! mv "$UPD_STAGE_DIR" "$GENESIS_HOME"; then
+    mv "$UPD_OLD_DIR" "$GENESIS_HOME" || printf 'Warning: could not restore the previous install from %s\n' "$UPD_OLD_DIR" >&2
+    UPD_OLD_DIR=""
+    die "failed to move the new release into $GENESIS_HOME"
+  fi
+  # Consumed by the swap above: never let the teardown delete the live tree.
+  UPD_STAGE_DIR=""
+  for _upd_bin in "$GENESIS_HOME"/bin/*; do
+    if [ -f "$_upd_bin" ]; then chmod +x "$_upd_bin"; fi
+  done
+
+  if [ "$_upd_was_running" = 0 ]; then
+    rm -rf "$UPD_OLD_DIR"
+    UPD_OLD_DIR=""
+    printf 'Genesis updated: %s → %s\n' "$_upd_current" "$_upd_target"
+    printf 'The server was not running; run `genesis start` to start Genesis %s.\n' "$_upd_target"
+    return 0
+  fi
+
+  printf 'Starting the Genesis server.\n'
+  # `start_and_wait` polls /health for START_TIMEOUT seconds; --wait is this
+  # restart's budget, so it overrides the constant for the rest of this run.
+  START_TIMEOUT=$UPD_WAIT
+  _upd_healthy=1
+  # The instance re-adopts its distribution intent from <data dir>/remote/
+  # desired.env at boot, so nothing has to be re-enabled here.
+  start_and_wait "$_upd_ip" "$_upd_port" "" || _upd_healthy=0
+
+  if [ "$_upd_healthy" = 1 ]; then
+    rm -rf "$UPD_OLD_DIR"
+    UPD_OLD_DIR=""
+    printf 'Genesis updated: %s → %s\n' "$_upd_current" "$_upd_target"
+    return 0
+  fi
+
+  # ── Rollback ──
+  printf 'The new version did not become healthy; rolling back to %s.\n' "$_upd_current"
+  do_stop || true
+  _upd_i=0
+  while [ "$_upd_i" -lt 10 ]; do
+    service_active || break
+    sleep 1
+    _upd_i=$((_upd_i + 1))
+  done
+
+  case $GENESIS_HOME in
+    '' | /) die "refusing to remove $GENESIS_HOME during rollback" ;;
+  esac
+  if [ -d "$UPD_OLD_DIR" ]; then
+    rm -rf "$GENESIS_HOME"
+    if mv "$UPD_OLD_DIR" "$GENESIS_HOME"; then
+      UPD_OLD_DIR=""
+    else
+      die "could not restore the previous install from $UPD_OLD_DIR; move it back to $GENESIS_HOME by hand"
+    fi
+  fi
+
+  printf 'Starting the Genesis server.\n'
+  if start_and_wait "$_upd_ip" "$_upd_port" ""; then
+    printf 'Genesis update failed; the previous version is running.\n'
+  else
+    printf 'Genesis update failed and the previous version (%s) did not start either.\n' "$_upd_current" >&2
+    printf 'The previous release is installed at %s; see `genesis logs` for the failure.\n' "$GENESIS_HOME" >&2
+  fi
+  printf 'Dashboard: %s\n' "$_upd_url" >&2
+  return 1
 }
 
 # ── SSH remote development (genesis remote) ──────────────────────────────────
@@ -1710,6 +2585,10 @@ main() {
       ;;
     remote)
       cmd_remote "$@"
+      ;;
+    update | upgrade)
+      require_launcher
+      cmd_update "$@"
       ;;
     version | --version)
       require_launcher
