@@ -83,7 +83,8 @@ Both JSON controls have unique associated labels/help text warning against pasti
 Models submit `models[index][model|context_window|override_reasoning|reasoning_efforts|default_reasoning_effort]` plus `models[index][generation][...]` using the same generation field names.
 The `override_reasoning` hidden false sentinel plus checked true checkbox is UI-only and must not persist in canonical config.
 When false, omit the model inventory so it inherits provider support but retain a validated model default if explicitly selected.
-When true, a blank inventory means explicit `[]` (reasoning unsupported) and its default must be omitted; a nonempty inventory enables a validated optional default.
+When true, the blank sentinel submits explicit `[]` (reasoning unsupported), but `reasoning_default/1` retains an existing default as a selected unsupported option even when the inventory becomes empty, so omission of that default depends on the owning parser.
+A nonempty inventory enables an optional default selected from that inventory.
 Blank optional numeric/model-generation fields mean inherit, not nil or zero; explicit numeric zero must survive parsing.
 `off_peak_days[]` and `peak_hours[index][days][]` use hidden blank sentinels so clearing all days is submitted, and window times use `peak_hours[index][start|end]`.
 Remove sentinel blanks before core validation, drop fully blank windows, numerically order indexed maps and preserve complete drafts across add/remove events.
@@ -96,6 +97,8 @@ Unknown generation/config keys must be preserved by the owner when applying edit
 
 OAuth availability comes from existing `LLMCatalog` metadata via a whitelist of catalog-owned provider atoms, never dynamic atom creation or a new schema API.
 OAuth-only providers emit hidden `auth_mode=oauth` and never show an API-key prompt; other providers have API-key guidance without rendering any key/token field.
+The canonical form has no `api_key_env_var` field or nonsecret credential-source selector, so it cannot choose a distinct API-key environment variable for another account of the same provider.
+The default-model control is a required select over current row names plus the retained default, so changing a default-only account to a new model requires adding a model row, selecting its name, then removing the row if no override should persist.
 `auth_statuses` remains keyed by profile id with `state`, `expires`, `login_instructions` and `oauth_file`; states `ok`, `missing`, `unwritable` and `unknown` accept atom or string forms.
 The owner must clear/reload statuses on node changes; unsaved provider/auth/path changes additionally suppress a saved credential verdict inside the editor.
 Unknown status makes no detected/missing claim, and unwritable status withholds login instructions in favor of the writable-path remedy.
