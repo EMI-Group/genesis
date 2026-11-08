@@ -1081,9 +1081,14 @@ jobs:
               "version": version,
               "notes": os.environ.get("RELEASE_NOTES", ""),
               "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              # `platforms` is ALWAYS present, even as `{}`: the tauri-plugin-updater
+              # deserializes latest.json into a struct with a REQUIRED platforms map,
+              # so a missing key is a manifest parse error (which breaks every
+              # installed desktop app) rather than "no update for this platform".
+              # An empty map is valid and means exactly "no update on any platform",
+              # which is the correct answer for a server-only release.
+              "platforms": platforms,
           }
-          if platforms:
-              manifest["platforms"] = platforms
           if server:
               manifest["server"] = server
           with open("latest.json", "w") as f:
