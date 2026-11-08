@@ -20,8 +20,8 @@ There is **no `live(...)` call anywhere in this directory**: every component is 
 | `task_card_components_test.exs` | `EvoDashWeb.TaskCardComponentsTest` | 9 / 35 — copy-text helpers, task card affordances, Review-button candidacy, structured errors, archive pass-through |
 | `setting_card_test.exs` | `EvoDashWeb.SettingCardTest` | 3 / 18 — `setting_card/1` `:list_of_strings` editor, `default_label/1`, appearance accent swatch picker |
 | `remote_gate_components_test.exs` | `EvoDashWeb.RemoteGateComponentsTest` | 5 / 16 — `remote_connection_gate/1` states + `gate_active?/1` truth table |
-| `model_profiles_editor_test.exs` | `EvoDashWeb.ModelProfilesEditorTest` | 2 / 32 — render-only peak/off-peak concurrency form + advanced disclosure open/closed rule and reasoning-effort placement (events belong to SettingsLive) |
-| `model_profiles_editor_auth_test.exs` | `EvoDashWeb.ModelProfilesEditorAuthTest` | 3 / 15 — render-only OAuth/subscription auth UI: edit-form auth-mode select vs OAuth-only badge, credential-file input, summary-row auth badge, credential-status line |
+| `model_profiles_editor_test.exs` | `EvoDashWeb.ModelProfilesEditorTest` | 2 / 35 — render-only peak/off-peak concurrency form + advanced disclosure open/closed rule and reasoning-effort placement (events belong to SettingsLive) |
+| `model_profiles_editor_auth_test.exs` | `EvoDashWeb.ModelProfilesEditorAuthTest` | 3 / 19 — render-only OAuth/subscription auth UI: edit-form auth-mode select vs OAuth-only badge, credential-file input, summary-row auth badge, credential-status line |
 | `custom_agents_editor_test.exs` | `EvoDashWeb.SettingsComponents.CustomAgentsEditorTest` | 2 / 7 — the editor's extra "Custom tools" chip group + alias-aware comparisons |
 | `custom_tools_panel_test.exs` | `EvoDashWeb.CustomToolsPanelTest` | 2 / 22 — `custom_tools_panel/1` render contract + pure `custom_tool_names/1` |
 | `layouts_test.exs` | `EvoDashWeb.LayoutsTest` | 3 / 7 — `Layouts.app/1` sidebar task grouping, Assistant navigation, keyboard focus, and responsive configuration warning |
@@ -40,6 +40,9 @@ Selection is read as `aria-selected`/`.capsule-item-active` plus the drill row's
 It also pins both capsule roots inside the form: `#task-llm-selection` carries `phx-hook="CapsulePanel"` + `data-capsule-view="model"` while `#mode-speed-capsule` carries the same hook and no view marker (and no `.capsule-view` of its own).
 Existing selection render pins in `task_form_components_test.exs` preserve the legacy `model_profiles` / `selected_model_id` toolbar-select contract.
 Settings field/disclosure pins in `model_profiles_editor_test.exs` and subscription credential-state pins in `model_profiles_editor_auth_test.exs` exercise the legacy `ModelProfilesEditor`, not `SettingsComponents.ProviderProfilesEditor`.
+No component test directly renders or references `ProviderProfilesEditor`, `ProviderProfileFields` or `provider_profiles_editor/1`, so canonical account/nested-model editing, its disclosure layout, Quick Setup and persisted-selection connection testing have no dedicated isolated component coverage here.
+The legacy form tests couple strongly to `#model-profile-edit-form`, `#model-profile-advanced`, exact input names and containment, nine-checkbox day groups, and the OAuth status line's exact `div.mt-2.space-y-1` classes, so they must not be mistaken for canonical-editor layout contracts.
+Behavioral render pins worth preserving independently of layout include authoritative drafts (including explicit blank and numeric zero), per-window schedule indexing, total day/status normalization, account-scoped credential verdicts and managed-path fallback, and distinct missing-login versus unwritable-file guidance.
 Component suites own isolated markup, event payload attributes and pure helper contracts; mounted event handling, persistence, node-aware loading and task-option threading belong to the separate LiveView test subtree.
 ## Coverage Boundary — review-page components
 
