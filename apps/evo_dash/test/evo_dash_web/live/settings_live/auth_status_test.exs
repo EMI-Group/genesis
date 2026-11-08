@@ -275,20 +275,44 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
       html = inject_statuses(view, %{@oauth_profile => entry})
 
-      assert html =~ "Login found, managed credential file not writable"
-      assert html =~ "Managed credential file: /ro/genesis/auth.json"
+      # Scope the render assertions to profile-1's OWN credential-status block:
+      # the page ALSO carries the core's page-level "Missing Configuration"
+      # health banner, which legitimately names the vendor login command for
+      # the WHOLE config (this fixture's vendor logins are unreadable), so a
+      # page-wide guidance refute would be pinning someone else's surface.
+      block = auth_status_block(html, @oauth_profile)
 
-      assert html =~
+      assert block =~ "Login found, managed credential file not writable"
+      assert block =~ "Managed credential file: /ro/genesis/auth.json"
+
+      assert block =~
                "Set oauth_file on this profile to a writable location, then recheck."
 
-      refute html =~ "Set [llm] oauth_file"
+      refute block =~ "Set [llm] oauth_file"
+
+      # The injected sentinel never reaches the page at all.
+      refute html =~ "SHOULD-NOT-RENDER-LOGIN-GUIDANCE"
 
       # No login guidance of any kind, and no "we import it next run" note.
-      refute html =~ "SHOULD-NOT-RENDER-LOGIN-GUIDANCE"
-      refute html =~ "claude setup-token"
-      refute html =~ "Genesis imports the vendor login automatically on the next run."
-      refute html =~ "No subscription login found"
-      refute html =~ "Login detected"
+      refute block =~ "claude setup-token"
+      refute block =~ "Genesis imports the vendor login automatically on the next run."
+      refute block =~ "No subscription login found"
+      refute block =~ "Login detected"
+      refute block =~ "Subscription login"
+
+      # Pin the surface split so the stray-guidance failure cannot silently
+      # return: the vendor command is legitimately present on the page (the
+      # core "Missing Configuration" banner speaks for the WHOLE config), but
+      # EVERY occurrence sits outside every per-profile credential-status
+      # block — no block may ever carry vendor login guidance here.
+      assert html =~ "Missing Configuration"
+      outside = without_credential_status_blocks(html)
+      # Proves the strip really removed the blocks (else the count below is vacuous).
+      refute outside =~ "Login found, managed credential file not writable"
+      assert count_occurrences(outside, "claude setup-token") > 0
+
+      assert count_occurrences(html, "claude setup-token") ==
+               count_occurrences(outside, "claude setup-token")
     end
 
     # Regression pin: the neutral state still renders neutral guidance with NO
@@ -819,6 +843,53 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
     assert [row] = rows, "expected one canonical provider row for #{profile_id}"
     Floki.raw_html(row)
+  end
+
+  # The rendered credential-status block (`div[role="status"]`) that belongs to
+  # ONE profile, located by that block's own Recheck trigger so the assertion
+  # can never span a neighbouring account or a page-level banner.
+  defp auth_status_block(html, profile_id) do
+    blocks =
+      html
+      |> Floki.parse_fragment!()
+      |> Floki.find(~s([role="status"]))
+      |> Enum.filter(&(profile_id in status_block_profile_ids(&1)))
+
+    assert [block] = blocks, "expected one credential status block for #{profile_id}"
+    Floki.raw_html(block)
+  end
+
+  # Every profile id a rendered credential-status block speaks for (one Recheck
+  # trigger per block; an unrelated `role="status"` node yields none).
+  defp status_block_profile_ids(block) do
+    block
+    |> Floki.find(~s(button[phx-click="refresh_auth_status"]))
+    |> Floki.attribute("phx-value-profile_id")
+  end
+
+  # The page with every per-profile credential-status block removed — i.e. only
+  # the surfaces a profile's verdict does NOT own (the page-level core
+  # "Missing Configuration" health banner is the notable one).
+  # The container check is attribute-based because `Floki.find/2` also matches
+  # the node it is given: only the `role="status"` container may be dropped, so
+  # the Recheck button inside it is never deleted first.
+  defp without_credential_status_blocks(html) do
+    html
+    |> Floki.parse_fragment!()
+    |> Floki.traverse_and_update(fn
+      node = {_tag, attrs, _children} ->
+        if {"role", "status"} in attrs and status_block_profile_ids(node) != [],
+          do: nil,
+          else: node
+
+      other ->
+        other
+    end)
+    |> Floki.raw_html()
+  end
+
+  defp count_occurrences(text, needle) do
+    text |> :binary.matches(needle) |> length()
   end
 
   # The pre-injection baseline must be the REAL load's map for both seeded OAuth
