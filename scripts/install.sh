@@ -8,6 +8,8 @@
 #
 # Downloads the `genesis_server` release tarball for this machine, installs it
 # under ~/.local/share/genesis/server and links ~/.local/bin/genesis to it.
+# Afterwards `genesis update` upgrades that install in place from the release
+# feed (see `genesis update --help`).
 #
 # Usage: sh install.sh [--dir <path>] [--force] [--help]
 #
@@ -65,6 +67,7 @@ Environment:
 After installing:
   genesis          Run the server in the foreground
   genesis start    Run the server as a service (systemd-run / launchd)
+  genesis update   Upgrade this install in place to the newest release
   genesis status   Show the service state
   genesis logs     Follow the server log
   genesis stop     Stop the service
@@ -413,6 +416,7 @@ esac
 printf '\nNext steps:\n'
 printf '  genesis          # run the server in the foreground\n'
 printf '  genesis start    # run it as a service (systemd-run / launchd)\n'
+printf '  genesis update   # upgrade this install in place\n'
 printf '  genesis status   # show the service state\n'
 printf '  genesis logs     # follow the server log\n'
 printf '  genesis stop     # stop the service\n'
