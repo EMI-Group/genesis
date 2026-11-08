@@ -125,10 +125,10 @@ The shared helper reconstructs only provider_profile_id/model/reasoning_effort f
 Provider/model event transitions and reasoning-slider conversion belong in the shared parent helper and `LLMSelectionComponents.resolve_reasoning_effort/3`, not duplicated in Assistant code.
 The core projection contract is `Schema.provider_profiles(config)` string maps and `Schema.model_selections(config)` ordered atom maps containing provider_profile_id/profile_name/provider/model/reasoning_efforts/default_reasoning_effort/context_window.
 The parent seeds the selection fields, projects loaded snapshots with `LLMSelection.from_config/2`, renders `LLMSelectionComponents` with provider/model/reasoning events, reconciles migration/defaults and clears the legacy id, and handles task-option errors before appending bubbles or clearing drafts.
-The Assistant picker is the shared fused `llm_selection` capsule (id `chat-llm-selection`) in the composer card's control bar (`#chat-composer-controls`), whose SINGLE panel holds the provider selector, the model list and (only for reasoning-capable models) the reasoning stops; there is no nested sub-layer.
+The Assistant picker is the shared fused `llm_selection` capsule (id `chat-llm-selection`) in the composer card's control bar (`#chat-composer-controls`), whose SINGLE panel holds two client-switched views: the model view (provider drill row, model listbox and, only for reasoning-capable models, the reasoning stops) and the provider view (the provider-profile listbox); there is no nested sub-layer, no provider `<select>` and no `phx-change`.
 The composer card is the ONE `#chat-form`, laid out as a column: the textarea row on top, then the control bar with the capsule on the left and the Send/Stop group on the right.
 The page header carries only the title and New chat and renders no picker.
-The capsule sits inside `#chat-form` because its provider `select` needs a form owner; that select's own `phx-change` takes precedence over the form's `chat_input` and serializes only its own field, so picker changes never reach the draft handler, and no form is ever nested inside `#chat-form`.
+The capsule sits inside `#chat-form` as part of the composer layout only — it needs no form owner because selection is emitted as `phx-click` + `phx-value-*` (`provider_profile_id` / `model` / `reasoning_effort`), so picker changes never reach the form's `chat_input` draft handler, and no form is ever nested inside `#chat-form`.
 There is no mode/speed control on the Assistant page; the capsule carries only provider, model and reasoning effort.
 `handle_params/3` restores selection scope before resetting a cross-node chat; `reset_chat/1` clears transcript/runtime refs without clearing the already-scoped selection, so same-scope New chat keeps the choice.
 Config snapshots and loaded bundles remain ephemeral server-only assigns and are never persisted by `ChatState`.
@@ -168,7 +168,7 @@ No sibling tests are modified by helper-only work; persistent additions and moun
 
 ### Parent-page integration requirements
 
-The shared fused `llm_selection` capsule renders in the composer card's control bar, inside the caller-owned `#chat-form`; it must never be moved into a nested form, and its provider select's own `phx-change` must keep shadowing the form-level `chat_input`.
+The shared fused `llm_selection` capsule renders in the composer card's control bar, inside the caller-owned `#chat-form`; it must never be moved into a nested form, and its selection events stay `phx-click`-based so they never shadow the form-level `chat_input` change handler.
 Provider/model/reasoning event names and zero-based stop-index decoding through `LLMSelection.select_reasoning_effort/3` are unchanged.
 Provider/model transitions, canonical reconstruction and strict pre-send validation already delegate to the shared helper; do not replace them with resolved.model_spec or raw generation_params.
 `assign_model_select/1` must handle `SafeCall.start/4` returning `{:error, reason}` immediately, clearing model_select_loading and setting a retryable load error, because failed task startup sends no result message.
