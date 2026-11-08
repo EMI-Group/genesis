@@ -24,8 +24,9 @@ defmodule EvoGit.Agent.TurnWarning do
   reporting take two separate turns. Both also state the acceptable outcome of a
   bounded budget: stop and report what was done and what remains instead of
   working right up to the hard limit. `:critical` additionally states the
-  terminal consequence — past the limit, any further tool call ends the run with
-  NO report at all.
+  terminal consequence — past the hard limit only a few final turns remain (one
+  bounded commit at most), every turn there that ends in a tool call burns one of
+  them, and running them out ends the run with NO report at all.
 
   ### Periodic (fires repeatedly)
 
