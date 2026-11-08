@@ -392,6 +392,26 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert button_attr(html, "data-mode") == "custom_agent"
     end
 
+    test "hidden mode field carries the combined UI mode string inside #task-form" do
+      # REGRESSION (task submit was impossible): the fused capsule replaced the
+      # old <select name="mode" phx-change="task_change">, so the form MUST
+      # submit "mode" through a hidden input — otherwise the payload has no
+      # "mode" key and ProjectsLive's strict task_submit clause raises
+      # FunctionClauseError.
+      for mode <- ["evolve_simple", "custom_agent", "genesis_new", "genesis_existing"] do
+        html = render_component(&TaskFormComponents.task_form/1, prompt: "", mode: mode)
+        doc = parse(html)
+
+        [input] = Floki.find(doc, "form#task-form input[name=mode]")
+        assert input |> Floki.attribute("type") |> List.first() == "hidden"
+        assert input |> Floki.attribute("value") |> List.first() == mode
+
+        # Exactly ONE mode field — the capsule's Layer-2 buttons are
+        # type="button" and never submit a value of their own.
+        assert length(Floki.find(doc, "form#task-form input[name=mode]")) == 1
+      end
+    end
+
     test "custom_agent mode hides the Auto (recommended) option in the agent select" do
       agents = [%{id: "my-agent", name: "Bug Hunter"}]
 
@@ -866,6 +886,72 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       for level <- ["fast", "balanced", "high_quality"] do
         assert quality_attr(html, level, "type") == "button"
       end
+    end
+  end
+
+  # Fused capsule trigger & panel: the collapsed pill shows the SHORT mode
+  # label (the long sentence overflows the one-line toolbar and lives in the
+  # `title` tooltip only), and Layer-1's stops stay on ONE line.
+  describe "fused capsule trigger and panel layout" do
+    test "trigger shows the short mode label and keeps the long description as its title" do
+      for {mode, label, long} <- [
+            {"genesis_new", "New project", "Creates a brand new codebase from scratch"},
+            {"genesis_existing", "Init existing", "Analyzes an existing codebase"},
+            {"evolve_simple", "Evolve", "Uses a single top-down agent"},
+            {"custom_agent", "Custom", "Runs a user-defined custom agent"}
+          ] do
+        html = render_component(&TaskFormComponents.task_form/1, prompt: "", mode: mode)
+        doc = parse(html)
+
+        [main] = Floki.find(doc, "#mode-speed-capsule .capsule-main")
+        assert main |> Floki.text() |> String.trim() == label
+
+        # The full sentence never renders inline...
+        refute main |> Floki.text() =~ long
+
+        # ...it is the trigger's tooltip instead.
+        [trigger] = Floki.find(doc, "#mode-speed-capsule summary.capsule-trigger")
+        assert trigger |> Floki.attribute("title") |> List.first() =~ long
+      end
+    end
+
+    test "trigger main label truncates: min-w-0 + truncate + a max width" do
+      html = render_component(&TaskFormComponents.task_form/1, prompt: "", mode: "evolve_simple")
+
+      [main] = Floki.find(parse(html), "#mode-speed-capsule .capsule-main")
+      main_class = main |> Floki.attribute("class") |> List.first() |> to_string()
+
+      assert main_class =~ "min-w-0"
+      assert main_class =~ "truncate"
+      assert main_class =~ "max-w-"
+    end
+
+    test "the mode-list entry shows the short label, not the long sentence" do
+      html = render_component(&TaskFormComponents.task_form/1, prompt: "", mode: "evolve_simple")
+
+      [subrow_label] = Floki.find(parse(html), "#mode-speed-capsule .capsule-subrow-label")
+      text = subrow_label |> Floki.text() |> String.trim()
+
+      assert text =~ "Mode"
+      assert text =~ "Evolve"
+      refute text =~ "single top-down agent"
+    end
+
+    test "Layer-1 stops sit on one non-wrapping line" do
+      html = render_component(&TaskFormComponents.task_form/1, prompt: "")
+
+      doc = parse(html)
+      [stops] = Floki.find(doc, "#mode-speed-capsule .capsule-stops")
+      stops_class = stops |> Floki.attribute("class") |> List.first() |> to_string()
+
+      # No wrap: the three stops must never stack into multiple lines.
+      assert stops_class =~ "flex-nowrap"
+      refute stops_class =~ "flex-wrap"
+
+      assert stops
+             |> Floki.find("button.capsule-stop")
+             |> Enum.map(fn button -> button |> Floki.attribute("id") |> List.first() end) ==
+               ["quality-level-fast", "quality-level-balanced", "quality-level-high_quality"]
     end
   end
 

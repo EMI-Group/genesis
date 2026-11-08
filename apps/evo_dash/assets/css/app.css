@@ -2362,10 +2362,19 @@ button, a, input, textarea, select, summary,
   transition: background 0.2s ease, color 0.2s ease;
 }
 
+/* Layer-1 stops sit on ONE line: the panel sizes to its content
+   (w-max min-w-72), so the three labels are never squeezed — they keep their
+   intrinsic width (flex-shrink: 0) and never break mid-label. */
+.capsule-stops {
+  flex-wrap: nowrap;
+}
+
 /* Layer-1 discrete stop: resting text at 80% alpha; hover raises a neutral
    base-200 well. */
 .capsule-stop {
   color: color-mix(in oklab, var(--color-base-content) 80%, transparent);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .capsule-stop:hover {
   background: var(--color-base-200);

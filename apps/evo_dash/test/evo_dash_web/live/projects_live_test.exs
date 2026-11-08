@@ -5247,6 +5247,58 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
     end
   end
 
+  # REGRESSION: the fused mode+speed capsule removed the old
+  # `<select name="mode" phx-change="task_change">` and for a while no field
+  # carried "mode" at all, so the browser payload had no "mode" key and the
+  # strict `handle_event("task_submit", %{"prompt" => _, "mode" => _})` clause
+  # raised FunctionClauseError — /projects could not start ANY task. The other
+  # submit tests hand-build a `mode:` param (which is exactly what hid the bug),
+  # so this one submits the REAL rendered form: render_submit/2 collects the
+  # form's DOM values (hidden inputs and `form="task-form"` inputs included) and
+  # deep-merges the given map over them, never supplying :mode itself.
+  describe "task_submit form contract" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "a real form submit with no hand-built mode param launches (hidden mode field)", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      open_project!(view, tmp_dir)
+      await_async_loads(view)
+
+      # A real git repo so the doomed wrapper dies at node-path validation
+      # rather than spawning anything (see make_git_repo!/1).
+      make_git_repo!(tmp_dir)
+
+      # Move the server-side mode truth through the UI, exactly like clicking
+      # the capsule's Layer-2 "Evolve" item; the hidden field mirrors it.
+      render_click(view, "task_change", %{"mode" => "evolve_simple"})
+      assert assigns(view)[:task_mode] == "evolve_simple"
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{prompt: "build me a thing", node_path: "./nonexistent-dir"})
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      # "mode" reached the handler (hidden field) and mapped to the core mode
+      # string; the rest of the payload's keys still arrive too.
+      assert opt(task, :mode) == "simple"
+      assert opt(task, :objective) == "build me a thing"
+      assert opt(task, :node_path) == "./nonexistent-dir"
+      assert opt(task, :path) == tmp_dir
+    end
+  end
+
   describe "remote URL-driven project activation" do
     test "remote ?project= tilde path expands via the remote seam, never the local HOME", %{
       conn: conn,
