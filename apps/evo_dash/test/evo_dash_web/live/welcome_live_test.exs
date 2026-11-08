@@ -10,7 +10,16 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
   # Canonical resolution can cold-load the model catalog before reaching the
   # stub; keep that startup budget separate from the blocked runner's reply.
-  @runner_start_timeout 15_000
+  # Load-tolerant: the catalog cold-load runs on a shared host whose scheduling
+  # swings 10-30x (test/CONTEXT.md), so the previous 15 s budget was a flake.
+  @runner_start_timeout 30_000
+  # Load-tolerant budget for the bounded poll that waits for the runner's
+  # result to reach the LiveView (was 5 s). The wait stays bounded and still
+  # fails loudly — only the deadline moved.
+  @async_wait_budget_ms 30_000
+  # `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be starved for
+  # seconds on a loaded host, where the 5 s default exits the test.
+  @assigns_timeout_ms 30_000
 
   setup do
     EvoDash.Test.ConfigDir.isolate!("evogit_welcome_test_config")
@@ -40,7 +49,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     :ok
   end
 
-  defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
+  defp assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
   defp provider(id), do: Enum.find(Catalog.providers(), &(&1.id == id))
 
   defp model_string(id, variant_id \\ nil, index \\ 0) do
@@ -102,7 +111,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   end
 
   defp await_status(view, expected, deadline \\ nil) do
-    deadline = deadline || System.monotonic_time(:millisecond) + 5_000
+    deadline = deadline || System.monotonic_time(:millisecond) + @async_wait_budget_ms
 
     if assigns(view).llm_test_status != expected do
       assert System.monotonic_time(:millisecond) < deadline,
@@ -617,7 +626,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       choose(view)
 
       socket =
-        :sys.get_state(view.pid).socket
+        :sys.get_state(view.pid, @assigns_timeout_ms).socket
         |> Phoenix.Component.assign(:current_node_id, "remote-target")
 
       html = render_component(&EvoDashWeb.WelcomeLive.render/1, socket.assigns)

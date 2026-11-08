@@ -119,6 +119,13 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
   alias EvoGit.TaskInfo
   alias EvoGit.TaskRegistry
 
+  # Load-tolerant budgets: this host is shared, so async loads and the
+  # `:sys.get_state/1` socket read can stall far past the historical
+  # 2-5 s (or 5 s default) windows. Waiting longer only weakens the test when
+  # the message never arrives — the assertion itself is unchanged.
+  @async_wait_budget_ms 30_000
+  @assigns_timeout_ms 30_000
+
   @blocking_merge_check_key {__MODULE__, :blocking_merge_check_repos}
 
   # The canonical merge-check stub (see the file header). Installed by every
@@ -544,7 +551,14 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
   # holds no state for it, so nothing else needs clearing.)
   def delete_seeded_task!(task_id), do: EvoGit.Store.delete_task(EvoGit.Store, task_id)
   # Reads the LiveView's socket assigns (same pattern as projects_live_test).
-  def assigns(view), do: :sys.get_state(view.pid).socket.assigns
+  # The explicit timeout matters: the 5 s `:sys.get_state/1` default exits on a
+  # loaded shared host, and this is a round-trip, not a responsiveness pin.
+  def assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
+
+  # Module attributes are not importable across modules, so the suites below
+  # (which `import EvoDashWeb.ReviewLiveTest.Helpers`) read the shared budget
+  # through this one accessor for their `assert_receive` timeouts.
+  def async_wait_budget, do: @async_wait_budget_ms
 
   # Opt keys round-trip through the Store codec: known keys stay atoms, but
   # unknown keys (merge_from/merge_target) come back as STRING keys. Read
@@ -968,7 +982,7 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
   @wait_poll_ms 2
 
   # Delegates to the shared flush helper (EvoDashWeb.TestHelpers.flush_loading/4).
-  def flush_review_load(view, timeout \\ 5000) do
+  def flush_review_load(view, timeout \\ @async_wait_budget_ms) do
     # Settle the mount-time async load BEFORE polling the loading marker: the
     # review page spawns a supervised EvoDash.TaskSupervisor child at mount
     # (ReviewLive.LoadData.load/3) whose result message is applied to the view
@@ -1015,7 +1029,7 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
   # async children — a test may have a deliberately-blocking merge-check task in
   # flight that must not be waited on. Waits carry a generous timeout so genuine
   # breakage still fails loudly.
-  def settle_debounced_task_reload(view, timeout \\ 5000) do
+  def settle_debounced_task_reload(view, timeout \\ @async_wait_budget_ms) do
     # Synchronize with the arming cast(s) so their broadcasts are already
     # delivered before we read the debounce flag below.
     _ = TaskRegistry.list_tasks()
@@ -1066,7 +1080,7 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
       receive do
         {:DOWN, ^ref, :process, _pid, _reason} -> :ok
       after
-        5_000 -> :ok
+        async_wait_budget() -> :ok
       end
     end)
 
@@ -1105,7 +1119,7 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
   # shortly after mount. Once warm no further fetch fires (warm suppresses), so
   # the hub is stable until the action under test runs. Fails loudly if it
   # stays cold — the hub-cold/unchanged assertions below would be vacuous.
-  def wait_hub_warm(timeout \\ 3000) do
+  def wait_hub_warm(timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
 
     wait_loop = fn wait_loop ->
@@ -1172,7 +1186,7 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
   # LiveView process — polling its assigns would exit with `:noproc`. A stopped
   # view IS the settled state (there is no in-flight marker left to clear), so
   # this returns "" instead of raising; the caller asserts the redirect.
-  def await_review_action_settled(view, timeout \\ 5000) do
+  def await_review_action_settled(view, timeout \\ @async_wait_budget_ms) do
     wait_until(fn -> review_action_settled?(view) end, timeout)
 
     if Process.alive?(view.pid), do: render(view), else: ""
@@ -1193,7 +1207,7 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
   # Polls `fun` until it returns a truthy value (or the timeout elapses).
   # Used to synchronize on LiveView state changes that follow directly-sent
   # messages (mailbox FIFO guarantees the preceding messages were processed).
-  def wait_until(fun, timeout \\ 5000) do
+  def wait_until(fun, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
 
     wait_loop = fn wait_loop ->
@@ -1430,7 +1444,7 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
 
       view |> element(archive_tab_selector()) |> render_click()
 
-      assert_receive {:archive_fetch, _pid, _node, ^task_id, opts}
+      assert_receive {:archive_fetch, _pid, _node, ^task_id, opts}, async_wait_budget()
       assert opts[:limit] == 100
       assert opts[:offset] == 0
       assert opts[:include_results] == false
@@ -1490,13 +1504,13 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
       flush_review_load(view)
       view |> element(archive_tab_selector()) |> render_click()
 
-      assert_receive {:archive_fetch, _pid, _node, ^task_id, first_opts}
+      assert_receive {:archive_fetch, _pid, _node, ^task_id, first_opts}, async_wait_budget()
       assert first_opts[:offset] == 0
       wait_until(fn -> length(assigns(view).archive_records) == 100 end)
 
       view |> element("button[phx-click='load_more_archive']") |> render_click()
 
-      assert_receive {:archive_fetch, _pid, _node, ^task_id, more_opts}
+      assert_receive {:archive_fetch, _pid, _node, ^task_id, more_opts}, async_wait_budget()
       assert more_opts[:offset] == 100
       assert more_opts[:limit] == 100
       assert more_opts[:include_results] == false
@@ -1709,7 +1723,7 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
         receive do
           {:archive_agent_reply, entry} -> entry
         after
-          5_000 -> nil
+          async_wait_budget() -> nil
         end
       end)
 
@@ -1734,7 +1748,9 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
       # NOTE: literal U+2026 ellipsis (gettext("Loading result…")).
       assert render(view) =~ "Loading result…"
       current_node = node()
-      assert_receive {:archive_agent_fetch, pid, ^current_node, ^task_id, "agent-2"}
+
+      assert_receive {:archive_agent_fetch, pid, ^current_node, ^task_id, "agent-2"},
+                     async_wait_budget()
 
       entry = %{
         "agent_id" => "agent-2",
@@ -1817,7 +1833,10 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
       |> render_click()
 
       current_node = node()
-      assert_receive {:archive_agent_fetch, _pid, ^current_node, ^task_id, "agent-2"}
+
+      assert_receive {:archive_agent_fetch, _pid, ^current_node, ^task_id, "agent-2"},
+                     async_wait_budget()
+
       wait_until(fn -> render(view) =~ "Fetched" end)
       assert assigns(view).archive_agent_results["agent-2"].state == :ok
     end
@@ -1876,7 +1895,7 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
           {:archive_reply, page} -> page
         after
           # Never leave a blocked supervised child behind on a failing test.
-          5_000 -> %{entries: [], total: 0}
+          async_wait_budget() -> %{entries: [], total: 0}
         end
       end)
 
@@ -1888,7 +1907,7 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
       assert html =~ "Loading archive…"
       assert assigns(view).archive_state == :loading
       current_node = node()
-      assert_receive {:archive_fetch, pid, ^current_node, ^task_id, opts}
+      assert_receive {:archive_fetch, pid, ^current_node, ^task_id, opts}, async_wait_budget()
       assert opts[:offset] == 0
 
       # A second click while the first page is in flight is a no-op.
@@ -1919,7 +1938,7 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
       wait_until(fn -> render(view) =~ "agent-1" end)
 
       assert assigns(view).archive_state == :loaded
-      assert_receive {:archive_fetch, _pid, _node, ^task_id, _opts}
+      assert_receive {:archive_fetch, _pid, _node, ^task_id, _opts}, async_wait_budget()
 
       # Tab round-trip: out to the conversation tab and back into the archive.
       render_click(view, "switch_tab", %{"tab" => "conversation"})
@@ -2003,7 +2022,7 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
       wait_until(fn -> render(view) =~ "agent-1" end)
 
       assert assigns(view).archive_state == :loaded
-      assert_receive {:archive_fetch, _pid, _node, ^task_id, opts}
+      assert_receive {:archive_fetch, _pid, _node, ^task_id, opts}, async_wait_budget()
       assert opts[:offset] == 0
     end
 
@@ -2063,11 +2082,12 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
       assert synced.assigns.archive_state == :loading
       assert synced.assigns.archive_key == {"t1", other_node}
       assert synced.assigns.archive_seq == 3
-      assert_receive {:archive_fetch, ^other_node, "t1", opts}
+      assert_receive {:archive_fetch, ^other_node, "t1", opts}, async_wait_budget()
       assert opts[:offset] == 0
 
       assert_receive {:review_archive_loaded, "t1", ^other_node, 3, 0,
-                      {:ok, %{entries: [_one], total: 1}}}
+                      {:ok, %{entries: [_one], total: 1}}},
+                     async_wait_budget()
     end
   end
 
@@ -2968,8 +2988,12 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
 
       # ONE runner call per repo — the foreign repo's conflict did NOT abort the
       # primary's merge (best-effort per repo).
-      assert_receive {:merged_call, _, "/nonexistent/repo/path", "evogit/test-branch", nil}
-      assert_receive {:merged_call, _, "/nonexistent/foreign/path", "evogit/test-branch", nil}
+      assert_receive {:merged_call, _, "/nonexistent/repo/path", "evogit/test-branch", nil},
+                     async_wait_budget()
+
+      assert_receive {:merged_call, _, "/nonexistent/foreign/path", "evogit/test-branch", nil},
+                     async_wait_budget()
+
       # The runner calls are issued from the action task; a zero-window
       # refute already proves ONE call per repo (never a fan-out).
       refute_received {:merged_call, _, _, _, _}
@@ -3061,7 +3085,9 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
       # EXACTLY ONE runner call — for the foreign (change-bearing) repo. The
       # nil-branch primary is skipped entirely, so its nil branch never reaches
       # the runner (which would crash in the core).
-      assert_receive {:merged_call, call_node, path, "evogit/test-branch", _target}
+      assert_receive {:merged_call, call_node, path, "evogit/test-branch", _target},
+                     async_wait_budget()
+
       assert call_node == node()
       assert path == "/nonexistent/foreign/path"
       # The runner calls are issued from the action task; a zero-window
@@ -3150,7 +3176,7 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
       assert sibling.text == "Merging…"
       assert reject_button_state(html, "original").disabled?
 
-      assert_receive {:merge_started, task_pid, ^primary_dir}
+      assert_receive {:merge_started, task_pid, ^primary_dir}, async_wait_budget()
 
       # A second submit while the action is set is suppressed by the
       # `review_action` gate — the runner is never invoked twice.
@@ -3183,7 +3209,7 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
       end)
 
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
-      assert_receive {:merge_call, _path, "dev"}
+      assert_receive {:merge_call, _path, "dev"}, async_wait_budget()
       await_review_action_settled(view)
       refute_received {:merge_call, _, _}
     end
@@ -3207,7 +3233,7 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
       # The sibling repo's controls are disabled too (one action at a time).
       assert merge_submit_state(html, "primary").disabled?
 
-      assert_receive {:reject_started, task_pid, _foreign_path}
+      assert_receive {:reject_started, task_pid, _foreign_path}, async_wait_budget()
       refute task_pid == primary_dir
 
       # No second invocation while the action is set.
@@ -3248,8 +3274,8 @@ defmodule EvoDashWeb.ReviewLiveMergeTest do
 
       # The batch folded every unresolved change-bearing repo through the
       # runner (one call per repo, no fan-out duplication).
-      assert_receive {:batch_call, _path}
-      assert_receive {:batch_call, _path}
+      assert_receive {:batch_call, _path}, async_wait_budget()
+      assert_receive {:batch_call, _path}, async_wait_budget()
       refute_received {:batch_call, _path}
 
       await_review_action_settled(view)
@@ -6096,7 +6122,9 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       # (validated against ITS merge_targets); the primary stays untouched.
       render_click(view, "merge", %{"repo_id" => "original", "target_branch" => "dev"})
 
-      assert_receive {:merged_call, call_node, call_path, "task-branch", "dev"}
+      assert_receive {:merged_call, call_node, call_path, "task-branch", "dev"},
+                     async_wait_budget()
+
       assert call_node == node()
       assert call_path == foreign_dir
       # The runner call is issued from the action task; an immediate
@@ -6130,7 +6158,9 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       # snapshot is invalidated — and the page STILL does not navigate.
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
 
-      assert_receive {:merged_call, call_node, call_path, "task-branch", "dev"}
+      assert_receive {:merged_call, call_node, call_path, "task-branch", "dev"},
+                     async_wait_budget()
+
       assert call_node == node()
       assert call_path == primary_dir
       refute_received {:merged_call, _, _, _, _}
@@ -6300,7 +6330,7 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       # a fan-out.
       render_click(view, "reject", %{"repo_id" => "primary"})
 
-      assert_receive {:reject_call, call_node, call_path, "task-branch"}
+      assert_receive {:reject_call, call_node, call_path, "task-branch"}, async_wait_budget()
       assert call_node == node()
       assert call_path == primary_dir
       refute_received {:reject_call, _, _, _}
@@ -6317,7 +6347,7 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       # the review stays open with the hub snapshot untouched.
       render_click(view, "reject", %{"repo_id" => "original"})
 
-      assert_receive {:reject_call, call_node, call_path, "task-branch"}
+      assert_receive {:reject_call, call_node, call_path, "task-branch"}, async_wait_budget()
       assert call_node == node()
       assert call_path == foreign_dir
       refute_received {:reject_call, _, _, _}
@@ -6357,7 +6387,7 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
 
       render_click(view, "reject", %{"repo_id" => "original"})
 
-      assert_receive {:reject_call, call_node, call_path, "task-branch"}
+      assert_receive {:reject_call, call_node, call_path, "task-branch"}, async_wait_budget()
       assert call_node == node()
       assert call_path == foreign_dir
       refute_received {:reject_call, _, _, _}
@@ -6476,7 +6506,9 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       view |> element(archive_tab_selector()) |> render_click()
 
       # The PAGE runner got the REMOTE node atom, not the local one.
-      assert_receive {:archive_fetch, _pid, ^remote_node, "some-remote-task-id", opts}
+      assert_receive {:archive_fetch, _pid, ^remote_node, "some-remote-task-id", opts},
+                     async_wait_budget()
+
       assert opts[:offset] == 0
       wait_until(fn -> render(view) =~ "agent-1" end)
       assert assigns(view).archive_state == :loaded
@@ -6696,11 +6728,15 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
 
       # ONE runner call per unresolved repo, each with ITS OWN target: the
       # primary on its default "main", the foreign repo on its selected "dev".
-      assert_receive {:merged_call, call_node, call_path, "task-branch", "main"}
+      assert_receive {:merged_call, call_node, call_path, "task-branch", "main"},
+                     async_wait_budget()
+
       assert call_node == node()
       assert call_path == primary_dir
 
-      assert_receive {:merged_call, call_node, call_path, "task-branch", "dev"}
+      assert_receive {:merged_call, call_node, call_path, "task-branch", "dev"},
+                     async_wait_budget()
+
       assert call_node == node()
       assert call_path == foreign_dir
 

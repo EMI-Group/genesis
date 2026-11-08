@@ -120,6 +120,20 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.TaskInfo
 
+  # Load-tolerant budgets for waits on ASYNC page work (the mount load batch,
+  # remote activation/resume reads, GitHub runners). That work runs in
+  # supervised tasks on a shared host whose scheduling swings 10-30x
+  # (test/CONTEXT.md), so the previous 2-5 s budgets intermittently expired.
+  # The waits stay bounded and still fail loudly — only the deadlines moved.
+  @async_wait_budget_ms 30_000
+  # `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be starved for
+  # seconds on a loaded host, where the 5 s default exits the test.
+  @assigns_timeout_ms 30_000
+
+  # The same load-tolerant budget for `assert_receive` handshakes in the test
+  # modules below (module attributes are not importable across modules).
+  def async_wait_budget, do: @async_wait_budget_ms
+
   # Builds the module-wide git fixture template ONCE per suite module (called
   # from each module's `setup_all`) and copies it per test. Every git fixture
   # needs a real repository with one (empty) commit, and `git init` +
@@ -550,7 +564,7 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # The Phoenix.LiveViewTest View struct exposes no assigns accessor in this
   # version, so read the LiveView socket assigns directly from the process
   # state (same pattern as welcome_live_test.exs / settings_live_test.exs).
-  def assigns(view), do: :sys.get_state(view.pid).socket.assigns
+  def assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
 
   # Bounded poll on the LiveView assigns (async remote-project activation runs
   # in a supervised Task and lands a frame later via handle_info). `predicate`
@@ -563,7 +577,7 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # wedge — is unchanged. `assigns/1` is a `:sys.get_state` round-trip, so a
   # successful poll also guarantees the view has processed every message the
   # TEST process queued before it (Erlang signal order per sender pair).
-  def wait_assigns(view, predicate, timeout_ms \\ 3_000) do
+  def wait_assigns(view, predicate, timeout_ms \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
 
     poll = fn poll ->
@@ -716,7 +730,9 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   def assert_remote_activation_loaded(view, id, remote_node, path) do
     view_pid = view.pid
 
-    assert_receive {:remote_project_loaded, loader, [^view_pid | _], ^remote_node, ^path}, 2_000
+    assert_receive {:remote_project_loaded, loader, [^view_pid | _], ^remote_node, ^path},
+                   @async_wait_budget_ms
+
     assert loader != self()
     assert loader != view.pid
     wait_assigns(view, &(&1[:active_project_path] == path))
@@ -755,7 +771,7 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # after the budget (default 3s) so a connect that never lands fails loudly
   # instead of hanging. Deadline + 2ms cadence for the same reasons as
   # `wait_assigns/3`.
-  def wait_for_fake_callers(fake, predicate, timeout_ms \\ 3_000) do
+  def wait_for_fake_callers(fake, predicate, timeout_ms \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
 
     poll = fn poll ->
@@ -821,7 +837,7 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
       receive do
         {:DOWN, ^ref, :process, _pid, _reason} -> :ok
       after
-        5_000 -> :ok
+        @async_wait_budget_ms -> :ok
       end
     end)
 
@@ -985,7 +1001,7 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # GitHub runners run in supervised Tasks and report back via self-messages
   # handled by handle_info, so polling the assigns (with a generous budget)
   # is the deterministic way to wait for an async result.
-  def wait_until(view, predicate, timeout_ms \\ 2_000) do
+  def wait_until(view, predicate, timeout_ms \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
 
     poll = fn poll ->
@@ -2243,7 +2259,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      assert_receive {:batch_started, task_pid}, 1_000
+      assert_receive {:batch_started, task_pid}, async_wait_budget()
       # The batch runs OFF the LiveView process.
       assert task_pid != view.pid
       assert task_pid != test_pid
@@ -2752,7 +2768,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # result message lands in the test-process mailbox.
       local_node = node()
 
-      assert_receive {:async_remote_project, ^local_node, ^tmp_dir, {:ok, results}}, 2000
+      assert_receive {:async_remote_project, ^local_node, ^tmp_dir, {:ok, results}},
+                     async_wait_budget()
 
       # Apply the continuation directly (handle_info is a public callback).
       socket =
@@ -3104,7 +3121,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       assert_remote_activation_loaded(view, id, remote_node, remote_path)
       view_pid = view.pid
-      assert_receive {:remote_resume_read, reader, [^view_pid | _], ^remote_node, task_id}, 2_000
+
+      assert_receive {:remote_resume_read, reader, [^view_pid | _], ^remote_node, task_id},
+                     async_wait_budget()
+
       assert task_id == task.id
       assert reader != self()
       assert reader != view.pid
@@ -5329,7 +5349,10 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
         live(conn, "/projects?project=" <> URI.encode("~/remote-proj") <> "&node=" <> id)
 
       assert_remote_activation_loaded(view, id, remote_node, remote_home)
-      assert_receive {:remote_path_expanded, ^remote_node, "~/remote-proj"}, 2_000
+
+      assert_receive {:remote_path_expanded, ^remote_node, "~/remote-proj"},
+                     async_wait_budget()
+
       assert assigns(view)[:active_project_path] == remote_home
     end
   end

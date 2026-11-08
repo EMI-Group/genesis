@@ -105,6 +105,16 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
   # every timeout are unchanged.
   @poll_ms 1
 
+  # Load-tolerant budgets for the bounded awaits below (self-check task, chart
+  # seeding, update-hub broadcasts): that work runs off-process on a shared
+  # host whose scheduling swings 10-30x (test/CONTEXT.md), so the previous
+  # 2-10 s budgets intermittently expired. The waits stay bounded and still
+  # fail loudly — only the deadlines moved.
+  @async_wait_budget_ms 30_000
+  # `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be starved for
+  # seconds on a loaded host, where the 5 s default exits the test.
+  @assigns_timeout_ms 30_000
+
   # alpha (used 2 / waiting 1 / capacity 4) + beta (used 0 / waiting 3 /
   # capacity 0). Sorted ids are ["alpha", "beta"], so the deterministic
   # default selection is "alpha" and beta's distinctive legend last-value is
@@ -116,7 +126,7 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
   # The Phoenix.LiveViewTest View struct exposes no assigns accessor in this
   # version, so read the LiveView socket assigns directly from the process
   # state (same pattern as projects_live_test.exs / welcome_live_test.exs).
-  def assigns(view), do: :sys.get_state(view.pid).socket.assigns
+  def assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
 
   # Waits until the async self-check task spawned on mount has processed its
   # real `{:system_checks_result, _}` (i.e. `system_checks_status` leaves
@@ -124,7 +134,7 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
   # processed wins — awaiting the real result first guarantees an injected
   # result below is deterministically processed last (FIFO mailbox), no matter
   # how fast/slow the real check completes on the host.
-  def await_checks_done(view, timeout \\ 10_000) do
+  def await_checks_done(view, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_await_checks_done(view, deadline)
   end
@@ -147,7 +157,7 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
   # arrive either from a `{:system_sample, ...}` broadcast (applied
   # synchronously by the handler) or from the async seed RPC — poll until the
   # handler has applied one.
-  def await_chart_sample(view, timeout \\ 2_000) do
+  def await_chart_sample(view, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_await_chart_sample(view, deadline)
   end
@@ -385,7 +395,7 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
 
   # Polls the hub until it reaches the given phase. A cast followed by a call
   # from this process is ordered, so the first poll already reflects the cast.
-  def await_hub_phase(phase, timeout \\ 2_000) do
+  def await_hub_phase(phase, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_await_hub_phase(phase, deadline)
   end
@@ -405,7 +415,7 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
 
   # Polls the LiveView's `@update_status` assign until its phase matches (the
   # hub broadcast is assigned via the `{:update_status, state}` handle_info).
-  def await_update_phase(view, phase, timeout \\ 2_000) do
+  def await_update_phase(view, phase, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_await_update_phase(view, phase, deadline)
   end
@@ -432,7 +442,7 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
   # phase-only await above can return on the PREVIOUS state's broadcast, and
   # the following render would show stale HTML. Awaiting the error value
   # discriminates the two states.
-  def await_update_error(view, error, timeout \\ 2_000) do
+  def await_update_error(view, error, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_await_update_error(view, error, deadline)
   end
@@ -458,7 +468,7 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
   # needed when consecutive hub transitions share a phase/error (e.g. an empty
   # vs absent changelog body), where the phase-only awaits would return on the
   # PREVIOUS state's broadcast.
-  def await_update_status(view, predicate, timeout \\ 2_000) do
+  def await_update_status(view, predicate, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_await_update_status(view, predicate, deadline)
   end
@@ -477,14 +487,14 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
   end
 
   # Polls any socket assign until it equals the expected value (modal flags).
-  def await_view_assign(view, key, value, timeout \\ 2_000) do
+  def await_view_assign(view, key, value, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_await_view_assign(view, key, value, deadline)
   end
 
   # Polls an ETS integer counter until it reaches the expected value (used for
   # deterministic proofs where a transient phase window is too short to await).
-  def await_ets_count(table, key, expected, timeout \\ 2_000) do
+  def await_ets_count(table, key, expected, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_await_ets_count(table, key, expected, deadline)
   end

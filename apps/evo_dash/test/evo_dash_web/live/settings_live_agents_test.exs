@@ -59,9 +59,15 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
 
   # Generous best-effort deadline for that funnel: past it the wait simply stops
   # and the test's own synchronous call drains whatever is still queued.
-  @settle_timeout_ms 5_000
+  # Load-tolerant (was 5 s): the mount's supervised load runs on a shared host
+  # whose scheduling swings 10-30x (test/CONTEXT.md).
+  @settle_timeout_ms 30_000
 
-  defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
+  # Exit-safe `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be
+  # starved for seconds on a loaded host, where the 5 s default exits the test.
+  @assigns_timeout_ms 30_000
+
+  defp assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
 
   # Mounts the Settings page and waits for the async node-data load that mount
   # kicks off (`EvoDashWeb.SettingsLive.NodeData`, a supervised

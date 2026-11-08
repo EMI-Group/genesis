@@ -40,6 +40,20 @@ defmodule EvoDashWeb.SettingsLiveTest.Helpers do
   import ExUnit.Assertions
   import ExUnit.Callbacks
 
+  # Load-tolerant budgets for waits on ASYNC settings work (mount load chain,
+  # owned config-save receipt, provider-request round trips). That work runs in
+  # supervised tasks on a shared host whose scheduling swings 10-30x
+  # (test/CONTEXT.md), so the previous 1-5 s budgets intermittently expired.
+  # The waits stay bounded and still fail loudly — only the deadlines moved.
+  @async_wait_budget_ms 30_000
+  # `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be starved for
+  # seconds on a loaded host, where the 5 s default exits the test.
+  @assigns_timeout_ms 30_000
+
+  # The same load-tolerant budget for `assert_receive` / poll deadlines in the
+  # test modules below (module attributes are not importable across modules).
+  def async_wait_budget, do: @async_wait_budget_ms
+
   # ───────────────────────────────────────────────────────────────────────────
   # Mount helper — deterministic settle of the page's ASYNC loads
   # ───────────────────────────────────────────────────────────────────────────
@@ -88,7 +102,7 @@ defmodule EvoDashWeb.SettingsLiveTest.Helpers do
       receive do
         {:DOWN, ^ref, :process, _pid, _reason} -> :ok
       after
-        5_000 -> :ok
+        @async_wait_budget_ms -> :ok
       end
     end)
 
@@ -130,7 +144,7 @@ defmodule EvoDashWeb.SettingsLiveTest.Helpers do
   end
 
   def wait_settings(view, predicate, deadline \\ nil) do
-    deadline = deadline || System.monotonic_time(:millisecond) + 5_000
+    deadline = deadline || System.monotonic_time(:millisecond) + @async_wait_budget_ms
     current = assigns(view)
 
     if predicate.(current) do
@@ -148,7 +162,7 @@ defmodule EvoDashWeb.SettingsLiveTest.Helpers do
 
   # In LiveView 1.x the test View struct has no `.assigns` field, so we read
   # them from the underlying LiveView process socket.
-  def assigns(view), do: :sys.get_state(view.pid).socket.assigns
+  def assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
 
   # Builds a deterministic NodeData results map for the currently viewed node
   # by applying the pure PlatformInfo filters to the UNFILTERED schemas
@@ -427,6 +441,9 @@ defmodule EvoDashWeb.SettingsLiveParentAdapterTest do
   # configuration and custom credentials remain per-process isolated.
   use ExUnit.Case, async: true
   import Phoenix.LiveViewTest
+  # Load-tolerant budget for the loopback provider-request round trip below
+  # (the shared host's scheduling swings 10-30x per test/CONTEXT.md).
+  import EvoDashWeb.SettingsLiveTest.Helpers, only: [async_wait_budget: 0]
   alias EvoDashWeb.{SettingsComponents, SettingsLive}
 
   defp socket(draft, editing \\ "new") do
@@ -630,7 +647,7 @@ defmodule EvoDashWeb.SettingsLiveParentAdapterTest do
       assert {:ok, %{response: "hello"}} =
                EvoGit.SystemCheck.llm_test(resolved.model_spec, resolved.generation_params)
 
-      assert_receive {:settings_llm_request, headers, body}, 5_000
+      assert_receive {:settings_llm_request, headers, body}, async_wait_budget()
 
       assert List.keyfind(headers, "authorization", 0) ==
                {"authorization", "Bearer fixture-not-for-network"}
@@ -2358,7 +2375,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       settings_hook(view, "test_llm", %{})
       wait_settings(view, &match?({:ok, _}, &1.llm_test_status))
-      assert_receive {:settings_llm_request, headers, body}, 5_000
+      assert_receive {:settings_llm_request, headers, body}, async_wait_budget()
 
       assert List.keyfind(headers, "authorization", 0) ==
                {"authorization", "Bearer mounted-fixture"}
@@ -2466,7 +2483,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
         assert {:noreply, result} = SettingsLive.handle_event("test_llm", %{}, socket)
         assert result.assigns.llm_test_status == :testing
         scope = {nil, :"missing_settings_test@127.0.0.1", selected}
-        assert_receive {{:llm_test_result, 1, ^scope}, {:ok, {:error, _}}}, 5_000
+
+        assert_receive {{:llm_test_result, 1, ^scope}, {:ok, {:error, _}}},
+                       async_wait_budget()
       end
     end
 
@@ -2806,7 +2825,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # Polls render(view) until `fun` is truthy or the deadline passes. The
     # bootstrap handlers spawn their NodeContext call in an async Task whose
     # completion arrives as a message — render/1 flushes it deterministically.
-    defp wait_until(view, fun, timeout \\ 1_000) do
+    defp wait_until(view, fun, timeout \\ async_wait_budget()) do
       deadline = System.monotonic_time(:millisecond) + timeout
       do_wait(view, fun, deadline)
     end

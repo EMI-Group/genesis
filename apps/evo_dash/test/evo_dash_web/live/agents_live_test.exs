@@ -24,6 +24,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # starved for seconds on a loaded host, where the 5 s default would turn a
   # state read into an `(EXIT) time out` failure.
   @assigns_timeout_ms 30_000
+  # Load-tolerant budget for the bounded awaits below (async page loads,
+  # out-of-band renders): the work runs off-process on a shared host whose
+  # scheduling swings 10-30x (test/CONTEXT.md), so the previous 5 s budgets
+  # intermittently expired. The waits stay bounded and still fail loudly.
+  @async_wait_budget_ms
+  30_000
 
   setup do
     # The scheduler ETS tables (:evogit_sched_meta / :evogit_agent_state) are
@@ -288,7 +294,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       flush_agents_load(view)
 
       view |> element("#agent-card-#{agent_id()}") |> render_click()
-      assert_receive {:history_fetch_called, first_task}, 2000
+      assert_receive {:history_fetch_called, first_task}, @async_wait_budget_ms
 
       send(
         first_task,
@@ -317,8 +323,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       send(view.pid, {:agents_updated, node()})
       flush_agent_events(view)
 
-      assert_receive {:history_fetch_called, second_task}, 2000
-
+      assert_receive {:history_fetch_called, second_task}, @async_wait_budget_ms
       mid_flight = render(view)
       assert mid_flight =~ "first entry"
       refute mid_flight =~ "Loading history"
@@ -750,7 +755,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       # Coalescing contract: NOTHING is applied on receipt. The three events
       # sit in the newest-first buffer and the tree is still the pre-burst one.
-      buffered = :sys.get_state(view.pid).socket.assigns
+      buffered = :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
       assert length(buffered.pending_agent_events) == 3
       assert buffered.agent_flush_scheduled == true
       assert Enum.map(buffered.agents, & &1.id) == [agent_id()]
@@ -827,7 +832,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # before this reply. The FIRST event armed the single timer; the other
       # five only appended to the buffer (no second schedule), and nothing was
       # applied yet.
-      state = :sys.get_state(view.pid).socket.assigns
+      state = :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
       assert state.agent_flush_scheduled == true
       assert length(state.pending_agent_events) == 6
       assert state.agents |> Enum.map(& &1.id) == [agent_id()]
@@ -873,7 +878,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       # No flush call here: a flush would reset :agent_flush_scheduled itself
       # and make the assertion vacuous. :sys.get_state is the FIFO fence.
-      state = :sys.get_state(view.pid).socket.assigns
+      state = :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
       assert state.pending_agent_events == []
       assert state.agent_flush_scheduled == false
       assert state.pending_agents_refresh == false
@@ -2144,8 +2149,11 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # Exactly ONE call per {repo_root, task_id} group, carrying that group's
       # de-duplicated LIVE TIPS (the non-ended agents' current commits, in agent
       # order) and the limit.
-      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", tips_a, opts_a}, 1000
-      assert_receive {:commit_graph_call, _node, "task-1", "/repo/b", tips_b, opts_b}, 1000
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", tips_a, opts_a},
+                     @async_wait_budget_ms
+
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/b", tips_b, opts_b},
+                     @async_wait_budget_ms
 
       assert opts_a == [limit: 100]
       assert opts_b == [limit: 100]
@@ -2198,7 +2206,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # never for a nil/blank repo_root, commit or task_id. Once the fetch's
       # loading flag clears the whole fetch is done, so an extra call could only
       # come from a second fetch — assert none is in flight or armed.
-      assert_receive {:commit_graph_call, _node, "task-1", repo_root, _tips, _opts}, 1000
+      assert_receive {:commit_graph_call, _node, "task-1", repo_root, _tips, _opts},
+                     @async_wait_budget_ms
+
       assert repo_root == "/repo/a"
       wait_until(fn -> assigns(view)[:commit_graph_loading] == false end)
       assert assigns(view)[:commit_graph_tick_scheduled] == false
@@ -2239,8 +2249,11 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       # Same repo_key, different task_id → TWO calls, each carrying only ITS
       # task's live tips. Groups are sorted by {repo_key, task_id}.
-      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
-      assert_receive {:commit_graph_call, _node, "task-2", "/repo/a", ["c2"], [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]},
+                     @async_wait_budget_ms
+
+      assert_receive {:commit_graph_call, _node, "task-2", "/repo/a", ["c2"], [limit: 100]},
+                     @async_wait_budget_ms
 
       # Both group calls precede the fetch's async result, so once its loading
       # flag clears the fetch is done: an extra call could only come from a
@@ -2308,8 +2321,11 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       render_click(view, "switch_left_view", %{"view" => "commits"})
 
-      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
-      assert_receive {:commit_graph_call, _node, "task-2", "/repo/a", ["c2"], [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]},
+                     @async_wait_budget_ms
+
+      assert_receive {:commit_graph_call, _node, "task-2", "/repo/a", ["c2"], [limit: 100]},
+                     @async_wait_budget_ms
 
       wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
 
@@ -2365,8 +2381,11 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       render_click(view, "switch_left_view", %{"view" => "commits"})
 
-      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
-      assert_receive {:commit_graph_call, _node, "task-2", "/repo/b", ["c2"], [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]},
+                     @async_wait_budget_ms
+
+      assert_receive {:commit_graph_call, _node, "task-2", "/repo/b", ["c2"], [limit: 100]},
+                     @async_wait_budget_ms
 
       # The /repo/a agent ENDS (the core recycles it) → retained, ended.
       send(view.pid, {:agent_removed, agent_id(), node()})
@@ -2380,8 +2399,11 @@ defmodule EvoDashWeb.AgentsLiveTest do
       view |> element("#left-view-tree") |> render_click()
       view |> element("#left-view-commits") |> render_click()
 
-      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", [], [limit: 100]}, 1000
-      assert_receive {:commit_graph_call, _node, "task-2", "/repo/b", ["c2"], [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", [], [limit: 100]},
+                     @async_wait_budget_ms
+
+      assert_receive {:commit_graph_call, _node, "task-2", "/repo/b", ["c2"], [limit: 100]},
+                     @async_wait_budget_ms
     end
 
     test "a payload that INCLUDES the base commit renders it as ONE normal commit node",
@@ -2411,7 +2433,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       render_click(view, "switch_left_view", %{"view" => "commits"})
 
-      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]},
+                     @async_wait_budget_ms
+
       wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
 
       assert [repo] = assigns(view)[:commit_graph]
@@ -2469,7 +2493,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       render_click(view, "switch_left_view", %{"view" => "commits"})
 
-      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]},
+                     @async_wait_budget_ms
+
       wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
 
       # The stored socket state first (the rendered DOM is asserted below).
@@ -2888,7 +2914,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # Drive handle_params/3 directly (the LiveView is a plain socket here) and
       # force the node-changed reset branch by pointing previous_node at another
       # node than the one the (node-less) params resolve to — the local node.
-      state = :sys.get_state(view.pid)
+      state = :sys.get_state(view.pid, @assigns_timeout_ms)
       socket = state.socket
 
       socket = %{socket | assigns: Map.put(socket.assigns, :previous_node, :some_other_node)}
@@ -3049,7 +3075,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # Mirror the commit-graph reset test's idiom: invoke handle_params/3
       # directly on the live socket with `previous_node` forced to differ —
       # :sys.replace_state on :current_node would NOT run the reset branch.
-      state = :sys.get_state(view.pid)
+      state = :sys.get_state(view.pid, @assigns_timeout_ms)
       socket = state.socket
       socket = %{socket | assigns: Map.put(socket.assigns, :previous_node, :some_other_node)}
 
@@ -3118,8 +3144,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       render_click(view, "switch_left_view", %{"view" => "commits"})
 
-      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
-      assert_receive {:commit_graph_call, _node, "task-2", "/repo/b", ["c2"], [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]},
+                     @async_wait_budget_ms
+
+      assert_receive {:commit_graph_call, _node, "task-2", "/repo/b", ["c2"], [limit: 100]},
+                     @async_wait_budget_ms
+
       wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
 
       # PARTIAL SUCCESS: an {:ok, _} result (not an error) holding ONLY the
@@ -3195,7 +3225,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       end
 
       assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["new_sha"], [limit: 100]},
-                     1000
+                     @async_wait_budget_ms
 
       wait_until(fn -> assigns(view)[:commit_graph_loading] == false end)
 
@@ -3243,7 +3273,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
       end
 
       # The group's live tips now carry BOTH agents' current commits.
-      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", tips, [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", tips, [limit: 100]},
+                     @async_wait_budget_ms
+
       assert Enum.sort(tips) == Enum.sort(["c1", "c9"])
     end
 
@@ -3289,7 +3321,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
   end
 
   # Delegates to the shared flush helper (EvoDashWeb.TestHelpers.flush_loading/4).
-  defp flush_agents_load(view, timeout \\ 5000),
+  defp flush_agents_load(view, timeout \\ @async_wait_budget_ms),
     do:
       EvoDashWeb.TestHelpers.flush_loading(
         view,
@@ -3362,7 +3394,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # a TaskSupervisor child at teardown — and a raise here would in any case be
   # swallowed by the load task's node-boundary rescue, silently degrading the
   # test instead of failing it.
-  defp await_latch(latch, timeout \\ 5_000) do
+  defp await_latch(latch, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
     await_latch_loop(latch, deadline)
   end
@@ -3384,7 +3416,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # Polls `fun` until it returns a truthy value (or the timeout elapses).
   # Used to synchronize on LiveView state changes that follow directly-sent
   # messages (mailbox FIFO guarantees the preceding messages were processed).
-  defp wait_until(fun, timeout \\ 5000) do
+  defp wait_until(fun, timeout \\ @async_wait_budget_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
 
     wait_loop = fn wait_loop ->
@@ -3405,7 +3437,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
   # Polls the rendered HTML until `text` appears (async history fetches) and
   # returns the final HTML.
-  defp wait_for_text(view, text, timeout \\ 5000) do
+  defp wait_for_text(view, text, timeout \\ @async_wait_budget_ms) do
     wait_until(fn -> render(view) =~ text end, timeout)
     render(view)
   end
@@ -3414,7 +3446,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # on this page) and returns the LAST render either way — it never raises, so
   # the caller's assertion still fails loudly with the real output instead of a
   # synthetic timeout message.
-  defp render_until(view, predicate, budget_ms \\ 5_000) do
+  defp render_until(view, predicate, budget_ms \\ @async_wait_budget_ms) do
     render_until_loop(view, predicate, System.monotonic_time(:millisecond) + budget_ms)
   end
 
@@ -3620,7 +3652,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
     render_click(view, "switch_left_view", %{"view" => "commits"})
 
-    assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
+    assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]},
+                   @async_wait_budget_ms
+
     wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
 
     view
