@@ -16,8 +16,8 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
       assert_picker(doc)
       assert values(doc, "#task-llm-selection-provider option") == ["", "work", "personal"]
       assert selected_value(doc, "#task-llm-selection-provider") == ""
-      assert attr(doc, "#task-llm-selection-model", "disabled") == ["disabled"]
-      assert text(doc, "#task-llm-selection-model option") == "Choose a provider first"
+      assert attr(doc, "#task-llm-selection-model .capsule-item", "disabled") == ["disabled"]
+      assert text(doc, "#task-llm-selection-model .capsule-item") == "Choose a provider first"
       assert Floki.find(doc, "#task-llm-selection-reasoning") == []
     end
 
@@ -26,7 +26,7 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
 
       assert_picker(doc)
       assert attr(doc, "#task-llm-selection-provider", "disabled") == ["disabled"]
-      assert attr(doc, "#task-llm-selection-model", "disabled") == ["disabled"]
+      assert attr(doc, "#task-llm-selection-model .capsule-item", "disabled") == ["disabled"]
 
       assert text(doc, "#task-llm-selection-empty") ==
                "No provider profiles configured. Add one in Settings to choose a model."
@@ -63,13 +63,13 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
       doc = render_form(model_profiles: [])
 
       assert Floki.find(doc, "#task-llm-selection, select[name=model_id]") == []
-      assert length(Floki.find(doc, ".input-controls select[name=mode]")) == 1
+      assert length(Floki.find(doc, ".input-controls #mode-speed-capsule")) == 1
       assert length(Floki.find(doc, ".input-controls #task-launch-button")) == 1
     end
   end
 
   describe "task form layout and event forwarding" do
-    test "compact picker is inside the only form and immediately before the toolbar in both layouts" do
+    test "compact picker is inside the only form and the toolbar in both layouts" do
       for {prompt, layout} <- [
             {"Short objective", "compact"},
             {String.duplicate("a", 1300), "expanded"}
@@ -80,17 +80,8 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
         assert length(Floki.find(doc, "form")) == 1
         assert attr(doc, "#task-form", "phx-submit") == ["task_submit"]
         assert attr(doc, "#input-layout", "data-layout") == [layout]
-        assert length(Floki.find(doc, "#task-form .input-card > #task-llm-selection")) == 1
-        assert length(Floki.find(doc, "#task-llm-selection + .input-controls")) == 1
-        assert Floki.find(doc, ".input-controls #task-llm-selection") == []
-        assert_classes(doc, "#task-llm-selection", ["p-3", "mx-3", "mb-2"])
-        refute "p-4" in classes(doc, "#task-llm-selection")
-
-        assert_classes(doc, "#task-llm-selection > div", [
-          "grid-cols-1",
-          "sm:grid-cols-2",
-          "lg:grid-cols-3"
-        ])
+        assert length(Floki.find(doc, "#task-form .input-controls #task-llm-selection")) == 1
+        assert length(Floki.find(doc, ".input-controls #task-llm-selection")) == 1
 
         assert_classes(doc, ".input-controls", ["flex-nowrap"])
       end
@@ -99,21 +90,34 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
     test "picker controls retain explicit submit-form ownership, nesting, default events and payload names" do
       doc = render_picker()
 
-      for {suffix, name, event} <- [
-            {"provider", "provider_profile_id", "select_provider_profile"},
-            {"model", "model", "select_model"},
-            {"reasoning", "reasoning_effort", "select_reasoning_effort"}
-          ] do
-        selector = "#task-form #task-llm-selection-" <> suffix
-        assert attr(doc, selector, "name") == [name]
-        assert attr(doc, selector, "phx-change") == [event]
-        assert attr(doc, selector, "form") == ["task-form"]
-      end
+      provider = "#task-form #task-llm-selection-provider"
+      assert attr(doc, provider, "name") == ["provider_profile_id"]
+      assert attr(doc, provider, "phx-change") == ["select_provider_profile"]
+      assert attr(doc, provider, "form") == ["task-form"]
 
-      assert attr(doc, "#task-llm-selection-reasoning", "type") == ["range"]
-      assert attr(doc, "#task-llm-selection-reasoning", "value") == ["1"]
-      assert attr(doc, "#task-llm-selection-reasoning", "min") == ["0"]
-      assert attr(doc, "#task-llm-selection-reasoning", "max") == ["2"]
+      assert attr(doc, "#task-form #task-llm-selection-model", "role") == ["listbox"]
+
+      assert attr(doc, "#task-llm-selection-model .capsule-item", "phx-click") ==
+               List.duplicate("select_model", 3)
+
+      assert attr(doc, "#task-llm-selection-model .capsule-item", "phx-value-model") == [
+               "",
+               "shared-model",
+               "work-only"
+             ]
+
+      assert attr(doc, "#task-form #task-llm-selection-reasoning", "role") == ["group"]
+
+      assert attr(doc, "#task-llm-selection-reasoning .capsule-stop", "phx-click") ==
+               List.duplicate("select_reasoning_effort", 3)
+
+      assert attr(
+               doc,
+               "#task-llm-selection-reasoning .capsule-stop",
+               "phx-value-reasoning_effort"
+             ) ==
+               ["0", "1", "2"]
+
       assert text(doc, "#task-llm-selection-reasoning-value") == "Medium"
     end
 
@@ -129,11 +133,16 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
                "task_provider_changed"
              ]
 
-      assert attr(doc, "select[name=model]", "phx-change") == ["task_model_changed"]
-      assert attr(doc, "input[name=reasoning_effort]", "phx-change") == ["task_reasoning_changed"]
-      assert attr(doc, "select[name=mode]", "phx-change") == ["task_change"]
+      assert attr(doc, "#task-llm-selection-model .capsule-item", "phx-click") ==
+               List.duplicate("task_model_changed", 3)
 
-      assert attr(doc, "#quality-level-control button", "phx-click") ==
+      assert attr(doc, "#task-llm-selection-reasoning .capsule-stop", "phx-click") ==
+               List.duplicate("task_reasoning_changed", 3)
+
+      assert attr(doc, "#mode-speed-capsule .capsule-item", "phx-click") ==
+               List.duplicate("task_change", 4)
+
+      assert attr(doc, "#mode-speed-capsule .capsule-stop", "phx-click") ==
                List.duplicate("select_quality_level", 3)
     end
 
@@ -149,7 +158,7 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
                  if(show_auto?, do: "Auto (by rules)", else: "Choose a provider profile")
 
         assert selected_value(doc, "#task-llm-selection-provider") == "work"
-        assert selected_value(doc, "#task-llm-selection-model") == "shared-model"
+        assert selected_model(doc) == "shared-model"
       end
     end
 
@@ -158,8 +167,8 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
 
       assert selected_value(doc, "#task-llm-selection-provider") == ""
       assert text(doc, "#task-llm-selection-provider option[selected]") == "Auto (by rules)"
-      assert selected_value(doc, "#task-llm-selection-model") == ""
-      assert values(doc, "#task-llm-selection-model option") == [""]
+      assert selected_model(doc) == ""
+      assert attr(doc, "#task-llm-selection-model .capsule-item", "phx-value-model") == [""]
       assert Floki.find(doc, "#task-llm-selection-reasoning") == []
     end
 
@@ -182,24 +191,44 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
       personal = render_picker(model_spec: spec("personal", "shared-model", "xhigh"))
 
       assert selected_value(work, "#task-llm-selection-provider") == "work"
-      assert values(work, "#task-llm-selection-model option") == ["", "shared-model", "work-only"]
-      assert selected_value(work, "#task-llm-selection-model") == "shared-model"
+
+      assert attr(work, "#task-llm-selection-model .capsule-item", "phx-value-model") == [
+               "",
+               "shared-model",
+               "work-only"
+             ]
+
+      assert selected_model(work) == "shared-model"
       assert text(work, "#task-llm-selection-provider option[selected]") == "Work account"
       assert text(work, "#task-llm-selection-reasoning-value") == "Medium"
-      assert attr(work, "#task-llm-selection-reasoning", "max") == ["2"]
+
+      assert attr(
+               work,
+               "#task-llm-selection-reasoning .capsule-stop",
+               "phx-value-reasoning_effort"
+             ) ==
+               ["0", "1", "2"]
 
       assert selected_value(personal, "#task-llm-selection-provider") == "personal"
 
-      assert values(personal, "#task-llm-selection-model option") == [
+      assert attr(personal, "#task-llm-selection-model .capsule-item", "phx-value-model") == [
                "",
                "shared-model",
                "personal-only"
              ]
 
-      assert selected_value(personal, "#task-llm-selection-model") == "shared-model"
+      assert selected_model(personal) == "shared-model"
       assert text(personal, "#task-llm-selection-reasoning-value") == "Extra high"
-      assert attr(personal, "#task-llm-selection-reasoning", "value") == ["0"]
-      assert attr(personal, "#task-llm-selection-reasoning", "disabled") == ["disabled"]
+
+      assert attr(
+               personal,
+               "#task-llm-selection-reasoning .capsule-stop[aria-pressed=true]",
+               "phx-value-reasoning_effort"
+             ) == ["0"]
+
+      assert attr(personal, "#task-llm-selection-reasoning .capsule-stop", "disabled") == [
+               "disabled"
+             ]
     end
 
     test "a model belonging only to another profile is retained as unavailable, not borrowed" do
@@ -208,11 +237,16 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
       assert selected_value(doc, "#task-llm-selection-provider") == "work"
       assert_unavailable(doc, "model", "personal-only", "Unavailable model: personal-only")
 
-      assert values(doc, "#task-llm-selection-model option:not([disabled])") == [
-               "",
-               "shared-model",
-               "work-only"
-             ]
+      assert attr(
+               doc,
+               "#task-llm-selection-model .capsule-item:not([disabled])",
+               "phx-value-model"
+             ) ==
+               [
+                 "",
+                 "shared-model",
+                 "work-only"
+               ]
 
       assert Floki.find(doc, "#task-llm-selection-reasoning") == []
     end
@@ -235,7 +269,10 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
                "personal"
              ]
 
-      assert attr(doc, "#task-llm-selection-model", "disabled") == ["disabled"]
+      assert attr(doc, "#task-llm-selection-model button[phx-value-model]", "disabled") == [
+               "disabled"
+             ]
+
       assert Floki.find(doc, "#task-llm-selection-reasoning") == []
     end
 
@@ -245,14 +282,21 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
       assert selected_value(doc, "#task-llm-selection-provider") == "work"
       assert_unavailable(doc, "model", "retired-model", "Unavailable model: retired-model")
 
-      assert values(doc, "#task-llm-selection-model option") == [
-               "",
-               "retired-model",
-               "shared-model",
-               "work-only"
+      assert attr(
+               doc,
+               "#task-llm-selection-model .capsule-item:not([disabled])",
+               "phx-value-model"
+             ) ==
+               [
+                 "",
+                 "shared-model",
+                 "work-only"
+               ]
+
+      assert attr(doc, "#task-llm-selection-model .capsule-item[disabled]", "disabled") == [
+               "disabled"
              ]
 
-      assert attr(doc, "#task-llm-selection-model", "disabled") == []
       assert Floki.find(doc, "#task-llm-selection-reasoning") == []
     end
 
@@ -268,7 +312,13 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
       assert text(doc, "#task-llm-selection") =~
                "No models are available for this provider profile."
 
-      assert attr(doc, "#task-llm-selection-model", "disabled") == ["disabled"]
+      assert attr(
+               doc,
+               "#task-llm-selection-model .capsule-item:not([disabled])",
+               "phx-value-model"
+             ) ==
+               []
+
       assert Floki.find(doc, "#task-llm-selection-reasoning") == []
     end
   end
@@ -280,9 +330,15 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
 
         assert selected_quality(doc) == quality
         assert text(doc, "#task-llm-selection-reasoning-value") == "Medium"
-        assert attr(doc, "#task-llm-selection-reasoning", "value") == ["1"]
-        assert Floki.find(doc, "#quality-level-control input[name=reasoning_effort]") == []
-        assert length(Floki.find(doc, ".input-controls > #quality-level-control")) == 1
+
+        assert attr(
+                 doc,
+                 "#task-llm-selection-reasoning .capsule-stop[aria-pressed=true]",
+                 "phx-value-reasoning_effort"
+               ) == ["1"]
+
+        assert Floki.find(doc, "#mode-speed-capsule #task-llm-selection-reasoning") == []
+        assert length(Floki.find(doc, ".input-controls > #mode-speed-capsule")) == 1
       end
     end
 
@@ -297,15 +353,21 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
 
         assert selected_quality(doc) == "fast"
         assert text(doc, "#task-llm-selection-reasoning-value") == label
-        assert attr(doc, "#task-llm-selection-reasoning", "value") == [index]
 
-        assert attr(doc, "#quality-level-control button", "phx-value-level") == [
+        assert attr(
+                 doc,
+                 "#task-llm-selection-reasoning .capsule-stop[aria-pressed=true]",
+                 "phx-value-reasoning_effort"
+               ) == [index]
+
+        assert attr(doc, "#mode-speed-capsule .capsule-stop", "phx-value-level") == [
                  "fast",
                  "balanced",
                  "high_quality"
                ]
 
-        assert attr(doc, "#quality-level-control button", "type") == List.duplicate("button", 3)
+        assert attr(doc, "#mode-speed-capsule .capsule-stop", "type") ==
+                 List.duplicate("button", 3)
       end
     end
 
@@ -316,8 +378,13 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
           model_spec: spec("work", "work-only", "high")
         )
 
-      assert selected_value(doc, "#task-llm-selection-model") == "work-only"
-      assert Floki.find(doc, "#task-llm-selection-reasoning, [name=reasoning_effort]") == []
+      assert selected_model(doc) == "work-only"
+
+      assert Floki.find(
+               doc,
+               "#task-llm-selection-reasoning, #task-llm-selection-reasoning-value, [name=reasoning_effort]"
+             ) == []
+
       assert selected_quality(doc) == "high_quality"
     end
   end
@@ -373,15 +440,30 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
     assert Floki.find(doc, "select[name=model_id]") == []
   end
 
-  defp assert_unavailable(doc, suffix, value, label) do
-    selector = "#task-llm-selection-#{suffix} option[selected]"
+  defp assert_unavailable(doc, "provider", value, label) do
+    selector = "#task-llm-selection-provider option[selected]"
     assert attr(doc, selector, "value") == [value]
     assert attr(doc, selector, "disabled") == ["disabled"]
+    assert attr(doc, "#task-llm-selection-provider", "aria-invalid") == ["true"]
+    assert text(doc, selector) == label
+  end
+
+  defp assert_unavailable(doc, "model", _value, label) do
+    selector = "#task-llm-selection-model button[aria-invalid]"
+    assert attr(doc, selector, "disabled") == ["disabled"]
+    assert attr(doc, selector, "aria-invalid") == ["true"]
     assert text(doc, selector) == label
   end
 
   defp selected_quality(doc) do
-    [value] = attr(doc, "#quality-level-control button[aria-pressed=true]", "phx-value-level")
+    [value] = attr(doc, "#mode-speed-capsule button[aria-pressed=true]", "phx-value-level")
+    value
+  end
+
+  defp selected_model(doc) do
+    [value] =
+      attr(doc, "#task-llm-selection-model .capsule-item[aria-selected=true]", "phx-value-model")
+
     value
   end
 
