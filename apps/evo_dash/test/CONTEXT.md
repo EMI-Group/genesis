@@ -193,7 +193,7 @@ Coverage distinguishes exact-code write versus sudo Elixir requests and legacy c
 The helper test node's `CONTEXT.md` and the LiveView test context document the detailed recovery contracts.
 
 ### Speed ↔ quality control
-The task form's segmented control is covered at component level (`task_form_components_test.exs`, `#quality-level-control` markup + exact active/inactive class strings) and at page level (`projects_live_test.exs`, `select_quality_level` assign movement and `:quality_level` opt threading).
+The task form's fused-capsule speed ↔ quality control is covered at component level (`task_form_components_test.exs`, `#mode-speed-capsule` markup with `#quality-level-fast`/`-balanced`/`-high_quality` `.capsule-stop` buttons and exact `aria-pressed`/`.capsule-stop-active` active-state strings) and at page level (`projects_live_test.exs`, `select_quality_level` assign movement and `:quality_level` opt threading).
 
 ## Provider-profile redesign regression coverage
 
