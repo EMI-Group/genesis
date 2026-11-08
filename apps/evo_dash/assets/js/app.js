@@ -66,6 +66,7 @@ import AdaptiveInput from "./hooks/adaptive_input.js"
 import LegendTooltip from "./hooks/legend_tooltip.js"
 import DiffViewer from "./hooks/diff_viewer.js"
 import CommitGraph from "./hooks/commit_graph.js"
+import CapsulePanel from "./hooks/capsule_panel.js"
 // Compute the longest common prefix among an array of strings
 function longestCommonPrefix(strings) {
   if (strings.length === 0) return "";
@@ -1235,7 +1236,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken, guide_client_id: guideClientId},
-  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateStatus, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, Guide, StatePersistence, BrowserNotifications, AutoClearFlash, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList, DiffViewer, CommitGraph},
+  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateStatus, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, Guide, StatePersistence, BrowserNotifications, AutoClearFlash, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList, DiffViewer, CommitGraph, CapsulePanel},
 })
 
 // Show progress bar on live navigation and form submits
