@@ -179,7 +179,7 @@ Opt-in only, and the archive NEVER rides a page load: every page reads a lite ta
 ### Genesis Assistant Page (`HomeLive` at `GET /help`)
 
 ChatGPT-style chat that IS the Genesis Assistant — a general-purpose agent that understands Genesis and operates it, wired to the self-reflective agent and the ONLY entry for `:reflect` tasks; sidebar **Assistant** entry (the `/help` route is unchanged).
-The header uses the shared provider/model/reasoning picker; the transcript scrolls independently above pinned approval cards and the bottom composer, and New chat is idle-only.
+The composer card is one column form: the textarea above a control bar carrying the shared provider/model/reasoning picker on the left and Send/Stop on the right (the header renders no picker); the transcript scrolls independently above pinned approval cards and the composer, and New chat is idle-only.
 Send flow: `Transcript.build_preamble/1` (last 8 exchanges, 600 chars/entry, 4000-char cap) + message → `EvoDash.NodeContext.start_task(node, :reflect, mode: "reflect", objective: ...)` with NO `:path`, after canonical node-scoped model-option validation.
 Streaming rides `"agents"`/`"tasks"` PubSub + async `get_agent_history/2` (the `:agent_updated` `changed_fields` is a KEYWORD LIST — guard with `is_list`/`Keyword.has_key?`); the terminal render comes from the task result, behind two monotonic stale-guards (`chat_fetch_seq`, `chat_task_fetch_seq`).
 Each assistant response is a **mini task-card chat message** (`home_live/assistant_message.ex`) reusing `Helpers.task_status_badge/1`, the streamed text, and a collapsible "Thought process" (思考过程) via `AgentsLive.ToolCallDisplay`.

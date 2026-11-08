@@ -44,7 +44,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
   defp text(dom, selector), do: dom |> Floki.find(selector) |> Floki.text() |> String.trim()
   defp attr(dom, selector, name), do: dom |> Floki.find(selector) |> Floki.attribute(name)
 
-  test "header renders the shared picker and rule-controlled Auto label" do
+  test "composer card renders the shared picker and rule-controlled Auto label" do
     profiles = [%{"id" => "work-account", "name" => "Work", "provider" => "openai"}]
 
     selections = [
@@ -103,13 +103,59 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
              ["1"]
 
     assert text(dom, "#chat-llm-selection-provider option[value='']") == "Auto (by rules)"
-    assert Floki.find(dom, "#chat-form #chat-llm-selection") == []
+
+    # Placement: the picker lives in the composer card's control bar, inside
+    # the ONE `#chat-form` (the provider select needs that form owner), and is
+    # gone from the page header along with its old standalone form.
+    assert Floki.find(dom, "#chat-form #chat-composer-controls #chat-llm-selection") != []
+    assert Floki.find(dom, "#chat-header #chat-llm-selection") == []
+    assert Floki.find(dom, "form#chat-llm-selection-form") == []
     assert Floki.find(dom, "select[name='model_id']") == []
 
     dom = page(provider_profiles: profiles, model_selections: selections, model_spec: spec)
 
     assert text(dom, "#chat-llm-selection-provider option[value='']") ==
              "Choose a provider profile"
+  end
+
+  test "composer control bar pairs the picker with the send control inside one form" do
+    profiles = [%{"id" => "work-account", "name" => "Work", "provider" => "openai"}]
+
+    selections = [
+      %{
+        provider_profile_id: "work-account",
+        model: "reasoned-model",
+        reasoning_efforts: ["low", "high"],
+        default_reasoning_effort: "low"
+      }
+    ]
+
+    spec = %{"provider_profile_id" => "work-account", "model" => "reasoned-model"}
+    dom = page(provider_profiles: profiles, model_selections: selections, model_spec: spec)
+
+    # One form owns the whole composer; nothing is nested inside it.
+    assert attr(dom, "#chat-form", "phx-submit") == ["send_message"]
+    assert attr(dom, "#chat-form", "phx-change") == ["chat_input"]
+    assert Floki.find(dom, "#chat-form #chat-form") == []
+    assert Floki.find(dom, "#chat-form form") == []
+
+    # Capsule on the left, send/stop on the right, both in the control bar row
+    # that sits BELOW the textarea.
+    assert Floki.find(dom, "#chat-composer-controls #chat-llm-selection") != []
+    assert Floki.find(dom, "#chat-composer-controls button[type='submit']") != []
+    assert Floki.find(dom, "#chat-composer-controls button[phx-click='stop']") != []
+
+    assert Floki.find(dom, "#chat-form > textarea") != []
+    assert Floki.find(dom, "#chat-form > textarea + #chat-composer-controls") != []
+
+    # The picker's select carries its OWN change binding, which LiveView
+    # dispatches in preference to the enclosing form's `chat_input`; the
+    # textarea has no own binding, so typing still hits the form event.
+    assert attr(dom, "#chat-form #chat-llm-selection-provider", "phx-change") == [
+             "select_provider_profile"
+           ]
+
+    assert attr(dom, "#chat-form textarea", "phx-change") == []
   end
 
   test "loading, missing snapshots and invalid selections cannot enable sending" do

@@ -2554,11 +2554,11 @@ button, a, input, textarea, select, summary,
 /* No DaisyUI control styles: keep the composer quiet beside the borderless
    reading column. Focus uses the standalone accent (outline role). */
 .help-composer {
-  /* Vertically center the round Send/Stop buttons within the input row -
-     overrides the form's Tailwind `items-end` (unlayered CSS beats @layer
-     utilities), fixing the button sitting low against the min-h-[46px]
-     textarea in both the 1-row and grown states. */
-  align-items: center;
+  /* Column composer: the textarea row on top, the control bar (picker left,
+     send/stop right) underneath. `align-items: stretch` (unlayered CSS beats
+     @layer utilities) keeps the textarea full width in both the 1-row and
+     grown states. */
+  align-items: stretch;
   padding: 0 0.5rem;
   border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
   min-width: 0;
@@ -2577,7 +2577,16 @@ button, a, input, textarea, select, summary,
   /* Avoid an invisible caret against the active accent on either theme. */
   caret-color: var(--color-primary-standalone);
 }
-.help-composer > button:focus-visible {
+/* Control bar under the textarea: vertically centered picker capsule on the
+   left, Send/Stop group pushed right. */
+.help-composer-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0 0.25rem 0.375rem;
+}
+.help-composer-controls button:focus-visible {
   outline: 2px solid var(--color-primary-standalone);
   outline-offset: 3px;
 }

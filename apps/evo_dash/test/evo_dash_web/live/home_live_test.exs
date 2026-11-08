@@ -1898,7 +1898,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       end
     end
 
-    test "header projects canonical provider, model and reasoning defaults without credentials",
+    test "composer projects canonical provider, model and reasoning defaults without credentials",
          %{
            conn: conn
          } do
@@ -1926,7 +1926,11 @@ defmodule EvoDashWeb.HomeLiveTest do
              )
 
       refute present?(html, ~s(select[name="model_id"]))
-      refute present?(html, "#chat-form #chat-llm-selection")
+      # The picker moved from the header into the composer card's control bar
+      # (still inside the ONE `#chat-form`).
+      assert present?(html, "#chat-form #chat-composer-controls #chat-llm-selection")
+      refute present?(html, "#chat-header #chat-llm-selection")
+      refute present?(html, "form#chat-llm-selection-form")
       dom = Floki.parse_document!(html)
 
       assert dom |> Floki.find("#chat-llm-selection-provider option") |> Floki.attribute("value") ==
@@ -2049,6 +2053,79 @@ defmodule EvoDashWeb.HomeLiveTest do
         assert assigns(view).model_spec == expected
         assert EvoDash.ChatHistory.get_state(assigns(view).chat_id).model_spec == expected
       end
+    end
+
+    test "composer picker events never reach the composer's chat_input handler", %{conn: conn} do
+      write_provider_profile_config()
+      {:ok, view, html} = live(conn, "/help")
+
+      # Placement: the capsule is a control in the composer card, not the
+      # header, and `#chat-form` is its form owner.
+      assert present?(html, "#chat-form #chat-composer-controls #chat-llm-selection")
+      refute present?(html, "#chat-header #chat-llm-selection")
+
+      # Typing still drives the draft through the form-level `chat_input`.
+      render_change(view, "chat_input", %{"message" => "draft text"})
+      assert assigns(view).chat_draft == "draft text"
+
+      # Capsule changes carry ONLY their own field (the picker's select owns its
+      # `phx-change`, so LiveView serializes that input alone instead of the
+      # enclosing form) and mutate the selection only: the draft and transcript
+      # are untouched, i.e. the composer's `chat_input` never fired.
+      render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
+      assert assigns(view).model_spec == work_spec("high")
+      assert assigns(view).chat_draft == "draft text"
+      assert assigns(view).transcript == []
+
+      html =
+        render_change(view, "select_provider_profile", %{"provider_profile_id" => "first-account"})
+
+      assert assigns(view).model_spec == %{
+               "provider_profile_id" => "first-account",
+               "model" => "fast-model"
+             }
+
+      assert assigns(view).chat_draft == "draft text"
+      assert assigns(view).transcript == []
+      assert present?(html, "#chat-form textarea[name=\"message\"]")
+
+      # The reverse direction still works after the move: a textarea change
+      # keeps updating the draft.
+      render_change(view, "chat_input", %{"message" => "draft text v2"})
+      assert assigns(view).chat_draft == "draft text v2"
+
+      assert assigns(view).model_spec == %{
+               "provider_profile_id" => "first-account",
+               "model" => "fast-model"
+             }
+    end
+
+    test "the composer form still submits end-to-end with the picker in its control bar", %{
+      conn: conn
+    } do
+      write_provider_profile_config()
+      {:ok, view, html} = live(conn, "/help")
+
+      # The submit control lives in the same control bar row as the capsule.
+      assert present?(html, "#chat-composer-controls button[type=\"submit\"]")
+      assert present?(html, "#chat-composer-controls #chat-llm-selection")
+      assert disabled?(html, ~s(#chat-form button[type="submit"])) == false
+
+      render_change(view, "chat_input", %{"message" => "sent from the composer"})
+
+      # A REAL form submit: the test client resolves `phx-submit` from the
+      # `#chat-form` DOM node and collects the form's own input values.
+      {html, _log} =
+        send_and_await_terminal(fn ->
+          view |> form("#chat-form", %{message: "sent from the composer"}) |> render_submit()
+        end)
+
+      assert html =~ "sent from the composer"
+      task = only_reflect_task()
+      assert_task_selection(task, work_spec())
+      assert opt(task, :mode) == "reflect"
+      assert opt(task, :objective) == "sent from the composer"
+      cleanup_task_on_exit(task.id)
     end
 
     test "legacy ChatHistory id migrates on mount to a canonical same-node selection", %{

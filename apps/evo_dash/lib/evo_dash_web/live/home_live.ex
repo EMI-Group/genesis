@@ -79,7 +79,10 @@ defmodule EvoDashWeb.HomeLive do
     >
       <div class="flex h-full min-h-0 w-full min-w-0 max-w-3xl flex-col mx-auto">
         <!-- The header, answers and composer share one reading column. -->
-        <div class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-base-300 px-3 pt-3 pb-3 sm:px-4 sm:pt-4">
+        <div
+          id="chat-header"
+          class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-base-300 px-3 pt-3 pb-3 sm:px-4 sm:pt-4"
+        >
           <div class="min-w-0 basis-full sm:basis-auto sm:flex-1">
             <h1 class="text-base font-semibold truncate">
               <%!-- zh_CN: Genesis Assistant 是此对话助手的名称 --%>{gettext(
@@ -87,24 +90,6 @@ defmodule EvoDashWeb.HomeLive do
               )}
             </h1>
           </div>
-          <form id="chat-llm-selection-form" class="basis-full order-last">
-            <.llm_selection
-              id="chat-llm-selection"
-              provider_profiles={@provider_profiles}
-              model_selections={@model_selections}
-              model_spec={@model_spec || %{}}
-              show_auto_option={@model_selection_enabled}
-              disabled={@model_select_loading or is_nil(@model_snapshot)}
-              compact
-            />
-          </form>
-          <p
-            :if={@model_select_load_error || @model_selection_error}
-            role="alert"
-            class="basis-full order-last text-xs text-error"
-          >
-            {gettext("Model selection is unavailable. Choose a valid model or reconnect to the node.")}
-          </p>
           <button
             type="button"
             phx-click="new_chat"
@@ -196,13 +181,26 @@ defmodule EvoDashWeb.HomeLive do
           <% _ -> %>
         <% end %>
 
-        <!-- Composer: pinned bottom, outside the messages scroller -->
+        <!-- Composer: pinned bottom, outside the messages scroller. ONE form:
+             the textarea row, then a control bar holding the shared
+             provider/model/reasoning capsule on the left and Send/Stop on the
+             right (the /projects toolbar shape). The capsule's provider
+             `<select>` must have a form owner for its `phx-change`, so it lives
+             INSIDE this form — its own input-level phx-change takes precedence
+             over the form's `chat_input`, and NO form may ever be nested here. -->
         <div class="shrink-0 px-3 pt-2 pb-3 sm:px-4 bg-base-100">
+          <p
+            :if={@model_select_load_error || @model_selection_error}
+            role="alert"
+            class="mb-1.5 text-xs text-error"
+          >
+            {gettext("Model selection is unavailable. Choose a valid model or reconnect to the node.")}
+          </p>
           <form
             id="chat-form"
             phx-submit="send_message"
             phx-change="chat_input"
-            class="help-composer flex items-end gap-2 rounded-2xl p-1"
+            class="help-composer flex flex-col gap-1 rounded-2xl p-1"
           >
             <textarea
               name="message"
@@ -215,29 +213,44 @@ defmodule EvoDashWeb.HomeLive do
               aria-label={gettext("Message Genesis Assistant…")}
               class="w-full min-w-0 min-h-[46px] max-h-[min(10rem,25dvh)] resize-y bg-transparent px-4 py-3 text-base leading-relaxed placeholder:text-base-content/50 focus:outline-none disabled:opacity-50"
             ></textarea>
-            <!-- Send → Stop morph: exactly one button is visible at a time; both
-                 stay in the DOM (the hidden one disabled) so the Stop button's
-                 presence/disabled state remains assertable on idle. -->
-            <button
-              type="submit"
-              disabled={
-                @chat_status != :idle or SourceGate.blocked?(assigns) or
-                  is_nil(@model_snapshot) or not is_nil(@model_selection_error)
-              }
-              class={"help-send-btn flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-content transition hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:pointer-events-none " <> if(@chat_status == :running, do: "hidden", else: "")}
-            >
-              <.icon name="hero-paper-airplane" class="size-4" />
-              <span class="sr-only"><%!-- zh_CN: "发送" --%>{gettext("Send")}</span>
-            </button>
-            <button
-              type="button"
-              phx-click="stop"
-              disabled={@chat_status != :running}
-              class={"flex size-9 shrink-0 items-center justify-center rounded-full bg-base-content text-base-100 transition hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:pointer-events-none " <> if(@chat_status != :running, do: "hidden", else: "")}
-            >
-              <.icon name="hero-stop" class="size-4" />
-              <span class="sr-only"><%!-- zh_CN: "停止" --%>{gettext("Stop")}</span>
-            </button>
+            <!-- Composer control bar: picker left, send/stop right. -->
+            <div id="chat-composer-controls" class="help-composer-controls">
+              <.llm_selection
+                id="chat-llm-selection"
+                provider_profiles={@provider_profiles}
+                model_selections={@model_selections}
+                model_spec={@model_spec || %{}}
+                show_auto_option={@model_selection_enabled}
+                disabled={@model_select_loading or is_nil(@model_snapshot)}
+                compact
+                class="min-w-0"
+              />
+              <div class="ml-auto flex shrink-0 items-center gap-2">
+                <!-- Send → Stop morph: exactly one button is visible at a time; both
+                     stay in the DOM (the hidden one disabled) so the Stop button's
+                     presence/disabled state remains assertable on idle. -->
+                <button
+                  type="submit"
+                  disabled={
+                    @chat_status != :idle or SourceGate.blocked?(assigns) or
+                      is_nil(@model_snapshot) or not is_nil(@model_selection_error)
+                  }
+                  class={"help-send-btn flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-content transition hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:pointer-events-none " <> if(@chat_status == :running, do: "hidden", else: "")}
+                >
+                  <.icon name="hero-paper-airplane" class="size-4" />
+                  <span class="sr-only"><%!-- zh_CN: "发送" --%>{gettext("Send")}</span>
+                </button>
+                <button
+                  type="button"
+                  phx-click="stop"
+                  disabled={@chat_status != :running}
+                  class={"flex size-9 shrink-0 items-center justify-center rounded-full bg-base-content text-base-100 transition hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:pointer-events-none " <> if(@chat_status != :running, do: "hidden", else: "")}
+                >
+                  <.icon name="hero-stop" class="size-4" />
+                  <span class="sr-only"><%!-- zh_CN: "停止" --%>{gettext("Stop")}</span>
+                </button>
+              </div>
+            </div>
           </form>
           <div class="mt-1.5 text-center text-xs text-base-content/60">
             <%!-- zh_CN: "回车发送 · Shift+回车换行" --%>{gettext(

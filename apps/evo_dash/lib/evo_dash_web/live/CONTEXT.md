@@ -31,7 +31,7 @@ Phoenix LiveView modules and templates for the EvoDash interactive UI — real-t
 
 ### HomeLive operational UX and current gotchas
 
-`home_live.ex` presents "Genesis Assistant" with the shared provider/model/reasoning picker in its own `#chat-llm-selection-form`, separate from the composer, so native input change events reach the existing selection handlers.
+`home_live.ex` presents "Genesis Assistant" with the shared provider/model/reasoning picker in the composer card's control bar (inside the `#chat-form` composer form, capsule left and Send/Stop right, below the textarea), so native input change events reach the existing selection handlers; the page header renders no picker.
 The page retains idle-only New chat, a separately scrolling transcript, pinned approval cards and the "Message Genesis Assistant…" composer.
 Every nonblank idle send starts a NEW `:reflect` task with `mode: "reflect"`, bounded textual conversation preamble and no `:path`; the current message itself has no page-level length limit and cannot be sent while a task is running or cancelling.
 Enter submits through a server-maintained Shift latch, Shift+Enter keeps the newline, and model selection stays available during a run but affects later tasks only.

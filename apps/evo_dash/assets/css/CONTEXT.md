@@ -5,7 +5,7 @@
 
 ## API Surface
 The file contains DaisyUI light/dark themes, accent fill/standalone role tokens, shared component styles, Markdown, responsive input layout, and a final Genesis Assistant chat section.
-The Assistant section scopes reading rhythm, quiet headings/quotes, code sizing and narrow-screen spacing to `#chat-messages .md-content`, and styles `.help-composer` plus `.help-caret` without changing layout or hook contracts.
+The Assistant section scopes reading rhythm, quiet headings/quotes, code sizing and narrow-screen spacing to `#chat-messages .md-content`, and styles the column `.help-composer` (textarea row above a `.help-composer-controls` bar holding the picker left and Send/Stop right) plus `.help-caret` without changing layout or hook contracts.
 Shared Markdown guards wrap long prose and constrain code/table width while preserving horizontal scrolling.
 
 ## Constraints
