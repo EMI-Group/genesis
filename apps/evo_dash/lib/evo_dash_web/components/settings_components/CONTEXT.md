@@ -59,8 +59,8 @@ The existing legacy editor is unchanged and must not be mounted alongside this e
 
 `SettingsComponents.category_section/1` imports the provider editor outside the flat `save_category` form and accepts separate `provider_profiles` and `model_selections` projections from SettingsLive.
 The default account comes from `file_config[:llm][:default_provider_profile]`, and edit/draft/auth assigns pass through unchanged except for the parent's flat-to-nested generation display adapter.
-The editor renders a standalone detached form for `editing_profile_id=:new` with a catalog-backed `select name="provider"`, authentication controls/guidance, compact editable model-name rows and real default-model/default-reasoning selects.
-The default-model selector draws from current model-row names and retains an existing default-only model without inventing override rows, so a saved default need not belong to the optional override list.
+The editor renders a standalone detached form for `editing_profile_id=:new` with a catalog-backed `select name="provider"`, authentication controls/guidance, compact editable model-name rows, an editable default-model input with datalist suggestions, and a default-reasoning select.
+The default-model input suggests current model-row names and retains an existing default-only model without inventing override rows, so a saved default need not belong to the optional override list.
 Every model row initially shows its name and remove action, while `details#provider-model-details-<index>` holds context, reasoning inventory/default overrides and nested generation overrides.
 The collapsed `details#provider-profile-advanced` contains optional account ID/display name, endpoint, concurrency, schedules, shared context, shared reasoning support and generation defaults.
 Advanced identity fields remain submitted while collapsed, preserve existing IDs/names and allow blank new values for the owning state layer to derive on save.
@@ -74,9 +74,15 @@ Connection-test option values JSON-encode the account/model identity through pub
 `edit_provider_profile`, `delete_provider_profile` and `set_default_provider_profile` submit `profile_id`; the latter updates `[llm] default_provider_profile` and is not a provider-form field.
 `remove_provider_model` and `remove_provider_peak_hours_row` submit zero-based `index` strings.
 `refresh_auth_status` keeps its existing event name and also supplies `profile_id`, which a handler that refreshes all statuses may ignore.
-The change/save payload has original `profile_id`, editable `profile_id_new`, and flat `name`, `provider`, `base_url`, `auth_mode`, `oauth_file`, `concurrency`, `context_window`, `default_model`, `peak_concurrency`, `timezone`, `reasoning_efforts` and `default_reasoning_effort` fields.
+The change/save payload has original `profile_id`, editable `profile_id_new`, and flat `name`, `provider`, `base_url`, `auth_mode`, `oauth_file`, `api_key_env_var`, `concurrency`, `context_window`, `default_model`, `peak_concurrency`, `timezone`, `reasoning_efforts` and `default_reasoning_effort` fields.
 `reasoning_efforts[]` and nested `models[index][reasoning_efforts][]` are ordered checkbox lists with a hidden blank sentinel, not comma-separated text controls.
 The vocabulary is `none minimal low medium high xhigh max default`, and configured unknown values remain checked, editable choices rather than being dropped.
+`ProviderProfileFields.reasoning_suggestions/2` reads the already-loaded LLMDB catalog's exact provider/model `capabilities.reasoning.effort` only when `supported: true` and an explicit `values` list are available, never a general reasoning boolean or token budget.
+Custom endpoints, provider/model aliases and missing metadata yield no suggestions; no network, config load or catalog mutation occurs during render.
+Shared-account suggestions are the order-preserving intersection across the default model and all configured rows, so one unknown model suppresses the shared suggestions.
+Catalog coverage is incomplete, notably no Codex entries and no effort enumerations for DeepSeek or Z.AI in the current snapshot, and suggestions never automatically change saved inventories or defaults.
+Configured choices remain first, exact catalog suggestions follow unchecked, and the remaining generic vocabulary is available only in a closed Advanced reasoning choices disclosure explicitly described as unverified for the endpoint.
+The catalog is local advisory metadata even for remote Settings, not a verdict about the remote runtime or a guarantee that ReqLLM can send a given level.
 Configured inventory order is preserved in checkbox DOM/submission order, with unselected vocabulary choices appended, and the parser must trim/filter blank sentinels/deduplicate while retaining order.
 `generation[temperature|max_tokens|top_p|top_k|frequency_penalty|presence_penalty]` carries optional numeric strings, and `generation[extra]` and `generation[provider_options]` carry JSON object text.
 Both JSON controls have unique associated labels/help text warning against pasting API keys or login tokens; they intentionally display editable advanced configuration rather than silently redacting or corrupting it.
@@ -89,7 +95,7 @@ Blank optional numeric/model-generation fields mean inherit, not nil or zero; ex
 `off_peak_days[]` and `peak_hours[index][days][]` use hidden blank sentinels so clearing all days is submitted, and window times use `peak_hours[index][start|end]`.
 Remove sentinel blanks before core validation, drop fully blank windows, numerically order indexed maps and preserve complete drafts across add/remove events.
 The owner validates unique profile/model ids, supported reasoning defaults, JSON objects, numeric ranges and scheduling before saving; component HTML ranges are not provider-specific validation.
-The common `default_model` select retains a saved default outside the optional override rows and offers live row names; selecting a default never creates an override row automatically.
+The common `default_model` input retains a saved default outside the optional override rows and offers live row names through its datalist; changing a default never creates an override row automatically.
 Unknown default providers and unsupported saved reasoning defaults remain visibly unavailable, never silently replaced.
 Unknown generation/config keys must be preserved by the owner when applying edits.
 
@@ -97,8 +103,9 @@ Unknown generation/config keys must be preserved by the owner when applying edit
 
 OAuth availability comes from existing `LLMCatalog` metadata via a whitelist of catalog-owned provider atoms, never dynamic atom creation or a new schema API.
 OAuth-only providers emit hidden `auth_mode=oauth` and never show an API-key prompt; other providers have API-key guidance without rendering any key/token field.
-The canonical form has no `api_key_env_var` field or nonsecret credential-source selector, so it cannot choose a distinct API-key environment variable for another account of the same provider.
-The default-model control is a required select over current row names plus the retained default, so changing a default-only account to a new model requires adding a model row, selecting its name, then removing the row if no override should persist.
+The default-model control is a required free-text input named `default_model`, with a datalist of current row names and the retained default, so default-only accounts can change models directly without creating override rows.
+The same existing `default_model` payload is used for change/save, with no helper field or new event; the owner must preserve absent/empty model overrides on an untouched default-only account.
+In API-key mode, Advanced exposes the nonsecret `api_key_env_var` name, never its value, and an explicit blank must remove the configured source so provider-default credential resolution resumes.
 `auth_statuses` remains keyed by profile id with `state`, `expires`, `login_instructions` and `oauth_file`; states `ok`, `missing`, `unwritable` and `unknown` accept atom or string forms.
 The owner must clear/reload statuses on node changes; unsaved provider/auth/path changes additionally suppress a saved credential verdict inside the editor.
 Unknown status makes no detected/missing claim, and unwritable status withholds login instructions in favor of the writable-path remedy.

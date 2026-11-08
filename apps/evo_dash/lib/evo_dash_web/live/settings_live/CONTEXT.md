@@ -80,7 +80,8 @@ The parent preserves nested drafts during Change and passes raw nested submissio
 ProviderProfiles.parse_editor/3 accepts both flat generation fields and nested generation maps at account/model levels and removes override_reasoning UI sentinels without persisting them.
 A model override_reasoning=false removes its inventory key to restore inheritance, while absent inventory, explicit [] and checkbox [""] remain distinct according to key presence.
 Checkbox inventories trim blanks, deduplicate in submitted order and retain unknown custom effort strings; an unrestricted inventory does not discard an explicitly supplied default.
-ProviderProfiles does not consult model capability metadata, so a submitted nested reasoning_efforts=[] with default_reasoning_effort="high" is accepted and preserved rather than treated as a no-reasoning model.
+A nested model row with explicit UI override_reasoning=true and an explicitly empty reasoning_efforts inventory (including the hidden blank checkbox seed) drops any obsolete default_reasoning_effort before parsing and inherited validation.
+Without that explicit UI marker, unrestricted inventories and default-only legacy rows retain their supplied defaults; ProviderProfiles does not consult model capability metadata.
 The override_reasoning=false sentinel removes only reasoning_efforts, not default_reasoning_effort, and clearing a nested default omits that key so effective validation falls back to the account default.
 Neither reasoning/2 nor validate_inherited_reasoning/3 invents "high" or any first-inventory default; a persisted nested default must already occur in the submitted row or an upstream canonical projection.
 Wholly blank model rows carrying empty checkbox or generation sentinels are ignored rather than creating overrides.
@@ -176,6 +177,8 @@ Existing helper regression suites live in apps/evo_dash/test/evo_dash_web/live/s
 The canonical contract suite covers typed multi-model overrides, credentials, detached drafts, CRUD/default migration and default-only parser behavior; the flat-parser suite tests compatibility rather than canonical Save.
 Parent-owned new regressions should cover blank/hidden/generated creation identities, explicit ids/names including profile-N, multiple same-provider accounts, saved-identity preservation on provider edits, and invalid-save retries before provider changes.
 Parent-owned inventory regressions should submit ordered checkbox lists with blanks/duplicates/custom values, explicit empty versus inherited rows, raw nested generation maps, wholly blank sentinel rows and hidden advanced draft fields through mounted Save.
+Nested UI clearing regressions must include override_reasoning=true with [] or the hidden blank seed and a nonblank obsolete default, verify that only the nested default is dropped, and contrast absent markers, missing inventories, override_reasoning=false and account-level unrestricted defaults.
+Credential env omission preserves the saved value, while explicit blank, whitespace or nil clears it through both canonical and legacy input aliases, including detached submission over a saved draft.
 Leaf-only implementation checks may run in-memory ExUnit modules with mix run --no-start without adding test artifacts under production source.
 Auth/node integration lives in sibling auth_status_test.exs and settings_live_test.exs and uses explicit result messages rather than render_async for supervised tasks.
 Core facade APIs and :provider_profiles validation are available; normal Mix tests boot without the former missing-delegate/validation prerequisites.
