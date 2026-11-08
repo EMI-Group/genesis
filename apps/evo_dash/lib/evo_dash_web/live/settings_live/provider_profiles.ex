@@ -306,7 +306,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
 
   defp parse_model_rows(raw) do
     Enum.reduce_while(Enum.with_index(rows(raw)), {:ok, []}, fn {row, index}, {:ok, acc} ->
-      row = editor_values(row)
+      row = editor_model_values(row)
       model = nonblank(row["model"] || row["model_id"])
 
       cond do
@@ -366,6 +366,18 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
     end
   end
 
+  defp editor_model_values(params) do
+    # Only an explicit UI override with an empty checkbox inventory clears the
+    # obsolete default; legacy unrestricted/default-only rows keep their default.
+    clear_default? =
+      params["override_reasoning"] in [true, "true"] and
+        Map.has_key?(params, "reasoning_efforts") and
+        string_list(params["reasoning_efforts"]) == []
+
+    params = editor_values(params)
+    if clear_default?, do: Map.delete(params, "default_reasoning_effort"), else: params
+  end
+
   defp reasoning(profile, params) do
     efforts = string_list(params["reasoning_efforts"])
     default = nonblank(params["default_reasoning_effort"])
@@ -393,7 +405,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
     indices =
       raw
       |> rows()
-      |> Enum.map(&editor_values/1)
+      |> Enum.map(&editor_model_values/1)
       |> Enum.with_index()
       |> Enum.reject(fn {row, _} -> blank_model_row?(row) end)
       |> Enum.map(&elem(&1, 1))
