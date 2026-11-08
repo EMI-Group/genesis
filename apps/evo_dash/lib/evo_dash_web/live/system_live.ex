@@ -816,9 +816,9 @@ defmodule EvoDashWeb.SystemLive do
             :unknown
           end,
         chart_samples: [],
-        # Selected model profile for the LLM Slots chart — nil until samples
-        # carrying `llm_slots` arrive; resolution re-defaults to the first id
-        # (see resolve_selected_llm_model/2).
+        # Selected provider-profile pool for the LLM Slots chart — nil until
+        # samples carrying `llm_slots` arrive; resolution re-defaults to the
+        # first pool id (see resolve_selected_llm_model/2).
         selected_llm_model: nil,
         chart_node: nil,
         # Monotonic sequence for async sample-seed results (never reset — see
@@ -985,12 +985,13 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("select_llm_model", %{"model" => id}, socket) do
-    # Dropdown change from the in-card LLM Slots model selector. The choice is
-    # clamped by the SAME deterministic rule as every samples-change path
-    # (resolve_selected_llm_model/2): an id no longer present in the ring
-    # buffer (e.g. a model profile removed from config while stale samples
-    # remain) falls back to the first available id. Ids are user-config
-    # strings — never converted to atoms.
+    # Dropdown change from the in-card LLM Slots selector. `id` is a
+    # PROVIDER-PROFILE pool id (the `[[llm.providers]]` account id — its models
+    # share the pool). The choice is clamped by the SAME deterministic rule as
+    # every samples-change path (resolve_selected_llm_model/2): an id no longer
+    # present in the ring buffer (e.g. a provider profile removed from config
+    # while stale samples remain) falls back to the first available id. Ids are
+    # user-config strings — never converted to atoms.
     {:noreply,
      assign(
        socket,
@@ -1891,12 +1892,12 @@ defmodule EvoDashWeb.SystemLive do
     socket
   end
 
-  # Deterministic model selection for the LLM Slots chart: keep `selected`
-  # when it is still present in the samples' model ids, otherwise fall back to
-  # the first id (`nil` when the buffer has no ids yet — the series then
-  # renders all-zero). Shared by every samples-change path (live push, seed
-  # fill) and the select_llm_model event so the plotted model never flickers
-  # between stale and current profiles.
+  # Deterministic pool selection for the LLM Slots chart: keep `selected` when
+  # it is still present in the samples' provider-profile pool ids, otherwise
+  # fall back to the first id (`nil` when the buffer has no ids yet — the
+  # series then renders all-zero). Shared by every samples-change path (live
+  # push, seed fill) and the select_llm_model event so the plotted pool never
+  # flickers between stale and current profiles.
   defp resolve_selected_llm_model(selected, samples) do
     ids = Charts.llm_model_ids(samples)
     if selected in ids, do: selected, else: List.first(ids)

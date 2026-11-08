@@ -25,9 +25,11 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
 
   # A sample map as emitted by the evo_git system sampler (the "system"
   # topic contract): the 12 aggregate keys (still driving the tool/agents
-  # series) plus the per-model `llm_slots` map (the ONLY source for the LLM
-  # Slots chart, which plots one selected model). Overrides let tests vary
-  # individual keys — pass `llm_slots: %{...}` to replace the whole map.
+  # series) plus the per-pool `llm_slots` map (the ONLY source for the LLM
+  # Slots chart, which plots one selected provider-profile pool). The optional
+  # `llm_pools` metadata map is absent by default (legacy sampler shape).
+  # Overrides let tests vary individual keys — pass `llm_slots: %{...}` /
+  # `llm_pools: %{...}` to replace the whole map.
   defp sample_map, do: sample_map(%{})
 
   defp sample_map(overrides) do
@@ -68,7 +70,7 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
         samples: samples,
         series: series,
         y_max: Charts.y_max(series)
-      ] ++ Keyword.take(opts, [:model_ids, :selected_model])
+      ] ++ Keyword.take(opts, [:model_ids, :selected_model, :pool_options])
     )
   end
 
@@ -173,6 +175,170 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
       ]
 
       assert Charts.llm_model_ids(samples) == ["alpha", "beta", "gamma"]
+    end
+  end
+
+  describe "format_pool_label/1" do
+    test "formats label + models, label only, models only, and neither" do
+      # label + multi-model profile → "<label> — <m1, m2>"
+      assert Charts.format_pool_label(%{
+               id: "work",
+               label: "Work",
+               models: ["glm-4.6", "glm-4.5"]
+             }) == "Work — glm-4.6, glm-4.5"
+
+      # label + single model profile
+      assert Charts.format_pool_label(%{id: "work", label: "Work", models: ["glm-4.6"]}) ==
+               "Work — glm-4.6"
+
+      # label present, no models
+      assert Charts.format_pool_label(%{id: "work", label: "Work", models: []}) == "Work"
+
+      # no label, models present → the raw pool id prefixed
+      assert Charts.format_pool_label(%{id: "work", label: nil, models: ["glm-4.6"]}) ==
+               "work — glm-4.6"
+
+      # no label, no models → the raw pool id
+      assert Charts.format_pool_label(%{id: "work", label: nil, models: []}) == "work"
+      assert Charts.format_pool_label(%{id: "work", label: "", models: []}) == "work"
+      assert Charts.format_pool_label(%{id: "work"}) == "work"
+    end
+  end
+
+  describe "llm_pool_options/1" do
+    test "returns [] for an empty buffer and for legacy samples without llm_slots" do
+      assert Charts.llm_pool_options([]) == []
+
+      legacy = [Map.delete(sample_map(), :llm_slots), Map.delete(sample_map(), :llm_slots)]
+      assert Charts.llm_pool_options(legacy) == []
+
+      assert Charts.llm_pool_options([sample_map(llm_slots: %{})]) == []
+    end
+
+    test "labels multi-model and single-model provider profiles" do
+      samples = [
+        sample_map(
+          llm_slots: %{
+            "home" => %{used: 0, waiting: 0, capacity: 2},
+            "work" => %{used: 1, waiting: 0, capacity: 3}
+          },
+          llm_pools: %{
+            "home" => %{label: "Home", models: ["glm-4.6"]},
+            "work" => %{label: "Work", models: ["glm-4.6", "glm-4.5"]}
+          }
+        )
+      ]
+
+      # ORDER follows llm_model_ids/1 (sorted pool ids)
+      assert Charts.llm_pool_options(samples) == [
+               %{id: "home", label: "Home — glm-4.6", models: ["glm-4.6"]},
+               %{id: "work", label: "Work — glm-4.6, glm-4.5", models: ["glm-4.6", "glm-4.5"]}
+             ]
+    end
+
+    test "falls back to the raw pool id when llm_pools is absent, and llm_model_ids/1 is unchanged" do
+      samples = [sample_map(), sample_map()]
+
+      # pre-llm_pools rendering is EXACTLY today's behaviour: raw id, no models
+      assert Charts.llm_model_ids(samples) == ["alpha", "beta"]
+
+      assert Charts.llm_pool_options(samples) == [
+               %{id: "alpha", label: "alpha", models: []},
+               %{id: "beta", label: "beta", models: []}
+             ]
+    end
+
+    test "degrades to raw ids for a non-map llm_pools or a non-map per-pool entry" do
+      for bad <- ["nope", ["work"], 42] do
+        samples = [sample_map(llm_pools: bad)]
+
+        assert Charts.llm_pool_options(samples) == [
+                 %{id: "alpha", label: "alpha", models: []},
+                 %{id: "beta", label: "beta", models: []}
+               ]
+      end
+
+      samples = [sample_map(llm_pools: %{"alpha" => "nope", "beta" => %{label: "B"}})]
+
+      assert Charts.llm_pool_options(samples) == [
+               %{id: "alpha", label: "alpha", models: []},
+               %{id: "beta", label: "B", models: []}
+             ]
+    end
+
+    test "degrades a blank/non-binary label and a non-list/non-binary models list" do
+      samples = [
+        sample_map(
+          llm_pools: %{
+            "alpha" => %{label: "", models: ["glm-4.6"]},
+            "beta" => %{label: 42, models: ["glm-4.6"]}
+          }
+        )
+      ]
+
+      assert Charts.llm_pool_options(samples) == [
+               %{id: "alpha", label: "alpha — glm-4.6", models: ["glm-4.6"]},
+               %{id: "beta", label: "beta — glm-4.6", models: ["glm-4.6"]}
+             ]
+
+      for bad_models <- ["glm-4.6", 42, ["glm-4.6", :nope]] do
+        samples = [
+          sample_map(llm_pools: %{"alpha" => %{label: "Work", models: bad_models}})
+        ]
+
+        assert Charts.llm_pool_options(samples) |> hd() ==
+                 %{id: "alpha", label: "Work", models: []},
+               "expected #{inspect(bad_models)} to degrade to no models"
+      end
+    end
+
+    test "the NEWEST sample carrying an entry for the id wins (samples are oldest→newest)" do
+      samples = [
+        sample_map(llm_pools: %{"alpha" => %{label: "Old", models: ["glm-4.5"]}}),
+        # this sample carries no llm_pools at all → does not reset anything
+        Map.delete(sample_map(), :llm_pools),
+        sample_map(llm_pools: %{"alpha" => %{label: "New", models: ["glm-4.6", "glm-4.5"]}})
+      ]
+
+      assert Charts.llm_pool_options(samples) |> Enum.find(&(&1.id == "alpha")) ==
+               %{id: "alpha", label: "New — glm-4.6, glm-4.5", models: ["glm-4.6", "glm-4.5"]}
+
+      # A newer sample that only knows "beta" leaves alpha on its older metadata.
+      samples = [
+        sample_map(llm_pools: %{"alpha" => %{label: "Old", models: ["glm-4.5"]}}),
+        sample_map(llm_pools: %{"beta" => %{label: "Bee", models: ["glm-4.6"]}})
+      ]
+
+      assert Charts.llm_pool_options(samples) == [
+               %{id: "alpha", label: "Old — glm-4.5", models: ["glm-4.5"]},
+               %{id: "beta", label: "Bee — glm-4.6", models: ["glm-4.6"]}
+             ]
+    end
+
+    test "ids present in llm_slots but absent from llm_pools still get a raw-id option" do
+      samples = [
+        sample_map(
+          llm_slots: %{
+            "alpha" => %{used: 0, waiting: 0, capacity: 1},
+            "beta" => %{used: 0, waiting: 0, capacity: 2}
+          },
+          llm_pools: %{"alpha" => %{label: "Work", models: ["glm-4.6"]}}
+        )
+      ]
+
+      assert Charts.llm_pool_options(samples) == [
+               %{id: "alpha", label: "Work — glm-4.6", models: ["glm-4.6"]},
+               %{id: "beta", label: "beta", models: []}
+             ]
+    end
+
+    test "reads a string-keyed llm_pools map defensively (same result)" do
+      samples = [
+        sample_map(llm_pools: %{"alpha" => %{"label" => "Work", "models" => ["glm-4.6"]}})
+      ]
+
+      assert Charts.llm_pool_options(samples) |> hd() ==
+               %{id: "alpha", label: "Work — glm-4.6", models: ["glm-4.6"]}
     end
   end
 
@@ -313,31 +479,67 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
       assert length(Floki.find(doc, ~s|line[style*="var(--chart-capacity)"]|)) == 1
     end
 
-    test "renders the in-card model selector in each model-id state" do
-      # Exactly one model id → the muted pill (dot + id), NOT the interactive dropdown.
-      single = [sample_map(llm_slots: %{"alpha" => %{used: 2, waiting: 1, capacity: 4}})]
-      html = render_llm_card(single, model_ids: ["alpha"], selected_model: "alpha")
+    test "renders the in-card provider-profile selector in each pool-id state" do
+      # Exactly one pool id → the muted pill (dot + FORMATTED provider-profile
+      # label), NOT the interactive dropdown.
+      single = [
+        sample_map(
+          llm_slots: %{"work" => %{used: 2, waiting: 1, capacity: 4}},
+          llm_pools: %{"work" => %{label: "Work", models: ["glm-4.6"]}}
+        )
+      ]
+
+      html =
+        render_llm_card(single,
+          model: "work",
+          model_ids: ["work"],
+          selected_model: "work",
+          pool_options: Charts.llm_pool_options(single)
+        )
 
       assert html =~ "rounded-full bg-primary/60"
-      assert html =~ "alpha"
+      assert html =~ "Work — glm-4.6"
+      assert html =~ "Slots are pooled per provider profile"
 
       for absent <- ["role=\"group\"", "select_llm_model", "<select", "aria-pressed"] do
         refute html =~ absent
       end
 
-      # Multiple model ids → a compact dropdown listing every id, the selected one preselected.
+      # Multiple pool ids → a compact dropdown listing every pool; option TEXT
+      # is the formatted provider-profile label, option VALUE the raw pool id.
+      samples = [
+        sample_map(
+          llm_pools: %{
+            "alpha" => %{label: "Work", models: ["glm-4.6", "glm-4.5"]},
+            "beta" => %{label: "Home", models: ["glm-4.6"]}
+          }
+        )
+      ]
+
       html =
-        render_llm_card([sample_map()], model_ids: ["alpha", "beta"], selected_model: "alpha")
+        render_llm_card(samples,
+          model_ids: ["alpha", "beta"],
+          selected_model: "alpha",
+          pool_options: Charts.llm_pool_options(samples)
+        )
 
       assert html =~ ~s(phx-change="select_llm_model")
-      assert html =~ ~s(aria-label="Model")
+      assert html =~ ~s(name="model")
+      assert html =~ ~s(aria-label="Provider profile")
+      refute html =~ ~s(aria-label="Model")
       assert html =~ "select-sm"
+      assert html =~ "Slots are pooled per provider profile"
 
       doc = Floki.parse_document!(html)
       assert length(Floki.find(doc, ~s(select[name="model"][phx-change="select_llm_model"]))) == 1
 
       options = Floki.find(doc, "option")
       assert Enum.map(options, &Floki.attribute(&1, "value")) == [["alpha"], ["beta"]]
+
+      assert Enum.map(options, &String.trim(Floki.text(&1))) == [
+               "Work — glm-4.6, glm-4.5",
+               "Home — glm-4.6"
+             ]
 
       alpha_opt = Enum.find(options, &(Floki.attribute(&1, "value") == ["alpha"]))
       beta_opt = Enum.find(options, &(Floki.attribute(&1, "value") == ["beta"]))
@@ -347,12 +549,33 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
       refute html =~ "role=\"group\""
       refute html =~ "aria-pressed"
 
-      # No model ids known → no control at all: neither the dropdown nor the pill.
+      # No `llm_pools` metadata (legacy sampler) → the raw pool id is the option
+      # text, and the selector still works exactly as before.
+      html = render_llm_card([sample_map()], model_ids: ["alpha", "beta"], selected_model: "beta")
+
+      assert html =~ ~s(aria-label="Provider profile")
+      assert html =~ "Slots are pooled per provider profile"
+
+      raw_doc = Floki.parse_document!(html)
+      raw_options = Floki.find(raw_doc, "option")
+      assert Enum.map(raw_options, &Floki.attribute(&1, "value")) == [["alpha"], ["beta"]]
+      assert Enum.map(raw_options, &String.trim(Floki.text(&1))) == ["alpha", "beta"]
+
+      beta_raw = Enum.find(raw_options, &(Floki.attribute(&1, "value") == ["beta"]))
+      assert Floki.attribute(beta_raw, "selected") == ["selected"]
+
+      # No pool ids known → no control at all: neither the dropdown, the pill,
+      # nor the sharing note.
       html = render_llm_card([sample_map(llm_slots: %{})], model: nil)
 
       assert html =~ "<svg"
 
-      for absent <- ["select_llm_model", "<select", "rounded-full bg-primary/60"] do
+      for absent <- [
+            "select_llm_model",
+            "<select",
+            "rounded-full bg-primary/60",
+            "Slots are pooled per provider profile"
+          ] do
         refute html =~ absent
       end
     end
