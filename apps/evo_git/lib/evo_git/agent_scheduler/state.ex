@@ -398,6 +398,22 @@ defmodule EvoGit.AgentScheduler.State do
            &Keyword.has_key?(opts, &1)
          ) do
         profiles = Keyword.get(opts, :model_profiles, state.model_profiles)
+
+        # A legacy-style replacement drops the canonical resolution snapshot.
+        # That is intended for a genuine legacy config, but when a canonical
+        # snapshot is installed it silently breaks every explicit model_spec.
+        if ModelSelection.legacy_replacement?(opts) and
+             (state.provider_profiles != [] or state.model_selection_config != nil) do
+          Logger.warning(
+            "Model configuration update dropped the canonical provider-profile snapshot: " <>
+              "the update carried model_profiles without provider_profiles/model_selection_config, " <>
+              "so explicit model_spec selections will no longer resolve (:model_spec_schema_unavailable). " <>
+              "Pass provider_profiles and model_selection_config from " <>
+              "EvoGit.AgentScheduler.ModelSelection.config_opts/1 or " <>
+              "EvoGit.AgentScheduler.RemoteAPI.build_reload_opts/1."
+          )
+        end
+
         opts = ModelSelection.update_opts(state, opts)
 
         opts =

@@ -43,6 +43,23 @@ defmodule EvoGit.AgentScheduler.ModelSelection do
     end
   end
 
+  @doc """
+  Returns true when an update replaces the complete model profiles with a
+  legacy inventory (id + qualified model) instead of the canonical selection
+  inventory (provider_profile_id + unqualified model).
+  """
+  def legacy_replacement?(opts) do
+    Keyword.has_key?(opts, :model_profiles) and
+      not Keyword.has_key?(opts, :provider_profiles) and
+      not Keyword.has_key?(opts, :model_selection_config) and
+      Enum.all?(Keyword.fetch!(opts, :model_profiles), fn profile ->
+        selection = value(profile, :model_spec) || profile
+
+        is_nil(value(profile, :provider_profile_id)) and
+          is_nil(value(selection, :provider_profile_id))
+      end)
+  end
+
   @doc "Keeps runtime profile replacements and their selection snapshot consistent."
   def update_opts(%State{} = state, opts) do
     # Legacy callers replace complete profiles (id + qualified model), not the
@@ -50,18 +67,7 @@ defmodule EvoGit.AgentScheduler.ModelSelection do
     # They must return to legacy resolution, including model-selection scripts,
     # rather than resolving the new ids against the boot-time account snapshot.
     # Empty replacements also clear model configuration, as they always did.
-    legacy_replacement? =
-      Keyword.has_key?(opts, :model_profiles) and
-        not Keyword.has_key?(opts, :provider_profiles) and
-        not Keyword.has_key?(opts, :model_selection_config) and
-        Enum.all?(Keyword.fetch!(opts, :model_profiles), fn profile ->
-          selection = value(profile, :model_spec) || profile
-
-          is_nil(value(profile, :provider_profile_id)) and
-            is_nil(value(selection, :provider_profile_id))
-        end)
-
-    if legacy_replacement? do
+    if legacy_replacement?(opts) do
       opts
       |> Keyword.put(:provider_profiles, [])
       |> Keyword.put(:model_selection_config, nil)
