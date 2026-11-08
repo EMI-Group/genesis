@@ -47,6 +47,11 @@ Auth save contracts assert live canonical providers and `EvoGit.Config.user_conf
 The stale-result tests here cover OAuth credential-status node/sequence guards only, not config reload or writer completion generations.
 No suite here injects a configuration-writer failure or exercises category reset/reset-all preservation of canonical providers and defaults.
 The `:managed_file_unwritable` classification tests concern OAuth credential files, not `config.toml` write failures.
+`auth_status_test.exs`'s `blocked_oauth_file/1` creates a regular file named `blocker` and returns its nonexistent child `blocker/auth.json`; this is deterministic invalid-path fixture data, not a suspended process, FIFO, lock or blocking runner.
+The legacy OAuth migration save preserves this path for both OAuth accounts, so its appearance in scheduler update options is expected and does not establish that the path caused a scheduler call timeout.
+No suite in this helper directory installs an app-env blocking runner or suspends the scheduler; `config_io_test.exs` exercises `State.do_update_config/2` on local state values, not the registered scheduler process.
+`await_profile_save/1` waits for save markers to clear and then drains OAuth refresh tasks, but marker clearance alone is not success: the exact success-flash assertion must remain because a failed runtime scheduler update can also finish the writer request.
+A longer test polling deadline cannot repair a runtime `GenServer.call` timeout already returned as a failed save acknowledgement.
 Mounted canonical editor save/reload/reset regressions belong with the parent `settings_live_test.exs`; pure shape and draft regressions belong in `provider_profiles_contract_test.exs`, and config writer atomicity belongs to the core-owned configuration tests.
 
 ## Validation and Integration Boundary
