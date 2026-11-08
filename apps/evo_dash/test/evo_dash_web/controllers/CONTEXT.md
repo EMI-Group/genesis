@@ -2,8 +2,8 @@
 
 ## Intent
 
-ExUnit suites for the classic (non-LiveView) HTTP controllers and error templates of `EvoDashWeb`: the task-archive JSON export endpoint and the router/error responses.
-Leaf node — all five suites live directly here, none of them calls `live/3` (pure HTTP requests plus `render_to_string/4`).
+ExUnit suites for the classic (non-LiveView) HTTP controllers and error templates of `EvoDashWeb`: the task-archive JSON export endpoint, the `/health` and `/server/status` probes, and the router/error responses.
+Leaf node — all six suites live directly here, none of them calls `live/3` (pure HTTP requests plus `render_to_string/4`).
 
 ## Routing Table
 
@@ -20,6 +20,7 @@ Leaf node — all five suites live directly here, none of them calls `live/3` (p
 | `error_html_test.exs` | `EvoDashWeb.ErrorHTMLTest` | 14 | 2 | `async: true` |
 | `error_json_test.exs` | `EvoDashWeb.ErrorJSONTest` | 12 | 2 | `async: true` |
 | `health_controller_test.exs` | `EvoDashWeb.HealthControllerTest` | 60 | 5 | `async: true` |
+| `server_status_controller_test.exs` | `EvoDashWeb.ServerStatusControllerTest` | 123 | 9 | `async: true` (its only global is the `:server_status_task_runner` seam, restored in `on_exit`) |
 
 ## `task_export_controller_test.exs`
 
@@ -46,3 +47,10 @@ Pure render tests (`async: true`, no store, no env): the 404 and 500 templates f
 ## `health_controller_test.exs`
 
 `async: true`, pure HTTP: `GET /health` answers `200` `application/json` with `"status" == "ok"`, a non-empty `"version"` (pinned to `Application.spec(:evo_dash, :vsn)`), and a non-negative integer `"uptime_ms"` that is strictly `> 0` and below a 24 h sanity bound (the regression guard against the field degrading to `0`), plus a monotonicity check that a second probe after `Process.sleep(20)` reports `>=` the first; a bare connection with no session/cookies is enough and the probe never redirects (`conn.state == :sent`).
+
+## `server_status_controller_test.exs`
+
+`async: true`, pure HTTP: `GET /server/status` answers `200` `application/json` whose key set is EXACTLY `["active_tasks", "status", "version"]` (`"status" == "ok"`, a non-empty binary `"version"` pinned to `Application.spec(:evo_git, :vsn)`, an integer `"active_tasks"`).
+- **The seam**: every test injects `:evo_dash, :server_status_task_runner` (`put_seam/2` copies `task_export_controller_test.exs`, restoring the previous value in `on_exit`) — `fn -> [%{id: "a"}, %{id: "b"}] end` → `2`, `fn -> [] end` → `0`.
+- **Degradation**: a raising seam, an EXITING seam (`fn -> exit(:timeout) end` — the case only `SafeCall.run/1`'s `catch :exit` covers, mirroring a `GenServer.call` timeout) and a non-list answer (`fn -> :nope end`) all yield `active_tasks: -1` on a `200`, never `0`.
+- **No pipeline**: a bare connection with no session/CSRF works and never redirects (`conn.state == :sent`); one test leaves the seam at its default so the real `EvoGit.TaskRegistry` read must produce an integer (or `-1`), proving the endpoint never raises.

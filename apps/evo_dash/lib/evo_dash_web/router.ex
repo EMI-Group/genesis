@@ -17,8 +17,10 @@ defmodule EvoDashWeb.Router do
   end
 
   # Liveness probe for the headless server CLI / shell — no pipeline (no session, no CSRF, no auth).
+  # The operational status probe (idle gate for the self-updater) is its sibling, equally unpipelined.
   scope "/", EvoDashWeb do
     get("/health", HealthController, :index)
+    get("/server/status", ServerStatusController, :index)
   end
 
   scope "/", EvoDashWeb do
