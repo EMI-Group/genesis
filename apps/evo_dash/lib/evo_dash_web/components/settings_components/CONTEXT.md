@@ -59,7 +59,13 @@ The existing legacy editor is unchanged and must not be mounted alongside this e
 
 `SettingsComponents.category_section/1` imports the provider editor outside the flat `save_category` form and accepts separate `provider_profiles` and `model_selections` projections from SettingsLive.
 The default account comes from `file_config[:llm][:default_provider_profile]`, and edit/draft/auth assigns pass through unchanged except for the parent's flat-to-nested generation display adapter.
-The editor renders a standalone detached form for `editing_profile_id=:new`, and `default_model` is an independent text input because model override rows are optional.
+The editor renders a standalone detached form for `editing_profile_id=:new` with a catalog-backed `select name="provider"`, authentication controls/guidance, compact editable model-name rows and real default-model/default-reasoning selects.
+The default-model selector draws from current model-row names and retains an existing default-only model without inventing override rows, so a saved default need not belong to the optional override list.
+Every model row initially shows its name and remove action, while `details#provider-model-details-<index>` holds context, reasoning inventory/default overrides and nested generation overrides.
+The collapsed `details#provider-profile-advanced` contains optional account ID/display name, endpoint, concurrency, schedules, shared context, shared reasoning support and generation defaults.
+Advanced identity fields remain submitted while collapsed, preserve existing IDs/names and allow blank new values for the owning state layer to derive on save.
+Provider options submit catalog-owned provider atoms as strings, including regional/plan variants, deduplicate the generic OpenAI-compatible alias, and retain an unknown configured provider option.
+An OpenAI-compatible endpoint uses the OpenAI option plus the Advanced base URL.
 Connection-test option values JSON-encode the account/model identity through public `SettingsComponents.model_selection_value/1`; they never identify a model by account id alone.
 
 ### Events and submitted fields
@@ -69,7 +75,9 @@ Connection-test option values JSON-encode the account/model identity through pub
 `remove_provider_model` and `remove_provider_peak_hours_row` submit zero-based `index` strings.
 `refresh_auth_status` keeps its existing event name and also supplies `profile_id`, which a handler that refreshes all statuses may ignore.
 The change/save payload has original `profile_id`, editable `profile_id_new`, and flat `name`, `provider`, `base_url`, `auth_mode`, `oauth_file`, `concurrency`, `context_window`, `default_model`, `peak_concurrency`, `timezone`, `reasoning_efforts` and `default_reasoning_effort` fields.
-`reasoning_efforts` is an ordered comma-separated string, not a range index; normalize by trimming/filtering blanks/deduplicating while retaining order.
+`reasoning_efforts[]` and nested `models[index][reasoning_efforts][]` are ordered checkbox lists with a hidden blank sentinel, not comma-separated text controls.
+The vocabulary is `none minimal low medium high xhigh max default`, and configured unknown values remain checked, editable choices rather than being dropped.
+Configured inventory order is preserved in checkbox DOM/submission order, with unselected vocabulary choices appended, and the parser must trim/filter blank sentinels/deduplicate while retaining order.
 `generation[temperature|max_tokens|top_p|top_k|frequency_penalty|presence_penalty]` carries optional numeric strings, and `generation[extra]` and `generation[provider_options]` carry JSON object text.
 Both JSON controls have unique associated labels/help text warning against pasting API keys or login tokens; they intentionally display editable advanced configuration rather than silently redacting or corrupting it.
 Models submit `models[index][model|context_window|override_reasoning|reasoning_efforts|default_reasoning_effort]` plus `models[index][generation][...]` using the same generation field names.
@@ -80,7 +88,7 @@ Blank optional numeric/model-generation fields mean inherit, not nil or zero; ex
 `off_peak_days[]` and `peak_hours[index][days][]` use hidden blank sentinels so clearing all days is submitted, and window times use `peak_hours[index][start|end]`.
 Remove sentinel blanks before core validation, drop fully blank windows, numerically order indexed maps and preserve complete drafts across add/remove events.
 The owner validates unique profile/model ids, supported reasoning defaults, JSON objects, numeric ranges and scheduling before saving; component HTML ranges are not provider-specific validation.
-`default_model` is independent of optional override rows and is never restricted to membership in those rows.
+The common `default_model` select retains a saved default outside the optional override rows and offers live row names; selecting a default never creates an override row automatically.
 Unknown default providers and unsupported saved reasoning defaults remain visibly unavailable, never silently replaced.
 Unknown generation/config keys must be preserved by the owner when applying edits.
 

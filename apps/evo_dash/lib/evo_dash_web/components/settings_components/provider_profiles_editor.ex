@@ -19,8 +19,9 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
   (`index`), and the existing `refresh_auth_status` (`profile_id`).
 
   Save/change payload: `profile_id` is the original id; `profile_id_new` is the
-  editable id. Other names mirror canonical keys except `reasoning_efforts`
-  is a comma-separated ordered string and model `override_reasoning` is a UI
+  editable optional id in Advanced; blank new identity/name values are derived
+  by the owner on save. Other names mirror canonical keys; `reasoning_efforts[]`
+  submits an ordered checkbox list and model `override_reasoning` is a UI
   boolean sentinel. A false model override omits its reasoning inventory but
   may still set a default from the inherited inventory; true plus a blank
   inventory persists `[]` (unsupported reasoning) and omits its default.
@@ -63,7 +64,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
           </h3>
           <p class="mt-1 text-sm text-base-content/70">
             {gettext(
-              "Share connection, authentication and capacity across multiple models. Override only what each model needs."
+              "Choose a provider, connect your account, then add models and choose your defaults."
             )}
           </p>
         </div>
@@ -146,7 +147,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
               else: gettext("API key")}</span>
           </div>
           <p class="mt-1 break-all font-mono text-xs text-base-content/70">
-            {value(@profile, "id")} · {value(@profile, "provider")}
+            {value(@profile, "provider")}
           </p>
         </div>
         <div class="flex flex-wrap items-center gap-1">
@@ -180,20 +181,15 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
           </button>
         </div>
       </div>
-      <dl class="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
-        <div>
-          <dt class="text-base-content/70">{gettext("Shared concurrency")}</dt><dd class="mt-1 font-mono">
-            {value(@profile, "concurrency", 3)}
-          </dd>
-        </div>
+      <dl class="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
         <div>
           <dt class="text-base-content/70">{gettext("Default model")}</dt><dd class="mt-1 break-all font-mono">
             {value(@profile, "default_model", gettext("Not set"))}
           </dd>
         </div>
         <div>
-          <dt class="text-base-content/70">{gettext("Peak concurrency")}</dt><dd class="mt-1 font-mono">
-            {value(@profile, "peak_concurrency", gettext("Not set"))}
+          <dt class="text-base-content/70">{gettext("Default reasoning level")}</dt><dd class="mt-1 font-mono">
+            {value(@profile, "default_reasoning_effort", gettext("Provider default"))}
           </dd>
         </div>
       </dl>
@@ -241,6 +237,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
       |> assign(:auth_status, if(same_credential_scope?, do: assigns.auth_status, else: nil))
       |> assign(:fields, fields)
       |> assign(:models, models)
+      |> assign(:default_models, default_models(fields, models))
 
     ~H"""
     <form
@@ -266,34 +263,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
           <li :for={{field, message} <- Enum.sort(@errors)}><code>{field}</code>: {message}</li>
         </ul>
       </div>
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <.profile_field
-          name="profile_id_new"
-          label={gettext("Profile ID")}
-          value={value(@fields, "profile_id_new", value(@fields, "id"))}
-          required
-          help={gettext("Stable identifier used by task selections and model rules.")}
-        />
-        <.profile_field name="name" label={gettext("Display name")} value={value(@fields, "name")} />
-        <.profile_field
-          name="provider"
-          label={gettext("Provider")}
-          value={value(@fields, "provider")}
-          required
-          help={gettext("Provider identifier, such as openai, anthropic or openai_codex.")}
-        />
-        <.profile_field
-          name="base_url"
-          label={gettext("Base URL (optional)")}
-          value={value(@fields, "base_url")}
-          type="url"
-          help={
-            gettext(
-              "Shared endpoint for every model in this profile. Leave blank for the provider default."
-            )
-          }
-        />
-      </div>
+      <.provider_select fields={@fields} />
 
       <fieldset class="min-w-0 space-y-3 rounded-lg border border-base-300 p-3">
         <legend class="px-1 text-sm font-semibold">{gettext("Authentication")}</legend>
@@ -344,41 +314,14 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
         </p>
       </fieldset>
 
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <.profile_field
-          name="concurrency"
-          label={gettext("Shared concurrency")}
-          value={value(@fields, "concurrency", 3)}
-          type="number"
-          min={1}
-          required
-          help={gettext("All models in this provider profile share this capacity.")}
-        />
-        <.profile_field
-          name="default_model"
-          label={gettext("Default model")}
-          value={value(@fields, "default_model")}
-          required
-          help={gettext("Any model served by this provider; override rows below are optional.")}
-        />
-        <.profile_field
-          name="context_window"
-          label={gettext("Shared context window (optional)")}
-          value={value(@fields, "context_window")}
-          type="number"
-          min={1024}
-          help={gettext("Leave blank for the runtime default. Models may override this value.")}
-        />
-      </div>
-      <.reasoning_fields prefix="" fields={@fields} />
-      <.provider_schedule fields={@fields} />
-
       <section class="space-y-3" aria-labelledby="provider-models-title">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h5 id="provider-models-title" class="text-sm font-semibold">{gettext("Models")}</h5>
             <p class="mt-1 text-xs text-base-content/70">
-              {gettext("Models inherit provider defaults unless an override is set.")}
+              {gettext(
+                "Enter model names supported by this provider. Open model details only when you need overrides."
+              )}
             </p>
           </div>
           <button type="button" phx-click="add_provider_model" class="btn btn-outline btn-sm gap-1"><.icon
@@ -390,7 +333,9 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
           :if={@models == []}
           class="rounded-lg border border-dashed border-base-300 p-4 text-sm text-base-content/70"
         >
-          {gettext("Model overrides are optional. Enter a default model above to save this profile.")}
+          {gettext(
+            "Add a model to choose as your default. An existing default-only model is also kept in the default selector."
+          )}
         </p>
         <.model_fields
           :for={{model, index} <- @models}
@@ -400,16 +345,115 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
         />
       </section>
 
-      <details id="provider-generation-defaults" class="rounded-lg border border-base-300 p-3">
+      <fieldset class="grid min-w-0 grid-cols-1 gap-3 rounded-lg border border-base-300 p-3 sm:grid-cols-2">
+        <legend class="px-1 text-sm font-semibold">{gettext("Defaults")}</legend>
+        <div class="min-w-0">
+          <label
+            for="provider-field-default_model"
+            class="mb-1 block text-xs font-medium text-base-content/70"
+          >
+            {gettext("Default model")}
+          </label>
+          <select
+            id="provider-field-default_model"
+            name="default_model"
+            required
+            class="select select-sm w-full min-w-0"
+            aria-describedby="provider-default-model-help"
+          >
+            <option value="" selected={value(@fields, "default_model") == ""}>
+              {gettext("Choose a model")}
+            </option>
+            <option
+              :for={model <- @default_models}
+              value={model}
+              selected={model == value(@fields, "default_model")}
+            >
+              {model}
+            </option>
+          </select>
+          <p id="provider-default-model-help" class="mt-1 text-xs text-base-content/70">
+            {gettext("Used when this account is selected without an explicit model.")}
+          </p>
+        </div>
+        <.reasoning_default
+          prefix=""
+          fields={@fields}
+          efforts={efforts(value(@fields, "reasoning_efforts", []))}
+        />
+      </fieldset>
+
+      <details id="provider-profile-advanced" class="rounded-lg border border-base-300 p-3">
         <summary class="cursor-pointer rounded-md text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary-standalone">
-          {gettext("Shared generation defaults")}
+          {gettext("Advanced")}
         </summary>
-        <p class="mt-2 text-xs text-base-content/70">
-          {gettext(
-            "Optional request parameters shared by every model. Unsupported parameters are filtered by the provider at request time."
-          )}
-        </p>
-        <.generation_fields prefix="generation" fields={value(@fields, "generation", %{})} />
+        <div class="mt-3 space-y-4">
+          <fieldset class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+            <legend class="mb-2 text-xs font-semibold">
+              {gettext("Account identity and connection")}
+            </legend>
+            <.profile_field
+              name="profile_id_new"
+              label={gettext("Profile ID (optional)")}
+              value={value(@fields, "profile_id_new", value(@fields, "id"))}
+              help={
+                gettext(
+                  "Leave blank for an automatic ID. Use a distinct ID for another account with the same provider."
+                )
+              }
+            />
+            <.profile_field
+              name="name"
+              label={gettext("Display name (optional)")}
+              value={value(@fields, "name")}
+              help={
+                gettext("An optional label to distinguish accounts. Existing names are preserved.")
+              }
+            />
+            <.profile_field
+              name="base_url"
+              label={gettext("Base URL (optional)")}
+              value={value(@fields, "base_url")}
+              type="url"
+              help={
+                gettext(
+                  "Leave blank for the provider endpoint. For an OpenAI-compatible service, choose OpenAI and enter its endpoint here."
+                )
+              }
+            />
+            <.profile_field
+              name="concurrency"
+              label={gettext("Shared concurrency")}
+              value={value(@fields, "concurrency", 3)}
+              type="number"
+              min={0}
+              help={
+                gettext("All models in this account share this capacity. Zero pauses new requests.")
+              }
+            />
+          </fieldset>
+          <.provider_schedule fields={@fields} />
+          <.profile_field
+            name="context_window"
+            label={gettext("Shared context window (optional)")}
+            value={value(@fields, "context_window")}
+            type="number"
+            min={1024}
+            help={gettext("Leave blank for the runtime default. Models may override this value.")}
+          />
+          <.reasoning_fields prefix="" fields={@fields} show_default={false} />
+          <details id="provider-generation-defaults" class="rounded-lg border border-base-300 p-3">
+            <summary class="cursor-pointer rounded-md text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary-standalone">
+              {gettext("Shared generation defaults")}
+            </summary>
+            <p class="mt-2 text-xs text-base-content/70">
+              {gettext(
+                "Optional request parameters shared by every model. Unsupported parameters are filtered by the provider at request time."
+              )}
+            </p>
+            <.generation_fields prefix="generation" fields={value(@fields, "generation", %{})} />
+          </details>
+        </div>
       </details>
       <.form_footer
         cancel_event="cancel_edit_provider_profile"
@@ -436,77 +480,97 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfilesEditor do
       |> assign(:override?, override?)
 
     ~H"""
-    <fieldset class="min-w-0 space-y-3 rounded-lg border border-base-300 bg-base-200/30 p-3">
+    <fieldset class="min-w-0 space-y-2 rounded-lg border border-base-300 bg-base-200/30 p-3">
       <legend class="px-1 text-xs font-semibold">
         {gettext("Model %{number}", number: index_number(@index))}
       </legend>
-      <div class="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
-        <.profile_field
-          name={@prefix <> "[model]"}
-          label={gettext("Model ID")}
-          value={value(@model, "model")}
-          required
-        />
-        <.profile_field
-          name={@prefix <> "[context_window]"}
-          label={gettext("Context window (optional)")}
-          value={value(@model, "context_window")}
-          type="number"
-          min={1024}
-          help={gettext("Leave blank to inherit the shared context window or runtime default.")}
-        />
-      </div>
-      <label class="flex items-center gap-2 text-xs font-medium text-base-content/80">
-        <input type="hidden" name={@prefix <> "[override_reasoning]"} value="false" />
-        <input
-          type="checkbox"
-          name={@prefix <> "[override_reasoning]"}
-          value="true"
-          checked={@override?}
-          class="checkbox checkbox-sm"
-        />
-        {gettext("Override reasoning levels for this model")}
-      </label>
-      <.reasoning_fields :if={@override?} prefix={@prefix} fields={@model} model_override />
-      <div :if={not @override?} class="space-y-2">
-        <p class="text-xs text-base-content/70">
-          {gettext("Supported levels are inherited from the provider profile.")}
-        </p>
-        <.reasoning_default
-          prefix={@prefix}
-          fields={@model}
-          efforts={efforts(value(@provider, "reasoning_efforts", []))}
-          inherit
-        />
-      </div>
-      <details
-        id={"provider-model-generation-#{@index}"}
-        class="rounded-md border border-base-300 bg-base-100 p-3"
-      >
-        <summary class="cursor-pointer rounded-md text-xs font-medium focus-visible:outline-2 focus-visible:outline-primary-standalone">
-          {gettext("Generation overrides")}
-        </summary>
-        <p class="mt-2 text-xs text-base-content/70">
-          {gettext("Blank values inherit the shared generation defaults.")}
-        </p>
-        <.generation_fields
-          prefix={@prefix <> "[generation]"}
-          fields={value(@model, "generation", %{})}
-        />
-      </details>
-      <div class="flex justify-end">
+      <div class="flex items-end gap-2">
+        <div class="min-w-0 flex-1">
+          <.profile_field
+            name={@prefix <> "[model]"}
+            label={gettext("Model name")}
+            value={value(@model, "model")}
+            required
+          />
+        </div>
         <button
           type="button"
           phx-click="remove_provider_model"
           phx-value-index={@index}
-          class="btn btn-ghost btn-xs gap-1 text-error"
+          class="btn btn-ghost btn-sm shrink-0 text-error"
           aria-label={gettext("Remove model %{number}", number: index_number(@index))}
+          title={gettext("Remove model")}
         >
-          <.icon name="hero-trash" class="size-3.5" />{gettext("Remove model")}
+          <.icon name="hero-trash" class="size-4" />
         </button>
       </div>
+      <details id={"provider-model-details-#{@index}"} class="min-w-0">
+        <summary class="cursor-pointer rounded-md text-xs font-medium text-base-content/70 focus-visible:outline-2 focus-visible:outline-primary-standalone">
+          {gettext("Model details")}
+        </summary>
+        <div class="mt-3 space-y-3">
+          <.profile_field
+            name={@prefix <> "[context_window]"}
+            label={gettext("Context window (optional)")}
+            value={value(@model, "context_window")}
+            type="number"
+            min={1024}
+            help={gettext("Leave blank to inherit the shared context window or runtime default.")}
+          />
+          <label class="flex items-center gap-2 text-xs font-medium text-base-content/80">
+            <input type="hidden" name={@prefix <> "[override_reasoning]"} value="false" />
+            <input
+              type="checkbox"
+              name={@prefix <> "[override_reasoning]"}
+              value="true"
+              checked={@override?}
+              class="checkbox checkbox-sm"
+            />
+            {gettext("Override reasoning levels for this model")}
+          </label>
+          <.reasoning_fields :if={@override?} prefix={@prefix} fields={@model} model_override />
+          <div :if={not @override?} class="space-y-2">
+            <p class="text-xs text-base-content/70">
+              {gettext("Supported levels are inherited from the provider profile.")}
+            </p>
+            <.reasoning_default
+              prefix={@prefix}
+              fields={@model}
+              efforts={efforts(value(@provider, "reasoning_efforts", []))}
+              inherit
+            />
+          </div>
+          <details
+            id={"provider-model-generation-#{@index}"}
+            class="rounded-md border border-base-300 bg-base-100 p-3"
+          >
+            <summary class="cursor-pointer rounded-md text-xs font-medium focus-visible:outline-2 focus-visible:outline-primary-standalone">
+              {gettext("Generation overrides")}
+            </summary>
+            <p class="mt-2 text-xs text-base-content/70">
+              {gettext("Blank values inherit the shared generation defaults.")}
+            </p>
+            <.generation_fields
+              prefix={@prefix <> "[generation]"}
+              fields={value(@model, "generation", %{})}
+            />
+          </details>
+        </div>
+      </details>
     </fieldset>
     """
+  end
+
+  # Keep default-only accounts editable without inventing model override rows.
+  # Live draft names populate the select; a saved default outside those rows
+  # remains available until the user explicitly replaces it.
+  defp default_models(fields, models) do
+    ([value(fields, "default_model")] ++
+       Enum.map(models, fn {model, _} -> value(model, "model") end))
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
   end
 
   defp index_number(index) when is_integer(index), do: index + 1
