@@ -6,6 +6,7 @@ Long-form design records, reference documentation and short user-facing guides f
 ## API Surface
 - `genesis-assistant.md` — user guide (not a design record): the dashboard **Assistant** (`/help`) as a general-purpose Genesis operator — source/CONTEXT.md/git-history reading, `elixir_eval` read/write/sudo tiers with exact-code approvals, task control, the guide overlay, and runtime versus saved configuration.
 - `auto-update.md` — full design record for the desktop auto-update / push-update system (tauri-plugin-updater v2): two-phase check/download/apply model, the genesis.evox.group `/dl/` update feed, CI signing, platform matrix, and remaining blockers.
+- `server-update.md` — design record AND user guide for the headless `genesis_server` self-update: why the release shell CLI (not the desktop plugin) performs it, the shared `latest.json` `server` map + published `.sha256`, the `genesis update`/`upgrade` flags, exit codes and output lines, the `/server/status` idle gate, the staged stop→swap→start→`/health`→rollback flow, and the deferred dashboard/remote-node orchestration.
 - `experiments.md` — results/reference document: the per-regime experimental results (formation, continuation, redevelopment, Terminal-Bench) and their figures, moved out of the top-level README; figures live under `images/experiments/`.
 - `harness-alignment.md` — comparison record: Genesis agent runtime (tools, result conventions, role prompts, compression, loop, delegation) vs the DeepSeek Harness (`dsh`), with a tiered proposal list for aligning our environment with the harness newer DeepSeek models are trained on. Carries the verified `dsh` facts (tool names/caps/footers, prompt-slot table, compaction thresholds, subagent limits) so future agents do not re-investigate `/home/bill/Source/deepseek-harness`.
 - `llm-profiles.md` — user guide: canonical provider accounts and nested concrete-model inventories, reasoning defaults versus explicit effort selection, dashboard/CLI setup, shared capacity and schedules, credentials, and legacy configuration compatibility.
@@ -18,6 +19,8 @@ Long-form design records, reference documentation and short user-facing guides f
 - README curation/update instructions live in `readme-evidence.md`; `readme-evidence.json` selects exactly three projects and result fields, and `readme-evidence.snapshot.json` stores minimal published data for deterministic offline generation.
 - These are design records, not CONTEXT.md nodes: they may carry rationale and sequencing that CONTEXT.md deliberately must not.
 - Keep external-fact claims accurate (Cloudflare worker behaviour, GitHub release redirect chains, CI mechanics) — other agents cite these instead of re-investigating.
+- The desktop updater (`tauri-plugin-updater`) and the headless server updater (`genesis update`) share ONE `latest.json`: `platforms` is the desktop half and `server` the headless-tarball half, so a manifest change has to keep both consumers working and a server-only release must still publish the file.
+- The tag-scoped `/dl/<tag>/<asset>` worker form is only live after a manual `pnpm deploy` in `genesis-doc`; the unversioned `/dl/<asset>` form is what shipped consumers use, and pinned server installs may fall back to GitHub.
 - Design records describe the CURRENT design; edit them in place as the design changes rather than appending change history.
 - The numbers in `experiments.md` mirror the published Genesis paper — keep them verbatim; they are observed system-level results, not normalized benchmarks.
 
@@ -29,6 +32,7 @@ Long-form design records, reference documentation and short user-facing guides f
 ## Routing Table
 - `genesis-assistant.md` — Genesis Assistant as the dashboard operator (sidebar **Assistant**, `/help`): capabilities, realistic operator requests, evaluation tiers, approval safety, and fully-qualified task/configuration API examples.
 - `auto-update.md` — desktop auto-update / push-update design record.
+- `server-update.md` — headless `genesis_server` self-update: `genesis update` flags/exit codes, shared feed, idle gate, swap + rollback, remaining gaps.
 - `experiments.md` — experimental results and figures (regime-by-regime).
 - `harness-alignment.md` — agent-harness comparison against DeepSeek Harness + alignment proposals (read this BEFORE changing tool schemas, tool-result formatting, role prompts, or context compression).
 - `llm-profiles.md` — provider-profile configuration and task model/effort selection across Projects, Assistant, Settings, Welcome and CLI.
