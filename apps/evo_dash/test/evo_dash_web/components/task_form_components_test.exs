@@ -256,8 +256,10 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       # Regression: with no project open (@disabled) the mode-dependent
       # task-launch hint is an empty placeholder — the centered welcome overlay
       # is the only hint. Covers the genesis_new default branch AND the
-      # evolve-family branch (the reported leak).
-      for mode <- [nil, "evolve_simple"] do
+      # evolve-family branch (the reported leak). Pins BOTH placeholder
+      # channels: the SSR `placeholder` and the LIVE `data-placeholder` that
+      # LiveView re-merges through phx-update="ignore".
+      for mode <- [nil, "evolve_simple", "genesis_existing", "custom_agent"] do
         html =
           render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
             prompt: "",
@@ -273,12 +275,14 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
                  ~s(placeholder="Optional — leave empty and click Launch to initialize an existing codebase")
 
         assert html =~ "Open a project to get started"
+        assert data_placeholder(html) in [nil, ""]
       end
     end
 
     test "evolve_simple placeholder renders when a project is open (not disabled)" do
       # Control: with a project open (@disabled == false) the evolve-family
-      # task-launch hint is unchanged.
+      # task-launch hint is unchanged — on both channels (SSR placeholder +
+      # the live data-placeholder the AdaptiveInput hook mirrors).
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: "",
@@ -287,6 +291,32 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
         )
 
       assert html =~ ~s(placeholder="Describe what you want to change or improve...")
+      assert data_placeholder(html) == "Describe what you want to change or improve..."
+    end
+
+    test "enabled state seeds data-placeholder with the mode-specific hint" do
+      # phx-update="ignore" means LiveView never re-merges the textarea's
+      # `placeholder` attribute, so the SSR value is first paint only: the
+      # mode-specific hint also rides data-placeholder, which IS re-merged, and
+      # AdaptiveInput mirrors it onto el.placeholder.
+      for {mode, expected} <- [
+            {"genesis_new", "Describe the codebase you want to create..."},
+            {"evolve_simple", "Describe what you want to change or improve..."},
+            {"custom_agent", "Describe what you want to change or improve..."},
+            {"genesis_existing",
+             "Optional — leave empty and click Launch to initialize an existing codebase"}
+          ] do
+        html =
+          render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+            prompt: "",
+            disabled: false,
+            mode: mode
+          )
+
+        assert data_placeholder(html) == expected
+        # The SSR attribute stays byte-identical (first-paint value).
+        assert placeholder_attr(html) == expected
+      end
     end
 
     test "controls row stays on one line (flex-nowrap)" do
@@ -471,6 +501,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
         )
 
       assert html =~ ~s(placeholder="Describe what you want to change or improve...")
+      assert data_placeholder(html) == "Describe what you want to change or improve..."
     end
 
     test "textarea keeps AdaptiveInput + phx-update=ignore with no per-keystroke server event" do
@@ -1000,6 +1031,21 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
 
   defp quality_text(html, level) do
     quality_step(html, level) |> Floki.text() |> String.trim()
+  end
+
+  # The objective textarea's SSR hint (first paint only — a phx-update="ignore"
+  # element's non-data-* attributes are never re-merged by LiveView).
+  defp placeholder_attr(html) do
+    [ta] = Floki.find(parse(html), "#prompt")
+    ta |> Floki.attribute("placeholder") |> List.first()
+  end
+
+  # The LIVE hint channel: data-placeholder IS re-merged through
+  # phx-update="ignore", and the AdaptiveInput hook mirrors it onto
+  # el.placeholder.
+  defp data_placeholder(html) do
+    [ta] = Floki.find(parse(html), "#prompt")
+    ta |> Floki.attribute("data-placeholder") |> List.first()
   end
 
   # Floki 0.38's find/2 + attribute/2 require a parsed tree, not a raw binary.

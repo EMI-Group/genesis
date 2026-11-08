@@ -161,6 +161,8 @@ The launch panel is ONE card (`.input-card`) containing the objective textarea A
 The layout is **server-seeded at render + client-driven**: `layout_for/1` computes the initial `data-layout` on `.input-layout` from `@prompt` (public, unit-tested).
 There is NO per-keystroke server event (no `phx-change`/`phx-debounce`; `@task_prompt` changes only via `restore_state`/`task_submit`, and the `phx-update="ignore"` textarea is never clobbered by re-renders; draft persistence is client-side).
 The **AdaptiveInput JS hook** mirrors the thresholds, flips `data-layout` while typing, autogrows the textarea, and re-asserts the computed layout via a MutationObserver on `.input-layout` after any server re-render — zero network events.
+The **objective placeholder** is computed ONCE per render by the private `task_placeholder/2` (suppressed to `""` while `@disabled`) and rendered on TWO channels: `placeholder` (SSR first paint only) and `data-placeholder` (the live channel).
+`phx-update="ignore"` makes LiveView re-merge only `data-*` attributes, so `placeholder` never updates after insertion and `updated()` never fires for the textarea; the AdaptiveInput hook mirrors `data-placeholder` onto `el.placeholder` (on mount, from `_apply()`, and via an `attributeFilter: ['data-placeholder']` MutationObserver), so the hint follows the mode.
 
 - **Threshold**: `@short_objective_threshold 1200` — `:expanded` when the prompt exceeds 1200 graphemes OR 32 explicit lines; otherwise `:compact` (also for non-binary input).
 Compact auto-grows to ~16 lines; expanded fills the card (`flex: 1`, internal scroll, no max-height — the card's `overflow: hidden` bounds it).

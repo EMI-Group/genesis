@@ -207,6 +207,9 @@ defmodule EvoDashWeb.TaskFormProviderSelectionTest do
 
       assert text(doc, "#task-form") =~ "Open a project to get started"
       assert attr(doc, "#prompt", "placeholder") == [""]
+      # The LIVE hint channel is suppressed too (phx-update="ignore" only
+      # re-merges data-* attributes; AdaptiveInput mirrors this one).
+      assert attr(doc, "#prompt", "data-placeholder") == [""]
     end
   end
 

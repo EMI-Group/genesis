@@ -184,6 +184,7 @@ defmodule EvoDashWeb.TaskFormComponents do
         @disabled && "opacity-40 pointer-events-none select-none"
       ]}>
         <% layout = layout_for(@prompt) %>
+        <% placeholder = task_placeholder(@disabled, @mode) %>
         <!-- Single-card, two-layout objective editor.
              data-layout is server-seeded at render time via layout_for/1
              (threshold: @short_objective_threshold chars or 32+ lines) and
@@ -205,7 +206,19 @@ defmodule EvoDashWeb.TaskFormComponents do
              dropdown (text / image / audio, bottom-left) and the fused
              mode+speed capsule sit on the left → (custom-agent select) →
              model capsule → circular icon-only send button (far right); only
-             the textarea size differs. -->
+             the textarea size differs.
+
+             PLACEHOLDER CHANNEL — the textarea is phx-update="ignore" (the
+             client owns the typed value), so LiveView only re-merges its
+             data-* attributes (dom.ts mergeAttrs keeps an ignored element's
+             data-* attributes) and updated() never fires for it. The
+             SSR-computed placeholder attribute is therefore a first-paint
+             value only — it is never refreshed (the page usually first
+             renders with no active project, then the mode/project changes).
+             data-placeholder={placeholder} is the LIVE channel: LiveView
+             re-merges it through phx-update="ignore" and the AdaptiveInput
+             hook mirrors it onto el.placeholder (an attributeFilter observer
+             on data-placeholder, plus _apply()), so the hint follows the mode. -->
         <div
           class="input-layout mx-auto w-full max-w-3xl px-4 flex-1 flex flex-col min-h-0"
           data-layout={layout}
@@ -218,23 +231,8 @@ defmodule EvoDashWeb.TaskFormComponents do
               phx-update="ignore"
               phx-hook="AdaptiveInput"
               class="input-prompt w-full text-base bg-transparent border-0 focus:outline-none resize-none placeholder:text-base-content/45 transition-colors"
-              placeholder={
-                cond do
-                  @disabled ->
-                    ""
-
-                  @mode == "genesis_existing" ->
-                    gettext(
-                      "Optional — leave empty and click Launch to initialize an existing codebase"
-                    )
-
-                  evolve_family_mode?(@mode) ->
-                    gettext("Describe what you want to change or improve...")
-
-                  true ->
-                    gettext("Describe the codebase you want to create...")
-                end
-              }
+              placeholder={placeholder}
+              data-placeholder={placeholder}
             ><%= @prompt %></textarea>
 
             <%!-- Bottom toolbar (.input-controls) — the card's LAST element, in
@@ -270,10 +268,12 @@ defmodule EvoDashWeb.TaskFormComponents do
 
             <%!-- The launch panel renders ONLY when a project is open
                  (@disabled == false). When no project is active the row is
-                 hidden entirely — the textarea's task-launch placeholder is
-                 suppressed too (@disabled → ""), so the empty state shows just
-                 the faded textarea (wrapper opacity) + the centered "Open a
-                 project to get started" hint overlay. --%>
+                 hidden entirely — the textarea's task-launch hint is
+                 suppressed too (task_placeholder/2 returns "" for @disabled,
+                 so BOTH the SSR placeholder and the live data-placeholder are
+                 empty), so the empty state shows just the faded textarea
+                 (wrapper opacity) + the centered "Open a project to get
+                 started" hint overlay. --%>
             <%= unless @disabled do %>
               <%!-- Staged media attachments — image/audio files picked via the
                    attach-kind dropdown above are staged server-side by
@@ -910,6 +910,26 @@ defmodule EvoDashWeb.TaskFormComponents do
   # All evolve-gated UI (placeholder, advanced options) must include it.
   defp evolve_family_mode?(mode) do
     String.starts_with?(mode, "evolve") or mode == "custom_agent"
+  end
+
+  # The task-launch hint for the objective textarea, derived ONCE per render
+  # and used for BOTH the SSR `placeholder` (first paint) and the live
+  # `data-placeholder` channel the AdaptiveInput hook mirrors onto
+  # el.placeholder — keeping one helper means the two can never drift.
+  # @disabled (no project open) suppresses the hint entirely: the centered
+  # welcome overlay is the only hint then.
+  defp task_placeholder(true, _mode), do: ""
+
+  defp task_placeholder(false, "genesis_existing") do
+    gettext("Optional — leave empty and click Launch to initialize an existing codebase")
+  end
+
+  defp task_placeholder(false, mode) do
+    if evolve_family_mode?(mode) do
+      gettext("Describe what you want to change or improve...")
+    else
+      gettext("Describe the codebase you want to create...")
+    end
   end
 
   # ---------------------------------------------------------------------------

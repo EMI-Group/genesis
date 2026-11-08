@@ -43,11 +43,29 @@
 // per-keystroke server event. This hook does not position any floating
 // controls panel (the old --input-layout-center logic is gone — Layout B's
 // controls row is in-flow below the textarea).
+//
+// PLACEHOLDER — the same phx-update="ignore" also means LiveView re-merges
+// ONLY the textarea's data-* attributes (dom.ts mergeAttrs keeps data-* on an
+// ignored element), so the SSR `placeholder` attribute is a first-paint value
+// only and never updates: the Projects page usually first renders with no
+// active project (the hint is suppressed), and the mode changes later. The
+// server therefore also renders `data-placeholder`, which IS re-merged, and
+// this hook mirrors it onto el.placeholder via _syncPlaceholder() — called on
+// mount (cold first paint), from _apply() (every input / updated() /
+// data-layout observer / clear_prompt refresh), and from a second
+// MutationObserver on the textarea watching data-placeholder (a later server
+// re-render, e.g. a project becoming active or a mode switch). The write is
+// equality-guarded for the same no-loop reason as data-layout.
 const AdaptiveInput = {
   mounted() {
     this._inputHandler = () => this._apply();
 
     this.el.addEventListener("input", this._inputHandler);
+
+    // Cold mount: apply the SSR data-placeholder right away (el.placeholder
+    // already carries it in the initial DOM, so this is usually a no-op, but
+    // it also covers a LiveView re-insert where only data-* were re-merged).
+    this._syncPlaceholder();
 
     // Watch the layout container for server re-seeds: any control that
     // triggers a server event (mode/model select, etc.) re-renders the form
@@ -66,6 +84,16 @@ const AdaptiveInput = {
         attributeFilter: ['data-layout']
       });
     }
+
+    // The LIVE placeholder channel: an ignored element never fires updated(),
+    // but LiveView DOES re-merge its data-* attributes, so watch
+    // data-placeholder on the textarea itself and mirror it onto
+    // el.placeholder (equality-guarded — no loop).
+    this._placeholderObserver = new MutationObserver(() => this._syncPlaceholder());
+    this._placeholderObserver.observe(this.el, {
+      attributes: true,
+      attributeFilter: ['data-placeholder']
+    });
 
     // Defer the initial measurement until after the browser has laid out the
     // element so scrollHeight/lineHeight are accurate. StatePersistence may
@@ -114,6 +142,7 @@ const AdaptiveInput = {
   destroyed() {
     this.el.removeEventListener("input", this._inputHandler);
     if (this._layoutObserver) this._layoutObserver.disconnect();
+    if (this._placeholderObserver) this._placeholderObserver.disconnect();
     if (this._syncAppVh && window.visualViewport) {
       window.visualViewport.removeEventListener('resize', this._syncAppVh);
       window.visualViewport.removeEventListener('scroll', this._syncAppVh);
@@ -135,8 +164,24 @@ const AdaptiveInput = {
     // in expanded mode flex layout (flex-basis 0% + grow, no max-height cap;
     // see css/app.css "Adaptive Input Layout") fills the card, so the box
     // scrolls internally instead of growing unboundedly.
+    this._syncPlaceholder();
     this.measureAndApply();
     this.applyLayout();
+  },
+
+  // Mirror the server's live data-placeholder channel onto el.placeholder.
+  // Called (a) on mount, (b) at the top of _apply() so every existing refresh
+  // path (input, updated(), the data-layout observer, clear_prompt) also
+  // refreshes the hint, and (c) from a MutationObserver on data-placeholder
+  // (a later server re-render, since updated() never fires on an ignored
+  // element). The equality guard is mandatory: writing el.placeholder is
+  // observed by nothing we watch, but an unconditional write on every input
+  // is pointless work — and the guard keeps the same discipline as
+  // applyLayout's data-layout write ("never mutate an observed property
+  // inside its own observer without an equality guard").
+  _syncPlaceholder() {
+    const next = this.el.dataset.placeholder || "";
+    if (this.el.placeholder !== next) this.el.placeholder = next;
   },
 
   // Compute the compact/expanded layout from the input value AND the measured
