@@ -68,7 +68,7 @@ These suites preserve expected behavior assertions even when production defects 
 
 ## Grace Budget & Report-Window Contract (`turn_limit_test.exs`, `cancel_grace_test.exs`, `turn_warning_test.exs`)
 
-`EvoGit.Agent.Runner.@turn_limit_grace_turns` is 3 — the SAME budget as `@cancel_grace_turns` — because a tool-calling turn never finishes the run, so the window must fit the ONE permitted final commit PLUS the tool-free report turn.
+`EvoGit.Agent.Runner`'s `@turn_limit_grace_turns` is 3 — the SAME budget as `@cancel_grace_turns` — because a tool-calling turn never finishes the run, so the window must fit the ONE permitted final commit PLUS the tool-free report turn.
 `EvoGit.Agent.grace_period_continue_failed?/1` hard-stops at `grace_turns_remaining <= 1` (and at the struct default 0), so a budget of 3 yields exactly 3 continued turns, then `{:error, :recovery_failed}`; both grace kinds share that predicate and its boundary.
 `turn_limit_test.exs` pins the pure predicate/boundedness (budget 3 and 2 allowed, 1 hard-stops, the default 0 hard-stops, and a `continue_until_fail/2` simulation proving exactly 3 continues before the hard-stop).
 `cancel_grace_test.exs` pins the same via the production entry point: `Runner.enter_grace/3` grants `grace_turns_remaining == 3` for turn-limit recovery and the budget is `> 1` and finite.
