@@ -298,7 +298,8 @@ defmodule EvoGit.Agent.TurnWarning do
 
     Commit any uncommitted changes IMMEDIATELY — that commit is the one permitted tool call. (An uncommitted tree is auto-committed when the process exits, but only a commit you make lands as your work with a clear message.)
 
-    After that commit, the ONLY way to end this run WITH a report is a reply with NO tool calls: once the hard limit is reached, any further tool call ends the run immediately with NO report at all.
+    After that commit, the ONLY way to end this run WITH a report is a reply with NO tool calls.
+    Past the hard limit you get only a few final turns, and every turn that ends in a tool call burns one of them; once those are gone, the run ends immediately with NO report at all.
 
     If you cannot complete the objective, stop and report what was done (with the commit) and what remains — a truthful partial report is a success here; being hard-killed with no report is a failure.
     """

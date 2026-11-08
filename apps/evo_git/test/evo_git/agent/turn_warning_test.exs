@@ -248,9 +248,13 @@ defmodule EvoGit.Agent.TurnWarningTest do
       # calls is the ONLY way to end this run WITH a report.
       assert msg =~ "the ONLY way to end this run WITH a report is a reply with NO tool calls"
       assert msg =~ "IMMEDIATELY"
-      # The terminal consequence: any further tool call ends the run with no
-      # report at all, so a truthful partial report is a success here.
-      assert msg =~ "any further tool call ends the run immediately with NO report at all"
+      # The terminal consequence: past the hard limit only a short window of
+      # final turns remains, each tool call burns one of them, and running out
+      # of that window ends the run with no report at all — so a truthful
+      # partial report is a success here.
+      assert msg =~ "Past the hard limit you get only a few final turns"
+      assert msg =~ "every turn that ends in a tool call burns one of them"
+      assert msg =~ "the run ends immediately with NO report at all"
       assert msg =~ "stop and report what was done (with the commit) and what remains"
 
       assert msg =~
