@@ -430,11 +430,15 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     Map.has_key?(opts, :quality_level) or Map.has_key?(opts, "quality_level")
   end
 
-  # The active segment of the speed ↔ quality control is the button whose class
-  # carries btn-active (component-side contract in task_form_components_test).
+  # The active segment of the speed ↔ quality control is the button whose
+  # aria-pressed is "true" and whose class carries capsule-stop-active
+  # (fused-capsule markup; component-side contract in
+  # task_form_provider_selection_test.exs).
   def quality_step_active?(html, level) do
     [btn] = html |> Floki.parse_document!() |> Floki.find("button#quality-level-#{level}")
-    btn |> Floki.attribute("class") |> List.first() |> to_string() =~ "btn-active"
+    class = btn |> Floki.attribute("class") |> List.first() |> to_string()
+    aria_pressed = btn |> Floki.attribute("aria-pressed") |> List.first()
+    class =~ "capsule-stop-active" and aria_pressed == "true"
   end
 
   # Saves a unique remote connection target under the test's isolated config
@@ -5701,13 +5705,31 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
 
       assert has_element?(
                view,
-               ~s(select[name="provider_profile_id"] option[value="account-a"][selected])
+               ~s(#task-llm-selection-provider option[value="account-a"][selected])
              )
 
       assert has_element?(
                view,
-               ~s(select[name="model"] option[value="claude-sonnet-5"][selected])
+               ~s(#task-llm-selection-model .capsule-item-active[phx-value-model="claude-sonnet-5"])
              )
+
+      [active_model] =
+        render(view)
+        |> Floki.parse_document!()
+        |> Floki.find("#task-llm-selection-model .capsule-item-active")
+
+      assert Floki.attribute(active_model, "phx-value-model") == ["claude-sonnet-5"]
+
+      assert active_model |> Floki.find(".capsule-item-label") |> Floki.text() |> String.trim() ==
+               "claude-sonnet-5"
+
+      [reasoning_stop] =
+        render(view)
+        |> Floki.parse_document!()
+        |> Floki.find("#task-llm-selection-reasoning .capsule-stop-active")
+
+      assert Floki.attribute(reasoning_stop, "aria-pressed") == ["true"]
+      assert reasoning_stop |> Floki.text() |> String.trim() == "Low"
 
       # Seed a real git repo so the doomed wrapper's life is pure validation
       # (make_git_repo!/1) — see "task_submit clears the prompt".
