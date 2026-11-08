@@ -487,6 +487,76 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
     end
   end
 
+  describe "single-panel structure" do
+    test "provider, model list and reasoning stops share ONE panel with no nested sub-layer" do
+      tree = render_picker()
+      panel = one(tree, "#llm-selection .capsule-panel")
+
+      # Every control lives inside the same expanded panel.
+      for id <- ["#llm-selection-provider", "#llm-selection-model", "#llm-selection-reasoning"] do
+        assert [_] = Floki.find(panel, id)
+      end
+
+      # The old two-layer structure is gone: no nested disclosure, no
+      # current-model subrow, no list-panel wrapper.
+      assert Floki.find(tree, "#llm-selection .capsule-sub") == []
+      assert Floki.find(tree, "#llm-selection .capsule-subrow") == []
+      assert Floki.find(tree, "#llm-selection .capsule-list-panel") == []
+      assert Floki.find(tree, "#llm-selection details") == []
+    end
+
+    test "the reasoning group is a panel section, not the removed layer-1 hero group" do
+      tree = render_picker()
+      group = one(tree, "#llm-selection-reasoning")
+
+      assert_attr(group, "class", "capsule-stops flex flex-wrap gap-1")
+
+      # Nested one level down inside its own labelled section, so the old
+      # "first thing in the panel" hero group cannot come back.
+      assert Floki.find(tree, "#llm-selection .capsule-panel > #llm-selection-reasoning") == []
+
+      assert [_] =
+               Floki.find(
+                 tree,
+                 "#llm-selection .capsule-panel > div > #llm-selection-reasoning"
+               )
+    end
+
+    test "the trigger still shows the model name, the reasoning effort and a chevron" do
+      tree = render_picker()
+      trigger = one(tree, "#llm-selection > summary")
+
+      assert text(one(trigger, ".capsule-main")) == "shared-model"
+      assert text(one(trigger, "#llm-selection-reasoning-value")) == "Medium"
+      assert [_] = Floki.find(trigger, ".capsule-chevron")
+      assert Floki.find(trigger, ".capsule-stop, .capsule-item, #llm-selection-model") == []
+    end
+
+    test "no reasoning section at all when the selected model has no effort inventory" do
+      tree = render_picker(model_selections: [selection(%{reasoning_efforts: []})])
+      panel = one(tree, "#llm-selection .capsule-panel")
+
+      assert Floki.find(tree, "#llm-selection-reasoning, #llm-selection-reasoning-value") == []
+      assert Floki.find(panel, ".capsule-stops") == []
+
+      # Provider + model controls still render in the same panel.
+      assert [_] = Floki.find(panel, "#llm-selection-provider")
+      assert [_] = Floki.find(panel, "#llm-selection-model")
+    end
+
+    test "empty profile state renders inside the same single panel" do
+      tree =
+        render_component(&LLMSelectionComponents.llm_selection/1, []) |> Floki.parse_document!()
+
+      panel = one(tree, "#llm-selection .capsule-panel")
+
+      assert text(one(panel, "#llm-selection-empty")) ==
+               "No provider profiles configured. Add one in Settings to choose a model."
+
+      assert Floki.find(tree, "#llm-selection .capsule-sub, #llm-selection details") == []
+    end
+  end
+
   defp profiles do
     [
       %{

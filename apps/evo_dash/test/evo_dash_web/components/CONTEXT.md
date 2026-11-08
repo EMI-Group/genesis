@@ -25,13 +25,14 @@ There is **no `live(...)` call anywhere in this directory**: every component is 
 | `custom_agents_editor_test.exs` | `EvoDashWeb.SettingsComponents.CustomAgentsEditorTest` | 2 / 7 — the editor's extra "Custom tools" chip group + alias-aware comparisons |
 | `custom_tools_panel_test.exs` | `EvoDashWeb.CustomToolsPanelTest` | 2 / 22 — `custom_tools_panel/1` render contract + pure `custom_tool_names/1` |
 | `layouts_test.exs` | `EvoDashWeb.LayoutsTest` | 3 / 7 — `Layouts.app/1` sidebar task grouping, Assistant navigation, keyboard focus, and responsive configuration warning |
-| `llm_selection_components_test.exs` | `EvoDashWeb.LLMSelectionComponentsTest` | 27 async tests — reasoning effort-stop rendering/resolution, provider scoping, fallback, unavailable/empty states, events and accessibility |
+| `llm_selection_components_test.exs` | `EvoDashWeb.LLMSelectionComponentsTest` | 32 async tests — single-panel structure (no nested sub-layer), reasoning effort-stop rendering/resolution, provider scoping, fallback, unavailable/empty states, events and accessibility |
 | `task_form_provider_selection_test.exs` | `EvoDashWeb.TaskFormProviderSelectionTest` | 20 async tests — provider-picker activation/placement, legacy fallback/suppression, forwarding, scoping and quality independence |
 | `category_metadata_test.exs` | `EvoDashWeb.CategoryMetadataTest` | 2 / 4 — pure `SettingsComponents.CategoryMetadata` units |
 
 ## Coverage Boundary — shared LLM selection
 `llm_selection_components_test.exs` pins `LLMSelectionComponents.llm_selection/1` and `resolve_reasoning_effort/3` against string-keyed provider profiles/model specs and atom-keyed model-selection projections.
 Shared-picker coverage includes first/middle/last integer and string indices, invalid-index rejection, singleton disabled effort stops, empty inventories, default/first-effort fallback, exact provider-profile scoping for duplicate model names, unavailable selections, event overrides and unique accessibility ids.
+The single-panel structure is pinned explicitly: provider selector, model listbox and reasoning group share ONE `.capsule-panel`, `.capsule-sub`/`.capsule-subrow`/`.capsule-list-panel` and any nested `<details>` are gone, the trigger keeps its model name + effort + chevron, and the reasoning group is a panel section rather than the removed layer-1 hero group.
 `task_form_provider_selection_test.exs` pins the `#task-llm-selection` capsule inside `.input-controls`, independent activation by all three data attrs, legacy-select suppression/fallback, explicit `form="task-form"` ownership alongside nested controls and exact event/payload names, event/Auto forwarding, disabled-state hiding and reasoning-effort independence from `quality_level`.
 Existing selection render pins in `task_form_components_test.exs` preserve the legacy `model_profiles` / `selected_model_id` toolbar-select contract.
 Settings field/disclosure pins in `model_profiles_editor_test.exs` and subscription credential-state pins in `model_profiles_editor_auth_test.exs` exercise the legacy `ModelProfilesEditor`, not `SettingsComponents.ProviderProfilesEditor`.

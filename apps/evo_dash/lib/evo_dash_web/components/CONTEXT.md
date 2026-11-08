@@ -191,7 +191,7 @@ Values live in the `assets/css/app.css` "Adaptive Input Layout" section (sibling
 `EvoDashWeb.LLMSelectionComponents.llm_selection/1` is a pure reusable provider-profile/model/discrete-reasoning picker for Projects, Assistant, onboarding and Settings.
 It accepts `provider_profiles` (canonical string-keyed maps with `"id"`, `"name"`, `"provider"`), `model_selections` (the ordered atom-keyed `EvoGit.Config.Schema.model_selections/1` projection) and `model_spec` (string-keyed `"provider_profile_id"`, `"model"`, optional `"reasoning_effort"`); all default to empty.
 Optional attrs are `id` (default `"llm-selection"`, must be unique per page), `provider_event` (default `"select_provider_profile"`), `model_event` (default `"select_model"`), `reasoning_event` (default `"select_reasoning_effort"`), `disabled`, `compact`, `class` and `show_auto_option` (all boolean options default false).
-The provider and model controls submit `provider_profile_id` and `model` respectively; the native range named `reasoning_effort` emits a ZERO-BASED INDEX into the selected model's ordered `reasoning_efforts`, not a provider effort string.
+The provider and model controls submit `provider_profile_id` and `model` respectively; the reasoning stop buttons (`phx-value-reasoning_effort`) emit a ZERO-BASED INDEX into the selected model's ordered `reasoning_efforts`, not a provider effort string.
 Call the public `resolve_reasoning_effort(model_selections, model_spec, value)` from change AND submit handlers before persisting the spec: a supported string or valid integer/decimal-string index returns `{:ok, effort_string}`, and a malformed/out-of-range value or unsupported model returns `{:error, :unsupported_reasoning_effort}`.
 The component never nests forms, fetches configuration or renders credentials; callers own state, validate provider/model changes, clear downstream choices and resolve the resulting spec through the core.
 LiveView change events require each control to have a form owner: render the picker inside a caller-owned form, or explicitly pass `form` to associate all three controls with an existing form when outside it.
@@ -199,9 +199,9 @@ The Assistant caller should set `form="chat-form"` because its header picker is 
 TaskForm sets `form="task-form"`, and the shared fieldset is non-shrinking so the expanded editor compresses the textarea rather than its controls.
 Stale explicit provider/model selections are marked `aria-invalid`, and a model-empty hint is associated with its disabled model control.
 Models are scoped to the exact selected provider profile; unavailable persisted providers/models stay visibly unavailable rather than silently selecting a replacement.
-The slider uses only advertised discrete steps, defaults to the model's supported default (else its first effort), disappears for unsupported models and is disabled for a single supported level.
-Callers should omit reasoning for unsupported models and retain the current/default effort when the disabled single-level slider is absent from submitted form data.
-Controls have unique associated labels, native keyboard navigation, range value text and translated labels; the responsive fieldset uses only theme-token utility classes.
+The reasoning stops use only advertised discrete steps, default to the model's supported default (else its first effort), disappear for unsupported models and are disabled for a single supported level.
+Callers should omit reasoning for unsupported models and retain the current/default effort when the disabled single-level stop is the only option.
+Controls have unique associated labels, native keyboard navigation, `aria-pressed` stop state and translated labels; the responsive fieldset uses only theme-token utility classes.
 `TaskFormComponents.task_form/1` accepts the three projection/spec attrs and the three event attrs with the same defaults, rendering the shared picker (`id="task-llm-selection"`) INSIDE the toolbar's right cluster (before `#task-launch-button`) when any new projection/spec is non-empty.
 That capsule replaces only the legacy toolbar model select; the attach dropdown, the mode+speed capsule, the optional custom-agent select and the launch button stay in `.input-controls`, and task quality stays independent from reasoning.
 With all new attrs empty, `model_profiles` / `selected_model_id` / `show_auto_model_option` preserve legacy behavior unchanged.
@@ -209,17 +209,17 @@ Persistent picker tests belong in the sibling test node: cover empty/stale selec
 
 ### Fused Capsule Controls — CSS-class & DOM-id contract
 
-The shared model+reasoning capsule (`llm_selection_components.ex`) and the task form's mode+speed capsule (`task_form_components.ex`) share ONE fused-capsule class grammar and two-layer nested `<details>` structure.
+The shared model+reasoning capsule (`llm_selection_components.ex`) and the task form's mode+speed capsule (`task_form_components.ex`) share ONE fused-capsule class grammar (outer `<details class="capsule …">` + `.capsule-panel` dropdown-content + stop/item markup), but only the mode+speed capsule nests a second layer whereas the model capsule is a single panel.
 The outer root is always `<details class="capsule dropdown dropdown-top min-w-0 shrink-0">`.
 The collapsed trigger is a pill `<summary class="capsule-trigger flex items-center gap-1.5 rounded-full border border-base-300 bg-base-100 px-3 py-1.5 text-sm cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">`.
 `.capsule-main` is the dark primary value (`min-w-0 truncate font-medium text-base-content`).
 `.capsule-secondary` is the gray secondary value (`shrink-0 text-xs text-base-content/60`).
 `.capsule-chevron` is the right-side glyph (`shrink-0 text-base-content/50`, `hero-chevron-down size-3.5`).
 The expanded panel is `<div class="capsule-panel dropdown-content z-50 mb-2 w-72 rounded-2xl border border-base-300 bg-base-100 p-2 shadow-lg">`.
-`.capsule-stops` is Layer 1 (`flex flex-wrap gap-1`, `role="group"`); each `.capsule-stop` is a `type="button"` with `rounded-lg px-2.5 py-1.5 text-sm font-medium` and `aria-pressed`.
-The active Layer-1 stop adds `.capsule-stop-active`.
-The Layer-1→Layer-2 entry is an inner `<details class="capsule-sub">` whose `<summary class="capsule-subrow flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm cursor-pointer select-none list-none hover:bg-base-200 [&::-webkit-details-marker]:hidden">` shows `.capsule-subrow-label` and `.capsule-subrow-arrow` (`hero-chevron-right`, `shrink-0 text-base-content/50`).
-Layer 2 is `.capsule-list` (`mt-1 space-y-0.5`, `role="listbox"`), optionally preceded by a `.capsule-provider` label + `<select>`.
+The task form's mode+speed capsule (`task_form_components.ex`) is the only TWO-layer disclosure: its Layer 1 is `.capsule-stops` (`flex flex-wrap gap-1`, `role="group"`), and its Layer-1→Layer-2 entry is an inner `<details class="capsule-sub">` whose `<summary class="capsule-subrow flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm cursor-pointer select-none list-none hover:bg-base-200 [&::-webkit-details-marker]:hidden">` shows `.capsule-subrow-label` and `.capsule-subrow-arrow` (`hero-chevron-right`, `shrink-0 text-base-content/50`).
+Each `.capsule-stop` is a `type="button"` with `rounded-lg px-2.5 py-1.5 text-sm font-medium` and `aria-pressed`; the active stop adds `.capsule-stop-active`.
+The model+reasoning capsule (`llm_selection_components.ex`) is a SINGLE panel with no `.capsule-sub`, `.capsule-subrow` or `.capsule-list-panel` and no model-name subrow: it opens directly onto `.capsule-provider` (label + `<select>`) and `.capsule-list` (`mt-1 space-y-0.5`, `role="listbox"`), followed — only when the selected model advertises efforts — by the same `.capsule-stops` `#<id>-reasoning` `role="group"` inside one bordered panel section.
+Its collapsed trigger is unchanged: `.capsule-main` model name, `.capsule-secondary` `#<id>-reasoning-value` effort and `.capsule-chevron`.
 Each `.capsule-item` is a `type="button"` with `flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left`; the active item adds `.capsule-item-active`.
 `.capsule-item-label` is `min-w-0 flex-1 truncate`; the active `.capsule-item-check` is `shrink-0 text-primary-standalone` (`hero-check`).
 The stable DOM ids are `#task-launch-button`, `#objective-file-button` (inside `#objective-file-attach`), `#task-llm-selection`, `#chat-llm-selection`, `#<id>-provider`, `#<id>-model`, `#<id>-reasoning`, `#<id>-reasoning-value`, `#<id>-empty`, `#<id>-model-empty`, `#mode-speed-capsule`, `#quality-level-fast`, `#quality-level-balanced`, `#quality-level-high_quality`, `#mode-option-genesis_existing`, `#mode-option-genesis_new`, `#mode-option-evolve_simple` and `#mode-option-custom_agent`.

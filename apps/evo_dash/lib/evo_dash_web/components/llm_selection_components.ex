@@ -9,10 +9,10 @@ defmodule EvoDashWeb.LLMSelectionComponents do
 
   The picker is a ChatGPT-style **fused capsule**: a collapsed pill showing
   the current model (`.capsule-main`) and reasoning effort (`.capsule-secondary`)
-  side by side plus a chevron, expanding into a two-layer floating panel.
-  Layer 1 is the reasoning-effort hero (discrete `.capsule-stop` buttons), and
-  its `.capsule-subrow` entry opens Layer 2 (the provider selector nested at
-  the top of the `.capsule-list` of models). See
+  side by side plus a chevron, expanding into ONE floating panel holding the
+  provider selector, the `.capsule-list` of models and — only when the current
+  model advertises reasoning efforts — the discrete `.capsule-stop` group.
+  There is deliberately no nested sub-layer. See
   `components/CONTEXT.md` → "Shared LLM Selection" for the exact CSS-class and
   DOM-id contract.
 
@@ -120,180 +120,172 @@ defmodule EvoDashWeb.LLMSelectionComponents do
       </summary>
 
       <div class="capsule-panel dropdown-content z-50 mb-2 w-72 rounded-2xl border border-base-300 bg-base-100 p-2 shadow-lg">
-        <%!-- Layer 1: reasoning-effort hero (discrete stops) --%>
+        <%!-- Provider selector — the panel's first row --%>
+        <div class="capsule-provider px-1 pt-1">
+          <label
+            for={@id <> "-provider"}
+            class="mb-1 flex items-center gap-1.5 text-xs font-medium text-base-content/70"
+          >
+            <.icon name="hero-server-stack" class="size-3.5" />
+            <%!-- zh_CN: 提供商配置包含连接和认证设置，不是单纯的厂商名称。 --%>
+            {gettext("Provider profile")}
+          </label>
+          <select
+            id={@id <> "-provider"}
+            name="provider_profile_id"
+            form={@form}
+            phx-change={@provider_event}
+            aria-invalid={if(@provider_id != "" and not @known_provider?, do: "true")}
+            disabled={@disabled or @provider_profiles == []}
+            class="select select-sm w-full min-w-0 truncate rounded-lg border-base-300 bg-base-100 focus-visible:outline-primary-standalone"
+            aria-describedby={if(@provider_profiles == [], do: @id <> "-empty")}
+          >
+            <option value="" selected={@provider_id == ""}>
+              {if @show_auto_option,
+                do: gettext("Auto (by rules)"),
+                else: gettext("Choose a provider profile")}
+            </option>
+            <option
+              :if={@provider_id != "" and not @known_provider?}
+              value={@provider_id}
+              selected
+              disabled
+            >
+              {gettext("Unavailable profile: %{profile}", profile: @provider_id)}
+            </option>
+            <option
+              :for={profile <- @provider_profiles}
+              value={profile_id(profile)}
+              selected={profile_id(profile) == @provider_id}
+            >
+              {profile_label(profile)}
+            </option>
+          </select>
+        </div>
+
+        <%!-- Model list --%>
         <div
-          :if={@efforts != []}
-          id={@id <> "-reasoning"}
-          class="capsule-stops flex flex-wrap gap-1"
-          role="group"
-          aria-label={gettext("Reasoning effort")}
+          id={@id <> "-model"}
+          class="capsule-list mt-1 space-y-0.5"
+          role="listbox"
+          aria-label={gettext("Model")}
+          aria-describedby={
+            if(@provider_id != "" and @known_provider? and @available_models == [],
+              do: @id <> "-model-empty"
+            )
+          }
         >
+          <%!-- Leading blank / clear option (mirrors the old select's
+               first option): text depends on whether a provider is chosen. --%>
           <button
-            :for={{effort, index} <- Enum.with_index(@efforts)}
             type="button"
-            phx-click={@reasoning_event}
-            phx-value-reasoning_effort={index}
-            aria-pressed={to_string(effort == @effort)}
-            disabled={@disabled or length(@efforts) == 1}
+            role="option"
+            phx-click={@model_event}
+            phx-value-model=""
+            aria-selected={to_string(@selected_model == "")}
+            disabled={@disabled or @available_models == []}
             class={[
-              "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium",
-              effort == @effort && "capsule-stop-active"
+              "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
+              @selected_model == "" && "capsule-item-active"
             ]}
           >
-            {effort_label(effort)}
+            <span class="capsule-item-label min-w-0 flex-1 truncate">
+              {if @provider_id == "",
+                do: gettext("Choose a provider first"),
+                else: gettext("Choose a model")}
+            </span>
+            <span
+              :if={@selected_model == ""}
+              class="capsule-item-check shrink-0 text-primary-standalone"
+              aria-hidden="true"
+            >
+              <.icon name="hero-check" class="size-4" />
+            </span>
+          </button>
+
+          <%!-- Stale/unavailable model — preserved, selected and disabled --%>
+          <button
+            :if={@selected_model != "" and not @known_model?}
+            type="button"
+            role="option"
+            disabled
+            aria-invalid="true"
+            class="capsule-item capsule-item-placeholder flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left text-base-content/60"
+          >
+            <span class="capsule-item-label min-w-0 flex-1 truncate">
+              {gettext("Unavailable model: %{model}", model: @selected_model)}
+            </span>
+          </button>
+
+          <button
+            :for={selection <- @available_models}
+            type="button"
+            role="option"
+            phx-click={@model_event}
+            phx-value-model={selection.model}
+            aria-selected={to_string(selection.model == @selected_model)}
+            disabled={@disabled}
+            class={[
+              "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
+              selection.model == @selected_model && "capsule-item-active"
+            ]}
+          >
+            <span class="capsule-item-label min-w-0 flex-1 truncate">
+              {selection.model}
+            </span>
+            <span
+              :if={selection.model == @selected_model}
+              class="capsule-item-check shrink-0 text-primary-standalone"
+              aria-hidden="true"
+            >
+              <.icon name="hero-check" class="size-4" />
+            </span>
           </button>
         </div>
 
-        <%!-- Layer-1 → Layer-2 entry: current model name + right arrow --%>
-        <details class="capsule-sub">
-          <summary class="capsule-subrow flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm cursor-pointer select-none list-none hover:bg-base-200 [&::-webkit-details-marker]:hidden">
-            <span class="capsule-subrow-label min-w-0 flex-1 truncate text-base-content/80">
-              {@model_label}
-            </span>
-            <span class="capsule-subrow-arrow shrink-0 text-base-content/50" aria-hidden="true">
-              <.icon name="hero-chevron-right" class="size-4" />
-            </span>
-          </summary>
-
-          <div class="capsule-list-panel">
-            <%!-- Provider selector nested at the top of the model list --%>
-            <div class="capsule-provider px-1 pt-1">
-              <label
-                for={@id <> "-provider"}
-                class="mb-1 flex items-center gap-1.5 text-xs font-medium text-base-content/70"
-              >
-                <.icon name="hero-server-stack" class="size-3.5" />
-                <%!-- zh_CN: 提供商配置包含连接和认证设置，不是单纯的厂商名称。 --%>
-                {gettext("Provider profile")}
-              </label>
-              <select
-                id={@id <> "-provider"}
-                name="provider_profile_id"
-                form={@form}
-                phx-change={@provider_event}
-                aria-invalid={if(@provider_id != "" and not @known_provider?, do: "true")}
-                disabled={@disabled or @provider_profiles == []}
-                class="select select-sm w-full min-w-0 truncate rounded-lg border-base-300 bg-base-100 focus-visible:outline-primary-standalone"
-                aria-describedby={if(@provider_profiles == [], do: @id <> "-empty")}
-              >
-                <option value="" selected={@provider_id == ""}>
-                  {if @show_auto_option,
-                    do: gettext("Auto (by rules)"),
-                    else: gettext("Choose a provider profile")}
-                </option>
-                <option
-                  :if={@provider_id != "" and not @known_provider?}
-                  value={@provider_id}
-                  selected
-                  disabled
-                >
-                  {gettext("Unavailable profile: %{profile}", profile: @provider_id)}
-                </option>
-                <option
-                  :for={profile <- @provider_profiles}
-                  value={profile_id(profile)}
-                  selected={profile_id(profile) == @provider_id}
-                >
-                  {profile_label(profile)}
-                </option>
-              </select>
-            </div>
-
-            <div
-              id={@id <> "-model"}
-              class="capsule-list mt-1 space-y-0.5"
-              role="listbox"
-              aria-label={gettext("Model")}
-              aria-describedby={
-                if(@provider_id != "" and @known_provider? and @available_models == [],
-                  do: @id <> "-model-empty"
-                )
-              }
+        <%!-- Reasoning stops, only when the selected model advertises efforts --%>
+        <div :if={@efforts != []} class="mt-2 border-t border-base-300 px-1 pt-2">
+          <p class="mb-1 text-xs font-medium text-base-content/70">
+            <%!-- zh_CN: 推理性能力档位（低/中/高），不是响应长度。 --%>
+            {gettext("Reasoning effort")}
+          </p>
+          <div
+            id={@id <> "-reasoning"}
+            class="capsule-stops flex flex-wrap gap-1"
+            role="group"
+            aria-label={gettext("Reasoning effort")}
+          >
+            <button
+              :for={{effort, index} <- Enum.with_index(@efforts)}
+              type="button"
+              phx-click={@reasoning_event}
+              phx-value-reasoning_effort={index}
+              aria-pressed={to_string(effort == @effort)}
+              disabled={@disabled or length(@efforts) == 1}
+              class={[
+                "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium",
+                effort == @effort && "capsule-stop-active"
+              ]}
             >
-              <%!-- Leading blank / clear option (mirrors the old select's
-                   first option): text depends on whether a provider is chosen. --%>
-              <button
-                type="button"
-                role="option"
-                phx-click={@model_event}
-                phx-value-model=""
-                aria-selected={to_string(@selected_model == "")}
-                disabled={@disabled or @available_models == []}
-                class={[
-                  "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
-                  @selected_model == "" && "capsule-item-active"
-                ]}
-              >
-                <span class="capsule-item-label min-w-0 flex-1 truncate">
-                  {if @provider_id == "",
-                    do: gettext("Choose a provider first"),
-                    else: gettext("Choose a model")}
-                </span>
-                <span
-                  :if={@selected_model == ""}
-                  class="capsule-item-check shrink-0 text-primary-standalone"
-                  aria-hidden="true"
-                >
-                  <.icon name="hero-check" class="size-4" />
-                </span>
-              </button>
-
-              <%!-- Stale/unavailable model — preserved, selected and disabled --%>
-              <button
-                :if={@selected_model != "" and not @known_model?}
-                type="button"
-                role="option"
-                disabled
-                aria-invalid="true"
-                class="capsule-item capsule-item-placeholder flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left text-base-content/60"
-              >
-                <span class="capsule-item-label min-w-0 flex-1 truncate">
-                  {gettext("Unavailable model: %{model}", model: @selected_model)}
-                </span>
-              </button>
-
-              <button
-                :for={selection <- @available_models}
-                type="button"
-                role="option"
-                phx-click={@model_event}
-                phx-value-model={selection.model}
-                aria-selected={to_string(selection.model == @selected_model)}
-                disabled={@disabled}
-                class={[
-                  "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
-                  selection.model == @selected_model && "capsule-item-active"
-                ]}
-              >
-                <span class="capsule-item-label min-w-0 flex-1 truncate">
-                  {selection.model}
-                </span>
-                <span
-                  :if={selection.model == @selected_model}
-                  class="capsule-item-check shrink-0 text-primary-standalone"
-                  aria-hidden="true"
-                >
-                  <.icon name="hero-check" class="size-4" />
-                </span>
-              </button>
-            </div>
-
-            <p
-              :if={@provider_profiles == []}
-              id={@id <> "-empty"}
-              class="px-1 pt-2 text-xs text-base-content/70"
-            >
-              {gettext("No provider profiles configured. Add one in Settings to choose a model.")}
-            </p>
-            <p
-              :if={@provider_id != "" and @known_provider? and @available_models == []}
-              id={@id <> "-model-empty"}
-              class="px-1 pt-2 text-xs text-base-content/70"
-            >
-              {gettext("No models are available for this provider profile.")}
-            </p>
+              {effort_label(effort)}
+            </button>
           </div>
-        </details>
+        </div>
+
+        <p
+          :if={@provider_profiles == []}
+          id={@id <> "-empty"}
+          class="px-1 pt-2 text-xs text-base-content/70"
+        >
+          {gettext("No provider profiles configured. Add one in Settings to choose a model.")}
+        </p>
+        <p
+          :if={@provider_id != "" and @known_provider? and @available_models == []}
+          id={@id <> "-model-empty"}
+          class="px-1 pt-2 text-xs text-base-content/70"
+        >
+          {gettext("No models are available for this provider profile.")}
+        </p>
       </div>
     </details>
     """
@@ -355,9 +347,9 @@ defmodule EvoDashWeb.LLMSelectionComponents do
     if name in [nil, ""], do: profile_id(profile), else: name
   end
 
-  # Collapsed-pill + Layer-1→Layer-2 entry label for the current model. A
-  # stale persisted model stays visible as "Unavailable model: …"; otherwise
-  # the placeholder mirrors the old model select's leading option.
+  # Collapsed-pill label for the current model. A stale persisted model stays
+  # visible as "Unavailable model: …"; otherwise the placeholder mirrors the
+  # old model select's leading option.
   defp model_trigger_label(%{
          selected_model: model,
          known_model?: known,
