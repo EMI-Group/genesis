@@ -20,7 +20,7 @@ new_draft/1 creates an unsaved profile-N account with blank provider/default_mod
 draft/1 stringifies maps, JSON-encodes extra/provider_options at both levels and supplies [] models for iteration without fabricating model overrides.
 normalize_draft/1 numerically orders indexed model rows and normalizes peak/day fields while preserving blank input and nested generation drafts.
 submission/2 overlays submitted fields on the whole detached draft, preserving omitted hidden advanced fields and explicitly emptied collections while canonicalizing credential aliases before merging.
-Legacy model_id submissions discard detached models/default_model/default_reasoning_effort so old draft defaults cannot shadow single-model compatibility input.
+Legacy model_id submissions discard detached models/default_model/default_model_name/default_reasoning_effort so old draft defaults cannot shadow single-model compatibility input.
 editor_identity/4 resolves optional advanced identity: new blank or untouched generated ids use a canonical provider slug with collision-safe -2/-3 suffixes, and blank names use the catalog display name with independently collision-safe suffixes.
 Explicit nonblank ids and names are retained for normal collision validation, while blank or omitted edit identities retain the saved account id/name even when the provider changes.
 A present blank profile_id_new requests automatic new identity rather than falling back to the draft's id.
@@ -94,7 +94,15 @@ The parent owns ConfigSave start/result presentation and authoritative config ap
 ConfigSave rejects pending target contexts that resolve to node(), but permits a known same-BEAM alias only when the parent supplies the current target's authoritative remote_status=%{phase: :connected} (NodeAware's contract).
 A missing/non-connected status rejects the same-BEAM alias; the parent must refresh status on target changes and never reuse another target's connected status.
 The parent exports the /4 persistence overload and routes ConfigSave receipts; this leaf must not add fallback shims that bypass that ownership.
-Render default_model as independent text, not a select restricted to saved override rows.
+Render default_model as a required real select that retains the saved default outside the optional override rows and offers live row names.
+Only zero-row drafts render the required UI-only default_model_name text input; it never creates an override row or enters canonical configuration.
+ProviderProfiles.submission/2 synchronizes a helper edit into default_model, including explicit blank/nil values, while an explicit current _target=["default_model"] synchronizes the select back into the helper despite a stale helper in the full form.
+Submission discards any draft-carried _target before applying the current event and removes it afterward, so a previous select event cannot override a later helper edit or save.
+A helper supplied on save is authoritative without a prior change event, and explicit blank helpers fail default_model validation rather than restoring the saved default.
+A direct submission without a helper preserves legacy default_model/model_id behavior; unrelated partial overlays retain detached helper and advanced values.
+Any override row, even a blank row, makes a stale helper irrelevant, and normalization plus row additions discard it.
+Removing the last override row seeds default_model_name from the retained default_model before rerendering.
+Parsing strips default_model_name and retains the existing empty-inventory omission policy, so absent or empty models remain default-only rather than acquiring synthesized override rows.
 Native details open must use the explicit boolean or the SAME ModelProfileEvents.advanced_open?/1 rule, with collapsed inputs remaining in the DOM.
 All save paths, including generic category/search/reset and Quick Setup, must pass through ConfigIO.canonicalize_file_config/1 in the parent persistence boundary.
 Provider editor rows and OAuth loads use ProviderProfiles.profiles(file_config), not runtime Schema.model_profiles/1 or raw llm.models.
