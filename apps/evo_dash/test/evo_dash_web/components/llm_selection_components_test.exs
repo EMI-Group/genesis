@@ -13,7 +13,7 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
 
   alias EvoDashWeb.LLMSelectionComponents
 
-  describe "llm_selection/1 — discrete reasoning range" do
+  describe "llm_selection/1 — discrete reasoning stops" do
     for {effort, index, label} <- [
           {"low", 0, "Low"},
           {"medium", 1, "Medium"},
@@ -21,38 +21,33 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
         ] do
       test "#{effort} renders index #{index} with its associated accessible label" do
         tree = render_picker(model_spec: spec(%{"reasoning_effort" => unquote(effort)}))
-        range = one(tree, "#llm-selection-reasoning")
+        group = one(tree, "#llm-selection-reasoning")
 
-        assert_attr(range, "type", "range")
-        assert_attr(range, "name", "reasoning_effort")
-        assert_attr(range, "min", "0")
-        assert_attr(range, "max", "2")
-        assert_attr(range, "step", "1")
-        assert_attr(range, "value", Integer.to_string(unquote(index)))
-        assert_attr(range, "phx-change", "select_reasoning_effort")
-        assert_attr(range, "aria-valuetext", unquote(label))
-        assert Floki.attribute(range, "disabled") == []
+        assert_attr(group, "role", "group")
+        assert_attr(group, "aria-label", "Reasoning effort")
 
-        assert text(one(tree, ~s(label[for="llm-selection-reasoning"]))) == "Reasoning effort"
-        output = one(tree, "#llm-selection-reasoning-value")
-        assert_attr(output, "for", "llm-selection-reasoning")
-        assert text(output) == unquote(label)
-        assert_attr(range, "aria-describedby", "llm-selection-reasoning-help")
+        selected = one(tree, ~s(#llm-selection-reasoning button[aria-pressed="true"]))
+        assert_attr(selected, "type", "button")
+        assert_attr(selected, "phx-click", "select_reasoning_effort")
+        assert_attr(selected, "phx-value-reasoning_effort", Integer.to_string(unquote(index)))
+        assert text(selected) == unquote(label)
+        assert Floki.attribute(selected, "disabled") == []
 
-        assert text(one(tree, "#llm-selection-reasoning-help")) ==
-                 "Use the arrow keys to select a supported reasoning level. This is independent of task quality."
+        assert text(one(tree, "#llm-selection-reasoning-value")) == unquote(label)
 
-        assert_attr(range, "list", "llm-selection-reasoning-ticks")
-        ticks = Floki.find(tree, "#llm-selection-reasoning-ticks option")
-        assert Enum.map(ticks, &Floki.attribute(&1, "value")) == [["0"], ["1"], ["2"]]
-        assert Enum.map(ticks, &Floki.attribute(&1, "label")) == [["Low"], ["Medium"], ["High"]]
+        stops = Floki.find(tree, "#llm-selection-reasoning .capsule-stop")
 
-        endpoints = one(tree, ~s(div[aria-hidden="true"]))
-        assert Enum.map(Floki.find(endpoints, "span"), &text/1) == ["Low", "High"]
+        assert Enum.map(stops, &Floki.attribute(&1, "phx-value-reasoning_effort")) == [
+                 ["0"],
+                 ["1"],
+                 ["2"]
+               ]
+
+        assert Enum.map(stops, &text/1) == ["Low", "Medium", "High"]
       end
     end
 
-    test "singleton effort renders a disabled zero-width range, one tick and one endpoint" do
+    test "singleton effort renders a single disabled stop" do
       tree =
         render_picker(
           model_selections: [
@@ -60,17 +55,13 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
           ]
         )
 
-      range = one(tree, "input[type=range]")
+      stop = one(tree, "#llm-selection-reasoning .capsule-stop")
 
-      for attribute <- ["min", "max", "value"], do: assert_attr(range, attribute, "0")
-      assert_attr(range, "step", "1")
-      assert_attr(range, "disabled", "disabled")
-      assert_attr(range, "aria-valuetext", "High")
-      assert text(one(tree, "output")) == "High"
-      tick = one(tree, "datalist option")
-      assert_attr(tick, "value", "0")
-      assert_attr(tick, "label", "High")
-      assert Enum.map(Floki.find(tree, ~s(div[aria-hidden="true"] span)), &text/1) == ["High"]
+      assert_attr(stop, "phx-value-reasoning_effort", "0")
+      assert_attr(stop, "aria-pressed", "true")
+      assert_attr(stop, "disabled", "disabled")
+      assert text(stop) == "High"
+      assert text(one(tree, "#llm-selection-reasoning-value")) == "High"
       assert Floki.attribute(one(tree, "#llm-selection-model"), "disabled") == []
     end
 
@@ -82,11 +73,14 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
           ] do
         tree = render_picker(model_selections: [model])
 
+        assert Floki.find(tree, "#llm-selection-reasoning, #llm-selection-reasoning-value") == []
         assert Floki.find(tree, "input[type=range], output, datalist") == []
-        assert Floki.find(tree, ~s(label[for="llm-selection-reasoning"])) == []
-        assert Floki.find(tree, "#llm-selection-reasoning-help") == []
-        assert Floki.find(tree, ~s(input[name="reasoning_effort"])) == []
-        assert_attr(one(tree, ~s(#llm-selection-model option[selected])), "value", "shared-model")
+
+        assert_attr(
+          one(tree, ~s(#llm-selection-model button[aria-selected="true"])),
+          "phx-value-model",
+          "shared-model"
+        )
       end
     end
 
@@ -97,8 +91,11 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
             spec(%{"reasoning_effort" => nil})
           ] do
         tree = render_picker(model_spec: model_spec)
-        assert_attr(one(tree, "input[type=range]"), "value", "1")
-        assert text(one(tree, "output")) == "Medium"
+
+        selected = one(tree, ~s(#llm-selection-reasoning button[aria-pressed="true"]))
+        assert_attr(selected, "phx-value-reasoning_effort", "1")
+        assert text(selected) == "Medium"
+        assert text(one(tree, "#llm-selection-reasoning-value")) == "Medium"
       end
     end
 
@@ -113,15 +110,21 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
             |> Map.delete(:default_reasoning_effort)
           ] do
         tree = render_picker(model_selections: [model])
-        assert_attr(one(tree, "input[type=range]"), "value", "0")
-        assert text(one(tree, "output")) == "High"
+
+        selected = one(tree, ~s(#llm-selection-reasoning button[aria-pressed="true"]))
+        assert_attr(selected, "phx-value-reasoning_effort", "0")
+        assert text(selected) == "High"
+        assert text(one(tree, "#llm-selection-reasoning-value")) == "High"
       end
     end
 
     test "a supported explicit effort wins over the default" do
       tree = render_picker(model_spec: spec(%{"reasoning_effort" => "low"}))
-      assert_attr(one(tree, "input[type=range]"), "value", "0")
-      assert text(one(tree, "output")) == "Low"
+
+      selected = one(tree, ~s(#llm-selection-reasoning button[aria-pressed="true"]))
+      assert_attr(selected, "phx-value-reasoning_effort", "0")
+      assert text(selected) == "Low"
+      assert text(one(tree, "#llm-selection-reasoning-value")) == "Low"
     end
 
     test "all standard effort labels and unknown catalog labels remain distinguishable" do
@@ -140,10 +143,20 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
 
       tree = render_picker(model_selections: [selection(%{reasoning_efforts: efforts})])
 
-      assert Enum.map(Floki.find(tree, "datalist option"), &Floki.attribute(&1, "label")) ==
-               Enum.map(labels, &[&1])
+      stops = Floki.find(tree, "#llm-selection-reasoning .capsule-stop")
 
-      assert_attr(one(tree, "input[type=range]"), "max", "7")
+      assert Enum.map(stops, &text/1) == labels
+
+      assert Enum.map(stops, &Floki.attribute(&1, "phx-value-reasoning_effort")) == [
+               ["0"],
+               ["1"],
+               ["2"],
+               ["3"],
+               ["4"],
+               ["5"],
+               ["6"],
+               ["7"]
+             ]
     end
   end
 
@@ -243,18 +256,19 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
             model_spec: spec(%{"provider_profile_id" => "secondary"})
           )
 
-        assert_attr(one(tree, "input[type=range]"), "max", "1")
-        assert_attr(one(tree, "input[type=range]"), "value", "0")
-        assert text(one(tree, "output")) == "Extra high"
+        selected = one(tree, ~s(#llm-selection-reasoning button[aria-pressed="true"]))
+        assert_attr(selected, "phx-value-reasoning_effort", "0")
+        assert text(selected) == "Extra high"
+        assert text(one(tree, "#llm-selection-reasoning-value")) == "Extra high"
 
-        assert Enum.map(Floki.find(tree, "datalist option"), &Floki.attribute(&1, "label")) == [
-                 ["Extra high"],
-                 ["Minimal"]
+        assert Enum.map(Floki.find(tree, "#llm-selection-reasoning .capsule-stop"), &text/1) == [
+                 "Extra high",
+                 "Minimal"
                ]
 
         assert Enum.map(
-                 Floki.find(tree, "#llm-selection-model option"),
-                 &Floki.attribute(&1, "value")
+                 Floki.find(tree, "#llm-selection-model .capsule-item"),
+                 &Floki.attribute(&1, "phx-value-model")
                ) == [[""], ["shared-model"]]
 
         assert LLMSelectionComponents.resolve_reasoning_effort(selections, spec(), 0) ==
@@ -282,8 +296,10 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
             spec(%{"provider_profile_id" => "secondary", "reasoning_effort" => "medium"})
         )
 
-      assert text(one(tree, "output")) == "Extra high"
-      assert_attr(one(tree, "input[type=range]"), "value", "0")
+      selected = one(tree, ~s(#llm-selection-reasoning button[aria-pressed="true"]))
+      assert_attr(selected, "phx-value-reasoning_effort", "0")
+      assert text(selected) == "Extra high"
+      assert text(one(tree, "#llm-selection-reasoning-value")) == "Extra high"
     end
   end
 
@@ -291,46 +307,40 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
     test "uses string-keyed profile labels and spec values without leaking credentials" do
       tree = render_picker()
       assert text(one(tree, ~s(label[for="llm-selection-provider"]))) == "Provider profile"
-      assert text(one(tree, ~s(label[for="llm-selection-model"]))) == "Model"
+
       provider = one(tree, "#llm-selection-provider")
       assert_attr(provider, "name", "provider_profile_id")
       assert_attr(provider, "phx-change", "select_provider_profile")
       assert_attr(one(provider, "option[selected]"), "value", "primary")
       assert text(one(provider, "option[selected]")) == "Primary account"
       assert text(one(provider, ~s(option[value="secondary"]))) == "secondary"
+
       model = one(tree, "#llm-selection-model")
-      assert_attr(model, "name", "model")
-      assert_attr(model, "phx-change", "select_model")
-      assert_attr(one(model, "option[selected]"), "value", "shared-model")
+      assert_attr(model, "role", "listbox")
+      assert_attr(model, "aria-label", "Model")
+      selected = one(model, ~s(button[aria-selected="true"]))
+      assert_attr(selected, "phx-click", "select_model")
+      assert_attr(selected, "phx-value-model", "shared-model")
+      assert text(selected) == "shared-model"
+
       refute text(tree) =~ "secret-not-for-display"
       refute inspect(tree) =~ "secret-not-for-display"
       assert Floki.find(tree, "form") == []
     end
 
-    test "custom ids associate all controls, output, ticks and help without collisions" do
+    test "custom ids associate all controls without collisions" do
       tree = render_picker(id: "task-picker") ++ render_picker(id: "assistant-picker")
       ids = Floki.attribute(tree, "[id]", "id")
       assert length(ids) == length(Enum.uniq(ids))
 
       for id <- ["task-picker", "assistant-picker"] do
-        fieldset = one(tree, "##{id}")
+        capsule = one(tree, "##{id}")
+        one(capsule, ~s(label[for="#{id}-provider"]))
+        one(capsule, "##{id}-provider")
 
-        for suffix <- ["provider", "model", "reasoning"] do
-          one(fieldset, ~s(label[for="#{id}-#{suffix}"]))
-          one(fieldset, "##{id}-#{suffix}")
-        end
-
-        assert_attr(one(fieldset, "output"), "for", "#{id}-reasoning")
-        assert_attr(one(fieldset, "input[type=range]"), "list", "#{id}-reasoning-ticks")
-
-        assert_attr(
-          one(fieldset, "input[type=range]"),
-          "aria-describedby",
-          "#{id}-reasoning-help"
-        )
-
-        one(fieldset, "##{id}-reasoning-ticks")
-        one(fieldset, "##{id}-reasoning-help")
+        assert_attr(one(capsule, "##{id}-model"), "aria-label", "Model")
+        assert_attr(one(capsule, "##{id}-reasoning"), "aria-label", "Reasoning effort")
+        one(capsule, "##{id}-reasoning-value")
       end
     end
 
@@ -342,26 +352,39 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
           reasoning_event: "choose_effort"
         )
 
-      for {selector, event, name} <- [
-            {"select#llm-selection-provider", "choose_account", "provider_profile_id"},
-            {"select#llm-selection-model", "choose_model", "model"},
-            {"input[type=range]", "choose_effort", "reasoning_effort"}
-          ] do
-        control = one(tree, selector)
-        assert_attr(control, "phx-change", event)
-        assert_attr(control, "name", name)
-      end
+      provider = one(tree, "#llm-selection-provider")
+      assert_attr(provider, "phx-change", "choose_account")
+      assert_attr(provider, "name", "provider_profile_id")
+
+      model = one(tree, ~s(#llm-selection-model button[aria-selected="true"]))
+      assert_attr(model, "phx-click", "choose_model")
+      assert_attr(model, "phx-value-model", "shared-model")
+
+      reasoning = one(tree, ~s(#llm-selection-reasoning button[aria-pressed="true"]))
+      assert_attr(reasoning, "phx-click", "choose_effort")
+      assert_attr(reasoning, "phx-value-reasoning_effort", "1")
     end
 
-    test "disabled disables the fieldset and every control without erasing selection" do
+    test "disabled disables every control without erasing selection" do
       tree = render_picker(disabled: true)
-      assert_attr(one(tree, "fieldset"), "disabled", "disabled")
 
-      for control <- Floki.find(tree, "select, input[type=range]"),
-          do: assert_attr(control, "disabled", "disabled")
+      capsule = one(tree, "#llm-selection")
+      classes = Floki.attribute(capsule, "class") |> List.first()
+      assert classes =~ "pointer-events-none"
+      assert classes =~ "opacity-60"
+      assert Floki.attribute(capsule, "disabled") == []
 
-      assert_attr(one(tree, "input[type=range]"), "value", "1")
-      assert text(one(tree, "output")) == "Medium"
+      for control <-
+            Floki.find(
+              tree,
+              "#llm-selection-provider, #llm-selection-model button, #llm-selection-reasoning button"
+            ) do
+        assert_attr(control, "disabled", "disabled")
+      end
+
+      selected = one(tree, ~s(#llm-selection-reasoning button[aria-pressed="true"]))
+      assert_attr(selected, "phx-value-reasoning_effort", "1")
+      assert text(one(tree, "#llm-selection-reasoning-value")) == "Medium"
     end
 
     test "empty defaults offer an accessible settings hint and no reasoning controls" do
@@ -372,13 +395,19 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
       assert_attr(provider, "disabled", "disabled")
       assert_attr(provider, "aria-describedby", "llm-selection-empty")
       assert text(one(provider, "option[selected]")) == "Choose a provider profile"
-      assert_attr(one(tree, "#llm-selection-model"), "disabled", "disabled")
-      assert text(one(tree, "#llm-selection-model option[selected]")) == "Choose a provider first"
+
+      blank = one(tree, ~s(#llm-selection-model button[aria-selected="true"]))
+      assert_attr(blank, "disabled", "disabled")
+      assert_attr(blank, "phx-value-model", "")
+      assert text(blank) == "Choose a provider first"
 
       assert text(one(tree, "#llm-selection-empty")) ==
                "No provider profiles configured. Add one in Settings to choose a model."
 
-      assert Floki.find(tree, "input[type=range], output, datalist") == []
+      assert Floki.find(
+               tree,
+               "input[type=range], output, datalist, #llm-selection-reasoning, #llm-selection-reasoning-value"
+             ) == []
     end
 
     test "Auto is a selected blank profile and never silently selects a model" do
@@ -386,18 +415,33 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
       auto = one(tree, "#llm-selection-provider option[selected]")
       assert_attr(auto, "value", "")
       assert text(auto) == "Auto (by rules)"
-      assert_attr(one(tree, "#llm-selection-model"), "disabled", "disabled")
-      assert text(one(tree, "#llm-selection-model option[selected]")) == "Choose a provider first"
-      assert Floki.find(tree, "input[type=range]") == []
+
+      blank = one(tree, ~s(#llm-selection-model button[aria-selected="true"]))
+      assert_attr(blank, "disabled", "disabled")
+      assert_attr(blank, "phx-value-model", "")
+      assert text(blank) == "Choose a provider first"
+
+      assert Floki.find(
+               tree,
+               "input[type=range], #llm-selection-reasoning, #llm-selection-reasoning-value"
+             ) == []
     end
 
     test "a known profile without models renders its own empty state" do
       tree = render_picker(model_selections: [], model_spec: spec(%{"model" => ""}))
       assert Floki.attribute(one(tree, "#llm-selection-provider"), "disabled") == []
-      assert_attr(one(tree, "#llm-selection-model"), "disabled", "disabled")
-      assert text(one(tree, "#llm-selection-model option[selected]")) == "Choose a model"
+
+      blank = one(tree, ~s(#llm-selection-model button[aria-selected="true"]))
+      assert_attr(blank, "disabled", "disabled")
+      assert_attr(blank, "phx-value-model", "")
+      assert text(blank) == "Choose a model"
+
       assert text(tree) =~ "No models are available for this provider profile."
-      assert Floki.find(tree, "#llm-selection-empty, input[type=range]") == []
+
+      assert Floki.find(
+               tree,
+               "#llm-selection-empty, input[type=range], #llm-selection-reasoning, #llm-selection-reasoning-value"
+             ) == []
     end
 
     test "unavailable profile and model remain visible, selected and disabled, not replaced" do
@@ -411,26 +455,35 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
       assert_attr(provider, "value", "removed-profile")
       assert_attr(provider, "disabled", "disabled")
       assert text(provider) == "Unavailable profile: removed-profile"
-      model = one(tree, "#llm-selection-model option[selected]")
-      assert_attr(model, "value", "removed-model")
+
+      model = one(tree, ~s(#llm-selection-model button.capsule-item-placeholder))
       assert_attr(model, "disabled", "disabled")
+      assert_attr(model, "aria-invalid", "true")
       assert text(model) == "Unavailable model: removed-model"
-      assert Floki.find(tree, "input[type=range]") == []
+
+      assert Floki.find(
+               tree,
+               "input[type=range], #llm-selection-reasoning, #llm-selection-reasoning-value"
+             ) == []
+
       refute text(tree) =~ "No models are available for this provider profile."
     end
 
     test "a stale model within a known profile preserves valid alternatives but has no range" do
       tree = render_picker(model_spec: spec(%{"model" => "removed-model"}))
-      assert Floki.attribute(one(tree, "#llm-selection-model"), "disabled") == []
-      selected = one(tree, "#llm-selection-model option[selected]")
-      assert_attr(selected, "value", "removed-model")
+
+      selected = one(tree, ~s(#llm-selection-model button.capsule-item-placeholder))
       assert_attr(selected, "disabled", "disabled")
       assert text(selected) == "Unavailable model: removed-model"
 
-      assert text(one(tree, ~s(#llm-selection-model option[value="shared-model"]))) ==
-               "shared-model"
+      alternative = one(tree, ~s(#llm-selection-model button[phx-value-model="shared-model"]))
+      assert Floki.attribute(alternative, "disabled") == []
+      assert text(alternative) == "shared-model"
 
-      assert Floki.find(tree, "input[type=range]") == []
+      assert Floki.find(
+               tree,
+               "input[type=range], #llm-selection-reasoning, #llm-selection-reasoning-value"
+             ) == []
     end
   end
 
