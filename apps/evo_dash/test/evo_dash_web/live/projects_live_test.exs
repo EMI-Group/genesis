@@ -4819,8 +4819,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
   end
 
-  # Speed ↔ quality segmented control — the 3-step control on the task form's
-  # bottom toolbar (#quality-level-control, component-side markup contract is
+  # Speed ↔ quality capsule control — the 3-step control on the task form's
+  # bottom toolbar (#mode-speed-capsule, component-side markup contract is
   # covered in task_form_components_test.exs). Projectslive owns the assign
   # (@quality_level, default "balanced"), the whitelisted select_quality_level
   # event, and the submit threading: do_task_submit/4 adds the :quality_level
