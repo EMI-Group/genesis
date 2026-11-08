@@ -113,13 +113,13 @@ Prefer unique task ids plus explicit cleanup over assumptions about global empti
 `XDG_CONFIG_HOME` is process-global, but no suite writes it: the config dir is resolved per process through the `:config_dir_fun` seam the helper installs (`EvoDash.Test.ConfigDir.isolate!/1` in `setup` — own process dictionary, then the `$callers` chain), proven end-to-end by `support/config_dir_test.exs` (test process, a real page render in the mounted view, `Task.Supervisor` children via `EvoDash.SafeCall.start/4`; a raw `spawn/1` and the boot-time app-global singletons are the documented escape classes).
 
 ### Async policy
-Census by MODULE (the unit ExUnit parallelises), not by file: 89 case modules across the 74 files — 73 `async: true` (1 498 declared tests) and 16 `async: false` (344).
-Eight files hold both kinds (`review_live_test.exs` 9 case modules, `node_context_test.exs` 2, `node_aware_test.exs` 2, and `projects_live_test.exs`, `settings_live_test.exs`, `system_live_test.exs`, `welcome_live_test.exs`, `welcome_complete_live_test.exs` with one async + one sync module each); the other 66 files are a single case module.
-The other 24 `defmodule`s in this tree (113 total) are helpers with no case template: 18 in the test files (the review/settings/system/projects `Helpers` modules, the fake `ConnectionManager` GenServers, `SafeCallTest.SlowServer`, the diff-viewer `Foo`) and 6 in `support/`; three of them (`review_live_test`, `system_live_test`, `settings_live_test`) still `use EvoDashWeb.ConnCase` for its imports without running tests.
+Census by MODULE (the unit ExUnit parallelises), not by file: 91 case modules across the 76 files — 74 `async: true` (1 515 declared tests) and 17 `async: false` (348).
+Eight files hold both kinds (`review_live_test.exs` 9 case modules, `node_context_test.exs` 2, `node_aware_test.exs` 2, and `projects_live_test.exs`, `settings_live_test.exs`, `system_live_test.exs`, `welcome_live_test.exs`, `welcome_complete_live_test.exs` with one async + one sync module each); the other 68 files are a single case module.
+The other 24 `defmodule`s in this tree (115 total) are helpers with no case template: 18 in the test files (the review/settings/system/projects `Helpers` modules, the fake `ConnectionManager` GenServers, `SafeCallTest.SlowServer`, the diff-viewer `Foo`) and 6 in `support/`; three of them (`review_live_test`, `system_live_test`, `settings_live_test`) still `use EvoDashWeb.ConnCase` for its imports without running tests.
 ExUnit drains ALL async modules before starting any sync one (`ExUnit.Runner.async_loop/4`), so a flip is unsafe only when a module shares a MUTABLE global with another ASYNC module.
 Config-directory isolation itself is not a reason for `async: false`: `EvoGit.Platform.config_dir/1` resolves through the `:config_dir_fun` seam per process (own dictionary, then the `$callers` chain — LiveViewTest sets a view's `$callers` to the test pid), so a config-writing module can isolate with `setup`-time `EvoDash.Test.ConfigDir.isolate!/1` and stay async.
 The mounted-only `support/config_dir_test.exs` proof is synchronous because async Projects tests replace the global `:projects_async_load_runner`, which can bypass its real configuration load; its other two proofs remain async.
-The 16 sync modules and the one global that forces each (per-file evidence: the child docs `evo_dash/CONTEXT.md`, `live/CONTEXT.md`, `live_hooks/CONTEXT.md`, `controllers/CONTEXT.md`):
+The 17 sync modules and the one global that forces each (per-file evidence: the child docs `evo_dash/CONTEXT.md`, `live/CONTEXT.md`, `live_hooks/CONTEXT.md`, `controllers/CONTEXT.md`):
 
 | File → module | Tests | Forcing global |
 |---------------|-------|----------------|
@@ -140,6 +140,7 @@ The 16 sync modules and the one global that forces each (per-file evidence: the 
 | `live_hooks/node_aware_test.exs` → `NodeAwareTest` | 33 | exact reads of the LOCAL `{nil, node()}` ActiveTasks key + `Process.unregister(EvoGit.TaskRegistry)` + `IsolatedTaskStore.isolate!/1` |
 | `live_hooks/update_status_test.exs` | 11 | the `EvoDash.UpdateStatus` hub + `:update_notify_only_override`/`:desktop_quit_stop_fun` seams shared with the async `evo_dash/update_status_test` and `desktop_quit_test` |
 | `controllers/page_controller_test.exs` | 2 | writes junk sentinel shapes into the `{nil, node()}` ActiveTasks key |
+| `live/agents_live/load_data_model_label_test.exs` | 4 | writes the `:agents_list_runner` app-env seam, which the ASYNC `agents_live_test.exs` drives for its page loads |
 
 Remaining levers, in the order they would pay off (each one is a PRODUCTION change, since every surviving sync module is blocked by a BEAM-global singleton):
 - Scoped/per-task `EvoGit.TaskRegistry` broadcasts → the three `"tasks"`-publisher review modules, the two `TaskBroadcast` tests and `ProjectsLiveSyncTest`'s broadcast half.

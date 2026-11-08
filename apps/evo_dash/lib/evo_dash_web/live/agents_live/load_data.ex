@@ -11,7 +11,7 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
   resolved at call time so tests can inject fakes.
   """
 
-  alias EvoDashWeb.AgentsLive.{ContextMeter, ThresholdCache}
+  alias EvoDashWeb.AgentsLive.{ContextMeter, ModelLabel, ThresholdCache}
 
   @doc """
   Full page load: agent summaries + the node's config status (layout banner)
@@ -109,6 +109,10 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
         retries: summary[:retries] || 0,
         agent_module: parse_agent_module(summary[:agent_module]),
         model_id: summary[:model_id],
+        # Display-only label: canonical `model_spec` -> `llm_model` -> legacy
+        # `model_id` -> nil (the template's "N/A"). `model_id` above keeps its
+        # legacy meaning untouched.
+        model_label: ModelLabel.label(summary),
         objective: summary[:objective] || "",
         context_path: summary[:context_path],
         current_commit: summary[:current_commit],

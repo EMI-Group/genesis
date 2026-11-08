@@ -151,12 +151,12 @@ The dashboard controls a remote headless daemon over Erlang distribution via an 
 | `"tasks"` | `{:task_updated, task_id, status, node}` (status `:pending\|:running\|:finalizing\|:cancelling\|:completed\|:failed\|:cancelled`, or `nil` for review-only mutations); `{:task_deleted, task_id, node}` | NodeAware, TasksLive, ProjectsLive, ReviewLive, AgentsLive, SettingsLive, SystemLive |
 | `"agents"` | `{:agent_registered, id, summary, node}`, `{:agent_updated, id, changed_fields, node}` (NEVER `:context`; carries `:message_count` when context changed), `{:agent_removed, id, node}`, `{:agents_updated, node}` | AgentsLive |
 | `"scheduler_config"` | `{:scheduler_config_updated, node}` | SettingsLive, SystemLive (node-filtered → async reloads) |
-| `"system"` | `{:system_sample, node, seq, sample}` every 3 s: legacy aggregates plus **`llm_slots`** (per-model `%{used:, waiting:, capacity:}`, real counts for every configured profile incl. peak-paused 0-capacity; `%{}` when the scheduler is dead) | SystemLive charts (ring buffer, cap 60) |
+| `"system"` | `{:system_sample, node, seq, sample}` every 3 s: legacy aggregates plus **`llm_slots`** (per-PROVIDER-PROFILE pool `%{used:, waiting:, capacity:}` keyed by `[[llm.providers]]` account id — all models of one profile share the pool — real counts for every configured profile incl. peak-paused 0-capacity; `%{}` when the scheduler is dead) and the OPTIONAL **`llm_pools`** label metadata (`%{pool_id => %{label:, models:}}`, read defensively, never required) | SystemLive charts (ring buffer, cap 60) |
 | `"recent_projects"` | `{:recent_projects_updated}` | ProjectsLive |
 | `"guides"` | `{:guide_updated, id, %{message, page, selector, dismissible}, node}` | `LiveHooks.Guide` overlay |
 | `"updates"` | `{:update_status, state}` | UpdateStatus hook, SystemLive |
 
-Key detail + subscriber specifics: `lib/CONTEXT.md` (§ PubSub Topics), `live/system_live/CONTEXT.md` (sample keys, the per-model LLM Slots chart + one-shot seed), `live_hooks/CONTEXT.md` (guide shape).
+Key detail + subscriber specifics: `lib/CONTEXT.md` (§ PubSub Topics), `live/system_live/CONTEXT.md` (sample keys, the per-provider-profile LLM Slots chart + `llm_pools` label metadata + one-shot seed), `live_hooks/CONTEXT.md` (guide shape).
 
 ### Task Archive Feature
 

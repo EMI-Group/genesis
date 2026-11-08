@@ -18,14 +18,27 @@ defmodule EvoDashWeb.SystemLive.Charts do
   `"system"` PubSub topic (`{:system_sample, node, seq, sample}`, one every
   3 seconds). Each sample map carries:
 
-  - a per-model `llm_slots` map (`%{model_id => %{used:, waiting:, capacity:}}`
-    — model ids are config-profile id STRINGS, inner keys are atoms) — the ONLY
-    source for the LLM Slots chart, which plots ONE selected model. The chart
-    reads it DEFENSIVELY (a `Map.get` chain: a sample missing `:llm_slots`, a
-    missing model key, or a missing inner key all contribute 0 for that
-    sample) so sparklines stay continuous while the sampler key is rolled out.
-    Model SELECTION is dashboard-side (see `llm_model_ids/1` + the
+  - a per-POOL `llm_slots` map (`%{pool_id => %{used:, waiting:, capacity:}}`
+    — `pool_id` is the PROVIDER PROFILE (account) id STRING, i.e. the
+    `[[llm.providers]]` entry id, and inner keys are atoms) — the ONLY source
+    for the LLM Slots chart, which plots ONE selected pool. Pools are provider
+    profiles, NOT models: every model configured under one profile shares that
+    profile's slots, capacity, backoff and peak schedule (see
+    `EvoGit.AgentScheduler.get_llm_slot_status/0`). The chart reads it
+    DEFENSIVELY (a `Map.get` chain: a sample missing `:llm_slots`, a missing
+    pool key, or a missing inner key all contribute 0 for that sample) so
+    sparklines stay continuous while the sampler key is rolled out.
+    Pool SELECTION is dashboard-side (see `llm_model_ids/1` + the
     `selected_llm_model` / `model_ids` attrs).
+  - an OPTIONAL `llm_pools` map (`%{pool_id => %{label: String.t() | nil,
+    models: [String.t()]}}`) carrying the display label of the provider
+    profile and the bare configured model ids that share its pool. It is
+    presentation-only metadata for the in-card selector and is read
+    DEFENSIVELY (`llm_pool_options/1`): a sample missing the key (legacy
+    sampler), a non-map value, a missing/non-map per-pool entry, a blank or
+    non-binary `label`, or a non-list/non-binary `models` all fall back to the
+    raw pool id with no model suffix. Ids, labels and model names are
+    user-config STRINGS — never atomized, never gettext-ed.
   - the 12 aggregate keys (`llm_used, llm_waiting, llm_capacity, tool_used,
     tool_waiting, tool_capacity, agents_total, agents_running, agents_blocked,
     agents_waiting, agents_pending, scheduler_alive`) — still consumed by the
@@ -72,41 +85,42 @@ defmodule EvoDashWeb.SystemLive.Charts do
   # ── Series derivation (pure) ─────────────────────────────────────
 
   @doc """
-  LLM-slot chart series for ONE model profile: capacity (static reference line
-  rendered at the latest per-sample capacity), in use (live slot holders),
-  waiting (agents queued for a slot). Each series' values derive from each
-  sample's `llm_slots[model_id]` map, read DEFENSIVELY (missing `:llm_slots`
-  key on the sample, missing model key, or missing inner key ⇒ 0 for that
-  sample — see `llm_values/3`). `model_id` may be nil (no model ids in the
-  buffer yet / legacy sampler without `llm_slots`): the defensive chain then
-  yields an all-zero series, so the chart renders without raising.
+  LLM-slot chart series for ONE provider-profile pool: capacity (static
+  reference line rendered at the latest per-sample capacity), in use (live
+  slot holders), waiting (agents queued for a slot). Each series' values derive
+  from each sample's `llm_slots[pool_id]` map, read DEFENSIVELY (missing
+  `:llm_slots` key on the sample, missing pool key, or missing inner key ⇒ 0
+  for that sample — see `llm_values/3`). `pool_id` may be nil (no pool ids in
+  the buffer yet / legacy sampler without `llm_slots`): the defensive chain
+  then yields an all-zero series, so the chart renders without raising.
   """
-  def llm_series(samples, model_id) when is_list(samples) do
+  def llm_series(samples, pool_id) when is_list(samples) do
     [
       %{
         name: gettext("Capacity"),
         color: @capacity_color,
-        values: llm_values(samples, model_id, :capacity),
+        values: llm_values(samples, pool_id, :capacity),
         static: true
       },
       %{
         name: gettext("In use"),
         color: @in_use_color,
-        values: llm_values(samples, model_id, :used)
+        values: llm_values(samples, pool_id, :used)
       },
       %{
         name: gettext("Waiting"),
         color: @waiting_color,
-        values: llm_values(samples, model_id, :waiting)
+        values: llm_values(samples, pool_id, :waiting)
       }
     ]
   end
 
   @doc """
-  Sorted unique model-profile ids present across the samples' `llm_slots`
-  maps: the union of `Map.keys(Map.get(sample, :llm_slots, %{}))` per sample.
-  Samples without the `:llm_slots` key (legacy sampler / pre-merge builds)
-  contribute nothing; `[]` for an empty buffer or a dead scheduler.
+  Sorted unique provider-profile (LLM pool) ids present across the samples'
+  `llm_slots` maps: the union of `Map.keys(Map.get(sample, :llm_slots, %{}))`
+  per sample. Samples without the `:llm_slots` key (legacy sampler /
+  pre-merge builds) contribute nothing; `[]` for an empty buffer or a dead
+  scheduler. This list ALSO defines the order of `llm_pool_options/1`.
   """
   def llm_model_ids(samples) when is_list(samples) do
     samples
@@ -115,10 +129,104 @@ defmodule EvoDashWeb.SystemLive.Charts do
     |> Enum.sort()
   end
 
-  # Per-sample defensive extraction of one metric for one model profile. The
-  # `Map.get` chain never raises: a sample without `:llm_slots`, a slots map
-  # without the model id, or a model map without the inner key all yield 0 for
-  # that sample, keeping sparklines continuous across rollout gaps.
+  @doc """
+  Display options for the in-card LLM pool selector, ONE entry per pool id
+  reported by `llm_model_ids/1` (so the order follows that list):
+
+      [%{id: pool_id, label: display_label, models: [model_id]}]
+
+  `label` is the already-formatted option text from `format_pool_label/1`;
+  `models` are the bare configured model ids that share that pool (`[]` when
+  unknown). The metadata comes from the samples' OPTIONAL `llm_pools` map —
+  `%{pool_id => %{label: String.t() | nil, models: [String.t()]}}` — and is
+  taken from the NEWEST sample carrying a map entry for that id (samples are
+  oldest→newest). Everything is read defensively: a missing `:llm_pools` /
+  `"llm_pools"` key, a non-map value, a missing or non-map entry for an id, a
+  blank/non-binary `label`, or a non-list/non-binary `models` degrades to
+  `%{id: pool_id, label: pool_id, models: []}` — i.e. exactly the pre-`llm_pools`
+  rendering. `[]` for an empty buffer or a legacy sampler.
+  """
+  def llm_pool_options(samples) when is_list(samples) do
+    Enum.map(llm_model_ids(samples), fn pool_id ->
+      {label, models} = newest_pool_metadata(samples, pool_id)
+
+      %{
+        id: pool_id,
+        label: format_pool_label(%{id: pool_id, label: label, models: models}),
+        models: models
+      }
+    end)
+  end
+
+  @doc """
+  The single formatting point for a pool option label (`%{id:, label:, models:}`,
+  `label` optional and user-config — never gettext-ed):
+
+    * label + models → `"<label> — <m1, m2>"` (em dash, `", "`-joined models)
+    * label only → `"<label>"`
+    * models only → `"<pool_id> — <m1, m2>"`
+    * neither → `"<pool_id>"`
+  """
+  def format_pool_label(%{id: id} = pool) when is_binary(id) do
+    prefix =
+      case Map.get(pool, :label) do
+        label when is_binary(label) and label != "" -> label
+        _ -> id
+      end
+
+    case Map.get(pool, :models) do
+      [_ | _] = models -> prefix <> " — " <> Enum.join(models, ", ")
+      _ -> prefix
+    end
+  end
+
+  # Newest sample carrying a usable (map) `llm_pools` entry for `pool_id` wins.
+  # `Enum.find_value/3` returns the first TRUTHY result while walking
+  # newest→oldest, so a newer entry with unusable fields (`{nil, []}`) still
+  # wins over an older, richer one — the sampler emits one shape per build.
+  defp newest_pool_metadata(samples, pool_id) do
+    samples
+    |> Enum.reverse()
+    |> Enum.find_value({nil, []}, fn sample ->
+      case pool_entry(sample, pool_id) do
+        nil ->
+          nil
+
+        entry ->
+          {normalize_pool_label(Map.get(entry, :label) || Map.get(entry, "label")),
+           normalize_pool_models(Map.get(entry, :models) || Map.get(entry, "models"))}
+      end
+    end)
+  end
+
+  # `llm_pools` is optional and may arrive atom- or string-keyed; anything that
+  # is not a map carrying a map entry for the id yields nil (⇒ raw-id fallback).
+  defp pool_entry(sample, pool_id) when is_map(sample) do
+    pools = Map.get(sample, :llm_pools) || Map.get(sample, "llm_pools")
+
+    with true <- is_map(pools),
+         entry when is_map(entry) <- Map.get(pools, pool_id) do
+      entry
+    else
+      _ -> nil
+    end
+  end
+
+  defp pool_entry(_sample, _pool_id), do: nil
+
+  defp normalize_pool_label(label) when is_binary(label) and label != "", do: label
+  defp normalize_pool_label(_label), do: nil
+
+  defp normalize_pool_models([_ | _] = models) do
+    if Enum.all?(models, &is_binary/1), do: models, else: []
+  end
+
+  defp normalize_pool_models(_models), do: []
+
+  # Per-sample defensive extraction of one metric for one provider-profile pool.
+  # The `Map.get` chain never raises: a sample without `:llm_slots`, a slots
+  # map without the pool id, or a pool map without the inner key all yield 0
+  # for that sample, keeping sparklines continuous across rollout gaps.
   defp llm_values(samples, model_id, key) do
     Enum.map(samples, fn sample ->
       slots = Map.get(sample, :llm_slots, %{})
@@ -248,6 +356,18 @@ defmodule EvoDashWeb.SystemLive.Charts do
 
   defp num(v), do: v |> Float.round(2) |> Float.to_string()
 
+  # Option/label lookup for the in-card pool control: the formatted label from
+  # `llm_pool_options/1` when the option list has the pool id, else the raw
+  # pool id (legacy sampler without `llm_pools`, or a stale option list).
+  defp pool_label(pool_options, pool_id) when is_list(pool_options) do
+    case Enum.find(pool_options, &match?(%{id: ^pool_id}, &1)) do
+      %{label: label} when is_binary(label) and label != "" -> label
+      _ -> pool_id
+    end
+  end
+
+  defp pool_label(_pool_options, pool_id), do: pool_id
+
   # ── Components ───────────────────────────────────────────────────
 
   attr(:samples, :list, default: [])
@@ -257,12 +377,14 @@ defmodule EvoDashWeb.SystemLive.Charts do
   @doc """
   The full charts section: header row + grid of the three chart cards.
 
-  The LLM Slots card plots ONE model profile. The resolved model follows the
-  SAME deterministic rule as the LiveView-side `resolve_selected_llm_model/2`:
-  keep `selected_llm_model` when it is present in the samples' model ids,
-  otherwise fall back to the first id (`nil` when no ids are known yet — the
-  series renders all-zero). Model ids + the resolved selection are threaded
-  into the card as `model_ids` / `selected_model` for the in-card selector.
+  The LLM Slots card plots ONE provider-profile POOL (one `[[llm.providers]]`
+  account — its models share the pool). The resolved pool follows the SAME
+  deterministic rule as the LiveView-side `resolve_selected_llm_model/2`: keep
+  `selected_llm_model` when it is present in the samples' pool ids, otherwise
+  fall back to the first id (`nil` when no ids are known yet — the series
+  renders all-zero). Pool ids, the resolved selection and the display options
+  (`llm_pool_options/1`) are threaded into the card as `model_ids` /
+  `selected_model` / `pool_options` for the in-card selector.
   """
   def charts_section(assigns) do
     llm_ids = llm_model_ids(assigns.samples)
@@ -285,7 +407,8 @@ defmodule EvoDashWeb.SystemLive.Charts do
         tools_max: y_max(tools),
         agents_max: y_max(agents),
         llm_ids: llm_ids,
-        llm_selected: llm_selected
+        llm_selected: llm_selected,
+        llm_pool_options: llm_pool_options(assigns.samples)
       )
 
     ~H"""
@@ -314,9 +437,9 @@ defmodule EvoDashWeb.SystemLive.Charts do
           title={gettext("LLM Slots")}
           icon="hero-sparkles"
           description={
-            # zh_CN: 该卡片描述所选模型的槽位：容量=该模型当前生效并发数（峰谷暂停窗口为0），使用中=正在占用槽位的智能体，等待中=排队等待槽位的智能体
+            # zh_CN: 该卡片描述所选「供应商配置档案」（[[llm.providers]] 账户）的槽位：容量=该档案当前生效并发数（峰谷暂停窗口为0），使用中=正在占用槽位的智能体，等待中=排队等待槽位的智能体；每个档案一个槽位池，同一档案下的多个模型共用这些槽位
             gettext(
-              "Capacity: the selected model's effective concurrency. In use: live slot holders. Waiting: agents queued for a slot."
+              "Capacity: the selected provider profile's effective concurrency. In use: live slot holders. Waiting: agents queued for a slot. One pool per provider profile — the models of a profile share its slots."
             )
           }
           samples={@samples}
@@ -324,6 +447,7 @@ defmodule EvoDashWeb.SystemLive.Charts do
           y_max={@llm_max}
           model_ids={@llm_ids}
           selected_model={@llm_selected}
+          pool_options={@llm_pool_options}
         />
         <.chart_card
           title={gettext("Tool Slots")}
@@ -362,20 +486,27 @@ defmodule EvoDashWeb.SystemLive.Charts do
   attr(:y_max, :integer, required: true)
   attr(:model_ids, :list, default: [])
   attr(:selected_model, :string, default: nil)
+  attr(:pool_options, :list, default: [])
 
   @doc """
   One chart card: legend row with last values + a server-rendered SVG
   sparkline. Renders a gettext placeholder while no samples exist yet (static
   mount before the first tick).
 
-  Optional in-card model selector (used by the LLM Slots card): when
-  `model_ids` is non-empty, a compact control renders between the description
-  and the samples body — a static muted single-model label when exactly one
-  model id is known, otherwise a compact dropdown `<select>` (DaisyUI
-  `select-sm`) listing every model id, the currently selected model
-  preselected, dispatching `select_llm_model` on change (options carry the raw
-  user-config model id, never gettext-ed). When `model_ids == []` (no samples
-  yet / legacy sampler without `llm_slots`) no control renders.
+  Optional in-card POOL selector (used by the LLM Slots card): when
+  `model_ids` (provider-profile pool ids) is non-empty, a compact control
+  renders between the description and the samples body — a static muted
+  single-pool label when exactly one pool id is known, otherwise a compact
+  dropdown `<select>` (DaisyUI `select-sm`) listing every pool id, the
+  currently selected pool preselected, dispatching `select_llm_model` on
+  change. Option TEXT is the formatted provider-profile label from
+  `pool_options` (`llm_pool_options/1`), falling back to the raw pool id when
+  that list lacks the id (legacy sampler without `llm_pools`); option VALUE
+  stays the raw pool id, so the `%{"model" => pool_id}` wire shape is
+  unchanged. Both control shapes are followed by a one-line muted note that
+  slots are pooled per provider profile. When `model_ids == []` (no samples
+  yet / legacy sampler without `llm_slots`) no control renders. Pool ids,
+  labels and model names are user-config strings — never gettext-ed.
   """
   def chart_card(assigns) do
     ~H"""
@@ -387,34 +518,43 @@ defmodule EvoDashWeb.SystemLive.Charts do
       <p class="text-xs text-base-content/60 mb-3">{@description}</p>
 
       <%= if @model_ids != [] do %>
-        <%= if length(@model_ids) == 1 do %>
-          <div class="mb-3">
-            <span class="inline-flex items-center gap-1.5 rounded-md border border-base-300 bg-base-100 px-2 py-0.5 text-xs text-base-content/60">
-              <span class="size-1.5 rounded-full bg-primary/60" />
-              {hd(@model_ids)}
-            </span>
-          </div>
-        <% else %>
-          <%!-- Multiple model ids → a compact dropdown. The select sits in a
-               minimal form (no submit button, inert — no implicit
-               submission from a lone select): LiveView change events only
-               fire from inputs inside a form. The select itself carries
-               phx-change, so only its own field ("model") is serialized —
-               the event params land as `%{"model" => id}`, matching the
-               existing `select_llm_model` handler. --%>
-          <form class="mb-3">
-            <select
-              name="model"
-              phx-change="select_llm_model"
-              aria-label={gettext("Model")}
-              class="select select-sm select-bordered rounded-md w-full"
-            >
-              <%= for id <- @model_ids do %>
-                <option value={id} selected={id == @selected_model}>{id}</option>
-              <% end %>
-            </select>
-          </form>
-        <% end %>
+        <div class="mb-3 space-y-1">
+          <%= if length(@model_ids) == 1 do %>
+            <div>
+              <span class="inline-flex items-center gap-1.5 rounded-md border border-base-300 bg-base-100 px-2 py-0.5 text-xs text-base-content/60">
+                <span class="size-1.5 rounded-full bg-primary/60" />
+                {pool_label(@pool_options, hd(@model_ids))}
+              </span>
+            </div>
+          <% else %>
+            <%!-- Multiple provider-profile pools → a compact dropdown. The
+                 select sits in a minimal form (no submit button, inert — no
+                 implicit submission from a lone select): LiveView change
+                 events only fire from inputs inside a form. The select itself
+                 carries phx-change, so only its own field ("model") is
+                 serialized — the event params land as `%{"model" => pool_id}`,
+                 matching the existing `select_llm_model` handler. --%>
+            <form>
+              <select
+                name="model"
+                phx-change="select_llm_model"
+                aria-label={gettext("Provider profile")}
+                class="select select-sm select-bordered rounded-md w-full"
+              >
+                <%= for id <- @model_ids do %>
+                  <option value={id} selected={id == @selected_model}>
+                    {pool_label(@pool_options, id)}
+                  </option>
+                <% end %>
+              </select>
+            </form>
+          <% end %>
+          <p class="text-[11px] leading-snug text-base-content/70">
+            {gettext(
+              "Slots are pooled per provider profile — the models of one profile share its slots."
+            )}
+          </p>
+        </div>
       <% end %>
 
       <%= if @samples == [] do %>
