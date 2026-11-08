@@ -194,6 +194,7 @@ The helper test node's `CONTEXT.md` and the LiveView test context document the d
 
 ### Speed ↔ quality control
 The task form's fused-capsule speed ↔ quality control is covered at component level (`task_form_components_test.exs`, `#mode-speed-capsule` markup with `#quality-level-fast`/`-balanced`/`-high_quality` `.capsule-stop` buttons and exact `aria-pressed`/`.capsule-stop-active` active-state strings) and at page level (`projects_live_test.exs`, `select_quality_level` assign movement and `:quality_level` opt threading).
+Both capsule roots' `phx-hook="CapsulePanel"` pin, the model capsule's drill-down provider view and the absence of a provider `<select>`/`phx-change` are asserted in `task_form_provider_selection_test.exs`, `llm_selection_components_test.exs` and the page-level live suites.
 The capsule trigger/panel contract is pinned by the `fused capsule trigger and panel layout` describe (`.capsule-main` shows the short `mode_label/1` label, `mode_description/1` appears only as the trigger `title`, the subrow reads "Mode · <short label>", and `.capsule-stops` is `flex-nowrap` with the three stop ids in order), and the page-level `task_submit form contract` describe submits the REAL rendered form with no hand-built `mode` param, pinning the hidden field.
 
 ## Provider-profile redesign regression coverage
