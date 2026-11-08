@@ -242,6 +242,7 @@ Nothing is buffered in memory, there is no archive in `%Result{}` and none in th
 The same function writes the protecting refs `refs/genesis/archive/T<task>-A<local>-start/-final` (always, before the row) and the metadata note (`add_metadata_note/3`, gated on `base_commit` alone); an unknown task id (`nil`/`0`/`""`) skips the row write and logs a debug line; `started_at`/`completed_at` are ISO-8601 STRINGS.
 Archived `llm_settings` are JSON-normalized by construction: keyword lists, lists of 2-tuples and tuples become STRING-KEYED maps, atoms become strings, and maps are normalized recursively (so `provider_options` archives as `%{"auth_mode" => "oauth", …}` instead of an unencodable tuple list).
 Credentials are NEVER archived: an `:api_key`/`"api_key"` entry is dropped entirely (at any depth), never replaced by a placeholder.
+The archived `foreign_repos` list is NARROWED by `Completion.format_foreign_repos/1` (`completion.ex:363-369`) to `%{id, root, description}` per repo — `writable` and `base_sha` are dropped, so a stored archive cannot reconstruct a task's write role.
 
 ## Constraints
 - Every agent MUST `use EvoGit.Agent` and implement `system_prompt/0`; system prompts MUST NOT contain dynamic state, objectives or context trees (those are injected as user prompts).
