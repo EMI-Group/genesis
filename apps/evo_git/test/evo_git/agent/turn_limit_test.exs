@@ -21,6 +21,22 @@ defmodule EvoGit.Agent.TurnLimitTest do
     |> struct(overrides)
   end
 
+  # Simulates the grace continue path: a turn ran and ended with
+  # `{:continue, _}` (the turn did not finish the run). The continue call site
+  # checks `grace_period_continue_failed?/1` and, when allowed, decrements
+  # `grace_turns_remaining`. Returns `{:recovery_failed, turns_completed}` —
+  # the number of grace turns that ran before the hard-stop.
+  defp continue_until_fail(%LoopState{} = state, turns_completed) do
+    if Agent.grace_period_continue_failed?(state) do
+      {:recovery_failed, turns_completed + 1}
+    else
+      continue_until_fail(
+        %{state | grace_turns_remaining: state.grace_turns_remaining - 1},
+        turns_completed + 1
+      )
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # trigger_turn_limit_recovery?/1
   # ---------------------------------------------------------------------------
@@ -69,12 +85,30 @@ defmodule EvoGit.Agent.TurnLimitTest do
   # ---------------------------------------------------------------------------
 
   describe "grace_period_continue_failed?/1" do
-    test "in grace period returns true (continue fails recovery)" do
+    test "in grace period with the default counter (0) returns true (continue fails recovery)" do
       assert Agent.grace_period_continue_failed?(state(in_grace_period: true))
     end
 
     test "not in grace period returns false" do
       refute Agent.grace_period_continue_failed?(state(in_grace_period: false))
+    end
+
+    test "the 3-turn budget allows the first two continues and hard-stops at 1" do
+      # Turn-limit recovery grants the same 3-turn window as cancel-grace:
+      # a turn that ends with a tool call merely consumes one grace turn, so a
+      # budget of 1 could never fit the ONE permitted final commit PLUS the
+      # tool-free report turn the completion contract requires.
+      refute Agent.grace_period_continue_failed?(
+               state(in_grace_period: true, grace_turns_remaining: 3)
+             )
+
+      refute Agent.grace_period_continue_failed?(
+               state(in_grace_period: true, grace_turns_remaining: 2)
+             )
+
+      assert Agent.grace_period_continue_failed?(
+               state(in_grace_period: true, grace_turns_remaining: 1)
+             )
     end
   end
 
@@ -118,15 +152,28 @@ defmodule EvoGit.Agent.TurnLimitTest do
       refute Agent.trigger_turn_limit_recovery?(second_iteration)
     end
 
-    test "grace period is bounded to one turn" do
-      # After entering grace period, a continue outcome fails recovery
-      # immediately. This means the agent gets exactly one grace turn —
-      # it must FINISH (a plain-text reply with no tool calls completes the
-      # run), not keep calling other tools.
-      in_grace = state(in_grace_period: true)
+    test "the grace budget is strictly bounded: exactly 3 continues then a hard-stop" do
+      # Entering turn-limit recovery sets `grace_turns_remaining` to the budget
+      # (3). Each turn that ends with `{:continue, _}` consumes one grace turn:
+      #   turn 1 ends with continue (3 > 1) → allowed, decrement to 2
+      #   turn 2 ends with continue (2 > 1) → allowed, decrement to 1
+      #   turn 3 ends with continue (1 <= 1) → hard-stop
+      # So the window is > 1 turn but FINITE — recovery can never spin.
+      assert {:recovery_failed, 3} ==
+               continue_until_fail(
+                 state(in_grace_period: true, grace_turns_remaining: 3),
+                 0
+               )
 
-      # A {:continue, _} outcome during grace period fails recovery
-      assert Agent.grace_period_continue_failed?(in_grace)
+      # Sanity: the budget is not a single turn (the real report window is one
+      # bounded final commit plus the tool-free report turn).
+      refute Agent.grace_period_continue_failed?(
+               state(in_grace_period: true, grace_turns_remaining: 3)
+             )
+
+      # The frozen struct default (0) hard-stops immediately (kept).
+      assert {:recovery_failed, 1} ==
+               continue_until_fail(state(in_grace_period: true), 0)
     end
   end
 end

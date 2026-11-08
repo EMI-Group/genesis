@@ -6,8 +6,10 @@ defmodule EvoGit.Agent.CancelGraceTest do
     - the ETS `cancel_requested` flag is drained at the top of `loop/1` and
       the agent enters cancel-grace (budget 3, no extra recovery message —
       the cancel message arrives via the pending_user_messages drain);
-    - the `grace_turns_remaining` budget semantics: 3 for cancel, 1 for
-      turn-limit (which keeps its exact pre-budget behavior);
+    - the `grace_turns_remaining` budget semantics: 3 for cancel-grace AND 3
+      for turn-limit recovery (a real report window: a tool-calling turn does
+      not finish the run, so one bounded final commit plus the tool-free report
+      turn has to fit inside it);
     - the budget-aware grace hard-stop checks;
     - `maybe_recovery_auto_commit` fires on cancel-grace entry (shared with
       turn-limit recovery);
@@ -189,7 +191,7 @@ defmodule EvoGit.Agent.CancelGraceTest do
              )
     end
 
-    test "budget 1: continue fails recovery (hard-stop, turn-limit parity)" do
+    test "budget 1: continue fails recovery (the shared hard-stop boundary)" do
       assert Agent.grace_period_continue_failed?(
                state(in_grace_period: true, grace_turns_remaining: 1)
              )
@@ -230,12 +232,16 @@ defmodule EvoGit.Agent.CancelGraceTest do
                )
     end
 
-    test "turn-limit budget 1: exactly 1 grace turn then {:error, :recovery_failed}" do
-      # Turn-limit recovery keeps its exact pre-budget behavior: enter grace,
-      # one continue attempt → hard-stop.
-      assert {:recovery_failed, 1} ==
+    test "turn-limit budget 3: exactly 3 grace turns then {:error, :recovery_failed}" do
+      # Turn-limit recovery grants the SAME 3-turn window as cancel-grace, so
+      # the agent can still make its one bounded final commit AND deliver the
+      # tool-free report (a tool-calling turn does not finish the run):
+      #   turn 1 ends with continue (3 > 1) → allowed, decrement to 2
+      #   turn 2 ends with continue (2 > 1) → allowed, decrement to 1
+      #   turn 3 ends with continue (1 <= 1) → hard-stop
+      assert {:recovery_failed, 3} ==
                continue_until_fail(
-                 state(in_grace_period: true, grace_turns_remaining: 1),
+                 state(in_grace_period: true, grace_turns_remaining: 3),
                  0
                )
     end
@@ -306,10 +312,10 @@ defmodule EvoGit.Agent.CancelGraceTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Turn-limit recovery — byte-for-byte parity
+  # Turn-limit recovery — 3-turn report window
   # ---------------------------------------------------------------------------
 
-  describe "turn-limit recovery parity" do
+  describe "turn-limit recovery" do
     test "trigger_turn_limit_recovery?/1 unchanged (at limit, not in grace → true)" do
       assert Agent.trigger_turn_limit_recovery?(
                state(turn: 128, max_turns: 128, in_grace_period: false)
@@ -322,27 +328,56 @@ defmodule EvoGit.Agent.CancelGraceTest do
              )
     end
 
-    test "enter_grace default (turn-limit): appends the exact standard message, budget 1" do
+    test "enter_grace default (turn-limit): the new message with budget 3" do
       # No ETS agent state → objective is nil → the no-objective message variant.
       grace_state = Runner.enter_grace(state(), "max turns (128) exceeded")
 
       assert grace_state.in_grace_period == true
-      assert grace_state.grace_turns_remaining == 1
+      assert grace_state.grace_turns_remaining == 3
 
       [text] = message_texts(grace_state.context)
-      assert text =~ "You have exceeded the execution limit (max turns (128) exceeded)."
+      assert text =~ "You have exceeded your turn budget (max turns (128) exceeded)."
+      assert text =~ "You have 3 final turns left before this run stops immediately."
 
+      # The ONE completion rule: a tool-free reply finishes the run; a
+      # tool-calling turn does not.
+      assert text =~ "a reply with NO tool calls ends the run, and its text IS the report"
+      assert text =~ "A turn that ends with a tool call does NOT finish the run"
+
+      # The terminal consequence of burning the window.
+      assert text =~ "there will be NO report at all"
+
+      # The one bounded final commit, and the safety of already-committed work.
+      assert text =~ "at most ONE final commit"
+      assert text =~ "Your already-committed work is safe"
+
+      # The acceptable outcome: an honest partial report, not "one more fix".
       assert text =~
-               "Your priority is to FINISH now by replying with your final report as plain text"
+               "what was done (with the commit), what remains, and what a follow-up must pick up"
 
-      assert text =~
-               "a text reply with no tool calls ends the run and its text IS the report, so no tool call is required."
+      assert text =~ "an honest partial report is exactly what is needed here"
+      assert text =~ ~s(Never keep working toward "just one more fix".)
 
-      assert text =~ "Your already-committed work is safe."
+      # The false "work will be LOST" claim is gone.
+      refute text =~ "LOST"
+
       refute text =~ "Your original objective was:"
     end
 
-    test "turn-limit message includes the objective when present (byte-for-byte parity)" do
+    test "the turn-limit budget is > 1 and strictly bounded" do
+      # The production entry point grants a real report window (not a single
+      # turn), and continuing without a tool-free reply always terminates:
+      # a finite number of grace turns, then {:error, :recovery_failed}.
+      grace_state = Runner.enter_grace(state(), "max turns (128) exceeded")
+
+      assert grace_state.grace_turns_remaining > 1
+
+      assert {:recovery_failed, turns_completed} = continue_until_fail(grace_state, 0)
+      assert turns_completed == grace_state.grace_turns_remaining
+      assert turns_completed <= 10
+    end
+
+    test "turn-limit message includes the objective when present" do
       agent_id = put_agent_state!(objective: "Refactor the parser")
 
       grace_state = Runner.enter_grace(state(agent_id: agent_id), "max turns (128) exceeded")
@@ -350,6 +385,35 @@ defmodule EvoGit.Agent.CancelGraceTest do
       [text] = message_texts(grace_state.context)
       assert text =~ "Your original objective was:\nRefactor the parser"
       assert text =~ "Your report MUST summarize the status of this ENTIRE objective"
+    end
+
+    test "objective variant: report what remains even if the objective cannot be completed" do
+      agent_id = put_agent_state!(objective: "Refactor the parser")
+
+      grace_state = Runner.enter_grace(state(agent_id: agent_id), "max turns (128) exceeded")
+
+      [text] = message_texts(grace_state.context)
+      assert grace_state.grace_turns_remaining == 3
+
+      assert text =~ "You have exceeded your turn budget (max turns (128) exceeded)."
+      assert text =~ "You have 3 final turns left before this run stops immediately."
+
+      # The ONE completion rule, stated for the objective variant too.
+      assert text =~ "a reply with NO tool calls ends the run, and its text IS the report"
+      assert text =~ "A turn that ends with a tool call does NOT finish the run"
+      assert text =~ "there will be NO report at all"
+
+      # One bounded final commit; already-committed work is safe.
+      assert text =~ "First turn: make at most ONE final commit"
+      assert text =~ "Your already-committed work is safe"
+
+      # The partial report is the ACCEPTABLE outcome of a bounded budget.
+      assert text =~
+               "If you cannot complete the entire objective, that is acceptable: stop and report what you did (with the commit), what remains, and what a follow-up must pick up."
+
+      assert text =~ "Your original objective was:\nRefactor the parser"
+      assert text =~ "Your report MUST summarize the status of this ENTIRE objective"
+      refute text =~ "LOST"
     end
   end
 
