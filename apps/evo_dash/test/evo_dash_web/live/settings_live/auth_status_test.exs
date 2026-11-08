@@ -573,9 +573,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
              )
     end
 
-    test "default-only model name edits save without persisting a helper or model row", %{
-      conn: conn
-    } do
+    test "default-only edits retain the UI after core rejection and save after adding a model row",
+         %{
+           conn: conn
+         } do
       seed_canonical_profile("models = []")
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       open_canonical_profile(view)
@@ -595,18 +596,51 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
                ~s(select[name="default_model"] option[selected][value="renamed-model"])
              )
 
+      before_disk = File.read!(EvoGit.Config.config_path())
+      view |> form("#provider-profile-edit-form") |> render_submit()
+      refute await_profile_save(view) =~ "Provider profile saved."
+
+      # Helper-only profiles are faithfully editable, but core validation still
+      # requires a nested inventory containing the selected default.
+      assert assigns(view).flash["error"] =~
+               ~s(default_model must be one of [], got \\"renamed-model\\")
+
+      assert assigns(view).editing_profile_id == "rendered-account"
+      assert assigns(view).profile_form_draft["models"] == []
+      assert assigns(view).profile_form_draft["default_model"] == "renamed-model"
+      assert has_element?(view, ~s(input[name="default_model_name"][value="renamed-model"]))
+      refute has_element?(view, ~s(input[name="models[0][model]"]))
+      assert persisted_models() == before
+      assert current_models(view) == before
+      assert File.read!(EvoGit.Config.config_path()) == before_disk
+
+      view |> element(~s(button[phx-click="add_provider_model"])) |> render_click()
+      assert has_element?(view, ~s(input[name="models[0][model]"][value=""]))
+      refute has_element?(view, ~s(input[name="default_model_name"]))
+
+      view
+      |> form("#provider-profile-edit-form", %{models: %{"0" => %{model: "renamed-model"}}})
+      |> render_change(%{"_target" => ["models", "0", "model"]})
+
       view |> form("#provider-profile-edit-form") |> render_submit()
       assert await_profile_save(view) =~ "Provider profile saved."
+      assert assigns(view).flash["info"] == "Provider profile saved."
       [saved] = persisted_models()
       assert saved["default_model"] == "renamed-model"
+      assert saved["models"] == [%{"model" => "renamed-model"}]
       refute Map.has_key?(saved, "default_model_name")
-      refute Map.has_key?(saved, "models")
 
       {:ok, restored, _html} = mount_settings(conn, ~p"/settings")
       assert current_models(restored) == [saved]
       open_canonical_profile(restored)
-      assert has_element?(restored, ~s(input[name="default_model_name"][value="renamed-model"]))
-      refute has_element?(restored, ~s(input[name="models[0][model]"]))
+      assert has_element?(restored, ~s(input[name="models[0][model]"][value="renamed-model"]))
+
+      assert has_element?(
+               restored,
+               ~s(select[name="default_model"] option[selected][value="renamed-model"])
+             )
+
+      refute has_element?(restored, ~s(input[name="default_model_name"]))
     end
 
     test "blank default-only name fails without writing and supports correction and remount", %{
@@ -640,18 +674,54 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       |> form("#provider-profile-edit-form", %{default_model_name: "corrected-model"})
       |> render_change(%{"_target" => ["default_model_name"]})
 
+      assert has_element?(
+               view,
+               ~s(select[name="default_model"] option[selected][value="corrected-model"])
+             )
+
+      before_disk = File.read!(EvoGit.Config.config_path())
+      view |> form("#provider-profile-edit-form") |> render_submit()
+      refute await_profile_save(view) =~ "Provider profile saved."
+
+      assert assigns(view).flash["error"] =~
+               ~s(default_model must be one of [], got \\"corrected-model\\")
+
+      assert assigns(view).editing_profile_id == "rendered-account"
+      assert assigns(view).profile_form_draft["models"] == []
+      assert assigns(view).profile_form_draft["default_model"] == "corrected-model"
+      assert has_element?(view, ~s(input[name="default_model_name"][value="corrected-model"]))
+      refute has_element?(view, ~s(input[name="models[0][model]"]))
+      assert persisted_models() == before
+      assert current_models(view) == before
+      assert File.read!(EvoGit.Config.config_path()) == before_disk
+
+      view |> element(~s(button[phx-click="add_provider_model"])) |> render_click()
+      assert has_element?(view, ~s(input[name="models[0][model]"][value=""]))
+      refute has_element?(view, ~s(input[name="default_model_name"]))
+
+      view
+      |> form("#provider-profile-edit-form", %{models: %{"0" => %{model: "corrected-model"}}})
+      |> render_change(%{"_target" => ["models", "0", "model"]})
+
       view |> form("#provider-profile-edit-form") |> render_submit()
       assert await_profile_save(view) =~ "Provider profile saved."
+      assert assigns(view).flash["info"] == "Provider profile saved."
       [saved] = persisted_models()
       assert saved["default_model"] == "corrected-model"
+      assert saved["models"] == [%{"model" => "corrected-model"}]
       refute Map.has_key?(saved, "default_model_name")
-      refute Map.has_key?(saved, "models")
 
       {:ok, restored, _html} = mount_settings(conn, ~p"/settings")
       assert current_models(restored) == [saved]
       open_canonical_profile(restored)
-      assert has_element?(restored, ~s(input[name="default_model_name"][value="corrected-model"]))
-      refute has_element?(restored, ~s(input[name="models[0][model]"]))
+      assert has_element?(restored, ~s(input[name="models[0][model]"][value="corrected-model"]))
+
+      assert has_element?(
+               restored,
+               ~s(select[name="default_model"] option[selected][value="corrected-model"])
+             )
+
+      refute has_element?(restored, ~s(input[name="default_model_name"]))
     end
 
     test "closed Advanced preserves, edits and clears the API-key environment variable", %{

@@ -27,7 +27,8 @@ The five suites declare 130 tests and preserve `async: true`; pure helpers neith
 - `auth_status_test.exs` holds 32 credential-status classification/page and rendered-editor persistence contracts, including verdict forwarding, exact fallback and supplied vendor guidance, node/sequence guards, refresh, canonical auth persistence and editing a legacy OAuth row into `llm.providers` without a shadow `llm.models` table.
 - The rendered-editor reasoning regression seeds a model's `high` default, changes only its checkbox inventory to the hidden `[""]` sentinel with explicit `override_reasoning = "true"`, then submits the real form without blanking its still-selected `high` default.
 - Both change and submit serialize the rendered form, the change leaves disk untouched, and the owned writer receipt plus remount must preserve exactly an empty model reasoning inventory with no model default or UI sentinel.
-- Default-only mounted regressions seed `models = []`, edit the rendered `default_model_name`, require select synchronization and helper-free/model-row-free persistence, and cover blank rejection, unchanged disk, correction and remount.
+- Default-only mounted regressions seed `models = []`, require rendered `default_model_name`/select synchronization and local blank rejection, then pin core inventory rejection without changing live config or on-disk bytes while retaining the no-row editing UI.
+- Both mounted regressions correct the core-invalid inventory through the rendered Add model row button and real form changes, save successfully, remount the matching nested model/default and prove `default_model_name` never persists.
 - The rendered API-key-source state machine preserves a closed Advanced field through an unrelated save, changes its value with the real form, remounts, explicitly clears it and remounts again; omitted-field preservation remains covered by the detached-submission helper contract.
 - Auth page fixtures deliberately seed legacy `[[llm.models]]` rows to exercise migration, while row assertions select the actual mounted canonical provider article by its Edit control and profile id.
 - Successful new-profile auth submissions use canonical `default_model` plus a matching nested `models` row and the atom `:new` detached-editor sentinel, assert the nested shape in live and persisted config, and require the exact Provider-profile success message plus persisted auth fields.
@@ -64,11 +65,11 @@ Mounted canonical editor save/reload/reset regressions belong with the parent `s
 ## Validation and Integration Boundary
 
 Pure canonical parser contracts accept default-only profiles with absent or empty `models` and omit the stored `models` key; helper-level configured rows are overrides rather than an allowlist restricting `default_model`.
-The production core validator still rejects default-only account fixtures with `default_model must be one of []`, independently of the editor helper's missing synchronization.
+The production core validator still rejects default-only account fixtures with `default_model must be one of []`, independently of the editor's helper-level acceptance and synchronization.
 `provider_profiles_contract_test.exs` declares the helper contracts as "default-only profiles round-trip without manufacturing model overrides" and "models are overrides and do not restrict the default model", and its submission contract preserves explicit empty rows while allowing a nonblank default-only profile.
-The five default-only name-helper regressions currently fail because the production draft/submission/parser path ignores `default_model_name`: targeted name changes retain the old default, default-select changes retain the old helper, save ignores the helper, blank helpers restore the old default and last-row removal retains a stale helper.
-The two mounted default-only regressions remain failing contracts: editing leaves `fixture-model` selected instead of `renamed-model`, and blank submission does not render the local provider-field validation error.
-Their later save/correction/remount assertions remain mandatory but are not established by the current failures.
+Default-only helper synchronization contracts pin targeted name/select changes, save without a prior change event, blank validation/correction and last-row transitions without manufacturing model rows.
+The two mounted default-only regressions preserve these UI contracts but distinguish them from successful core persistence: a nonblank default with no model rows receives `default_model must be one of []`, leaves disk/live config unchanged and retains the draft.
+Successful Save → remount requires explicitly adding a nested inventory row matching the chosen default; this core limitation remains outside the test node's scope.
 The actual rendered reasoning-checkbox clear and closed-Advanced API-key-source state machines pass, including persistence and remount; no production changes or input weakening are needed for those cases.
 Mounted auth persistence success fixtures include nested model rows matching their default and do not establish default-only Save success.
 The `profile save round-trip (auth_mode / oauth_file persistence)` describe in `auth_status_test.exs` covers OAuth auth/path persistence, explicit API-key mode with stale-path removal, blank-path omission, OAuth-only mode inference, legacy migration and unsupported-auth rejection.
@@ -77,11 +78,11 @@ The unsupported-auth case retains its invalid authentication fixture and verifie
 Focused validation uses `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/auth_status_test.exs --only 'describe:profile save round-trip (auth_mode / oauth_file persistence)' --seed 0` (also seed 1) and passes all six selected tests with 22 excluded in each run.
 This focused run does not establish full-file, directory or broader dashboard-suite success.
 The pure canonical helper slice is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/model_profile_helpers_test.exs --seed 1` and selects 92 tests.
-Default-only helper synchronization regressions require the production state/parser implementation; helper-slice success alone does not establish mounted Save → remount success.
+Pure helper-slice success alone does not establish mounted Save → remount success; the full subtree includes both the unchanged no-row fidelity contracts and the rendered core-rejection/correction flows.
 The full helper subtree contains 130 tests and runs with `mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` or `--seed 1`.
-Seed-0 leaf validation selects 130 tests with 123 passing and seven failing: the five default-only helper regressions and the two mounted default-only editor regressions.
-The focused parent-plus-leaf command is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` (also seed 1), selecting 267 tests with 260 passing and the same seven failures at both seeds.
-These are genuine source-behavior failures, not skipped tests or timing-budget adjustments, and they do not establish broader dashboard-suite success.
+Scoped validation passes all 130 tests at both seed 0 (5.5 seconds ExUnit time) and seed 1 (6.8 seconds ExUnit time).
+Scoped formatting passes with `mix format --check-formatted apps/evo_dash/test/evo_dash_web/live/settings_live/auth_status_test.exs`.
+These runs establish leaf-subtree coverage only, not parent-file or broader dashboard-suite success.
 Mounted auth identity assertions pin the profile heading and separate provider text within the account article selected by its Edit control, including the sibling article retained after stripping credential-status blocks.
 These row-scoped identity checks preserve the credential verdict, managed-path, writable-path remedy and vendor-guidance surface-split assertions.
 
