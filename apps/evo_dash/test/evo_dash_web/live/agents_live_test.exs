@@ -20,6 +20,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
   # A fixed UTC instant: 2023-11-14 22:13:20Z
   @unix_seconds 1_700_000_000
+  # Exit-safe `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be
+  # starved for seconds on a loaded host, where the 5 s default would turn a
+  # state read into an `(EXIT) time out` failure.
+  @assigns_timeout_ms 30_000
 
   setup do
     # The scheduler ETS tables (:evogit_sched_meta / :evogit_agent_state) are
@@ -1732,7 +1736,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       view |> element("button[phx-click='open_send_message']") |> render_click()
 
       html =
-        render_submit(view, "send_agent_message", %{
+        submit_until_pending_hint(view, %{
           "agent_id" => to_string(agent_id()),
           "message" => msg
         })
@@ -3273,7 +3277,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
   # Reads the LiveView's CURRENT socket assigns directly (same pattern as
   # system_live_test / welcome_live_test / settings_live_agents_test).
-  defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
+  # The explicit timeout keeps the read from exiting the test on a loaded host:
+  # `:sys.get_state/1`'s 5 s default is routinely exceeded when the shared
+  # machine is saturated (test/CONTEXT.md documents 10-30x timing swings).
+  defp assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
 
   # The trimmed text of `selector` within a parsed tree — Floki.text/1 keeps the
   # whitespace the HEEx template indents around the content.
@@ -3401,6 +3408,63 @@ defmodule EvoDashWeb.AgentsLiveTest do
   defp wait_for_text(view, text, timeout \\ 5000) do
     wait_until(fn -> render(view) =~ text end, timeout)
     render(view)
+  end
+
+  # Polls `render/1` until `predicate` matches (async results apply out of band
+  # on this page) and returns the LAST render either way — it never raises, so
+  # the caller's assertion still fails loudly with the real output instead of a
+  # synthetic timeout message.
+  defp render_until(view, predicate, budget_ms \\ 5_000) do
+    render_until_loop(view, predicate, System.monotonic_time(:millisecond) + budget_ms)
+  end
+
+  defp render_until_loop(view, predicate, deadline) do
+    html = render(view)
+
+    cond do
+      predicate.(html) ->
+        html
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        html
+
+      true ->
+        Process.sleep(20)
+        render_until_loop(view, predicate, deadline)
+    end
+  end
+
+  # The optimistic pending hint of a sent-but-not-yet-drained user message
+  # (the apostrophe is HTML-escaped to &#39; in HEEx).
+  defp pending_hint?(html), do: html =~ "will be added on the agent&#39;s next turn"
+  # Load-tolerant send for the optimistic-display tests: renders the submit and
+  # returns the render that carries the OPTIMISTIC pending hint.
+  # `send_agent_message` performs a REAL scheduler + store write, so on a loaded
+  # host its (production) 5 s `GenServer.call` budget can elapse — the page then
+  # flashes "Failed to send message" and deliberately KEEPS the modal and the
+  # typed text (the user's retry affordance), so the textarea alone would still
+  # satisfy a bare `html =~ message` check while the pending hint is missing.
+  # Resubmitting is exactly the action that failure state exists for, and the
+  # render is polled for the out-of-band apply, so neither assertion is
+  # relaxed: a persistent failure still returns the last render and fails the
+  # caller's assertions with the real output.
+  defp submit_until_pending_hint(view, params, attempts \\ 3) do
+    html = render_submit(view, "send_agent_message", params)
+
+    cond do
+      pending_hint?(html) ->
+        html
+
+      attempts <= 1 ->
+        html
+
+      html =~ "Failed to send message" ->
+        Process.sleep(20)
+        submit_until_pending_hint(view, params, attempts - 1)
+
+      true ->
+        render_until(view, &pending_hint?/1)
+    end
   end
 
   # Joins an element's class attribute(s) into one searchable string (Floki

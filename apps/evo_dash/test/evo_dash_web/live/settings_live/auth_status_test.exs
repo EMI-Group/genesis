@@ -46,6 +46,17 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   }
 
   @claude_instructions "Run `claude` and log in once"
+  # Load-tolerant budget for every wait on ASYNC settings work (the mount load
+  # chain and an owned config-save receipt). Both are supervised children whose
+  # completion depends on the shared host's scheduling, so the budget is sized
+  # for a HEAVILY LOADED machine (test/CONTEXT.md documents 10-30x timing
+  # swings) instead of the ~ms-scale happy path. The waits stay bounded and
+  # still fail loudly — only the deadline moved.
+  @async_wait_budget_ms 30_000
+  # `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be starved for
+  # seconds on a loaded host, and `:sys.get_state/1`'s 5 s default would exit
+  # the test instead of reading the state.
+  @assigns_timeout_ms 30_000
 
   setup do
     # Per-process config isolation through the `:config_dir_fun` seam (installed
@@ -703,7 +714,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   end
 
   defp settle_mount_loads(view) do
-    settle_mount_loads(view, System.monotonic_time(:millisecond) + 5_000)
+    settle_mount_loads(view, System.monotonic_time(:millisecond) + @async_wait_budget_ms)
   end
 
   defp settle_mount_loads(view, deadline) do
@@ -753,7 +764,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
   # In LiveView 1.x the test View struct has no `.assigns` field, so we read
   # them from the underlying LiveView process socket.
-  defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
+  defp assigns(view), do: :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
 
   # Delivers one `{:settings_auth_status_loaded, ...}` result for THIS node and
   # the CURRENT seq (both stale guards pass), then drains the mailbox via
@@ -802,7 +813,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   # clear its marker, then drain the receipt's OAuth refresh before assertions
   # (and before teardown removes the config directory).
   defp await_profile_save(view) do
-    deadline = System.monotonic_time(:millisecond) + 5_000
+    deadline = System.monotonic_time(:millisecond) + @async_wait_budget_ms
     await_profile_save(view, deadline)
     settle_mount_loads(view)
     render(view)
