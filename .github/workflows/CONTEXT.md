@@ -106,6 +106,7 @@ It wraps `mix deps.get` and the `mix assets.setup`/`mix assets.deploy` pair in `
 `ci.yml` routes `mix deps.get`, `mix compile` and `mix deps.compile` through it, while `MIX_ENV=test mix compile --warnings-as-errors` gets 2 attempts because it also fails deterministically on ordinary warnings.
 The vendor-binary `curl` downloads use curl's own `--retry 5 --retry-all-errors --retry-delay 5`, with the sha256 verification lines unchanged.
 The macOS notarization step sources `./.github/actions/retry/retry.sh` to reuse `retry()` around `notarize-macos-dmg.sh`, `notarytool submit --wait`, `stapler staple` and `verify-macos-artifacts.sh`.
+The three `Build Tauri app` steps (Linux, macOS, Windows) source `${GITHUB_WORKSPACE}/.github/actions/retry/retry.sh` and run their final `tauri build` through `retry()` with `RETRY_ATTEMPTS: "3"`, because bundling downloads tooling (Windows NSIS, Linux `linuxdeploy`/`appimagetool`) and fetches crates.
 `softprops/action-gh-release` v3.0.2 exposes no retry inputs, so it stays pinned and untouched.
 `./.github/actions/setup-mix` also caches the `rustler_precompiled` NIF tarball directories (`~/.cache/rustler_precompiled`, `~/Library/Caches/rustler_precompiled`, `~\AppData\Local\rustler_precompiled`), so a cached tarball is reused instead of re-downloaded.
 

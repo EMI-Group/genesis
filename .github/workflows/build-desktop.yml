@@ -379,14 +379,16 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          RETRY_ATTEMPTS: "3"
         run: |
+          source "${GITHUB_WORKSPACE}/.github/actions/retry/retry.sh"
           cd desktop/src-tauri
           UPDATER_ARGS=()
           if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
             echo "no TAURI_SIGNING_PRIVATE_KEY — disabling updater artifacts" >&2
             UPDATER_ARGS=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
           fi
-          tauri build --target "${{ matrix.rust_target }}" --bundles "${{ matrix.bundles }}" ${UPDATER_ARGS[@]+"${UPDATER_ARGS[@]}"}
+          retry tauri build --target "${{ matrix.rust_target }}" --bundles "${{ matrix.bundles }}" ${UPDATER_ARGS[@]+"${UPDATER_ARGS[@]}"}
 
       - name: Stage artifacts
         env:
@@ -634,7 +636,9 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          RETRY_ATTEMPTS: "3"
         run: |
+          source "${GITHUB_WORKSPACE}/.github/actions/retry/retry.sh"
           set -euo pipefail
           : "${APPLE_SIGNING_IDENTITY:?}"
           : "${APPLE_API_ISSUER:?APPLE_API_ISSUER secret is empty}"
@@ -646,7 +650,7 @@ jobs:
             echo "no TAURI_SIGNING_PRIVATE_KEY — disabling updater artifacts" >&2
             UPDATER_ARGS=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
           fi
-          tauri build --target aarch64-apple-darwin --bundles app,dmg ${UPDATER_ARGS[@]+"${UPDATER_ARGS[@]}"}
+          retry tauri build --target aarch64-apple-darwin --bundles app,dmg ${UPDATER_ARGS[@]+"${UPDATER_ARGS[@]}"}
 
       - name: Notarize and verify macOS artifacts
         run: |
@@ -837,14 +841,16 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          RETRY_ATTEMPTS: "3"
         run: |
+          source "${GITHUB_WORKSPACE}/.github/actions/retry/retry.sh"
           cd desktop/src-tauri
           UPDATER_ARGS=()
           if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
             echo "no TAURI_SIGNING_PRIVATE_KEY — disabling updater artifacts" >&2
             UPDATER_ARGS=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
           fi
-          tauri build --target x86_64-pc-windows-msvc ${UPDATER_ARGS[@]+"${UPDATER_ARGS[@]}"}
+          retry tauri build --target x86_64-pc-windows-msvc ${UPDATER_ARGS[@]+"${UPDATER_ARGS[@]}"}
 
       - name: Stage artifacts
         env:
