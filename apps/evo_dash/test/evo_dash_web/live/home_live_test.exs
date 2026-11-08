@@ -1836,6 +1836,35 @@ defmodule EvoDashWeb.HomeLiveTest do
       |> Floki.attribute("value")
     end
 
+    # Fused-capsule picker: the selected model is the listbox button with
+    # `aria-selected="true"`, and its value is `phx-value-model`.
+    defp selected_model(html) do
+      html
+      |> Floki.parse_document!()
+      |> Floki.find("#chat-llm-selection-model .capsule-item[aria-selected=\"true\"]")
+      |> Floki.attribute("phx-value-model")
+      |> List.first()
+    end
+
+    # Fused-capsule picker: the active reasoning stop is the button with
+    # `aria-pressed="true"`; its zero-based effort index is
+    # `phx-value-reasoning_effort` and its human label is the button text.
+    defp selected_reasoning_index(html) do
+      html
+      |> Floki.parse_document!()
+      |> Floki.find("#chat-llm-selection-reasoning button[aria-pressed=\"true\"]")
+      |> Floki.attribute("phx-value-reasoning_effort")
+      |> List.first()
+    end
+
+    defp selected_reasoning_label(html) do
+      html
+      |> Floki.parse_document!()
+      |> Floki.find("#chat-llm-selection-reasoning button[aria-pressed=\"true\"]")
+      |> Floki.text()
+      |> String.trim()
+    end
+
     defp only_reflect_task do
       [task] =
         EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
@@ -1883,12 +1912,17 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       assert present?(
                html,
-               ~s(#chat-llm-selection-model[name="model"][phx-change="select_model"])
+               ~s(#chat-llm-selection-model[role="listbox"][aria-label="Model"])
              )
 
       assert present?(
                html,
-               ~s(#chat-llm-selection-reasoning[name="reasoning_effort"][phx-change="select_reasoning_effort"][value="1"])
+               ~s(#chat-llm-selection-reasoning[role="group"][aria-label="Reasoning effort"])
+             )
+
+      assert present?(
+               html,
+               ~s(#chat-llm-selection-reasoning button[aria-pressed="true"][phx-value-reasoning_effort="1"])
              )
 
       refute present?(html, ~s(select[name="model_id"]))
@@ -1898,11 +1932,13 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert dom |> Floki.find("#chat-llm-selection-provider option") |> Floki.attribute("value") ==
                ["", "first-account", "work-account"]
 
-      assert dom |> Floki.find("#chat-llm-selection-model option") |> Floki.attribute("value") ==
-               ["", "fast-model", "reasoned-model"]
+      assert dom
+             |> Floki.find("#chat-llm-selection-model .capsule-item")
+             |> Floki.attribute("phx-value-model") == ["", "fast-model", "reasoned-model"]
 
       assert selected_option(html, "chat-llm-selection-provider") == ["work-account"]
-      assert selected_option(html, "chat-llm-selection-model") == ["reasoned-model"]
+      assert selected_model(html) == "reasoned-model"
+      assert selected_reasoning_label(html) == "Medium"
       assert assigns(view).model_spec == work_spec()
       assert assigns(view).selected_model_id == nil
       assert assigns(view).model_selection_scope == {nil, node()}
@@ -1925,7 +1961,12 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       assert assigns(view).provider_profiles == []
       assert present?(html, ~s(#chat-llm-selection-provider[disabled]))
-      assert present?(html, ~s(#chat-llm-selection-model[disabled]))
+
+      assert present?(
+               html,
+               ~s(#chat-llm-selection-model .capsule-item[disabled][phx-value-model=""])
+             )
+
       assert html =~ "No provider profiles configured. Add one in Settings to choose a model."
       refute present?(html, "#chat-llm-selection-reasoning")
     end
@@ -2079,7 +2120,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).model_spec == work_spec("high")
       assert assigns(view).model_selection_scope == {nil, node()}
       assert selected_option(html, "chat-llm-selection-provider") == ["work-account"]
-      assert present?(html, ~s(#chat-llm-selection-reasoning[value="2"]))
+      assert selected_reasoning_index(html) == "2"
+      assert selected_reasoning_label(html) == "High"
     end
 
     test "suggestion-chip send locks the same canonical selection as typed submit", %{conn: conn} do
@@ -3298,7 +3340,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       # A different node gets its own configured default, NOT the earlier high pin.
       assert assigns(view).model_spec == work_spec()
       assert assigns(view).model_selection_scope == {nil, node()}
-      assert present?(html, ~s(#chat-llm-selection-reasoning[value="1"]))
+      assert selected_reasoning_index(html) == "1"
+      assert selected_reasoning_label(html) == "Medium"
 
       remote_snapshot = %{local_snapshot | node: :"genesis_remote@127.0.0.1"}
 
