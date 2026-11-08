@@ -18,21 +18,22 @@ runs:
 
     - name: Install Tauri CLI (Linux/macOS)
       if: runner.os != 'Windows' && steps.cache.outputs.cache-hit != 'true'
-      shell: bash
+      uses: ./.github/actions/retry
       env:
         TAURI_VERSION: ${{ inputs.version }}
-      run: |
-        set -euo pipefail
-        npm install -g --prefix "$HOME/tauri-cli" "@tauri-apps/cli@${TAURI_VERSION}" --no-audit --no-fund
+      with:
+        command: >-
+          npm install -g --prefix "$HOME/tauri-cli" "@tauri-apps/cli@${TAURI_VERSION}"
+          --no-audit --no-fund
 
     - name: Install Tauri CLI (Windows)
       if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
-      shell: bash
+      uses: ./.github/actions/retry
       env:
         TAURI_VERSION: ${{ inputs.version }}
-      run: |
-        set -euo pipefail
-        npm install -g "@tauri-apps/cli@${TAURI_VERSION}" --no-audit --no-fund
+      with:
+        command: >-
+          npm install -g "@tauri-apps/cli@${TAURI_VERSION}" --no-audit --no-fund
 
     - name: Add Tauri CLI bin to PATH
       if: runner.os != 'Windows'

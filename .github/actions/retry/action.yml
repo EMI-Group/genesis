@@ -1,0 +1,35 @@
+name: Retry command
+description: >-
+  Run a shell command with bounded exponential-backoff retries, so a transient
+  network failure (5xx / connection reset from a GitHub-hosted runner) does not
+  fail a whole build.
+
+inputs:
+  command:
+    description: Shell command line to execute (runs under `bash -ec`)
+    required: true
+  attempts:
+    description: Maximum number of attempts
+    required: false
+    default: "5"
+  delay:
+    description: Initial delay between attempts in seconds (doubles per attempt)
+    required: false
+    default: "10"
+  max-delay:
+    description: Cap for the delay between attempts in seconds
+    required: false
+    default: "60"
+
+runs:
+  using: composite
+  steps:
+    - name: Retry
+      shell: bash
+      env:
+        RETRY_COMMAND: ${{ inputs.command }}
+        RETRY_ATTEMPTS: ${{ inputs.attempts }}
+        RETRY_DELAY: ${{ inputs.delay }}
+        RETRY_MAX_DELAY: ${{ inputs.max-delay }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/retry.sh" bash -ec "${RETRY_COMMAND}"

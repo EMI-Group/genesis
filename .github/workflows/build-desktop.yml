@@ -337,7 +337,7 @@ jobs:
           mkdir -p "${VENDOR_DIR}"
           mkdir -p "${DOWNLOAD_DIR}"
           RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
-          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
           echo "${RG_SHA256}  ${DOWNLOAD_DIR}/${RG_ARCHIVE}" | sha256sum -c -
           tar -xzf "${DOWNLOAD_DIR}/${RG_ARCHIVE}" -C "${DOWNLOAD_DIR}"
           cp "${DOWNLOAD_DIR}/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
@@ -346,8 +346,9 @@ jobs:
           chmod +x "${VENDOR_DIR}/git"
 
       - name: Build Elixir releases
-        run: |
-          MIX_ENV=prod mix release genesis_desktop --overwrite
+        uses: ./.github/actions/retry
+        with:
+          command: MIX_ENV=prod mix release genesis_desktop --overwrite
 
       - name: Place desktop release in Tauri resources
         run: |
@@ -482,7 +483,7 @@ jobs:
           mkdir -p "${VENDOR_DIR}"
           mkdir -p "${DOWNLOAD_DIR}"
           RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
-          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
           echo "${RG_SHA256}  ${DOWNLOAD_DIR}/${RG_ARCHIVE}" | sha256sum -c -
           tar -xzf "${DOWNLOAD_DIR}/${RG_ARCHIVE}" -C "${DOWNLOAD_DIR}"
           cp "${DOWNLOAD_DIR}/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
@@ -491,8 +492,9 @@ jobs:
           chmod +x "${VENDOR_DIR}/git"
 
       - name: Build genesis_server release
-        run: |
-          MIX_ENV=prod mix release genesis_server --overwrite
+        uses: ./.github/actions/retry
+        with:
+          command: MIX_ENV=prod mix release genesis_server --overwrite
 
       - name: Stage artifacts
         run: |
@@ -542,19 +544,21 @@ jobs:
           mkdir -p "${VENDOR_DIR}"
           mkdir -p "${DOWNLOAD_DIR}"
           RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
-          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
           echo "${RG_SHA256}  ${DOWNLOAD_DIR}/${RG_ARCHIVE}" | shasum -a 256 -c -
           tar -xzf "${DOWNLOAD_DIR}/${RG_ARCHIVE}" -C "${DOWNLOAD_DIR}"
           cp "${DOWNLOAD_DIR}/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
           chmod +x "${VENDOR_DIR}/rg"
 
       - name: Build Elixir releases
-        run: |
-          MIX_ENV=prod mix release genesis_desktop --overwrite
-          # Headless server distribution (both apps, serves the dashboard from
-          # the assets already deployed by setup-mix above; also the SSH
-          # remote-development daemon).
-          MIX_ENV=prod mix release genesis_server --overwrite
+        uses: ./.github/actions/retry
+        with:
+          command: |
+            MIX_ENV=prod mix release genesis_desktop --overwrite
+            # Headless server distribution (both apps, serves the dashboard from
+            # the assets already deployed by setup-mix above; also the SSH
+            # remote-development daemon).
+            MIX_ENV=prod mix release genesis_server --overwrite
 
       - name: Place desktop release in Tauri resources
         run: |
@@ -648,6 +652,10 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
+          # notarytool/stapler talk to Apple's CloudKit ticket service, which
+          # intermittently returns -1005 "network connection was lost"; reuse
+          # the shared retry helper from the composite retry action.
+          source .github/actions/retry/retry.sh
           BUNDLE_DIR="desktop/src-tauri/target/aarch64-apple-darwin/release/bundle"
           APP_BUNDLES=("${BUNDLE_DIR}/macos/"*.app)
           DMG_BUNDLES=("${BUNDLE_DIR}/dmg/"*.dmg)
@@ -659,19 +667,19 @@ jobs:
             echo "expected one DMG, found ${#DMG_BUNDLES[@]}" >&2
             exit 1
           }
-          ./desktop/scripts/notarize-macos-dmg.sh "${DMG_BUNDLES[0]}"
+          retry ./desktop/scripts/notarize-macos-dmg.sh "${DMG_BUNDLES[0]}"
           # The app.zip is both the notarization submission vehicle and the
           # distribution artifact — it stays in dist/ for upload.
           mkdir -p dist
           ditto -c -k --keepParent "${APP_BUNDLES[0]}" \
             "dist/genesis_desktop_darwin_arm64.app.zip"
-          xcrun notarytool submit "dist/genesis_desktop_darwin_arm64.app.zip" \
+          retry xcrun notarytool submit "dist/genesis_desktop_darwin_arm64.app.zip" \
             --issuer "${APPLE_API_ISSUER}" \
             --key-id "${APPLE_API_KEY}" \
             --key "${APPLE_API_KEY_PATH}" \
             --wait
-          xcrun stapler staple "${APP_BUNDLES[0]}"
-          ./desktop/scripts/verify-macos-artifacts.sh \
+          retry xcrun stapler staple "${APP_BUNDLES[0]}"
+          retry ./desktop/scripts/verify-macos-artifacts.sh \
             "${APP_BUNDLES[0]}" "${DMG_BUNDLES[0]}"
 
       - name: Stage artifacts
@@ -770,7 +778,7 @@ jobs:
           mkdir -p "${VENDOR_DIR}"
           mkdir -p "${DOWNLOAD_DIR}"
           RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.zip"
-          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
           echo "${RG_SHA256}  ${DOWNLOAD_DIR}/${RG_ARCHIVE}" | sha256sum -c -
           unzip -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}" -d "${DOWNLOAD_DIR}/rg-extract"
           cp "${DOWNLOAD_DIR}/rg-extract/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg.exe" "${VENDOR_DIR}/rg.exe"
@@ -781,13 +789,14 @@ jobs:
           # bumping MINGIT_VERSION, especially to a *.windows.1 release.
           MINGIT_ARCHIVE="MinGit-${MINGIT_VERSION//.windows./.}-64-bit.zip"
           MINGIT_URL="https://github.com/git-for-windows/git/releases/download/v${MINGIT_VERSION}/${MINGIT_ARCHIVE}"
-          curl -fsSL "${MINGIT_URL}" -o "${DOWNLOAD_DIR}/${MINGIT_ARCHIVE}"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "${MINGIT_URL}" -o "${DOWNLOAD_DIR}/${MINGIT_ARCHIVE}"
           echo "${MINGIT_SHA256}  ${DOWNLOAD_DIR}/${MINGIT_ARCHIVE}" | sha256sum -c -
           unzip -o "${DOWNLOAD_DIR}/${MINGIT_ARCHIVE}" -d "${VENDOR_DIR}/mingit"
 
       - name: Build Elixir releases
-        run: |
-          MIX_ENV=prod mix release genesis_desktop --overwrite
+        uses: ./.github/actions/retry
+        with:
+          command: MIX_ENV=prod mix release genesis_desktop --overwrite
 
       - name: Place desktop release in Tauri resources
         shell: pwsh
@@ -1087,10 +1096,12 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Publish release (flip draft -> public with all assets attached)
+        uses: ./.github/actions/retry
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          TAG="${{ needs.prepare.outputs.release_tag }}"
-          gh release edit "${TAG}" --draft=false --repo "${{ github.repository }}"
-          echo "Release ${TAG} is now public with all artifacts attached."
+          TAG: ${{ needs.prepare.outputs.release_tag }}
+          REPO: ${{ github.repository }}
+        with:
+          command: |
+            gh release edit "${TAG}" --draft=false --repo "${REPO}"
+            echo "Release ${TAG} is now public with all artifacts attached."

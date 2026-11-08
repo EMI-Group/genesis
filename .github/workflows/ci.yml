@@ -63,10 +63,14 @@ jobs:
             mix-build-test-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
 
       - name: Install dependencies
-        run: mix deps.get
+        uses: ./.github/actions/retry
+        with:
+          command: mix deps.get
 
       - name: Compile
-        run: mix compile
+        uses: ./.github/actions/retry
+        with:
+          command: mix compile
 
       - name: Run tests
         # `mix test` must run from inside the app directory — running it from
@@ -96,13 +100,17 @@ jobs:
             mix-deps-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
 
       - name: Install dependencies
-        run: mix deps.get
+        uses: ./.github/actions/retry
+        with:
+          command: mix deps.get
 
       - name: Compile dependencies
         # The evo_dash formatter uses plugins from deps (e.g.
       # Phoenix.LiveView.HTMLFormatter), so dependencies must be compiled
       # before format checking.
-        run: mix deps.compile
+        uses: ./.github/actions/retry
+        with:
+          command: mix deps.compile
 
       - name: Check formatting
         run: mix format --check-formatted
@@ -137,10 +145,16 @@ jobs:
             mix-build-test-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
 
       - name: Install dependencies
-        run: mix deps.get
+        uses: ./.github/actions/retry
+        with:
+          command: mix deps.get
 
       - name: Compile with warnings as errors
-        run: MIX_ENV=test mix compile --warnings-as-errors
+        uses: ./.github/actions/retry
+        with:
+          command: MIX_ENV=test mix compile --warnings-as-errors
+          attempts: "2"
+          delay: "10"
 
   shell-lint:
     name: Shell script syntax

@@ -31,12 +31,25 @@ runs:
         restore-keys: |
           mix-build-${{ inputs.cache-key }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
 
+    - name: Cache rustler_precompiled NIFs
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: |
+          ~/.cache/rustler_precompiled
+          ~/Library/Caches/rustler_precompiled
+          ~\AppData\Local\rustler_precompiled
+        key: rustler-precompiled-${{ inputs.cache-key }}-${{ hashFiles('mix.lock') }}
+        restore-keys: |
+          rustler-precompiled-${{ inputs.cache-key }}-
+
     - name: Install Elixir dependencies
-      shell: bash
-      run: mix deps.get
+      uses: ./.github/actions/retry
+      with:
+        command: mix deps.get
 
     - name: Build assets
-      shell: bash
-      run: |
-        mix assets.setup
-        mix assets.deploy
+      uses: ./.github/actions/retry
+      with:
+        command: |
+          mix assets.setup
+          mix assets.deploy
