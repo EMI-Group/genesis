@@ -11,6 +11,7 @@ There are no child directory nodes.
 Tests belong to `apps/evo_git/test/evo_git/agent/tools/` and its parent agent suites; see their CONTEXT.md files rather than placing tests beside these modules.
 Evaluator-specific suites in the tools test directory cover authorization, engine execution, traced engine cleanup, worker-tree lifecycle, public wrapper approval, projections, validation and rendering (`elixir_eval_*_test.exs`), with shared genuine assistant fixtures in `elixir_eval_fixture_helper.exs`.
 `elixir_eval_engine_cleanup_test.exs:26` is the cold-start fully qualified Read facade regression and must also pass alone in a fresh BEAM, without preloading the facade or generated Base allowlist.
+`elixir_eval_allowlist_boot_test.exs` pins the release-boot invariant in a throwaway VM: loading only a wrapper module loads no other module and materializes only its own alias atoms, while the `ensure_initialized/0` chokepoint loads both generated Base allowlists.
 Related integration suites include `reflect_tools_test.exs` and the parent tool-dispatch tests; direct Engine write/sudo tests do not establish public-wrapper approval enforcement.
 
 ## API Surface
