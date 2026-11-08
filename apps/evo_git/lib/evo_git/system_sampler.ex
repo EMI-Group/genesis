@@ -16,9 +16,9 @@ defmodule EvoGit.SystemSampler do
 
   * `node` — the sampling node (`node()`; sampling is LOCAL-only, no RPC).
   * `seq` — monotonically increasing integer per sampler instance.
-  * `sample` — a map with EXACTLY these keys (no extras):
+  * `sample` — a map with EXACTLY these 14 keys (no extras):
 
-        llm_slots, llm_used, llm_waiting, tool_used, tool_waiting,
+        llm_slots, llm_pools, llm_used, llm_waiting, tool_used, tool_waiting,
         llm_capacity, tool_capacity,
         agents_total, agents_running, agents_blocked, agents_waiting,
         agents_pending, scheduler_alive
@@ -27,6 +27,18 @@ defmodule EvoGit.SystemSampler do
     scheduler GenServer state every tick (see "Sampling semantics" below):
 
         llm_slots: %{model_id => %{used: non_neg_integer, waiting: non_neg_integer, capacity: non_neg_integer}}
+
+    `llm_pools` is the CACHED provider-account view of those pools, one entry
+    per canonical `[[llm.providers]]` account — an account owns several models,
+    so a multi-model account is ONE pool entry:
+
+        llm_pools: %{profile_id => %{label: String.t() | nil, models: [String.t()]}}
+
+    `profile_id` is the STRING account id, `label` the account `name` (falling
+    back to the id) and `models` the account's configured BARE model ids in
+    configured order. It is `%{}` for a legacy/empty config with no provider
+    profiles, on the dead-scheduler sample, and whenever no cached profile
+    metadata exists yet.
 
   ## Sampling semantics (proxy, must stay truthful)
 
@@ -57,12 +69,16 @@ defmodule EvoGit.SystemSampler do
   it high, e.g. 86_400_000, and drive ticks via `tick/0` or by sending
   `:sample_tick` directly to the sampler process).
 
-  Capacity totals (`llm_capacity`, `tool_capacity`) come from the RESOLVED
-  scheduler config, cached in state and refreshed every 10th tick on the
-  dashboard's `rem(tick, 10) != 1` rule (tick 1 always loads; an unloaded
-  cache refetches on any tick until the first FAILED attempt records a
-  failed-refresh marker that defers further retries to the refresh cadence;
-  zero capacities from the dead-scheduler branch are NEVER cached).
+  Capacity totals (`llm_capacity`, `tool_capacity`) AND the provider-account
+  profile metadata (`llm_pools`) come from the RESOLVED scheduler config,
+  cached TOGETHER in state and refreshed every 10th tick on the dashboard's
+  `rem(tick, 10) != 1` rule (tick 1 always loads; an unloaded cache refetches
+  on any tick until the first FAILED attempt records a failed-refresh marker
+  that defers further retries to the refresh cadence; zero capacities from the
+  dead-scheduler branch are NEVER cached). Canonical configs derive
+  `llm_capacity` from the summed per-ACCOUNT concurrency of
+  `[[llm.providers]]` (the selection inventory in `model_profiles` carries no
+  concurrency), legacy configs keep the Σ-per-model-profile computation.
 
   The per-model `llm_slots` map is NOT part of that cache: it is fetched LIVE
   every tick via `EvoGit.AgentScheduler.get_llm_slot_status/0` so holder and
@@ -70,8 +86,10 @@ defmodule EvoGit.SystemSampler do
   next 3s sample. The per-model `capacity` values therefore come from the
   scheduler-returned effective capacity (`State.concurrency_for/2` — peak-pause
   correctness), not from the static profile `concurrency` in the config cache;
-  the aggregate `llm_capacity` key keeps its cached Σ-profiled-concurrency
-  value.
+  the aggregate `llm_capacity` key keeps its cached summed-concurrency value —
+  Σ per canonical provider ACCOUNT (`[[llm.providers]]`, which owns the
+  concurrency of all its models) when provider profiles exist, else the
+  legacy Σ per-model-profile `:concurrency`.
 
   **Config source — a direct, bounded scheduler `GenServer.call` for
   `:get_config`** (what `RemoteAPI.get_config/0` wraps, minus its implicit
@@ -122,8 +140,8 @@ defmodule EvoGit.SystemSampler do
 
   * `get_recent_samples/0` — the last 60 samples (ring buffer).
   * `tick/0` — synchronous sampling tick (test seam).
-  * `scheduler_alive?/0`, `status_counts/1`, `config_totals/1`,
-    `build_sample/3,4`, `push/3` — pure helpers (public for tests; the
+  * `scheduler_alive?/0`, `status_counts/1`, `config_totals/1`, `llm_pools/1`,
+    `build_sample/3,4,5`, `push/3` — pure helpers (public for tests; the
     dashboard's old `Charts` equivalents are deleted).
   """
 
@@ -141,6 +159,9 @@ defmodule EvoGit.SystemSampler do
   @scheduler_call_timeout_ms 2_000
   # At most one warning per failure kind per this many ticks (~30 s at 3 s).
   @warn_min_interval_ticks 10
+  # Project default for an account that declares no `concurrency` — the same
+  # value the config schema injects during provider-profile normalization.
+  @default_account_concurrency 3
 
   # ── Public API ───────────────────────────────────────────────────
 
@@ -221,41 +242,193 @@ defmodule EvoGit.SystemSampler do
   end
 
   @doc """
-  Extracts slot capacities from a resolved config map (same computation as the
-  dashboard's `Charts.config_totals/1`): LLM = Σ per-profile `concurrency`,
-  tool = `max_tool_concurrency`. Missing/unknown keys or a non-map yield zero
-  capacities.
+  Extracts slot capacities from a resolved scheduler config map.
+
+  LLM capacity is the sum of per-ACCOUNT `concurrency` values. Canonical
+  provider profiles (`config[:provider_profiles]`, one entry per
+  `[[llm.providers]]` account, which owns the concurrency of every model it
+  holds) win whenever that list is non-empty: an absent/nil concurrency
+  contributes the project default `3` and an explicit `0` is preserved as a
+  hard pause. Configs without provider profiles keep the legacy computation,
+  Σ per-model-profile `:concurrency` (`nil` counting as 0).
+
+  `tool_capacity` is `max_tool_concurrency`. Missing/unknown keys or a non-map
+  yield zero capacities.
   """
   @spec config_totals(term()) :: %{llm_capacity: integer(), tool_capacity: integer()}
   def config_totals(config) when is_map(config) do
-    llm =
-      Enum.reduce(Map.get(config, :model_profiles, []), 0, fn profile, acc ->
-        acc + (Map.get(profile, :concurrency) || 0)
-      end)
-
-    %{llm_capacity: llm, tool_capacity: Map.get(config, :max_tool_concurrency) || 0}
+    %{
+      llm_capacity: llm_capacity(config),
+      tool_capacity: Map.get(config, :max_tool_concurrency) || 0
+    }
   end
 
   def config_totals(_), do: %{llm_capacity: 0, tool_capacity: 0}
 
   @doc """
-  Builds one sample map (the 13-key contract map — no extra keys) from status
-  counts, capacity totals, the live per-model LLM slot map and the
-  scheduler-liveness flag.
+  Builds the `llm_pools` sample key: the CACHED provider-account view of the
+  LLM slot pools, one entry per canonical `[[llm.providers]]` account (an
+  account holds several models, so a multi-model account is ONE pool entry):
+
+      %{profile_id => %{label: String.t() | nil, models: [String.t()]}}
+
+  * `profile_id` — the account id as a STRING (`"id"`/`:id`; an atom id is
+    converted, an entry without one is skipped).
+  * `label` — the account `name` (`"name"`/`:name`), else the id.
+  * `models` — the account's configured BARE model ids in configured order,
+    read from its nested `models` list (each entry's `"model"`/`:model`, or a
+    bare binary; a leading `"<provider>:"` qualifier is stripped defensively).
+    `[]` when the account declares no models.
+
+  `%{}` when the config carries no provider profiles (legacy/empty config), for
+  a non-map, and — through the sampler — whenever no cached profile metadata
+  exists yet.
+  """
+  @spec llm_pools(term()) ::
+          %{optional(String.t()) => %{label: String.t() | nil, models: [String.t()]}}
+  def llm_pools(config) when is_map(config) do
+    case field(config, :provider_profiles) do
+      [_ | _] = accounts ->
+        accounts
+        |> Enum.map(&pool_entry/1)
+        |> Enum.reject(&is_nil/1)
+        |> Map.new()
+
+      _ ->
+        %{}
+    end
+  end
+
+  def llm_pools(_), do: %{}
+
+  # ── Config-derived helpers ───────────────────────────────────────
+  #
+  # Atom-or-string key read for the scheduler config map: the resolved
+  # scheduler config is atom-keyed at the top level, while canonical provider
+  # profiles and their nested model entries are STRING-keyed (the config
+  # schema's normalization boundary). Never creates atoms.
+  defp field(map, key) when is_map(map) do
+    Map.get(map, key, Map.get(map, Atom.to_string(key)))
+  end
+
+  defp llm_capacity(config) do
+    case field(config, :provider_profiles) do
+      [_ | _] = accounts ->
+        Enum.reduce(accounts, 0, fn account, acc ->
+          acc + account_concurrency(account)
+        end)
+
+      _ ->
+        legacy_llm_capacity(config)
+    end
+  end
+
+  # Legacy configs (no canonical provider profiles): unchanged Σ per-model-
+  # profile `:concurrency`, absent counting as 0.
+  defp legacy_llm_capacity(config) do
+    Enum.reduce(Map.get(config, :model_profiles, []), 0, fn profile, acc ->
+      acc + (Map.get(profile, :concurrency) || 0)
+    end)
+  end
+
+  # A canonical account owns the concurrency of every model it holds, so an
+  # absent value falls back to the project default (the value the schema
+  # injects during normalization) while an explicit 0 stays a hard pause.
+  defp account_concurrency(account) when is_map(account) do
+    case field(account, :concurrency) do
+      value when is_integer(value) -> value
+      _ -> @default_account_concurrency
+    end
+  end
+
+  # A list entry that is not a map is not an account — it contributes nothing.
+  defp account_concurrency(_), do: 0
+
+  defp pool_entry(account) when is_map(account) do
+    case profile_id(account) do
+      nil -> nil
+      id -> {id, %{label: profile_label(account, id), models: profile_models(account)}}
+    end
+  end
+
+  defp pool_entry(_), do: nil
+
+  defp profile_id(account) do
+    case field(account, :id) do
+      id when is_binary(id) and id != "" -> id
+      id when is_atom(id) and not is_nil(id) -> Atom.to_string(id)
+      _ -> nil
+    end
+  end
+
+  defp profile_label(account, id) do
+    case field(account, :name) do
+      name when is_binary(name) and name != "" -> name
+      _ -> id
+    end
+  end
+
+  defp profile_models(account) do
+    provider = field(account, :provider)
+
+    case field(account, :models) do
+      models when is_list(models) ->
+        models
+        |> Enum.map(&model_id(&1, provider))
+        |> Enum.reject(&is_nil/1)
+
+      _ ->
+        []
+    end
+  end
+
+  # A configured model entry is a bare binary, or a map whose id lives under
+  # `"model"` (canonical) or `"id"` (input spelling) — mirroring the schema's
+  # normalization.
+  defp model_id(entry, provider) when is_binary(entry), do: unqualify(entry, provider)
+
+  defp model_id(entry, provider) when is_map(entry) do
+    case field(entry, :model) || field(entry, :id) do
+      model when is_binary(model) and model != "" -> unqualify(model, provider)
+      _ -> nil
+    end
+  end
+
+  defp model_id(_entry, _provider), do: nil
+
+  # Canonical inventories are BARE model ids; strip a `"<provider>:"` qualifier
+  # defensively (same rule as the schema's normalization boundary).
+  defp unqualify(model, provider) when is_binary(provider) and provider != "" do
+    String.replace_prefix(model, provider <> ":", "")
+  end
+
+  defp unqualify(model, _provider), do: model
+
+  @doc """
+  Builds one sample map (the 14-key contract map — no extra keys) from status
+  counts, capacity totals, the live per-model LLM slot map, the scheduler
+  liveness flag and the cached provider-account pools.
 
   * `llm_slots` — real per-model LLM slot occupancy read live from the
     scheduler GenServer state (`EvoGit.AgentScheduler.get_llm_slot_status/0`);
     the scheduler-dead shape is `%{}`.
+  * `llm_pools` — the CACHED provider-account view (`llm_pools/1`, refreshed
+    together with the capacity totals every 10th tick); it defaults to `%{}`,
+    so `build_sample/4` and `build_sample/3` compose exactly the maps they
+    always did.
   * The aggregated `llm_used`/`llm_waiting` and both tool keys are the
     `:running`/`:blocked` status proxies (see moduledoc), kept for backward
     compatibility.
   """
-  @spec build_sample(map(), map(), map(), boolean()) :: map()
-  def build_sample(counts, totals, llm_slots, scheduler_alive)
+  @spec build_sample(map(), map(), map(), boolean(), map()) :: map()
+  def build_sample(counts, totals, llm_slots, scheduler_alive, llm_pools \\ %{})
+
+  def build_sample(counts, totals, llm_slots, scheduler_alive, llm_pools)
       when is_map(counts) and is_map(totals) and is_map(llm_slots) and
-             is_boolean(scheduler_alive) do
+             is_boolean(scheduler_alive) and is_map(llm_pools) do
     %{
       llm_slots: llm_slots,
+      llm_pools: llm_pools,
       llm_used: counts.running,
       llm_waiting: counts.blocked,
       llm_capacity: totals.llm_capacity,
@@ -273,14 +446,15 @@ defmodule EvoGit.SystemSampler do
 
   @doc """
   Backward-compat 3-arity of `build_sample/4`: composes a sample without live
-  per-model slot data (`llm_slots: %{}` — the scheduler-dead shape). The
-  sampler's live tick path uses `build_sample/4` with the per-tick-fetched
-  `llm_slots` map.
+  per-model slot data (`llm_slots: %{}` — the scheduler-dead shape) and without
+  provider-account pools (`llm_pools: %{}`). The sampler's live tick path uses
+  `build_sample/5` with the per-tick-fetched `llm_slots` map and the cached
+  `llm_pools`.
   """
   @spec build_sample(map(), map(), boolean()) :: map()
   def build_sample(counts, totals, scheduler_alive)
       when is_map(counts) and is_map(totals) and is_boolean(scheduler_alive) do
-    build_sample(counts, totals, %{}, scheduler_alive)
+    build_sample(counts, totals, %{}, scheduler_alive, %{})
   end
 
   @doc """
@@ -353,15 +527,16 @@ defmodule EvoGit.SystemSampler do
           status_counts(read_sched_metas()),
           cached_totals(state),
           llm_slots,
-          true
+          true,
+          cached_llm_pools(state)
         )
 
       broadcast_and_store(state, sample)
     else
-      # Dead scheduler: zero agents, zero capacities and an empty llm_slots
-      # map — mirrors the dashboard's dead branch (`{[], nil}`). Zero
-      # capacities are NOT cached (see maybe_refresh_config).
-      sample = build_sample(status_counts([]), zero_totals(), %{}, false)
+      # Dead scheduler: zero agents, zero capacities, an empty llm_slots map and
+      # empty provider-account pools — mirrors the dashboard's dead branch
+      # (`{[], nil}`). Zero capacities are NOT cached (see maybe_refresh_config).
+      sample = build_sample(status_counts([]), zero_totals(), %{}, false, %{})
       broadcast_and_store(state, sample)
     end
   end
@@ -394,11 +569,19 @@ defmodule EvoGit.SystemSampler do
   end
 
   # 10-tick config-cache rule (dashboard's `rem(tick, 10) != 1`): use the
-  # cache (valid totals OR a failed-refresh marker — both 2-tuples) except on
-  # ticks 1, 11, 21…; a cache that has never loaded (nil) refetches on any
+  # cache (valid totals+pools OR a failed-refresh marker — both tuples) except
+  # on ticks 1, 11, 21…; a cache that has never loaded (nil) refetches on any
   # tick until the first attempt succeeds or fails (the marker then defers
   # further retries to the refresh cadence).
-  defp maybe_refresh_config(%{tick: tick, config_cache: {_totals, _loaded_tick}} = state)
+  defp maybe_refresh_config(%{tick: tick, config_cache: {_totals, _pools, _loaded_tick}} = state)
+       when rem(tick, @config_refresh_divisor) != 1 do
+    state
+  end
+
+  # The failed-refresh marker counts as a cache entry for the SAME cadence
+  # rule — it is what defers a wedged scheduler's next attempt to the refresh
+  # tick instead of retrying on every tick.
+  defp maybe_refresh_config(%{tick: tick, config_cache: {:failed_at, _}} = state)
        when rem(tick, @config_refresh_divisor) != 1 do
     state
   end
@@ -409,24 +592,26 @@ defmodule EvoGit.SystemSampler do
         {:ok, config} ->
           # Config source: the resolved scheduler config (incl. runtime
           # overrides) — the same the dashboard's chart capacities used; see
-          # the moduledoc for the choice rationale.
-          %{state | config_cache: {config_totals(config), state.tick}}
+          # the moduledoc for the choice rationale. The provider-account
+          # profile metadata is cached WITH the totals so both stay on the
+          # same refresh tick (no extra scheduler call, no per-tick work).
+          %{state | config_cache: {config_totals(config), llm_pools(config), state.tick}}
 
         {:failed, reason} ->
           state = warn_rate_limited(state, :last_config_warn_tick, "get_config", reason)
 
           case state.config_cache do
-            # Valid stale totals exist — keep them (never nil the cache;
+            # Valid stale totals+pools exist — keep them (never nil the cache;
             # 10-tick staleness is already by design). The next refresh
             # attempt falls on the next refresh tick.
-            {totals, _loaded} when is_map(totals) ->
+            {totals, _pools, _loaded} when is_map(totals) ->
               state
 
             # No cache yet (e.g. tick 1 after a restart): record a
             # failed-refresh marker so the next retry falls on the regular
             # refresh cadence instead of re-attempting a wedged scheduler on
-            # every tick. cached_totals/1 maps the marker to the zero
-            # fallback (the documented dead-branch capacity shape).
+            # every tick. cached_totals/1 and cached_llm_pools/1 map the marker
+            # to the documented zero/empty fallbacks.
             _ ->
               %{state | config_cache: {:failed_at, state.tick}}
           end
@@ -439,8 +624,15 @@ defmodule EvoGit.SystemSampler do
     end
   end
 
-  defp cached_totals(%{config_cache: {totals, _loaded_tick}}) when is_map(totals), do: totals
+  defp cached_totals(%{config_cache: {totals, _pools, _loaded_tick}}) when is_map(totals),
+    do: totals
+
   defp cached_totals(_state), do: zero_totals()
+
+  defp cached_llm_pools(%{config_cache: {_totals, pools, _loaded_tick}}) when is_map(pools),
+    do: pools
+
+  defp cached_llm_pools(_state), do: %{}
 
   defp zero_totals, do: %{llm_capacity: 0, tool_capacity: 0}
 
