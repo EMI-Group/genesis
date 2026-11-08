@@ -1012,7 +1012,7 @@ jobs:
           export RELEASE_NOTES
           cd dist
           python3 - <<'PY'
-          import datetime, json, os, sys
+          import datetime, hashlib, json, os, sys
 
           tag = os.environ["RELEASE_TAG"]
           version = tag[1:] if tag.startswith("v") else tag
@@ -1048,15 +1048,44 @@ jobs:
                       "signature": signature,
                   }
                   print(f"included {key}: {payload}")
-          if not platforms:
-              print("no signed updater payloads found — latest.json not written")
+          # Headless `genesis_server` self-update feed. The platform tarballs are
+          # built by different jobs, so a release may carry only some of them.
+          server_entries = {
+              "linux_x64": "genesis_server_linux_x64.tar.xz",
+              "linux_arm64": "genesis_server_linux_arm64.tar.xz",
+              "darwin_arm64": "genesis_server_darwin_arm64.tar.xz",
+          }
+          server = {}
+          for key, filename in server_entries.items():
+              if not os.path.exists(filename):
+                  continue
+              digest = hashlib.sha256()
+              with open(filename, "rb") as fh:
+                  for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              checksum = digest.hexdigest()
+              server[key] = {
+                  "url": f"{base_url}/{filename}",
+                  "sha256": checksum,
+              }
+              # `scripts/install.sh` verifies an optional `<asset>.sha256` (the
+              # first field of the first line) and treats a missing file as "no
+              # checksum published", so shipping it is backwards compatible.
+              with open(f"{filename}.sha256", "w") as f:
+                  f.write(f"{checksum}  {filename}\n")
+              print(f"included server {key}: {filename}")
+          if not platforms and not server:
+              print("no signed updater payloads or server tarballs found — latest.json not written")
               sys.exit(0)
           manifest = {
               "version": version,
               "notes": os.environ.get("RELEASE_NOTES", ""),
               "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-              "platforms": platforms,
           }
+          if platforms:
+              manifest["platforms"] = platforms
+          if server:
+              manifest["server"] = server
           with open("latest.json", "w") as f:
               json.dump(manifest, f, indent=2)
               f.write("\n")
@@ -1076,6 +1105,9 @@ jobs:
           `curl -LsSf https://genesis.evox.group/dl/install.sh | sh`, or download
           `genesis_server_linux_x64.tar.xz`, `genesis_server_linux_arm64.tar.xz` or
           `genesis_server_darwin_arm64.tar.xz` from the assets below.
+
+          To upgrade an existing installation in place, run `genesis update --check`
+          to see whether a newer release is available, then `genesis update`.
           EOF
           echo "appended headless server note to release_body.md"
 
