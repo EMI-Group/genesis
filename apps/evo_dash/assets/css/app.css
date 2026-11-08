@@ -2362,12 +2362,17 @@ button, a, input, textarea, select, summary,
   transition: background 0.2s ease, color 0.2s ease;
 }
 
-/* Layer-1 stops sit on ONE line: the panel sizes to its content
-   (w-max min-w-72), so the three labels are never squeezed — they keep their
-   intrinsic width (flex-shrink: 0) and never break mid-label. */
-.capsule-stops {
-  flex-wrap: nowrap;
-}
+/* Wrapping is owned by the MARKUP, never by this file. The task form's
+   Layer-1 quality stops carry the `flex-nowrap` utility (their panel sizes to
+   its content: w-max min-w-72, so the three labels fit on ONE line), while the
+   shared model+reasoning capsule's `#<id>-reasoning` group carries
+   `flex-wrap` (a model may advertise 4-5 efforts, which must wrap inside its
+   fixed w-72 panel instead of overflowing). There is deliberately NO
+   `.capsule-stops { flex-wrap: … }` rule here: unlayered CSS beats Tailwind's
+   layered utilities, so a global one would silently override both contracts.
+   `.capsule-stop` below still keeps every label on one unbroken line
+   (flex-shrink: 0 + white-space: nowrap); overflow wrapping is the group's
+   job, never the label's. */
 
 /* Layer-1 discrete stop: resting text at 80% alpha; hover raises a neutral
    base-200 well. */

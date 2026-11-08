@@ -522,6 +522,22 @@ defmodule EvoDashWeb.LLMSelectionComponentsTest do
                )
     end
 
+    test "the reasoning group wraps its stops inside the fixed-width panel" do
+      # Pins the intent against a future GLOBAL `.capsule-stops` rule: the
+      # group's wrapping must come from the `flex-wrap` utility on the markup
+      # (unlayered CSS such as `.capsule-stops { flex-wrap: nowrap }` would
+      # beat it and push 4-5 reasoning stops into horizontal overflow), while
+      # the task form's quality group is the one that opts into `flex-nowrap`.
+      for id <- ["llm-selection", "chat-llm-selection"] do
+        tree = render_picker(id: id)
+        group = one(tree, "##{id}-reasoning")
+        group_class = group |> Floki.attribute("class") |> List.first() |> to_string()
+        assert group_class =~ "capsule-stops"
+        assert group_class =~ "flex-wrap"
+        refute group_class =~ "flex-nowrap"
+      end
+    end
+
     test "the trigger still shows the model name, the reasoning effort and a chevron" do
       tree = render_picker()
       trigger = one(tree, "#llm-selection > summary")
