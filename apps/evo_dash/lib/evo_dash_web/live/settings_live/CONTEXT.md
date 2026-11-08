@@ -80,6 +80,9 @@ The parent preserves nested drafts during Change and passes raw nested submissio
 ProviderProfiles.parse_editor/3 accepts both flat generation fields and nested generation maps at account/model levels and removes override_reasoning UI sentinels without persisting them.
 A model override_reasoning=false removes its inventory key to restore inheritance, while absent inventory, explicit [] and checkbox [""] remain distinct according to key presence.
 Checkbox inventories trim blanks, deduplicate in submitted order and retain unknown custom effort strings; an unrestricted inventory does not discard an explicitly supplied default.
+ProviderProfiles does not consult model capability metadata, so a submitted nested reasoning_efforts=[] with default_reasoning_effort="high" is accepted and preserved rather than treated as a no-reasoning model.
+The override_reasoning=false sentinel removes only reasoning_efforts, not default_reasoning_effort, and clearing a nested default omits that key so effective validation falls back to the account default.
+Neither reasoning/2 nor validate_inherited_reasoning/3 invents "high" or any first-inventory default; a persisted nested default must already occur in the submitted row or an upstream canonical projection.
 Wholly blank model rows carrying empty checkbox or generation sentinels are ignored rather than creating overrides.
 The component must include hidden blank checkbox seeds to signal clearing, render existing unknown effort values for round-trip fidelity and submit complete nested model rows when present.
 Pass editing_profile_id/profile_form_draft/profile_advanced_open/auth_statuses through category_section to the standalone provider editor.
@@ -165,7 +168,7 @@ normalize_days/1 handles scalar/list/hidden blanks and trims/downcases/whitelist
 Public helpers include parse_peak_fields/1, normalize_peak_hours_draft/1, valid_clock_time?/1 and clock_to_minutes/1.
 Errors are peak_concurrency_invalid, peak_hours_invalid_time, peak_hours_start_equals_end and peak_hours_overlap.
 Touching intervals are legal, but the UI overlap check ignores days and does not split overnight intervals; core validation remains authoritative.
-normalize_peak_hours_draft assumes map rows in lists and malformed non-map rows can raise.
+normalize_peak_hours_draft/1 tolerates non-map rows through peak_draft_value/2 and guards day lookups, while parse_peak_fields/1 rejects such rows as peak_hours_invalid_time.
 
 ## Tests and Constraints
 
