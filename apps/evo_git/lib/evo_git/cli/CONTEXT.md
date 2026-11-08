@@ -12,7 +12,9 @@ Parsing stays pure and setup persists only through `EvoGit.Config` and imports s
 - Incomplete explicit selections and blank values return `{:error, message}`, and effort without an explicit provider profile is rejected.
 - The parent dispatch must validate selections with the schema and enqueue an explicit selection as `model_spec: spec, model_id_locked: true`, while Auto omits both keys.
 - `Parser.parse_model_flag/1` preserves legacy `id:provider:model` splitting for the parent's legacy-ID resolver.
-- `Parser.parse_foreign_repos/1` builds read-only `%EvoGit.Core.ForeignRepo{}` values from repeatable `-R`, and Windows drive-letter absolute paths are never split as IDs.
+- `Parser.parse_foreign_repos/1` builds read-only `%EvoGit.Core.ForeignRepo{}` values from repeatable `-R` (`foreign_repo: [:string, :keep]`, alias `R`), and Windows drive-letter absolute paths (`^[a-zA-Z]:[\\/]`) are never split as IDs.
+- `-R` parsing is a plain order-preserving `Enum.map` with NO dedupe, NO id-uniqueness check and NO blank-spec check, so duplicate ids/paths yield separate struct entries downstream.
+- `-R` does NOT validate existence or git-ness at parse time; the only parse-time path handling is `ForeignRepo.new/2` → `Platform.safe_expand/1` (`Path.expand`), so relative and `~` paths are resolved against the CLI process cwd.
 - `Parser.maybe_put/3` leaves a keyword list unchanged for nil values.
 - `Setup.run/0` guides provider, model, endpoint variant and API-key or subscription authentication selection.
 - Setup saves canonical `[llm].default_provider_profile` and `[[llm.providers]]`, without a legacy `llm.model` mirror or top-level `llm.models` list.
