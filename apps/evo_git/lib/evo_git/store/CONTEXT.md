@@ -180,6 +180,13 @@ The shared filter builder `Operations.Filters` (`where_filters/2` + the clamps) 
 `opts` is a plain JSON object so search can `LIKE` its raw text and SQL paths can `json_extract(opts, '$.path')`.
 Decode strictness is unchanged: `decode_result/1` raises `ArgumentError` on anything but the 4 tagged forms, while lenient `decode_logs/1` → `[]` and `decode_error/1` → `nil` keep callers safe; `Types.*` stay thin delegations so the Codec remains the single wire oracle.
 
+## Task repo/commit identity — where each field lives
+
+Only these identity fields are real `tasks` columns: `project_path` (the repo ROOT, denormalized from `opts[:path]`), `base_sha` (the REVIEW base, written only by `TaskRegistry.set_review_metadata/3` — NOT the runtime starting commit), `commit_sha` (the primary repo's final commit), `branch_name` (denormalized from the primary's `{:ok, %{branch_name: _}}` result) and `model_id`.
+The runtime starting commit exists ONLY in the JSON `opts` key `:starting_commit`; `:path`, `:mode`, `:node_path`, `:resume_from`, `:merge_from`, `:merge_target` and `:foreign_repos` are opts-only too (no column mirrors any of them), and `:merge_from`/`:merge_target` decode STRING-keyed while `:path`/`:starting_commit`/`:resume_from`/`:foreign_repos` decode atom-keyed.
+There is NO column for a worktree path, a task number or a parent task id: `task_number` is naming-only (derived from a `.genesis/workers/` scan) and an archive's `parent_id` is the spawn-tree PARENT AGENT id, never a task id.
+Per-repo identity for a finished task lives only in the `result` JSON: `result["repos"] = %{repo_id => %{"commit_sha", "branch_name"}}` inside the canonical `{"__result_tag__":"ok","data":{…}}` envelope (`"repos"` is NOT in `@result_data_fields`, so it stays a STRING key holding string-keyed nested maps).
+
 ## Per-Agent Archive (`task_agent_archives`)
 
 The archived conversation is a RELATIONAL table, one row per `(task_id, agent_id)` — not a JSON blob on the task row; migration 5 creates the table, composite key and index.
@@ -260,6 +267,7 @@ Because `put_task` is delete + full-row insert, every task write maintains SIX i
 
 ## Known Issues
 
+- **`task_agent_archives.repo_path` is a TRANSIENT per-agent WORKTREE path, not a repo root**: the producer passes `Process.get(:repo_path)`, which the Runner sets to the agent's `worker_T<n>_A<m>` worktree dir (destroyed when the agent exits), while `repo_root` is the real root (worktree suffix stripped by `Dispatch.resolve_agent_repo_root/2`); an archive row's `repo_path` is therefore a stale path and must never be used to read files.
 - **`tasks.id` and `projects.path` are NULLABLE TEXT primary keys**: `PRAGMA table_info` reports `notnull = 0` for both (SQLite only implies NOT NULL for INTEGER primary keys), so the DDL allows a NULL id that every read would then miss (all of them compare ids). Only hand-edited/adopted rows can produce one — `Codec.validate_task/1` and `Operations.Archives.validate_entry/1` reject a missing id before any write.
 - **The same `%EvoGit.Agent.Usage{}` is stored TWICE per task**: embedded in an `{:ok, …}` result's `data.usage` and again in the `usage` column, so one `get_task/2` pays two JSON decodes of the same numbers and one `put_task/2` two encodes (the summary/page projections avoid it by never selecting either).
 - **`put_task/2` rewrites the whole row by design** (delete + full 19-key insert): a single status change through the full-row path re-writes every column and all six index entries; the targeted `update_task_columns/3` path exists to avoid that.
