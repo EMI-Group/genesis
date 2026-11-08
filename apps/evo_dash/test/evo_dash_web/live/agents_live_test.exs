@@ -157,6 +157,71 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "agent model label" do
+    # The detail panel's "Model" cell renders `agent.model_label` (derived by
+    # EvoDashWeb.AgentsLive.ModelLabel: canonical `:model_spec` -> `:llm_model`
+    # -> legacy `:model_id` -> nil), NOT the raw legacy `:model_id`. An explicit
+    # canonical task selection stores `model_id: nil`, which used to render "N/A".
+    test "renders the canonical selection instead of N/A", %{conn: conn} do
+      install_agents([
+        summary_agent(
+          model_id: nil,
+          model_spec: %{
+            "provider_profile_id" => "work",
+            "model" => "glm-4.6",
+            "reasoning_effort" => "high"
+          },
+          llm_model: "zai:glm-4.6"
+        )
+      ])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      assert model_cell(render(view)) == "work - glm-4.6 - high"
+    end
+
+    test "falls back to the legacy model_id", %{conn: conn} do
+      install_agents([summary_agent(model_id: "1:zai:glm-4.6")])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      assert model_cell(render(view)) == "1:zai:glm-4.6"
+    end
+
+    test "renders N/A when the summary carries no model information", %{conn: conn} do
+      install_agents([summary_agent([])])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      assert model_cell(render(view)) == "N/A"
+    end
+
+    test "the incremental registered-agent path sets the same label", %{conn: conn} do
+      install_agents([])
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      registered_id = agent_id()
+
+      send(
+        view.pid,
+        {:agent_registered, registered_id,
+         summary_agent(
+           id: registered_id,
+           model_id: nil,
+           model_spec: %{"provider_profile_id" => "work", "model" => "glm-4.6"}
+         ), node()}
+      )
+
+      flush_agent_events(view)
+      wait_until(fn -> Enum.any?(assigns(view)[:agents], &(&1.id == registered_id)) end)
+      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == registered_id))
+      assert agent.model_label == "work - glm-4.6"
+    end
+  end
+
   describe "history fetch gating" do
     # The HistoryGate suppresses full-history re-transfers while an agent's
     # :message_count is unchanged (see EvoDashWeb.AgentsLive.HistoryGate).
@@ -3384,6 +3449,28 @@ defmodule EvoDashWeb.AgentsLiveTest do
     on_exit(&clear_agents_env/0)
   end
 
+  # The text of the detail panel's "Model" cell: the <code> inside the wrapper
+  # div that holds the single "Model" <h4>. Scoping to that wrapper (exactly one
+  # h4, whose text is "Model") keeps the assertion honest — the panel contains
+  # other N/A-bearing cells (e.g. Context Path).
+  defp model_cell(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find("div")
+    |> Enum.find_value(fn div ->
+      case Floki.find(div, "h4") do
+        [h4] ->
+          if String.trim(Floki.text(h4)) == "Model",
+            do: div |> Floki.find("code") |> List.first()
+
+        _ ->
+          nil
+      end
+    end)
+    |> Floki.text()
+    |> String.trim()
+  end
+
   # Mounts /agents with ONE stubbed summary, selects its agent card (the only
   # place the detail panel renders) and — unless `expand: false` — expands the
   # "Token and Cost" panel, which is the only place the Context meter renders.
@@ -3622,6 +3709,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
         retries: 0,
         agent_module: EvoGit.Agents.Manager,
         model_id: nil,
+        # The detail panel renders `model_label` (ModelLabel output) — the
+        # legacy `model_id` is no longer read directly.
+        model_label: nil,
         objective: "STALE MARKER OBJECTIVE",
         context_path: "./stale-marker",
         current_commit: "abc123",

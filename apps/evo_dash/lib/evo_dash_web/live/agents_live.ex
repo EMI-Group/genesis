@@ -37,6 +37,7 @@ defmodule EvoDashWeb.AgentsLive do
     ContextMeter,
     HistoryGate,
     LoadData,
+    ModelLabel,
     OptimisticMessages,
     PendingEvents,
     ThresholdCache,
@@ -1738,6 +1739,10 @@ defmodule EvoDashWeb.AgentsLive do
          retries: summary[:retries] || 0,
          agent_module: summary[:agent_module],
          model_id: summary[:model_id],
+         # Display-only label (same derivation as LoadData.build_agents) so a
+         # live-registered agent never renders "N/A" while the full refresh
+         # would show a model.
+         model_label: ModelLabel.label(summary),
          objective: summary[:objective] || "",
          context_path: summary[:context_path],
          current_commit: summary[:current_commit],
