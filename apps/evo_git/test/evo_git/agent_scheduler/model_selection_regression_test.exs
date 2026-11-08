@@ -76,6 +76,32 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
     %{llm: %{default_provider_profile: "other-account", providers: [first, second]}}
   end
 
+  # Canonical provider account EXACTLY as `Schema.ProviderProfiles.provider_profiles/1`
+  # emits it (string-keyed, nested `models`). The configured default model is the
+  # SECOND inventory entry, so resolving it can never be confused with "first".
+  defp canonical_account do
+    [account] =
+      Schema.provider_profiles(%{
+        llm: %{
+          providers: [
+            %{
+              id: "account",
+              provider: "openai",
+              default_model: "gpt-4o-mini",
+              concurrency: 5,
+              temperature: 0.4,
+              models: [
+                %{model: "gpt-4o", context_window: 120_000},
+                %{model: "gpt-4o-mini", context_window: 64_000, max_tokens: 4321}
+              ]
+            }
+          ]
+        }
+      })
+
+    account
+  end
+
   defp spec(opts \\ []) do
     %AgentSpec{
       context_node: nil,
@@ -692,5 +718,52 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
     assert effective_spec.model_spec == chosen
     assert effective_spec.opts[:model_id_locked]
     assert Task.await(task, 5000) == {:ok, :observed}
+  end
+
+  # A bare `provider_profiles` push carries no selection snapshot, so the
+  # non-schema fallback is the ONLY default source. It must resolve the account's
+  # configured default model (not nil, and not merely the first inventory model)
+  # and assemble its params through the schema's generation choke point.
+  test "string-keyed canonical accounts supply the fallback default model and params" do
+    account = canonical_account()
+
+    # Pin the key shape this fallback depends on: canonical accounts are
+    # STRING-keyed, so an atom-keyed `llm_generation_params/1` yields [] for them.
+    assert %{
+             "id" => "account",
+             "provider" => "openai",
+             "default_model" => "gpt-4o-mini",
+             "concurrency" => 5
+           } = account
+
+    state = State.from_model_profiles([], provider_profiles: [account])
+
+    assert state.provider_profiles == [account]
+    assert state.llm_model == "openai:gpt-4o-mini"
+
+    assert Keyword.keyword?(state.llm_generation_params)
+    assert Keyword.fetch!(state.llm_generation_params, :temperature) == 0.4
+    # `max_tokens` is a nested override of the SECOND inventory model, so its
+    # presence proves these params were assembled for the configured default.
+    assert Keyword.fetch!(state.llm_generation_params, :max_tokens) == 4321
+
+    assert state.model_concurrency == %{"account" => 5}
+    assert state.default_llm_max_concurrency == 5
+    assert Map.keys(state.llm_holders) == ["account"]
+  end
+
+  # The legacy atom-keyed fallback is unchanged byte-for-byte.
+  test "legacy atom-keyed profiles keep their fallback model and generation params" do
+    profile = %{id: "legacy", model: "openai:gpt-4o", temperature: 0.3, concurrency: 4}
+
+    state = State.from_model_profiles([profile])
+
+    assert state.provider_profiles == []
+    assert state.llm_model == "openai:gpt-4o"
+    assert state.llm_generation_params == Schema.llm_generation_params(profile)
+    assert Keyword.keyword?(state.llm_generation_params)
+    assert Keyword.fetch!(state.llm_generation_params, :temperature) == 0.3
+    assert state.model_concurrency == %{"legacy" => 4}
+    assert state.default_llm_max_concurrency == 4
   end
 end

@@ -229,7 +229,11 @@ defmodule EvoGit.AgentScheduler.State do
         {id, :queue.new()}
       end)
 
-    default_profile = List.first(profiles)
+    # A canonical push normally carries the selection snapshot, which resolves
+    # the default through the schema. Without it (e.g. a bare
+    # `provider_profiles` push) the provider ACCOUNTS are the only default
+    # source, so the non-schema fallback must consult them too.
+    default_profile = List.first(profiles) || List.first(provider_profiles)
     selection_config = Keyword.get(opts, :model_selection_config)
 
     {default_model, default_params, default_concurrency} =
@@ -250,8 +254,9 @@ defmodule EvoGit.AgentScheduler.State do
             {nil, [], 3}
 
           profile ->
-            {ModelSelection.value(profile, :model),
-             EvoGit.Config.Schema.llm_generation_params(profile),
+            {fallback_model, fallback_params} = fallback_default(profile)
+
+            {fallback_model, fallback_params,
              Map.get(model_concurrency, ModelSelection.pool_id(profile), 3)}
         end
       end
@@ -644,4 +649,67 @@ defmodule EvoGit.AgentScheduler.State do
           end)
     }
   end
+
+  # Default model + generation params for the NON-schema fallback (no
+  # `model_selection_config` snapshot).
+  #
+  # Legacy selection inventories are ATOM-keyed (`:id`, `:model`) and keep going
+  # through `Schema.llm_generation_params/1` unchanged. Canonical provider
+  # accounts are STRING-keyed (`"id"`, `"provider"`, `"default_model"`, nested
+  # `"models"`), and `llm_generation_params/1` only recognizes an ATOM `:id` —
+  # it would return `[]` for them. Project such an account through the schema's
+  # own normalization so model and parameters keep coming from the ONE
+  # generation-parameter choke point, with no second copy of the defaults.
+  defp fallback_default(profile) do
+    if canonical_account?(profile) do
+      canonical_fallback_default(profile)
+    else
+      {ModelSelection.value(profile, :model), EvoGit.Config.Schema.llm_generation_params(profile)}
+    end
+  end
+
+  # The canonical account shape `ProviderProfiles.provider_profiles/1` emits:
+  # string-keyed with a string `"id"` and `"provider"`. A string-keyed LEGACY
+  # profile carries `"model"` but no `"provider"`, so it stays on the legacy
+  # path above rather than failing account normalization.
+  defp canonical_account?(%{"id" => id} = profile) when is_binary(id),
+    do: is_binary(ModelSelection.value(profile, :provider))
+
+  defp canonical_account?(_profile), do: false
+
+  defp canonical_fallback_default(account) do
+    config = %{"llm" => %{"providers" => [account]}}
+    spec = %{"provider_profile_id" => ModelSelection.value(account, :id)}
+
+    spec =
+      case fallback_model_id(account) do
+        nil -> spec
+        model -> Map.put(spec, "model", model)
+      end
+
+    case EvoGit.Config.Schema.ProviderProfiles.resolve_runtime_profile(config, spec) do
+      {:ok, runtime_profile} ->
+        {Map.get(runtime_profile, :model),
+         EvoGit.Config.Schema.LLM.profile_generation_params(runtime_profile)}
+
+      {:error, reason} ->
+        Logger.warning(
+          "Default model unavailable from provider account " <>
+            "#{inspect(ModelSelection.value(account, :id))}: #{inspect(reason)}"
+        )
+
+        {nil, []}
+    end
+  end
+
+  # Key-agnostic model id: the selection's own `:model`/`"model"`, else the
+  # account's `"default_model"`/`:default_model`, else its first inventory model.
+  defp fallback_model_id(profile) do
+    ModelSelection.value(profile, :model) || ModelSelection.value(profile, :default_model) ||
+      first_inventory_model(ModelSelection.value(profile, :models))
+  end
+
+  defp first_inventory_model([model | _]) when is_binary(model), do: model
+  defp first_inventory_model([%{} = model | _]), do: ModelSelection.value(model, :model)
+  defp first_inventory_model(_models), do: nil
 end
