@@ -138,6 +138,7 @@ AuthStatus.credential_profile/1 adapts canonical or legacy profiles to credentia
 statuses/2 includes only OAuth accounts with nonblank ids and unknown_statuses/1 supplies neutral entries.
 Status entries contain state/expires/account_id/login_instructions/oauth_file; no_credentials/invalid_credentials become missing, managed_file_unwritable alone becomes unwritable and unexpected transports/verdicts become unknown.
 Credential verdict and managed-path calls run on the viewed node; login instructions are static and renderer fallback may use the configured path.
+A profile's verdict renders in its OWN credential-status block, while the page-level core "Missing Configuration" banner describes the WHOLE config and may still name a vendor login command (e.g. claude setup-token) when another account's credential is unusable, so guidance assertions are scoped to one profile's block, never page-wide.
 start/2 sends FLAT {:settings_auth_status_loaded, node, seq, statuses}; the parent checks node AND auth_status_seq after node-data loads, saves or explicit refresh, never polls.
 Two remote calls per OAuth account are not deduplicated and unexpected errors degrade the map through the outer SafeCall.
 
