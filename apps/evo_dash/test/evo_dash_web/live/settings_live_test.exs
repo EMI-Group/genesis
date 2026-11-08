@@ -1558,7 +1558,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
               "model" => "no-reasoning",
               "override_reasoning" => "true",
               "reasoning_efforts" => "",
-              "default_reasoning_effort" => ""
+              "default_reasoning_effort" => "high"
             }
           }
         })
