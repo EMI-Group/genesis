@@ -1232,14 +1232,17 @@ STUB
 chmod +x "$UPDP_SHIM/curl"
 
 # write_launcher <path> <version> <ok|fail> — a stub release launcher.
-# `version` stays silent, so releases/start_erl.data owns the installed version
-# (that is what makes the staged-version check observable); `start` publishes or
-# clears the /health marker of that version.
+# `version` answers with the REAL Mix release shape, `<release name> <vsn>` (a
+# genuine `bin/genesis_server version` prints `genesis_server 0.13.12`), so the
+# CLI's release-name normalization is what the installed/staged version checks
+# exercise. The staged-version check still reads the staged
+# `releases/start_erl.data`, which is what keeps the `mismatch` fixture
+# observable; `start` publishes or clears the /health marker of that version.
 write_launcher() {
   cat >"$1" <<STUB
 #!/bin/sh
 case \${1:-} in
-  version) exit 0 ;;
+  version) printf 'genesis_server %s\n' "$2" ;;
   start)
     printf 'LAUNCH $2\n' >>"\$UPDP_LOG"
     case $3 in
@@ -1389,6 +1392,28 @@ fi
 expect_status 0 "upgrade --check is the alias" "$UPDP_CLI" upgrade --check
 contains "$(cat "$TMP/out")" "is up to date" "upgrade must behave like update"
 ok "update --check on an up-to-date install exits 0 and downloads nothing"
+
+# (b2) the launcher answers `version` with the real Mix shape (`<release name>
+# <vsn>`): the release name must be stripped everywhere it would leak — into
+# `genesis version`, into the up-to-date comparison and into the --json payload.
+reset_update 0.13.0
+ver=$("$UPDP_CLI" version </dev/null)
+[ "$ver" = "genesis 0.13.0" ] ||
+  fail "genesis version must strip the release name, got: $ver"
+write_manifest "$UPDP_STATE/latest.json" 0.13.0 ""
+expect_status 0 "update --check (Mix-shaped launcher version)" "$UPDP_CLI" update --check
+contains "$(cat "$TMP/out")" "Genesis 0.13.0 is up to date." \
+  "a two-token launcher answer must compare equal to the feed version"
+rc=0
+"$UPDP_CLI" update --check --json >"$TMP/upd-json" 2>"$TMP/upd-json-err" </dev/null || rc=$?
+[ "$rc" -eq 0 ] || fail "--check --json with a two-token launcher answer must exit 0, got $rc"
+json=$(cat "$TMP/upd-json")
+contains "$json" '"current":"0.13.0"' \
+  "the JSON must carry the normalized installed version"
+not_contains "$json" "genesis_server" \
+  "the launcher's release name must never reach the JSON"
+[ ! -s "$TMP/upd-json-err" ] || fail "--check --json must keep stderr quiet: $(cat "$TMP/upd-json-err")"
+ok "a Mix-shaped launcher version is normalized for version, --check and --json"
 
 # (c) a newer feed version: exit 10, the human summary and the hint.
 reset_update
