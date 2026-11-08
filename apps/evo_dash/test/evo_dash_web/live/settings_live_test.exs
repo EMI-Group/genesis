@@ -968,7 +968,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert has_element?(
                view,
-               ~s(input[name="default_model"][value="anthropic/claude-3.5-sonnet"])
+               ~s(select[name="default_model"] option[selected][value="anthropic/claude-3.5-sonnet"])
              )
     end
 
@@ -991,7 +991,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert profile["models"] == [%{"model" => "my-model"}]
       assert stored_providers() == [profile]
       settings_hook(view, "edit_provider_profile", %{"profile_id" => profile["id"]})
-      assert has_element?(view, ~s(input[name="default_model"][value="my-model"]))
+
+      assert has_element?(
+               view,
+               ~s(select[name="default_model"] option[selected][value="my-model"])
+             )
+
       assert has_element?(view, ~s(input[name="base_url"][value="https://api.example.com/v1"]))
     end
   end
@@ -1077,12 +1082,353 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute has_element?(view, "#provider-profile-edit-form")
     end
 
+    test "rendered creation derives collision-safe account identities from blank and untouched ids",
+         %{
+           conn: conn
+         } do
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+
+      # Submit the browser's actual fields, including the unopened Advanced section.
+      # The first blank identity and second untouched profile-N identity are both Auto.
+      for {identity, expected_id, expected_name} <- [
+            {"", "openai", "OpenAI"},
+            {:untouched, "openai-2", "OpenAI-2"},
+            {"work-account", "work-account", "Work subscription"}
+          ] do
+        view |> element(~s(button[phx-click="add_provider_profile"])) |> render_click()
+        assert has_element?(view, "details#provider-profile-advanced:not([open])")
+
+        assert assigns(view).profile_form_draft["id"] ==
+                 "profile-#{length(stored_providers()) + 1}"
+
+        view |> form("#provider-profile-edit-form", %{provider: "openai"}) |> render_change()
+        view |> element(~s(button[phx-click="add_provider_model"])) |> render_click()
+
+        view
+        |> form("#provider-profile-edit-form", %{models: %{"0" => %{model: "example"}}})
+        |> render_change()
+
+        assert has_element?(view, ~s(select[name="default_model"] option[value="example"]))
+        refute has_element?(view, ~s(input[name="default_model"]))
+
+        params = %{"default_model" => "example"}
+
+        params =
+          if identity == :untouched, do: params, else: Map.put(params, "profile_id_new", identity)
+
+        params =
+          if identity == "work-account", do: Map.put(params, "name", expected_name), else: params
+
+        view |> form("#provider-profile-edit-form", params) |> render_submit()
+        assert await_config_save(view) =~ "Provider profile saved."
+        saved = List.last(stored_providers())
+        assert saved["id"] == expected_id
+        assert saved["name"] == expected_name
+        assert saved["models"] == [%{"model" => "example"}]
+        assert saved["default_model"] == "example"
+        assert current_providers(view) == stored_providers()
+      end
+
+      assert Enum.map(stored_providers(), & &1["provider"]) == ["openai", "openai", "openai"]
+      assert Enum.map(stored_providers(), & &1["id"]) == ["openai", "openai-2", "work-account"]
+      assert EvoGit.Config.user_config()["llm"]["default_provider_profile"] == "openai"
+    end
+
+    test "rendered duplicate-id validation retains the draft and permits correction and retry", %{
+      conn: conn
+    } do
+      seed_provider_profiles([{"taken", "openai", "example"}])
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+      before = stored_providers()
+      before_config = assigns(view).file_config
+      view |> element(~s(button[phx-click="add_provider_profile"])) |> render_click()
+      view |> form("#provider-profile-edit-form", %{provider: "openai"}) |> render_change()
+      view |> element(~s(button[phx-click="add_provider_model"])) |> render_click()
+
+      view
+      |> form("#provider-profile-edit-form", %{models: %{"0" => %{model: "example"}}})
+      |> render_change()
+
+      view
+      |> form("#provider-profile-edit-form", %{
+        profile_id_new: "taken",
+        name: "Second account",
+        default_model: "example"
+      })
+      |> render_submit()
+
+      html = await_config_save(view)
+      assert html =~ "already exists"
+      assert has_element?(view, "#provider-profile-errors[role=alert]")
+      assert has_element?(view, ~s(input[name="profile_id_new"][value="taken"]))
+      assert has_element?(view, ~s(input[name="name"][value="Second account"]))
+      assert assigns(view).editing_profile_id == :new
+      assert stored_providers() == before
+      assert assigns(view).file_config == before_config
+
+      view
+      |> form("#provider-profile-edit-form", %{profile_id_new: "second-account"})
+      |> render_submit()
+
+      assert await_config_save(view) =~ "Provider profile saved."
+      assert [original, corrected] = stored_providers()
+
+      assert original ==
+               Map.merge(hd(before), %{"auth_mode" => "api_key", "reasoning_efforts" => []})
+
+      assert corrected["id"] == "second-account"
+      assert corrected["name"] == "Second account"
+      assert corrected["models"] == [%{"model" => "example"}]
+      assert assigns(view).profile_form_draft == nil
+      assert current_providers(view) == stored_providers()
+    end
+
+    test "closed advanced controls round-trip all account and model settings through the rendered form",
+         %{
+           conn: conn
+         } do
+      path = EvoGit.Config.config_path()
+      File.mkdir_p!(Path.dirname(path))
+
+      File.write!(path, """
+      [user]
+      name = "Unrelated setting"
+      [llm]
+      default_provider_profile = "explicit-account"
+      [[llm.providers]]
+      id = "explicit-account"
+      name = "Named subscription"
+      provider = "anthropic"
+      auth_mode = "oauth"
+      oauth_file = "~/isolated-subscription.json"
+      base_url = "https://proxy.example/v1"
+      default_model = "second-model"
+      concurrency = 7
+      context_window = 180000
+      reasoning_efforts = ["custom", "high", "low"]
+      default_reasoning_effort = "high"
+      temperature = 0.7
+      max_tokens = 4096
+      top_p = 0.9
+      top_k = 40
+      frequency_penalty = 0.25
+      presence_penalty = -0.5
+      extra = { wire = { protocol = "custom" } }
+      provider_options = { custom_flag = false }
+      peak_concurrency = 0
+      timezone = "Asia/Hong_Kong"
+      off_peak_days = ["sat", "sun"]
+      [[llm.providers.peak_hours]]
+      start = "23:00"
+      end = "02:00"
+      days = ["mon", "fri"]
+      [[llm.providers.models]]
+      model = "first-model"
+      context_window = 128000
+      reasoning_efforts = ["custom", "low"]
+      default_reasoning_effort = "custom"
+      temperature = 0.0
+      max_tokens = 2048
+      top_p = 0.5
+      top_k = 4
+      frequency_penalty = -0.2
+      presence_penalty = 0.1
+      extra = { model_flag = false }
+      provider_options = { custom_flag = true }
+      [[llm.providers.models]]
+      model = "second-model"
+      default_reasoning_effort = "low"
+      """)
+
+      {:ok, view, _} = mount_settings(conn, ~p"/settings")
+      before = hd(stored_providers())
+
+      view
+      |> element(
+        ~s(button[phx-click="edit_provider_profile"][phx-value-profile_id="explicit-account"])
+      )
+      |> render_click()
+
+      for selector <- [
+            "#provider-profile-advanced",
+            "#provider-peak-schedule",
+            "#provider-generation-defaults",
+            "#provider-model-details-0",
+            "#provider-model-generation-0",
+            "#provider-model-details-1"
+          ] do
+        assert has_element?(view, "details#{selector}:not([open])")
+      end
+
+      assert has_element?(
+               view,
+               ~s(select[name="default_model"] option[selected][value="second-model"])
+             )
+
+      assert has_element?(view, ~s(select[name="auth_mode"] option[selected][value="oauth"]))
+
+      assert has_element?(
+               view,
+               ~s(input[name="oauth_file"][value="~/isolated-subscription.json"])
+             )
+
+      # Checkbox DOM order, not the standard vocabulary order, owns configured custom values.
+      doc = Floki.parse_document!(render(view))
+
+      assert Floki.attribute(doc, ~s(input[name="reasoning_efforts[]"][checked]), "value") ==
+               ["custom", "high", "low"]
+
+      assert Floki.attribute(
+               doc,
+               ~s(input[name="models[0][reasoning_efforts][]"][checked]),
+               "value"
+             ) ==
+               ["custom", "low"]
+
+      refute has_element?(
+               view,
+               ~s(input[name="models[1][override_reasoning]"][type="checkbox"][checked])
+             )
+
+      # No manually constructed save payload: hidden sentinels, OAuth, JSON,
+      # nested generation and unopened controls must all survive browser serialization.
+      view |> form("#provider-profile-edit-form") |> render_submit()
+      assert await_config_save(view) =~ "Provider profile saved."
+      assert [^before] = stored_providers()
+      assert current_providers(view) == [before]
+      assert EvoGit.Config.user_config()["user"]["name"] == "Unrelated setting"
+
+      view
+      |> element(
+        ~s(button[phx-click="edit_provider_profile"][phx-value-profile_id="explicit-account"])
+      )
+      |> render_click()
+
+      # Blank edit identity must preserve the explicit id AND display name.
+      # An enabled override with no checked levels is [], whereas unchecked
+      # override restores inheritance and does not persist the UI-only sentinel.
+      view
+      |> form("#provider-profile-edit-form", %{
+        profile_id_new: "",
+        name: "",
+        default_model: "first-model",
+        models: %{
+          "0" => %{
+            override_reasoning: "true",
+            reasoning_efforts: [""],
+            default_reasoning_effort: ""
+          },
+          "1" => %{override_reasoning: "false", default_reasoning_effort: ""}
+        }
+      })
+      |> render_submit()
+
+      assert await_config_save(view) =~ "Provider profile saved."
+      [updated] = stored_providers()
+      assert updated["id"] == before["id"]
+      assert updated["name"] == before["name"]
+      assert updated["default_model"] == "first-model"
+
+      assert Map.drop(updated, ["models", "default_model"]) ==
+               Map.drop(before, ["models", "default_model"])
+
+      assert [unsupported, inherited] = updated["models"]
+
+      assert unsupported ==
+               hd(before["models"])
+               |> Map.delete("default_reasoning_effort")
+               |> Map.put("reasoning_efforts", [])
+
+      assert inherited == %{"model" => "second-model"}
+      refute Enum.any?(updated["models"], &Map.has_key?(&1, "override_reasoning"))
+
+      view
+      |> element(
+        ~s(button[phx-click="edit_provider_profile"][phx-value-profile_id="explicit-account"])
+      )
+      |> render_click()
+
+      assert has_element?(
+               view,
+               ~s(select[name="default_model"] option[selected][value="first-model"])
+             )
+
+      assert has_element?(
+               view,
+               ~s(input[name="models[0][override_reasoning]"][type="checkbox"][checked])
+             )
+
+      refute has_element?(view, ~s(input[name="models[0][reasoning_efforts][]"][checked]))
+      refute has_element?(view, ~s(input[name="models[1][reasoning_efforts][]"]))
+
+      # Now uncheck an existing explicit-empty override: absence means inherit,
+      # which is distinct from retaining reasoning_efforts: [] on the model.
+      view
+      |> form("#provider-profile-edit-form", %{
+        models: %{"0" => %{override_reasoning: "false"}}
+      })
+      |> render_submit()
+
+      assert await_config_save(view) =~ "Provider profile saved."
+      [inherited_profile] = stored_providers()
+      assert hd(inherited_profile["models"]) == Map.delete(unsupported, "reasoning_efforts")
+      assert Enum.at(inherited_profile["models"], 1) == inherited
+      assert Map.drop(inherited_profile, ["models"]) == Map.drop(updated, ["models"])
+      updated = inherited_profile
+      assert EvoGit.Config.user_config()["llm"]["default_provider_profile"] == "explicit-account"
+
+      view
+      |> element(
+        ~s(button[phx-click="edit_provider_profile"][phx-value-profile_id="explicit-account"])
+      )
+      |> render_click()
+
+      refute has_element?(view, ~s(input[name="models[0][reasoning_efforts][]"]))
+
+      # Clearing checkbox groups sends ONLY their hidden blank sentinel, not
+      # an impossible browser-side empty array (which query encoding omits).
+      view
+      |> form("#provider-profile-edit-form", %{
+        reasoning_efforts: [""],
+        default_reasoning_effort: "",
+        off_peak_days: [""],
+        peak_hours: %{"0" => %{days: [""]}}
+      })
+      |> render_submit()
+
+      assert await_config_save(view) =~ "Provider profile saved."
+      [cleared] = stored_providers()
+      assert cleared["reasoning_efforts"] == []
+      refute Map.has_key?(cleared, "default_reasoning_effort")
+      refute Map.has_key?(cleared, "off_peak_days")
+      assert cleared["peak_hours"] == [%{"start" => "23:00", "end" => "02:00"}]
+
+      assert Map.drop(
+               cleared,
+               ~w(reasoning_efforts default_reasoning_effort off_peak_days peak_hours)
+             ) ==
+               Map.drop(
+                 updated,
+                 ~w(reasoning_efforts default_reasoning_effort off_peak_days peak_hours)
+               )
+
+      assert current_providers(view) == [cleared]
+    end
+
     test "Save, edit, toggle, rename, default and delete use rendered provider actions", %{
       conn: conn
     } do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
       settings_hook(view, "add_provider_profile", %{})
       settings_hook(view, "add_provider_model", %{})
+
+      view
+      |> form("#provider-profile-edit-form", %{
+        "profile_id_new" => "profile-1",
+        "models" => %{"0" => %{"model" => "example"}}
+      })
+      |> render_change(%{"_target" => ["profile_id_new"]})
+
       view |> form("#provider-profile-edit-form", provider_params()) |> render_submit()
       html = await_config_save(view)
       assert html =~ "Provider profile saved."
@@ -1100,6 +1446,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
       settings_hook(view, "add_provider_profile", %{})
       assert assigns(view).profile_form_draft["id"] == "profile-2"
 
+      view
+      |> form("#provider-profile-edit-form", %{profile_id_new: "profile-2"})
+      |> render_change(%{"_target" => ["profile_id_new"]})
+
       settings_hook(
         view,
         "save_provider_profile",
@@ -1113,7 +1463,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
       |> render_click()
 
       assert assigns(view).editing_profile_id == "profile-1"
-      assert has_element?(view, ~s(input[name="default_model"][value="example"]))
+
+      assert has_element?(
+               view,
+               ~s(select[name="default_model"] option[selected][value="example"])
+             )
+
       # Legacy callers can still toggle the same edit session off.
       settings_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
       assert assigns(view).editing_profile_id == nil
@@ -1203,12 +1558,17 @@ defmodule EvoDashWeb.SettingsLiveTest do
               "model" => "no-reasoning",
               "override_reasoning" => "true",
               "reasoning_efforts" => "",
-              "default_reasoning_effort" => "high"
+              "default_reasoning_effort" => ""
             }
           }
         })
 
-      settings_hook(view, "provider_profile_form_change", input)
+      settings_hook(
+        view,
+        "provider_profile_form_change",
+        Map.put(input, "_target", ["profile_id_new"])
+      )
+
       # Change keeps the nested browser draft; only Save flattens it at the parent boundary.
       assert assigns(view).profile_form_draft["generation"] == input["generation"]
 
@@ -1542,7 +1902,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
       before_config = current_providers(view)
 
       for {patch, message} <- [
-            {%{"profile_id_new" => "  "}, "Profile id cannot be empty."},
             {%{"profile_id_new" => "taken"}, "already exists"},
             {%{"provider" => ""}, "Provider cannot be empty."},
             {%{"default_model" => "", "models" => []},
@@ -1598,7 +1957,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
       settings_hook(view, "edit_model_profile", %{"profile_id" => "legacy"})
       assert assigns(view).editing_profile_id == "legacy"
-      assert has_element?(view, ~s(input[name="default_model"][value="old-model"]))
+
+      assert has_element?(
+               view,
+               ~s(select[name="default_model"] option[selected][value="old-model"])
+             )
+
       assert has_element?(view, ~s(input[name="generation[temperature]"][value="0.7"]))
 
       html =
