@@ -44,6 +44,7 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | `elixir_eval_output_truncation_test.exs` | Real-Dune stdout-budget integration: oversized prints truncate to the cap (valid UTF-8 prefix + marker, inside the cap) and the evaluation still succeeds, the per-item render cap at a wide budget, and untruncated baselines |
 | `elixir_eval_broker_output_test.exs` | Broker-level stdout truncation without Dune: genuine fixture plus controller/worker handshake, over-budget and one-megabyte items, exact-fit and exact-fill boundaries, exhausted-budget no-ops and codepoint-safe cuts |
 | `elixir_eval_wrapper_test.exs` | Actual public wrapper exact-code read/write/sudo approval, no-effect denial/timeout, lifecycle revalidation and argument validation |
+| `elixir_eval_allowlist_boot_test.exs` | Release-boot safety of the allowlist wrappers: a THROWAWAY-VM probe pins that a wrapper `@on_load` loads only itself (never a generated Base spec) and that `ensure_initialized/0` loads both Base specs at the parse chokepoint |
 
 ## Async-Safety Rationale
 
@@ -59,6 +60,7 @@ Every module carries an `@moduledoc` naming why it is `async: true` / `async: fa
 - `async: false` — `elixir_eval_configuration_test.exs` mutates the app-global AgentScheduler and CommandApproval timeout/service, suspending PeakHourEngine and restoring scheduler scalars and derived model-concurrency state.
 - `async: false` — `elixir_eval_direct_api_test.exs` uses the app-global CommandApproval service, pending roster and topic, and reads the global AgentScheduler and RemoteAPI agent roster without mutating scheduler settings, approval timeout or configuration files.
 - `async: false` — `elixir_eval_direct_configuration_test.exs` mutates the global AgentScheduler, CommandApproval timeout and `:config_dir_fun` app-env seam, suspending PeakHourEngine before snapshots and resuming it only after restoring scheduler fields, model defaults, pool state and both app-env keys.
+- `async: true` — `elixir_eval_allowlist_boot_test.exs` (nothing global: each assertion runs inside one throwaway `elixir` child process, so the probe observes and loads modules without ever touching this suite's code server; it only reads the compiled code path).
 - `async: true` — every other file: pure helpers, per-test `:tmp_dir` fixtures, process-local state, or uniquely keyed evaluator ETS authority rows backed by isolated Store/TaskRegistry instances.
 
 ## Reflect / Command Dispatch Coverage and Gaps
@@ -80,6 +82,11 @@ Sibling parser/approval suites route to `test/evo_git/{command_shell,command_app
 `elixir_eval_engine_test.exs` uses the genuine fixture and real Dune for Engine-only contracts: fully qualified Read discovery through interpreted callbacks, captured-registry projections, read/write/native separation, restricted runtime APIs, generic exception handling, fresh bindings and cumulative UTF-8 byte/output/inspection bounds.
 Its direct write/sudo calls model an already-approved tier and are explicitly not evidence that the public wrapper enforces manual approval.
 The nested Read discovery case intentionally performs no facade/allowlist warm-up and must also pass alone in a fresh BEAM, because earlier evaluation can conceal alias-initialization defects.
+`elixir_eval_allowlist_boot_test.exs` pins the wrappers' release-boot contract in a THROWAWAY VM (`elixir -pa <evo_git ebin> -pa <dune ebin> -e <probe>`, ebin dirs derived from `:code.which/1`), so its assertions can observe not-yet-loaded modules without touching this suite's code server.
+Its `on_load` stage proves that loading a wrapper loads exactly that module (never a `*Allowlist.Base` sibling, which is what an embedded-mode boot cannot survive) and materializes exactly its own alias atoms.
+Its `chokepoint` stage proves cold write-first `ReadAllowlist.ensure_initialized/0` / `WriteAllowlist.ensure_initialized/0 == :ok`, both Base specs loaded afterwards, and the alias split `atoms(:write) -- atoms(:read) == [:Write]`.
+Embedded boot mode cannot be requested from the stock CLI (no `code:set_mode/1` on OTP 29, and `--erl "-mode embedded"` cannot boot an `-e` script), so the probe pins the invariant that makes embedded boot safe rather than the mode itself.
+The probe's `System.cmd` runs inside a bounded `Task.yield/2` (60 s, brutal kill on expiry) because `System.cmd` itself has no timeout option.
 The production contract is documented at `apps/evo_git/lib/evo_git/agent/tools/elixir_eval/CONTEXT.md`.
 Keep pure projection/validation/render/ancestry tests separate from real-Dune engine, authorization/broker, process-cleanup and public-wrapper approval integration suites.
 A valid evaluator fixture needs production-shaped AgentState/SchedMeta rows with unique integer ids, an isolated running reflect task, a live SelfReflective owner Task/spec and an actual descendant tool process; `Process.put(:repo_less, true)` alone must never authorize it.
