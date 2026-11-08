@@ -5665,7 +5665,21 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       html = render_change(view, "select_provider_profile", %{"provider_profile_id" => ""})
       assert assigns(view)[:selected_model_spec] == %{}
       assert html =~ "Auto (by rules)"
-      assert has_element?(view, ~s(select[name="provider_profile_id"] option[value=""][selected]))
+
+      # The capsule's Auto row is the blank provider item (selected, active)
+      # and the drill row mirrors it; there is no provider `<select>` at all.
+      refute has_element?(view, "#task-llm-selection select")
+
+      assert has_element?(
+               view,
+               ~s(#task-llm-selection-provider-list [role="option"][phx-value-provider_profile_id=""][aria-selected="true"])
+             )
+
+      assert has_element?(
+               view,
+               "#task-llm-selection-provider .capsule-drill-value",
+               "Auto (by rules)"
+             )
 
       # Seed a real git repo so the doomed wrapper's life is pure validation
       # (make_git_repo!/1) — see "task_submit clears the prompt".
@@ -5755,9 +5769,41 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       await_async_loads(view)
       refute render(view) =~ "Auto (by rules)"
 
+      # Both fused capsules carry the shared client hook; only the model capsule
+      # declares an initial `data-capsule-view`, and no provider `<select>` or
+      # `phx-change` selection control exists anywhere in the picker.
+      assert has_element?(view, ~s(#mode-speed-capsule[phx-hook="CapsulePanel"]))
+
       assert has_element?(
                view,
-               ~s(#task-llm-selection-provider option[value="account-a"][selected])
+               ~s(#task-llm-selection[phx-hook="CapsulePanel"][data-capsule-view="model"])
+             )
+
+      assert has_element?(view, ~s(#task-llm-selection .capsule-view[data-view="model"]))
+      assert has_element?(view, ~s(#task-llm-selection .capsule-view[data-view="provider"]))
+      assert has_element?(view, ~s(#task-llm-selection-provider[data-capsule-drill="provider"]))
+      assert has_element?(view, ~s(#task-llm-selection-provider-list[role="listbox"]))
+      assert has_element?(view, ~s(#task-llm-selection .capsule-back[data-capsule-back]))
+      assert has_element?(view, "#task-form .input-controls #task-llm-selection")
+      refute has_element?(view, "#task-llm-selection select")
+      refute render(view) =~ ~s(phx-change="select_provider_profile")
+
+      # Ordered provider inventory (blank/Auto row first, then the configured
+      # profile) and the selected row.
+      assert render(view)
+             |> Floki.parse_document!()
+             |> Floki.find("#task-llm-selection-provider-list [role=\"option\"]")
+             |> Floki.attribute("phx-value-provider_profile_id") == ["", "account-a"]
+
+      assert has_element?(
+               view,
+               ~s(#task-llm-selection-provider-list [role="option"][phx-value-provider_profile_id="account-a"][aria-selected="true"])
+             )
+
+      assert has_element?(
+               view,
+               "#task-llm-selection-provider .capsule-drill-value",
+               "Test account"
              )
 
       assert has_element?(

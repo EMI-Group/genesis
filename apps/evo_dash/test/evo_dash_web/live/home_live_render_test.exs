@@ -70,7 +70,22 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
         model_selection_enabled: true
       )
 
-    assert attr(dom, "#chat-llm-selection-provider", "phx-change") == ["select_provider_profile"]
+    # Fused-capsule root: the shared client hook owns the active panel view.
+    assert attr(dom, "#chat-llm-selection", "phx-hook") == ["CapsulePanel"]
+    assert attr(dom, "#chat-llm-selection", "data-capsule-view") == ["model"]
+
+    # ONE panel with two sibling views (model + provider drill-down) — there is
+    # no provider `<select>` and no `phx-change` anywhere in the picker.
+    assert Floki.find(dom, "#chat-llm-selection .capsule-view[data-view='model']") != []
+    assert Floki.find(dom, "#chat-llm-selection .capsule-view[data-view='provider']") != []
+    assert Floki.find(dom, "#chat-llm-selection select") == []
+    assert Floki.find(dom, "#chat-llm-selection [phx-change]") == []
+
+    # The model view's drill row opens the provider list; the provider view's
+    # back row returns to the model list.
+    assert attr(dom, "#chat-llm-selection-provider", "data-capsule-drill") == ["provider"]
+    assert attr(dom, "#chat-llm-selection-provider-list", "role") == ["listbox"]
+    assert Floki.find(dom, "#chat-llm-selection .capsule-back[data-capsule-back]") != []
 
     assert attr(dom, "#chat-llm-selection-model .capsule-item[aria-selected='true']", "phx-click") ==
              [
@@ -85,7 +100,16 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
              "select_reasoning_effort"
            ]
 
-    assert attr(dom, "#chat-llm-selection-provider option[selected]", "value") == ["work-account"]
+    # Provider inventory/selection lives in the drill-down provider list: the
+    # selected row is the `aria-selected="true"` option carrying its profile id,
+    # and the drill row shows that profile's display name.
+    assert attr(
+             dom,
+             "#chat-llm-selection-provider-list [role='option'][aria-selected='true']",
+             "phx-value-provider_profile_id"
+           ) == ["work-account"]
+
+    assert text(dom, "#chat-llm-selection-provider .capsule-drill-value") == "Work"
 
     assert attr(
              dom,
@@ -102,11 +126,16 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
            ) ==
              ["1"]
 
-    assert text(dom, "#chat-llm-selection-provider option[value='']") == "Auto (by rules)"
+    assert text(
+             dom,
+             "#chat-llm-selection-provider-list .capsule-item[phx-value-provider_profile_id='']"
+           ) ==
+             "Auto (by rules)"
 
     # Placement: the picker lives in the composer card's control bar, inside
-    # the ONE `#chat-form` (the provider select needs that form owner), and is
-    # gone from the page header along with its old standalone form.
+    # the ONE `#chat-form` (its items carry their own click bindings, so no
+    # nested form or form owner is involved), and is gone from the page header
+    # along with its old standalone form.
     assert Floki.find(dom, "#chat-form #chat-composer-controls #chat-llm-selection") != []
     assert Floki.find(dom, "#chat-header #chat-llm-selection") == []
     assert Floki.find(dom, "form#chat-llm-selection-form") == []
@@ -114,8 +143,40 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
 
     dom = page(provider_profiles: profiles, model_selections: selections, model_spec: spec)
 
-    assert text(dom, "#chat-llm-selection-provider option[value='']") ==
+    assert text(
+             dom,
+             "#chat-llm-selection-provider-list .capsule-item[phx-value-provider_profile_id='']"
+           ) ==
              "Choose a provider profile"
+
+    # A persisted id that no longer exists renders as a disabled, invalid row
+    # that is never selected, and the drill row flags it too.
+    stale = %{"provider_profile_id" => "removed-account"}
+
+    dom = page(provider_profiles: profiles, model_selections: selections, model_spec: stale)
+
+    assert attr(dom, "#chat-llm-selection-provider", "aria-invalid") == ["true"]
+
+    assert attr(
+             dom,
+             "#chat-llm-selection-provider-list [role='option'][aria-invalid='true']",
+             "phx-value-provider_profile_id"
+           ) == ["removed-account"]
+
+    assert Floki.find(
+             dom,
+             "#chat-llm-selection-provider-list .capsule-item-placeholder[disabled]"
+           ) !=
+             []
+
+    assert attr(
+             dom,
+             "#chat-llm-selection-provider-list [role='option'][aria-selected='true']",
+             "phx-value-provider_profile_id"
+           ) == []
+
+    assert text(dom, "#chat-llm-selection-provider .capsule-drill-value") ==
+             "Unavailable profile: removed-account"
   end
 
   test "composer control bar pairs the picker with the send control inside one form" do
@@ -148,12 +209,14 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert Floki.find(dom, "#chat-form > textarea") != []
     assert Floki.find(dom, "#chat-form > textarea + #chat-composer-controls") != []
 
-    # The picker's select carries its OWN change binding, which LiveView
-    # dispatches in preference to the enclosing form's `chat_input`; the
-    # textarea has no own binding, so typing still hits the form event.
-    assert attr(dom, "#chat-form #chat-llm-selection-provider", "phx-change") == [
-             "select_provider_profile"
-           ]
+    # Provider rows carry their OWN click bindings, which LiveView dispatches
+    # to `select_provider_profile` with the row's profile id; the textarea has
+    # no own binding, so typing still hits the enclosing form's `chat_input`.
+    assert attr(
+             dom,
+             "#chat-form #chat-llm-selection-provider-list [phx-click='select_provider_profile']",
+             "phx-value-provider_profile_id"
+           ) == ["", "work-account"]
 
     assert attr(dom, "#chat-form textarea", "phx-change") == []
   end

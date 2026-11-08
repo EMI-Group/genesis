@@ -1829,11 +1829,26 @@ defmodule EvoDashWeb.HomeLiveTest do
       }
     end
 
-    defp selected_option(html, id) do
+    # Fused-capsule picker: the selected provider profile is the drill-down
+    # provider-list item carrying BOTH `aria-selected="true"` and
+    # `.capsule-item-active`; its id is `phx-value-provider_profile_id`.
+    defp selected_provider(html) do
       html
       |> Floki.parse_document!()
-      |> Floki.find("##{id} option[selected]")
-      |> Floki.attribute("value")
+      |> Floki.find(
+        "#chat-llm-selection-provider-list .capsule-item-active[aria-selected=\"true\"]"
+      )
+      |> Floki.attribute("phx-value-provider_profile_id")
+    end
+
+    # The drill row's right-aligned value mirrors the current profile's display
+    # label (blank -> Auto/choose text, unknown -> "Unavailable profile: …").
+    defp provider_drill_label(html) do
+      html
+      |> Floki.parse_document!()
+      |> Floki.find("#chat-llm-selection-provider .capsule-drill-value")
+      |> Floki.text()
+      |> String.trim()
     end
 
     # Fused-capsule picker: the selected model is the listbox button with
@@ -1905,10 +1920,24 @@ defmodule EvoDashWeb.HomeLiveTest do
       write_provider_profile_config()
       {:ok, view, html} = live(conn, "/help")
 
-      assert present?(
-               html,
-               ~s(#chat-llm-selection-provider[name="provider_profile_id"][phx-change="select_provider_profile"])
-             )
+      # The capsule root: the shared client hook owns the active panel view, and
+      # the model view is the initial one.
+      assert present?(html, ~s(#chat-llm-selection[phx-hook="CapsulePanel"]))
+      assert present?(html, ~s(#chat-llm-selection[data-capsule-view="model"]))
+
+      # ONE panel with two sibling views (model, then the provider drill-down);
+      # the drill row opens the provider list and the back row returns.
+      assert present?(html, ~s(#chat-llm-selection .capsule-view[data-view="model"]))
+      assert present?(html, ~s(#chat-llm-selection .capsule-view[data-view="provider"]))
+      assert present?(html, ~s(#chat-llm-selection-provider[data-capsule-drill="provider"]))
+      assert present?(html, ~s(#chat-llm-selection-provider-list[role="listbox"]))
+      assert present?(html, ~s(#chat-llm-selection .capsule-back[data-capsule-back]))
+
+      # There is no provider `<select>` and no `phx-change` in the picker: its
+      # rows carry their own click events.
+      refute present?(html, ~s(#chat-llm-selection select))
+      refute present?(html, ~s(#chat-llm-selection [phx-change]))
+      refute present?(html, ~s(#chat-llm-selection [name="provider_profile_id"]))
 
       assert present?(
                html,
@@ -1933,14 +1962,17 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute present?(html, "form#chat-llm-selection-form")
       dom = Floki.parse_document!(html)
 
-      assert dom |> Floki.find("#chat-llm-selection-provider option") |> Floki.attribute("value") ==
+      assert dom
+             |> Floki.find("#chat-llm-selection-provider-list [role=\"option\"]")
+             |> Floki.attribute("phx-value-provider_profile_id") ==
                ["", "first-account", "work-account"]
 
       assert dom
              |> Floki.find("#chat-llm-selection-model .capsule-item")
              |> Floki.attribute("phx-value-model") == ["", "fast-model", "reasoned-model"]
 
-      assert selected_option(html, "chat-llm-selection-provider") == ["work-account"]
+      assert selected_provider(html) == ["work-account"]
+      assert provider_drill_label(html) == "Work"
       assert selected_model(html) == "reasoned-model"
       assert selected_reasoning_label(html) == "Medium"
       assert assigns(view).model_spec == work_spec()
@@ -1965,6 +1997,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       assert assigns(view).provider_profiles == []
       assert present?(html, ~s(#chat-llm-selection-provider[disabled]))
+      assert provider_drill_label(html) == "Choose a provider profile"
 
       assert present?(
                html,
@@ -2008,7 +2041,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, html} = live(conn, "/help")
       assert assigns(view).chat_id == chat_id
       assert assigns(view).model_spec == %{}
-      assert selected_option(html, "chat-llm-selection-provider") == [""]
+      assert selected_provider(html) == [""]
+      assert provider_drill_label(html) == "Choose a provider profile"
       refute present?(html, "#chat-llm-selection-reasoning")
 
       send_and_await_terminal(fn ->
@@ -2060,7 +2094,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, html} = live(conn, "/help")
 
       # Placement: the capsule is a control in the composer card, not the
-      # header, and `#chat-form` is its form owner.
+      # header; it renders inside the ONE `#chat-form` but owns its own
+      # `phx-click` bindings, so no form submission is involved.
       assert present?(html, "#chat-form #chat-composer-controls #chat-llm-selection")
       refute present?(html, "#chat-header #chat-llm-selection")
 
@@ -2068,10 +2103,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       render_change(view, "chat_input", %{"message" => "draft text"})
       assert assigns(view).chat_draft == "draft text"
 
-      # Capsule changes carry ONLY their own field (the picker's select owns its
-      # `phx-change`, so LiveView serializes that input alone instead of the
-      # enclosing form) and mutate the selection only: the draft and transcript
-      # are untouched, i.e. the composer's `chat_input` never fired.
+      # Capsule selections carry ONLY their own `phx-value-*` payload (the
+      # picker's items are plain buttons with their own click events, never a
+      # form field) and mutate the selection only: the draft and transcript are
+      # untouched, i.e. the composer's `chat_input` never fired.
       render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
       assert assigns(view).model_spec == work_spec("high")
       assert assigns(view).chat_draft == "draft text"
@@ -2141,7 +2176,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).model_spec == expected
       assert assigns(view).selected_model_id == nil
       assert assigns(view).model_selection_scope == {nil, node()}
-      assert selected_option(html, "chat-llm-selection-provider") == ["first-account"]
+      assert selected_provider(html) == ["first-account"]
+      assert provider_drill_label(html) == "Personal"
       assert EvoDash.ChatHistory.get_state(chat_id).model_spec == expected
     end
 
@@ -2196,7 +2232,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).chat_id == chat_id
       assert assigns(view).model_spec == work_spec("high")
       assert assigns(view).model_selection_scope == {nil, node()}
-      assert selected_option(html, "chat-llm-selection-provider") == ["work-account"]
+      assert selected_provider(html) == ["work-account"]
+      assert provider_drill_label(html) == "Work"
       assert selected_reasoning_index(html) == "2"
       assert selected_reasoning_label(html) == "High"
     end
