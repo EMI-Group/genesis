@@ -256,7 +256,9 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
       # The deepseek API-key profile renders no status line of any kind.
       row = profile_row(html, @deepseek_profile)
-      assert row =~ "profile-4 · deepseek"
+      identity = Floki.parse_fragment!(row)
+      assert identity |> Floki.find("h4") |> Floki.text() |> String.trim() == @deepseek_profile
+      assert identity |> Floki.find("p.font-mono") |> Floki.text() |> String.trim() == "deepseek"
       assert row =~ "deepseek-v4-pro"
       refute row =~ "Recheck"
       refute row =~ "Login detected"
@@ -334,7 +336,11 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       # host-dependent (a readable ~/.codex/auth.json with no
       # ~/.claude/.credentials.json yields no Claude guidance).
       assert outside =~ ~s(id="provider-profile-edit-form")
-      assert outside =~ "profile-2 · openai_codex"
+      sibling = outside |> profile_row(@oauth_only_profile) |> Floki.parse_fragment!()
+      assert sibling |> Floki.find("h4") |> Floki.text() |> String.trim() == @oauth_only_profile
+
+      assert sibling |> Floki.find("p.font-mono") |> Floki.text() |> String.trim() ==
+               "openai_codex"
 
       assert count_occurrences(html, "claude setup-token") ==
                count_occurrences(outside, "claude setup-token")
@@ -483,6 +489,296 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       # in between, which never moves the sequence backwards.
       render_hook(view, "refresh_auth_status", %{})
       assert assigns(view).auth_status_seq == before_seq + 2
+    end
+  end
+
+  describe "rendered provider editor persistence" do
+    test "clearing only model reasoning checkboxes removes the untouched high default", %{
+      conn: conn
+    } do
+      seed_canonical_profile("""
+      reasoning_efforts = ["custom", "low", "high"]
+      default_reasoning_effort = "high"
+      [[llm.providers.models]]
+      model = "fixture-model"
+      reasoning_efforts = ["custom", "high"]
+      default_reasoning_effort = "high"
+      """)
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_canonical_profile(view)
+      before = persisted_models()
+
+      assert has_element?(view, "details#provider-model-details-0:not([open])")
+      assert has_element?(view, "details#provider-profile-advanced:not([open])")
+
+      assert has_element?(
+               view,
+               ~s(input[type="hidden"][name="models[0][reasoning_efforts][]"][value=""])
+             )
+
+      assert has_element?(
+               view,
+               ~s(input[type="checkbox"][name="models[0][override_reasoning]"][checked])
+             )
+
+      assert has_element?(
+               view,
+               ~s(select[name="models[0][default_reasoning_effort]"] option[selected][value="high"])
+             )
+
+      # Change ONLY the checkbox inventory. Both real form events serialize the
+      # existing high select; do not blank it to make the save pass. [""] is the
+      # browser's hidden sentinel, whereas [] would disappear in query encoding.
+      cleared = %{
+        "models" => %{"0" => %{"override_reasoning" => "true", "reasoning_efforts" => [""]}}
+      }
+
+      view
+      |> form("#provider-profile-edit-form", cleared)
+      |> render_change(%{"_target" => ["models", "0", "reasoning_efforts"]})
+
+      row = hd(assigns(view).profile_form_draft["models"])
+      assert row["override_reasoning"] == "true"
+      assert row["reasoning_efforts"] == [""]
+      assert row["default_reasoning_effort"] == "high"
+      assert persisted_models() == before
+
+      assert has_element?(
+               view,
+               ~s(select[name="models[0][default_reasoning_effort]"] option[selected][value="high"])
+             )
+
+      view |> form("#provider-profile-edit-form", cleared) |> render_submit()
+      assert await_profile_save(view) =~ "Provider profile saved."
+      assert assigns(view).flash == %{"info" => "Provider profile saved."}
+      [saved] = persisted_models()
+      assert saved["models"] == [%{"model" => "fixture-model", "reasoning_efforts" => []}]
+      assert Map.drop(saved, ["models"]) == Map.drop(hd(before), ["models"])
+
+      {:ok, restored, _html} = mount_settings(conn, ~p"/settings")
+      assert current_models(restored) == [saved]
+      open_canonical_profile(restored)
+
+      assert has_element?(
+               restored,
+               ~s(input[type="checkbox"][name="models[0][override_reasoning]"][checked])
+             )
+
+      refute has_element?(restored, ~s(input[name="models[0][reasoning_efforts][]"][checked]))
+
+      refute has_element?(
+               restored,
+               ~s(select[name="models[0][default_reasoning_effort]"] option[selected][value="high"])
+             )
+    end
+
+    test "default-only edits retain the UI after core rejection and save after adding a model row",
+         %{
+           conn: conn
+         } do
+      seed_canonical_profile("models = []")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_canonical_profile(view)
+      assert has_element?(view, ~s(input[name="default_model_name"][value="fixture-model"]))
+      refute has_element?(view, ~s(input[name="models[0][model]"]))
+      before = persisted_models()
+
+      view
+      |> form("#provider-profile-edit-form", %{default_model_name: "renamed-model"})
+      |> render_change(%{"_target" => ["default_model_name"]})
+
+      assert assigns(view).profile_form_draft["default_model"] == "renamed-model"
+      assert persisted_models() == before
+
+      assert has_element?(
+               view,
+               ~s(select[name="default_model"] option[selected][value="renamed-model"])
+             )
+
+      before_disk = File.read!(EvoGit.Config.config_path())
+      view |> form("#provider-profile-edit-form") |> render_submit()
+      refute await_profile_save(view) =~ "Provider profile saved."
+
+      # Helper-only profiles are faithfully editable, but core validation still
+      # requires a nested inventory containing the selected default.
+      assert assigns(view).flash["error"] =~
+               ~s(default_model must be one of [], got \\"renamed-model\\")
+
+      assert assigns(view).editing_profile_id == "rendered-account"
+      assert assigns(view).profile_form_draft["models"] == []
+      assert assigns(view).profile_form_draft["default_model"] == "renamed-model"
+      assert has_element?(view, ~s(input[name="default_model_name"][value="renamed-model"]))
+      refute has_element?(view, ~s(input[name="models[0][model]"]))
+      assert persisted_models() == before
+      assert current_models(view) == before
+      assert File.read!(EvoGit.Config.config_path()) == before_disk
+
+      view |> element(~s(button[phx-click="add_provider_model"])) |> render_click()
+      assert has_element?(view, ~s(input[name="models[0][model]"][value=""]))
+      refute has_element?(view, ~s(input[name="default_model_name"]))
+
+      view
+      |> form("#provider-profile-edit-form", %{models: %{"0" => %{model: "renamed-model"}}})
+      |> render_change(%{"_target" => ["models", "0", "model"]})
+
+      view |> form("#provider-profile-edit-form") |> render_submit()
+      assert await_profile_save(view) =~ "Provider profile saved."
+      assert assigns(view).flash["info"] == "Provider profile saved."
+      [saved] = persisted_models()
+      assert saved["default_model"] == "renamed-model"
+      assert saved["models"] == [%{"model" => "renamed-model"}]
+      refute Map.has_key?(saved, "default_model_name")
+
+      {:ok, restored, _html} = mount_settings(conn, ~p"/settings")
+      assert current_models(restored) == [saved]
+      open_canonical_profile(restored)
+      assert has_element?(restored, ~s(input[name="models[0][model]"][value="renamed-model"]))
+
+      assert has_element?(
+               restored,
+               ~s(select[name="default_model"] option[selected][value="renamed-model"])
+             )
+
+      refute has_element?(restored, ~s(input[name="default_model_name"]))
+    end
+
+    test "blank default-only name fails without writing and supports correction and remount", %{
+      conn: conn
+    } do
+      seed_canonical_profile("models = []")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_canonical_profile(view)
+      before = persisted_models()
+
+      view
+      |> form("#provider-profile-edit-form", %{default_model_name: " "})
+      |> render_change(%{"_target" => ["default_model_name"]})
+
+      view |> form("#provider-profile-edit-form") |> render_submit()
+      html = await_profile_save(view)
+
+      assert has_element?(
+               view,
+               "#provider-profile-errors[role=alert]",
+               "Check the profile settings before saving."
+             )
+
+      refute html =~ "Provider profile saved."
+      assert assigns(view).editing_profile_id == "rendered-account"
+      assert assigns(view).profile_form_draft["default_model_name"] == " "
+      assert persisted_models() == before
+      assert current_models(view) == before
+
+      view
+      |> form("#provider-profile-edit-form", %{default_model_name: "corrected-model"})
+      |> render_change(%{"_target" => ["default_model_name"]})
+
+      assert has_element?(
+               view,
+               ~s(select[name="default_model"] option[selected][value="corrected-model"])
+             )
+
+      before_disk = File.read!(EvoGit.Config.config_path())
+      view |> form("#provider-profile-edit-form") |> render_submit()
+      refute await_profile_save(view) =~ "Provider profile saved."
+
+      assert assigns(view).flash["error"] =~
+               ~s(default_model must be one of [], got \\"corrected-model\\")
+
+      assert assigns(view).editing_profile_id == "rendered-account"
+      assert assigns(view).profile_form_draft["models"] == []
+      assert assigns(view).profile_form_draft["default_model"] == "corrected-model"
+      assert has_element?(view, ~s(input[name="default_model_name"][value="corrected-model"]))
+      refute has_element?(view, ~s(input[name="models[0][model]"]))
+      assert persisted_models() == before
+      assert current_models(view) == before
+      assert File.read!(EvoGit.Config.config_path()) == before_disk
+
+      view |> element(~s(button[phx-click="add_provider_model"])) |> render_click()
+      assert has_element?(view, ~s(input[name="models[0][model]"][value=""]))
+      refute has_element?(view, ~s(input[name="default_model_name"]))
+
+      view
+      |> form("#provider-profile-edit-form", %{models: %{"0" => %{model: "corrected-model"}}})
+      |> render_change(%{"_target" => ["models", "0", "model"]})
+
+      view |> form("#provider-profile-edit-form") |> render_submit()
+      assert await_profile_save(view) =~ "Provider profile saved."
+      assert assigns(view).flash["info"] == "Provider profile saved."
+      [saved] = persisted_models()
+      assert saved["default_model"] == "corrected-model"
+      assert saved["models"] == [%{"model" => "corrected-model"}]
+      refute Map.has_key?(saved, "default_model_name")
+
+      {:ok, restored, _html} = mount_settings(conn, ~p"/settings")
+      assert current_models(restored) == [saved]
+      open_canonical_profile(restored)
+      assert has_element?(restored, ~s(input[name="models[0][model]"][value="corrected-model"]))
+
+      assert has_element?(
+               restored,
+               ~s(select[name="default_model"] option[selected][value="corrected-model"])
+             )
+
+      refute has_element?(restored, ~s(input[name="default_model_name"]))
+    end
+
+    test "closed Advanced preserves, edits and clears the API-key environment variable", %{
+      conn: conn
+    } do
+      seed_canonical_profile("""
+      api_key_env_var = "SAVED_ACCOUNT_KEY"
+      reasoning_efforts = []
+      [[llm.providers.models]]
+      model = "fixture-model"
+      """)
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      open_canonical_profile(view)
+      assert has_element?(view, "details#provider-profile-advanced:not([open])")
+
+      assert has_element?(
+               view,
+               ~s(#provider-profile-advanced input[name="api_key_env_var"][value="SAVED_ACCOUNT_KEY"])
+             )
+
+      before = persisted_models()
+      # An unrelated edit must serialize even the unopened Advanced control.
+      view |> form("#provider-profile-edit-form", %{name: "Renamed account"}) |> render_submit()
+      assert await_profile_save(view) =~ "Provider profile saved."
+      [preserved] = persisted_models()
+      assert preserved == Map.put(hd(before), "name", "Renamed account")
+
+      open_canonical_profile(view)
+
+      view
+      |> form("#provider-profile-edit-form", %{api_key_env_var: "NEW_ACCOUNT_KEY"})
+      |> render_change(%{"_target" => ["api_key_env_var"]})
+
+      assert persisted_models() == [preserved]
+      view |> form("#provider-profile-edit-form") |> render_submit()
+      assert await_profile_save(view) =~ "Provider profile saved."
+      [edited] = persisted_models()
+      assert edited == Map.put(preserved, "api_key_env_var", "NEW_ACCOUNT_KEY")
+      refute Map.has_key?(edited, "api_key_env")
+
+      {:ok, restored, _html} = mount_settings(conn, ~p"/settings")
+      open_canonical_profile(restored)
+      assert has_element?(restored, ~s(input[name="api_key_env_var"][value="NEW_ACCOUNT_KEY"]))
+
+      restored
+      |> form("#provider-profile-edit-form", %{api_key_env_var: ""})
+      |> render_change(%{"_target" => ["api_key_env_var"]})
+
+      restored |> form("#provider-profile-edit-form") |> render_submit()
+      assert await_profile_save(restored) =~ "Provider profile saved."
+      assert persisted_models() == [Map.delete(edited, "api_key_env_var")]
+
+      {:ok, cleared, _html} = mount_settings(conn, ~p"/settings")
+      assert current_models(cleared) == persisted_models()
+      open_canonical_profile(cleared)
+      assert has_element?(cleared, ~s(input[name="api_key_env_var"][value=""]))
     end
   end
 
@@ -922,6 +1218,34 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   # `blocked_oauth_file/1` — so the stale-guard tests can refute a verdict.
   defp assert_oauth_baseline(baseline) do
     assert Enum.sort(Map.keys(baseline)) == [@oauth_profile, @oauth_only_profile]
+  end
+
+  defp open_canonical_profile(view) do
+    view
+    |> element(
+      ~s(button[phx-click="edit_provider_profile"][phx-value-profile_id="rendered-account"])
+    )
+    |> render_click()
+  end
+
+  # Canonical fixture for real form serialization, independent of the legacy
+  # migration fixtures below. No connection test or task launch is performed.
+  defp seed_canonical_profile(fields) do
+    path = EvoGit.Config.config_path()
+    File.mkdir_p!(Path.dirname(path))
+
+    File.write!(path, """
+    [llm]
+    default_provider_profile = "rendered-account"
+    [[llm.providers]]
+    id = "rendered-account"
+    name = "Rendered account"
+    provider = "openai"
+    auth_mode = "api_key"
+    concurrency = 3
+    default_model = "fixture-model"
+    #{fields}
+    """)
   end
 
   # Seeds the four-profile fixture: an anthropic profile explicitly on OAuth,

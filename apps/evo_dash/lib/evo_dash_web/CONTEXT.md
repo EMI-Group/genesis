@@ -12,6 +12,8 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 - Canonical provider/model/reasoning selection and server-only configuration ownership → `live/CONTEXT.md`, `live/projects_live/`, `live/home_live/` and `components/llm_selection_components.ex`.
 - The "Model" label rendered by the Agents detail panel and the task card — ONE pure derivation (canonical `model_spec` → `llm_model` → legacy `model_id` → nil, plus a task-opts wrapper) in `model_label.ex` (`EvoDashWeb.ModelLabel`) → `live/agents_live/CONTEXT.md`, `components/task_card_components/CONTEXT.md`.
 - Canonical Settings provider editor, creation identity, scoped asynchronous persistence and field errors → `live/settings_live/CONTEXT.md` and `components/settings_components/CONTEXT.md`.
+- Progressive Settings provider editor — catalog provider choices, authentication, compact model rows and real default-model/reasoning selects stay visible; optional account settings (including the nonsecret API-key environment-variable name) and model overrides live in collapsed Advanced/model details → `components/settings_components/CONTEXT.md`.
+- Settings editor state and parsing — the zero-row `default_model_name` helper synchronizes with the default-model select without synthesizing overrides, and explicitly clearing a model's reasoning override inventory removes its obsolete default while absent overrides retain inheritance → `live/settings_live/CONTEXT.md`.
 - Default-only provider save validation is core-owned; the current validator rejects a nonempty default model with an empty override list, so the dashboard preserves the rejected draft rather than inventing an override row.
 
 ## API Surface

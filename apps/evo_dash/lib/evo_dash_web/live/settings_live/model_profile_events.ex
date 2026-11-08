@@ -77,11 +77,14 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
   end
 
   def add_model_profile(socket, _params) do
+    draft = ProviderProfiles.new_draft(socket.assigns.file_config)
+
     {:noreply,
      socket
      |> assign(
        editing_profile_id: :new,
-       profile_form_draft: ProviderProfiles.new_draft(socket.assigns.file_config),
+       profile_form_draft: draft,
+       profile_generated_id: draft["id"],
        profile_form_errors: %{},
        profile_save_token: nil,
        profile_advanced_open: nil
@@ -103,6 +106,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
              assign(socket,
                editing_profile_id: id,
                profile_form_draft: ProviderProfiles.draft(profile),
+               profile_generated_id: nil,
                profile_form_errors: %{},
                profile_save_token: nil,
                profile_advanced_open: nil
@@ -113,12 +117,21 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
 
   def cancel_edit_model_profile(socket, _params), do: {:noreply, clear_editor(socket)}
 
-  @doc "Snapshot of the entire form. Nested models are numerically ordered string-keyed maps."
+  @doc "Snapshots supplied form fields over the draft; nested rows remain numerically ordered."
   def model_profile_form_change(socket, params) when is_map(params) do
     if socket.assigns[:editing_profile_id] do
+      generated_id =
+        if params["_target"] in [["profile_id_new"], ["id"]],
+          do: nil,
+          else: socket.assigns[:profile_generated_id]
+
       {:noreply,
        assign(socket,
-         profile_form_draft: ProviderProfiles.normalize_draft(params),
+         profile_form_draft:
+           params
+           |> ProviderProfiles.submission(socket.assigns[:profile_form_draft])
+           |> ProviderProfiles.normalize_draft(),
+         profile_generated_id: generated_id,
          profile_form_errors: %{},
          profile_save_token: nil
        )}
@@ -133,8 +146,19 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
   def save_model_profile(socket, params, submitted_draft \\ nil) do
     editing_id = socket.assigns[:editing_profile_id]
     old_id = if editing_id == :new, do: nil, else: editing_id
-    params = ProviderProfiles.submission(params, socket.assigns[:profile_form_draft])
-    id = text(params["profile_id_new"] || params["id"])
+
+    submitted =
+      ProviderProfiles.submission(submitted_draft || params, socket.assigns[:profile_form_draft])
+
+    params =
+      ProviderProfiles.editor_identity(
+        submitted,
+        socket.assigns.file_config,
+        editing_id,
+        socket.assigns[:profile_generated_id]
+      )
+
+    id = text(params["profile_id_new"])
     profiles = ProviderProfiles.profiles(socket.assigns.file_config)
     original = if is_nil(old_id), do: %{}, else: find_profile(socket, old_id) || %{}
 
@@ -145,13 +169,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
       # initiation. The parent must pass raw UI params when it flattens generation.
       socket =
         assign(socket,
-          profile_form_draft:
-            ProviderProfiles.normalize_draft(
-              ProviderProfiles.submission(
-                submitted_draft || params,
-                socket.assigns[:profile_form_draft]
-              )
-            ),
+          profile_form_draft: ProviderProfiles.normalize_draft(submitted),
           profile_form_errors: %{},
           profile_save_token: nil
         )
@@ -297,9 +315,16 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
       if rows == current_rows do
         {:noreply, socket}
       else
+        draft = ProviderProfiles.submission(%{key => rows}, draft)
+
+        draft =
+          if key == "models" and rows == [],
+            do: Map.put(draft, "default_model_name", draft["default_model"] || ""),
+            else: draft
+
         {:noreply,
          assign(socket,
-           profile_form_draft: Map.put(draft, key, rows),
+           profile_form_draft: draft,
            profile_form_errors: %{},
            profile_save_token: nil
          )}
@@ -331,6 +356,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
       assign(socket,
         editing_profile_id: nil,
         profile_form_draft: nil,
+        profile_generated_id: nil,
         profile_form_errors: %{},
         profile_save_token: nil,
         profile_advanced_open: nil

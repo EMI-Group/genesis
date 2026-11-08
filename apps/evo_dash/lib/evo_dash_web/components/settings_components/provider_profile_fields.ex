@@ -45,36 +45,110 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
     """
   end
 
+  attr(:fields, :map, required: true)
+
+  def provider_select(assigns) do
+    assigns =
+      assigns
+      |> assign(:selected, value(assigns.fields, "provider"))
+      |> assign(:options, provider_options())
+
+    ~H"""
+    <div class="min-w-0">
+      <label for="provider-field-provider" class="mb-1 block text-xs font-medium text-base-content/70">
+        {gettext("Provider")}
+      </label>
+      <select id="provider-field-provider" name="provider" required class="select select-sm w-full">
+        <option value="" selected={@selected == ""}>{gettext("Choose a provider")}</option>
+        <option
+          :if={@selected != "" and not Enum.any?(@options, fn {id, _} -> id == @selected end)}
+          value={@selected}
+          selected
+        >
+          {gettext("Configured provider: %{provider}", provider: @selected)}
+        </option>
+        <option :for={{id, label} <- @options} value={id} selected={id == @selected}>{label}</option>
+      </select>
+    </div>
+    """
+  end
+
   attr(:prefix, :string, required: true)
   attr(:fields, :map, required: true)
   attr(:model_override, :boolean, default: false)
+  attr(:show_default, :boolean, default: true)
+  attr(:suggestions, :list, default: [])
 
   def reasoning_fields(assigns) do
-    assigns = assign(assigns, :efforts, efforts(value(assigns.fields, "reasoning_efforts", [])))
+    selected = efforts(value(assigns.fields, "reasoning_efforts", []))
+    options = Enum.uniq(selected ++ efforts(assigns.suggestions))
+
+    # Catalog values are suggestions, not automatic config changes or a promise
+    # of wire support. Configured custom values stay first in submission order.
+    assigns =
+      assigns
+      |> assign(:efforts, selected)
+      |> assign(:options, options)
+      |> assign(:advanced_options, ~w(none minimal low medium high xhigh max default) -- options)
+      |> assign(:name, nested(assigns.prefix, "reasoning_efforts") <> "[]")
 
     ~H"""
     <fieldset class="min-w-0 space-y-3 rounded-lg border border-base-300 p-3">
-      <%!-- zh_CN: 推理等级列表是有序能力清单，不是任务的速度/质量设置。 --%>
-      <legend class="px-1 text-xs font-semibold">{gettext("Reasoning support and defaults")}</legend>
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <.profile_field
-          name={nested(@prefix, "reasoning_efforts")}
-          label={gettext("Supported reasoning levels (ordered)")}
-          value={inventory_text(value(@fields, "reasoning_efforts", []))}
-          help={
-            if @model_override,
-              do:
-                gettext(
-                  "Comma-separated, lowest to highest. Blank explicitly disables reasoning for this model."
-                ),
-              else:
-                gettext(
-                  "Comma-separated, lowest to highest; for example: low, medium, high. Blank means no advertised reasoning support."
-                )
-          }
-        />
-        <.reasoning_default prefix={@prefix} fields={@fields} efforts={@efforts} />
+      <%!-- zh_CN: 勾选的是模型支持的有序推理等级清单，不是任务速度；保留已有的自定义等级。 --%>
+      <legend class="px-1 text-xs font-semibold">{gettext("Reasoning levels")}</legend>
+      <p class="text-xs leading-relaxed text-base-content/70">
+        {if @suggestions == [],
+          do:
+            gettext(
+              "No verified catalog level list is available for this selection. Keep configured levels or use advanced choices after checking your provider."
+            ),
+          else:
+            gettext(
+              "Catalog suggestions are shown alongside configured levels. For shared defaults, suggestions must appear in every configured model's catalog entry. Verify support with your provider; nothing is selected automatically."
+            )}
+      </p>
+      <input type="hidden" name={@name} value="" />
+      <div class="flex flex-wrap gap-2">
+        <label
+          :for={effort <- @options}
+          class="flex cursor-pointer items-center gap-1.5 rounded-md border border-base-300 bg-base-100 px-2 py-1 text-xs"
+        >
+          <input
+            type="checkbox"
+            name={@name}
+            value={effort}
+            checked={effort in @efforts}
+            class="checkbox checkbox-xs"
+          />{effort}
+        </label>
       </div>
+      <details :if={@advanced_options != []} class="rounded-md border border-base-300 p-2">
+        <summary class="cursor-pointer text-xs font-medium focus-visible:outline-2 focus-visible:outline-primary-standalone">
+          {gettext("Advanced reasoning choices")}
+        </summary>
+        <p class="mt-2 text-xs text-base-content/70">
+          {gettext(
+            "These are request vocabulary choices, not verified support for this model or endpoint. Select only levels you have confirmed."
+          )}
+        </p>
+        <div class="mt-2 flex flex-wrap gap-2">
+          <label
+            :for={effort <- @advanced_options}
+            class="flex cursor-pointer items-center gap-1.5 rounded-md border border-base-300 bg-base-100 px-2 py-1 text-xs"
+          >
+            <input type="checkbox" name={@name} value={effort} class="checkbox checkbox-xs" />{effort}
+          </label>
+        </div>
+      </details>
+      <p class="text-xs leading-relaxed text-base-content/70">
+        {if @model_override,
+          do: gettext("No levels selected explicitly disables reasoning for this model."),
+          else:
+            gettext(
+              "Select only levels supported by your models. No selection advertises no reasoning support."
+            )}
+      </p>
+      <.reasoning_default :if={@show_default} prefix={@prefix} fields={@fields} efforts={@efforts} />
     </fieldset>
     """
   end
@@ -351,7 +425,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
 
   # Pure normalization shared by the parent editor; canonical projections are
   # string-keyed, and the whitelist also accepts existing atom-keyed auth maps.
-  @keys ~w(id name provider auth_mode oauth_file base_url concurrency default_model models
+  @keys ~w(id name provider auth_mode oauth_file api_key_env_var base_url concurrency default_model models
     context_window reasoning_efforts default_reasoning_effort generation provider_options
     peak_concurrency peak_hours timezone off_peak_days start end days override_reasoning
     profile_id_new temperature max_tokens top_p top_k frequency_penalty presence_penalty
@@ -405,6 +479,52 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
   def efforts(text) when is_binary(text), do: text |> String.split(",") |> efforts()
   def efforts(_), do: []
 
+  @doc "Advisory exact-catalog effort values, never inferred from a reasoning boolean."
+  def reasoning_suggestions(profile, model \\ nil) do
+    # A custom endpoint may run a different model under the same name. Do not
+    # borrow metadata from another provider, regional variant, or Codex route.
+    if value(profile, "base_url") != "" do
+      []
+    else
+      names =
+        if is_binary(model) do
+          [model]
+        else
+          [
+            value(profile, "default_model")
+            | Enum.map(indexed_rows(value(profile, "models", [])), fn
+                {row, _} -> value(row, "model")
+              end)
+          ]
+        end
+        |> efforts()
+
+      names
+      |> Enum.map(&catalog_efforts(value(profile, "provider"), &1))
+      |> case do
+        [] -> []
+        [first | rest] -> Enum.filter(first, fn effort -> Enum.all?(rest, &(effort in &1)) end)
+      end
+    end
+  end
+
+  defp catalog_efforts(provider, model) when is_binary(provider) do
+    case LLMDB.model({provider, model}) do
+      {:ok, entry} ->
+        exact? = to_string(entry.provider) == provider and entry.id == model
+
+        case {exact?, get_in(entry.capabilities || %{}, [:reasoning, :effort])} do
+          {true, %{supported: true, values: values}} -> efforts(values)
+          _ -> []
+        end
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  defp catalog_efforts(_, _), do: []
+
   def oauth_only?(profile), do: EvoGit.Config.LLMCatalog.oauth_only?(provider_atom(profile))
 
   def oauth_supported?(profile),
@@ -420,8 +540,25 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
   defp field_id(name), do: "provider-field-" <> String.replace(name, ["[", "]"], "-")
   defp row_number(index) when is_integer(index), do: index + 1
   defp row_number(index), do: String.to_integer(index) + 1
-  defp inventory_text(text) when is_binary(text), do: text
-  defp inventory_text(list), do: list |> efforts() |> Enum.join(", ")
+  # Each variant submits its real provider atom; the generic OpenAI-compatible
+  # catalog entry shares :openai and is configured through the Advanced endpoint.
+  defp provider_options do
+    EvoGit.Config.LLMCatalog.providers()
+    |> Enum.flat_map(fn entry ->
+      case entry.variants do
+        variants when is_list(variants) and variants != [] ->
+          Enum.map(variants, fn variant ->
+            {Atom.to_string(variant.provider_atom),
+             entry.display_name <> " · " <> variant.display_name}
+          end)
+
+        _ ->
+          Enum.map(entry.provider_atoms, &{Atom.to_string(&1), entry.display_name})
+      end
+    end)
+    |> Enum.uniq_by(&elem(&1, 0))
+  end
+
   defp json_text(text) when is_binary(text), do: text
 
   defp json_text(value) do

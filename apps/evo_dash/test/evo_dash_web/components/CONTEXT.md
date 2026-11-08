@@ -20,14 +20,16 @@ There is **no `live(...)` call anywhere in this directory**: every component is 
 | `task_card_components_test.exs` | `EvoDashWeb.TaskCardComponentsTest` | 9 / 35 — copy-text helpers, task card affordances, Review-button candidacy, structured errors, archive pass-through |
 | `setting_card_test.exs` | `EvoDashWeb.SettingCardTest` | 3 / 18 — `setting_card/1` `:list_of_strings` editor, `default_label/1`, appearance accent swatch picker |
 | `remote_gate_components_test.exs` | `EvoDashWeb.RemoteGateComponentsTest` | 5 / 16 — `remote_connection_gate/1` states + `gate_active?/1` truth table |
-| `model_profiles_editor_test.exs` | `EvoDashWeb.ModelProfilesEditorTest` | 2 / 32 — render-only peak/off-peak concurrency form + advanced disclosure open/closed rule and reasoning-effort placement (events belong to SettingsLive) |
-| `model_profiles_editor_auth_test.exs` | `EvoDashWeb.ModelProfilesEditorAuthTest` | 3 / 15 — render-only OAuth/subscription auth UI: edit-form auth-mode select vs OAuth-only badge, credential-file input, summary-row auth badge, credential-status line |
+| `model_profiles_editor_test.exs` | `EvoDashWeb.ModelProfilesEditorTest` | 2 / 35 — render-only peak/off-peak concurrency form + advanced disclosure open/closed rule and reasoning-effort placement (events belong to SettingsLive) |
+| `model_profiles_editor_auth_test.exs` | `EvoDashWeb.ModelProfilesEditorAuthTest` | 3 / 19 — render-only OAuth/subscription auth UI: edit-form auth-mode select vs OAuth-only badge, credential-file input, summary-row auth badge, credential-status line |
 | `custom_agents_editor_test.exs` | `EvoDashWeb.SettingsComponents.CustomAgentsEditorTest` | 2 / 7 — the editor's extra "Custom tools" chip group + alias-aware comparisons |
 | `custom_tools_panel_test.exs` | `EvoDashWeb.CustomToolsPanelTest` | 2 / 22 — `custom_tools_panel/1` render contract + pure `custom_tool_names/1` |
 | `layouts_test.exs` | `EvoDashWeb.LayoutsTest` | 3 / 7 — `Layouts.app/1` sidebar task grouping, Assistant navigation, keyboard focus, and responsive configuration warning |
 | `llm_selection_components_test.exs` | `EvoDashWeb.LLMSelectionComponentsTest` | 37 async tests — fused-capsule structure (hook + two client-switched views, no provider select), reasoning effort-stop rendering/resolution, provider drill-down labels/selection, provider scoping, fallback, unavailable/empty/disabled states, events and accessibility |
 | `task_form_provider_selection_test.exs` | `EvoDashWeb.TaskFormProviderSelectionTest` | 22 async tests — provider-picker activation/placement, capsule hook/view pins, no-select drill-down payloads, legacy fallback/suppression, forwarding, scoping and quality independence |
 | `category_metadata_test.exs` | `EvoDashWeb.CategoryMetadataTest` | 2 / 4 — pure `SettingsComponents.CategoryMetadata` units |
+| `provider_profiles_editor_test.exs` | `EvoDashWeb.ProviderProfilesEditorTest` | 3 / 29 — canonical catalog/account form, actual default select and default-only helper, closed disclosures, API-key environment overrides, catalog/custom reasoning inventories and credential-scope guards |
+| `provider_profile_fields_test.exs` | `EvoDashWeb.ProviderProfileFieldsTest` | 5 / 18 — exact catalog reasoning suggestions, checkbox serialization and closed advanced vocabulary, indexed scheduling, generation controls and node-supplied OAuth status |
 
 ## Coverage Boundary — shared LLM selection
 `llm_selection_components_test.exs` pins `LLMSelectionComponents.llm_selection/1` and `resolve_reasoning_effort/3` against string-keyed provider profiles/model specs and atom-keyed model-selection projections.
@@ -40,6 +42,10 @@ Selection is read as `aria-selected`/`.capsule-item-active` plus the drill row's
 It also pins both capsule roots inside the form: `#task-llm-selection` carries `phx-hook="CapsulePanel"` + `data-capsule-view="model"` while `#mode-speed-capsule` carries the same hook and no view marker (and no `.capsule-view` of its own).
 Existing selection render pins in `task_form_components_test.exs` preserve the legacy `model_profiles` / `selected_model_id` toolbar-select contract.
 Settings field/disclosure pins in `model_profiles_editor_test.exs` and subscription credential-state pins in `model_profiles_editor_auth_test.exs` exercise the legacy `ModelProfilesEditor`, not `SettingsComponents.ProviderProfilesEditor`.
+`provider_profiles_editor_test.exs` directly renders canonical `ProviderProfilesEditor.provider_profiles_editor/1`, and `provider_profile_fields_test.exs` renders the public `ProviderProfileFields` building blocks.
+These canonical regressions pin the simplified catalog provider select, credentials guidance, compact model rows, closed account/model disclosures, actual model/reasoning defaults and retained hidden controls; Quick Setup is absent from this editor, and persisted-selection connection testing belongs to the mounted Settings suites.
+The legacy form tests couple strongly to `#model-profile-edit-form`, `#model-profile-advanced`, exact input names and containment, nine-checkbox day groups, and the OAuth status line's exact `div.mt-2.space-y-1` classes, so they must not be mistaken for canonical-editor layout contracts.
+Behavioral render pins worth preserving independently of layout include authoritative drafts (including explicit blank and numeric zero), per-window schedule indexing, total day/status normalization, account-scoped credential verdicts and managed-path fallback, and distinct missing-login versus unwritable-file guidance.
 Component suites own isolated markup, event payload attributes and pure helper contracts; mounted event handling, persistence, node-aware loading and task-option threading belong to the separate LiveView test subtree.
 ## Coverage Boundary — review-page components
 
@@ -172,6 +178,31 @@ Shell navigation coverage pins the **Assistant** label on the unchanged `/help` 
 Configuration-warning coverage pins escaped warning text, node-aware Settings link, accessible Close control, absent/healthy status gating, and narrow-screen width/shrink/wrap markup with an unbroken long warning.
 These are render contracts, not browser viewport or keyboard-interaction tests, and do not snapshot full class strings.
 Helpers: `render_app/1`, `sidebar_group_names/1`, `sidebar_task_links/1`, `sidebar_task_labels/1`, `task/1`, `config_warning/1`, `assert_classes/2`.
+
+## Canonical provider editor and field regressions
+`provider_profiles_editor_test.exs` uses string-keyed account fixtures and indexed draft maps, never a mounted LiveView or configuration-file read.
+The catalog select includes real variant provider IDs, retains an unknown configured provider and avoids duplicate OpenAI options.
+Model names and remove buttons stay outside closed `Model details`, while account `Advanced`, schedule and shared/model generation disclosures remain closed even with saved values.
+The required `select[name="default_model"]` is the actual default control outside Advanced, not a hidden input, and its options include live draft names and the saved default independently of nested override rows.
+Accounts with `models: []` also expose a required `input[name="default_model_name"]` outside Advanced, with no invented nested rows or model-detail disclosures.
+The helper uses its explicit draft value (including blank), otherwise the effective draft/saved `default_model`; its trimmed nonblank value is offered once in the real select without silently changing the selected default.
+The mounted owner, not the component, synchronizes and strips this UI-only helper on change/save.
+Account `reasoning_efforts[]` and nested `models[index][reasoning_efforts][]` checkboxes carry a leading blank hidden sentinel and retain configured custom effort order before unchecked exact-catalog suggestions.
+Unverified request vocabulary is kept in a closed `Advanced reasoning choices` disclosure, rather than represented as verified model support, for both generic providers and custom-endpoint overrides.
+Suggestions never select levels automatically or expand the default-reasoning select beyond the configured inventory, and an exhausted advanced vocabulary renders no empty disclosure.
+Inherited, explicitly disabled and explicitly false model reasoning overrides retain distinct successful-control contracts.
+Closed advanced controls retain saved identity, endpoints, numeric zero, context, generation JSON and scheduling; authoritative draft blanks/empty collections replace saved values without losing the original `profile_id`.
+OAuth editor coverage pins API-key guidance without secret values, optional-auth selects, OAuth-only hidden mode, account-keyed credential verdicts and invalidation when a draft changes provider, path or auth mode.
+The API-key account's closed Advanced section exposes an optional successful `api_key_env_var` text control whose saved value survives unrelated/omitted drafts, whose edited value wins, and whose explicit blank remains a clear request.
+Its guidance distinguishes a variable name from a secret and promises exact selected-node lookup without another account's fallback; OAuth and OAuth-only modes omit the control entirely rather than submitting a blank clear.
+These are render/serialization contracts, not proof of persisted omitted-field preservation.
+`provider_profile_fields_test.exs` pins advisory `reasoning_suggestions/1,2` against the installed catalog: explicit effort metadata on exact provider/model IDs, shared intersection across the default and every nested model, and per-model override isolation.
+Aliases, unknown/default-less inventories, another provider/Codex route, reasoning-enabled models without explicit effort values and custom endpoints cannot borrow suggestions.
+The positive dated Anthropic fixture and the overlapping Opus inventories intentionally assert concrete catalog effort order; a dependency catalog update may require reviewing those fixtures without weakening the exact-identity contract.
+The field suite also pins unsupported default visibility/invalid state, numeric bounds, editable invalid JSON, sparse numeric schedule indices, overnight windows and blank day-list sentinels.
+OAuth field tests distinguish all four credential verdicts, atom/string-keyed status maps, configured-path fallback, neutral malformed status and summary-versus-detail guidance.
+Floki's mochiweb parser leaves textarea RCDATA entities encoded, so each file's `textarea_value/1` decodes that escaped text once via `parse_fragment!` before asserting exact draft text or decoded JSON.
+These tests validate render and form-serialization contracts only; event handling, persistence, asynchronous connection tests and node-loading behavior remain in the LiveView/helper suites.
 
 ## `category_metadata_test.exs` (2 describes / 4 tests)
 
