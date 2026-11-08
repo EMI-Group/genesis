@@ -482,15 +482,20 @@ defmodule EvoDashWeb.TaskFormComponents do
                      speed/quality hero (three discrete .capsule-stop buttons on
                      ONE non-wrapping line), and its .capsule-subrow entry
                      ("Mode · <short label>") opens Layer 2 (the four mode
-                     choices). Every button is type="button" (NEVER submit — the
-                     capsule lives inside <form id="task-form">) and fires
-                     phx-click="select_quality_level" (phx-value-level
+                     choices). `phx-hook="CapsulePanel"` adds outside-click /
+                     Escape close and the panel's open/close animation, while
+                     the nested `.capsule-sub` keeps its native <details>
+                     toggling (the hook never intercepts it) and only gains an
+                     entrance animation. Every button is type="button" (NEVER
+                     submit — the capsule lives inside <form id="task-form">) and
+                     fires phx-click="select_quality_level" (phx-value-level
                      "fast"|"balanced"|"high_quality") or phx-click="task_change"
                      (phx-value-mode "<value>"). The quality value is threaded to
                      the task opt :quality_level (STRING); mode/quality and the
                      model capsule's reasoning stay independent. --%>
                 <details
                   id="mode-speed-capsule"
+                  phx-hook="CapsulePanel"
                   class="capsule dropdown dropdown-top min-w-0 shrink-0"
                 >
                   <summary
@@ -729,11 +734,15 @@ defmodule EvoDashWeb.TaskFormComponents do
                      true. It sits AFTER the custom-agent select (if present)
                      and BEFORE the send button, and carries the row's ml-auto
                      (the first element of the right cluster owns the auto
-                     margin). The own-row picker above the toolbar is gone. --%>
+                     margin). The own-row picker above the toolbar is gone.
+                     Its provider-profile row is a ChatGPT-style drill-down
+                     (the same panel switches between the model view and the
+                     provider list) rather than a <select>, and it needs no
+                     form owner: every control emits phx-click/phx-value
+                     events, so no `form` association is threaded. --%>
                 <EvoDashWeb.LLMSelectionComponents.llm_selection
                   :if={@use_llm_selection?}
                   id="task-llm-selection"
-                  form="task-form"
                   provider_profiles={@provider_profiles}
                   model_selections={@model_selections}
                   model_spec={@model_spec}
