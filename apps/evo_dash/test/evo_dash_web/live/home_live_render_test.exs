@@ -71,11 +71,37 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
       )
 
     assert attr(dom, "#chat-llm-selection-provider", "phx-change") == ["select_provider_profile"]
-    assert attr(dom, "#chat-llm-selection-model", "phx-change") == ["select_model"]
-    assert attr(dom, "#chat-llm-selection-reasoning", "phx-change") == ["select_reasoning_effort"]
+
+    assert attr(dom, "#chat-llm-selection-model .capsule-item[aria-selected='true']", "phx-click") ==
+             [
+               "select_model"
+             ]
+
+    assert attr(
+             dom,
+             "#chat-llm-selection-reasoning .capsule-stop[aria-pressed='true']",
+             "phx-click"
+           ) == [
+             "select_reasoning_effort"
+           ]
+
     assert attr(dom, "#chat-llm-selection-provider option[selected]", "value") == ["work-account"]
-    assert attr(dom, "#chat-llm-selection-model option[selected]", "value") == ["reasoned-model"]
-    assert attr(dom, "#chat-llm-selection-reasoning", "value") == ["1"]
+
+    assert attr(
+             dom,
+             "#chat-llm-selection-model .capsule-item[aria-selected='true']",
+             "phx-value-model"
+           ) == [
+             "reasoned-model"
+           ]
+
+    assert attr(
+             dom,
+             "#chat-llm-selection-reasoning .capsule-stop[aria-pressed='true']",
+             "phx-value-reasoning_effort"
+           ) ==
+             ["1"]
+
     assert text(dom, "#chat-llm-selection-provider option[value='']") == "Auto (by rules)"
     assert Floki.find(dom, "#chat-form #chat-llm-selection") == []
     assert Floki.find(dom, "select[name='model_id']") == []
@@ -100,7 +126,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     end
 
     dom = page(model_snapshot: nil, model_select_load_error: :remote_not_connected)
-    assert Floki.find(dom, "#chat-llm-selection[disabled]") != []
+    assert Floki.find(dom, "#chat-llm-selection.pointer-events-none.opacity-60") != []
     assert text(dom, "[role='alert']") =~ "Model selection is unavailable."
   end
 
