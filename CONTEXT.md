@@ -46,7 +46,7 @@ The full design specification is documented across the CONTEXT.md tree.
 - `./scripts/` → Headless-server installer (`install.sh`, published at `https://genesis.evox.group/dl/install.sh`; `curl | sh` installs the `genesis_server` release into `~/.local/share/genesis/server` and symlinks `~/.local/bin/genesis`) — detail: `scripts/CONTEXT.md`
 - `./desktop/` → Tauri desktop shell (native WebView wrapper, sidecar lifecycle management)
 - `./nix/` → NixOS build support (vendor bundling helper for local desktop builds)
-- `./.github/workflows/` → CI/CD pipelines (desktop app build on release; also publishes the `genesis_server_linux_x64.tar.xz` / `genesis_server_linux_arm64.tar.xz` / `genesis_server_darwin_arm64.tar.xz` artifacts and the `install.sh` asset)
+- `./.github/` → CI/CD definitions plus the shared composite actions they consume — `./workflows/` (desktop app build on release; also publishes the `genesis_server_linux_x64.tar.xz` / `genesis_server_linux_arm64.tar.xz` / `genesis_server_darwin_arm64.tar.xz` artifacts and the `install.sh` asset) and `./actions/` (`setup-mix`, `install-tauri-cli`, `retry` — the bounded-backoff wrapper every network-prone step routes through, since GitHub-hosted runner networking fails transiently)
 
 ## API Surface
 
