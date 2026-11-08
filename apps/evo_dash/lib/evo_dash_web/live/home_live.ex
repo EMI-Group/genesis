@@ -184,10 +184,11 @@ defmodule EvoDashWeb.HomeLive do
         <!-- Composer: pinned bottom, outside the messages scroller. ONE form:
              the textarea row, then a control bar holding the shared
              provider/model/reasoning capsule on the left and Send/Stop on the
-             right (the /projects toolbar shape). The capsule's provider
-             `<select>` must have a form owner for its `phx-change`, so it lives
-             INSIDE this form — its own input-level phx-change takes precedence
-             over the form's `chat_input`, and NO form may ever be nested here. -->
+             right (the /projects toolbar shape). `#chat-form` owns the
+             textarea's `chat_input` draft handler; the capsule needs NO form
+             owner (every control emits `phx-click` + `phx-value-*`, so its
+             selections never reach `chat_input`) and NO form may ever be
+             nested here. -->
         <div class="shrink-0 px-3 pt-2 pb-3 sm:px-4 bg-base-100">
           <p
             :if={@model_select_load_error || @model_selection_error}

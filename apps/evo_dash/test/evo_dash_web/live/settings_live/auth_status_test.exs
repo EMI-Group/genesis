@@ -287,10 +287,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       html = inject_statuses(view, %{@oauth_profile => entry})
 
       # Scope the render assertions to profile-1's OWN credential-status block:
-      # the page ALSO carries the core's page-level "Missing Configuration"
-      # health banner, which legitimately names the vendor login command for
-      # the WHOLE config (this fixture's vendor logins are unreadable), so a
-      # page-wide guidance refute would be pinning someone else's surface.
+      # the page ALSO renders the core's page-level health banner whenever the
+      # WHOLE config's status is not `ok?`, and that banner legitimately names
+      # the vendor login command (this fixture's vendor logins are unreadable) —
+      # so a page-wide guidance refute would be pinning someone else's surface.
       block = auth_status_block(html, @oauth_profile)
 
       assert block =~ "Login found, managed credential file not writable"
@@ -315,19 +315,26 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       # return: EVERY occurrence of vendor login guidance on the page sits
       # outside every per-profile credential-status block — no block may ever
       # carry vendor login guidance here.
-      assert html =~ "Missing Configuration"
       outside = without_credential_status_blocks(html)
       # Proves the strip really removed the blocks (else the equality below is vacuous).
       refute outside =~ "Login found, managed credential file not writable"
 
-      # Non-vacuity proof, deliberately host-independent: the page-level
-      # "Missing Configuration" heading is fixture-driven and always survives
-      # the strip. The vendor command cannot serve as this marker — whether the
-      # core health banner names "claude setup-token" tracks THIS host's own
-      # vendor logins (a readable ~/.codex/auth.json with no
-      # ~/.claude/.credentials.json yields no Claude guidance), so requiring the
-      # phrase to be present would fail on a healthy host.
-      assert outside =~ "Missing Configuration"
+      # Non-vacuity proofs, deliberately host- AND run-independent: the (open)
+      # profile-1 editor form and a seeded sibling profile's identity line are
+      # fixture-driven and always survive the strip.
+      #
+      # The page-level "Missing Configuration" banner CANNOT serve as this
+      # marker: it renders only while `EvoGit.Config.config_status/0` is `ok?`
+      # FALSE, and that verdict's api_key check reads ReqLLM's BEAM-global key
+      # store (`Application.get_env(:req_llm, ...)`). `:evo_git`'s own
+      # `test/test_helper.exs` installs `:req_llm, :openai_api_key`, which a
+      # root `mix test` (both umbrella apps in ONE VM) leaves in place for the
+      # whole run — so under the umbrella run the health verdict is `ok?` and
+      # the banner legitimately does not render. The vendor command is equally
+      # host-dependent (a readable ~/.codex/auth.json with no
+      # ~/.claude/.credentials.json yields no Claude guidance).
+      assert outside =~ ~s(id="provider-profile-edit-form")
+      assert outside =~ "profile-2 · openai_codex"
 
       assert count_occurrences(html, "claude setup-token") ==
                count_occurrences(outside, "claude setup-token")
@@ -886,8 +893,8 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   end
 
   # The page with every per-profile credential-status block removed — i.e. only
-  # the surfaces a profile's verdict does NOT own (the page-level core
-  # "Missing Configuration" health banner is the notable one).
+  # the surfaces a profile's verdict does NOT own (the page-level core health
+  # banner, when the config status is not `ok?`, is the notable one).
   # The container check is attribute-based because `Floki.find/2` also matches
   # the node it is given: only the `role="status"` container may be dropped, so
   # the Recheck button inside it is never deleted first.
