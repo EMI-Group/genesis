@@ -256,7 +256,9 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
       # The deepseek API-key profile renders no status line of any kind.
       row = profile_row(html, @deepseek_profile)
-      assert row =~ "profile-4 · deepseek"
+      identity = Floki.parse_fragment!(row)
+      assert identity |> Floki.find("h4") |> Floki.text() |> String.trim() == @deepseek_profile
+      assert identity |> Floki.find("p.font-mono") |> Floki.text() |> String.trim() == "deepseek"
       assert row =~ "deepseek-v4-pro"
       refute row =~ "Recheck"
       refute row =~ "Login detected"
@@ -334,7 +336,11 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       # host-dependent (a readable ~/.codex/auth.json with no
       # ~/.claude/.credentials.json yields no Claude guidance).
       assert outside =~ ~s(id="provider-profile-edit-form")
-      assert outside =~ "profile-2 · openai_codex"
+      sibling = outside |> profile_row(@oauth_only_profile) |> Floki.parse_fragment!()
+      assert sibling |> Floki.find("h4") |> Floki.text() |> String.trim() == @oauth_only_profile
+
+      assert sibling |> Floki.find("p.font-mono") |> Floki.text() |> String.trim() ==
+               "openai_codex"
 
       assert count_occurrences(html, "claude setup-token") ==
                count_occurrences(outside, "claude setup-token")

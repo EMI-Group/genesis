@@ -60,8 +60,9 @@ The unsupported-auth case retains its invalid authentication fixture and verifie
 Focused validation uses `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/auth_status_test.exs --only 'describe:profile save round-trip (auth_mode / oauth_file persistence)' --seed 0` (also seed 1) and passes all six selected tests with 22 excluded in each run.
 This focused run does not establish full-file, directory or broader dashboard-suite success.
 The pure canonical helper slice is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/model_profile_helpers_test.exs --seed 1` and contains 85 passing tests.
-The full helper subtree contains 119 tests; two mounted auth render assertions still require the retired concatenated identity text (`profile-4 · deepseek` at `auth_status_test.exs:259` and `profile-2 · openai_codex` at `:337`) even though the rewritten editor renders profile name and provider separately.
-Those identity-markup assertions do not establish a production credential-status defect and remain outside the pure-helper regression coverage.
+The full helper subtree contains 119 tests and passes with `mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` and `--seed 1`.
+Mounted auth identity assertions pin the profile heading and separate provider text within the account article selected by its Edit control, including the sibling article retained after stripping credential-status blocks.
+These row-scoped identity checks preserve the credential verdict, managed-path, writable-path remedy and vendor-guidance surface-split assertions.
 
 ## UI Simplification Survey
 
@@ -75,7 +76,7 @@ Auth saves pin the exact `Provider profile saved.` flash, detached `editing_prof
 `provider_profiles_contract_test.exs` keeps detached form/row/cancel and advanced-auto-open contracts, including `toggle_profile_advanced`, `profile_advanced_open` and `advanced_open?/1`; these are helper API assertions, not rendered disclosure requirements.
 `model_ids_test.exs` has a one-pass owner-filtered mount wait with a silent 5-second timeout, unlike the auth suite's repeated drain and failing 30-second budget.
 Focused commands from the umbrella root are `mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` or individual filenames, with `--only 'describe:credential status render (injected result)'` and `--only 'describe:Quick Setup OAuth-only provider'` useful for auth UI work.
-The documented six-selected auth-save result above is the only focused baseline recorded here and is not a fresh validation of this checkout.
+The full-subtree seed-0 validation includes all mounted auth render/save and pure helper contracts; it does not establish broader dashboard-suite success.
 
 ## Routing Table
 
