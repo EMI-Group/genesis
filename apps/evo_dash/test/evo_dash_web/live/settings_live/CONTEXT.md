@@ -80,12 +80,15 @@ This focused run does not establish full-file, directory or broader dashboard-su
 The pure canonical helper slice is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/model_profile_helpers_test.exs --seed 1` and selects 92 tests.
 Pure helper-slice success alone does not establish mounted Save → remount success; the full subtree includes both the unchanged no-row fidelity contracts and the rendered core-rejection/correction flows.
 The full helper subtree contains 130 tests and runs with `mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` or `--seed 1`.
-Scoped validation passes all 130 tests at both seed 0 (5.5 seconds ExUnit time) and seed 1 (6.8 seconds ExUnit time).
-Scoped formatting passes with `mix format --check-formatted apps/evo_dash/test/evo_dash_web/live/settings_live/auth_status_test.exs`.
-These runs establish leaf-subtree coverage only, not parent-file or broader dashboard-suite success.
+Leaf-subtree success does not establish collective LiveView-directory success; the scheduler acknowledgement issue below can surface in the broader run.
 Mounted auth identity assertions pin the profile heading and separate provider text within the account article selected by its Edit control, including the sibling article retained after stripping credential-status blocks.
 These row-scoped identity checks preserve the credential verdict, managed-path, writable-path remedy and vendor-guidance surface-split assertions.
 
+## Known Issues
+Collective LiveView-directory validation at seed 1 can fail `auth_status_test.exs:853`, "the API-key default is explicit and drops a stale OAuth path", at the exact success-flash assertion on line 868 because saving returns `Failed to save configuration` with an `{:exit, {:timeout, {GenServer, :call, [EvoGit.AgentScheduler, {:update_config, full_canonical_options}, 5000]}}}` error.
+This is a core scheduler acknowledgement timeout, not a test polling failure; retain the exact success assertion and async concurrency rather than extending polling deadlines.
+No scheduler stack or mailbox capture establishes the underlying cause, so neither OAuth, Finch nor the request payload is implicated by this failure alone.
+The source failure belongs to the core scheduler owner, outside this leaf test node.
 ## UI Simplification Survey
 
 `auth_status_test.exs` declares apply/render/classification/stale/refresh/rendered-editor/save/Quick Setup groups at lines 76, 171, 370, 411, 476, 495, 715 and 887 respectively.
