@@ -63,7 +63,7 @@ Default Dune pure operations remain available, but every EvoGit module is interc
 Dune's generated `allow(..., only: [...])` entries select names rather than arities and initialize aliases only; the outer `fun_status/3` wrappers enforce exact arities and route admitted real APIs to fixed broker-backed shims, never arbitrary apply or namespace grants.
 Both tiers initialize all admitted module aliases at Base load time, but write MFAs remain restricted in read tier.
 `DirectAPI.help/0` generates the exact admitted signature lists plus examples, limits and deviations.
-Public `ElixirEval.help/0` includes `DirectAPI.help/0` exactly once.
+Public `ElixirEval.help/0` includes `DirectAPI.help/0` exactly once and is embedded verbatim into the SelfReflective system prompt (`agents/self_reflective.ex:279`, between its prefix and Recipes suffix), so the catalog cannot drift from admission.
 `Read.help/0` delegates to `Broker.call(:help, [])`, whose `execute(:help, [], _)` returns public `ElixirEval.help/0` without appending another direct-API section.
 The restricted-operation hint names admitted TaskRegistry/AgentScheduler APIs and directs callers to `Read.help/0`, while retaining facade compatibility and explicit write approval without automatic escalation.
 Sudo runs `Code.eval_string(code, [])` with full VM authority only after the external approval gate; it can access secrets, mutate the VM, spawn OS children or interfere with tracing.
