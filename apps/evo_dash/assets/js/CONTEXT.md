@@ -21,6 +21,9 @@ Client-side JavaScript for the EvoDash dashboard: the main entry (`app.js`, Live
 ## Projects State Persistence
 
 `StatePersistence` in `app.js` stores one JSON object in `sessionStorage` under `dashboard_state` and sends that object back through `restore_state` on mount.
+That object is single-project form state: `project` (the ONE active project path, read from the root's `data-project`), `task_mode`, `node`, `task_prompt`, `task_node_path`, `task_seeds`, `task_starting_commit`, optionally `selected_model_id` (legacy) and `model_spec` (`{}` = explicit Auto), plus server-managed keys merged in and preserved (e.g. `foreign_repos`).
+There is NO client-side persistence of open project tabs, a project list, a "last opened project" or recent projects — recent projects live in the server-side store and arrive over the `"recent_projects"` PubSub topic, which no JS in this tree handles.
+Browser storage keys owned here: `dashboard_state` (sessionStorage), `guide_client_id` (sessionStorage), `sidebar-collapsed` (localStorage); `phx:theme` (localStorage) belongs to the inline script in `root.html.heex`, not this tree.
 The `persist_model_selection` server event carries `{node, model_spec}`, where `model_spec` is a string-keyed map containing `provider_profile_id`, `model`, and optional `reasoning_effort`, or the explicit empty map `{}` for Auto.
 The handler merges only `node` and `model_spec`, leaving the saved prompt and unrelated fields untouched, and accepts an event only for the root's current `data-node-id` (default `local`) and the saved state's node when storage already exists.
 Node-less legacy state belongs to `local`, and a picker-only event must never relabel another node's pending saved state.
