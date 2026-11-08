@@ -539,23 +539,32 @@ defmodule EvoDashWeb.SettingsLiveParentAdapterTest do
     assert added.assigns.profile_form_draft["models"] ==
              changed.assigns.profile_form_draft["models"] ++ [%{"model" => ""}]
 
-    assert {:noreply, ^changed} =
+    # Form changes normalize peak rows to atom keys; row actions stringify the
+    # detached draft again. Allow only that representation change, not lost fields
+    # or unrelated socket changes (including profile_generated_id bookkeeping).
+    expected_draft =
+      Map.put(changed.assigns.profile_form_draft, "peak_hours", [
+        %{"start" => "09:00", "end" => "12:00", "days" => ["mon"]}
+      ])
+
+    expected = %{changed | assigns: %{changed.assigns | profile_form_draft: expected_draft}}
+    assert Map.fetch!(expected.assigns, :profile_generated_id) == nil
+
+    assert {:noreply, ^expected} =
              SettingsLive.handle_event("remove_provider_model", %{"index" => "2"}, added)
+
+    for index <- ["-1", "99", "invalid"] do
+      assert {:noreply, ^expected} =
+               SettingsLive.handle_event("remove_provider_model", %{"index" => index}, expected)
+    end
 
     assert {:noreply, peak} =
              SettingsLive.handle_event("add_provider_peak_hours_row", %{}, changed)
 
     assert length(peak.assigns.profile_form_draft["peak_hours"]) == 2
 
-    assert {:noreply, restored} =
+    assert {:noreply, ^expected} =
              SettingsLive.handle_event("remove_provider_peak_hours_row", %{"index" => "1"}, peak)
-
-    assert restored.assigns.profile_form_draft["generation"] == input["generation"]
-
-    assert Enum.map(restored.assigns.profile_form_draft["models"], & &1["model"]) == [
-             "two",
-             "ten"
-           ]
 
     assert {:noreply, cancelled} =
              SettingsLive.handle_event("cancel_edit_provider_profile", %{}, changed)
