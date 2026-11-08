@@ -301,15 +301,22 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       refute block =~ "Subscription login"
 
       # Pin the surface split so the stray-guidance failure cannot silently
-      # return: the vendor command is legitimately present on the page (the
-      # core "Missing Configuration" banner speaks for the WHOLE config), but
-      # EVERY occurrence sits outside every per-profile credential-status
-      # block — no block may ever carry vendor login guidance here.
+      # return: EVERY occurrence of vendor login guidance on the page sits
+      # outside every per-profile credential-status block — no block may ever
+      # carry vendor login guidance here.
       assert html =~ "Missing Configuration"
       outside = without_credential_status_blocks(html)
-      # Proves the strip really removed the blocks (else the count below is vacuous).
+      # Proves the strip really removed the blocks (else the equality below is vacuous).
       refute outside =~ "Login found, managed credential file not writable"
-      assert count_occurrences(outside, "claude setup-token") > 0
+
+      # Non-vacuity proof, deliberately host-independent: the page-level
+      # "Missing Configuration" heading is fixture-driven and always survives
+      # the strip. The vendor command cannot serve as this marker — whether the
+      # core health banner names "claude setup-token" tracks THIS host's own
+      # vendor logins (a readable ~/.codex/auth.json with no
+      # ~/.claude/.credentials.json yields no Claude guidance), so requiring the
+      # phrase to be present would fail on a healthy host.
+      assert outside =~ "Missing Configuration"
 
       assert count_occurrences(html, "claude setup-token") ==
                count_occurrences(outside, "claude setup-token")
