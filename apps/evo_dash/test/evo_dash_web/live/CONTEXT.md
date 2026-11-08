@@ -57,15 +57,14 @@ Welcome tests exercise canonical provider setup with multiple models, a default 
 WelcomeComplete tests preserve canonical provider configuration and pin the full example/clipboard objective.
 Settings canonical serialization, shadow removal, unrelated-setting preservation, nested models and OAuth contracts live in `./settings_live/provider_profiles_contract_test.exs` and use the shared test bootstrap without `ExUnit.start`.
 Mounted successful-save fixtures require nested `models` rows containing `default_model`, and the emptied-model correction test pins core rejection without changing disk or live config.
-Pure parser tests in `settings_live/provider_profiles_contract_test.exs` separately accept default-only profiles and defaults outside override rows, so parser acceptance must not be mistaken for successful mounted persistence validation.
+Pure parser and state-helper tests in `settings_live/` preserve default-only profiles without synthesizing model rows, but core persistence requires a nonempty model inventory containing the default.
+Mounted default-only editor tests assert rejection without disk/live-config writes, retain the editable draft, then explicitly click Add model row before successful save/remount; the UI-only `default_model_name` helper never persists.
 Settings parent-page wiring contracts stay cohesive in `settings_live_test.exs`, whose folded scenarios use rendered canonical events and assert both live config and persisted `llm.providers` with no `llm.models` shadow except the intentional legacy-input fixture.
 Add creates a detached `"new"` draft, Cancel never writes, failed validation retains the draft, and CRUD/default/rename/delete plus legacy edit/save/reorder aliases retain persistence assertions.
 The draft-clear lifecycle test drives rendered Add/change/model-row/Cancel/Save controls, keeps the browser's empty new-profile identity, and establishes a matching nested model/default before submission.
 It waits for both config_save_request and config_saving to clear, asserts the successful writer receipt, and pins nil draft/editor state after Cancel and Save plus unchanged disk on Cancel and persisted model/temperature on Save.
-Collective Settings validation must retain normal async module concurrency: real saves can fail at EvoGit.AgentScheduler.update_config/1's default GenServer.call timeout, surfaced as a failed-configuration flash, so a longer test polling budget cannot turn that failed write acknowledgement into success.
-The explicit scheduler suspension in SettingsLiveGlobalStateTest's in-flight-save test is sync-only, resumes before awaiting success and has an on_exit resume safety net, so it cannot normally overlap async auth_status_test saves.
-Auth-status blocker/auth.json fixtures are children of a regular file, not waiting runners or FIFOs; fixture construction and save-await details belong in settings_live/CONTEXT.md.
-A timeout payload identifies the caller's requested configuration, not the scheduler's currently executing handler; attributing collective save timeouts to OAuth paths or Finch reconciliation requires a scheduler stack/mailbox capture.
+Collective Settings validation retains normal async module concurrency and exact successful-write assertions; longer polling budgets cannot repair a failed scheduler write acknowledgement.
+The explicit scheduler suspension in SettingsLiveGlobalStateTest's in-flight-save test is sync-only, resumes before awaiting success and has an on_exit resume safety net.
 Generation input names are nested under `generation` and each model's `generation`, while persisted provider/model generation fields are flat; sparse overrides inherit, explicit blank reasoning overrides produce `[]`, and the `override_reasoning` form sentinel must not persist.
 Mounted canonical regressions submit the actual `#provider-profile-edit-form` for blank-new and untouched `profile-N` identities, provider-derived collision-safe IDs/names, duplicate same-provider accounts, duplicate-ID validation/correction/retry, and blank-edit preservation of explicit identity.
 The closed-Advanced round-trip fixture pins OAuth mode/path, connection/concurrency/context, all account/model generation numbers and JSON, reasoning custom-value order, peak schedules, default-model selection, and unrelated configuration through browser form serialization.
@@ -97,7 +96,8 @@ Rendered row buttons are `add_provider_model` and `remove_provider_model` with `
 Quick Setup pins `save_quick_setup`, hidden `model_string`, qualified `phx-value-model_string` shortcuts and selected shortcut classes `btn-primary`/`shadow-md`, independently of credential form gating on model selection.
 Most schedule and compatibility scenarios invoke `settings_hook/3` directly rather than submitting rendered controls, whereas Add/Cancel/CRUD/model-row and multi-model-save scenarios retain actual element/form coverage.
 `settings_hook/3` awaits `config_saving == false` and renders authoritative completion; the owner-filtered mount funnel is a single task snapshot whose 30-second monitor timeout returns silently, not a recursive guaranteed drain.
-The helper subtree documents pure-parser, OAuth-status, Quick Setup retired-id and full scheduler-option-push coverage, with no current passing baseline established by a source-only survey.
+The helper subtree documents pure-parser, state-helper default-only fidelity, OAuth-status, Quick Setup retired-id and full scheduler-option-push coverage.
+The parent-adapter row-action contract permits peak-window atom keys to normalize to string keys while preserving full socket equality for all other state and exact invalid-index no-ops.
 
 ### Integration validation
 
