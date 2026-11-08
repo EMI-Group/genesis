@@ -59,7 +59,7 @@ ${GENESIS_INSTALL_DIR:-$HOME/.local/share/genesis/server}/
 $HOME/.local/bin/genesis -> <install dir>/bin/genesis
 ```
 
-Printed next steps: `genesis` (foreground server), `genesis start` (service via systemd-run/launchd), `genesis status`, `genesis logs`, `genesis stop`, then open the dashboard URL printed on boot (default `http://127.0.0.1:9999`).
+Printed next steps: `genesis` (foreground server), `genesis start` (service via systemd-run/launchd), `genesis update` (upgrade the install in place), `genesis status`, `genesis logs`, `genesis stop`, then open the dashboard URL printed on boot (default `http://127.0.0.1:9999`).
 
 ### `test-genesis-cli.sh`
 
@@ -68,6 +68,10 @@ It also covers the `genesis start` systemd-linger offer — `GENESIS_LINGER` (`a
 It also covers the `genesis remote …` family against the single-instance contract (distribution is a runtime toggle on the ONE server instance, never a second process): the control request's mode/contents/sequence number, the canonical `running node=… dist_port=…` line as the LAST line, idempotent re-start, `--force`, the stale-answer/`--wait` floor handshake, a daemon-error answer, legacy per-target unit cleanup in its own scope, `status`/`stop`/`logs`, and the fallback-pidfile and launchd backends (contract detail: `../rel/CONTEXT.md`).
 Stub `systemd-run`/`systemctl`/`launchctl`/`journalctl`/`loginctl`/`curl`/`uname`/`setsid` binaries stand in for the real ones (the recording `loginctl` shims prove the non-systemd paths never call it), so no real service manager, `loginctl` or network is touched.
 The "instance" those stubs launch is a real background `sh` fixture that answers the CLI's SIGHUP by writing its own `dist.env`, so every signal and every accepted answer is observable; stub `sleep` and `curl` keep the CLI's poll budgets and health probe cheap, keeping a whole run in the low seconds.
+It also covers the `genesis update` / `genesis upgrade` self-update family: feed/version comparison (`--check` exits 0 up to date and 10 when a newer release exists), the one-line `--check --json` payload (with and without `pub_date`), the busy-instance guard (`/server/status` `active_tasks > 0`) and `--force`, the checksum-mismatch and staged-version-mismatch pre-stop aborts, the full staged swap (download → verify → extract → stop → rename → restart → `/health`), the health-failure rollback, the unsupported-platform refusal, unknown flags (exit 2), a live versus stale `update.lock`, `--version TAG` URL shaping, and a dead primary feed base falling back to the GitHub manifest and asset.
+Its update fixtures are REAL `.tar.xz` archives (`tar -cJf`, tarball root `genesis_server/`) built once from a stub launcher plus `releases/start_erl.data`: a good `0.13.0` tree, a `0.14.1` tree whose launcher cannot become healthy, and a `0.0.9` tree that disagrees with the feed.
+ONE stub `curl` serves that feed (primary and GitHub fallback), the asset (and 404s its absent `.sha256`), the instance's `/server/status` (from an `active_tasks` state file) and `/health` (from a `health.ok` marker the running instance owns and removes on TERM), with a `primary.down` marker forcing the fallback base.
+The update arms install into a throwaway tree beside a writable parent and drive the fallback (pidfile) backend, so the planted real "instance" pid is what the busy guard, the stop and the rollback observably act on; `reset_update` clears the tree, data dir, feed, markers and `curl.log`, and planted pids are appended to the shared instance-pid file for teardown.
 
 ## Constraints
 
@@ -81,12 +85,13 @@ The "instance" those stubs launch is a real background `sh` fixture that answers
 - External tool dependencies only: `curl` or `wget`, `tar` with `.tar.xz` support, `awk`; no network access during analysis/verification.
 - The smoke test is `bash` (not POSIX `sh`, unlike `install.sh`) and must never invoke a real `systemd-run`/`systemctl`/`journalctl`/`loginctl`/`curl` where a stub applies — the shim dirs precede `PATH`, and recording `loginctl` shims make "never called" provable rather than assumed.
 - The smoke test's remote arms signal REAL fixture processes: each supervisor stub pre-arms its instance's HUP trap before reporting the instance started, and the exit trap plus every `reset_remote` reap leftover instance pids so nothing leaks.
+- The smoke test's update arms serve REAL `.tar.xz` fixtures from `$TMP` through one stub `curl` (feed + fallback + asset + `/server/status` + `/health`), so they must never reach the network either; the install tree and its parent stay writable because the CLI stages the swap beside the install.
 
 ## Routing Table
 
 - `./sync-readme-evidence.py` → Python standard-library generator for the bounded README Evidence block. `--refresh` fetches the website manifest; `--check` validates against the committed snapshot offline. Selection, snapshot and maintenance instructions live in `../docs/readme-evidence*`.
 - `./install.sh` → one-line installer for the headless `genesis_server` distribution.
-- `./test-genesis-cli.sh` → smoke test for `../rel/overlays/bin/genesis` (temp release + stub `bin/genesis_server`, PATH-shadowed systemd/launchd/launchctl and stubbed `loginctl`/`journalctl`/`curl`/`uname`, plus a real stub "server instance" for the single-instance `genesis remote` control plane; run with `bash scripts/test-genesis-cli.sh`, no release build, service manager or network needed) — its CLI surface, linger coverage, remote fixture and shim inventory: `### test-genesis-cli.sh` above.
+- `./test-genesis-cli.sh` → smoke test for `../rel/overlays/bin/genesis` (temp release + stub `bin/genesis_server`, PATH-shadowed systemd/launchd/launchctl and stubbed `loginctl`/`journalctl`/`curl`/`uname`, a real stub "server instance" for the single-instance `genesis remote` control plane, and real `.tar.xz` fixtures for the `genesis update` self-update path; run with `bash scripts/test-genesis-cli.sh`, no release build, service manager or network needed) — its CLI surface, linger/remote/update coverage and fixture/shim inventory: `### test-genesis-cli.sh` above.
 - `../rel/overlays/` → release overlay sources; `../rel/overlays/bin/genesis` is the CLI this installer links.
 - `../.github/workflows/` → builds and uploads the `genesis_server_*` tarballs and the `install.sh` asset.
 - `../apps/evo_git/lib/evo_git/remote_bootstrap.ex` → Elixir mirror of the same `/dl/` asset-URL pattern (`direct_url/1`).
