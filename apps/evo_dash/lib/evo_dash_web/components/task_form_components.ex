@@ -167,6 +167,18 @@ defmodule EvoDashWeb.TaskFormComponents do
       phx-submit="task_submit"
       class="w-full flex-1 flex flex-col min-h-0 gap-0"
     >
+      <%!-- Hidden mode field — the form's ONLY carrier of the combined UI mode
+           string ("genesis_new" | "genesis_existing" | "evolve_simple" |
+           "custom_agent"). The old <select name="mode" phx-change="task_change">
+           was replaced by the fused mode+speed capsule's Layer-2 buttons, which
+           render OUTSIDE any input, so without this field the submit payload has
+           no "mode" key and ProjectsLive's strict
+           handle_event("task_submit", %{"prompt" => _, "mode" => _}) clause
+           raises FunctionClauseError. The value always mirrors the server-side
+           truth (@mode == @task_mode, moved only by the task_change handler).
+           Quality level is NOT a form field — it comes from the
+           :quality_level assign through LaunchOptions. --%>
+      <input type="hidden" name="mode" value={@mode} />
       <div class={[
         "relative flex-1 flex flex-col min-h-0 transition-opacity",
         @disabled && "opacity-40 pointer-events-none select-none"
@@ -459,12 +471,17 @@ defmodule EvoDashWeb.TaskFormComponents do
                      collapsed pill sitting at the toolbar's LEFT, right after
                      the attach "+" trigger (its `.file-manual` sibling is
                      position:absolute and takes no flex space). The pill shows
-                     mode_description(@mode) as the main value and the current
-                     speed/quality label as the secondary value, then expands
-                     UPWARD (dropdown-top, so .input-card's overflow containment
-                     never clips it) into a two-layer panel: Layer 1 is the
-                     speed/quality hero (three discrete .capsule-stop buttons),
-                     and its .capsule-subrow entry opens Layer 2 (the four mode
+                     the SHORT mode label (mode_label/1 — "New project" /
+                     "Init existing" / "Evolve" / "Custom") as the main value
+                     and the current speed/quality label as the secondary
+                     value; the LONG sentence (mode_description/1) is only the
+                     trigger's `title` tooltip, because it overflowed the
+                     one-line toolbar. The pill then expands UPWARD
+                     (dropdown-top, so .input-card's overflow containment never
+                     clips it) into a two-layer panel: Layer 1 is the
+                     speed/quality hero (three discrete .capsule-stop buttons on
+                     ONE non-wrapping line), and its .capsule-subrow entry
+                     ("Mode · <short label>") opens Layer 2 (the four mode
                      choices). Every button is type="button" (NEVER submit — the
                      capsule lives inside <form id="task-form">) and fires
                      phx-click="select_quality_level" (phx-value-level
@@ -480,8 +497,8 @@ defmodule EvoDashWeb.TaskFormComponents do
                     class="capsule-trigger flex items-center gap-1.5 rounded-full border border-base-300 bg-base-100 px-3 py-1.5 text-sm cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden"
                     title={mode_description(@mode)}
                   >
-                    <span class="capsule-main min-w-0 truncate font-medium text-base-content">
-                      {mode_description(@mode)}
+                    <span class="capsule-main min-w-0 max-w-[9rem] truncate font-medium text-base-content">
+                      {mode_label(@mode)}
                     </span>
                     <span class="capsule-secondary shrink-0 text-xs text-base-content/60">
                       {quality_label(@quality_level)}
@@ -491,10 +508,13 @@ defmodule EvoDashWeb.TaskFormComponents do
                     </span>
                   </summary>
 
-                  <div class="capsule-panel dropdown-content z-50 mb-2 w-72 rounded-2xl border border-base-300 bg-base-100 p-2 shadow-lg">
-                    <%!-- Layer 1: speed ↔ quality hero (discrete stops) --%>
+                  <div class="capsule-panel dropdown-content z-50 mb-2 w-max min-w-72 max-w-[92vw] rounded-2xl border border-base-300 bg-base-100 p-2 shadow-lg">
+                    <%!-- Layer 1: speed ↔ quality hero (discrete stops) — ONE
+                         line (flex-nowrap + whitespace-nowrap/flex-shrink-0 on
+                         .capsule-stop in app.css): the three labels must never
+                         wrap into a stack. --%>
                     <div
-                      class="capsule-stops flex flex-wrap gap-1"
+                      class="capsule-stops flex flex-nowrap gap-1"
                       role="group"
                       aria-label={gettext("Speed / quality trade-off")}
                     >
@@ -553,11 +573,13 @@ defmodule EvoDashWeb.TaskFormComponents do
                       </button>
                     </div>
 
-                    <%!-- Layer-1 → Layer-2 entry: mode description + right arrow --%>
+                    <%!-- Layer-1 → Layer-2 entry: SHORT mode label + right arrow
+                         (the long description sentence lives in the trigger's
+                         title tooltip, never inline here). --%>
                     <details class="capsule-sub">
                       <summary class="capsule-subrow flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm cursor-pointer select-none list-none hover:bg-base-200 [&::-webkit-details-marker]:hidden">
                         <span class="capsule-subrow-label min-w-0 flex-1 truncate text-base-content/80">
-                          {mode_description(@mode)}
+                          {gettext("Mode")} · {mode_label(@mode)}
                         </span>
                         <span
                           class="capsule-subrow-arrow shrink-0 text-base-content/50"

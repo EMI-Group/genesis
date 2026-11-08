@@ -169,6 +169,11 @@ The Projects task form keeps a single `.input-controls` toolbar: the attach-kind
 The own-row shared `llm_selection` picker is gone; the model capsule now lives inside the toolbar's right cluster.
 `ml-auto` now sits on the first right-cluster element: the model capsule when `@use_llm_selection?` is true, else the custom-agent select, else the legacy model select.
 Mode, quality (speed) and reasoning remain independent policies, and the existing event payload keys are unchanged: `mode`, `level`, `provider_profile_id`, `model` (plus the legacy `model_id` variant), `reasoning_effort` and `agent`.
+## task_submit payload contract
+`handle_event("task_submit", %{"prompt" => prompt, "mode" => combined_mode})` matches STRICTLY on both keys — there is deliberately no tolerant fallback clause, so the rendered `#task-form` must always carry `mode`.
+The combined UI mode string (`genesis_new` / `genesis_existing` / `evolve_simple` / `custom_agent`) travels in a hidden `<input type="hidden" name="mode" value={@mode}>` inside `#task-form`, rendered from the capsule component's `@mode` (`= @task_mode`); the capsule's Layer-2 buttons are `type="button"` and fire `task_change`, which moves that server-side truth.
+`node_path` / `starting_commit` / `resume_from` / `build_system` / `archive` arrive through the Configure dropdown's `form="task-form"` inputs (always in the DOM, class-hidden), while `quality_level` is never a form field — `LaunchOptions.apply/2` reads the `:quality_level` assign.
+Quality (speed) and reasoning remain independent policies; `do_task_submit/4` maps the combined mode to `{task_type, core_mode}` and treats every absent payload key as "unset".
 
 ## Payload-vs-consumed gaps
 

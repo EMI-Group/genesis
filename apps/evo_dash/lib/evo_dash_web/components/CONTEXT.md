@@ -215,8 +215,10 @@ The collapsed trigger is a pill `<summary class="capsule-trigger flex items-cent
 `.capsule-main` is the dark primary value (`min-w-0 truncate font-medium text-base-content`).
 `.capsule-secondary` is the gray secondary value (`shrink-0 text-xs text-base-content/60`).
 `.capsule-chevron` is the right-side glyph (`shrink-0 text-base-content/50`, `hero-chevron-down size-3.5`).
-The expanded panel is `<div class="capsule-panel dropdown-content z-50 mb-2 w-72 rounded-2xl border border-base-300 bg-base-100 p-2 shadow-lg">`.
-`.capsule-stops` is Layer 1 (`flex flex-wrap gap-1`, `role="group"`); each `.capsule-stop` is a `type="button"` with `rounded-lg px-2.5 py-1.5 text-sm font-medium` and `aria-pressed`.
+The expanded panel is `<div class="capsule-panel dropdown-content z-50 mb-2 w-max min-w-72 max-w-[92vw] rounded-2xl border border-base-300 bg-base-100 p-2 shadow-lg">` — it sizes to its content (min 18rem, clamped to the viewport) so the Layer-1 stops fit on one line.
+The task form's mode+speed capsule is the one that sizes to content; the shared model+reasoning capsule keeps its fixed `w-72`.
+`.capsule-stops` is Layer 1 (`flex flex-nowrap gap-1`, `role="group"`) — never `flex-wrap`: the three stops stay on ONE line, and `.capsule-stop` carries `flex-shrink: 0` + `white-space: nowrap` in `app.css` so no label is squeezed or broken.
+Each `.capsule-stop` is a `type="button"` with `rounded-lg px-2.5 py-1.5 text-sm font-medium` and `aria-pressed`.
 The active Layer-1 stop adds `.capsule-stop-active`.
 The Layer-1→Layer-2 entry is an inner `<details class="capsule-sub">` whose `<summary class="capsule-subrow flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm cursor-pointer select-none list-none hover:bg-base-200 [&::-webkit-details-marker]:hidden">` shows `.capsule-subrow-label` and `.capsule-subrow-arrow` (`hero-chevron-right`, `shrink-0 text-base-content/50`).
 Layer 2 is `.capsule-list` (`mt-1 space-y-0.5`, `role="listbox"`), optionally preceded by a `.capsule-provider` label + `<select>`.
@@ -224,7 +226,9 @@ Each `.capsule-item` is a `type="button"` with `flex w-full items-center gap-2 r
 `.capsule-item-label` is `min-w-0 flex-1 truncate`; the active `.capsule-item-check` is `shrink-0 text-primary-standalone` (`hero-check`).
 The stable DOM ids are `#task-launch-button`, `#objective-file-button` (inside `#objective-file-attach`), `#task-llm-selection`, `#chat-llm-selection`, `#<id>-provider`, `#<id>-model`, `#<id>-reasoning`, `#<id>-reasoning-value`, `#<id>-empty`, `#<id>-model-empty`, `#mode-speed-capsule`, `#quality-level-fast`, `#quality-level-balanced`, `#quality-level-high_quality`, `#mode-option-genesis_existing`, `#mode-option-genesis_new`, `#mode-option-evolve_simple` and `#mode-option-custom_agent`.
 Panels open UPWARD (`dropdown-top`) because `.input-card` has `overflow: hidden`, which would clip a downward menu.
-`mode_description/1` returns a LONG sentence and is used literally in `.capsule-main` and `.capsule-subrow`; truncation handles overflow.
+`mode_description/1` returns a LONG sentence and is rendered ONLY as the trigger `<summary>`'s `title` tooltip.
+`.capsule-main` (trigger) and `.capsule-subrow` show the SHORT `mode_label/1` label instead ("New project" / "Init existing" / "Evolve" / "Custom"; `.capsule-main` is `min-w-0 max-w-[9rem] truncate` so the one-line toolbar contract holds, and the subrow reads "Mode · <short label>").
+`<form id="task-form">` carries a hidden `<input type="hidden" name="mode" value={@mode}>` — the ONLY form field for the combined UI mode string, because the Layer-2 mode buttons are `type="button"` inside the form and submit nothing; without it `ProjectsLive.handle_event("task_submit", %{"prompt" => _, "mode" => _})` raises FunctionClauseError.
 
 ### Foreign Repos — writable + base_sha + edit-in-place (`project_components.ex`)
 

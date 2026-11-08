@@ -970,6 +970,27 @@ defmodule EvoDashWeb.Helpers do
 
   def mode_description(_), do: ""
 
+  @doc """
+  Returns a very short label for the given task mode.
+
+  The fused mode+speed capsule's collapsed trigger shows ONLY this label; the
+  long `mode_description/1` sentence is rendered as the trigger's `title`
+  tooltip instead of inline text (it overflowed the one-line toolbar).
+  """
+  # zh_CN: New project → "新建项目"(genesis_new：从零创建代码库)
+  def mode_label("genesis_new"), do: gettext("New project")
+
+  # zh_CN: Init existing → "初始化"(genesis_existing：为已有代码库生成 CONTEXT.md)
+  def mode_label("genesis_existing"), do: gettext("Init existing")
+
+  # zh_CN: Evolve → "演进"(evolve_simple：演进已有代码库)
+  def mode_label("evolve_simple"), do: gettext("Evolve")
+
+  # zh_CN: Custom → "自定义"(custom_agent：以自定义智能体作为根智能体演进)
+  def mode_label("custom_agent"), do: gettext("Custom")
+
+  def mode_label(_), do: ""
+
   # ---------------------------------------------------------------------------
   # Number / Cost Formatting
   # ---------------------------------------------------------------------------
