@@ -79,7 +79,7 @@ Per-function detail (signatures, arities, return shapes) lives in the child CONT
 | `EvoGit.TaskInfo` / `RecentProject` | persisted structs; `opts`/`result["repos"]` STRING-keyed → `core/` |
 | `EvoGit.TaskRegistry` | lifecycle GenServer (`server/0` seam, `StoreGuard`, `ReadOffload`, cancel/kill; `put_task_archive/1` runs in the CALLER) → `task_registry/` |
 | `EvoGit.RemoteNode` / `AgentScheduler.RemoteAPI` | `:erpc.call/5` wrapper (`:remote_rpc_timeout` 30s) ↔ read-only RPC → `agent_scheduler/` |
-| `EvoGit.SystemSampler` | 3s `"system"` samples (13 keys incl. `llm_slots`) → `lib/evo_git/CONTEXT.md` |
+| `EvoGit.SystemSampler` | 3s `"system"` samples (14 keys incl. `llm_slots` + `llm_pools`) → `lib/evo_git/CONTEXT.md` |
 | `EvoGit.PeakHours` / `PeakHourEngine` | window math + flip engine (§ Peak/Off-Peak) |
 | `EvoGit.Bench` / `Bench.Stats` / `Bench.Report` / `Bench.SystemInfo` | boot-free I/O benchmark engine (synthetic repo, 8 measured phases), pure stats/reporting → `lib/evo_git/bench/` |
 | `EvoGit.ReqLLMPool` / `EvoGit.Powershell` | grow-only Finch-pool reconciliation; PowerShell helpers → `lib/evo_git/CONTEXT.md` |
