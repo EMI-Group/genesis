@@ -1,15 +1,15 @@
-defmodule EvoDashWeb.AgentsLive.ModelLabelTest do
+defmodule EvoDashWeb.ModelLabelTest do
   @moduledoc """
-  Pure unit tests for `EvoDashWeb.AgentsLive.ModelLabel` — the derivation
-  behind the agent-detail panel's "Model" cell.
+  Pure unit tests for `EvoDashWeb.ModelLabel` — the shared derivation behind
+  the agent-detail panel's "Model" cell and the task card's "Model" line.
 
-  The helper takes plain summary/agent maps, so no LiveView, socket, ETS or DB
-  setup is needed. Its contract is TOTAL: every unknown shape degrades to the
-  next source (or nil), it never raises and never renders a stray separator for
-  an absent part.
+  The helper takes plain summary/agent/task maps, so no LiveView, socket, ETS
+  or DB setup is needed. Its contract is TOTAL: every unknown shape degrades to
+  the next source (or nil), it never raises and never renders a stray separator
+  for an absent part.
   """
   use ExUnit.Case, async: true
-  alias EvoDashWeb.AgentsLive.ModelLabel
+  alias EvoDashWeb.ModelLabel
 
   # The canonical STRING-keyed task selection the scheduler now stores for an
   # explicit canonical model selection (the case that used to render "N/A").
@@ -135,6 +135,69 @@ defmodule EvoDashWeb.AgentsLive.ModelLabelTest do
       assert ModelLabel.label(nil) == nil
       assert ModelLabel.label("zai:glm-4.6") == nil
       assert ModelLabel.label(model_id: "legacy-id") == nil
+    end
+  end
+
+  describe "task_label/1 — the task card's Model line (canonical selection in opts)" do
+    # A stored task row reaches the card with `opts` decoded to a KEYWORD list
+    # (`:model_spec` atomized, its inner selection map string-keyed) while the
+    # legacy `model_id` column stays nil for canonical selections.
+    test "canonical opts model_spec WITH effort renders profile - model - effort" do
+      task = %{id: "t1", model_id: nil, opts: [mode: "simple", model_spec: @canonical]}
+
+      assert ModelLabel.task_label(task) == "work - glm-4.6 - high"
+    end
+
+    test "canonical opts model_spec WITHOUT effort renders profile - model" do
+      spec = %{"provider_profile_id" => "work", "model" => "glm-4.6"}
+
+      assert ModelLabel.task_label(%{model_id: nil, opts: [model_spec: spec]}) == "work - glm-4.6"
+    end
+
+    test "the canonical selection beats a legacy model_id" do
+      task = %{model_id: "legacy-id", opts: [model_spec: @canonical]}
+
+      assert ModelLabel.task_label(task) == "work - glm-4.6 - high"
+    end
+
+    test "a legacy model_id only still renders (top-level, as the summary carries it)" do
+      assert ModelLabel.task_label(%{model_id: "1:zai:glm-4.6", opts: [mode: "simple"]}) ==
+               "1:zai:glm-4.6"
+    end
+
+    test "a model_id inside opts is a fallback (string OR atom keyed opts)" do
+      assert ModelLabel.task_label(%{model_id: nil, opts: [{"model_id", "1:zai:glm-4.6"}]}) ==
+               "1:zai:glm-4.6"
+
+      assert ModelLabel.task_label(%{model_id: nil, opts: %{"model_id" => "1:zai:glm-4.6"}}) ==
+               "1:zai:glm-4.6"
+
+      assert ModelLabel.task_label(%{model_id: nil, opts: %{model_id: "1:zai:glm-4.6"}}) ==
+               "1:zai:glm-4.6"
+    end
+
+    test "a task with no model information yields nil (the card renders no Model line)" do
+      assert ModelLabel.task_label(%{id: "t1", model_id: nil, opts: [mode: "simple"]}) == nil
+      assert ModelLabel.task_label(%{id: "t1", opts: nil}) == nil
+      assert ModelLabel.task_label(%{id: "t1"}) == nil
+      assert ModelLabel.task_label(%{model_id: "", opts: [model_spec: %{}]}) == nil
+    end
+
+    test "string-keyed task maps are accepted (wire shapes)" do
+      assert ModelLabel.task_label(%{"model_id" => nil, "opts" => %{"model_spec" => @canonical}}) ==
+               "work - glm-4.6 - high"
+    end
+
+    test "total on odd shapes — never raises, degrades to nil" do
+      assert ModelLabel.task_label(nil) == nil
+      assert ModelLabel.task_label("task") == nil
+      assert ModelLabel.task_label(%{opts: "not-opts"}) == nil
+
+      assert ModelLabel.task_label(%{opts: [:junk, {:model_spec, @canonical}, :more]}) ==
+               "work - glm-4.6 - high"
+
+      assert ModelLabel.task_label(%{opts: [model_spec: %URI{}]}) == nil
+      assert ModelLabel.task_label(%{opts: [model_spec: ["not", "a", "map"]]}) == nil
     end
   end
 end

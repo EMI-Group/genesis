@@ -177,6 +177,81 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
     end
   end
 
+  # The "Model" line renders `EvoDashWeb.ModelLabel.task_label/1` output, NOT
+  # the raw legacy `model_id`: a canonical task selection persists `model_spec`
+  # in the task OPTS (string-keyed inner map) and leaves `model_id` nil by
+  # design, which used to hide the model entirely.
+  describe "task_card/1 — Model line" do
+    test "renders profile - model - effort for a canonical selection with effort" do
+      html =
+        render_model_card(
+          model_id: nil,
+          opts: [
+            prompt: "canonical task",
+            mode: "simple",
+            model_spec: %{
+              "provider_profile_id" => "work",
+              "model" => "glm-4.6",
+              "reasoning_effort" => "high"
+            }
+          ]
+        )
+
+      assert html =~ "Model"
+      assert html =~ "work - glm-4.6 - high"
+    end
+
+    test "renders profile - model for a canonical selection without effort" do
+      html =
+        render_model_card(
+          model_id: nil,
+          opts: [
+            prompt: "canonical task",
+            mode: "simple",
+            model_spec: %{"provider_profile_id" => "work", "model" => "glm-4.6"}
+          ]
+        )
+
+      assert html =~ "Model"
+      assert html =~ "work - glm-4.6"
+      refute html =~ "work - glm-4.6 -"
+    end
+
+    test "a legacy model_id only still renders the raw id" do
+      html =
+        render_model_card(
+          model_id: "1:zai:glm-4.6",
+          opts: [prompt: "legacy task", mode: "simple"]
+        )
+
+      assert html =~ "Model"
+      assert html =~ "1:zai:glm-4.6"
+    end
+
+    test "no model information renders NO Model line at all (no N/A clutter)" do
+      html = render_model_card(model_id: nil, opts: [prompt: "bare task", mode: "simple"])
+
+      refute html =~ "Model"
+      refute html =~ "N/A"
+    end
+
+    test "the lazily-fetched full row is an equal-shaped fallback" do
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task: summary_map(model_id: nil, opts: [prompt: "fallback task", mode: "simple"]),
+          show_details: true,
+          detail: %{
+            state: :ok,
+            task: %{
+              opts: [model_spec: %{"provider_profile_id" => "side", "model" => "kimi-k2"}]
+            }
+          }
+        )
+
+      assert html =~ "side - kimi-k2"
+    end
+  end
+
   # Review-button candidacy is RESULT-AGNOSTIC: every completed/cancelled task
   # is reviewable (a multi-repo task may have changed ONLY writable foreign
   # repos, making no primary-repo changes), while `:reflect` (repo-less) tasks
@@ -656,6 +731,16 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
         opts: [prompt: "Review candidacy task", mode: "simple"]
       },
       Map.new(overrides)
+    )
+  end
+
+  # Renders the EXPANDED card from a summary fixture — the Model line lives in
+  # the "Agents Spawned" panel, which needs the lazily-fetched full row.
+  defp render_model_card(overrides) do
+    render_component(&TaskCardComponents.task_card/1,
+      task: summary_map(overrides),
+      show_details: true,
+      detail: %{state: :ok, task: %{}}
     )
   end
 

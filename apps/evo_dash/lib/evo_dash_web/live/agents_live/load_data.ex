@@ -11,7 +11,8 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
   resolved at call time so tests can inject fakes.
   """
 
-  alias EvoDashWeb.AgentsLive.{ContextMeter, ModelLabel, ThresholdCache}
+  alias EvoDashWeb.AgentsLive.{ContextMeter, ThresholdCache}
+  alias EvoDashWeb.ModelLabel
 
   @doc """
   Full page load: agent summaries + the node's config status (layout banner)

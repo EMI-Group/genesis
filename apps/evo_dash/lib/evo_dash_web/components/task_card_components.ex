@@ -50,6 +50,17 @@ defmodule EvoDashWeb.TaskCardComponents do
   `commit_sha`/`branch_name` + `opts[:foreign_repos]`, enriched by the detail
   result's `repos` map when it has landed).
 
+  ## The "Model" line
+
+  The Agents Spawned panel's "Model: …" line renders the shared label
+  derivation `EvoDashWeb.ModelLabel.task_label/1` — the canonical task
+  selection lives in `opts` (`:model_spec`, whose inner map keeps STRING keys)
+  while the legacy `model_id` field stays nil by design, so reading only
+  `model_id` hid the model for every canonical selection. `task_label/1`
+  renders `"<provider_profile_id> - <model>[ - <reasoning_effort>]"`, falls
+  back to the legacy `model_id`, and returns nil — so the whole line is
+  omitted — when the task genuinely carries no model information.
+
   ## Why the preview helpers stay HERE
 
   The card template and its bounded-preview helpers (`text_preview/2`,
@@ -63,6 +74,7 @@ defmodule EvoDashWeb.TaskCardComponents do
 
   use EvoDashWeb, :html
 
+  alias EvoDashWeb.ModelLabel
   alias EvoDashWeb.TaskCardComponents.{Options, Repos, ResultRender}
 
   # Card readers implemented in the submodules and called directly by the
@@ -122,6 +134,11 @@ defmodule EvoDashWeb.TaskCardComponents do
         %{state: state} -> state
         _ -> nil
       end %>
+    <%!-- The "Model" line's label: a canonical task selection lives in `opts`
+         (`:model_spec`) while the legacy `model_id` stays nil by design, so the
+         summary's opts are the authoritative source and the lazily-fetched full
+         row is an equal-shaped fallback. nil = render no Model line at all. --%>
+    <% model_label = ModelLabel.task_label(@task) || ModelLabel.task_label(lite) %>
     <div class={[
       "bg-base-100 rounded-lg shadow-sm hover:shadow-md transition-shadow border border-base-200/60 relative z-10 group has-[[open]]:z-30",
       task_card_tint(@task)
@@ -618,9 +635,9 @@ defmodule EvoDashWeb.TaskCardComponents do
                           <.icon name="hero-user-group" class="size-4.5 text-primary-standalone" />
                           <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agents Spawned")}
                         </span>
-                        <%= if @task.model_id do %>
+                        <%= if model_label do %>
                           <span class="text-xs font-medium text-base-content/70">
-                            {gettext("Model")}: {@task.model_id}
+                            {gettext("Model")}: {model_label}
                           </span>
                         <% end %>
                       </h4>

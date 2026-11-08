@@ -57,8 +57,13 @@ After the Objective/Agent Message grid the expanded card renders EXACTLY ONE of:
 
 - `detail.state == :error` → an inline error-tinted strip `id="task-<id>-detail-error"` with `gettext("Could not load task details.")` and a Retry button (`phx-click="retry_task_detail"` + `phx-value-task_id`). Retry-able by construction — never an endless spinner.
 - `lite == nil` (detail nil or `:loading`) → a compact placeholder `id="task-<id>-detail-loading"`: spinner + `gettext("Loading task details…")`.
-- `lite` present → the heavy sections (Token & Cost Usage from `lite.usage`, Agents Spawned from the summary's `agent_count`/`model_id`, Execution Logs from `lite.logs`, lazy archive — next section).
+- `lite` present → the heavy sections (Token & Cost Usage from `lite.usage`, Agents Spawned from the summary's `agent_count` plus the "Model" line from `EvoDashWeb.ModelLabel.task_label/1`, Execution Logs from `lite.logs`, lazy archive — next section).
 
+### The "Model" line (`EvoDashWeb.ModelLabel.task_label/1`)
+The Agents Spawned panel's `gettext("Model")` line renders the shared label derivation, never the raw legacy field.
+A canonical task selection is persisted in the task `opts` (`:model_spec`, whose inner selection map keeps STRING keys) while `model_id` stays nil by design, so `ModelLabel.task_label(@task)` (summary first, then the lazily-fetched `lite` row as an equal-shaped fallback) renders `"<provider_profile_id> - <model>[ - <reasoning_effort>]"`.
+The legacy `model_id` (top-level summary field, `opts["model_id"]` fallback) still renders for pre-canonical tasks, and a nil label hides the whole line — no "N/A" clutter.
+The helper is total and never raises (odd `opts`, non-map tasks and unreadable selections all degrade to nil); the label is user configuration, so it is never gettext-wrapped or atomized.
 ### Lazy, paged archive disclosure (`load_task_archive` / `load_more_task_archive` / `load_task_archive_agent_result`)
 
 The expanded card's archive section renders only when `lite` is present AND (`Keyword.get(@task.opts, :archive) in [true, "true"]` via `Archive.archive_opt?/1` (imported into the card module) OR the archive envelope has been fetched) — the summary map cannot tell whether records exist, so `opts[:archive]` is the opt-in signal.
@@ -86,7 +91,7 @@ Task results may carry a top-level `repos` map — STRING keys: `%{repo_id => %{
 | Component / render path | Fields | Access |
 |---|---|---|
 | `Layouts.app` sidebar Active Tasks | `id`, `status`, `started_at`, `finished_at`, `opts`, `project_path` | dot on contract keys only (summary-safe) |
-| `TaskCardComponents.task_card/1` | `type`, `opts`, `id`, `status`, `started_at`, `finished_at`, `agent_count`, `model_id`, `review_status`, `commit_sha`, `branch_name`; `error` | dot on contract keys; `error` only via `task_error/1` + `error_field/2` |
+| `TaskCardComponents.task_card/1` | `type`, `opts`, `id`, `status`, `started_at`, `finished_at`, `agent_count`, `model_id` (legacy label fallback only — the Model line comes from `ModelLabel.task_label/1`), `review_status`, `commit_sha`, `branch_name`; `error` | dot on contract keys; `error` only via `task_error/1` + `error_field/2` |
 | `task_card/1` Agent Message / usage / logs / archive sections | `detail.task`'s `result`, `usage` (+ nested `usage.*`), `logs`; `detail.archive` via the `Archive` accessors (`entries`, `total`, `agent_results`, `loading_more?`, `more_error`) | `Map.get(lite, …)` + `not in [nil, []]` guards — hidden until the detail load lands |
 | `render_result_full/1` | the result VALUE (`Map.get(lite, :result)`) from TasksLive's detail entry | TasksLive modal only |
 

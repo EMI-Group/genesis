@@ -159,7 +159,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
   describe "agent model label" do
     # The detail panel's "Model" cell renders `agent.model_label` (derived by
-    # EvoDashWeb.AgentsLive.ModelLabel: canonical `:model_spec` -> `:llm_model`
+    # EvoDashWeb.ModelLabel: canonical `:model_spec` -> `:llm_model`
     # -> legacy `:model_id` -> nil), NOT the raw legacy `:model_id`. An explicit
     # canonical task selection stores `model_id: nil`, which used to render "N/A".
     test "renders the canonical selection instead of N/A", %{conn: conn} do

@@ -37,7 +37,6 @@ defmodule EvoDashWeb.AgentsLive do
     ContextMeter,
     HistoryGate,
     LoadData,
-    ModelLabel,
     OptimisticMessages,
     PendingEvents,
     ThresholdCache,
@@ -45,6 +44,7 @@ defmodule EvoDashWeb.AgentsLive do
   }
 
   alias EvoDashWeb.ContentText
+  alias EvoDashWeb.ModelLabel
 
   # Minimum interval between commit-graph fetches. Refreshes are already coalesced
   # by the agent-event flush; this further throttles the (heavier) per-repo git
