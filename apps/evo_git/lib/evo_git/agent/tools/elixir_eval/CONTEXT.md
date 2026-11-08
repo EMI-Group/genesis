@@ -22,7 +22,7 @@ Related integration suites include `reflect_tools_test.exs` and the parent tool-
 | `worker_tree.ex` / `WorkerTree` | `run(context, tier, limits, fun)` creates a guardian, authorized broker and independently owned traced evaluation subtree, with bounded execution, cleanup and caller waits. |
 | `custodian.ex` / `Custodian` | Internal independent trace owner; `start/4`, `finish/2` and `cleanup_ms/0` support bounded reaping even after abrupt guardian/tool death. |
 | `broker.ex` / `Broker` | `start/2,3,4`, `attach/2,3`, `call/2`, `output/1,2`, `stop/1,2` implement one unregistered capability broker per evaluation, with optional lifecycle-call timeout overrides. |
-| `allowlist.ex` | Read/write wrappers enforce exact EvoGit MFA/tier admission before Dune default fallback, with explicit IO shims and dbg rejection. |
+| `allowlist.ex` | Read/write wrappers enforce exact EvoGit MFA/tier admission before Dune default fallback, with explicit IO shims and dbg rejection; `ensure_initialized/0` loads the generated Base allowlists at the parse chokepoint, while `AllowlistAliases.atoms/1` supplies the compile-time alias atoms for the boot-safe `@on_load`. |
 | `direct_api.ex` / `DirectAPI` | Literal exact-MFA/tier registry, generated fixed real-function invocations and shared direct-API help. |
 | `read.ex` / `Read`, `Write` | Fixed broker-backed runtime inspection and mutation APIs, not direct access to runtime structs or configuration. |
 | `projection.ex` / `Projection` | Scalar runtime projections, paginated task options, task-id validation and scalar normalization. |
@@ -53,8 +53,10 @@ Engine accepts validated limits and an authorized context, adds only the request
 Every evaluation has fresh bindings; there is no persistent REPL state.
 The engine rejects invalid UTF-8 or code over 16,384 bytes independently of any stricter public-tool validation.
 Read/write use Dune's safe string parser for preflight and interpretation, with a 1,000-atom pool, 1,000,000-word heap budget, 5,000,000 reductions and supplied execution/parse timeouts.
-Both public allowlist wrappers load their generated Base allowlist in an `@on_load` callback, so Dune's generated alias-atom initialization runs before safe parsing, including when read or write is the first tier used in a fresh BEAM.
-Deferring Base loading until `fun_status/3` is too late: Dune 0.3.18 encodes unknown alias segments before function authorization, preventing fully qualified facades from resolving on cold first use.
+Both public allowlist wrappers materialize their generated Base spec's alias segment atoms in a side-effect-only `@on_load` that only enumerates compile-time literals from `AllowlistAliases.atoms/1`, so Dune's safe parser finds them before parsing, including when read or write is the first tier used in a fresh BEAM.
+An allowlist `@on_load` never loads another module and never raises: an embedded-mode release primLoads modules and runs their on_load handlers while `Code.ensure_loaded/1` can still answer `{:error, :embedded}` for a not-yet-loaded module, and a raising handler takes kernel down with `on_load_function_failed`.
+`ReadAllowlist.ensure_initialized/0` and `WriteAllowlist.ensure_initialized/0` instead load the generated Base allowlists at the `Engine` parse chokepoint, before `Dune.string_to_quoted/2`, so a genuinely unavailable allowlist fails loudly as an evaluation error rather than crashing boot or degrading to a restriction error.
+Loading the generated Base allowlist only from `fun_status/3` is too late: Dune 0.3.18 encodes unknown alias segments before function authorization, preventing fully qualified facades from resolving on cold first use.
 Unqualified dbg AST nodes are rejected before interpretation because sanitizer-generated debug IO can bypass normal allowlist shims; Kernel.dbg is also restricted by the allowlist.
 Default Dune pure operations remain available, but every EvoGit module is intercepted before Base fallback and denied unless its exact MFA and tier appear in `DirectAPI`'s literal registry or compatible facade list.
 Dune's generated `allow(..., only: [...])` entries select names rather than arities and initialize aliases only; the outer `fun_status/3` wrappers enforce exact arities and route admitted real APIs to fixed broker-backed shims, never arbitrary apply or namespace grants.
