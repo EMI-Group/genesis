@@ -5,12 +5,17 @@ defmodule EvoDashWeb.SettingsLive.ConfigIOTest do
   `:float` branches used by flat global `[llm]` cards (e.g.
   `tool_result_pruning`, `tool_result_pruning_target_fraction`).
 
+  Also covers the canonical-safe runtime model push built by
+  `ConfigIO.runtime_model_opts/1` and consumed by the scheduler's pure
+  `EvoGit.AgentScheduler.State.do_update_config/2` / `ModelSelection.resolve/2`.
+
   These are pure data-transformation functions operating on plain maps — no
-  LiveView, Phoenix socket, or DB setup is required.
+  LiveView, Phoenix socket, DB or app-global scheduler setup is required.
   """
 
   use ExUnit.Case, async: true
 
+  alias EvoGit.AgentScheduler.{ModelSelection, State}
   alias EvoDashWeb.SettingsLive.ConfigIO
 
   # Mirrors the real schema definition for [:sandbox, :write_paths] from
@@ -58,6 +63,25 @@ defmodule EvoDashWeb.SettingsLive.ConfigIOTest do
   end
 
   defp llm_params(value), do: %{"llm.tool_result_pruning_target_fraction" => value}
+
+  # Persisted config.toml shape: atom-keyed `:llm` container holding a canonical
+  # default selection plus STRING-keyed provider/model maps.
+  defp canonical_config do
+    %{
+      llm: %{
+        default_provider_profile: "acct",
+        providers: [
+          %{
+            "id" => "acct",
+            "provider" => "openai",
+            "api_key" => "k",
+            "default_model" => "gpt-x",
+            "models" => [%{"model" => "gpt-x"}, %{"model" => "gpt-y"}]
+          }
+        ]
+      }
+    }
+  end
 
   describe "list_of_strings_value/1" do
     test "filters blanks and non-binaries; kept entries stay untrimmed" do
@@ -235,6 +259,75 @@ defmodule EvoDashWeb.SettingsLive.ConfigIOTest do
 
       assert {%{llm: %{tool_result_pruning: false, tool_result_pruning_target_fraction: 0.5}}, []} =
                ConfigIO.params_to_category_config(llm_params("0.5"), :llm, schemas)
+    end
+  end
+
+  describe "runtime_model_opts/1 with a canonical [llm] configuration" do
+    test "pushes the selection snapshot so an explicit selection still resolves after a settings save" do
+      config = canonical_config()
+
+      # The settings save path pushes exactly this keyword list to the running
+      # scheduler.
+      opts = ConfigIO.runtime_model_opts(config)
+
+      assert [%{"id" => "acct"}] = Keyword.fetch!(opts, :provider_profiles)
+      assert Keyword.fetch!(opts, :model_selection_config) == config
+
+      assert Enum.any?(
+               Keyword.fetch!(opts, :model_profiles),
+               &(Map.get(&1, :provider_profile_id) == "acct")
+             )
+
+      # Simulate that save against a scheduler booted from a DIFFERENT (here:
+      # empty) configuration, i.e. one with no provider-profile snapshot.
+      boot_state = State.from_config(%{})
+      assert boot_state.provider_profiles == []
+      assert boot_state.model_selection_config == nil
+
+      # Historical failure mode: pushing only the LEGACY `Schema.model_profiles/1`
+      # projection made the scheduler treat the update as a legacy replacement,
+      # so `provider_profiles` became [] and `model_selection_config` nil —
+      # after which every explicit task selection failed with
+      # {:error, :model_spec_schema_unavailable}. The canonical-safe options
+      # keep the snapshot consistent instead.
+      assert {:reply, :ok, new_state} = State.do_update_config(opts, boot_state)
+      assert new_state.model_selection_config == config
+      assert new_state.provider_profiles != []
+
+      assert {:ok, resolved} =
+               ModelSelection.resolve(new_state, %{
+                 "provider_profile_id" => "acct",
+                 "model" => "gpt-y"
+               })
+
+      assert resolved.model_spec["model"] == "gpt-y"
+      assert resolved.model_spec["provider_profile_id"] == "acct"
+    end
+  end
+
+  describe "runtime_model_opts/1 with a legacy-only configuration" do
+    test "yields no provider accounts and no invented snapshot" do
+      # Neither `llm.providers` nor `llm.models`: the unconfigured legacy shape.
+      config = %{llm: %{temperature: 0.2}, scheduler: %{max_turns: 7}}
+
+      opts = ConfigIO.runtime_model_opts(config)
+
+      assert [%{id: "default", model: nil}] = Keyword.fetch!(opts, :model_profiles)
+
+      # A legacy-only config has no canonical accounts to push, and no
+      # selection snapshot exists to keep — that is not an error.
+      assert Keyword.get(opts, :provider_profiles) in [nil, []]
+      assert is_nil(Keyword.get(opts, :model_selection_config))
+
+      boot_state = State.from_config(config)
+
+      assert {:reply, :ok, new_state} = State.do_update_config(opts, boot_state)
+      assert new_state.model_selection_config == nil
+      assert new_state.provider_profiles == []
+
+      # The legacy shape is unchanged: an `:id`-keyed profile, no account id.
+      assert [%{id: "default"}] = new_state.model_profiles
+      refute Enum.any?(new_state.model_profiles, &Map.has_key?(&1, :provider_profile_id))
     end
   end
 end

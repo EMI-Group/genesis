@@ -8,6 +8,7 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
   accepts and returns a LiveView socket.
   """
 
+  alias EvoGit.AgentScheduler.ModelSelection
   alias EvoGit.Config.Schema
   alias EvoDash.SettingsUtils
 
@@ -60,8 +61,25 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
   end
 
   @doc """
+  Canonical-safe model options the running scheduler should receive.
+
+  Delegates to `EvoGit.AgentScheduler.ModelSelection.config_opts/1`, the single
+  source of truth shared with scheduler boot and reload: a canonical
+  `[llm] default_provider_profile` / `[[llm.providers]]` file yields
+  `:model_profiles` PLUS `:provider_profiles` and `:model_selection_config`
+  (the selection snapshot), while a legacy-only configuration yields
+  `:model_profiles` alone — no snapshot exists there, and that is not an error.
+  """
+  def runtime_model_opts(file_config), do: ModelSelection.config_opts(file_config)
+
+  @doc """
   Pushes relevant scheduler and LLM model config values from `file_config` to
   the running AgentScheduler. Returns the (possibly updated) socket.
+
+  The model side is the canonical-safe option list from `runtime_model_opts/1`,
+  so the running scheduler keeps (or installs) its provider-profile selection
+  snapshot. A legacy-only configuration yields no snapshot, which is not an
+  error: there is nothing to keep.
   """
   def update_runtime_from_file_config(file_config, socket) do
     updates =
@@ -89,14 +107,19 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
         get_in(file_config, [:scheduler, :max_turns_root])
       )
 
+    # LLM model configuration: `ModelSelection.config_opts/1` is the single
+    # source of truth shared with scheduler boot and reload. For a canonical
+    # `[llm]` configuration it carries the account snapshot
+    # (`:provider_profiles` + `:model_selection_config`) alongside the
+    # selections, so a later explicit task selection keeps resolving. Pushing
+    # the legacy projection alone would be read as a legacy replacement and
+    # would clear the running scheduler's snapshot.
     # Note: :tools config (e.g., web_search) is read from EvoGit.Config.resolve()
     # at execution time — no runtime push needed here.
-
-    # LLM model profiles: the scheduler now accepts the full profiles list and
-    # derives the model + generation params from the default profile internally.
-    # We no longer push :llm_model / :llm_generation_params separately.
     updates =
-      SettingsUtils.maybe_add_kw(updates, :model_profiles, Schema.model_profiles(file_config))
+      Enum.reduce(runtime_model_opts(file_config), updates, fn {key, value}, acc ->
+        SettingsUtils.maybe_add_kw(acc, key, value)
+      end)
 
     if updates != [] do
       # EXIT-SAFE: a dead/restarting AgentScheduler exits the caller on call —

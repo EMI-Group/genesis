@@ -107,7 +107,8 @@ build_config_from_category_params/4 parses supplied schemas, deep-merges and del
 generic_schema?/1 excludes :model_profiles/:provider_profiles and llm.models/llm.providers/llm.default_provider_profile paths and descendants with mixed atom/string spellings because dedicated forms own them.
 Generic category/search conversion and reset handlers share that guard, and parse_key_path/2 accepts only complete known generic schema paths rather than recombining individually allowed segments.
 Booleans parse before nil/blank and only "true" is true; malformed floats are neither written nor deleted and list_of_strings_value/1 preserves [] while absent/non-list signals deletion.
-update_runtime_from_file_config/2 best-effort pushes scheduler limits plus Schema.model_profiles(file_config), then reloads scheduler_config on success; runtime-push failure does not invalidate an already-written file.
+update_runtime_from_file_config/2 best-effort pushes scheduler limits plus runtime_model_opts/1 — the canonical-safe ModelSelection.config_opts/1 list of model_profiles with provider_profiles and model_selection_config — so the running scheduler keeps its provider-profile selection snapshot, then reloads scheduler_config on success; runtime-push failure does not invalidate an already-written file.
+A legacy-only configuration yields no selection snapshot to keep, which is not an error.
 Category/provider/variant/key-path conversions use schema/catalog whitelists rather than client-derived atoms.
 SearchEvents resets in memory and delegates parent persistence/reload, handling invalid key paths only.
 
