@@ -22,12 +22,12 @@ msgstr "%{action} se realizó correctamente."
 msgid "%{action} unavailable — the remote connection subsystem is not running."
 msgstr "%{action} no disponible: el subsistema de conexión remota no está en ejecución."
 
-#: lib/evo_dash_web/components/task_card_components.ex:876
+#: lib/evo_dash_web/components/task_card_components.ex:893
 #, elixir-autogen, elixir-format
 msgid "%{count}"
 msgstr "%{count}"
 
-#: lib/evo_dash_web/components/task_card_components.ex:269
+#: lib/evo_dash_web/components/task_card_components.ex:286
 #, elixir-autogen, elixir-format
 msgid "%{count} Agents"
 msgstr "%{count} Agentes"
@@ -143,13 +143,13 @@ msgstr "<sin contenido de texto>"
 msgid "<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."
 msgstr "<strong>¿No ves tu proveedor?</strong> Puedes ingresar cualquier modelo manualmente en el campo Modelo usando el formato <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">proveedor:nombre-del-modelo</code>. Consulta tu modelo en <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> o revisa los <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">proveedores compatibles</a>."
 
-#: lib/evo_dash_web/components/task_form_components.ex:807
-#: lib/evo_dash_web/components/task_form_components.ex:919
+#: lib/evo_dash_web/components/task_form_components.ex:1010
+#: lib/evo_dash_web/components/task_form_components.ex:1122
 #, elixir-autogen, elixir-format
 msgid "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
 msgstr "Un SHA de commit Git, nombre de rama o etiqueta para usar como base. Por defecto es HEAD."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:165
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:183
 #, elixir-autogen, elixir-format
 msgid "A profile with id \"%{id}\" already exists."
 msgstr "Ya existe un perfil con el id \"%{id}\"."
@@ -229,12 +229,12 @@ msgstr "Añadir modelo"
 msgid "Add a profile to get started, or use Quick Setup above."
 msgstr "Añade un perfil para empezar, o usa la configuración rápida de arriba."
 
-#: lib/evo_dash_web/components/task_form_components.ex:889
+#: lib/evo_dash_web/components/task_form_components.ex:1092
 #, elixir-autogen, elixir-format
 msgid "Advanced Options"
 msgstr "Opciones avanzadas"
 
-#: lib/evo_dash_web/components/task_card_components.ex:439
+#: lib/evo_dash_web/components/task_card_components.ex:456
 #: lib/evo_dash_web/components/task_card_components/result_render.ex:130
 #: lib/evo_dash_web/components/task_card_components/result_render.ex:219
 #, elixir-autogen, elixir-format
@@ -270,12 +270,12 @@ msgstr "Agente no encontrado"
 #: lib/evo_dash_web/components/review_components/header.ex:509
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:22
 #: lib/evo_dash_web/live/settings_live.ex:678
-#: lib/evo_dash_web/live/system_live/charts.ex:341
+#: lib/evo_dash_web/live/system_live/charts.ex:465
 #, elixir-autogen, elixir-format
 msgid "Agents"
 msgstr "Agentes"
 
-#: lib/evo_dash_web/components/task_card_components.ex:619
+#: lib/evo_dash_web/components/task_card_components.ex:636
 #, elixir-autogen, elixir-format
 msgid "Agents Spawned"
 msgstr "Agentes Desplegados"
@@ -351,14 +351,14 @@ msgstr "Inicio de archivo"
 msgid "Archive Start Ref"
 msgstr "Ref inicial del archivo"
 
-#: lib/evo_dash_web/components/task_form_components.ex:843
+#: lib/evo_dash_web/components/task_form_components.ex:1046
 #, elixir-autogen, elixir-format
 msgid "Archive agent details"
 msgstr "Archivar detalles del agente"
 
 #: lib/evo_dash_web/components/archive_components.ex:142
 #: lib/evo_dash_web/components/review_components.ex:216
-#: lib/evo_dash_web/components/task_card_components.ex:712
+#: lib/evo_dash_web/components/task_card_components.ex:729
 #, elixir-autogen, elixir-format
 msgid "Archived Agent Details"
 msgstr "Detalles del agente archivado"
@@ -403,7 +403,7 @@ msgstr "La URL base no puede estar vacía."
 msgid "Binary"
 msgstr "Binario"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:155
+#: lib/evo_dash_web/live/system_live/charts.ex:263
 #, elixir-autogen, elixir-format
 msgid "Blocked"
 msgstr "Bloqueado"
@@ -420,27 +420,27 @@ msgstr "Rama"
 msgid "Browse"
 msgstr "Examinar"
 
-#: lib/evo_dash_web/components/task_form_components.ex:765
+#: lib/evo_dash_web/components/task_form_components.ex:968
 #: lib/evo_dash_web/live/projects_live.ex:468
 #, elixir-autogen, elixir-format
 msgid "Build System"
 msgstr "Sistema de compilación"
 
 #: lib/evo_dash_web/components/review_components/header.ex:579
-#: lib/evo_dash_web/components/task_card_components.ex:549
+#: lib/evo_dash_web/components/task_card_components.ex:566
 #, elixir-autogen, elixir-format
 msgid "Cache Creation"
 msgstr "Creación de Caché"
 
 #: lib/evo_dash_web/components/review_components/header.ex:588
-#: lib/evo_dash_web/components/task_card_components.ex:557
+#: lib/evo_dash_web/components/task_card_components.ex:574
 #: lib/evo_dash_web/live/agents_live.html.heex:541
 #, elixir-autogen, elixir-format
 msgid "Cache Hit Rate"
 msgstr "Tasa de aciertos de caché"
 
 #: lib/evo_dash_web/components/review_components/header.ex:570
-#: lib/evo_dash_web/components/task_card_components.ex:541
+#: lib/evo_dash_web/components/task_card_components.ex:558
 #: lib/evo_dash_web/live/agents_live.html.heex:533
 #, elixir-autogen, elixir-format
 msgid "Cached Tokens"
@@ -451,7 +451,7 @@ msgstr "Tokens en Caché"
 #: lib/evo_dash_web/components/project_components.ex:816
 #: lib/evo_dash_web/components/review_components/actions.ex:268
 #: lib/evo_dash_web/components/settings_components/form_footer.ex:26
-#: lib/evo_dash_web/components/task_card_components.ex:283
+#: lib/evo_dash_web/components/task_card_components.ex:300
 #: lib/evo_dash_web/live/agents_live.html.heex:1167
 #: lib/evo_dash_web/live/settings_live.ex:584
 #: lib/evo_dash_web/live/settings_live.ex:652
@@ -767,22 +767,23 @@ msgstr "Commit actual"
 msgid "Dark theme"
 msgstr "Tema oscuro"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:304
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:143
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:213
+#: lib/evo_dash_web/components/llm_selection_components.ex:502
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:147
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:212
 #: lib/evo_dash_web/components/settings_components/setting_card.ex:104
 #, elixir-autogen, elixir-format
 msgid "Default"
 msgstr "Valor predeterminado"
 
 #: lib/evo_dash_web/components/project_components.ex:442
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:357
 #, elixir-autogen, elixir-format
 msgid "Defaults"
 msgstr "Valores predeterminados"
 
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:156
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:159
-#: lib/evo_dash_web/components/task_card_components.ex:341
+#: lib/evo_dash_web/components/task_card_components.ex:358
 #: lib/evo_dash_web/live/settings_live.ex:313
 #, elixir-autogen, elixir-format
 msgid "Delete"
@@ -793,7 +794,7 @@ msgstr "Eliminar"
 msgid "Delete this model profile?"
 msgstr "¿Eliminar este perfil de modelo?"
 
-#: lib/evo_dash_web/components/task_card_components.ex:339
+#: lib/evo_dash_web/components/task_card_components.ex:356
 #, elixir-autogen, elixir-format
 msgid "Delete this task?"
 msgstr "¿Eliminar esta tarea?"
@@ -805,12 +806,12 @@ msgstr "¿Eliminar esta tarea?"
 msgid "Depth"
 msgstr "Profundidad"
 
-#: lib/evo_dash_web/components/task_form_components.ex:219
+#: lib/evo_dash_web/components/task_form_components.ex:931
 #, elixir-autogen, elixir-format
 msgid "Describe the codebase you want to create..."
 msgstr "Describe la base de código que deseas crear..."
 
-#: lib/evo_dash_web/components/task_form_components.ex:216
+#: lib/evo_dash_web/components/task_form_components.ex:929
 #, elixir-autogen, elixir-format
 msgid "Describe what you want to change or improve..."
 msgstr "Describe lo que deseas cambiar o mejorar..."
@@ -821,7 +822,7 @@ msgstr "Describe lo que deseas cambiar o mejorar..."
 msgid "Description (optional)"
 msgstr "Descripción (opcional)"
 
-#: lib/evo_dash_web/components/task_card_components.ex:311
+#: lib/evo_dash_web/components/task_card_components.ex:328
 #, elixir-autogen, elixir-format
 msgid "Details"
 msgstr "Detalles"
@@ -872,7 +873,7 @@ msgstr "Puerto de distribución"
 
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:146
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:149
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:169
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:173
 #: lib/evo_dash_web/live/settings_live.ex:305
 #, elixir-autogen, elixir-format
 msgid "Edit"
@@ -943,7 +944,7 @@ msgstr "Error al ejecutar '%{command}': %{error}"
 msgid "Example model names:"
 msgstr "Nombres de modelo de ejemplo:"
 
-#: lib/evo_dash_web/components/task_card_components.ex:653
+#: lib/evo_dash_web/components/task_card_components.ex:670
 #, elixir-autogen, elixir-format
 msgid "Execution Logs"
 msgstr "Registros de Ejecución"
@@ -1039,7 +1040,7 @@ msgid "Filter settings..."
 msgstr "Filtrar ajustes..."
 
 #: lib/evo_dash_web/components/review_components/header.ex:522
-#: lib/evo_dash_web/components/task_card_components.ex:263
+#: lib/evo_dash_web/components/task_card_components.ex:280
 #, elixir-autogen, elixir-format
 msgid "Finished"
 msgstr "Finalizado"
@@ -1084,8 +1085,8 @@ msgstr "Los repositorios externos son bases de código adicionales a las que los
 msgid "Frequency Penalty"
 msgstr "Penalización por frecuencia"
 
-#: lib/evo_dash_web/components/task_card_components.ex:421
-#: lib/evo_dash_web/components/task_card_components.ex:458
+#: lib/evo_dash_web/components/task_card_components.ex:438
+#: lib/evo_dash_web/components/task_card_components.ex:475
 #, elixir-autogen, elixir-format
 msgid "Full"
 msgstr "Completo"
@@ -1127,7 +1128,7 @@ msgstr "Nombre de usuario de GitHub"
 msgid "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
 msgstr "Reinicia o detiene la máquina virtual de Erlang de forma controlada. Reiniciar cierra y reinicia todas las aplicaciones; detener apaga la MV de forma controlada y debe iniciarse nuevamente de forma manual. En ambos casos se perderá el estado del entorno de ejecución en memoria."
 
-#: lib/evo_dash_web/components/task_card_components.ex:309
+#: lib/evo_dash_web/components/task_card_components.ex:326
 #, elixir-autogen, elixir-format
 msgid "Hide Details"
 msgstr "Ocultar Detalles"
@@ -1148,7 +1149,7 @@ msgid "Ignored"
 msgstr "Ignorado"
 
 #: lib/evo_dash_web/components/review_components/header.ex:615
-#: lib/evo_dash_web/components/task_card_components.ex:586
+#: lib/evo_dash_web/components/task_card_components.ex:603
 #: lib/evo_dash_web/live/agents_live.html.heex:642
 #, elixir-autogen, elixir-format
 msgid "Input Cost"
@@ -1157,7 +1158,7 @@ msgstr "Costo de Entrada"
 #: lib/evo_dash_web/components/archive_components.ex:425
 #: lib/evo_dash_web/components/review_components.ex:469
 #: lib/evo_dash_web/components/review_components/header.ex:539
-#: lib/evo_dash_web/components/task_card_components.ex:513
+#: lib/evo_dash_web/components/task_card_components.ex:530
 #: lib/evo_dash_web/live/agents_live.html.heex:506
 #, elixir-autogen, elixir-format
 msgid "Input Tokens"
@@ -1293,23 +1294,21 @@ msgstr "Configuración faltante"
 msgid "Mode: %{mode} | %{prompt}"
 msgstr "Modo: %{mode} | %{prompt}"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:137
+#: lib/evo_dash_web/components/llm_selection_components.ex:168
 #: lib/evo_dash_web/components/review_components/header.ex:500
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:281
-#: lib/evo_dash_web/components/task_card_components.ex:623
+#: lib/evo_dash_web/components/task_card_components.ex:640
 #: lib/evo_dash_web/live/agents_live.html.heex:338
-#: lib/evo_dash_web/live/system_live/charts.ex:409
 #, elixir-autogen, elixir-format
 msgid "Model"
 msgstr "Modelo"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:260
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:446
 #, elixir-autogen, elixir-format
 msgid "Model ID"
 msgstr "ID del modelo"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:373
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:399
 #, elixir-autogen, elixir-format
 msgid "Model ID cannot be empty."
 msgstr "El id del modelo no puede estar vacío."
@@ -1449,7 +1448,7 @@ msgstr "No se encontraron ajustes que coincidan con \"%{query}\""
 msgid "No tasks found"
 msgstr "No se encontraron tareas"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:298
+#: lib/evo_dash_web/components/llm_selection_components.ex:496
 #: lib/evo_dash_web/live/agents_live.html.heex:453
 #: lib/evo_dash_web/live/agents_live.html.heex:478
 #: lib/evo_dash_web/live/system_live/status.ex:75
@@ -1476,7 +1475,7 @@ msgstr "Número de espacios paralelos para solicitudes LLM"
 #: lib/evo_dash_web/components/review_components.ex:71
 #: lib/evo_dash_web/components/review_components.ex:341
 #: lib/evo_dash_web/components/review_components/header.ex:365
-#: lib/evo_dash_web/components/task_card_components.ex:402
+#: lib/evo_dash_web/components/task_card_components.ex:419
 #: lib/evo_dash_web/live/agents_live.html.heex:356
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:125
 #, elixir-autogen, elixir-format
@@ -1492,7 +1491,7 @@ msgstr "Objetivo"
 msgid "Open"
 msgstr "Abrir"
 
-#: lib/evo_dash_web/components/task_form_components.ex:673
+#: lib/evo_dash_web/components/task_form_components.ex:853
 #, elixir-autogen, elixir-format
 msgid "Open a project to get started"
 msgstr "Abre un proyecto para comenzar"
@@ -1503,7 +1502,7 @@ msgid "Optional: Note for the skill extraction agent"
 msgstr "Opcional: nota para el agente de extracción de habilidades"
 
 #: lib/evo_dash_web/components/review_components/header.ex:624
-#: lib/evo_dash_web/components/task_card_components.ex:594
+#: lib/evo_dash_web/components/task_card_components.ex:611
 #: lib/evo_dash_web/live/agents_live.html.heex:650
 #, elixir-autogen, elixir-format
 msgid "Output Cost"
@@ -1512,7 +1511,7 @@ msgstr "Costo de Salida"
 #: lib/evo_dash_web/components/archive_components.ex:432
 #: lib/evo_dash_web/components/review_components.ex:478
 #: lib/evo_dash_web/components/review_components/header.ex:548
-#: lib/evo_dash_web/components/task_card_components.ex:521
+#: lib/evo_dash_web/components/task_card_components.ex:538
 #: lib/evo_dash_web/live/agents_live.html.heex:514
 #, elixir-autogen, elixir-format
 msgid "Output Tokens"
@@ -1549,7 +1548,7 @@ msgstr "Pausar planificador"
 #: lib/evo_dash_web/helpers.ex:76
 #: lib/evo_dash_web/live/agents_live.html.heex:163
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:311
-#: lib/evo_dash_web/live/system_live/charts.ex:165
+#: lib/evo_dash_web/live/system_live/charts.ex:273
 #: lib/evo_dash_web/live/tasks_live.ex:74
 #, elixir-autogen, elixir-format
 msgid "Pending"
@@ -1585,12 +1584,11 @@ msgid "Process limits are only available on Linux with systemd-run."
 msgstr "Los límites de proceso solo están disponibles en Linux con systemd-run."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:239
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:272
 #, elixir-autogen, elixir-format
 msgid "Profile ID"
 msgstr "ID del perfil"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:161
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:179
 #, elixir-autogen, elixir-format
 msgid "Profile id cannot be empty."
 msgstr "El id del perfil no puede estar vacío."
@@ -1622,7 +1620,7 @@ msgid "Provide specific instructions on what knowledge should be captured as ski
 msgstr "Proporciona instrucciones específicas sobre qué conocimiento se debe capturar como habilidades."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:249
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:280
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:59
 #, elixir-autogen, elixir-format
 msgid "Provider"
 msgstr "proveedor"
@@ -1781,8 +1779,8 @@ msgstr "Resultado"
 msgid "Resume Scheduler"
 msgstr "Reanudar planificador"
 
-#: lib/evo_dash_web/components/task_form_components.ex:822
-#: lib/evo_dash_web/components/task_form_components.ex:936
+#: lib/evo_dash_web/components/task_form_components.ex:1025
+#: lib/evo_dash_web/components/task_form_components.ex:1139
 #, elixir-autogen, elixir-format
 msgid "Resume from"
 msgstr "Reanudar desde"
@@ -1803,8 +1801,8 @@ msgstr "Reintentos"
 #: lib/evo_dash_web/components/review_components.ex:273
 #: lib/evo_dash_web/components/review_components.ex:393
 #: lib/evo_dash_web/components/settings_components.ex:548
-#: lib/evo_dash_web/components/task_card_components.ex:489
-#: lib/evo_dash_web/components/task_card_components.ex:755
+#: lib/evo_dash_web/components/task_card_components.ex:506
+#: lib/evo_dash_web/components/task_card_components.ex:772
 #: lib/evo_dash_web/live/agents_live.html.heex:44
 #: lib/evo_dash_web/live/projects_live.ex:153
 #: lib/evo_dash_web/live/projects_live/remote_view.ex:290
@@ -1827,7 +1825,7 @@ msgstr "Reintento #%{attempt} - Iniciando con espera de %{backoff_seconds}s"
 msgid "Retry attempt %{attempt}"
 msgstr "Intento de reintento %{attempt}"
 
-#: lib/evo_dash_web/components/task_card_components.ex:295
+#: lib/evo_dash_web/components/task_card_components.ex:312
 #, elixir-autogen, elixir-format
 msgid "Review"
 msgstr "Revisar"
@@ -1856,7 +1854,7 @@ msgstr "Ejecutar"
 #: lib/evo_dash_web/helpers.ex:77
 #: lib/evo_dash_web/live/agents_live.html.heex:172
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:310
-#: lib/evo_dash_web/live/system_live/charts.ex:153
+#: lib/evo_dash_web/live/system_live/charts.ex:261
 #: lib/evo_dash_web/live/tasks_live.ex:71
 #, elixir-autogen, elixir-format
 msgid "Running"
@@ -1920,18 +1918,18 @@ msgstr "Planificador"
 msgid "Scheduler Active"
 msgstr "Planificador activo"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:307
+#: lib/evo_dash_web/live/system_live/charts.ex:430
 #: lib/evo_dash_web/live/system_live/runtime_controls.ex:70
 #, elixir-autogen, elixir-format
 msgid "Scheduler Paused"
 msgstr "Planificador en pausa"
 
-#: lib/evo_dash_web/live/system_live.ex:1684
+#: lib/evo_dash_web/live/system_live.ex:1685
 #, elixir-autogen, elixir-format
 msgid "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
 msgstr "Planificador en pausa. Los agentes en ejecución continúan, pero no se concederán nuevos espacios ni agentes."
 
-#: lib/evo_dash_web/live/system_live.ex:1679
+#: lib/evo_dash_web/live/system_live.ex:1680
 #, elixir-autogen, elixir-format
 msgid "Scheduler resumed. New agents and slots are being granted."
 msgstr "Planificador reanudado. Se están concediendo nuevos agentes y espacios."
@@ -2028,21 +2026,21 @@ msgstr "Inicia una tarea desde el panel para ver agentes aquí."
 #: lib/evo_dash_web/components/archive_components.ex:460
 #: lib/evo_dash_web/components/review_components.ex:511
 #: lib/evo_dash_web/components/review_components/header.ex:516
-#: lib/evo_dash_web/components/task_card_components.ex:258
+#: lib/evo_dash_web/components/task_card_components.ex:275
 #, elixir-autogen, elixir-format
 msgid "Started"
 msgstr "Iniciado"
 
 #: lib/evo_dash_web/components/project_components.ex:669
 #: lib/evo_dash_web/components/project_components.ex:795
-#: lib/evo_dash_web/components/task_form_components.ex:805
-#: lib/evo_dash_web/components/task_form_components.ex:914
+#: lib/evo_dash_web/components/task_form_components.ex:1008
+#: lib/evo_dash_web/components/task_form_components.ex:1117
 #, elixir-autogen, elixir-format
 msgid "Starting Commit"
 msgstr "Commit inicial"
 
-#: lib/evo_dash_web/components/task_form_components.ex:787
-#: lib/evo_dash_web/components/task_form_components.ex:895
+#: lib/evo_dash_web/components/task_form_components.ex:990
+#: lib/evo_dash_web/components/task_form_components.ex:1098
 #, elixir-autogen, elixir-format
 msgid "Starting Node"
 msgstr "Nodo inicial"
@@ -2146,7 +2144,7 @@ msgid "Tasks will appear here once you start them from the dashboard."
 msgstr "Las tareas aparecerán aquí una vez que las inicies desde el panel de control."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:621
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:436
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:573
 #, elixir-autogen, elixir-format
 msgid "Temperature"
 msgstr "Temperatura"
@@ -2169,8 +2167,8 @@ msgstr "Probar en Ajustes"
 msgid "Testing LLM connection..."
 msgstr "Probando conexión con el LLM..."
 
-#: lib/evo_dash_web/components/task_form_components.ex:824
-#: lib/evo_dash_web/components/task_form_components.ex:938
+#: lib/evo_dash_web/components/task_form_components.ex:1027
+#: lib/evo_dash_web/components/task_form_components.ex:1141
 #, elixir-autogen, elixir-format
 msgid "The ID of a previous task to continue from. Injects the previous task's context (commits, objective, and result) into this task's objective."
 msgstr "El ID de una tarea anterior para continuar. Inyecta el contexto de la tarea anterior (commits, objetivo y resultado) en el objetivo de esta tarea."
@@ -2201,8 +2199,8 @@ msgstr "El agente completó sin realizar cambios de código. Puedes reanudar des
 msgid "The model name"
 msgstr "El nombre del modelo"
 
-#: lib/evo_dash_web/components/task_form_components.ex:789
-#: lib/evo_dash_web/components/task_form_components.ex:898
+#: lib/evo_dash_web/components/task_form_components.ex:992
+#: lib/evo_dash_web/components/task_form_components.ex:1101
 #, elixir-autogen, elixir-format
 msgid "The subdirectory within the project to start evolution from. Use './' for root."
 msgstr "El subdirectorio dentro del proyecto desde donde iniciar la evolución. Usa './' para la raíz."
@@ -2225,7 +2223,7 @@ msgid "This will gracefully shut down the Erlang VM. All applications will be st
 msgstr "Esto apagará la máquina virtual de Erlang de forma controlada. Todas las aplicaciones se detendrán en orden."
 
 #: lib/evo_dash_web/components/review_components/header.ex:532
-#: lib/evo_dash_web/components/task_card_components.ex:508
+#: lib/evo_dash_web/components/task_card_components.ex:525
 #, elixir-autogen, elixir-format
 msgid "Token & Cost Usage"
 msgstr "Uso de Tokens y Costos"
@@ -2257,19 +2255,19 @@ msgid "Tools"
 msgstr "Herramientas"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:647
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:439
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:576
 #, elixir-autogen, elixir-format
 msgid "Top K"
 msgstr "Top K"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:638
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:438
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:575
 #, elixir-autogen, elixir-format
 msgid "Top P"
 msgstr "Top P"
 
 #: lib/evo_dash_web/components/review_components/header.ex:633
-#: lib/evo_dash_web/components/task_card_components.ex:602
+#: lib/evo_dash_web/components/task_card_components.ex:619
 #: lib/evo_dash_web/live/agents_live.html.heex:658
 #, elixir-autogen, elixir-format
 msgid "Total Cost"
@@ -2278,7 +2276,7 @@ msgstr "Costo total"
 #: lib/evo_dash_web/components/archive_components.ex:439
 #: lib/evo_dash_web/components/review_components.ex:487
 #: lib/evo_dash_web/components/review_components/header.ex:557
-#: lib/evo_dash_web/components/task_card_components.ex:529
+#: lib/evo_dash_web/components/task_card_components.ex:546
 #: lib/evo_dash_web/live/agents_live.html.heex:522
 #, elixir-autogen, elixir-format
 msgid "Total Tokens"
@@ -2381,9 +2379,9 @@ msgstr "Ver métricas del sistema, procesos y telemetría de aplicaciones"
 
 #: lib/evo_dash_web/helpers.ex:78
 #: lib/evo_dash_web/live/agents_live.html.heex:183
-#: lib/evo_dash_web/live/system_live/charts.ex:98
-#: lib/evo_dash_web/live/system_live/charts.ex:140
-#: lib/evo_dash_web/live/system_live/charts.ex:160
+#: lib/evo_dash_web/live/system_live/charts.ex:111
+#: lib/evo_dash_web/live/system_live/charts.ex:248
+#: lib/evo_dash_web/live/system_live/charts.ex:268
 #, elixir-autogen, elixir-format
 msgid "Waiting"
 msgstr "Esperando"
@@ -2441,8 +2439,8 @@ msgstr "ej. anthropic, openai"
 msgid "e.g. gpt-4o or anthropic/claude-3.5-sonnet"
 msgstr "p. ej. gpt-4o o anthropic/claude-3.5-sonnet"
 
-#: lib/evo_dash_web/components/task_form_components.ex:800
-#: lib/evo_dash_web/components/task_form_components.ex:909
+#: lib/evo_dash_web/components/task_form_components.ex:1003
+#: lib/evo_dash_web/components/task_form_components.ex:1112
 #, elixir-autogen, elixir-format
 msgid "e.g., ./src/components"
 msgstr "ej., ./src/components"
@@ -2452,8 +2450,8 @@ msgstr "ej., ./src/components"
 msgid "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
 msgstr "ej., Enfócate en el flujo de despliegue y los patrones de migración de base de datos descubiertos en este PR."
 
-#: lib/evo_dash_web/components/task_form_components.ex:816
-#: lib/evo_dash_web/components/task_form_components.ex:930
+#: lib/evo_dash_web/components/task_form_components.ex:1019
+#: lib/evo_dash_web/components/task_form_components.ex:1133
 #, elixir-autogen, elixir-format
 msgid "e.g., abc1234 or HEAD"
 msgstr "ej., abc1234 o HEAD"
@@ -2549,7 +2547,7 @@ msgstr "top_k"
 msgid "top_p"
 msgstr "top_p"
 
-#: lib/evo_dash_web/components/task_card_components.ex:631
+#: lib/evo_dash_web/components/task_card_components.ex:648
 #, elixir-autogen, elixir-format
 msgid "total agents (incl. subagents)"
 msgstr "agentes totales (incl. subagentes)"
@@ -2889,12 +2887,12 @@ msgstr "Introduce tu clave API para %{provider}."
 msgid "Extra Config (JSON)"
 msgstr "Configuración adicional (JSON)"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:377
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:403
 #, elixir-autogen, elixir-format
 msgid "Extra Config must be a JSON object (map)."
 msgstr "La configuración adicional debe ser un objeto JSON (mapa)."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:374
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:400
 #, elixir-autogen, elixir-format
 msgid "Extra Config must be valid JSON."
 msgstr "La configuración adicional debe ser JSON válido."
@@ -2915,7 +2913,7 @@ msgstr "Ir al panel"
 msgid "Light"
 msgstr "Claro"
 
-#: lib/evo_dash_web/components/task_form_components.ex:772
+#: lib/evo_dash_web/components/task_form_components.ex:975
 #: lib/evo_dash_web/live/projects_live.ex:470
 #, elixir-autogen, elixir-format
 msgid "No build system"
@@ -2942,12 +2940,12 @@ msgstr "La ruta debe ser absoluta."
 msgid "Provider Options (JSON)"
 msgstr "Opciones de proveedor (JSON)"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:383
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:409
 #, elixir-autogen, elixir-format
 msgid "Provider Options must be a JSON object (map)."
 msgstr "Las opciones del proveedor deben ser un objeto JSON (mapa)."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:380
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:406
 #, elixir-autogen, elixir-format
 msgid "Provider Options must be valid JSON."
 msgstr "Las opciones del proveedor deben ser JSON válido."
@@ -2993,18 +2991,18 @@ msgstr "Tu LLM está configurado. Puedes gestionarlo en cualquier momento desde 
 msgid "completed"
 msgstr "completadas"
 
-#: lib/evo_dash_web/live/agents_live.ex:2013
+#: lib/evo_dash_web/live/agents_live.ex:2018
 #, elixir-autogen, elixir-format
 msgid "Failed to send message: %{reason}"
 msgstr "Error al enviar el mensaje: %{reason}"
 
-#: lib/evo_dash_web/live/agents_live.ex:707
+#: lib/evo_dash_web/live/agents_live.ex:708
 #, elixir-autogen, elixir-format
 msgid "Message sent to agent"
 msgstr "Mensaje enviado al agente"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:1171
-#: lib/evo_dash_web/live/home_live.ex:230
+#: lib/evo_dash_web/live/home_live.ex:242
 #, elixir-autogen, elixir-format
 msgid "Send"
 msgstr "Enviar"
@@ -3034,7 +3032,7 @@ msgstr "Tu mensaje se añadirá al contexto del agente en su siguiente turno."
 msgid "Agent Report"
 msgstr "Informe del Agente"
 
-#: lib/evo_dash_web/live/home_live.ex:649
+#: lib/evo_dash_web/live/home_live.ex:663
 #: lib/evo_dash_web/live/projects_live.ex:1167
 #: lib/evo_dash_web/live/review_live.ex:583
 #: lib/evo_dash_web/live/settings_live.ex:1553
@@ -3138,12 +3136,12 @@ msgstr "Z.ai (Zhipu AI)"
 msgid "xAI"
 msgstr "xAI"
 
-#: lib/evo_dash_web/live/system_live.ex:1743
+#: lib/evo_dash_web/live/system_live.ex:1744
 #, elixir-autogen, elixir-format
 msgid "Remote node is restarting. Please wait for it to come back up, then reconnect."
 msgstr "El nodo remoto se está reiniciando. Espere a que vuelva a estar disponible y vuelva a conectarse."
 
-#: lib/evo_dash_web/live/system_live.ex:1747
+#: lib/evo_dash_web/live/system_live.ex:1748
 #, elixir-autogen, elixir-format
 msgid "Remote node is stopping. It will need to be started again on the remote host."
 msgstr "El nodo remoto se está deteniendo. Deberá iniciarse de nuevo en el host remoto."
@@ -3158,7 +3156,7 @@ msgstr "Esto reiniciará de forma controlada la máquina virtual de Erlang del n
 msgid "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
 msgstr "Esto apagará de forma controlada la máquina virtual de Erlang del nodo remoto. Todas las aplicaciones del nodo remoto se detendrán en orden."
 
-#: lib/evo_dash_web/components/task_form_components.ex:854
+#: lib/evo_dash_web/components/task_form_components.ex:1057
 #, elixir-autogen, elixir-format
 msgid "Archive agent detail"
 msgstr "Archivar detalle del agente"
@@ -3168,7 +3166,7 @@ msgstr "Archivar detalle del agente"
 msgid "Blank = auto-probe the remote OS/arch"
 msgstr "Vacío = detectar automáticamente el SO/arquitectura remota"
 
-#: lib/evo_dash_web/components/task_form_components.ex:856
+#: lib/evo_dash_web/components/task_form_components.ex:1059
 #, elixir-autogen, elixir-format
 msgid "Collect per-agent metadata for review"
 msgstr "Recopilar metadatos por agente para revisión"
@@ -3195,8 +3193,8 @@ msgstr "Descargando"
 msgid "Extracting"
 msgstr "Extrayendo"
 
-#: lib/evo_dash_web/components/task_form_components.ex:631
-#: lib/evo_dash_web/components/task_form_components.ex:632
+#: lib/evo_dash_web/components/task_form_components.ex:811
+#: lib/evo_dash_web/components/task_form_components.ex:812
 #, elixir-autogen, elixir-format
 msgid "Launch"
 msgstr "Iniciar"
@@ -3227,7 +3225,7 @@ msgstr "Abrir proyecto por ruta"
 msgid "Open a project..."
 msgstr "Abrir un proyecto..."
 
-#: lib/evo_dash_web/components/task_form_components.ex:211
+#: lib/evo_dash_web/components/task_form_components.ex:924
 #, elixir-autogen, elixir-format
 msgid "Optional — leave empty and click Launch to initialize an existing codebase"
 msgstr "Opcional: deje vacío y haga clic en Iniciar para inicializar un código existente"
@@ -3284,13 +3282,13 @@ msgstr "No se puede conectar a %{name}"
 msgid "Cannot open project: remote node %{name} is not connected. Retry the connection first."
 msgstr "No se puede abrir el proyecto: el nodo remoto %{name} no está conectado. Reintente la conexión primero."
 
-#: lib/evo_dash_web/live/system_live/charts.ex:87
-#: lib/evo_dash_web/live/system_live/charts.ex:134
+#: lib/evo_dash_web/live/system_live/charts.ex:100
+#: lib/evo_dash_web/live/system_live/charts.ex:242
 #, elixir-autogen, elixir-format
 msgid "Capacity"
 msgstr "Capacidad"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:332
+#: lib/evo_dash_web/live/system_live/charts.ex:456
 #, elixir-autogen, elixir-format
 msgid "Capacity: max_tool_concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
 msgstr "Capacidad: max_tool_concurrency. En uso: agentes en ejecución (proxy de uso de slots — los titulares de slots no están expuestos)."
@@ -3330,7 +3328,7 @@ msgstr "Verifica el entorno de desarrollo Nix utilizado para compilaciones repro
 msgid "Choose a provider:"
 msgstr "Elige un proveedor:"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:422
+#: lib/evo_dash_web/live/system_live/charts.ex:562
 #, elixir-autogen, elixir-format
 msgid "Collecting data…"
 msgstr "Recopilando datos…"
@@ -3353,8 +3351,8 @@ msgid "Connection lost or failed"
 msgstr "Conexión perdida o fallida"
 
 #: lib/evo_dash_web/components/settings_components/model_selection_editor.ex:117
-#: lib/evo_dash_web/components/task_card_components.ex:414
-#: lib/evo_dash_web/components/task_card_components.ex:451
+#: lib/evo_dash_web/components/task_card_components.ex:431
+#: lib/evo_dash_web/components/task_card_components.ex:468
 #: lib/evo_dash_web/live/projects_live.ex:280
 #: lib/evo_dash_web/live/tasks_live.ex:432
 #: lib/evo_dash_web/live/tasks_live.ex:455
@@ -3383,8 +3381,8 @@ msgstr "Corrige la configuración faltante o no válida en Configuración."
 msgid "Hide example"
 msgstr "Ocultar ejemplo"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:93
-#: lib/evo_dash_web/live/system_live/charts.ex:139
+#: lib/evo_dash_web/live/system_live/charts.ex:106
+#: lib/evo_dash_web/live/system_live/charts.ex:247
 #, elixir-autogen, elixir-format
 msgid "In use"
 msgstr "En uso"
@@ -3399,17 +3397,17 @@ msgstr "Instala git y asegúrate de que esté disponible en tu PATH."
 msgid "Install ripgrep and make sure it is available on your PATH."
 msgstr "Instala ripgrep y asegúrate de que esté disponible en tu PATH."
 
-#: lib/evo_dash_web/live/system_live/charts.ex:314
+#: lib/evo_dash_web/live/system_live/charts.ex:437
 #, elixir-autogen, elixir-format
 msgid "LLM Slots"
 msgstr "Slots de LLM"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:299
+#: lib/evo_dash_web/live/system_live/charts.ex:422
 #, elixir-autogen, elixir-format
 msgid "LLM slots, tool slots, and agent activity — sampled every 3 seconds over the last 3 minutes."
 msgstr "Slots de LLM, slots de herramientas y actividad de agentes — muestreados cada 3 segundos durante los últimos 3 minutos."
 
-#: lib/evo_dash_web/live/system_live/charts.ex:476
+#: lib/evo_dash_web/live/system_live/charts.ex:616
 #, elixir-autogen, elixir-format
 msgid "Last 3 minutes"
 msgstr "Últimos 3 minutos"
@@ -3500,12 +3498,12 @@ msgstr "El aislamiento con sandbox-exec no está disponible en este sistema."
 msgid "Save Model"
 msgstr "Guardar modelo"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:475
+#: lib/evo_dash_web/live/system_live/charts.ex:615
 #, elixir-autogen, elixir-format
 msgid "Scale 0–%{max}"
 msgstr "Escala 0–%{max}"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:297
+#: lib/evo_dash_web/live/system_live/charts.ex:420
 #, elixir-autogen, elixir-format
 msgid "Scheduler Status"
 msgstr "Estado del planificador"
@@ -3568,17 +3566,17 @@ msgstr "El sistema funciona, pero requiere atención"
 msgid "The Nix dev environment could not be built. Fix the flake or disable Nix in Settings."
 msgstr "No se pudo compilar el entorno de desarrollo Nix. Corrige el flake o desactiva Nix en Configuración."
 
-#: lib/evo_dash_web/live/system_live/charts.ex:329
+#: lib/evo_dash_web/live/system_live/charts.ex:453
 #, elixir-autogen, elixir-format
 msgid "Tool Slots"
 msgstr "Slots de herramientas"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:148
+#: lib/evo_dash_web/live/system_live/charts.ex:256
 #, elixir-autogen, elixir-format
 msgid "Total"
 msgstr "Total"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:344
+#: lib/evo_dash_web/live/system_live/charts.ex:468
 #, elixir-autogen, elixir-format
 msgid "Total agents with running, blocked (waiting for a slot), waiting, and pending counts."
 msgstr "Total de agentes con recuentos de ejecución, bloqueados (en espera de un slot), en espera y pendientes."
@@ -3588,7 +3586,7 @@ msgstr "Total de agentes con recuentos de ejecución, bloqueados (en espera de u
 msgid "Try an example task"
 msgstr "Prueba una tarea de ejemplo"
 
-#: lib/evo_dash_web/components/task_form_components.ex:676
+#: lib/evo_dash_web/components/task_form_components.ex:856
 #, elixir-autogen, elixir-format
 msgid "Use the project picker in the top bar to open or create one."
 msgstr "Usa el selector de proyectos en la barra superior para abrir o crear uno."
@@ -3704,13 +3702,13 @@ msgstr "¿Cancelar tarea?"
 msgid "Cancelling"
 msgstr "Cancelando"
 
-#: lib/evo_dash_web/components/task_card_components.ex:185
+#: lib/evo_dash_web/components/task_card_components.ex:202
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:316
 #, elixir-autogen, elixir-format
 msgid "Cancelling…"
 msgstr "Cancelando…"
 
-#: lib/evo_dash_web/components/task_card_components.ex:331
+#: lib/evo_dash_web/components/task_card_components.ex:348
 #, elixir-autogen, elixir-format
 msgid "Danger zone"
 msgstr "Zona de peligro"
@@ -3730,7 +3728,7 @@ msgstr "Forzar terminación"
 msgid "Force Kill Task?"
 msgstr "¿Forzar terminación de la tarea?"
 
-#: lib/evo_dash_web/components/task_card_components.ex:327
+#: lib/evo_dash_web/components/task_card_components.ex:344
 #: lib/evo_dash_web/helpers.ex:211
 #, elixir-autogen, elixir-format
 msgid "Force kill"
@@ -3827,20 +3825,20 @@ msgstr "Esto inicia una nueva tarea de agente que fusionará los cambios y resol
 msgid "Advanced settings"
 msgstr "Configuración avanzada"
 
-#: lib/evo_dash_web/components/task_form_components.ex:354
 #: lib/evo_dash_web/components/task_form_components.ex:355
+#: lib/evo_dash_web/components/task_form_components.ex:356
 #, elixir-autogen, elixir-format
 msgid "Attach file"
 msgstr "Adjuntar archivo"
 
-#: lib/evo_dash_web/components/task_form_components.ex:450
 #: lib/evo_dash_web/components/task_form_components.ex:451
+#: lib/evo_dash_web/components/task_form_components.ex:452
 #, elixir-autogen, elixir-format
 msgid "Cancel attach file path"
 msgstr "Cancelar ruta de archivo adjunto"
 
-#: lib/evo_dash_web/components/task_form_components.ex:431
 #: lib/evo_dash_web/components/task_form_components.ex:432
+#: lib/evo_dash_web/components/task_form_components.ex:433
 #, elixir-autogen, elixir-format
 msgid "Confirm attach file path"
 msgstr "Confirmar ruta de archivo adjunto"
@@ -3856,7 +3854,7 @@ msgstr "No se pudo adjuntar el archivo: %{reason}"
 msgid "File not found: %{path}"
 msgstr "Archivo no encontrado: %{path}"
 
-#: lib/evo_dash_web/components/task_form_components.ex:423
+#: lib/evo_dash_web/components/task_form_components.ex:424
 #, elixir-autogen, elixir-format
 msgid "File path to attach"
 msgstr "Ruta del archivo a adjuntar"
@@ -3883,7 +3881,7 @@ msgstr "Mover arriba"
 msgid "Please enter a file path."
 msgstr "Por favor, introduce una ruta de archivo."
 
-#: lib/evo_dash_web/components/task_form_components.ex:422
+#: lib/evo_dash_web/components/task_form_components.ex:423
 #, elixir-autogen, elixir-format
 msgid "Type a full file path…"
 msgstr "Escribe una ruta de archivo completa…"
@@ -3978,13 +3976,15 @@ msgstr "Aplicando actualización…"
 msgid "Asia/Shanghai"
 msgstr "Asia/Shanghai"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:110
-#: lib/evo_dash_web/components/task_form_components.ex:604
+#: lib/evo_dash_web/components/llm_selection_components.ex:326
+#: lib/evo_dash_web/components/llm_selection_components.ex:450
+#: lib/evo_dash_web/components/llm_selection_components.ex:486
+#: lib/evo_dash_web/components/task_form_components.ex:781
 #, elixir-autogen, elixir-format
 msgid "Auto (by rules)"
 msgstr "Automático (según reglas)"
 
-#: lib/evo_dash_web/components/task_form_components.ex:574
+#: lib/evo_dash_web/components/task_form_components.ex:718
 #, elixir-autogen, elixir-format
 msgid "Auto (recommended)"
 msgstr "Automático (recomendado)"
@@ -4041,7 +4041,7 @@ msgstr "Crea agentes personalizados y configura el script de selección de model
 msgid "Current version: %{version}"
 msgstr "Versión actual: %{version}"
 
-#: lib/evo_dash_web/components/task_form_components.ex:554
+#: lib/evo_dash_web/components/task_form_components.ex:684
 #, elixir-autogen, elixir-format
 msgid "Custom Agent"
 msgstr "Agente personalizado"
@@ -4156,7 +4156,7 @@ msgstr "No se pudo guardar el agente personalizado: %{reason}"
 msgid "Failed to save script: %{reason}"
 msgstr "No se pudo guardar el script: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1328
+#: lib/evo_dash_web/live/system_live.ex:1329
 #, elixir-autogen, elixir-format
 msgid "Failed to stop running tasks. The update was not applied."
 msgstr "No se pudieron detener las tareas en ejecución. La actualización no se aplicó."
@@ -4304,7 +4304,7 @@ msgstr "No hay problemas cerrados"
 msgid "No custom agents defined"
 msgstr "No hay agentes personalizados definidos"
 
-#: lib/evo_dash_web/components/task_form_components.ex:650
+#: lib/evo_dash_web/components/task_form_components.ex:830
 #, elixir-autogen, elixir-format
 msgid "No custom agents defined. Add one in Settings → Agents to use Custom Agent mode."
 msgstr "No hay agentes personalizados definidos. Agrega uno en Configuración → Agentes para usar el modo Agente personalizado."
@@ -4354,22 +4354,22 @@ msgstr "Concurrencia punta (opcional)"
 msgid "Peak Hours (optional)"
 msgstr "Horas punta (opcional)"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:387
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:413
 #, elixir-autogen, elixir-format
 msgid "Peak concurrency must be a non-negative integer."
 msgstr "La concurrencia máxima debe ser un número entero no negativo."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:393
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:419
 #, elixir-autogen, elixir-format
 msgid "Peak hour window start and end must differ."
 msgstr "La hora de inicio y fin de la ventana de horas punta deben ser diferentes."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:395
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:421
 #, elixir-autogen, elixir-format
 msgid "Peak hour windows must not overlap."
 msgstr "Las ventanas de horas punta no deben superponerse."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:390
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:416
 #, elixir-autogen, elixir-format
 msgid "Peak hours must use HH:MM 24-hour format."
 msgstr "Las horas punta deben usar el formato HH:MM de 24 horas."
@@ -4415,7 +4415,7 @@ msgstr "Arquitecto raíz (nivel 0)"
 msgid "Runs a user-defined custom agent as the root agent of an evolution task on this codebase."
 msgstr "Ejecuta un agente personalizado definido por el usuario como agente raíz de una tarea de evolución en este código base."
 
-#: lib/evo_dash_web/components/task_form_components.ex:658
+#: lib/evo_dash_web/components/task_form_components.ex:838
 #, elixir-autogen, elixir-format
 msgid "Runs the selected custom agent as the root agent of an evolution task."
 msgstr "Ejecuta el agente personalizado seleccionado como agente raíz de una tarea de evolución."
@@ -4497,7 +4497,7 @@ msgid "The update can only be applied when no tasks are running. Gracefully stop
 msgstr "La actualización solo se puede aplicar cuando no hay tareas en ejecución. Detener las tareas de forma controlada pide a sus agentes que guarden su trabajo y finalicen; los resultados se conservan para revisión."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:457
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:198
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:272
 #, elixir-autogen, elixir-format
 msgid "Timezone (optional)"
 msgstr "Zona horaria (opcional)"
@@ -4562,17 +4562,17 @@ msgstr "delegación alta"
 msgid "low delegation"
 msgstr "delegación baja"
 
-#: lib/evo_dash_web/components/task_form_components.ex:546
+#: lib/evo_dash_web/components/task_form_components.ex:638
 #, elixir-autogen, elixir-format
 msgid "Create new project"
 msgstr "Crear nuevo proyecto"
 
-#: lib/evo_dash_web/components/task_form_components.ex:550
+#: lib/evo_dash_web/components/task_form_components.ex:661
 #, elixir-autogen, elixir-format
 msgid "Evolve existing project"
 msgstr "Evolucionar proyecto existente"
 
-#: lib/evo_dash_web/components/task_form_components.ex:542
+#: lib/evo_dash_web/components/task_form_components.ex:615
 #, elixir-autogen, elixir-format
 msgid "Initialize existing project"
 msgstr "Inicializar proyecto existente"
@@ -4609,28 +4609,28 @@ msgstr "Directorio"
 msgid "Dismiss guide"
 msgstr "Descartar guía"
 
-#: lib/evo_dash_web/live/system_live.ex:2000
+#: lib/evo_dash_web/live/system_live.ex:2001
 #, elixir-autogen, elixir-format
 msgid "Failed to clone the Genesis source."
 msgstr "No se pudo clonar el origen de Genesis."
 
-#: lib/evo_dash_web/live/home_live.ex:1136
+#: lib/evo_dash_web/live/home_live.ex:1150
 #, elixir-autogen, elixir-format
 msgid "Failed to start the task: %{reason}"
 msgstr "No se pudo iniciar la tarea: %{reason}"
 
-#: lib/evo_dash_web/live/home_live.ex:1125
+#: lib/evo_dash_web/live/home_live.ex:1139
 #, elixir-autogen, elixir-format
 msgid "Failed to start the task: no task id returned"
 msgstr "No se pudo iniciar la tarea: no se devolvió un ID de tarea"
 
-#: lib/evo_dash_web/live/home_live.ex:708
-#: lib/evo_dash_web/live/home_live.ex:716
+#: lib/evo_dash_web/live/home_live.ex:722
+#: lib/evo_dash_web/live/home_live.ex:730
 #, elixir-autogen, elixir-format
 msgid "Failed to stop: %{reason}"
 msgstr "No se pudo detener: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:2001
+#: lib/evo_dash_web/live/system_live.ex:2002
 #, elixir-autogen, elixir-format
 msgid "Failed to update the Genesis source."
 msgstr "No se pudo actualizar el origen de Genesis."
@@ -4650,18 +4650,18 @@ msgstr "Origen de Genesis"
 msgid "Genesis source checkout used by the self-reflective agent."
 msgstr "Copia del origen de Genesis utilizada por el agente autorreflexivo."
 
-#: lib/evo_dash_web/live/system_live.ex:1997
+#: lib/evo_dash_web/live/system_live.ex:1998
 #, elixir-autogen, elixir-format
 msgid "Genesis source cloned."
 msgstr "Origen de Genesis clonado."
 
-#: lib/evo_dash_web/live/system_live.ex:1986
+#: lib/evo_dash_web/live/system_live.ex:1987
 #: lib/evo_dash_web/live/system_live/source_card.ex:108
 #, elixir-autogen, elixir-format
 msgid "Genesis source is not available in this version"
 msgstr "El origen de Genesis no está disponible en esta versión"
 
-#: lib/evo_dash_web/live/system_live.ex:1998
+#: lib/evo_dash_web/live/system_live.ex:1999
 #, elixir-autogen, elixir-format
 msgid "Genesis source updated."
 msgstr "Origen de Genesis actualizado."
@@ -4678,12 +4678,12 @@ msgstr "Ir"
 msgid "Loading…"
 msgstr "Cargando…"
 
-#: lib/evo_dash_web/live/home_live.ex:115
+#: lib/evo_dash_web/live/home_live.ex:100
 #, elixir-autogen, elixir-format
 msgid "New chat"
 msgstr "Nuevo chat"
 
-#: lib/evo_dash_web/live/home_live.ex:1338
+#: lib/evo_dash_web/live/home_live.ex:1352
 #, elixir-autogen, elixir-format
 msgid "No response."
 msgstr "Sin respuesta."
@@ -4693,12 +4693,12 @@ msgstr "Sin respuesta."
 msgid "Start a conversation"
 msgstr "Iniciar una conversación"
 
-#: lib/evo_dash_web/live/home_live.ex:239
+#: lib/evo_dash_web/live/home_live.ex:251
 #, elixir-autogen, elixir-format
 msgid "Stop"
 msgstr "Detener"
 
-#: lib/evo_dash_web/live/home_live.ex:1347
+#: lib/evo_dash_web/live/home_live.ex:1361
 #, elixir-autogen, elixir-format
 msgid "Stopped."
 msgstr "Detenido."
@@ -4708,15 +4708,15 @@ msgstr "Detenido."
 msgid "The Genesis source has not been cloned yet."
 msgstr "El origen de Genesis aún no se ha clonado."
 
-#: lib/evo_dash_web/live/home_live.ex:1270
-#: lib/evo_dash_web/live/home_live.ex:1294
+#: lib/evo_dash_web/live/home_live.ex:1284
+#: lib/evo_dash_web/live/home_live.ex:1308
 #, elixir-autogen, elixir-format
 msgid "The conversation was deleted."
 msgstr "La conversación fue eliminada."
 
-#: lib/evo_dash_web/live/home_live.ex:1230
-#: lib/evo_dash_web/live/home_live.ex:1339
-#: lib/evo_dash_web/live/home_live.ex:1358
+#: lib/evo_dash_web/live/home_live.ex:1244
+#: lib/evo_dash_web/live/home_live.ex:1353
+#: lib/evo_dash_web/live/home_live.ex:1372
 #, elixir-autogen, elixir-format
 msgid "The task failed."
 msgstr "La tarea falló."
@@ -4806,7 +4806,7 @@ msgstr "rama o SHA, vacío = HEAD"
 msgid "no changes"
 msgstr "sin cambios"
 
-#: lib/evo_dash_web/live/home_live.ex:243
+#: lib/evo_dash_web/live/home_live.ex:257
 #, elixir-autogen, elixir-format
 msgid "Enter to send · Shift+Enter for a new line"
 msgstr "Enter para enviar · Shift+Enter para una nueva línea"
@@ -4846,11 +4846,6 @@ msgstr "Azul"
 msgid "Brown"
 msgstr "Marrón"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:318
-#, elixir-autogen, elixir-format
-msgid "Capacity: the selected model's effective concurrency. In use: live slot holders. Waiting: agents queued for a slot."
-msgstr "Capacidad: concurrencia efectiva del modelo seleccionado. En uso: titulares de ranuras activos. En espera: agentes en cola por una ranura."
-
 #: lib/evo_dash_web/live/settings_live.ex:343
 #, elixir-autogen, elixir-format
 msgid "Configuring"
@@ -4873,7 +4868,7 @@ msgid "Days:"
 msgstr "Días:"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1233
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:451
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:588
 #, elixir-autogen, elixir-format
 msgid "Fri"
 msgstr "Vie"
@@ -4884,7 +4879,7 @@ msgid "Green"
 msgstr "Verde"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1229
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:447
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:584
 #, elixir-autogen, elixir-format
 msgid "Mon"
 msgstr "Lun"
@@ -4930,7 +4925,7 @@ msgid "Red"
 msgstr "Rojo"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1234
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:452
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:589
 #, elixir-autogen, elixir-format
 msgid "Sat"
 msgstr "Sáb"
@@ -4963,7 +4958,7 @@ msgid "Slate"
 msgstr "Gris pizarra"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1235
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:453
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:590
 #, elixir-autogen, elixir-format
 msgid "Sun"
 msgstr "Dom"
@@ -4984,13 +4979,13 @@ msgid "The system dashboard, scheduler pause/resume, and Erlang VM restart/stop 
 msgstr "Controles del panel del sistema, pausa/reanudación del planificador y reinicio/detención de la VM de Erlang."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1232
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:450
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:587
 #, elixir-autogen, elixir-format
 msgid "Thu"
 msgstr "Jue"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1230
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:448
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:585
 #, elixir-autogen, elixir-format
 msgid "Tue"
 msgstr "Mar"
@@ -5005,25 +5000,25 @@ msgstr "Color de acento desconocido."
 msgid "Update changelog"
 msgstr "Actualizar registro de cambios"
 
-#: lib/evo_dash_web/live/system_live.ex:2095
+#: lib/evo_dash_web/live/system_live.ex:2096
 #, elixir-autogen, elixir-format
 msgid "View changelog"
 msgstr "Ver registro de cambios"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1231
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:449
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:586
 #, elixir-autogen, elixir-format
 msgid "Wed"
 msgstr "Mié"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1237
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:454
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:591
 #, elixir-autogen, elixir-format
 msgid "Weekdays"
 msgstr "Días laborables"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1239
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:455
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:592
 #, elixir-autogen, elixir-format
 msgid "Weekends"
 msgstr "Fines de semana"
@@ -5048,7 +5043,7 @@ msgstr "Confirmar"
 msgid "Deny"
 msgstr "Denegar"
 
-#: lib/evo_dash_web/live/home_live.ex:190
+#: lib/evo_dash_web/live/home_live.ex:175
 #, elixir-autogen, elixir-format
 msgid "Failed to respond: %{reason}"
 msgstr "No se pudo responder: %{reason}"
@@ -5189,8 +5184,8 @@ msgstr "El agente se bloqueó"
 msgid "Agent monitor"
 msgstr "Monitor del agente"
 
-#: lib/evo_dash_web/components/task_form_components.ex:391
-#: lib/evo_dash_web/components/task_form_components.ex:706
+#: lib/evo_dash_web/components/task_form_components.ex:392
+#: lib/evo_dash_web/components/task_form_components.ex:886
 #, elixir-autogen, elixir-format
 msgid "Audio"
 msgstr "Audio"
@@ -5210,8 +5205,8 @@ msgstr "Vigilante de finalización"
 msgid "Force-killed"
 msgstr "Finalizado a la fuerza"
 
-#: lib/evo_dash_web/components/task_form_components.ex:380
-#: lib/evo_dash_web/components/task_form_components.ex:705
+#: lib/evo_dash_web/components/task_form_components.ex:381
+#: lib/evo_dash_web/components/task_form_components.ex:885
 #, elixir-autogen, elixir-format
 msgid "Image"
 msgstr "Imagen"
@@ -5234,33 +5229,33 @@ msgstr "Máximo de %{count} archivos adjuntos por tarea"
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:956
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:957
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:960
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:328
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:402
 #: lib/evo_dash_web/helpers.ex:197
 #: lib/evo_dash_web/helpers.ex:215
 #, elixir-autogen, elixir-format
 msgid "Recheck"
 msgstr "Verificar de nuevo"
 
-#: lib/evo_dash_web/live/agents_live.ex:316
+#: lib/evo_dash_web/live/agents_live.ex:317
 #: lib/evo_dash_web/live/projects_live.ex:2031
 #: lib/evo_dash_web/live/review_live.ex:1276
-#: lib/evo_dash_web/live/system_live.ex:1263
+#: lib/evo_dash_web/live/system_live.ex:1264
 #: lib/evo_dash_web/live/tasks_live.ex:814
 #, elixir-autogen, elixir-format
 msgid "Remote connect failed: %{reason}"
 msgstr "Error al conectar de forma remota: %{reason}"
 
-#: lib/evo_dash_web/live/agents_live.ex:313
+#: lib/evo_dash_web/live/agents_live.ex:314
 #: lib/evo_dash_web/live/projects_live.ex:2028
 #: lib/evo_dash_web/live/review_live.ex:1273
-#: lib/evo_dash_web/live/system_live.ex:1260
+#: lib/evo_dash_web/live/system_live.ex:1261
 #: lib/evo_dash_web/live/tasks_live.ex:811
 #, elixir-autogen, elixir-format
 msgid "Remote connect unavailable — the remote connection subsystem is not running."
 msgstr "La conexión remota no está disponible: el subsistema de conexión remota no está en ejecución."
 
-#: lib/evo_dash_web/components/task_form_components.ex:296
-#: lib/evo_dash_web/components/task_form_components.ex:297
+#: lib/evo_dash_web/components/task_form_components.ex:315
+#: lib/evo_dash_web/components/task_form_components.ex:316
 #, elixir-autogen, elixir-format
 msgid "Remove attachment"
 msgstr "Eliminar adjunto"
@@ -5275,12 +5270,12 @@ msgstr "Gestor de resultados"
 msgid "Runtime restarted"
 msgstr "Entorno de ejecución reiniciado"
 
-#: lib/evo_dash_web/components/task_card_components.ex:373
+#: lib/evo_dash_web/components/task_card_components.ex:390
 #, elixir-autogen, elixir-format
 msgid "Source"
 msgstr "Origen"
 
-#: lib/evo_dash_web/components/task_card_components.ex:386
+#: lib/evo_dash_web/components/task_card_components.ex:403
 #, elixir-autogen, elixir-format
 msgid "Stacktrace"
 msgstr "Traza de pila"
@@ -5290,7 +5285,7 @@ msgstr "Traza de pila"
 msgid "Startup reconcile"
 msgstr "Reconciliación al inicio"
 
-#: lib/evo_dash_web/components/task_form_components.ex:369
+#: lib/evo_dash_web/components/task_form_components.ex:370
 #, elixir-autogen, elixir-format
 msgid "Text / PDF"
 msgstr "Texto / PDF"
@@ -5340,7 +5335,7 @@ msgstr "No se pudo fusionar ninguno de los %{total} repositorios; consulta las t
 msgid "Download source"
 msgstr "Descargar código fuente"
 
-#: lib/evo_dash_web/live/home_live.ex:1030
+#: lib/evo_dash_web/live/home_live.ex:1044
 #, elixir-autogen, elixir-format
 msgid "Download the Genesis source before sending a message."
 msgstr "Descarga el código fuente de Genesis antes de enviar un mensaje."
@@ -5350,7 +5345,7 @@ msgstr "Descarga el código fuente de Genesis antes de enviar un mensaje."
 msgid "Download the Genesis source to start chatting."
 msgstr "Descarga el código fuente de Genesis para empezar a chatear."
 
-#: lib/evo_dash_web/live/home_live.ex:943
+#: lib/evo_dash_web/live/home_live.ex:957
 #, elixir-autogen, elixir-format
 msgid "Failed to download the Genesis source: %{reason}"
 msgstr "No se pudo descargar el código fuente de Genesis: %{reason}"
@@ -5698,12 +5693,14 @@ msgstr "Trabajo en segundo plano: %{name}"
 msgid "Background shell call"
 msgstr "Llamada de shell en segundo plano"
 
-#: lib/evo_dash_web/components/task_form_components.ex:513
+#: lib/evo_dash_web/components/task_form_components.ex:560
+#: lib/evo_dash_web/components/task_form_components.ex:897
+#: lib/evo_dash_web/components/task_form_components.ex:899
 #, elixir-autogen, elixir-format
 msgid "Balanced"
 msgstr "Equilibrado"
 
-#: lib/evo_dash_web/components/task_form_components.ex:509
+#: lib/evo_dash_web/components/task_form_components.ex:556
 #, elixir-autogen, elixir-format
 msgid "Balanced — the default trade-off between speed and correctness"
 msgstr "Equilibrado: el balance predeterminado entre velocidad y corrección"
@@ -5738,7 +5735,7 @@ msgstr "Compresiones"
 msgid "Context Window (optional)"
 msgstr "Ventana de contexto (opcional)"
 
-#: lib/evo_dash_web/components/task_card_components.ex:888
+#: lib/evo_dash_web/components/task_card_components.ex:905
 #, elixir-autogen, elixir-format
 msgid "Copy is limited to the first 1 MB — open Full for the complete text"
 msgstr "La copia se limita al primer 1 MB; abre Completo para ver el texto íntegro"
@@ -5758,7 +5755,7 @@ msgstr "No se pudieron cargar más páginas del archivo."
 msgid "Could not load more archive records."
 msgstr "No se pudieron cargar más registros del archivo."
 
-#: lib/evo_dash_web/components/task_card_components.ex:482
+#: lib/evo_dash_web/components/task_card_components.ex:499
 #, elixir-autogen, elixir-format
 msgid "Could not load task details."
 msgstr "No se pudieron cargar los detalles de la tarea."
@@ -5773,7 +5770,7 @@ msgstr "No se pudieron cargar las tareas."
 msgid "Could not load the previous task's foreign repositories."
 msgstr "No se pudieron cargar los repositorios externos de la tarea anterior."
 
-#: lib/evo_dash_web/components/task_card_components.ex:748
+#: lib/evo_dash_web/components/task_card_components.ex:765
 #, elixir-autogen, elixir-format
 msgid "Could not load the task archive."
 msgstr "No se pudo cargar el archivo de la tarea."
@@ -5799,7 +5796,7 @@ msgstr "No se pudieron fusionar los repositorios; consulta las tarjetas de repos
 msgid "Could not refresh tasks."
 msgstr "No se pudieron actualizar las tareas."
 
-#: lib/evo_dash_web/live/system_live.ex:1429
+#: lib/evo_dash_web/live/system_live.ex:1430
 #, elixir-autogen, elixir-format
 msgid "Failed to check running tasks: %{reason}"
 msgstr "No se pudieron comprobar las tareas en ejecución: %{reason}"
@@ -5826,7 +5823,7 @@ msgstr "No se pudo eliminar la tarea: %{reason}"
 msgid "Failed to delete: %{reason}"
 msgstr "Error al eliminar: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1467
+#: lib/evo_dash_web/live/system_live.ex:1468
 #, elixir-autogen, elixir-format
 msgid "Failed to force kill tasks: %{reason}"
 msgstr "No se pudieron forzar la finalización de las tareas: %{reason}"
@@ -5846,7 +5843,7 @@ msgstr "No se pudieron cargar los datos de archivo."
 msgid "Failed to remove recent project: %{reason}"
 msgstr "No se pudo quitar el proyecto reciente: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1751
+#: lib/evo_dash_web/live/system_live.ex:1752
 #, elixir-autogen, elixir-format
 msgid "Failed to restart the remote node: %{reason}"
 msgstr "No se pudo reiniciar el nodo remoto: %{reason}"
@@ -5856,7 +5853,7 @@ msgstr "No se pudo reiniciar el nodo remoto: %{reason}"
 msgid "Failed to start action: %{reason}"
 msgstr "No se pudo iniciar la acción: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1755
+#: lib/evo_dash_web/live/system_live.ex:1756
 #, elixir-autogen, elixir-format
 msgid "Failed to stop the remote node: %{reason}"
 msgstr "No se pudo detener el nodo remoto: %{reason}"
@@ -5867,12 +5864,13 @@ msgstr "No se pudo detener el nodo remoto: %{reason}"
 msgid "Failed to update review status: %{reason}"
 msgstr "No se pudo actualizar el estado de la revisión: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1358
+#: lib/evo_dash_web/live/system_live.ex:1359
 #, elixir-autogen, elixir-format
 msgid "Failed to update the scheduler: %{reason}"
 msgstr "No se pudo actualizar el planificador: %{reason}"
 
-#: lib/evo_dash_web/components/task_form_components.ex:500
+#: lib/evo_dash_web/components/task_form_components.ex:541
+#: lib/evo_dash_web/components/task_form_components.ex:896
 #, elixir-autogen, elixir-format
 msgid "Fast"
 msgstr "Rápido"
@@ -5882,7 +5880,8 @@ msgstr "Rápido"
 msgid "Generation parameters and provider-specific JSON. Rarely needed."
 msgstr "Parámetros de generación y JSON específico del proveedor. Rara vez es necesario."
 
-#: lib/evo_dash_web/components/task_form_components.ex:526
+#: lib/evo_dash_web/components/task_form_components.ex:577
+#: lib/evo_dash_web/components/task_form_components.ex:898
 #, elixir-autogen, elixir-format
 msgid "High quality"
 msgstr "Alta calidad"
@@ -5898,7 +5897,7 @@ msgstr "Cuánto razona el modelo antes de responder."
 msgid "Load more"
 msgstr "Cargar más"
 
-#: lib/evo_dash_web/components/task_card_components.ex:738
+#: lib/evo_dash_web/components/task_card_components.ex:755
 #: lib/evo_dash_web/live/review_live/archive_load.ex:347
 #, elixir-autogen, elixir-format
 msgid "Loading archive…"
@@ -5910,7 +5909,7 @@ msgstr "Cargando archivo…"
 msgid "Loading result…"
 msgstr "Cargando resultado…"
 
-#: lib/evo_dash_web/components/task_card_components.ex:499
+#: lib/evo_dash_web/components/task_card_components.ex:516
 #, elixir-autogen, elixir-format
 msgid "Loading task details…"
 msgstr "Cargando detalles de la tarea…"
@@ -5927,7 +5926,7 @@ msgstr "Ventana de contexto máxima del modelo, en Tokens. Déjalo vacío para u
 msgid "Merging…"
 msgstr "Fusionando…"
 
-#: lib/evo_dash_web/components/task_card_components.ex:760
+#: lib/evo_dash_web/components/task_card_components.ex:777
 #, elixir-autogen, elixir-format
 msgid "No archived agents for this task."
 msgstr "No hay agentes archivados para esta tarea."
@@ -5947,12 +5946,12 @@ msgstr "Pausando…"
 msgid "Peak / Off-Peak Scheduling (optional)"
 msgstr "Programación en horas pico / valle (opcional)"
 
-#: lib/evo_dash_web/components/task_form_components.ex:522
+#: lib/evo_dash_web/components/task_form_components.ex:574
 #, elixir-autogen, elixir-format
 msgid "Prioritise correctness — verify more, run tests and compile"
 msgstr "Prioriza la corrección: verifica más, ejecuta pruebas y compila"
 
-#: lib/evo_dash_web/components/task_form_components.ex:496
+#: lib/evo_dash_web/components/task_form_components.ex:538
 #, elixir-autogen, elixir-format
 msgid "Prioritise speed — trust the context, run fewer checks"
 msgstr "Prioriza la velocidad: confía en el contexto, ejecuta menos comprobaciones"
@@ -5972,7 +5971,7 @@ msgstr "Reanudando…"
 msgid "Saving configuration…"
 msgstr "Guardando configuración…"
 
-#: lib/evo_dash_web/components/task_card_components.ex:721
+#: lib/evo_dash_web/components/task_card_components.ex:738
 #, elixir-autogen, elixir-format
 msgid "Show archive"
 msgstr "Mostrar archivo"
@@ -5995,7 +5994,7 @@ msgstr "Mostrando %{shown} de %{total} registros de agentes — exporta el JSON 
 #: lib/evo_dash_web/components/review_components.ex:368
 #: lib/evo_dash_web/components/review_components/header.ex:319
 #: lib/evo_dash_web/components/review_components/header.ex:431
-#: lib/evo_dash_web/components/task_card_components.ex:900
+#: lib/evo_dash_web/components/task_card_components.ex:917
 #, elixir-autogen, elixir-format
 msgid "Showing %{shown} of %{total} bytes"
 msgstr "Mostrando %{shown} de %{total} bytes"
@@ -6005,12 +6004,12 @@ msgstr "Mostrando %{shown} de %{total} bytes"
 msgid "Showing %{shown} of %{total} files"
 msgstr "Mostrando %{shown} de %{total} archivos"
 
-#: lib/evo_dash_web/components/task_card_components.ex:660
+#: lib/evo_dash_web/components/task_card_components.ex:677
 #, elixir-autogen, elixir-format
 msgid "Showing the last %{shown} of %{total} log entries"
 msgstr "Mostrando las últimas %{shown} de %{total} entradas de registro"
 
-#: lib/evo_dash_web/components/task_form_components.ex:487
+#: lib/evo_dash_web/components/task_form_components.ex:524
 #, elixir-autogen, elixir-format
 msgid "Speed / quality trade-off"
 msgstr "Balance entre velocidad y calidad"
@@ -6035,7 +6034,7 @@ msgstr "El resultado de la tarea aún no se ha cargado."
 msgid "Tasks started without archiving enabled keep no per-agent archive."
 msgstr "Las tareas iniciadas sin el archivado habilitado no conservan un archivo por agente."
 
-#: lib/evo_dash_web/components/task_card_components.ex:730
+#: lib/evo_dash_web/components/task_card_components.ex:747
 #, elixir-autogen, elixir-format
 msgid "The archive loads on demand."
 msgstr "El archivo se carga a pedido."
@@ -6045,7 +6044,7 @@ msgstr "El archivo se carga a pedido."
 msgid "context_window"
 msgstr "context_window"
 
-#: lib/evo_dash_web/components/task_card_components.ex:873
+#: lib/evo_dash_web/components/task_card_components.ex:890
 #, elixir-autogen, elixir-format
 msgid "last %{shown} of %{count}"
 msgstr "últimas %{shown} de %{count}"
@@ -6055,15 +6054,15 @@ msgstr "últimas %{shown} de %{count}"
 msgid "%{count} provider profiles"
 msgstr "%{count} perfiles de proveedor"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:164
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:238
 #, elixir-autogen, elixir-format
 msgid "A JSON object of advanced request options. Never paste API keys or login tokens here."
 msgstr "Un objeto JSON con opciones avanzadas de solicitud. Nunca pegues aquí claves de API ni tokens de inicio de sesión."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:315
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:801
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:146
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:316
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:150
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:289
 #: lib/evo_dash_web/live/welcome_live.ex:222
 #, elixir-autogen, elixir-format
 msgid "API key"
@@ -6074,30 +6073,25 @@ msgstr "Clave de API"
 msgid "Absolute or ~-relative path to the vendor credential file. Leave empty to use the default managed file."
 msgstr "Ruta absoluta o relativa a ~ del archivo de credenciales del proveedor. Déjalo vacío para usar el archivo gestionado predeterminado."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:82
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:86
 #, elixir-autogen, elixir-format
 msgid "Add a provider profile, then choose its models and defaults."
 msgstr "Agrega un perfil de proveedor y luego elige sus modelos y valores predeterminados."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:387
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:333
 #, elixir-autogen, elixir-format
 msgid "Add model"
 msgstr "Agregar modelo"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:262
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:336
 #, elixir-autogen, elixir-format
 msgid "Add peak window"
 msgstr "Añadir franja de máxima demanda"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:71
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:75
 #, elixir-autogen, elixir-format
 msgid "Add provider profile"
 msgstr "Agregar perfil de proveedor"
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:355
-#, elixir-autogen, elixir-format
-msgid "All models in this provider profile share this capacity."
-msgstr "Todos los modelos de este perfil de proveedor comparten esta capacidad."
 
 #: lib/evo_dash_web/live/home_live/approval_card.ex:151
 #, elixir-autogen, elixir-format
@@ -6119,7 +6113,7 @@ msgstr "¿Permitir este código Elixir una vez?"
 msgid "Allow unrestricted execution once"
 msgstr "Permitir una ejecución sin restricciones"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:210
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:284
 #, elixir-autogen, elixir-format
 msgid "Always off-peak on these days"
 msgstr "Siempre fuera de máxima demanda estos días"
@@ -6129,12 +6123,7 @@ msgstr "Siempre fuera de máxima demanda estos días"
 msgid "Analyze the changes in this PR and distill reusable knowledge into Genesis skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
 msgstr "Analiza los cambios de este PR y destila el conocimiento reutilizable en habilidades de Genesis. El agente examinará el diff, identificará patrones valiosos y creará archivos de habilidades en .agents/skills/."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:362
-#, elixir-autogen, elixir-format
-msgid "Any model served by this provider; override rows below are optional."
-msgstr "Cualquier modelo que ofrezca este proveedor; las filas de sobrescritura de abajo son opcionales."
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:241
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:315
 #, elixir-autogen, elixir-format
 msgid "Apply this window on"
 msgstr "Aplicar esta franja los"
@@ -6150,29 +6139,29 @@ msgid "Auth mode"
 msgstr "Modo de autenticación"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:288
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:299
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:272
 #: lib/evo_dash_web/live/welcome_live.ex:213
 #, elixir-autogen, elixir-format
 msgid "Authentication"
 msgstr "Autenticación"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:306
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:308
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:279
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:281
 #, elixir-autogen, elixir-format
 msgid "Authentication mode"
 msgstr "Modo de autenticación"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:287
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:434
 #, elixir-autogen, elixir-format
 msgid "Base URL (optional)"
 msgstr "URL base (opcional)"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:332
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:305
 #, elixir-autogen, elixir-format
 msgid "Blank uses the managed credential file on the selected node. Absolute and ~-relative paths are accepted."
 msgstr "Si se deja en blanco, se usa el archivo de credenciales gestionado en el nodo seleccionado. Se aceptan rutas absolutas y relativas a ~."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:490
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:581
 #, elixir-autogen, elixir-format
 msgid "Blank values inherit the shared generation defaults."
 msgstr "Los valores en blanco heredan los valores predeterminados de generación compartidos."
@@ -6193,32 +6182,36 @@ msgstr "Comprobar el estado y la capacidad del sistema"
 msgid "Check the profile settings before saving."
 msgstr "Revisa la configuración del perfil antes de guardar."
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:157
+#: lib/evo_dash_web/components/llm_selection_components.ex:192
+#: lib/evo_dash_web/components/llm_selection_components.ex:483
+#: lib/evo_dash_web/components/llm_selection_components.ex:492
 #, elixir-autogen, elixir-format
 msgid "Choose a model"
 msgstr "Elige un modelo"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:156
+#: lib/evo_dash_web/components/llm_selection_components.ex:191
+#: lib/evo_dash_web/components/llm_selection_components.ex:489
 #, elixir-autogen, elixir-format
 msgid "Choose a provider first"
 msgstr "Elige primero un proveedor"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:111
+#: lib/evo_dash_web/components/llm_selection_components.ex:327
+#: lib/evo_dash_web/components/llm_selection_components.ex:453
 #, elixir-autogen, elixir-format
 msgid "Choose a provider profile"
 msgstr "Elige un perfil de proveedor"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:116
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:190
 #, elixir-autogen, elixir-format
 msgid "Choose a supported level. This is separate from task speed and quality."
 msgstr "Elige un nivel compatible. Esto es independiente de la velocidad y la calidad de la tarea."
 
-#: lib/evo_dash_web/live/home_live.ex:1068
+#: lib/evo_dash_web/live/home_live.ex:1082
 #, elixir-autogen, elixir-format
 msgid "Choose a valid model before sending a message."
 msgstr "Elige un modelo válido antes de enviar un mensaje."
 
-#: lib/evo_dash_web/live/home_live.ex:468
+#: lib/evo_dash_web/live/home_live.ex:482
 #, elixir-autogen, elixir-format
 msgid "Choose a valid provider profile, model and reasoning effort."
 msgstr "Elige un perfil de proveedor, un modelo y un nivel de razonamiento válidos."
@@ -6227,16 +6220,6 @@ msgstr "Elige un perfil de proveedor, un modelo y un nivel de razonamiento váli
 #, elixir-autogen, elixir-format
 msgid "Choose models and a default model from the selected provider."
 msgstr "Elige modelos y un modelo predeterminado del proveedor seleccionado."
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:67
-#, elixir-autogen, elixir-format
-msgid "Comma-separated, lowest to highest. Blank explicitly disables reasoning for this model."
-msgstr "Separados por comas, de menor a mayor. En blanco, desactiva explícitamente el razonamiento para este modelo."
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:71
-#, elixir-autogen, elixir-format
-msgid "Comma-separated, lowest to highest; for example: low, medium, high. Blank means no advertised reasoning support."
-msgstr "Separados por comas, de menor a mayor; por ejemplo: bajo, medio, alto. En blanco, significa que no se anuncia compatibilidad con razonamiento."
 
 #: lib/evo_dash_web/live/welcome_live.ex:677
 #, elixir-autogen, elixir-format
@@ -6253,7 +6236,7 @@ msgstr "Configuración guardada, pero la actualización falló: %{reason}"
 msgid "Configure a provider and its models to start building with Genesis."
 msgstr "Configura un proveedor y sus modelos para empezar a construir con Genesis."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:341
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:314
 #, elixir-autogen, elixir-format
 msgid "Configure the provider's API key in the selected node's credentials file or environment. Keys are never displayed or copied into this profile form."
 msgstr "Configura la clave de API del proveedor en el archivo de credenciales o el entorno del nodo seleccionado. Las claves nunca se muestran ni se copian en este formulario de perfil."
@@ -6264,12 +6247,12 @@ msgstr "Configura la clave de API del proveedor en el archivo de credenciales o 
 msgid "Configure via the provider profiles editor"
 msgstr "Configurar mediante el editor de perfiles de proveedor"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:203
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:202
 #, elixir-autogen, elixir-format
 msgid "Configured models"
 msgstr "Modelos configurados"
 
-#: lib/evo_dash_web/live/home_live.ex:1022
+#: lib/evo_dash_web/live/home_live.ex:1036
 #, elixir-autogen, elixir-format
 msgid "Connect to the remote node before sending a message."
 msgstr "Conéctate al nodo remoto antes de enviar un mensaje."
@@ -6285,7 +6268,7 @@ msgstr "Conéctate al nodo remoto antes de iniciar una tarea."
 msgid "Connect to the remote node before testing its configuration."
 msgstr "Conéctate al nodo remoto antes de probar su configuración."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:452
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:538
 #, elixir-autogen, elixir-format
 msgid "Context window (optional)"
 msgstr "Ventana de contexto (opcional)"
@@ -6295,13 +6278,13 @@ msgstr "Ventana de contexto (opcional)"
 msgid "Could not load model selection. Your choice has been kept. Reconnect to the node if needed, then retry before launching a task."
 msgstr "No se pudo cargar la selección de modelo. Tu elección se ha conservado. Vuelve a conectarte al nodo si es necesario y luego reinténtalo antes de lanzar una tarea."
 
-#: lib/evo_dash_web/live/home_live.ex:169
+#: lib/evo_dash_web/live/home_live.ex:154
 #, elixir-autogen, elixir-format
 msgid "Could not load pending approvals: %{reason}"
 msgstr "No se pudieron cargar las aprobaciones pendientes: %{reason}"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:328
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:329
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:302
 #, elixir-autogen, elixir-format
 msgid "Credential file (optional)"
 msgstr "Archivo de credenciales (opcional)"
@@ -6311,19 +6294,19 @@ msgstr "Archivo de credenciales (opcional)"
 msgid "Danger — unrestricted Elixir execution"
 msgstr "Peligro: ejecución de Elixir sin restricciones"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:190
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:359
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:189
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:363
 #: lib/evo_dash_web/live/welcome_live.ex:165
 #, elixir-autogen, elixir-format
 msgid "Default model"
 msgstr "Modelo predeterminado"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:229
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:247
 #, elixir-autogen, elixir-format
 msgid "Default provider profile saved."
 msgstr "Perfil de proveedor predeterminado guardado."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:368
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:394
 #, elixir-autogen, elixir-format
 msgid "Default reasoning effort must be one of the configured reasoning efforts."
 msgstr "El esfuerzo de razonamiento predeterminado debe ser uno de los esfuerzos de razonamiento configurados."
@@ -6333,47 +6316,43 @@ msgstr "El esfuerzo de razonamiento predeterminado debe ser uno de los esfuerzos
 msgid "Default reasoning for %{model}"
 msgstr "Razonamiento predeterminado para %{model}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:95
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:169
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:194
 #, elixir-autogen, elixir-format
 msgid "Default reasoning level"
 msgstr "Nivel de razonamiento predeterminado"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:177
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:181
 #, elixir-autogen, elixir-format
 msgid "Delete %{name}"
 msgstr "Eliminar %{name}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:175
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:179
 #, elixir-autogen, elixir-format
 msgid "Delete this provider profile and its models?"
 msgstr "¿Eliminar este perfil de proveedor y sus modelos?"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:277
-#, elixir-autogen, elixir-format
-msgid "Display name"
-msgstr "Nombre para mostrar"
-
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:371
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:397
 #, elixir-autogen, elixir-format
 msgid "Each model entry must be a model configuration."
 msgstr "Cada entrada de modelo debe ser una configuración de modelo."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:167
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:171
 #, elixir-autogen, elixir-format
 msgid "Edit %{name}"
 msgstr "Editar %{name}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:233
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:307
 #, elixir-autogen, elixir-format
 msgid "End time"
 msgstr "Hora de fin"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:365
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:391
 #, elixir-autogen, elixir-format
 msgid "Enter a default model or add a model override."
 msgstr "Introduce un modelo predeterminado o añade una anulación de modelo."
 
-#: lib/evo_dash_web/live/home_live.ex:172
+#: lib/evo_dash_web/live/home_live.ex:157
 #, elixir-autogen, elixir-format
 msgid "Existing requests are kept. Retry to check for pending approvals."
 msgstr "Se conservan las solicitudes existentes. Reintenta para comprobar si hay aprobaciones pendientes."
@@ -6383,60 +6362,60 @@ msgstr "Se conservan las solicitudes existentes. Reintenta para comprobar si hay
 msgid "Explain how tasks are scheduled"
 msgstr "Explicar cómo se programan las tareas"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:130
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:204
 #, elixir-autogen, elixir-format
 msgid "Extra config (JSON, optional)"
 msgstr "Configuración adicional (JSON, opcional)"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:303
+#: lib/evo_dash_web/components/llm_selection_components.ex:501
 #, elixir-autogen, elixir-format
 msgid "Extra high"
 msgstr "Muy alto"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:440
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:577
 #, elixir-autogen, elixir-format
 msgid "Frequency penalty"
 msgstr "Penalización por frecuencia"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:487
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:578
 #, elixir-autogen, elixir-format
 msgid "Generation overrides"
 msgstr "Sobrescrituras de generación"
 
-#: lib/evo_dash_web/live/home_live.ex:85
+#: lib/evo_dash_web/live/home_live.ex:88
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:57
 #, elixir-autogen, elixir-format
 msgid "Genesis Assistant"
 msgstr "Asistente Genesis"
 
-#: lib/evo_dash_web/live/home_live.ex:248
+#: lib/evo_dash_web/live/home_live.ex:262
 #, elixir-autogen, elixir-format
 msgid "Genesis Assistant can make mistakes. Verify important information."
 msgstr "El Asistente Genesis puede cometer errores. Verifica la información importante."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:970
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:333
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:407
 #, elixir-autogen, elixir-format
 msgid "Genesis found the vendor login but could not write its managed credential file."
 msgstr "Genesis encontró el inicio de sesión del proveedor, pero no pudo escribir su archivo de credenciales gestionado."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:994
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:341
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:415
 #, elixir-autogen, elixir-format
 msgid "Genesis imports the vendor login automatically on the next run."
 msgstr "Genesis importará el inicio de sesión del proveedor automáticamente en la próxima ejecución."
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:302
+#: lib/evo_dash_web/components/llm_selection_components.ex:500
 #, elixir-autogen, elixir-format
 msgid "High"
 msgstr "Alto"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:201
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:275
 #, elixir-autogen, elixir-format
 msgid "IANA timezone, such as Asia/Shanghai. Blank uses the selected node's local time."
 msgstr "Zona horaria IANA, como Asia/Shanghai. En blanco, se usa la hora local del nodo seleccionado."
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:106
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:180
 #, elixir-autogen, elixir-format
 msgid "Inherit provider default"
 msgstr "Heredar el valor predeterminado del proveedor"
@@ -6456,17 +6435,12 @@ msgstr "Configuración no válida: %{reason}"
 msgid "Invalid reasoning effort."
 msgstr "Nivel de razonamiento no válido."
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:84
-#, elixir-autogen, elixir-format
-msgid "Language model selection"
-msgstr "Selección de modelo de lenguaje"
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:370
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:461
 #, elixir-autogen, elixir-format
 msgid "Leave blank for the runtime default. Models may override this value."
 msgstr "Déjalo en blanco para usar el valor predeterminado del entorno de ejecución. Los modelos pueden sobrescribir este valor."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:456
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:542
 #, elixir-autogen, elixir-format
 msgid "Leave blank to inherit the shared context window or runtime default."
 msgstr "Déjalo en blanco para heredar la ventana de contexto compartida o el valor predeterminado del entorno de ejecución."
@@ -6477,30 +6451,30 @@ msgid "Log in once with the vendor CLI on this machine, then test the connection
 msgstr "Inicia sesión una vez con la CLI del proveedor en esta máquina y luego prueba la conexión. No se requiere ninguna clave de API."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:855
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:481
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:485
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:618
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:622
 #, elixir-autogen, elixir-format
 msgid "Login detected"
 msgstr "Inicio de sesión detectado"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:856
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:476
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:613
 #, elixir-autogen, elixir-format
 msgid "Login detected (expires %{date})"
 msgstr "Inicio de sesión detectado (caduca el %{date})"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:864
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:489
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:626
 #, elixir-autogen, elixir-format
 msgid "Login found, managed credential file not writable"
 msgstr "Inicio de sesión encontrado, el archivo de credenciales gestionado no es escribible"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:300
+#: lib/evo_dash_web/components/llm_selection_components.ex:498
 #, elixir-autogen, elixir-format
 msgid "Low"
 msgstr "Bajo"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:160
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:164
 #, elixir-autogen, elixir-format
 msgid "Make default"
 msgstr "Establecer como predeterminado"
@@ -6508,100 +6482,89 @@ msgstr "Establecer como predeterminado"
 #: lib/evo_dash_web/components/settings_components.ex:362
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:976
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:989
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:345
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:419
 #, elixir-autogen, elixir-format
 msgid "Managed credential file: %{path}"
 msgstr "Archivo de credenciales gestionado: %{path}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:437
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:574
 #, elixir-autogen, elixir-format
 msgid "Max output tokens"
 msgstr "Máximo de tokens de salida"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:301
+#: lib/evo_dash_web/components/llm_selection_components.ex:499
 #, elixir-autogen, elixir-format
 msgid "Medium"
 msgstr "Medio"
 
-#: lib/evo_dash_web/live/home_live.ex:213
-#: lib/evo_dash_web/live/home_live.ex:215
+#: lib/evo_dash_web/live/home_live.ex:212
+#: lib/evo_dash_web/live/home_live.ex:214
 #, elixir-autogen, elixir-format
 msgid "Message Genesis Assistant…"
 msgstr "Escribe un mensaje al Asistente Genesis…"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:299
+#: lib/evo_dash_web/components/llm_selection_components.ex:497
 #, elixir-autogen, elixir-format
 msgid "Minimal"
 msgstr "Mínimo"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:441
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:509
 #, elixir-autogen, elixir-format
 msgid "Model %{number}"
 msgstr "Modelo %{number}"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:362
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:388
 #, elixir-autogen, elixir-format
 msgid "Model IDs must be unique within a provider profile."
 msgstr "Los ID de modelo deben ser únicos dentro de un perfil de proveedor."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:393
-#, elixir-autogen, elixir-format
-msgid "Model overrides are optional. Enter a default model above to save this profile."
-msgstr "Las sobrescrituras de modelo son opcionales. Ingresa un modelo predeterminado arriba para guardar este perfil."
-
-#: lib/evo_dash_web/live/home_live.ex:106
+#: lib/evo_dash_web/live/home_live.ex:198
 #, elixir-autogen, elixir-format
 msgid "Model selection is unavailable. Choose a valid model or reconnect to the node."
 msgstr "La selección de modelo no está disponible. Elige un modelo válido o vuelve a conectarte al nodo."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:379
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:323
 #, elixir-autogen, elixir-format
 msgid "Models"
 msgstr "Modelos"
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:381
-#, elixir-autogen, elixir-format
-msgid "Models inherit provider defaults unless an override is set."
-msgstr "Los modelos heredan los valores predeterminados del proveedor a menos que se establezca una sobrescritura."
 
 #: lib/evo_dash_web/live/welcome_live.ex:156
 #, elixir-autogen, elixir-format
 msgid "Need a custom model or advanced settings?"
 msgstr "¿Necesitas un modelo personalizado o ajustes avanzados?"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:247
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:321
 #, elixir-autogen, elixir-format
 msgid "No days selected means every day. End before start crosses midnight."
 msgstr "Si no se selecciona ningún día, se aplica a todos. Si la hora de fin es anterior a la de inicio, se cruza la medianoche."
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:237
+#: lib/evo_dash_web/components/llm_selection_components.ex:284
 #, elixir-autogen, elixir-format
 msgid "No models are available for this provider profile."
 msgstr "No hay modelos disponibles para este perfil de proveedor."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:80
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:84
 #, elixir-autogen, elixir-format
 msgid "No provider profiles configured"
 msgstr "No hay perfiles de proveedor configurados"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:230
+#: lib/evo_dash_web/components/llm_selection_components.ex:277
 #, elixir-autogen, elixir-format
 msgid "No provider profiles configured. Add one in Settings to choose a model."
 msgstr "No hay perfiles de proveedor configurados. Añade uno en Ajustes para elegir un modelo."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:860
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:486
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:623
 #, elixir-autogen, elixir-format
 msgid "No subscription login found"
 msgstr "No se encontró ningún inicio de sesión de suscripción"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:191
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:196
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:190
 #, elixir-autogen, elixir-format
 msgid "Not set"
 msgstr "Sin establecer"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:359
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:385
 #, elixir-autogen, elixir-format
 msgid "Numeric fields must contain valid numbers."
 msgstr "Los campos numéricos deben contener números válidos."
@@ -6611,28 +6574,27 @@ msgstr "Los campos numéricos deben contener números válidos."
 msgid "OAuth"
 msgstr "OAuth"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:408
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:474
 #, elixir-autogen, elixir-format
 msgid "Optional request parameters shared by every model. Unsupported parameters are filtered by the provider at request time."
 msgstr "Parámetros de solicitud opcionales compartidos por todos los modelos. El proveedor filtra los parámetros no compatibles en el momento de la solicitud."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:468
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:553
 #, elixir-autogen, elixir-format
 msgid "Override reasoning levels for this model"
 msgstr "Sobrescribir los niveles de razonamiento para este modelo"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:181
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:255
 #, elixir-autogen, elixir-format
 msgid "Peak / off-peak scheduling (optional)"
 msgstr "Programación de máxima y fuera de máxima demanda (opcional)"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:191
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:195
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:265
 #, elixir-autogen, elixir-format
 msgid "Peak concurrency"
 msgstr "Concurrencia en máxima demanda"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:222
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:296
 #, elixir-autogen, elixir-format
 msgid "Peak window %{number}"
 msgstr "Franja de máxima demanda %{number}"
@@ -6642,7 +6604,7 @@ msgstr "Franja de máxima demanda %{number}"
 msgid "Pick a provider, select one or more models, then choose API key or subscription authentication."
 msgstr "Elige un proveedor, selecciona uno o más modelos y luego opta por la autenticación con clave de API o con suscripción."
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:441
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:578
 #, elixir-autogen, elixir-format
 msgid "Presence penalty"
 msgstr "Penalización por presencia"
@@ -6652,44 +6614,43 @@ msgstr "Penalización por presencia"
 msgid "Provider and models saved. You're all set!"
 msgstr "Proveedor y modelos guardados. ¡Todo listo!"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:354
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:380
 #, elixir-autogen, elixir-format
 msgid "Provider cannot be empty."
 msgstr "El proveedor no puede estar vacío."
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:106
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:180
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:195
 #: lib/evo_dash_web/live/welcome_live.ex:193
 #, elixir-autogen, elixir-format
 msgid "Provider default"
 msgstr "Valor predeterminado del proveedor"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:283
-#, elixir-autogen, elixir-format
-msgid "Provider identifier, such as openai, anthropic or openai_codex."
-msgstr "Identificador del proveedor, como openai, anthropic u openai_codex."
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:131
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:205
 #, elixir-autogen, elixir-format
 msgid "Provider options (JSON, optional)"
 msgstr "Opciones del proveedor (JSON, opcional)"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:96
+#: lib/evo_dash_web/components/llm_selection_components.ex:152
+#: lib/evo_dash_web/components/llm_selection_components.ex:300
+#: lib/evo_dash_web/components/llm_selection_components.ex:308
+#: lib/evo_dash_web/live/system_live/charts.ex:541
 #, elixir-autogen, elixir-format
 msgid "Provider profile"
 msgstr "Perfil de proveedor"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:208
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:210
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:226
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:228
 #, elixir-autogen, elixir-format
 msgid "Provider profile deleted."
 msgstr "Perfil de proveedor eliminado."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:219
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:237
 #, elixir-autogen, elixir-format
 msgid "Provider profile moved."
 msgstr "Perfil de proveedor movido."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:174
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:192
 #, elixir-autogen, elixir-format
 msgid "Provider profile saved."
 msgstr "Perfil de proveedor guardado."
@@ -6699,22 +6660,18 @@ msgstr "Perfil de proveedor guardado."
 msgid "Provider profile settings"
 msgstr "Configuración del perfil de proveedor"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:62
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:66
 #, elixir-autogen, elixir-format
 msgid "Provider profiles"
 msgstr "Perfiles de proveedor"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:185
+#: lib/evo_dash_web/components/llm_selection_components.ex:247
+#: lib/evo_dash_web/components/llm_selection_components.ex:253
 #, elixir-autogen, elixir-format
 msgid "Reasoning effort"
 msgstr "Nivel de razonamiento"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:58
-#, elixir-autogen, elixir-format
-msgid "Reasoning support and defaults"
-msgstr "Compatibilidad con razonamiento y valores predeterminados"
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:327
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:401
 #, elixir-autogen, elixir-format
 msgid "Recheck subscription login"
 msgstr "Volver a comprobar el inicio de sesión de suscripción"
@@ -6729,37 +6686,37 @@ msgstr "Reconectar y reactivar"
 msgid "Remote node already connected"
 msgstr "El nodo remoto ya está conectado"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:505
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:526
 #, elixir-autogen, elixir-format
 msgid "Remove model"
 msgstr "Quitar modelo"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:503
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:525
 #, elixir-autogen, elixir-format
 msgid "Remove model %{number}"
 msgstr "Quitar modelo %{number}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:254
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:328
 #, elixir-autogen, elixir-format
 msgid "Remove peak window %{number}"
 msgstr "Eliminar franja de máxima demanda %{number}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:255
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:329
 #, elixir-autogen, elixir-format
 msgid "Remove window"
 msgstr "Eliminar franja"
 
-#: lib/evo_dash_web/live/home_live.ex:180
+#: lib/evo_dash_web/live/home_live.ex:165
 #, elixir-autogen, elixir-format
 msgid "Retry approvals"
 msgstr "Reintentar aprobaciones"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:510
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:647
 #, elixir-autogen, elixir-format
 msgid "Run claude to sign in on the selected node, or use claude setup-token, then recheck."
 msgstr "Ejecuta claude para iniciar sesión en el nodo seleccionado, o usa claude setup-token; luego vuelve a comprobar."
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:507
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:644
 #, elixir-autogen, elixir-format
 msgid "Run codex login on the selected node, then recheck."
 msgstr "Ejecuta codex login en el nodo seleccionado y vuelve a comprobar."
@@ -6769,7 +6726,7 @@ msgstr "Ejecuta codex login en el nodo seleccionado y vuelve a comprobar."
 msgid "Save provider and models"
 msgstr "Guardar proveedor y modelos"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:416
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:484
 #, elixir-autogen, elixir-format
 msgid "Save provider profile"
 msgstr "Guardar perfil de proveedor"
@@ -6779,44 +6736,33 @@ msgstr "Guardar perfil de proveedor"
 msgid "Select a provider and models above to configure authentication."
 msgstr "Selecciona un proveedor y modelos arriba para configurar la autenticación."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:357
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:383
 #, elixir-autogen, elixir-format
 msgid "Select a supported authentication mode for this provider."
 msgstr "Selecciona un modo de autenticación compatible para este proveedor."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:981
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:337
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:411
 #, elixir-autogen, elixir-format
 msgid "Set oauth_file on this profile to a writable location, then recheck."
 msgstr "Establece oauth_file en este perfil a una ubicación escribible y vuelve a comprobar."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:65
-#, elixir-autogen, elixir-format
-msgid "Share connection, authentication and capacity across multiple models. Override only what each model needs."
-msgstr "Comparte la conexión, la autenticación y la capacidad entre varios modelos. Sobrescribe solo lo que necesite cada modelo."
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:184
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:258
 #, elixir-autogen, elixir-format
 msgid "Shared by all models in this profile. A peak capacity of 0 pauses new requests; existing requests continue."
 msgstr "Compartido por todos los modelos de este perfil. Una capacidad en máxima demanda de 0 pausa las solicitudes nuevas; las solicitudes existentes continúan."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:185
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:350
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:445
 #, elixir-autogen, elixir-format
 msgid "Shared concurrency"
 msgstr "Concurrencia compartida"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:366
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:457
 #, elixir-autogen, elixir-format
 msgid "Shared context window (optional)"
 msgstr "Ventana de contexto compartida (opcional)"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:291
-#, elixir-autogen, elixir-format
-msgid "Shared endpoint for every model in this profile. Leave blank for the provider default."
-msgstr "Endpoint compartido para todos los modelos de este perfil. Déjalo en blanco para usar el valor predeterminado del proveedor."
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:405
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:471
 #, elixir-autogen, elixir-format
 msgid "Shared generation defaults"
 msgstr "Valores predeterminados de generación compartidos"
@@ -6826,22 +6772,17 @@ msgstr "Valores predeterminados de generación compartidos"
 msgid "Show my running tasks"
 msgstr "Mostrar mis tareas en ejecución"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:515
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:652
 #, elixir-autogen, elixir-format
 msgid "Sign in with the provider's CLI on the selected node, then recheck."
 msgstr "Inicia sesión con la CLI del proveedor en el nodo seleccionado y vuelve a comprobar."
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:275
-#, elixir-autogen, elixir-format
-msgid "Stable identifier used by task selections and model rules."
-msgstr "Identificador estable que usan las selecciones de tareas y las reglas de modelos."
 
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:74
 #, elixir-autogen, elixir-format
 msgid "Start a task for me"
 msgstr "Iniciar una tarea por mí"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:227
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:301
 #, elixir-autogen, elixir-format
 msgid "Start time"
 msgstr "Hora de inicio"
@@ -6849,9 +6790,9 @@ msgstr "Hora de inicio"
 #: lib/evo_dash_web/components/settings_components.ex:348
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:295
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:319
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:145
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:318
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:323
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:149
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:291
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:296
 #: lib/evo_dash_web/live/welcome_live.ex:210
 #: lib/evo_dash_web/live/welcome_live.ex:225
 #, elixir-autogen, elixir-format
@@ -6859,20 +6800,15 @@ msgid "Subscription (OAuth)"
 msgstr "Suscripción (OAuth)"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:867
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:491
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:628
 #, elixir-autogen, elixir-format
 msgid "Subscription login"
 msgstr "Inicio de sesión de suscripción"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:473
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:564
 #, elixir-autogen, elixir-format
 msgid "Supported levels are inherited from the provider profile."
 msgstr "Los niveles compatibles se heredan del perfil de proveedor."
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:62
-#, elixir-autogen, elixir-format
-msgid "Supported reasoning levels (ordered)"
-msgstr "Niveles de razonamiento compatibles (en orden)"
 
 #: lib/evo_dash_web/live/home_live/approval_card.ex:44
 #, elixir-autogen, elixir-format
@@ -6884,17 +6820,17 @@ msgstr "Entorno de ejecución de destino: %{node}"
 msgid "That host's Genesis server already has Erlang distribution enabled for another connection. Continuing will disconnect that node and re-enable distribution with this connection's identity. The server and its tasks keep running."
 msgstr "El servidor Genesis de ese host ya tiene la distribución de Erlang habilitada para otra conexión. Si continúas, se desconectará ese nodo y se volverá a habilitar la distribución con la identidad de esta conexión. El servidor y sus tareas seguirán en ejecución."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:94
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:98
 #, elixir-autogen, elixir-format
 msgid "The default provider profile is unavailable: %{id}"
 msgstr "El perfil de proveedor predeterminado no está disponible: %{id}"
 
-#: lib/evo_dash_web/live/home_live.ex:192
+#: lib/evo_dash_web/live/home_live.ex:177
 #, elixir-autogen, elixir-format
 msgid "The request is still pending. Use its decision buttons to try again."
 msgstr "La solicitud sigue pendiente. Usa sus botones de decisión para volver a intentarlo."
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:214
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:288
 #, elixir-autogen, elixir-format
 msgid "These days ignore every peak window and use normal concurrency all day."
 msgstr "Estos días ignoran todas las franjas de máxima demanda y usan la concurrencia normal durante todo el día."
@@ -6914,12 +6850,14 @@ msgstr "Este proveedor usa un inicio de sesión por suscripción. No hace falta 
 msgid "This runs unrestricted ordinary Elixir in the target's live runtime. It can change running processes, files and configuration. There is no rollback. This is not OS root access. Approve only if you trust this exact code."
 msgstr "Esto ejecuta Elixir ordinario sin restricciones en el entorno de ejecución activo del destino. Puede modificar procesos en ejecución, archivos y configuración. No hay forma de revertirlo. No se trata de acceso root al sistema operativo. Aprieta solo si confías en este código exacto."
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:165
+#: lib/evo_dash_web/components/llm_selection_components.ex:213
+#: lib/evo_dash_web/components/llm_selection_components.ex:480
 #, elixir-autogen, elixir-format
 msgid "Unavailable model: %{model}"
 msgstr "Modelo no disponible: %{model}"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:119
+#: lib/evo_dash_web/components/llm_selection_components.ex:349
+#: lib/evo_dash_web/components/llm_selection_components.ex:461
 #, elixir-autogen, elixir-format
 msgid "Unavailable profile: %{profile}"
 msgstr "Perfil no disponible: %{profile}"
@@ -6929,7 +6867,7 @@ msgstr "Perfil no disponible: %{profile}"
 msgid "Unknown target"
 msgstr "Destino desconocido"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:109
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:183
 #, elixir-autogen, elixir-format
 msgid "Unsupported level: %{level}"
 msgstr "Nivel no compatible: %{level}"
@@ -6938,11 +6876,6 @@ msgstr "Nivel no compatible: %{level}"
 #, elixir-autogen, elixir-format
 msgid "Use Settings to configure the remote node."
 msgstr "Usa Ajustes para configurar el nodo remoto."
-
-#: lib/evo_dash_web/components/llm_selection_components.ex:223
-#, elixir-autogen, elixir-format
-msgid "Use the arrow keys to select a supported reasoning level. This is independent of task quality."
-msgstr "Usa las teclas de flecha para seleccionar un nivel de razonamiento compatible. Esto es independiente de la calidad de la tarea."
 
 #: lib/evo_dash_web/live/settings_live.ex:2059
 #, elixir-autogen, elixir-format
@@ -6973,3 +6906,170 @@ msgstr "p. ej., anthropic:claude-opus-5-5 u openai:gpt-5.6-terra"
 #, elixir-autogen, elixir-format
 msgid "e.g. claude-sonnet-5-5"
 msgstr "p. ej., claude-sonnet-5-5"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:424
+#, elixir-autogen, elixir-format
+msgid "API key environment variable (optional)"
+msgstr "Variable de entorno de la clave de API (opcional)"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:401
+#, elixir-autogen, elixir-format
+msgid "Account identity and connection"
+msgstr "Identidad de la cuenta y conexión"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:396
+#, elixir-autogen, elixir-format
+msgid "Advanced"
+msgstr "Avanzado"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:127
+#, elixir-autogen, elixir-format
+msgid "Advanced reasoning choices"
+msgstr "Opciones de razonamiento avanzadas"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:450
+#, elixir-autogen, elixir-format
+msgid "All models in this account share this capacity. Zero pauses new requests."
+msgstr "Todos los modelos de esta cuenta comparten esta capacidad. Con cero se pausan las nuevas solicitudes."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:418
+#, elixir-autogen, elixir-format
+msgid "An optional label to distinguish accounts. Existing names are preserved."
+msgstr "Una etiqueta opcional para distinguir cuentas. Los nombres existentes se conservan."
+
+#: lib/evo_dash_web/live/system_live/charts.ex:441
+#, elixir-autogen, elixir-format
+msgid "Capacity: the selected provider profile's effective concurrency. In use: live slot holders. Waiting: agents queued for a slot. One pool per provider profile — the models of a profile share its slots."
+msgstr "Capacidad: la concurrencia efectiva del perfil de proveedor seleccionado. En uso: agentes que ocupan una ranura. En espera: agentes en cola para una ranura. Un grupo por perfil de proveedor: los modelos de un perfil comparten sus ranuras."
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:106
+#, elixir-autogen, elixir-format
+msgid "Catalog suggestions are shown alongside configured levels. For shared defaults, suggestions must appear in every configured model's catalog entry. Verify support with your provider; nothing is selected automatically."
+msgstr "Las sugerencias del catálogo se muestran junto a los niveles configurados. Para los valores predeterminados compartidos, las sugerencias deben aparecer en la entrada de catálogo de cada modelo configurado. Verifica la compatibilidad con tu proveedor; no se selecciona nada automáticamente."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:373
+#, elixir-autogen, elixir-format
+msgid "Choose a default model"
+msgstr "Elige un modelo predeterminado"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:62
+#, elixir-autogen, elixir-format
+msgid "Choose a provider"
+msgstr "Elige un proveedor"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:69
+#, elixir-autogen, elixir-format
+msgid "Choose a provider, connect your account, then add models and choose your defaults."
+msgstr "Elige un proveedor, conecta tu cuenta y luego añade modelos y elige tus valores predeterminados."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:384
+#, elixir-autogen, elixir-format
+msgid "Choose the default model. This does not create a model override."
+msgstr "Elige el modelo predeterminado. Esto no crea una anulación de modelo."
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:68
+#, elixir-autogen, elixir-format
+msgid "Configured provider: %{provider}"
+msgstr "Proveedor configurado: %{provider}"
+
+#: lib/evo_dash_web/helpers.ex:990
+#, elixir-autogen, elixir-format
+msgid "Custom"
+msgstr "Personalizado"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:415
+#, elixir-autogen, elixir-format
+msgid "Display name (optional)"
+msgstr "Nombre para mostrar (opcional)"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:343
+#, elixir-autogen, elixir-format
+msgid "Edit the default model name. Add model rows only when you need per-model overrides."
+msgstr "Edita el nombre del modelo predeterminado. Añade filas de modelos solo cuando necesites anulaciones por modelo."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:325
+#, elixir-autogen, elixir-format
+msgid "Enter model names supported by this provider. Open model details only when you need overrides."
+msgstr "Introduce los nombres de los modelos compatibles con este proveedor. Abre los detalles del modelo solo cuando necesites anulaciones."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:427
+#, elixir-autogen, elixir-format
+msgid "Enter the variable name, not the key. In API-key mode this exact variable is used on the selected node, with no fallback to another account's key. Clear it to use the provider's default credential source."
+msgstr "Introduce el nombre de la variable, no la clave. En el modo de clave de API se usa exactamente esta variable en el nodo seleccionado, sin recurrir a la clave de otra cuenta. Bórrala para usar la fuente de credenciales predeterminada del proveedor."
+
+#: lib/evo_dash_web/helpers.ex:987
+#, elixir-autogen, elixir-format
+msgid "Evolve"
+msgstr "Evolucionar"
+
+#: lib/evo_dash_web/helpers.ex:984
+#, elixir-autogen, elixir-format
+msgid "Init existing"
+msgstr "Inicializar existente"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:408
+#, elixir-autogen, elixir-format
+msgid "Leave blank for an automatic ID. Use a distinct ID for another account with the same provider."
+msgstr "Déjalo en blanco para generar un ID automático. Usa un ID distinto para otra cuenta con el mismo proveedor."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:438
+#, elixir-autogen, elixir-format
+msgid "Leave blank for the provider endpoint. For an OpenAI-compatible service, choose OpenAI and enter its endpoint here."
+msgstr "Déjalo en blanco para usar el endpoint del proveedor. Para un servicio compatible con OpenAI, elige OpenAI e introduce aquí su endpoint."
+
+#: lib/evo_dash_web/components/task_form_components.ex:587
+#: lib/evo_dash_web/components/task_form_components.ex:600
+#, elixir-autogen, elixir-format
+msgid "Mode"
+msgstr "Modo"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:533
+#, elixir-autogen, elixir-format
+msgid "Model details"
+msgstr "Detalles del modelo"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:339
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:515
+#, elixir-autogen, elixir-format
+msgid "Model name"
+msgstr "Nombre del modelo"
+
+#: lib/evo_dash_web/helpers.ex:981
+#, elixir-autogen, elixir-format
+msgid "New project"
+msgstr "Nuevo proyecto"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:145
+#, elixir-autogen, elixir-format
+msgid "No levels selected explicitly disables reasoning for this model."
+msgstr "Si no se selecciona ningún nivel, se desactiva explícitamente el razonamiento para este modelo."
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:102
+#, elixir-autogen, elixir-format
+msgid "No verified catalog level list is available for this selection. Keep configured levels or use advanced choices after checking your provider."
+msgstr "No hay ninguna lista de niveles de catálogo verificada para esta selección. Conserva los niveles configurados o usa las opciones avanzadas después de consultar con tu proveedor."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:405
+#, elixir-autogen, elixir-format
+msgid "Profile ID (optional)"
+msgstr "ID del perfil (opcional)"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:98
+#, elixir-autogen, elixir-format
+msgid "Reasoning levels"
+msgstr "Niveles de razonamiento"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:147
+#, elixir-autogen, elixir-format
+msgid "Select only levels supported by your models. No selection advertises no reasoning support."
+msgstr "Selecciona solo los niveles compatibles con tus modelos. Si no seleccionas ninguno, se indicará que no se admite el razonamiento."
+
+#: lib/evo_dash_web/live/system_live/charts.ex:553
+#, elixir-autogen, elixir-format
+msgid "Slots are pooled per provider profile — the models of one profile share its slots."
+msgstr "Las ranuras se agrupan por perfil de proveedor: los modelos de un mismo perfil comparten sus ranuras."
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:130
+#, elixir-autogen, elixir-format
+msgid "These are request vocabulary choices, not verified support for this model or endpoint. Select only levels you have confirmed."
+msgstr "Estas son opciones de vocabulario para las solicitudes, no una confirmación de compatibilidad con este modelo o endpoint. Selecciona solo los niveles que hayas confirmado."

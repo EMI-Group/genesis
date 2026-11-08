@@ -22,12 +22,12 @@ msgstr "%{action} 成功。"
 msgid "%{action} unavailable — the remote connection subsystem is not running."
 msgstr "%{action} 無法使用——遠端連線子系統未在運行。"
 
-#: lib/evo_dash_web/components/task_card_components.ex:876
+#: lib/evo_dash_web/components/task_card_components.ex:893
 #, elixir-autogen, elixir-format
 msgid "%{count}"
 msgstr "%{count}"
 
-#: lib/evo_dash_web/components/task_card_components.ex:269
+#: lib/evo_dash_web/components/task_card_components.ex:286
 #, elixir-autogen, elixir-format
 msgid "%{count} Agents"
 msgstr "%{count} 個智能體"
@@ -143,13 +143,13 @@ msgstr "<無文字內容>"
 msgid "<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."
 msgstr "<strong>找不到您的服務商？</strong>您可以在下方的「模型」欄位中手動輸入任何模型字串，格式為 <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">服務商:模型名稱</code>。前往 <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> 查詢您的模型，或查看<a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">支援的服務商</a>。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:807
-#: lib/evo_dash_web/components/task_form_components.ex:919
+#: lib/evo_dash_web/components/task_form_components.ex:1010
+#: lib/evo_dash_web/components/task_form_components.ex:1122
 #, elixir-autogen, elixir-format
 msgid "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
 msgstr "用於作為基礎的 Git 提交 SHA、分支名稱或標籤。預設為 HEAD。"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:165
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:183
 #, elixir-autogen, elixir-format
 msgid "A profile with id \"%{id}\" already exists."
 msgstr "ID 為「%{id}」的設定檔已存在。"
@@ -229,12 +229,12 @@ msgstr "新增模型"
 msgid "Add a profile to get started, or use Quick Setup above."
 msgstr "新增設定檔以開始使用，或使用上方的快速設定。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:889
+#: lib/evo_dash_web/components/task_form_components.ex:1092
 #, elixir-autogen, elixir-format
 msgid "Advanced Options"
 msgstr "進階選項"
 
-#: lib/evo_dash_web/components/task_card_components.ex:439
+#: lib/evo_dash_web/components/task_card_components.ex:456
 #: lib/evo_dash_web/components/task_card_components/result_render.ex:130
 #: lib/evo_dash_web/components/task_card_components/result_render.ex:219
 #, elixir-autogen, elixir-format
@@ -270,12 +270,12 @@ msgstr "找不到智能體"
 #: lib/evo_dash_web/components/review_components/header.ex:509
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:22
 #: lib/evo_dash_web/live/settings_live.ex:678
-#: lib/evo_dash_web/live/system_live/charts.ex:341
+#: lib/evo_dash_web/live/system_live/charts.ex:465
 #, elixir-autogen, elixir-format
 msgid "Agents"
 msgstr "智能體"
 
-#: lib/evo_dash_web/components/task_card_components.ex:619
+#: lib/evo_dash_web/components/task_card_components.ex:636
 #, elixir-autogen, elixir-format
 msgid "Agents Spawned"
 msgstr "已生成智能體"
@@ -351,14 +351,14 @@ msgstr "封存開始"
 msgid "Archive Start Ref"
 msgstr "歸檔起始參考"
 
-#: lib/evo_dash_web/components/task_form_components.ex:843
+#: lib/evo_dash_web/components/task_form_components.ex:1046
 #, elixir-autogen, elixir-format
 msgid "Archive agent details"
 msgstr "封存智能體詳細資訊"
 
 #: lib/evo_dash_web/components/archive_components.ex:142
 #: lib/evo_dash_web/components/review_components.ex:216
-#: lib/evo_dash_web/components/task_card_components.ex:712
+#: lib/evo_dash_web/components/task_card_components.ex:729
 #, elixir-autogen, elixir-format
 msgid "Archived Agent Details"
 msgstr "已歸檔智能體詳情"
@@ -403,7 +403,7 @@ msgstr "基礎 URL 不能為空。"
 msgid "Binary"
 msgstr "二進位檔案"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:155
+#: lib/evo_dash_web/live/system_live/charts.ex:263
 #, elixir-autogen, elixir-format
 msgid "Blocked"
 msgstr "受阻"
@@ -420,27 +420,27 @@ msgstr "分支"
 msgid "Browse"
 msgstr "瀏覽"
 
-#: lib/evo_dash_web/components/task_form_components.ex:765
+#: lib/evo_dash_web/components/task_form_components.ex:968
 #: lib/evo_dash_web/live/projects_live.ex:468
 #, elixir-autogen, elixir-format
 msgid "Build System"
 msgstr "建置系統"
 
 #: lib/evo_dash_web/components/review_components/header.ex:579
-#: lib/evo_dash_web/components/task_card_components.ex:549
+#: lib/evo_dash_web/components/task_card_components.ex:566
 #, elixir-autogen, elixir-format
 msgid "Cache Creation"
 msgstr "快取建立"
 
 #: lib/evo_dash_web/components/review_components/header.ex:588
-#: lib/evo_dash_web/components/task_card_components.ex:557
+#: lib/evo_dash_web/components/task_card_components.ex:574
 #: lib/evo_dash_web/live/agents_live.html.heex:541
 #, elixir-autogen, elixir-format
 msgid "Cache Hit Rate"
 msgstr "快取命中率"
 
 #: lib/evo_dash_web/components/review_components/header.ex:570
-#: lib/evo_dash_web/components/task_card_components.ex:541
+#: lib/evo_dash_web/components/task_card_components.ex:558
 #: lib/evo_dash_web/live/agents_live.html.heex:533
 #, elixir-autogen, elixir-format
 msgid "Cached Tokens"
@@ -451,7 +451,7 @@ msgstr "已快取詞元"
 #: lib/evo_dash_web/components/project_components.ex:816
 #: lib/evo_dash_web/components/review_components/actions.ex:268
 #: lib/evo_dash_web/components/settings_components/form_footer.ex:26
-#: lib/evo_dash_web/components/task_card_components.ex:283
+#: lib/evo_dash_web/components/task_card_components.ex:300
 #: lib/evo_dash_web/live/agents_live.html.heex:1167
 #: lib/evo_dash_web/live/settings_live.ex:584
 #: lib/evo_dash_web/live/settings_live.ex:652
@@ -767,22 +767,23 @@ msgstr "當前提交"
 msgid "Dark theme"
 msgstr "深色主題"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:304
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:143
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:213
+#: lib/evo_dash_web/components/llm_selection_components.ex:502
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:147
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:212
 #: lib/evo_dash_web/components/settings_components/setting_card.ex:104
 #, elixir-autogen, elixir-format
 msgid "Default"
 msgstr "預設值"
 
 #: lib/evo_dash_web/components/project_components.ex:442
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:357
 #, elixir-autogen, elixir-format
 msgid "Defaults"
 msgstr "預設值"
 
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:156
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:159
-#: lib/evo_dash_web/components/task_card_components.ex:341
+#: lib/evo_dash_web/components/task_card_components.ex:358
 #: lib/evo_dash_web/live/settings_live.ex:313
 #, elixir-autogen, elixir-format
 msgid "Delete"
@@ -793,7 +794,7 @@ msgstr "刪除"
 msgid "Delete this model profile?"
 msgstr "刪除此模型設定檔？"
 
-#: lib/evo_dash_web/components/task_card_components.ex:339
+#: lib/evo_dash_web/components/task_card_components.ex:356
 #, elixir-autogen, elixir-format
 msgid "Delete this task?"
 msgstr "刪除此任務？"
@@ -805,12 +806,12 @@ msgstr "刪除此任務？"
 msgid "Depth"
 msgstr "深度"
 
-#: lib/evo_dash_web/components/task_form_components.ex:219
+#: lib/evo_dash_web/components/task_form_components.ex:931
 #, elixir-autogen, elixir-format
 msgid "Describe the codebase you want to create..."
 msgstr "描述您想建立的程式碼庫…"
 
-#: lib/evo_dash_web/components/task_form_components.ex:216
+#: lib/evo_dash_web/components/task_form_components.ex:929
 #, elixir-autogen, elixir-format
 msgid "Describe what you want to change or improve..."
 msgstr "描述您想變更或改善的內容…"
@@ -821,7 +822,7 @@ msgstr "描述您想變更或改善的內容…"
 msgid "Description (optional)"
 msgstr "說明（選填）"
 
-#: lib/evo_dash_web/components/task_card_components.ex:311
+#: lib/evo_dash_web/components/task_card_components.ex:328
 #, elixir-autogen, elixir-format
 msgid "Details"
 msgstr "詳細資訊"
@@ -872,7 +873,7 @@ msgstr "分散式連接埠"
 
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:146
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:149
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:169
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:173
 #: lib/evo_dash_web/live/settings_live.ex:305
 #, elixir-autogen, elixir-format
 msgid "Edit"
@@ -943,7 +944,7 @@ msgstr "執行「%{command}」時發生錯誤：%{error}"
 msgid "Example model names:"
 msgstr "模型名稱範例："
 
-#: lib/evo_dash_web/components/task_card_components.ex:653
+#: lib/evo_dash_web/components/task_card_components.ex:670
 #, elixir-autogen, elixir-format
 msgid "Execution Logs"
 msgstr "執行日誌"
@@ -1039,7 +1040,7 @@ msgid "Filter settings..."
 msgstr "搜尋設定..."
 
 #: lib/evo_dash_web/components/review_components/header.ex:522
-#: lib/evo_dash_web/components/task_card_components.ex:263
+#: lib/evo_dash_web/components/task_card_components.ex:280
 #, elixir-autogen, elixir-format
 msgid "Finished"
 msgstr "已完成"
@@ -1084,8 +1085,8 @@ msgstr "外部儲存庫是智能體在執行任務時可存取的額外程式碼
 msgid "Frequency Penalty"
 msgstr "頻率懲罰"
 
-#: lib/evo_dash_web/components/task_card_components.ex:421
-#: lib/evo_dash_web/components/task_card_components.ex:458
+#: lib/evo_dash_web/components/task_card_components.ex:438
+#: lib/evo_dash_web/components/task_card_components.ex:475
 #, elixir-autogen, elixir-format
 msgid "Full"
 msgstr "完整"
@@ -1127,7 +1128,7 @@ msgstr "GitHub 使用者名稱"
 msgid "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
 msgstr "平滑重啟或停止 Erlang VM。重啟會卸載並重新啟動所有應用程式；停止則會優雅地關閉 VM，必須手動重新啟動。兩種情況下，記憶體中的運行時狀態都會遺失。"
 
-#: lib/evo_dash_web/components/task_card_components.ex:309
+#: lib/evo_dash_web/components/task_card_components.ex:326
 #, elixir-autogen, elixir-format
 msgid "Hide Details"
 msgstr "隱藏詳細資訊"
@@ -1148,7 +1149,7 @@ msgid "Ignored"
 msgstr "已忽略"
 
 #: lib/evo_dash_web/components/review_components/header.ex:615
-#: lib/evo_dash_web/components/task_card_components.ex:586
+#: lib/evo_dash_web/components/task_card_components.ex:603
 #: lib/evo_dash_web/live/agents_live.html.heex:642
 #, elixir-autogen, elixir-format
 msgid "Input Cost"
@@ -1157,7 +1158,7 @@ msgstr "輸入成本"
 #: lib/evo_dash_web/components/archive_components.ex:425
 #: lib/evo_dash_web/components/review_components.ex:469
 #: lib/evo_dash_web/components/review_components/header.ex:539
-#: lib/evo_dash_web/components/task_card_components.ex:513
+#: lib/evo_dash_web/components/task_card_components.ex:530
 #: lib/evo_dash_web/live/agents_live.html.heex:506
 #, elixir-autogen, elixir-format
 msgid "Input Tokens"
@@ -1293,23 +1294,21 @@ msgstr "缺少設定"
 msgid "Mode: %{mode} | %{prompt}"
 msgstr "模式：%{mode} | %{prompt}"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:137
+#: lib/evo_dash_web/components/llm_selection_components.ex:168
 #: lib/evo_dash_web/components/review_components/header.ex:500
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:281
-#: lib/evo_dash_web/components/task_card_components.ex:623
+#: lib/evo_dash_web/components/task_card_components.ex:640
 #: lib/evo_dash_web/live/agents_live.html.heex:338
-#: lib/evo_dash_web/live/system_live/charts.ex:409
 #, elixir-autogen, elixir-format
 msgid "Model"
 msgstr "模型"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:260
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:446
 #, elixir-autogen, elixir-format
 msgid "Model ID"
 msgstr "模型 ID"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:373
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:399
 #, elixir-autogen, elixir-format
 msgid "Model ID cannot be empty."
 msgstr "模型 ID 不能為空。"
@@ -1449,7 +1448,7 @@ msgstr "找不到符合 \"%{query}\" 的設定"
 msgid "No tasks found"
 msgstr "找不到任務"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:298
+#: lib/evo_dash_web/components/llm_selection_components.ex:496
 #: lib/evo_dash_web/live/agents_live.html.heex:453
 #: lib/evo_dash_web/live/agents_live.html.heex:478
 #: lib/evo_dash_web/live/system_live/status.ex:75
@@ -1476,7 +1475,7 @@ msgstr "並行 LLM 請求槽位數量"
 #: lib/evo_dash_web/components/review_components.ex:71
 #: lib/evo_dash_web/components/review_components.ex:341
 #: lib/evo_dash_web/components/review_components/header.ex:365
-#: lib/evo_dash_web/components/task_card_components.ex:402
+#: lib/evo_dash_web/components/task_card_components.ex:419
 #: lib/evo_dash_web/live/agents_live.html.heex:356
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:125
 #, elixir-autogen, elixir-format
@@ -1492,7 +1491,7 @@ msgstr "目標"
 msgid "Open"
 msgstr "開啟"
 
-#: lib/evo_dash_web/components/task_form_components.ex:673
+#: lib/evo_dash_web/components/task_form_components.ex:853
 #, elixir-autogen, elixir-format
 msgid "Open a project to get started"
 msgstr "開啟專案以開始使用"
@@ -1503,7 +1502,7 @@ msgid "Optional: Note for the skill extraction agent"
 msgstr "選擇性：給技能提取智能體的備註"
 
 #: lib/evo_dash_web/components/review_components/header.ex:624
-#: lib/evo_dash_web/components/task_card_components.ex:594
+#: lib/evo_dash_web/components/task_card_components.ex:611
 #: lib/evo_dash_web/live/agents_live.html.heex:650
 #, elixir-autogen, elixir-format
 msgid "Output Cost"
@@ -1512,7 +1511,7 @@ msgstr "輸出成本"
 #: lib/evo_dash_web/components/archive_components.ex:432
 #: lib/evo_dash_web/components/review_components.ex:478
 #: lib/evo_dash_web/components/review_components/header.ex:548
-#: lib/evo_dash_web/components/task_card_components.ex:521
+#: lib/evo_dash_web/components/task_card_components.ex:538
 #: lib/evo_dash_web/live/agents_live.html.heex:514
 #, elixir-autogen, elixir-format
 msgid "Output Tokens"
@@ -1549,7 +1548,7 @@ msgstr "暫停調度器"
 #: lib/evo_dash_web/helpers.ex:76
 #: lib/evo_dash_web/live/agents_live.html.heex:163
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:311
-#: lib/evo_dash_web/live/system_live/charts.ex:165
+#: lib/evo_dash_web/live/system_live/charts.ex:273
 #: lib/evo_dash_web/live/tasks_live.ex:74
 #, elixir-autogen, elixir-format
 msgid "Pending"
@@ -1585,12 +1584,11 @@ msgid "Process limits are only available on Linux with systemd-run."
 msgstr "行程限制僅在 Linux 搭配 systemd-run 時可用。"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:239
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:272
 #, elixir-autogen, elixir-format
 msgid "Profile ID"
 msgstr "設定檔 ID"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:161
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:179
 #, elixir-autogen, elixir-format
 msgid "Profile id cannot be empty."
 msgstr "設定檔 ID 不能為空。"
@@ -1622,7 +1620,7 @@ msgid "Provide specific instructions on what knowledge should be captured as ski
 msgstr "提供具體指示，說明應將哪些知識收錄為技能。"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:249
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:280
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:59
 #, elixir-autogen, elixir-format
 msgid "Provider"
 msgstr "服務商"
@@ -1781,8 +1779,8 @@ msgstr "結果"
 msgid "Resume Scheduler"
 msgstr "恢復調度器"
 
-#: lib/evo_dash_web/components/task_form_components.ex:822
-#: lib/evo_dash_web/components/task_form_components.ex:936
+#: lib/evo_dash_web/components/task_form_components.ex:1025
+#: lib/evo_dash_web/components/task_form_components.ex:1139
 #, elixir-autogen, elixir-format
 msgid "Resume from"
 msgstr "從此繼續"
@@ -1803,8 +1801,8 @@ msgstr "重試次數"
 #: lib/evo_dash_web/components/review_components.ex:273
 #: lib/evo_dash_web/components/review_components.ex:393
 #: lib/evo_dash_web/components/settings_components.ex:548
-#: lib/evo_dash_web/components/task_card_components.ex:489
-#: lib/evo_dash_web/components/task_card_components.ex:755
+#: lib/evo_dash_web/components/task_card_components.ex:506
+#: lib/evo_dash_web/components/task_card_components.ex:772
 #: lib/evo_dash_web/live/agents_live.html.heex:44
 #: lib/evo_dash_web/live/projects_live.ex:153
 #: lib/evo_dash_web/live/projects_live/remote_view.ex:290
@@ -1827,7 +1825,7 @@ msgstr "第 %{attempt} 次重試 — 開始 %{backoff_seconds} 秒退避"
 msgid "Retry attempt %{attempt}"
 msgstr "第 %{attempt} 次重試"
 
-#: lib/evo_dash_web/components/task_card_components.ex:295
+#: lib/evo_dash_web/components/task_card_components.ex:312
 #, elixir-autogen, elixir-format
 msgid "Review"
 msgstr "審閱"
@@ -1856,7 +1854,7 @@ msgstr "執行"
 #: lib/evo_dash_web/helpers.ex:77
 #: lib/evo_dash_web/live/agents_live.html.heex:172
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:310
-#: lib/evo_dash_web/live/system_live/charts.ex:153
+#: lib/evo_dash_web/live/system_live/charts.ex:261
 #: lib/evo_dash_web/live/tasks_live.ex:71
 #, elixir-autogen, elixir-format
 msgid "Running"
@@ -1920,18 +1918,18 @@ msgstr "調度器"
 msgid "Scheduler Active"
 msgstr "調度器執行中"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:307
+#: lib/evo_dash_web/live/system_live/charts.ex:430
 #: lib/evo_dash_web/live/system_live/runtime_controls.ex:70
 #, elixir-autogen, elixir-format
 msgid "Scheduler Paused"
 msgstr "調度器已暫停"
 
-#: lib/evo_dash_web/live/system_live.ex:1684
+#: lib/evo_dash_web/live/system_live.ex:1685
 #, elixir-autogen, elixir-format
 msgid "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
 msgstr "調度器已暫停。執行中的智能體會繼續運作，但不會再分配新的槽位或智能體。"
 
-#: lib/evo_dash_web/live/system_live.ex:1679
+#: lib/evo_dash_web/live/system_live.ex:1680
 #, elixir-autogen, elixir-format
 msgid "Scheduler resumed. New agents and slots are being granted."
 msgstr "調度器已恢復。正在分配新的智能體與槽位。"
@@ -2028,21 +2026,21 @@ msgstr "從儀表板啟動任務，即可在此處查看智能體。"
 #: lib/evo_dash_web/components/archive_components.ex:460
 #: lib/evo_dash_web/components/review_components.ex:511
 #: lib/evo_dash_web/components/review_components/header.ex:516
-#: lib/evo_dash_web/components/task_card_components.ex:258
+#: lib/evo_dash_web/components/task_card_components.ex:275
 #, elixir-autogen, elixir-format
 msgid "Started"
 msgstr "已開始"
 
 #: lib/evo_dash_web/components/project_components.ex:669
 #: lib/evo_dash_web/components/project_components.ex:795
-#: lib/evo_dash_web/components/task_form_components.ex:805
-#: lib/evo_dash_web/components/task_form_components.ex:914
+#: lib/evo_dash_web/components/task_form_components.ex:1008
+#: lib/evo_dash_web/components/task_form_components.ex:1117
 #, elixir-autogen, elixir-format
 msgid "Starting Commit"
 msgstr "起始提交"
 
-#: lib/evo_dash_web/components/task_form_components.ex:787
-#: lib/evo_dash_web/components/task_form_components.ex:895
+#: lib/evo_dash_web/components/task_form_components.ex:990
+#: lib/evo_dash_web/components/task_form_components.ex:1098
 #, elixir-autogen, elixir-format
 msgid "Starting Node"
 msgstr "起始節點"
@@ -2146,7 +2144,7 @@ msgid "Tasks will appear here once you start them from the dashboard."
 msgstr "從儀表板啟動任務後，任務將會顯示在這裡。"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:621
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:436
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:573
 #, elixir-autogen, elixir-format
 msgid "Temperature"
 msgstr "溫度"
@@ -2169,8 +2167,8 @@ msgstr "在設定中測試"
 msgid "Testing LLM connection..."
 msgstr "正在測試 LLM 連線…"
 
-#: lib/evo_dash_web/components/task_form_components.ex:824
-#: lib/evo_dash_web/components/task_form_components.ex:938
+#: lib/evo_dash_web/components/task_form_components.ex:1027
+#: lib/evo_dash_web/components/task_form_components.ex:1141
 #, elixir-autogen, elixir-format
 msgid "The ID of a previous task to continue from. Injects the previous task's context (commits, objective, and result) into this task's objective."
 msgstr "要從先前繼續的任務 ID。會將前一個任務的上下文（提交、目標與結果）注入到當前任務的目標中。"
@@ -2201,8 +2199,8 @@ msgstr "智能體已完成，未進行任何程式碼變更。您可以從此調
 msgid "The model name"
 msgstr "模型名稱"
 
-#: lib/evo_dash_web/components/task_form_components.ex:789
-#: lib/evo_dash_web/components/task_form_components.ex:898
+#: lib/evo_dash_web/components/task_form_components.ex:992
+#: lib/evo_dash_web/components/task_form_components.ex:1101
 #, elixir-autogen, elixir-format
 msgid "The subdirectory within the project to start evolution from. Use './' for root."
 msgstr "專案內開始演進的子目錄。使用 './' 表示根目錄。"
@@ -2225,7 +2223,7 @@ msgid "This will gracefully shut down the Erlang VM. All applications will be st
 msgstr "這將平滑關閉 Erlang VM。所有應用程式將依序停止。"
 
 #: lib/evo_dash_web/components/review_components/header.ex:532
-#: lib/evo_dash_web/components/task_card_components.ex:508
+#: lib/evo_dash_web/components/task_card_components.ex:525
 #, elixir-autogen, elixir-format
 msgid "Token & Cost Usage"
 msgstr "詞元與成本用量"
@@ -2257,19 +2255,19 @@ msgid "Tools"
 msgstr "工具"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:647
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:439
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:576
 #, elixir-autogen, elixir-format
 msgid "Top K"
 msgstr "Top K"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:638
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:438
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:575
 #, elixir-autogen, elixir-format
 msgid "Top P"
 msgstr "Top P"
 
 #: lib/evo_dash_web/components/review_components/header.ex:633
-#: lib/evo_dash_web/components/task_card_components.ex:602
+#: lib/evo_dash_web/components/task_card_components.ex:619
 #: lib/evo_dash_web/live/agents_live.html.heex:658
 #, elixir-autogen, elixir-format
 msgid "Total Cost"
@@ -2278,7 +2276,7 @@ msgstr "總成本"
 #: lib/evo_dash_web/components/archive_components.ex:439
 #: lib/evo_dash_web/components/review_components.ex:487
 #: lib/evo_dash_web/components/review_components/header.ex:557
-#: lib/evo_dash_web/components/task_card_components.ex:529
+#: lib/evo_dash_web/components/task_card_components.ex:546
 #: lib/evo_dash_web/live/agents_live.html.heex:522
 #, elixir-autogen, elixir-format
 msgid "Total Tokens"
@@ -2381,9 +2379,9 @@ msgstr "檢視系統指標、進程與應用程式遙測"
 
 #: lib/evo_dash_web/helpers.ex:78
 #: lib/evo_dash_web/live/agents_live.html.heex:183
-#: lib/evo_dash_web/live/system_live/charts.ex:98
-#: lib/evo_dash_web/live/system_live/charts.ex:140
-#: lib/evo_dash_web/live/system_live/charts.ex:160
+#: lib/evo_dash_web/live/system_live/charts.ex:111
+#: lib/evo_dash_web/live/system_live/charts.ex:248
+#: lib/evo_dash_web/live/system_live/charts.ex:268
 #, elixir-autogen, elixir-format
 msgid "Waiting"
 msgstr "等待中"
@@ -2441,8 +2439,8 @@ msgstr "例如 anthropic、openai"
 msgid "e.g. gpt-4o or anthropic/claude-3.5-sonnet"
 msgstr "例如 gpt-4o 或 anthropic/claude-3.5-sonnet"
 
-#: lib/evo_dash_web/components/task_form_components.ex:800
-#: lib/evo_dash_web/components/task_form_components.ex:909
+#: lib/evo_dash_web/components/task_form_components.ex:1003
+#: lib/evo_dash_web/components/task_form_components.ex:1112
 #, elixir-autogen, elixir-format
 msgid "e.g., ./src/components"
 msgstr "例如 ./src/components"
@@ -2452,8 +2450,8 @@ msgstr "例如 ./src/components"
 msgid "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
 msgstr "例如：專注於此 PR 中發現的部署流程和資料庫遷移模式。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:816
-#: lib/evo_dash_web/components/task_form_components.ex:930
+#: lib/evo_dash_web/components/task_form_components.ex:1019
+#: lib/evo_dash_web/components/task_form_components.ex:1133
 #, elixir-autogen, elixir-format
 msgid "e.g., abc1234 or HEAD"
 msgstr "例如 abc1234 或 HEAD"
@@ -2549,7 +2547,7 @@ msgstr "top_k"
 msgid "top_p"
 msgstr "top_p"
 
-#: lib/evo_dash_web/components/task_card_components.ex:631
+#: lib/evo_dash_web/components/task_card_components.ex:648
 #, elixir-autogen, elixir-format
 msgid "total agents (incl. subagents)"
 msgstr "智能體總數（含子智能體）"
@@ -2889,12 +2887,12 @@ msgstr "輸入 %{provider} 的 API 金鑰。"
 msgid "Extra Config (JSON)"
 msgstr "額外設定 (JSON)"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:377
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:403
 #, elixir-autogen, elixir-format
 msgid "Extra Config must be a JSON object (map)."
 msgstr "額外配置必須是 JSON 物件（映射）。"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:374
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:400
 #, elixir-autogen, elixir-format
 msgid "Extra Config must be valid JSON."
 msgstr "額外配置必須是有效的 JSON。"
@@ -2915,7 +2913,7 @@ msgstr "前往儀表板"
 msgid "Light"
 msgstr "淺色模式"
 
-#: lib/evo_dash_web/components/task_form_components.ex:772
+#: lib/evo_dash_web/components/task_form_components.ex:975
 #: lib/evo_dash_web/live/projects_live.ex:470
 #, elixir-autogen, elixir-format
 msgid "No build system"
@@ -2942,12 +2940,12 @@ msgstr "路徑必須為絕對路徑。"
 msgid "Provider Options (JSON)"
 msgstr "服務商選項 (JSON)"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:383
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:409
 #, elixir-autogen, elixir-format
 msgid "Provider Options must be a JSON object (map)."
 msgstr "服務商選項必須是 JSON 物件（映射）。"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:380
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:406
 #, elixir-autogen, elixir-format
 msgid "Provider Options must be valid JSON."
 msgstr "服務商選項必須是有效的 JSON。"
@@ -2993,18 +2991,18 @@ msgstr "你的 LLM 已設定完成。你隨時可以在設定中管理它。"
 msgid "completed"
 msgstr "已完成"
 
-#: lib/evo_dash_web/live/agents_live.ex:2013
+#: lib/evo_dash_web/live/agents_live.ex:2018
 #, elixir-autogen, elixir-format
 msgid "Failed to send message: %{reason}"
 msgstr "傳送訊息失敗：%{reason}"
 
-#: lib/evo_dash_web/live/agents_live.ex:707
+#: lib/evo_dash_web/live/agents_live.ex:708
 #, elixir-autogen, elixir-format
 msgid "Message sent to agent"
 msgstr "訊息已傳送給智能體"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:1171
-#: lib/evo_dash_web/live/home_live.ex:230
+#: lib/evo_dash_web/live/home_live.ex:242
 #, elixir-autogen, elixir-format
 msgid "Send"
 msgstr "發送"
@@ -3034,7 +3032,7 @@ msgstr "您的訊息將在智能體下一次輪次時加入其上下文。"
 msgid "Agent Report"
 msgstr "智能體報告"
 
-#: lib/evo_dash_web/live/home_live.ex:649
+#: lib/evo_dash_web/live/home_live.ex:663
 #: lib/evo_dash_web/live/projects_live.ex:1167
 #: lib/evo_dash_web/live/review_live.ex:583
 #: lib/evo_dash_web/live/settings_live.ex:1553
@@ -3138,12 +3136,12 @@ msgstr "智譜AI（Z.ai）"
 msgid "xAI"
 msgstr "xAI"
 
-#: lib/evo_dash_web/live/system_live.ex:1743
+#: lib/evo_dash_web/live/system_live.ex:1744
 #, elixir-autogen, elixir-format
 msgid "Remote node is restarting. Please wait for it to come back up, then reconnect."
 msgstr "遠端節點正在重啟。請等待其恢復上線後再重新連線。"
 
-#: lib/evo_dash_web/live/system_live.ex:1747
+#: lib/evo_dash_web/live/system_live.ex:1748
 #, elixir-autogen, elixir-format
 msgid "Remote node is stopping. It will need to be started again on the remote host."
 msgstr "遠端節點正在停止。需在遠端主機上重新啟動才能再次使用。"
@@ -3158,7 +3156,7 @@ msgstr "此操作將平滑重啟遠端節點的 Erlang 虛擬機。遠端節點�
 msgid "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
 msgstr "此操作將平滑關閉遠端節點的 Erlang 虛擬機。遠端節點上的所有應用程式將依序停止。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:854
+#: lib/evo_dash_web/components/task_form_components.ex:1057
 #, elixir-autogen, elixir-format
 msgid "Archive agent detail"
 msgstr "封存智能體詳情"
@@ -3168,7 +3166,7 @@ msgstr "封存智能體詳情"
 msgid "Blank = auto-probe the remote OS/arch"
 msgstr "留空 = 自動偵測遠端作業系統/架構"
 
-#: lib/evo_dash_web/components/task_form_components.ex:856
+#: lib/evo_dash_web/components/task_form_components.ex:1059
 #, elixir-autogen, elixir-format
 msgid "Collect per-agent metadata for review"
 msgstr "收集每個智能體的中繼資料以供檢閱"
@@ -3195,8 +3193,8 @@ msgstr "正在下載"
 msgid "Extracting"
 msgstr "正在解壓縮"
 
-#: lib/evo_dash_web/components/task_form_components.ex:631
-#: lib/evo_dash_web/components/task_form_components.ex:632
+#: lib/evo_dash_web/components/task_form_components.ex:811
+#: lib/evo_dash_web/components/task_form_components.ex:812
 #, elixir-autogen, elixir-format
 msgid "Launch"
 msgstr "啟動"
@@ -3227,7 +3225,7 @@ msgstr "依路徑開啟專案"
 msgid "Open a project..."
 msgstr "開啟專案..."
 
-#: lib/evo_dash_web/components/task_form_components.ex:211
+#: lib/evo_dash_web/components/task_form_components.ex:924
 #, elixir-autogen, elixir-format
 msgid "Optional — leave empty and click Launch to initialize an existing codebase"
 msgstr "選填 — 留空並點擊「啟動」以初始化現有程式碼庫"
@@ -3284,13 +3282,13 @@ msgstr "無法連線至 %{name}"
 msgid "Cannot open project: remote node %{name} is not connected. Retry the connection first."
 msgstr "無法開啟專案：遠端節點 %{name} 未連線。請先重試連線。"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:87
-#: lib/evo_dash_web/live/system_live/charts.ex:134
+#: lib/evo_dash_web/live/system_live/charts.ex:100
+#: lib/evo_dash_web/live/system_live/charts.ex:242
 #, elixir-autogen, elixir-format
 msgid "Capacity"
 msgstr "容量"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:332
+#: lib/evo_dash_web/live/system_live/charts.ex:456
 #, elixir-autogen, elixir-format
 msgid "Capacity: max_tool_concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
 msgstr "容量：max_tool_concurrency。使用中：運行中的智能體（槽位使用代理 — 槽位持有者不對外公開）。"
@@ -3330,7 +3328,7 @@ msgstr "檢查用於可重現建置的 Nix 開發環境。"
 msgid "Choose a provider:"
 msgstr "選擇服務商："
 
-#: lib/evo_dash_web/live/system_live/charts.ex:422
+#: lib/evo_dash_web/live/system_live/charts.ex:562
 #, elixir-autogen, elixir-format
 msgid "Collecting data…"
 msgstr "正在收集資料…"
@@ -3353,8 +3351,8 @@ msgid "Connection lost or failed"
 msgstr "連線已中斷或失敗"
 
 #: lib/evo_dash_web/components/settings_components/model_selection_editor.ex:117
-#: lib/evo_dash_web/components/task_card_components.ex:414
-#: lib/evo_dash_web/components/task_card_components.ex:451
+#: lib/evo_dash_web/components/task_card_components.ex:431
+#: lib/evo_dash_web/components/task_card_components.ex:468
 #: lib/evo_dash_web/live/projects_live.ex:280
 #: lib/evo_dash_web/live/tasks_live.ex:432
 #: lib/evo_dash_web/live/tasks_live.ex:455
@@ -3383,8 +3381,8 @@ msgstr "請在「設定」中修正遺漏或無效的設定。"
 msgid "Hide example"
 msgstr "隱藏範例"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:93
-#: lib/evo_dash_web/live/system_live/charts.ex:139
+#: lib/evo_dash_web/live/system_live/charts.ex:106
+#: lib/evo_dash_web/live/system_live/charts.ex:247
 #, elixir-autogen, elixir-format
 msgid "In use"
 msgstr "使用中"
@@ -3399,17 +3397,17 @@ msgstr "請安裝 git 並確保其可在 PATH 中找到。"
 msgid "Install ripgrep and make sure it is available on your PATH."
 msgstr "請安裝 ripgrep 並確保其可在 PATH 中找到。"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:314
+#: lib/evo_dash_web/live/system_live/charts.ex:437
 #, elixir-autogen, elixir-format
 msgid "LLM Slots"
 msgstr "LLM 槽位"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:299
+#: lib/evo_dash_web/live/system_live/charts.ex:422
 #, elixir-autogen, elixir-format
 msgid "LLM slots, tool slots, and agent activity — sampled every 3 seconds over the last 3 minutes."
 msgstr "LLM 槽位、工具槽位及智能體活動 — 每 3 秒取樣一次，涵蓋最近 3 分鐘。"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:476
+#: lib/evo_dash_web/live/system_live/charts.ex:616
 #, elixir-autogen, elixir-format
 msgid "Last 3 minutes"
 msgstr "最近 3 分鐘"
@@ -3500,12 +3498,12 @@ msgstr "此系統上無法使用 sandbox-exec 沙箱功能。"
 msgid "Save Model"
 msgstr "儲存模型"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:475
+#: lib/evo_dash_web/live/system_live/charts.ex:615
 #, elixir-autogen, elixir-format
 msgid "Scale 0–%{max}"
 msgstr "刻度 0–%{max}"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:297
+#: lib/evo_dash_web/live/system_live/charts.ex:420
 #, elixir-autogen, elixir-format
 msgid "Scheduler Status"
 msgstr "調度器狀態"
@@ -3568,17 +3566,17 @@ msgstr "系統運作中，但需要注意"
 msgid "The Nix dev environment could not be built. Fix the flake or disable Nix in Settings."
 msgstr "無法建置 Nix 開發環境。請在「設定」中修正 flake 或停用 Nix。"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:329
+#: lib/evo_dash_web/live/system_live/charts.ex:453
 #, elixir-autogen, elixir-format
 msgid "Tool Slots"
 msgstr "工具槽位"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:148
+#: lib/evo_dash_web/live/system_live/charts.ex:256
 #, elixir-autogen, elixir-format
 msgid "Total"
 msgstr "總計"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:344
+#: lib/evo_dash_web/live/system_live/charts.ex:468
 #, elixir-autogen, elixir-format
 msgid "Total agents with running, blocked (waiting for a slot), waiting, and pending counts."
 msgstr "智能體總數，包含運行中、阻塞（等待槽位）、等候及待處理計數。"
@@ -3588,7 +3586,7 @@ msgstr "智能體總數，包含運行中、阻塞（等待槽位）、等候及
 msgid "Try an example task"
 msgstr "試試範例任務"
 
-#: lib/evo_dash_web/components/task_form_components.ex:676
+#: lib/evo_dash_web/components/task_form_components.ex:856
 #, elixir-autogen, elixir-format
 msgid "Use the project picker in the top bar to open or create one."
 msgstr "請使用頂端列中的專案選擇器來開啟或建立專案。"
@@ -3704,13 +3702,13 @@ msgstr "取消任務？"
 msgid "Cancelling"
 msgstr "取消中"
 
-#: lib/evo_dash_web/components/task_card_components.ex:185
+#: lib/evo_dash_web/components/task_card_components.ex:202
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:316
 #, elixir-autogen, elixir-format
 msgid "Cancelling…"
 msgstr "取消中…"
 
-#: lib/evo_dash_web/components/task_card_components.ex:331
+#: lib/evo_dash_web/components/task_card_components.ex:348
 #, elixir-autogen, elixir-format
 msgid "Danger zone"
 msgstr "危險區域"
@@ -3730,7 +3728,7 @@ msgstr "強制終止"
 msgid "Force Kill Task?"
 msgstr "強制終止任務？"
 
-#: lib/evo_dash_web/components/task_card_components.ex:327
+#: lib/evo_dash_web/components/task_card_components.ex:344
 #: lib/evo_dash_web/helpers.ex:211
 #, elixir-autogen, elixir-format
 msgid "Force kill"
@@ -3827,20 +3825,20 @@ msgstr "這將啟動一個新的智能體任務，負責合併變更並解決衝
 msgid "Advanced settings"
 msgstr "進階設定"
 
-#: lib/evo_dash_web/components/task_form_components.ex:354
 #: lib/evo_dash_web/components/task_form_components.ex:355
+#: lib/evo_dash_web/components/task_form_components.ex:356
 #, elixir-autogen, elixir-format
 msgid "Attach file"
 msgstr "附加檔案"
 
-#: lib/evo_dash_web/components/task_form_components.ex:450
 #: lib/evo_dash_web/components/task_form_components.ex:451
+#: lib/evo_dash_web/components/task_form_components.ex:452
 #, elixir-autogen, elixir-format
 msgid "Cancel attach file path"
 msgstr "取消附加檔案路徑"
 
-#: lib/evo_dash_web/components/task_form_components.ex:431
 #: lib/evo_dash_web/components/task_form_components.ex:432
+#: lib/evo_dash_web/components/task_form_components.ex:433
 #, elixir-autogen, elixir-format
 msgid "Confirm attach file path"
 msgstr "確認附加檔案路徑"
@@ -3856,7 +3854,7 @@ msgstr "附加檔案失敗：%{reason}"
 msgid "File not found: %{path}"
 msgstr "找不到檔案：%{path}"
 
-#: lib/evo_dash_web/components/task_form_components.ex:423
+#: lib/evo_dash_web/components/task_form_components.ex:424
 #, elixir-autogen, elixir-format
 msgid "File path to attach"
 msgstr "要附加的檔案路徑"
@@ -3883,7 +3881,7 @@ msgstr "上移"
 msgid "Please enter a file path."
 msgstr "請輸入檔案路徑。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:422
+#: lib/evo_dash_web/components/task_form_components.ex:423
 #, elixir-autogen, elixir-format
 msgid "Type a full file path…"
 msgstr "輸入完整檔案路徑…"
@@ -3978,13 +3976,15 @@ msgstr "正在套用更新…"
 msgid "Asia/Shanghai"
 msgstr "亞洲/上海"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:110
-#: lib/evo_dash_web/components/task_form_components.ex:604
+#: lib/evo_dash_web/components/llm_selection_components.ex:326
+#: lib/evo_dash_web/components/llm_selection_components.ex:450
+#: lib/evo_dash_web/components/llm_selection_components.ex:486
+#: lib/evo_dash_web/components/task_form_components.ex:781
 #, elixir-autogen, elixir-format
 msgid "Auto (by rules)"
 msgstr "自動（依規則）"
 
-#: lib/evo_dash_web/components/task_form_components.ex:574
+#: lib/evo_dash_web/components/task_form_components.ex:718
 #, elixir-autogen, elixir-format
 msgid "Auto (recommended)"
 msgstr "自動（建議）"
@@ -4041,7 +4041,7 @@ msgstr "建立自訂智能體，並為每個智能體設定模型選擇腳本。
 msgid "Current version: %{version}"
 msgstr "目前版本：%{version}"
 
-#: lib/evo_dash_web/components/task_form_components.ex:554
+#: lib/evo_dash_web/components/task_form_components.ex:684
 #, elixir-autogen, elixir-format
 msgid "Custom Agent"
 msgstr "自訂智能體"
@@ -4156,7 +4156,7 @@ msgstr "儲存自訂智能體失敗：%{reason}"
 msgid "Failed to save script: %{reason}"
 msgstr "儲存腳本失敗：%{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1328
+#: lib/evo_dash_web/live/system_live.ex:1329
 #, elixir-autogen, elixir-format
 msgid "Failed to stop running tasks. The update was not applied."
 msgstr "無法停止執行中的任務，更新未套用。"
@@ -4304,7 +4304,7 @@ msgstr "沒有已關閉的議題"
 msgid "No custom agents defined"
 msgstr "尚未定義自訂智能體"
 
-#: lib/evo_dash_web/components/task_form_components.ex:650
+#: lib/evo_dash_web/components/task_form_components.ex:830
 #, elixir-autogen, elixir-format
 msgid "No custom agents defined. Add one in Settings → Agents to use Custom Agent mode."
 msgstr "尚未定義任何自訂智能體。請在「設定 → 智能體」中新增一個，方可使用「自訂智能體」模式。"
@@ -4354,22 +4354,22 @@ msgstr "高峰並發（選填）"
 msgid "Peak Hours (optional)"
 msgstr "高峰時段（選填）"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:387
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:413
 #, elixir-autogen, elixir-format
 msgid "Peak concurrency must be a non-negative integer."
 msgstr "尖峰並發數必須為非負整數。"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:393
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:419
 #, elixir-autogen, elixir-format
 msgid "Peak hour window start and end must differ."
 msgstr "尖峰時段的開始與結束時間必須不同。"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:395
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:421
 #, elixir-autogen, elixir-format
 msgid "Peak hour windows must not overlap."
 msgstr "尖峰時段不得重疊。"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:390
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:416
 #, elixir-autogen, elixir-format
 msgid "Peak hours must use HH:MM 24-hour format."
 msgstr "尖峰時段必須使用 HH:MM 24 小時制格式。"
@@ -4415,7 +4415,7 @@ msgstr "根架構師（深度 0）"
 msgid "Runs a user-defined custom agent as the root agent of an evolution task on this codebase."
 msgstr "以使用者定義的自訂智能體作為此程式碼庫上演進任務的根智能體。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:658
+#: lib/evo_dash_web/components/task_form_components.ex:838
 #, elixir-autogen, elixir-format
 msgid "Runs the selected custom agent as the root agent of an evolution task."
 msgstr "將所選的自訂智能體作為演進任務的根智能體來執行。"
@@ -4497,7 +4497,7 @@ msgid "The update can only be applied when no tasks are running. Gracefully stop
 msgstr "更新僅能在沒有任務執行時套用。平滑停止任務會要求其智能體儲存工作並結束；結果會保留以供檢視。"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:457
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:198
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:272
 #, elixir-autogen, elixir-format
 msgid "Timezone (optional)"
 msgstr "時區（選填）"
@@ -4562,17 +4562,17 @@ msgstr "高度委派"
 msgid "low delegation"
 msgstr "低度委派"
 
-#: lib/evo_dash_web/components/task_form_components.ex:546
+#: lib/evo_dash_web/components/task_form_components.ex:638
 #, elixir-autogen, elixir-format
 msgid "Create new project"
 msgstr "建立新專案"
 
-#: lib/evo_dash_web/components/task_form_components.ex:550
+#: lib/evo_dash_web/components/task_form_components.ex:661
 #, elixir-autogen, elixir-format
 msgid "Evolve existing project"
 msgstr "演進既有專案"
 
-#: lib/evo_dash_web/components/task_form_components.ex:542
+#: lib/evo_dash_web/components/task_form_components.ex:615
 #, elixir-autogen, elixir-format
 msgid "Initialize existing project"
 msgstr "初始化既有專案"
@@ -4609,28 +4609,28 @@ msgstr "目錄"
 msgid "Dismiss guide"
 msgstr "關閉指南"
 
-#: lib/evo_dash_web/live/system_live.ex:2000
+#: lib/evo_dash_web/live/system_live.ex:2001
 #, elixir-autogen, elixir-format
 msgid "Failed to clone the Genesis source."
 msgstr "無法複製啟元來源。"
 
-#: lib/evo_dash_web/live/home_live.ex:1136
+#: lib/evo_dash_web/live/home_live.ex:1150
 #, elixir-autogen, elixir-format
 msgid "Failed to start the task: %{reason}"
 msgstr "無法啟動任務：%{reason}"
 
-#: lib/evo_dash_web/live/home_live.ex:1125
+#: lib/evo_dash_web/live/home_live.ex:1139
 #, elixir-autogen, elixir-format
 msgid "Failed to start the task: no task id returned"
 msgstr "無法啟動任務：未回傳任務 ID"
 
-#: lib/evo_dash_web/live/home_live.ex:708
-#: lib/evo_dash_web/live/home_live.ex:716
+#: lib/evo_dash_web/live/home_live.ex:722
+#: lib/evo_dash_web/live/home_live.ex:730
 #, elixir-autogen, elixir-format
 msgid "Failed to stop: %{reason}"
 msgstr "無法停止：%{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:2001
+#: lib/evo_dash_web/live/system_live.ex:2002
 #, elixir-autogen, elixir-format
 msgid "Failed to update the Genesis source."
 msgstr "無法更新啟元來源。"
@@ -4650,18 +4650,18 @@ msgstr "啟元來源"
 msgid "Genesis source checkout used by the self-reflective agent."
 msgstr "自我反思智能體所使用的啟元來源檢出。"
 
-#: lib/evo_dash_web/live/system_live.ex:1997
+#: lib/evo_dash_web/live/system_live.ex:1998
 #, elixir-autogen, elixir-format
 msgid "Genesis source cloned."
 msgstr "啟元來源已複製。"
 
-#: lib/evo_dash_web/live/system_live.ex:1986
+#: lib/evo_dash_web/live/system_live.ex:1987
 #: lib/evo_dash_web/live/system_live/source_card.ex:108
 #, elixir-autogen, elixir-format
 msgid "Genesis source is not available in this version"
 msgstr "此版本不提供啟元來源"
 
-#: lib/evo_dash_web/live/system_live.ex:1998
+#: lib/evo_dash_web/live/system_live.ex:1999
 #, elixir-autogen, elixir-format
 msgid "Genesis source updated."
 msgstr "啟元來源已更新。"
@@ -4678,12 +4678,12 @@ msgstr "前往"
 msgid "Loading…"
 msgstr "載入中…"
 
-#: lib/evo_dash_web/live/home_live.ex:115
+#: lib/evo_dash_web/live/home_live.ex:100
 #, elixir-autogen, elixir-format
 msgid "New chat"
 msgstr "新對話"
 
-#: lib/evo_dash_web/live/home_live.ex:1338
+#: lib/evo_dash_web/live/home_live.ex:1352
 #, elixir-autogen, elixir-format
 msgid "No response."
 msgstr "沒有回應。"
@@ -4693,12 +4693,12 @@ msgstr "沒有回應。"
 msgid "Start a conversation"
 msgstr "開始對話"
 
-#: lib/evo_dash_web/live/home_live.ex:239
+#: lib/evo_dash_web/live/home_live.ex:251
 #, elixir-autogen, elixir-format
 msgid "Stop"
 msgstr "停止"
 
-#: lib/evo_dash_web/live/home_live.ex:1347
+#: lib/evo_dash_web/live/home_live.ex:1361
 #, elixir-autogen, elixir-format
 msgid "Stopped."
 msgstr "已停止。"
@@ -4708,15 +4708,15 @@ msgstr "已停止。"
 msgid "The Genesis source has not been cloned yet."
 msgstr "啟元來源尚未複製。"
 
-#: lib/evo_dash_web/live/home_live.ex:1270
-#: lib/evo_dash_web/live/home_live.ex:1294
+#: lib/evo_dash_web/live/home_live.ex:1284
+#: lib/evo_dash_web/live/home_live.ex:1308
 #, elixir-autogen, elixir-format
 msgid "The conversation was deleted."
 msgstr "對話已刪除。"
 
-#: lib/evo_dash_web/live/home_live.ex:1230
-#: lib/evo_dash_web/live/home_live.ex:1339
-#: lib/evo_dash_web/live/home_live.ex:1358
+#: lib/evo_dash_web/live/home_live.ex:1244
+#: lib/evo_dash_web/live/home_live.ex:1353
+#: lib/evo_dash_web/live/home_live.ex:1372
 #, elixir-autogen, elixir-format
 msgid "The task failed."
 msgstr "任務失敗。"
@@ -4806,7 +4806,7 @@ msgstr "分支或 SHA，留空 = HEAD"
 msgid "no changes"
 msgstr "沒有變更"
 
-#: lib/evo_dash_web/live/home_live.ex:243
+#: lib/evo_dash_web/live/home_live.ex:257
 #, elixir-autogen, elixir-format
 msgid "Enter to send · Shift+Enter for a new line"
 msgstr "Enter 發送 · Shift+Enter 換行"
@@ -4846,11 +4846,6 @@ msgstr "藍色"
 msgid "Brown"
 msgstr "棕色"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:318
-#, elixir-autogen, elixir-format
-msgid "Capacity: the selected model's effective concurrency. In use: live slot holders. Waiting: agents queued for a slot."
-msgstr "容量：所選模型的有效並發數。使用中：當前佔用槽位的實體。等待中：排隊等待槽位的智能體。"
-
 #: lib/evo_dash_web/live/settings_live.ex:343
 #, elixir-autogen, elixir-format
 msgid "Configuring"
@@ -4873,7 +4868,7 @@ msgid "Days:"
 msgstr "日期："
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1233
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:451
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:588
 #, elixir-autogen, elixir-format
 msgid "Fri"
 msgstr "週五"
@@ -4884,7 +4879,7 @@ msgid "Green"
 msgstr "綠色"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1229
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:447
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:584
 #, elixir-autogen, elixir-format
 msgid "Mon"
 msgstr "週一"
@@ -4930,7 +4925,7 @@ msgid "Red"
 msgstr "紅色"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1234
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:452
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:589
 #, elixir-autogen, elixir-format
 msgid "Sat"
 msgstr "週六"
@@ -4963,7 +4958,7 @@ msgid "Slate"
 msgstr "石板灰"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1235
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:453
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:590
 #, elixir-autogen, elixir-format
 msgid "Sun"
 msgstr "週日"
@@ -4984,13 +4979,13 @@ msgid "The system dashboard, scheduler pause/resume, and Erlang VM restart/stop 
 msgstr "系統儀表盤、調度器暫停/恢復與 Erlang VM 重啟/停止控制。"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1232
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:450
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:587
 #, elixir-autogen, elixir-format
 msgid "Thu"
 msgstr "週四"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1230
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:448
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:585
 #, elixir-autogen, elixir-format
 msgid "Tue"
 msgstr "週二"
@@ -5005,25 +5000,25 @@ msgstr "未知的強調色。"
 msgid "Update changelog"
 msgstr "更新變更日誌"
 
-#: lib/evo_dash_web/live/system_live.ex:2095
+#: lib/evo_dash_web/live/system_live.ex:2096
 #, elixir-autogen, elixir-format
 msgid "View changelog"
 msgstr "檢視變更日誌"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1231
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:449
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:586
 #, elixir-autogen, elixir-format
 msgid "Wed"
 msgstr "週三"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1237
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:454
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:591
 #, elixir-autogen, elixir-format
 msgid "Weekdays"
 msgstr "平日"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1239
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:455
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:592
 #, elixir-autogen, elixir-format
 msgid "Weekends"
 msgstr "週末"
@@ -5048,7 +5043,7 @@ msgstr "確認"
 msgid "Deny"
 msgstr "拒絕"
 
-#: lib/evo_dash_web/live/home_live.ex:190
+#: lib/evo_dash_web/live/home_live.ex:175
 #, elixir-autogen, elixir-format
 msgid "Failed to respond: %{reason}"
 msgstr "回覆失敗：%{reason}"
@@ -5189,8 +5184,8 @@ msgstr "智能體崩潰"
 msgid "Agent monitor"
 msgstr "智能體監控"
 
-#: lib/evo_dash_web/components/task_form_components.ex:391
-#: lib/evo_dash_web/components/task_form_components.ex:706
+#: lib/evo_dash_web/components/task_form_components.ex:392
+#: lib/evo_dash_web/components/task_form_components.ex:886
 #, elixir-autogen, elixir-format
 msgid "Audio"
 msgstr "音訊"
@@ -5210,8 +5205,8 @@ msgstr "收尾看門狗"
 msgid "Force-killed"
 msgstr "强制終止"
 
-#: lib/evo_dash_web/components/task_form_components.ex:380
-#: lib/evo_dash_web/components/task_form_components.ex:705
+#: lib/evo_dash_web/components/task_form_components.ex:381
+#: lib/evo_dash_web/components/task_form_components.ex:885
 #, elixir-autogen, elixir-format
 msgid "Image"
 msgstr "圖片"
@@ -5234,33 +5229,33 @@ msgstr "每個任務最多可有 %{count} 個附件"
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:956
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:957
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:960
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:328
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:402
 #: lib/evo_dash_web/helpers.ex:197
 #: lib/evo_dash_web/helpers.ex:215
 #, elixir-autogen, elixir-format
 msgid "Recheck"
 msgstr "重新檢查"
 
-#: lib/evo_dash_web/live/agents_live.ex:316
+#: lib/evo_dash_web/live/agents_live.ex:317
 #: lib/evo_dash_web/live/projects_live.ex:2031
 #: lib/evo_dash_web/live/review_live.ex:1276
-#: lib/evo_dash_web/live/system_live.ex:1263
+#: lib/evo_dash_web/live/system_live.ex:1264
 #: lib/evo_dash_web/live/tasks_live.ex:814
 #, elixir-autogen, elixir-format
 msgid "Remote connect failed: %{reason}"
 msgstr "遠端連線失敗：%{reason}"
 
-#: lib/evo_dash_web/live/agents_live.ex:313
+#: lib/evo_dash_web/live/agents_live.ex:314
 #: lib/evo_dash_web/live/projects_live.ex:2028
 #: lib/evo_dash_web/live/review_live.ex:1273
-#: lib/evo_dash_web/live/system_live.ex:1260
+#: lib/evo_dash_web/live/system_live.ex:1261
 #: lib/evo_dash_web/live/tasks_live.ex:811
 #, elixir-autogen, elixir-format
 msgid "Remote connect unavailable — the remote connection subsystem is not running."
 msgstr "無法使用遠端連線——遠端連線子系統未在運行。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:296
-#: lib/evo_dash_web/components/task_form_components.ex:297
+#: lib/evo_dash_web/components/task_form_components.ex:315
+#: lib/evo_dash_web/components/task_form_components.ex:316
 #, elixir-autogen, elixir-format
 msgid "Remove attachment"
 msgstr "移除附件"
@@ -5275,12 +5270,12 @@ msgstr "結果處理器"
 msgid "Runtime restarted"
 msgstr "運行時已重啟"
 
-#: lib/evo_dash_web/components/task_card_components.ex:373
+#: lib/evo_dash_web/components/task_card_components.ex:390
 #, elixir-autogen, elixir-format
 msgid "Source"
 msgstr "來源"
 
-#: lib/evo_dash_web/components/task_card_components.ex:386
+#: lib/evo_dash_web/components/task_card_components.ex:403
 #, elixir-autogen, elixir-format
 msgid "Stacktrace"
 msgstr "堆疊追蹤"
@@ -5290,7 +5285,7 @@ msgstr "堆疊追蹤"
 msgid "Startup reconcile"
 msgstr "啟動時對帳"
 
-#: lib/evo_dash_web/components/task_form_components.ex:369
+#: lib/evo_dash_web/components/task_form_components.ex:370
 #, elixir-autogen, elixir-format
 msgid "Text / PDF"
 msgstr "文字 / PDF"
@@ -5340,7 +5335,7 @@ msgstr "無法合併 %{total} 個儲存庫中的任何一個 —— 詳情請參
 msgid "Download source"
 msgstr "下載原始碼"
 
-#: lib/evo_dash_web/live/home_live.ex:1030
+#: lib/evo_dash_web/live/home_live.ex:1044
 #, elixir-autogen, elixir-format
 msgid "Download the Genesis source before sending a message."
 msgstr "請先下載啟元原始碼，再傳送訊息。"
@@ -5350,7 +5345,7 @@ msgstr "請先下載啟元原始碼，再傳送訊息。"
 msgid "Download the Genesis source to start chatting."
 msgstr "請先下載啟元原始碼，即可開始對話。"
 
-#: lib/evo_dash_web/live/home_live.ex:943
+#: lib/evo_dash_web/live/home_live.ex:957
 #, elixir-autogen, elixir-format
 msgid "Failed to download the Genesis source: %{reason}"
 msgstr "下載啟元原始碼失敗：%{reason}"
@@ -5698,12 +5693,14 @@ msgstr "背景作業：%{name}"
 msgid "Background shell call"
 msgstr "背景 Shell 調用"
 
-#: lib/evo_dash_web/components/task_form_components.ex:513
+#: lib/evo_dash_web/components/task_form_components.ex:560
+#: lib/evo_dash_web/components/task_form_components.ex:897
+#: lib/evo_dash_web/components/task_form_components.ex:899
 #, elixir-autogen, elixir-format
 msgid "Balanced"
 msgstr "均衡"
 
-#: lib/evo_dash_web/components/task_form_components.ex:509
+#: lib/evo_dash_web/components/task_form_components.ex:556
 #, elixir-autogen, elixir-format
 msgid "Balanced — the default trade-off between speed and correctness"
 msgstr "均衡 — 在速度與正確性之間取得預設的平衡"
@@ -5738,7 +5735,7 @@ msgstr "壓縮次數"
 msgid "Context Window (optional)"
 msgstr "上下文窗口（可選）"
 
-#: lib/evo_dash_web/components/task_card_components.ex:888
+#: lib/evo_dash_web/components/task_card_components.ex:905
 #, elixir-autogen, elixir-format
 msgid "Copy is limited to the first 1 MB — open Full for the complete text"
 msgstr "複製僅限前 1 MB — 開啟「完整」以取得完整文字"
@@ -5758,7 +5755,7 @@ msgstr "無法載入更多歸檔頁面。"
 msgid "Could not load more archive records."
 msgstr "無法載入更多封存記錄。"
 
-#: lib/evo_dash_web/components/task_card_components.ex:482
+#: lib/evo_dash_web/components/task_card_components.ex:499
 #, elixir-autogen, elixir-format
 msgid "Could not load task details."
 msgstr "無法載入任務詳細資料。"
@@ -5773,7 +5770,7 @@ msgstr "無法載入任務。"
 msgid "Could not load the previous task's foreign repositories."
 msgstr "無法載入前一個任務的外部儲存庫。"
 
-#: lib/evo_dash_web/components/task_card_components.ex:748
+#: lib/evo_dash_web/components/task_card_components.ex:765
 #, elixir-autogen, elixir-format
 msgid "Could not load the task archive."
 msgstr "無法載入任務存檔。"
@@ -5799,7 +5796,7 @@ msgstr "無法合併儲存庫——詳情請參閱各儲存庫卡片。"
 msgid "Could not refresh tasks."
 msgstr "無法重新整理任務。"
 
-#: lib/evo_dash_web/live/system_live.ex:1429
+#: lib/evo_dash_web/live/system_live.ex:1430
 #, elixir-autogen, elixir-format
 msgid "Failed to check running tasks: %{reason}"
 msgstr "無法檢查執行中的任務：%{reason}"
@@ -5826,7 +5823,7 @@ msgstr "刪除任務失敗：%{reason}"
 msgid "Failed to delete: %{reason}"
 msgstr "刪除失敗：%{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1467
+#: lib/evo_dash_web/live/system_live.ex:1468
 #, elixir-autogen, elixir-format
 msgid "Failed to force kill tasks: %{reason}"
 msgstr "無法強制終止任務：%{reason}"
@@ -5846,7 +5843,7 @@ msgstr "無法載入封存資料。"
 msgid "Failed to remove recent project: %{reason}"
 msgstr "移除最近的專案失敗：%{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1751
+#: lib/evo_dash_web/live/system_live.ex:1752
 #, elixir-autogen, elixir-format
 msgid "Failed to restart the remote node: %{reason}"
 msgstr "無法重新啟動遠端節點：%{reason}"
@@ -5856,7 +5853,7 @@ msgstr "無法重新啟動遠端節點：%{reason}"
 msgid "Failed to start action: %{reason}"
 msgstr "啟動動作失敗：%{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1755
+#: lib/evo_dash_web/live/system_live.ex:1756
 #, elixir-autogen, elixir-format
 msgid "Failed to stop the remote node: %{reason}"
 msgstr "無法停止遠端節點：%{reason}"
@@ -5867,12 +5864,13 @@ msgstr "無法停止遠端節點：%{reason}"
 msgid "Failed to update review status: %{reason}"
 msgstr "更新審查狀態失敗：%{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1358
+#: lib/evo_dash_web/live/system_live.ex:1359
 #, elixir-autogen, elixir-format
 msgid "Failed to update the scheduler: %{reason}"
 msgstr "無法更新調度器：%{reason}"
 
-#: lib/evo_dash_web/components/task_form_components.ex:500
+#: lib/evo_dash_web/components/task_form_components.ex:541
+#: lib/evo_dash_web/components/task_form_components.ex:896
 #, elixir-autogen, elixir-format
 msgid "Fast"
 msgstr "快速"
@@ -5882,7 +5880,8 @@ msgstr "快速"
 msgid "Generation parameters and provider-specific JSON. Rarely needed."
 msgstr "生成參數與服務商專屬的 JSON。通常無需設定。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:526
+#: lib/evo_dash_web/components/task_form_components.ex:577
+#: lib/evo_dash_web/components/task_form_components.ex:898
 #, elixir-autogen, elixir-format
 msgid "High quality"
 msgstr "高品質"
@@ -5898,7 +5897,7 @@ msgstr "模型在回答前進行推理的程度。"
 msgid "Load more"
 msgstr "載入更多"
 
-#: lib/evo_dash_web/components/task_card_components.ex:738
+#: lib/evo_dash_web/components/task_card_components.ex:755
 #: lib/evo_dash_web/live/review_live/archive_load.ex:347
 #, elixir-autogen, elixir-format
 msgid "Loading archive…"
@@ -5910,7 +5909,7 @@ msgstr "正在載入存檔…"
 msgid "Loading result…"
 msgstr "正在載入結果…"
 
-#: lib/evo_dash_web/components/task_card_components.ex:499
+#: lib/evo_dash_web/components/task_card_components.ex:516
 #, elixir-autogen, elixir-format
 msgid "Loading task details…"
 msgstr "正在載入任務詳細資料…"
@@ -5927,7 +5926,7 @@ msgstr "模型的最大上下文窗口，以詞元計。留空則使用預設值
 msgid "Merging…"
 msgstr "合併中…"
 
-#: lib/evo_dash_web/components/task_card_components.ex:760
+#: lib/evo_dash_web/components/task_card_components.ex:777
 #, elixir-autogen, elixir-format
 msgid "No archived agents for this task."
 msgstr "此任務沒有已存檔的智能體。"
@@ -5947,12 +5946,12 @@ msgstr "暫停中…"
 msgid "Peak / Off-Peak Scheduling (optional)"
 msgstr "尖峰／離峰調度（可選）"
 
-#: lib/evo_dash_web/components/task_form_components.ex:522
+#: lib/evo_dash_web/components/task_form_components.ex:574
 #, elixir-autogen, elixir-format
 msgid "Prioritise correctness — verify more, run tests and compile"
 msgstr "優先確保正確性 — 加強驗證，執行測試與編譯"
 
-#: lib/evo_dash_web/components/task_form_components.ex:496
+#: lib/evo_dash_web/components/task_form_components.ex:538
 #, elixir-autogen, elixir-format
 msgid "Prioritise speed — trust the context, run fewer checks"
 msgstr "優先追求速度 — 信任上下文，減少檢查"
@@ -5972,7 +5971,7 @@ msgstr "恢復中…"
 msgid "Saving configuration…"
 msgstr "正在儲存設定…"
 
-#: lib/evo_dash_web/components/task_card_components.ex:721
+#: lib/evo_dash_web/components/task_card_components.ex:738
 #, elixir-autogen, elixir-format
 msgid "Show archive"
 msgstr "顯示存檔"
@@ -5995,7 +5994,7 @@ msgstr "顯示 %{total} 筆智能體記錄中的 %{shown} 筆 — 匯出 JSON �
 #: lib/evo_dash_web/components/review_components.ex:368
 #: lib/evo_dash_web/components/review_components/header.ex:319
 #: lib/evo_dash_web/components/review_components/header.ex:431
-#: lib/evo_dash_web/components/task_card_components.ex:900
+#: lib/evo_dash_web/components/task_card_components.ex:917
 #, elixir-autogen, elixir-format
 msgid "Showing %{shown} of %{total} bytes"
 msgstr "顯示 %{total} 個位元組中的 %{shown} 個"
@@ -6005,12 +6004,12 @@ msgstr "顯示 %{total} 個位元組中的 %{shown} 個"
 msgid "Showing %{shown} of %{total} files"
 msgstr "顯示 %{total} 個檔案中的 %{shown} 個"
 
-#: lib/evo_dash_web/components/task_card_components.ex:660
+#: lib/evo_dash_web/components/task_card_components.ex:677
 #, elixir-autogen, elixir-format
 msgid "Showing the last %{shown} of %{total} log entries"
 msgstr "顯示 %{total} 筆日誌中的最後 %{shown} 筆"
 
-#: lib/evo_dash_web/components/task_form_components.ex:487
+#: lib/evo_dash_web/components/task_form_components.ex:524
 #, elixir-autogen, elixir-format
 msgid "Speed / quality trade-off"
 msgstr "速度 / 品質取捨"
@@ -6035,7 +6034,7 @@ msgstr "任務結果尚未載入。"
 msgid "Tasks started without archiving enabled keep no per-agent archive."
 msgstr "未啟用封存即啟動的任務，不會保留各智能體的封存資料。"
 
-#: lib/evo_dash_web/components/task_card_components.ex:730
+#: lib/evo_dash_web/components/task_card_components.ex:747
 #, elixir-autogen, elixir-format
 msgid "The archive loads on demand."
 msgstr "存檔將依需求載入。"
@@ -6045,7 +6044,7 @@ msgstr "存檔將依需求載入。"
 msgid "context_window"
 msgstr "context_window"
 
-#: lib/evo_dash_web/components/task_card_components.ex:873
+#: lib/evo_dash_web/components/task_card_components.ex:890
 #, elixir-autogen, elixir-format
 msgid "last %{shown} of %{count}"
 msgstr "最後 %{count} 筆中的 %{shown} 筆"
@@ -6055,15 +6054,15 @@ msgstr "最後 %{count} 筆中的 %{shown} 筆"
 msgid "%{count} provider profiles"
 msgstr "%{count} 個服務商設定檔"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:164
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:238
 #, elixir-autogen, elixir-format
 msgid "A JSON object of advanced request options. Never paste API keys or login tokens here."
 msgstr "以 JSON 物件提供進階請求選項。切勿在此貼上 API 金鑰或登入憑證。"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:315
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:801
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:146
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:316
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:150
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:289
 #: lib/evo_dash_web/live/welcome_live.ex:222
 #, elixir-autogen, elixir-format
 msgid "API key"
@@ -6074,30 +6073,25 @@ msgstr "API 金鑰"
 msgid "Absolute or ~-relative path to the vendor credential file. Leave empty to use the default managed file."
 msgstr "廠商憑證檔案的絕對路徑或 ~ 相對路徑。留空則使用預設的託管檔案。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:82
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:86
 #, elixir-autogen, elixir-format
 msgid "Add a provider profile, then choose its models and defaults."
 msgstr "新增服務商設定檔，然後選擇其模型與預設值。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:387
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:333
 #, elixir-autogen, elixir-format
 msgid "Add model"
 msgstr "新增模型"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:262
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:336
 #, elixir-autogen, elixir-format
 msgid "Add peak window"
 msgstr "新增尖峰時段"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:71
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:75
 #, elixir-autogen, elixir-format
 msgid "Add provider profile"
 msgstr "新增服務商設定檔"
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:355
-#, elixir-autogen, elixir-format
-msgid "All models in this provider profile share this capacity."
-msgstr "此服務商設定檔中的所有模型共用此容量。"
 
 #: lib/evo_dash_web/live/home_live/approval_card.ex:151
 #, elixir-autogen, elixir-format
@@ -6119,7 +6113,7 @@ msgstr "允許執行這段 Elixir 程式碼一次？"
 msgid "Allow unrestricted execution once"
 msgstr "允許一次不受限制的執行"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:210
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:284
 #, elixir-autogen, elixir-format
 msgid "Always off-peak on these days"
 msgstr "這些日期全天視為離峰"
@@ -6129,12 +6123,7 @@ msgstr "這些日期全天視為離峰"
 msgid "Analyze the changes in this PR and distill reusable knowledge into Genesis skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
 msgstr "分析此拉取請求中的變更，並將可重複使用的知識提煉為啟元技能。智能體將檢視差異內容、辨識有價值的模式，並在 .agents/skills/ 中建立技能檔案。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:362
-#, elixir-autogen, elixir-format
-msgid "Any model served by this provider; override rows below are optional."
-msgstr "此服務商提供的任何模型；下方覆寫列為選填。"
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:241
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:315
 #, elixir-autogen, elixir-format
 msgid "Apply this window on"
 msgstr "套用此尖峰時段的日期"
@@ -6150,29 +6139,29 @@ msgid "Auth mode"
 msgstr "驗證模式"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:288
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:299
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:272
 #: lib/evo_dash_web/live/welcome_live.ex:213
 #, elixir-autogen, elixir-format
 msgid "Authentication"
 msgstr "身分驗證"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:306
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:308
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:279
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:281
 #, elixir-autogen, elixir-format
 msgid "Authentication mode"
 msgstr "身分驗證模式"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:287
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:434
 #, elixir-autogen, elixir-format
 msgid "Base URL (optional)"
 msgstr "基礎 URL (選填)"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:332
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:305
 #, elixir-autogen, elixir-format
 msgid "Blank uses the managed credential file on the selected node. Absolute and ~-relative paths are accepted."
 msgstr "留空時使用所選節點上的託管憑證檔案。可接受絕對路徑與以 ~ 開頭的相對路徑。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:490
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:581
 #, elixir-autogen, elixir-format
 msgid "Blank values inherit the shared generation defaults."
 msgstr "留空的欄位將沿用共用的生成預設值。"
@@ -6193,32 +6182,36 @@ msgstr "檢查系統狀態與容量"
 msgid "Check the profile settings before saving."
 msgstr "儲存前請先檢查設定檔設定。"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:157
+#: lib/evo_dash_web/components/llm_selection_components.ex:192
+#: lib/evo_dash_web/components/llm_selection_components.ex:483
+#: lib/evo_dash_web/components/llm_selection_components.ex:492
 #, elixir-autogen, elixir-format
 msgid "Choose a model"
 msgstr "選擇模型"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:156
+#: lib/evo_dash_web/components/llm_selection_components.ex:191
+#: lib/evo_dash_web/components/llm_selection_components.ex:489
 #, elixir-autogen, elixir-format
 msgid "Choose a provider first"
 msgstr "請先選擇服務商"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:111
+#: lib/evo_dash_web/components/llm_selection_components.ex:327
+#: lib/evo_dash_web/components/llm_selection_components.ex:453
 #, elixir-autogen, elixir-format
 msgid "Choose a provider profile"
 msgstr "選擇服務商設定檔"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:116
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:190
 #, elixir-autogen, elixir-format
 msgid "Choose a supported level. This is separate from task speed and quality."
 msgstr "請選擇支援的等級。此設定與任務的速度與品質無關。"
 
-#: lib/evo_dash_web/live/home_live.ex:1068
+#: lib/evo_dash_web/live/home_live.ex:1082
 #, elixir-autogen, elixir-format
 msgid "Choose a valid model before sending a message."
 msgstr "請先選擇有效的模型再傳送訊息。"
 
-#: lib/evo_dash_web/live/home_live.ex:468
+#: lib/evo_dash_web/live/home_live.ex:482
 #, elixir-autogen, elixir-format
 msgid "Choose a valid provider profile, model and reasoning effort."
 msgstr "請選擇有效的服務商設定檔、模型與推理強度。"
@@ -6227,16 +6220,6 @@ msgstr "請選擇有效的服務商設定檔、模型與推理強度。"
 #, elixir-autogen, elixir-format
 msgid "Choose models and a default model from the selected provider."
 msgstr "請從所選服務商中選擇模型及預設模型。"
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:67
-#, elixir-autogen, elixir-format
-msgid "Comma-separated, lowest to highest. Blank explicitly disables reasoning for this model."
-msgstr "以逗號分隔，由低到高排列。留空即明確停用此模型的推理功能。"
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:71
-#, elixir-autogen, elixir-format
-msgid "Comma-separated, lowest to highest; for example: low, medium, high. Blank means no advertised reasoning support."
-msgstr "以逗號分隔，由低到高排列，例如：low, medium, high。留空表示不宣告支援推理功能。"
 
 #: lib/evo_dash_web/live/welcome_live.ex:677
 #, elixir-autogen, elixir-format
@@ -6253,7 +6236,7 @@ msgstr "設定已儲存，但重新整理失敗：%{reason}"
 msgid "Configure a provider and its models to start building with Genesis."
 msgstr "設定服務商及其模型，即可開始使用啟元進行建置。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:341
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:314
 #, elixir-autogen, elixir-format
 msgid "Configure the provider's API key in the selected node's credentials file or environment. Keys are never displayed or copied into this profile form."
 msgstr "請在所選節點的憑證檔案或環境變數中設定此服務商的 API 金鑰。金鑰絕不會顯示，也不會複製到此設定檔表單中。"
@@ -6264,12 +6247,12 @@ msgstr "請在所選節點的憑證檔案或環境變數中設定此服務商的
 msgid "Configure via the provider profiles editor"
 msgstr "透過服務商設定檔編輯器進行設定"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:203
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:202
 #, elixir-autogen, elixir-format
 msgid "Configured models"
 msgstr "已配置的模型"
 
-#: lib/evo_dash_web/live/home_live.ex:1022
+#: lib/evo_dash_web/live/home_live.ex:1036
 #, elixir-autogen, elixir-format
 msgid "Connect to the remote node before sending a message."
 msgstr "請先連線至遠端節點再傳送訊息。"
@@ -6285,7 +6268,7 @@ msgstr "開始任務前，請先連線至遠端節點。"
 msgid "Connect to the remote node before testing its configuration."
 msgstr "請先連線至遠端節點，再測試其設定。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:452
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:538
 #, elixir-autogen, elixir-format
 msgid "Context window (optional)"
 msgstr "上下文窗口 (選填)"
@@ -6295,13 +6278,13 @@ msgstr "上下文窗口 (選填)"
 msgid "Could not load model selection. Your choice has been kept. Reconnect to the node if needed, then retry before launching a task."
 msgstr "無法載入模型選擇。您先前的選擇已保留。如有需要，請重新連線至節點，然後在啟動任務前重試。"
 
-#: lib/evo_dash_web/live/home_live.ex:169
+#: lib/evo_dash_web/live/home_live.ex:154
 #, elixir-autogen, elixir-format
 msgid "Could not load pending approvals: %{reason}"
 msgstr "無法載入待處理的核准請求：%{reason}"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:328
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:329
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:302
 #, elixir-autogen, elixir-format
 msgid "Credential file (optional)"
 msgstr "憑證檔案 (選填)"
@@ -6311,19 +6294,19 @@ msgstr "憑證檔案 (選填)"
 msgid "Danger — unrestricted Elixir execution"
 msgstr "危險 — 不受限制的 Elixir 執行"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:190
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:359
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:189
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:363
 #: lib/evo_dash_web/live/welcome_live.ex:165
 #, elixir-autogen, elixir-format
 msgid "Default model"
 msgstr "預設模型"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:229
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:247
 #, elixir-autogen, elixir-format
 msgid "Default provider profile saved."
 msgstr "已儲存預設服務商設定檔。"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:368
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:394
 #, elixir-autogen, elixir-format
 msgid "Default reasoning effort must be one of the configured reasoning efforts."
 msgstr "預設推理強度必須是已設定的推理強度之一。"
@@ -6333,47 +6316,43 @@ msgstr "預設推理強度必須是已設定的推理強度之一。"
 msgid "Default reasoning for %{model}"
 msgstr "%{model} 的預設推理設定"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:95
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:169
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:194
 #, elixir-autogen, elixir-format
 msgid "Default reasoning level"
 msgstr "預設推理等級"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:177
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:181
 #, elixir-autogen, elixir-format
 msgid "Delete %{name}"
 msgstr "刪除 %{name}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:175
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:179
 #, elixir-autogen, elixir-format
 msgid "Delete this provider profile and its models?"
 msgstr "要刪除此服務商設定檔及其模型嗎？"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:277
-#, elixir-autogen, elixir-format
-msgid "Display name"
-msgstr "顯示名稱"
-
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:371
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:397
 #, elixir-autogen, elixir-format
 msgid "Each model entry must be a model configuration."
 msgstr "每個模型項目都必須是模型設定。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:167
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:171
 #, elixir-autogen, elixir-format
 msgid "Edit %{name}"
 msgstr "編輯 %{name}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:233
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:307
 #, elixir-autogen, elixir-format
 msgid "End time"
 msgstr "結束時間"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:365
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:391
 #, elixir-autogen, elixir-format
 msgid "Enter a default model or add a model override."
 msgstr "請輸入預設模型，或新增模型覆寫。"
 
-#: lib/evo_dash_web/live/home_live.ex:172
+#: lib/evo_dash_web/live/home_live.ex:157
 #, elixir-autogen, elixir-format
 msgid "Existing requests are kept. Retry to check for pending approvals."
 msgstr "現有請求已保留。請重試以檢查待處理的核准請求。"
@@ -6383,60 +6362,60 @@ msgstr "現有請求已保留。請重試以檢查待處理的核准請求。"
 msgid "Explain how tasks are scheduled"
 msgstr "說明任務如何調度"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:130
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:204
 #, elixir-autogen, elixir-format
 msgid "Extra config (JSON, optional)"
 msgstr "額外設定（JSON，選填）"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:303
+#: lib/evo_dash_web/components/llm_selection_components.ex:501
 #, elixir-autogen, elixir-format
 msgid "Extra high"
 msgstr "極高"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:440
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:577
 #, elixir-autogen, elixir-format
 msgid "Frequency penalty"
 msgstr "頻率懲罰"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:487
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:578
 #, elixir-autogen, elixir-format
 msgid "Generation overrides"
 msgstr "生成覆寫設定"
 
-#: lib/evo_dash_web/live/home_live.ex:85
+#: lib/evo_dash_web/live/home_live.ex:88
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:57
 #, elixir-autogen, elixir-format
 msgid "Genesis Assistant"
 msgstr "啟元助理"
 
-#: lib/evo_dash_web/live/home_live.ex:248
+#: lib/evo_dash_web/live/home_live.ex:262
 #, elixir-autogen, elixir-format
 msgid "Genesis Assistant can make mistakes. Verify important information."
 msgstr "啟元助理可能會出錯，請核實重要資訊。"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:970
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:333
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:407
 #, elixir-autogen, elixir-format
 msgid "Genesis found the vendor login but could not write its managed credential file."
 msgstr "啟元找到服務商登入資訊，但無法寫入其託管憑證檔案。"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:994
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:341
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:415
 #, elixir-autogen, elixir-format
 msgid "Genesis imports the vendor login automatically on the next run."
 msgstr "啟元會在下次執行時自動匯入服務商登入資訊。"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:302
+#: lib/evo_dash_web/components/llm_selection_components.ex:500
 #, elixir-autogen, elixir-format
 msgid "High"
 msgstr "高"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:201
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:275
 #, elixir-autogen, elixir-format
 msgid "IANA timezone, such as Asia/Shanghai. Blank uses the selected node's local time."
 msgstr "IANA 時區，例如 Asia/Shanghai。留空則使用所選節點的本機時間。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:106
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:180
 #, elixir-autogen, elixir-format
 msgid "Inherit provider default"
 msgstr "沿用服務商預設值"
@@ -6456,17 +6435,12 @@ msgstr "設定無效：%{reason}"
 msgid "Invalid reasoning effort."
 msgstr "推理強度無效。"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:84
-#, elixir-autogen, elixir-format
-msgid "Language model selection"
-msgstr "語言模型選擇"
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:370
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:461
 #, elixir-autogen, elixir-format
 msgid "Leave blank for the runtime default. Models may override this value."
 msgstr "留空則使用運行時預設值。模型可覆寫此值。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:456
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:542
 #, elixir-autogen, elixir-format
 msgid "Leave blank to inherit the shared context window or runtime default."
 msgstr "留空則沿用共用的上下文窗口或運行時預設值。"
@@ -6477,30 +6451,30 @@ msgid "Log in once with the vendor CLI on this machine, then test the connection
 msgstr "先在此機器上透過供應商 CLI 登入一次，然後測試連線。無需 API 金鑰。"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:855
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:481
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:485
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:618
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:622
 #, elixir-autogen, elixir-format
 msgid "Login detected"
 msgstr "偵測到登入"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:856
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:476
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:613
 #, elixir-autogen, elixir-format
 msgid "Login detected (expires %{date})"
 msgstr "偵測到登入（到期日：%{date}）"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:864
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:489
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:626
 #, elixir-autogen, elixir-format
 msgid "Login found, managed credential file not writable"
 msgstr "找到登入資訊，但託管憑證檔案無法寫入"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:300
+#: lib/evo_dash_web/components/llm_selection_components.ex:498
 #, elixir-autogen, elixir-format
 msgid "Low"
 msgstr "低"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:160
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:164
 #, elixir-autogen, elixir-format
 msgid "Make default"
 msgstr "設為預設"
@@ -6508,100 +6482,89 @@ msgstr "設為預設"
 #: lib/evo_dash_web/components/settings_components.ex:362
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:976
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:989
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:345
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:419
 #, elixir-autogen, elixir-format
 msgid "Managed credential file: %{path}"
 msgstr "託管憑證檔案：%{path}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:437
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:574
 #, elixir-autogen, elixir-format
 msgid "Max output tokens"
 msgstr "最大輸出詞元數"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:301
+#: lib/evo_dash_web/components/llm_selection_components.ex:499
 #, elixir-autogen, elixir-format
 msgid "Medium"
 msgstr "中"
 
-#: lib/evo_dash_web/live/home_live.ex:213
-#: lib/evo_dash_web/live/home_live.ex:215
+#: lib/evo_dash_web/live/home_live.ex:212
+#: lib/evo_dash_web/live/home_live.ex:214
 #, elixir-autogen, elixir-format
 msgid "Message Genesis Assistant…"
 msgstr "傳訊息給啟元助理…"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:299
+#: lib/evo_dash_web/components/llm_selection_components.ex:497
 #, elixir-autogen, elixir-format
 msgid "Minimal"
 msgstr "最低"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:441
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:509
 #, elixir-autogen, elixir-format
 msgid "Model %{number}"
 msgstr "模型 %{number}"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:362
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:388
 #, elixir-autogen, elixir-format
 msgid "Model IDs must be unique within a provider profile."
 msgstr "模型 ID 在每個服務商設定檔中必須唯一。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:393
-#, elixir-autogen, elixir-format
-msgid "Model overrides are optional. Enter a default model above to save this profile."
-msgstr "模型覆寫為選填。請於上方輸入預設模型以儲存此設定檔。"
-
-#: lib/evo_dash_web/live/home_live.ex:106
+#: lib/evo_dash_web/live/home_live.ex:198
 #, elixir-autogen, elixir-format
 msgid "Model selection is unavailable. Choose a valid model or reconnect to the node."
 msgstr "目前無法選擇模型。請選擇有效的模型，或重新連線至節點。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:379
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:323
 #, elixir-autogen, elixir-format
 msgid "Models"
 msgstr "模型"
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:381
-#, elixir-autogen, elixir-format
-msgid "Models inherit provider defaults unless an override is set."
-msgstr "除非設定了覆寫，否則模型會沿用服務商預設值。"
 
 #: lib/evo_dash_web/live/welcome_live.ex:156
 #, elixir-autogen, elixir-format
 msgid "Need a custom model or advanced settings?"
 msgstr "需要自訂模型或進階設定嗎？"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:247
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:321
 #, elixir-autogen, elixir-format
 msgid "No days selected means every day. End before start crosses midnight."
 msgstr "未選擇任何日期即表示每天。結束時間早於開始時間，表示跨越午夜。"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:237
+#: lib/evo_dash_web/components/llm_selection_components.ex:284
 #, elixir-autogen, elixir-format
 msgid "No models are available for this provider profile."
 msgstr "此服務商設定檔沒有可用的模型。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:80
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:84
 #, elixir-autogen, elixir-format
 msgid "No provider profiles configured"
 msgstr "尚未配置服務商設定檔"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:230
+#: lib/evo_dash_web/components/llm_selection_components.ex:277
 #, elixir-autogen, elixir-format
 msgid "No provider profiles configured. Add one in Settings to choose a model."
 msgstr "尚未設定任何服務商設定檔。請在「設定」中新增一個設定檔，即可選擇模型。"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:860
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:486
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:623
 #, elixir-autogen, elixir-format
 msgid "No subscription login found"
 msgstr "未找到訂閱登入資訊"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:191
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:196
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:190
 #, elixir-autogen, elixir-format
 msgid "Not set"
 msgstr "未設定"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:359
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:385
 #, elixir-autogen, elixir-format
 msgid "Numeric fields must contain valid numbers."
 msgstr "數值欄位必須包含有效的數字。"
@@ -6611,28 +6574,27 @@ msgstr "數值欄位必須包含有效的數字。"
 msgid "OAuth"
 msgstr "OAuth"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:408
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:474
 #, elixir-autogen, elixir-format
 msgid "Optional request parameters shared by every model. Unsupported parameters are filtered by the provider at request time."
 msgstr "所有模型共用的選填請求參數。不支援的參數會由服務商於請求時過濾。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:468
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:553
 #, elixir-autogen, elixir-format
 msgid "Override reasoning levels for this model"
 msgstr "覆寫此模型的推理等級"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:181
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:255
 #, elixir-autogen, elixir-format
 msgid "Peak / off-peak scheduling (optional)"
 msgstr "尖峰／離峰排程（選填）"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:191
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:195
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:265
 #, elixir-autogen, elixir-format
 msgid "Peak concurrency"
 msgstr "尖峰並發數"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:222
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:296
 #, elixir-autogen, elixir-format
 msgid "Peak window %{number}"
 msgstr "尖峰時段 %{number}"
@@ -6642,7 +6604,7 @@ msgstr "尖峰時段 %{number}"
 msgid "Pick a provider, select one or more models, then choose API key or subscription authentication."
 msgstr "選擇服務商，挑選一個或多個模型，然後選擇 API 金鑰或訂閱驗證方式。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:441
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:578
 #, elixir-autogen, elixir-format
 msgid "Presence penalty"
 msgstr "出現懲罰"
@@ -6652,44 +6614,43 @@ msgstr "出現懲罰"
 msgid "Provider and models saved. You're all set!"
 msgstr "服務商與模型已儲存，設定完成！"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:354
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:380
 #, elixir-autogen, elixir-format
 msgid "Provider cannot be empty."
 msgstr "服務商不能為空。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:106
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:180
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:195
 #: lib/evo_dash_web/live/welcome_live.ex:193
 #, elixir-autogen, elixir-format
 msgid "Provider default"
 msgstr "服務商預設值"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:283
-#, elixir-autogen, elixir-format
-msgid "Provider identifier, such as openai, anthropic or openai_codex."
-msgstr "服務商識別碼，例如 openai、anthropic 或 openai_codex。"
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:131
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:205
 #, elixir-autogen, elixir-format
 msgid "Provider options (JSON, optional)"
 msgstr "服務商選項（JSON，選填）"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:96
+#: lib/evo_dash_web/components/llm_selection_components.ex:152
+#: lib/evo_dash_web/components/llm_selection_components.ex:300
+#: lib/evo_dash_web/components/llm_selection_components.ex:308
+#: lib/evo_dash_web/live/system_live/charts.ex:541
 #, elixir-autogen, elixir-format
 msgid "Provider profile"
 msgstr "服務商設定檔"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:208
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:210
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:226
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:228
 #, elixir-autogen, elixir-format
 msgid "Provider profile deleted."
 msgstr "已刪除服務商設定檔。"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:219
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:237
 #, elixir-autogen, elixir-format
 msgid "Provider profile moved."
 msgstr "已移動服務商設定檔。"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:174
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:192
 #, elixir-autogen, elixir-format
 msgid "Provider profile saved."
 msgstr "已儲存服務商設定檔。"
@@ -6699,22 +6660,18 @@ msgstr "已儲存服務商設定檔。"
 msgid "Provider profile settings"
 msgstr "服務商設定檔設定"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:62
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:66
 #, elixir-autogen, elixir-format
 msgid "Provider profiles"
 msgstr "服務商設定檔"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:185
+#: lib/evo_dash_web/components/llm_selection_components.ex:247
+#: lib/evo_dash_web/components/llm_selection_components.ex:253
 #, elixir-autogen, elixir-format
 msgid "Reasoning effort"
 msgstr "推理強度"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:58
-#, elixir-autogen, elixir-format
-msgid "Reasoning support and defaults"
-msgstr "推理支援與預設值"
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:327
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:401
 #, elixir-autogen, elixir-format
 msgid "Recheck subscription login"
 msgstr "重新檢查訂閱登入"
@@ -6729,37 +6686,37 @@ msgstr "重新連線並重新啟用"
 msgid "Remote node already connected"
 msgstr "遠端節點已連線"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:505
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:526
 #, elixir-autogen, elixir-format
 msgid "Remove model"
 msgstr "移除模型"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:503
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:525
 #, elixir-autogen, elixir-format
 msgid "Remove model %{number}"
 msgstr "移除模型 %{number}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:254
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:328
 #, elixir-autogen, elixir-format
 msgid "Remove peak window %{number}"
 msgstr "移除尖峰時段 %{number}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:255
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:329
 #, elixir-autogen, elixir-format
 msgid "Remove window"
 msgstr "移除時段"
 
-#: lib/evo_dash_web/live/home_live.ex:180
+#: lib/evo_dash_web/live/home_live.ex:165
 #, elixir-autogen, elixir-format
 msgid "Retry approvals"
 msgstr "重試核准請求"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:510
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:647
 #, elixir-autogen, elixir-format
 msgid "Run claude to sign in on the selected node, or use claude setup-token, then recheck."
 msgstr "在所選節點上執行 claude 登入，或使用 claude setup-token，然後重新檢查。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:507
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:644
 #, elixir-autogen, elixir-format
 msgid "Run codex login on the selected node, then recheck."
 msgstr "在所選節點上執行 codex login，然後重新檢查。"
@@ -6769,7 +6726,7 @@ msgstr "在所選節點上執行 codex login，然後重新檢查。"
 msgid "Save provider and models"
 msgstr "儲存服務商與模型"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:416
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:484
 #, elixir-autogen, elixir-format
 msgid "Save provider profile"
 msgstr "儲存服務商設定檔"
@@ -6779,44 +6736,33 @@ msgstr "儲存服務商設定檔"
 msgid "Select a provider and models above to configure authentication."
 msgstr "請於上方選擇服務商與模型，以設定驗證方式。"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:357
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:383
 #, elixir-autogen, elixir-format
 msgid "Select a supported authentication mode for this provider."
 msgstr "請為此服務商選擇支援的驗證模式。"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:981
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:337
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:411
 #, elixir-autogen, elixir-format
 msgid "Set oauth_file on this profile to a writable location, then recheck."
 msgstr "將此設定檔的 oauth_file 設為可寫入的位置，然後重新檢查。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:65
-#, elixir-autogen, elixir-format
-msgid "Share connection, authentication and capacity across multiple models. Override only what each model needs."
-msgstr "在多個模型之間共用連線、身分驗證與容量。僅需覆寫各模型所需的部分。"
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:184
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:258
 #, elixir-autogen, elixir-format
 msgid "Shared by all models in this profile. A peak capacity of 0 pauses new requests; existing requests continue."
 msgstr "此設定檔中的所有模型共用。尖峰容量設為 0 會暫停新的請求；現有請求仍會繼續執行。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:185
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:350
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:445
 #, elixir-autogen, elixir-format
 msgid "Shared concurrency"
 msgstr "共用並發"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:366
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:457
 #, elixir-autogen, elixir-format
 msgid "Shared context window (optional)"
 msgstr "共用上下文窗口 (選填)"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:291
-#, elixir-autogen, elixir-format
-msgid "Shared endpoint for every model in this profile. Leave blank for the provider default."
-msgstr "此設定檔中所有模型共用的端點。留空則使用服務商預設值。"
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:405
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:471
 #, elixir-autogen, elixir-format
 msgid "Shared generation defaults"
 msgstr "共用生成預設值"
@@ -6826,22 +6772,17 @@ msgstr "共用生成預設值"
 msgid "Show my running tasks"
 msgstr "顯示我執行中的任務"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:515
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:652
 #, elixir-autogen, elixir-format
 msgid "Sign in with the provider's CLI on the selected node, then recheck."
 msgstr "在所選節點上使用服務商的 CLI 登入，然後重新檢查。"
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:275
-#, elixir-autogen, elixir-format
-msgid "Stable identifier used by task selections and model rules."
-msgstr "供任務選擇與模型規則使用的穩定識別碼。"
 
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:74
 #, elixir-autogen, elixir-format
 msgid "Start a task for me"
 msgstr "替我開始一個任務"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:227
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:301
 #, elixir-autogen, elixir-format
 msgid "Start time"
 msgstr "開始時間"
@@ -6849,9 +6790,9 @@ msgstr "開始時間"
 #: lib/evo_dash_web/components/settings_components.ex:348
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:295
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:319
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:145
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:318
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:323
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:149
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:291
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:296
 #: lib/evo_dash_web/live/welcome_live.ex:210
 #: lib/evo_dash_web/live/welcome_live.ex:225
 #, elixir-autogen, elixir-format
@@ -6859,20 +6800,15 @@ msgid "Subscription (OAuth)"
 msgstr "訂閱（OAuth）"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:867
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:491
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:628
 #, elixir-autogen, elixir-format
 msgid "Subscription login"
 msgstr "訂閱登入"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:473
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:564
 #, elixir-autogen, elixir-format
 msgid "Supported levels are inherited from the provider profile."
 msgstr "支援的等級沿用自服務商設定檔。"
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:62
-#, elixir-autogen, elixir-format
-msgid "Supported reasoning levels (ordered)"
-msgstr "支援的推理等級（依序）"
 
 #: lib/evo_dash_web/live/home_live/approval_card.ex:44
 #, elixir-autogen, elixir-format
@@ -6884,17 +6820,17 @@ msgstr "目標運行時：%{node}"
 msgid "That host's Genesis server already has Erlang distribution enabled for another connection. Continuing will disconnect that node and re-enable distribution with this connection's identity. The server and its tasks keep running."
 msgstr "該主機的啟元伺服器已為其他連線啟用 Erlang 分散式功能。繼續操作將中斷該節點的連線，並以此連線的身分重新啟用分散式功能。伺服器及其任務將繼續運行。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:94
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:98
 #, elixir-autogen, elixir-format
 msgid "The default provider profile is unavailable: %{id}"
 msgstr "預設服務商設定檔無法使用：%{id}"
 
-#: lib/evo_dash_web/live/home_live.ex:192
+#: lib/evo_dash_web/live/home_live.ex:177
 #, elixir-autogen, elixir-format
 msgid "The request is still pending. Use its decision buttons to try again."
 msgstr "此請求仍在待處理中。請使用其決策按鈕再試一次。"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:214
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:288
 #, elixir-autogen, elixir-format
 msgid "These days ignore every peak window and use normal concurrency all day."
 msgstr "這些日期將忽略所有尖峰時段，全天採用一般並發數。"
@@ -6914,12 +6850,14 @@ msgstr "此服務商使用訂閱登入方式，無需在此貼上 API 金鑰。"
 msgid "This runs unrestricted ordinary Elixir in the target's live runtime. It can change running processes, files and configuration. There is no rollback. This is not OS root access. Approve only if you trust this exact code."
 msgstr "這會在目標的即時運行時中執行不受限制的一般 Elixir 程式碼。它可能變更正在運行的程序、檔案與設定，且無法回復。這並非作業系統 root 權限。請僅在您信任這段確切程式碼時才核准。"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:165
+#: lib/evo_dash_web/components/llm_selection_components.ex:213
+#: lib/evo_dash_web/components/llm_selection_components.ex:480
 #, elixir-autogen, elixir-format
 msgid "Unavailable model: %{model}"
 msgstr "無法使用的模型：%{model}"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:119
+#: lib/evo_dash_web/components/llm_selection_components.ex:349
+#: lib/evo_dash_web/components/llm_selection_components.ex:461
 #, elixir-autogen, elixir-format
 msgid "Unavailable profile: %{profile}"
 msgstr "無法使用的設定檔：%{profile}"
@@ -6929,7 +6867,7 @@ msgstr "無法使用的設定檔：%{profile}"
 msgid "Unknown target"
 msgstr "未知目標"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:109
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:183
 #, elixir-autogen, elixir-format
 msgid "Unsupported level: %{level}"
 msgstr "不支援的等級：%{level}"
@@ -6938,11 +6876,6 @@ msgstr "不支援的等級：%{level}"
 #, elixir-autogen, elixir-format
 msgid "Use Settings to configure the remote node."
 msgstr "請使用設定來配置遠端節點。"
-
-#: lib/evo_dash_web/components/llm_selection_components.ex:223
-#, elixir-autogen, elixir-format
-msgid "Use the arrow keys to select a supported reasoning level. This is independent of task quality."
-msgstr "使用方向鍵選取支援的推理等級。此設定與任務品質無關。"
 
 #: lib/evo_dash_web/live/settings_live.ex:2059
 #, elixir-autogen, elixir-format
@@ -6973,3 +6906,170 @@ msgstr "例如 anthropic:claude-opus-5-5 或 openai:gpt-5.6-terra"
 #, elixir-autogen, elixir-format
 msgid "e.g. claude-sonnet-5-5"
 msgstr "例如 claude-sonnet-5-5"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:424
+#, elixir-autogen, elixir-format
+msgid "API key environment variable (optional)"
+msgstr "API 金鑰環境變數（選填）"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:401
+#, elixir-autogen, elixir-format
+msgid "Account identity and connection"
+msgstr "帳戶身分與連線"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:396
+#, elixir-autogen, elixir-format
+msgid "Advanced"
+msgstr "進階"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:127
+#, elixir-autogen, elixir-format
+msgid "Advanced reasoning choices"
+msgstr "進階推理選項"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:450
+#, elixir-autogen, elixir-format
+msgid "All models in this account share this capacity. Zero pauses new requests."
+msgstr "此帳戶中的所有模型共用此容量。設為零即暫停新請求。"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:418
+#, elixir-autogen, elixir-format
+msgid "An optional label to distinguish accounts. Existing names are preserved."
+msgstr "用來區分帳戶的選填標籤。現有名稱會保留。"
+
+#: lib/evo_dash_web/live/system_live/charts.ex:441
+#, elixir-autogen, elixir-format
+msgid "Capacity: the selected provider profile's effective concurrency. In use: live slot holders. Waiting: agents queued for a slot. One pool per provider profile — the models of a profile share its slots."
+msgstr "容量：所選服務商設定檔的有效並發數。使用中：目前持有槽位的數量。等待中：排隊等待槽位的智能體數。每個服務商設定檔對應一個資源池——同一設定檔下的模型共用其槽位。"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:106
+#, elixir-autogen, elixir-format
+msgid "Catalog suggestions are shown alongside configured levels. For shared defaults, suggestions must appear in every configured model's catalog entry. Verify support with your provider; nothing is selected automatically."
+msgstr "目錄建議會與已設定的層級一併顯示。若要做為共用預設值，建議必須出現在每個已設定模型的目錄項目中。請向您的服務商確認支援情況；系統不會自動選取任何項目。"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:373
+#, elixir-autogen, elixir-format
+msgid "Choose a default model"
+msgstr "選擇預設模型"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:62
+#, elixir-autogen, elixir-format
+msgid "Choose a provider"
+msgstr "選擇服務商"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:69
+#, elixir-autogen, elixir-format
+msgid "Choose a provider, connect your account, then add models and choose your defaults."
+msgstr "選擇服務商、連結帳戶，接著新增模型並設定預設值。"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:384
+#, elixir-autogen, elixir-format
+msgid "Choose the default model. This does not create a model override."
+msgstr "選擇預設模型。這不會建立模型覆寫。"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:68
+#, elixir-autogen, elixir-format
+msgid "Configured provider: %{provider}"
+msgstr "已設定的服務商：%{provider}"
+
+#: lib/evo_dash_web/helpers.ex:990
+#, elixir-autogen, elixir-format
+msgid "Custom"
+msgstr "自訂"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:415
+#, elixir-autogen, elixir-format
+msgid "Display name (optional)"
+msgstr "顯示名稱（選填）"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:343
+#, elixir-autogen, elixir-format
+msgid "Edit the default model name. Add model rows only when you need per-model overrides."
+msgstr "編輯預設模型名稱。只有在需要個別模型覆寫時，才需新增模型列。"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:325
+#, elixir-autogen, elixir-format
+msgid "Enter model names supported by this provider. Open model details only when you need overrides."
+msgstr "輸入此服務商支援的模型名稱。只有在需要覆寫時，才需展開模型詳細資料。"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:427
+#, elixir-autogen, elixir-format
+msgid "Enter the variable name, not the key. In API-key mode this exact variable is used on the selected node, with no fallback to another account's key. Clear it to use the provider's default credential source."
+msgstr "請輸入變數名稱，而非金鑰本身。在 API 金鑰模式下，所選節點會使用此確切變數，不會改用其他帳戶的金鑰。清空此欄位即改用服務商的預設憑證來源。"
+
+#: lib/evo_dash_web/helpers.ex:987
+#, elixir-autogen, elixir-format
+msgid "Evolve"
+msgstr "演進"
+
+#: lib/evo_dash_web/helpers.ex:984
+#, elixir-autogen, elixir-format
+msgid "Init existing"
+msgstr "初始化現有專案"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:408
+#, elixir-autogen, elixir-format
+msgid "Leave blank for an automatic ID. Use a distinct ID for another account with the same provider."
+msgstr "留空即自動產生 ID。若要在同一服務商下使用另一個帳戶，請使用不同的 ID。"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:438
+#, elixir-autogen, elixir-format
+msgid "Leave blank for the provider endpoint. For an OpenAI-compatible service, choose OpenAI and enter its endpoint here."
+msgstr "留空即使用服務商端點。若為 OpenAI 相容服務，請選擇 OpenAI 並在此輸入其端點。"
+
+#: lib/evo_dash_web/components/task_form_components.ex:587
+#: lib/evo_dash_web/components/task_form_components.ex:600
+#, elixir-autogen, elixir-format
+msgid "Mode"
+msgstr "模式"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:533
+#, elixir-autogen, elixir-format
+msgid "Model details"
+msgstr "模型詳細資料"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:339
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:515
+#, elixir-autogen, elixir-format
+msgid "Model name"
+msgstr "模型名稱"
+
+#: lib/evo_dash_web/helpers.ex:981
+#, elixir-autogen, elixir-format
+msgid "New project"
+msgstr "新增專案"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:145
+#, elixir-autogen, elixir-format
+msgid "No levels selected explicitly disables reasoning for this model."
+msgstr "未選取任何層級時，此模型將明確停用推理功能。"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:102
+#, elixir-autogen, elixir-format
+msgid "No verified catalog level list is available for this selection. Keep configured levels or use advanced choices after checking your provider."
+msgstr "此選擇目前沒有可用的已驗證目錄層級清單。請保留已設定的層級，或在向服務商確認後改用進階選項。"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:405
+#, elixir-autogen, elixir-format
+msgid "Profile ID (optional)"
+msgstr "設定檔 ID（選填）"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:98
+#, elixir-autogen, elixir-format
+msgid "Reasoning levels"
+msgstr "推理層級"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:147
+#, elixir-autogen, elixir-format
+msgid "Select only levels supported by your models. No selection advertises no reasoning support."
+msgstr "僅選取您的模型所支援的層級。若未選取任何層級，即表示不提供推理支援。"
+
+#: lib/evo_dash_web/live/system_live/charts.ex:553
+#, elixir-autogen, elixir-format
+msgid "Slots are pooled per provider profile — the models of one profile share its slots."
+msgstr "槽位以服務商設定檔為單位共用——同一設定檔下的模型共用其槽位。"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:130
+#, elixir-autogen, elixir-format
+msgid "These are request vocabulary choices, not verified support for this model or endpoint. Select only levels you have confirmed."
+msgstr "這些是請求用語選項，並不代表此模型或端點已驗證支援。請僅選取您已確認的層級。"

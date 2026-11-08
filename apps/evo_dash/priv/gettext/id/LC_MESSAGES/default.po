@@ -22,12 +22,12 @@ msgstr "%{action} berhasil."
 msgid "%{action} unavailable — the remote connection subsystem is not running."
 msgstr "%{action} tidak tersedia — subsistem koneksi jarak jauh tidak berjalan."
 
-#: lib/evo_dash_web/components/task_card_components.ex:876
+#: lib/evo_dash_web/components/task_card_components.ex:893
 #, elixir-autogen, elixir-format
 msgid "%{count}"
 msgstr "%{count}"
 
-#: lib/evo_dash_web/components/task_card_components.ex:269
+#: lib/evo_dash_web/components/task_card_components.ex:286
 #, elixir-autogen, elixir-format
 msgid "%{count} Agents"
 msgstr "%{count} Agen"
@@ -143,13 +143,13 @@ msgstr "<tidak ada konten teks>"
 msgid "<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."
 msgstr "<strong>Tidak melihat penyedia Anda?</strong> Anda dapat memasukkan string model apa pun secara manual di kolom Model di bawah dengan format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">penyedia:nama-model</code>. Cari model Anda di <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> atau lihat <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">penyedia yang didukung</a>."
 
-#: lib/evo_dash_web/components/task_form_components.ex:807
-#: lib/evo_dash_web/components/task_form_components.ex:919
+#: lib/evo_dash_web/components/task_form_components.ex:1010
+#: lib/evo_dash_web/components/task_form_components.ex:1122
 #, elixir-autogen, elixir-format
 msgid "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
 msgstr "SHA commit Git, nama cabang, atau tag yang digunakan sebagai dasar. Default-nya adalah HEAD."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:165
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:183
 #, elixir-autogen, elixir-format
 msgid "A profile with id \"%{id}\" already exists."
 msgstr "Profil dengan id \"%{id}\" sudah ada."
@@ -229,12 +229,12 @@ msgstr "Tambah Model"
 msgid "Add a profile to get started, or use Quick Setup above."
 msgstr "Tambahkan profil untuk memulai, atau gunakan Pengaturan Cepat di atas."
 
-#: lib/evo_dash_web/components/task_form_components.ex:889
+#: lib/evo_dash_web/components/task_form_components.ex:1092
 #, elixir-autogen, elixir-format
 msgid "Advanced Options"
 msgstr "Opsi Lanjutan"
 
-#: lib/evo_dash_web/components/task_card_components.ex:439
+#: lib/evo_dash_web/components/task_card_components.ex:456
 #: lib/evo_dash_web/components/task_card_components/result_render.ex:130
 #: lib/evo_dash_web/components/task_card_components/result_render.ex:219
 #, elixir-autogen, elixir-format
@@ -270,12 +270,12 @@ msgstr "Agen tidak ditemukan"
 #: lib/evo_dash_web/components/review_components/header.ex:509
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:22
 #: lib/evo_dash_web/live/settings_live.ex:678
-#: lib/evo_dash_web/live/system_live/charts.ex:341
+#: lib/evo_dash_web/live/system_live/charts.ex:465
 #, elixir-autogen, elixir-format
 msgid "Agents"
 msgstr "Agen"
 
-#: lib/evo_dash_web/components/task_card_components.ex:619
+#: lib/evo_dash_web/components/task_card_components.ex:636
 #, elixir-autogen, elixir-format
 msgid "Agents Spawned"
 msgstr "Agen yang Dimunculkan"
@@ -351,14 +351,14 @@ msgstr "Awal Arsip"
 msgid "Archive Start Ref"
 msgstr "Referensi Awal Arsip"
 
-#: lib/evo_dash_web/components/task_form_components.ex:843
+#: lib/evo_dash_web/components/task_form_components.ex:1046
 #, elixir-autogen, elixir-format
 msgid "Archive agent details"
 msgstr "Arsipkan detail agen"
 
 #: lib/evo_dash_web/components/archive_components.ex:142
 #: lib/evo_dash_web/components/review_components.ex:216
-#: lib/evo_dash_web/components/task_card_components.ex:712
+#: lib/evo_dash_web/components/task_card_components.ex:729
 #, elixir-autogen, elixir-format
 msgid "Archived Agent Details"
 msgstr "Detail Agen yang Diarsipkan"
@@ -403,7 +403,7 @@ msgstr "URL dasar tidak boleh kosong."
 msgid "Binary"
 msgstr "Biner"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:155
+#: lib/evo_dash_web/live/system_live/charts.ex:263
 #, elixir-autogen, elixir-format
 msgid "Blocked"
 msgstr "Terblokir"
@@ -420,27 +420,27 @@ msgstr "cabang"
 msgid "Browse"
 msgstr "Jelajahi"
 
-#: lib/evo_dash_web/components/task_form_components.ex:765
+#: lib/evo_dash_web/components/task_form_components.ex:968
 #: lib/evo_dash_web/live/projects_live.ex:468
 #, elixir-autogen, elixir-format
 msgid "Build System"
 msgstr "Sistem Build"
 
 #: lib/evo_dash_web/components/review_components/header.ex:579
-#: lib/evo_dash_web/components/task_card_components.ex:549
+#: lib/evo_dash_web/components/task_card_components.ex:566
 #, elixir-autogen, elixir-format
 msgid "Cache Creation"
 msgstr "Pembuatan Cache"
 
 #: lib/evo_dash_web/components/review_components/header.ex:588
-#: lib/evo_dash_web/components/task_card_components.ex:557
+#: lib/evo_dash_web/components/task_card_components.ex:574
 #: lib/evo_dash_web/live/agents_live.html.heex:541
 #, elixir-autogen, elixir-format
 msgid "Cache Hit Rate"
 msgstr "Rasio Cache Hit"
 
 #: lib/evo_dash_web/components/review_components/header.ex:570
-#: lib/evo_dash_web/components/task_card_components.ex:541
+#: lib/evo_dash_web/components/task_card_components.ex:558
 #: lib/evo_dash_web/live/agents_live.html.heex:533
 #, elixir-autogen, elixir-format
 msgid "Cached Tokens"
@@ -451,7 +451,7 @@ msgstr "Token yang Di-cache"
 #: lib/evo_dash_web/components/project_components.ex:816
 #: lib/evo_dash_web/components/review_components/actions.ex:268
 #: lib/evo_dash_web/components/settings_components/form_footer.ex:26
-#: lib/evo_dash_web/components/task_card_components.ex:283
+#: lib/evo_dash_web/components/task_card_components.ex:300
 #: lib/evo_dash_web/live/agents_live.html.heex:1167
 #: lib/evo_dash_web/live/settings_live.ex:584
 #: lib/evo_dash_web/live/settings_live.ex:652
@@ -767,22 +767,23 @@ msgstr "Commit Saat Ini"
 msgid "Dark theme"
 msgstr "Tema gelap"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:304
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:143
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:213
+#: lib/evo_dash_web/components/llm_selection_components.ex:502
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:147
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:212
 #: lib/evo_dash_web/components/settings_components/setting_card.ex:104
 #, elixir-autogen, elixir-format
 msgid "Default"
 msgstr "Standar"
 
 #: lib/evo_dash_web/components/project_components.ex:442
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:357
 #, elixir-autogen, elixir-format
 msgid "Defaults"
 msgstr "Default"
 
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:156
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:159
-#: lib/evo_dash_web/components/task_card_components.ex:341
+#: lib/evo_dash_web/components/task_card_components.ex:358
 #: lib/evo_dash_web/live/settings_live.ex:313
 #, elixir-autogen, elixir-format
 msgid "Delete"
@@ -793,7 +794,7 @@ msgstr "Hapus"
 msgid "Delete this model profile?"
 msgstr "Hapus profil model ini?"
 
-#: lib/evo_dash_web/components/task_card_components.ex:339
+#: lib/evo_dash_web/components/task_card_components.ex:356
 #, elixir-autogen, elixir-format
 msgid "Delete this task?"
 msgstr "Hapus tugas ini?"
@@ -805,12 +806,12 @@ msgstr "Hapus tugas ini?"
 msgid "Depth"
 msgstr "Kedalaman"
 
-#: lib/evo_dash_web/components/task_form_components.ex:219
+#: lib/evo_dash_web/components/task_form_components.ex:931
 #, elixir-autogen, elixir-format
 msgid "Describe the codebase you want to create..."
 msgstr "Jelaskan basis kode yang ingin Anda buat..."
 
-#: lib/evo_dash_web/components/task_form_components.ex:216
+#: lib/evo_dash_web/components/task_form_components.ex:929
 #, elixir-autogen, elixir-format
 msgid "Describe what you want to change or improve..."
 msgstr "Jelaskan apa yang ingin Anda ubah atau tingkatkan..."
@@ -821,7 +822,7 @@ msgstr "Jelaskan apa yang ingin Anda ubah atau tingkatkan..."
 msgid "Description (optional)"
 msgstr "Deskripsi (opsional)"
 
-#: lib/evo_dash_web/components/task_card_components.ex:311
+#: lib/evo_dash_web/components/task_card_components.ex:328
 #, elixir-autogen, elixir-format
 msgid "Details"
 msgstr "Detail"
@@ -872,7 +873,7 @@ msgstr "Port Dist"
 
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:146
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:149
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:169
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:173
 #: lib/evo_dash_web/live/settings_live.ex:305
 #, elixir-autogen, elixir-format
 msgid "Edit"
@@ -943,7 +944,7 @@ msgstr "Kesalahan saat menjalankan '%{command}': %{error}"
 msgid "Example model names:"
 msgstr "Contoh nama model:"
 
-#: lib/evo_dash_web/components/task_card_components.ex:653
+#: lib/evo_dash_web/components/task_card_components.ex:670
 #, elixir-autogen, elixir-format
 msgid "Execution Logs"
 msgstr "Log Eksekusi"
@@ -1039,7 +1040,7 @@ msgid "Filter settings..."
 msgstr "Saring pengaturan..."
 
 #: lib/evo_dash_web/components/review_components/header.ex:522
-#: lib/evo_dash_web/components/task_card_components.ex:263
+#: lib/evo_dash_web/components/task_card_components.ex:280
 #, elixir-autogen, elixir-format
 msgid "Finished"
 msgstr "Selesai"
@@ -1084,8 +1085,8 @@ msgstr "Repo eksternal adalah basis kode tambahan yang dapat diakses oleh agen s
 msgid "Frequency Penalty"
 msgstr "Penalti Frekuensi"
 
-#: lib/evo_dash_web/components/task_card_components.ex:421
-#: lib/evo_dash_web/components/task_card_components.ex:458
+#: lib/evo_dash_web/components/task_card_components.ex:438
+#: lib/evo_dash_web/components/task_card_components.ex:475
 #, elixir-autogen, elixir-format
 msgid "Full"
 msgstr "Lengkap"
@@ -1127,7 +1128,7 @@ msgstr "Nama Pengguna GitHub"
 msgid "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
 msgstr "Mulai ulang atau hentikan Erlang VM secara halus. Mulai ulang akan menghentikan dan memulai ulang semua aplikasi; hentikan akan mematikan VM secara halus dan harus dijalankan lagi secara manual. Status runtime di memori akan hilang dalam kedua kasus."
 
-#: lib/evo_dash_web/components/task_card_components.ex:309
+#: lib/evo_dash_web/components/task_card_components.ex:326
 #, elixir-autogen, elixir-format
 msgid "Hide Details"
 msgstr "Sembunyikan Detail"
@@ -1148,7 +1149,7 @@ msgid "Ignored"
 msgstr "Diabaikan"
 
 #: lib/evo_dash_web/components/review_components/header.ex:615
-#: lib/evo_dash_web/components/task_card_components.ex:586
+#: lib/evo_dash_web/components/task_card_components.ex:603
 #: lib/evo_dash_web/live/agents_live.html.heex:642
 #, elixir-autogen, elixir-format
 msgid "Input Cost"
@@ -1157,7 +1158,7 @@ msgstr "Biaya Input"
 #: lib/evo_dash_web/components/archive_components.ex:425
 #: lib/evo_dash_web/components/review_components.ex:469
 #: lib/evo_dash_web/components/review_components/header.ex:539
-#: lib/evo_dash_web/components/task_card_components.ex:513
+#: lib/evo_dash_web/components/task_card_components.ex:530
 #: lib/evo_dash_web/live/agents_live.html.heex:506
 #, elixir-autogen, elixir-format
 msgid "Input Tokens"
@@ -1293,23 +1294,21 @@ msgstr "Konfigurasi Tidak Ada"
 msgid "Mode: %{mode} | %{prompt}"
 msgstr "Mode: %{mode} | %{prompt}"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:137
+#: lib/evo_dash_web/components/llm_selection_components.ex:168
 #: lib/evo_dash_web/components/review_components/header.ex:500
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:281
-#: lib/evo_dash_web/components/task_card_components.ex:623
+#: lib/evo_dash_web/components/task_card_components.ex:640
 #: lib/evo_dash_web/live/agents_live.html.heex:338
-#: lib/evo_dash_web/live/system_live/charts.ex:409
 #, elixir-autogen, elixir-format
 msgid "Model"
 msgstr "Model"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:260
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:446
 #, elixir-autogen, elixir-format
 msgid "Model ID"
 msgstr "ID Model"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:373
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:399
 #, elixir-autogen, elixir-format
 msgid "Model ID cannot be empty."
 msgstr "ID Model tidak boleh kosong."
@@ -1449,7 +1448,7 @@ msgstr "Tidak ada pengaturan yang cocok dengan \"%{query}\""
 msgid "No tasks found"
 msgstr "Tidak ada tugas ditemukan"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:298
+#: lib/evo_dash_web/components/llm_selection_components.ex:496
 #: lib/evo_dash_web/live/agents_live.html.heex:453
 #: lib/evo_dash_web/live/agents_live.html.heex:478
 #: lib/evo_dash_web/live/system_live/status.ex:75
@@ -1476,7 +1475,7 @@ msgstr "Jumlah slot permintaan LLM paralel"
 #: lib/evo_dash_web/components/review_components.ex:71
 #: lib/evo_dash_web/components/review_components.ex:341
 #: lib/evo_dash_web/components/review_components/header.ex:365
-#: lib/evo_dash_web/components/task_card_components.ex:402
+#: lib/evo_dash_web/components/task_card_components.ex:419
 #: lib/evo_dash_web/live/agents_live.html.heex:356
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:125
 #, elixir-autogen, elixir-format
@@ -1492,7 +1491,7 @@ msgstr "Tujuan"
 msgid "Open"
 msgstr "Buka"
 
-#: lib/evo_dash_web/components/task_form_components.ex:673
+#: lib/evo_dash_web/components/task_form_components.ex:853
 #, elixir-autogen, elixir-format
 msgid "Open a project to get started"
 msgstr "Buka proyek untuk memulai"
@@ -1503,7 +1502,7 @@ msgid "Optional: Note for the skill extraction agent"
 msgstr "Opsional: Catatan untuk agen ekstraksi keahlian"
 
 #: lib/evo_dash_web/components/review_components/header.ex:624
-#: lib/evo_dash_web/components/task_card_components.ex:594
+#: lib/evo_dash_web/components/task_card_components.ex:611
 #: lib/evo_dash_web/live/agents_live.html.heex:650
 #, elixir-autogen, elixir-format
 msgid "Output Cost"
@@ -1512,7 +1511,7 @@ msgstr "Biaya Output"
 #: lib/evo_dash_web/components/archive_components.ex:432
 #: lib/evo_dash_web/components/review_components.ex:478
 #: lib/evo_dash_web/components/review_components/header.ex:548
-#: lib/evo_dash_web/components/task_card_components.ex:521
+#: lib/evo_dash_web/components/task_card_components.ex:538
 #: lib/evo_dash_web/live/agents_live.html.heex:514
 #, elixir-autogen, elixir-format
 msgid "Output Tokens"
@@ -1549,7 +1548,7 @@ msgstr "Jeda Penjadwal"
 #: lib/evo_dash_web/helpers.ex:76
 #: lib/evo_dash_web/live/agents_live.html.heex:163
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:311
-#: lib/evo_dash_web/live/system_live/charts.ex:165
+#: lib/evo_dash_web/live/system_live/charts.ex:273
 #: lib/evo_dash_web/live/tasks_live.ex:74
 #, elixir-autogen, elixir-format
 msgid "Pending"
@@ -1585,12 +1584,11 @@ msgid "Process limits are only available on Linux with systemd-run."
 msgstr "Batas proses hanya tersedia di Linux dengan systemd-run."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:239
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:272
 #, elixir-autogen, elixir-format
 msgid "Profile ID"
 msgstr "ID Profil"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:161
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:179
 #, elixir-autogen, elixir-format
 msgid "Profile id cannot be empty."
 msgstr "ID profil tidak boleh kosong."
@@ -1622,7 +1620,7 @@ msgid "Provide specific instructions on what knowledge should be captured as ski
 msgstr "Berikan instruksi spesifik tentang pengetahuan apa yang harus ditangkap sebagai keahlian."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:249
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:280
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:59
 #, elixir-autogen, elixir-format
 msgid "Provider"
 msgstr "Penyedia"
@@ -1781,8 +1779,8 @@ msgstr "Hasil"
 msgid "Resume Scheduler"
 msgstr "Lanjutkan Penjadwal"
 
-#: lib/evo_dash_web/components/task_form_components.ex:822
-#: lib/evo_dash_web/components/task_form_components.ex:936
+#: lib/evo_dash_web/components/task_form_components.ex:1025
+#: lib/evo_dash_web/components/task_form_components.ex:1139
 #, elixir-autogen, elixir-format
 msgid "Resume from"
 msgstr "Lanjutkan dari"
@@ -1803,8 +1801,8 @@ msgstr "Percobaan Ulang"
 #: lib/evo_dash_web/components/review_components.ex:273
 #: lib/evo_dash_web/components/review_components.ex:393
 #: lib/evo_dash_web/components/settings_components.ex:548
-#: lib/evo_dash_web/components/task_card_components.ex:489
-#: lib/evo_dash_web/components/task_card_components.ex:755
+#: lib/evo_dash_web/components/task_card_components.ex:506
+#: lib/evo_dash_web/components/task_card_components.ex:772
 #: lib/evo_dash_web/live/agents_live.html.heex:44
 #: lib/evo_dash_web/live/projects_live.ex:153
 #: lib/evo_dash_web/live/projects_live/remote_view.ex:290
@@ -1827,7 +1825,7 @@ msgstr "Percobaan Ulang #%{attempt} - Dimulai dengan jeda %{backoff_seconds}s"
 msgid "Retry attempt %{attempt}"
 msgstr "Percobaan ulang ke-%{attempt}"
 
-#: lib/evo_dash_web/components/task_card_components.ex:295
+#: lib/evo_dash_web/components/task_card_components.ex:312
 #, elixir-autogen, elixir-format
 msgid "Review"
 msgstr "Tinjau"
@@ -1856,7 +1854,7 @@ msgstr "Jalankan"
 #: lib/evo_dash_web/helpers.ex:77
 #: lib/evo_dash_web/live/agents_live.html.heex:172
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:310
-#: lib/evo_dash_web/live/system_live/charts.ex:153
+#: lib/evo_dash_web/live/system_live/charts.ex:261
 #: lib/evo_dash_web/live/tasks_live.ex:71
 #, elixir-autogen, elixir-format
 msgid "Running"
@@ -1920,18 +1918,18 @@ msgstr "Penjadwal"
 msgid "Scheduler Active"
 msgstr "Penjadwal Aktif"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:307
+#: lib/evo_dash_web/live/system_live/charts.ex:430
 #: lib/evo_dash_web/live/system_live/runtime_controls.ex:70
 #, elixir-autogen, elixir-format
 msgid "Scheduler Paused"
 msgstr "Penjadwal Dijeda"
 
-#: lib/evo_dash_web/live/system_live.ex:1684
+#: lib/evo_dash_web/live/system_live.ex:1685
 #, elixir-autogen, elixir-format
 msgid "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
 msgstr "Penjadwal dijeda. Agen yang berjalan tetap berlanjut, tetapi tidak ada slot atau agen baru yang akan diberikan."
 
-#: lib/evo_dash_web/live/system_live.ex:1679
+#: lib/evo_dash_web/live/system_live.ex:1680
 #, elixir-autogen, elixir-format
 msgid "Scheduler resumed. New agents and slots are being granted."
 msgstr "Penjadwal dilanjutkan. Agen dan slot baru sedang diberikan."
@@ -2028,21 +2026,21 @@ msgstr "Mulai tugas dari dasbor untuk melihat agen di sini."
 #: lib/evo_dash_web/components/archive_components.ex:460
 #: lib/evo_dash_web/components/review_components.ex:511
 #: lib/evo_dash_web/components/review_components/header.ex:516
-#: lib/evo_dash_web/components/task_card_components.ex:258
+#: lib/evo_dash_web/components/task_card_components.ex:275
 #, elixir-autogen, elixir-format
 msgid "Started"
 msgstr "Dimulai"
 
 #: lib/evo_dash_web/components/project_components.ex:669
 #: lib/evo_dash_web/components/project_components.ex:795
-#: lib/evo_dash_web/components/task_form_components.ex:805
-#: lib/evo_dash_web/components/task_form_components.ex:914
+#: lib/evo_dash_web/components/task_form_components.ex:1008
+#: lib/evo_dash_web/components/task_form_components.ex:1117
 #, elixir-autogen, elixir-format
 msgid "Starting Commit"
 msgstr "Commit Awal"
 
-#: lib/evo_dash_web/components/task_form_components.ex:787
-#: lib/evo_dash_web/components/task_form_components.ex:895
+#: lib/evo_dash_web/components/task_form_components.ex:990
+#: lib/evo_dash_web/components/task_form_components.ex:1098
 #, elixir-autogen, elixir-format
 msgid "Starting Node"
 msgstr "Node Awal"
@@ -2146,7 +2144,7 @@ msgid "Tasks will appear here once you start them from the dashboard."
 msgstr "Tugas akan muncul di sini setelah Anda memulainya dari dasbor."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:621
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:436
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:573
 #, elixir-autogen, elixir-format
 msgid "Temperature"
 msgstr "Temperatur"
@@ -2169,8 +2167,8 @@ msgstr "Uji di Pengaturan"
 msgid "Testing LLM connection..."
 msgstr "Menguji koneksi LLM..."
 
-#: lib/evo_dash_web/components/task_form_components.ex:824
-#: lib/evo_dash_web/components/task_form_components.ex:938
+#: lib/evo_dash_web/components/task_form_components.ex:1027
+#: lib/evo_dash_web/components/task_form_components.ex:1141
 #, elixir-autogen, elixir-format
 msgid "The ID of a previous task to continue from. Injects the previous task's context (commits, objective, and result) into this task's objective."
 msgstr "ID tugas sebelumnya untuk dilanjutkan. Menyuntikkan konteks tugas sebelumnya (commit, tujuan, dan hasil) ke dalam tujuan tugas ini."
@@ -2201,8 +2199,8 @@ msgstr "Agen selesai tanpa membuat perubahan kode apa pun. Anda dapat melanjutka
 msgid "The model name"
 msgstr "Nama model"
 
-#: lib/evo_dash_web/components/task_form_components.ex:789
-#: lib/evo_dash_web/components/task_form_components.ex:898
+#: lib/evo_dash_web/components/task_form_components.ex:992
+#: lib/evo_dash_web/components/task_form_components.ex:1101
 #, elixir-autogen, elixir-format
 msgid "The subdirectory within the project to start evolution from. Use './' for root."
 msgstr "Subdirektori dalam proyek untuk memulai evolusi. Gunakan './' untuk root."
@@ -2225,7 +2223,7 @@ msgid "This will gracefully shut down the Erlang VM. All applications will be st
 msgstr "Ini akan mematikan Erlang VM secara halus. Semua aplikasi akan dihentikan secara berurutan."
 
 #: lib/evo_dash_web/components/review_components/header.ex:532
-#: lib/evo_dash_web/components/task_card_components.ex:508
+#: lib/evo_dash_web/components/task_card_components.ex:525
 #, elixir-autogen, elixir-format
 msgid "Token & Cost Usage"
 msgstr "Penggunaan Token & Biaya"
@@ -2257,19 +2255,19 @@ msgid "Tools"
 msgstr "Alat"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:647
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:439
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:576
 #, elixir-autogen, elixir-format
 msgid "Top K"
 msgstr "Top K"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:638
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:438
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:575
 #, elixir-autogen, elixir-format
 msgid "Top P"
 msgstr "Top P"
 
 #: lib/evo_dash_web/components/review_components/header.ex:633
-#: lib/evo_dash_web/components/task_card_components.ex:602
+#: lib/evo_dash_web/components/task_card_components.ex:619
 #: lib/evo_dash_web/live/agents_live.html.heex:658
 #, elixir-autogen, elixir-format
 msgid "Total Cost"
@@ -2278,7 +2276,7 @@ msgstr "Total Biaya"
 #: lib/evo_dash_web/components/archive_components.ex:439
 #: lib/evo_dash_web/components/review_components.ex:487
 #: lib/evo_dash_web/components/review_components/header.ex:557
-#: lib/evo_dash_web/components/task_card_components.ex:529
+#: lib/evo_dash_web/components/task_card_components.ex:546
 #: lib/evo_dash_web/live/agents_live.html.heex:522
 #, elixir-autogen, elixir-format
 msgid "Total Tokens"
@@ -2381,9 +2379,9 @@ msgstr "Lihat metrik sistem, proses, dan telemetri aplikasi"
 
 #: lib/evo_dash_web/helpers.ex:78
 #: lib/evo_dash_web/live/agents_live.html.heex:183
-#: lib/evo_dash_web/live/system_live/charts.ex:98
-#: lib/evo_dash_web/live/system_live/charts.ex:140
-#: lib/evo_dash_web/live/system_live/charts.ex:160
+#: lib/evo_dash_web/live/system_live/charts.ex:111
+#: lib/evo_dash_web/live/system_live/charts.ex:248
+#: lib/evo_dash_web/live/system_live/charts.ex:268
 #, elixir-autogen, elixir-format
 msgid "Waiting"
 msgstr "Menunggu"
@@ -2441,8 +2439,8 @@ msgstr "misalnya anthropic, openai"
 msgid "e.g. gpt-4o or anthropic/claude-3.5-sonnet"
 msgstr "mis. gpt-4o atau anthropic/claude-3.5-sonnet"
 
-#: lib/evo_dash_web/components/task_form_components.ex:800
-#: lib/evo_dash_web/components/task_form_components.ex:909
+#: lib/evo_dash_web/components/task_form_components.ex:1003
+#: lib/evo_dash_web/components/task_form_components.ex:1112
 #, elixir-autogen, elixir-format
 msgid "e.g., ./src/components"
 msgstr "mis., ./src/components"
@@ -2452,8 +2450,8 @@ msgstr "mis., ./src/components"
 msgid "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
 msgstr "mis., Fokus pada alur kerja deployment dan pola migrasi database yang ditemukan di PR ini."
 
-#: lib/evo_dash_web/components/task_form_components.ex:816
-#: lib/evo_dash_web/components/task_form_components.ex:930
+#: lib/evo_dash_web/components/task_form_components.ex:1019
+#: lib/evo_dash_web/components/task_form_components.ex:1133
 #, elixir-autogen, elixir-format
 msgid "e.g., abc1234 or HEAD"
 msgstr "mis., abc1234 atau HEAD"
@@ -2549,7 +2547,7 @@ msgstr "top_k"
 msgid "top_p"
 msgstr "top_p"
 
-#: lib/evo_dash_web/components/task_card_components.ex:631
+#: lib/evo_dash_web/components/task_card_components.ex:648
 #, elixir-autogen, elixir-format
 msgid "total agents (incl. subagents)"
 msgstr "total agen (termasuk subagen)"
@@ -2889,12 +2887,12 @@ msgstr "Masukkan kunci API untuk %{provider}."
 msgid "Extra Config (JSON)"
 msgstr "Konfigurasi Tambahan (JSON)"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:377
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:403
 #, elixir-autogen, elixir-format
 msgid "Extra Config must be a JSON object (map)."
 msgstr "Konfigurasi Ekstra harus berupa objek JSON (map)."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:374
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:400
 #, elixir-autogen, elixir-format
 msgid "Extra Config must be valid JSON."
 msgstr "Konfigurasi Ekstra harus berupa JSON yang valid."
@@ -2915,7 +2913,7 @@ msgstr "Buka Dasbor"
 msgid "Light"
 msgstr "Terang"
 
-#: lib/evo_dash_web/components/task_form_components.ex:772
+#: lib/evo_dash_web/components/task_form_components.ex:975
 #: lib/evo_dash_web/live/projects_live.ex:470
 #, elixir-autogen, elixir-format
 msgid "No build system"
@@ -2942,12 +2940,12 @@ msgstr "Jalur harus absolut."
 msgid "Provider Options (JSON)"
 msgstr "Opsi Penyedia (JSON)"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:383
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:409
 #, elixir-autogen, elixir-format
 msgid "Provider Options must be a JSON object (map)."
 msgstr "Opsi Penyedia harus berupa objek JSON (map)."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:380
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:406
 #, elixir-autogen, elixir-format
 msgid "Provider Options must be valid JSON."
 msgstr "Opsi Penyedia harus berupa JSON yang valid."
@@ -2993,18 +2991,18 @@ msgstr "LLM Anda sudah dikonfigurasi. Anda dapat mengelolanya kapan saja di Peng
 msgid "completed"
 msgstr "selesai"
 
-#: lib/evo_dash_web/live/agents_live.ex:2013
+#: lib/evo_dash_web/live/agents_live.ex:2018
 #, elixir-autogen, elixir-format
 msgid "Failed to send message: %{reason}"
 msgstr "Gagal mengirim pesan: %{reason}"
 
-#: lib/evo_dash_web/live/agents_live.ex:707
+#: lib/evo_dash_web/live/agents_live.ex:708
 #, elixir-autogen, elixir-format
 msgid "Message sent to agent"
 msgstr "Pesan terkirim ke agen"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:1171
-#: lib/evo_dash_web/live/home_live.ex:230
+#: lib/evo_dash_web/live/home_live.ex:242
 #, elixir-autogen, elixir-format
 msgid "Send"
 msgstr "Kirim"
@@ -3034,7 +3032,7 @@ msgstr "Pesan Anda akan ditambahkan ke konteks agen pada giliran berikutnya."
 msgid "Agent Report"
 msgstr "Laporan Agen"
 
-#: lib/evo_dash_web/live/home_live.ex:649
+#: lib/evo_dash_web/live/home_live.ex:663
 #: lib/evo_dash_web/live/projects_live.ex:1167
 #: lib/evo_dash_web/live/review_live.ex:583
 #: lib/evo_dash_web/live/settings_live.ex:1553
@@ -3138,12 +3136,12 @@ msgstr "Z.ai (Zhipu AI)"
 msgid "xAI"
 msgstr "xAI"
 
-#: lib/evo_dash_web/live/system_live.ex:1743
+#: lib/evo_dash_web/live/system_live.ex:1744
 #, elixir-autogen, elixir-format
 msgid "Remote node is restarting. Please wait for it to come back up, then reconnect."
 msgstr "Node jarak jauh sedang dimulai ulang. Harap tunggu hingga kembali aktif, lalu sambungkan kembali."
 
-#: lib/evo_dash_web/live/system_live.ex:1747
+#: lib/evo_dash_web/live/system_live.ex:1748
 #, elixir-autogen, elixir-format
 msgid "Remote node is stopping. It will need to be started again on the remote host."
 msgstr "Node jarak jauh sedang dihentikan. Node ini perlu dimulai ulang pada host jarak jauh."
@@ -3158,7 +3156,7 @@ msgstr "Tindakan ini akan memulai ulang VM Erlang node jarak jauh secara halus. 
 msgid "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
 msgstr "Tindakan ini akan mematikan VM Erlang node jarak jauh secara halus. Semua aplikasi pada node jarak jauh akan dihentikan secara berurutan."
 
-#: lib/evo_dash_web/components/task_form_components.ex:854
+#: lib/evo_dash_web/components/task_form_components.ex:1057
 #, elixir-autogen, elixir-format
 msgid "Archive agent detail"
 msgstr "Arsipkan detail agen"
@@ -3168,7 +3166,7 @@ msgstr "Arsipkan detail agen"
 msgid "Blank = auto-probe the remote OS/arch"
 msgstr "Kosongkan = deteksi otomatis OS/arsitektur remote"
 
-#: lib/evo_dash_web/components/task_form_components.ex:856
+#: lib/evo_dash_web/components/task_form_components.ex:1059
 #, elixir-autogen, elixir-format
 msgid "Collect per-agent metadata for review"
 msgstr "Kumpulkan metadata per agen untuk ditinjau"
@@ -3195,8 +3193,8 @@ msgstr "Mengunduh"
 msgid "Extracting"
 msgstr "Mengekstrak"
 
-#: lib/evo_dash_web/components/task_form_components.ex:631
-#: lib/evo_dash_web/components/task_form_components.ex:632
+#: lib/evo_dash_web/components/task_form_components.ex:811
+#: lib/evo_dash_web/components/task_form_components.ex:812
 #, elixir-autogen, elixir-format
 msgid "Launch"
 msgstr "Jalankan"
@@ -3227,7 +3225,7 @@ msgstr "Buka Proyek berdasarkan Jalur"
 msgid "Open a project..."
 msgstr "Buka proyek..."
 
-#: lib/evo_dash_web/components/task_form_components.ex:211
+#: lib/evo_dash_web/components/task_form_components.ex:924
 #, elixir-autogen, elixir-format
 msgid "Optional — leave empty and click Launch to initialize an existing codebase"
 msgstr "Opsional — biarkan kosong dan klik Jalankan untuk menginisialisasi codebase yang sudah ada"
@@ -3284,13 +3282,13 @@ msgstr "Tidak dapat terhubung ke %{name}"
 msgid "Cannot open project: remote node %{name} is not connected. Retry the connection first."
 msgstr "Tidak dapat membuka proyek: simpul jarak jauh %{name} tidak terhubung. Coba sambungkan kembali terlebih dahulu."
 
-#: lib/evo_dash_web/live/system_live/charts.ex:87
-#: lib/evo_dash_web/live/system_live/charts.ex:134
+#: lib/evo_dash_web/live/system_live/charts.ex:100
+#: lib/evo_dash_web/live/system_live/charts.ex:242
 #, elixir-autogen, elixir-format
 msgid "Capacity"
 msgstr "Kapasitas"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:332
+#: lib/evo_dash_web/live/system_live/charts.ex:456
 #, elixir-autogen, elixir-format
 msgid "Capacity: max_tool_concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
 msgstr "Kapasitas: max_tool_concurrency. Sedang digunakan: agen yang berjalan (proksi penggunaan slot — pemegang slot tidak diekspos)."
@@ -3330,7 +3328,7 @@ msgstr "Memeriksa lingkungan pengembangan Nix yang digunakan untuk build yang da
 msgid "Choose a provider:"
 msgstr "Pilih penyedia:"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:422
+#: lib/evo_dash_web/live/system_live/charts.ex:562
 #, elixir-autogen, elixir-format
 msgid "Collecting data…"
 msgstr "Mengumpulkan data…"
@@ -3353,8 +3351,8 @@ msgid "Connection lost or failed"
 msgstr "Koneksi terputus atau gagal"
 
 #: lib/evo_dash_web/components/settings_components/model_selection_editor.ex:117
-#: lib/evo_dash_web/components/task_card_components.ex:414
-#: lib/evo_dash_web/components/task_card_components.ex:451
+#: lib/evo_dash_web/components/task_card_components.ex:431
+#: lib/evo_dash_web/components/task_card_components.ex:468
 #: lib/evo_dash_web/live/projects_live.ex:280
 #: lib/evo_dash_web/live/tasks_live.ex:432
 #: lib/evo_dash_web/live/tasks_live.ex:455
@@ -3383,8 +3381,8 @@ msgstr "Perbaiki pengaturan yang hilang atau tidak valid di Pengaturan."
 msgid "Hide example"
 msgstr "Sembunyikan contoh"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:93
-#: lib/evo_dash_web/live/system_live/charts.ex:139
+#: lib/evo_dash_web/live/system_live/charts.ex:106
+#: lib/evo_dash_web/live/system_live/charts.ex:247
 #, elixir-autogen, elixir-format
 msgid "In use"
 msgstr "Sedang digunakan"
@@ -3399,17 +3397,17 @@ msgstr "Pasang git dan pastikan tersedia di PATH Anda."
 msgid "Install ripgrep and make sure it is available on your PATH."
 msgstr "Pasang ripgrep dan pastikan tersedia di PATH Anda."
 
-#: lib/evo_dash_web/live/system_live/charts.ex:314
+#: lib/evo_dash_web/live/system_live/charts.ex:437
 #, elixir-autogen, elixir-format
 msgid "LLM Slots"
 msgstr "Slot LLM"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:299
+#: lib/evo_dash_web/live/system_live/charts.ex:422
 #, elixir-autogen, elixir-format
 msgid "LLM slots, tool slots, and agent activity — sampled every 3 seconds over the last 3 minutes."
 msgstr "Slot LLM, slot alat, dan aktivitas agen — disampel setiap 3 detik selama 3 menit terakhir."
 
-#: lib/evo_dash_web/live/system_live/charts.ex:476
+#: lib/evo_dash_web/live/system_live/charts.ex:616
 #, elixir-autogen, elixir-format
 msgid "Last 3 minutes"
 msgstr "3 menit terakhir"
@@ -3500,12 +3498,12 @@ msgstr "Penghalangan kotak pasir sandbox-exec tidak tersedia di sistem ini."
 msgid "Save Model"
 msgstr "Simpan Model"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:475
+#: lib/evo_dash_web/live/system_live/charts.ex:615
 #, elixir-autogen, elixir-format
 msgid "Scale 0–%{max}"
 msgstr "Skala 0–%{max}"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:297
+#: lib/evo_dash_web/live/system_live/charts.ex:420
 #, elixir-autogen, elixir-format
 msgid "Scheduler Status"
 msgstr "Status Penjadwal"
@@ -3568,17 +3566,17 @@ msgstr "Sistem berjalan, tetapi memerlukan perhatian"
 msgid "The Nix dev environment could not be built. Fix the flake or disable Nix in Settings."
 msgstr "Lingkungan pengembangan Nix tidak dapat dibangun. Perbaiki flake atau nonaktifkan Nix di Pengaturan."
 
-#: lib/evo_dash_web/live/system_live/charts.ex:329
+#: lib/evo_dash_web/live/system_live/charts.ex:453
 #, elixir-autogen, elixir-format
 msgid "Tool Slots"
 msgstr "Slot Alat"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:148
+#: lib/evo_dash_web/live/system_live/charts.ex:256
 #, elixir-autogen, elixir-format
 msgid "Total"
 msgstr "Total"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:344
+#: lib/evo_dash_web/live/system_live/charts.ex:468
 #, elixir-autogen, elixir-format
 msgid "Total agents with running, blocked (waiting for a slot), waiting, and pending counts."
 msgstr "Total agen dengan jumlah yang berjalan, diblokir (menunggu slot), menunggu, dan tertunda."
@@ -3588,7 +3586,7 @@ msgstr "Total agen dengan jumlah yang berjalan, diblokir (menunggu slot), menung
 msgid "Try an example task"
 msgstr "Coba tugas contoh"
 
-#: lib/evo_dash_web/components/task_form_components.ex:676
+#: lib/evo_dash_web/components/task_form_components.ex:856
 #, elixir-autogen, elixir-format
 msgid "Use the project picker in the top bar to open or create one."
 msgstr "Gunakan pemilih proyek di bilah atas untuk membuka atau membuat proyek."
@@ -3704,13 +3702,13 @@ msgstr "Batalkan Tugas?"
 msgid "Cancelling"
 msgstr "Membatalkan"
 
-#: lib/evo_dash_web/components/task_card_components.ex:185
+#: lib/evo_dash_web/components/task_card_components.ex:202
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:316
 #, elixir-autogen, elixir-format
 msgid "Cancelling…"
 msgstr "Membatalkan…"
 
-#: lib/evo_dash_web/components/task_card_components.ex:331
+#: lib/evo_dash_web/components/task_card_components.ex:348
 #, elixir-autogen, elixir-format
 msgid "Danger zone"
 msgstr "Zona berbahaya"
@@ -3730,7 +3728,7 @@ msgstr "Paksa Hentikan"
 msgid "Force Kill Task?"
 msgstr "Paksa Hentikan Tugas?"
 
-#: lib/evo_dash_web/components/task_card_components.ex:327
+#: lib/evo_dash_web/components/task_card_components.ex:344
 #: lib/evo_dash_web/helpers.ex:211
 #, elixir-autogen, elixir-format
 msgid "Force kill"
@@ -3827,20 +3825,20 @@ msgstr "Ini memulai tugas agen baru yang akan menggabungkan perubahan dan menyel
 msgid "Advanced settings"
 msgstr "Pengaturan lanjutan"
 
-#: lib/evo_dash_web/components/task_form_components.ex:354
 #: lib/evo_dash_web/components/task_form_components.ex:355
+#: lib/evo_dash_web/components/task_form_components.ex:356
 #, elixir-autogen, elixir-format
 msgid "Attach file"
 msgstr "Lampirkan file"
 
-#: lib/evo_dash_web/components/task_form_components.ex:450
 #: lib/evo_dash_web/components/task_form_components.ex:451
+#: lib/evo_dash_web/components/task_form_components.ex:452
 #, elixir-autogen, elixir-format
 msgid "Cancel attach file path"
 msgstr "Batal lampirkan jalur file"
 
-#: lib/evo_dash_web/components/task_form_components.ex:431
 #: lib/evo_dash_web/components/task_form_components.ex:432
+#: lib/evo_dash_web/components/task_form_components.ex:433
 #, elixir-autogen, elixir-format
 msgid "Confirm attach file path"
 msgstr "Konfirmasi lampirkan jalur file"
@@ -3856,7 +3854,7 @@ msgstr "Gagal melampirkan file: %{reason}"
 msgid "File not found: %{path}"
 msgstr "Berkas tidak ditemukan: %{path}"
 
-#: lib/evo_dash_web/components/task_form_components.ex:423
+#: lib/evo_dash_web/components/task_form_components.ex:424
 #, elixir-autogen, elixir-format
 msgid "File path to attach"
 msgstr "Jalur file yang akan dilampirkan"
@@ -3883,7 +3881,7 @@ msgstr "Pindah ke atas"
 msgid "Please enter a file path."
 msgstr "Silakan masukkan jalur berkas."
 
-#: lib/evo_dash_web/components/task_form_components.ex:422
+#: lib/evo_dash_web/components/task_form_components.ex:423
 #, elixir-autogen, elixir-format
 msgid "Type a full file path…"
 msgstr "Ketik jalur file lengkap…"
@@ -3978,13 +3976,15 @@ msgstr "Menerapkan pembaruan…"
 msgid "Asia/Shanghai"
 msgstr "Asia/Shanghai"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:110
-#: lib/evo_dash_web/components/task_form_components.ex:604
+#: lib/evo_dash_web/components/llm_selection_components.ex:326
+#: lib/evo_dash_web/components/llm_selection_components.ex:450
+#: lib/evo_dash_web/components/llm_selection_components.ex:486
+#: lib/evo_dash_web/components/task_form_components.ex:781
 #, elixir-autogen, elixir-format
 msgid "Auto (by rules)"
 msgstr "Otomatis (sesuai aturan)"
 
-#: lib/evo_dash_web/components/task_form_components.ex:574
+#: lib/evo_dash_web/components/task_form_components.ex:718
 #, elixir-autogen, elixir-format
 msgid "Auto (recommended)"
 msgstr "Otomatis (disarankan)"
@@ -4041,7 +4041,7 @@ msgstr "Buat agen kustom dan konfigurasikan skrip pemilihan model untuk setiap a
 msgid "Current version: %{version}"
 msgstr "Versi saat ini: %{version}"
 
-#: lib/evo_dash_web/components/task_form_components.ex:554
+#: lib/evo_dash_web/components/task_form_components.ex:684
 #, elixir-autogen, elixir-format
 msgid "Custom Agent"
 msgstr "Agen Khusus"
@@ -4156,7 +4156,7 @@ msgstr "Gagal menyimpan agen kustom: %{reason}"
 msgid "Failed to save script: %{reason}"
 msgstr "Gagal menyimpan skrip: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1328
+#: lib/evo_dash_web/live/system_live.ex:1329
 #, elixir-autogen, elixir-format
 msgid "Failed to stop running tasks. The update was not applied."
 msgstr "Gagal menghentikan tugas yang berjalan. Pembaruan tidak diterapkan."
@@ -4304,7 +4304,7 @@ msgstr "Tidak ada isu yang ditutup"
 msgid "No custom agents defined"
 msgstr "Belum ada agen kustom yang ditentukan"
 
-#: lib/evo_dash_web/components/task_form_components.ex:650
+#: lib/evo_dash_web/components/task_form_components.ex:830
 #, elixir-autogen, elixir-format
 msgid "No custom agents defined. Add one in Settings → Agents to use Custom Agent mode."
 msgstr "Belum ada agen khusus yang ditentukan. Tambahkan satu di Pengaturan → Agen untuk menggunakan mode Agen Khusus."
@@ -4354,22 +4354,22 @@ msgstr "Konkurensi Puncak (opsional)"
 msgid "Peak Hours (optional)"
 msgstr "Jam Sibuk (opsional)"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:387
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:413
 #, elixir-autogen, elixir-format
 msgid "Peak concurrency must be a non-negative integer."
 msgstr "Konkurensi puncak harus berupa bilangan bulat non-negatif."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:393
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:419
 #, elixir-autogen, elixir-format
 msgid "Peak hour window start and end must differ."
 msgstr "Waktu mulai dan berakhir jam puncak harus berbeda."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:395
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:421
 #, elixir-autogen, elixir-format
 msgid "Peak hour windows must not overlap."
 msgstr "Jendela jam puncak tidak boleh tumpang tindih."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:390
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:416
 #, elixir-autogen, elixir-format
 msgid "Peak hours must use HH:MM 24-hour format."
 msgstr "Jam puncak harus menggunakan format HH:MM 24 jam."
@@ -4415,7 +4415,7 @@ msgstr "Arsitek utama (kedalaman 0)"
 msgid "Runs a user-defined custom agent as the root agent of an evolution task on this codebase."
 msgstr "Menjalankan agen kustom yang ditentukan pengguna sebagai agen utama dari tugas evolusi pada basis kode ini."
 
-#: lib/evo_dash_web/components/task_form_components.ex:658
+#: lib/evo_dash_web/components/task_form_components.ex:838
 #, elixir-autogen, elixir-format
 msgid "Runs the selected custom agent as the root agent of an evolution task."
 msgstr "Menjalankan agen khusus yang dipilih sebagai agen utama dari tugas evolusi."
@@ -4497,7 +4497,7 @@ msgid "The update can only be applied when no tasks are running. Gracefully stop
 msgstr "Pembaruan hanya dapat diterapkan saat tidak ada tugas yang berjalan. Menghentikan tugas secara halus meminta para agen untuk menyimpan pekerjaan mereka dan menyelesaikannya; hasilnya disimpan untuk ditinjau."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:457
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:198
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:272
 #, elixir-autogen, elixir-format
 msgid "Timezone (optional)"
 msgstr "Zona Waktu (opsional)"
@@ -4562,17 +4562,17 @@ msgstr "delegasi tinggi"
 msgid "low delegation"
 msgstr "delegasi rendah"
 
-#: lib/evo_dash_web/components/task_form_components.ex:546
+#: lib/evo_dash_web/components/task_form_components.ex:638
 #, elixir-autogen, elixir-format
 msgid "Create new project"
 msgstr "Buat proyek baru"
 
-#: lib/evo_dash_web/components/task_form_components.ex:550
+#: lib/evo_dash_web/components/task_form_components.ex:661
 #, elixir-autogen, elixir-format
 msgid "Evolve existing project"
 msgstr "Evolusi proyek yang sudah ada"
 
-#: lib/evo_dash_web/components/task_form_components.ex:542
+#: lib/evo_dash_web/components/task_form_components.ex:615
 #, elixir-autogen, elixir-format
 msgid "Initialize existing project"
 msgstr "Inisialisasi proyek yang sudah ada"
@@ -4609,28 +4609,28 @@ msgstr "Direktori"
 msgid "Dismiss guide"
 msgstr "Tutup panduan"
 
-#: lib/evo_dash_web/live/system_live.ex:2000
+#: lib/evo_dash_web/live/system_live.ex:2001
 #, elixir-autogen, elixir-format
 msgid "Failed to clone the Genesis source."
 msgstr "Gagal mengkloning sumber Genesis."
 
-#: lib/evo_dash_web/live/home_live.ex:1136
+#: lib/evo_dash_web/live/home_live.ex:1150
 #, elixir-autogen, elixir-format
 msgid "Failed to start the task: %{reason}"
 msgstr "Gagal memulai tugas: %{reason}"
 
-#: lib/evo_dash_web/live/home_live.ex:1125
+#: lib/evo_dash_web/live/home_live.ex:1139
 #, elixir-autogen, elixir-format
 msgid "Failed to start the task: no task id returned"
 msgstr "Gagal memulai tugas: tidak ada id tugas yang dikembalikan"
 
-#: lib/evo_dash_web/live/home_live.ex:708
-#: lib/evo_dash_web/live/home_live.ex:716
+#: lib/evo_dash_web/live/home_live.ex:722
+#: lib/evo_dash_web/live/home_live.ex:730
 #, elixir-autogen, elixir-format
 msgid "Failed to stop: %{reason}"
 msgstr "Gagal menghentikan: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:2001
+#: lib/evo_dash_web/live/system_live.ex:2002
 #, elixir-autogen, elixir-format
 msgid "Failed to update the Genesis source."
 msgstr "Gagal memperbarui sumber Genesis."
@@ -4650,18 +4650,18 @@ msgstr "Sumber Genesis"
 msgid "Genesis source checkout used by the self-reflective agent."
 msgstr "Checkout sumber Genesis yang digunakan oleh agen yang merefleksikan diri."
 
-#: lib/evo_dash_web/live/system_live.ex:1997
+#: lib/evo_dash_web/live/system_live.ex:1998
 #, elixir-autogen, elixir-format
 msgid "Genesis source cloned."
 msgstr "Sumber Genesis berhasil dikloning."
 
-#: lib/evo_dash_web/live/system_live.ex:1986
+#: lib/evo_dash_web/live/system_live.ex:1987
 #: lib/evo_dash_web/live/system_live/source_card.ex:108
 #, elixir-autogen, elixir-format
 msgid "Genesis source is not available in this version"
 msgstr "Sumber Genesis tidak tersedia di versi ini"
 
-#: lib/evo_dash_web/live/system_live.ex:1998
+#: lib/evo_dash_web/live/system_live.ex:1999
 #, elixir-autogen, elixir-format
 msgid "Genesis source updated."
 msgstr "Sumber Genesis berhasil diperbarui."
@@ -4678,12 +4678,12 @@ msgstr "Lanjut"
 msgid "Loading…"
 msgstr "Memuat…"
 
-#: lib/evo_dash_web/live/home_live.ex:115
+#: lib/evo_dash_web/live/home_live.ex:100
 #, elixir-autogen, elixir-format
 msgid "New chat"
 msgstr "Obrolan baru"
 
-#: lib/evo_dash_web/live/home_live.ex:1338
+#: lib/evo_dash_web/live/home_live.ex:1352
 #, elixir-autogen, elixir-format
 msgid "No response."
 msgstr "Tidak ada respons."
@@ -4693,12 +4693,12 @@ msgstr "Tidak ada respons."
 msgid "Start a conversation"
 msgstr "Mulai percakapan"
 
-#: lib/evo_dash_web/live/home_live.ex:239
+#: lib/evo_dash_web/live/home_live.ex:251
 #, elixir-autogen, elixir-format
 msgid "Stop"
 msgstr "Berhenti"
 
-#: lib/evo_dash_web/live/home_live.ex:1347
+#: lib/evo_dash_web/live/home_live.ex:1361
 #, elixir-autogen, elixir-format
 msgid "Stopped."
 msgstr "Dihentikan."
@@ -4708,15 +4708,15 @@ msgstr "Dihentikan."
 msgid "The Genesis source has not been cloned yet."
 msgstr "Sumber Genesis belum dikloning."
 
-#: lib/evo_dash_web/live/home_live.ex:1270
-#: lib/evo_dash_web/live/home_live.ex:1294
+#: lib/evo_dash_web/live/home_live.ex:1284
+#: lib/evo_dash_web/live/home_live.ex:1308
 #, elixir-autogen, elixir-format
 msgid "The conversation was deleted."
 msgstr "Percakapan telah dihapus."
 
-#: lib/evo_dash_web/live/home_live.ex:1230
-#: lib/evo_dash_web/live/home_live.ex:1339
-#: lib/evo_dash_web/live/home_live.ex:1358
+#: lib/evo_dash_web/live/home_live.ex:1244
+#: lib/evo_dash_web/live/home_live.ex:1353
+#: lib/evo_dash_web/live/home_live.ex:1372
 #, elixir-autogen, elixir-format
 msgid "The task failed."
 msgstr "Tugas gagal."
@@ -4806,7 +4806,7 @@ msgstr "cabang atau SHA, kosongkan = HEAD"
 msgid "no changes"
 msgstr "tidak ada perubahan"
 
-#: lib/evo_dash_web/live/home_live.ex:243
+#: lib/evo_dash_web/live/home_live.ex:257
 #, elixir-autogen, elixir-format
 msgid "Enter to send · Shift+Enter for a new line"
 msgstr "Enter untuk mengirim · Shift+Enter untuk baris baru"
@@ -4846,11 +4846,6 @@ msgstr "Biru"
 msgid "Brown"
 msgstr "Cokelat"
 
-#: lib/evo_dash_web/live/system_live/charts.ex:318
-#, elixir-autogen, elixir-format
-msgid "Capacity: the selected model's effective concurrency. In use: live slot holders. Waiting: agents queued for a slot."
-msgstr "Kapasitas: konkurensi efektif model yang dipilih. Sedang digunakan: pemegang slot aktif. Menunggu: agen yang mengantre untuk sebuah slot."
-
 #: lib/evo_dash_web/live/settings_live.ex:343
 #, elixir-autogen, elixir-format
 msgid "Configuring"
@@ -4873,7 +4868,7 @@ msgid "Days:"
 msgstr "Hari:"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1233
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:451
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:588
 #, elixir-autogen, elixir-format
 msgid "Fri"
 msgstr "Jum"
@@ -4884,7 +4879,7 @@ msgid "Green"
 msgstr "Hijau"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1229
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:447
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:584
 #, elixir-autogen, elixir-format
 msgid "Mon"
 msgstr "Sen"
@@ -4930,7 +4925,7 @@ msgid "Red"
 msgstr "Merah"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1234
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:452
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:589
 #, elixir-autogen, elixir-format
 msgid "Sat"
 msgstr "Sab"
@@ -4963,7 +4958,7 @@ msgid "Slate"
 msgstr "Batu Tulis"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1235
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:453
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:590
 #, elixir-autogen, elixir-format
 msgid "Sun"
 msgstr "Min"
@@ -4984,13 +4979,13 @@ msgid "The system dashboard, scheduler pause/resume, and Erlang VM restart/stop 
 msgstr "Kontrol dasbor sistem, jeda/lanjutkan penjadwal, serta mulai ulang/hentikan VM Erlang."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1232
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:450
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:587
 #, elixir-autogen, elixir-format
 msgid "Thu"
 msgstr "Kam"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1230
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:448
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:585
 #, elixir-autogen, elixir-format
 msgid "Tue"
 msgstr "Sel"
@@ -5005,25 +5000,25 @@ msgstr "Warna aksen tidak dikenal."
 msgid "Update changelog"
 msgstr "Perbarui catatan perubahan"
 
-#: lib/evo_dash_web/live/system_live.ex:2095
+#: lib/evo_dash_web/live/system_live.ex:2096
 #, elixir-autogen, elixir-format
 msgid "View changelog"
 msgstr "Lihat catatan perubahan"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1231
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:449
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:586
 #, elixir-autogen, elixir-format
 msgid "Wed"
 msgstr "Rab"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1237
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:454
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:591
 #, elixir-autogen, elixir-format
 msgid "Weekdays"
 msgstr "Hari kerja"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:1239
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:455
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:592
 #, elixir-autogen, elixir-format
 msgid "Weekends"
 msgstr "Akhir pekan"
@@ -5048,7 +5043,7 @@ msgstr "Konfirmasi"
 msgid "Deny"
 msgstr "Tolak"
 
-#: lib/evo_dash_web/live/home_live.ex:190
+#: lib/evo_dash_web/live/home_live.ex:175
 #, elixir-autogen, elixir-format
 msgid "Failed to respond: %{reason}"
 msgstr "Gagal merespons: %{reason}"
@@ -5189,8 +5184,8 @@ msgstr "Agen mogok"
 msgid "Agent monitor"
 msgstr "Pemantau agen"
 
-#: lib/evo_dash_web/components/task_form_components.ex:391
-#: lib/evo_dash_web/components/task_form_components.ex:706
+#: lib/evo_dash_web/components/task_form_components.ex:392
+#: lib/evo_dash_web/components/task_form_components.ex:886
 #, elixir-autogen, elixir-format
 msgid "Audio"
 msgstr "Audio"
@@ -5210,8 +5205,8 @@ msgstr "Pengawas finalisasi"
 msgid "Force-killed"
 msgstr "Dihentikan paksa"
 
-#: lib/evo_dash_web/components/task_form_components.ex:380
-#: lib/evo_dash_web/components/task_form_components.ex:705
+#: lib/evo_dash_web/components/task_form_components.ex:381
+#: lib/evo_dash_web/components/task_form_components.ex:885
 #, elixir-autogen, elixir-format
 msgid "Image"
 msgstr "Gambar"
@@ -5234,33 +5229,33 @@ msgstr "Maksimal %{count} lampiran per tugas"
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:956
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:957
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:960
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:328
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:402
 #: lib/evo_dash_web/helpers.ex:197
 #: lib/evo_dash_web/helpers.ex:215
 #, elixir-autogen, elixir-format
 msgid "Recheck"
 msgstr "Periksa ulang"
 
-#: lib/evo_dash_web/live/agents_live.ex:316
+#: lib/evo_dash_web/live/agents_live.ex:317
 #: lib/evo_dash_web/live/projects_live.ex:2031
 #: lib/evo_dash_web/live/review_live.ex:1276
-#: lib/evo_dash_web/live/system_live.ex:1263
+#: lib/evo_dash_web/live/system_live.ex:1264
 #: lib/evo_dash_web/live/tasks_live.ex:814
 #, elixir-autogen, elixir-format
 msgid "Remote connect failed: %{reason}"
 msgstr "Koneksi jarak jauh gagal: %{reason}"
 
-#: lib/evo_dash_web/live/agents_live.ex:313
+#: lib/evo_dash_web/live/agents_live.ex:314
 #: lib/evo_dash_web/live/projects_live.ex:2028
 #: lib/evo_dash_web/live/review_live.ex:1273
-#: lib/evo_dash_web/live/system_live.ex:1260
+#: lib/evo_dash_web/live/system_live.ex:1261
 #: lib/evo_dash_web/live/tasks_live.ex:811
 #, elixir-autogen, elixir-format
 msgid "Remote connect unavailable — the remote connection subsystem is not running."
 msgstr "Koneksi jarak jauh tidak tersedia — subsistem koneksi jarak jauh tidak berjalan."
 
-#: lib/evo_dash_web/components/task_form_components.ex:296
-#: lib/evo_dash_web/components/task_form_components.ex:297
+#: lib/evo_dash_web/components/task_form_components.ex:315
+#: lib/evo_dash_web/components/task_form_components.ex:316
 #, elixir-autogen, elixir-format
 msgid "Remove attachment"
 msgstr "Hapus lampiran"
@@ -5275,12 +5270,12 @@ msgstr "Penangan hasil"
 msgid "Runtime restarted"
 msgstr "Runtime dimulai ulang"
 
-#: lib/evo_dash_web/components/task_card_components.ex:373
+#: lib/evo_dash_web/components/task_card_components.ex:390
 #, elixir-autogen, elixir-format
 msgid "Source"
 msgstr "Sumber"
 
-#: lib/evo_dash_web/components/task_card_components.ex:386
+#: lib/evo_dash_web/components/task_card_components.ex:403
 #, elixir-autogen, elixir-format
 msgid "Stacktrace"
 msgstr "Jejak tumpukan"
@@ -5290,7 +5285,7 @@ msgstr "Jejak tumpukan"
 msgid "Startup reconcile"
 msgstr "Rekonsiliasi saat mulai"
 
-#: lib/evo_dash_web/components/task_form_components.ex:369
+#: lib/evo_dash_web/components/task_form_components.ex:370
 #, elixir-autogen, elixir-format
 msgid "Text / PDF"
 msgstr "Teks / PDF"
@@ -5340,7 +5335,7 @@ msgstr "Tidak dapat menggabungkan satu pun dari %{total} repositori — lihat ka
 msgid "Download source"
 msgstr "Unduh sumber"
 
-#: lib/evo_dash_web/live/home_live.ex:1030
+#: lib/evo_dash_web/live/home_live.ex:1044
 #, elixir-autogen, elixir-format
 msgid "Download the Genesis source before sending a message."
 msgstr "Unduh sumber Genesis sebelum mengirim pesan."
@@ -5350,7 +5345,7 @@ msgstr "Unduh sumber Genesis sebelum mengirim pesan."
 msgid "Download the Genesis source to start chatting."
 msgstr "Unduh kode sumber Genesis untuk mulai mengobrol."
 
-#: lib/evo_dash_web/live/home_live.ex:943
+#: lib/evo_dash_web/live/home_live.ex:957
 #, elixir-autogen, elixir-format
 msgid "Failed to download the Genesis source: %{reason}"
 msgstr "Gagal mengunduh sumber Genesis: %{reason}"
@@ -5698,12 +5693,14 @@ msgstr "Tugas latar belakang: %{name}"
 msgid "Background shell call"
 msgstr "Panggilan shell latar belakang"
 
-#: lib/evo_dash_web/components/task_form_components.ex:513
+#: lib/evo_dash_web/components/task_form_components.ex:560
+#: lib/evo_dash_web/components/task_form_components.ex:897
+#: lib/evo_dash_web/components/task_form_components.ex:899
 #, elixir-autogen, elixir-format
 msgid "Balanced"
 msgstr "Seimbang"
 
-#: lib/evo_dash_web/components/task_form_components.ex:509
+#: lib/evo_dash_web/components/task_form_components.ex:556
 #, elixir-autogen, elixir-format
 msgid "Balanced — the default trade-off between speed and correctness"
 msgstr "Seimbang — kompromi bawaan antara kecepatan dan ketepatan"
@@ -5738,7 +5735,7 @@ msgstr "Kompresi"
 msgid "Context Window (optional)"
 msgstr "Jendela Konteks (opsional)"
 
-#: lib/evo_dash_web/components/task_card_components.ex:888
+#: lib/evo_dash_web/components/task_card_components.ex:905
 #, elixir-autogen, elixir-format
 msgid "Copy is limited to the first 1 MB — open Full for the complete text"
 msgstr "Penyalinan dibatasi pada 1 MB pertama — buka Lengkap untuk teks utuh"
@@ -5758,7 +5755,7 @@ msgstr "Tidak dapat memuat halaman arsip lainnya."
 msgid "Could not load more archive records."
 msgstr "Tidak dapat memuat lebih banyak catatan arsip."
 
-#: lib/evo_dash_web/components/task_card_components.ex:482
+#: lib/evo_dash_web/components/task_card_components.ex:499
 #, elixir-autogen, elixir-format
 msgid "Could not load task details."
 msgstr "Tidak dapat memuat detail tugas."
@@ -5773,7 +5770,7 @@ msgstr "Tidak dapat memuat tugas."
 msgid "Could not load the previous task's foreign repositories."
 msgstr "Gagal memuat repositori eksternal dari tugas sebelumnya."
 
-#: lib/evo_dash_web/components/task_card_components.ex:748
+#: lib/evo_dash_web/components/task_card_components.ex:765
 #, elixir-autogen, elixir-format
 msgid "Could not load the task archive."
 msgstr "Tidak dapat memuat arsip tugas."
@@ -5799,7 +5796,7 @@ msgstr "Tidak dapat menggabungkan repositori — lihat kartu repositori untuk de
 msgid "Could not refresh tasks."
 msgstr "Tidak dapat menyegarkan tugas."
 
-#: lib/evo_dash_web/live/system_live.ex:1429
+#: lib/evo_dash_web/live/system_live.ex:1430
 #, elixir-autogen, elixir-format
 msgid "Failed to check running tasks: %{reason}"
 msgstr "Gagal memeriksa tugas yang berjalan: %{reason}"
@@ -5826,7 +5823,7 @@ msgstr "Gagal menghapus tugas: %{reason}"
 msgid "Failed to delete: %{reason}"
 msgstr "Gagal menghapus: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1467
+#: lib/evo_dash_web/live/system_live.ex:1468
 #, elixir-autogen, elixir-format
 msgid "Failed to force kill tasks: %{reason}"
 msgstr "Gagal menghentikan paksa tugas: %{reason}"
@@ -5846,7 +5843,7 @@ msgstr "Gagal memuat data arsip."
 msgid "Failed to remove recent project: %{reason}"
 msgstr "Gagal menghapus proyek terbaru: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1751
+#: lib/evo_dash_web/live/system_live.ex:1752
 #, elixir-autogen, elixir-format
 msgid "Failed to restart the remote node: %{reason}"
 msgstr "Gagal memulai ulang node jarak jauh: %{reason}"
@@ -5856,7 +5853,7 @@ msgstr "Gagal memulai ulang node jarak jauh: %{reason}"
 msgid "Failed to start action: %{reason}"
 msgstr "Gagal memulai tindakan: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1755
+#: lib/evo_dash_web/live/system_live.ex:1756
 #, elixir-autogen, elixir-format
 msgid "Failed to stop the remote node: %{reason}"
 msgstr "Gagal menghentikan node jarak jauh: %{reason}"
@@ -5867,12 +5864,13 @@ msgstr "Gagal menghentikan node jarak jauh: %{reason}"
 msgid "Failed to update review status: %{reason}"
 msgstr "Gagal memperbarui status tinjauan: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1358
+#: lib/evo_dash_web/live/system_live.ex:1359
 #, elixir-autogen, elixir-format
 msgid "Failed to update the scheduler: %{reason}"
 msgstr "Gagal memperbarui penjadwal: %{reason}"
 
-#: lib/evo_dash_web/components/task_form_components.ex:500
+#: lib/evo_dash_web/components/task_form_components.ex:541
+#: lib/evo_dash_web/components/task_form_components.ex:896
 #, elixir-autogen, elixir-format
 msgid "Fast"
 msgstr "Cepat"
@@ -5882,7 +5880,8 @@ msgstr "Cepat"
 msgid "Generation parameters and provider-specific JSON. Rarely needed."
 msgstr "Parameter generasi dan JSON khusus penyedia. Jarang diperlukan."
 
-#: lib/evo_dash_web/components/task_form_components.ex:526
+#: lib/evo_dash_web/components/task_form_components.ex:577
+#: lib/evo_dash_web/components/task_form_components.ex:898
 #, elixir-autogen, elixir-format
 msgid "High quality"
 msgstr "Kualitas tinggi"
@@ -5898,7 +5897,7 @@ msgstr "Seberapa banyak model bernalar sebelum menjawab."
 msgid "Load more"
 msgstr "Muat lebih banyak"
 
-#: lib/evo_dash_web/components/task_card_components.ex:738
+#: lib/evo_dash_web/components/task_card_components.ex:755
 #: lib/evo_dash_web/live/review_live/archive_load.ex:347
 #, elixir-autogen, elixir-format
 msgid "Loading archive…"
@@ -5910,7 +5909,7 @@ msgstr "Memuat arsip…"
 msgid "Loading result…"
 msgstr "Memuat hasil…"
 
-#: lib/evo_dash_web/components/task_card_components.ex:499
+#: lib/evo_dash_web/components/task_card_components.ex:516
 #, elixir-autogen, elixir-format
 msgid "Loading task details…"
 msgstr "Memuat detail tugas…"
@@ -5927,7 +5926,7 @@ msgstr "Jendela konteks maksimum model dalam satuan token. Biarkan kosong untuk 
 msgid "Merging…"
 msgstr "Menggabungkan…"
 
-#: lib/evo_dash_web/components/task_card_components.ex:760
+#: lib/evo_dash_web/components/task_card_components.ex:777
 #, elixir-autogen, elixir-format
 msgid "No archived agents for this task."
 msgstr "Tidak ada agen yang diarsipkan untuk tugas ini."
@@ -5947,12 +5946,12 @@ msgstr "Menjeda…"
 msgid "Peak / Off-Peak Scheduling (optional)"
 msgstr "Penjadwalan Jam Sibuk / Jam Sepi (opsional)"
 
-#: lib/evo_dash_web/components/task_form_components.ex:522
+#: lib/evo_dash_web/components/task_form_components.ex:574
 #, elixir-autogen, elixir-format
 msgid "Prioritise correctness — verify more, run tests and compile"
 msgstr "Utamakan ketepatan — lebih banyak verifikasi, jalankan tes dan kompilasi"
 
-#: lib/evo_dash_web/components/task_form_components.ex:496
+#: lib/evo_dash_web/components/task_form_components.ex:538
 #, elixir-autogen, elixir-format
 msgid "Prioritise speed — trust the context, run fewer checks"
 msgstr "Utamakan kecepatan — percayai konteks, jalankan lebih sedikit pemeriksaan"
@@ -5972,7 +5971,7 @@ msgstr "Melanjutkan…"
 msgid "Saving configuration…"
 msgstr "Menyimpan konfigurasi…"
 
-#: lib/evo_dash_web/components/task_card_components.ex:721
+#: lib/evo_dash_web/components/task_card_components.ex:738
 #, elixir-autogen, elixir-format
 msgid "Show archive"
 msgstr "Tampilkan arsip"
@@ -5995,7 +5994,7 @@ msgstr "Menampilkan %{shown} dari %{total} catatan Agen — ekspor JSON untuk ar
 #: lib/evo_dash_web/components/review_components.ex:368
 #: lib/evo_dash_web/components/review_components/header.ex:319
 #: lib/evo_dash_web/components/review_components/header.ex:431
-#: lib/evo_dash_web/components/task_card_components.ex:900
+#: lib/evo_dash_web/components/task_card_components.ex:917
 #, elixir-autogen, elixir-format
 msgid "Showing %{shown} of %{total} bytes"
 msgstr "Menampilkan %{shown} dari %{total} byte"
@@ -6005,12 +6004,12 @@ msgstr "Menampilkan %{shown} dari %{total} byte"
 msgid "Showing %{shown} of %{total} files"
 msgstr "Menampilkan %{shown} dari %{total} file"
 
-#: lib/evo_dash_web/components/task_card_components.ex:660
+#: lib/evo_dash_web/components/task_card_components.ex:677
 #, elixir-autogen, elixir-format
 msgid "Showing the last %{shown} of %{total} log entries"
 msgstr "Menampilkan %{shown} entri log terakhir dari %{total} entri"
 
-#: lib/evo_dash_web/components/task_form_components.ex:487
+#: lib/evo_dash_web/components/task_form_components.ex:524
 #, elixir-autogen, elixir-format
 msgid "Speed / quality trade-off"
 msgstr "Kompromi kecepatan / kualitas"
@@ -6035,7 +6034,7 @@ msgstr "Hasil tugas belum dimuat."
 msgid "Tasks started without archiving enabled keep no per-agent archive."
 msgstr "Tugas yang dimulai tanpa pengarsipan aktif tidak menyimpan arsip per agen."
 
-#: lib/evo_dash_web/components/task_card_components.ex:730
+#: lib/evo_dash_web/components/task_card_components.ex:747
 #, elixir-autogen, elixir-format
 msgid "The archive loads on demand."
 msgstr "Arsip dimuat sesuai permintaan."
@@ -6045,7 +6044,7 @@ msgstr "Arsip dimuat sesuai permintaan."
 msgid "context_window"
 msgstr "context_window"
 
-#: lib/evo_dash_web/components/task_card_components.ex:873
+#: lib/evo_dash_web/components/task_card_components.ex:890
 #, elixir-autogen, elixir-format
 msgid "last %{shown} of %{count}"
 msgstr "%{shown} terakhir dari %{count}"
@@ -6055,15 +6054,15 @@ msgstr "%{shown} terakhir dari %{count}"
 msgid "%{count} provider profiles"
 msgstr "%{count} profil penyedia"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:164
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:238
 #, elixir-autogen, elixir-format
 msgid "A JSON object of advanced request options. Never paste API keys or login tokens here."
 msgstr "Objek JSON berisi opsi permintaan lanjutan. Jangan pernah menempelkan kunci API atau token login di sini."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:315
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:801
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:146
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:316
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:150
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:289
 #: lib/evo_dash_web/live/welcome_live.ex:222
 #, elixir-autogen, elixir-format
 msgid "API key"
@@ -6074,30 +6073,25 @@ msgstr "Kunci API"
 msgid "Absolute or ~-relative path to the vendor credential file. Leave empty to use the default managed file."
 msgstr "Path absolut atau relatif terhadap ~ ke file kredensial vendor. Biarkan kosong untuk menggunakan file terkelola bawaan."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:82
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:86
 #, elixir-autogen, elixir-format
 msgid "Add a provider profile, then choose its models and defaults."
 msgstr "Tambahkan profil penyedia, lalu pilih model dan defaultnya."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:387
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:333
 #, elixir-autogen, elixir-format
 msgid "Add model"
 msgstr "Tambah model"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:262
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:336
 #, elixir-autogen, elixir-format
 msgid "Add peak window"
 msgstr "Tambah jendela jam sibuk"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:71
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:75
 #, elixir-autogen, elixir-format
 msgid "Add provider profile"
 msgstr "Tambah profil penyedia"
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:355
-#, elixir-autogen, elixir-format
-msgid "All models in this provider profile share this capacity."
-msgstr "Semua model dalam profil penyedia ini berbagi kapasitas ini."
 
 #: lib/evo_dash_web/live/home_live/approval_card.ex:151
 #, elixir-autogen, elixir-format
@@ -6119,7 +6113,7 @@ msgstr "Izinkan kode Elixir ini sekali?"
 msgid "Allow unrestricted execution once"
 msgstr "Izinkan eksekusi tanpa batasan sekali"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:210
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:284
 #, elixir-autogen, elixir-format
 msgid "Always off-peak on these days"
 msgstr "Selalu di luar jam sibuk pada hari-hari ini"
@@ -6129,12 +6123,7 @@ msgstr "Selalu di luar jam sibuk pada hari-hari ini"
 msgid "Analyze the changes in this PR and distill reusable knowledge into Genesis skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
 msgstr "Analisis perubahan pada PR ini dan saring pengetahuan yang dapat digunakan kembali menjadi skill Genesis. Agen akan memeriksa diff, mengidentifikasi pola yang bernilai, dan membuat berkas skill di .agents/skills/."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:362
-#, elixir-autogen, elixir-format
-msgid "Any model served by this provider; override rows below are optional."
-msgstr "Model apa pun yang dilayani penyedia ini; baris penimpaan di bawah bersifat opsional."
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:241
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:315
 #, elixir-autogen, elixir-format
 msgid "Apply this window on"
 msgstr "Terapkan jendela ini pada"
@@ -6150,29 +6139,29 @@ msgid "Auth mode"
 msgstr "Mode autentikasi"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:288
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:299
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:272
 #: lib/evo_dash_web/live/welcome_live.ex:213
 #, elixir-autogen, elixir-format
 msgid "Authentication"
 msgstr "Autentikasi"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:306
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:308
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:279
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:281
 #, elixir-autogen, elixir-format
 msgid "Authentication mode"
 msgstr "Mode autentikasi"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:287
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:434
 #, elixir-autogen, elixir-format
 msgid "Base URL (optional)"
 msgstr "URL dasar (opsional)"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:332
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:305
 #, elixir-autogen, elixir-format
 msgid "Blank uses the managed credential file on the selected node. Absolute and ~-relative paths are accepted."
 msgstr "Jika kosong, file kredensial terkelola pada node yang dipilih akan digunakan. Path absolut dan relatif terhadap ~ diterima."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:490
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:581
 #, elixir-autogen, elixir-format
 msgid "Blank values inherit the shared generation defaults."
 msgstr "Nilai kosong akan mewarisi default generasi bersama."
@@ -6193,32 +6182,36 @@ msgstr "Periksa status dan kapasitas sistem"
 msgid "Check the profile settings before saving."
 msgstr "Periksa pengaturan profil sebelum menyimpan."
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:157
+#: lib/evo_dash_web/components/llm_selection_components.ex:192
+#: lib/evo_dash_web/components/llm_selection_components.ex:483
+#: lib/evo_dash_web/components/llm_selection_components.ex:492
 #, elixir-autogen, elixir-format
 msgid "Choose a model"
 msgstr "Pilih model"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:156
+#: lib/evo_dash_web/components/llm_selection_components.ex:191
+#: lib/evo_dash_web/components/llm_selection_components.ex:489
 #, elixir-autogen, elixir-format
 msgid "Choose a provider first"
 msgstr "Pilih penyedia terlebih dahulu"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:111
+#: lib/evo_dash_web/components/llm_selection_components.ex:327
+#: lib/evo_dash_web/components/llm_selection_components.ex:453
 #, elixir-autogen, elixir-format
 msgid "Choose a provider profile"
 msgstr "Pilih profil penyedia"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:116
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:190
 #, elixir-autogen, elixir-format
 msgid "Choose a supported level. This is separate from task speed and quality."
 msgstr "Pilih tingkat yang didukung. Ini terpisah dari kecepatan dan kualitas tugas."
 
-#: lib/evo_dash_web/live/home_live.ex:1068
+#: lib/evo_dash_web/live/home_live.ex:1082
 #, elixir-autogen, elixir-format
 msgid "Choose a valid model before sending a message."
 msgstr "Pilih model yang valid sebelum mengirim pesan."
 
-#: lib/evo_dash_web/live/home_live.ex:468
+#: lib/evo_dash_web/live/home_live.ex:482
 #, elixir-autogen, elixir-format
 msgid "Choose a valid provider profile, model and reasoning effort."
 msgstr "Pilih profil penyedia, model, dan tingkat penalaran yang valid."
@@ -6227,16 +6220,6 @@ msgstr "Pilih profil penyedia, model, dan tingkat penalaran yang valid."
 #, elixir-autogen, elixir-format
 msgid "Choose models and a default model from the selected provider."
 msgstr "Pilih model dan model default dari penyedia yang dipilih."
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:67
-#, elixir-autogen, elixir-format
-msgid "Comma-separated, lowest to highest. Blank explicitly disables reasoning for this model."
-msgstr "Dipisahkan koma, dari terendah ke tertinggi. Kosong berarti penalaran dinonaktifkan secara eksplisit untuk model ini."
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:71
-#, elixir-autogen, elixir-format
-msgid "Comma-separated, lowest to highest; for example: low, medium, high. Blank means no advertised reasoning support."
-msgstr "Dipisahkan koma, dari terendah ke tertinggi; misalnya: low, medium, high. Kosong berarti tidak ada dukungan penalaran yang diiklankan."
 
 #: lib/evo_dash_web/live/welcome_live.ex:677
 #, elixir-autogen, elixir-format
@@ -6253,7 +6236,7 @@ msgstr "Konfigurasi tersimpan, tetapi penyegaran gagal: %{reason}"
 msgid "Configure a provider and its models to start building with Genesis."
 msgstr "Konfigurasikan penyedia dan modelnya untuk mulai membangun dengan Genesis."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:341
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:314
 #, elixir-autogen, elixir-format
 msgid "Configure the provider's API key in the selected node's credentials file or environment. Keys are never displayed or copied into this profile form."
 msgstr "Konfigurasikan kunci API penyedia di file kredensial atau environment node yang dipilih. Kunci tidak pernah ditampilkan atau disalin ke formulir profil ini."
@@ -6264,12 +6247,12 @@ msgstr "Konfigurasikan kunci API penyedia di file kredensial atau environment no
 msgid "Configure via the provider profiles editor"
 msgstr "Konfigurasikan melalui editor profil penyedia"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:203
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:202
 #, elixir-autogen, elixir-format
 msgid "Configured models"
 msgstr "Model yang dikonfigurasi"
 
-#: lib/evo_dash_web/live/home_live.ex:1022
+#: lib/evo_dash_web/live/home_live.ex:1036
 #, elixir-autogen, elixir-format
 msgid "Connect to the remote node before sending a message."
 msgstr "Hubungkan ke node jarak jauh sebelum mengirim pesan."
@@ -6285,7 +6268,7 @@ msgstr "Hubungkan ke node jarak jauh sebelum memulai tugas."
 msgid "Connect to the remote node before testing its configuration."
 msgstr "Hubungkan ke node jarak jauh sebelum menguji konfigurasinya."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:452
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:538
 #, elixir-autogen, elixir-format
 msgid "Context window (optional)"
 msgstr "Jendela konteks (opsional)"
@@ -6295,13 +6278,13 @@ msgstr "Jendela konteks (opsional)"
 msgid "Could not load model selection. Your choice has been kept. Reconnect to the node if needed, then retry before launching a task."
 msgstr "Tidak dapat memuat pilihan model. Pilihan Anda tetap tersimpan. Hubungkan kembali ke node jika perlu, lalu coba lagi sebelum meluncurkan tugas."
 
-#: lib/evo_dash_web/live/home_live.ex:169
+#: lib/evo_dash_web/live/home_live.ex:154
 #, elixir-autogen, elixir-format
 msgid "Could not load pending approvals: %{reason}"
 msgstr "Tidak dapat memuat persetujuan yang tertunda: %{reason}"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:328
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:329
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:302
 #, elixir-autogen, elixir-format
 msgid "Credential file (optional)"
 msgstr "File kredensial (opsional)"
@@ -6311,19 +6294,19 @@ msgstr "File kredensial (opsional)"
 msgid "Danger — unrestricted Elixir execution"
 msgstr "Bahaya — eksekusi Elixir tanpa batasan"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:190
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:359
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:189
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:363
 #: lib/evo_dash_web/live/welcome_live.ex:165
 #, elixir-autogen, elixir-format
 msgid "Default model"
 msgstr "Model default"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:229
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:247
 #, elixir-autogen, elixir-format
 msgid "Default provider profile saved."
 msgstr "Profil penyedia default disimpan."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:368
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:394
 #, elixir-autogen, elixir-format
 msgid "Default reasoning effort must be one of the configured reasoning efforts."
 msgstr "Upaya penalaran default harus salah satu dari upaya penalaran yang dikonfigurasi."
@@ -6333,47 +6316,43 @@ msgstr "Upaya penalaran default harus salah satu dari upaya penalaran yang dikon
 msgid "Default reasoning for %{model}"
 msgstr "Penalaran default untuk %{model}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:95
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:169
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:194
 #, elixir-autogen, elixir-format
 msgid "Default reasoning level"
 msgstr "Tingkat penalaran default"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:177
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:181
 #, elixir-autogen, elixir-format
 msgid "Delete %{name}"
 msgstr "Hapus %{name}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:175
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:179
 #, elixir-autogen, elixir-format
 msgid "Delete this provider profile and its models?"
 msgstr "Hapus profil penyedia ini beserta modelnya?"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:277
-#, elixir-autogen, elixir-format
-msgid "Display name"
-msgstr "Nama tampilan"
-
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:371
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:397
 #, elixir-autogen, elixir-format
 msgid "Each model entry must be a model configuration."
 msgstr "Setiap entri model harus berupa konfigurasi model."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:167
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:171
 #, elixir-autogen, elixir-format
 msgid "Edit %{name}"
 msgstr "Edit %{name}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:233
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:307
 #, elixir-autogen, elixir-format
 msgid "End time"
 msgstr "Waktu selesai"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:365
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:391
 #, elixir-autogen, elixir-format
 msgid "Enter a default model or add a model override."
 msgstr "Masukkan model default atau tambahkan penimpaan model."
 
-#: lib/evo_dash_web/live/home_live.ex:172
+#: lib/evo_dash_web/live/home_live.ex:157
 #, elixir-autogen, elixir-format
 msgid "Existing requests are kept. Retry to check for pending approvals."
 msgstr "Permintaan yang ada tetap disimpan. Coba lagi untuk memeriksa persetujuan yang tertunda."
@@ -6383,60 +6362,60 @@ msgstr "Permintaan yang ada tetap disimpan. Coba lagi untuk memeriksa persetujua
 msgid "Explain how tasks are scheduled"
 msgstr "Jelaskan cara tugas dijadwalkan"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:130
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:204
 #, elixir-autogen, elixir-format
 msgid "Extra config (JSON, optional)"
 msgstr "Konfigurasi tambahan (JSON, opsional)"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:303
+#: lib/evo_dash_web/components/llm_selection_components.ex:501
 #, elixir-autogen, elixir-format
 msgid "Extra high"
 msgstr "Sangat tinggi"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:440
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:577
 #, elixir-autogen, elixir-format
 msgid "Frequency penalty"
 msgstr "Penalti frekuensi"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:487
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:578
 #, elixir-autogen, elixir-format
 msgid "Generation overrides"
 msgstr "Penimpaan generasi"
 
-#: lib/evo_dash_web/live/home_live.ex:85
+#: lib/evo_dash_web/live/home_live.ex:88
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:57
 #, elixir-autogen, elixir-format
 msgid "Genesis Assistant"
 msgstr "Asisten Genesis"
 
-#: lib/evo_dash_web/live/home_live.ex:248
+#: lib/evo_dash_web/live/home_live.ex:262
 #, elixir-autogen, elixir-format
 msgid "Genesis Assistant can make mistakes. Verify important information."
 msgstr "Asisten Genesis dapat membuat kesalahan. Verifikasi informasi penting."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:970
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:333
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:407
 #, elixir-autogen, elixir-format
 msgid "Genesis found the vendor login but could not write its managed credential file."
 msgstr "Genesis menemukan login vendor tetapi tidak dapat menulis berkas kredensial terkelolanya."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:994
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:341
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:415
 #, elixir-autogen, elixir-format
 msgid "Genesis imports the vendor login automatically on the next run."
 msgstr "Genesis mengimpor login vendor secara otomatis pada proses berikutnya."
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:302
+#: lib/evo_dash_web/components/llm_selection_components.ex:500
 #, elixir-autogen, elixir-format
 msgid "High"
 msgstr "Tinggi"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:201
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:275
 #, elixir-autogen, elixir-format
 msgid "IANA timezone, such as Asia/Shanghai. Blank uses the selected node's local time."
 msgstr "Zona waktu IANA, seperti Asia/Shanghai. Kosong berarti menggunakan waktu lokal node yang dipilih."
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:106
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:180
 #, elixir-autogen, elixir-format
 msgid "Inherit provider default"
 msgstr "Gunakan default penyedia"
@@ -6456,17 +6435,12 @@ msgstr "Konfigurasi tidak valid: %{reason}"
 msgid "Invalid reasoning effort."
 msgstr "Tingkat penalaran tidak valid."
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:84
-#, elixir-autogen, elixir-format
-msgid "Language model selection"
-msgstr "Pemilihan model bahasa"
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:370
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:461
 #, elixir-autogen, elixir-format
 msgid "Leave blank for the runtime default. Models may override this value."
 msgstr "Biarkan kosong untuk default runtime. Model dapat menimpa nilai ini."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:456
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:542
 #, elixir-autogen, elixir-format
 msgid "Leave blank to inherit the shared context window or runtime default."
 msgstr "Biarkan kosong untuk mewarisi jendela konteks bersama atau default runtime."
@@ -6477,30 +6451,30 @@ msgid "Log in once with the vendor CLI on this machine, then test the connection
 msgstr "Masuk sekali dengan CLI vendor di mesin ini, lalu uji koneksi. Tidak diperlukan API key."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:855
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:481
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:485
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:618
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:622
 #, elixir-autogen, elixir-format
 msgid "Login detected"
 msgstr "Login terdeteksi"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:856
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:476
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:613
 #, elixir-autogen, elixir-format
 msgid "Login detected (expires %{date})"
 msgstr "Login terdeteksi (kedaluwarsa %{date})"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:864
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:489
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:626
 #, elixir-autogen, elixir-format
 msgid "Login found, managed credential file not writable"
 msgstr "Login ditemukan, berkas kredensial terkelola tidak dapat ditulis"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:300
+#: lib/evo_dash_web/components/llm_selection_components.ex:498
 #, elixir-autogen, elixir-format
 msgid "Low"
 msgstr "Rendah"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:160
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:164
 #, elixir-autogen, elixir-format
 msgid "Make default"
 msgstr "Jadikan default"
@@ -6508,100 +6482,89 @@ msgstr "Jadikan default"
 #: lib/evo_dash_web/components/settings_components.ex:362
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:976
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:989
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:345
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:419
 #, elixir-autogen, elixir-format
 msgid "Managed credential file: %{path}"
 msgstr "Berkas kredensial terkelola: %{path}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:437
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:574
 #, elixir-autogen, elixir-format
 msgid "Max output tokens"
 msgstr "Maksimum token keluaran"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:301
+#: lib/evo_dash_web/components/llm_selection_components.ex:499
 #, elixir-autogen, elixir-format
 msgid "Medium"
 msgstr "Sedang"
 
-#: lib/evo_dash_web/live/home_live.ex:213
-#: lib/evo_dash_web/live/home_live.ex:215
+#: lib/evo_dash_web/live/home_live.ex:212
+#: lib/evo_dash_web/live/home_live.ex:214
 #, elixir-autogen, elixir-format
 msgid "Message Genesis Assistant…"
 msgstr "Kirim pesan ke Asisten Genesis…"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:299
+#: lib/evo_dash_web/components/llm_selection_components.ex:497
 #, elixir-autogen, elixir-format
 msgid "Minimal"
 msgstr "Minimal"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:441
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:509
 #, elixir-autogen, elixir-format
 msgid "Model %{number}"
 msgstr "Model %{number}"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:362
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:388
 #, elixir-autogen, elixir-format
 msgid "Model IDs must be unique within a provider profile."
 msgstr "ID model harus unik dalam satu profil penyedia."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:393
-#, elixir-autogen, elixir-format
-msgid "Model overrides are optional. Enter a default model above to save this profile."
-msgstr "Penimpaan model bersifat opsional. Masukkan model default di atas untuk menyimpan profil ini."
-
-#: lib/evo_dash_web/live/home_live.ex:106
+#: lib/evo_dash_web/live/home_live.ex:198
 #, elixir-autogen, elixir-format
 msgid "Model selection is unavailable. Choose a valid model or reconnect to the node."
 msgstr "Pemilihan model tidak tersedia. Pilih model yang valid atau hubungkan kembali ke node."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:379
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:323
 #, elixir-autogen, elixir-format
 msgid "Models"
 msgstr "Model"
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:381
-#, elixir-autogen, elixir-format
-msgid "Models inherit provider defaults unless an override is set."
-msgstr "Model mewarisi default penyedia kecuali penimpaan ditetapkan."
 
 #: lib/evo_dash_web/live/welcome_live.ex:156
 #, elixir-autogen, elixir-format
 msgid "Need a custom model or advanced settings?"
 msgstr "Butuh model kustom atau pengaturan lanjutan?"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:247
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:321
 #, elixir-autogen, elixir-format
 msgid "No days selected means every day. End before start crosses midnight."
 msgstr "Tanpa hari yang dipilih berarti setiap hari. Waktu selesai sebelum waktu mulai berarti melewati tengah malam."
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:237
+#: lib/evo_dash_web/components/llm_selection_components.ex:284
 #, elixir-autogen, elixir-format
 msgid "No models are available for this provider profile."
 msgstr "Tidak ada model yang tersedia untuk profil penyedia ini."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:80
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:84
 #, elixir-autogen, elixir-format
 msgid "No provider profiles configured"
 msgstr "Belum ada profil penyedia yang dikonfigurasi"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:230
+#: lib/evo_dash_web/components/llm_selection_components.ex:277
 #, elixir-autogen, elixir-format
 msgid "No provider profiles configured. Add one in Settings to choose a model."
 msgstr "Belum ada profil penyedia yang dikonfigurasi. Tambahkan satu di Pengaturan untuk memilih model."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:860
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:486
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:623
 #, elixir-autogen, elixir-format
 msgid "No subscription login found"
 msgstr "Login langganan tidak ditemukan"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:191
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:196
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:190
 #, elixir-autogen, elixir-format
 msgid "Not set"
 msgstr "Belum diatur"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:359
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:385
 #, elixir-autogen, elixir-format
 msgid "Numeric fields must contain valid numbers."
 msgstr "Kolom numerik harus berisi angka yang valid."
@@ -6611,28 +6574,27 @@ msgstr "Kolom numerik harus berisi angka yang valid."
 msgid "OAuth"
 msgstr "OAuth"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:408
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:474
 #, elixir-autogen, elixir-format
 msgid "Optional request parameters shared by every model. Unsupported parameters are filtered by the provider at request time."
 msgstr "Parameter permintaan opsional yang dibagikan ke setiap model. Parameter yang tidak didukung akan difilter oleh penyedia saat permintaan diproses."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:468
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:553
 #, elixir-autogen, elixir-format
 msgid "Override reasoning levels for this model"
 msgstr "Timpa tingkat penalaran untuk model ini"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:181
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:255
 #, elixir-autogen, elixir-format
 msgid "Peak / off-peak scheduling (optional)"
 msgstr "Penjadwalan jam sibuk / luar jam sibuk (opsional)"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:191
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:195
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:265
 #, elixir-autogen, elixir-format
 msgid "Peak concurrency"
 msgstr "Konkurensi jam sibuk"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:222
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:296
 #, elixir-autogen, elixir-format
 msgid "Peak window %{number}"
 msgstr "Jendela jam sibuk %{number}"
@@ -6642,7 +6604,7 @@ msgstr "Jendela jam sibuk %{number}"
 msgid "Pick a provider, select one or more models, then choose API key or subscription authentication."
 msgstr "Pilih penyedia, pilih satu atau beberapa model, lalu pilih autentikasi API key atau langganan."
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:441
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:578
 #, elixir-autogen, elixir-format
 msgid "Presence penalty"
 msgstr "Penalti kehadiran"
@@ -6652,44 +6614,43 @@ msgstr "Penalti kehadiran"
 msgid "Provider and models saved. You're all set!"
 msgstr "Penyedia dan model telah disimpan. Semuanya siap!"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:354
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:380
 #, elixir-autogen, elixir-format
 msgid "Provider cannot be empty."
 msgstr "Penyedia tidak boleh kosong."
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:106
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:180
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:195
 #: lib/evo_dash_web/live/welcome_live.ex:193
 #, elixir-autogen, elixir-format
 msgid "Provider default"
 msgstr "Default penyedia"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:283
-#, elixir-autogen, elixir-format
-msgid "Provider identifier, such as openai, anthropic or openai_codex."
-msgstr "Pengenal penyedia, seperti openai, anthropic, atau openai_codex."
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:131
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:205
 #, elixir-autogen, elixir-format
 msgid "Provider options (JSON, optional)"
 msgstr "Opsi penyedia (JSON, opsional)"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:96
+#: lib/evo_dash_web/components/llm_selection_components.ex:152
+#: lib/evo_dash_web/components/llm_selection_components.ex:300
+#: lib/evo_dash_web/components/llm_selection_components.ex:308
+#: lib/evo_dash_web/live/system_live/charts.ex:541
 #, elixir-autogen, elixir-format
 msgid "Provider profile"
 msgstr "Profil penyedia"
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:208
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:210
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:226
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:228
 #, elixir-autogen, elixir-format
 msgid "Provider profile deleted."
 msgstr "Profil penyedia dihapus."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:219
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:237
 #, elixir-autogen, elixir-format
 msgid "Provider profile moved."
 msgstr "Profil penyedia dipindahkan."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:174
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:192
 #, elixir-autogen, elixir-format
 msgid "Provider profile saved."
 msgstr "Profil penyedia disimpan."
@@ -6699,22 +6660,18 @@ msgstr "Profil penyedia disimpan."
 msgid "Provider profile settings"
 msgstr "Pengaturan profil penyedia"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:62
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:66
 #, elixir-autogen, elixir-format
 msgid "Provider profiles"
 msgstr "Profil penyedia"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:185
+#: lib/evo_dash_web/components/llm_selection_components.ex:247
+#: lib/evo_dash_web/components/llm_selection_components.ex:253
 #, elixir-autogen, elixir-format
 msgid "Reasoning effort"
 msgstr "Tingkat penalaran"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:58
-#, elixir-autogen, elixir-format
-msgid "Reasoning support and defaults"
-msgstr "Dukungan dan default penalaran"
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:327
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:401
 #, elixir-autogen, elixir-format
 msgid "Recheck subscription login"
 msgstr "Periksa ulang login langganan"
@@ -6729,37 +6686,37 @@ msgstr "Hubungkan ulang & aktifkan kembali"
 msgid "Remote node already connected"
 msgstr "Node jarak jauh sudah terhubung"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:505
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:526
 #, elixir-autogen, elixir-format
 msgid "Remove model"
 msgstr "Hapus model"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:503
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:525
 #, elixir-autogen, elixir-format
 msgid "Remove model %{number}"
 msgstr "Hapus model %{number}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:254
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:328
 #, elixir-autogen, elixir-format
 msgid "Remove peak window %{number}"
 msgstr "Hapus jendela jam sibuk %{number}"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:255
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:329
 #, elixir-autogen, elixir-format
 msgid "Remove window"
 msgstr "Hapus jendela"
 
-#: lib/evo_dash_web/live/home_live.ex:180
+#: lib/evo_dash_web/live/home_live.ex:165
 #, elixir-autogen, elixir-format
 msgid "Retry approvals"
 msgstr "Coba lagi persetujuan"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:510
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:647
 #, elixir-autogen, elixir-format
 msgid "Run claude to sign in on the selected node, or use claude setup-token, then recheck."
 msgstr "Jalankan claude untuk masuk di node yang dipilih, atau gunakan claude setup-token, lalu periksa ulang."
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:507
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:644
 #, elixir-autogen, elixir-format
 msgid "Run codex login on the selected node, then recheck."
 msgstr "Jalankan codex login di node yang dipilih, lalu periksa ulang."
@@ -6769,7 +6726,7 @@ msgstr "Jalankan codex login di node yang dipilih, lalu periksa ulang."
 msgid "Save provider and models"
 msgstr "Simpan penyedia dan model"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:416
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:484
 #, elixir-autogen, elixir-format
 msgid "Save provider profile"
 msgstr "Simpan profil penyedia"
@@ -6779,44 +6736,33 @@ msgstr "Simpan profil penyedia"
 msgid "Select a provider and models above to configure authentication."
 msgstr "Pilih penyedia dan model di atas untuk mengonfigurasi autentikasi."
 
-#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:357
+#: lib/evo_dash_web/live/settings_live/model_profile_events.ex:383
 #, elixir-autogen, elixir-format
 msgid "Select a supported authentication mode for this provider."
 msgstr "Pilih mode autentikasi yang didukung untuk penyedia ini."
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:981
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:337
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:411
 #, elixir-autogen, elixir-format
 msgid "Set oauth_file on this profile to a writable location, then recheck."
 msgstr "Atur oauth_file pada profil ini ke lokasi yang dapat ditulis, lalu periksa ulang."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:65
-#, elixir-autogen, elixir-format
-msgid "Share connection, authentication and capacity across multiple models. Override only what each model needs."
-msgstr "Bagikan koneksi, autentikasi, dan kapasitas ke beberapa model. Timpa hanya bagian yang diperlukan tiap model."
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:184
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:258
 #, elixir-autogen, elixir-format
 msgid "Shared by all models in this profile. A peak capacity of 0 pauses new requests; existing requests continue."
 msgstr "Digunakan bersama oleh semua model dalam profil ini. Kapasitas jam sibuk bernilai 0 akan menjeda permintaan baru; permintaan yang sedang berjalan tetap dilanjutkan."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:185
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:350
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:445
 #, elixir-autogen, elixir-format
 msgid "Shared concurrency"
 msgstr "Konkurensi bersama"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:366
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:457
 #, elixir-autogen, elixir-format
 msgid "Shared context window (optional)"
 msgstr "Jendela konteks bersama (opsional)"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:291
-#, elixir-autogen, elixir-format
-msgid "Shared endpoint for every model in this profile. Leave blank for the provider default."
-msgstr "Endpoint bersama untuk setiap model dalam profil ini. Biarkan kosong untuk default penyedia."
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:405
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:471
 #, elixir-autogen, elixir-format
 msgid "Shared generation defaults"
 msgstr "Default generasi bersama"
@@ -6826,22 +6772,17 @@ msgstr "Default generasi bersama"
 msgid "Show my running tasks"
 msgstr "Tampilkan tugas saya yang sedang berjalan"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:515
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:652
 #, elixir-autogen, elixir-format
 msgid "Sign in with the provider's CLI on the selected node, then recheck."
 msgstr "Masuk dengan CLI penyedia di node yang dipilih, lalu periksa ulang."
-
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:275
-#, elixir-autogen, elixir-format
-msgid "Stable identifier used by task selections and model rules."
-msgstr "Pengenal stabil yang digunakan oleh pilihan tugas dan aturan model."
 
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:74
 #, elixir-autogen, elixir-format
 msgid "Start a task for me"
 msgstr "Mulai tugas untuk saya"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:227
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:301
 #, elixir-autogen, elixir-format
 msgid "Start time"
 msgstr "Waktu mulai"
@@ -6849,9 +6790,9 @@ msgstr "Waktu mulai"
 #: lib/evo_dash_web/components/settings_components.ex:348
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:295
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:319
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:145
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:318
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:323
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:149
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:291
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:296
 #: lib/evo_dash_web/live/welcome_live.ex:210
 #: lib/evo_dash_web/live/welcome_live.ex:225
 #, elixir-autogen, elixir-format
@@ -6859,20 +6800,15 @@ msgid "Subscription (OAuth)"
 msgstr "Langganan (OAuth)"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:867
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:491
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:628
 #, elixir-autogen, elixir-format
 msgid "Subscription login"
 msgstr "Login langganan"
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:473
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:564
 #, elixir-autogen, elixir-format
 msgid "Supported levels are inherited from the provider profile."
 msgstr "Tingkat yang didukung diwarisi dari profil penyedia."
-
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:62
-#, elixir-autogen, elixir-format
-msgid "Supported reasoning levels (ordered)"
-msgstr "Tingkat penalaran yang didukung (berurutan)"
 
 #: lib/evo_dash_web/live/home_live/approval_card.ex:44
 #, elixir-autogen, elixir-format
@@ -6884,17 +6820,17 @@ msgstr "Runtime target: %{node}"
 msgid "That host's Genesis server already has Erlang distribution enabled for another connection. Continuing will disconnect that node and re-enable distribution with this connection's identity. The server and its tasks keep running."
 msgstr "Server Genesis pada host tersebut sudah memiliki distribusi Erlang yang aktif untuk koneksi lain. Melanjutkan akan memutus node tersebut dan mengaktifkan kembali distribusi dengan identitas koneksi ini. Server beserta tugas-tugasnya tetap berjalan."
 
-#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:94
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:98
 #, elixir-autogen, elixir-format
 msgid "The default provider profile is unavailable: %{id}"
 msgstr "Profil penyedia default tidak tersedia: %{id}"
 
-#: lib/evo_dash_web/live/home_live.ex:192
+#: lib/evo_dash_web/live/home_live.ex:177
 #, elixir-autogen, elixir-format
 msgid "The request is still pending. Use its decision buttons to try again."
 msgstr "Permintaan masih tertunda. Gunakan tombol keputusannya untuk mencoba lagi."
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:214
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:288
 #, elixir-autogen, elixir-format
 msgid "These days ignore every peak window and use normal concurrency all day."
 msgstr "Pada hari-hari ini semua jendela jam sibuk diabaikan dan konkurensi normal digunakan sepanjang hari."
@@ -6914,12 +6850,14 @@ msgstr "Penyedia ini menggunakan login langganan. Tidak perlu menempelkan kunci 
 msgid "This runs unrestricted ordinary Elixir in the target's live runtime. It can change running processes, files and configuration. There is no rollback. This is not OS root access. Approve only if you trust this exact code."
 msgstr "Ini menjalankan Elixir biasa tanpa batasan di runtime aktif target. Kode ini dapat mengubah proses yang berjalan, berkas, dan konfigurasi. Tidak ada pembatalan (rollback). Ini bukan akses root OS. Setujui hanya jika Anda mempercayai kode ini secara persis."
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:165
+#: lib/evo_dash_web/components/llm_selection_components.ex:213
+#: lib/evo_dash_web/components/llm_selection_components.ex:480
 #, elixir-autogen, elixir-format
 msgid "Unavailable model: %{model}"
 msgstr "Model tidak tersedia: %{model}"
 
-#: lib/evo_dash_web/components/llm_selection_components.ex:119
+#: lib/evo_dash_web/components/llm_selection_components.ex:349
+#: lib/evo_dash_web/components/llm_selection_components.ex:461
 #, elixir-autogen, elixir-format
 msgid "Unavailable profile: %{profile}"
 msgstr "Profil tidak tersedia: %{profile}"
@@ -6929,7 +6867,7 @@ msgstr "Profil tidak tersedia: %{profile}"
 msgid "Unknown target"
 msgstr "Target tidak diketahui"
 
-#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:109
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:183
 #, elixir-autogen, elixir-format
 msgid "Unsupported level: %{level}"
 msgstr "Tingkat tidak didukung: %{level}"
@@ -6938,11 +6876,6 @@ msgstr "Tingkat tidak didukung: %{level}"
 #, elixir-autogen, elixir-format
 msgid "Use Settings to configure the remote node."
 msgstr "Gunakan Pengaturan untuk mengonfigurasi node jarak jauh."
-
-#: lib/evo_dash_web/components/llm_selection_components.ex:223
-#, elixir-autogen, elixir-format
-msgid "Use the arrow keys to select a supported reasoning level. This is independent of task quality."
-msgstr "Gunakan tombol panah untuk memilih tingkat penalaran yang didukung. Ini tidak bergantung pada kualitas tugas."
 
 #: lib/evo_dash_web/live/settings_live.ex:2059
 #, elixir-autogen, elixir-format
@@ -6973,3 +6906,170 @@ msgstr "mis. anthropic:claude-opus-5-5 atau openai:gpt-5.6-terra"
 #, elixir-autogen, elixir-format
 msgid "e.g. claude-sonnet-5-5"
 msgstr "mis. claude-sonnet-5-5"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:424
+#, elixir-autogen, elixir-format
+msgid "API key environment variable (optional)"
+msgstr "Variabel lingkungan kunci API (opsional)"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:401
+#, elixir-autogen, elixir-format
+msgid "Account identity and connection"
+msgstr "Identitas dan koneksi akun"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:396
+#, elixir-autogen, elixir-format
+msgid "Advanced"
+msgstr "Lanjutan"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:127
+#, elixir-autogen, elixir-format
+msgid "Advanced reasoning choices"
+msgstr "Pilihan penalaran lanjutan"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:450
+#, elixir-autogen, elixir-format
+msgid "All models in this account share this capacity. Zero pauses new requests."
+msgstr "Semua model di akun ini berbagi kapasitas ini. Nilai nol menghentikan sementara permintaan baru."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:418
+#, elixir-autogen, elixir-format
+msgid "An optional label to distinguish accounts. Existing names are preserved."
+msgstr "Label opsional untuk membedakan akun. Nama yang sudah ada tetap dipertahankan."
+
+#: lib/evo_dash_web/live/system_live/charts.ex:441
+#, elixir-autogen, elixir-format
+msgid "Capacity: the selected provider profile's effective concurrency. In use: live slot holders. Waiting: agents queued for a slot. One pool per provider profile — the models of a profile share its slots."
+msgstr "Kapasitas: konkurensi efektif dari profil penyedia yang dipilih. Digunakan: pemegang slot aktif. Menunggu: agen yang mengantre untuk slot. Satu kumpulan per profil penyedia — model-model dalam satu profil berbagi slotnya."
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:106
+#, elixir-autogen, elixir-format
+msgid "Catalog suggestions are shown alongside configured levels. For shared defaults, suggestions must appear in every configured model's catalog entry. Verify support with your provider; nothing is selected automatically."
+msgstr "Saran katalog ditampilkan bersama level yang dikonfigurasi. Untuk nilai default bersama, saran harus muncul di entri katalog setiap model yang dikonfigurasi. Verifikasi dukungan dengan penyedia Anda; tidak ada yang dipilih secara otomatis."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:373
+#, elixir-autogen, elixir-format
+msgid "Choose a default model"
+msgstr "Pilih model default"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:62
+#, elixir-autogen, elixir-format
+msgid "Choose a provider"
+msgstr "Pilih penyedia"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:69
+#, elixir-autogen, elixir-format
+msgid "Choose a provider, connect your account, then add models and choose your defaults."
+msgstr "Pilih penyedia, hubungkan akun Anda, lalu tambahkan model dan pilih default Anda."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:384
+#, elixir-autogen, elixir-format
+msgid "Choose the default model. This does not create a model override."
+msgstr "Pilih model default. Ini tidak membuat penimpaan model."
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:68
+#, elixir-autogen, elixir-format
+msgid "Configured provider: %{provider}"
+msgstr "Penyedia terkonfigurasi: %{provider}"
+
+#: lib/evo_dash_web/helpers.ex:990
+#, elixir-autogen, elixir-format
+msgid "Custom"
+msgstr "Kustom"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:415
+#, elixir-autogen, elixir-format
+msgid "Display name (optional)"
+msgstr "Nama tampilan (opsional)"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:343
+#, elixir-autogen, elixir-format
+msgid "Edit the default model name. Add model rows only when you need per-model overrides."
+msgstr "Ubah nama model default. Tambahkan baris model hanya jika Anda perlu penimpaan per model."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:325
+#, elixir-autogen, elixir-format
+msgid "Enter model names supported by this provider. Open model details only when you need overrides."
+msgstr "Masukkan nama model yang didukung oleh penyedia ini. Buka detail model hanya jika Anda perlu penimpaan."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:427
+#, elixir-autogen, elixir-format
+msgid "Enter the variable name, not the key. In API-key mode this exact variable is used on the selected node, with no fallback to another account's key. Clear it to use the provider's default credential source."
+msgstr "Masukkan nama variabel, bukan kuncinya. Dalam mode kunci API, variabel ini persis yang digunakan pada node terpilih, tanpa fallback ke kunci akun lain. Kosongkan untuk menggunakan sumber kredensial default penyedia."
+
+#: lib/evo_dash_web/helpers.ex:987
+#, elixir-autogen, elixir-format
+msgid "Evolve"
+msgstr "Evolusi"
+
+#: lib/evo_dash_web/helpers.ex:984
+#, elixir-autogen, elixir-format
+msgid "Init existing"
+msgstr "Inisialisasi yang ada"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:408
+#, elixir-autogen, elixir-format
+msgid "Leave blank for an automatic ID. Use a distinct ID for another account with the same provider."
+msgstr "Biarkan kosong untuk ID otomatis. Gunakan ID berbeda untuk akun lain dengan penyedia yang sama."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:438
+#, elixir-autogen, elixir-format
+msgid "Leave blank for the provider endpoint. For an OpenAI-compatible service, choose OpenAI and enter its endpoint here."
+msgstr "Biarkan kosong untuk endpoint penyedia. Untuk layanan yang kompatibel dengan OpenAI, pilih OpenAI dan masukkan endpoint-nya di sini."
+
+#: lib/evo_dash_web/components/task_form_components.ex:587
+#: lib/evo_dash_web/components/task_form_components.ex:600
+#, elixir-autogen, elixir-format
+msgid "Mode"
+msgstr "Mode"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:533
+#, elixir-autogen, elixir-format
+msgid "Model details"
+msgstr "Detail model"
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:339
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:515
+#, elixir-autogen, elixir-format
+msgid "Model name"
+msgstr "Nama model"
+
+#: lib/evo_dash_web/helpers.ex:981
+#, elixir-autogen, elixir-format
+msgid "New project"
+msgstr "Proyek baru"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:145
+#, elixir-autogen, elixir-format
+msgid "No levels selected explicitly disables reasoning for this model."
+msgstr "Jika tidak ada level yang dipilih, penalaran untuk model ini dinonaktifkan secara eksplisit."
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:102
+#, elixir-autogen, elixir-format
+msgid "No verified catalog level list is available for this selection. Keep configured levels or use advanced choices after checking your provider."
+msgstr "Tidak ada daftar level katalog terverifikasi untuk pilihan ini. Pertahankan level yang dikonfigurasi atau gunakan pilihan lanjutan setelah memeriksa penyedia Anda."
+
+#: lib/evo_dash_web/components/settings_components/provider_profiles_editor.ex:405
+#, elixir-autogen, elixir-format
+msgid "Profile ID (optional)"
+msgstr "ID profil (opsional)"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:98
+#, elixir-autogen, elixir-format
+msgid "Reasoning levels"
+msgstr "Level penalaran"
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:147
+#, elixir-autogen, elixir-format
+msgid "Select only levels supported by your models. No selection advertises no reasoning support."
+msgstr "Pilih hanya level yang didukung oleh model Anda. Tanpa pilihan berarti tidak ada dukungan penalaran yang diiklankan."
+
+#: lib/evo_dash_web/live/system_live/charts.ex:553
+#, elixir-autogen, elixir-format
+msgid "Slots are pooled per provider profile — the models of one profile share its slots."
+msgstr "Slot dikelompokkan per profil penyedia — model-model dalam satu profil berbagi slotnya."
+
+#: lib/evo_dash_web/components/settings_components/provider_profile_fields.ex:130
+#, elixir-autogen, elixir-format
+msgid "These are request vocabulary choices, not verified support for this model or endpoint. Select only levels you have confirmed."
+msgstr "Ini adalah pilihan kosakata permintaan, bukan bukti dukungan terverifikasi untuk model atau endpoint ini. Pilih hanya level yang sudah Anda pastikan."
