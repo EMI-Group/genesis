@@ -176,6 +176,66 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
     assert reloaded.model_profiles == Schema.effective_model_profiles(%{})
   end
 
+  # A dashboard Settings save must keep the canonical snapshot: anything that
+  # re-pushes profiles for a canonical config also carries the snapshot keys.
+  @tag capture_log: true
+  test "canonical config opts round-trip keeps explicit model_spec resolution working" do
+    config = config()
+    state = State.from_config(config)
+    assert state.provider_profiles != []
+    assert state.model_selection_config == config
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:reply, :ok, updated} =
+                 State.do_update_config(ModelSelection.config_opts(config), state)
+
+        send(self(), {:updated, updated})
+      end)
+
+    assert_received {:updated, updated}
+    refute log =~ "explicit model_spec selections will no longer resolve"
+
+    assert updated.provider_profiles == Schema.provider_profiles(config)
+    assert updated.model_selection_config == config
+
+    assert {:ok, selection} =
+             ModelSelection.resolve(updated, %{
+               "provider_profile_id" => "account",
+               "model" => "gpt-4o-mini"
+             })
+
+    assert selection.provider_profile_id == "account"
+    assert selection.model_spec["model"] == "gpt-4o-mini"
+  end
+
+  # The hazard this pins: replacing profiles for a canonical config without the
+  # snapshot keys silently drops every explicit model_spec selection.
+  @tag capture_log: true
+  test "a bare legacy model_profiles push clears the snapshot and breaks explicit selections" do
+    config = config()
+    state = State.from_config(config)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:reply, :ok, cleared} =
+                 State.do_update_config([model_profiles: Schema.model_profiles(config)], state)
+
+        send(self(), {:cleared, cleared})
+      end)
+
+    assert_received {:cleared, cleared}
+
+    assert log =~ "explicit model_spec selections will no longer resolve"
+    assert cleared.provider_profiles == []
+    assert cleared.model_selection_config == nil
+
+    assert ModelSelection.resolve(cleared, %{
+             "provider_profile_id" => "account",
+             "model" => "gpt-4o"
+           }) == {:error, :model_spec_schema_unavailable}
+  end
+
   test "canonical inventories retain multiple selections but one shared account pool" do
     opts = ModelSelection.config_opts(config())
     assert opts[:model_profiles] == Schema.model_selections(config())
