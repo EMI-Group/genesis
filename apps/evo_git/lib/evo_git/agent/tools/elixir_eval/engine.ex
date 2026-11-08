@@ -18,6 +18,8 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Engine do
   interfere with tracing. Its normal BEAM descendants are reaped, but no in-VM
   engine can contain actively hostile native code with full VM authority.
   """
+  require Logger
+
   alias EvoGit.Agent.Tools.ElixirEval.{
     BoundedIO,
     Broker,
@@ -97,8 +99,31 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Engine do
   end
 
   defp dune(code, tier, limits) do
+    allowlist = if(tier == :read, do: ReadAllowlist, else: WriteAllowlist)
+
+    # The parse chokepoint: the allowlist's alias atoms and its generated Base spec
+    # must exist BEFORE Dune's safe parser encodes module aliases. This is an
+    # ordinary runtime call (unlike the wrappers' side-effect-only on_load), so a
+    # genuine failure fails the evaluation loudly instead of crashing boot.
+    case allowlist.ensure_initialized() do
+      :ok -> run_dune(code, allowlist, limits)
+      {:error, reason} -> allowlist_unavailable(allowlist, reason, limits)
+    end
+  end
+
+  defp allowlist_unavailable(allowlist, reason, limits) do
+    Logger.error("ElixirEval allowlist unavailable (#{inspect(allowlist)}): #{inspect(reason)}")
+
+    {:error,
+     Render.text(
+       "Evaluation allowlist is unavailable in this runtime.",
+       limits.max_output_bytes
+     )}
+  end
+
+  defp run_dune(code, allowlist, limits) do
     opts = [
-      allowlist: if(tier == :read, do: ReadAllowlist, else: WriteAllowlist),
+      allowlist: allowlist,
       max_length: @max_code_bytes,
       atom_pool_size: 1_000,
       max_heap_size: @dune_heap_words,

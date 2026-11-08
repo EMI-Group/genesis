@@ -38,18 +38,67 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WriteAllowlist.Base do
   )
 end
 
+defmodule EvoGit.Agent.Tools.ElixirEval.AllowlistAliases do
+  @moduledoc false
+
+  # Compile-time helper. Dune's safe parser never CREATES alias atoms: it maps each
+  # dotted segment to an already-existing atom, so a segment that does not exist yet
+  # becomes an opaque placeholder and a fully qualified module cannot resolve.
+  # Dune derives the same list for its own generated `@on_load :ensure_alias_atoms`,
+  # so each wrapper bakes in the atoms of ITS generated Base spec (`spec()` is the
+  # single source of truth for the allowed modules).
+  @spec atoms(:read | :write) :: [atom()]
+  def atoms(:read), do: atoms_for_spec(EvoGit.Agent.Tools.ElixirEval.ReadAllowlist.Base.spec())
+  def atoms(:write), do: atoms_for_spec(EvoGit.Agent.Tools.ElixirEval.WriteAllowlist.Base.spec())
+
+  defp atoms_for_spec(%Dune.Allowlist.Spec{modules: modules}) do
+    modules
+    |> Map.keys()
+    |> Enum.filter(&elixir_module?/1)
+    |> Enum.flat_map(&Module.split/1)
+    |> Enum.map(&String.to_atom/1)
+    |> Enum.uniq()
+  end
+
+  defp elixir_module?(module), do: match?("Elixir." <> _, Atom.to_string(module))
+end
+
 defmodule EvoGit.Agent.Tools.ElixirEval.ReadAllowlist do
   @moduledoc false
   @behaviour Dune.Allowlist
-  alias EvoGit.Agent.Tools.ElixirEval.{IOShim, ReadAllowlist}
+  alias EvoGit.Agent.Tools.ElixirEval.{AllowlistAliases, IOShim, ReadAllowlist}
 
-  # Dune loads this wrapper before parsing, but only calls fun_status afterwards.
-  # Load the generated allowlist now so its on_load initializes the facade alias
-  # atoms before Dune's safe parser encodes otherwise-unknown module names.
-  @on_load :ensure_base_loaded
-  def ensure_base_loaded do
-    Code.ensure_loaded!(ReadAllowlist.Base)
+  # An embedded-mode release primLoads modules and runs their `@on_load` handlers
+  # while `Code.ensure_loaded/1` can still answer `{:error, :embedded}` for a module
+  # that is not loaded yet, so an on_load that loads a sibling module takes kernel
+  # down with `on_load_function_failed`. This hook is therefore side-effect-only
+  # atom materialization of compile-time literals: it never loads a module and
+  # cannot fail. The Base allowlist itself is loaded at the parse chokepoint by
+  # `ensure_initialized/0`.
+  @alias_atoms AllowlistAliases.atoms(:read)
+  @on_load :ensure_alias_atoms
+  def ensure_alias_atoms do
+    # Aliases like Foo.Bar are AST `{:__aliases__, _, [:Foo, :Bar]}` nodes that Dune
+    # only maps to existing atoms. Enumerating the literals forces their creation.
+    Enum.each(@alias_atoms, & &1)
     :ok
+  end
+
+  @doc false
+  # Called by the Engine immediately before handing code to Dune. Unlike the on_load
+  # above this is an ordinary runtime call, so it MAY load the generated Base
+  # allowlist and a genuine failure is reported at the parse site instead of
+  # crashing boot or silently degrading to a restriction error.
+  @spec ensure_initialized() :: :ok | {:error, term()}
+  def ensure_initialized do
+    case Code.ensure_loaded(ReadAllowlist.Base) do
+      {:module, _module} ->
+        ensure_alias_atoms()
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   # Default already specifies IO, so its DSL cannot replace those entries.
@@ -70,14 +119,28 @@ end
 defmodule EvoGit.Agent.Tools.ElixirEval.WriteAllowlist do
   @moduledoc false
   @behaviour Dune.Allowlist
-  alias EvoGit.Agent.Tools.ElixirEval.{ReadAllowlist, WriteAllowlist}
+  alias EvoGit.Agent.Tools.ElixirEval.{AllowlistAliases, ReadAllowlist, WriteAllowlist}
 
-  # The write spec includes both facades; initialize all its alias atoms before
-  # parsing even when write is the first tier used in a fresh BEAM.
-  @on_load :ensure_base_loaded
-  def ensure_base_loaded do
-    Code.ensure_loaded!(WriteAllowlist.Base)
+  # Same embedded-mode constraint as ReadAllowlist: atom materialization only, so
+  # the write spec's aliases exist before parsing even when write is the first tier
+  # used in a fresh BEAM. Never load a module here.
+  @alias_atoms AllowlistAliases.atoms(:write)
+  @on_load :ensure_alias_atoms
+  def ensure_alias_atoms do
+    Enum.each(@alias_atoms, & &1)
     :ok
+  end
+
+  @doc false
+  # See ReadAllowlist.ensure_initialized/0. The write spec extends the read spec, so
+  # both generated Base allowlists must be available before parsing.
+  @spec ensure_initialized() :: :ok | {:error, term()}
+  def ensure_initialized do
+    with {:module, _module} <- Code.ensure_loaded(ReadAllowlist.Base),
+         {:module, _module} <- Code.ensure_loaded(WriteAllowlist.Base) do
+      ensure_alias_atoms()
+      :ok
+    end
   end
 
   @impl true
