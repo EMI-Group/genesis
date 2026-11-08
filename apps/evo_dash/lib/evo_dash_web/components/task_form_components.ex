@@ -4,9 +4,9 @@ defmodule EvoDashWeb.TaskFormComponents do
   "pageless editor".
 
   One card contains the objective textarea AND a bottom toolbar
-  (`.input-controls` — attach-kind dropdown | speed↔quality segmented control |
-  mode select | (custom-agent select) | model select | circular icon-only send
-  button) as its last
+  (`.input-controls` — attach-kind dropdown | mode+speed fused capsule (LEFT),
+  then a right-aligned cluster of (custom-agent select)? | model capsule |
+  circular icon-only send button) as its last
   element. The
   layout is server-seeded at render time via `layout_for/1` and client-driven
   by the
@@ -35,10 +35,10 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   Both layouts share the same bottom toolbar (`.input-controls`) — the card's
   last element, ChatGPT/Gemini input-box style: the attach-kind dropdown
-  (text / image / audio, bottom-left) → the speed↔quality segmented control
-  (bottom-left, next to "+") → mode select → (custom-agent select)
-  → model select → circular icon-only send button (far right). Only the
-  textarea size differs. The accent
+  (text / image / audio, bottom-left) and the fused mode+speed capsule sit on
+  the LEFT, then the right-aligned cluster of (custom-agent select) → model
+  capsule → circular icon-only send button (far right). Only the textarea size
+  differs. The accent
   decorations (accent border-color, layered box-shadow glow, top-edge
   gradient) are defined on the base `.input-card` CSS rule and are shared by
   both layouts.
@@ -63,13 +63,14 @@ defmodule EvoDashWeb.TaskFormComponents do
   panels live OUTSIDE this component in the dashboard layout.
 
   Passing `provider_profiles`, `model_selections`, or a non-empty `model_spec`
-  enables the shared `LLMSelectionComponents.llm_selection/1` picker in its own
-  responsive row above the toolbar. Its event attrs (`provider_event`,
-  `model_event`, `reasoning_event`) pass through unchanged. The native reasoning
-  range emits an index; callers resolve it through
+  moves the shared `LLMSelectionComponents.llm_selection/1` capsule INSIDE the
+  toolbar's right-aligned cluster (before the send button). Its event attrs
+  (`provider_event`, `model_event`, `reasoning_event`) pass through unchanged.
+  Reasoning is a discrete zero-based stop index; callers resolve it through
   `LLMSelectionComponents.resolve_reasoning_effort/3` before storing the spec.
-  Speed/quality remains independent. When these new attrs are empty, the legacy
-  `model_profiles` / `selected_model_id` toolbar select remains unchanged.
+  Mode, speed/quality and reasoning stay independent. When these new attrs are
+  empty, the legacy `model_profiles` / `selected_model_id` toolbar select
+  remains unchanged.
   """
 
   # zh_CN: Evolution → "演进", Prompt → "提示词", Commit → "提交", Branch → "分支"
@@ -109,8 +110,8 @@ defmodule EvoDashWeb.TaskFormComponents do
   # task_form/1 — Single-card objective editor (textarea + in-flow bottom toolbar)
   #
   # The <.form id="task-form"> wraps the whole card: the textarea AND the
-  # bottom toolbar (attach "+" | mode | (agent) | model | send button) as the
-  # card's last element. The
+  # bottom toolbar (attach "+" | mode+speed capsule (LEFT), then (agent) |
+  # model capsule | send button) as the card's last element. The
   # compact/expanded layout is server-seeded at render via layout_for/1
   # (data-layout) and client-driven by the AdaptiveInput hook (adds a
   # height-based trigger — flips to expanded when the content exceeds the
@@ -183,13 +184,16 @@ defmodule EvoDashWeb.TaskFormComponents do
              MutationObserver on .input-layout catches any server re-render,
              e.g. toggling mode/model, converging with no loop):
                "compact"  → Layout A — unified box: the bottom toolbar is the
-                            card's last line (attach dropdown | mode | model | send).
+                            card's last line (attach dropdown | mode+speed capsule |
+                            model capsule | send).
                "expanded" → Layout B — large objective area with an in-flow
-                            bottom toolbar (attach dropdown | mode | model | send).
+                            bottom toolbar (attach dropdown | mode+speed capsule |
+                            model capsule | send).
              Both layouts share the same bottom toolbar — the attach-kind
-             dropdown (text / image / audio, bottom-left) → mode select →
-             (custom-agent select) → model select → circular icon-only send
-             button (far right); only the textarea size differs. -->
+             dropdown (text / image / audio, bottom-left) and the fused
+             mode+speed capsule sit on the left → (custom-agent select) →
+             model capsule → circular icon-only send button (far right); only
+             the textarea size differs. -->
         <div
           class="input-layout mx-auto w-full max-w-3xl px-4 flex-1 flex flex-col min-h-0"
           data-layout={layout}
@@ -226,28 +230,31 @@ defmodule EvoDashWeb.TaskFormComponents do
                  input-box style: ALL controls live in ONE toolbar row pinned to
                  the card's bottom — the ATTACH-KIND DROPDOWN (text / image /
                  audio; bottom-LEFT; a <details class="dropdown"> whose <summary>
-                 is the visual "+" trigger — see below) and the speed↔quality
-                 segmented control (also bottom-LEFT, right after "+"), then
-                 free space, then a
-                 RIGHT-ALIGNED cluster: mode select → (custom-agent select) →
-                 model select → circular icon-only send button (the cluster's
-                 LAST element = the row's far right, no auto margin of its own).
-                 The row's auto-margin lives on the MODE select's ml-auto — it
-                 absorbs the free space, packing the cluster at the right edge
-                 with the uniform flex gap between members. DOM order == visual
-                 order (no order-* overrides). The attach dropdown and its
-                 hidden manual-fallback panel are DIRECT children of the
-                 toolbar; .file-manual is positioned absolutely just above the
-                 toolbar's left side, near the "+" trigger (see app.css), so it
-                 never takes part in the flex row. The dropdown menu opens
-                 UPWARD (daisyUI dropdown-top) so .input-card's overflow
-                 containment (expanded layout) never clips it below the card.
-                 The row is guaranteed ONE LINE (flex-nowrap — never wraps): the
-                 selects use min-w-0 + truncate + max-w so long labels (agent
-                 names, mode names, model profile ids) are clipped with an
-                 ellipsis instead of forcing the row wider than its container.
-                 Staged media attachments (@staged_attachments) render as a chip
-                 row directly ABOVE this toolbar, inside the card. --%>
+                 is the visual "+" trigger — see below) and the fused
+                 mode+speed capsule (#mode-speed-capsule, also bottom-LEFT,
+                 right after "+"), then free space, then a RIGHT-ALIGNED
+                 cluster: (custom-agent select) → model capsule → circular
+                 icon-only send button (the cluster's LAST element = the row's
+                 far right, no auto margin of its own). The row's auto-margin
+                 lives on the FIRST element of the right cluster — the model
+                 capsule's ml-auto when @use_llm_selection?, else the
+                 custom-agent select's ml-auto, else the legacy model select's
+                 ml-auto — absorbing the free space and packing the cluster at
+                 the right edge with the uniform flex gap between members. DOM
+                 order == visual order (no order-* overrides). The attach
+                 dropdown, the mode+speed capsule and the hidden manual-fallback
+                 panel are DIRECT children of the toolbar; .file-manual is
+                 positioned absolutely just above the toolbar's left side, near
+                 the "+" trigger (see app.css), so it never takes part in the
+                 flex row. Both fused-capsule panels open UPWARD (daisyUI
+                 dropdown-top) so .input-card's overflow containment (expanded
+                 layout) never clips them below the card. The row is guaranteed
+                 ONE LINE (flex-nowrap — never wraps): selects and capsules use
+                 min-w-0 + truncate + max-w so long labels (agent names, mode
+                 descriptions, model ids) are clipped with an ellipsis instead
+                 of forcing the row wider than its container. Staged media
+                 attachments (@staged_attachments) render as a chip row directly
+                 ABOVE this toolbar, inside the card. --%>
 
             <%!-- The launch panel renders ONLY when a project is open
                  (@disabled == false). When no project is active the row is
@@ -303,24 +310,6 @@ defmodule EvoDashWeb.TaskFormComponents do
                   <% end %>
                 </div>
               <% end %>
-
-              <%!-- The shared picker gets its own responsive row so provider,
-                   model and reasoning never squeeze the one-line launch toolbar.
-                   Task quality remains a separate policy control below. --%>
-              <EvoDashWeb.LLMSelectionComponents.llm_selection
-                :if={@use_llm_selection?}
-                id="task-llm-selection"
-                form="task-form"
-                provider_profiles={@provider_profiles}
-                model_selections={@model_selections}
-                model_spec={@model_spec}
-                provider_event={@provider_event}
-                model_event={@model_event}
-                reasoning_event={@reasoning_event}
-                show_auto_option={@show_auto_model_option}
-                compact
-                class="mx-3 mb-2"
-              />
 
               <div class="input-controls flex-nowrap">
                 <%!-- Attach-kind dropdown — bottom-LEFT of the toolbar. A
@@ -466,94 +455,216 @@ defmodule EvoDashWeb.TaskFormComponents do
                   <span class="file-manual-error" role="alert" hidden></span>
                 </div>
 
-                <%!-- Speed ↔ quality segmented control — a compact 3-step
-                     DaisyUI `join` group sitting at the toolbar's LEFT, right
-                     after the attach "+" trigger (its `.file-manual` sibling is
-                     position:absolute and takes no flex space). It is a DIRECT
-                     child of .input-controls placed BEFORE the mode select —
-                     which carries the row's ml-auto — so the group stays left
-                     while the [mode | agent | model | send] cluster stays right.
-                     The ACTIVE step (@quality_level, default "balanced") gets
-                     btn-active + btn-primary; the two inactive steps are
-                     btn-ghost. Every button is type="button" (NEVER submit —
-                     the group lives inside <form id="task-form">) and fires
-                     phx-click="select_quality_level" with phx-value-level
-                     ("fast"|"balanced"|"high_quality"). The value is threaded to
-                     the task opt :quality_level (STRING). --%>
-                <div
-                  id="quality-level-control"
-                  class="join shrink-0"
-                  role="group"
-                  aria-label={gettext("Speed / quality trade-off")}
+                <%!-- Fused mode + speed/quality capsule — a ChatGPT-style
+                     collapsed pill sitting at the toolbar's LEFT, right after
+                     the attach "+" trigger (its `.file-manual` sibling is
+                     position:absolute and takes no flex space). The pill shows
+                     mode_description(@mode) as the main value and the current
+                     speed/quality label as the secondary value, then expands
+                     UPWARD (dropdown-top, so .input-card's overflow containment
+                     never clips it) into a two-layer panel: Layer 1 is the
+                     speed/quality hero (three discrete .capsule-stop buttons),
+                     and its .capsule-subrow entry opens Layer 2 (the four mode
+                     choices). Every button is type="button" (NEVER submit — the
+                     capsule lives inside <form id="task-form">) and fires
+                     phx-click="select_quality_level" (phx-value-level
+                     "fast"|"balanced"|"high_quality") or phx-click="task_change"
+                     (phx-value-mode "<value>"). The quality value is threaded to
+                     the task opt :quality_level (STRING); mode/quality and the
+                     model capsule's reasoning stay independent. --%>
+                <details
+                  id="mode-speed-capsule"
+                  class="capsule dropdown dropdown-top min-w-0 shrink-0"
                 >
-                  <%!-- zh_CN: 速度优先（信任上下文、少做校验） --%>
-                  <button
-                    type="button"
-                    id="quality-level-fast"
-                    phx-click="select_quality_level"
-                    phx-value-level="fast"
-                    class={quality_step_class(@quality_level, "fast")}
-                    title={gettext("Prioritise speed — trust the context, run fewer checks")}
-                    aria-pressed={to_string(@quality_level == "fast")}
+                  <summary
+                    class="capsule-trigger flex items-center gap-1.5 rounded-full border border-base-300 bg-base-100 px-3 py-1.5 text-sm cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden"
+                    title={mode_description(@mode)}
                   >
-                    <.icon name="hero-bolt" class="size-3.5" />
-                    {gettext("Fast")}
-                  </button>
-                  <%!-- zh_CN: 均衡（默认，速度与正确性折中） --%>
-                  <button
-                    type="button"
-                    id="quality-level-balanced"
-                    phx-click="select_quality_level"
-                    phx-value-level="balanced"
-                    class={quality_step_class(@quality_level, "balanced")}
-                    title={gettext("Balanced — the default trade-off between speed and correctness")}
-                    aria-pressed={to_string(@quality_level == "balanced")}
-                  >
-                    <.icon name="hero-scale" class="size-3.5" />
-                    {gettext("Balanced")}
-                  </button>
-                  <%!-- zh_CN: 高质量（正确性优先，多验证、跑测试/编译） --%>
-                  <button
-                    type="button"
-                    id="quality-level-high_quality"
-                    phx-click="select_quality_level"
-                    phx-value-level="high_quality"
-                    class={quality_step_class(@quality_level, "high_quality")}
-                    title={gettext("Prioritise correctness — verify more, run tests and compile")}
-                    aria-pressed={to_string(@quality_level == "high_quality")}
-                  >
-                    <.icon name="hero-check-badge" class="size-3.5" />
-                    {gettext("High quality")}
-                  </button>
-                </div>
+                    <span class="capsule-main min-w-0 truncate font-medium text-base-content">
+                      {mode_description(@mode)}
+                    </span>
+                    <span class="capsule-secondary shrink-0 text-xs text-base-content/60">
+                      {quality_label(@quality_level)}
+                    </span>
+                    <span class="capsule-chevron shrink-0 text-base-content/50" aria-hidden="true">
+                      <.icon name="hero-chevron-down" class="size-3.5" />
+                    </span>
+                  </summary>
 
-                <!-- Mode switch — carries the row's auto-margin (ml-auto):
-                     it leads the toolbar's RIGHT-ALIGNED cluster [mode | agent |
-                     model | send], absorbing the free space after the attach
-                     "+" button so the cluster packs at the right edge. -->
-                <select
-                  name="mode"
-                  phx-change="task_change"
-                  class="select select-ghost select-sm text-sm bg-transparent font-medium ml-auto min-w-0 truncate max-w-[11rem]"
-                  title={mode_description(@mode)}
-                >
-                  <option value="genesis_existing" selected={@mode == "genesis_existing"}>
-                    <%!-- zh_CN: Initialize existing project → "初始化已有项目" --%>
-                    {gettext("Initialize existing project")}
-                  </option>
-                  <option value="genesis_new" selected={@mode == "genesis_new"}>
-                    <%!-- zh_CN: Create new project → "新建空白项目" --%>
-                    {gettext("Create new project")}
-                  </option>
-                  <option value="evolve_simple" selected={@mode == "evolve_simple"}>
-                    <%!-- zh_CN: Evolve existing project → "演进已有项目" --%>
-                    {gettext("Evolve existing project")}
-                  </option>
-                  <option value="custom_agent" selected={@mode == "custom_agent"}>
-                    <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
-                    {gettext("Custom Agent")}
-                  </option>
-                </select>
+                  <div class="capsule-panel dropdown-content z-50 mb-2 w-72 rounded-2xl border border-base-300 bg-base-100 p-2 shadow-lg">
+                    <%!-- Layer 1: speed ↔ quality hero (discrete stops) --%>
+                    <div
+                      class="capsule-stops flex flex-wrap gap-1"
+                      role="group"
+                      aria-label={gettext("Speed / quality trade-off")}
+                    >
+                      <%!-- zh_CN: 速度优先（信任上下文、少做校验） --%>
+                      <button
+                        type="button"
+                        id="quality-level-fast"
+                        phx-click="select_quality_level"
+                        phx-value-level="fast"
+                        aria-pressed={to_string(@quality_level == "fast")}
+                        disabled={@disabled}
+                        class={[
+                          "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium",
+                          @quality_level == "fast" && "capsule-stop-active"
+                        ]}
+                        title={gettext("Prioritise speed — trust the context, run fewer checks")}
+                      >
+                        <.icon name="hero-bolt" class="size-3.5" />
+                        {gettext("Fast")}
+                      </button>
+                      <%!-- zh_CN: 均衡（默认，速度与正确性折中） --%>
+                      <button
+                        type="button"
+                        id="quality-level-balanced"
+                        phx-click="select_quality_level"
+                        phx-value-level="balanced"
+                        aria-pressed={to_string(@quality_level == "balanced")}
+                        disabled={@disabled}
+                        class={[
+                          "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium",
+                          @quality_level == "balanced" && "capsule-stop-active"
+                        ]}
+                        title={gettext("Balanced — the default trade-off between speed and correctness")}
+                      >
+                        <.icon name="hero-scale" class="size-3.5" />
+                        {gettext("Balanced")}
+                      </button>
+                      <%!-- zh_CN: 高质量（正确性优先，多验证、跑测试/编译） --%>
+                      <button
+                        type="button"
+                        id="quality-level-high_quality"
+                        phx-click="select_quality_level"
+                        phx-value-level="high_quality"
+                        aria-pressed={to_string(@quality_level == "high_quality")}
+                        disabled={@disabled}
+                        class={[
+                          "capsule-stop rounded-lg px-2.5 py-1.5 text-sm font-medium",
+                          @quality_level == "high_quality" && "capsule-stop-active"
+                        ]}
+                        title={gettext("Prioritise correctness — verify more, run tests and compile")}
+                      >
+                        <.icon name="hero-check-badge" class="size-3.5" />
+                        {gettext("High quality")}
+                      </button>
+                    </div>
+
+                    <%!-- Layer-1 → Layer-2 entry: mode description + right arrow --%>
+                    <details class="capsule-sub">
+                      <summary
+                        class="capsule-subrow flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm cursor-pointer select-none list-none hover:bg-base-200 [&::-webkit-details-marker]:hidden"
+                      >
+                        <span class="capsule-subrow-label min-w-0 flex-1 truncate text-base-content/80">
+                          {mode_description(@mode)}
+                        </span>
+                        <span class="capsule-subrow-arrow shrink-0 text-base-content/50" aria-hidden="true">
+                          <.icon name="hero-chevron-right" class="size-4" />
+                        </span>
+                      </summary>
+
+                      <div
+                        class="capsule-list mt-1 space-y-0.5"
+                        role="listbox"
+                        aria-label={gettext("Mode")}
+                      >
+                        <button
+                          type="button"
+                          id="mode-option-genesis_existing"
+                          phx-click="task_change"
+                          phx-value-mode="genesis_existing"
+                          disabled={@disabled}
+                          class={[
+                            "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
+                            @mode == "genesis_existing" && "capsule-item-active"
+                          ]}
+                        >
+                          <span class="capsule-item-label min-w-0 flex-1 truncate">
+                            <%!-- zh_CN: Initialize existing project → "初始化已有项目" --%>
+                            {gettext("Initialize existing project")}
+                          </span>
+                          <span
+                            :if={@mode == "genesis_existing"}
+                            class="capsule-item-check shrink-0 text-primary-standalone"
+                            aria-hidden="true"
+                          >
+                            <.icon name="hero-check" class="size-4" />
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          id="mode-option-genesis_new"
+                          phx-click="task_change"
+                          phx-value-mode="genesis_new"
+                          disabled={@disabled}
+                          class={[
+                            "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
+                            @mode == "genesis_new" && "capsule-item-active"
+                          ]}
+                        >
+                          <span class="capsule-item-label min-w-0 flex-1 truncate">
+                            <%!-- zh_CN: Create new project → "新建空白项目" --%>
+                            {gettext("Create new project")}
+                          </span>
+                          <span
+                            :if={@mode == "genesis_new"}
+                            class="capsule-item-check shrink-0 text-primary-standalone"
+                            aria-hidden="true"
+                          >
+                            <.icon name="hero-check" class="size-4" />
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          id="mode-option-evolve_simple"
+                          phx-click="task_change"
+                          phx-value-mode="evolve_simple"
+                          disabled={@disabled}
+                          class={[
+                            "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
+                            @mode == "evolve_simple" && "capsule-item-active"
+                          ]}
+                        >
+                          <span class="capsule-item-label min-w-0 flex-1 truncate">
+                            <%!-- zh_CN: Evolve existing project → "演进已有项目" --%>
+                            {gettext("Evolve existing project")}
+                          </span>
+                          <span
+                            :if={@mode == "evolve_simple"}
+                            class="capsule-item-check shrink-0 text-primary-standalone"
+                            aria-hidden="true"
+                          >
+                            <.icon name="hero-check" class="size-4" />
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          id="mode-option-custom_agent"
+                          phx-click="task_change"
+                          phx-value-mode="custom_agent"
+                          disabled={@disabled}
+                          class={[
+                            "capsule-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-left",
+                            @mode == "custom_agent" && "capsule-item-active"
+                          ]}
+                        >
+                          <span class="capsule-item-label min-w-0 flex-1 truncate">
+                            <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
+                            {gettext("Custom Agent")}
+                          </span>
+                          <span
+                            :if={@mode == "custom_agent"}
+                            class="capsule-item-check shrink-0 text-primary-standalone"
+                            aria-hidden="true"
+                          >
+                            <.icon name="hero-check" class="size-4" />
+                          </span>
+                        </button>
+                      </div>
+                    </details>
+                  </div>
+                </details>
 
                 <%!-- Custom agent select — rendered only when custom agents
                    exist in agents.toml. "Auto (recommended)" (empty value)
@@ -566,7 +677,10 @@ defmodule EvoDashWeb.TaskFormComponents do
                   <select
                     name="agent"
                     phx-change="select_agent"
-                    class="select select-ghost select-sm text-sm bg-transparent font-medium min-w-0 truncate max-w-[10rem]"
+                    class={[
+                      "select select-ghost select-sm text-sm bg-transparent font-medium min-w-0 truncate max-w-[10rem]",
+                      not @use_llm_selection? && "ml-auto"
+                    ]}
                   >
                     <%= if @mode != "custom_agent" do %>
                       <%!-- zh_CN: Auto → "自动"（推荐：由运行时选择默认智能体） --%>
@@ -585,12 +699,41 @@ defmodule EvoDashWeb.TaskFormComponents do
                   </select>
                 <% end %>
 
-                <!-- Model switch -->
+                <%!-- Shared model capsule (fused model + reasoning picker) — the
+                     RIGHT cluster's model control when @use_llm_selection? is
+                     true. It sits AFTER the custom-agent select (if present)
+                     and BEFORE the send button, and carries the row's ml-auto
+                     (the first element of the right cluster owns the auto
+                     margin). The own-row picker above the toolbar is gone. --%>
+                <EvoDashWeb.LLMSelectionComponents.llm_selection
+                  :if={@use_llm_selection?}
+                  id="task-llm-selection"
+                  form="task-form"
+                  provider_profiles={@provider_profiles}
+                  model_selections={@model_selections}
+                  model_spec={@model_spec}
+                  provider_event={@provider_event}
+                  model_event={@model_event}
+                  reasoning_event={@reasoning_event}
+                  show_auto_option={@show_auto_model_option}
+                  compact
+                  disabled={@disabled}
+                  class={
+                    if right_cluster_ml_auto?(@use_llm_selection?),
+                      do: "mx-1 ml-auto",
+                      else: "mx-1"
+                  }
+                />
+
+                <!-- Legacy model switch -->
                 <%= if not @use_llm_selection? and @model_profiles != [] do %>
                   <select
                     name="model_id"
                     phx-change="select_model"
-                    class="select select-ghost select-sm text-sm bg-transparent font-medium min-w-0 truncate max-w-[11rem]"
+                    class={[
+                      "select select-ghost select-sm text-sm bg-transparent font-medium min-w-0 truncate max-w-[11rem]",
+                      @custom_agents == [] && "ml-auto"
+                    ]}
                   >
                     <%!-- "Auto (by rules)" is offered when a model-selection
                        script is configured (show_auto_model_option) — and
@@ -615,12 +758,15 @@ defmodule EvoDashWeb.TaskFormComponents do
                 <!-- Launch button — circular icon-only send (ChatGPT/Gemini
                    style): the LAST element of the toolbar's right-aligned
                    cluster = the row's far right. It carries NO auto margin of
-                   its own — the cluster is packed right by the MODE select's
-                   ml-auto. data-mode drives the per-mode hover ring color;
-                   data-resume drives the resume-ring variant (lighter green
-                   when a resume task id is set — evolve only). Both keyed in
-                   CSS in assets/css/app.css. id="task-launch-button" is a
-                   stable test/UI marker that survives icon swaps. -->
+                   its own — the cluster is packed right by the FIRST element
+                   of the right cluster's ml-auto (model capsule when
+                   @use_llm_selection?, else custom-agent select, else legacy
+                   model select). data-mode drives the per-mode hover ring
+                   color; data-resume drives the resume-ring variant (lighter
+                   green when a resume task id is set — evolve only). Both
+                   keyed in CSS in assets/css/app.css.
+                   id="task-launch-button" is a stable test/UI marker that
+                   survives icon swaps. -->
                 <button
                   type="submit"
                   id="task-launch-button"
@@ -710,17 +856,20 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   defp staged_kind_label(_), do: ""
 
-  # Step class for the speed ↔ quality segmented control: the step whose value
-  # equals the selected @quality_level carries the highlight (btn-active +
-  # btn-primary); the others stay btn-ghost. Always `btn btn-xs join-item` so
-  # the three read as one segmented group at the toolbar's left.
-  defp quality_step_class(selected, value) do
-    if selected == value do
-      "btn btn-xs join-item btn-active btn-primary"
-    else
-      "btn btn-xs join-item btn-ghost"
-    end
-  end
+  # Collapsed-pill secondary label for the fused mode+speed capsule: the three
+  # speed/quality steps map to their short gettext labels; anything unknown
+  # falls back to the default "Balanced" label.
+  defp quality_label("fast"), do: gettext("Fast")
+  defp quality_label("balanced"), do: gettext("Balanced")
+  defp quality_label("high_quality"), do: gettext("High quality")
+  defp quality_label(_), do: gettext("Balanced")
+
+  # When the shared model capsule leads the right-aligned toolbar cluster, it
+  # carries the row's ml-auto; the other cases put ml-auto on the custom-agent
+  # or legacy model select instead (see the toolbar markup). Literal
+  # passthrough keeps the call site readable:
+  # right_cluster_ml_auto?(@use_llm_selection?).
+  defp right_cluster_ml_auto?(use_llm_selection?), do: use_llm_selection?
 
   # Custom Agent mode is evolve-family: it runs an :evolve task (existing
   # repo, reviewable result) with the chosen custom agent as the root agent.
