@@ -56,6 +56,8 @@ Environment: `GENESIS_LINGER` (`ask` default, `yes`/`enable` = enable lingering 
 
 Release discovery: `$0` is resolved through symlinks with a portable `readlink` loop (no `readlink -f` — absent on macOS/BSD), then `GENESIS_HOME` is the parent of the script's directory when that directory is `bin`, else the directory itself; an explicit `$GENESIS_HOME` wins. A missing `$GENESIS_HOME/bin/genesis_server` fails with "not inside a Genesis server release; set GENESIS_HOME=…".
 
+Installed version (shared by `genesis version` and `genesis update`): the boot script's `version` answer is parsed to its version TOKEN — a real Mix boot script prints `<release name> <vsn>`, so the SECOND whitespace-separated field is taken (a single-field answer is used unchanged) — falling back to `releases/start_erl.data` field 2 (the staged-tree check `upd_tree_version` always reads that file), then `unknown`.
+
 Backends, chosen per host by `systemd_usable` → `launchd_usable` → pidfile fallback:
 `systemd` — `systemd-run --user --unit=genesis-server --collect --property=Restart=on-failure --property=RestartSec=5 --setenv=PHX_IP=… --setenv=PORT=… <launcher> start` (a `reset-failed` precedes it; `--collect` removes the transient unit on exit, `Restart=on-failure` restarts a crashed server); stop is `systemctl --user stop` + `reset-failed`; logs are `journalctl --user -u genesis-server -n 200 [-f]`.
 `launchd` — writes/refreshes `~/Library/LaunchAgents/com.genesis.server.plist` (RunAtLoad + KeepAlive, `EnvironmentVariables` with PHX_IP/PORT, StandardOut/ErrPath = the CLI log file) and `launchctl bootout` (when loaded) → `bootstrap gui/<uid>`; stop is `bootout`; logs tail the plist's `StandardOutPath`.

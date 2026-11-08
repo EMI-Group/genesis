@@ -1146,10 +1146,15 @@ update_usage_error() {
 # The installed release version: the boot script's `version` answer first (it
 # needs no BEAM boot), else releases/start_erl.data ("<erts> <release>"), else
 # `unknown`. Shared by `genesis version` and `genesis update`.
+# A real Mix boot script answers `version` with "<release name> <vsn>"
+# (e.g. "genesis_server 0.13.12"), so the answer is reduced to its version
+# token: the SECOND field when there are two or more, the whole answer when it
+# is a single field (a test/alternate launcher that prints only the version).
 release_version() {
   _rv_v=""
   if [ -x "$LAUNCHER" ]; then
-    _rv_v=$("$LAUNCHER" version 2>/dev/null | head -n 1 || true)
+    _rv_v=$("$LAUNCHER" version 2>/dev/null | head -n 1 |
+      awk 'NF >= 2 { print $2; next } NF == 1 { print $1 }' || true)
   fi
   if [ -z "$_rv_v" ]; then
     _rv_data=$GENESIS_HOME/releases/start_erl.data
