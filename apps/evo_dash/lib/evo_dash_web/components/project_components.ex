@@ -4,8 +4,9 @@ defmodule EvoDashWeb.ProjectComponents do
 
   `project_omnibox/1` renders a **Command Palette** (like VS Code Cmd+K,
   Spotlight, Raycast): a clickable trigger showing the active project that
-  opens a centered modal overlay with a search-filtered list of recent
-  projects, an "Open by Path" action, and a "Create New Project" action.
+  opens a centered modal overlay with a search-filtered list of the VCT
+  project registry (`%EvoGit.VCT.Mount{}` entries), an "Open by Path" action,
+  and a "Create New Project" action.
   Keyboard-first: search auto-focuses, arrow keys navigate, Enter activates,
   Escape closes.
 
@@ -23,12 +24,12 @@ defmodule EvoDashWeb.ProjectComponents do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Filters `recent_projects` by a search query, matching against the project
-  name, OS path AND Virtual Context Tree path (case-insensitive substring
-  match). The VCT path is optional (`nil` for an unmapped legacy entry).
+  Filters `projects` by a search query, matching against the mount's display
+  `name`, its OS `path` AND its VCT `point` (case-insensitive substring
+  match). The VCT point is optional (`nil` for an unmapped entry).
   Returns the full list when the query is empty.
   """
-  def filter_projects(recent_projects, search) do
+  def filter_projects(projects, search) do
     query =
       search
       |> to_string()
@@ -36,44 +37,25 @@ defmodule EvoDashWeb.ProjectComponents do
       |> String.downcase()
 
     if query == "" do
-      recent_projects
+      projects
     else
-      Enum.filter(recent_projects, fn project ->
+      Enum.filter(projects, fn project ->
         name = (Map.get(project, :name) || "") |> String.downcase()
         path = (Map.get(project, :path) || "") |> String.downcase()
-        vct_path = (Map.get(project, :vct_path) || "") |> String.downcase()
+        point = (Map.get(project, :point) || "") |> String.downcase()
 
         String.contains?(name, query) or String.contains?(path, query) or
-          String.contains?(vct_path, query)
+          String.contains?(point, query)
       end)
     end
   end
-
-  # ---------------------------------------------------------------------------
-  # vct_path_for/2 — Public helper used by BOTH the local (ProjectsLive) and
-  # remote (ProjectsLive.ProjectFlow) active-project flows.
-  # ---------------------------------------------------------------------------
-
-  @doc """
-  Returns the display-only VCT path (`vct:///...`) of the recent project whose
-  OS path is `path`, or nil when there is no matching/unmapped entry.
-  Total: a nil/non-list list or an entry with a nil `vct_path` yields nil.
-  """
-  def vct_path_for(recent_projects, path) when is_list(recent_projects) do
-    case Enum.find(recent_projects, &(is_map(&1) and Map.get(&1, :path) == path)) do
-      nil -> nil
-      entry -> Map.get(entry, :vct_path)
-    end
-  end
-
-  def vct_path_for(_recent_projects, _path), do: nil
 
   # ---------------------------------------------------------------------------
   # project_omnibox/1 — Command Palette trigger + overlay
   # ---------------------------------------------------------------------------
 
   attr(:active_project, :map, default: nil)
-  attr(:recent_projects, :list, default: [])
+  attr(:projects, :list, default: [])
   attr(:palette_open, :boolean, default: false)
   attr(:palette_search, :string, default: "")
   attr(:palette_mode, :atom, values: [:menu, :open_path, :new_project], default: :menu)
@@ -101,7 +83,7 @@ defmodule EvoDashWeb.ProjectComponents do
             class="text-sm text-base-content/80 font-mono truncate hidden md:inline"
             title={@active_project.path}
           >
-            {Map.get(@active_project, :vct_path) || @active_project.path}
+            {Map.get(@active_project, :point) || @active_project.path}
           </span>
         <% else %>
           <.icon name="hero-folder-open" class="size-4 text-base-content/60 shrink-0" />
@@ -125,7 +107,7 @@ defmodule EvoDashWeb.ProjectComponents do
           <%= case @palette_mode do %>
             <% :menu -> %>
               <.palette_menu
-                recent_projects={@recent_projects}
+                projects={@projects}
                 palette_search={@palette_search}
                 palette_selected_index={@palette_selected_index}
                 remote={@remote}
@@ -150,17 +132,17 @@ defmodule EvoDashWeb.ProjectComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # palette_menu/1 — Search input + filtered recent projects + actions
+  # palette_menu/1 — Search input + filtered projects + actions
   # ---------------------------------------------------------------------------
 
-  attr(:recent_projects, :list, default: [])
+  attr(:projects, :list, default: [])
   attr(:palette_search, :string, default: "")
   attr(:palette_selected_index, :integer, default: 0)
   attr(:remote, :boolean, default: false)
 
   defp palette_menu(assigns) do
     ~H"""
-    <% filtered = filter_projects(@recent_projects, @palette_search) %>
+    <% filtered = filter_projects(@projects, @palette_search) %>
     <% action_base = length(filtered) %>
     <!-- Search input -->
     <div class="p-3 border-b border-base-200">
@@ -192,7 +174,7 @@ defmodule EvoDashWeb.ProjectComponents do
     >
       <%= if filtered != [] do %>
         <p class="text-xs font-semibold uppercase tracking-wide text-base-content/60 px-2 py-1">
-          {gettext("Recent Projects")}
+          {gettext("Projects")}
         </p>
         <%= for {project, i} <- Enum.with_index(filtered) do %>
           <div class="relative group">
@@ -206,32 +188,30 @@ defmodule EvoDashWeb.ProjectComponents do
               <.icon name="hero-folder" class="size-4 shrink-0" />
               <div class="min-w-0 flex-1">
                 <div class="text-sm font-medium font-mono truncate">
-                  {Map.get(project, :vct_path) || project.name}
+                  {Map.get(project, :point) || project.name}
                 </div>
                 <div class="text-xs text-base-content/70 font-mono truncate" title={project.path}>
                   {project.path}
                 </div>
               </div>
             </button>
-            <%= unless @remote do %>
-              <%!-- Remove-from-recents button: a sibling of the row button
-                   (not nested) so clicking it never triggers the row's
-                   select_project action; phx-stop-propagation is defense in
-                   depth. Barely visible by default (opacity-0), appears on
-                   row hover, turns red on its own hover. Local-only —
-                   remote recent projects are read-only by design. --%>
-              <button
-                type="button"
-                phx-click="remove_recent_project"
-                phx-value-path={project.path}
-                phx-stop-propagation
-                aria-label={gettext("Remove %{name} from recent projects", name: project.name)}
-                title={gettext("Remove from recent projects")}
-                class="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-md opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto text-base-content/60 hover:text-error hover:bg-error/10 transition-opacity"
-              >
-                <.icon name="hero-trash" class="size-4" />
-              </button>
-            <% end %>
+            <%!-- Forget button: a sibling of the row button (not nested) so
+                 clicking it never triggers the row's select_project action;
+                 phx-stop-propagation is defense in depth. Barely visible by
+                 default (opacity-0), appears on row hover, turns red on its
+                 own hover. Available on LOCAL and REMOTE nodes alike.
+                 zh_CN: Forget project → 从项目列表中移除该项目 --%>
+            <button
+              type="button"
+              phx-click="forget_project"
+              phx-value-point={Map.get(project, :point)}
+              phx-stop-propagation
+              aria-label={gettext("Forget %{name}", name: project.name)}
+              title={gettext("Forget project")}
+              class="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-md opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto text-base-content/60 hover:text-error hover:bg-error/10 transition-opacity"
+            >
+              <.icon name="hero-trash" class="size-4" />
+            </button>
           </div>
         <% end %>
       <% end %>
