@@ -521,6 +521,10 @@ defmodule EvoGit.Sandbox.Bwrap do
   pid namespace, so only the process-group kill applies — `kill_process_group`
   itself is unchanged).
 
+  `opts` is the observability option list (only `:execution_id` is defined): the
+  enabled path attaches a `:posix` handle carrying bwrap's own pid, the disabled
+  path a pid-less one (the child is a `System.cmd` inside an internal Task).
+
   Returns:
     * `{:ok, output, exit_code}` — command completed within timeout
     * `{:timeout, partial_output}` — command timed out; partial_output may be empty
@@ -531,10 +535,19 @@ defmodule EvoGit.Sandbox.Bwrap do
           [String.t()],
           String.t() | nil,
           pos_integer(),
-          integer() | nil
+          integer() | nil,
+          keyword()
         ) ::
           {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
-  def run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout, max_bytes \\ nil)
+  def run_with_partial(
+        cwd,
+        executable,
+        args \\ [],
+        repo_root \\ nil,
+        timeout,
+        max_bytes \\ nil,
+        opts \\ []
+      )
       when is_list(args) and is_integer(timeout) and timeout > 0 do
     tmpfile = Helpers.partial_output_tmpfile()
 
@@ -565,6 +578,11 @@ defmodule EvoGit.Sandbox.Bwrap do
         )
 
       os_pid = Helpers.wait_for_os_pid(port)
+
+      # `:undefined` (the pid never materialized) is normalized to `nil` by
+      # `Handle.new/2`: the execution stays `:running` with degraded stats.
+      Helpers.attach_execution(opts, :posix, os_pid: os_pid, backend: __MODULE__)
+
       collect_output(port, timeout, max_bytes, os_pid, tmpfile)
     else
       # Disabled path: identical to linux.ex — Task + bash -c (no nix wrapping,
@@ -572,6 +590,10 @@ defmodule EvoGit.Sandbox.Bwrap do
       # (when installed) rides along via `Helpers.temp_env_vars/0`.
       git_env =
         if(is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []) ++ Helpers.temp_env_vars()
+
+      # No portable OS pid here (the child is a `System.cmd` inside an internal
+      # Task): the execution is recorded pid-less and its stats degrade to nil.
+      Helpers.attach_execution(opts, :posix, backend: __MODULE__)
 
       Helpers.run_task_with_partial(
         "bash",

@@ -16,6 +16,10 @@ defmodule EvoGit.Sandbox.Behaviour do
     * `run_with_partial/6` — run a command with a timeout, recovering partial
       output via temp-file redirection. Returns `{:ok, output, exit_code}` or
       `{:timeout, partial_output}`.
+    * `run_with_partial/7` (OPTIONAL) — the same run plus observability `opts`
+      (currently only `:execution_id`), used to attach the backend's real OS
+      handle to a live `EvoGit.ProcessManager` record. A backend that implements
+      it must keep `run_with_partial/6` working.
   """
 
   @doc "Returns true when the sandbox backend is enabled for this platform/mode."
@@ -79,4 +83,28 @@ defmodule EvoGit.Sandbox.Behaviour do
               timeout :: pos_integer(),
               max_bytes :: integer() | nil
             ) :: {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
+
+  @doc """
+  Same as `run_with_partial/6` plus observability options.
+
+  `opts` is a keyword list; the only key defined is `:execution_id` (the
+  `"proc-<n>"` record from `EvoGit.ProcessManager.track/3`), which the backend
+  attaches its real OS handle to as soon as that identity is known.
+
+  OPTIONAL: a backend that does not implement it is called through
+  `run_with_partial/6` by the dispatcher, and an implementing backend must keep
+  `run_with_partial/6` working. Tracking is best-effort and observability-only —
+  it never changes a command's output or exit status.
+  """
+  @callback run_with_partial(
+              cwd :: String.t(),
+              executable :: String.t(),
+              args :: [String.t()],
+              repo_root :: String.t() | nil,
+              timeout :: pos_integer(),
+              max_bytes :: integer() | nil,
+              opts :: keyword()
+            ) :: {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
+
+  @optional_callbacks run_with_partial: 7
 end

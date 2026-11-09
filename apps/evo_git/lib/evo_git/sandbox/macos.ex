@@ -541,6 +541,11 @@ defmodule EvoGit.Sandbox.MacOS do
   this function redirects stdout/stderr to a temp file. If the timeout fires, the
   partial output written so far can still be read from the temp file.
 
+  `opts` is the observability option list (only `:execution_id` is defined): both
+  paths attach a pid-less `:posix` handle before running, because macOS has no
+  systemd and `sandbox-exec` here is spawned through `System.cmd` inside an
+  internal Task, which exposes no portable OS pid.
+
   Returns:
     * `{:ok, output, exit_code}` — command completed within timeout
     * `{:timeout, partial_output}` — command timed out; partial_output may be empty
@@ -551,10 +556,19 @@ defmodule EvoGit.Sandbox.MacOS do
           [String.t()],
           String.t() | nil,
           pos_integer(),
-          integer() | nil
+          integer() | nil,
+          keyword()
         ) ::
           {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
-  def run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout, max_bytes \\ nil)
+  def run_with_partial(
+        cwd,
+        executable,
+        args \\ [],
+        repo_root \\ nil,
+        timeout,
+        max_bytes \\ nil,
+        opts \\ []
+      )
       when is_list(args) and is_integer(timeout) and timeout > 0 do
     tmpfile = Helpers.partial_output_tmpfile()
 
@@ -562,6 +576,11 @@ defmodule EvoGit.Sandbox.MacOS do
 
     # Detect git on the ORIGINAL executable (before we wrap it in bash)
     is_git = EvoGit.GitEnv.git_command?(executable)
+
+    # Both the sandbox-exec and the disabled path spawn through `System.cmd`
+    # inside a Task, so no portable pid is ever available: record a pid-less
+    # handle and let the stats degrade to nil fields.
+    Helpers.attach_execution(opts, :posix, backend: __MODULE__)
 
     if enabled?() do
       resolved_tmpdir = EvoGit.Sandbox.resolve_tmpdir()
