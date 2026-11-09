@@ -9,10 +9,12 @@ defmodule EvoGit.Repo.Migrations.BaselineAdoption do
   the Ecto migrator (seeing version 0) runs THIS migration against them. It is
   therefore idempotent by construction:
 
-    * tables via `CREATE TABLE IF NOT EXISTS` — the FINAL `tasks` shape (19
+    * the `tasks` table via `CREATE TABLE IF NOT EXISTS` — the FINAL shape (19
       columns; the `archive_metadata` column the pre-release builds carried is
-      GONE for good, see `20260815000005_task_agent_archives`) and the
-      3-column `projects` table
+      GONE for good, see `20260815000005_task_agent_archives`). No other table
+      is created here: a legacy `projects` table is exclusively
+      `20260815000007_vct_mounts` business (it migrates the rows into
+      `vct_mounts` and drops it), so a fresh database never has one
     * for each task column missing from a legacy table, a NULLABLE
       `ALTER TABLE tasks ADD COLUMN <col> <type>` — nullable, no default,
       because SQLite refuses NOT NULL adds without a default on populated
@@ -153,14 +155,6 @@ defmodule EvoGit.Repo.Migrations.BaselineAdoption do
       branch_name TEXT,
       error TEXT,
       updated_at TEXT
-    )
-    """)
-
-    sql("""
-    CREATE TABLE IF NOT EXISTS projects (
-      path TEXT PRIMARY KEY,
-      name TEXT,
-      last_opened_at TEXT
     )
     """)
 

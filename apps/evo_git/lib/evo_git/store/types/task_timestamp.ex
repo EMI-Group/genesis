@@ -2,7 +2,7 @@ defmodule EvoGit.Store.Types.TaskTimestamp do
   @moduledoc """
   Ecto.Type for the fixed-millisecond ISO-8601 TEXT timestamps of the
   EvoGit task store (`tasks.started_at`, `tasks.finished_at`,
-  `tasks.updated_at`, `projects.last_opened_at`).
+  `tasks.updated_at`, `vct_mounts.last_opened_at`).
 
   This type is a THIN delegation to `EvoGit.Store.Codec` — the Codec is the
   single source of truth for the on-disk wire format and stays byte-compatible
@@ -25,7 +25,7 @@ defmodule EvoGit.Store.Types.TaskTimestamp do
 
   `load/1` returns a `%DateTime{}` (or `nil`) — the same type
   `Codec.decode_datetime/1` returns, which is what `%TaskInfo{}` holds for
-  `started_at`/`finished_at` (and `%RecentProject{}` for `last_opened_at`).
+  `started_at`/`finished_at` (and `%VctMountRow{}` for `last_opened_at`).
 
   > #### `updated_at` is special {: .warning}
   > The store-internal `updated_at` column is RAW — the summary/changed-since

@@ -7,13 +7,9 @@ defmodule EvoGit.TaskRegistry do
   Supports configurable persistence of finished tasks to SQLite (platform data
   directory via EvoGit.Platform).
 
-  "Recently opened projects" are NOT stored here: every recent-project call
-  delegates to the Virtual Context Tree mount store (`EvoGit.VCT`, the
-  `:vct` option), which owns the mount table, its own persistence and the
-  broadcasts. The public `add_recent_project/2`, `list_recent_projects/0` and
-  `remove_recent_project/1` API and its return shapes are unchanged; the
-  legacy SQLite `projects` table remains only as the VCT's one-time import
-  source.
+  The registry owns TASK state only: the Virtual Context Tree mount table is
+  `EvoGit.VCT` business, persisted by `EvoGit.Store` and broadcast by the VCT
+  itself, so nothing here reads or writes a mount.
   """
   use GenServer
 
@@ -36,8 +32,6 @@ defmodule EvoGit.TaskRegistry do
   # they use an explicit 30s timeout instead of the 5s default. Keep the value
   # tunable in one place.
   @call_timeout 30_000
-
-  @max_recent_projects 10
 
   # Registry instance name => its task-store name, published by `init/1` and
   # read by `put_task_archive/1`. App-owned (`EvoGit.Application`) so it
@@ -340,41 +334,6 @@ defmodule EvoGit.TaskRegistry do
     GenServer.call(server(), :clear_finished_tasks, @call_timeout)
   end
 
-  ## Recent Projects Client API
-
-  @doc """
-  Adds or updates a project in the recently opened list.
-
-  Delegates to the VCT mount store (`EvoGit.VCT.register_project/2`), which
-  moves the project to the top with the current timestamp and broadcasts
-  `{:recent_projects_updated}` on `"recent_projects"`. Always replies `:ok`:
-  recents are a convenience, so a failed mount registration is logged and
-  swallowed (exactly like the old disk-full behaviour).
-  """
-  def add_recent_project(path, name) do
-    GenServer.call(server(), {:add_recent_project, path, name}, @call_timeout)
-  end
-
-  @doc """
-  Returns the list of recently opened projects, sorted by last_opened_at descending.
-
-  Entries are the VCT's mounts (at most 10 — the display cap; the VCT itself
-  retains every mount), mapped to `%EvoGit.RecentProject{path, name,
-  last_opened_at, vct_path}` where `vct_path` is the mount point.
-  """
-  def list_recent_projects do
-    GenServer.call(server(), :list_recent_projects, @call_timeout)
-  end
-
-  @doc """
-  Removes a project from the recent list by its OS path.
-
-  Idempotent: removing an unknown path replies `:ok`.
-  """
-  def remove_recent_project(path) do
-    GenServer.call(server(), {:remove_recent_project, path}, @call_timeout)
-  end
-
   ## Server Callbacks
 
   @impl true
@@ -393,11 +352,6 @@ defmodule EvoGit.TaskRegistry do
     # The TaskStore is started by the supervisor; here just reference by name.
     # Tests may pass their own task_store: name pointing to a test store.
     task_store = Keyword.get(opts, :task_store, EvoGit.Store)
-
-    # The VCT mount store that owns the "recently opened projects" list. A
-    # registered name (tests start an isolated instance) or the module, which
-    # resolves to the app-global singleton `EvoGit.VCT`.
-    vct = Keyword.get(opts, :vct, EvoGit.VCT)
 
     # This instance's OWN registered name. Captured here so the task wrapper it
     # spawns can propagate it into the wrapper process's `:evogit_task_registry_server`
@@ -419,7 +373,6 @@ defmodule EvoGit.TaskRegistry do
     state = %{
       data_dir: data_dir,
       task_store: task_store,
-      vct: vct,
       task_refs: %{},
       read_offloads: ReadOffload.new(),
       server_name: server_name
@@ -931,72 +884,6 @@ defmodule EvoGit.TaskRegistry do
     {:reply, reply, state}
   end
 
-  ## Recent Projects Handlers
-
-  # Recent projects live in the VCT mount store, so these handlers NEVER touch
-  # the SQLite `projects` table and never broadcast: `EvoGit.VCT` publishes
-  # both `{:recent_projects_updated}` (on `"recent_projects"`) and
-  # `{:vct_updated, node}` (on `"vct"`) after a successful mutation, and a
-  # second broadcast here would duplicate every notification.
-
-  @impl true
-  def handle_call({:add_recent_project, path, name}, _from, state) do
-    # Recents are a convenience: a refused mount (relative path, persistence
-    # failure, unavailable VCT) is logged and the caller still gets `:ok`,
-    # mirroring the old disk-full behaviour.
-    case with_vct(state, fn -> EvoGit.VCT.register_project(path, name) end) do
-      {:ok, _mount} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning(
-          "TaskRegistry: recent project #{inspect(path)} not registered: #{inspect(reason)}"
-        )
-
-        :ok
-    end
-
-    {:reply, :ok, state}
-  end
-
-  @impl true
-  def handle_call(:list_recent_projects, _from, state) do
-    reply =
-      state
-      |> with_vct(fn -> EvoGit.VCT.list_projects(limit: @max_recent_projects) end)
-      |> Enum.map(fn mount ->
-        %EvoGit.RecentProject{
-          path: mount.path,
-          name: mount.name,
-          last_opened_at: mount.last_opened_at,
-          vct_path: mount.point
-        }
-      end)
-
-    {:reply, reply, state}
-  end
-
-  @impl true
-  def handle_call({:remove_recent_project, path}, _from, state) do
-    # Idempotent: an unknown path and a refused removal both reply `:ok`.
-    case with_vct(state, fn -> EvoGit.VCT.remove_project(path) end) do
-      :ok ->
-        :ok
-
-      {:error, :not_found} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning(
-          "TaskRegistry: recent project #{inspect(path)} not removed: #{inspect(reason)}"
-        )
-
-        :ok
-    end
-
-    {:reply, :ok, state}
-  end
-
   @impl true
   def handle_cast({:update_status, task_id, status, result, opts}, state) do
     {:noreply, handle_update_status(state, task_id, status, result, opts, nil)}
@@ -1273,30 +1160,6 @@ defmodule EvoGit.TaskRegistry do
     safe_store_read("get_task", nil, fn ->
       EvoGit.Store.get_task(state.task_store, task_id)
     end)
-  end
-
-  # --- VCT Delegation ---
-
-  # `EvoGit.VCT` resolves its target instance from the CALLING process (the
-  # `:evogit_vct_server` process-dictionary seam, exactly like `server/0`
-  # above), so the handler pins the instance it was configured with for the
-  # duration of the delegation and restores the previous value afterwards.
-  # With no `:vct` option that is `EvoGit.VCT` itself, i.e. the app-global
-  # singleton — production behaviour unchanged.
-  defp with_vct(state, fun) do
-    key = :evogit_vct_server
-    previous = Process.get(key)
-    Process.put(key, state.vct)
-
-    try do
-      fun.()
-    after
-      if previous == nil do
-        Process.delete(key)
-      else
-        Process.put(key, previous)
-      end
-    end
   end
 
   # Removes a task_id from the :evogit_cancelling_tasks marker once the task

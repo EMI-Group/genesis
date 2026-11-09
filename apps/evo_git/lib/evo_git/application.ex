@@ -107,9 +107,9 @@ defmodule EvoGit.Application do
       # total, so a restarting/absent store is skipped, never a crash.
       {EvoGit.Store.Maintenance, []},
       # Virtual Context Tree mount store (pure namespace over OS paths).
-      # Starts AFTER EvoGit.Store because its one-time legacy import reads the
-      # legacy `projects` rows at init — the store MUST already be up — and
-      # BEFORE EvoGit.TaskRegistry so every later reader (registry, dashboard,
+      # Starts AFTER EvoGit.Store because its mount table lives in the task
+      # store (`vct_mounts`) and is loaded at init — the store MUST already be
+      # up — and BEFORE EvoGit.TaskRegistry so every later reader (dashboard,
       # agents) finds a ready mount table.
       {EvoGit.VCT, []},
       # Dedicated pool for the TaskRegistry's offloaded READS: a heavy decode

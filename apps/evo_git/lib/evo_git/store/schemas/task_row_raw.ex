@@ -91,36 +91,3 @@ defmodule EvoGit.Store.Schemas.TaskRowRaw do
   """
   def columns, do: Enum.map(__schema__(:fields), &Atom.to_string/1)
 end
-
-defmodule EvoGit.Store.Schemas.ProjectRowRaw do
-  @moduledoc """
-  RAW wire-value Ecto schema for the `projects` table — the read-projection
-  twin of `EvoGit.Store.Schemas.ProjectRow`.
-
-  Same rationale as `EvoGit.Store.Schemas.TaskRowRaw`: plain `:string` fields
-  (no `Types.TaskTimestamp` casting) so a row loads as the exact bytes SQLite
-  stored, enabling per-row safe decode through `Codec.decode_project/1` (one
-  bad row is skipped, not fatal) and byte-identical timestamp strings.
-  READ-PROJECTION ONLY — writes go through `ProjectRow` or
-  `Codec.encode_project/1`. No `timestamps()` macro.
-  """
-
-  use Ecto.Schema
-
-  @primary_key {:path, :string, autogenerate: false}
-  schema "projects" do
-    # Plain TEXT columns; the string PK `path` comes from @primary_key above
-    # (mirrors ProjectRow).
-    field(:name, :string)
-
-    # ISO-8601 TEXT timestamp — raw fixed-precision string, never parsed.
-    field(:last_opened_at, :string)
-  end
-
-  @doc """
-  The 3 project-table column names (strings) in schema-declaration order —
-  identical to `EvoGit.Store.Schemas.ProjectRow.columns/0`. Returns strings to
-  mirror `Codec.project_columns/0` exactly.
-  """
-  def columns, do: Enum.map(__schema__(:fields), &Atom.to_string/1)
-end

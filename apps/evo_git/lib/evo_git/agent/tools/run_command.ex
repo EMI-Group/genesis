@@ -13,7 +13,7 @@ defmodule EvoGit.Agent.Tools.RunCommand do
 
   Commands carry a security level enforced at the shell dispatch choke point:
   level-1 commands (listing/inspecting — `ListTasks.list_tasks`,
-  `GetTask.get_task`, `ListRecentProjects.list_recent_projects`,
+  `GetTask.get_task`, `ListProjects.list_projects`,
   `SystemInfo.system_info`, `help`) execute immediately. Level-2 commands
   (`GuideUser.guide_user` — needs the user's attention) and level-3 commands
   (`StartTask.start_task`, `CancelTask.cancel_task`,

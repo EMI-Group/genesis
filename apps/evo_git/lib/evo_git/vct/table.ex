@@ -30,12 +30,6 @@ defmodule EvoGit.VCT.Table do
 
   @projects_prefix VctPath.projects()
 
-  @type import_result :: %{
-          mounts: [Mount.t()],
-          imported: [Mount.t()],
-          skipped: [String.t()]
-        }
-
   ## Path normalization
 
   @doc """
@@ -176,6 +170,25 @@ defmodule EvoGit.VCT.Table do
     end)
   end
 
+  @doc """
+  Caps the mount list at `cap` entries by EVICTING the oldest mounts.
+
+  A `nil` `last_opened_at` counts as the oldest, and the sort is stable over the
+  incoming list — which is the store's order (newest first, ties by point
+  ascending) — so the outcome is deterministic. A non-positive or non-integer
+  `cap` leaves the list untouched.
+  """
+  @spec enforce_cap([Mount.t()], term()) :: [Mount.t()]
+  def enforce_cap(mounts, cap) when is_list(mounts) and is_integer(cap) and cap > 0 do
+    if length(mounts) <= cap do
+      mounts
+    else
+      mounts |> sort_by_recency() |> Enum.take(cap)
+    end
+  end
+
+  def enforce_cap(mounts, _cap), do: mounts
+
   ## Mutations
 
   @doc """
@@ -273,92 +286,6 @@ defmodule EvoGit.VCT.Table do
   end
 
   def remove_by_path(_mounts, _os_path), do: {:error, :not_found}
-
-  @doc """
-  Imports legacy "recent project" rows as mounts.
-
-  Rows may be `%EvoGit.RecentProject{}` structs or maps (string- or
-  atom-keyed). For each row with a non-empty ABSOLUTE `path` that is not
-  already mounted, a mount is created preserving the row's `name` and
-  `last_opened_at` (`nil` stays `nil`). Points are deduplicated deterministically
-  in input order. Rows are never required to exist on disk and no directory is
-  created.
-
-  Returns `%{mounts: updated_mounts, imported: [new_mount], skipped: [row_path]}`
-  — `skipped` carries the offending paths so the caller can warn.
-  """
-  @spec import_legacy([Mount.t()], list()) :: import_result()
-  def import_legacy(mounts, rows) when is_list(mounts) do
-    rows
-    |> List.wrap()
-    |> Enum.reduce(%{mounts: mounts, imported: [], skipped: []}, fn row, acc ->
-      import_row(row, acc)
-    end)
-    |> Map.update!(:imported, &Enum.reverse/1)
-    |> Map.update!(:skipped, &Enum.reverse/1)
-  end
-
-  defp import_row(row, acc) do
-    case legacy_fields(row) do
-      {:ok, path, name, last_opened_at} ->
-        normalized = normalize_os_path(path)
-
-        if find_by_os_path(acc.mounts, normalized) do
-          acc
-        else
-          name = normalize_name(name) || display_name(normalized)
-          point = unique_point(acc.mounts, point_for_basename(path_basename(normalized)))
-          mount = Mount.new(point, normalized, name: name, last_opened_at: last_opened_at)
-
-          %{acc | mounts: acc.mounts ++ [mount], imported: [mount | acc.imported]}
-        end
-
-      {:skip, path} ->
-        %{acc | skipped: [path | acc.skipped]}
-    end
-  end
-
-  defp legacy_fields(%EvoGit.RecentProject{} = row),
-    do: legacy_fields({row.path, row.name, row.last_opened_at})
-
-  defp legacy_fields(row) when is_map(row),
-    do: legacy_fields({field(row, :path), field(row, :name), field(row, :last_opened_at)})
-
-  defp legacy_fields({path, name, last_opened_at}) do
-    cond do
-      not is_binary(path) ->
-        {:skip, inspect(path)}
-
-      String.trim(path) == "" ->
-        {:skip, path}
-
-      not EvoGit.Platform.absolute_path?(String.trim(path)) ->
-        {:skip, path}
-
-      true ->
-        {:ok, String.trim(path), name, normalize_datetime(last_opened_at)}
-    end
-  end
-
-  defp legacy_fields(other), do: {:skip, inspect(other)}
-
-  defp field(map, key) do
-    case Map.fetch(map, key) do
-      {:ok, value} -> value
-      :error -> Map.get(map, to_string(key))
-    end
-  end
-
-  defp normalize_datetime(%DateTime{} = datetime), do: datetime
-
-  defp normalize_datetime(value) when is_binary(value) do
-    case DateTime.from_iso8601(value) do
-      {:ok, datetime, _offset} -> datetime
-      {:error, _reason} -> nil
-    end
-  end
-
-  defp normalize_datetime(_value), do: nil
 
   ## VCT path derivation
 

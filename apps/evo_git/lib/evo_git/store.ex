@@ -1,6 +1,7 @@
 defmodule EvoGit.Store do
   @moduledoc """
-  SQLite-backed persistent store for EvoGit tasks and recent projects.
+  SQLite-backed persistent store for EvoGit tasks and the Virtual Context Tree
+  mount table.
 
   A THIN GenServer facade over the Ecto Operations layer: every handler
   dispatches to a pure operation module in `EvoGit.Store.Operations.*` against
@@ -24,7 +25,7 @@ defmodule EvoGit.Store do
       `mix migrate.store` is never required for the app to boot.
     * **Operations** — `Operations.Tasks`, `Operations.Lightweight`,
       `Operations.Summaries`, `Operations.Pages`, `Operations.Archives`,
-      `Operations.Filters`, `Operations.Projects`, `Operations.Safety` own
+      `Operations.Filters`, `Operations.VctMounts`, `Operations.Safety` own
       the actual `EvoGit.Repo.*` + `Ecto.Query` work. Every function takes the
       repo pid FIRST and binds it with `EvoGit.Store.RepoScope.with_repo/2`,
       so it targets THIS store's dynamic instance regardless of the calling
@@ -57,12 +58,12 @@ defmodule EvoGit.Store do
 
   | Read | Degraded value |
   |------|----------------|
-  | `get_task/2`, `get_task_lite/2`, `get_task_status/2`, `select_task_update_info/2`, `get_project/2`, `get_agent_archive/3` | `nil` |
-  | `select_task_paths/1`, `select_finished_task_ids/1`, `select_task_ids/2`, `select_running_lease_info/1`, `select_cleanup_info/1,3`, `select_tasks_summary/3`, `select_tasks_summary_by_path/4`, `select_tasks_changed_since/2`, `select_all_projects/1`, `safe_select_all_tasks/1`, `safe_select_all_projects/1` | `[]` |
+  | `get_task/2`, `get_task_lite/2`, `get_task_status/2`, `select_task_update_info/2`, `get_agent_archive/3` | `nil` |
+  | `select_task_paths/1`, `select_finished_task_ids/1`, `select_task_ids/2`, `select_running_lease_info/1`, `select_cleanup_info/1,3`, `select_tasks_summary/3`, `select_tasks_summary_by_path/4`, `select_tasks_changed_since/2`, `list_vct_mounts/1`, `safe_select_all_tasks/1` | `[]` |
   | `safe_select_paginated_tasks/2` | `{[], 0}` |
   | `select_tasks_page/2` | `%{rows: [], total: 0}` |
   | `list_task_archives/3` | `%{entries: [], total: 0}` |
-  | `count_projects/1`, `size/1` | `0` |
+  | `size/1` | `0` |
 
   The degraded value is passed EXPLICITLY at each call site (`offload/5`'s
   `degraded_value` argument), so this table and the handlers can never drift.
@@ -79,8 +80,7 @@ defmodule EvoGit.Store do
       after logging an actionable warning. The GenServer survives so reads
       keep working and writes can be retried — a full disk is transient,
       unlike a corrupt DB. All OTHER errors re-raise and crash as before.
-      See `EvoGit.Store.Errors` for the classifier. (`put_project` is
-      protected INSIDE `Operations.Projects` — not double-wrapped here.)
+      See `EvoGit.Store.Errors` for the classifier.
     * **Write offload** — every write handler forwards its operation to the
       store's dedicated `EvoGit.Store.Writer` process (`offload_write/3`) and
       returns `{:noreply, state}` RIGHT AWAY; the writer runs the operation and
@@ -144,7 +144,6 @@ defmodule EvoGit.Store do
   alias EvoGit.Store.Errors
   alias EvoGit.Store.Writer
   alias EvoGit.TaskInfo
-  alias EvoGit.RecentProject
 
   ## Call timeout
 
@@ -557,37 +556,36 @@ defmodule EvoGit.Store do
     GenServer.call(store, {:select_tasks_changed_since, since_iso}, @call_timeout)
   end
 
-  ## Public API — Projects
+  ## Public API — Virtual Context Tree mount table (`vct_mounts`)
 
-  @doc "Inserts or replaces a project. Validates that path is present."
-  def put_project(store \\ __MODULE__, project)
+  @doc """
+  Returns the Virtual Context Tree mount table — one STRING-KEYED map per
+  mount: `%{"point" =>, "path" =>, "name" =>, "kind" =>, "last_opened_at" =>
+  %DateTime{} | nil}`.
 
-  def put_project(store, %RecentProject{} = project) do
-    GenServer.call(store, {:put_project, project}, @call_timeout)
+  Ordered newest-first with a `nil` `last_opened_at` LAST and a deterministic
+  `point` ASC tie-break. Degrades to `[]` on a failed read (see the
+  moduledoc's degradation table).
+  """
+  @spec list_vct_mounts(term()) :: [map()]
+  def list_vct_mounts(store \\ __MODULE__) do
+    GenServer.call(store, :list_vct_mounts, @call_timeout)
   end
 
-  def put_project(_store, _other) do
-    {:error, :invalid_project_struct}
-  end
+  @doc """
+  REPLACES the whole Virtual Context Tree mount table with `mounts`, atomically.
 
-  @doc "Reads a single project by path, returning the struct or nil."
-  def get_project(store \\ __MODULE__, path) do
-    GenServer.call(store, {:get_project, path}, @call_timeout)
-  end
+  `mounts` is a list of maps — atom-keyed or string-keyed (the shape
+  `EvoGit.VCT.Mount.to_map/1` produces) — with `point`, `path`, `name`,
+  `kind` and `last_opened_at` (a `DateTime`, an ISO-8601 binary or `nil`). The
+  write runs on the dedicated writer process (like every other write) inside
+  ONE immediate transaction, so a reader never observes a half-written table.
 
-  @doc "Deletes a single project by path."
-  def delete_project(store \\ __MODULE__, path) do
-    GenServer.call(store, {:delete_project, path}, @call_timeout)
-  end
-
-  @doc "Returns all projects as a list of RecentProject structs."
-  def select_all_projects(store \\ __MODULE__) do
-    GenServer.call(store, :select_all_projects, @call_timeout)
-  end
-
-  @doc "Returns the number of project rows."
-  def count_projects(store \\ __MODULE__) do
-    GenServer.call(store, :count_projects, @call_timeout)
+  Returns `:ok` (`{:error, :disk_full}` on a full disk, see the moduledoc).
+  """
+  @spec save_vct_mounts(term(), [map()]) :: :ok | {:error, :disk_full}
+  def save_vct_mounts(store \\ __MODULE__, mounts) do
+    GenServer.call(store, {:save_vct_mounts, mounts}, @call_timeout)
   end
 
   ## Public API — Safety
@@ -601,14 +599,9 @@ defmodule EvoGit.Store do
   end
 
   @doc """
-  Enumerates all projects, skipping (not raising on) rows that fail to decode.
-  Bad rows are logged with a warning and excluded from the returned list.
+  Returns the total number of rows across both tables (`tasks` and
+  `vct_mounts`).
   """
-  def safe_select_all_projects(store \\ __MODULE__) do
-    GenServer.call(store, :safe_select_all_projects, @call_timeout)
-  end
-
-  @doc "Returns the total number of rows across both tables."
   def size(store \\ __MODULE__) do
     GenServer.call(store, :size, @call_timeout)
   end
@@ -897,42 +890,22 @@ defmodule EvoGit.Store do
     end)
   end
 
-  ## GenServer — Project handlers
+  ## GenServer — Virtual Context Tree mount handlers
 
-  # Operations.Projects owns its own disk-full rescue (returns
-  # {:error, :disk_full} directly) — NOT wrapped in write_call/2 here, exactly
-  # as in the old inline handler, so it goes to the writer unwrapped.
+  # Offloaded (failure-isolated): the mount table is small, but it still runs
+  # on the worker so a fault degrades to `[]` instead of killing this process.
   @impl true
-  def handle_call({:put_project, project}, from, state) do
-    offload_raw_write(from, state, fn ->
-      Operations.Projects.put_project(state.repo, project)
+  def handle_call(:list_vct_mounts, from, state) do
+    offload(from, state, "list_vct_mounts", [], fn ->
+      Operations.VctMounts.list(state.repo)
     end)
   end
 
+  # Write — the whole mount table replaced in one immediate transaction,
+  # through the writer like every other write.
   @impl true
-  def handle_call({:get_project, path}, from, state) do
-    offload(from, state, "get_project", nil, fn ->
-      Operations.Projects.get_project(state.repo, path)
-    end)
-  end
-
-  @impl true
-  def handle_call({:delete_project, path}, from, state) do
-    offload_write(from, state, fn -> Operations.Projects.delete_project(state.repo, path) end)
-  end
-
-  @impl true
-  def handle_call(:select_all_projects, from, state) do
-    offload(from, state, "select_all_projects", [], fn ->
-      Operations.Projects.select_all_projects(state.repo)
-    end)
-  end
-
-  @impl true
-  def handle_call(:count_projects, from, state) do
-    offload(from, state, "count_projects", 0, fn ->
-      Operations.Projects.count_projects(state.repo)
-    end)
+  def handle_call({:save_vct_mounts, mounts}, from, state) do
+    offload_write(from, state, fn -> Operations.VctMounts.save(state.repo, mounts) end)
   end
 
   ## GenServer — Size & Safety handlers
@@ -950,13 +923,6 @@ defmodule EvoGit.Store do
   def handle_call(:safe_select_all_tasks, from, state) do
     offload(from, state, "safe_select_all_tasks", [], fn ->
       Operations.Safety.safe_select_all_tasks(state.repo)
-    end)
-  end
-
-  @impl true
-  def handle_call(:safe_select_all_projects, from, state) do
-    offload(from, state, "safe_select_all_projects", [], fn ->
-      Operations.Safety.safe_select_all_projects(state.repo)
     end)
   end
 
@@ -1192,22 +1158,12 @@ defmodule EvoGit.Store do
     {:noreply, state}
   end
 
-  # Offloaded write that carries its OWN disk-full protection
-  # (`Operations.Projects.put_project`) — deliberately NOT wrapped in
-  # `write_call/2`, exactly like the old inline handler.
-  defp offload_raw_write(from, state, fun) do
-    Writer.submit(state.writer, from, fun)
-
-    {:noreply, state}
-  end
-
   # ── Write boundary (disk-full choke point) ───────────────────────────
   #
-  # Shared boundary for EVERY task/project write dispatched by this facade
-  # (put_task, delete_task, delete_tasks, clear_tasks, update_lease_expires_at,
-  # update_task_columns, delete_project, put_task_archive,
-  # delete_task_archives — put_project protects itself inside
-  # Operations.Projects). The XqliteEcto3 adapter RAISES %XqliteEcto3.Error{}
+  # Shared boundary for EVERY write dispatched by this facade (put_task,
+  # delete_task, delete_tasks, clear_tasks, update_lease_expires_at,
+  # update_task_columns, save_vct_mounts, put_task_archive,
+  # delete_task_archives). The XqliteEcto3 adapter RAISES %XqliteEcto3.Error{}
   # on failure; disk-full-class errors (SQLITE_FULL 13, SQLITE_IOERR 10,
   # SQLITE_READONLY 8 — see EvoGit.Store.Errors) are converted to
   # {:error, :disk_full} after logging an actionable warning: the write can be

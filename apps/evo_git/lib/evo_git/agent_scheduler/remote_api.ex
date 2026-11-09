@@ -569,31 +569,42 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
-  Lists recent projects from the TaskRegistry.
-
-  Delegates to `EvoGit.TaskRegistry.list_recent_projects/0` (a `GenServer.call`).
+  Lists the node's Virtual Context Tree project mounts, newest first.
+  Delegates to `EvoGit.VCT.projects/1`.
   This runs on the REMOTE node when called via `:erpc.call/5`, returning native
-  `%EvoGit.RecentProject{}` structs.
-
-  Returns `[%EvoGit.RecentProject{}]` (empty list when no projects exist).
+  `%EvoGit.VCT.Mount{}` structs.
+  Returns `[%EvoGit.VCT.Mount{}]` (empty list when no project is mounted or the
+  VCT is unavailable).
   """
-  @spec list_recent_projects() :: [EvoGit.RecentProject.t()]
-  def list_recent_projects do
-    EvoGit.TaskRegistry.list_recent_projects()
+  @spec projects() :: [EvoGit.VCT.Mount.t()]
+  def projects do
+    EvoGit.VCT.projects()
   end
 
   @doc """
-  Adds or updates a recent project entry on the remote node.
-
-  Delegates to `EvoGit.TaskRegistry.add_recent_project/2` (a `GenServer.call`).
-  `path` is the project path (string), `name` is the display name (string). This
-  runs on the REMOTE node when called via `:erpc.call/5`.
-
-  Returns `:ok`.
+  Mounts an OS project path in the node's Virtual Context Tree.
+  Delegates to `EvoGit.VCT.mount/2` with `:name` as the display name.
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+  Returns `{:ok, %EvoGit.VCT.Mount{}}` or `{:error, reason}` (`:relative_path`
+  for a non-absolute path, `:store_unavailable` when the mount could not be
+  persisted, `:vct_unavailable` when the VCT is not running).
   """
-  @spec add_recent_project(String.t(), String.t()) :: :ok
-  def add_recent_project(path, name) do
-    EvoGit.TaskRegistry.add_recent_project(path, name)
+  @spec mount_project(String.t(), String.t() | nil) ::
+          {:ok, EvoGit.VCT.Mount.t()} | {:error, atom()}
+  def mount_project(path, name) do
+    EvoGit.VCT.mount(path, name: name)
+  end
+
+  @doc """
+  Forgets one project mount on the node by VCT point or OS path.
+  Delegates to `EvoGit.VCT.forget/1`.
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+  Returns `:ok`, `{:error, :not_found}` for an unknown key or
+  `{:error, :invalid_point}` when the key is not a VCT point and not an OS path.
+  """
+  @spec forget_project(term()) :: :ok | {:error, atom()}
+  def forget_project(key) do
+    EvoGit.VCT.forget(key)
   end
 
   # ── Custom agents (delegated to EvoGit.CustomAgents) ───────────────

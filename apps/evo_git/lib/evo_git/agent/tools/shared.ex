@@ -975,7 +975,7 @@ defmodule EvoGit.Agent.Tools.Shared do
 
   `nil` renders as "unknown"; `%DateTime{}` and `%NaiveDateTime{}` render via
   their canonical ISO-8601 forms; any other value is stringified. Shared by
-  the task-control command handlers (GetTask, ListTasks, ListRecentProjects,
+  the task-control command handlers (GetTask, ListTasks, ListProjects,
   SystemInfo) — previously each carried a private copy.
   """
   def format_datetime(nil), do: "unknown"

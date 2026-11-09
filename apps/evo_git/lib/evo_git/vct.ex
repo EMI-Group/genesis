@@ -11,14 +11,21 @@ defmodule EvoGit.VCT do
 
   This GenServer owns:
 
-    * the mount table (rules in `EvoGit.VCT.Table`), persisted as one JSON file
-      in the VCT directory (`<data_dir>/vct/virtual-tree.json`) through
-      `EvoGit.VCT.Persistence`;
+    * the mount table (rules in `EvoGit.VCT.Table`), persisted in the SQLite
+      task store's `vct_mounts` table (`EvoGit.Store.list_vct_mounts/1` /
+      `EvoGit.Store.save_vct_mounts/2`). The in-memory list is a READ CACHE of
+      that table; every mutation writes the WHOLE table back before the state
+      changes;
     * the GLOBAL context file (`<data_dir>/vct/CONTEXT.md`) and its local git
       history, so a global context edit is a committed, auditable change; a
-      NON-BLANK file that already exists at boot is synced then, too;
-    * a ONE-TIME import of the legacy "recent projects" table (the SQLite
-      `projects` rows), recorded by the `legacy_projects_imported` marker.
+      NON-BLANK file that already exists at boot is synced then, too.
+
+  ## Capacity
+
+  `max_projects/0` (100 by default, overridable through the app env
+  `:vct_max_projects`) caps the mount table. Registering a path beyond the cap
+  EVICTS the oldest mounts, so the table never grows unbounded while staying
+  newest-first.
 
   ## Client reads are TOTAL
 
@@ -26,7 +33,9 @@ defmodule EvoGit.VCT do
   process, including during boot or after a crash, so every read resolves a
   missing/dead server to its documented empty value (`[]`, `nil`, `""`,
   `{:error, :not_found}`) instead of raising; mutations resolve to
-  `{:error, :vct_unavailable}`.
+  `{:error, :vct_unavailable}`. A store that is down or unavailable never
+  crashes the init or a caller: the mount list loads as `[]` and a mutation
+  returns an error.
 
   ## Instance seam
 
@@ -34,13 +43,12 @@ defmodule EvoGit.VCT do
   dictionary key (set by `init/1` for self-calls, exactly like
   `EvoGit.TaskRegistry.server/0`), falling back to the registered singleton
   `__MODULE__`. Tests start isolated instances with a unique `:name`,
-  `:data_dir` and `:path`.
+  `:data_dir` and `:store`.
 
   ## Broadcasts
 
-  Every successful mount mutation publishes BOTH the node-less legacy
-  `"recent_projects"` notification (`{:recent_projects_updated}`) and the
-  node-aware `"vct"` notification (`{:vct_updated, node()}`).
+  Every successful mount mutation publishes `{:vct_updated, node()}` on
+  `"vct"` — exactly one broadcast per mutation.
   """
 
   use GenServer
@@ -49,32 +57,29 @@ defmodule EvoGit.VCT do
 
   alias EvoGit.VCT.Mount
   alias EvoGit.VCT.Path, as: VctPath
-  alias EvoGit.VCT.Persistence
   alias EvoGit.VCT.Table
 
   @server_key :evogit_vct_server
   @context_file "CONTEXT.md"
-  @table_file "virtual-tree.json"
   @global_context_commit_message "Update global context"
 
-  # The machine-local mount table and any atomic-write temporaries must never
-  # enter the global context's git history.
+  # Any atomic-write temporaries must never enter the global context's git
+  # history. The mount table itself is task-store state, not a file here.
   @gitignore_entries [
-    "# Machine-local Virtual Context Tree state, never committed.",
-    @table_file,
+    "# Temporary files, never committed.",
     "*.tmp",
     "*.tmp.*"
   ]
 
   @call_timeout 30_000
+  @default_max_projects 100
 
   @type state :: %{
           name: term(),
           data_dir: String.t(),
           vct_dir: String.t(),
-          path: String.t(),
-          mounts: [Mount.t()],
-          legacy_projects_imported: boolean()
+          store: term(),
+          mounts: [Mount.t()]
         }
 
   ## Client API
@@ -97,10 +102,8 @@ defmodule EvoGit.VCT do
     * `:name` — registered name (default `__MODULE__`)
     * `:data_dir` — data directory holding the `vct/` folder (default
       `Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir())`)
-    * `:path` — the JSON mount-table file (default `<data_dir>/vct/virtual-tree.json`)
-    * `:legacy_projects` — rows to import instead of reading the task store
-    * `:legacy_projects_fun` — `fun/0` returning those rows (wins over
-      `:legacy_projects`)
+    * `:store` — the task store owning the `vct_mounts` table (default
+      `EvoGit.Store`)
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -109,55 +112,78 @@ defmodule EvoGit.VCT do
   end
 
   @doc """
-  Returns every mount in raw persisted order.
+  Returns the maximum number of mounts the table may hold.
+
+  `100` by default, overridable through the app env `:vct_max_projects` (a
+  non-positive or non-integer value falls back to the default).
   """
-  @spec mounts() :: [Mount.t()]
-  def mounts, do: call(:mounts, [])
+  @spec max_projects() :: pos_integer()
+  def max_projects do
+    case Application.get_env(:evo_git, :vct_max_projects) do
+      value when is_integer(value) and value > 0 -> value
+      _other -> @default_max_projects
+    end
+  end
 
   @doc """
-  Returns the mounts sorted by `last_opened_at` DESC with `nil` LAST.
+  Mounts an absolute OS path, returning the created or refreshed mount.
+
+  `path` must be an absolute OS path (`{:error, :relative_path}` otherwise) and
+  is normalized (trimmed, trailing separators dropped). It is NEVER required to
+  exist on disk, and no directory is created.
 
   ## Options
 
-    * `:limit` — positive integer cap on the returned list (the VCT itself
-      always retains every mount)
-  """
-  @spec list_projects(keyword()) :: [Mount.t()]
-  def list_projects(opts \\ []) when is_list(opts), do: call({:list_projects, opts}, [])
+    * `:name` — display name (a blank or absent name keeps the derived basename)
 
-  @doc """
-  Registers an OS path as a mount.
-
-  `path` must be an absolute OS path (`{:error, :relative_path}` otherwise);
-  it is normalized (trimmed, trailing separators dropped) and is NEVER required
-  to exist. `name_or_opts` is a binary name, `nil`, or a keyword list with
-  `:name`.
-
-  Registering the same OS path twice is idempotent and keeps its point; a new
-  path that matches the name/basename of a mount whose recorded OS path is gone
-  RE-POINTS that mount (same point, new path) instead of accumulating a second
-  one.
+  Registering an already-mounted OS path is idempotent: it refreshes
+  `last_opened_at` (and a non-blank `:name`) and KEEPS its point. A new path
+  that matches the name and point basename of a mount whose recorded OS path is
+  gone RE-POINTS that mount (same point, new path) instead of accumulating a
+  second one — the portability rule for a mount table carried across machines.
 
   Returns `{:ok, mount}` or `{:error, reason}` (`:relative_path`,
-  `:invalid_path`, `:invalid_name`, a persistence error, or
+  `:invalid_path`, `{:invalid_name, term}`, a store error, or
   `:vct_unavailable`).
   """
-  @spec register_project(String.t(), String.t() | nil | keyword()) ::
-          {:ok, Mount.t()} | {:error, term()}
-  def register_project(path, name_or_opts \\ nil),
-    do: call({:register_project, path, name_or_opts}, {:error, :vct_unavailable})
+  @spec mount(String.t(), keyword()) :: {:ok, Mount.t()} | {:error, term()}
+  def mount(path, opts \\ []) when is_list(opts),
+    do: call({:mount, path, opts}, {:error, :vct_unavailable})
 
   @doc """
-  Removes a mount by VCT point (`"vct:..."` binary or `%EvoGit.VCT.Path{}`) or
+  Returns every mount, newest first (`last_opened_at` descending, `nil` LAST).
+
+  ## Options
+
+    * `:limit` — positive integer cap on the returned list (the table itself
+      keeps up to `max_projects/0` entries)
+  """
+  @spec projects(keyword()) :: [Mount.t()]
+  def projects(opts \\ []) when is_list(opts), do: call({:projects, opts}, [])
+
+  @doc """
+  Returns the mounts matching `query`, newest first.
+
+  The match is a CASE-INSENSITIVE SUBSTRING search over the display name, the
+  OS path and the VCT point — the autocomplete interface. A blank query matches
+  every mount; a non-binary query matches none.
+
+  ## Options
+
+    * `:limit` — positive integer cap on the returned list
+  """
+  @spec search(term(), keyword()) :: [Mount.t()]
+  def search(query, opts \\ []) when is_list(opts), do: call({:search, query, opts}, [])
+
+  @doc """
+  Forgets a mount by VCT point (`"vct:..."` binary or `%EvoGit.VCT.Path{}`) or
   by OS path (any other binary).
 
-  Returns `:ok`, `{:error, :not_found}` (callers may map it to `:ok`),
-  `{:error, :invalid_point}` for an unparseable point, or `{:error, reason}`.
+  Returns `:ok`, `{:error, :not_found}`, `{:error, :invalid_point}` for an
+  unparseable point, or another `{:error, reason}`.
   """
-  @spec remove_project(String.t() | VctPath.t()) ::
-          :ok | {:error, :not_found} | {:error, term()}
-  def remove_project(point_or_path),
-    do: call({:remove_project, point_or_path}, {:error, :vct_unavailable})
+  @spec forget(String.t() | VctPath.t()) :: :ok | {:error, term()}
+  def forget(key), do: call({:forget, key}, {:error, :vct_unavailable})
 
   @doc """
   Resolves a VCT point (`"vct:..."` binary or `%EvoGit.VCT.Path{}`) — or an
@@ -165,8 +191,7 @@ defmodule EvoGit.VCT do
   """
   @spec resolve(String.t() | VctPath.t()) ::
           {:ok, Mount.t()} | {:error, :not_found} | {:error, term()}
-  def resolve(point_or_path),
-    do: call({:resolve, point_or_path}, {:error, :not_found})
+  def resolve(point_or_path), do: call({:resolve, point_or_path}, {:error, :not_found})
 
   @doc """
   Returns the mount containing `os_path` (longest OS-path prefix, path-boundary
@@ -207,8 +232,7 @@ defmodule EvoGit.VCT do
   Writes the global context verbatim.
 
   After a successful write with NON-BLANK content it lazily initializes the VCT
-  directory as a git repository, keeps the machine-local mount table out of
-  history via a `.gitignore`, and commits the context files. A blank content
+  directory as a git repository and commits the context files. A blank content
   never initializes a repository. Git failures are logged and never lose the
   written file.
 
@@ -230,21 +254,18 @@ defmodule EvoGit.VCT do
         Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir())
 
     vct_dir = Path.join(data_dir, "vct")
-    path = Keyword.get(opts, :path) || Path.join(vct_dir, @table_file)
 
     # The VCT directory only — never a mount point.
     File.mkdir_p!(vct_dir)
 
-    loaded = Persistence.load(path)
-    {mounts, imported?} = boot_import(loaded, path, opts)
+    store = Keyword.get(opts, :store, EvoGit.Store)
 
     state = %{
       name: name,
       data_dir: data_dir,
       vct_dir: vct_dir,
-      path: path,
-      mounts: mounts,
-      legacy_projects_imported: imported?
+      store: store,
+      mounts: load_mounts(store)
     }
 
     # A global context restored from a state backup is already on disk but its
@@ -256,21 +277,11 @@ defmodule EvoGit.VCT do
   end
 
   @impl true
-  def handle_call(:mounts, _from, state), do: {:reply, state.mounts, state}
-
-  def handle_call({:list_projects, opts}, _from, state) do
-    mounts =
-      state.mounts
-      |> Table.sort_by_recency()
-      |> apply_limit(Keyword.get(opts, :limit))
-
-    {:reply, mounts, state}
-  end
-
-  def handle_call({:register_project, path, name_or_opts}, _from, state) do
+  def handle_call({:mount, path, opts}, _from, state) do
     with {:ok, os_path} <- validate_os_path(path),
-         {:ok, name} <- extract_name(name_or_opts) do
-      {:ok, mounts, mount} = Table.register(state.mounts, os_path, name, DateTime.utc_now())
+         {:ok, name} <- extract_name(opts) do
+      {:ok, registered, mount} = Table.register(state.mounts, os_path, name, DateTime.utc_now())
+      mounts = Table.enforce_cap(registered, max_projects())
 
       case persist(state, mounts) do
         :ok ->
@@ -285,7 +296,26 @@ defmodule EvoGit.VCT do
     end
   end
 
-  def handle_call({:remove_project, key}, _from, state) do
+  def handle_call({:projects, opts}, _from, state) do
+    mounts =
+      state.mounts
+      |> Table.sort_by_recency()
+      |> apply_limit(Keyword.get(opts, :limit))
+
+    {:reply, mounts, state}
+  end
+
+  def handle_call({:search, query, opts}, _from, state) do
+    mounts =
+      state.mounts
+      |> matching_mounts(query)
+      |> Table.sort_by_recency()
+      |> apply_limit(Keyword.get(opts, :limit))
+
+    {:reply, mounts, state}
+  end
+
+  def handle_call({:forget, key}, _from, state) do
     case remove_from(state.mounts, key) do
       {:ok, mounts, _removed} ->
         case persist(state, mounts) do
@@ -345,7 +375,7 @@ defmodule EvoGit.VCT do
   def handle_call({:put_global_context, content}, _from, state) when is_binary(content) do
     case write_global_context(state, content) do
       :ok ->
-        safe_broadcast("vct", {:vct_updated, node()})
+        broadcast_mount_change()
         {:reply, :ok, state}
 
       {:error, reason} ->
@@ -356,67 +386,55 @@ defmodule EvoGit.VCT do
   def handle_call({:put_global_context, _content}, _from, state),
     do: {:reply, {:error, :invalid_content}, state}
 
-  ## Boot: one-time legacy import
+  ## Boot: load the mount table from the task store
 
-  defp boot_import(%{legacy_projects_imported: true} = loaded, _path, _opts),
-    do: {loaded.mounts, true}
+  # Total: a store that is absent, down or holding an undecodable row never
+  # crashes boot. Invalid rows are dropped with a warning.
+  defp load_mounts(store) do
+    store
+    |> store_mounts()
+    |> Enum.flat_map(fn map ->
+      case Mount.from_map(map) do
+        {:ok, mount} ->
+          [mount]
 
-  defp boot_import(%{mounts: mounts}, path, opts) do
-    result = Table.import_legacy(mounts, legacy_rows(opts))
-
-    Enum.each(result.skipped, fn skipped ->
-      Logger.warning("VCT: skipping legacy project with a non-absolute path: #{inspect(skipped)}")
+        {:error, reason} ->
+          Logger.warning("VCT: dropping an invalid mount row: #{inspect({map, reason})}")
+          []
+      end
     end)
-
-    case Persistence.save(path, result.mounts, true) do
-      :ok ->
-        log_import(result)
-        {result.mounts, true}
-
-      {:error, reason} ->
-        # Keep the imported mounts in memory but leave the marker false so the
-        # NEXT boot retries; the import is idempotent per OS path.
-        Logger.warning("VCT: could not persist the legacy project import: #{inspect(reason)}")
-        {result.mounts, false}
-    end
   end
 
-  defp log_import(%{imported: imported}) when imported != [] do
-    Logger.info("VCT: imported #{length(imported)} legacy recent project(s)")
-  end
-
-  defp log_import(_result), do: :ok
-
-  defp legacy_rows(opts) do
-    fun = Keyword.get(opts, :legacy_projects_fun)
-
-    cond do
-      is_function(fun, 0) -> normalize_rows(fun.())
-      is_list(Keyword.get(opts, :legacy_projects)) -> Keyword.get(opts, :legacy_projects)
-      true -> normalize_rows(default_legacy_rows())
-    end
-  end
-
-  defp normalize_rows(rows) when is_list(rows), do: rows
-  defp normalize_rows(_rows), do: []
-
-  defp default_legacy_rows do
-    EvoGit.Store.safe_select_all_projects(EvoGit.Store)
+  defp store_mounts(store) do
+    EvoGit.Store.list_vct_mounts(store)
   rescue
-    _exception -> []
+    exception ->
+      Logger.warning("VCT: could not load the mount table: #{Exception.message(exception)}")
+      []
   catch
-    :exit, _reason -> []
+    :exit, reason ->
+      Logger.warning("VCT: could not load the mount table: #{inspect(reason)}")
+      []
   end
 
   ## Persistence + broadcasts
 
-  defp persist(state, mounts),
-    do: Persistence.save(state.path, mounts, state.legacy_projects_imported)
-
-  defp broadcast_mount_change do
-    safe_broadcast("recent_projects", {:recent_projects_updated})
-    safe_broadcast("vct", {:vct_updated, node()})
+  # The WHOLE table is replaced atomically by the store, so the in-memory list
+  # and the database can never disagree; a failed write leaves both untouched.
+  defp persist(state, mounts) do
+    EvoGit.Store.save_vct_mounts(state.store, Enum.map(mounts, &Mount.to_map/1))
+  rescue
+    exception ->
+      Logger.warning("VCT: could not persist the mount table: #{Exception.message(exception)}")
+      {:error, :store_unavailable}
+  catch
+    :exit, reason ->
+      Logger.warning("VCT: could not persist the mount table: #{inspect(reason)}")
+      {:error, :store_unavailable}
   end
+
+  # ONE broadcast per successful mutation: the node-aware `"vct"` notification.
+  defp broadcast_mount_change, do: safe_broadcast("vct", {:vct_updated, node()})
 
   defp safe_broadcast(topic, message) do
     Phoenix.PubSub.broadcast(EvoGit.PubSub, topic, message)
@@ -440,9 +458,6 @@ defmodule EvoGit.VCT do
 
   defp validate_os_path(_path), do: {:error, :invalid_path}
 
-  defp extract_name(name) when is_binary(name), do: {:ok, Table.normalize_name(name)}
-  defp extract_name(nil), do: {:ok, nil}
-
   defp extract_name(opts) when is_list(opts) do
     case Keyword.get(opts, :name) do
       nil -> {:ok, nil}
@@ -457,6 +472,26 @@ defmodule EvoGit.VCT do
     do: Enum.take(mounts, limit)
 
   defp apply_limit(mounts, _limit), do: mounts
+
+  # Case-insensitive substring match over name, OS path and VCT point.
+  defp matching_mounts(mounts, query) when is_binary(query) do
+    needle = query |> String.trim() |> String.downcase()
+
+    if needle == "" do
+      mounts
+    else
+      Enum.filter(mounts, fn mount ->
+        Enum.any?([mount.name, mount.path, mount.point], &contains?(&1, needle))
+      end)
+    end
+  end
+
+  defp matching_mounts(_mounts, _query), do: []
+
+  defp contains?(value, needle) when is_binary(value),
+    do: String.contains?(String.downcase(value), needle)
+
+  defp contains?(_value, _needle), do: false
 
   defp remove_from(mounts, %VctPath{} = point),
     do: Table.remove_by_point(mounts, VctPath.format(point))

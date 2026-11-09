@@ -75,35 +75,3 @@ defmodule EvoGit.Store.Schemas.TaskRow do
   """
   def columns, do: Enum.map(__schema__(:fields), &Atom.to_string/1)
 end
-
-defmodule EvoGit.Store.Schemas.ProjectRow do
-  @moduledoc """
-  Ecto schema for the `projects` table — a PERSISTENCE-ROW struct, not a
-  domain struct.
-
-  `EvoGit.Store` translates `ProjectRow ↔ %EvoGit.RecentProject{}` in wave 2;
-  nothing outside the store layer should ever see a `ProjectRow`. The field
-  set mirrors `Codec.project_columns/0`.
-
-  `path` is the TEXT primary key (no autogenerate); `name` is plain TEXT;
-  `last_opened_at` is a `TaskTimestamp` (DateTime ↔ fixed-millisecond ISO-8601
-  TEXT — same wire format as every other timestamp column). No `timestamps()`.
-  """
-
-  use Ecto.Schema
-
-  alias EvoGit.Store.Types
-
-  @primary_key {:path, :string, autogenerate: false}
-  schema "projects" do
-    field(:name, :string)
-    field(:last_opened_at, Types.TaskTimestamp)
-  end
-
-  @doc """
-  The 3 project-table column names (strings) in schema-declaration order —
-  equals `Codec.project_columns/0`. Returns strings to mirror
-  `Codec.project_columns/0` exactly.
-  """
-  def columns, do: Enum.map(__schema__(:fields), &Atom.to_string/1)
-end

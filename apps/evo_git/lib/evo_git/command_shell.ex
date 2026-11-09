@@ -62,7 +62,7 @@ defmodule EvoGit.CommandShell do
     ForceKillTask,
     GetTask,
     GuideUser,
-    ListRecentProjects,
+    ListProjects,
     ListTasks,
     SpawnInvestigator,
     StartTask,
@@ -182,10 +182,10 @@ defmodule EvoGit.CommandShell do
         %{key: "dismissible", type: :bool, required: false, positional: nil, default: true}
       ]
     },
-    "ListRecentProjects.list_recent_projects" => %{
-      module: ListRecentProjects,
+    "ListProjects.list_projects" => %{
+      module: ListProjects,
       level: 1,
-      summary: "Lists the user's recently opened projects, most recent first.",
+      summary: "Lists the node's Virtual Context Tree project mounts, newest first.",
       args: []
     },
     "SystemInfo.system_info" => %{
