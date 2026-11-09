@@ -3,17 +3,28 @@ defmodule EvoGit.Agent.ToolDispatch do
   Core tool-execution and LLM-turn logic extracted from `EvoGit.Agent.__using__/1`.
 
   Handles the main agent turn cycle: LLM call with retry, tool-call processing
-  (subagent vs standard), batching, timeout management, output sanitization, and
-  redundant-cd warnings.
+  (subagent vs standard), output assembly, and redundant-cd warnings.
+
+  ## Dispatch ownership
+
+  EXECUTION is no longer the agent's business: `batch_execute_tools/5` resolves
+  the agent-side context (owner identity, repo paths, node path, taskdir, role)
+  into ONE `EvoGit.ToolRuntime.Request` and delegates the whole batch to
+  `EvoGit.ToolRuntime.execute_batch/2`, which owns the serial/parallel
+  partition, per-call timeouts, tool slots, the spawned tool task,
+  `EvoGit.ProcessManager` tracking and the sanitize pipeline
+  (`EvoGit.ToolRuntime.Output`). What remains here is the AGENT-side
+  bookkeeping: delegation-hint accumulation and the once-per-run redundant-cd
+  warning, applied after the batch in the parent process, in request order
+  (`apply_tool_output_tracking/3`).
 
   ## Multimodal tool outputs (the wrap boundary)
 
-  This module is the ONE place a `%EvoGit.Agent.ToolOutput{}` (text + optional
-  images/audio) is wrapped, unwrapped and materialized. A tool may return a
-  `%ToolOutput{}`; `sanitize_tool_result/3` wraps the raw return, runs the
-  BINARY-ONLY sanitize/truncate-feedback pipeline on its text component and
+  The RUNTIME wraps and sanitizes (`EvoGit.ToolRuntime.Output.sanitize/3`); this
+  module keeps the AGENT-side wrap helpers — `sanitize_tool_result/3` (a thin
+  delegator, kept because it is the long-standing public entry point)
   re-attaches the sanitized text (`ToolOutput.with_text/2`) so the media
-  survive, collapsing an all-text output back to a plain binary. `assemble_tool_result/3`
+  survive, and `assemble_tool_result/3`
   materializes it into the tool-result message — media-carrying outputs become a
   content-part LIST (`ToolOutput.to_content_parts/1`), while a plain binary is
   passed through BYTE-IDENTICALLY to `ReqLLM.Context.tool_result/3`. The
@@ -51,7 +62,6 @@ defmodule EvoGit.Agent.ToolDispatch do
   alias EvoGit.Agent.ConflictState
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.ToolInvocation
-  alias EvoGit.Agent.OutputSanitizer
   alias EvoGit.Agent.ToolOutput
   alias EvoGit.Agent.SubagentSchemas
   alias EvoGit.Adapters.Git
@@ -60,11 +70,6 @@ defmodule EvoGit.Agent.ToolDispatch do
   alias EvoGit.AgentScheduler
 
   import ReqLLM.Context, only: [user: 1, tool_result: 3]
-
-  # Extra per-call headroom (ms) after approval for elixir_eval write/sudo:
-  # covers the engine's 5s execution cap plus bounded cleanup/authorization.
-  # Also retained for legacy level-2/3 run_command timeout compatibility.
-  @approval_execution_buffer 30_000
 
   # Maximum consecutive EMPTY-response nudges before ending the turn gracefully.
   # A response with zero tool calls and no usable text (e.g. a provider
@@ -1202,170 +1207,86 @@ defmodule EvoGit.Agent.ToolDispatch do
     agent_id = AgentScheduler.current_agent_id()
     repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
-    # The OWNER identity every spawned tool task needs, resolved ONCE per batch
-    # (this function always runs in the AGENT process, so `self()` IS the agent
-    # pid) and threaded down to `execute_tool_task/7`, which re-installs it in
-    # each tool task's process dictionary.
+    {:ok, %{context_node: %{path: node_path}}} =
+      AgentScheduler.get_agent_state(agent_id)
+
+    # The AGENT-side identity, resolved ONCE per batch (this function always
+    # runs in the AGENT process, so `self()` IS the agent pid) and handed to the
+    # managed runtime in ONE request struct.
     #
-    # The pid MUST be the AGENT's, never the tool task's: the tool `Task` is
-    # shut down IMMEDIATELY after the tool returns
+    # The pid MUST be the AGENT's, never a tool task's: the tool task is shut
+    # down IMMEDIATELY after the tool returns
     # (`Task.yield(task, tool_timeout) || Task.shutdown(task)`), so anything
     # monitoring it — `EvoGit.BackgroundJobs` binds a detached job's lifetime to
     # its owner — would see an exit at once and kill the job on the spot. The
     # AGENT pid is the one lifetime signal that covers agent completion, crash,
     # graceful cancel and force-kill.
-    owner = %{
-      agent_id: agent_id,
-      task_id: AgentScheduler.task_id_for_agent(agent_id),
-      agent_pid: self()
-    }
-
-    {:ok, %{context_node: %{path: node_path}}} =
-      AgentScheduler.get_agent_state(agent_id)
-
-    threshold = EvoGit.Agent.DelegationHints.delegation_hint_threshold()
-    initial_hints = Process.get(:delegation_hints, %{})
-
-    read_threshold = EvoGit.Agent.DelegationHints.read_delegation_hint_threshold()
-    read_initial_hints = Process.get(:read_delegation_hints, %{})
-
-    # ONE merge-conflict check per turn: reuse the snapshot refreshed at the END
-    # of the previous turn (`EvoGit.Agent.ConflictState`) — that is immediately
-    # before this batch, so it is fresher than a pre-batch check and free of any
-    # extra git call. A never-refreshed process dictionary yields `[]`.
-    conflict_files = ConflictState.files()
+    request =
+      EvoGit.ToolRuntime.Request.new(%{
+        agent_id: agent_id,
+        task_id: AgentScheduler.task_id_for_agent(agent_id),
+        agent_pid: self(),
+        repo_path: repo_path,
+        repo_root: repo_root,
+        node_path: node_path,
+        # Resolved once here (in the agent process, which owns the process dict)
+        # and re-installed inside each spawned tool task so the per-task tmpdir
+        # survives the spawned-task boundary (spawned tasks do not inherit the
+        # caller's process dictionary). `nil` is a harmless no-op.
+        taskdir: EvoGit.TaskTmpdir.current(),
+        max_timeout: max_timeout,
+        delegation_level: delegation_level,
+        agent_module: agent_module,
+        # The ROLE-GUARD inputs `EvoGit.Agent.Tools.execute/5` consults; the
+        # runtime re-installs them in every tool task.
+        role: %{
+          repo_less: Process.get(:repo_less) == true,
+          foreign_repos: Process.get(:foreign_repos, []),
+          repo_id: Process.get(:evogit_repo_id)
+        }
+      })
 
     ctx = %{
-      owner: owner,
       repo_path: repo_path,
       repo_root: repo_root,
       node_path: node_path,
-      max_timeout: max_timeout,
+      threshold: EvoGit.Agent.DelegationHints.delegation_hint_threshold(),
+      read_threshold: EvoGit.Agent.DelegationHints.read_delegation_hint_threshold(),
+      # ONE merge-conflict check per turn: reuse the snapshot refreshed at the
+      # END of the previous turn (`EvoGit.Agent.ConflictState`) — that is
+      # immediately before this batch, so it is fresher than a pre-batch check
+      # and free of any extra git call. A never-refreshed process dictionary
+      # yields `[]`.
+      conflict_files: ConflictState.files(),
+      # The receiving role: its delegation level and module, used by the
+      # read-delegation nudge to name only the subagent tools this role actually
+      # has.
       delegation_level: delegation_level,
-      # The receiving role module, used by the read-delegation nudge to name
-      # only the subagent tools this role actually has.
-      agent_module: agent_module,
-      threshold: threshold,
-      read_threshold: read_threshold,
-      conflict_files: conflict_files,
-      # Resolved once here (in the agent process, which owns the process dict)
-      # and re-installed inside each spawned tool task so the per-task tmpdir
-      # survives the `Task.async` boundary (spawned tasks do not inherit the
-      # caller's process dictionary). `nil` is a harmless no-op.
-      taskdir: EvoGit.TaskTmpdir.current()
+      agent_module: agent_module
     }
 
-    # Partition the batch: tool calls that read-modify-write files
-    # (`EvoGit.Agent.Tools.serial_tool?/1` — the single classification source of
-    # truth) must NOT overlap each other, because each reads the ORIGINAL bytes
-    # and the last write wins, silently discarding every other same-file edit in
-    # the batch. Run them SEQUENTIALLY in this (parent agent) process, one call
-    # at a time, in request order. Everything else stays concurrent below.
-    #
-    # The SERIAL phase runs FIRST, deliberately: a file mutation then always
-    # lands BEFORE any read or shell command in the same batch that could
-    # observe it, so `[write_file x.ex, run_bash "mix test"]` and
-    # `[edit_file x, read_file x]` behave as the model expects. The reverse
-    # order would let a same-batch read/exec observe stale bytes.
-    {serial_calls, parallel_calls} =
-      Enum.split_with(indexed_calls, fn {call, _index} ->
-        EvoGit.Agent.Tools.serial_tool?(ReqLLM.ToolCall.name(call))
-      end)
+    initial_hints = Process.get(:delegation_hints, %{})
+    read_initial_hints = Process.get(:read_delegation_hints, %{})
 
-    serial_outputs =
-      Enum.map(serial_calls, fn {call, index} -> run_tool_call(call, index, ctx) end)
-
-    # Execute the remaining standard tool calls CONCURRENTLY, bounded only
-    # by the scheduler's tool-slot pool: each parallel task still acquires a
-    # tool slot via `AgentScheduler.with_tool_slot/2` inside
-    # `execute_tool_with_timeout/8` (respecting `max_tool_concurrency`).
-    # `max_concurrency` is set to the batch size so every call starts
-    # immediately — Elixir's `max_concurrency` only accepts positive integers
-    # (`:infinity` is valid for `timeout` only) — making the scheduler, not a
-    # local cap, the binding constraint. `ordered: true` keeps results in index
-    # order. `timeout: :infinity` defers timeout enforcement to the per-tool
-    # timeout logic inside `execute_tool_with_timeout/8` (an outer stream
-    # timeout would wrongly kill legitimate long-running tools).
-    concurrency = max(1, length(parallel_calls))
-
-    parallel_outputs =
-      parallel_calls
-      |> Task.async_stream(
-        fn {call, index} -> run_tool_call(call, index, ctx) end,
-        max_concurrency: concurrency,
-        ordered: true,
-        timeout: :infinity
-      )
-      |> Enum.map(fn
-        {:ok, result} -> result
-        {:exit, {%_{} = exception, stacktrace}} -> reraise(exception, stacktrace)
-        {:exit, reason} -> exit(reason)
-      end)
-
-    # Both phases ran in request-independent order, so re-sort by index before
-    # hint tracking: the LLM must receive results in request order.
-    tool_outputs =
-      (serial_outputs ++ parallel_outputs) |> Enum.sort_by(fn {index, _, _} -> index end)
+    calls_by_index = Map.new(indexed_calls, fn {call, index} -> {index, call} end)
 
     # Apply hint tracking in the PARENT process, in index order, so the
     # process-dictionary-backed delegation-hint maps and the once-per-run
     # redundant-cd warning accumulate deterministically (running them inside
-    # the parallel tasks would make accumulation racy/non-deterministic).
+    # the runtime's parallel tasks would make accumulation racy/non-deterministic).
     {results, final_hints, read_final_hints} =
-      Enum.reduce(
-        tool_outputs,
-        {[], initial_hints, read_initial_hints},
-        &apply_tool_output_tracking(&1, &2, ctx)
-      )
+      indexed_calls
+      |> EvoGit.ToolRuntime.execute_batch(request)
+      |> Enum.reduce({[], initial_hints, read_initial_hints}, fn {index, _id, _name, output},
+                                                                 acc ->
+        apply_tool_output_tracking({index, Map.fetch!(calls_by_index, index), output}, acc, ctx)
+      end)
 
     # Store updated hints in process dictionary for do_turn to pick up
     Process.put(:delegation_hints, final_hints)
     Process.put(:read_delegation_hints, read_final_hints)
 
     results
-  end
-
-  # Runs a single tool call's execution, returning `{index, call, output}`,
-  # where `output` is `String.t() | %ToolOutput{} | nil` — a plain binary for an
-  # all-text result (the legacy shape) and a `%ToolOutput{}` only when the tool
-  # attached media. Used by BOTH batch phases: sequentially in the parent process
-  # for the serial (file-mutating) group and inside the `Task.async_stream`
-  # worker for the parallel group. Only the tool-execution call happens here —
-  # hint tracking and the redundant-cd warning are applied later in the parent
-  # process, in index order (see `apply_tool_output_tracking/3`).
-  #
-  # Arguments go through the tolerant three-stage parse
-  # (`EvoGit.Agent.ToolInvocation.arguments/1`): a decoded JSON object is passed
-  # to the tool layer, a non-blank but unparseable argument string is passed
-  # through RAW (the tool layer answers with a self-correcting error), and when
-  # nothing is recoverable the call is answered with a normal
-  # `Error: invalid arguments: …` result. This is the fix for the crash path:
-  # `ReqLLM.ToolCall.args_map/1` returns nil for undecodable arguments, and a
-  # nil reaching `EvoGit.Agent.Tools.execute/5` (whose clauses are `is_map` /
-  # `is_binary`) raised `FunctionClauseError` inside the LINKED tool task and
-  # killed the whole agent instead of letting the model self-correct.
-  defp run_tool_call(call, index, ctx) do
-    name = ReqLLM.ToolCall.name(call)
-
-    output =
-      case ToolInvocation.arguments(call) do
-        {:ok, args} ->
-          execute_tool_with_timeout(
-            name,
-            args,
-            ctx.owner,
-            ctx.repo_path,
-            ctx.repo_root,
-            ctx.node_path,
-            ctx.max_timeout,
-            ctx.taskdir
-          )
-
-        {:error, reason} ->
-          ToolInvocation.invalid_arguments_result(reason)
-      end
-
-    {index, call, output}
   end
 
   @doc false
@@ -1413,284 +1334,24 @@ defmodule EvoGit.Agent.ToolDispatch do
   defp rewrap_output(%ToolOutput{} = output, text), do: ToolOutput.with_text(output, text)
   defp rewrap_output(_output, text), do: text
 
-  # Runs a single tool call inside a tool slot with an async task, bounded
-  # timeout, and output sanitization/truncation feedback.
-  #
-  # The per-call timeout rule lives in `EvoGit.Agent.ToolInvocation.resolve_timeout/4`:
-  # an explicit `timeout` argument wins (clamped by `[:scheduler,
-  # :max_tool_timeout]`), an OMITTED timeout on the platform shell tool
-  # (`bash` / `run_bash` / `run_powershell` / `pwsh` / `shell` / …) gets a
-  # generous 120 s default — the shell schema advertises a long timeout, so a
-  # long test run that simply omits the argument must not be silently cut at the
-  # generic 10 s `[:scheduler, :default_tool_timeout]` — and every other tool
-  # keeps that configured default.
-  #
-  # The ADVERTISED-DEFAULT seam (`EvoGit.Agent.Tools.default_timeout_ms/1`) is
-  # then applied on top: a tool that publishes its own default timeout for the
-  # "model omitted the argument" case (today the platform shell tool's 120 s)
-  # raises the resolved timeout to that value. It is a pure MAX — it can never
-  # LOWER the resolved timeout, so `resolve_timeout/4`'s own shell fallback and
-  # an explicit `timeout` argument are both unaffected — and it is clamped by
-  # the same `max_timeout`. The one exception is a tool whose `timeout` argument
-  # is an INTERNAL wait budget (`EvoGit.Agent.Tools.timeout_arg_is_wait_budget?/1`
-  # — `job_output`), where the advertised default is a FLOOR even against an
-  # explicit argument (see `apply_advertised_tool_timeout/4`).
-  #
-  # `owner` is the batch's resolved owner identity (`%{agent_id:, task_id:,
-  # agent_pid:}` — see `batch_execute_tools/4`): the agent id is what the tool
-  # slot pool is acquired under, and the WHOLE map is re-installed inside the
-  # spawned task below.
-  defp execute_tool_with_timeout(
-         name,
-         args,
-         owner,
-         repo_path,
-         repo_root,
-         node_path,
-         max_timeout,
-         taskdir
-       ) do
-    tool_timeout =
-      ToolInvocation.resolve_timeout(
-        name,
-        args,
-        EvoGit.Agent.DelegationHints.default_tool_timeout(),
-        max_timeout
-      )
-
-    tool_timeout = apply_advertised_tool_timeout(tool_timeout, name, args, max_timeout)
-
-    tool_timeout =
-      if approval_window_tool_call?(name, args) do
-        # Write/sudo elixir_eval waits for exact-code approval before evaluation.
-        # Floor even an explicit outer `timeout` to the approval window plus
-        # execution/cleanup headroom; `timeout_ms` is ONLY the inner engine cap.
-        # The configured scheduler max remains authoritative, even if shorter
-        # than the approval window. Read/invalid tiers get no approval floor.
-        # Legacy run_command timeout policy is retained despite refused dispatch.
-        approval_timeout = EvoGit.CommandApproval.timeout()
-        tool_timeout |> max(approval_timeout + @approval_execution_buffer) |> min(max_timeout)
-      else
-        tool_timeout
-      end
-
-    AgentScheduler.with_tool_slot(owner.agent_id, fn ->
-      task =
-        Task.async(fn ->
-          execute_tool_task(
-            name,
-            args,
-            repo_path,
-            repo_root,
-            node_path,
-            taskdir,
-            owner
-          )
-        end)
-
-      case Task.yield(task, tool_timeout) || Task.shutdown(task) do
-        {:ok, {:tool_crashed, message}} ->
-          "Error: Tool execution crashed: #{message}"
-
-        {:ok, {:error, reason}} ->
-          "Error: #{inspect(reason)}"
-
-        {:ok, result} ->
-          # Wrap → sanitize → truncation-feedback → re-wrap, all in one place
-          # (the wrap boundary — see `sanitize_tool_result/3`). A plain binary
-          # return round-trips BYTE-IDENTICALLY; a media-carrying return keeps
-          # its attachments.
-          sanitize_tool_result(result, name, args)
-
-        {:exit, reason} ->
-          "Error: Tool execution crashed: #{inspect(reason)}"
-
-        nil ->
-          "Error: Tool execution timed out after #{tool_timeout}ms. Some output may have been partially captured by the tool."
-      end
-    end)
-  end
-
-  # Applies a tool's OWN advertised default timeout
-  # (`EvoGit.Agent.Tools.default_timeout_ms/1`) to the resolved per-call timeout.
-  #
-  # Pure MAX + `max_timeout` clamp: `min(max(resolved, advertised), max_timeout)`.
-  # It can only RAISE the resolved timeout, never lower it, so the platform-shell
-  # 120 s fallback in `ToolInvocation.resolve_timeout/4` and a resolved value
-  # that is already larger both survive untouched.
-  #
-  # Two branches:
-  #
-  #   * `EvoGit.Agent.Tools.timeout_arg_is_wait_budget?/1` (today only
-  #     `job_output`, whose `timeout` argument bounds its INTERNAL `wait: true`
-  #     loop rather than the whole call): the advertised value is a FLOOR even
-  #     when an explicit `timeout` argument is present — an explicit value may
-  #     still RAISE the ceiling, but never lower it below the advertised wait
-  #     default (the 60 s wait cap plus headroom), so
-  #     `{"wait": true, "timeout": "60s"}` cannot be killed by the dispatcher at
-  #     exactly 60 s.
-  #   * every other tool: an explicit `timeout` argument (any usable duration
-  #     shape — see `explicit_timeout_arg?/1`) means the model asked for a
-  #     specific budget, so the advertised default does not apply — that is the
-  #     same "explicit wins" rule `resolve_timeout/4` implements (pinned for the
-  #     platform shell by `test/evo_git/agent/tool_dispatch_test.exs`).
-  defp apply_advertised_tool_timeout(resolved, name, args, max_timeout) do
-    case EvoGit.Agent.Tools.default_timeout_ms(name) do
-      advertised when is_integer(advertised) and advertised > 0 ->
-        if explicit_timeout_arg?(args) and
-             not EvoGit.Agent.Tools.timeout_arg_is_wait_budget?(name) do
-          resolved
-        else
-          resolved |> max(advertised) |> min(max_timeout)
-        end
-
-      _no_advertised_default ->
-        resolved
-    end
-  end
-
-  # True when `args` carries a usable explicit `timeout`: any duration shape the
-  # tool surface accepts (an integer, a float, or a numeric string with an
-  # optional `ms`/`s`/`m` unit — `"60000"`, `"90s"`, `"30m"`), parsed by the ONE
-  # duration helper `EvoGit.Agent.Tools.Shared.fetch_duration_ms/2` and POSITIVE
-  # (a zero/negative or unusable value means "absent"). This is the SAME
-  # recognition `ToolInvocation.resolve_timeout/4` applies, so the "explicit wins"
-  # rule can never disagree with the resolved timeout.
-  # TOTAL: the tolerant arguments parse can hand the dispatcher a RAW string, a
-  # nil or anything else — only a map can declare a `timeout`.
-  defp explicit_timeout_arg?(args) when is_map(args) do
-    case EvoGit.Agent.Tools.Shared.fetch_duration_ms(
-           %{"timeout" => Map.get(args, "timeout")},
-           ["timeout"]
-         ) do
-      {:ok, timeout} when timeout > 0 -> true
-      _absent_or_unusable -> false
-    end
-  end
-
-  defp explicit_timeout_arg?(_args), do: false
-
-  # The body of one tool-execution task. Runs INSIDE the `Task.async` (so it is
-  # linked to the agent process) and therefore contains the failure containment
-  # described below.
-  #
-  # `owner` is the batch's owner identity (`%{agent_id:, task_id:, agent_pid:}`
-  # — resolved ONCE per batch in `batch_execute_tools/4`, in the agent process).
-  defp execute_tool_task(
-         name,
-         args,
-         repo_path,
-         repo_root,
-         node_path,
-         taskdir,
-         owner
-       ) do
-    # Spawned tasks do NOT inherit the caller's process dictionary, so
-    # re-install the resolved per-task tmpdir unconditionally — every tool
-    # that consults `EvoGit.Sandbox.resolve_tmpdir/0` (sandbox TMPDIR
-    # injection, commit-message files, skill scripts, partial outputs)
-    # must see the correct dir. A nil value is harmless (`current/0`
-    # returns nil for a non-binary).
-    EvoGit.TaskTmpdir.put_current(taskdir)
-
-    # EVERY tool task gets the full owner identity (no `run_command` special
-    # case):
-    #
-    #   * `:evogit_agent_pid` — the AGENT's pid, read by
-    #     `EvoGit.BackgroundJobs.current_owner_pid/0` to bind a detached job's
-    #     lifetime to its owner. It MUST be the agent pid, never `self()` here:
-    #     this tool task is shut down the moment the tool returns
-    #     (`Task.yield/2 || Task.shutdown/1`), so a job monitored on it would be
-    #     killed instantly — the agent pid is the one lifetime signal covering
-    #     agent completion, crash, graceful cancel and force-kill.
-    #   * `:evogit_agent_id` / `:evogit_task_id` — read by the command-approval
-    #     gate (`EvoGit.CommandShell.request_approval/3`) and by the
-    #     task-control/background-job tools that report who acted.
-    Process.put(:evogit_agent_id, owner.agent_id)
-    Process.put(:evogit_task_id, owner.task_id)
-    Process.put(:evogit_agent_pid, owner.agent_pid)
-
-    # Reason for the try/rescue/catch: `Task.async/1` LINKS this task to the
-    # agent process, so a RAISING tool implementation (a wrong-typed argument, an
-    # unresolved executable inside a tool, a buggy custom tool) would kill the
-    # whole agent before `Task.yield/2` could ever observe it — the caller's
-    # `{:exit, reason}` arm is unreachable for raises, because the linked exit
-    # signal is delivered directly and the agent does not trap exits. Containing
-    # the failure HERE converts it into a normal tool result
-    # (`Error: Tool execution crashed: …`) that the model can self-correct from
-    # on the next turn. `:kill` (this module's own timeout shutdown) and the
-    # `:shutdown`/`:normal` exit family are re-raised unchanged so a legitimate
-    # task exit is never swallowed and still reaches the `{:exit, reason}` arm.
-    try do
-      EvoGit.Agent.Tools.execute(name, args, repo_path, repo_root, node_path)
-    rescue
-      exception ->
-        {:tool_crashed, Exception.format_banner(:error, exception)}
-    catch
-      :exit, reason when reason in [:normal, :shutdown, :kill] ->
-        exit(reason)
-
-      :exit, {:shutdown, _} = reason ->
-        exit(reason)
-
-      kind, reason ->
-        {:tool_crashed, "#{kind} #{inspect(reason)}"}
-    end
-  end
-
   # --- Multimodal tool output: wrap boundary ---
 
   @doc false
-  # Finalizes a tool's raw return value for the tool-result message: wraps it
-  # (`ToolOutput.wrap/1`), runs the BINARY-ONLY sanitize → truncation-feedback
-  # pipeline on the TEXT component only, and re-attaches the sanitized text
-  # while PRESERVING any media (`ToolOutput.with_text/2`).
+  # Finalizes a tool's raw return value for the tool-result message.
+  #
+  # The pipeline itself MOVED to `EvoGit.ToolRuntime.Output.sanitize/3` (it is
+  # runtime-owned, like execution and tracking); this delegator stays because it
+  # is the long-standing public entry point of the wrap boundary and is called
+  # directly by suites.
   #
   # An all-text return (the shape every built-in tool produces today) comes back
   # as the plain sanitized BINARY — byte-identical to the legacy path, never
   # promoted to a `%ToolOutput{}`. A return carrying media comes back as a
   # `%ToolOutput{}` from which the media parts are materialized exactly once at
   # the message-construction site (`assemble_tool_result/3`).
-  #
-  # `nil` (a tool that legitimately returns nothing) stays `nil`. Any other
-  # non-binary term is passed through verbatim to preserve the legacy
-  # pass-through sanitizer behavior — no built-in tool returns one (the
-  # `execute/5` contract is `String.t() | %ToolOutput.t() | {:error, reason}`,
-  # and the error path is stringified upstream).
-  def sanitize_tool_result(nil, _name, _args), do: nil
-
-  def sanitize_tool_result(result, name, args)
-      when is_binary(result) or is_struct(result, ToolOutput) do
-    output = ToolOutput.wrap(result)
-
-    sanitized =
-      output
-      |> ToolOutput.text()
-      |> sanitize_and_append_truncation_feedback(name, args)
-
-    output
-    |> ToolOutput.with_text(sanitized)
-    |> collapse_all_text_output()
-  end
-
-  def sanitize_tool_result(other, _name, _args), do: other
-
-  # Runs the BINARY-ONLY sanitize → truncation-feedback pipeline on the text
-  # component. Neither `OutputSanitizer` nor `TruncationFeedback` ever sees a
-  # `%ToolOutput{}`.
-  defp sanitize_and_append_truncation_feedback(text, name, args) do
-    {sanitized, truncation_info} = OutputSanitizer.sanitize_and_truncate(text, name, args)
-
-    EvoGit.Agent.TruncationFeedback.append_truncation_feedback(sanitized, truncation_info, name)
-  end
-
-  # A `%ToolOutput{}` carrying NO media collapses back to its plain text binary:
-  # the all-text path must stay BYTE-IDENTICAL to the legacy string pipeline and
-  # behave like a plain string for every downstream consumer. A media-carrying
-  # output stays a struct.
-  defp collapse_all_text_output(%ToolOutput{} = output) do
-    if ToolOutput.media?(output), do: output, else: ToolOutput.text(output)
-  end
+  defdelegate sanitize_tool_result(result, name, args),
+    to: EvoGit.ToolRuntime.Output,
+    as: :sanitize
 
   @doc false
   # Builds the `%ReqLLM.Message{}` for one tool result — the ONE
@@ -1713,22 +1374,6 @@ defmodule EvoGit.Agent.ToolDispatch do
         tool_result(tool_call_id, name, binary)
     end
   end
-
-  # Only exact valid write/sudo tiers can wait on evaluator approval. Missing
-  # tier means read; invalid values fail fast in the tool without this floor.
-  defp approval_window_tool_call?("elixir_eval", %{"tier" => tier})
-       when tier in ["write", "sudo"],
-       do: true
-
-  # Legacy timeout compatibility only: Tools.execute/5 refuses run_command.
-  # Command paths at level >= 2 historically waited for interactive approval.
-  defp approval_window_tool_call?("run_command", %{"command" => command})
-       when is_binary(command) do
-    first_token = command |> String.trim() |> String.split(~r/\s+/, parts: 2) |> hd()
-    EvoGit.CommandShell.security_level(first_token) >= 2
-  end
-
-  defp approval_window_tool_call?(_name, _args), do: false
 
   # Appends the write-tool delegation hint when the write threshold is
   # exceeded (skipped during conflict resolution).

@@ -393,7 +393,12 @@ defmodule EvoGit.Agent.Tools.ShellTool do
            shell_args,
            repo_root,
            timeout,
-           max_bytes
+           max_bytes,
+           # Observability only: the MANAGED tool-call runtime
+           # (`EvoGit.ToolRuntime`) tracks the call and exposes its execution id
+           # here so the backend can attach the real OS handle. `nil` (an
+           # untracked call) is a no-op and changes nothing about the result.
+           execution_id: Process.get(:evogit_execution_id)
          ) do
       {:ok, output, exit_code} ->
         elapsed = System.monotonic_time(:millisecond) - start
