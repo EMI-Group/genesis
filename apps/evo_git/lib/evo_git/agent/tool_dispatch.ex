@@ -1,94 +1,51 @@
 defmodule EvoGit.Agent.ToolDispatch do
   @moduledoc """
-  Core tool-execution and LLM-turn logic extracted from `EvoGit.Agent.__using__/1`.
+  Turn orchestration for a scheduled agent: one prompt, one response, and the
+  tool calls it carries.
 
-  Handles the main agent turn cycle: LLM call with retry, tool-call processing
-  (subagent vs standard), output assembly, and redundant-cd warnings.
+  This module owns the turn loop only — the current model/generation-param
+  accessors, commit syncing, `do_turn/5`, post-LLM response processing (usage
+  accounting, tool-call dedupe, turn/context advance, reasoning compaction),
+  tool-call processing and the completion route.
 
-  ## Dispatch ownership
+    * PROMPTING lives in `EvoGit.Agent.LLMPrompting` (transient-error retry,
+      fail-fast on a non-retryable rejection, the empty-response nudge, turn
+      classification via `EvoGit.Agent.CompletionProtocol`) and is delegated here.
+    * EXECUTION lives in `EvoGit.ToolRuntime` (serial/parallel partition,
+      per-call timeouts, tool slots, spawned tool task, `EvoGit.ProcessManager`
+      tracking, sanitize pipeline); `batch_execute_tools/5` resolves the
+      agent-side context into ONE `EvoGit.ToolRuntime.Request` and delegates the
+      whole batch to `EvoGit.ToolRuntime.execute_batch/2`.
+    * HINT TRACKING lives in `EvoGit.Agent.ToolOutputTracking` (delegation hints
+      plus the once-per-run redundant-cd warning, applied after the batch in the
+      parent process, in request order) and is delegated here.
 
-  EXECUTION is no longer the agent's business: `batch_execute_tools/5` resolves
-  the agent-side context (owner identity, repo paths, node path, taskdir, role)
-  into ONE `EvoGit.ToolRuntime.Request` and delegates the whole batch to
-  `EvoGit.ToolRuntime.execute_batch/2`, which owns the serial/parallel
-  partition, per-call timeouts, tool slots, the spawned tool task,
-  `EvoGit.ProcessManager` tracking and the sanitize pipeline
-  (`EvoGit.ToolRuntime.Output`). What remains here is the AGENT-side
-  bookkeeping: delegation-hint accumulation and the once-per-run redundant-cd
-  warning, applied after the batch in the parent process, in request order
-  (`apply_tool_output_tracking/3`).
+  The wrap boundary stays here: `sanitize_tool_result/3` is a thin delegator to
+  `EvoGit.ToolRuntime.Output.sanitize/3` that re-attaches the sanitized text
+  (`ToolOutput.with_text/2`) so media survive, and `assemble_tool_result/3`
+  materializes a `%ToolOutput{}` into content parts
+  (`ToolOutput.to_content_parts/1`) while passing a plain binary through
+  BYTE-IDENTICALLY to `ReqLLM.Context.tool_result/3`.
 
-  ## Multimodal tool outputs (the wrap boundary)
-
-  The RUNTIME wraps and sanitizes (`EvoGit.ToolRuntime.Output.sanitize/3`); this
-  module keeps the AGENT-side wrap helpers — `sanitize_tool_result/3` (a thin
-  delegator, kept because it is the long-standing public entry point)
-  re-attaches the sanitized text (`ToolOutput.with_text/2`) so the media
-  survive, and `assemble_tool_result/3`
-  materializes it into the tool-result message — media-carrying outputs become a
-  content-part LIST (`ToolOutput.to_content_parts/1`), while a plain binary is
-  passed through BYTE-IDENTICALLY to `ReqLLM.Context.tool_result/3`. The
-  delegation-hint and redundant-cd hint appenders unwrap to text before their
-  string concatenation and re-wrap afterwards. `EvoGit.Agent.OutputSanitizer`,
-  `EvoGit.Agent.TruncationFeedback` and `EvoGit.Agent.DelegationHints` never see
-  or return a `%ToolOutput{}`.
-
-  ## Completion protocol (harness-aligned)
-
-  The turn ends when the model STOPS calling tools — a text reply with zero tool
-  calls is an IMPLICIT COMPLETION, exactly like the reference harness the models
-  are trained on (`EvoGit.Agent.CompletionProtocol` classifies each response).
-  There are exactly two outcomes:
-
-    * tool calls present → execute them and continue the loop;
-    * ZERO tool calls with usable text → `implicit_complete/2` commits any
-      pending work and builds the `%EvoGit.Agent.Result{}`; that reply text IS
-      the report, and scheduler result handling, `merge_and_report`, the
-      `genesis/agent_*` review branch, task persistence and the dashboard are
-      all unchanged.
-
-  The only other path is an error one: ZERO tool calls and no usable text (an
-  empty provider response) gets exactly one nudge, then the unchanged bounded
-  protocol-violation path (grace/recovery), so a genuinely broken turn still
-  cannot spin forever.
-
-  There is NO completion tool: finishing is always the implicit text reply.
+  A text reply with ZERO tool calls is an IMPLICIT COMPLETION: pending work is
+  committed and the reply text IS the report. ZERO tool calls and no usable text
+  is the only error path (one nudge, then the bounded protocol-violation route);
+  there is NO completion tool.
   """
+
   require Logger
 
   alias EvoGit.Agent.Completion
-  alias EvoGit.Agent.CompletionProtocol
   alias EvoGit.Agent.Compression.Threshold
   alias EvoGit.Agent.ConflictState
   alias EvoGit.Agent.LoopState
-  alias EvoGit.Agent.ToolInvocation
   alias EvoGit.Agent.ToolOutput
   alias EvoGit.Agent.SubagentSchemas
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Usage
   alias EvoGit.Agent.Cost
   alias EvoGit.AgentScheduler
-
   import ReqLLM.Context, only: [user: 1, tool_result: 3]
-
-  # Maximum consecutive EMPTY-response nudges before ending the turn gracefully.
-  # A response with zero tool calls and no usable text (e.g. a provider
-  # returning an empty message) is still a protocol failure — but a recoverable
-  # one, so it gets exactly ONE nudge and re-prompt (the reference harness
-  # recovers the same case as an EMPTY_RESPONSE code). After that the turn ends
-  # via the existing protocol-violation path (grace/recovery or
-  # :recovery_failed) instead of crashing or spinning forever.
-  #
-  # A response with zero tool calls and NON-EMPTY text is NOT a failure: it is
-  # the model finishing, and it never reaches this nudge (see
-  # `EvoGit.Agent.CompletionProtocol`).
-  @max_no_tool_call_nudges 1
-
-  # Base (ms) of the LLM retry exponential backoff. Overridable at call time via
-  # the app env `:llm_retry_backoff_base_ms` (mirrors the other app-env test
-  # seams such as `:peak_hours_now_fun` / `:worktree_create_fun`); when unset the
-  # default below applies, so production behavior is unchanged.
-  @default_retry_backoff_ms 1_000
 
   # --- Model & Generation Params ---
 
@@ -118,22 +75,6 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   defp normalize_context_window(_window),
     do: EvoGit.Config.Schema.LLM.default_context_window()
-
-  # The resolved model spec for a DIAGNOSTIC annotation on the fail-fast error
-  # message (`handle_llm_failure/7`), as opposed to `current_model/0`'s raising
-  # lookup. Deliberately TOTAL: an annotation must never turn the graceful
-  # terminal `{:error, {:llm_request_rejected, message}}` into an agent crash
-  # (the agent state can legitimately be gone by then — a purge/cancel or a
-  # scheduler restart while the call was in flight), so a missing state simply
-  # omits the model from the message.
-  defp diagnostic_model_spec do
-    with agent_id when not is_nil(agent_id) <- AgentScheduler.current_agent_id(),
-         {:ok, agent_state} <- AgentScheduler.get_agent_state(agent_id) do
-      agent_state.llm_model
-    else
-      _other -> nil
-    end
-  end
 
   # Shared lookup for current_model/0 + current_generation_params/0. Raises a
   # descriptive ArgumentError instead of a context-free MatchError when the
@@ -288,338 +229,21 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
   end
 
-  # --- LLM Prompting (transient-error retry + empty-response nudging) ---
+  # --- LLM Prompting (delegators to `EvoGit.Agent.LLMPrompting`) ---
 
   @doc false
-  # Calls the LLM and classifies the turn outcome via
-  # `EvoGit.Agent.CompletionProtocol.classify/1`:
-  #
-  #   * `{:tool_calls, _}` → `{:ok, response}`, the loop continues normally.
-  #   * `{:text_reply, text}` → `{:implicit_completion, response, text}`: the
-  #     model finished by writing text instead of calling a tool (the harness
-  #     completion signal). No nudge — nudging here would fight the training
-  #     distribution and turn a legitimate finish into a protocol violation.
-  #   * `:empty` → zero tool calls AND no usable text, a recoverable protocol
-  #     failure: append ONE nudge and re-prompt, then end the turn gracefully
-  #     via `{:error, :protocol_violation}` (feeding the existing
-  #     grace/recovery path — no crash, no new try/rescue).
-  #
-  # Transient transport/stream errors are still retried with exponential backoff
-  # inside `call_llm_with_retry/5`.
-  #
-  # A NON-RETRYABLE provider rejection (`EvoGit.Agent.LlmError`) is the one
-  # other graceful terminal arm: the retry loop already failed fast, so
-  # `{:error, {:llm_request_rejected, message}}` is passed through unchanged.
-  # Every other `{:error, reason}` still raises exactly as before.
-  def prompt_until_tools_or_limit(context, tools, llm_gen_opts, agent_id, max_retries) do
-    prompt_until_tools_or_limit(context, tools, llm_gen_opts, agent_id, max_retries, 0)
-  end
-
-  defp prompt_until_tools_or_limit(
-         context,
-         tools,
-         llm_gen_opts,
-         agent_id,
-         max_retries,
-         nudge_count
-       ) do
-    case call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries) do
-      {:ok, response, _llm_duration} ->
-        case CompletionProtocol.classify(response) do
-          {:tool_calls, _calls} ->
-            {:ok, response}
-
-          {:text_reply, text} ->
-            {:implicit_completion, response, text}
-
-          :empty ->
-            if nudge_count >= @max_no_tool_call_nudges do
-              Logger.warning(
-                "Agent #{agent_id}: LLM returned an empty response (no tool calls, no text) after #{nudge_count} consecutive nudges (#{nudge_count + 1} attempts), ending turn gracefully"
-              )
-
-              {:error, :protocol_violation}
-            else
-              Logger.warning(
-                "Agent #{agent_id}: LLM returned an empty response (no tool calls, no text), appending nudge and continuing (nudge #{nudge_count + 1}/#{@max_no_tool_call_nudges})"
-              )
-
-              nudge_context = append_no_tool_call_nudge(response.context)
-
-              prompt_until_tools_or_limit(
-                nudge_context,
-                tools,
-                llm_gen_opts,
-                agent_id,
-                max_retries,
-                nudge_count + 1
-              )
-            end
-        end
-
-      {:error, {:llm_request_rejected, _message} = terminal} ->
-        # Non-retryable provider rejection: the loop already failed fast (no
-        # further attempts) and the message is actionable as-is. Pass it through
-        # as a GRACEFUL terminal error — no raise, so the runtime returns
-        # `{:error, ...}` to the task wrapper, which persists the task as
-        # `:failed` with this message instead of crash-retrying the agent
-        # through the same doomed retry cycle.
-        {:error, terminal}
-
-      {:error, reason} ->
-        # Genuine transient failure (network/rate-limit/stream) exhausted all
-        # retries. This is a real error — raise, preserving prior behavior.
-        raise "LLM request failed after #{max_retries} retries: #{inspect(reason)}"
-    end
-  end
+  defdelegate prompt_until_tools_or_limit(context, tools, llm_gen_opts, agent_id, max_retries),
+    to: EvoGit.Agent.LLMPrompting
 
   @doc false
-  # Calls the LLM with retry-on-transient-error semantics using a MANUAL retry
-  # loop (not the `retry` macro) so error CLASSES can be discriminated:
-  #
-  #   * MODEL-EXHAUSTION errors (e.g. "insufficient balance" / HTTP 402) are
-  #     classified by `EvoGit.Agent.TruncationFeedback.classify_model_exhaustion/1`;
-  #     the agent reports them to the scheduler via `report_llm_error/3` and then
-  #     recurses IMMEDIATELY with NO agent-side sleep. The long wait is realized
-  #     by the scheduler's per-model backoff: the next attempt's
-  #     `AgentScheduler.with_llm_slot/2` BLOCKS in the backoff queue (a purgeable
-  #     `:infinity` call, unblocked by force-kill/graceful-cancel or granted when
-  #     the backoff expires). That keeps the wait cancel-safe and preserves the
-  #     SAME turn/context across attempts (no context loss).
-  #   * ORDINARY transient errors keep the previous schedule EXACTLY: a short
-  #     exponential backoff of base `retry_backoff_base_ms()`, doubling each step,
-  #     capped at 60s, with the same +/-10% jitter (see `short_delay_ms/1`).
-  #
-  # The loop handles ONLY genuine transport/stream errors returned as `{:error, _}`
-  # tuples; it does NOT retry the "no tool calls" case — that semantic problem is
-  # handled by the caller via context nudging. The first attempt runs with NO
-  # initial sleep; total attempts = `max_retries + 1`. Returns `{:ok, response,
-  # duration_ms}` or `{:error, reason}`.
-  #
-  # There is NO try/rescue around the loop: exceptions MUST propagate IMMEDIATELY
-  # rather than being retried through backoff sleeps. The raise paths are:
-  # (a) `{:error, :cancelled}` from a force-kill queue purge raises in
-  # `AgentScheduler.with_llm_slot/2` → agent crash → scheduler crash-retry/cancel
-  # machinery; (b) unexpected exceptions. A model with 0 LLM slots (peak
-  # hard-pause) does NOT raise — its slot request BLOCKS (queued in the
-  # scheduler, exactly like the paused-scheduler path), until capacity returns
-  # (peak exit → `update_config` → `grant_pending_on_resume` grants queued
-  # waiters) or a purge replies `{:error, :cancelled}` (force-kill).
-  #
-  # The LLM slot is acquired and released PER ATTEMPT (`with_llm_slot` wraps a
-  # SINGLE attempt), so the backoff wait happens BETWEEN attempts while the
-  # agent's slot is FREE. This keeps `AgentScheduler.pause/0` effective for a
-  # retrying agent: its next attempt blocks on slot re-acquisition when the
-  # scheduler is paused (and is granted on resume).
-  def call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries) do
-    do_call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries, 0)
-  end
-
-  # Manual retry loop. `attempt` is 0-based; total attempts = max_retries + 1.
-  defp do_call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries, attempt) do
-    case run_llm_attempt(context, tools, llm_gen_opts, agent_id) do
-      {:ok, _response, _llm_duration} = result ->
-        result
-
-      {:error, reason} ->
-        handle_llm_failure(context, tools, llm_gen_opts, agent_id, max_retries, attempt, reason)
-    end
-  end
-
-  # Classifies a failed attempt and decides what to do next: recurse
-  # (model-exhaustion → immediate recursion, the scheduler realizes the wait;
-  # ordinary transient → short backoff sleep), FAIL FAST on a non-retryable
-  # provider rejection, or return the terminal error once attempts are
-  # exhausted.
-  #
-  # Branch order matters:
-  #
-  #   1. MODEL EXHAUSTION first — 402 (insufficient balance) / 429 (rate limit)
-  #      keep their existing long scheduler-side backoff untouched, for both the
-  #      in-flight retry and the exhausted case.
-  #   2. NON-RETRYABLE provider rejection (`EvoGit.Agent.LlmError`) — a
-  #      deterministic 4xx (e.g. HTTP 400 code 1210 "Invalid API parameter")
-  #      can never succeed on a retry, so the loop returns the terminal
-  #      `{:error, {:llm_request_rejected, message}}` IMMEDIATELY: no sleep, no
-  #      further attempt, no scheduler backoff. `prompt_until_tools_or_limit/6`
-  #      passes this value through instead of raising, so the runtime returns
-  #      `{:error, ...}` to the task wrapper, which persists the task as
-  #      `:failed` with the actionable message in its structured error record —
-  #      instead of a `RuntimeError` crash that the scheduler crash-retries
-  #      (each crash-retry re-running the whole retry cycle).
-  #   3. Attempts exhausted → the unchanged terminal `{:error, reason}` (still
-  #      raising downstream).
-  #   4. Ordinary transient error → the unchanged short backoff + recurse.
-  defp handle_llm_failure(context, tools, llm_gen_opts, agent_id, max_retries, attempt, reason) do
-    class = EvoGit.Agent.TruncationFeedback.classify_model_exhaustion(reason)
-
-    cond do
-      class && attempt >= max_retries ->
-        # Attempts exhausted. Keep the model-wide backoff fresh for the
-        # crash-retry: `prompt_until_tools_or_limit/6` still raises as before,
-        # but the crash-retry then lands after a long scheduler wait instead of
-        # immediately re-hitting an exhausted model.
-        AgentScheduler.report_llm_error(
-          agent_id,
-          class,
-          EvoGit.Agent.LlmRetryPolicy.model_exhaustion_delay(15)
-        )
-
-        {:error, reason}
-
-      class ->
-        # Model exhaustion with attempts remaining: report to the scheduler and
-        # recurse IMMEDIATELY — the next attempt's `with_llm_slot/2` BLOCKS in the
-        # per-model backoff queue. No agent-side sleep here (the long wait is the
-        # scheduler's, and stays cancel-safe).
-        AgentScheduler.report_llm_error(
-          agent_id,
-          class,
-          EvoGit.Agent.LlmRetryPolicy.model_exhaustion_delay(attempt + 1)
-        )
-
-        do_call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries, attempt + 1)
-
-      EvoGit.Agent.LlmError.non_retryable?(reason) ->
-        # Deterministic provider rejection: fail fast with an actionable message
-        # that also names the request parameters Genesis SENT for this call and
-        # the resolved model spec to check (see `EvoGit.Agent.LlmError`'s
-        # `format_failure/2`). Parameter NAMES only — never a value, the
-        # objective, a tool result or a credential.
-        message =
-          EvoGit.Agent.LlmError.format_failure(reason,
-            params: request_parameters(tools, llm_gen_opts),
-            model: diagnostic_model_spec()
-          )
-
-        Logger.error("Agent #{agent_id}: #{message}")
-
-        {:error, {:llm_request_rejected, message}}
-
-      attempt >= max_retries ->
-        {:error, reason}
-
-      true ->
-        # Ordinary transient error: short exponential-backoff sleep, then recurse.
-        :timer.sleep(short_delay_ms(attempt + 1))
-
-        do_call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries, attempt + 1)
-    end
-  end
-
-  # Runs ONE LLM attempt, acquiring and releasing the LLM slot for THAT single
-  # attempt (the slot-per-attempt invariant). Any exception raised inside — e.g.
-  # `{:error, :cancelled}` from a force-kill purge in
-  # `AgentScheduler.with_llm_slot/2` — propagates IMMEDIATELY (no rescue).
-  defp run_llm_attempt(context, tools, llm_gen_opts, agent_id) do
-    request_params = request_parameters(tools, llm_gen_opts)
-    log_request_parameters(agent_id, request_params)
-
-    AgentScheduler.with_llm_slot(agent_id, fn ->
-      with llm_start <- System.monotonic_time(:millisecond),
-           {:ok, stream_resp} <-
-             ReqLLM.stream_text(
-               current_model(),
-               context,
-               request_params
-             ),
-           {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
-           llm_end <- System.monotonic_time(:millisecond) do
-        {:ok, response, llm_end - llm_start}
-      else
-        {:error, reason} ->
-          Logger.warning(
-            "Agent #{agent_id}: LLM request failed#{retry_intent(reason)} Reason: #{inspect(reason)}"
-          )
-
-          if EvoGit.ReqLLMPool.excess_queuing_error?(reason) do
-            EvoGit.ReqLLMPool.bump_for_excess_queuing(
-              AgentScheduler.get_config(:model_concurrency),
-              AgentScheduler.get_config(:default_llm_max_concurrency)
-            )
-          end
-
-          {:error, reason}
-      end
-    end)
-  end
-
-  # The EXACT keyword list handed to `ReqLLM.stream_text/3` for one attempt —
-  # the single source of the request's parameter names for both the debug log
-  # and the fail-fast message's self-diagnosing tail.
-  defp request_parameters(tools, llm_gen_opts), do: Keyword.merge([tools: tools], llm_gen_opts)
-
-  # Emits the parameter NAMES of the request once per attempt at DEBUG level so
-  # even an ORDINARY (retryable) failure is diagnosable after the fact — e.g. a
-  # provider rejecting an unsupported generation parameter whose name never
-  # appears in the error body. Nothing here is logged at info/error on the happy
-  # path, and the lazy (0-arity) message means the names are rendered ONLY when
-  # the debug level is actually enabled, so the normal path pays nothing.
-  defp log_request_parameters(agent_id, request_params) do
-    Logger.debug(fn ->
-      names = EvoGit.Agent.LlmError.parameter_names(request_params)
-
-      "Agent #{agent_id}: LLM request parameters sent: " <>
-        EvoGit.Agent.LlmError.format_parameter_names(names)
-    end)
-  end
-
-  # Per-attempt failure log suffix. A non-retryable provider rejection is
-  # TERMINAL (`handle_llm_failure/7` returns immediately, see
-  # `EvoGit.Agent.LlmError`), so the log must not claim it is "retrying"; every
-  # other class keeps the original wording. Pure and total.
-  defp retry_intent(reason) do
-    if EvoGit.Agent.LlmError.non_retryable?(reason) do
-      " (non-retryable — failing fast)."
-    else
-      ", retrying..."
-    end
-  end
-
-  # Short exponential-backoff delay (ms) before attempt `k` (k >= 1) for ORDINARY
-  # transient errors — preserves the prior schedule exactly: base
-  # `retry_backoff_base_ms()`, doubling each step, capped at 60_000 ms, with the
-  # same +/-10% jitter as `Retry.DelayStreams.randomize/2`. The raw stream's first
-  # element is the base delay, so the delay before attempt k is the (k-1)-th
-  # element (`Enum.at(stream, k - 1)`).
-  defp short_delay_ms(k) do
-    retry_backoff_base_ms()
-    |> Retry.DelayStreams.exponential_backoff()
-    |> Retry.DelayStreams.randomize()
-    |> Retry.DelayStreams.cap(60_000)
-    |> Enum.at(k - 1, 60_000)
-  end
-
-  # Retry backoff base (ms) — call-time app-env seam so tests can shrink the
-  # exponential-backoff sleeps; defaults to `@default_retry_backoff_ms`.
-  defp retry_backoff_base_ms do
-    Application.get_env(:evo_git, :llm_retry_backoff_base_ms, @default_retry_backoff_ms)
-  end
+  defdelegate call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries),
+    to: EvoGit.Agent.LLMPrompting
 
   @doc false
-  # Appends a user-role nudge message to the context (which already contains the
-  # assistant's EMPTY response), asking the model to either call a tool or say
-  # what it did.
-  def append_no_tool_call_nudge(context) do
-    ReqLLM.Context.append(context, no_tool_call_nudge_message())
-  end
+  defdelegate append_no_tool_call_nudge(context), to: EvoGit.Agent.LLMPrompting
 
   @doc false
-  # The user-role nudge message appended when the LLM returns an EMPTY response
-  # (zero tool calls AND no usable text). It is deliberately NOT used for a
-  # text-only reply — that reply is the completion signal, not a failure.
-  # Stamped with a creation-time timestamp (not turn-tagged — it can be
-  # appended between turns inside prompt_until_tools_or_limit).
-  def no_tool_call_nudge_message do
-    EvoGit.Agent.ContextBuilder.tag_message_timestamp(
-      user(
-        "Your last response was empty: you did not make any tool calls and you " <>
-          "did not write any text. If you have finished the task, reply with a " <>
-          "plain-text summary of what you did — no tool call is needed to " <>
-          "finish. Otherwise, respond with a tool call."
-      )
-    )
-  end
+  defdelegate no_tool_call_nudge_message(), to: EvoGit.Agent.LLMPrompting
 
   # Handles the protocol-violation outcome (an EMPTY response — no tool calls and
   # no usable text, after the single nudge was already spent) by either
@@ -1289,50 +913,15 @@ defmodule EvoGit.Agent.ToolDispatch do
     results
   end
 
+  # --- Tool Output Tracking (delegators to `EvoGit.Agent.ToolOutputTracking`) ---
+
   @doc false
-  # Applies the redundant-cd warning and write/read delegation hints to one
-  # tool output in the parent process, threading the hint maps through the
-  # batch accumulator (index-ordered, deterministic).
-  #
-  # The wrap boundary lives here too: the redundant-cd warning preserves media,
-  # while the delegation-hint modules are BINARY-ONLY, so the text component is
-  # unwrapped, the hint appends run on it, and the (possibly extended) text is
-  # re-attached with the media preserved (`ToolOutput.with_text/2`). An all-text
-  # output never becomes a struct — `rewrap_output/2` returns the plain binary.
-  def apply_tool_output_tracking({index, call, output}, {acc_results, hints, read_hints}, ctx) do
-    name = ReqLLM.ToolCall.name(call)
-    # TOTAL accessor: the tolerant parse may have handed a RAW string to the tool
-    # layer (undecodable arguments), and the hint helpers are map-only.
-    args = ToolInvocation.arguments_map(call)
-    tool_call_id = call.id || name || "unknown"
+  defdelegate apply_tool_output_tracking(entry, acc, ctx),
+    to: EvoGit.Agent.ToolOutputTracking
 
-    output =
-      maybe_append_redundant_cd_warning(output, name, args, ctx.repo_path, ctx.repo_root)
-
-    text = output_text(output)
-
-    # Track delegation hints for write tools (skip during conflict resolution)
-    {text, hints} = track_write_delegation_hint(text, hints, name, args, ctx)
-
-    # Track read delegation hints for read tools (skip during conflict resolution)
-    {text, read_hints} = track_read_delegation_hint(text, read_hints, name, args, ctx)
-
-    output = rewrap_output(output, text)
-
-    {acc_results ++ [{index, tool_call_id, name, output}], hints, read_hints}
-  end
-
-  # Returns the TEXT component of a tool output — the plain binary itself, or
-  # `ToolOutput.text/1` for a media-carrying `%ToolOutput{}`. The sanitize /
-  # truncation / hint pipeline is BINARY-ONLY and therefore always consumes this.
-  defp output_text(%ToolOutput{} = output), do: ToolOutput.text(output)
-  defp output_text(text), do: text
-
-  # Re-attaches `text` to the SAME media set as `output`: a `%ToolOutput{}`
-  # keeps its attachments (`ToolOutput.with_text/2`), while a plain binary (or
-  # the legacy non-binary pass-through) is returned as-is.
-  defp rewrap_output(%ToolOutput{} = output, text), do: ToolOutput.with_text(output, text)
-  defp rewrap_output(_output, text), do: text
+  @doc false
+  defdelegate maybe_append_redundant_cd_warning(output, name, args, repo_path, repo_root),
+    to: EvoGit.Agent.ToolOutputTracking
 
   # --- Multimodal tool output: wrap boundary ---
 
@@ -1374,106 +963,6 @@ defmodule EvoGit.Agent.ToolDispatch do
         tool_result(tool_call_id, name, binary)
     end
   end
-
-  # Appends the write-tool delegation hint when the write threshold is
-  # exceeded (skipped during conflict resolution).
-  defp track_write_delegation_hint(output, hints, name, args, ctx) do
-    if ctx.threshold > 0 do
-      child_paths =
-        EvoGit.Agent.DelegationHints.extract_child_paths(
-          name,
-          args,
-          ctx.node_path,
-          ctx.repo_path
-        )
-
-      child_paths =
-        EvoGit.Agent.DelegationHints.filter_child_paths_if_conflicts(
-          child_paths,
-          ctx.conflict_files
-        )
-
-      EvoGit.Agent.DelegationHints.maybe_append_delegation_hint(
-        output,
-        hints,
-        child_paths,
-        ctx.threshold
-      )
-    else
-      {output, hints}
-    end
-  end
-
-  # Appends the read-tool delegation hint when the read threshold is exceeded
-  # (skipped during conflict resolution).
-  defp track_read_delegation_hint(output, read_hints, name, args, ctx) do
-    if ctx.read_threshold > 0 do
-      read_child_paths =
-        EvoGit.Agent.DelegationHints.extract_read_child_paths(
-          name,
-          args,
-          ctx.node_path,
-          ctx.repo_path
-        )
-
-      read_child_paths =
-        EvoGit.Agent.DelegationHints.filter_child_paths_if_conflicts(
-          read_child_paths,
-          ctx.conflict_files
-        )
-
-      EvoGit.Agent.DelegationHints.maybe_append_read_delegation_hint(
-        output,
-        read_hints,
-        read_child_paths,
-        ctx.read_threshold,
-        ctx.delegation_level,
-        ctx.agent_module
-      )
-    else
-      {output, read_hints}
-    end
-  end
-
-  # --- Redundant CD Warning ---
-  # The "you don't need to cd into your worktree" warning fires only once
-  # per agent run (tracked via the process dictionary), unlike the
-  # wrong-path cd warnings which fire every time.
-
-  @doc false
-  def maybe_append_redundant_cd_warning(output, name, args, repo_path, repo_root) do
-    # ALIAS-AWARE: the model-facing shell tool name is `bash` while the internal
-    # dispatch keys are `run_bash` / `run_powershell`, so compare through the
-    # alias spine (`EvoGit.Agent.ToolNames`) instead of a hardcoded name list —
-    # otherwise a `bash` call never reaches the warning.
-    if EvoGit.Agent.ToolNames.normalize(name) == EvoGit.Agent.ToolNames.shell_tool_name() do
-      command = Map.get(args, "command", "")
-
-      if EvoGit.Agent.Tools.ShellTool.redundant_cd?(command, repo_path, repo_root) and
-           not Process.get(:redundant_cd_warned, false) do
-        Process.put(:redundant_cd_warned, true)
-
-        append_output_text(
-          output,
-          "\n\n" <> EvoGit.Agent.Tools.ShellTool.redundant_cd_warning(repo_path)
-        )
-      else
-        output
-      end
-    else
-      output
-    end
-  end
-
-  # Appends `suffix` to the TEXT component of a tool output while PRESERVING any
-  # media: a `%ToolOutput{}` is unwrapped (`ToolOutput.text/1`), the suffix is
-  # concatenated, and the result is re-attached (`ToolOutput.with_text/2`); a
-  # plain binary stays a plain binary (the byte-identity invariant).
-  defp append_output_text(%ToolOutput{} = output, suffix) do
-    ToolOutput.with_text(output, ToolOutput.text(output) <> suffix)
-  end
-
-  defp append_output_text(binary, suffix) when is_binary(binary), do: binary <> suffix
 
   # --- Shared Helpers ---
 

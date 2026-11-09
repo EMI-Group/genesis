@@ -802,7 +802,7 @@ defmodule EvoGit.Agent.Tools do
   # started with the shell tool's `run_in_background` argument; their owner
   # identity comes from the process dictionary the dispatcher installs in every
   # tool task (`:evogit_agent_pid` / `:evogit_agent_id` / `:evogit_task_id` —
-  # see `EvoGit.Agent.ToolDispatch.execute_tool_task/7`), so the repo paths are
+  # see `EvoGit.ToolRuntime.Executor.execute_tool_task/4`), so the repo paths are
   # accepted but unused.
   defp execute_tool("job_output", args, repo_path, repo_root, _node_path) when is_map(args) do
     JobOutput.execute(args, repo_path, repo_root)

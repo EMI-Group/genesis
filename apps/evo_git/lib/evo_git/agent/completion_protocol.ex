@@ -17,8 +17,9 @@ defmodule EvoGit.Agent.CompletionProtocol do
       branch, task persistence, the dashboard — is unchanged.
     * `:empty` — zero tool calls and no usable text (e.g. a provider returning
       an empty message). That is still a protocol failure; it is recovered by
-      exactly ONE nudge in `ToolDispatch.prompt_until_tools_or_limit/6` before
-      the turn ends (`dsh` has the same `EMPTY_RESPONSE` recovery code).
+      exactly ONE nudge in
+      `EvoGit.Agent.LLMPrompting.prompt_until_tools_or_limit/6` before the turn
+      ends (`dsh` has the same `EMPTY_RESPONSE` recovery code).
 
   There is no completion tool: a text reply with zero tool calls IS the
   completion, and the same dirty-workspace commit, archive refs and git note are
