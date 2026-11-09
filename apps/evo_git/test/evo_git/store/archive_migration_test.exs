@@ -33,6 +33,9 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
   fixtures (built from their DDL alone) do not carry; that migration and its
   index inventory are covered by their own suites, and stamping it keeps this
   file about the archive step only.
+  `20260815000007_vct_mounts` is stamped as applied for the same reason: it
+  would fan the fixture's `projects` table out into `vct_mounts`, which is the
+  subject of its own suite.
 
   ## Pinned contracts
 
@@ -86,6 +89,7 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
   @covering_index_version 20_260_815_000_004
   @archive_version 20_260_815_000_005
   @prune_index_version 20_260_815_000_006
+  @vct_mounts_version 20_260_815_000_007
 
   # The whole shipped chain, ascending exactly as `schema_migrations` reports it.
   @migration_versions [
@@ -94,7 +98,8 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     @composite_index_version,
     @covering_index_version,
     @archive_version,
-    @prune_index_version
+    @prune_index_version,
+    @vct_mounts_version
   ]
 
   # The pre-release 20-column `tasks` DDL — the state a database upgraded from a

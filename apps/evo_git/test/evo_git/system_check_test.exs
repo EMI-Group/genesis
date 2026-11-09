@@ -2,13 +2,106 @@ defmodule EvoGit.SystemCheckTest.StreamEndpoint do
   @moduledoc false
   # Test-local real HTTP endpoint: capture the outgoing wire request, then send a
   # minimal successful OpenAI stream. Unlike TestLlmServer, this pins credentials
-  # and the selected model rather than just counting error responses.
-  def init(owner), do: owner
+  # and the selected model rather than just counting error responses, and it
+  # answers `text/event-stream` (TestLlmServer's fixed JSON body cannot satisfy a
+  # streaming request).
+  #
+  # Raw TCP on purpose: `:evo_git` carries no Plug/Bandit dependency (those
+  # belong to the dashboard app), so the server is built directly on `:gen_tcp`
+  # — the same shape the other streaming stubs in this suite use.
+  import ExUnit.Callbacks, only: [on_exit: 1]
 
-  def call(conn, owner) do
-    {:ok, body, conn} = Plug.Conn.read_body(conn)
-    send(owner, {:health_request, conn.req_headers, Jason.decode!(body)})
+  @doc """
+  Starts the endpoint and returns its OS-assigned ephemeral port.
+  Each served request's headers and decoded JSON body are sent to `owner` as
+  `{:health_request, headers, body}` (`headers` is a `{downcased_name, value}`
+  list).
+  """
+  @spec start!(pid()) :: non_neg_integer()
+  def start!(owner) do
+    {:ok, listen} =
+      :gen_tcp.listen(0, [
+        :binary,
+        packet: :raw,
+        active: false,
+        reuseaddr: true,
+        ip: {127, 0, 0, 1}
+      ])
 
+    {:ok, port} = :inet.port(listen)
+    acceptor = spawn(fn -> accept_loop(listen, owner) end)
+
+    on_exit(fn ->
+      Process.exit(acceptor, :kill)
+      :gen_tcp.close(listen)
+    end)
+
+    port
+  end
+
+  defp accept_loop(listen, owner) do
+    case :gen_tcp.accept(listen) do
+      {:ok, socket} ->
+        serve(socket, owner)
+        :gen_tcp.close(socket)
+        accept_loop(listen, owner)
+
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  # Drain the request body BEFORE replying: closing on unread data can RST the
+  # response before the client reads it.
+  defp serve(socket, owner) do
+    {headers_block, rest} = read_headers(socket, "")
+    body = drain_body(socket, rest, content_length(headers_block))
+    send(owner, {:health_request, parse_headers(headers_block), Jason.decode!(body)})
+    :gen_tcp.send(socket, response())
+  end
+
+  defp read_headers(socket, acc) do
+    case String.split(acc, "\r\n\r\n", parts: 2) do
+      [headers, rest] ->
+        {headers, rest}
+
+      [_incomplete] ->
+        case :gen_tcp.recv(socket, 0, 5_000) do
+          {:ok, data} -> read_headers(socket, acc <> data)
+          {:error, _reason} -> {acc, ""}
+        end
+    end
+  end
+
+  # Header names are downcased, exactly as Plug's `req_headers` presents them.
+  defp parse_headers(block) do
+    [_request_line | lines] = String.split(block, "\r\n")
+
+    Enum.flat_map(lines, fn line ->
+      case String.split(line, ":", parts: 2) do
+        [name, value] -> [{String.downcase(String.trim(name)), String.trim(value)}]
+        _other -> []
+      end
+    end)
+  end
+
+  defp content_length(headers) do
+    case Regex.run(~r/\r\ncontent-length:\s*(\d+)/i, headers) do
+      [_, length] -> String.to_integer(length)
+      _ -> 0
+    end
+  end
+
+  defp drain_body(_socket, have, length) when byte_size(have) >= length, do: have
+
+  defp drain_body(socket, have, length) do
+    case :gen_tcp.recv(socket, 0, 5_000) do
+      {:ok, data} -> drain_body(socket, have <> data, length)
+      {:error, _reason} -> have
+    end
+  end
+
+  defp response do
     chunks = [
       %{type: "response.output_text.delta", delta: "hello", output_index: 0, content_index: 0},
       %{
@@ -17,11 +110,19 @@ defmodule EvoGit.SystemCheckTest.StreamEndpoint do
       }
     ]
 
-    response = Enum.map_join(chunks, "", &("data: " <> Jason.encode!(&1) <> "\n\n"))
+    body =
+      Enum.map_join(chunks, "", &("data: " <> Jason.encode!(&1) <> "\n\n")) <>
+        "data: [DONE]\n\n"
 
-    conn
-    |> Plug.Conn.put_resp_content_type("text/event-stream")
-    |> Plug.Conn.send_resp(200, response <> "data: [DONE]\n\n")
+    [
+      "HTTP/1.1 200 OK\r\n",
+      "content-type: text/event-stream\r\n",
+      "cache-control: no-cache\r\n",
+      "content-length: #{byte_size(body)}\r\n",
+      "connection: close\r\n",
+      "\r\n",
+      body
+    ]
   end
 end
 
@@ -249,16 +350,7 @@ defmodule EvoGit.SystemCheckTest do
     end
 
     test "same-provider accounts sharing an endpoint send only their own key and selected model" do
-      server =
-        start_supervised!(
-          {Bandit,
-           plug: {EvoGit.SystemCheckTest.StreamEndpoint, self()},
-           ip: {127, 0, 0, 1},
-           port: 0,
-           startup_log: false}
-        )
-
-      assert {:ok, {_address, port}} = ThousandIsland.listener_info(server)
+      port = EvoGit.SystemCheckTest.StreamEndpoint.start!(self())
 
       System.put_env("GENESIS_HEALTH_ACCOUNT_A", "health-account-a-secret")
       System.put_env("GENESIS_HEALTH_ACCOUNT_B", "health-account-b-secret")

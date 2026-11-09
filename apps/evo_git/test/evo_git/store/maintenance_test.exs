@@ -498,6 +498,9 @@ defmodule EvoGit.Store.MaintenanceTest do
             point: "vct:///projects/seed-#{i}",
             path: "/seed/#{i}",
             name: "Seed #{i}",
+            # `insert_all` bypasses the schema's `kind` default and the column
+            # is NOT NULL, so it is supplied explicitly.
+            kind: "git",
             last_opened_at: ~U[2024-05-05 05:05:05.555Z]
           ]
         end

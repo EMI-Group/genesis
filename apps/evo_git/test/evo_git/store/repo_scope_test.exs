@@ -91,9 +91,17 @@ defmodule EvoGit.Store.RepoScopeTest do
   # VctMountRow's `last_opened_at` is a `Types.TaskTimestamp` — a %DateTime{}
   # dumps to the fixed-ms ISO wire format, so insert_all through the TYPED
   # schema is the correct write path (raw schemas are read-projection only).
+  # Every column is supplied explicitly: `insert_all` bypasses the schema's
+  # `kind` default, and the column is NOT NULL.
   defp insert_mount(point, path, name) do
     Repo.insert_all(VctMountRow, [
-      [point: point, path: path, name: name, last_opened_at: ~U[2024-05-05 05:05:05.555Z]]
+      [
+        point: point,
+        path: path,
+        name: name,
+        kind: "git",
+        last_opened_at: ~U[2024-05-05 05:05:05.555Z]
+      ]
     ])
   end
 

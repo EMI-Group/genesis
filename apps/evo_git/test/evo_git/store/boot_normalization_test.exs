@@ -38,7 +38,10 @@ defmodule EvoGit.Store.BootNormalizationTest do
       '*.[0-9][0-9][0-9]Z' AND julianday(col) IS NOT NULL`, for
       `tasks.started_at`, `tasks.finished_at`, `projects.last_opened_at`
       (NOT `tasks.updated_at` — that column is only backfilled, never
-      re-formatted); unparseable/NULL values are skipped.
+      re-formatted); unparseable/NULL values are skipped. `projects` is the
+      LEGACY mount table a pre-VCT database still carries: this migration
+      normalizes it and `20260815000007_vct_mounts` then fans its rows into
+      `vct_mounts`, so the fixtures assert the normalized value there.
     * results — JSON literal `null` text → SQL NULL; every other untagged
       value (raw non-JSON strings AND untagged JSON objects/arrays/scalars)
       wrapped verbatim as `{"__result_tag__":"string","value":<original>}`;
@@ -219,7 +222,7 @@ defmodule EvoGit.Store.BootNormalizationTest do
   defp snapshot(pid) do
     {
       query_rows(pid, "SELECT * FROM tasks ORDER BY id"),
-      query_rows(pid, "SELECT * FROM projects ORDER BY path"),
+      query_rows(pid, "SELECT * FROM vct_mounts ORDER BY path"),
       query_rows(pid, "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
     }
   end
@@ -270,8 +273,11 @@ defmodule EvoGit.Store.BootNormalizationTest do
       null_row = raw_task!(pid, "null")
       assert {null_row.started_at, null_row.finished_at} == {nil, nil}
 
-      # projects.last_opened_at is normalized by the same rule.
-      assert query_rows(pid, "SELECT last_opened_at FROM projects WHERE path = '/p-six'") ==
+      # projects.last_opened_at is normalized by the same rule, and the value
+      # survives the retirement of the legacy table: `20260815000007_vct_mounts`
+      # fans the row out into `vct_mounts` with its timestamp VERBATIM, so the
+      # already-normalized spelling is what a mount reader sees afterwards.
+      assert query_rows(pid, "SELECT last_opened_at FROM vct_mounts WHERE path = '/p-six'") ==
                [["2024-01-01T12:00:00.123Z"]]
     end
 
@@ -495,7 +501,8 @@ defmodule EvoGit.Store.BootNormalizationTest do
       pid = boot!(path)
 
       # DROP TABLE IF EXISTS — gone, and the surviving inventory is exactly
-      # the four expected tables. SQLite's own planner-statistics tables
+      # the four expected tables (the legacy `projects` table is retired by
+      # `20260815000007_vct_mounts`). SQLite's own planner-statistics tables
       # (`sqlite_stat1`/`sqlite_stat4`) are excluded: the boot path now runs a
       # best-effort `PRAGMA optimize`, which ANALYZEs whatever SQLite deems
       # worth it (see `EvoGit.Store.Boot.start_dynamic/2`).
@@ -504,10 +511,10 @@ defmodule EvoGit.Store.BootNormalizationTest do
                "SELECT name FROM sqlite_master WHERE type = 'table' " <>
                  "AND name NOT LIKE 'sqlite_stat%' ORDER BY name"
              ) == [
-               ["projects"],
                ["schema_migrations"],
                ["task_agent_archives"],
-               ["tasks"]
+               ["tasks"],
+               ["vct_mounts"]
              ]
     end
   end
@@ -559,7 +566,7 @@ defmodule EvoGit.Store.BootNormalizationTest do
       Process.unlink(pid2)
       on_exit(fn -> if Process.alive?(pid2), do: :ok = Boot.stop(pid2) end)
 
-      # Full-database byte identity: task rows, project rows, table inventory.
+      # Full-database byte identity: task rows, mount rows, table inventory.
       assert snapshot(pid2) == before
     end
   end

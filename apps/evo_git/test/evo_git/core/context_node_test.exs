@@ -17,18 +17,36 @@ defmodule EvoGit.Core.ContextNodeTest do
 
   ## Helpers
 
-  # Isolated VCT instance whose data dir (and therefore its `vct/CONTEXT.md`
+  # Isolated VCT instance whose mount table lives in THIS test's own SQLite
+  # store (`:store`) and whose data dir (and therefore its `vct/CONTEXT.md`
   # global context) lives under this test's tmp_dir.
+  #
+  # The `:store` binding is load-bearing: `EvoGit.VCT` persists its mount list
+  # through the store and READS it back at `init/1`, so an instance left on the
+  # default `EvoGit.Store` would see the app-global mount table - every earlier
+  # test's mounts, and point collisions such as `vct:///projects/proj-2`.
   defp start_vct(tmp_dir, opts \\ []) do
-    name = :"vct_context_node_#{System.unique_integer([:positive])}"
+    unique = System.unique_integer([:positive])
+    store_name = :"vct_context_node_store_#{unique}"
+    db_path = Path.join(tmp_dir, "tasks.sqlite")
+    # A byte copy of the schema-complete template: the seven migrations' DDL is
+    # paid once per BEAM, not once per test.
+    EvoGit.TestSupport.StoreTemplate.new!().(db_path)
+
+    start_supervised!(
+      Supervisor.child_spec({EvoGit.Store, data_dir: db_path, name: store_name}, id: store_name)
+    )
+
+    name = :"vct_context_node_#{unique}"
 
     start_args =
-      Keyword.merge([name: name, data_dir: tmp_dir], opts)
+      Keyword.merge([name: name, data_dir: tmp_dir, store: store_name], opts)
 
     Process.put(:evogit_vct_server, name)
+    Process.put(:evogit_test_store, store_name)
     start_supervised!({VCT, start_args}, id: name)
 
-    %{name: name, vct_dir: Path.join(tmp_dir, "vct")}
+    %{name: name, store: store_name, vct_dir: Path.join(tmp_dir, "vct")}
   end
 
   defp fence_count(output), do: length(:binary.matches(output, "```"))

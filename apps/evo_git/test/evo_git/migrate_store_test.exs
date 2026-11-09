@@ -38,7 +38,8 @@ defmodule EvoGit.MigrateStoreTest do
   @covering_index_version 20_260_815_000_004
   @archive_table_version 20_260_815_000_005
   @prune_indexes_version 20_260_815_000_006
-  # Ascending, exactly as `schema_migrations` reports it — six contiguous
+  @vct_mounts_version 20_260_815_000_007
+  # Ascending, exactly as `schema_migrations` reports it — seven contiguous
   # versions, no gaps.
   @migration_versions [
     @baseline_version,
@@ -46,7 +47,8 @@ defmodule EvoGit.MigrateStoreTest do
     @composite_index_version,
     @covering_index_version,
     @archive_table_version,
-    @prune_indexes_version
+    @prune_indexes_version,
+    @vct_mounts_version
   ]
 
   @migration_count length(@migration_versions)
@@ -148,9 +150,7 @@ defmodule EvoGit.MigrateStoreTest do
       assert output =~ "20260815000004_covering_indexes"
       assert output =~ "20260815000005_task_agent_archives"
       assert output =~ "20260815000006_prune_redundant_indexes"
-      # The four retired modules (unpack compressed rows / create / move /
-      # normalize the archive table) ship no version at all any more.
-      refute output =~ "20260815000007"
+      assert output =~ "20260815000007_vct_mounts"
 
       assert output =~ "Database is now current (#{@migration_count} migration(s) applied)."
 
@@ -158,8 +158,10 @@ defmodule EvoGit.MigrateStoreTest do
       # its 19 live columns — the archive column is gone).
       assert migration_versions(path) == @migration_versions
 
+      # The legacy `projects` table is retired (migration 7 drops it), so the
+      # mount table is `vct_mounts`.
       assert Enum.sort(table_names(path)) ==
-               ["projects", "schema_migrations", "task_agent_archives", "tasks"]
+               ["schema_migrations", "task_agent_archives", "tasks", "vct_mounts"]
 
       assert Enum.sort(columns(path)) == Enum.sort(@live_task_columns)
       assert "error" in columns(path)

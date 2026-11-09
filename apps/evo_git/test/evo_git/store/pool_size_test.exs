@@ -219,13 +219,16 @@ defmodule EvoGit.Store.PoolSizeTest do
 
       assert results == List.duplicate(expected["tasks"], size)
 
-      projects =
+      # The mount table replaced the retired `projects` table; its PRIMARY KEY
+      # and UNIQUE `path` give it implicit indexes, so the per-table inventory
+      # is non-empty and every connection must report it.
+      mounts =
         on_every_connection(pid, size, fn conn ->
-          Enum.sort(raw_rows!(conn, "PRAGMA index_list(projects)") |> Enum.map(&Enum.at(&1, 1)))
+          Enum.sort(raw_rows!(conn, "PRAGMA index_list(vct_mounts)") |> Enum.map(&Enum.at(&1, 1)))
         end)
 
-      assert projects == List.duplicate(expected["projects"], size)
-      assert expected["tasks"] != [] and expected["projects"] != []
+      assert mounts == List.duplicate(expected["vct_mounts"], size)
+      assert expected["tasks"] != [] and expected["vct_mounts"] != []
     end
   end
 
