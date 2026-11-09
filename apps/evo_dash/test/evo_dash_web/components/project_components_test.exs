@@ -659,11 +659,12 @@ defmodule EvoDashWeb.ProjectComponentsTest do
   end
 
   # The palette lists the VCT project registry: each row's primary line is the
-  # mount's VCT `point` and its secondary line the OS `path`, and every row
-  # carries a SIBLING Forget button (the VCT point is the forget value) that is
-  # available on LOCAL and REMOTE nodes alike.
+  # mount's friendly display `name` (falling back to the VCT `point`, then the
+  # OS `path`), its secondary line the OS `path`, and every row carries a
+  # SIBLING Forget button (the VCT point is the forget value) that is available
+  # on LOCAL and REMOTE nodes alike.
   describe "palette project rows and Forget action" do
-    test "renders the Projects heading and one row per mount with point and path" do
+    test "renders the Projects heading and one row per mount with name and path" do
       html =
         render_component(&ProjectComponents.project_omnibox/1,
           palette_open: true,
@@ -683,12 +684,12 @@ defmodule EvoDashWeb.ProjectComponentsTest do
 
       assert Enum.map(rows, &row_lines/1) == [
                %{
-                 primary: "vct:///projects/alpha",
+                 primary: "alpha",
                  path: "/home/user/alpha",
                  title: "/home/user/alpha"
                },
                %{
-                 primary: "vct:///projects/bravo",
+                 primary: "bravo",
                  path: "/home/user/bravo",
                  title: "/home/user/bravo"
                }
@@ -757,11 +758,13 @@ defmodule EvoDashWeb.ProjectComponentsTest do
       end
     end
 
-    test "trigger shows the active mount's point, falling back to the OS path" do
+    test "trigger shows the active mount's name with the OS path beside it" do
       with_point =
         render_component(&ProjectComponents.project_omnibox/1, active_project: alpha_mount())
 
-      assert trigger_secondary(with_point) == "vct:///projects/alpha"
+      assert trigger_label(with_point) == "alpha"
+      assert trigger_secondary(with_point) == "/home/user/alpha"
+      refute with_point =~ "vct://"
 
       without_point =
         render_component(&ProjectComponents.project_omnibox/1,
@@ -769,7 +772,36 @@ defmodule EvoDashWeb.ProjectComponentsTest do
         )
 
       refute without_point =~ "vct://"
+      assert trigger_label(without_point) == "plain"
       assert trigger_secondary(without_point) == "/home/user/plain"
+    end
+
+    test "a row's primary line falls back from the display name to the point, then the path" do
+      html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :menu,
+          projects: [
+            %Mount{point: "vct:///projects/legacy", path: "/home/user/legacy", name: nil},
+            %{path: "/home/user/plain", name: " "}
+          ]
+        )
+
+      rows = Floki.find(parse(html), "button[phx-click=select_project]")
+      assert length(rows) == 2
+
+      assert Enum.map(rows, &row_lines/1) == [
+               %{
+                 primary: "vct:///projects/legacy",
+                 path: "/home/user/legacy",
+                 title: "/home/user/legacy"
+               },
+               %{
+                 primary: "/home/user/plain",
+                 path: "/home/user/plain",
+                 title: "/home/user/plain"
+               }
+             ]
     end
   end
 
@@ -784,9 +816,10 @@ defmodule EvoDashWeb.ProjectComponentsTest do
     %Mount{point: "vct:///projects/bravo", path: "/home/user/bravo", name: "bravo"}
   end
 
-  # The two text lines of one palette row: the primary line (VCT point, or the
-  # display name when the mount carries no point) and the secondary OS path
-  # line, which also carries the full path as its `title`.
+  # The two text lines of one palette row: the primary line (the mount's
+  # friendly display name, falling back to the VCT point and then the OS path)
+  # and the secondary OS path line, which also carries the full path as its
+  # `title`.
   defp row_lines(row) do
     [primary, path] = Floki.find(row, "div div")
 
@@ -801,6 +834,19 @@ defmodule EvoDashWeb.ProjectComponentsTest do
   # `title` (the OS path).
   defp trigger_secondary(html) do
     [span] = Floki.find(parse(html), "button.project-palette-trigger span[title]")
+    span |> Floki.text() |> String.trim()
+  end
+
+  # The trigger's primary line is its only non-empty span WITHOUT a `title`
+  # (the icon spans render empty and the path span carries the `title`), i.e.
+  # the project's display identity.
+  defp trigger_label(html) do
+    [span] =
+      parse(html)
+      |> Floki.find("button.project-palette-trigger span")
+      |> Enum.filter(&(Floki.attribute(&1, "title") == []))
+      |> Enum.filter(&(String.trim(Floki.text(&1)) != ""))
+
     span |> Floki.text() |> String.trim()
   end
 

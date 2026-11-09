@@ -1627,12 +1627,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ ~s(phx-value-path="#{project_a}")
     end
 
-    # The VCT owns the project's identity: the palette's primary line is the
-    # mount point (`vct:///projects/<basename>[-N]`), the OS path is secondary,
-    # and row EVENTS stay OS-path-keyed. Unique basenames keep the VCT's `-N`
-    # dedup suffix out of the picture, and the expected point is derived from
-    # the registry (never hardcoded).
-    test "palette_menu shows the VCT point as the project identity", %{
+    # A project's DISPLAY identity is the mount's friendly `name` (the basename
+    # it was registered with), with the OS path as the secondary line; the VCT
+    # `point` stays the registry/search/forget identity. Row EVENTS stay
+    # OS-path-keyed. Unique basenames keep the VCT's `-N` dedup suffix out of
+    # the picture, and the expected point is derived from the registry (never
+    # hardcoded).
+    test "palette_menu shows the project name as the identity with the OS path secondary", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
@@ -1649,6 +1650,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # The point is DERIVED from the registry, never hardcoded.
       entry = Enum.find(EvoGit.VCT.projects(), &(&1.path == project_a))
       assert entry.point == mount.point
+      assert entry.name == Path.basename(project_a)
 
       html = render_click(view, "open_project_palette", %{})
 
@@ -1656,15 +1658,19 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # mounts, so a page-wide index comparison would compare unrelated rows.
       row = palette_row(html, project_a)
 
-      # The row's PRIMARY identity line is the VCT point and the SECONDARY line
-      # is the OS path: the point is the content of the row button's first line
-      # div, immediately followed by the path line (whose `title` attribute is
-      # the OS path and whose text is the OS path).
+      # The row's PRIMARY identity line is the mount display name and the
+      # SECONDARY line is the OS path: the name is the content of the row
+      # button's first line div, immediately followed by the path line (whose
+      # `title` attribute is the OS path and whose text is the OS path).
       assert row =~
-               ~r{>\s*#{Regex.escape(entry.point)}\s*</div>\s*<div[^>]*title="#{Regex.escape(project_a)}"[^>]*>\s*#{Regex.escape(project_a)}\s*</div>}
+               ~r{>\s*#{Regex.escape(entry.name)}\s*</div>\s*<div[^>]*title="#{Regex.escape(project_a)}"[^>]*>\s*#{Regex.escape(project_a)}\s*</div>}
+
+      # The VCT point is never rendered as ELEMENT TEXT (its only appearance is
+      # the Forget sibling's `phx-value-point` below).
+      refute row =~ ~r{>\s*#{Regex.escape(entry.point)}\s*</div>}
 
       # Row EVENTS stay OS-path-keyed while the Forget sibling carries the VCT
-      # point — the point is the row's identity, the path its handle.
+      # point — the point is the registry/forget identity, the path the handle.
       assert row =~ ~s(phx-value-path="#{project_a}")
       assert row =~ ~s(phx-click="forget_project")
       assert row =~ ~s(phx-value-point="#{entry.point}")
@@ -1779,7 +1785,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert length(String.split(html, ~s(phx-click="select_project"))) == 2
     end
 
-    test "selecting a project shows its VCT point in the top bar", %{
+    test "selecting a project shows its name and OS path in the top bar", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
@@ -1795,14 +1801,17 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       render_click(view, "open_project_palette", %{})
       html = render_click(view, "select_project", %{"path" => project_a})
 
+      # The data identity is unchanged (the VCT point still keys the registry).
       assert assigns(view)[:active_project_path] == project_a
       assert assigns(view)[:active_project].point == mount.point
 
-      # The palette is closed, so the VCT point can only come from the omnibox
-      # trigger's subtitle (beside the project name).
+      # The palette is closed, so the project identity shown in the omnibox
+      # trigger is the mount's display name (bold label) beside the OS path
+      # (mono secondary span) — the VCT point is not rendered as the identity.
       refute html =~ ~s(id="palette-search-input")
-      assert html =~ mount.point
       assert html =~ Path.basename(project_a)
+      assert html =~ project_a
+      refute html =~ mount.point
     end
 
     test "palette_menu renders a per-entry forget button wired to the VCT point", %{
