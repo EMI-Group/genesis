@@ -10,14 +10,14 @@ defmodule EvoDashWeb.AgentsLive.ProcessesSectionTest do
   `agents_live_test.exs` and is not duplicated here.
   """
 
-  # async: true — the only global state this file touches is (a) the
-  # `:agents_processes_runner` app-env seam, which NO other module reads (the
-  # production default is `ProcessesSection.load/2`), and (b) two rows in the
-  # app-global scheduler ETS tables (`:evogit_sched_meta` /
-  # `:evogit_agent_state`), seeded under a UNIQUE per-test id and deleted in
-  # `on_exit`, exactly like `agents_live_test.exs` does — so a concurrently
-  # running module can never observe them.
-  use EvoDashWeb.ConnCase, async: true
+  # async: false — the forcing global is the process-global app-env seam
+  # `:agents_processes_runner`: `AgentsLive` reads it on every `select_agent`
+  # (via `ProcessesSection.start/2`), so the ASYNC `agents_live_test.exs`
+  # would call this file's injected fake whenever the two overlap. The
+  # scheduler ETS rows (`:evogit_sched_meta` / `:evogit_agent_state`) this file
+  # seeds use a UNIQUE per-test id and are deleted in `on_exit`, so they are
+  # never the reason for the sync placement.
+  use EvoDashWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
 
