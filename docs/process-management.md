@@ -197,8 +197,9 @@ Notes that matter:
   `Control.status_after_signal/1` is the ONE rule saying `SIGSTOP` implies `:paused` and `SIGCONT` implies
   `:running`, so pause/resume and the record cannot disagree.
 - **Kill escalation** is TERM → `:process_kill_grace_ms` (default `1_500`) → KILL → a final `alive?/1`
-  check, so `:ok` means the handle is really gone. `ProcessManager.kill/2` marks the record `:killed` even
-  when the OS call failed (because the operator asked for it) and still returns the error.
+  check, so `:ok` means the handle is really gone. `ProcessManager.kill/2` therefore marks the record
+  `:killed` ONLY when the backend reports success; a failed or refused kill leaves the status untouched, so
+  the execution stays observable and controllable, logs the attempt and returns the error (§10).
 - **The pgid guard is load-bearing.** A raw port child normally inherits the BEAM's own process group, so an
   unguarded `kill -- -pgid` would kill Genesis itself; group signalling therefore requires a known `pgid`
   that differs from our own, and falls back to the bare pid.
@@ -419,7 +420,15 @@ button and its confirm flow in `ProcessesLive`/`ProcessComponents`.
   (they are operational state, not history), and a remote node's executions are visible only through that
   node's RPC.
 - **The registry bounds history.** Terminal records expire after `:process_finished_retention_ms` and the
-  newest 200 are kept; `control_log` keeps at most 50 entries. Older detail is gone by design.
+  newest 200 are kept; `control_log` keeps at most 50 entries. A pruned id answers `{:error, :not_found}`
+  from `get/2` and is absent from `list/1` and `sample_all/1`, so older detail is gone by design.
+- **A failed kill is never reported as a kill.** `kill/2` transitions the record to `:killed` only when the
+  backend confirms the handle is gone; a failed or refused kill leaves the status untouched (the execution
+  stays observable and controllable), appends the audited
+  `%{action: :kill, reason: {:kill_failed, reason}, actor: actor}` control-log entry and returns the backend
+  error, which the caller and the dashboard surface as a failure.
+- **`:unknown` is declared but never produced.** It appears in `Execution.status`, yet no current code path
+  assigns it — only `:starting | :running | :paused | :completed | :failed | :killed` are ever written.
 
 ## Related reading
 
