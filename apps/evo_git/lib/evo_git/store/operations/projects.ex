@@ -16,8 +16,20 @@ defmodule EvoGit.Store.Operations.Projects do
   | `put_project/2`         | store.ex:868   | `:ok` \| `{:error, :missing_project_path}` \| `{:error, :invalid_project_struct}` \| `{:error, :disk_full}` |
   | `get_project/2`         | store.ex:889   | `%RecentProject{}` \| `nil` |
   | `delete_project/2`      | store.ex:902   | `:ok` \| `{:error, :disk_full}` |
-  | `select_all_projects/1` | store.ex:910   | `[RecentProject.t()]` — NO ordering (the old SQL had none; `TaskRegistry` sorts in Elixir) |
+  | `select_all_projects/1` | store.ex:910   | `[RecentProject.t()]` — NO ordering (the old SQL had none; recency ordering is `EvoGit.VCT.Table.sort_by_recency/1`) |
   | `count_projects/1`      | store.ex:920   | integer |
+
+  ## Deprecated legacy table
+
+  The SQLite `projects` table is DEPRECATED legacy state: recent projects are
+  VCT-backed (`<data_dir>/vct/virtual-tree.json`, with
+  `EvoGit.VCT.Table.sort_by_recency/1` owning the `last_opened_at` DESC / `nil`
+  LAST ordering). The ONE production reader left is the VCT's one-time
+  idempotent legacy import (`EvoGit.VCT.Persistence`'s
+  `legacy_projects_imported` marker), which copies these rows into the mount
+  table and then never reads them again — so the operations below are retained
+  for that import, for explicit reads and for tests, and the table is never
+  dropped.
 
   ## REPLACE semantics
 
@@ -117,7 +129,8 @@ defmodule EvoGit.Store.Operations.Projects do
 
   @doc """
   Returns all projects as a list of `%RecentProject{}` — unordered, exactly
-  like the old bare `SELECT ... FROM projects` (no `ORDER BY`).
+  like the old bare `SELECT ... FROM projects` (no `ORDER BY`). Recency
+  ordering belongs to `EvoGit.VCT.Table.sort_by_recency/1`.
   """
   @spec select_all_projects(pid()) :: [RecentProject.t()]
   def select_all_projects(repo) do

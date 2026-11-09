@@ -513,6 +513,69 @@ defmodule EvoGit.VCTTest do
       assert {:error, :invalid_content} = VCT.put_global_context(nil)
       assert {:error, :invalid_content} = VCT.put_global_context(123)
     end
+
+    test "syncing a restored global context at boot is idempotent", %{tmp_dir: tmp} do
+      data_dir = Path.join(tmp, "restored-#{System.unique_integer([:positive])}")
+      vct_dir = Path.join(data_dir, "vct")
+      File.mkdir_p!(vct_dir)
+      content = "# Restored global context\n\nBody.\n"
+      File.write!(Path.join(vct_dir, "CONTEXT.md"), content)
+
+      vct = start_vct(%{tmp_dir: tmp}, data_dir: data_dir)
+
+      # Boot created the lazy repository and committed the existing file.
+      assert vct.vct_dir == vct_dir
+      assert File.exists?(Path.join(vct_dir, ".git"))
+      assert {:ok, ""} = EvoGit.Adapters.Git.status(vct_dir)
+
+      assert {:ok, "Update global context"} =
+               EvoGit.Adapters.Git.log(vct_dir, ["-1", "--pretty=%s"])
+
+      assert {:ok, committed} = EvoGit.Adapters.Git.show(vct_dir, ["HEAD:CONTEXT.md"])
+      assert String.trim(committed) == String.trim(content)
+
+      # The machine-local mount table never enters history.
+      assert {:error, _reason} = EvoGit.Adapters.Git.rev_parse(vct_dir, "HEAD:virtual-tree.json")
+
+      assert {:ok, first_sha} = EvoGit.Adapters.Git.rev_parse(vct_dir)
+
+      # A second boot over the SAME data dir stages nothing: no new commit.
+      start_vct(%{tmp_dir: tmp}, data_dir: data_dir)
+      assert {:ok, ^first_sha} = EvoGit.Adapters.Git.rev_parse(vct_dir)
+      assert {:ok, ""} = EvoGit.Adapters.Git.status(vct_dir)
+    end
+
+    test "an absent or blank global context initializes no repository at boot", %{tmp_dir: tmp} do
+      absent = start_vct(%{tmp_dir: tmp})
+      refute File.exists?(Path.join(absent.vct_dir, ".git"))
+
+      data_dir = Path.join(tmp, "blank-#{System.unique_integer([:positive])}")
+      vct_dir = Path.join(data_dir, "vct")
+      File.mkdir_p!(vct_dir)
+      File.write!(Path.join(vct_dir, "CONTEXT.md"), "   \n\t\n")
+
+      blank = start_vct(%{tmp_dir: tmp}, data_dir: data_dir)
+      refute File.exists?(Path.join(vct_dir, ".git"))
+      assert blank.vct_dir == vct_dir
+      assert VCT.global_context() == "   \n\t\n"
+    end
+
+    test "a boot-time git failure is logged and never crashes boot", %{tmp_dir: tmp} do
+      data_dir = Path.join(tmp, "broken-#{System.unique_integer([:positive])}")
+      vct_dir = Path.join(data_dir, "vct")
+      File.mkdir_p!(vct_dir)
+      File.write!(Path.join(vct_dir, "CONTEXT.md"), "# Restored context\n")
+      # A `.git` that is not a usable repository, so every git command fails.
+      File.write!(Path.join(vct_dir, ".git"), "not a git repository\n")
+
+      {_context, log} = with_log(fn -> start_vct(%{tmp_dir: tmp}, data_dir: data_dir) end)
+
+      # Boot survived (the instance is up and the file is untouched)...
+      assert VCT.mounts() == []
+      assert VCT.global_context() == "# Restored context\n"
+      # ...and the git failure was reported, not raised.
+      assert log =~ "global context git sync"
+    end
   end
 
   ## Total reads

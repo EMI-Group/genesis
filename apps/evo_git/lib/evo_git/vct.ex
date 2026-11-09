@@ -15,7 +15,8 @@ defmodule EvoGit.VCT do
       in the VCT directory (`<data_dir>/vct/virtual-tree.json`) through
       `EvoGit.VCT.Persistence`;
     * the GLOBAL context file (`<data_dir>/vct/CONTEXT.md`) and its local git
-      history, so a global context edit is a committed, auditable change;
+      history, so a global context edit is a committed, auditable change; a
+      NON-BLANK file that already exists at boot is synced then, too;
     * a ONE-TIME import of the legacy "recent projects" table (the SQLite
       `projects` rows), recorded by the `legacy_projects_imported` marker.
 
@@ -237,15 +238,21 @@ defmodule EvoGit.VCT do
     loaded = Persistence.load(path)
     {mounts, imported?} = boot_import(loaded, path, opts)
 
-    {:ok,
-     %{
-       name: name,
-       data_dir: data_dir,
-       vct_dir: vct_dir,
-       path: path,
-       mounts: mounts,
-       legacy_projects_imported: imported?
-     }}
+    state = %{
+      name: name,
+      data_dir: data_dir,
+      vct_dir: vct_dir,
+      path: path,
+      mounts: mounts,
+      legacy_projects_imported: imported?
+    }
+
+    # A global context restored from a state backup is already on disk but its
+    # lazy git repository may not be: sync it now instead of waiting for the
+    # first `put_global_context/1`. Best effort — a git failure never fails boot.
+    sync_boot_global_context(vct_dir)
+
+    {:ok, state}
   end
 
   @impl true
@@ -477,6 +484,33 @@ defmodule EvoGit.VCT do
   defp point_string?(value), do: String.starts_with?(value, "vct:")
 
   ## Global context
+
+  # Boot-time counterpart of the lazy sync in `write_global_context/2`: when a
+  # NON-BLANK global context file already exists (e.g. restored from a state
+  # backup), commit it into its local git history now. An absent or blank file
+  # initializes NOTHING (no empty repository), and the sync stays idempotent —
+  # a clean tree stages no change, so HEAD is never moved. Every failure is
+  # logged, never raised: git trouble must never crash boot.
+  defp sync_boot_global_context(vct_dir) do
+    context_path = Path.join(vct_dir, @context_file)
+
+    if File.exists?(context_path) and not blank?(read_file(context_path)) do
+      sync_context_repository(vct_dir)
+    end
+
+    :ok
+  rescue
+    exception ->
+      Logger.warning(
+        "VCT: boot-time global context git sync failed: #{Exception.message(exception)}"
+      )
+
+      :ok
+  catch
+    kind, reason ->
+      Logger.warning("VCT: boot-time global context git sync failed: #{inspect({kind, reason})}")
+      :ok
+  end
 
   defp write_global_context(state, content) do
     context_path = Path.join(state.vct_dir, @context_file)
