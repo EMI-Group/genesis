@@ -333,19 +333,14 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
 
   describe "ListRecentProjects" do
     test "lists seeded recent projects with name, path, and last opened time" do
-      # Truncate to millisecond precision so the ISO string survives the Store
-      # round-trip (Codec.encode_datetime truncates to milliseconds).
-      last_opened = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+      # Recents live in the VCT mount store, which stamps `last_opened_at`
+      # itself — read it back from the isolated mount table and assert the tool
+      # renders exactly that timestamp.
+      :ok = TaskRegistry.add_recent_project("/proj/a", "Project A")
+      assert [%EvoGit.VCT.Mount{last_opened_at: last_opened}] = EvoGit.VCT.mounts()
 
-      :ok =
-        EvoGit.Store.put_project(store(), %EvoGit.RecentProject{
-          path: "/proj/a",
-          name: "Project A",
-          last_opened_at: last_opened
-        })
-
-      # list_recent_projects/0 reads LIVE from the Store, so direct Store
-      # seeding is visible — same idiom as seed_task!.
+      # list_recent_projects/0 reads LIVE from the VCT, so direct registration
+      # is visible.
       output = ListRecentProjects.execute(%{}, nil, nil)
 
       assert output =~ "Project A"

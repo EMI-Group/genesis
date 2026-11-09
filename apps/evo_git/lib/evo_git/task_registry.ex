@@ -4,9 +4,16 @@ defmodule EvoGit.TaskRegistry do
   Tasks are identified by unique IDs and persisted to SQLite (the single source of truth)
   under namespaced keys `{:task, task_id}`.
   Runtime-only task references (`%Task{}`) are kept in-memory in `task_refs`.
-  Supports configurable persistence of finished tasks and
-  recently opened projects to SQLite (platform data directory via EvoGit.Platform),
-  using namespaced keys `{:project, path}`.
+  Supports configurable persistence of finished tasks to SQLite (platform data
+  directory via EvoGit.Platform).
+
+  "Recently opened projects" are NOT stored here: every recent-project call
+  delegates to the Virtual Context Tree mount store (`EvoGit.VCT`, the
+  `:vct` option), which owns the mount table, its own persistence and the
+  broadcasts. The public `add_recent_project/2`, `list_recent_projects/0` and
+  `remove_recent_project/1` API and its return shapes are unchanged; the
+  legacy SQLite `projects` table remains only as the VCT's one-time import
+  source.
   """
   use GenServer
 
@@ -337,7 +344,12 @@ defmodule EvoGit.TaskRegistry do
 
   @doc """
   Adds or updates a project in the recently opened list.
-  Moves it to the top with the current timestamp.
+
+  Delegates to the VCT mount store (`EvoGit.VCT.register_project/2`), which
+  moves the project to the top with the current timestamp and broadcasts
+  `{:recent_projects_updated}` on `"recent_projects"`. Always replies `:ok`:
+  recents are a convenience, so a failed mount registration is logged and
+  swallowed (exactly like the old disk-full behaviour).
   """
   def add_recent_project(path, name) do
     GenServer.call(server(), {:add_recent_project, path, name}, @call_timeout)
@@ -345,13 +357,19 @@ defmodule EvoGit.TaskRegistry do
 
   @doc """
   Returns the list of recently opened projects, sorted by last_opened_at descending.
+
+  Entries are the VCT's mounts (at most 10 — the display cap; the VCT itself
+  retains every mount), mapped to `%EvoGit.RecentProject{path, name,
+  last_opened_at, vct_path}` where `vct_path` is the mount point.
   """
   def list_recent_projects do
     GenServer.call(server(), :list_recent_projects, @call_timeout)
   end
 
   @doc """
-  Removes a project from the recent list by path.
+  Removes a project from the recent list by its OS path.
+
+  Idempotent: removing an unknown path replies `:ok`.
   """
   def remove_recent_project(path) do
     GenServer.call(server(), {:remove_recent_project, path}, @call_timeout)
@@ -376,6 +394,11 @@ defmodule EvoGit.TaskRegistry do
     # Tests may pass their own task_store: name pointing to a test store.
     task_store = Keyword.get(opts, :task_store, EvoGit.Store)
 
+    # The VCT mount store that owns the "recently opened projects" list. A
+    # registered name (tests start an isolated instance) or the module, which
+    # resolves to the app-global singleton `EvoGit.VCT`.
+    vct = Keyword.get(opts, :vct, EvoGit.VCT)
+
     # This instance's OWN registered name. Captured here so the task wrapper it
     # spawns can propagate it into the wrapper process's `:evogit_task_registry_server`
     # process dictionary key — in-wrapper callbacks (MergeContext/ResumeContext)
@@ -396,6 +419,7 @@ defmodule EvoGit.TaskRegistry do
     state = %{
       data_dir: data_dir,
       task_store: task_store,
+      vct: vct,
       task_refs: %{},
       read_offloads: ReadOffload.new(),
       server_name: server_name
@@ -909,64 +933,67 @@ defmodule EvoGit.TaskRegistry do
 
   ## Recent Projects Handlers
 
+  # Recent projects live in the VCT mount store, so these handlers NEVER touch
+  # the SQLite `projects` table and never broadcast: `EvoGit.VCT` publishes
+  # both `{:recent_projects_updated}` (on `"recent_projects"`) and
+  # `{:vct_updated, node}` (on `"vct"`) after a successful mutation, and a
+  # second broadcast here would duplicate every notification.
+
   @impl true
   def handle_call({:add_recent_project, path, name}, _from, state) do
-    now = DateTime.utc_now()
-
-    # On disk-full the project simply isn't persisted — log and continue
-    # (recent projects are a convenience, never worth crashing the registry).
-    case safe_store_write("add_recent_project", fn ->
-           EvoGit.Store.put_project(
-             state.task_store,
-             %EvoGit.RecentProject{path: path, name: name, last_opened_at: now}
-           )
-         end) do
-      :ok ->
+    # Recents are a convenience: a refused mount (relative path, persistence
+    # failure, unavailable VCT) is logged and the caller still gets `:ok`,
+    # mirroring the old disk-full behaviour.
+    case with_vct(state, fn -> EvoGit.VCT.register_project(path, name) end) do
+      {:ok, _mount} ->
         :ok
 
-      {:error, :disk_full} ->
-        Logger.warning("TaskRegistry: disk full — recent project #{inspect(path)} not persisted")
+      {:error, reason} ->
+        Logger.warning(
+          "TaskRegistry: recent project #{inspect(path)} not registered: #{inspect(reason)}"
+        )
 
-      {:error, :store_unavailable} ->
-        # StoreGuard already logged it — recent projects are a convenience.
         :ok
     end
 
-    # Enforce max limit
-    trim_recent_projects(state)
-
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
     {:reply, :ok, state}
   end
 
   @impl true
   def handle_call(:list_recent_projects, _from, state) do
     reply =
-      select_all_projects(state)
-      |> sort_projects_by_recency()
+      state
+      |> with_vct(fn -> EvoGit.VCT.list_projects(limit: @max_recent_projects) end)
+      |> Enum.map(fn mount ->
+        %EvoGit.RecentProject{
+          path: mount.path,
+          name: mount.name,
+          last_opened_at: mount.last_opened_at,
+          vct_path: mount.point
+        }
+      end)
 
     {:reply, reply, state}
   end
 
   @impl true
   def handle_call({:remove_recent_project, path}, _from, state) do
-    # On disk-full the project row simply remains — log and continue.
-    case safe_store_write("remove_recent_project", fn ->
-           EvoGit.Store.delete_project(state.task_store, path)
-         end) do
+    # Idempotent: an unknown path and a refused removal both reply `:ok`.
+    case with_vct(state, fn -> EvoGit.VCT.remove_project(path) end) do
       :ok ->
         :ok
 
-      {:error, :disk_full} ->
+      {:error, :not_found} ->
+        :ok
+
+      {:error, reason} ->
         Logger.warning(
-          "TaskRegistry: disk full — recent project #{inspect(path)} could not be deleted"
+          "TaskRegistry: recent project #{inspect(path)} not removed: #{inspect(reason)}"
         )
 
-      {:error, :store_unavailable} ->
         :ok
     end
 
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
     {:reply, :ok, state}
   end
 
@@ -1248,10 +1275,28 @@ defmodule EvoGit.TaskRegistry do
     end)
   end
 
-  defp select_all_projects(state) do
-    safe_store_read("select_all_projects", [], fn ->
-      EvoGit.Store.safe_select_all_projects(state.task_store)
-    end)
+  # --- VCT Delegation ---
+
+  # `EvoGit.VCT` resolves its target instance from the CALLING process (the
+  # `:evogit_vct_server` process-dictionary seam, exactly like `server/0`
+  # above), so the handler pins the instance it was configured with for the
+  # duration of the delegation and restores the previous value afterwards.
+  # With no `:vct` option that is `EvoGit.VCT` itself, i.e. the app-global
+  # singleton — production behaviour unchanged.
+  defp with_vct(state, fun) do
+    key = :evogit_vct_server
+    previous = Process.get(key)
+    Process.put(key, state.vct)
+
+    try do
+      fun.()
+    after
+      if previous == nil do
+        Process.delete(key)
+      else
+        Process.put(key, previous)
+      end
+    end
   end
 
   # Removes a task_id from the :evogit_cancelling_tasks marker once the task
@@ -1629,56 +1674,6 @@ defmodule EvoGit.TaskRegistry do
       )
 
     {:noreply, state}
-  end
-
-  # --- Recent Projects ---
-
-  defp trim_recent_projects(state) do
-    projects =
-      select_all_projects(state)
-      |> sort_projects_by_recency()
-
-    case Enum.split(projects, @max_recent_projects) do
-      {_kept, []} ->
-        :ok
-
-      {_kept, to_remove} ->
-        paths = Enum.map(to_remove, fn project -> project.path end)
-
-        Enum.each(paths, fn path ->
-          case safe_store_write("trim_recent_projects", fn ->
-                 EvoGit.Store.delete_project(state.task_store, path)
-               end) do
-            :ok ->
-              :ok
-
-            {:error, :disk_full} ->
-              # Over-limit project rows simply remain until space is freed —
-              # log and continue (recent projects are a convenience).
-              Logger.warning(
-                "TaskRegistry: disk full — recent project #{inspect(path)} could not be trimmed"
-              )
-
-            {:error, :store_unavailable} ->
-              :ok
-          end
-        end)
-
-        :ok
-    end
-  end
-
-  # Sorts projects by last_opened_at descending (most recent first), handling nil
-  # timestamps safely. A nil last_opened_at sorts LAST (oldest). This avoids the
-  # ArgumentError that DateTime.compare/2 raises when comparing against nil.
-  defp sort_projects_by_recency(projects) do
-    Enum.sort(projects, fn a, b ->
-      cond do
-        a.last_opened_at == nil -> false
-        b.last_opened_at == nil -> true
-        true -> DateTime.after?(a.last_opened_at, b.last_opened_at)
-      end
-    end)
   end
 
   ## GenServer Info Handlers

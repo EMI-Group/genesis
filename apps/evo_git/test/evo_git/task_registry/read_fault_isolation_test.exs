@@ -55,6 +55,8 @@ defmodule EvoGit.TaskRegistry.ReadFaultIsolationTest do
           assert TaskRegistry.get_task(id) == nil
           assert TaskRegistry.get_unique_paths() == []
           assert TaskRegistry.list_tasks() == []
+          # Recents are served by the VCT (not the store), so they keep
+          # answering — empty, since this test never registered a project.
           assert TaskRegistry.list_recent_projects() == []
         end)
 
@@ -72,7 +74,8 @@ defmodule EvoGit.TaskRegistry.ReadFaultIsolationTest do
         # The delete path reports the degraded error atom (like disk-full).
         assert TaskRegistry.clear_finished_tasks() == {:error, :store_unavailable}
 
-        # Convenience writes swallow the fault and continue in-memory.
+        # Convenience writes swallow the fault and continue in-memory (recents
+        # live in the VCT, so they are unaffected by a dead store).
         assert TaskRegistry.add_recent_project("/tmp/read_fault_project", "fault") == :ok
         assert TaskRegistry.remove_recent_project("/tmp/read_fault_project") == :ok
       end)
@@ -80,7 +83,8 @@ defmodule EvoGit.TaskRegistry.ReadFaultIsolationTest do
       assert Process.alive?(Process.whereis(registry))
     end
 
-    test "a registry can boot against a store that is already gone", %{data_dir: data_dir} do
+    test "a registry can boot against a store that is already gone",
+         %{data_dir: data_dir, vct: vct} do
       unique = System.unique_integer([:positive])
       registry_name = :"evogit_test_registry_dead_store_#{unique}"
 
@@ -91,7 +95,10 @@ defmodule EvoGit.TaskRegistry.ReadFaultIsolationTest do
         start_supervised!(
           Supervisor.child_spec(
             {TaskRegistry,
-             task_store: :"no_such_store_#{unique}", data_dir: data_dir, name: registry_name},
+             task_store: :"no_such_store_#{unique}",
+             data_dir: data_dir,
+             vct: vct,
+             name: registry_name},
             id: registry_name
           )
         )
