@@ -166,14 +166,17 @@ defmodule EvoDashWeb.AgentsLive.ProcessesSection do
     raw_executions = Map.get(state, :executions)
     executions = if is_list(raw_executions), do: Enum.filter(raw_executions, &is_map/1), else: []
 
+    # A plain function component receives a BARE assigns map (no `__changed__`
+    # tracking), so `Phoenix.Component.assign/3` would raise here — plain
+    # `Map.put/3` derives the local render values instead.
     assigns =
       assigns
-      |> assign(:agent_id, Map.get(state, :agent_id) || assigns.selected_agent_id)
-      |> assign(:executions, executions)
-      |> assign(:count, length(executions))
-      |> assign(:loaded, not is_nil(raw_executions))
-      |> assign(:loading, Map.get(state, :loading) == true)
-      |> assign(:error, Map.get(state, :error))
+      |> Map.put(:agent_id, Map.get(state, :agent_id) || Map.get(assigns, :selected_agent_id))
+      |> Map.put(:executions, executions)
+      |> Map.put(:count, length(executions))
+      |> Map.put(:loaded, not is_nil(raw_executions))
+      |> Map.put(:loading, Map.get(state, :loading) == true)
+      |> Map.put(:error, Map.get(state, :error))
 
     ~H"""
     <div id="agent-processes-section" class="agent-detail-processes mt-6">
