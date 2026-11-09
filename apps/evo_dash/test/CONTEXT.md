@@ -23,7 +23,7 @@ Web-layer tests reference those singletons directly; per-test Store/TaskRegistry
 - `evo_dash_web/live/` → LiveView page suites + pure unit tests for their support modules (`settings_live/` holds `config_io_test.exs`, `model_profile_helpers_test.exs`, `auth_status_test.exs` and `model_ids_test.exs`) — detail: `live/CONTEXT.md`, `live/agents_live/CONTEXT.md`.
 - `evo_dash_web/live_hooks/` → the on-mount hook suites (NodeAware, Guide, Appearance, DesktopQuit, UpdateStatus) — detail: `live_hooks/CONTEXT.md`.
 - `evo_dash_web/components/` → function-component render/contract suites (all `async: true`, `render_component/2` + Floki), including task-form/profile-editor integration pins and the shared LLM-selection coverage boundary — detail: `components/CONTEXT.md`.
-- `evo_dash_web/controllers/` → error templates + the streamed task-archive export endpoint — detail: `controllers/CONTEXT.md`.
+- `evo_dash_web/controllers/` → error templates + the streamed task-archive export endpoint + the `GET /server/status` operational-probe suite (its `:server_status_task_runner` seam is the only global it touches) — detail: `controllers/CONTEXT.md`.
 - Provider-profile selection contracts → `evo_dash_web/components/CONTEXT.md` and `evo_dash_web/live/CONTEXT.md`, with focused support-module contracts documented under `live/projects_live/`, `live/home_live/` and `live/settings_live/`.
 - No CONTEXT.md exists at `evo_dash_web/`; consult the nearest documented child node for page-specific coverage.
 

@@ -75,6 +75,7 @@ Users open a Project (a Git repository path) through the command-palette selecto
 | `GET /review/:task_id/commit/:commit_sha` | `ReviewLive :commit` | Single-commit inspection |
 | `GET /tasks/:task_id/export` | `TaskExportController :export` | Streamed JSON export of the task's agent archive, paged from the store (node-aware) |
 | `GET /health` | `HealthController :index` | Unauthenticated liveness/readiness probe OUTSIDE every pipeline — `200` `application/json` `{"status":"ok","version":"<vsn>","uptime_ms":<integer>}`; polled by the headless server CLI (`genesis status`) and the desktop/remote shell |
+| `GET /server/status` | `ServerStatusController :index` | Unauthenticated operational probe OUTSIDE every pipeline — `200` `application/json` `{"status":"ok","version":"<evo_git vsn>","active_tasks":<integer>}`, the count of live task ids only (`-1` when the read fails), used by the headless CLI self-updater as an idle gate before a stop→swap→start upgrade |
 | `GET /dashboard` | `ProjectsLive :system_dashboard` | Full-bleed LiveDashboard iframe (no header chrome) |
 | `GET /phoenix/dashboard` | `Phoenix.LiveDashboard` | Built-in metrics/telemetry dashboard |
 

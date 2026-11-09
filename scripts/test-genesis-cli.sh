@@ -18,6 +18,13 @@
 # real "instance" process that answers the CLI's control request, and every
 # supervisor call answers from marker files — no service manager, no launcher and
 # no network. Nothing else is left running when the run ends.
+#
+# The `genesis update` section drives the self-update path end to end against a
+# fake install tree and real .tar.xz fixtures: feed/version comparison, the
+# --check/--json exit codes, the busy-task and --force guards, the update lock,
+# the atomic swap and the health-failure rollback. One stub curl serves the feed
+# (primary and GitHub fallback), the asset, /server/status and /health, so no
+# network is touched.
 set -euo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -1118,5 +1125,510 @@ expect_status 1 "remote start with a bad --dist-port" \
   "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port nope
 contains "$(cat "$TMP/out")" "invalid port: nope" "a non-numeric --dist-port must be rejected"
 ok "an unknown remote subcommand exits 2 and a bad --dist-port exits 1"
+
+# ── self-update (`genesis update` / `genesis upgrade`) ──────────────────────
+# The update path is exercised end to end without a network, a service manager
+# or a release build: a fake install tree (`bin/genesis`, a stub launcher and
+# `releases/start_erl.data`) is swapped for real .tar.xz fixtures, and ONE stub
+# curl answers the release feed (primary + GitHub fallback), the asset, the
+# running instance's /server/status and the /health probe.
+#
+# The fallback (pidfile) backend is deliberate: `service_active` then follows
+# `<data dir>/server.pid`, so a real planted process is the "running server" the
+# busy/stop assertions observe, and `start` runs the stub launcher itself.
+# `sleep` is stubbed to a few real milliseconds, so the health budget (and the
+# 10-step stop wait) finish in milliseconds instead of tens of seconds.
+
+UPDP="$TMP/update"
+UPDP_STATE="$UPDP/state"
+UPDP_SHIM="$UPDP/shim"
+UPDP_RISCV="$UPDP/shim-riscv"
+UPDP_WORK="$UPDP/work"
+UPDP_ART="$UPDP/artifacts"
+mkdir -p "$UPDP_STATE" "$UPDP_SHIM" "$UPDP_RISCV" "$UPDP_WORK" \
+  "$UPDP_ART" "$UPDP/build"
+
+UPDP_INSTALL=""
+UPDP_CLI=""
+
+export GENESIS_LINGER=no
+unset GENESIS_HOME || true
+unset XDG_RUNTIME_DIR || true
+export UPDP_STATE
+export UPDP_LOG="$UPDP_STATE/launcher.log"
+
+# Failing supervisors force the fallback (pidfile) backend; `setsid` is reduced
+# to an exec so <data>/server.pid names the launcher itself.
+for tool in systemd-run systemctl launchctl; do
+  printf '#!/bin/sh\nexit 1\n' >"$UPDP_SHIM/$tool"
+  chmod +x "$UPDP_SHIM/$tool"
+done
+
+cat >"$UPDP_SHIM/uname" <<'STUB'
+#!/bin/sh
+case ${1:-} in
+  -m) printf 'x86_64\n' ;;
+  *) printf 'Linux\n' ;;
+esac
+STUB
+cat >"$UPDP_SHIM/setsid" <<'STUB'
+#!/bin/sh
+exec "$@"
+STUB
+cat >"$UPDP_RISCV/uname" <<'STUB'
+#!/bin/sh
+case ${1:-} in
+  -m) printf 'riscv64\n' ;;
+  *) printf 'Linux\n' ;;
+esac
+STUB
+chmod +x "$UPDP_SHIM/uname" "$UPDP_SHIM/setsid" "$UPDP_RISCV/uname"
+write_sleep_stub "$UPDP_SHIM"
+
+# ONE curl for every HTTP call the update path makes. The URL is always the
+# LAST argument and `-o` names the destination, so no per-call parsing is
+# needed. `primary.down` makes the proxy base unreachable (the GitHub fallback
+# must then be used), `active_tasks` feeds /server/status, and `health.ok` — a
+# marker the running instance owns — is what /health answers from.
+cat >"$UPDP_SHIM/curl" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*" >>"$UPDP_STATE/curl.log"
+url=""
+dest=""
+prev=""
+for a in "\$@"; do
+  case \$prev in -o | --output) dest=\$a ;; esac
+  prev=\$a
+  url=\$a
+done
+case \$url in
+  http://feed.invalid/*)
+    if [ -e "$UPDP_STATE/primary.down" ]; then exit 22; fi
+    ;;
+esac
+case \$url in
+  */health)
+    # Give a just-started launcher a moment to publish its marker.
+    "$REAL_SLEEP" 0.02
+    [ -e "$UPDP_STATE/health.ok" ] || exit 22
+    exit 0
+    ;;
+  */server/status)
+    _n=\$(cat "$UPDP_STATE/active_tasks" 2>/dev/null || printf '0')
+    _v=\$(cat "$UPDP_STATE/instance.version" 2>/dev/null || printf '0.0.0')
+    _body=\$(printf '{"status":"ok","version":"%s","active_tasks":%s}' "\$_v" "\$_n")
+    if [ -n "\$dest" ]; then printf '%s\n' "\$_body" >"\$dest"; else printf '%s\n' "\$_body"; fi
+    exit 0
+    ;;
+  *.tar.xz.sha256) exit 22 ;;
+  *.tar.xz) src="$UPDP_STATE/asset.tar.xz" ;;
+  *latest.json) src="$UPDP_STATE/latest.json" ;;
+  *) exit 22 ;;
+esac
+[ -f "\$src" ] || exit 22
+if [ -n "\$dest" ]; then cp "\$src" "\$dest"; else cat "\$src"; fi
+exit 0
+STUB
+chmod +x "$UPDP_SHIM/curl"
+
+# write_launcher <path> <version> <ok|fail> — a stub release launcher.
+# `version` answers with the REAL Mix release shape, `<release name> <vsn>` (a
+# genuine `bin/genesis_server version` prints `genesis_server 0.13.12`), so the
+# CLI's release-name normalization is what the installed/staged version checks
+# exercise. The staged-version check still reads the staged
+# `releases/start_erl.data`, which is what keeps the `mismatch` fixture
+# observable; `start` publishes or clears the /health marker of that version.
+write_launcher() {
+  cat >"$1" <<STUB
+#!/bin/sh
+case \${1:-} in
+  version) printf 'genesis_server %s\n' "$2" ;;
+  start)
+    printf 'LAUNCH $2\n' >>"\$UPDP_LOG"
+    case $3 in
+      ok) : >"\$UPDP_STATE/health.ok" ;;
+      fail) rm -f "\$UPDP_STATE/health.ok" ;;
+    esac
+    exit 0
+    ;;
+esac
+exit 0
+STUB
+  chmod +x "$1"
+}
+
+# write_manifest <file> <version> <sha256> [pub_date] [notes]
+write_manifest() {
+  cat >"$1" <<EOF
+{
+  "version": "$2",
+  "notes": "${5:-}",
+  "pub_date": "${4:-}",
+  "platforms": {},
+  "server": {
+    "linux_x64": {
+      "url": "https://genesis.evox.group/dl/genesis_server_linux_x64.tar.xz",
+      "sha256": "$3"
+    }
+  }
+}
+EOF
+}
+
+# sha256_of <file> — the digest the CLI itself would compute.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{ print $1 }'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  else
+    fail "neither sha256sum nor shasum is available to build the release fixtures"
+  fi
+}
+
+# installed_version <release tree> — the version its start_erl.data names.
+installed_version() {
+  awk 'NF >= 2 { print $2; exit }' "$1/releases/start_erl.data" 2>/dev/null || true
+}
+
+# build_release_tree <name> <version> <ok|fail> — a REAL .tar.xz fixture whose
+# tarball root is `genesis_server/`, exactly like the published asset.
+build_release_tree() {
+  _bt="$UPDP/build/$1"
+  rm -rf "$_bt"
+  mkdir -p "$_bt/genesis_server/bin" "$_bt/genesis_server/releases"
+  cp "$CLI_SRC" "$_bt/genesis_server/bin/genesis"
+  chmod +x "$_bt/genesis_server/bin/genesis"
+  write_launcher "$_bt/genesis_server/bin/genesis_server" "$2" "$3"
+  printf 'erts-15.0.1 %s\n' "$2" >"$_bt/genesis_server/releases/start_erl.data"
+  tar -cJf "$UPDP_ART/$1.tar.xz" -C "$_bt" genesis_server
+}
+
+build_release_tree good 0.13.0 ok
+build_release_tree bad 0.14.1 fail
+build_release_tree mismatch 0.0.9 ok
+GOOD_SHA=$(sha256_of "$UPDP_ART/good.tar.xz")
+BAD_SHA=$(sha256_of "$UPDP_ART/bad.tar.xz")
+MISMATCH_SHA=$(sha256_of "$UPDP_ART/mismatch.tar.xz")
+
+# The planted "server instance": it owns /health until something stops it, and
+# TERM removes the marker too, so a restart has to republish it (that is what
+# makes a rollback observable rather than a stale marker).
+cat >"$UPDP_STATE/instance.sh" <<STUB
+#!/bin/sh
+state=\$1
+: >"\$state/health.ok"
+trap 'rm -f "\$state/health.ok"; exit 0' TERM INT
+while :; do "$REAL_SLEEP" 0.05; done
+STUB
+chmod +x "$UPDP_STATE/instance.sh"
+
+# reset_update [version] [ok|fail] — a fresh install tree, data dir, feed and
+# markers, so no case can leak into the next.
+reset_update() {
+  kill_instances "$UPDP/data/server.pid"
+  rm -rf "$UPDP_WORK" "$UPDP/data"
+  mkdir -p "$UPDP_WORK/install/bin" "$UPDP_WORK/install/releases" "$UPDP/data"
+  UPDP_INSTALL="$UPDP_WORK/install"
+  UPDP_CLI="$UPDP_INSTALL/bin/genesis"
+  cp "$CLI_SRC" "$UPDP_CLI"
+  chmod +x "$UPDP_CLI"
+  write_launcher "$UPDP_INSTALL/bin/genesis_server" "${1:-0.12.0}" "${2:-ok}"
+  printf 'erts-15.0.1 %s\n' "${1:-0.12.0}" >"$UPDP_INSTALL/releases/start_erl.data"
+  : >"$UPDP_INSTALL/.old-sentinel"
+  : >"$UPDP_STATE/curl.log"
+  : >"$UPDP_STATE/launcher.log"
+  printf '0\n' >"$UPDP_STATE/active_tasks"
+  printf '%s\n' "${1:-0.12.0}" >"$UPDP_STATE/instance.version"
+  rm -f "$UPDP_STATE/primary.down" "$UPDP_STATE/health.ok" \
+    "$UPDP_STATE/latest.json" "$UPDP_STATE/asset.tar.xz"
+}
+
+# plant_instance — a live pidfile instance plus <data>/server.pid naming it;
+# prints its pid.
+plant_instance() {
+  "$UPDP_STATE/instance.sh" "$UPDP_STATE" </dev/null >/dev/null 2>&1 &
+  _pl_pid=$!
+  printf '%s\n' "$_pl_pid" >"$UPDP/data/server.pid"
+  printf '%s\n' "$_pl_pid" >>"$TMP/instance-pids"
+  _pl_n=0
+  while [ ! -e "$UPDP_STATE/health.ok" ] && [ "$_pl_n" -lt 200 ]; do
+    "$REAL_SLEEP" 0.005
+    _pl_n=$((_pl_n + 1))
+  done
+  printf '%s\n' "$_pl_pid"
+}
+
+export GENESIS_DATA_DIR="$UPDP/data"
+export GENESIS_DOWNLOAD_BASE="http://feed.invalid/dl"
+export GENESIS_DOWNLOAD_FALLBACK_BASE="http://fallback.invalid/releases"
+export PATH="$UPDP_SHIM:$REMOTE_BASE_PATH"
+
+# (a) the family and its flags are discoverable.
+reset_update
+expect_status 0 "update help" "$UPDP_CLI" update --help
+out=$(cat "$TMP/out")
+contains "$out" "--check" "update help must document --check"
+contains "$out" "--json" "update help must document --json"
+contains "$out" "--version TAG" "update help must document --version"
+contains "$out" "--force" "update help must document --force"
+contains "$out" "--wait N" "update help must document --wait"
+contains "$out" "alias: genesis upgrade" "update help must document the alias"
+expect_status 0 "top-level help lists update" "$UPDP_CLI" help
+out=$(cat "$TMP/out")
+contains "$out" "update" "help must list the update command"
+contains "$out" "upgrade" "help must list the upgrade alias"
+ok "help and 'update --help' document the self-update family and its flags"
+
+# (b) already on the feed's version: up to date, exit 0, nothing downloaded.
+reset_update
+write_manifest "$UPDP_STATE/latest.json" 0.12.0 ""
+expect_status 0 "update --check (up to date)" "$UPDP_CLI" update --check
+out=$(cat "$TMP/out")
+contains "$out" "Genesis 0.12.0 is up to date." "an equal version must report up to date"
+if grep -q 'tar\.xz' "$UPDP_STATE/curl.log"; then
+  fail "a check-only run must not fetch the asset: $(cat "$UPDP_STATE/curl.log")"
+fi
+expect_status 0 "upgrade --check is the alias" "$UPDP_CLI" upgrade --check
+contains "$(cat "$TMP/out")" "is up to date" "upgrade must behave like update"
+ok "update --check on an up-to-date install exits 0 and downloads nothing"
+
+# (b2) the launcher answers `version` with the real Mix shape (`<release name>
+# <vsn>`): the release name must be stripped everywhere it would leak — into
+# `genesis version`, into the up-to-date comparison and into the --json payload.
+reset_update 0.13.0
+ver=$("$UPDP_CLI" version </dev/null)
+[ "$ver" = "genesis 0.13.0" ] ||
+  fail "genesis version must strip the release name, got: $ver"
+write_manifest "$UPDP_STATE/latest.json" 0.13.0 ""
+expect_status 0 "update --check (Mix-shaped launcher version)" "$UPDP_CLI" update --check
+contains "$(cat "$TMP/out")" "Genesis 0.13.0 is up to date." \
+  "a two-token launcher answer must compare equal to the feed version"
+rc=0
+"$UPDP_CLI" update --check --json >"$TMP/upd-json" 2>"$TMP/upd-json-err" </dev/null || rc=$?
+[ "$rc" -eq 0 ] || fail "--check --json with a two-token launcher answer must exit 0, got $rc"
+json=$(cat "$TMP/upd-json")
+contains "$json" '"current":"0.13.0"' \
+  "the JSON must carry the normalized installed version"
+not_contains "$json" "genesis_server" \
+  "the launcher's release name must never reach the JSON"
+[ ! -s "$TMP/upd-json-err" ] || fail "--check --json must keep stderr quiet: $(cat "$TMP/upd-json-err")"
+ok "a Mix-shaped launcher version is normalized for version, --check and --json"
+
+# (c) a newer feed version: exit 10, the human summary and the hint.
+reset_update
+write_manifest "$UPDP_STATE/latest.json" 0.13.0 "" "2026-11-01T00:00:00Z" \
+  "Faster updates."
+expect_status 10 "update --check (update available)" "$UPDP_CLI" update --check
+out=$(cat "$TMP/out")
+contains "$out" "Update available: 0.13.0 (installed 0.12.0)" \
+  "the newer version and the installed one must be named"
+contains "$out" "Released: 2026-11-01T00:00:00Z" "the release date must be shown"
+contains "$out" "Notes:" "the release notes must be shown"
+contains "$out" "Run \`genesis update\` to install it." "the install hint must be shown"
+if grep -q 'tar\.xz' "$UPDP_STATE/curl.log"; then
+  fail "a check-only run must not fetch the asset: $(cat "$UPDP_STATE/curl.log")"
+fi
+ok "update --check reports a newer release, its notes and the install hint (exit 10)"
+
+# (d) --check --json is ONE line of machine-readable JSON on stdout.
+reset_update
+write_manifest "$UPDP_STATE/latest.json" 0.13.0 "" "2026-11-01T00:00:00Z"
+rc=0
+"$UPDP_CLI" update --check --json >"$TMP/upd-json" 2>"$TMP/upd-json-err" </dev/null || rc=$?
+[ "$rc" -eq 10 ] || fail "--check --json with a newer release must exit 10, got $rc"
+[ "$(wc -l <"$TMP/upd-json" | tr -d ' ')" = 1 ] ||
+  fail "--check --json must print exactly one line: $(cat "$TMP/upd-json")"
+json=$(cat "$TMP/upd-json")
+contains "$json" '"available":true' "the JSON must report the update as available"
+contains "$json" '"current":"0.12.0"' "the JSON must carry the installed version"
+contains "$json" '"latest":"0.13.0"' "the JSON must carry the feed version"
+contains "$json" '"pub_date":"2026-11-01T00:00:00Z"' "the JSON must carry the release date"
+not_contains "$json" "Update available" "--json must not print human prose"
+[ ! -s "$TMP/upd-json-err" ] || fail "--check --json must keep stderr quiet: $(cat "$TMP/upd-json-err")"
+# Up to date, and the manifest publishes no date: `false` and no pub_date key.
+write_manifest "$UPDP_STATE/latest.json" 0.12.0 ""
+rc=0
+"$UPDP_CLI" update --check --json >"$TMP/upd-json" 2>/dev/null </dev/null || rc=$?
+[ "$rc" -eq 0 ] || fail "--check --json on an up-to-date install must exit 0, got $rc"
+json=$(cat "$TMP/upd-json")
+contains "$json" '"available":false' "the JSON must report an up-to-date install as false"
+not_contains "$json" '"pub_date"' "an unpublished date must be omitted from the JSON"
+ok "--check --json prints one JSON line (and omits an absent pub_date)"
+
+# (e) a running instance with active tasks refuses the update and changes nothing.
+reset_update
+write_manifest "$UPDP_STATE/latest.json" 0.13.0 "$GOOD_SHA"
+cp "$UPDP_ART/good.tar.xz" "$UPDP_STATE/asset.tar.xz"
+printf '2\n' >"$UPDP_STATE/active_tasks"
+pid=$(plant_instance)
+expect_status 1 "update with active tasks" "$UPDP_CLI" update
+out=$(cat "$TMP/out")
+contains "$out" "The Genesis server has 2 active task(s)" "the active task count must be reported"
+contains "$out" "pass --force to update anyway" "the override must be explained"
+if grep -q 'tar\.xz' "$UPDP_STATE/curl.log"; then
+  fail "a refused update must download nothing: $(cat "$UPDP_STATE/curl.log")"
+fi
+[ "$(installed_version "$UPDP_INSTALL")" = 0.12.0 ] || fail "a refused update must not change the install"
+[ -e "$UPDP_INSTALL/.old-sentinel" ] || fail "a refused update must keep the old tree"
+[ ! -e "$UPDP/data/update.lock" ] || fail "a refused update must release the lock"
+kill -0 "$pid" 2>/dev/null || fail "a refused update must leave the server running"
+ok "update refuses a busy instance (exit 1) and downloads nothing"
+
+# (f) --force bypasses that guard and performs the full staged swap.
+expect_status 0 "update --force over a busy instance" \
+  "$UPDP_CLI" update --force --wait 3
+out=$(cat "$TMP/out")
+contains "$out" "updating anyway (--force)" "--force must acknowledge the active tasks"
+contains "$out" "Downloading genesis_server_linux_x64.tar.xz (0.13.0)" "the asset must be fetched"
+contains "$out" "Checksum verified." "the checksum must be verified before the swap"
+contains "$out" "Installing Genesis 0.13.0 to $UPDP_INSTALL" "the install target must be named"
+contains "$out" "Stopping the Genesis server." "the running service must be stopped"
+contains "$out" "Starting the Genesis server." "the new version must be started"
+contains "$out" "Genesis updated: 0.12.0 → 0.13.0" "the version transition must be reported"
+[ "$(installed_version "$UPDP_INSTALL")" = 0.13.0 ] || fail "the install must carry the new version"
+[ ! -e "$UPDP_INSTALL/.old-sentinel" ] || fail "the install tree must have been replaced"
+[ -e "$UPDP_INSTALL/bin/genesis_server" ] || fail "the new tree must carry its launcher"
+[ -e "$UPDP_INSTALL/bin/genesis" ] || fail "the new tree must carry the CLI"
+grep -qx 'LAUNCH 0.13.0' "$UPDP_STATE/launcher.log" ||
+  fail "the new version must have been started: $(cat "$UPDP_STATE/launcher.log")"
+if kill -0 "$pid" 2>/dev/null; then
+  fail "the old instance must have been stopped (pid $pid is alive)"
+fi
+if ls -d "$UPDP_INSTALL".old.* >/dev/null 2>&1; then
+  fail "the previous tree must be removed after a healthy start: $(ls -d "$UPDP_INSTALL".old.*)"
+fi
+if ls -d "$UPDP_WORK"/.genesis-update.* >/dev/null 2>&1; then
+  fail "no staging directory may be left behind: $(ls -d "$UPDP_WORK"/.genesis-update.*)"
+fi
+[ ! -e "$UPDP/data/update.lock" ] || fail "a completed update must release its lock"
+ok "update --force stops, swaps, restarts and reports the transition"
+
+# (g) a corrupt download is rejected before the server is touched.
+reset_update
+write_manifest "$UPDP_STATE/latest.json" 0.13.0 \
+  "0000000000000000000000000000000000000000000000000000000000000000"
+cp "$UPDP_ART/good.tar.xz" "$UPDP_STATE/asset.tar.xz"
+pid=$(plant_instance)
+expect_status 1 "update with a checksum mismatch" "$UPDP_CLI" update
+out=$(cat "$TMP/out")
+contains "$out" "checksum mismatch" "a bad digest must be reported"
+not_contains "$out" "Stopping the Genesis server." "a bad digest must abort before the stop"
+[ "$(installed_version "$UPDP_INSTALL")" = 0.12.0 ] || fail "a bad digest must not change the install"
+[ -e "$UPDP_INSTALL/.old-sentinel" ] || fail "a bad digest must keep the old tree"
+kill -0 "$pid" 2>/dev/null || fail "a bad digest must leave the server running"
+ok "a checksum mismatch aborts before any stop and keeps the old tree"
+
+# (h) the new version never becomes healthy → roll back to the old one.
+reset_update
+write_manifest "$UPDP_STATE/latest.json" 0.14.1 "$BAD_SHA"
+cp "$UPDP_ART/bad.tar.xz" "$UPDP_STATE/asset.tar.xz"
+pid=$(plant_instance)
+expect_status 1 "update rolling back" "$UPDP_CLI" update --wait 3
+out=$(cat "$TMP/out")
+not_contains "$out" "Genesis updated" "a rolled-back update must not report success"
+contains "$out" "rolling back to 0.12.0" "the failed version must roll back"
+contains "$out" "Genesis update failed; the previous version is running." \
+  "the rollback outcome must be reported"
+[ "$(installed_version "$UPDP_INSTALL")" = 0.12.0 ] || fail "the rollback must restore the old version"
+[ -e "$UPDP_INSTALL/.old-sentinel" ] || fail "the rollback must restore the old tree"
+grep -qx 'LAUNCH 0.14.1' "$UPDP_STATE/launcher.log" ||
+  fail "the new version must have been tried: $(cat "$UPDP_STATE/launcher.log")"
+grep -qx 'LAUNCH 0.12.0' "$UPDP_STATE/launcher.log" ||
+  fail "the old version must have been restarted: $(cat "$UPDP_STATE/launcher.log")"
+if ls -d "$UPDP_INSTALL".old.* >/dev/null 2>&1; then
+  fail "the rollback must consume its kept-aside tree: $(ls -d "$UPDP_INSTALL".old.*)"
+fi
+ok "an unhealthy new version rolls back and the previous version runs again"
+
+# (i) a tarball whose own version disagrees with the feed aborts pre-stop.
+reset_update
+write_manifest "$UPDP_STATE/latest.json" 0.13.0 "$MISMATCH_SHA"
+cp "$UPDP_ART/mismatch.tar.xz" "$UPDP_STATE/asset.tar.xz"
+pid=$(plant_instance)
+expect_status 1 "update with a staged version mismatch" "$UPDP_CLI" update
+out=$(cat "$TMP/out")
+contains "$out" "the downloaded release is 0.0.9 but 0.13.0 was requested; nothing was changed" \
+  "a mismatched staged release must be refused"
+not_contains "$out" "Stopping the Genesis server." "a version mismatch must abort before the stop"
+[ "$(installed_version "$UPDP_INSTALL")" = 0.12.0 ] || fail "a version mismatch must not change the install"
+kill -0 "$pid" 2>/dev/null || fail "a version mismatch must leave the server running"
+ok "a staged version mismatch aborts before any stop, server untouched"
+
+# (j) an unsupported architecture is refused with the published build list.
+reset_update
+write_manifest "$UPDP_STATE/latest.json" 0.13.0 "$GOOD_SHA"
+SAVED_UPDP_PATH=$PATH
+export PATH="$UPDP_RISCV:$UPDP_SHIM:$REMOTE_BASE_PATH"
+expect_status 1 "update on an unsupported architecture" "$UPDP_CLI" update --check
+out=$(cat "$TMP/out")
+contains "$out" "no Genesis server build for Linux/riscv64" \
+  "an unsupported architecture must be named"
+contains "$out" "linux_x64, linux_arm64, darwin_arm64" \
+  "the supported builds must be listed"
+export PATH="$SAVED_UPDP_PATH"
+ok "an unsupported architecture fails with the published build list"
+
+# (k) flags and the update lock: usage errors, a live lock refuses, a stale one
+# is recovered.
+reset_update
+write_manifest "$UPDP_STATE/latest.json" 0.13.0 "$GOOD_SHA"
+cp "$UPDP_ART/good.tar.xz" "$UPDP_STATE/asset.tar.xz"
+expect_status 2 "update with an unknown flag" "$UPDP_CLI" update --bogus
+contains "$(cat "$TMP/out")" "unknown option for 'genesis update': --bogus" \
+  "an unknown flag must be a usage error"
+expect_status 2 "update with a non-numeric --wait" "$UPDP_CLI" update --wait nope
+ok "unknown update flags and a bad --wait exit 2"
+
+mkdir -p "$UPDP/data/update.lock"
+printf '%s\n' "$$" >"$UPDP/data/update.lock/pid"
+expect_status 1 "update while another update holds the lock" "$UPDP_CLI" update
+contains "$(cat "$TMP/out")" "another update is in progress" \
+  "a live lock owner must be reported"
+[ -d "$UPDP/data/update.lock" ] || fail "a live lock must not be removed"
+[ "$(installed_version "$UPDP_INSTALL")" = 0.12.0 ] || fail "a locked-out update must not change the install"
+# A lock whose owner is gone is stale: it must be recovered, not wedge updates.
+sh -c 'exit 0' &
+dead_pid=$!
+wait "$dead_pid" || true
+printf '%s\n' "$dead_pid" >"$UPDP/data/update.lock/pid"
+expect_status 0 "update recovering a stale lock" "$UPDP_CLI" update --wait 3
+out=$(cat "$TMP/out")
+contains "$out" "Genesis updated: 0.12.0 → 0.13.0" "a stale lock must be recovered"
+contains "$out" "The server was not running" "a stopped server must not be restarted"
+[ "$(installed_version "$UPDP_INSTALL")" = 0.13.0 ] || fail "a recovered update must install the new version"
+[ ! -e "$UPDP/data/update.lock" ] || fail "the recovered lock must be released"
+ok "a live lock refuses the update and a stale lock is recovered"
+
+# (l) --version pins the feed/asset URLs, and a dead primary base falls back to
+# the GitHub release feed.
+reset_update
+write_manifest "$UPDP_STATE/latest.json" 0.13.0 "$GOOD_SHA"
+cp "$UPDP_ART/good.tar.xz" "$UPDP_STATE/asset.tar.xz"
+expect_status 10 "update --check --version" "$UPDP_CLI" update --check --version 0.13.0
+out=$(cat "$TMP/out")
+contains "$out" "Update available: 0.13.0 (installed 0.12.0)" "a pinned tag must be used as the target"
+grep -q "http://feed.invalid/dl/v0.13.0/latest.json" "$UPDP_STATE/curl.log" ||
+  fail "a pinned tag must shape the feed URL: $(cat "$UPDP_STATE/curl.log")"
+ok "--version pins the release tag into the feed URL"
+
+reset_update
+write_manifest "$UPDP_STATE/latest.json" 0.13.0 "$GOOD_SHA"
+cp "$UPDP_ART/good.tar.xz" "$UPDP_STATE/asset.tar.xz"
+: >"$UPDP_STATE/primary.down"
+expect_status 10 "update --check with the primary feed down" "$UPDP_CLI" update --check
+out=$(cat "$TMP/out")
+contains "$out" "Update available: 0.13.0 (installed 0.12.0)" \
+  "the fallback feed must still answer the check"
+grep -q "http://fallback.invalid/releases/latest/download/latest.json" "$UPDP_STATE/curl.log" ||
+  fail "the GitHub fallback manifest must be tried: $(cat "$UPDP_STATE/curl.log")"
+expect_status 0 "update with the primary feed down" "$UPDP_CLI" update --wait 3
+out=$(cat "$TMP/out")
+contains "$out" "Genesis updated: 0.12.0 → 0.13.0" "the fallback feed must complete the update"
+grep -q "http://fallback.invalid/releases/latest/download/genesis_server_linux_x64.tar.xz" \
+  "$UPDP_STATE/curl.log" ||
+  fail "the asset must be fetched from the fallback base: $(cat "$UPDP_STATE/curl.log")"
+[ "$(installed_version "$UPDP_INSTALL")" = 0.13.0 ] || fail "the fallback update must install the new version"
+ok "a dead primary feed base falls back to the GitHub manifest and asset"
 
 printf '\nAll %d checks passed.\n' "$checks"

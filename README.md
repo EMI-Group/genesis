@@ -96,6 +96,8 @@ Run the dashboard and agent runtime on Linux (x86_64 or ARM64) or macOS (Apple S
 curl -LsSf https://genesis.evox.group/dl/install.sh | sh
 genesis start
 genesis status
+genesis update --check   # is a newer server release available?
+genesis update           # install it and restart the server
 ```
 
 Open **http://127.0.0.1:9999** and configure your model provider in **Settings**. The server listens on localhost by default and has no built-in authentication; use an SSH tunnel for remote access.
