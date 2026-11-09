@@ -50,6 +50,19 @@ defmodule EvoDashWeb.ProjectComponents do
     end
   end
 
+  # The user-visible project identity: the mount's friendly display name,
+  # falling back to the VCT point and then the OS path when name is nil/blank.
+  defp display_name(project) do
+    name = Map.get(project, :name)
+    point = Map.get(project, :point)
+
+    cond do
+      is_binary(name) and String.trim(name) != "" -> name
+      is_binary(point) and String.trim(point) != "" -> point
+      true -> Map.get(project, :path)
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # project_omnibox/1 — Command Palette trigger + overlay
   # ---------------------------------------------------------------------------
@@ -77,13 +90,13 @@ defmodule EvoDashWeb.ProjectComponents do
         <%= if @active_project do %>
           <.icon name="hero-folder" class="size-4 text-primary-standalone shrink-0" />
           <span class="text-base font-bold text-base-content truncate leading-tight">
-            {@active_project.name}
+            {display_name(@active_project)}
           </span>
           <span
             class="text-sm text-base-content/80 font-mono truncate hidden md:inline"
             title={@active_project.path}
           >
-            {Map.get(@active_project, :point) || @active_project.path}
+            {@active_project.path}
           </span>
         <% else %>
           <.icon name="hero-folder-open" class="size-4 text-base-content/60 shrink-0" />
@@ -188,7 +201,7 @@ defmodule EvoDashWeb.ProjectComponents do
               <.icon name="hero-folder" class="size-4 shrink-0" />
               <div class="min-w-0 flex-1">
                 <div class="text-sm font-medium font-mono truncate">
-                  {Map.get(project, :point) || project.name}
+                  {display_name(project)}
                 </div>
                 <div class="text-xs text-base-content/70 font-mono truncate" title={project.path}>
                   {project.path}
