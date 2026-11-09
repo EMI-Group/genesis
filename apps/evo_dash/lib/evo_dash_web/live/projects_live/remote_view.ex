@@ -12,7 +12,7 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
   with a muted non-interactive placeholder. It is passed by gate-state renders
   (connecting/bootstrapping/disconnecting and error/disconnected remote
   contexts) where project activation must not touch the local filesystem or
-  local TaskRegistry recents.
+  the local VCT project registry.
 
   `connecting_state/1` and `error_state/1` are the full-page states shown
   while a selected remote target is connecting/bootstrapping or has failed
@@ -26,7 +26,7 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
   # top_bar/1 — Immersive sticky app header with command palette project control.
   #
   # LEFT: command palette trigger (click to open centered overlay with search,
-  # recent projects, open-by-path, and create-new-project).
+  # projects, open-by-path, and create-new-project).
   # RIGHT: a single "Configure" dropdown showing BOTH sections at once —
   # "Task Options" and "Project Settings" — with no tab bar. When `remote` is
   # set the Configure dropdown is replaced by the remote target-name badge.
@@ -34,7 +34,7 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
 
   attr(:active_project, :map, default: nil)
   attr(:active_project_path, :string, default: nil)
-  attr(:recent_projects, :list, default: [])
+  attr(:projects, :list, default: [])
   attr(:palette_open, :boolean, default: false)
   attr(:palette_search, :string, default: "")
   attr(:palette_mode, :atom, default: :menu)
@@ -94,7 +94,7 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
         <% else %>
           <EvoDashWeb.ProjectComponents.project_omnibox
             active_project={@active_project}
-            recent_projects={@recent_projects}
+            projects={@projects}
             palette_open={@palette_open}
             palette_search={@palette_search}
             palette_mode={@palette_mode}

@@ -226,15 +226,15 @@ defmodule EvoDashWeb.ProjectsLive.Project do
   @doc """
   Returns path suggestions for the file-system picker based on the input value.
 
-  When `recent_projects` (a list of `%EvoGit.RecentProject{}` structs) is
-  given, recently opened projects whose path matches the typed value are
-  listed FIRST, followed by filesystem suggestions. A path that appears both
-  in the recent list and on disk is only listed once (recents win).
+  When `projects` (a list of `%EvoGit.VCT.Mount{}` structs from the VCT project
+  registry) is given, registered projects whose path matches the typed value
+  are listed FIRST, followed by filesystem suggestions. A path that appears
+  both in the project list and on disk is only listed once (projects win).
   """
-  def path_suggestions(value, recent_projects \\ [])
+  def path_suggestions(value, projects \\ [])
 
-  def path_suggestions(value, recent_projects) do
-    path_suggestions(node(), value, recent_projects)
+  def path_suggestions(value, projects) do
+    path_suggestions(node(), value, projects)
   end
 
   @doc """
@@ -246,18 +246,18 @@ defmodule EvoDashWeb.ProjectsLive.Project do
   the same module the remote daemon runs — so local and remote autocomplete
   behave identically.
 
-  The recents filter is also node-aware: recents must pass
+  The project filter is also node-aware: a registered project must pass
   `ProjectFlow.absolute_path_for_node?/2`, which keeps the local
   `EvoGit.Platform.absolute_path?/1` semantics for the local node and accepts
-  POSIX- or Windows-absolute paths for remote nodes (so remote recents are not
-  dropped when the dashboard runs on a different OS). Recents additionally
-  match the typed value as a case-insensitive SUBSTRING of the full path
-  (covers the basename and multi-segment queries like `src/proj`) — filesystem
-  entries keep prefix-match semantics.
+  POSIX- or Windows-absolute paths for remote nodes (so remote projects are
+  not dropped when the dashboard runs on a different OS). Registered projects
+  additionally match the typed value as a case-insensitive SUBSTRING of the
+  full path (covers the basename and multi-segment queries like `src/proj`) —
+  filesystem entries keep prefix-match semantics.
   """
-  def path_suggestions(node, value, recent_projects) do
-    recents =
-      recent_projects
+  def path_suggestions(node, value, projects) do
+    project_paths =
+      projects
       |> Enum.map(& &1.path)
       |> Enum.filter(
         &(is_binary(&1) and
@@ -273,14 +273,14 @@ defmodule EvoDashWeb.ProjectsLive.Project do
         EvoDash.NodeContext.list_path_suggestions(node, value)
       end
 
-    Enum.uniq(recents ++ suggestions)
+    Enum.uniq(project_paths ++ suggestions)
   end
 
-  # Recents match the typed value as a case-insensitive SUBSTRING of the full
-  # path — a recent "/home/test/sources/project" surfaces when the user types
-  # "proj" (an infix) or "test/sources" (a multi-segment query), not just when
-  # the whole path happens to start with the query. Empty/nil values match all
-  # recents. (Filesystem suggestions keep prefix semantics — see
+  # Registered projects match the typed value as a case-insensitive SUBSTRING
+  # of the full path — "/home/test/sources/project" surfaces when the user
+  # types "proj" (an infix) or "test/sources" (a multi-segment query), not just
+  # when the whole path happens to start with the query. Empty/nil values match
+  # every project. (Filesystem suggestions keep prefix semantics — see
   # `EvoGit.PathSuggestions.suggest/1`.)
   defp matches_substring?(_path, value) when value == "" or is_nil(value), do: true
 
