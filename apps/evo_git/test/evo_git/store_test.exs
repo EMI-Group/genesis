@@ -963,7 +963,6 @@ defmodule EvoGit.StoreTest do
       assert remaining == [["bad-task-1"]]
       :ok = XqliteNIF.close(conn2)
     end
-
   end
 
   describe "atom field round-trip safety (regression)" do

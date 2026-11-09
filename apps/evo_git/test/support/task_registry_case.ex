@@ -102,18 +102,14 @@ defmodule EvoGit.TaskRegistryCase do
     # context file lives under the test's own temp root.
     start_supervised!(
       Supervisor.child_spec(
-        {EvoGit.VCT,
-         name: vct_name,
-         data_dir: root,
-         store: store_name},
+        {EvoGit.VCT, name: vct_name, data_dir: root, store: store_name},
         id: vct_name
       )
     )
 
     start_supervised!(
       Supervisor.child_spec(
-        {TaskRegistry,
-         task_store: store_name, data_dir: root, name: registry_name},
+        {TaskRegistry, task_store: store_name, data_dir: root, name: registry_name},
         id: registry_name
       )
     )

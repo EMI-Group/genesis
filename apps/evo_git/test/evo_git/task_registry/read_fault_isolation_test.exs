@@ -86,9 +86,7 @@ defmodule EvoGit.TaskRegistry.ReadFaultIsolationTest do
         start_supervised!(
           Supervisor.child_spec(
             {TaskRegistry,
-             task_store: :"no_such_store_#{unique}",
-             data_dir: data_dir,
-             name: registry_name},
+             task_store: :"no_such_store_#{unique}", data_dir: data_dir, name: registry_name},
             id: registry_name
           )
         )
