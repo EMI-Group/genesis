@@ -13,11 +13,12 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   composites).
 
   Those three versions are STAMPED, so a real v0.13.8 database never re-runs
-  them: this suite proves the PENDING set only — the three migrations HEAD
+  them: this suite proves the PENDING set only — the four migrations HEAD
   ships on top of them, `…00004_covering_indexes`,
   `…00005_task_agent_archives` (table + legacy fan-out + `archive_metadata`
-  drop) and `…00006_prune_redundant_indexes`. HEAD's six migrations are
-  versions 1..6 with no gaps.
+  drop), `…00006_prune_redundant_indexes` and `…00007_vct_mounts` (the VCT
+  mount table, which also retires the legacy `projects` table). HEAD's seven
+  migrations are versions 1..7 with no gaps.
 
   This suite crafts that file with RAW xqlite — never through the migration
   modules, so the fixture stays independent of HEAD's code — seeds v0.13.8-shaped
@@ -41,12 +42,13 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   # `schema_migrations` carries exactly these rows.
   @v0138_versions [20_260_815_000_001, 20_260_815_000_002, 20_260_815_000_003]
 
-  # The three migrations HEAD ships ON TOP of the v0.13.8 three: contiguous
-  # versions, so the shipped set is `1..6` with no gaps.
+  # The four migrations HEAD ships ON TOP of the v0.13.8 three: contiguous
+  # versions, so the shipped set is `1..7` with no gaps.
   @pending_versions [
     20_260_815_000_004,
     20_260_815_000_005,
-    20_260_815_000_006
+    20_260_815_000_006,
+    20_260_815_000_007
   ]
 
   @shipped_versions @v0138_versions ++ @pending_versions
@@ -147,7 +149,7 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   # ── The chain ─────────────────────────────────────────────────────────────
 
   describe "released v0.13.8 database → HEAD" do
-    test "applies exactly the three pending migrations and stamps the six shipped versions",
+    test "applies exactly the four pending migrations and stamps the seven shipped versions",
          %{path: path} do
       build_v0138_db!(path)
 
@@ -160,6 +162,12 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
       assert Boot.run_migrations(pid) == @pending_versions
 
       assert migration_versions!(path) == @shipped_versions
+
+      # `…00007_vct_mounts` created the VCT mount table AND retired the legacy
+      # `projects` table, carrying its one seeded row over as a VCT mount.
+      assert table_names!(path) |> Enum.member?("vct_mounts")
+      refute table_names!(path) |> Enum.member?("projects")
+      assert vct_mount_points!(path) == ["vct:///projects/demo"]
     end
 
     test "ends at HEAD's 19-column tasks shape with the four redundant indexes pruned",
@@ -646,6 +654,18 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
       "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?1 ORDER BY name",
       [table]
     )
+    |> List.flatten()
+  end
+
+  # The whole table inventory, and the derived VCT mount points, of a migrated
+  # file — raw xqlite, independent of the VCT application code.
+  defp table_names!(path) do
+    query_rows!(path, "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+    |> List.flatten()
+  end
+
+  defp vct_mount_points!(path) do
+    query_rows!(path, "SELECT point FROM vct_mounts ORDER BY point")
     |> List.flatten()
   end
 

@@ -13,8 +13,8 @@ defmodule EvoGit.Store.BootMigrationTest do
   ## Pinned behaviors (per scenario)
 
     * fresh (nonexistent) path → the exact 19-column `tasks` table (the final
-      shape, NO `archive_metadata`), the `task_agent_archives` and `projects`
-      tables, and all six migration versions stamped in `schema_migrations`
+      shape, NO `archive_metadata`), the `task_agent_archives` and `vct_mounts`
+      tables, and all seven migration versions stamped in `schema_migrations`
     * a current 20-column legacy table (still carrying `archive_metadata`)
       without `schema_migrations` → adopted; the seeded row's surviving values
       are preserved BYTE-IDENTICAL (pre-boot raw SELECT == post-boot
@@ -71,18 +71,21 @@ defmodule EvoGit.Store.BootMigrationTest do
   @covering_index_version 20_260_815_000_004
   @archive_version 20_260_815_000_005
   @prune_indexes_version 20_260_815_000_006
+  @vct_mounts_version 20_260_815_000_007
   # Ascending, exactly as `schema_migrations` reports it: the one schema-creating
   # baseline, the data normalization, the two shipped index migrations (the two
   # composite indexes and the two covering indexes), the merged
   # `task_agent_archives` table + legacy fan-out that drops
-  # `tasks.archive_metadata`, and the final prune of the four redundant indexes.
+  # `tasks.archive_metadata`, the final prune of the four redundant indexes, and
+  # the VCT mount table (`vct_mounts`) that retires the legacy `projects` table.
   @migration_versions [
     @baseline_version,
     @normalization_version,
     @composite_index_version,
     @covering_index_version,
     @archive_version,
-    @prune_indexes_version
+    @prune_indexes_version,
+    @vct_mounts_version
   ]
 
   # The LEGACY 20 column names in physical order — the shape a pre-release
@@ -373,16 +376,14 @@ defmodule EvoGit.Store.BootMigrationTest do
   defp db_path(%{root: root}, tag), do: Path.join(root, "evogit_r6b1_#{tag}.sqlite")
 
   # Crafts a legacy DB with RAW xqlite — never the repo: `ddl` is executed
-  # verbatim, `columns`/`values` seed one task row, and `projects?` (default
-  # true) controls whether the historical projects table exists.
-  defp build_legacy_db!(path, ddl, columns, values, projects? \\ true) do
+  # verbatim, `columns`/`values` seed one task row, and the historical
+  # `projects` table is always created (every pre-VCT release had it; the
+  # baseline migration no longer does).
+  defp build_legacy_db!(path, ddl, columns, values) do
     File.mkdir_p!(Path.dirname(path))
     {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
     {:ok, _} = XqliteNIF.query(conn, ddl, [])
-
-    if projects? do
-      {:ok, _} = XqliteNIF.query(conn, @projects_ddl, [])
-    end
+    {:ok, _} = XqliteNIF.query(conn, @projects_ddl, [])
 
     if columns != [] do
       insert_task!(conn, columns, values)
@@ -446,6 +447,31 @@ defmodule EvoGit.Store.BootMigrationTest do
     RepoScope.with_repo(pid, fn ->
       Repo.query!("PRAGMA table_info(tasks)").rows
     end)
+  end
+
+  # Does the migrated database carry `table` at all? The retired `projects`
+  # table must never exist post-boot, so its absence is asserted through
+  # `sqlite_master` rather than through a PRAGMA that would raise.
+  defp table_exists?(pid, table) do
+    RepoScope.with_repo(pid, fn ->
+      Repo.query!("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1", [table]).rows !=
+        []
+    end)
+  end
+
+  # The PRE-boot table inventory of a raw xqlite file.
+  defp raw_table_names!(path) do
+    {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
+
+    {:ok, %{rows: rows}} =
+      XqliteNIF.query(
+        conn,
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+        []
+      )
+
+    :ok = XqliteNIF.close(conn)
+    Enum.map(rows, &hd/1)
   end
 
   defp column_names(pid, table) do
@@ -532,7 +558,7 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all six migrations (the Ecto migrator saw version 0).
+      # The boot stamped all seven migrations (the Ecto migrator saw version 0).
       assert migration_versions(pid) == @migration_versions
 
       # The schema was adopted untouched (the fresh-DB PRAGMA shape), minus the
@@ -591,9 +617,9 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all six migrations (the Ecto migrator saw version 0)...
+      # The boot stamped all seven migrations (the Ecto migrator saw version 0)...
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[6]]
+      assert schema_migrations_count(pid) == [[7]]
 
       # ...the appended `error` landed AFTER the pre-existing `updated_at`
       # (SQLite ALTERs can only append) as a NULLABLE add with its declared
@@ -648,7 +674,7 @@ defmodule EvoGit.Store.BootMigrationTest do
       assert task_table_info(pid) == @adopted_19_col_table_info_rows
       refute "archive_metadata" in column_names(pid, "tasks")
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[6]]
+      assert schema_migrations_count(pid) == [[7]]
 
       row = get_task_row(pid, "r6b1-oldpipe")
       assert {row.id, row.status} == {"r6b1-oldpipe", "completed"}
@@ -774,33 +800,49 @@ defmodule EvoGit.Store.BootMigrationTest do
     end
   end
 
-  # ── Scenario 6: missing projects table ────────────────────────────────────
+  # ── Scenario 6: the retired projects table + the VCT mount table ──────────
 
-  describe "legacy DB without a projects table" do
-    test "boot creates an empty projects table with the canonical 3-column shape", %{
-      root: root
-    } do
-      path = db_path(%{root: root}, "no_projects")
-      build_legacy_db!(path, @ddl_15_col, ~w(id status), ["r6b1-noproj", "completed"], false)
+  describe "projects retirement and vct_mounts creation" do
+    test "an adopted legacy DB drops its projects table and gains the 5-column vct_mounts",
+         %{root: root} do
+      path = db_path(%{root: root}, "projects_retired")
+      build_legacy_db!(path, @ddl_15_col, ~w(id status), ["r6b1-noproj", "completed"])
+
+      # Ground truth BEFORE boot: the legacy fixture really carries `projects`,
+      # so its post-boot absence proves `20260815000007_vct_mounts` dropped it.
+      assert raw_table_names!(path) |> Enum.member?("projects")
 
       pid = start_booted_repo!(path)
 
-      assert column_names(pid, "projects") == ["path", "name", "last_opened_at"]
+      refute table_exists?(pid, "projects")
 
-      assert RepoScope.with_repo(pid, fn ->
-               Repo.query!("PRAGMA table_info(projects)").rows
-             end) == [
-               [0, "path", "TEXT", 0, nil, 1],
-               [1, "name", "TEXT", 0, nil, 0],
-               [2, "last_opened_at", "TEXT", 0, nil, 0]
+      assert query_rows(pid, "PRAGMA table_info(vct_mounts)") == [
+               [0, "point", "TEXT", 1, nil, 1],
+               [1, "path", "TEXT", 1, nil, 0],
+               [2, "name", "TEXT", 1, nil, 0],
+               [3, "kind", "TEXT", 1, nil, 0],
+               [4, "last_opened_at", "TEXT", 0, nil, 0]
              ]
 
-      assert RepoScope.with_repo(pid, fn ->
-               Repo.query!("SELECT COUNT(*) FROM projects").rows
-             end) == [[0]]
-
-      # tasks adoption still happened alongside the projects creation.
+      # tasks adoption still happened alongside the mount-table creation.
       assert column_names(pid, "tasks") == @canonical_columns
+      assert migration_versions(pid) == @migration_versions
+    end
+
+    test "a FRESH database never creates a projects table", %{root: root} do
+      path = db_path(%{root: root}, "no_projects_fresh")
+
+      pid = start_booted_repo!(path)
+
+      refute table_exists?(pid, "projects")
+
+      assert column_names(pid, "vct_mounts") == [
+               "point",
+               "path",
+               "name",
+               "kind",
+               "last_opened_at"
+             ]
     end
   end
 

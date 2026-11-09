@@ -50,7 +50,22 @@ defmodule EvoGit.Repo.Migrations.DataNormalization do
   defp normalize_timestamps do
     normalize_timestamp("tasks", "started_at")
     normalize_timestamp("tasks", "finished_at")
-    normalize_timestamp("projects", "last_opened_at")
+
+    # Legacy `projects` rows still exist here on an ADOPTED database (this
+    # migration runs before `20260815000007`, which owns their fan-out and
+    # drop). A fresh database never has the table — `20260815000001`
+    # deliberately does not create it — so the statement is probe-guarded
+    # instead of assuming the table exists.
+    if table_exists?("projects"), do: normalize_timestamp("projects", "last_opened_at")
+  end
+
+  defp table_exists?(table) do
+    statement = "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?"
+
+    case repo().query(statement, [table], log: false) do
+      {:ok, %{rows: [_ | _]}} -> true
+      _other -> false
+    end
   end
 
   defp normalize_timestamp(table, column) do
