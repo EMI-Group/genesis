@@ -47,7 +47,7 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
   Non-empty shape (one line per job, newest first as handed in):
 
       ## Background Jobs
-      These are THIS agent's background shell jobs (live or finished). …
+      These are THIS agent's background shell jobs, live or finished. Read a job's output by calling `job_output` with that job's id as `job_id` (for example `job_id: "bash-1"`), and list them with `job_list`.
       - `bash-1` — running — `mix test`
       - `bash-2` — completed (exit code: 0) — `mix format --check-formatted`
 
@@ -67,7 +67,8 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
 
     ("## Background Jobs\n" <>
        "These are THIS agent's background shell jobs, live or finished. " <>
-       "Read a job's output with `job_output` (pass its id) and list them with `job_list`.\n" <>
+       "Read a job's output by calling `job_output` with that job's id as `job_id` " <>
+       "(for example `job_id: \"bash-1\"`), and list them with `job_list`.\n" <>
        lines)
     |> cap()
   end
@@ -80,12 +81,17 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
   Renders ONE combined `[NOTICE]`-prefixed message for `jobs` that just reached
   a terminal status, or `nil` for `nil`/`[]` (nothing to announce).
 
-  Shape:
+  Shape (the trailing instruction line uses the FIRST job's id — jobs are
+  handed in newest first — so the copy-ready `job_id` spelling is literal):
 
       [NOTICE] 2 background shell jobs finished:
       - `bash-1` — completed (exit code: 0) — `mix test`
       - `bash-2` — failed (exit code: 1) — `mix credo`
-      Call `job_output` with a job id to read its output, or `job_list` to see all of this agent's jobs.
+      Call `job_output` with job_id "bash-1" to read that job's output, or `job_list` to see all of this agent's jobs.
+
+  When the first job carries no usable id (nil, non-map or blank), the line
+  falls back to the generic wording that names no concrete `job_id` value, so
+  the notice never promises an id it cannot keep.
 
   Never raises on a malformed/missing job key, and the whole text is capped at
   ~#{@max_rendered_chars} characters.
@@ -100,8 +106,7 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
 
     ("[NOTICE] #{count} background shell #{plural(count)} finished:\n" <>
        Enum.map_join(jobs, "\n", &job_line/1) <>
-       "\nCall `job_output` with a job id to read its output, or `job_list` to see " <>
-       "all of this agent's jobs.")
+       "\n" <> instruction_line(first_job_id(jobs)))
     |> cap()
   end
 
@@ -126,6 +131,40 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
       _other ->
         "(unknown id)"
     end
+  end
+
+  # The FIRST job's usable id: the copy-ready `job_id` spelling the notice
+  # shows. Total: a nil list, a non-map first element, a missing/non-binary id
+  # or a blank id all yield `nil` so the renderer falls back to a generic line.
+  defp first_job_id(jobs) when is_list(jobs), do: usable_id(List.first(jobs))
+
+  defp first_job_id(_jobs), do: nil
+
+  defp usable_id(job) when is_map(job) do
+    case Map.get(job, :id) do
+      id when is_binary(id) ->
+        case flatten(id) do
+          "" -> nil
+          text -> text
+        end
+
+      _other ->
+        nil
+    end
+  end
+
+  defp usable_id(_job), do: nil
+
+  # Names the exact parameter (`job_id`) when a real id is available; the
+  # generic wording otherwise, so the notice never promises a fake spelling.
+  defp instruction_line(first_id) when is_binary(first_id) do
+    "Call `job_output` with job_id \"#{first_id}\" to read that job's output, or " <>
+      "`job_list` to see all of this agent's jobs."
+  end
+
+  defp instruction_line(_first_id) do
+    "Call `job_output` with a job id to read its output, or `job_list` to see " <>
+      "all of this agent's jobs."
   end
 
   defp status_text(job) do
