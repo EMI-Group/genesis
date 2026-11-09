@@ -163,8 +163,11 @@ defmodule EvoGit.ProcessManager.Control.Posix do
       {:ok, tids} ->
         Enum.flat_map(tids, fn tid ->
           case File.read("/#{@proc}/#{pid}/task/#{tid}/children") do
-            {:ok, content} -> content |> String.split(~r/\s+/, trim: true) |> Enum.flat_map(&int/1)
-            _ -> []
+            {:ok, content} ->
+              content |> String.split(~r/\s+/, trim: true) |> Enum.flat_map(&int/1)
+
+            _ ->
+              []
           end
         end)
 
@@ -178,7 +181,9 @@ defmodule EvoGit.ProcessManager.Control.Posix do
   end
 
   defp walk_tree(_root, acc, _seen, depth) when depth >= @max_depth, do: Enum.reverse(acc)
-  defp walk_tree(_root, acc, _seen, _depth) when length(acc) >= @max_tree_nodes, do: Enum.reverse(acc)
+
+  defp walk_tree(_root, acc, _seen, _depth) when length(acc) >= @max_tree_nodes,
+    do: Enum.reverse(acc)
 
   defp walk_tree(root, acc, seen, depth) do
     next =
@@ -189,8 +194,11 @@ defmodule EvoGit.ProcessManager.Control.Posix do
       |> Enum.take(@max_tree_nodes - length(acc))
 
     case next do
-      [] -> Enum.reverse(acc)
-      next -> walk_tree(root, acc ++ next, Enum.reduce(next, seen, &MapSet.put(&2, &1)), depth + 1)
+      [] ->
+        Enum.reverse(acc)
+
+      next ->
+        walk_tree(root, acc ++ next, Enum.reduce(next, seen, &MapSet.put(&2, &1)), depth + 1)
     end
   end
 

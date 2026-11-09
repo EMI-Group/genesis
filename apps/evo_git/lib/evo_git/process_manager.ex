@@ -417,7 +417,11 @@ defmodule EvoGit.ProcessManager do
 
   # A background job is killed through its owning registry; anything else (and a
   # job BackgroundJobs no longer knows) goes through the OS handle.
-  defp stop_execution(%Execution{kind: :background_job, job_id: job_id} = execution, handle, reason)
+  defp stop_execution(
+         %Execution{kind: :background_job, job_id: job_id} = execution,
+         handle,
+         reason
+       )
        when is_binary(job_id) do
     case background_kill(job_id, reason) do
       {:ok, _job} -> :ok

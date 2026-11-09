@@ -182,7 +182,11 @@ defmodule EvoGit.ProcessManager.Registry do
   @doc "Sampling interval (ms) — app env `:process_manager_sample_interval_ms`."
   @spec sample_interval_ms() :: pos_integer()
   def sample_interval_ms do
-    case Application.get_env(:evo_git, :process_manager_sample_interval_ms, @default_sample_interval_ms) do
+    case Application.get_env(
+           :evo_git,
+           :process_manager_sample_interval_ms,
+           @default_sample_interval_ms
+         ) do
       ms when is_integer(ms) and ms > 0 -> ms
       _other -> @default_sample_interval_ms
     end
@@ -197,7 +201,11 @@ defmodule EvoGit.ProcessManager.Registry do
   @doc "Retention window (ms) for terminal records — app env `:process_finished_retention_ms`."
   @spec finished_retention_ms() :: non_neg_integer()
   def finished_retention_ms do
-    case Application.get_env(:evo_git, :process_finished_retention_ms, @default_finished_retention_ms) do
+    case Application.get_env(
+           :evo_git,
+           :process_finished_retention_ms,
+           @default_finished_retention_ms
+         ) do
       ms when is_integer(ms) and ms >= 0 -> ms
       _other -> @default_finished_retention_ms
     end
@@ -225,7 +233,12 @@ defmodule EvoGit.ProcessManager.Registry do
     now = DateTime.utc_now()
     execution = build_execution(id, kind, meta, now)
 
-    state = %{state | executions: Map.put(state.executions, id, execution), next_id: state.next_id + 1}
+    state = %{
+      state
+      | executions: Map.put(state.executions, id, execution),
+        next_id: state.next_id + 1
+    }
+
     state = monitor_owner(state, id, execution.owner_pid)
 
     {:reply, {:ok, id}, arm_sampling(state)}
@@ -400,7 +413,8 @@ defmodule EvoGit.ProcessManager.Registry do
         Logger.debug("ProcessManager: ignoring an unrecognized handle for #{inspect(id)}")
         state
 
-      _ -> state
+      _ ->
+        state
     end
   end
 
@@ -513,10 +527,17 @@ defmodule EvoGit.ProcessManager.Registry do
 
   defp arm_sampling(state) do
     cond do
-      not stats_enabled?() -> disarm_sampling(state)
-      not any_live?(state) -> disarm_sampling(state)
-      state.sample_timer != nil -> state
-      true -> %{state | sample_timer: Process.send_after(self(), :sample_tick, sample_interval_ms())}
+      not stats_enabled?() ->
+        disarm_sampling(state)
+
+      not any_live?(state) ->
+        disarm_sampling(state)
+
+      state.sample_timer != nil ->
+        state
+
+      true ->
+        %{state | sample_timer: Process.send_after(self(), :sample_tick, sample_interval_ms())}
     end
   end
 

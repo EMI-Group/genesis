@@ -238,7 +238,13 @@ defmodule EvoGit.ProcessManager.Stats do
   yields `nil` (an unreadable figure is never reported as 0).
   """
   @spec parse_proc_status(term()) ::
-          {:ok, %{name: String.t() | nil, state: String.t() | nil, vm_rss_bytes: integer() | nil, vm_size_bytes: integer() | nil}}
+          {:ok,
+           %{
+             name: String.t() | nil,
+             state: String.t() | nil,
+             vm_rss_bytes: integer() | nil,
+             vm_size_bytes: integer() | nil
+           }}
           | {:error, :malformed}
   def parse_proc_status(status) when is_binary(status) do
     fields =
@@ -358,7 +364,13 @@ defmodule EvoGit.ProcessManager.Stats do
   `active`, `activating` or `reloading`.
   """
   @spec parse_systemctl_show(term()) ::
-          {:ok, %{cpu_time_ms: integer() | nil, memory_bytes: integer() | nil, active_state: String.t() | nil, alive: boolean()}}
+          {:ok,
+           %{
+             cpu_time_ms: integer() | nil,
+             memory_bytes: integer() | nil,
+             active_state: String.t() | nil,
+             alive: boolean()
+           }}
           | {:error, :malformed}
   def parse_systemctl_show(output) when is_binary(output) do
     fields =
