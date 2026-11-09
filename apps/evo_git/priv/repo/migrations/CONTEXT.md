@@ -2,35 +2,37 @@
 
 ## Intent
 The complete Ecto migration chain for `tasks.sqlite`, run before any store read/write by `EvoGit.Store.Boot.run_migrations/1` (preloaded `[{version, module}]` source, `Ecto.Migrator.run(repo, source, :up, all: true)`, `:global` lock) — detail: `../../../../lib/evo_git/store/CONTEXT.md`.
-Six contiguous versions (1..6); the chain is optimized for a NEW user's FIRST boot, so ALL schema-creating DDL lives in version 1 and every later version is a guarded no-op on a fresh database.
+Seven contiguous versions (1..7); the chain is optimized for a NEW user's FIRST boot, so ALL schema-creating DDL for the task tables lives in version 1 and every later version is a guarded no-op on a fresh database except the one-time create of its own table.
 
-## Inventory at HEAD (6 files, versions 1,2,3,4,5,6)
+## Inventory at HEAD (7 files, versions 1,2,3,4,5,6,7)
 
 | Version / file | Effect |
 |---|---|
-| `…000001_baseline_adoption` | The ONE schema-creating step: `CREATE TABLE IF NOT EXISTS tasks` with the FINAL 19 columns (no `archive_metadata`) + `projects`; per-column nullable `ALTER TABLE tasks ADD COLUMN` for the six legacy-missing columns (`lease_expires_at`, `model_id`, `project_path`, `branch_name`, `error`, `updated_at`); then the final six `idx_tasks_*` indexes; post-condition pins the 19 canonical columns (canonical order OR the adopted tail `…, branch_name, updated_at, error`), tolerating a legacy `archive_metadata` column (nullable TEXT, non-key) by removing it from the observed set first. |
-| `…000002_data_normalization` | Data rewrites only: timestamp normalization, `result` → tagged JSON, legacy pair-array `opts` → objects (in Elixir), `branch_name`/`updated_at` backfills, drops `tasks_quarantine`/`projects_quarantine`. |
+| `…000001_baseline_adoption` | The ONE task-table schema-creating step: `CREATE TABLE IF NOT EXISTS tasks` with the FINAL 19 columns (no `archive_metadata`) and NOTHING else — the legacy `projects` table is exclusively version 7's business, so a fresh database never creates-then-drops it; per-column nullable `ALTER TABLE tasks ADD COLUMN` for the six legacy-missing columns (`lease_expires_at`, `model_id`, `project_path`, `branch_name`, `error`, `updated_at`); then the final six `idx_tasks_*` indexes; post-condition pins the 19 canonical columns (canonical order OR the adopted tail `…, branch_name, updated_at, error`), tolerating a legacy `archive_metadata` column (nullable TEXT, non-key) by removing it from the observed set first. |
+| `…000002_data_normalization` | Data rewrites only: task timestamp normalization, `result` → tagged JSON, legacy pair-array `opts` → objects (in Elixir), `branch_name`/`updated_at` backfills, drops the DETS-era `tasks_quarantine`/`projects_quarantine` tables (`projects.last_opened_at` is NOT touched here — version 7 owns the legacy `projects` rows). |
 | `…000003_composite_indexes` | SHIPPED (v0.13.8, never renumbered): the two `(equality column, started_at)` composites `idx_tasks_status_started_at` / `idx_tasks_project_path_started_at` + a `PRAGMA index_info` post-condition; idempotent, so on a fresh database version 1 already created both and this is a no-op. |
 | `…000004_covering_indexes` | The two covering indexes `idx_tasks_status_updated_at_id` `(status, updated_at, id)` and `idx_tasks_finished_at_id` `(finished_at, id)` + a `PRAGMA index_info` post-condition; idempotent, so on a fresh database version 1 already created both and this is a no-op. |
 | `…000005_task_agent_archives` | Creates `task_agent_archives` (23 columns, `repo_id` TEXT, `PRIMARY KEY (task_id, agent_id)`) + `task_agent_archives_task_depth_idx` + both shape post-conditions — the ONLY create site of that table; then, ONLY if `PRAGMA table_info(tasks)` still reports `archive_metadata`, fans each task's JSON array out into one row per agent (`INSERT OR REPLACE`), strips `data.archive_records` from `result` when that key is present, NULLs the column, checks convergence and drops the column (19-column `tasks` afterwards). An UNDECODABLE archive is never destroyed with the column: the skipped tasks' raw payloads are written first to `<EvoGit.Platform.data_dir()>/migration_dumps/archive_metadata_skipped_20260815000005.json` (plain JSON `{task_id => raw payload}`) with the absolute path logged at `:warning`; a dump that cannot be written RAISES (boot-fatal, the column survives), while a clean migration writes no file and creates no directory. |
 | `…000006_prune_redundant_indexes` | Drops the four dead `tasks` indexes (`DROP INDEX IF EXISTS`) and asserts they are gone while all six final indexes exist, so an upgraded database provably converges; a pure no-op on a fresh database, which never created the four. |
+| `…000007_vct_mounts` | The ONLY create site of `vct_mounts`: `point TEXT PRIMARY KEY NOT NULL`, `path TEXT NOT NULL UNIQUE`, `name TEXT NOT NULL`, `kind TEXT NOT NULL` (`"git"` today), `last_opened_at TEXT` nullable ISO-8601 (`EvoGit.Store.Types.TaskTimestamp` owns the wire format). Then, ONLY when a legacy `projects` table exists, it derives each row's point exactly like `EvoGit.VCT.Table` (sanitized basename → `vct:///projects/<segment>`, `-N` dedupe counting from 2, non-blank stored name else the basename), processes rows NEWEST FIRST, skips missing/blank/non-absolute paths with a `Logger.warning`, inserts with `INSERT OR IGNORE`, caps the result at the 100 newest mounts and DROPS `projects`; post-conditions require exactly the five canonical columns (order, types, notnull/pk) and that `projects` is gone from `sqlite_master`. |
 
 ## Version numbering
 
 - The `2026081500000N` prefix is a SYNTHETIC fixed epoch, not a date: only the numeric order matters, because `Ecto.Migrator` sorts by the integer version.
 - A shipped version number is an identity — NEVER renumber it (versions 1, 2 and 3 shipped in v0.13.8).
-- A new migration MUST take the next FREE version above the highest existing one (`20260815000006`) and a module name no other file uses (`Ecto.Migrator.ensure_no_duplication!/1` keys on the module for a preloaded source).
+- A new migration MUST take the next FREE version above the highest existing one (`20260815000007`) and a module name no other file uses (`Ecto.Migrator.ensure_no_duplication!/1` keys on the module for a preloaded source).
 - Migrations landing on top of a release are additive: add a new version, never fold new DDL into an already-shipped one.
 
 ## Rules for editing this directory
 
-- Every migration is `up/0`-only (`down/0` never defined, because the data/schema changes are irreversible).
+- Every migration is `up/0`-only (`down/0` never defined, because the data/schema changes are irreversible): dropping `vct_mounts` would delete the whole mount table, and re-creating `projects` would restore a table nothing reads.
 - No migration declares `disable_ddl_transaction`: each runs in its own Ecto transaction (`XqliteEcto3.supports_ddl_transaction?/0` is true, transaction timeout `:infinity`), so a crash leaves earlier versions committed and the chain resumes from the next one.
 - Statements run through `repo().query!/3` in body order, never `Ecto.Migration.execute/1` (string commands queue until `flush/0`, so an in-body `PRAGMA` probe or `ALTER` would see the pre-migration state).
-- Idempotency is per migration: `CREATE … IF NOT EXISTS` / `DROP INDEX IF EXISTS` + column-existence probes + post-conditions that raise `Ecto.MigrationError` (boot-fatal, and the only way a silent shape drift is caught).
+- Idempotency is per migration: `CREATE … IF NOT EXISTS` / `DROP INDEX IF EXISTS` / `INSERT OR IGNORE` + column/table-existence probes + post-conditions that raise `Ecto.MigrationError` (boot-fatal, and the only way a silent shape drift is caught).
+- An applied migration is FROZEN HISTORY and must keep working after the application modules it mirrors are refactored: version 7 inlines its own point/path-basename helpers instead of calling `EvoGit.VCT.Table`, and that duplication is deliberate.
 - The per-statement timeout is the repo's 60 s, except payload-moving statements (the archive fan-out's reads/writes/drop), which pass `timeout: 600_000` because an archived agent's `result` can be tens of MiB.
-- Load-bearing order: version 1 creates `tasks`/`projects` and the indexes AFTER the nullable `ALTER`s (several indexes reference just-added columns), and version 5 fans the legacy archive out BEFORE it drops the column (the fan-out reads `result`/`archive_metadata` of the same row).
-- Only `task_agent_archives` is created outside version 1, and it is created in exactly ONE place (version 5) — never duplicate its DDL into the baseline.
+- Load-bearing order: version 1 creates `tasks` and the indexes AFTER the nullable `ALTER`s (several indexes reference just-added columns); version 5 fans the legacy archive out BEFORE it drops the column (the fan-out reads `result`/`archive_metadata` of the same row); version 7 reads `projects` BEFORE dropping it and runs LAST in the chain's schema work — nothing may create `projects` again, so a fresh database never pays a create-then-drop.
+- Only `task_agent_archives` and `vct_mounts` are created outside version 1, each in exactly ONE place (versions 5 and 7) — never duplicate their DDL into the baseline.
 - Data repairs for formats no release ever wrote are deliberately NOT part of the chain; see "Pre-release dev databases" below.
 
 ## The final `tasks` index set (six)
@@ -42,6 +44,7 @@ Six contiguous versions (1..6); the chain is optimized for a NEW user's FIRST bo
 - `idx_tasks_status_updated_at_id` on `(status, updated_at, id)` — `select_task_ids`/`select_finished_task_ids` answered entirely from the index (no row fetch into the blob-carrying row tail).
 - `idx_tasks_finished_at_id` on `(finished_at, id)` — both `select_cleanup_info` legs (age cutoff + `ORDER BY finished_at DESC` count trim) as covering reads.
 - `task_agent_archives_task_depth_idx` on `(task_id, depth, agent_id)` is the archive table's own index (untouched by the prune): the per-task roster seek + ordered scan and the `DELETE … WHERE task_id = ?` cascade.
+- `vct_mounts` carries only its two implicit indexes (the `point` primary key and the `path` UNIQUE constraint); the table is capped at 100 rows, so no extra index exists.
 
 ## Dropped indexes (four)
 
@@ -61,10 +64,10 @@ Six contiguous versions (1..6); the chain is optimized for a NEW user's FIRST bo
 - `v0138_upgrade_path_test.exs` — the released-v0.13.8 upgrade path through the real `Boot.run_migrations/1` on a raw pre-upgrade file.
 - `boot_migration_test.exs` — pre-Ecto legacy files (no `schema_migrations`) booted through the real chain.
 - `boot_migration_source_test.exs` — the preloaded `[{version, module}]` source (file discovery, ordering, module selection).
-- `boot_normalization_test.exs` — version 2's rewrites on adopted legacy data.
+- `boot_normalization_test.exs` — version 2's task rewrites on adopted legacy data.
 - `archive_migration_test.exs` — version 5's archive table, fan-out, `archive_records` strip, column drop, and the skipped-payload dump (file written + `{task_id => raw payload}` content when an archive is undecodable; no file and no directory on a clean migration).
 - `composite_index_test.exs` — version 3's two composites (emitted-SQL plans, DDL shape, post-condition).
 - `covering_index_test.exs` — version 4's two covering indexes (emitted-SQL plans, DDL shape, post-condition).
-- `canonical_schema_test.exs` — the fresh-database canonical schema: six versions, the 19-column `tasks`, the six final indexes, the archive table, and the captured boot SQL proving no create-then-drop.
+- `canonical_schema_test.exs` — the fresh-database canonical schema (the task tables, the six final indexes, the archive table) and the captured boot SQL proving no create-then-drop.
 - `test/evo_git/migrate_store_test.exs` — the whole chain on fresh and legacy files through `mix migrate.store`.
-- `test/evo_git/store/repo_test.exs` — infra contracts (applied versions, the `tasks`/`projects`/archive shapes, the six `idx_tasks_*` indexes, `run_migrations/1` idempotency).
+- `test/evo_git/store/repo_test.exs` — infra contracts (applied versions, the `tasks`/archive table shapes, the `idx_tasks_*` index set, `run_migrations/1` idempotency).

@@ -65,7 +65,7 @@ Every module carries an `@moduledoc` naming why it is `async: true` / `async: fa
 
 ## Reflect / Command Dispatch Coverage and Gaps
 
-`reflect_tools_test.exs` calls the ten control handlers directly through `execute/3`; its only `run_command` dispatch cases are `ListRecentProjects.list_recent_projects`, `SystemInfo.system_info`, and `ListTasks.list_tasks`, all under the process-local `:repo_less` flag.
+`reflect_tools_test.exs` calls the ten control handlers directly through `execute/3`; its only `run_command` dispatch cases are `ListProjects.list_projects`, `SystemInfo.system_info`, and `ListTasks.list_tasks`, all under the process-local `:repo_less` flag.
 These dispatch cases pin the `%{"command" => <legacy command string>}` argument and unconditional `Error: use elixir_eval exact-code approval path` refusal, even with a forged repo-less flag.
 The direct legacy handler tests remain distinct compatibility coverage and do not prove authorization of the new evaluator facades.
 The repo-less guard cases pin blocked `write_file` / `edit_file` / `skill_add`, JSON-string write arguments, a permitted file read, and restoration of writes after deleting `:repo_less`.

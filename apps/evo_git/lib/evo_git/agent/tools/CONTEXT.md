@@ -269,17 +269,17 @@ Every tools-node commit uses `git commit -F <tempfile>`, never `-m <message>` ar
 - Test gap: every Windows branch (`Sandbox.None.run_windows/3`, `run_with_partial_windows/5`, `EvoGit.Powershell`) is unexercised on Linux dev/CI, as was the OTP-27+ `:os.find_executable/1`-with-binary defect (`sandbox/none.ex`, pinned by `test/evo_git/sandbox/none_test.exs`).
 
 ### Task Management & Guide Tools (repo-less "self-reflective" workstream)
-`run_command` exposes the task system (`EvoGit.TaskRegistry`), user guides (PubSub `"guides"`), recent projects and local system facts: it passes a command STRING verbatim to `EvoGit.CommandShell.execute/1` and returns the handler output (or an `Error: ...` string for parse/validation failures).
+`run_command` exposes the task system (`EvoGit.TaskRegistry`), user guides (PubSub `"guides"`), the Virtual Context Tree project mounts and local system facts: it passes a command STRING verbatim to `EvoGit.CommandShell.execute/1` and returns the handler output (or an `Error: ...` string for parse/validation failures).
 - It is dispatch-registered ONLY (one `execute_tool/5` clause) and absent from `@write_tools` — task control for every coding agent would be a scope/security violation, and a control tool must not be blocked by the repo-less guard.
 - Approval gate: registry entries carry `level:`; level-2/3 commands pause at the dispatch choke point awaiting `EvoGit.CommandApproval.request/5` (blocking; PubSub `"approvals"`; default 120 s via `[:evo_git, :command_approval_timeout]`), run ONLY on `:approved` and fail closed on deny/timeout; level-1 commands run immediately.
-- The 10 command handlers keep `execute/3` and are called as `apply(module, :execute, [string_keyed_args, nil, nil])` (no schema, no dispatch clause): `ListTasks`, `GetTask`, `StartTask`, `CancelTask`, `ForceKillTask`, `DeleteTask`, `SpawnInvestigator`, `GuideUser`, `ListRecentProjects`, `SystemInfo`.
+- The 10 command handlers keep `execute/3` and are called as `apply(module, :execute, [string_keyed_args, nil, nil])` (no schema, no dispatch clause): `ListTasks`, `GetTask`, `StartTask`, `CancelTask`, `ForceKillTask`, `DeleteTask`, `SpawnInvestigator`, `GuideUser`, `ListProjects`, `SystemInfo`.
 - Handler output is a binary or `{:error, message}`: binary → `{:ok, output}`; `{:error, binary}` → propagated as a shell error; anything else → `{:error, "Unexpected handler output: #{inspect(output)}"}`.
-- `RunCommand.safe_execute/1` is the outer rescue/`:exit` boundary; `ListTasks`, `GetTask`, `StartTask` and `ListRecentProjects` also rescue/catch their registry calls, while `CancelTask`, `ForceKillTask` and `DeleteTask` catch ONLY `:exit` and rely on the outer boundary for exceptions.
+- `RunCommand.safe_execute/1` is the outer rescue/`:exit` boundary; `ListTasks`, `GetTask` and `StartTask` also rescue/catch their registry calls, `ListProjects` rescues its `EvoGit.VCT.projects/0` call and answers `project list unavailable: …` instead of crashing, while `CancelTask`, `ForceKillTask` and `DeleteTask` catch ONLY `:exit` and rely on the outer boundary for exceptions.
 - Handler `execute/3` functions contain NO approval check and NO owning-task/self-target check; direct calls bypass the command-shell confirmation policy entirely.
 - Every task-control handler uses the LOCAL `EvoGit.TaskRegistry`, ignores both repository-path arguments and has no node selector, so switching a dashboard's selected remote node does not retarget these handlers.
 - `CancelTask`/`ForceKillTask`/`DeleteTask` accept any nonblank task id, including the calling agent's own task id; a self-force-kill can destroy the caller before its result is returned, and a self-cancel requests the ordinary grace path rather than synchronously finishing it.
 - `DeleteTask.execute/3` reports success for the fire-and-forget registry cast without checking existence, status or completed deletion; its string is not an acknowledgement of persisted removal.
-- `ListTasks` reads the entire `list_tasks_summary(statuses)` collection without a limit and `ListRecentProjects` formats the entire returned collection; `GetTask` fetches the FULL task before trimming objective/result to 2,000 characters, so these are useful inspection APIs but not bounded read primitives.
+- `ListTasks` reads the entire `list_tasks_summary(statuses)` collection without a limit and `ListProjects` formats the entire mount list; `GetTask` fetches the FULL task before trimming objective/result to 2,000 characters, so these are useful inspection APIs but not bounded read primitives.
 - Approval, cancellation and generic execution deadlines live OUTSIDE these handlers in `EvoGit.CommandShell`, `EvoGit.CommandApproval` and `EvoGit.Agent.ToolDispatch`; none of the task-control handlers polls cancellation, installs a timeout or rolls back a mutation after the caller times out.
 - `GuideUser` uses `with` without `else`, so its validation failures return `{:error, message}` tuples on direct `execute/3` calls (test-pinned), while through the shell `parse_args` rejects missing args first.
 - `SpawnInvestigator` normalizes EVERY failure through `Failure.error/1`, so it always returns a plain single-`Error:` string (never a tuple).
@@ -296,7 +296,7 @@ Command catalog (`EvoGit.CommandShell`, compile-time literal registry):
 | `DeleteTask.delete_task <task_id>` | 3 | required positional |
 | `SpawnInvestigator.spawn_investigator <path> <objective>` | 1 | both required positionals — bounded READ-ONLY investigation probe (repo facts, CONTEXT.md chain, inventory, keyword scan); no subagent spawn, no LLM, no writes |
 | `GuideUser.guide_user <message> [page= selector= dismissible=true\|false]` | 2 | message required positional; page/selector optional kv; dismissible optional bool (default `true`) |
-| `ListRecentProjects.list_recent_projects` | 1 | none |
+| `ListProjects.list_projects` | 1 | none |
 | `SystemInfo.system_info` | 1 | none |
 | `help [command]` | 1 | built-in — handled by the shell itself |
 

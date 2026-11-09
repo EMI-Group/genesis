@@ -30,6 +30,10 @@ Surface: `get_file_content/3`, `list_commits/2`, `load_review_data/2`, `load_rev
 `list_commit_graph/3` → `{:ok, %{commits: [commit], refs: %{sha => [ref_name]}}}` (commits atom-keyed `:sha, :short_sha, :message, :author_name, :author_email, :date`, `:parents`; `EvoGit.CommitGraph.for_ranges/3` backs range reads); `list_task_commit_graph/4` (`EvoGit.TaskCommitGraph.for_task/4` → `EvoGit.CommitGraph.for_task/4`, base = `opts[:base_sha]` → task/foreign `base_sha` → `Git.merge_base`) adds `truncated: boolean`.
 `set_review_status/2` + `set_review_metadata/3` key on `task_id` ONLY — one status + one SHA pair per task; per-repo outcomes live in dashboard assigns; `get_foreign_repo_commits/1` is NOT exposed over RPC.
 `RemoteNode` mirrors `list_tasks_page/2` (deliberate asymmetry vs `select_tasks_page/1`), `get_task_lite/2`, `list_task_archives/3`, `get_agent_archive/3`, `list_commit_graph/4`, `list_task_commit_graph/5`, returning the Store's degraded shape on transport failure (`./store/CONTEXT.md`); guards exist only on `send_agent_message/2`, `get_recent_system_samples/0`, `respond_approval/2`.
+### Project-mount surface (Virtual Context Tree)
+`RemoteAPI.projects/0` (`EvoGit.VCT.projects/1`) returns `[%EvoGit.VCT.Mount{}]` newest first, empty when nothing is mounted or the VCT is down; `mount_project(path, name)` (`EvoGit.VCT.mount/2`) returns `{:ok, mount} | {:error, :relative_path | :store_unavailable | :vct_unavailable}`; `forget_project(key)` (`EvoGit.VCT.forget/1`) returns `:ok | {:error, :not_found} | {:error, :invalid_point}` and accepts either a VCT point or an OS path.
+`RemoteNode` mirrors them as `projects(node)`, `mount_project(node, path, name)` and `forget_project(node, key)`: the local node calls `RemoteAPI` directly, a remote node goes through `call_remote/4`, and a failed transport degrades to `[]` for the list while mount/forget return the wrapper's `{:error, {kind, reason}}` so the caller can report it.
+Every mount mutation on the target node emits its ONE `{:vct_updated, node}` broadcast; these RPCs add no notification of their own.
 
 ## Direct-Eval / Assistant API Safety
 
