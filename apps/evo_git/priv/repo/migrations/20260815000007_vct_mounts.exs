@@ -40,6 +40,14 @@ defmodule EvoGit.Repo.Migrations.VctMounts do
   `Logger.warning` and never inserted. Inserts are `INSERT OR IGNORE`, so a
   re-run cannot duplicate a point or violate the UNIQUE path.
 
+  Row-level leniency is the ONLY leniency: both legacy READS run through
+  `repo().query!/3`, so a query that cannot even be parsed or executed (e.g. a
+  `projects` table with an unexpected column shape) RAISES instead of
+  reporting "no rows". The migration's own transaction then rolls back,
+  `projects` survives untouched and boot fails loudly — a silent zero-row
+  fan-out followed by `DROP TABLE projects` would destroy the user's mounts
+  irreversibly.
+
   After the fan-out the table is capped to the 100 NEWEST mounts (the VCT's
   `max_projects/0` default), so a migration can never produce a table the VCT
   itself would refuse to grow.
@@ -145,6 +153,10 @@ defmodule EvoGit.Repo.Migrations.VctMounts do
   # Newest first, NULL timestamps last, `path` ASC as a deterministic
   # tie-break — the exact order the VCT would have produced had these rows
   # landed there one at a time, so `-N` suffixes are stable across runs.
+  #
+  # `query!/3` on purpose: a read that fails must ABORT the migration (the
+  # transaction rolls back and `projects` survives) rather than look like an
+  # empty table and let `up/0` drop the user's rows.
   defp select_legacy_rows(legacy_table) do
     statement = """
     SELECT path, name, last_opened_at
@@ -152,17 +164,16 @@ defmodule EvoGit.Repo.Migrations.VctMounts do
      ORDER BY (last_opened_at IS NULL) ASC, last_opened_at DESC, path ASC
     """
 
-    case repo().query(statement, [], timeout: @statement_timeout, log: false) do
-      {:ok, %{rows: rows}} -> rows
-      _other -> []
-    end
+    repo().query!(statement, [], timeout: @statement_timeout, log: false).rows
   end
 
+  # Same rule as `select_legacy_rows/1`: a failed read raises, never `[]`.
   defp points_in_use do
-    case repo().query("SELECT point FROM #{@table}", [], timeout: @statement_timeout, log: false) do
-      {:ok, %{rows: rows}} -> rows |> Enum.map(fn [point] -> point end) |> MapSet.new()
-      _other -> MapSet.new()
-    end
+    "SELECT point FROM #{@table}"
+    |> repo().query!([], timeout: @statement_timeout, log: false)
+    |> Map.fetch!(:rows)
+    |> Enum.map(fn [point] -> point end)
+    |> MapSet.new()
   end
 
   # Total: one unusable row is logged and skipped, never raised.
