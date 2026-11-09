@@ -152,7 +152,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
 
     Pass `description` FIRST — a clear, short description of what the command does, echoed back as a `# …` header on the result — then `command`. #{shell_intro()} `timeout` is milliseconds (or a string with a unit, e.g. `90s`/`30m`) and applies to FOREGROUND commands: default #{@default_timeout}, maximum #{max_timeout()} (a larger value is clamped to it, never rejected), and a command still running when the timeout expires is killed.
 
-    For work that should stay alive — a server, a watcher, a long build — or that you want to poll while you do something else, set `run_in_background: true`: it returns a job id immediately, has NO timeout, and notifies you with a `[NOTICE]` when the job finishes; read its output with `job_output`, list your jobs with `job_list`, and stop it with `job_kill`. For a job expected to take a while, do ONE long `job_output` wait (e.g. `timeout: "30m"`, up to the ~30 min cap; the wait defaults to 120 s) instead of re-polling with short budgets.
+    For work that should stay alive — a server, a watcher, a long build — or that you want to poll while you do something else, set `run_in_background: true`: it returns a job id immediately, has NO timeout, and notifies you with a `[NOTICE]` when the job finishes; read its output with `job_output` (pass that job id as `job_id`), list your jobs with `job_list`, and stop it with `job_kill`. For a job expected to take a while, do ONE long `job_output` wait (e.g. `timeout: "30m"`, up to the ~30 min cap; the wait defaults to 120 s) instead of re-polling with short budgets.
     NEVER background a command yourself with `&`, `nohup`, `setsid`, `disown`, `screen` or `tmux`: the sandbox kills the process group as soon as this call returns, so the command silently dies — and because the call still reports success (exit 0) with empty output, that failure is invisible (no job id, output discarded, no notification, not killable). Use `run_in_background: true` instead.
     Do not prefix a command with a shell prompt `$` — the command is already passed to the shell.
 
@@ -243,10 +243,26 @@ defmodule EvoGit.Agent.Tools.ShellTool do
            agent_id: Process.get(:evogit_agent_id),
            task_id: Process.get(:evogit_task_id)
          }) do
-      {:ok, job} -> "started background job #{Map.get(job, :id, "unknown")}"
+      {:ok, job} -> started_result(Map.get(job, :id))
       {:error, message} -> Failure.error(message)
     end
   end
+
+  # One bounded line carrying the exact follow-up PARAMETER, with the id verbatim
+  # (quoted via `inspect/1`), so the model can copy it straight into a
+  # `job_output` call. A record without a usable binary id degrades to a bare
+  # "unknown" — never an interpolated nil.
+  defp started_result(id) when is_binary(id) do
+    case String.trim(id) do
+      "" ->
+        "started background job unknown"
+
+      trimmed ->
+        "started background job #{trimmed} — read its output with job_output using job_id #{inspect(trimmed)}"
+    end
+  end
+
+  defp started_result(_id), do: "started background job unknown"
 
   # A short human label for the job list: the command's first line, bounded.
   defp background_label(command) do

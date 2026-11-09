@@ -14,10 +14,15 @@ defmodule EvoGit.Agent.Tools.JobOutput do
       (no new output)
       [status: completed, exit code: 0]
 
+      (no new output)
+      [status: running]
+      [note: no job_id given — read the only background job bash-1; pass job_id explicitly next time]
+
   The delta is followed by a newline unless it already ends with one; an empty
   delta reads `(no new output)`. The status line is `[status: <status>]`, or
   `[status: <status>, <detail>]` when the job carries a terminal detail
-  (`exit code: N`, `killed (<reason>)`, …).
+  (`exit code: N`, `killed (<reason>)`, …). The trailing note line appears ONLY
+  when the id had to be inferred (see `job_id` below).
 
   ## `wait: true`
 
@@ -70,15 +75,23 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   The marker follows the `[status: …]` line byte-identically — the status line
   itself is unchanged.
 
-  ## Omitting `job_id`
+  ## `job_id`
 
-  `job_id` is OPTIONAL. When it is missing, blank or not a string, the tool
-  resolves the CALLING agent's own background jobs (the same ownership fence the
-  read uses): exactly one job is read as if its id had been passed (the full
-  `wait: true` / `timeout_ms` / `max_bytes` behaviour included), zero jobs and
-  several jobs both yield an actionable `Error: …` string — the several-jobs one
-  names every job id with its status and label, newest first, so the agent can
-  simply retry with one of them.
+  `job_id` is REQUIRED by the schema: every call passes the id returned by the
+  tool that started the job (`bash` with `run_in_background: true`), and
+  `job_list` lists this agent's job ids when it is not at hand.
+
+  The execute-time resolution still TOLERATES a provider that omits the id: a
+  missing, blank or non-string `job_id` resolves the CALLING agent's own
+  background jobs (the same ownership fence the read uses) — exactly one job is
+  read as if its id had been passed (the full `wait: true` / `timeout_ms` /
+  `max_bytes` behaviour included), while zero jobs and several jobs both yield an
+  actionable `Error: …` string (the several-jobs one names every job id with its
+  status and label, newest first, so the agent can retry with one of them).
+
+  That tolerance is never silent: an INFERRED read appends one trailing note line
+  naming the job it read, AFTER the status line and any `[wait: …]` marker (so it
+  is always the LAST line). An explicit `job_id` renders no note line.
   """
 
   alias EvoGit.Agent.Tools.Failure
@@ -113,7 +126,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
           "job_id" => %{
             "type" => "string",
             "description" =>
-              "Job id returned by the tool that started the background work. May be omitted when this agent has exactly one background job (its output is then read automatically); with several jobs the error lists every id."
+              "The id of the background job to read, exactly as returned by the tool that started it (for example \"bash-3\"). Always pass it — call `job_list` to see this agent's job ids if you do not have one."
           },
           "wait" => %{
             "type" => "boolean",
@@ -136,7 +149,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
             "default" => 16_384
           }
         },
-        "required" => []
+        "required" => ["job_id"]
       },
       callback: fn _ -> {:ok, nil} end
     )
@@ -147,16 +160,16 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
   Resolves `job_id` (`resolve_job_id/1`): an explicit, non-blank id is used
   as-is; otherwise this agent's OWN jobs are consulted — exactly one is read
-  automatically, while zero or several produce an actionable error naming what to
-  do next. Optionally honours `wait`, the wait budget (`timeout_ms` / `timeout` /
-  `timeoutMs`) and `max_bytes`. Never raises: a non-map `args` returns the
-  shared descriptive error string, every registry failure is rendered as an
-  `Error: ...` string, and an unexpected raise/exit at the tool boundary is
-  caught too.
+  automatically (and the result gains a trailing note line naming it), while zero
+  or several produce an actionable error naming what to do next. Optionally
+  honours `wait`, the wait budget (`timeout_ms` / `timeout` / `timeoutMs`) and
+  `max_bytes`. Never raises: a non-map `args` returns the shared descriptive
+  error string, every registry failure is rendered as an `Error: ...` string, and
+  an unexpected raise/exit at the tool boundary is caught too.
   """
   def execute(args, _repo_path, _repo_root) do
-    with {:ok, job_id} <- resolve_job_id(args) do
-      read_job(job_id, args)
+    with {:ok, job_id, source} <- resolve_job_id(args) do
+      read_job(job_id, source, args)
     else
       {:error, message} -> Failure.error(message)
     end
@@ -168,23 +181,26 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
   ## Job-id resolution (explicit id, else this agent's only job)
 
+  # `{:ok, job_id, :explicit | :inferred}` — the source decides whether the
+  # result carries the trailing "no job_id given" note line.
   defp resolve_job_id(args) when not is_map(args),
     do: {:error, "Arguments must be a map/object"}
 
   defp resolve_job_id(args) do
     case Map.get(args, "job_id") do
       id when is_binary(id) ->
-        if String.trim(id) == "", do: resolve_only_job_id(), else: {:ok, id}
+        if String.trim(id) == "", do: resolve_only_job_id(), else: {:ok, id, :explicit}
 
       _missing_or_non_string ->
         resolve_only_job_id()
     end
   end
 
-  # The omitted-id path. Ownership is the SAME fence `read/2` applies, and a
-  # nil owner is NOT treated as "unscoped" (that would read another agent's job):
-  # without an owning agent there is nothing to infer from, so the explicit-id
-  # error is kept.
+  # The omitted-id path — a TOLERANCE for a provider that ignores the schema's
+  # required `job_id`, never an invitation. Ownership is the SAME fence `read/2`
+  # applies, and a nil owner is NOT treated as "unscoped" (that would read another
+  # agent's job): without an owning agent there is nothing to infer from, so the
+  # explicit-id error is kept.
   defp resolve_only_job_id do
     case BackgroundJobs.current_owner_pid() do
       nil ->
@@ -192,7 +208,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
       owner ->
         case BackgroundJobs.list(owner_pid: owner) do
-          [%{id: id}] -> {:ok, id}
+          [%{id: id}] -> {:ok, id, :inferred}
           [] -> {:error, no_jobs_error()}
           jobs -> {:error, multiple_jobs_error(jobs)}
         end
@@ -204,7 +220,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
     remaining = length(jobs) - @max_named_jobs
     suffix = if remaining > 0, do: ", … and #{remaining} more", else: ""
 
-    "Multiple background jobs exist — pass job_id: #{named}#{suffix}. " <>
+    "Multiple background jobs exist — pass job_id with one of these ids: #{named}#{suffix}. " <>
       "Call job_list for details."
   end
 
@@ -239,7 +255,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
     end
   end
 
-  defp read_job(job_id, args) do
+  defp read_job(job_id, source, args) do
     owner = BackgroundJobs.current_owner_pid()
 
     # Waiting is best-effort: a timed-out (or unusable) wait still falls through
@@ -248,7 +264,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
     wait = maybe_wait(job_id, args, owner)
 
     case BackgroundJobs.read(job_id, read_opts(args, owner)) do
-      {:ok, %{text: text, job: job}} -> render(text, job, wait)
+      {:ok, %{text: text, job: job}} -> render(text, job, wait, source, job_id)
       {:error, reason} -> Failure.error(error_message(reason, job_id))
     end
   end
@@ -428,7 +444,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
   ## Rendering
 
-  defp render(text, job, wait) do
+  defp render(text, job, wait, source, job_id) do
     body =
       case text do
         value when is_binary(value) and value != "" -> value
@@ -437,7 +453,20 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
     separator = if String.ends_with?(body, "\n"), do: "", else: "\n"
 
-    body <> separator <> status_line(job) <> marker_suffix(wait, job)
+    body <>
+      separator <>
+      status_line(job) <> marker_suffix(wait, job) <> note_suffix(source, job_id)
+  end
+
+  # An INFERRED id (the schema requires `job_id`) is surfaced as the LAST line so
+  # a silently-defaulted read can never be mistaken for an explicit one. It comes
+  # after the status line and any wait marker, which stay byte-identical. An
+  # explicit id renders nothing extra.
+  defp note_suffix(:explicit, _job_id), do: ""
+
+  defp note_suffix(:inferred, job_id) do
+    "\n[note: no job_id given — read the only background job #{job_id}; " <>
+      "pass job_id explicitly next time]"
   end
 
   # The wait marker is a SEPARATE line after the status line (never part of it —
@@ -520,7 +549,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   defp no_jobs_error do
     "This agent has no background jobs yet, so there is no output to read. " <>
       "Start one with the `bash` tool and `run_in_background: true`, then call " <>
-      "job_output again (job_id may be omitted while exactly one job exists)."
+      "job_output with its job_id."
   end
 
   defp error_message(:not_found, job_id) do
