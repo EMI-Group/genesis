@@ -108,6 +108,13 @@ defmodule EvoGit.Sandbox do
   - `max_bytes` - Maximum output size in bytes before truncation (nil = no limit).
     When set and the output exceeds this size, only the first and last portions
     are read from disk to avoid loading large files into memory.
+  - `opts` - Keyword list of observability options (default: `[]`). The only key
+    this layer defines is `:execution_id` — the `"proc-<n>"` record created by
+    `EvoGit.ProcessManager.track/3` that the backend attaches its real OS handle
+    to as soon as that identity is known. Tracking is best-effort and
+    observability-only: it never changes the command, its output or its exit
+    status, and a backend that does not implement the 7-arity callback is simply
+    called with the 6-arity form.
 
   ## Returns
 
@@ -121,12 +128,27 @@ defmodule EvoGit.Sandbox do
           [String.t()],
           String.t() | nil,
           pos_integer(),
-          integer() | nil
+          integer() | nil,
+          keyword()
         ) ::
           {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
-  def run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout, max_bytes \\ nil) do
+  def run_with_partial(
+        cwd,
+        executable,
+        args \\ [],
+        repo_root \\ nil,
+        timeout,
+        max_bytes \\ nil,
+        opts \\ []
+      ) do
+    backend = backend()
     resolved = EvoGit.Executable.resolve(executable)
-    backend().run_with_partial(cwd, resolved, args, repo_root, timeout, max_bytes)
+
+    if Code.ensure_loaded?(backend) and function_exported?(backend, :run_with_partial, 7) do
+      backend.run_with_partial(cwd, resolved, args, repo_root, timeout, max_bytes, opts)
+    else
+      backend.run_with_partial(cwd, resolved, args, repo_root, timeout, max_bytes)
+    end
   end
 
   @doc "Ensures the sandbox backend is initialized (e.g., creates systemd slice)."

@@ -129,6 +129,11 @@ defmodule EvoGit.Sandbox.None do
   (not just the direct child, which is all that `Task.shutdown/1` can reach), with
   the partial output accumulated so far returned.
 
+  `opts` is the observability option list (only `:execution_id` is defined): the
+  Windows path attaches a `:windows` handle with the owned port's OS pid, the Unix
+  path a pid-less `:posix` handle (the child is a `System.cmd` inside an internal
+  Task, which exposes no portable pid).
+
   Returns:
     * `{:ok, output, exit_code}` — command completed within timeout
     * `{:timeout, partial_output}` — command timed out; partial_output may be empty
@@ -139,15 +144,24 @@ defmodule EvoGit.Sandbox.None do
           [String.t()],
           String.t() | nil,
           pos_integer(),
-          integer() | nil
+          integer() | nil,
+          keyword()
         ) ::
           {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
-  def run_with_partial(cwd, executable, args \\ [], _repo_root \\ nil, timeout, max_bytes \\ nil)
+  def run_with_partial(
+        cwd,
+        executable,
+        args \\ [],
+        _repo_root \\ nil,
+        timeout,
+        max_bytes \\ nil,
+        opts \\ []
+      )
       when is_list(args) and is_integer(timeout) and timeout > 0 do
     if EvoGit.Platform.windows?() do
-      run_with_partial_windows(cwd, executable, args, timeout, max_bytes)
+      run_with_partial_windows(cwd, executable, args, timeout, max_bytes, opts)
     else
-      run_with_partial_unix(cwd, executable, args, timeout, max_bytes)
+      run_with_partial_unix(cwd, executable, args, timeout, max_bytes, opts)
     end
   end
 
@@ -217,7 +231,7 @@ defmodule EvoGit.Sandbox.None do
     ]
   end
 
-  defp run_with_partial_unix(cwd, executable, args, timeout, max_bytes) do
+  defp run_with_partial_unix(cwd, executable, args, timeout, max_bytes, opts) do
     tmpfile = Helpers.partial_output_tmpfile()
 
     wrapped_cmd = Helpers.build_redirected_command(executable, args, tmpfile)
@@ -235,10 +249,14 @@ defmodule EvoGit.Sandbox.None do
     git_env =
       if(is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []) ++ Helpers.temp_env_vars()
 
+    # No portable OS pid here (the child is a `System.cmd` inside an internal
+    # Task): the execution is recorded pid-less and its stats degrade to nil.
+    Helpers.attach_execution(opts, :posix, backend: __MODULE__)
+
     Helpers.run_task_with_partial(exec, exec_args, cwd, git_env, timeout, tmpfile, max_bytes)
   end
 
-  defp run_with_partial_windows(cwd, executable, args, timeout, max_bytes) do
+  defp run_with_partial_windows(cwd, executable, args, timeout, max_bytes, opts) do
     # On Windows, System.cmd passes args as an array (no shell injection risk),
     # so we call the executable directly without a shell wrapper. This avoids the
     # need for shell escaping and avoids PowerShell's lack of input redirection
@@ -299,6 +317,10 @@ defmodule EvoGit.Sandbox.None do
       )
 
     os_pid = Helpers.wait_for_os_pid(port)
+
+    # `:undefined` (the pid never materialized) is normalized to `nil` by
+    # `Handle.new/2`: the execution stays `:running` with degraded stats.
+    Helpers.attach_execution(opts, :windows, os_pid: os_pid, backend: __MODULE__)
 
     collect_windows_output(port, [], timeout, max_bytes, os_pid)
   end

@@ -468,6 +468,45 @@ defmodule EvoGit.Sandbox.Helpers do
   end
 
   # ---------------------------------------------------------------------------
+  # Execution tracking (best-effort, observability-only)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Best-effort attachment of a real OS handle to a live tracked execution.
+
+  `opts` is a sandbox `run_with_partial/7` option list; the only key read is
+  `:execution_id` (`"proc-<n>"`, the record created by
+  `EvoGit.ProcessManager.track/3`). When it is absent/nil this is a no-op and no
+  handle is built.
+
+  `kind`/`attrs` are handed to `EvoGit.ProcessManager.Handle.new/2`, so callers
+  pass the addressing facts they actually know — `unit:` for a transient
+  systemd unit, `os_pid:` for a raw process (`:undefined`/nil normalizes to
+  nil, and the execution's stats then degrade to nil fields), `backend:` for
+  diagnostics.
+
+  Total by construction: a missing or restarting manager, or a handle the
+  registry does not accept, can never fail or slow the command being tracked.
+  """
+  @spec attach_execution(keyword() | nil, EvoGit.ProcessManager.Handle.kind(), keyword()) :: :ok
+  def attach_execution(opts, kind, attrs \\ []) do
+    case execution_id(opts) do
+      id when is_binary(id) ->
+        EvoGit.ProcessManager.attach(id, EvoGit.ProcessManager.Handle.new(kind, attrs))
+
+      _ ->
+        :ok
+    end
+  rescue
+    _ -> :ok
+  catch
+    _kind, _reason -> :ok
+  end
+
+  defp execution_id(opts) when is_list(opts), do: Keyword.get(opts, :execution_id)
+  defp execution_id(_opts), do: nil
+
+  # ---------------------------------------------------------------------------
   # Port helpers (direct Port ownership in run_with_partial enabled paths)
   # ---------------------------------------------------------------------------
 
