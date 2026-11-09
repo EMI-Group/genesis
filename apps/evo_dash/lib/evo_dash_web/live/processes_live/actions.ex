@@ -48,7 +48,11 @@ defmodule EvoDashWeb.ProcessesLive.Actions do
           :ok | {:error, term()}
   def control(node, id, action, reason) do
     runner =
-      Application.get_env(:evo_dash, :processes_control_runner, &EvoDash.NodeContext.process_control/4)
+      Application.get_env(
+        :evo_dash,
+        :processes_control_runner,
+        &EvoDash.NodeContext.process_control/4
+      )
 
     case SafeCall.run(fn -> runner.(node, id, action, reason) end) do
       {:ok, :ok} -> :ok

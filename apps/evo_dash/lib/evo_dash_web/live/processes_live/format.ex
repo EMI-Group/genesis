@@ -112,10 +112,17 @@ defmodule EvoDashWeb.ProcessesLive.Format do
   """
   def target_label(%{} = execution) do
     cond do
-      present?(Map.get(execution, :unit)) -> "unit " <> to_text(Map.get(execution, :unit))
-      is_integer(Map.get(execution, :os_pid)) -> "pid " <> Integer.to_string(Map.get(execution, :os_pid))
-      present?(Map.get(execution, :job_id)) -> "job " <> to_text(Map.get(execution, :job_id))
-      true -> "—"
+      present?(Map.get(execution, :unit)) ->
+        "unit " <> to_text(Map.get(execution, :unit))
+
+      is_integer(Map.get(execution, :os_pid)) ->
+        "pid " <> Integer.to_string(Map.get(execution, :os_pid))
+
+      present?(Map.get(execution, :job_id)) ->
+        "job " <> to_text(Map.get(execution, :job_id))
+
+      true ->
+        "—"
     end
   end
 
@@ -182,8 +189,11 @@ defmodule EvoDashWeb.ProcessesLive.Format do
     stop = Map.get(execution, :ended_at) || now
 
     case {start, stop} do
-      {%DateTime{} = started, %DateTime{} = ended} -> duration_label(DateTime.diff(ended, started))
-      _other -> "—"
+      {%DateTime{} = started, %DateTime{} = ended} ->
+        duration_label(DateTime.diff(ended, started))
+
+      _other ->
+        "—"
     end
   end
 
@@ -257,7 +267,9 @@ defmodule EvoDashWeb.ProcessesLive.Format do
   defp scaled(value, unit), do: :erlang.float_to_binary(value / unit, decimals: 1)
 
   defp float_text(value) when is_float(value), do: :erlang.float_to_binary(value, decimals: 1)
-  defp float_text(value) when is_integer(value), do: :erlang.float_to_binary(value * 1.0, decimals: 1)
+
+  defp float_text(value) when is_integer(value),
+    do: :erlang.float_to_binary(value * 1.0, decimals: 1)
 
   defp pad2(value) when value < 10, do: "0" <> Integer.to_string(value)
   defp pad2(value), do: Integer.to_string(value)
