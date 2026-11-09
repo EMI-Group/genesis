@@ -46,6 +46,12 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   }
 
   @claude_instructions "Run `claude` and log in once"
+
+  # The seeded OAuth profiles point their managed file INSIDE a path whose parent
+  # is a regular FILE, so the mount-time credential load can neither read nor
+  # create it on ANY host and always reports this verdict (never "Login
+  # detected"). The baseline wait below keys on it.
+  @baseline_verdict "No subscription login found"
   # Load-tolerant budget for every wait on ASYNC settings work (the mount load
   # chain and an owned config-save receipt). Both are supervised children whose
   # completion depends on the shared host's scheduling, so the budget is sized
@@ -232,8 +238,14 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
       # Baseline: the blocked managed file makes the OAuth profiles :missing, so
       # the neutral "Subscription login" text is NOT what the page shows either.
-      baseline_row = profile_row(render(view), @oauth_profile)
-      assert baseline_row =~ "No subscription login found"
+      # The mount-time load is ASYNC, so wait for its verdict to reach the render
+      # instead of assuming the mount funnel already applied it (on a loaded host
+      # a funnel round can hand back a page whose rows still show the neutral
+      # "Subscription login" label with no verdict line at all).
+      baseline_row =
+        profile_row(await_baseline_verdict(view, @oauth_profile), @oauth_profile)
+
+      assert baseline_row =~ @baseline_verdict
       refute baseline_row =~ "Login detected"
 
       html = inject_statuses(view, %{@oauth_profile => @ok_entry})
@@ -415,6 +427,11 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     } do
       seed_oauth_profiles(dir)
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      # The baseline map comes from the ASYNC mount-time load: wait for its
+      # verdict to render before capturing it (see `await_baseline_verdict/2`).
+      # Wait BEFORE opening the edit form — an open profile is rendered as the
+      # form, not as the summary row the verdict poll looks at.
+      _html = await_baseline_verdict(view, @oauth_profile)
       render_hook(view, "edit_model_profile", %{"profile_id" => @oauth_profile})
 
       baseline = assigns(view).auth_statuses
@@ -437,6 +454,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     } do
       seed_oauth_profiles(dir)
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      _html = await_baseline_verdict(view, @oauth_profile)
       render_hook(view, "edit_model_profile", %{"profile_id" => @oauth_profile})
 
       baseline = assigns(view).auth_statuses
@@ -1073,6 +1091,12 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   # the CURRENT seq (both stale guards pass), then drains the mailbox via
   # render — the established direct-send pattern for async-loaded content.
   defp inject_statuses(view, statuses, target_node \\ nil) do
+    # Settle, then READ the assigns: that `:sys.get_state` round-trip drains the
+    # mailbox, which can APPLY a queued node-data result and spawn the real
+    # credential load. Settle AGAIN before capturing the seq, so no in-flight
+    # real result (same seq) can land after — and overwrite — the injected map.
+    settle_mount_loads(view)
+    _ = assigns(view)
     settle_mount_loads(view)
     state = assigns(view)
 
@@ -1146,6 +1170,59 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   # One "Recheck" trigger per rendered credential status line.
   defp count_status_lines(html) do
     html |> String.split(~s(phx-click="refresh_auth_status")) |> length() |> Kernel.-(1)
+  end
+
+  # Bounded wait for the MOUNT-TIME credential-status load to reach the RENDER.
+  #
+  # `SettingsLive` loads the statuses asynchronously: `apply_node_data_results/3`
+  # spawns `AuthStatus.start/2` and the result arrives later as
+  # `{:settings_auth_status_loaded, node, seq, statuses}`. The mount funnel above
+  # waits for supervised children, but the credential load is spawned BY the
+  # node-data apply — and that task SENDS its result then exits, so a funnel round
+  # can drain the mailbox, find no child, and return while the apply is still
+  # queued. The page's profile rows then render the neutral "Subscription login"
+  # label with NO verdict line, and a baseline assertion made at that instant
+  # fails (the observed full-suite flake). Waiting on the rendered verdict is
+  # event-driven and bounded — never a fixed sleep — and the caller keeps its
+  # exact `=~` assertions (only the deadline moved). Returns the last rendered
+  # html so the caller asserts on it exactly as before.
+  defp await_baseline_verdict(view, profile_id, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + @async_wait_budget_ms
+    html = render(view)
+
+    if profile_row_has_verdict?(html, profile_id, @baseline_verdict) do
+      html
+    else
+      assert System.monotonic_time(:millisecond) < deadline,
+             "credential verdict for #{profile_id} never rendered"
+
+      receive do
+      after
+        # 2 ms bounded poll cadence (the suite's convention) — this is the
+        # cadence, not the wait itself: the loop ends the moment the verdict
+        # renders.
+        2 -> :ok
+      end
+
+      await_baseline_verdict(view, profile_id, deadline)
+    end
+  end
+
+  # Row-scoped, NON-raising check for the poll above: a transient render (row not
+  # present yet, or the neutral label) must be retried, never asserted — the
+  # caller's own `profile_row/2` assertion stays the real pin.
+  defp profile_row_has_verdict?(html, profile_id, verdict) do
+    html
+    |> Floki.parse_fragment!()
+    |> Floki.find("article")
+    |> Enum.any?(fn article ->
+      profile_ids =
+        article
+        |> Floki.find(~s(button[phx-click="edit_provider_profile"]))
+        |> Floki.attribute("phx-value-profile_id")
+
+      profile_id in profile_ids and Floki.raw_html(article) =~ verdict
+    end)
   end
 
   # Select the actual canonical account article by its Edit control, never by
