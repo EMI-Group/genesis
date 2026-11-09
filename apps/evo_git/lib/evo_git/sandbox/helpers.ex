@@ -420,17 +420,33 @@ defmodule EvoGit.Sandbox.Helpers do
   end
 
   # ---------------------------------------------------------------------------
-  # Timed command execution (Task + partial-output recovery)
+  # Timed command execution (directly owned port + partial-output recovery)
   # ---------------------------------------------------------------------------
 
   @doc """
-  Runs `exec` + `exec_args` (a `bash -c` wrapped command) in a `Task` with a
-  `timeout`, recovering partial output from `tmpfile` (created beforehand via
-  `partial_output_tmpfile/0`) when the timeout fires.
+  Runs `exec` + `exec_args` (a `bash -c` wrapped command) through a directly
+  owned `Port` with a `timeout`, recovering partial output from `tmpfile`
+  (created beforehand via `partial_output_tmpfile/0`) when the timeout fires.
 
-  Shared tail of every backend's `run_with_partial/6` non-sandbox / Unix path
-  (linux/bwrap/macos disabled paths + the `None` backend's Unix path, which
-  passes nix-wrapped `exec`/`exec_args`).
+  Shared tail of every backend's `run_with_partial/7` non-sandbox / Unix path
+  (linux/bwrap/macos disabled paths, the `None` backend's Unix path — which
+  passes nix-wrapped `exec`/`exec_args` — and the macOS `sandbox-exec` enabled
+  path).
+
+  **Why a port instead of `System.cmd/3`**: the child is spawned directly
+  (`Port.open({:spawn_executable, …})` with `System.cmd`'s option set), so its
+  real OS pid is readable via `Port.info(port, :os_pid)` and published to the
+  tracked execution (`opts` `:execution_id`, a no-op otherwise) BEFORE the wait.
+  That makes foreground executions observable (CPU/memory stats) and
+  controllable (pause/resume/signal) and lets the timeout path kill the whole
+  process TREE rather than only a wrapper process.
+
+  The command's stdout/stderr go to `tmpfile` via the caller's
+  `build_redirected_command/3` wrapping, so port data messages are drained and
+  deliberately discarded; only the exit status is awaited.
+
+  `opts` is the observability option list (only `:execution_id` is defined);
+  `backend` names the sandbox backend module for the handle's diagnostics.
 
   Returns:
     * `{:ok, output, exit_code}` — command completed within timeout
@@ -443,27 +459,128 @@ defmodule EvoGit.Sandbox.Helpers do
           [{String.t(), String.t()}],
           pos_integer(),
           Path.t(),
-          integer() | nil
+          integer() | nil,
+          keyword(),
+          module() | nil
         ) ::
           {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
-  def run_task_with_partial(exec, exec_args, cwd, env, timeout, tmpfile, max_bytes) do
-    task =
-      Task.async(fn ->
-        System.cmd(exec, exec_args,
-          cd: cwd,
-          stderr_to_stdout: true,
-          env: env
-        )
-      end)
-
-    case Task.yield(task, timeout) || Task.shutdown(task) do
-      {:ok, {_output, exit_code}} ->
+  def run_task_with_partial(
+        exec,
+        exec_args,
+        cwd,
+        env,
+        timeout,
+        tmpfile,
+        max_bytes,
+        opts \\ [],
+        backend \\ nil
+      ) do
+    case run_tracked_command(exec, exec_args, cwd, env, timeout, opts, backend) do
+      {:ok, exit_code} ->
         content = read_tempfile(tmpfile, max_bytes)
         {:ok, content, exit_code}
 
-      nil ->
+      {:timeout, :killed} ->
         partial = read_tempfile(tmpfile, max_bytes)
         {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
+    end
+  end
+
+  @doc """
+  Spawns `exec` + `exec_args` as a directly owned port, attaches the child's
+  real OS pid to the tracked execution (when `opts` carries an
+  `:execution_id`), and waits up to `timeout` for the exit status.
+
+  The port is opened with `System.cmd/3`'s own option set (`:binary`,
+  `:exit_status`, `:hide`, `:stderr_to_stdout`, `{:args, …}`, `{:cd, …}` and a
+  `Helpers.port_env/1`-converted `{:env, …}` — `Port.open/2` requires charlist
+  env pairs). `exec` is resolved first (`EvoGit.Sandbox.None.resolve_executable/1`,
+  binary-safe and PATH-searching); an unresolvable name raises `:enoent`, the
+  same `ErlangError` `System.cmd/3` reports.
+
+  Data messages are drained and discarded, so a caller whose command does NOT
+  redirect its output would lose it — this helper is for the redirected
+  `run_with_partial` shape, where only the exit status matters. On timeout the
+  whole process TREE is killed (`kill_process_tree/1` on the OS pid) and the
+  port is closed/drained, so a wedged child cannot outlive the call.
+
+  Returns `{:ok, exit_code}` or `{:timeout, :killed}`.
+  """
+  @spec run_tracked_command(
+          String.t(),
+          [String.t()],
+          String.t(),
+          [{String.t(), String.t()}],
+          pos_integer(),
+          keyword(),
+          module() | nil
+        ) :: {:ok, integer()} | {:timeout, :killed}
+  def run_tracked_command(exec, exec_args, cwd, env, timeout, opts \\ [], backend \\ nil) do
+    {port, os_pid} = spawn_tracked_port(exec, exec_args, cwd, env, opts, backend)
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    case await_exit_status(port, deadline) do
+      {:ok, exit_code} ->
+        {:ok, exit_code}
+
+      :timeout ->
+        # The child may hold a whole tree (bash -c → command). Kill the tree
+        # first (a no-op when the pid never materialized), then close the port.
+        kill_process_tree(os_pid)
+        close_port(port)
+        drain_port_messages(port)
+        {:timeout, :killed}
+    end
+  end
+
+  # Spawns the executable through a directly owned port and publishes its OS pid
+  # (when the execution is tracked). `:undefined` (the pid never materialized)
+  # is normalized to nil by `Handle.new/2`, leaving the execution with degraded
+  # stats exactly as before.
+  defp spawn_tracked_port(exec, exec_args, cwd, env, opts, backend) do
+    exec =
+      case EvoGit.Sandbox.None.resolve_executable(exec) do
+        nil -> :erlang.error(:enoent, [exec, exec_args, cwd])
+        resolved -> resolved
+      end
+
+    port =
+      Port.open(
+        {:spawn_executable, exec},
+        [:binary, :exit_status, :hide, :stderr_to_stdout] ++
+          [{:args, exec_args}, {:cd, cwd}] ++ env_option(env)
+      )
+
+    os_pid = wait_for_os_pid(port)
+    attach_execution(opts, :posix, os_pid: os_pid, backend: backend)
+    {port, os_pid}
+  end
+
+  # `Port.open/2` needs CHARLISTS in `{:env, …}`; an empty env is omitted
+  # entirely (passing `{:env, []}` is valid but pointless).
+  defp env_option([]), do: []
+  defp env_option(env), do: [{:env, port_env(env)}]
+
+  # Waits for THIS port's exit status until the monotonic deadline, discarding
+  # data messages (the command's output goes to its own redirect target).
+  defp await_exit_status(port, deadline) do
+    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      {^port, {:data, _data}} ->
+        await_exit_status(port, deadline)
+
+      {^port, {:exit_status, exit_code}} ->
+        {:ok, exit_code}
+    after
+      remaining ->
+        # A status already delivered to the mailbox still wins: `receive`
+        # matches queued messages BEFORE its `after` timeout fires.
+        receive do
+          {^port, {:exit_status, exit_code}} -> {:ok, exit_code}
+        after
+          0 -> :timeout
+        end
     end
   end
 

@@ -33,6 +33,7 @@ The public facade (`EvoGit.ProcessManager`) is a FROZEN contract: later rounds w
 - Windows has no POSIX signals: `signal/2`, `pause/2` and `resume/2` answer `{:error, :unsupported}` there; stats memory comes from `tasklist` and CPU is best-effort via PowerShell.
 - `server/0` is `Process.get(:evogit_process_manager_server) || __MODULE__` read at CALL time, and every function takes `:server`, so a suite starts isolated named instances.
 - Started unconditionally by `EvoGit.Application` AFTER `Phoenix.PubSub` and BEFORE `EvoGit.BackgroundJobs` (which registers its detached jobs here).
+- Foreground executions carry a REAL OS identity on every backend path: `EvoGit.Sandbox.Helpers.run_task_with_partial/9` and `run_tracked_command/7` spawn the child through a directly owned port and attach its pid (`:posix`) as soon as `wait_for_os_pid/2` observes it, so the non-sandboxed Linux/bwrap/macOS paths, the macOS `sandbox-exec` path and the `None` Unix path are observable and controllable instead of pid-less; the systemd path attaches the transient unit instead. The only pid-less record left is the pathological `:undefined` pid (a child that exited before the pid was observable), whose stats then degrade to nil fields.
 
 ## Routing Table
 

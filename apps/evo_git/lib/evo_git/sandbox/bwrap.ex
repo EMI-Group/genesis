@@ -585,16 +585,16 @@ defmodule EvoGit.Sandbox.Bwrap do
 
       collect_output(port, timeout, max_bytes, os_pid, tmpfile)
     else
-      # Disabled path: identical to linux.ex — Task + bash -c (no nix wrapping,
-      # consistent with run/4's disabled path). The managed per-task tmpdir
-      # (when installed) rides along via `Helpers.temp_env_vars/0`.
+      # Disabled path: identical to linux.ex — a directly owned port + bash -c
+      # (no nix wrapping, consistent with run/4's disabled path). The managed
+      # per-task tmpdir (when installed) rides along via
+      # `Helpers.temp_env_vars/0`.
       git_env =
         if(is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []) ++ Helpers.temp_env_vars()
 
-      # No portable OS pid here (the child is a `System.cmd` inside an internal
-      # Task): the execution is recorded pid-less and its stats degrade to nil.
-      Helpers.attach_execution(opts, :posix, backend: __MODULE__)
-
+      # `Helpers.run_task_with_partial/9` publishes the child's real OS pid to
+      # the tracked execution (`:execution_id`), so this path is observable and
+      # controllable too; its timeout kills the whole process tree.
       Helpers.run_task_with_partial(
         "bash",
         ["-c", wrapped_cmd],
@@ -602,7 +602,9 @@ defmodule EvoGit.Sandbox.Bwrap do
         git_env,
         timeout,
         tmpfile,
-        max_bytes
+        max_bytes,
+        opts,
+        __MODULE__
       )
     end
   end

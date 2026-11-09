@@ -539,11 +539,10 @@ defmodule EvoGit.Sandbox.Linux do
       git_env =
         if(is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []) ++ Helpers.temp_env_vars()
 
-      # There is NO portable OS pid on this path: the child is a `System.cmd`
-      # inside an internal Task, so the execution is recorded as `:running`
-      # with `os_pid: nil` and its stats degrade to nil fields.
-      Helpers.attach_execution(opts, :posix, backend: __MODULE__)
-
+      # There is no systemd unit on this path, but the child is spawned through
+      # a directly owned port inside `Helpers.run_task_with_partial/9`, which
+      # publishes its real OS pid to the tracked execution (`:execution_id`), so
+      # the record is observable (stats) and controllable (pause/resume/signal).
       Helpers.run_task_with_partial(
         "bash",
         ["-c", wrapped_cmd],
@@ -551,7 +550,9 @@ defmodule EvoGit.Sandbox.Linux do
         git_env,
         timeout,
         tmpfile,
-        max_bytes
+        max_bytes,
+        opts,
+        __MODULE__
       )
     end
   end

@@ -11,9 +11,11 @@ defmodule EvoGit.Sandbox.None do
 
   On Windows there is still no OS-level isolation (no Job Objects, no
   AppContainer, no resource limits, no network isolation); the one hardening
-  provided is that `run_with_partial/6` kills the entire process tree on
+  provided is that `run_with_partial/7` kills the entire process tree on
   timeout via `taskkill /T /F` (a bare `Task.shutdown/1` would only reach the
-  direct child). See `run_with_partial/6` for details.
+  direct child). On Unix the same call spawns through a directly owned port, so
+  the timeout kills the process tree there too. See `run_with_partial/7` for
+  details.
 
   The managed per-task tmpdir (`EvoGit.TaskTmpdir` / `EvoGit.Sandbox.resolve_tmpdir/0`)
   is EXPORTED to spawned commands as `TMPDIR`/`TMP`/`TEMP` when a task
@@ -129,10 +131,10 @@ defmodule EvoGit.Sandbox.None do
   (not just the direct child, which is all that `Task.shutdown/1` can reach), with
   the partial output accumulated so far returned.
 
-  `opts` is the observability option list (only `:execution_id` is defined): the
-  Windows path attaches a `:windows` handle with the owned port's OS pid, the Unix
-  path a pid-less `:posix` handle (the child is a `System.cmd` inside an internal
-  Task, which exposes no portable pid).
+  `opts` is the observability option list (only `:execution_id` is defined): both
+  paths attach a handle carrying the owned port's real OS pid (`:windows` there,
+  `:posix` on Unix via `Helpers.run_task_with_partial/9`), so foreground
+  executions are observable and controllable on this backend too.
 
   Returns:
     * `{:ok, output, exit_code}` — command completed within timeout
@@ -249,11 +251,21 @@ defmodule EvoGit.Sandbox.None do
     git_env =
       if(is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []) ++ Helpers.temp_env_vars()
 
-    # No portable OS pid here (the child is a `System.cmd` inside an internal
-    # Task): the execution is recorded pid-less and its stats degrade to nil.
-    Helpers.attach_execution(opts, :posix, backend: __MODULE__)
-
-    Helpers.run_task_with_partial(exec, exec_args, cwd, git_env, timeout, tmpfile, max_bytes)
+    # `Helpers.run_task_with_partial/9` spawns the child through a directly
+    # owned port and publishes its real OS pid to the tracked execution
+    # (`:execution_id`), so the record is observable (stats) and controllable
+    # (pause/resume/signal); its timeout kills the whole process tree.
+    Helpers.run_task_with_partial(
+      exec,
+      exec_args,
+      cwd,
+      git_env,
+      timeout,
+      tmpfile,
+      max_bytes,
+      opts,
+      __MODULE__
+    )
   end
 
   defp run_with_partial_windows(cwd, executable, args, timeout, max_bytes, opts) do
