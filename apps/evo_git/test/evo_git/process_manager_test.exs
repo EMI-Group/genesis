@@ -260,6 +260,95 @@ defmodule EvoGit.ProcessManagerTest do
     assert {:error, :not_found} = ProcessManager.kill("proc-404", srv)
   end
 
+  test "a FAILED kill leaves the record live and logs the failure", %{srv: srv} do
+    {:ok, id} =
+      ProcessManager.track(
+        :tool_call,
+        %{tool: "bash", command: "kill-no-pid-marker"},
+        srv
+      )
+
+    # A posix handle without any pid/pgid makes the backend answer `:no_pid`
+    # BEFORE it attempts any OS call — a fast, host-safe failing kill.
+    :ok = ProcessManager.attach(id, %Handle{kind: :posix}, srv)
+    flush()
+
+    assert {:error, :no_pid} =
+             ProcessManager.kill(id, srv ++ [reason: :operator_kill, actor: :operator])
+
+    assert_receive {:process_control, ^id,
+                    %{
+                      action: :kill,
+                      signal: nil,
+                      reason: {:kill_failed, :no_pid},
+                      actor: :operator
+                    }, _},
+                   500
+
+    # No terminal transition was broadcast, and the record is untouched.
+    refute_receive {:process_exited, %Execution{id: ^id, command: "kill-no-pid-marker"}, _}, 200
+
+    assert {:ok, %Execution{status: :running, reason: nil, ended_at: nil, control_log: log}} =
+             ProcessManager.get(id, srv)
+
+    assert [
+             %{action: :kill, signal: nil, reason: {:kill_failed, :no_pid}, actor: :operator}
+           ] = log
+
+    # Still observable and controllable: never aged out of the roster.
+    assert Enum.any?(ProcessManager.list(srv), &(&1.id == id))
+  end
+
+  test "a SUCCEEDING kill records :killed and logs no control entry", %{srv: srv} do
+    {:ok, id} =
+      ProcessManager.track(
+        :background_job,
+        %{tool: "bash", command: "kill-ok-marker"},
+        srv
+      )
+
+    flush()
+
+    assert :ok = ProcessManager.kill(id, srv ++ [reason: :operator_killed, actor: :operator])
+
+    assert_receive {:process_exited,
+                    %Execution{id: ^id, status: :killed, command: "kill-ok-marker"}, _},
+                   500
+
+    assert {:ok, execution} = ProcessManager.get(id, srv)
+    assert %Execution{status: :killed, reason: :operator_killed, control_log: []} = execution
+    assert execution.ended_at != nil
+    refute_receive {:process_control, ^id, %{reason: {:kill_failed, _}}, _}, 100
+  end
+
+  test "failed pause/resume/signal never change status or record an entry", %{srv: srv} do
+    {:ok, id} =
+      ProcessManager.track(:tool_call, %{tool: "bash", command: "control-no-pid-marker"}, srv)
+
+    :ok = ProcessManager.attach(id, %Handle{kind: :posix}, srv)
+    flush()
+
+    assert {:error, :no_pid} =
+             ProcessManager.pause(id, srv ++ [reason: :denied_pause, actor: :denied_suite])
+
+    assert {:error, :no_pid} =
+             ProcessManager.resume(id, srv ++ [reason: :denied_resume, actor: :denied_suite])
+
+    assert {:error, :no_pid} =
+             ProcessManager.signal(
+               id,
+               :term,
+               srv ++ [reason: :denied_signal, actor: :denied_suite]
+             )
+
+    refute_receive {:process_control, ^id, %{reason: :denied_pause}, _}, 75
+    refute_receive {:process_control, ^id, %{reason: :denied_resume}, _}, 75
+    refute_receive {:process_control, ^id, %{reason: :denied_signal}, _}, 75
+
+    assert {:ok, %Execution{status: :running, reason: nil, ended_at: nil, control_log: []}} =
+             ProcessManager.get(id, srv)
+  end
+
   ## Helpers
 
   defp open_sleep do

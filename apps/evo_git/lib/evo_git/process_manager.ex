@@ -351,9 +351,13 @@ defmodule EvoGit.ProcessManager do
   is `#{inspect(@default_kill_reason)}` — and `:actor`.
 
   Answers `:ok` (already terminal: idempotent), `{:error, :not_found}`, or the
-  backend's error. The record is marked `:killed` even when the OS call failed,
-  because the operator asked for it; the returned error still reports that the
-  process may be alive.
+  backend's error.
+
+  The record becomes `:killed` ONLY when the backend reports success. A failed
+  or refused kill leaves the status untouched — the execution stays observable
+  and controllable — appends
+  `%{action: :kill, reason: {:kill_failed, reason}, actor: actor}` to
+  `control_log`, and returns that error.
   """
   @spec kill(String.t(), keyword()) :: :ok | {:error, term()}
   def kill(id, opts \\ [])
@@ -361,15 +365,28 @@ defmodule EvoGit.ProcessManager do
   def kill(id, opts) when is_binary(id) do
     server = server_from(opts)
     reason = Keyword.get(opts, :reason, @default_kill_reason)
+    actor = Keyword.get(opts, :actor)
 
     case Registry.lookup(server, id) do
       {:ok, execution, handle} ->
         if Execution.terminal?(execution.status) do
           :ok
         else
-          result = stop_execution(execution, handle, reason)
-          finish(id, :killed, server: server, reason: reason, exit_code: exit_code(handle))
-          result
+          case stop_execution(execution, handle, reason) do
+            :ok ->
+              finish(id, :killed, server: server, reason: reason, exit_code: exit_code(handle))
+
+            {:error, reason_error} ->
+              entry =
+                Execution.control_entry(
+                  action: :kill,
+                  reason: {:kill_failed, reason_error},
+                  actor: actor
+                )
+
+              Registry.record_control(server, id, entry)
+              {:error, reason_error}
+          end
         end
 
       {:error, :not_found} ->
