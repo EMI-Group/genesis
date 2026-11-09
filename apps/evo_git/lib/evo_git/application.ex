@@ -128,6 +128,15 @@ defmodule EvoGit.Application do
        name: EvoGit.TaskRegistry.ProcessRegistry,
        id: :task_registry_process_registry},
       {EvoGit.TaskRegistry, []},
+      # THE live OS-execution registry (one record per foreground tool call /
+      # detached background job, with its normalized OS handle, stats sampling
+      # and PubSub topic "processes"). It starts BEFORE EvoGit.BackgroundJobs
+      # because BackgroundJobs REGISTERS its detached jobs here — a job whose
+      # registry lookup failed at spawn time would be invisible to the
+      # dashboard and to operator kill/pause. It starts AFTER PubSub (its
+      # broadcasts go out on "processes") and after the store group, but it
+      # touches no SQLite state of its own.
+      {EvoGit.ProcessManager, []},
       # Registry for DETACHED ("background") shell jobs started by agents.
       # Unconditional — unlike the Linux-only SandboxProcessRegistry/SandboxSlice
       # below, background jobs exist on every platform (the detached entry point
@@ -135,6 +144,13 @@ defmodule EvoGit.Application do
       # their owning agent process dies.
       {EvoGit.BackgroundJobs, []},
       {EvoGit.AgentScheduler.WorktreeManager, []},
+      # Dedicated pool for agent-tool RUNTIME work that must outlive one
+      # dispatch (the process-manager probes and, in a later round, the
+      # detached control paths). Declared before AgentGroupSupervisor so a
+      # scheduler restart cannot take in-flight tool runtime work down with it.
+      Supervisor.child_spec({Task.Supervisor, name: EvoGit.ToolRuntime.TaskSupervisor},
+        id: EvoGit.ToolRuntime.TaskSupervisor
+      ),
       {EvoGit.AgentGroupSupervisor, []},
       # Peak-hour LLM concurrency engine — watches the local wall clock and
       # dynamically pushes per-model peak/off-peak concurrency via

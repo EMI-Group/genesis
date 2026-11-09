@@ -20,6 +20,7 @@ This file is the module-level API surface plus the cross-cutting contracts; each
 - `./custom_agents/` → `EvoGit.CustomAgents` store + `ModelSelector` (agents.toml + per-agent model-selection script)
 - `./custom_tools/` → `EvoGit.CustomTools` + `.Tool` behaviour — user tools from `<config_dir>/tools/` (`.ex`/`.exs`/`.beam`)
 - `./sandbox/` → Multi-platform sandbox backends (Linux systemd-run, Linux bwrap, macOS sandbox-exec, passthrough)
+- `./process_manager.ex` + `./process_manager/` → `EvoGit.ProcessManager`: THE single source of truth for live OS executions (one `Execution` + normalized `Handle` per foreground tool call / detached background job), timer-based stats sampling, owner-pid lifetime, retention and pause/resume/signal/kill over `systemctl --user`, `/proc`/`ps` and `tasklist`; PubSub topic `"processes"`; started BEFORE `EvoGit.BackgroundJobs`, which registers its jobs here — detail: `./process_manager/CONTEXT.md`
 - **Background / detached jobs** (a command that must outlive the tool call) → `./background_jobs.ex` (`EvoGit.BackgroundJobs`: ids, output cursors, owner-pid lifetime) + `./sandbox/` (`Sandbox.Background`: detached spawn/kill/status, boot sweep) + `./agent/tools/` (`bash`'s `run_in_background` + `job_output`/`job_list`/`job_kill`)
 - `./skills/` → Dynamic skill tools — YAML-frontmatter markdown skills as LLM-callable tools
 - `./store/` → Ecto persistence — Operations, Boot/migrations, RepoScope, schemas, Ecto.Types, Codec (the wire oracle), Errors, Writer
