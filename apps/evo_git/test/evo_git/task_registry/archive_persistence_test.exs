@@ -275,7 +275,7 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
 
   describe "the archive write never blocks the registry" do
     test "an in-flight archive write leaves the registry answering reads",
-         %{data_dir: data_dir} do
+         %{data_dir: data_dir, vct: vct} do
       unique = System.unique_integer([:positive])
       store_name = :"archive_slow_store_#{unique}"
       registry_name = :"archive_slow_registry_#{unique}"
@@ -293,7 +293,8 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
       # every other call answers the empty projection.
       start_supervised!(
         Supervisor.child_spec(
-          {TaskRegistry, task_store: store_name, data_dir: data_dir, name: registry_name},
+          {TaskRegistry,
+           task_store: store_name, data_dir: data_dir, vct: vct, name: registry_name},
           id: registry_name
         )
       )

@@ -99,7 +99,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
   describe "TaskInfo field backfill" do
     test "normalize_tasks backfills base_sha and commit_sha as nil for old entries",
-         %{data_dir: data_dir, store: store, registry: registry} do
+         %{data_dir: data_dir, store: store, vct: vct, registry: registry} do
       unique = System.unique_integer([:positive])
       task_id = "backfill_#{unique}"
 
@@ -132,7 +132,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       start_supervised(
         Supervisor.child_spec(
-          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
+          {TaskRegistry, task_store: store, vct: vct, data_dir: data_dir, name: registry},
           id: registry
         )
       )
@@ -177,6 +177,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
     test "task persists across a registry restart with the same store", %{
       data_dir: data_dir,
       store: store,
+      vct: vct,
       registry: registry
     } do
       unique = System.unique_integer([:positive])
@@ -205,7 +206,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # Restart the registry pointing at the same store and data_dir.
       start_supervised(
         Supervisor.child_spec(
-          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
+          {TaskRegistry, task_store: store, vct: vct, data_dir: data_dir, name: registry},
           id: registry
         )
       )
@@ -222,7 +223,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
   describe "recent projects persistence" do
     test "recent project persists across a registry restart with the same store",
-         %{data_dir: data_dir, store: store, registry: registry} do
+         %{data_dir: data_dir, store: store, vct: vct, registry: registry} do
       path = "/some/path"
       name = "My Project"
 
@@ -238,7 +239,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # Restart the registry pointing at the same store and data_dir.
       start_supervised(
         Supervisor.child_spec(
-          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
+          {TaskRegistry, task_store: store, vct: vct, data_dir: data_dir, name: registry},
           id: registry
         )
       )
@@ -603,7 +604,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
   describe "startup reconciliation of orphaned :finalizing tasks" do
     test "restart marks an orphaned :finalizing row :failed (with the canonical payload) but leaves a :running row untouched",
-         %{data_dir: data_dir, store: store, registry: registry} do
+         %{data_dir: data_dir, store: store, vct: vct, registry: registry} do
       unique = System.unique_integer([:positive])
       finalizing_id = "startup_finalizing_#{unique}"
       running_id = "startup_running_#{unique}"
@@ -647,7 +648,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # Restart the registry pointing at the same store and data_dir.
       start_supervised(
         Supervisor.child_spec(
-          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
+          {TaskRegistry, task_store: store, vct: vct, data_dir: data_dir, name: registry},
           id: registry
         )
       )
@@ -681,6 +682,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
     test "restart marks an orphaned :cancelling row :cancelled", %{
       data_dir: data_dir,
       store: store,
+      vct: vct,
       registry: registry
     } do
       unique = System.unique_integer([:positive])
@@ -705,7 +707,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       start_supervised(
         Supervisor.child_spec(
-          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
+          {TaskRegistry, task_store: store, vct: vct, data_dir: data_dir, name: registry},
           id: registry
         )
       )
@@ -1127,10 +1129,22 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
   describe "recent projects — nil last_opened_at handling" do
     test "nil last_opened_at rows are sorted last and never crash add/list", %{
-      sqlite_path: sqlite_path
+      data_dir: data_dir,
+      vct: vct
     } do
       unique = System.unique_integer([:positive])
-      insert_project_row(sqlite_path, "/nil-proj-#{unique}", "Nil Proj", nil)
+
+      # Recents come from the VCT mount table (SQLite is only its one-time
+      # import source), so a controlled row set is injected through that
+      # import: a FRESH mount-table path plus `legacy_projects`, which makes
+      # the restarted instance seed exactly these timestamps.
+      restart_vct_with_legacy(vct, data_dir, [
+        %EvoGit.RecentProject{
+          path: "/nil-proj-#{unique}",
+          name: "Nil Proj",
+          last_opened_at: nil
+        }
+      ])
 
       :ok = TaskRegistry.add_recent_project("/fresh-#{unique}", "Fresh")
 
@@ -1141,25 +1155,36 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert "/nil-proj-#{unique}" in paths
       assert hd(projects).path == "/fresh-#{unique}"
       assert List.last(projects).path == "/nil-proj-#{unique}"
+
+      # Every entry carries its VCT mount point alongside the OS path.
+      assert Enum.all?(projects, &match?("vct:///projects/" <> _, &1.vct_path))
     end
 
-    test "trim removes oldest dated rows (and nil rows) first, never crashes on nil",
-         %{sqlite_path: sqlite_path} do
+    test "the display cap keeps the 10 newest and never crashes on nil, while the VCT retains every mount",
+         %{data_dir: data_dir, vct: vct} do
       unique = System.unique_integer([:positive])
       now = DateTime.utc_now()
 
-      # @max_recent_projects is 10 (task_registry.ex); seed 10 dated rows plus
-      # one nil row, then add one more → 12 rows → trim keeps the 10 newest.
-      insert_project_row(sqlite_path, "/nil-proj-#{unique}", "Nil Proj", nil)
-
-      for i <- 1..10 do
-        :ok =
-          EvoGit.Store.put_project(store(), %EvoGit.RecentProject{
+      # @max_recent_projects is 10 (task_registry.ex) — the DISPLAY cap only:
+      # import 10 dated rows plus one nil row, then add one more → 12 mounts,
+      # of which the 10 newest are displayed.
+      dated_rows =
+        Enum.map(1..10, fn i ->
+          %EvoGit.RecentProject{
             path: "/dated-#{unique}-#{i}",
             name: "D#{i}",
             last_opened_at: DateTime.add(now, -i * 86_400, :second)
-          })
-      end
+          }
+        end)
+
+      restart_vct_with_legacy(vct, data_dir, [
+        %EvoGit.RecentProject{
+          path: "/nil-proj-#{unique}",
+          name: "Nil Proj",
+          last_opened_at: nil
+        }
+        | dated_rows
+      ])
 
       :ok = TaskRegistry.add_recent_project("/newest-#{unique}", "Newest")
 
@@ -1167,9 +1192,23 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert length(projects) == 10
 
       # Sorted descending: newest first, then /dated-1..9. The oldest dated row
-      # (/dated-10) and the nil row (sorts last = oldest) are trimmed.
+      # (/dated-10) and the nil row (sorts last = oldest) fall outside the
+      # display window.
       assert Enum.map(projects, & &1.path) ==
                ["/newest-#{unique}"] ++ Enum.map(1..9, &"/dated-#{unique}-#{&1}")
+
+      # Retention: the VCT itself dropped nothing — all 12 mounts are still
+      # there, the display cap is purely a read-time limit.
+      mounts = EvoGit.VCT.mounts()
+      assert length(mounts) == 12
+      mount_paths = Enum.map(mounts, & &1.path)
+
+      for path <- [
+            "/newest-#{unique}",
+            "/nil-proj-#{unique}" | Enum.map(1..10, &"/dated-#{unique}-#{&1}")
+          ] do
+        assert path in mount_paths
+      end
     end
   end
 
@@ -1689,17 +1728,30 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
     XqliteNIF.close(raw_conn)
   end
 
-  defp insert_project_row(sqlite_path, path, name, last_opened_at) do
-    {:ok, raw_conn} = Xqlite.open(sqlite_path)
+  # Replaces this test's isolated VCT with a fresh one under the SAME
+  # registered name (so `EvoGit.TaskRegistry`'s `vct:` and the test process's
+  # `:evogit_vct_server` seam keep resolving to it). A NEW mount-table path
+  # avoids reloading the previous table (whose legacy-import marker is already
+  # set), and `legacy_projects` seeds controlled timestamps through the VCT's
+  # one-time import — the documented seam for a known row set.
+  defp restart_vct_with_legacy(vct, data_dir, rows) do
+    stop_supervised(vct)
 
-    {:ok, _} =
-      XqliteNIF.execute(
-        raw_conn,
-        "INSERT INTO projects (path, name, last_opened_at) VALUES (?1, ?2, ?3)",
-        [path, name, last_opened_at]
+    fresh_path =
+      Path.join([
+        data_dir,
+        "vct",
+        "legacy-#{System.unique_integer([:positive])}.json"
+      ])
+
+    start_supervised!(
+      Supervisor.child_spec(
+        {EvoGit.VCT, name: vct, data_dir: data_dir, path: fresh_path, legacy_projects: rows},
+        id: vct
       )
+    )
 
-    XqliteNIF.close(raw_conn)
+    :ok
   end
 
   defp recheck_agent_spec do
