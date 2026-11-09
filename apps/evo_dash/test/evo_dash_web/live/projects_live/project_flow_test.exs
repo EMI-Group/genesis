@@ -74,16 +74,16 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
   end
 
   describe "path_suggestions/2" do
-    test "relative input and relative recent-project entries never surface" do
+    test "relative input and relative project entries never surface" do
       assert Project.path_suggestions("Test", []) == []
-      # A stale cwd-joined recents entry (from the pre-fix behavior) must not
+      # A stale cwd-joined project entry (from the pre-fix behavior) must not
       # render in the palette.
       assert Project.path_suggestions("Test", [%{path: "Test"}]) == []
     end
 
-    test "absolute recent entries match once, relative entries are filtered" do
+    test "absolute project entries match once, relative entries are filtered" do
       # `/tmp` also triggers filesystem suggestions — assert membership and
-      # uniqueness rather than exact equality (recents win on dedup).
+      # uniqueness rather than exact equality (project mounts win on dedup).
       result =
         Project.path_suggestions("/tmp", [
           %{path: "/tmp", name: "tmp"},
@@ -126,7 +126,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
       refute home in result
     end
 
-    test "recent projects match by substring of the full path" do
+    test "project mounts match by substring of the full path" do
       result =
         Project.path_suggestions("proj", [%{path: "/home/test/sources/project", name: "project"}])
 
@@ -407,9 +407,9 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
     end
   end
 
-  describe "path_suggestions/3 — node-aware recents filter" do
-    test "remote node keeps absolute recents, drops relative ones, matches by substring" do
-      recents = [
+  describe "path_suggestions/3 — node-aware project filter" do
+    test "remote node keeps absolute projects, drops relative ones, matches by substring" do
+      projects = [
         %{path: "/home/user/proj", name: "proj"},
         %{path: "C:\\work\\repo", name: "repo"},
         %{path: "relative/repo", name: "rel"},
@@ -417,15 +417,15 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
       ]
 
       # Remote filesystem suggestions degrade to [] (no real daemon answers the
-      # RPC against the fake node), so the result IS the filtered recents.
-      result = Project.path_suggestions(@remote_node, "", recents)
+      # RPC against the fake node), so the result IS the filtered projects.
+      result = Project.path_suggestions(@remote_node, "", projects)
 
       assert "/home/user/proj" in result
       assert "C:\\work\\repo" in result
       refute "relative/repo" in result
       refute "D:Test" in result
 
-      # Empty query matches ALL recents.
+      # Empty query matches ALL projects.
       assert Project.path_suggestions(@remote_node, "", [
                %{path: "/home/a", name: "a"},
                %{path: "/home/b", name: "b"}
@@ -439,9 +439,9 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
       end
     end
 
-    test "local node recents filtering is unchanged" do
+    test "local node project filtering is unchanged" do
       # Empty input produces no filesystem suggestions on either branch, so the
-      # result is exactly the locally-filtered recents.
+      # result is exactly the locally-filtered projects.
       result =
         Project.path_suggestions(node(), "", [
           %{path: "/tmp", name: "tmp"},

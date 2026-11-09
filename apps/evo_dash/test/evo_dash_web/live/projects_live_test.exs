@@ -625,10 +625,10 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   end
 
   # Waits until the connected mount's ASYNC load batch has applied the seeded
-  # recent projects. `ProjectsLive.mount/3` seeds `projects: []` and the
+  # projects. `ProjectsLive.mount/3` seeds `projects: []` and the
   # real list arrives one frame later via the
   # `{:async_project_load, ...}` continuation (see
-  # `EvoDashWeb.ProjectsLive.AsyncLoad`), so every test that seeds recents and
+  # `EvoDashWeb.ProjectsLive.AsyncLoad`), so every test that seeds projects and
   # then asserts palette / datalist / auto-activation state MUST wait for the
   # batch first — otherwise the assertion races the continuation (seed
   # dependent). Bounded through `wait_assigns/2`, so real breakage still fails
@@ -1166,7 +1166,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
   describe "dashboard without active project" do
     setup do
-      # Clear all recent projects so auto-load doesn't activate a stale project
+      # Clear all projects so auto-load doesn't activate a stale project
       for project <- EvoGit.VCT.projects() do
         EvoGit.VCT.forget(project.point)
       end
@@ -1214,7 +1214,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
   describe "root route (GET /)" do
     setup do
-      # Clear all recent projects so auto-load doesn't activate a stale project
+      # Clear all projects so auto-load doesn't activate a stale project
       for project <- EvoGit.VCT.projects() do
         EvoGit.VCT.forget(project.point)
       end
@@ -1569,34 +1569,34 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ ~s(<datalist id="path-suggestions">)
     end
 
-    test "entering open_path mode seeds the datalist with recent project paths", %{
+    test "entering open_path mode seeds the datalist with project paths", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      recent_a = Path.join(tmp_dir, "recent-alpha")
-      recent_b = Path.join(tmp_dir, "recent-beta")
-      File.mkdir_p!(recent_a)
-      File.mkdir_p!(recent_b)
-      seed_project(recent_a, "recent-alpha")
-      seed_project(recent_b, "recent-beta")
+      project_a = Path.join(tmp_dir, "project-alpha")
+      project_b = Path.join(tmp_dir, "project-beta")
+      File.mkdir_p!(project_a)
+      File.mkdir_p!(project_b)
+      seed_project(project_a, "project-alpha")
+      seed_project(project_b, "project-beta")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
-      wait_for_projects(view, [recent_a, recent_b])
+      wait_for_projects(view, [project_a, project_b])
 
       render_click(view, "open_project_palette", %{})
       html = render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       datalist = path_suggestions_datalist(html)
-      assert datalist =~ ~s(<option value="#{recent_a}"></option>)
-      assert datalist =~ ~s(<option value="#{recent_b}"></option>)
+      assert datalist =~ ~s(<option value="#{project_a}"></option>)
+      assert datalist =~ ~s(<option value="#{project_b}"></option>)
     end
 
-    test "open_path mode keeps UNC/WSL recent project paths in the datalist", %{conn: conn} do
-      # UNC/WSL paths are absolute and must survive the recents absolute-path
+    test "open_path mode keeps UNC/WSL project paths in the datalist", %{conn: conn} do
+      # UNC/WSL paths are absolute and must survive the projects absolute-path
       # filter (never dropped as relative). They do NOT exist on the test host
       # — seed them via the public TaskRegistry API and assert the filtered
       # palette datalist renders them (the same surface the POSIX/Windows
-      # recents use; the mount's auto-load silently skips non-existent paths).
+      # projects use; the mount's auto-load silently skips non-existent paths).
       wsl_path = "//wsl.localhost/Ubuntu-22.04/home/user/proj"
       unc_path = "\\\\server\\share\\proj"
       seed_project(wsl_path, "wsl-proj")
@@ -1928,7 +1928,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ ~s(id="new-project-path-input")
     end
 
-    test "palette_search filters recent projects by name", %{conn: conn, tmp_dir: tmp_dir} do
+    test "palette_search filters projects by name", %{conn: conn, tmp_dir: tmp_dir} do
       project_a = Path.join(tmp_dir, "my-alpha")
       project_b = Path.join(tmp_dir, "my-beta")
       File.mkdir_p!(project_a)
@@ -1970,7 +1970,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       wait_for_projects(view, [project])
       render_click(view, "open_project_palette", %{})
 
-      # Enter on index 0 (the only recent project) selects it
+      # Enter on index 0 (the only project) selects it
       html = render_click(view, "palette_keydown", %{"key" => "Enter"})
       assert html =~ "enter-project"
     end
@@ -1981,58 +1981,58 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       clear_projects()
     end
 
-    test "path_input lists matching recent projects before filesystem suggestions", %{
+    test "path_input lists matching projects before filesystem suggestions", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      recent_path = Path.join(tmp_dir, "alpha")
+      project_path = Path.join(tmp_dir, "alpha")
       fs_only_path = Path.join(tmp_dir, "alpha-extra")
-      File.mkdir_p!(recent_path)
+      File.mkdir_p!(project_path)
       File.mkdir_p!(fs_only_path)
-      seed_project(recent_path, "alpha")
+      seed_project(project_path, "alpha")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
-      wait_for_projects(view, [recent_path])
+      wait_for_projects(view, [project_path])
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
 
-      html = render_change(view, "path_input", %{"path" => recent_path})
+      html = render_change(view, "path_input", %{"path" => project_path})
 
       datalist = path_suggestions_datalist(html)
 
-      # (a) the recent project path (which is also a real directory) is
+      # (a) the project path (which is also a real directory) is
       # suggested, and so is the filesystem-only sibling
-      assert datalist =~ ~s(<option value="#{recent_path}"></option>)
+      assert datalist =~ ~s(<option value="#{project_path}"></option>)
       assert datalist =~ ~s(<option value="#{fs_only_path}"></option>)
 
-      # (c) exact ordering from the rendered HTML: the recent match comes first
-      recent_idx = string_index(datalist, ~s(value="#{recent_path}"))
+      # (c) exact ordering from the rendered HTML: the project match comes first
+      project_idx = string_index(datalist, ~s(value="#{project_path}"))
       fs_idx = string_index(datalist, ~s(value="#{fs_only_path}"))
-      assert recent_idx != nil and fs_idx != nil
-      assert recent_idx < fs_idx
+      assert project_idx != nil and fs_idx != nil
+      assert project_idx < fs_idx
     end
 
-    test "path_input deduplicates paths present in both recents and filesystem", %{
+    test "path_input deduplicates paths present in both projects and filesystem", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      recent_path = Path.join(tmp_dir, "alpha")
-      File.mkdir_p!(recent_path)
-      seed_project(recent_path, "alpha")
+      project_path = Path.join(tmp_dir, "alpha")
+      File.mkdir_p!(project_path)
+      seed_project(project_path, "alpha")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
-      wait_for_projects(view, [recent_path])
+      wait_for_projects(view, [project_path])
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
 
-      html = render_change(view, "path_input", %{"path" => recent_path})
+      html = render_change(view, "path_input", %{"path" => project_path})
 
       datalist = path_suggestions_datalist(html)
 
-      # (b) the path exists in recents AND on disk (a filesystem suggestion),
+      # (b) the path exists in projects AND on disk (a filesystem suggestion),
       # but the datalist renders it exactly once
-      assert datalist =~ ~s(<option value="#{recent_path}"></option>)
-      assert length(String.split(datalist, ~s(value="#{recent_path}"))) == 2
+      assert datalist =~ ~s(<option value="#{project_path}"></option>)
+      assert length(String.split(datalist, ~s(value="#{project_path}"))) == 2
     end
   end
 
@@ -2120,7 +2120,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ "Project created"
       # The project bar shows the new project name
       assert html =~ "my-brand-new-project"
-      # The new project is registered in the recent list
+      # The new project is registered in the project list
       assert Enum.any?(EvoGit.VCT.projects(), &(&1.path == full_path))
       # The palette closes after successful creation
       assert assigns(view)[:project_palette_open] == false
@@ -2158,7 +2158,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert File.dir?(full_path) == true
       # Flash confirms creation
       assert html =~ "Project created"
-      # The new project is registered in the recent list
+      # The new project is registered in the project list
       assert Enum.any?(EvoGit.VCT.projects(), &(&1.path == full_path))
       # The palette closes after successful creation
       assert assigns(view)[:project_palette_open] == false
@@ -2191,7 +2191,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ "Project created"
       refute html =~ "Could not create directory"
       refute html =~ "Invalid project name"
-      # The existing project is registered in the recent list
+      # The existing project is registered in the project list
       assert Enum.any?(EvoGit.VCT.projects(), &(&1.path == existing))
       # The palette closes after successful creation
       assert assigns(view)[:project_palette_open] == false
@@ -2204,7 +2204,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       :ok
     end
 
-    test "create_project rejects relative paths without creating a directory or registering recents",
+    test "create_project rejects relative paths without creating a directory or registering the project",
          %{
            conn: conn
          } do
@@ -2230,15 +2230,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       refute File.dir?(relative)
       refute File.dir?(Path.join(File.cwd!(), relative))
 
-      # No recent-project registration for the bogus path (bare or cwd-joined)
-      recents = EvoGit.VCT.projects()
-      refute Enum.any?(recents, &(&1.path == relative))
-      refute Enum.any?(recents, &(&1.path == Path.join(File.cwd!(), relative)))
+      # No project registration for the bogus path (bare or cwd-joined)
+      projects = EvoGit.VCT.projects()
+      refute Enum.any?(projects, &(&1.path == relative))
+      refute Enum.any?(projects, &(&1.path == Path.join(File.cwd!(), relative)))
 
       on_exit(fn ->
         # Cleanup in on_exit: rescue so teardown failures don't mask real test
         # failures. Defensive: if the code regresses to cwd-joining, this
-        # removes the created directory and recents entry so they can't leak.
+        # removes the created directory and project entry so they can't leak.
         try do
           EvoGit.VCT.forget(Path.join(File.cwd!(), relative))
         rescue
@@ -2452,8 +2452,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       :ok
     end
 
-    test "the async batch really fills recent projects a frame after mount", %{conn: conn} do
-      async_path = Path.join(System.tmp_dir!(), "evogit_async_recents_#{System.unique_integer()}")
+    test "the async batch really fills projects a frame after mount", %{conn: conn} do
+      async_path =
+        Path.join(System.tmp_dir!(), "evogit_async_projects_#{System.unique_integer()}")
+
       File.mkdir_p!(async_path)
       on_exit(fn -> File.rm_rf(async_path) end)
 
@@ -2560,11 +2562,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # This handle_params run spawns its OWN `AsyncLoad` task. For a
       # `:connecting` target it is the ONLY thing that clears `projects`
       # to `[]` (the node-switch clearing owns the form/project assigns, not
-      # recents; `AsyncLoad.load_projects/3` returns `[]` whenever
+      # projects; `AsyncLoad.load_projects/3` returns `[]` whenever
       # `current_node_id` is a binary) — and `render_patch/2` does not wait for
       # it. Wait for the spawned task and drain its queued
       # `{:async_project_load, ...}` apply before asserting, otherwise a slow
-      # task leaves the pre-switch local recents (the project opened above) in
+      # task leaves the pre-switch local projects (the project opened above) in
       # place.
       await_async_loads(view)
 
@@ -2602,7 +2604,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:current_node_id] == id
       assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
       assert assigns(view)[:remote?] == true
-      # erpc to the fake BEAM node fails fast — no recents, no hang risk
+      # erpc to the fake BEAM node fails fast — no projects, no hang risk
       assert assigns(view)[:projects] == []
 
       # Remote top bar: data-remote present (boolean attrs serialize as a bare
@@ -2967,7 +2969,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:project_palette_open] == false
     end
 
-    test "open_project during the gate does not leak into the local recent-projects store", %{
+    test "open_project during the gate does not leak into the local project store", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
@@ -2981,7 +2983,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # Forged/raced submit: the palette is suppressed in the DOM but the event
       # can still arrive — the gate guard must reject it with a flash error and
-      # must NOT register the (locally existing) path in the LOCAL recents.
+      # must NOT register the (locally existing) path in the LOCAL projects.
       html = render_submit(view, "open_project", %{path: tmp_dir})
 
       assert html =~ "Cannot open project"
@@ -2989,7 +2991,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       refute Enum.any?(EvoGit.VCT.projects(), &(&1.path == tmp_dir))
     end
 
-    test "remote open_project success path filters recents with the node first (regression)", %{
+    test "remote open_project success path filters projects with the node first (regression)", %{
       tmp_dir: tmp_dir
     } do
       id = save_target!()
@@ -3013,7 +3015,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # open_project/2 now returns IMMEDIATELY: the RPC-heavy sequence runs in
       # a spawned task, so the socket only carries the loading flag + closed
-      # palette; the recents/active_project assigns arrive via the async
+      # palette; the projects/active_project assigns arrive via the async
       # continuation.
       assert {:noreply, socket} =
                EvoDashWeb.ProjectsLive.ProjectFlow.open_project(socket, %{"path" => tmp_dir})
@@ -3071,7 +3073,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert socket.assigns[:show_add_foreign_repo_form] == false
       assert socket.assigns[:task_mode] == "genesis_new"
 
-      # The project was registered in the LOCAL recent-projects store, proving
+      # The project was registered in the LOCAL project store, proving
       # the activation task's success branch ran end-to-end.
       assert Enum.any?(EvoGit.VCT.projects(), &(&1.path == tmp_dir))
 
@@ -5445,7 +5447,7 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       html = drain_task_reload(view)
 
       refute_push_event(view, "task_notification", %{}, 0)
-      # No active project in this describe (recent projects cleared, fixture
+      # No active project in this describe (projects cleared, fixture
       # inserted directly into the store), so the launch panel is hidden
       refute html =~ "task-launch-button"
     end
