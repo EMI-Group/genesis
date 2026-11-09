@@ -667,6 +667,13 @@
                     </div>
                   <% end %>
 
+                  <!-- Processes (managed OS executions of this agent) -->
+                  {EvoDashWeb.AgentsLive.ProcessesSection.section(%{
+                    agent_processes: @agent_processes,
+                    current_node_id: @current_node_id,
+                    selected_agent_id: @selected_agent_id
+                  })}
+
                   <!-- Chat History -->
                   <div class="agent-detail-history mt-6">
                     <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-2">

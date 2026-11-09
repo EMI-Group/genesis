@@ -39,6 +39,7 @@ defmodule EvoDashWeb.AgentsLive do
     LoadData,
     OptimisticMessages,
     PendingEvents,
+    ProcessesSection,
     ThresholdCache,
     ToolCallDisplay
   }
@@ -56,6 +57,9 @@ defmodule EvoDashWeb.AgentsLive do
   def mount(_params, _session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "agents")
+      # Managed-process lifecycle events ("processes" topic). Only the selected
+      # agent's Processes section reacts (node-filtered, async refetch).
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "processes")
     end
 
     # current_node is set to node() by the NodeAware on_mount hook (runs before
@@ -158,7 +162,13 @@ defmodule EvoDashWeb.AgentsLive do
         # commit-graph lanes ONLY — never the agent tree. Reset on a node switch
         # (agent ids are per-node). In-session only: the core persists no
         # per-agent commit attribution, so it does not survive a page reload.
-        retained_agents: %{}
+        retained_agents: %{},
+        # Selected-agent "Processes" section state (managed OS executions of the
+        # agent; see EvoDashWeb.AgentsLive.ProcessesSection). Loaded
+        # asynchronously and seq/node/agent-guarded — it never blocks the
+        # detail panel.
+        agent_processes: ProcessesSection.empty_state(),
+        processes_seq: 0
       )
 
     {:ok, socket}
@@ -166,6 +176,10 @@ defmodule EvoDashWeb.AgentsLive do
 
   @impl true
   def handle_params(params, _url, socket) do
+    # Captured BEFORE assign_node/2: the Processes section is per-node, so a
+    # context switch must drop the previous node's executions.
+    previous_context = socket.assigns[:current_node]
+
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
@@ -227,6 +241,16 @@ defmodule EvoDashWeb.AgentsLive do
         )
       else
         assign(socket, :previous_node, current_node)
+      end
+
+    # Node context switched: the Processes section is per-node. The agent
+    # selection is cleared by the branch above, so nothing is re-fetched here;
+    # an in-flight result is invalidated by the node stale-guard.
+    socket =
+      if socket.assigns.current_node != previous_context do
+        ProcessesSection.clear(socket)
+      else
+        socket
       end
 
     # Kick off the async page load (agents + config status + threshold cache),
@@ -363,6 +387,44 @@ defmodule EvoDashWeb.AgentsLive do
           {:noreply, socket}
       end
     end
+  end
+
+  @impl true
+  # Async Processes-section result (see EvoDashWeb.AgentsLive.ProcessesSection).
+  # NOTE: SafeCall.start/4 sends its tag VERBATIM, so the multi-element tag
+  # arrives NESTED — the never-matching flattened shape is deliberately absent.
+  def handle_info({{:agent_processes_loaded, seq, node, agent_id}, result}, socket) do
+    {:noreply, ProcessesSection.handle_result(socket, seq, node, agent_id, result)}
+  end
+
+  @impl true
+  # Managed-process lifecycle broadcasts ("processes" topic). All five shapes GO
+  # THROUGH the SAME section entry point: it node-filters, ignores a cleared
+  # selection and refetches the selected agent asynchronously (seq-guarded, no
+  # polling). Payloads are never inspected, so an odd shape cannot crash the
+  # page.
+  def handle_info({:process_started, _execution, node}, socket) do
+    {:noreply, ProcessesSection.process_event(socket, node)}
+  end
+
+  @impl true
+  def handle_info({:process_updated, _id, _changes, node}, socket) do
+    {:noreply, ProcessesSection.process_event(socket, node)}
+  end
+
+  @impl true
+  def handle_info({:process_exited, _execution, node}, socket) do
+    {:noreply, ProcessesSection.process_event(socket, node)}
+  end
+
+  @impl true
+  def handle_info({:process_sample, node, _seq, _entries}, socket) do
+    {:noreply, ProcessesSection.process_event(socket, node)}
+  end
+
+  @impl true
+  def handle_info({:process_control, _id, _entry, node}, socket) do
+    {:noreply, ProcessesSection.process_event(socket, node)}
   end
 
   @impl true
@@ -557,6 +619,7 @@ defmodule EvoDashWeb.AgentsLive do
         selected_history_entry: nil,
         full_message_pending_agent_id: nil
       )
+      |> ProcessesSection.start(agent_id)
 
     # Lazy-load chat history for the selected agent — asynchronously so the
     # page never blocks on the (possibly cross-node) history RPC. First
@@ -594,12 +657,14 @@ defmodule EvoDashWeb.AgentsLive do
   @impl true
   def handle_event("close_details", _params, socket) do
     {:noreply,
-     assign(socket,
+     socket
+     |> assign(
        selected_agent_id: nil,
        selected_history_entry: nil,
        selected_objective: nil,
        show_usage: false
-     )}
+     )
+     |> ProcessesSection.clear()}
   end
 
   @impl true
