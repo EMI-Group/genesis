@@ -10,7 +10,7 @@ There is **no `live(...)` call anywhere in this directory**: every component is 
 
 | File | Module | Describes / tests |
 |------|--------|-------------------|
-| `project_components_test.exs` | `EvoDashWeb.ProjectComponentsTest` | 9 / 24 — command palette (`project_omnibox/1`, incl. pure `filter_projects/2` VCT matching) + `project_settings_tab/1` (directory-picker browse buttons, PathAutocomplete wiring, remote gating, foreign-repo writable/base_sha UI) |
+| `project_components_test.exs` | `EvoDashWeb.ProjectComponentsTest` | 9 / 24 — command palette (`project_omnibox/1`, incl. pure `filter_projects/2` units) + `project_settings_tab/1` (directory-picker browse buttons, PathAutocomplete wiring, remote gating, foreign-repo writable/base_sha UI) |
 | `task_form_components_test.exs` | `EvoDashWeb.TaskFormComponentsTest` | 4 / 43 — `layout_for/1` boundaries, `task_form/1` control order/agent/model selects/attach-file, `task_options_tab/1` mode gating, speed ↔ quality capsule control |
 | `commit_graph_view_test.exs` | `EvoDashWeb.CommitGraphViewTest` | 12 / 27 — `AgentsComponents.CommitGraphView.commit_graph_view/1` vertical per-agent-lane temporal view |
 | `commit_graph/geometry_test.exs` | `EvoDashWeb.CommitGraphGeometryTest` | 3 / 8 — PURE lane-geometry / jog-staggering units for `CommitGraphView.Geometry` |
@@ -60,7 +60,7 @@ Component suites own isolated markup, event payload attributes and pure helper c
 - `foreign repo path input autocomplete` (1): `#foreign-repo-path-input` carries `phx-hook="PathAutocomplete"`, `list="foreign-repo-path-suggestions"`, `phx-change="foreign_repo_path_input"`, `phx-debounce="150"`, and a datalist with one `<option value="…">` per suggestion.
 - `foreign repo writable/base_sha UI` (9): the add form's `input[name=writable]` (checkbox, `value="true"`, unchecked by default) and `input[name=base_sha]` (value seeded from `new_repo_base_sha`, `""` when the assign is absent); repo rows render a `badge-warning` "Writable" badge + `<code>` base_sha for a writable repo and neither for a read-only one; every non-primary row carries the edit button with its repo id; the primary row has NO edit/remove buttons; `editing_foreign_repo_id` renders the inline edit form (falling back to the repo's own values when `foreign_repo_edit_form` is absent) and nil renders none. Fixtures use `%ForeignRepo{}` structs.
 - `new project path input autocomplete` (1), `neutral placeholders` (1), `palette actions in remote contexts` (2 — "Create New Project" hidden on remote, "Open Project by Path" kept).
-- `filter_projects/2` (3, pure units): a `vct_path` substring matches case-insensitively, a nil-`vct_path` legacy entry still matches by name/OS path without crashing, and an empty or blank query returns the list unchanged.
+- `filter_projects/2` (3, pure units): the fixtures carry a `vct_path` key while the helper matches the mount's `point` (plus `name` and OS `path`), so the "vct_path substring" unit finds nothing against the current helper (a matching fixture is `%{name:, path:, point: "vct:///projects/<name>"}`), while the nil-entry unit (name/OS path matching, no crash) and the empty/blank-query unit hold as written.
 - No test asserts the `show_add_foreign_repo == false` negative for the add form beyond the edit-form cases above.
 
 ## `task_form_components_test.exs` (4 describes / 43 tests)
