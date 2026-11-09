@@ -35,8 +35,7 @@ defmodule EvoDashWeb.ProcessComponents do
       Format.status_badge_class(@status),
       @class
     ]}>
-      <span class={["inline-block size-1.5 rounded-full shrink-0", Format.status_dot_class(@status)]}>
-      </span>
+      <span class={["inline-block size-1.5 rounded-full shrink-0", Format.status_dot_class(@status)]}></span>
       {status_text(@status)}
     </span>
     """
@@ -78,7 +77,10 @@ defmodule EvoDashWeb.ProcessComponents do
       |> assign(:live?, Format.live?(status) and is_binary(id))
       |> assign(:paused?, status == :paused)
       |> assign(:running?, status == :running)
-      |> assign(:agents_link, assigns.agents_path || with_node_param(~p"/agents", assigns.node_id))
+      |> assign(
+        :agents_link,
+        assigns.agents_path || with_node_param(~p"/agents", assigns.node_id)
+      )
       |> assign(:tasks_link, assigns.tasks_path || with_node_param(~p"/tasks", assigns.node_id))
       |> assign(:row_attrs, [
         {"phx-click", assigns.row_event},
@@ -211,7 +213,10 @@ defmodule EvoDashWeb.ProcessComponents do
     </tr>
     <tr :if={@expanded} class="border-b border-base-300/60 bg-base-200/30">
       <td colspan="12" class="px-4 py-3">
-        {execution_details(%{execution: @execution})}
+        <%!-- Must go through the component call syntax: `execution_details/1`
+        runs `assign/3`, which needs Phoenix's assigns change-tracking wrapper
+        (a hand-built `%{execution: ...}` map raises on expansion). --%>
+        <.execution_details execution={@execution} />
       </td>
     </tr>
     """
@@ -244,8 +249,14 @@ defmodule EvoDashWeb.ProcessComponents do
           <.detail_field label={gettext("Working Directory")} value={@execution[:cwd]} mono />
           <.detail_field label={gettext("Repository Root")} value={@execution[:repo_root]} mono />
           <.detail_field label={gettext("Reason")} value={Format.reason_label(@execution)} />
-          <.detail_field label={gettext("Runtime")} value={Format.runtime_label(@execution[:runtime])} />
-          <.detail_field label={gettext("Backend")} value={Format.backend_label(@execution[:backend])} />
+          <.detail_field
+            label={gettext("Runtime")}
+            value={Format.runtime_label(@execution[:runtime])}
+          />
+          <.detail_field
+            label={gettext("Backend")}
+            value={Format.backend_label(@execution[:backend])}
+          />
           <.detail_field label={gettext("Started")} value={format_time(@execution[:started_at])} />
           <.detail_field label={gettext("Ended")} value={format_time(@execution[:ended_at])} />
         </div>
@@ -272,10 +283,14 @@ defmodule EvoDashWeb.ProcessComponents do
                 <%= for entry <- @log do %>
                   <tr>
                     <td class="whitespace-nowrap font-mono">{Format.entry_time(entry)}</td>
-                    <td class="whitespace-nowrap">{Format.action_label(Format.entry_action(entry))}</td>
+                    <td class="whitespace-nowrap">
+                      {Format.action_label(Format.entry_action(entry))}
+                    </td>
                     <td class="whitespace-nowrap font-mono">{Format.signal_label(entry)}</td>
                     <td class="break-words">{Format.entry_reason(entry)}</td>
-                    <td class="whitespace-nowrap">{Format.actor_label(Format.entry_get(entry, :actor))}</td>
+                    <td class="whitespace-nowrap">
+                      {Format.actor_label(Format.entry_get(entry, :actor))}
+                    </td>
                   </tr>
                 <% end %>
               </tbody>
@@ -442,7 +457,10 @@ defmodule EvoDashWeb.ProcessComponents do
   defp present?(_value), do: true
 
   defp blank_text(nil), do: "—"
-  defp blank_text(value) when is_binary(value), do: if(String.trim(value) == "", do: "—", else: value)
+
+  defp blank_text(value) when is_binary(value),
+    do: if(String.trim(value) == "", do: "—", else: value)
+
   defp blank_text(value), do: Format.term_text(value)
 
   defp format_time(%DateTime{} = at), do: format_datetime(at)
