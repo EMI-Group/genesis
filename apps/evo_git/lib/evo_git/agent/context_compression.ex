@@ -303,7 +303,7 @@ defmodule EvoGit.Agent.ContextCompression do
         end
 
       {:error, {:llm_request_rejected, message}} = terminal ->
-        # Fail fast EXACTLY like `ToolDispatch.handle_llm_failure/7`'s fail-fast
+        # Fail fast EXACTLY like `EvoGit.Agent.LLMPrompting.handle_llm_failure/7`'s fail-fast
         # branch: ONE `Logger.error` line naming the agent, NO scheduler
         # backoff report, NO sleep. The terminal tuple is returned unchanged for
         # `Runner.loop/1` to propagate.

@@ -10,7 +10,7 @@ defmodule EvoGit.Agent.LlmError do
   scheduler crash-retries — repeating the entire cycle with no actionable error
   ever surfaced. Instead the loop fails fast with
   `{:error, {:llm_request_rejected, message}}` (see
-  `EvoGit.Agent.ToolDispatch.handle_llm_failure/7`), which the runtime returns to
+  `EvoGit.Agent.LLMPrompting.handle_llm_failure/7`), which the runtime returns to
   the task wrapper and persists as a `:failed` task whose structured `error`
   record carries the actionable message built by `format_failure/1`.
 
@@ -48,8 +48,9 @@ defmodule EvoGit.Agent.LlmError do
   check only matches a bare `API.Request`, so a wrapped 402 must be tested on the
   request it wraps) and on the raw reason as well, so a wrapper carrying the
   phrase cannot change the classification either.
-  `ToolDispatch.handle_llm_failure/7` orders its model-exhaustion branch BEFORE
-  the fail-fast branch — so the precedence holds whichever entry point is used.
+  `EvoGit.Agent.LLMPrompting.handle_llm_failure/7` orders its model-exhaustion
+  branch BEFORE the fail-fast branch — so the precedence holds whichever entry
+  point is used.
 
   Every function here is pure and TOTAL: it never raises for any input (nil,
   strings, maps, cycles, arbitrary terms) and never touches the network, the

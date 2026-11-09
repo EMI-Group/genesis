@@ -14,8 +14,8 @@ defmodule EvoGit.Agent.DelegationHints do
   `maybe_append_read_delegation_hint/6` take a string and return a string. They
   never receive or return a `%EvoGit.Agent.ToolOutput{}` — the wrap/unwrap
   between a binary and a `%ToolOutput{}` happens ONLY inside
-  `EvoGit.Agent.ToolDispatch` (see `EvoGit.Agent.ToolOutput` → "Wrap boundary
-  invariant"). `ToolDispatch.apply_tool_output_tracking/3` unwraps the text
+  `EvoGit.Agent.ToolOutputTracking` (see `EvoGit.Agent.ToolOutput` → "Wrap
+  boundary invariant"), whose `apply_tool_output_tracking/3` unwraps the text
   component (`ToolOutput.text/1`) before calling these hint appenders and
   re-attaches the extended text with `ToolOutput.with_text/2`, so any media a
   tool attached survives the nudge.

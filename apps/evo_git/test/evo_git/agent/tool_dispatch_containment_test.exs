@@ -24,7 +24,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
 
   ## Tool-raise / throw / exit containment
 
-  `execute_tool_task/7` runs inside a `Task.async` LINKED to the agent process,
+  `EvoGit.ToolRuntime.Executor.execute_tool_task/4` runs inside a `Task.async` LINKED to the agent process,
   so an uncontained failure would kill the whole agent. Pinned here:
 
     * a RAISING tool → `Error: Tool execution crashed: <exception banner>`;

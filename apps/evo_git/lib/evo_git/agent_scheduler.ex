@@ -405,11 +405,12 @@ defmodule EvoGit.AgentScheduler do
   agent is purged from the waiting queue during a force-kill or graceful
   cancel) raises instead of proceeding without a slot.
 
-  The raise is deliberate: callers (`ToolDispatch.call_llm_with_retry/5`, context
-  compression) already depend on a non-`:ok` slot result being an exception, and
-  the retry loop is configured with `rescue_only: []` so the raise propagates on
-  the first attempt with zero retries (a retried cancelled agent would be
-  pointless — the crash hands it to the scheduler's crash-retry/cancel machinery).
+  The raise is deliberate: callers (`EvoGit.Agent.LLMPrompting.call_llm_with_retry/5`,
+  context compression) already depend on a non-`:ok` slot result being an
+  exception, and the retry loop is configured with `rescue_only: []` so the
+  raise propagates on the first attempt with zero retries (a retried cancelled
+  agent would be pointless — the crash hands it to the scheduler's
+  crash-retry/cancel machinery).
   """
   @spec with_llm_slot(pos_integer(), (-> result)) :: result when result: var
   def with_llm_slot(agent_id, fun) when is_function(fun, 0) do
