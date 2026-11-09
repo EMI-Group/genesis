@@ -23,7 +23,7 @@ defmodule EvoGit.Core.ContextNodeTest do
     name = :"vct_context_node_#{System.unique_integer([:positive])}"
 
     start_args =
-      Keyword.merge([name: name, data_dir: tmp_dir, legacy_projects: []], opts)
+      Keyword.merge([name: name, data_dir: tmp_dir], opts)
 
     Process.put(:evogit_vct_server, name)
     start_supervised!({VCT, start_args}, id: name)
@@ -177,7 +177,7 @@ defmodule EvoGit.Core.ContextNodeTest do
       proj_root = Path.join(tmp_dir, "proj")
       File.mkdir_p!(proj_root)
 
-      assert {:ok, mount} = VCT.register_project(proj_root, "proj")
+      assert {:ok, mount} = VCT.mount(proj_root, name: "proj")
       assert mount.point == "vct:///projects/proj"
 
       node = ContextNode.load("src/auth", proj_root)
@@ -199,7 +199,7 @@ defmodule EvoGit.Core.ContextNodeTest do
       proj_root = Path.join(tmp_dir, "proj")
       File.mkdir_p!(proj_root)
 
-      assert {:ok, _mount} = VCT.register_project(proj_root, "proj")
+      assert {:ok, _mount} = VCT.mount(proj_root, name: "proj")
 
       assert {:ok, nodes} = ContextNode.hierarchy_nodes("src/auth", proj_root, "primary")
 
@@ -229,7 +229,7 @@ defmodule EvoGit.Core.ContextNodeTest do
       proj_root = Path.join(tmp_dir, "proj")
       File.mkdir_p!(proj_root)
 
-      assert {:ok, _mount} = VCT.register_project(proj_root, "proj")
+      assert {:ok, _mount} = VCT.mount(proj_root, name: "proj")
 
       node = ContextNode.load("src/auth", proj_root, "api")
 

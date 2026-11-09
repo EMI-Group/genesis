@@ -159,8 +159,8 @@ defmodule EvoGit.CustomAgentsRPCTest do
 
   # ── RemoteNode wrappers (unreachable remote node) ──────────────────
   #
-  # Unlike the fire-and-forget recent-projects wrappers, these are
-  # user-action RPCs — the remote failure is surfaced as {:error, reason}.
+  # Unlike the fire-and-forget project-mount wrappers, these are user-action
+  # RPCs — the remote failure is surfaced as {:error, reason}.
 
   describe "RemoteNode custom-agents wrappers on an unreachable remote node" do
     test "list_custom_agents/1 surfaces the RPC failure" do
