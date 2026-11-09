@@ -146,7 +146,7 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
   defp clear_node_state(socket) do
     socket
     |> assign(
-      recent_projects: [],
+      projects: [],
       task_prompt: "",
       task_resume_from: "",
       task_starting_commit: "",
