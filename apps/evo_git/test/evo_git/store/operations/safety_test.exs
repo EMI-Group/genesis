@@ -6,10 +6,10 @@ defmodule EvoGit.Store.Operations.SafetyTest do
   Pinned contracts (mirror of the raw store's store.ex:925-953 handlers — zero
   consumer changes allowed):
 
-    * `safe_select_all_tasks/1` / `safe_select_all_projects/1` return a plain
-      LIST of decoded structs (the `{tasks, total_count}` split belongs to the
-      PAGINATED variant, never these handlers), unordered (rowid order), with
-      undecodable rows SKIPPED + `Logger.warning`'d
+    * `safe_select_all_tasks/1` returns a plain LIST of decoded structs (the
+      `{tasks, total_count}` split belongs to the PAGINATED variant, never this
+      handler), unordered (rowid order), with undecodable rows SKIPPED +
+      `Logger.warning`'d
     * `size/1` = SUM of both tables' ROW COUNTS (COUNT(*) semantics — corrupt
       rows count too; never PRAGMA byte math)
     * `TaskInfo.ref` is always `nil` (runtime-only), `status || :pending`
@@ -30,9 +30,8 @@ defmodule EvoGit.Store.Operations.SafetyTest do
   alias EvoGit.Repo
   alias EvoGit.Store.Boot
   alias EvoGit.Store.Operations.Safety
+  alias EvoGit.Store.Operations.VctMounts
   alias EvoGit.Store.RepoScope
-  alias EvoGit.Store.Schemas.ProjectRow
-  alias EvoGit.Store.Schemas.ProjectRowRaw
   alias EvoGit.Store.Schemas.TaskRow
   alias EvoGit.Store.Schemas.TaskRowRaw
   alias EvoGit.TestSupport.StoreTemplate
@@ -151,28 +150,28 @@ defmodule EvoGit.Store.Operations.SafetyTest do
     Keyword.fetch!(row, :id)
   end
 
-  # Seeds one GOOD project row through the TYPED schema. Returns the path.
-  defp insert_project!(pid, path, name, dt \\ ~U[2026-06-26 07:19:44.123Z]) do
-    {1, nil} =
-      with_repo(pid, fn ->
-        Repo.insert_all(ProjectRow, [[path: path, name: name, last_opened_at: dt]])
-      end)
+  # Appends one VCT mount row through the operations module (the same
+  # REPLACE-ALL write the store facade uses). Returns the mount point.
+  defp insert_mount!(pid, point, path, last_opened_at \\ ~U[2026-06-26 07:19:44.123Z]) do
+    mounts = VctMounts.list(pid)
 
-    path
-  end
+    :ok =
+      VctMounts.save(pid, [
+        %{
+          point: point,
+          path: path,
+          name: path |> Path.basename() |> String.capitalize(),
+          kind: "git",
+          last_opened_at: last_opened_at
+        }
+        | mounts
+      ])
 
-  # Seeds one project row with ARBITRARY raw column text (raw twin insert).
-  defp insert_raw_project!(pid, path, name, last_opened_at) do
-    {1, nil} =
-      with_repo(pid, fn ->
-        Repo.insert_all(ProjectRowRaw, [[path: path, name: name, last_opened_at: last_opened_at]])
-      end)
-
-    path
+    point
   end
 
   defp ids(tasks), do: Enum.map(tasks, & &1.id)
-  defp paths(projects), do: Enum.map(projects, & &1.path)
+  defp points(mounts), do: Enum.map(mounts, & &1["point"])
 
   # ── safe_select_all_tasks/1 ──────────────────────────────────────────────
 
@@ -229,65 +228,6 @@ defmodule EvoGit.Store.Operations.SafetyTest do
     end
   end
 
-  # ── safe_select_all_projects/1 ───────────────────────────────────────────
-
-  describe "safe_select_all_projects/1" do
-    test "empty DB returns []" do
-      pid = start_repo!(:projects_empty)
-      assert Safety.safe_select_all_projects(pid) == []
-    end
-
-    test "2 good projects return as RecentProject structs" do
-      pid = start_repo!(:projects_good)
-
-      insert_project!(pid, "/p1", "P1")
-      insert_project!(pid, "/p2", "P2", ~U[2027-02-02 00:00:00.500Z])
-
-      projects = Safety.safe_select_all_projects(pid)
-
-      assert paths(projects) |> Enum.sort() == ["/p1", "/p2"]
-      assert Enum.all?(projects, &is_struct(&1, EvoGit.RecentProject))
-      assert Enum.all?(projects, &is_struct(&1.last_opened_at, DateTime))
-    end
-
-    test "a row with an unparseable last_opened_at SURVIVES decode with nil (lenient datetime)" do
-      pid = start_repo!(:projects_bad_ts)
-
-      # Codec.decode_datetime/1 is LENIENT (returns nil on DateTime.from_iso8601
-      # error — the project skip arm is effectively unreachable over TEXT wire
-      # values); the OLD store behaved identically, so this row is NOT skipped.
-      insert_raw_project!(pid, "/bad", "Bad", "not-a-timestamp")
-      insert_project!(pid, "/good", "Good")
-
-      projects = Safety.safe_select_all_projects(pid)
-
-      assert paths(projects) |> Enum.sort() == ["/bad", "/good"]
-      assert Enum.find(projects, &(&1.path == "/bad")).last_opened_at == nil
-
-      assert Enum.find(projects, &(&1.path == "/good")).last_opened_at !=
-               nil
-    end
-
-    test "corrupt project rows are skipped with a warning when decode raises" do
-      pid = start_repo!(:projects_skip)
-
-      # Force the raising path through the shared boundary: a corrupt task row
-      # is skipped + logged while the PROJECT read below stays unaffected —
-      # the tasks describe block already pins the full 2-good+1-bad task split.
-      {projects, logs} =
-        with_log(fn ->
-          insert_project!(pid, "/kept", "Kept")
-          insert_raw_task!(pid, id: "bad_proj_seed", opts: "{not json")
-
-          Safety.safe_select_all_tasks(pid)
-          Safety.safe_select_all_projects(pid)
-        end)
-
-      assert paths(projects) == ["/kept"]
-      assert logs =~ "Store: skipping undecodable row in tasks (id: \"bad_proj_seed\")"
-    end
-  end
-
   # ── size/1 ───────────────────────────────────────────────────────────────
 
   describe "size/1" do
@@ -296,28 +236,28 @@ defmodule EvoGit.Store.Operations.SafetyTest do
       assert Safety.size(pid) == 0
     end
 
-    test "sums ROW COUNTS across both tables (old count_table semantics)" do
+    test "sums ROW COUNTS across tasks and vct_mounts (old count_table semantics)" do
       pid = start_repo!(:size_sum)
 
       insert_task!(pid, id: "t1")
       insert_task!(pid, id: "t2")
-      insert_project!(pid, "/p1", "P1")
+      insert_mount!(pid, "vct:///projects/p1", "/p1")
 
       assert Safety.size(pid) == 3
     end
 
-    test "corrupt rows COUNT too (COUNT(*) never decodes — old semantics)" do
+    test "corrupt task rows COUNT too (COUNT(*) never decodes — old semantics)" do
       pid = start_repo!(:size_corrupt)
 
       insert_task!(pid, id: "good")
       insert_raw_task!(pid, id: "bad", opts: "{not json")
-      insert_raw_project!(pid, "/praw", "PRaw", nil)
+      insert_mount!(pid, "vct:///projects/praw", "/praw", nil)
 
-      # size/1 counts rows, it does not decode them: 2 tasks + 1 project.
+      # size/1 counts rows, it does not decode them: 2 tasks + 1 mount.
       assert Safety.size(pid) == 3
-      # ...while the safe selects skip the undecodable ones.
+      # ...while the safe select skips the undecodable task.
       assert ids(Safety.safe_select_all_tasks(pid)) == ["good"]
-      assert paths(Safety.safe_select_all_projects(pid)) == ["/praw"]
+      assert points(VctMounts.list(pid)) == ["vct:///projects/praw"]
     end
   end
 end

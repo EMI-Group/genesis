@@ -6,7 +6,6 @@ defmodule EvoGit.StoreTest do
   alias EvoGit.Store.Codec
   alias EvoGit.Store.RepoScope
   alias EvoGit.TaskInfo
-  alias EvoGit.RecentProject
   alias EvoGit.TestSupport.StoreTemplate
 
   # The production Store/TaskRegistry are owned by this module for its whole
@@ -620,22 +619,58 @@ defmodule EvoGit.StoreTest do
     end
   end
 
-  describe "project put/get round-trip" do
-    test "RecentProject round-trips correctly" do
-      project = %RecentProject{
-        path: "/tmp/myproj",
-        name: "My Project",
+  describe "vct mount table round-trip" do
+    test "save_vct_mounts/2 replaces the whole table and list_vct_mounts/1 reads it back" do
+      older = %{
+        point: "vct:///projects/alpha",
+        path: "/tmp/alpha",
+        name: "Alpha",
+        kind: "git",
         last_opened_at: ~U[2026-06-26 07:19:44Z]
       }
 
-      :ok = Store.put_project(Store, project)
-      fetched = Store.get_project(Store, "/tmp/myproj")
+      # String-keyed entries (the shape `EvoGit.VCT.Mount.to_map/1` produces)
+      # are accepted interchangeably with atom-keyed ones.
+      newer = %{
+        "point" => "vct:///projects/beta",
+        "path" => "/tmp/beta",
+        "name" => "Beta",
+        "kind" => "git",
+        "last_opened_at" => ~U[2026-07-01 09:00:00Z]
+      }
 
-      assert %RecentProject{} = fetched
-      assert fetched.path == "/tmp/myproj"
-      assert fetched.name == "My Project"
-      assert %DateTime{} = fetched.last_opened_at
-      assert DateTime.compare(fetched.last_opened_at, ~U[2026-06-26 07:19:44Z]) == :eq
+      assert :ok = Store.save_vct_mounts(Store, [older, newer])
+
+      # Newest first, and every entry carries exactly the five mount fields.
+      assert [
+               %{
+                 "point" => "vct:///projects/beta",
+                 "path" => "/tmp/beta",
+                 "name" => "Beta",
+                 "kind" => "git",
+                 "last_opened_at" => %DateTime{} = beta_opened
+               },
+               %{
+                 "point" => "vct:///projects/alpha",
+                 "path" => "/tmp/alpha",
+                 "name" => "Alpha",
+                 "kind" => "git",
+                 "last_opened_at" => %DateTime{} = alpha_opened
+               }
+             ] = Store.list_vct_mounts(Store)
+
+      assert DateTime.compare(beta_opened, ~U[2026-07-01 09:00:00Z]) == :eq
+      assert DateTime.compare(alpha_opened, ~U[2026-06-26 07:19:44Z]) == :eq
+
+      # REPLACE-ALL: a smaller list drops the rows it no longer carries.
+      assert :ok = Store.save_vct_mounts(Store, [older])
+
+      assert Enum.map(Store.list_vct_mounts(Store), & &1["point"]) ==
+               ["vct:///projects/alpha"]
+
+      # An empty list empties the table.
+      assert :ok = Store.save_vct_mounts(Store, [])
+      assert Store.list_vct_mounts(Store) == []
     end
   end
 
@@ -648,9 +683,6 @@ defmodule EvoGit.StoreTest do
 
       assert Store.put_task(Store, %TaskInfo{id: nil, status: :pending}) ==
                {:error, :missing_task_id}
-
-      assert Store.put_project(Store, %RecentProject{path: nil, name: "x"}) ==
-               {:error, :missing_project_path}
     end
   end
 
@@ -701,9 +733,12 @@ defmodule EvoGit.StoreTest do
   end
 
   describe "select and count" do
-    test "facade read/count helpers (projects, size) and clear_tasks with its archive cascade" do
-      :ok = Store.put_project(Store, %RecentProject{path: "/p1", name: "P1"})
-      :ok = Store.put_project(Store, %RecentProject{path: "/p2", name: "P2"})
+    test "facade read/count helpers (vct mounts, size) and clear_tasks with its archive cascade" do
+      :ok =
+        Store.save_vct_mounts(Store, [
+          %{point: "vct:///projects/p1", path: "/p1", name: "P1", kind: "git"},
+          %{point: "vct:///projects/p2", path: "/p2", name: "P2", kind: "git"}
+        ])
 
       for task_id <- ["clr-arch-1", "clr-arch-2"] do
         :ok =
@@ -717,11 +752,10 @@ defmodule EvoGit.StoreTest do
         :ok = Store.put_task_archive(Store, archive_entry(task_id, 1, 0))
       end
 
-      assert Store.select_all_projects(Store) |> Enum.map(& &1.path) |> Enum.sort() ==
+      assert Store.list_vct_mounts(Store) |> Enum.map(& &1["path"]) |> Enum.sort() ==
                ["/p1", "/p2"]
 
-      assert Store.count_projects(Store) == 2
-      # size/1 sums ROW COUNTS across both tables.
+      # size/1 sums ROW COUNTS across the task and mount tables.
       assert Store.size(Store) == 4
       assert %{total: 1} = Store.list_task_archives(Store, "clr-arch-1")
 
@@ -731,8 +765,9 @@ defmodule EvoGit.StoreTest do
       assert Store.list_task_archives(Store, "clr-arch-1") == %{entries: [], total: 0}
       assert Store.list_task_archives(Store, "clr-arch-2") == %{entries: [], total: 0}
       assert Store.get_agent_archive(Store, "clr-arch-1", 1) == nil
-      # Projects are untouched by a task clear.
-      assert Store.count_projects(Store) == 2
+      # Mounts are untouched by a task clear.
+      assert Store.list_vct_mounts(Store) |> length() == 2
+      assert Store.size(Store) == 2
     end
   end
 
@@ -929,84 +964,6 @@ defmodule EvoGit.StoreTest do
       :ok = XqliteNIF.close(conn2)
     end
 
-    test "safe_select_all_projects skips an undecodable row, logs a warning, and leaves the row in place",
-         %{sqlite_path: sqlite_path} do
-      :ok =
-        Store.put_project(Store, %RecentProject{
-          path: "/good/proj",
-          name: "Good Project",
-          last_opened_at: ~U[2026-06-26 07:19:44Z]
-        })
-
-      # Inject an undecodable project row via raw SQL. All `projects` columns
-      # are TEXT, and SQLite's TEXT affinity converts inserted integers to
-      # strings — so a plain garbage INSERT can never fail to decode. To
-      # exercise the skip-and-log boundary we recreate the table with an
-      # INTEGER `last_opened_at` column (a schema an old DB version could
-      # plausibly have had), then insert a genuine INTEGER there —
-      # decode_datetime/1 raises FunctionClauseError on non-binary values.
-      {:ok, conn} = Xqlite.open(sqlite_path)
-
-      XqliteNIF.execute(conn, "DROP TABLE projects", [])
-
-      XqliteNIF.execute(
-        conn,
-        "CREATE TABLE projects (path TEXT PRIMARY KEY, name TEXT, last_opened_at INTEGER)",
-        []
-      )
-
-      XqliteNIF.execute(
-        conn,
-        "INSERT OR REPLACE INTO projects (path, name, last_opened_at) VALUES (?1, ?2, ?3)",
-        ["/good/proj", "Good Project", "2026-06-26T07:19:44.000Z"]
-      )
-
-      XqliteNIF.execute(
-        conn,
-        "INSERT OR REPLACE INTO projects (path, name, last_opened_at) VALUES (?1, ?2, ?3)",
-        ["/bad/proj", "Bad Project", 12345]
-      )
-
-      :ok = XqliteNIF.close(conn)
-
-      log =
-        ExUnit.CaptureLog.capture_log(fn ->
-          projects = Store.safe_select_all_projects(Store)
-
-          # The bad row is SKIPPED — only the decodable project is returned.
-          paths = Enum.map(projects, & &1.path)
-          assert paths == ["/good/proj"]
-          refute "/bad/proj" in paths
-        end)
-
-      # A warning is logged identifying the skipped row.
-      assert log =~ "skipping undecodable row in projects"
-      assert log =~ "/bad/proj"
-
-      # The bad row REMAINS untouched in the live projects table.
-      {:ok, conn2} = Xqlite.open(sqlite_path)
-
-      {:ok, %{rows: remaining}} =
-        XqliteNIF.query(
-          conn2,
-          "SELECT path, name, last_opened_at FROM projects WHERE path = ?1",
-          ["/bad/proj"]
-        )
-
-      assert remaining == [["/bad/proj", "Bad Project", 12345]]
-
-      # The skip-and-log boundary must never create the legacy quarantine table
-      # (which no longer exists in the schema).
-      {:ok, %{rows: q_tables}} =
-        XqliteNIF.query(
-          conn2,
-          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projects_quarantine'",
-          []
-        )
-
-      assert q_tables == []
-      :ok = XqliteNIF.close(conn2)
-    end
   end
 
   describe "atom field round-trip safety (regression)" do

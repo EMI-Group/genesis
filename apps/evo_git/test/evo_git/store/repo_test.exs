@@ -20,8 +20,8 @@ defmodule EvoGit.Store.RepoTest do
       four redundant single-column indexes `20260815000006_prune_redundant_indexes`
       drops are GONE; `task_agent_archives`
       carries its `(task_id, depth, agent_id)` index and its composite
-      `(task_id, agent_id)` PK autoindex; `projects` carries its TEXT-PK
-      autoindex
+      `(task_id, agent_id)` PK autoindex; `vct_mounts` carries its TEXT-PK
+      autoindex plus the UNIQUE-path autoindex
     * `Boot.run_migrations/1` is idempotent (a re-run migrates nothing)
     * committed rows survive `Boot.stop/1` → `start_dynamic/1` on the same path
     * two dynamic instances on distinct paths coexist with independent data
@@ -47,7 +47,7 @@ defmodule EvoGit.Store.RepoTest do
   alias EvoGit.Store.Boot
   alias EvoGit.Store.Codec
   alias EvoGit.Store.RepoScope
-  alias EvoGit.Store.Schemas.ProjectRow
+  alias EvoGit.Store.Schemas.VctMountRow
   alias EvoGit.Store.Schemas.TaskAgentArchiveRow
   alias EvoGit.Store.Schemas.TaskRow
 
@@ -57,18 +57,21 @@ defmodule EvoGit.Store.RepoTest do
   @covering_index_version 20_260_815_000_004
   @archive_table_version 20_260_815_000_005
   @prune_indexes_version 20_260_815_000_006
+  @vct_mounts_version 20_260_815_000_007
   # Ascending, exactly as `schema_migrations` reports it: the ONE schema-creating
   # baseline, the data normalization, the two shipped index migrations (the
   # `(equality, started_at)` composites, then the covering pair), the merged
   # archive-table migration (legacy fan-out + `archive_metadata` drop, both
-  # skipped on a fresh database), and finally the redundant-index prune.
+  # skipped on a fresh database), the redundant-index prune, and finally the
+  # VCT mount table (which also retires any legacy `projects` table).
   @migration_versions [
     @baseline_version,
     @normalization_version,
     @composite_index_version,
     @covering_index_version,
     @archive_table_version,
-    @prune_indexes_version
+    @prune_indexes_version,
+    @vct_mounts_version
   ]
 
   # `tasks` columns RETIRED from the live table: the per-agent archive moved to
@@ -216,13 +219,13 @@ defmodule EvoGit.Store.RepoTest do
     end)
   end
 
-  # ProjectRow's `last_opened_at` is a `Types.TaskTimestamp` — a %DateTime{}
+  # VctMountRow's `last_opened_at` is a `Types.TaskTimestamp` — a %DateTime{}
   # dumps to the fixed-ms ISO wire format, so insert_all through the TYPED
   # schema is the correct write path (mirrors repo_scope_test.exs).
-  defp insert_project(pid, path, name) do
+  defp insert_mount(pid, point, path, name) do
     RepoScope.with_repo(pid, fn ->
-      Repo.insert_all(ProjectRow, [
-        [path: path, name: name, last_opened_at: ~U[2024-05-05 05:05:05.555Z]]
+      Repo.insert_all(VctMountRow, [
+        [point: point, path: path, name: name, last_opened_at: ~U[2024-05-05 05:05:05.555Z]]
       ])
     end)
   end
@@ -254,7 +257,7 @@ defmodule EvoGit.Store.RepoTest do
                pid,
                "SELECT name FROM sqlite_master WHERE type = 'table' " <>
                  "AND name NOT LIKE 'sqlite_stat%' ORDER BY name"
-             ) == [["projects"], ["schema_migrations"], [@archive_table], ["tasks"]]
+             ) == [["schema_migrations"], [@archive_table], ["tasks"], ["vct_mounts"]]
     end
   end
 
@@ -308,25 +311,29 @@ defmodule EvoGit.Store.RepoTest do
     end
   end
 
-  # ── projects table shape ─────────────────────────────────────────────────
+  # ── vct_mounts table shape ───────────────────────────────────────────────
 
-  describe "projects table shape" do
-    test "exact 3-column shape with path as the TEXT primary key" do
-      pid = start_repo!(:projects)
+  describe "vct_mounts table shape" do
+    test "exact 5-column shape with point as the TEXT primary key" do
+      pid = start_repo!(:vct_mounts)
 
-      assert query_rows(pid, "PRAGMA table_info(projects)") == [
-               [0, "path", "TEXT", 0, nil, 1],
-               [1, "name", "TEXT", 0, nil, 0],
-               [2, "last_opened_at", "TEXT", 0, nil, 0]
+      assert query_rows(pid, "PRAGMA table_info(vct_mounts)") == [
+               [0, "point", "TEXT", 1, nil, 1],
+               [1, "path", "TEXT", 1, nil, 0],
+               [2, "name", "TEXT", 1, nil, 0],
+               [3, "kind", "TEXT", 1, nil, 0],
+               [4, "last_opened_at", "TEXT", 0, nil, 0]
              ]
     end
 
-    test "primary key is backed by exactly one UNIQUE autoindex" do
-      pid = start_repo!(:projects_pk)
+    test "point PK and UNIQUE path are each backed by an autoindex" do
+      pid = start_repo!(:vct_mounts_pk)
 
-      assert query_rows(pid, "PRAGMA index_list(projects)")
-             |> Enum.map(fn [_seq, name | rest] -> [name | rest] end) == [
-               ["sqlite_autoindex_projects_1", 1, "pk", 0]
+      assert query_rows(pid, "PRAGMA index_list(vct_mounts)")
+             |> Enum.map(fn [_seq, name | rest] -> [name | rest] end)
+             |> Enum.sort() == [
+               ["sqlite_autoindex_vct_mounts_1", 1, "pk", 0],
+               ["sqlite_autoindex_vct_mounts_2", 1, "u", 0]
              ]
     end
   end
@@ -437,8 +444,9 @@ defmodule EvoGit.Store.RepoTest do
                    [
                      [@archive_index_name, @archive_table],
                      [@archive_pk_autoindex, @archive_table],
-                     ["sqlite_autoindex_projects_1", "projects"],
-                     ["sqlite_autoindex_tasks_1", "tasks"]
+                     ["sqlite_autoindex_tasks_1", "tasks"],
+                     ["sqlite_autoindex_vct_mounts_1", "vct_mounts"],
+                     ["sqlite_autoindex_vct_mounts_2", "vct_mounts"]
                    ]
                )
     end
@@ -491,8 +499,8 @@ defmodule EvoGit.Store.RepoTest do
         remove_db(path)
       end)
 
-      assert RepoScope.with_repo(pid, fn -> Repo.aggregate(ProjectRow, :count) end) == 0
-      assert insert_project(pid, "/r6a/durable", "Durable") == {1, nil}
+      assert RepoScope.with_repo(pid, fn -> Repo.aggregate(VctMountRow, :count) end) == 0
+      assert insert_mount(pid, "vct:///projects/durable", "/r6a/durable", "Durable") == {1, nil}
 
       :ok = Boot.stop(pid)
 
@@ -500,7 +508,7 @@ defmodule EvoGit.Store.RepoTest do
       Process.unlink(pid2)
       on_exit(fn -> stop_quietly(pid2) end)
 
-      row = RepoScope.with_repo(pid2, fn -> Repo.get(ProjectRow, "/r6a/durable") end)
+      row = RepoScope.with_repo(pid2, fn -> Repo.get(VctMountRow, "vct:///projects/durable") end)
 
       assert {row.path, row.name, row.last_opened_at} ==
                {"/r6a/durable", "Durable", ~U[2024-05-05 05:05:05.555Z]}
@@ -514,15 +522,17 @@ defmodule EvoGit.Store.RepoTest do
       pid_a = start_repo!(:coexist_a)
       pid_b = start_repo!(:coexist_b)
 
-      assert insert_project(pid_a, "/r6a/a", "A") == {1, nil}
-      assert insert_project(pid_b, "/r6a/b", "B") == {1, nil}
+      assert insert_mount(pid_a, "vct:///projects/a", "/r6a/a", "A") == {1, nil}
+      assert insert_mount(pid_b, "vct:///projects/b", "/r6a/b", "B") == {1, nil}
 
       assert RepoScope.with_repo(pid_a, fn ->
-               {Repo.aggregate(ProjectRow, :count), Repo.get(ProjectRow, "/r6a/a").name}
+               {Repo.aggregate(VctMountRow, :count),
+                Repo.get(VctMountRow, "vct:///projects/a").name}
              end) == {1, "A"}
 
       assert RepoScope.with_repo(pid_b, fn ->
-               {Repo.aggregate(ProjectRow, :count), Repo.get(ProjectRow, "/r6a/b").name}
+               {Repo.aggregate(VctMountRow, :count),
+                Repo.get(VctMountRow, "vct:///projects/b").name}
              end) == {1, "B"}
     end
   end

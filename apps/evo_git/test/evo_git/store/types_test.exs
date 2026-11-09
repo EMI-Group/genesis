@@ -25,9 +25,8 @@ defmodule EvoGit.Store.TypesTest do
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.Usage
-  alias EvoGit.RecentProject
   alias EvoGit.Store.Codec
-  alias EvoGit.Store.Schemas.ProjectRow
+  alias EvoGit.Store.Schemas.VctMountRow
   alias EvoGit.Store.Schemas.TaskRow
   alias EvoGit.Store.Types
 
@@ -936,27 +935,50 @@ defmodule EvoGit.Store.TypesTest do
     end
   end
 
-  describe "ProjectRow schema end-to-end" do
-    test "columns/0 matches Codec.project_columns/0" do
-      assert ProjectRow.columns() == Codec.project_columns()
+  describe "VctMountRow schema end-to-end" do
+    test "columns/0 matches the schema's own field list" do
+      assert VctMountRow.columns() ==
+               VctMountRow.__schema__(:fields) |> Enum.map(&Atom.to_string/1)
+
+      assert VctMountRow.columns() == ["point", "path", "name", "kind", "last_opened_at"]
     end
 
-    test "schema dump equals Codec.encode_project/1" do
-      project = %RecentProject{
+    test "schema dump/load round-trips a mount row through its declared types" do
+      mount = %{
+        point: "vct:///projects/repo",
         path: "/tmp/repo",
         name: "My Repo",
+        kind: "git",
         last_opened_at: ~U[2024-05-05 05:05:05.555Z]
       }
 
-      attrs = %{path: project.path, name: project.name, last_opened_at: project.last_opened_at}
-      dumped = dump_row(ProjectRow, attrs)
+      dumped = dump_row(VctMountRow, mount)
 
-      expected =
-        Codec.encode_project(project)
-        |> Enum.zip(ProjectRow.columns())
-        |> Map.new(fn {value, col} -> {String.to_atom(col), value} end)
+      # `last_opened_at` is a `TaskTimestamp`: fixed-millisecond ISO-8601 TEXT.
+      assert dumped == %{
+               point: "vct:///projects/repo",
+               path: "/tmp/repo",
+               name: "My Repo",
+               kind: "git",
+               last_opened_at: "2024-05-05T05:05:05.555Z"
+             }
 
-      assert dumped == expected
+      loaded =
+        for {field, value} <- dumped,
+            into: %{} do
+          {:ok, cast} = Ecto.Type.load(VctMountRow.__schema__(:type, field), value)
+          {field, cast}
+        end
+
+      assert loaded == mount
+    end
+
+    test "a nil last_opened_at stays NULL and the point is the primary key" do
+      assert VctMountRow.__schema__(:primary_key) == [:point]
+      assert VctMountRow.__schema__(:type, :kind) == :string
+
+      assert dump_row(VctMountRow, %{last_opened_at: nil}) == %{last_opened_at: nil}
+      assert Ecto.Type.load(VctMountRow.__schema__(:type, :last_opened_at), nil) == {:ok, nil}
     end
   end
 

@@ -116,7 +116,7 @@ defmodule EvoGit.Agent.ToolsTest do
         for old <- ~w(
               run_command complete_task list_tasks get_task start_task cancel_task
               force_kill_task delete_task guide_user subagent_investigator
-              list_recent_projects system_info bash write edit create_files
+              list_projects system_info bash write edit create_files
               make_dir write_context edit_context
             ) do
           refute old in names,
