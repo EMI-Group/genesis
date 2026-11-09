@@ -3,9 +3,9 @@ defmodule EvoGit.TestSupport.StoreTemplate do
   A schema-complete SQLite TEMPLATE, built ONCE per test BEAM and copied per
   test.
 
-  Creating a brand-new SQLite file plus running the six shipped store
+  Creating a brand-new SQLite file plus running the seven shipped store
   migrations costs ~23 ms of store boot (measured here: one real baseline DDL
-  followed by five probe-guarded no-ops); copying the checkpointed template and
+  followed by six probe-guarded no-ops); copying the checkpointed template and
   booting a store on the copy costs ~2 ms. Every test still gets its own
   isolated database FILE with the identical schema, so isolation semantics are
   unchanged.

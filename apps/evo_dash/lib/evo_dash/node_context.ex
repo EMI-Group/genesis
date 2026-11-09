@@ -555,25 +555,47 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
-  Lists recent projects on the given node.
+  Lists the persistent Virtual Context Tree project mounts of the given node.
 
-  Delegates to `EvoGit.RemoteNode.list_recent_projects/1`. Returns `[]` if the
-  remote call fails.
+  Delegates to `EvoGit.RemoteNode.projects/1`. Returns the node's VCT project
+  mounts, newest-opened first; the core caps the mount table at
+  `EvoGit.VCT.max_projects/0`. A failed remote call degrades to `[]` (the core
+  turns a remote error into `[]`), so the dashboard never crashes or blocks on
+  the project list.
   """
-  @spec list_recent_projects(node()) :: [EvoGit.RecentProject.t()]
-  def list_recent_projects(node) do
-    EvoGit.RemoteNode.list_recent_projects(node)
+  @spec projects(node()) :: [EvoGit.VCT.Mount.t()]
+  def projects(node) do
+    EvoGit.RemoteNode.projects(node)
   end
 
   @doc """
-  Adds a recent project on the given node.
+  Mounts an OS project path in the given node's Virtual Context Tree.
 
-  Delegates to `EvoGit.RemoteNode.add_recent_project/3`. Returns `:ok` on
-  success or `{:error, term()}` on failure.
+  Delegates to `EvoGit.RemoteNode.mount_project/3`. Records (or refreshes) the
+  project mount for an absolute OS path; mounting is idempotent — re-mounting an
+  already-mounted path refreshes its `last_opened_at` and keeps its `point`.
+  Returns `{:ok, %EvoGit.VCT.Mount{}}` on success, `{:error, reason}` when the
+  core rejects the request, and `{:error, {kind, reason}}` on a remote transport
+  failure.
   """
-  @spec add_recent_project(node(), String.t(), String.t()) :: :ok | {:error, term()}
-  def add_recent_project(node, path, name) do
-    EvoGit.RemoteNode.add_recent_project(node, path, name)
+  @spec mount_project(node(), String.t(), String.t() | nil) ::
+          {:ok, EvoGit.VCT.Mount.t()} | {:error, term()}
+  def mount_project(node, path, name) do
+    EvoGit.RemoteNode.mount_project(node, path, name)
+  end
+
+  @doc """
+  Forgets one project mount on the given node.
+
+  Delegates to `EvoGit.RemoteNode.forget_project/2`. `key` is a VCT point (e.g.
+  `vct:///projects/foo`) or an absolute OS path; forgetting works on the local
+  node and on remote nodes alike. Returns `:ok` on success, `{:error,
+  :not_found}` when no mount matches, `{:error, :invalid_point}` for a bad VCT
+  point, or `{:error, {kind, reason}}` on a remote transport failure.
+  """
+  @spec forget_project(node(), term()) :: :ok | {:error, term()}
+  def forget_project(node, key) do
+    EvoGit.RemoteNode.forget_project(node, key)
   end
 
   @doc """

@@ -2,13 +2,14 @@
 
 ## Intent
 
-This directory contains six async ExUnit suites for ProjectsLive support-module behavior without mounting a page.
+This directory contains six ExUnit suites (seven case modules) for ProjectsLive support-module behavior without mounting a page.
+Five suites are purely `async: true`; `project_flow_test.exs` pairs an async module with the sync `ProjectFlowVctTest`.
 The mounted ProjectsLive integration suite lives in the parent directory's `projects_live_test.exs`.
 
 ## API Surface
 
 - `project_test.exs` covers legacy `Project.load_model_profiles/0,1` and the injected-config seam `Project.load_model_profiles_from_config/2`.
-- `project_flow_test.exs` covers local/remote path normalization, node-aware foreign-repo construction/restoration, and recent-path suggestions.
+- `project_flow_test.exs` covers local/remote path normalization, node-aware foreign-repo construction/restoration, and path suggestions over the loaded VCT mounts. Its sync `ProjectFlowVctTest` mounts a real per-test-unique VCT row and pins `mount_point_for/2` plus `AsyncLoad.filter_absolute_projects/1` against actual `%EvoGit.VCT.Mount{}` rows.
 - `state_persistence_test.exs` covers `StatePersistence.maybe_restore_foreign_repos/2` and `serialize_foreign_repos/1` on minimal LiveView sockets.
 - `launch_options_test.exs` covers the shared normal/GitHub launch boundary, explicit canonical `model_spec` locking, Auto stripping carried locks, default selection with rules enabled, reasoning omission without an inventory, custom agent/quality options, owned-ready remote launches, and strict stale/unloaded/pending/unowned/unavailable-selection errors.
 - `model_selection_persistence_test.exs` covers canonical-field-only serialization, pending canonical/legacy restore precedence, explicit Auto, invalid input, pending-remote isolation, reconciliation, owned-ready remote persistence and blocked pending/unowned/unavailable bundles, and separate full-state versus node-scoped partial-selection push events.
@@ -16,7 +17,8 @@ The mounted ProjectsLive integration suite lives in the parent directory's `proj
 
 ## Constraints
 
-All six modules use `async: true` and require no LiveView mounts or database fixtures.
+Every module except `EvoDashWeb.ProjectsLive.ProjectFlowVctTest` uses `async: true` and requires no LiveView mounts or database fixtures.
+`ProjectFlowVctTest` is `async: false` because the `EvoGit.VCT` mount table is a BEAM-global singleton persisted on the run-wide test store; it never clears the table and only forgets the row it created.
 The canonical-selection suites use in-memory config maps and sockets, never app-env runner overrides, task launches, network calls or global state mutations.
 Canonical bundle fixtures call the public `Project.load_model_selection_from_config/2` API rather than mocking the core resolver.
 `ProjectTest` isolates configuration per process with `EvoDash.Test.ConfigDir.isolate!/1` and can inject local resolved configuration through `Process.put(:memo_config_resolve, config)`.

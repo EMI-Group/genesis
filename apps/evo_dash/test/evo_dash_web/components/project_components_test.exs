@@ -5,6 +5,7 @@ defmodule EvoDashWeb.ProjectComponentsTest do
 
   alias EvoDashWeb.ProjectComponents
   alias EvoGit.Core.ForeignRepo
+  alias EvoGit.VCT.Mount
 
   # Component-level tests for the command-palette project selector
   # (`project_omnibox/1`): the client-side wiring that makes keyboard
@@ -580,7 +581,228 @@ defmodule EvoDashWeb.ProjectComponentsTest do
     end
   end
 
+  # The palette's project filter matches the VCT mount's `point` in addition to
+  # the display name and the OS path, so a user can find a project by the VCT
+  # point the registry owns. Entries without a point (nil or an absent key)
+  # must keep matching by name/path and never crash.
+  describe "filter_projects/2" do
+    test "matches the name, the OS path and the VCT point case-insensitively" do
+      projects = [
+        %Mount{point: "vct:///projects/Alpha-One", path: "/home/user/alpha", name: "alpha"},
+        %Mount{point: "vct:///projects/bravo", path: "/home/user/bravo", name: "bravo"}
+      ]
+
+      assert [%{name: "alpha"}] = ProjectComponents.filter_projects(projects, "alpha")
+      assert [%{name: "alpha"}] = ProjectComponents.filter_projects(projects, "ALPHA")
+
+      assert [%{name: "alpha"}] =
+               ProjectComponents.filter_projects(projects, "/HOME/USER/ALPHA")
+
+      assert [%{name: "alpha"}] = ProjectComponents.filter_projects(projects, "alpha-one")
+
+      assert [%{name: "alpha"}] =
+               ProjectComponents.filter_projects(projects, "VCT:///PROJECTS/ALPHA")
+    end
+
+    test "blank, whitespace-only and nil queries return the full list unchanged" do
+      projects = [
+        %Mount{point: "vct:///projects/alpha", path: "/home/user/alpha", name: "alpha"},
+        %Mount{point: nil, path: "/home/user/bravo", name: "bravo"}
+      ]
+
+      assert ProjectComponents.filter_projects(projects, "") == projects
+      assert ProjectComponents.filter_projects(projects, "   ") == projects
+      assert ProjectComponents.filter_projects(projects, " \t\n ") == projects
+      assert ProjectComponents.filter_projects(projects, nil) == projects
+    end
+
+    test "a non-binary query is stringified before matching" do
+      projects = [
+        %Mount{point: "vct:///projects/alpha", path: "/home/user/alpha", name: "alpha"}
+      ]
+
+      assert ProjectComponents.filter_projects(projects, 42) == []
+
+      numbered = [
+        %Mount{point: "vct:///projects/build-42", path: "/home/user/build-42", name: "build"}
+      ]
+
+      assert [%{name: "build"}] = ProjectComponents.filter_projects(numbered, 42)
+      assert ProjectComponents.filter_projects(numbered, "42") == numbered
+    end
+
+    test "entries with a nil point or an absent :point key still match by name and path" do
+      projects = [
+        %Mount{point: nil, path: "/home/user/legacy", name: "legacy"},
+        %{name: "plain", path: "/home/user/plain"}
+      ]
+
+      assert [%{name: "legacy"}] = ProjectComponents.filter_projects(projects, "legacy")
+
+      assert [%{name: "legacy"}] =
+               ProjectComponents.filter_projects(projects, "/HOME/USER/LEGACY")
+
+      assert [%{name: "plain"}] = ProjectComponents.filter_projects(projects, "plain")
+
+      assert [%{name: "plain"}] =
+               ProjectComponents.filter_projects(projects, "/home/user/plain")
+    end
+
+    test "a query matching nothing returns an empty list" do
+      projects = [
+        %Mount{point: "vct:///projects/alpha", path: "/home/user/alpha", name: "alpha"}
+      ]
+
+      assert ProjectComponents.filter_projects(projects, "missing") == []
+      assert ProjectComponents.filter_projects(projects, "vct:///other/place") == []
+    end
+  end
+
+  # The palette lists the VCT project registry: each row's primary line is the
+  # mount's VCT `point` and its secondary line the OS `path`, and every row
+  # carries a SIBLING Forget button (the VCT point is the forget value) that is
+  # available on LOCAL and REMOTE nodes alike.
+  describe "palette project rows and Forget action" do
+    test "renders the Projects heading and one row per mount with point and path" do
+      html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :menu,
+          projects: [alpha_mount(), bravo_mount()]
+        )
+
+      assert html =~ "Projects"
+
+      rows = Floki.find(parse(html), "button[phx-click=select_project]")
+      assert length(rows) == 2
+
+      assert Enum.map(rows, &Floki.attribute(&1, "phx-value-path")) == [
+               ["/home/user/alpha"],
+               ["/home/user/bravo"]
+             ]
+
+      assert Enum.map(rows, &row_lines/1) == [
+               %{
+                 primary: "vct:///projects/alpha",
+                 path: "/home/user/alpha",
+                 title: "/home/user/alpha"
+               },
+               %{
+                 primary: "vct:///projects/bravo",
+                 path: "/home/user/bravo",
+                 title: "/home/user/bravo"
+               }
+             ]
+    end
+
+    test "the Projects heading renders only when the filtered list is non-empty" do
+      html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :menu,
+          palette_search: "zzz-nothing",
+          projects: [alpha_mount(), bravo_mount()]
+        )
+
+      refute html =~ "Projects"
+      assert html =~ "No matching projects"
+      assert Floki.find(parse(html), "button[phx-click=select_project]") == []
+      assert Floki.find(parse(html), "button[phx-click=forget_project]") == []
+    end
+
+    test "renders one Forget button per mount carrying its VCT point" do
+      html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :menu,
+          projects: [alpha_mount(), bravo_mount()]
+        )
+
+      buttons = Floki.find(parse(html), "button[phx-click=forget_project]")
+      assert length(buttons) == 2
+
+      assert Enum.map(buttons, &Floki.attribute(&1, "phx-value-point")) == [
+               ["vct:///projects/alpha"],
+               ["vct:///projects/bravo"]
+             ]
+
+      assert Enum.map(buttons, &Floki.attribute(&1, "aria-label")) == [
+               ["Forget alpha"],
+               ["Forget bravo"]
+             ]
+
+      assert Enum.all?(buttons, fn button ->
+               Floki.attribute(button, "title") == ["Forget project"] and
+                 Floki.attribute(button, "phx-stop-propagation") != []
+             end)
+    end
+
+    test "the Forget action renders on local and remote nodes alike" do
+      for remote <- [false, true] do
+        html =
+          render_component(&ProjectComponents.project_omnibox/1,
+            palette_open: true,
+            palette_mode: :menu,
+            remote: remote,
+            projects: [alpha_mount(), bravo_mount()]
+          )
+
+        buttons = Floki.find(parse(html), "button[phx-click=forget_project]")
+        assert length(buttons) == 2
+
+        assert Enum.map(buttons, &Floki.attribute(&1, "phx-value-point")) == [
+                 ["vct:///projects/alpha"],
+                 ["vct:///projects/bravo"]
+               ]
+      end
+    end
+
+    test "trigger shows the active mount's point, falling back to the OS path" do
+      with_point =
+        render_component(&ProjectComponents.project_omnibox/1, active_project: alpha_mount())
+
+      assert trigger_secondary(with_point) == "vct:///projects/alpha"
+
+      without_point =
+        render_component(&ProjectComponents.project_omnibox/1,
+          active_project: %{name: "plain", path: "/home/user/plain"}
+        )
+
+      refute without_point =~ "vct://"
+      assert trigger_secondary(without_point) == "/home/user/plain"
+    end
+  end
+
   # --- helpers ---
+
+  # A VCT mount as the palette receives it (one entry of the project registry).
+  defp alpha_mount do
+    %Mount{point: "vct:///projects/alpha", path: "/home/user/alpha", name: "alpha"}
+  end
+
+  defp bravo_mount do
+    %Mount{point: "vct:///projects/bravo", path: "/home/user/bravo", name: "bravo"}
+  end
+
+  # The two text lines of one palette row: the primary line (VCT point, or the
+  # display name when the mount carries no point) and the secondary OS path
+  # line, which also carries the full path as its `title`.
+  defp row_lines(row) do
+    [primary, path] = Floki.find(row, "div div")
+
+    %{
+      primary: primary |> Floki.text() |> String.trim(),
+      path: path |> Floki.text() |> String.trim(),
+      title: path |> Floki.attribute("title") |> List.first()
+    }
+  end
+
+  # The trigger's secondary line is the ONLY span inside the trigger carrying a
+  # `title` (the OS path).
+  defp trigger_secondary(html) do
+    [span] = Floki.find(parse(html), "button.project-palette-trigger span[title]")
+    span |> Floki.text() |> String.trim()
+  end
 
   defp trigger_class(html) do
     [btn] = Floki.find(parse(html), ".project-palette-trigger")

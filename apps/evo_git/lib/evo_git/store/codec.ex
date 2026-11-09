@@ -14,8 +14,8 @@ defmodule EvoGit.Store.Codec do
   ## Decode philosophy
 
   Decode functions raise on bad data — the Store's safe-select helpers
-  (`safe_select_all_tasks/1`, `safe_select_all_projects/1`,
-  `safe_select_paginated_tasks/2`) and the summary reads
+  (`safe_select_all_tasks/1`, `safe_select_paginated_tasks/2`) and the
+  summary reads
   (`select_tasks_summary/3`, `select_tasks_summary_by_path/4`,
   `select_tasks_changed_since/2`) skip undecodable rows and log a warning
   instead of crashing.
@@ -58,10 +58,8 @@ defmodule EvoGit.Store.Codec do
   require Logger
 
   alias EvoGit.TaskInfo
-  alias EvoGit.RecentProject
 
   @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error)
-  @project_columns ~w(path name last_opened_at)
 
   @usage_fields [
     :input_tokens,
@@ -103,9 +101,6 @@ defmodule EvoGit.Store.Codec do
 
   @doc "Returns the ordered list of task column names."
   def task_columns, do: @task_columns
-
-  @doc "Returns the ordered list of project column names."
-  def project_columns, do: @project_columns
 
   ## Public — Encode (struct → column values)
 
@@ -150,14 +145,6 @@ defmodule EvoGit.Store.Codec do
   end
 
   defp extract_branch_name(_other), do: nil
-
-  def encode_project(%RecentProject{} = project) do
-    [
-      project.path,
-      project.name,
-      encode_datetime(project.last_opened_at)
-    ]
-  end
 
   ## Public — Decode (column values → struct)
 
@@ -206,14 +193,6 @@ defmodule EvoGit.Store.Codec do
     }
   end
 
-  def decode_project([path, name, last_opened_at]) do
-    %RecentProject{
-      path: path,
-      name: name,
-      last_opened_at: decode_datetime(last_opened_at)
-    }
-  end
-
   ## Public — Validation
 
   def validate_task(%TaskInfo{id: id, status: status})
@@ -223,10 +202,6 @@ defmodule EvoGit.Store.Codec do
   def validate_task(%TaskInfo{id: nil}), do: {:error, :missing_task_id}
   def validate_task(%TaskInfo{status: nil}), do: {:error, :missing_task_status}
   def validate_task(%TaskInfo{}), do: {:error, :missing_task_id}
-
-  def validate_project(%RecentProject{path: path}) when is_binary(path), do: :ok
-  def validate_project(%RecentProject{path: nil}), do: {:error, :missing_project_path}
-  def validate_project(%RecentProject{}), do: {:error, :missing_project_path}
 
   ## Field encoders/decoders
 

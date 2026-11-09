@@ -4,19 +4,19 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
 
   Coordinator for the node-aware loads that must NOT run in the LiveView
   process (custom agents, canonical provider/model selections, remote project
-  config/mode, recent projects, and the
+  config/mode, the VCT project registry, and the
   notified-terminal-id seed). All loads run in ONE supervised
   `EvoDash.TaskSupervisor` task per connected handle_params run so the
   LiveView process never blocks on cross-node RPCs or on the task store — the
   remote path would otherwise serialize up to 6-8 `:erpc` round-trips on every
   navigation, and even the LOCAL store reads can take seconds.
 
-  This batch is the SINGLE seed for recent projects and the notified-id set:
-  `mount/3` seeds those assigns EMPTY (`recent_projects: []`,
+  This batch is the SINGLE seed for the project list and the notified-id set:
+  `mount/3` seeds those assigns EMPTY (`projects: []`,
   `notified_task_ids: MapSet.new()`, `notified_task_ids_ready?: false`) so the
   first paint never touches the store, and the continuation fills them a frame
   later (the mount's project auto-activation is likewise deferred to the
-  continuation — see `ProjectsLive.maybe_auto_activate_recent_project/1`).
+  continuation — see `ProjectsLive.maybe_auto_activate_project/1`).
   `terminal_ids` is loaded only for a LOCAL context that has not been seeded
   yet; a remote/pending context or an already-seeded socket leaves it nil.
 
@@ -37,7 +37,6 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   """
 
   alias EvoGit.Platform
-  alias EvoGit.TaskRegistry
 
   alias EvoDash.NodeContext
   alias EvoDashWeb.LLMSelection
@@ -67,7 +66,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
       (`nil` otherwise, so a remote/pending context and any later refresh
       never re-seed it).
     * `auto_activate?` — whether this spawn was the "no project in the URL"
-      candidate run, so the continuation may auto-activate the most recent
+      candidate run, so the continuation may auto-activate the newest-opened
       project.
   """
   def maybe_spawn(socket, prev_node_id) do
@@ -147,7 +146,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   # Do not read its agents/config or consume a pending remote model restore.
   def default_batch(target_node, _remote?, current_node_id, _path, _seed?, _auto?)
       when not is_nil(current_node_id) and (is_nil(target_node) or target_node == node()) do
-    %{recent_projects: [], terminal_ids: nil, auto_activate?: false}
+    %{projects: [], terminal_ids: nil, auto_activate?: false}
   end
 
   def default_batch(node, remote?, current_node_id, path, seed_terminal_ids?, auto_activate?) do
@@ -158,7 +157,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
       custom_agents: custom_agents,
       model_selection_enabled: model_selection_enabled,
       model_selection: model_selection,
-      recent_projects: load_recent_projects(remote?, current_node_id, node),
+      projects: load_projects(remote?, current_node_id, node),
       terminal_ids: if(seed_terminal_ids?, do: Notifications.load_terminal_ids()),
       auto_activate?: auto_activate?
     }
@@ -282,13 +281,13 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   end
 
   @doc """
-  Filters recent-project entries to absolute paths only. Stale cwd-joined
-  entries (produced by the pre-fix Windows relative-input bug, which
-  `Path.expand`ed bare folder names against the Tauri install dir) must never
-  render in the palette, feed auto-load, or reach path suggestions.
+  Filters project-registry entries to absolute OS paths only. Stale
+  cwd-joined entries (produced by the pre-fix Windows relative-input bug,
+  which `Path.expand`ed bare folder names against the Tauri install dir) must
+  never render in the palette, feed auto-load, or reach path suggestions.
   """
-  def filter_absolute_recent_projects(recent_projects) do
-    Enum.filter(recent_projects, fn project ->
+  def filter_absolute_projects(projects) do
+    Enum.filter(projects, fn project ->
       case project do
         %{path: path} when is_binary(path) -> Platform.absolute_path?(path)
         _ -> false
@@ -297,14 +296,14 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   end
 
   @doc """
-  Node-aware variant of `filter_absolute_recent_projects/1`: local nodes keep
-  the strict `Platform.absolute_path?/1` semantics; remote nodes accept
-  POSIX- or Windows-absolute paths via the single shared
-  `ProjectFlow.absolute_path_for_node?/2` predicate so remote recents survive
-  a dashboard running on a different OS.
+  Node-aware variant of `filter_absolute_projects/1`: local nodes keep the
+  strict `Platform.absolute_path?/1` semantics; remote nodes accept POSIX- or
+  Windows-absolute paths via the single shared
+  `ProjectFlow.absolute_path_for_node?/2` predicate so a remote project
+  registry survives a dashboard running on a different OS.
   """
-  def filter_absolute_recent_projects_for_node(node, recent_projects) do
-    Enum.filter(recent_projects, fn project ->
+  def filter_absolute_projects_for_node(node, projects) do
+    Enum.filter(projects, fn project ->
       case project do
         %{path: path} -> ProjectFlow.absolute_path_for_node?(node, path)
         _ -> false
@@ -313,24 +312,19 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   end
 
   @doc """
-  Recent projects for the node being viewed: connected remote → RPC +
-  node-aware filter; pending/error remote context → `[]` (local recents must
-  never leak into a remote view); local → the local `EvoGit.TaskRegistry`.
+  The node's project registry (Virtual Context Tree project mounts, newest
+  opened first): connected remote → RPC + node-aware filter; pending/error
+  remote context → `[]` (local projects must never leak into a remote view);
+  local → the local node's mounts.
 
   Callers must run this OUTSIDE the LiveView process (it is used by the async
-  load batch here and by `ProjectsLive`'s `{:recent_projects_updated}`
-  handler task) — the local branch is a task-store `GenServer.call`.
+  load batch here and by `ProjectsLive`'s `{:vct_updated, node}` handler task).
   """
-  def load_recent_projects(remote?, current_node_id, node) do
+  def load_projects(remote?, current_node_id, node) do
     cond do
-      remote? ->
-        filter_absolute_recent_projects_for_node(node, NodeContext.list_recent_projects(node))
-
-      is_binary(current_node_id) ->
-        []
-
-      true ->
-        filter_absolute_recent_projects(TaskRegistry.list_recent_projects())
+      remote? -> filter_absolute_projects_for_node(node, NodeContext.projects(node))
+      is_binary(current_node_id) -> []
+      true -> filter_absolute_projects(NodeContext.projects(node))
     end
   end
 

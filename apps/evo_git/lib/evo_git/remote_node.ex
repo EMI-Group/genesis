@@ -1107,18 +1107,18 @@ defmodule EvoGit.RemoteNode do
   defnode(EvoGit.AgentScheduler.RemoteAPI.branch_exists?(repo_path, branch_name))
 
   @doc """
-  Lists recent projects on the given node.
-
-  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_recent_projects/0`
+  Lists the Virtual Context Tree project mounts of the given node, newest first.
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.projects/0`
   directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
-  Returns `[]` if the remote call fails.
+  Returns `[%EvoGit.VCT.Mount{}]`, degrading to `[]` when the remote call fails
+  or returns something else.
   """
-  @spec list_recent_projects(node()) :: [EvoGit.RecentProject.t()]
-  def list_recent_projects(node) do
+  @spec projects(node()) :: [EvoGit.VCT.Mount.t()]
+  def projects(node) do
     if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.list_recent_projects()
+      EvoGit.AgentScheduler.RemoteAPI.projects()
     else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_recent_projects, []) do
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :projects, []) do
         {:ok, list} when is_list(list) -> list
         {:ok, _other} -> []
         {:error, _reason} -> []
@@ -1127,23 +1127,42 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
-  Adds or updates a recent project entry on the given node.
-
-  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.add_recent_project/2`
+  Mounts an OS project path in the Virtual Context Tree of the given node.
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.mount_project/2`
   directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
-  Returns `:ok` even if the remote call fails (fire-and-forget semantics for
-  recent-project tracking).
-
-  Returns `:ok`.
+  Returns `{:ok, %EvoGit.VCT.Mount{}}` or `{:error, reason}`; a failed RPC
+  returns `{:error, {kind, reason}}` so the caller can report it.
   """
-  @spec add_recent_project(node(), String.t(), String.t()) :: :ok
-  def add_recent_project(node, path, name) do
+  @spec mount_project(node(), String.t(), String.t() | nil) ::
+          {:ok, EvoGit.VCT.Mount.t()} | {:error, term()}
+  def mount_project(node, path, name) do
     if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.add_recent_project(path, name)
+      EvoGit.AgentScheduler.RemoteAPI.mount_project(path, name)
     else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :add_recent_project, [path, name]) do
-        {:ok, _} -> :ok
-        {:error, _reason} -> :ok
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :mount_project, [path, name]) do
+        {:ok, {:ok, mount}} -> {:ok, mount}
+        {:ok, {:error, reason}} -> {:error, reason}
+        {:error, _reason} = error -> error
+      end
+    end
+  end
+
+  @doc """
+  Forgets one project mount on the given node by VCT point or OS path.
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.forget_project/1`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
+  Returns `:ok`, `{:error, :not_found}`, `{:error, :invalid_point}` or a failed
+  RPC's `{:error, {kind, reason}}`.
+  """
+  @spec forget_project(node(), term()) :: :ok | {:error, term()}
+  def forget_project(node, key) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.forget_project(key)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :forget_project, [key]) do
+        {:ok, :ok} -> :ok
+        {:ok, {:error, reason}} -> {:error, reason}
+        {:error, _reason} = error -> error
       end
     end
   end

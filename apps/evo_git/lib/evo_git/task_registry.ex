@@ -4,9 +4,12 @@ defmodule EvoGit.TaskRegistry do
   Tasks are identified by unique IDs and persisted to SQLite (the single source of truth)
   under namespaced keys `{:task, task_id}`.
   Runtime-only task references (`%Task{}`) are kept in-memory in `task_refs`.
-  Supports configurable persistence of finished tasks and
-  recently opened projects to SQLite (platform data directory via EvoGit.Platform),
-  using namespaced keys `{:project, path}`.
+  Supports configurable persistence of finished tasks to SQLite (platform data
+  directory via EvoGit.Platform).
+
+  The registry owns TASK state only: the Virtual Context Tree mount table is
+  `EvoGit.VCT` business, persisted by `EvoGit.Store` and broadcast by the VCT
+  itself, so nothing here reads or writes a mount.
   """
   use GenServer
 
@@ -29,8 +32,6 @@ defmodule EvoGit.TaskRegistry do
   # they use an explicit 30s timeout instead of the 5s default. Keep the value
   # tunable in one place.
   @call_timeout 30_000
-
-  @max_recent_projects 10
 
   # Registry instance name => its task-store name, published by `init/1` and
   # read by `put_task_archive/1`. App-owned (`EvoGit.Application`) so it
@@ -331,30 +332,6 @@ defmodule EvoGit.TaskRegistry do
 
   def clear_finished_tasks do
     GenServer.call(server(), :clear_finished_tasks, @call_timeout)
-  end
-
-  ## Recent Projects Client API
-
-  @doc """
-  Adds or updates a project in the recently opened list.
-  Moves it to the top with the current timestamp.
-  """
-  def add_recent_project(path, name) do
-    GenServer.call(server(), {:add_recent_project, path, name}, @call_timeout)
-  end
-
-  @doc """
-  Returns the list of recently opened projects, sorted by last_opened_at descending.
-  """
-  def list_recent_projects do
-    GenServer.call(server(), :list_recent_projects, @call_timeout)
-  end
-
-  @doc """
-  Removes a project from the recent list by path.
-  """
-  def remove_recent_project(path) do
-    GenServer.call(server(), {:remove_recent_project, path}, @call_timeout)
   end
 
   ## Server Callbacks
@@ -907,69 +884,6 @@ defmodule EvoGit.TaskRegistry do
     {:reply, reply, state}
   end
 
-  ## Recent Projects Handlers
-
-  @impl true
-  def handle_call({:add_recent_project, path, name}, _from, state) do
-    now = DateTime.utc_now()
-
-    # On disk-full the project simply isn't persisted — log and continue
-    # (recent projects are a convenience, never worth crashing the registry).
-    case safe_store_write("add_recent_project", fn ->
-           EvoGit.Store.put_project(
-             state.task_store,
-             %EvoGit.RecentProject{path: path, name: name, last_opened_at: now}
-           )
-         end) do
-      :ok ->
-        :ok
-
-      {:error, :disk_full} ->
-        Logger.warning("TaskRegistry: disk full — recent project #{inspect(path)} not persisted")
-
-      {:error, :store_unavailable} ->
-        # StoreGuard already logged it — recent projects are a convenience.
-        :ok
-    end
-
-    # Enforce max limit
-    trim_recent_projects(state)
-
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
-    {:reply, :ok, state}
-  end
-
-  @impl true
-  def handle_call(:list_recent_projects, _from, state) do
-    reply =
-      select_all_projects(state)
-      |> sort_projects_by_recency()
-
-    {:reply, reply, state}
-  end
-
-  @impl true
-  def handle_call({:remove_recent_project, path}, _from, state) do
-    # On disk-full the project row simply remains — log and continue.
-    case safe_store_write("remove_recent_project", fn ->
-           EvoGit.Store.delete_project(state.task_store, path)
-         end) do
-      :ok ->
-        :ok
-
-      {:error, :disk_full} ->
-        Logger.warning(
-          "TaskRegistry: disk full — recent project #{inspect(path)} could not be deleted"
-        )
-
-      {:error, :store_unavailable} ->
-        :ok
-    end
-
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
-    {:reply, :ok, state}
-  end
-
   @impl true
   def handle_cast({:update_status, task_id, status, result, opts}, state) do
     {:noreply, handle_update_status(state, task_id, status, result, opts, nil)}
@@ -1245,12 +1159,6 @@ defmodule EvoGit.TaskRegistry do
   defp task_get(state, task_id) do
     safe_store_read("get_task", nil, fn ->
       EvoGit.Store.get_task(state.task_store, task_id)
-    end)
-  end
-
-  defp select_all_projects(state) do
-    safe_store_read("select_all_projects", [], fn ->
-      EvoGit.Store.safe_select_all_projects(state.task_store)
     end)
   end
 
@@ -1629,56 +1537,6 @@ defmodule EvoGit.TaskRegistry do
       )
 
     {:noreply, state}
-  end
-
-  # --- Recent Projects ---
-
-  defp trim_recent_projects(state) do
-    projects =
-      select_all_projects(state)
-      |> sort_projects_by_recency()
-
-    case Enum.split(projects, @max_recent_projects) do
-      {_kept, []} ->
-        :ok
-
-      {_kept, to_remove} ->
-        paths = Enum.map(to_remove, fn project -> project.path end)
-
-        Enum.each(paths, fn path ->
-          case safe_store_write("trim_recent_projects", fn ->
-                 EvoGit.Store.delete_project(state.task_store, path)
-               end) do
-            :ok ->
-              :ok
-
-            {:error, :disk_full} ->
-              # Over-limit project rows simply remain until space is freed —
-              # log and continue (recent projects are a convenience).
-              Logger.warning(
-                "TaskRegistry: disk full — recent project #{inspect(path)} could not be trimmed"
-              )
-
-            {:error, :store_unavailable} ->
-              :ok
-          end
-        end)
-
-        :ok
-    end
-  end
-
-  # Sorts projects by last_opened_at descending (most recent first), handling nil
-  # timestamps safely. A nil last_opened_at sorts LAST (oldest). This avoids the
-  # ArgumentError that DateTime.compare/2 raises when comparing against nil.
-  defp sort_projects_by_recency(projects) do
-    Enum.sort(projects, fn a, b ->
-      cond do
-        a.last_opened_at == nil -> false
-        b.last_opened_at == nil -> true
-        true -> DateTime.after?(a.last_opened_at, b.last_opened_at)
-      end
-    end)
   end
 
   ## GenServer Info Handlers

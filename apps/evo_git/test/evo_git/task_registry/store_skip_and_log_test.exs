@@ -60,8 +60,8 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
 
         assert log =~ "Store: skipping undecodable row in tasks (id: #{inspect(garbage_id)})"
 
-        # No extra tables were created (the tables are tasks/projects plus the
-        # per-agent archive table), and the bad row is untouched.
+        # No extra tables were created (the tables are tasks/vct_mounts plus
+        # the per-agent archive table), and the bad row is untouched.
         conn = raw_conn(sqlite_path)
 
         {:ok, %{rows: unexpected_tables}} =
@@ -72,7 +72,8 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
             # both are created by Boot's migrations at store start; the
             # assertion's intent is that skip-and-log performs NO
             # data-movement DDL of its own.
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('tasks', 'projects', 'schema_migrations', 'task_agent_archives')",
+            "SELECT name FROM sqlite_master WHERE type = 'table' " <>
+              "AND name NOT IN ('tasks', 'vct_mounts', 'schema_migrations', 'task_agent_archives')",
             []
           )
 
@@ -121,95 +122,6 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
         # id (shape pinned by the positive test above).
         refute log =~
                  "skipping undecodable row in tasks (id: #{inspect("clean_good_#{unique}")})"
-      after
-        cleanup_store(store, sqlite_path)
-      end
-    end
-  end
-
-  describe "safe_select_all_projects/1 skip-and-log semantics" do
-    test "skips an undecodable project row, logs a warning, and leaves the row untouched" do
-      unique = System.unique_integer([:positive])
-      sqlite_path = db_path("projects", unique)
-      File.mkdir_p!(Path.dirname(sqlite_path))
-
-      # Pre-create ONLY the projects table with INTEGER-affinity last_opened_at
-      # (a legacy-schema scenario). A TEXT-affinity column would coerce the
-      # injected integer to text, so this is required for the value to survive
-      # storage as an integer. The Store's create_tables uses IF NOT EXISTS,
-      # so it keeps this table untouched.
-      conn = raw_conn(sqlite_path)
-
-      {:ok, _} =
-        XqliteNIF.execute(
-          conn,
-          "CREATE TABLE projects (path TEXT PRIMARY KEY, name TEXT, last_opened_at INTEGER)",
-          []
-        )
-
-      :ok = XqliteNIF.close(conn)
-
-      store = :"skip_log_projects_#{unique}"
-      {:ok, _} = EvoGit.Store.start_link(data_dir: sqlite_path, name: store)
-
-      try do
-        good_proj = %EvoGit.RecentProject{
-          path: "/tmp/good_proj_#{unique}",
-          name: "good",
-          last_opened_at: DateTime.utc_now()
-        }
-
-        :ok = EvoGit.Store.put_project(store, good_proj)
-
-        garbage_path = "garbage_proj_#{unique}"
-
-        # The injected INTEGER survives storage in the INTEGER-affinity column
-        # — decode_datetime/1 has no clause for non-binary values, so
-        # decode_project/1 raises and the row must be skipped.
-        conn = raw_conn(sqlite_path)
-
-        {:ok, _} =
-          XqliteNIF.execute(
-            conn,
-            "INSERT OR REPLACE INTO projects (path, name, last_opened_at) VALUES (?1, ?2, ?3)",
-            [garbage_path, "garbage", 12345]
-          )
-
-        :ok = XqliteNIF.close(conn)
-
-        # WAL mode: the store's own connection sees the raw-injected row on
-        # its next read — no restart needed.
-        {entries, log} = with_log(fn -> EvoGit.Store.safe_select_all_projects(store) end)
-
-        paths = Enum.map(entries, & &1.path)
-        assert "/tmp/good_proj_#{unique}" in paths
-        refute garbage_path in paths
-
-        assert log =~ "Store: skipping undecodable row in projects (id: #{inspect(garbage_path)})"
-
-        # No extra tables were created (the tables are tasks/projects plus the
-        # per-agent archive table), and the bad row is untouched.
-        conn = raw_conn(sqlite_path)
-
-        {:ok, %{rows: unexpected_tables}} =
-          XqliteNIF.query(
-            conn,
-            # `schema_migrations` is the Ecto migrator's own bookkeeping
-            # table and `task_agent_archives` the per-agent archive table —
-            # both are created by Boot's migrations at store start; the
-            # assertion's intent is that skip-and-log performs NO
-            # data-movement DDL of its own.
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('tasks', 'projects', 'schema_migrations', 'task_agent_archives')",
-            []
-          )
-
-        assert unexpected_tables == []
-
-        {:ok, %{rows: bad_rows}} =
-          XqliteNIF.query(conn, "SELECT COUNT(*) FROM projects WHERE path = ?", [garbage_path])
-
-        assert bad_rows == [[1]]
-        :ok = XqliteNIF.close(conn)
       after
         cleanup_store(store, sqlite_path)
       end

@@ -12,7 +12,9 @@ Parsing stays pure and setup persists only through `EvoGit.Config` and imports s
 - Incomplete explicit selections and blank values return `{:error, message}`, and effort without an explicit provider profile is rejected.
 - The parent dispatch must validate selections with the schema and enqueue an explicit selection as `model_spec: spec, model_id_locked: true`, while Auto omits both keys.
 - `Parser.parse_model_flag/1` preserves legacy `id:provider:model` splitting for the parent's legacy-ID resolver.
-- `Parser.parse_foreign_repos/1` builds read-only `%EvoGit.Core.ForeignRepo{}` values from repeatable `-R`, and Windows drive-letter absolute paths are never split as IDs.
+- `Parser.parse_foreign_repos/1` builds read-only `%EvoGit.Core.ForeignRepo{}` values from repeatable `-R` (`foreign_repo: [:string, :keep]`, alias `R`), and Windows drive-letter absolute paths (`^[a-zA-Z]:[\\/]`) are never split as IDs.
+- `-R` parsing is a plain order-preserving `Enum.map` with NO dedupe, NO id-uniqueness check and NO blank-spec check, so duplicate ids/paths yield separate struct entries downstream.
+- `-R` does NOT validate existence or git-ness at parse time; the only parse-time path handling is `ForeignRepo.new/2` → `Platform.safe_expand/1` (`Path.expand`), so relative and `~` paths are resolved against the CLI process cwd.
 - `Parser.maybe_put/3` leaves a keyword list unchanged for nil values.
 - `Setup.run/0` guides provider, model, endpoint variant and API-key or subscription authentication selection.
 - Setup saves canonical `[llm].default_provider_profile` and `[[llm.providers]]`, without a legacy `llm.model` mirror or top-level `llm.models` list.
@@ -37,6 +39,8 @@ Parsing stays pure and setup persists only through `EvoGit.Config` and imports s
 - API-key writes go through `Config.save_credentials/1` with that exact string key, preserving other same-provider account credentials and unrelated credential entries.
 - Runtime `Schema.LLM.profile_generation_params/1` currently resolves `api_key_env_var` only from the process environment, so consuming custom keys saved in credentials.toml requires the parent-owned Config/schema integration fix.
 - No sibling test files are owned by this node.
+- `-R` parsing performs NO id uniqueness or emptiness check (an empty id from `-R :/path`, or a blank path from `-R id:`, is accepted); duplicate ids collapse later in `EvoGit.Runtime.Helpers.merge_foreign_repos/2` (`Map.new` per source, CLI entries overriding same-id TOML entries, no error).
+- `reflect` (and `setup`/`run`) accept the global `-R` switch but never call `parse_foreign_repos/1`, so foreign repos are silently dropped for those commands; only `genesis` (`genesis_task_opts/4`) and `evolve` (`evolve_task_opts/3`) attach `foreign_repos:`.
 
 ## Required Regression Coverage
 - Parser tests must cover explicit provider/model/effort flags, omitted effort, colon-containing model names, Auto, unchanged legacy flags/IDs, and blank/incomplete selections.

@@ -11,11 +11,20 @@ defmodule EvoGit.Core.ContextNode do
   multi-repo setup.  It defaults to `"primary"` for single-repo usage and is
   threaded through `load/3` and `hierarchy_nodes/3` when working with foreign
   repositories.
+
+  ## VCT path
+
+  The `vct_path` field carries the canonical Virtual Context Tree URL of the
+  node (`vct:///projects/foo/src/auth`, see `EvoGit.VCT.Path`) when the node's
+  repository root is mounted in the VCT, and `nil` otherwise. It is INTERNAL
+  metadata: `path` stays the byte-identical in-repo relative `"./…"` string and
+  is never derived from `vct_path`. The VCT read is total, so a missing VCT
+  server or an unmounted repository simply yields `nil`.
   """
   require Logger
 
   @enforce_keys [:path, :repo]
-  defstruct [:path, :repo, repo_id: "primary"]
+  defstruct [:path, :repo, :vct_path, repo_id: "primary"]
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Platform
@@ -23,6 +32,7 @@ defmodule EvoGit.Core.ContextNode do
   @type t :: %__MODULE__{
           path: String.t(),
           repo: String.t(),
+          vct_path: String.t() | nil,
           repo_id: String.t()
         }
 
@@ -99,9 +109,12 @@ defmodule EvoGit.Core.ContextNode do
   """
   @spec load(String.t(), String.t(), String.t()) :: t()
   def load(relative_path, repo_path, repo_id) do
+    normalized_path = normalize_relpath(relative_path)
+
     %__MODULE__{
-      path: normalize_relpath(relative_path),
+      path: normalized_path,
       repo: repo_path,
+      vct_path: EvoGit.VCT.vct_path_for(repo_path, normalized_path),
       repo_id: repo_id
     }
   end
@@ -157,6 +170,12 @@ defmodule EvoGit.Core.ContextNode do
   YAML front matter (delimited by `---`) in CONTEXT.md files is stripped before
   inclusion. The front matter is used for metadata like skill configuration and
   is not part of the visible context tree.
+
+  When the Virtual Context Tree's GLOBAL context is non-empty, it is rendered
+  FIRST as the `global/CONTEXT.md` stage (never an OS path, never a `vct:///`
+  URL) ahead of the in-repo `./CONTEXT.md` chain. Directory stages whose
+  `CONTEXT.md` is absent or blank (after front-matter stripping) are skipped, so
+  no empty fenced code block is rendered.
   """
   @spec build_context(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def build_context(relative_path, repo_path) do
@@ -164,51 +183,8 @@ defmodule EvoGit.Core.ContextNode do
       {:ok, nodes} ->
         context_max = context_max_bytes()
 
-        context_contents =
-          nodes
-          # Only include directories in the explicit context hierarchy.
-          # Compute abs_path once per node and thread it through.
-          |> Enum.flat_map(fn %__MODULE__{} = node ->
-            abs_path = Platform.safe_expand(node.path, node.repo)
-
-            if File.dir?(abs_path) do
-              content =
-                case File.read(Path.join(abs_path, "CONTEXT.md")) do
-                  {:ok, c} -> c
-                  _ -> ""
-                end
-
-              file =
-                if node.path == "./" do
-                  "./CONTEXT.md"
-                else
-                  Path.join(node.path, "CONTEXT.md")
-                end
-
-              # Strip YAML front matter before presenting to agents
-              display_content = EvoGit.Skills.strip_front_matter(content)
-
-              # UTF-8-safe truncation via String.byte_slice/3: the stdlib
-              # works on bytes and then adjusts to eliminate truncated
-              # codepoints, so we never split a multi-byte character (which
-              # would produce invalid UTF-8 that crashes Jason.encode! in the
-              # LLM request pipeline).
-              truncated_content =
-                if byte_size(display_content) > context_max do
-                  Logger.warning("Content truncated for file: #{file}")
-
-                  String.byte_slice(display_content, 0, context_max) <>
-                    "\n... [Content Truncated] ..."
-                else
-                  display_content
-                end
-
-              ["File: #{file}\n```\n#{truncated_content}\n```"]
-            else
-              []
-            end
-          end)
-          |> Enum.join("\n\n")
+        stages =
+          global_stage(context_max) ++ Enum.flat_map(nodes, &in_repo_stage(&1, context_max))
 
         location_info =
           """
@@ -219,16 +195,80 @@ defmodule EvoGit.Core.ContextNode do
           """
           |> String.trim_trailing()
 
-        if context_contents == "" do
-          {:ok, location_info}
-        else
-          {:ok, "# Context Tree\n" <> context_contents <> "\n\n" <> location_info}
+        case stages do
+          [] ->
+            {:ok, location_info}
+
+          rendered ->
+            {:ok, "# Context Tree\n" <> Enum.join(rendered, "\n\n") <> "\n\n" <> location_info}
         end
 
       {:error, reason} ->
         {:error, reason}
     end
   end
+
+  # The VCT global context is rendered exactly like an in-repo stage, but with
+  # the fixed label `global/CONTEXT.md` — never "/" or an OS path, and never the
+  # `vct:///` URL of the file.
+  defp global_stage(context_max) do
+    EvoGit.VCT.global_context()
+    |> render_stage("global/CONTEXT.md", context_max)
+    |> List.wrap()
+  end
+
+  defp in_repo_stage(%__MODULE__{} = node, context_max) do
+    abs_path = Platform.safe_expand(node.path, node.repo)
+
+    if File.dir?(abs_path) do
+      content =
+        case File.read(Path.join(abs_path, "CONTEXT.md")) do
+          {:ok, c} -> c
+          _ -> ""
+        end
+
+      file =
+        if node.path == "./" do
+          "./CONTEXT.md"
+        else
+          Path.join(node.path, "CONTEXT.md")
+        end
+
+      render_stage(content, file, context_max) |> List.wrap()
+    else
+      []
+    end
+  end
+
+  # Renders one context stage, or `nil` when the content is absent/blank after
+  # YAML front-matter stripping (a stage with nothing to show is SKIPPED rather
+  # than rendered as an empty fenced block).
+  defp render_stage(content, file, context_max) when is_binary(content) do
+    display_content = EvoGit.Skills.strip_front_matter(content)
+
+    if String.trim(display_content) == "" do
+      nil
+    else
+      # UTF-8-safe truncation via String.byte_slice/3: the stdlib
+      # works on bytes and then adjusts to eliminate truncated
+      # codepoints, so we never split a multi-byte character (which
+      # would produce invalid UTF-8 that crashes Jason.encode! in the
+      # LLM request pipeline).
+      truncated_content =
+        if byte_size(display_content) > context_max do
+          Logger.warning("Content truncated for file: #{file}")
+
+          String.byte_slice(display_content, 0, context_max) <>
+            "\n... [Content Truncated] ..."
+        else
+          display_content
+        end
+
+      "File: #{file}\n```\n#{truncated_content}\n```"
+    end
+  end
+
+  defp render_stage(_content, _file, _context_max), do: nil
 
   defp context_max_bytes do
     EvoGit.Config.resolve([:truncation, :context_max_bytes])

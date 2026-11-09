@@ -6,11 +6,12 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   lifecycle management and state persistence.
 
   All project-opening paths are node-aware: in a remote context
-  (`socket.assigns[:current_node_id] != nil`) directory checks, recent-project
-  registration, and recents reload go through `EvoDash.NodeContext` so they run
-  on the remote daemon's filesystem/store. In pending contexts `@current_node`
-  is still the local BEAM node, where NodeContext delegates to the local
-  TaskRegistry/filesystem — the safe degradation path.
+  (`socket.assigns[:current_node_id] != nil`) directory checks, VCT project
+  mount registration, and project-list reload go through
+  `EvoDash.NodeContext` so they run on the remote daemon's filesystem/store.
+  In pending contexts `@current_node` is still the local BEAM node, where
+  NodeContext delegates to the local VCT/filesystem — the safe degradation
+  path.
 
   Remote project ACTIVATION is async: the gate guard + path normalization run
   synchronously in the event handler, then `spawn_remote_project_activation/2`
@@ -26,10 +27,10 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   import Phoenix.LiveView, only: [put_flash: 3, push_patch: 2]
   import EvoDashWeb.Helpers, only: [mode_info_message: 1]
 
-  alias EvoGit.TaskRegistry
   alias EvoGit.Core.ForeignRepo
   alias EvoDash.NodeContext
   alias EvoDash.SafeCall
+  alias EvoDashWeb.ProjectsLive.AsyncLoad
   alias EvoDashWeb.ProjectsLive.Project
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -187,8 +188,8 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   via `EvoGit.Platform.absolute_path?/1`) — the remote node's paths must not
   be judged by the dashboard's host OS: on a Windows dashboard
   `Path.type("/home/user/repo")` is `:volumerelative`, which would wrongly
-  drop remote POSIX recents from the palette (and a POSIX dashboard would
-  drop remote Windows recents). Non-binary paths are always false.
+  drop remote POSIX project mounts from the palette (and a POSIX dashboard
+  would drop remote Windows mounts). Non-binary paths are always false.
   """
   @spec absolute_path_for_node?(node(), term()) :: boolean()
   def absolute_path_for_node?(node, path) when is_binary(path) do
@@ -247,18 +248,41 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
     end
   end
 
-  # Recent projects offered in the palette must have absolute paths — stale
-  # cwd-joined entries (from the pre-fix Path.expand-against-cwd behavior)
-  # must never render.
-  defp filter_absolute_recent_projects(recent_projects) do
-    Enum.filter(recent_projects, &EvoGit.Platform.absolute_path?(&1.path))
+  # The one pure, in-memory lookup behind an activation path: the VCT point of
+  # the already-loaded project whose OS path matches, or nil (a missing mount
+  # degrades to rendering the plain OS path). No store/RPC call.
+  @spec mount_point_for([map()], String.t() | nil) :: String.t() | nil
+  def mount_point_for(projects, path) when is_list(projects) do
+    Enum.find_value(projects, fn
+      %{path: ^path, point: point} when is_binary(point) -> point
+      _ -> nil
+    end)
   end
 
-  # Node-aware recents filter: local flows keep the strict local-semantics
-  # check; remote flows accept POSIX- or Windows-absolute paths so remote
-  # recents survive a dashboard running on a different OS.
-  defp filter_absolute_recent_projects_for_node(node, recent_projects) do
-    Enum.filter(recent_projects, &absolute_path_for_node?(node, &1.path))
+  def mount_point_for(_projects, _path), do: nil
+
+  # The ONE mount-registration call shape of this module: mounts `path` in the
+  # node's VCT project registry and returns the registered mount's `vct:` point
+  # (or nil when the mount failed, which degrades to rendering the plain OS
+  # path).
+  #
+  # `NodeContext.mount_project/3` ALREADY returns `{:ok, %EvoGit.VCT.Mount{}}`
+  # — it unwraps `EvoGit.AgentScheduler.RemoteAPI`'s own `{:ok, _}` for both the
+  # local call and the remote `:erpc` round-trip — so `SafeCall.run/1` wraps it
+  # exactly ONCE MORE into `{:ok, {:ok, %EvoGit.VCT.Mount{}}}`. The success
+  # clause therefore has to unwrap one extra level; every failure shape
+  # (`{:error, {kind, reason}}` from a failed RPC, `{:ok, {:error, reason}}`
+  # from the local/remote call itself, or a non-mount payload) falls through to
+  # nil.
+  #
+  # The call stays inside `EvoDash.SafeCall`: a `GenServer.call` to a
+  # dead/timed-out store EXITS the caller, which must never crash the page.
+  @spec mount_project_point(node(), String.t(), String.t() | nil) :: String.t() | nil
+  defp mount_project_point(node, path, name) do
+    case SafeCall.run(fn -> NodeContext.mount_project(node, path, name) end) do
+      {:ok, {:ok, %{point: point}}} when is_binary(point) -> point
+      _ -> nil
+    end
   end
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -314,29 +338,29 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
     end
   end
 
-  # Shared success path for create_project: register the path in recent
-  # projects, reload the recents, close the palette, reset it to :menu, flash
-  # info, and push the URL params to persist the project across navigation.
+  # Shared success path for create_project: mount the path in the VCT project
+  # registry, reload the project list, close the palette, reset it to :menu,
+  # flash info, and push the URL params to persist the project across
+  # navigation.
   #
-  # The two local store calls run inside `EvoDash.SafeCall`: a `GenServer.call`
-  # to a dead/timed-out store EXITS the LiveView, so a registration failure is
-  # tolerated (the recents reload falls back to the currently shown list).
+  # The two registry calls run inside `EvoDash.SafeCall`: a `GenServer.call`
+  # to a dead/timed-out store EXITS the LiveView, so a mount failure is
+  # tolerated (the project-list reload falls back to the currently shown list).
+  # The mount's returned VCT point is unused here — the reload below is the
+  # authoritative project list.
   defp register_and_open_project(socket, expanded) do
-    SafeCall.run(
-      fn -> TaskRegistry.add_recent_project(expanded, Path.basename(expanded)) end,
-      :ok
-    )
+    mount_project_point(node(), expanded, Path.basename(expanded))
 
-    recent_projects =
+    projects =
       SafeCall.run(
-        fn -> TaskRegistry.list_recent_projects() end,
-        socket.assigns[:recent_projects] || []
+        fn -> NodeContext.projects(node()) end,
+        socket.assigns[:projects] || []
       )
-      |> filter_absolute_recent_projects()
+      |> AsyncLoad.filter_absolute_projects()
 
     socket =
       socket
-      |> assign(:recent_projects, recent_projects)
+      |> assign(:projects, projects)
       |> assign(:project_palette_open, false)
       |> assign(:palette_mode, :menu)
       |> put_flash(:info, gettext("Project created: %{path}", path: expanded))
@@ -367,21 +391,18 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
         {:ok, expanded} ->
           if File.dir?(expanded) do
             # Exit-safe store calls (see register_and_open_project/2).
-            SafeCall.run(
-              fn -> TaskRegistry.add_recent_project(expanded, Path.basename(expanded)) end,
-              :ok
-            )
+            mount_project_point(node(), expanded, Path.basename(expanded))
 
-            recent_projects =
+            projects =
               SafeCall.run(
-                fn -> TaskRegistry.list_recent_projects() end,
-                socket.assigns[:recent_projects] || []
+                fn -> NodeContext.projects(node()) end,
+                socket.assigns[:projects] || []
               )
-              |> filter_absolute_recent_projects()
+              |> AsyncLoad.filter_absolute_projects()
 
             socket =
               socket
-              |> assign(:recent_projects, recent_projects)
+              |> assign(:projects, projects)
               |> assign(:project_palette_open, false)
               |> assign(:palette_mode, :menu)
 
@@ -421,21 +442,18 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
         {:ok, expanded} ->
           if File.dir?(expanded) do
             # Exit-safe store calls (see register_and_open_project/2).
-            SafeCall.run(
-              fn -> TaskRegistry.add_recent_project(expanded, Path.basename(expanded)) end,
-              :ok
-            )
+            mount_project_point(node(), expanded, Path.basename(expanded))
 
-            recent_projects =
+            projects =
               SafeCall.run(
-                fn -> TaskRegistry.list_recent_projects() end,
-                socket.assigns[:recent_projects] || []
+                fn -> NodeContext.projects(node()) end,
+                socket.assigns[:projects] || []
               )
-              |> filter_absolute_recent_projects()
+              |> AsyncLoad.filter_absolute_projects()
 
             socket =
               socket
-              |> assign(:recent_projects, recent_projects)
+              |> assign(:projects, projects)
               |> assign(:project_palette_open, false)
               |> assign(:palette_mode, :menu)
 
@@ -450,8 +468,8 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
   # Remote project activation — ASYNC — shared by open_project/select_project.
   # The synchronous part here is ONLY the gate guard + remote-aware path
-  # normalization; the RPC-heavy sequence (dir? validation, recent-project
-  # registration + reload, config/mode/foreign-repo loading) runs OUTSIDE the
+  # normalization; the RPC-heavy sequence (dir? validation, VCT project mount
+  # + reload, config/mode/foreign-repo loading) runs OUTSIDE the
   # LiveView process in a supervised EvoDash.TaskSupervisor task so the UI
   # never blocks on the 6-7 cross-node round-trips per activation click. The
   # result arrives as a `{:async_remote_project, node, path, result}` message
@@ -462,7 +480,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
     # Gate guard (defense in depth): while the selected remote target is
     # pending/failed, `@current_node` is still the LOCAL BEAM node — validating
     # or registering the path here would leak into the local filesystem and
-    # local TaskRegistry recents. Reject the event with a flash error.
+    # the local VCT project registry. Reject the event with a flash error.
     if EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) do
       {:noreply,
        put_flash(
@@ -669,20 +687,19 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   end
 
   # The RPC-heavy remote activation sequence, run in the supervised task.
-  # Returns `{:ok, results_map}` (the assigns the sync flow applied: recents
-  # reloaded + node-filtered, the display-only active project, the auto-
-  # detected task mode + info, and the project config / worktree script /
-  # commands / foreign repos) or `{:error, :not_a_directory}`. NodeContext's
-  # graceful degradation handles transport failures — no try/rescue.
+  # Returns `{:ok, results_map}` (the assigns the sync flow applied: the VCT
+  # project registry mounted + reloaded + node-filtered, the display-only active
+  # project — carrying the mount point of the project just mounted, no extra
+  # read — the auto-detected task mode + info, and the project config /
+  # worktree script / commands / foreign repos) or `{:error, :not_a_directory}`.
+  # NodeContext's graceful degradation handles transport failures — no
+  # try/rescue.
   defp remote_project_load(node, expanded) do
     if NodeContext.dir?(node, expanded) do
-      NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
+      mount_point = mount_project_point(node, expanded, Path.basename(expanded))
 
-      recent_projects =
-        filter_absolute_recent_projects_for_node(
-          node,
-          NodeContext.list_recent_projects(node)
-        )
+      projects =
+        AsyncLoad.filter_absolute_projects_for_node(node, NodeContext.projects(node))
 
       config = NodeContext.read_project_config(node, expanded)
       mode = Project.detect_mode(node, expanded)
@@ -695,8 +712,14 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
       {:ok,
        %{
-         recent_projects: recent_projects,
-         active_project: %{path: expanded, name: Path.basename(expanded)},
+         projects: projects,
+         active_project: %{
+           path: expanded,
+           name: Path.basename(expanded),
+           # Display-only mount point from the mount just registered above (no
+           # extra read); nil degrades to rendering the plain OS path.
+           point: mount_point
+         },
          active_project_path: expanded,
          task_mode: mode,
          task_mode_info: mode_info,

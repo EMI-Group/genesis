@@ -99,7 +99,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
   describe "TaskInfo field backfill" do
     test "normalize_tasks backfills base_sha and commit_sha as nil for old entries",
-         %{data_dir: data_dir, store: store, registry: registry} do
+         %{data_dir: data_dir, store: store, vct: _vct, registry: registry} do
       unique = System.unique_integer([:positive])
       task_id = "backfill_#{unique}"
 
@@ -177,6 +177,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
     test "task persists across a registry restart with the same store", %{
       data_dir: data_dir,
       store: store,
+      vct: _vct,
       registry: registry
     } do
       unique = System.unique_integer([:positive])
@@ -217,37 +218,6 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert fetched.type == :evolve
       assert fetched.status == :completed
       assert fetched.opts[:objective] == "durability check"
-    end
-  end
-
-  describe "recent projects persistence" do
-    test "recent project persists across a registry restart with the same store",
-         %{data_dir: data_dir, store: store, registry: registry} do
-      path = "/some/path"
-      name = "My Project"
-
-      :ok = TaskRegistry.add_recent_project(path, name)
-
-      # Confirm the project is listed before the restart.
-      projects_before = TaskRegistry.list_recent_projects()
-      assert Enum.any?(projects_before, &(&1.path == path and &1.name == name))
-
-      # Stop the registry but KEEP the same store running (store is durable on disk).
-      stop_supervised(registry)
-
-      # Restart the registry pointing at the same store and data_dir.
-      start_supervised(
-        Supervisor.child_spec(
-          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
-          id: registry
-        )
-      )
-
-      # The project must survive the registry restart.
-      projects_after = TaskRegistry.list_recent_projects()
-      matching = Enum.filter(projects_after, &(&1.path == path))
-      assert length(matching) == 1
-      assert hd(matching).name == name
     end
   end
 
@@ -374,14 +344,16 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       XqliteNIF.close(raw_conn)
 
-      EvoGit.Store.put_project(
-        store(),
-        %EvoGit.RecentProject{
-          path: "/some/path",
-          name: "test",
-          last_opened_at: DateTime.utc_now()
-        }
-      )
+      :ok =
+        EvoGit.Store.save_vct_mounts(store(), [
+          %{
+            point: "vct:///projects/some-path",
+            path: "/some/path",
+            name: "test",
+            kind: "git",
+            last_opened_at: DateTime.utc_now()
+          }
+        ])
 
       # A corrupt row ELSEWHERE must not block a new task's completion cycle
       # (the cast also runs the internal cleanup pass).
@@ -431,9 +403,9 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       paths = TaskRegistry.get_unique_paths()
       assert is_list(paths)
 
-      # list_recent_projects works
-      projects = TaskRegistry.list_recent_projects()
-      assert is_list(projects)
+      # the VCT mount table is still readable
+      assert [%{"point" => "vct:///projects/some-path"}] =
+               EvoGit.Store.list_vct_mounts(store())
     end
   end
 
@@ -603,7 +575,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
   describe "startup reconciliation of orphaned :finalizing tasks" do
     test "restart marks an orphaned :finalizing row :failed (with the canonical payload) but leaves a :running row untouched",
-         %{data_dir: data_dir, store: store, registry: registry} do
+         %{data_dir: data_dir, store: store, vct: _vct, registry: registry} do
       unique = System.unique_integer([:positive])
       finalizing_id = "startup_finalizing_#{unique}"
       running_id = "startup_running_#{unique}"
@@ -681,6 +653,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
     test "restart marks an orphaned :cancelling row :cancelled", %{
       data_dir: data_dir,
       store: store,
+      vct: _vct,
       registry: registry
     } do
       unique = System.unique_integer([:positive])
@@ -1122,54 +1095,6 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert fetched.status == :completed
       assert fetched.branch_name == "feat/x"
       assert fetched.commit_sha == "abc"
-    end
-  end
-
-  describe "recent projects — nil last_opened_at handling" do
-    test "nil last_opened_at rows are sorted last and never crash add/list", %{
-      sqlite_path: sqlite_path
-    } do
-      unique = System.unique_integer([:positive])
-      insert_project_row(sqlite_path, "/nil-proj-#{unique}", "Nil Proj", nil)
-
-      :ok = TaskRegistry.add_recent_project("/fresh-#{unique}", "Fresh")
-
-      projects = TaskRegistry.list_recent_projects()
-      paths = Enum.map(projects, & &1.path)
-
-      assert "/fresh-#{unique}" in paths
-      assert "/nil-proj-#{unique}" in paths
-      assert hd(projects).path == "/fresh-#{unique}"
-      assert List.last(projects).path == "/nil-proj-#{unique}"
-    end
-
-    test "trim removes oldest dated rows (and nil rows) first, never crashes on nil",
-         %{sqlite_path: sqlite_path} do
-      unique = System.unique_integer([:positive])
-      now = DateTime.utc_now()
-
-      # @max_recent_projects is 10 (task_registry.ex); seed 10 dated rows plus
-      # one nil row, then add one more → 12 rows → trim keeps the 10 newest.
-      insert_project_row(sqlite_path, "/nil-proj-#{unique}", "Nil Proj", nil)
-
-      for i <- 1..10 do
-        :ok =
-          EvoGit.Store.put_project(store(), %EvoGit.RecentProject{
-            path: "/dated-#{unique}-#{i}",
-            name: "D#{i}",
-            last_opened_at: DateTime.add(now, -i * 86_400, :second)
-          })
-      end
-
-      :ok = TaskRegistry.add_recent_project("/newest-#{unique}", "Newest")
-
-      projects = TaskRegistry.list_recent_projects()
-      assert length(projects) == 10
-
-      # Sorted descending: newest first, then /dated-1..9. The oldest dated row
-      # (/dated-10) and the nil row (sorts last = oldest) are trimmed.
-      assert Enum.map(projects, & &1.path) ==
-               ["/newest-#{unique}"] ++ Enum.map(1..9, &"/dated-#{unique}-#{&1}")
     end
   end
 
@@ -1685,19 +1610,6 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         iso,
         task_id
       ])
-
-    XqliteNIF.close(raw_conn)
-  end
-
-  defp insert_project_row(sqlite_path, path, name, last_opened_at) do
-    {:ok, raw_conn} = Xqlite.open(sqlite_path)
-
-    {:ok, _} =
-      XqliteNIF.execute(
-        raw_conn,
-        "INSERT INTO projects (path, name, last_opened_at) VALUES (?1, ?2, ?3)",
-        [path, name, last_opened_at]
-      )
 
     XqliteNIF.close(raw_conn)
   end

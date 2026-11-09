@@ -201,19 +201,20 @@ defmodule EvoGit.StoreDiskFullTest do
       set_query_only(store, "ON")
       assert {:error, :disk_full} = Store.update_task_columns(store, task_id, status: :failed)
 
-      set_query_only(store, "ON")
-      assert {:error, :disk_full} = Store.delete_project(store, "/no/such/project")
-
-      # put_project protects itself INSIDE Operations.Projects (not wrapped
-      # by the facade's write boundary) — same contract, same class.
+      # The mount table write goes through the same facade write boundary
+      # (`Store.save_vct_mounts/2` → one immediate transaction).
       set_query_only(store, "ON")
 
       assert {:error, :disk_full} =
-               Store.put_project(store, %EvoGit.RecentProject{
-                 path: "/tmp/proj",
-                 name: "proj",
-                 last_opened_at: DateTime.utc_now()
-               })
+               Store.save_vct_mounts(store, [
+                 %{
+                   point: "vct:///projects/proj",
+                   path: "/tmp/proj",
+                   name: "proj",
+                   kind: "git",
+                   last_opened_at: DateTime.utc_now()
+                 }
+               ])
 
       # The GenServer survived every failed write...
       assert Process.alive?(Process.whereis(store))

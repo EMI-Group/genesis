@@ -153,6 +153,13 @@ Linux (`-p ReadWritePaths=-<path>`), Bwrap (`--bind-try <path> <path>`) and macO
 
 Implementation: all three backends define a `@default_cache_dirs` module attribute (kept local per platform) + delegate to the single public `EvoGit.Sandbox.Helpers.resolve_write_paths/3` (`config_paths, defaults, home`).
 
+Writable-set assembly facts (one pass, no extra normalization layer):
+`resolve_write_paths/3` (helpers.ex:191-201) only maps the CONFIG list to absolute paths (`~`/absolute/relative-joined-to-home); it NEVER dedups, sorts, `Path.expand`s, or checks existence, and it sees only the config list — every structural root (cwd, tmp, nix, git metadata, task tmpdir) is appended by each backend itself, so duplicates across the two groups are passed through verbatim.
+Linux (linux.ex:254-265) = `[cwd | Platform.tmp_paths/0] ++ write_paths ++ nix_paths ++ List.wrap(task_tmpdir_path()) ++ extra_write_paths`; `extra_write_paths` is the git metadata dir supplied by the caller — `args/4` passes the NAIVE `[Path.join(repo_root, ".git")]` (linux.ex:140, no `gitdir:` pointer resolution) while `detached_args/5` passes `Helpers.git_metadata_dir(cwd, nil)` (linux.ex:184).
+Bwrap (bwrap.ex:403-442) = tmp binds first, then `[cwd] ++ write_paths ++ nix_paths ++ List.wrap(git_metadata_dir(cwd, repo_root))`, then the per-task tmpdir bind, then the deny `--tmpfs` overlays (order is load-bearing).
+macOS (macos.ex:270-295, 386-396) grants cwd, tmp paths, per-task tmpdir, genesis config/data dirs and the git metadata dir in their OWN rule groups, and only the cache-dir list comes from `write_paths` — the same replacement semantics apply to that group alone.
+`repo_root` is the agent's ORIGINAL repo root (primary for a primary agent, the FOREIGN repo root for a foreign-repo agent: dispatch.ex:675-691 + runner.ex:302), while `cwd`/`repo_path` is always the agent's transient worktree (runner.ex:352) — so the only repo-root-owned path any backend makes writable is the git metadata dir; the main working copy stays read-only.
+
 ## Windows / None Backend — No-Sandbox Gap (Known Issue)
 
 `EvoGit.Sandbox.None` is the fallback for Windows and unsupported platforms: **no OS-level isolation** — a documented gap, not an oversight; the timed path's only hardening is the process-tree kill. It DOES export the managed per-task tmpdir as `TMPDIR`/`TMP`/`TEMP` when one is installed (`Helpers.temp_env_vars/0`), but has NO writable-path gating — commands keep the user's own permissions and the system tmp dirs stay fully writable.

@@ -17,6 +17,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
 
   use ExUnit.Case, async: true
 
+  alias EvoDashWeb.ProjectsLive.AsyncLoad
   alias EvoDashWeb.ProjectsLive.Project
   alias EvoDashWeb.ProjectsLive.ProjectFlow
   alias EvoGit.Core.ForeignRepo
@@ -73,16 +74,16 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
   end
 
   describe "path_suggestions/2" do
-    test "relative input and relative recent-project entries never surface" do
+    test "relative input and relative project entries never surface" do
       assert Project.path_suggestions("Test", []) == []
-      # A stale cwd-joined recents entry (from the pre-fix behavior) must not
+      # A stale cwd-joined project entry (from the pre-fix behavior) must not
       # render in the palette.
       assert Project.path_suggestions("Test", [%{path: "Test"}]) == []
     end
 
-    test "absolute recent entries match once, relative entries are filtered" do
+    test "absolute project entries match once, relative entries are filtered" do
       # `/tmp` also triggers filesystem suggestions — assert membership and
-      # uniqueness rather than exact equality (recents win on dedup).
+      # uniqueness rather than exact equality (project mounts win on dedup).
       result =
         Project.path_suggestions("/tmp", [
           %{path: "/tmp", name: "tmp"},
@@ -125,7 +126,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
       refute home in result
     end
 
-    test "recent projects match by substring of the full path" do
+    test "project mounts match by substring of the full path" do
       result =
         Project.path_suggestions("proj", [%{path: "/home/test/sources/project", name: "project"}])
 
@@ -406,9 +407,9 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
     end
   end
 
-  describe "path_suggestions/3 — node-aware recents filter" do
-    test "remote node keeps absolute recents, drops relative ones, matches by substring" do
-      recents = [
+  describe "path_suggestions/3 — node-aware project filter" do
+    test "remote node keeps absolute projects, drops relative ones, matches by substring" do
+      projects = [
         %{path: "/home/user/proj", name: "proj"},
         %{path: "C:\\work\\repo", name: "repo"},
         %{path: "relative/repo", name: "rel"},
@@ -416,15 +417,15 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
       ]
 
       # Remote filesystem suggestions degrade to [] (no real daemon answers the
-      # RPC against the fake node), so the result IS the filtered recents.
-      result = Project.path_suggestions(@remote_node, "", recents)
+      # RPC against the fake node), so the result IS the filtered projects.
+      result = Project.path_suggestions(@remote_node, "", projects)
 
       assert "/home/user/proj" in result
       assert "C:\\work\\repo" in result
       refute "relative/repo" in result
       refute "D:Test" in result
 
-      # Empty query matches ALL recents.
+      # Empty query matches ALL projects.
       assert Project.path_suggestions(@remote_node, "", [
                %{path: "/home/a", name: "a"},
                %{path: "/home/b", name: "b"}
@@ -438,9 +439,9 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
       end
     end
 
-    test "local node recents filtering is unchanged" do
+    test "local node project filtering is unchanged" do
       # Empty input produces no filesystem suggestions on either branch, so the
-      # result is exactly the locally-filtered recents.
+      # result is exactly the locally-filtered projects.
       result =
         Project.path_suggestions(node(), "", [
           %{path: "/tmp", name: "tmp"},
@@ -449,6 +450,179 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
 
       assert "/tmp" in result
       refute "relative/repo" in result
+    end
+  end
+
+  describe "AsyncLoad.filter_absolute_projects/1" do
+    test "keeps POSIX, Windows-drive, UNC and VCT mount entries; drops relative and junk" do
+      kept = [
+        %{path: "/home/user/proj", name: "proj"},
+        %{path: "C:\\work\\repo", name: "repo"},
+        %{path: "D:/stuff", name: "stuff"},
+        %{path: "\\\\server\\share", name: "share"},
+        %EvoGit.VCT.Mount{
+          point: "vct:///projects/proj",
+          path: "/home/user/proj",
+          name: "proj"
+        }
+      ]
+
+      dropped = [
+        %{path: "relative/repo"},
+        %{path: "D:Test"},
+        %{path: "\\Test"},
+        %{path: nil},
+        %{},
+        "junk",
+        nil
+      ]
+
+      assert AsyncLoad.filter_absolute_projects(kept) == kept
+
+      assert AsyncLoad.filter_absolute_projects(dropped) == [],
+             "expected every relative/junk entry to be dropped: #{inspect(dropped)}"
+
+      # Order is preserved and only the absolute entries survive a mixed list.
+      assert AsyncLoad.filter_absolute_projects(dropped ++ kept) == kept
+    end
+  end
+
+  describe "AsyncLoad.filter_absolute_projects_for_node/2" do
+    test "the local node keeps the strict host predicate" do
+      kept = [
+        %{path: "/home/user/proj"},
+        %{path: "C:\\work\\repo"},
+        %{path: "D:/stuff"},
+        %{path: "\\\\server\\share"},
+        %EvoGit.VCT.Mount{
+          point: "vct:///projects/proj",
+          path: "/home/user/proj",
+          name: "proj"
+        }
+      ]
+
+      dropped = [
+        %{path: "relative/repo"},
+        %{path: "D:Test"},
+        %{path: "\\Test"},
+        %{path: nil},
+        %{},
+        "junk",
+        nil
+      ]
+
+      assert AsyncLoad.filter_absolute_projects_for_node(node(), kept) == kept
+      assert AsyncLoad.filter_absolute_projects_for_node(node(), dropped) == []
+    end
+
+    test "a remote node accepts cross-OS absolutes and drops relative/non-binary" do
+      projects = [
+        %{path: "/home/user/proj"},
+        %{path: "C:\\work\\repo"},
+        %{path: "D:/stuff"},
+        %{path: "\\\\server\\share"},
+        %{path: "relative/repo"},
+        %{path: "D:Test"},
+        %{path: "\\Test"},
+        %{path: nil},
+        %{},
+        "junk",
+        nil
+      ]
+
+      assert AsyncLoad.filter_absolute_projects_for_node(@remote_node, projects) ==
+               Enum.take(projects, 4)
+    end
+  end
+
+  describe "ProjectFlow.mount_point_for/2" do
+    test "returns the point of the first matching project and nil otherwise" do
+      projects = [
+        %{path: "/a", point: nil},
+        %{path: "/b", point: "vct:///projects/b"},
+        %{path: "/c", point: "vct:///projects/c"}
+      ]
+
+      assert ProjectFlow.mount_point_for(projects, "/b") == "vct:///projects/b"
+      # A matching path with a nil point is skipped, never returned.
+      assert ProjectFlow.mount_point_for(projects, "/a") == nil
+      assert ProjectFlow.mount_point_for(projects, "/missing") == nil
+      assert ProjectFlow.mount_point_for(projects, nil) == nil
+    end
+
+    test "accepts real VCT mount structs" do
+      mount = %EvoGit.VCT.Mount{
+        point: "vct:///projects/x",
+        path: "/home/user/x",
+        name: "x"
+      }
+
+      assert ProjectFlow.mount_point_for([mount], "/home/user/x") == "vct:///projects/x"
+    end
+
+    test "ignores absent, nil and non-binary points, and non-list collections" do
+      for bad <- [
+            [%{path: "/x"}],
+            [%{path: "/x", point: nil}],
+            [%{path: "/x", point: 123}]
+          ] do
+        assert ProjectFlow.mount_point_for(bad, "/x") == nil
+      end
+
+      assert ProjectFlow.mount_point_for(nil, "/x") == nil
+      assert ProjectFlow.mount_point_for(%{"path" => "/x"}, "/x") == nil
+    end
+  end
+
+  describe "path_suggestions/2 — VCT mount entries" do
+    test "a mount whose path contains the query substring is suggested" do
+      token = "vctflow#{System.unique_integer([:positive, :monotonic])}"
+      # A NONEXISTENT absolute path: filesystem suggestions stay empty, so the
+      # result is exactly the mount's path.
+      path = "/nonexistent/#{token}/proj"
+
+      mount = %EvoGit.VCT.Mount{
+        point: "vct:///projects/#{token}",
+        path: path,
+        name: token
+      }
+
+      assert Project.path_suggestions(token, [mount]) == [path]
+    end
+
+    test "caps matching project entries at 8" do
+      token = "vctflow#{System.unique_integer([:positive, :monotonic])}"
+
+      mounts =
+        for index <- 1..10 do
+          %EvoGit.VCT.Mount{
+            point: "vct:///projects/#{token}-#{index}",
+            path: "/nonexistent/#{token}/proj-#{index}",
+            name: "#{token}-#{index}"
+          }
+        end
+
+      result = Project.path_suggestions(token, mounts)
+
+      assert length(result) == 8
+      assert result == Enum.map(Enum.take(mounts, 8), & &1.path)
+    end
+
+    @tag :tmp_dir
+    test "a mount also produced by filesystem suggestions appears once", %{tmp_dir: tmp_dir} do
+      token = "vctdedupe#{System.unique_integer([:positive, :monotonic])}"
+      path = Path.join(tmp_dir, token)
+      File.mkdir_p!(path)
+
+      mount = %EvoGit.VCT.Mount{
+        point: "vct:///projects/#{token}",
+        path: path,
+        name: token
+      }
+
+      result = Project.path_suggestions(path, [mount])
+
+      assert Enum.count(result, &(&1 == path)) == 1
     end
   end
 
@@ -468,5 +642,61 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
     end)
 
     Application.put_env(:evo_dash, :remote_path_expand_runner, fun)
+  end
+end
+
+defmodule EvoDashWeb.ProjectsLive.ProjectFlowVctTest do
+  @moduledoc """
+  DB-backed Virtual Context Tree (VCT) project-registry coverage.
+
+  Kept `async: false` on purpose: the `EvoGit.VCT` mount table is a BEAM-global
+  singleton GenServer persisted on the run-wide test store, so registering or
+  forgetting a mount mutates state every mounted page in the VM reads. This
+  module never clears the whole mount table and only forgets the row it created.
+  """
+
+  use ExUnit.Case, async: false
+
+  alias EvoDashWeb.ProjectsLive.AsyncLoad
+  alias EvoDashWeb.ProjectsLive.ProjectFlow
+
+  test "a mounted path is exposed by the registry once and re-mount keeps its point" do
+    unique = System.unique_integer([:positive])
+    path = Path.join(System.tmp_dir!(), "genesis-vct-flow-#{unique}")
+    name = "genesis-vct-flow-#{unique}"
+
+    assert {:ok, %EvoGit.VCT.Mount{} = mount} = EvoGit.VCT.mount(path, name: name)
+
+    # Only ever forget the row THIS test created — other suites own rows on the
+    # shared store, so the table is never cleared wholesale.
+    on_exit(fn -> EvoGit.VCT.forget(mount.point) end)
+
+    assert mount.path == path
+    assert mount.name == name
+    assert is_binary(mount.point)
+
+    projects = EvoGit.VCT.projects()
+
+    assert Enum.any?(projects, &(&1.point == mount.point and &1.path == path)),
+           "expected the mount to appear in the project registry"
+
+    # Re-mounting the same OS path refreshes it and KEEPS the point; the
+    # registry must not accumulate a duplicate row for that path.
+    assert {:ok, remounted} = EvoGit.VCT.mount(path, name: name)
+    assert remounted.point == mount.point
+
+    assert [%EvoGit.VCT.Mount{point: point}] =
+             Enum.filter(EvoGit.VCT.projects(), &(&1.path == path))
+
+    assert point == mount.point
+
+    # The dashboard's pure lookup and absolute filter operate on the REAL rows.
+    assert ProjectFlow.mount_point_for(EvoGit.VCT.projects(), path) == mount.point
+    assert ProjectFlow.mount_point_for([mount], path) == mount.point
+
+    assert Enum.any?(
+             AsyncLoad.filter_absolute_projects(EvoGit.VCT.projects()),
+             &(&1.point == mount.point)
+           )
   end
 end

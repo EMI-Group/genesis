@@ -30,7 +30,7 @@ defmodule EvoGit.Store.MaintenanceTest do
   alias EvoGit.Store.Boot
   alias EvoGit.Store.Maintenance
   alias EvoGit.Store.RepoScope
-  alias EvoGit.Store.Schemas.ProjectRow
+  alias EvoGit.Store.Schemas.VctMountRow
   alias EvoGit.TestSupport.StoreTemplate
 
   @moduletag :tmp_dir
@@ -38,12 +38,12 @@ defmodule EvoGit.Store.MaintenanceTest do
   @db_filename "tasks.sqlite"
 
   # Every shipped store migration: baseline adoption, data normalization, the
-  # two index migrations, the archive table and the redundant-index prune — so
-  # `schema_migrations` holds 6 rows.
-  @migration_count 6
+  # two index migrations, the archive table, the redundant-index prune and the
+  # VCT mount table — so `schema_migrations` holds 7 rows.
+  @migration_count 7
 
   # One schema-complete, CHECKPOINTED database built per module
-  # (`EvoGit.TestSupport.StoreTemplate`): a brand-new file plus the six
+  # (`EvoGit.TestSupport.StoreTemplate`): a brand-new file plus the seven
   # migrations costs ~12 ms per boot, a byte copy of this template ~0.1 ms.
   # Every test still gets its own isolated file with the identical schema, so
   # the isolation semantics are unchanged. The `:template` context value is the
@@ -482,9 +482,9 @@ defmodule EvoGit.Store.MaintenanceTest do
     end)
   end
 
-  # Seeds `count` project rows into a per-test database built from the module's
-  # migrated template, then closes it — a small, realistic database for the mix
-  # task.
+  # Seeds `count` VCT mount rows into a per-test database built from the
+  # module's migrated template, then closes it — a small, realistic database
+  # for the mix task.
   defp seed_db!(template, path, count) do
     template.(path)
     {:ok, pid} = Boot.start_dynamic(path)
@@ -492,11 +492,15 @@ defmodule EvoGit.Store.MaintenanceTest do
 
     RepoScope.with_repo(pid, fn ->
       Repo.insert_all(
-        ProjectRow,
+        VctMountRow,
         for i <- 1..count do
           [
+            point: "vct:///projects/seed-#{i}",
             path: "/seed/#{i}",
             name: "Seed #{i}",
+            # `insert_all` bypasses the schema's `kind` default and the column
+            # is NOT NULL, so it is supplied explicitly.
+            kind: "git",
             last_opened_at: ~U[2024-05-05 05:05:05.555Z]
           ]
         end
@@ -521,7 +525,7 @@ defmodule EvoGit.Store.MaintenanceTest do
   end
 
   defp row_count(path) do
-    [[count]] = raw_query(path, "SELECT COUNT(*) FROM projects")
+    [[count]] = raw_query(path, "SELECT COUNT(*) FROM vct_mounts")
     count
   end
 

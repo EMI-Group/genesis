@@ -494,30 +494,39 @@ defmodule EvoGit.CommandShellTest do
     end
   end
 
-  describe "execute/1 - ListRecentProjects.list_recent_projects" do
-    test "returns No recent projects found for an empty registry" do
-      assert {:ok, output} = CommandShell.execute("ListRecentProjects.list_recent_projects")
-      assert output == "No recent projects found."
+  describe "execute/1 - ListProjects.list_projects" do
+    test "returns No projects found for an empty mount table" do
+      assert {:ok, output} = CommandShell.execute("ListProjects.list_projects")
+      assert output == "No projects found."
     end
 
-    test "lists seeded recent projects with name, path, and last opened time" do
-      # Truncate to millisecond precision so the ISO string survives the Store
-      # round-trip (Codec.encode_datetime truncates to milliseconds).
-      last_opened = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+    test "lists the mounted projects with point, name, path and last opened time" do
+      # Mounts live in the Virtual Context Tree, which stamps `last_opened_at`
+      # itself — read the mount back and assert the command renders exactly
+      # that timestamp.
+      assert {:ok, mount} = EvoGit.VCT.mount("/proj/a", name: "Project A")
+      assert %DateTime{} = mount.last_opened_at
+      assert mount.point == "vct:///projects/a"
 
-      :ok =
-        EvoGit.Store.put_project(store(), %EvoGit.RecentProject{
-          path: "/proj/a",
-          name: "Project A",
-          last_opened_at: last_opened
-        })
+      # list_projects/0 reads LIVE from the VCT, so a direct mount is visible.
+      assert {:ok, output} = CommandShell.execute("ListProjects.list_projects")
 
-      # list_recent_projects/0 reads LIVE from the Store, so direct Store
-      # seeding is visible — same idiom as seed_task!.
-      assert {:ok, output} = CommandShell.execute("ListRecentProjects.list_recent_projects")
-      assert output =~ "Project A"
-      assert output =~ "/proj/a"
-      assert output =~ DateTime.to_iso8601(last_opened)
+      assert output ==
+               "- vct:///projects/a | name: Project A | path: /proj/a | " <>
+                 "last opened: #{DateTime.to_iso8601(mount.last_opened_at)}"
+    end
+
+    test "lists several mounts newest first" do
+      assert {:ok, first} = EvoGit.VCT.mount("/proj/first", name: "First")
+      assert {:ok, second} = EvoGit.VCT.mount("/proj/second", name: "Second")
+      assert DateTime.compare(second.last_opened_at, first.last_opened_at) in [:gt, :eq]
+
+      assert {:ok, output} = CommandShell.execute("ListProjects.list_projects")
+      lines = String.split(output, "\n")
+
+      assert length(lines) == 2
+      assert hd(lines) =~ "vct:///projects/second | name: Second | path: /proj/second |"
+      assert List.last(lines) =~ "vct:///projects/first | name: First | path: /proj/first |"
     end
   end
 
@@ -771,7 +780,7 @@ defmodule EvoGit.CommandShellParsingTest do
     ForceKillTask.force_kill_task
     GetTask.get_task
     GuideUser.guide_user
-    ListRecentProjects.list_recent_projects
+    ListProjects.list_projects
     ListTasks.list_tasks
     SpawnInvestigator.spawn_investigator
     StartTask.start_task
@@ -948,7 +957,7 @@ defmodule EvoGit.CommandShellParsingTest do
       for path <- ~w(
         ListTasks.list_tasks
         GetTask.get_task
-        ListRecentProjects.list_recent_projects
+        ListProjects.list_projects
         SystemInfo.system_info
         SpawnInvestigator.spawn_investigator
       ) do

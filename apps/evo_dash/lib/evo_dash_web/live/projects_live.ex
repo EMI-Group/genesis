@@ -170,7 +170,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     active_project={@active_project}
                     active_project_path={@active_project_path}
                     no_project_hint_dismissed={@no_project_hint_dismissed}
-                    recent_projects={@recent_projects}
+                    projects={@projects}
                     palette_open={@project_palette_open}
                     palette_search={@palette_search}
                     palette_mode={@palette_mode}
@@ -311,7 +311,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     active_project={@active_project}
                     active_project_path={@active_project_path}
                     no_project_hint_dismissed={@no_project_hint_dismissed}
-                    recent_projects={@recent_projects}
+                    projects={@projects}
                     palette_open={@project_palette_open}
                     palette_search={@palette_search}
                     palette_mode={@palette_mode}
@@ -390,7 +390,7 @@ defmodule EvoDashWeb.ProjectsLive do
                 </div>
               <% phase in [:connecting, :bootstrapping, :disconnecting] -> %>
                 <!-- Pending remote context: connecting chrome only — no
-                     project data, no task form, no local recents (the
+                     project data, no task form, no local project list (the
                      node-switch clear already reset project state). -->
                 <RemoteView.top_bar
                   remote={true}
@@ -399,7 +399,7 @@ defmodule EvoDashWeb.ProjectsLive do
                   active_project={@active_project}
                   active_project_path={@active_project_path}
                   no_project_hint_dismissed={@no_project_hint_dismissed}
-                  recent_projects={@recent_projects}
+                  projects={@projects}
                   palette_open={@project_palette_open}
                   palette_search={@palette_search}
                   palette_mode={@palette_mode}
@@ -420,7 +420,7 @@ defmodule EvoDashWeb.ProjectsLive do
                   active_project={@active_project}
                   active_project_path={@active_project_path}
                   no_project_hint_dismissed={@no_project_hint_dismissed}
-                  recent_projects={@recent_projects}
+                  projects={@projects}
                   palette_open={@project_palette_open}
                   palette_search={@palette_search}
                   palette_mode={@palette_mode}
@@ -497,18 +497,19 @@ defmodule EvoDashWeb.ProjectsLive do
     else
       if connected?(socket) do
         Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
-        Phoenix.PubSub.subscribe(EvoGit.PubSub, "recent_projects")
+        Phoenix.PubSub.subscribe(EvoGit.PubSub, "vct")
         send(self(), :load_config_status)
       end
 
-      # ZERO task-store calls on the mount path: both recent projects and the
-      # notified-terminal-id seed are loaded by the connected AsyncLoad batch
-      # (AsyncLoad.maybe_spawn/2 in handle_params/3) — a store `GenServer.call`
-      # can take seconds (full-row decode) and EXITS the caller on
-      # timeout/dead server, which would crash the page. The empty seeds below
-      # are replaced a frame later; project auto-activation is likewise
-      # deferred to that continuation (maybe_auto_activate_recent_project/1).
-      recent_projects = []
+      # ZERO project-registry / task-store calls on the mount path: both the
+      # VCT project list and the notified-terminal-id seed are loaded by the
+      # connected AsyncLoad batch (AsyncLoad.maybe_spawn/2 in handle_params/3)
+      # — a registry `GenServer.call` can take seconds (full-row decode) and
+      # EXITS the caller on timeout/dead server, which would crash the page.
+      # The empty seeds below are replaced a frame later; project
+      # auto-activation is likewise deferred to that continuation
+      # (maybe_auto_activate_project/1).
+      projects = []
 
       # Pre-resolve config once and memoize via Process dict so that the
       # deferred :load_config_status handler can reuse this result instead
@@ -546,7 +547,7 @@ defmodule EvoDashWeb.ProjectsLive do
           palette_search: "",
           palette_mode: :menu,
           palette_selected_index: 0,
-          recent_projects: recent_projects,
+          projects: projects,
           path_suggestions: [],
           foreign_repo_path_suggestions: [],
           show_project_settings: false,
@@ -586,12 +587,12 @@ defmodule EvoDashWeb.ProjectsLive do
           notified_task_ids_ready?: false,
           # Monotonic stale-guards for the async store reads.
           task_notifications_seq: 0,
-          recent_projects_seq: 0,
+          projects_seq: 0,
           # Monotonic stale-guard for the async clear-history batch.
           clear_history_seq: 0,
           # True when this handle_params run has no `?project=` and is on the
           # local node — the async load continuation then auto-activates the
-          # most recent project (replaces the old synchronous mount seed).
+          # newest-opened project (replaces the old synchronous mount seed).
           auto_activate_candidate?: false,
           # Resume foreign-repos restore in flight for this task id (guards
           # task_submit until the restore lands).
@@ -651,9 +652,9 @@ defmodule EvoDashWeb.ProjectsLive do
     node_context_changed? = prev_scope != ModelSelectionScope.current(socket.assigns)
 
     # Auto-activation candidate: no `?project=` in the URL and a LOCAL context.
-    # The actual activation runs in the AsyncLoad continuation once the recent
-    # projects have been loaded (maybe_auto_activate_recent_project/1) — the
-    # mount seeds no recents, so nothing can be activated synchronously here.
+    # The actual activation runs in the AsyncLoad continuation once the projects
+    # have been loaded (maybe_auto_activate_project/1) — the mount seeds no
+    # projects, so nothing can be activated synchronously here.
     socket =
       assign(
         socket,
@@ -663,7 +664,7 @@ defmodule EvoDashWeb.ProjectsLive do
 
     # Node-aware refresh (custom agents + model-selection script state,
     # canonical provider/model/reasoning picker, remote
-    # project config, and recent projects) now runs in ONE
+    # project config, and projects) now runs in ONE
     # async task so the LiveView process never blocks on cross-node RPCs —
     # see EvoDashWeb.ProjectsLive.AsyncLoad. The spawn sits after the
     # node-switch clearing and the project-activation block below so it
@@ -736,7 +737,7 @@ defmodule EvoDashWeb.ProjectsLive do
         # same-path-in-flight guard in `spawn_remote_project_activation` covers
         # double-Enter within one frame). All other remote handle_params runs
         # (no project param) keep skipping local expansion / `File.dir?` /
-        # auto-load-most-recent entirely: a display-only remote project
+        # auto-load-newest entirely: a display-only remote project
         # selection made via the palette must survive same-node handle_params
         # runs; the node-switch clear above is what resets it.
         cond do
@@ -784,7 +785,7 @@ defmodule EvoDashWeb.ProjectsLive do
               end
 
             # Relative or blank project params (stale/legacy URLs, or entries
-            # from previously-polluted recents) are silently ignored: never
+            # from previously-polluted projects) are silently ignored: never
             # `Path.expand` against the VM cwd — the Windows desktop backend
             # inherits the Tauri process cwd, so a relative input would join
             # against the install dir. handle_params runs on every navigation,
@@ -793,22 +794,22 @@ defmodule EvoDashWeb.ProjectsLive do
               socket
           end
         else
-          # No project in URL — the most recent project is auto-activated by
-          # the async load continuation once the recents land (see
-          # maybe_auto_activate_recent_project/1). Nothing to load here.
+          # No project in URL — the newest-opened project is auto-activated by
+          # the async load continuation once the projects land (see
+          # maybe_auto_activate_project/1). Nothing to load here.
           socket
         end
       end
 
     # Spawn the grouped async node-aware load (custom agents, model profiles,
-    # remote project config, recent projects + the notified-terminal-id seed —
+    # remote project config, projects + the notified-terminal-id seed —
     # see the comment above and EvoDashWeb.ProjectsLive.AsyncLoad). The spawn
     # runs AFTER the node-switch state clearing AND the project-activation
     # block above, so it captures the post-clear, post-activation active
     # project path — the identity the AsyncLoad stale-guard compares against,
     # so a result spawned for the very activation that just happened is never
     # dropped as "stale" (and a remote→local switch can never keep a remote
-    # node's model profiles/recents after a local project activates).
+    # node's model profiles/projects after a local project activates).
     socket = AsyncLoad.maybe_spawn(socket, prev_node_id)
 
     # Preserve starting_commit from URL query param (e.g. ?starting_commit=abc123)
@@ -918,7 +919,7 @@ defmodule EvoDashWeb.ProjectsLive do
           Project.path_suggestions(
             socket.assigns.current_node,
             "",
-            socket.assigns.recent_projects
+            socket.assigns.projects
           )
         )
       else
@@ -969,46 +970,46 @@ defmodule EvoDashWeb.ProjectsLive do
     ProjectFlow.select_project(socket, params)
   end
 
-  # Deletes a recent-project entry from the open-project palette WITHOUT
-  # opening the project. LOCAL-only: recent-project removal is not exposed
-  # over the remote RPC chain, and remote projects are read-only by design —
-  # the delete button only renders in local contexts (palette_menu hides it
-  # when `remote`), so this guard is defensive. ASYNC: the removal + re-read
-  # run in one supervised task (never in the LiveView process — the store call
-  # can hang/exit); the row disappears OPTIMISTICALLY on this render and the
-  # `{:recent_projects_removed, seq, node, result}` continuation assigns the
-  # authoritative (absolute-path-filtered) list. A later
-  # `{:recent_projects_updated}` broadcast corrects a failed removal. The
-  # selected index resets to 0 so keyboard navigation stays in sync with the
-  # shortened list.
+  # Forgets a project in the VCT project registry WITHOUT opening it. Works in
+  # BOTH local and remote contexts (the forget RPC is node-aware). ASYNC: the
+  # forget + the authoritative re-read run in one supervised task (never in the
+  # LiveView process — the registry call can hang/exit); the row disappears
+  # OPTIMISTICALLY on this render and the `{:projects_forgotten, seq, node,
+  # result}` continuation assigns the authoritative (absolute-path-filtered)
+  # list. A later `{:vct_updated, node}` broadcast corrects a failed forget.
+  # The selected index resets to 0 so keyboard navigation stays in sync with
+  # the shortened list.
   @impl true
-  def handle_event("remove_recent_project", %{"path" => path}, socket) do
-    if socket.assigns[:current_node_id] != nil do
-      {:noreply, socket}
-    else
-      seq = (socket.assigns[:recent_projects_seq] || 0) + 1
-      node = socket.assigns[:current_node] || node()
-      parent = self()
+  def handle_event("forget_project", %{"point" => point}, socket) do
+    node = socket.assigns[:current_node] || node()
+    node_id = socket.assigns[:current_node_id]
+    remote? = socket.assigns.remote? == true
+    seq = (socket.assigns[:projects_seq] || 0) + 1
+    parent = self()
 
-      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-        result =
-          SafeCall.run(fn ->
-            TaskRegistry.remove_recent_project(path)
-            TaskRegistry.list_recent_projects()
-          end)
+    socket =
+      socket
+      |> assign(:projects_seq, seq)
+      |> assign(:palette_selected_index, 0)
+      |> assign(
+        :projects,
+        Enum.reject(socket.assigns[:projects] || [], fn entry ->
+          Map.get(entry, :point) == point
+        end)
+      )
 
-        send(parent, {:recent_projects_removed, seq, node, result})
-      end)
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      result =
+        case SafeCall.run(fn -> NodeContext.forget_project(node, point) end) do
+          {:ok, :ok} -> SafeCall.run(fn -> AsyncLoad.load_projects(remote?, node_id, node) end)
+          {:ok, {:error, reason}} -> {:error, reason}
+          {:error, reason} -> {:error, reason}
+        end
 
-      {:noreply,
-       socket
-       |> assign(
-         :recent_projects,
-         Enum.reject(socket.assigns.recent_projects, &(Map.get(&1, :path) == path))
-       )
-       |> assign(:palette_selected_index, 0)
-       |> assign(:recent_projects_seq, seq)}
-    end
+      send(parent, {:projects_forgotten, seq, node, result})
+    end)
+
+    {:noreply, socket}
   end
 
   # --- Remote Node Events ---
@@ -1683,7 +1684,7 @@ defmodule EvoDashWeb.ProjectsLive do
       Project.path_suggestions(
         socket.assigns.current_node,
         value,
-        socket.assigns.recent_projects
+        socket.assigns.projects
       )
 
     {:noreply, assign(socket, :path_suggestions, suggestions)}
@@ -1699,7 +1700,7 @@ defmodule EvoDashWeb.ProjectsLive do
       Project.path_suggestions(
         socket.assigns.current_node,
         value,
-        socket.assigns.recent_projects
+        socket.assigns.projects
       )
 
     {:noreply, assign(socket, :path_suggestions, suggestions)}
@@ -1710,7 +1711,7 @@ defmodule EvoDashWeb.ProjectsLive do
     # Foreign-repo paths are always LOCAL filesystem paths (project settings
     # are a local dashboard concern), so suggestions resolve against the local
     # node.
-    suggestions = Project.path_suggestions(node(), value, socket.assigns.recent_projects)
+    suggestions = Project.path_suggestions(node(), value, socket.assigns.projects)
     {:noreply, assign(socket, :foreign_repo_path_suggestions, suggestions)}
   end
 
@@ -2167,45 +2168,61 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
-  # Continuation of the ASYNC recent-project reload (the
-  # `{:recent_projects_updated}` PubSub broadcast). Stale-guarded on the seq,
-  # the node and the node context; an error leaves the current list alone.
+  # Continuation of the ASYNC VCT project-list reload (the `{:vct_updated,
+  # node}` PubSub broadcast). Stale-guarded on the seq, the node and the node
+  # context; an error leaves the current list alone.
   @impl true
-  def handle_info({:recent_projects_loaded, seq, node_id, node, result}, socket) do
-    if seq != socket.assigns[:recent_projects_seq] or
+  def handle_info({:projects_loaded, seq, node_id, node, result}, socket) do
+    if seq != socket.assigns[:projects_seq] or
          node_id != socket.assigns[:current_node_id] or
          node != (socket.assigns[:current_node] || node()) do
       {:noreply, socket}
     else
       case result do
-        {:ok, recent_projects} -> {:noreply, assign(socket, :recent_projects, recent_projects)}
-        {:error, _reason} -> {:noreply, socket}
+        {:ok, projects} ->
+          {:noreply, assign(socket, :projects, projects)}
+
+        {:error, _reason} ->
+          {:noreply, socket}
       end
     end
   end
 
-  # Continuation of the ASYNC optimistic recent-project removal (see the
-  # `remove_recent_project` event). The optimistic list already dropped the
-  # row; success replaces it with the authoritative filtered list, an error
-  # keeps the optimistic list and flashes (a later
-  # `{:recent_projects_updated}` broadcast corrects it).
+  # Continuation of the ASYNC optimistic project forget (see the
+  # `forget_project` event). The optimistic list already dropped the row;
+  # success replaces it with the authoritative filtered list, an error reloads
+  # the authoritative list and flashes.
   @impl true
-  def handle_info({:recent_projects_removed, seq, node, result}, socket) do
-    if seq != socket.assigns[:recent_projects_seq] or
+  def handle_info({:projects_forgotten, seq, node, result}, socket) do
+    if seq != socket.assigns[:projects_seq] or
          node != (socket.assigns[:current_node] || node()) do
       {:noreply, socket}
     else
       case result do
-        {:ok, recent_projects} ->
-          {:noreply,
-           assign(socket, :recent_projects, filter_absolute_recent_projects(recent_projects))}
+        {:ok, projects} ->
+          {:noreply, assign(socket, :projects, AsyncLoad.filter_absolute_projects(projects))}
 
         {:error, reason} ->
+          socket =
+            case SafeCall.run(fn ->
+                   AsyncLoad.load_projects(
+                     socket.assigns.remote? == true,
+                     socket.assigns[:current_node_id],
+                     node
+                   )
+                 end) do
+              {:ok, projects} ->
+                assign(socket, :projects, AsyncLoad.filter_absolute_projects(projects))
+
+              {:error, _reason} ->
+                socket
+            end
+
           {:noreply,
            put_flash(
              socket,
              :error,
-             gettext("Failed to remove recent project: %{reason}", reason: inspect(reason))
+             gettext("Failed to forget project: %{reason}", reason: inspect(reason))
            )}
       end
     end
@@ -2242,22 +2259,29 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
-  # The recent-projects list is loaded in a supervised task — the store/RPC
-  # read must never run in the LiveView process.
+  # The VCT project list is reloaded in a supervised task — the registry/RPC
+  # read must never run in the LiveView process. A pending/error remote
+  # context never consumes the reload (its own activation owns the list).
   @impl true
-  def handle_info({:recent_projects_updated}, socket) do
-    seq = (socket.assigns[:recent_projects_seq] || 0) + 1
-    node = socket.assigns[:current_node] || node()
-    node_id = socket.assigns[:current_node_id]
-    remote? = socket.assigns.remote? == true
-    parent = self()
+  def handle_info({:vct_updated, node}, socket) do
+    pending_remote? =
+      is_binary(socket.assigns[:current_node_id]) and socket.assigns[:current_node] == node()
 
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      result = SafeCall.run(fn -> AsyncLoad.load_recent_projects(remote?, node_id, node) end)
-      send(parent, {:recent_projects_loaded, seq, node_id, node, result})
-    end)
+    if node != (socket.assigns[:current_node] || node()) or pending_remote? do
+      {:noreply, socket}
+    else
+      seq = (socket.assigns[:projects_seq] || 0) + 1
+      node_id = socket.assigns[:current_node_id]
+      remote? = socket.assigns.remote? == true
+      parent = self()
 
-    {:noreply, assign(socket, :recent_projects_seq, seq)}
+      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+        result = SafeCall.run(fn -> AsyncLoad.load_projects(remote?, node_id, node) end)
+        send(parent, {:projects_loaded, seq, node_id, node, result})
+      end)
+
+      {:noreply, assign(socket, :projects_seq, seq)}
+    end
   end
 
   @impl true
@@ -2294,13 +2318,13 @@ defmodule EvoDashWeb.ProjectsLive do
 
   # Async node-aware loads spawned by AsyncLoad.maybe_spawn/2 in
   # handle_params/3 (custom agents, canonical model picker reconciliation,
-  # remote project config, recent projects + the
+  # remote project config, the VCT projects list + the
   # notified-terminal-id seed). The handler drops stale results (wrong node or
   # active project) in AsyncLoad.handle_result/5, which reports whether it
   # applied anything, then:
   #
-  #   * auto-activates the most recent project when this was the
-  #     no-`?project=` local run (maybe_auto_activate_recent_project/1 — this
+  #   * auto-activates the newest-opened project when this was the
+  #     no-`?project=` local run (maybe_auto_activate_project/1 — this
   #     replaces the old synchronous mount seed, so the project opens one frame
   #     later with the same end state);
   #   * re-runs GitHub.maybe_check/1: the remote task_mode now arrives via this
@@ -2313,7 +2337,7 @@ defmodule EvoDashWeb.ProjectsLive do
 
     socket =
       if applied? and Map.get(results, :auto_activate?, false) do
-        maybe_auto_activate_recent_project(socket)
+        maybe_auto_activate_project(socket)
       else
         socket
       end
@@ -2357,7 +2381,7 @@ defmodule EvoDashWeb.ProjectsLive do
             socket =
               socket
               |> assign(:remote_project_loading, nil)
-              |> assign(:recent_projects, results.recent_projects)
+              |> assign(:projects, results.projects)
               |> assign(:active_project, results.active_project)
               |> assign(:active_project_path, results.active_project_path)
               |> assign(:task_mode, results.task_mode)
@@ -2407,17 +2431,17 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
-  # Auto-activates the newest recent project once the async seed has produced
-  # the recents list (replaces the old synchronous mount-time auto-load). Only
+  # Auto-activates the newest project once the async seed has produced
+  # the projects list (replaces the old synchronous mount-time auto-load). Only
   # for a LOCAL context whose handle_params run carried no `?project=`; a
   # missing/non-existent path leaves the no-project view untouched.
-  defp maybe_auto_activate_recent_project(socket) do
+  defp maybe_auto_activate_project(socket) do
     if socket.assigns[:auto_activate_candidate?] == true and
          is_nil(socket.assigns[:current_node_id]) and
          is_nil(socket.assigns[:active_project]) do
-      case List.first(socket.assigns[:recent_projects]) do
-        %{path: recent_path} when is_binary(recent_path) ->
-          if File.dir?(recent_path), do: activate_project(socket, recent_path), else: socket
+      case List.first(socket.assigns[:projects]) do
+        %{path: project_path} when is_binary(project_path) ->
+          if File.dir?(project_path), do: activate_project(socket, project_path), else: socket
 
         _ ->
           socket
@@ -2552,7 +2576,7 @@ defmodule EvoDashWeb.ProjectsLive do
   defp handle_palette_key(socket, "Enter", :menu) do
     filtered =
       EvoDashWeb.ProjectComponents.filter_projects(
-        socket.assigns.recent_projects,
+        socket.assigns.projects,
         socket.assigns.palette_search
       )
 
@@ -2561,12 +2585,12 @@ defmodule EvoDashWeb.ProjectsLive do
 
     cond do
       index < action_base and index < length(filtered) ->
-        # Activate the selected recent project via push_patch (node-aware:
+        # Activate the selected project via push_patch (node-aware:
         # remote contexts validate/register on the remote node and carry the
         # `&node=` param so the node context survives the patch)
         project = Enum.at(filtered, index)
 
-        # Never `Path.expand` against the VM cwd: recents are absolute-path
+        # Never `Path.expand` against the VM cwd: registry projects are absolute-path
         # filtered at assignment, but a stale/relative entry would cwd-join
         # on Windows (Tauri install dir). A relative selection just doesn't
         # open — same UX as a failed open, without the cwd join.
@@ -2576,12 +2600,12 @@ defmodule EvoDashWeb.ProjectsLive do
               activate_remote_palette_project(socket, expanded)
             else
               if File.dir?(expanded) do
-                # Exit-safe write: a store `GenServer.call` can time out/exit
-                # and must never crash the page. The recents list itself is
-                # reloaded by the AsyncLoad batch the push_patch below spawns,
-                # so no synchronous re-read is needed here.
+                # Exit-safe write: a registry `GenServer.call` can time
+                # out/exit and must never crash the page. The projects list
+                # itself is reloaded by the AsyncLoad batch the push_patch
+                # below spawns, so no synchronous re-read is needed here.
                 SafeCall.run(fn ->
-                  TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+                  NodeContext.mount_project(node(), expanded, Path.basename(expanded))
                 end)
 
                 socket
@@ -2612,7 +2636,7 @@ defmodule EvoDashWeb.ProjectsLive do
           Project.path_suggestions(
             socket.assigns.current_node,
             "",
-            socket.assigns.recent_projects
+            socket.assigns.projects
           )
         )
 
@@ -2628,8 +2652,8 @@ defmodule EvoDashWeb.ProjectsLive do
   defp handle_palette_key(socket, _key, _mode), do: socket
 
   # Remote palette selection — ASYNC. The synchronous part is only the gate
-  # guard; the RPC-heavy sequence (remote dir? validation, recent-project
-  # registration + reload, config/mode/foreign-repo loading) runs OUTSIDE the
+  # guard; the RPC-heavy sequence (remote dir? validation, project mount +
+  # list reload, config/mode/foreign-repo loading) runs OUTSIDE the
   # LiveView process via ProjectFlow.spawn_remote_project_activation/2 so the
   # UI never blocks on the 6-7 cross-node round-trips per palette Enter. The
   # palette closes immediately at spawn; the result arrives as a
@@ -2641,7 +2665,7 @@ defmodule EvoDashWeb.ProjectsLive do
     # Gate guard (defense in depth): while the selected remote target is
     # pending/failed, `@current_node` is still the LOCAL BEAM node — validating
     # or registering the path here would leak into the local filesystem and
-    # local TaskRegistry recents. Close the palette and surface an error.
+    # the local VCT project registry. Close the palette and surface an error.
     if EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) do
       socket
       |> assign(:project_palette_open, false)
@@ -2659,37 +2683,18 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   # Counts the total number of items in the palette menu list:
-  # filtered recent projects + 2 actions (Open by Path, Create New) locally;
+  # filtered projects + 2 actions (Open by Path, Create New) locally;
   # the "Create New Project" action is hidden in remote contexts, so the count
   # is filtered + 1 there (keeps ArrowDown clamping in sync with the DOM).
   defp palette_item_count(socket) do
     filtered =
       EvoDashWeb.ProjectComponents.filter_projects(
-        socket.assigns.recent_projects,
+        socket.assigns.projects,
         socket.assigns.palette_search
       )
 
     length(filtered) + if socket.assigns[:current_node_id] != nil, do: 1, else: 2
   end
-
-  # Filters recent-project entries to absolute paths only. Stale cwd-joined
-  # entries (produced by the pre-fix Windows relative-input bug, which
-  # `Path.expand`ed bare folder names against the Tauri install dir) must
-  # never render in the palette, feed auto-load, or reach path suggestions.
-  # Applied at every `:recent_projects` assignment site in this module.
-  # Implementation lives in EvoDashWeb.ProjectsLive.AsyncLoad (shared with
-  # the async handle_params load).
-  defp filter_absolute_recent_projects(recent_projects) do
-    AsyncLoad.filter_absolute_recent_projects(recent_projects)
-  end
-
-  # Node-aware variant of the filter above lives in
-  # EvoDashWeb.ProjectsLive.AsyncLoad (`filter_absolute_recent_projects_for_node/2`)
-  # and is applied inside the async recents loads (`AsyncLoad.load_recent_projects/3`)
-  # — local nodes keep the strict `Platform.absolute_path?/1` semantics; remote
-  # nodes accept POSIX- or Windows-absolute paths via the single shared
-  # predicate `ProjectFlow.absolute_path_for_node?/2`, so remote recents survive
-  # a dashboard running on a different OS (e.g. `/home/user/repo` on Windows).
 
   # The add-foreign-repo form is reachable in remote mode (RemoteView renders
   # it via `show_add_foreign_repo`), so its path must be validated for the
@@ -2886,7 +2891,14 @@ defmodule EvoDashWeb.ProjectsLive do
 
     socket
     |> assign(
-      active_project: %{path: path, name: name},
+      # The display-only VCT identity comes from the projects list ALREADY
+      # loaded in assigns (the VCT owns it) — a pure in-memory lookup, so no
+      # VCT/RPC call ever runs here.
+      active_project: %{
+        path: path,
+        name: name,
+        point: ProjectFlow.mount_point_for(socket.assigns[:projects] || [], path)
+      },
       active_project_path: path,
       # Re-arm the no-project hint so it returns for a future no-project
       # session (dismissal is per no-project session, not permanent).

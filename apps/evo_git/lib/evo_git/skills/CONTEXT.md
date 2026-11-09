@@ -27,7 +27,8 @@ None — leaf directory (modules: `skill.ex`, `executor.ex`, `crud.ex`, `context
 
 | Function | Purpose |
 |----------|---------|
-| `load_skills/1` | Parse all `.md` files from `.agents/skills/` into `[Skill.t()]` |
+| `skills_dir/0` | `@doc false` single source of truth for the directory name: returns the RELATIVE `".agents/skills"` (`skills.ex:63`); every caller joins it with its own repo/worktree root, and there is no config-dir/global variant |
+| `load_skills/1` | Parse all `.md` files from `<repo_root>/<skills_dir()>/` into `[Skill.t()]` (`skills.ex:76-92`) |
 | `to_tool_schemas/1` | Convert skills to `ReqLLM` tool schemas for the LLM |
 | `skill_names/1`, `find_skill/2` | Query loaded skills by name |
 | `parse_frontmatter/1` | Parse YAML frontmatter from skill/CONTEXT.md content; parse failures return `{:error, human_readable_string}` including the parser's line/column and message |
@@ -65,7 +66,9 @@ Skills are **globally defined** in `.agents/skills/` but **hierarchically enable
 | `extract_context_skill_names/1` | Parse a CONTEXT.md's `skill:` frontmatter field |
 | `remove_skill_from_all_contexts/2` | Clean up all CONTEXT.md references (used when deleting a skill) |
 
-Agent-loop startup pipeline (`Runner.do_run/2`, `runner.ex:239-249`): `load_skills(repo_path)` → `hierarchical_skill_names(node_path, repo_path)` → `filter_skills/2` → `to_tool_schemas/1`, kept on `LoopState.skill_schemas` and appended in `effective_tools/1` (`runner.ex:721-736`) AFTER `agent_module.available_tools()` — so a custom agent's `tools` whitelist does NOT filter dynamic skill tools, and only the max-depth subagent-tool removal touches them. `node_path` = `agent_state.context_node.path` (relative), `repo_path` = the agent's WORKTREE (`<repo_root>/.genesis/workers/...`). Only skills enabled at/above the agent's node become LLM-callable tools.
+Agent-loop startup pipeline (`Runner.do_run/2`, `runner.ex:239-249`): `load_skills(repo_path)` → `hierarchical_skill_names(node_path, repo_path)` → `filter_skills/2` → `to_tool_schemas/1`, kept on `LoopState.skill_schemas` and appended in `effective_tools/1` (`runner.ex:721-736`) AFTER `agent_module.available_tools()` — so a custom agent's `tools` whitelist does NOT filter dynamic skill tools, and only the max-depth subagent-tool removal touches them.
+Enabled-skill schemas are added for EVERY agent type regardless of its static tool list: the read-only `EvoGit.Agent.Tools.read_only_schemas/0` set (Investigator, ContextExtractor) contains no `skill_*` management schema, and a repo-less agent (`:repo_less`, e.g. SelfReflective) loads `.agents/skills/` from its source root because `runner.ex:339-342` sets `:repo_path`/`:genesis_repo_root` to that root.
+`EvoGit.Skills.execute/4` returns a plain `String.t()` (never a `%ToolOutput{}`), so skill output carries no media attachments. `node_path` = `agent_state.context_node.path` (relative), `repo_path` = the agent's WORKTREE (`<repo_root>/.genesis/workers/...`). Only skills enabled at/above the agent's node become LLM-callable tools.
 
 ### Skill Struct (`EvoGit.Skills.Skill`)
 
@@ -96,6 +99,8 @@ Fields: `name`, `description`, `parameters` (list of `{name, type, description, 
 
 ## Known Issues / Gotchas
 
+- **Only a YAML LIST in `skill:` enables anything**: `extract_context_skill_names/1` does `Map.get(metadata, "skill", [])` and returns `[]` unless the value is a list (`context_integration.ex:26-35`), so a scalar `skill: my-skill` (valid YAML) or `skill: true` silently enables nothing; list items are `to_string/1`ed.
+- **An unclosed frontmatter block is silently treated as body**: `parse_frontmatter/1` needs a later `---` line; content that starts with `---` but has none falls into the `{:ok, %{}, String.trim(content)}` branch (`skills.ex:401-420`), so `skill:` is neither parsed nor stripped, and `strip_front_matter/1` returns the (trimmed) body or the content unchanged on a parse error (`context_integration.ex:42-47`).
 - **Body-only skills produce a broken name**: `Executor.execute_skill/3`'s no-bash-block branch interpolates `skill_name(args)` (`executor.ex:48`), a placeholder that always returns `""` (`executor.ex:61`) — the LLM receives `"Skill '' instructions:\n\n<body>"` (pinned by `skills_test.exs:531`).
 - **`skill_enable`/`skill_disable` accept an ABSOLUTE `node_path`**: `ContextIntegration.enable_skill/3` / `disable_skill/3` resolve `Platform.safe_expand(node_path, repo_path)` (`platform.ex:359-375`), which returns an absolute input UNCHANGED — no containment/`Platform.path_under?` check — so an LLM-supplied absolute `node_path` rewrites a `CONTEXT.md` outside the repo (the skill tools never call `Shared.validate_file_scope/3`).
 - **Parameter `type` is passed through unvalidated**: `Skills.to_tool_schemas/1` copies the frontmatter `type` string straight into the JSON schema (`skills.ex:143-176`); a bogus type reaches the provider.

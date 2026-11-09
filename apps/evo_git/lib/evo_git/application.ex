@@ -106,6 +106,12 @@ defmodule EvoGit.Application do
       # EvoGit.Store so its first tick always finds the store; every tick is
       # total, so a restarting/absent store is skipped, never a crash.
       {EvoGit.Store.Maintenance, []},
+      # Virtual Context Tree mount store (pure namespace over OS paths).
+      # Starts AFTER EvoGit.Store because its mount table lives in the task
+      # store (`vct_mounts`) and is loaded at init — the store MUST already be
+      # up — and BEFORE EvoGit.TaskRegistry so every later reader (dashboard,
+      # agents) finds a ready mount table.
+      {EvoGit.VCT, []},
       # Dedicated pool for the TaskRegistry's offloaded READS: a heavy decode
       # (`list_tasks`, `list_tasks_page`, archives, summaries) runs in one of
       # these workers and replies to its caller directly, so the decoded term

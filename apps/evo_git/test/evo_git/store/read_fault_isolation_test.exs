@@ -101,7 +101,6 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
           assert Store.get_task_lite(store, id) == nil
           assert Store.get_task_status(store, id) == nil
           assert Store.select_task_update_info(store, id) == nil
-          assert Store.get_project(store, "/no/such/project") == nil
 
           # … list reads to [] …
           assert Store.select_task_ids(store, [:running]) == []
@@ -113,15 +112,13 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
           assert Store.select_tasks_summary(store) == []
           assert Store.select_tasks_summary_by_path(store, "/no/such/project") == []
           assert Store.select_tasks_changed_since(store, "1970-01-01T00:00:00.000000Z") == []
-          assert Store.select_all_projects(store) == []
+          assert Store.list_vct_mounts(store) == []
           assert Store.safe_select_all_tasks(store) == []
-          assert Store.safe_select_all_projects(store) == []
 
           # … a paginated read keeps its {list, count} shape …
           assert Store.safe_select_paginated_tasks(store, limit: 10) == {[], 0}
 
           # … and counts degrade to 0.
-          assert Store.count_projects(store) == 0
           assert Store.size(store) == 0
 
           # See the moduledoc's "Waiting for the async crash-report path": drain
@@ -140,6 +137,8 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
             "get_task_lite",
             "get_task_status",
             "select_task_ids",
+            "list_vct_mounts",
+            "size",
             "safe_select_paginated_tasks"
           ] do
         assert log =~ "Store: read #{op} failed"

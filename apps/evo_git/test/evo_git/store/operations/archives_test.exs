@@ -29,7 +29,7 @@ defmodule EvoGit.Store.Operations.ArchivesTest do
   (`async: true` is safe — `EvoGit.Store.Boot` serializes migration runs with
   a `:global` lock), mirroring `operations/pages_test.exs`. The file starts as
   a byte copy of the module's schema-complete template
-  (`EvoGit.TestSupport.StoreTemplate`), so the six migrations' DDL is paid once
+  (`EvoGit.TestSupport.StoreTemplate`), so the seven migrations' DDL is paid once
   per module instead of once per test. The facade section
   starts its own uniquely-named `EvoGit.Store` GenServer instead, so it never
   touches the shared application store.

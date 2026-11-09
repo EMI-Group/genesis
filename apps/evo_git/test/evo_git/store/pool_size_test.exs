@@ -40,7 +40,7 @@ defmodule EvoGit.Store.PoolSizeTest do
   alias EvoGit.Store.RepoScope
 
   # One schema-complete, CHECKPOINTED database built per module: a brand-new
-  # file plus the six migrations costs ~12 ms per boot, a byte copy of this
+  # file plus the seven migrations costs ~12 ms per boot, a byte copy of this
   # template ~0.1 ms. Every test still gets its own isolated file with the
   # identical schema, so the isolation semantics are unchanged (same idiom as
   # `test/evo_git/store_test.exs`).
@@ -219,13 +219,16 @@ defmodule EvoGit.Store.PoolSizeTest do
 
       assert results == List.duplicate(expected["tasks"], size)
 
-      projects =
+      # The mount table replaced the retired `projects` table; its PRIMARY KEY
+      # and UNIQUE `path` give it implicit indexes, so the per-table inventory
+      # is non-empty and every connection must report it.
+      mounts =
         on_every_connection(pid, size, fn conn ->
-          Enum.sort(raw_rows!(conn, "PRAGMA index_list(projects)") |> Enum.map(&Enum.at(&1, 1)))
+          Enum.sort(raw_rows!(conn, "PRAGMA index_list(vct_mounts)") |> Enum.map(&Enum.at(&1, 1)))
         end)
 
-      assert projects == List.duplicate(expected["projects"], size)
-      assert expected["tasks"] != [] and expected["projects"] != []
+      assert mounts == List.duplicate(expected["vct_mounts"], size)
+      assert expected["tasks"] != [] and expected["vct_mounts"] != []
     end
   end
 

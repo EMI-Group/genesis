@@ -4,6 +4,10 @@ defmodule EvoGit.QualityLevelTest do
   per-task `:quality_level` (SPEED ↔ QUALITY) option.
 
   The module is pure (no I/O), so no DB/Store setup is needed.
+  `capture_log/2` is a WINDOW over the app-wide Logger, so a concurrently
+  running async module's line can land inside it; the silent-path tests
+  therefore scope their refutation to this module's own wording
+  (`"quality_level"`) instead of asserting an empty capture.
   """
 
   use ExUnit.Case, async: true
@@ -31,7 +35,7 @@ defmodule EvoGit.QualityLevelTest do
           assert QualityLevel.normalize(nil) == "balanced"
         end)
 
-      assert log == ""
+      refute log =~ "quality_level"
     end
 
     test "returns the default silently for an empty string" do
@@ -40,7 +44,7 @@ defmodule EvoGit.QualityLevelTest do
           assert QualityLevel.normalize("") == "balanced"
         end)
 
-      assert log == ""
+      refute log =~ "quality_level"
     end
 
     test "passes through each recognised value" do
@@ -50,7 +54,7 @@ defmodule EvoGit.QualityLevelTest do
             assert QualityLevel.normalize(value) == value
           end)
 
-        assert log == ""
+        refute log =~ "quality_level"
       end
     end
 

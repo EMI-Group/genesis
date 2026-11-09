@@ -2,19 +2,19 @@ defmodule EvoGit.TaskRegistryCase do
   @moduledoc """
   Shared test case for `EvoGit.TaskRegistry` tests.
 
-  Each test gets its OWN, fully isolated `EvoGit.Store` + `EvoGit.TaskRegistry`
-  pair, both started under the test's supervisor with UNIQUE registered names, so
-  the app-global singletons are never touched and tests may run concurrently
-  (`async: true`).
+  Each test gets its OWN, fully isolated `EvoGit.Store` + `EvoGit.VCT` +
+  `EvoGit.TaskRegistry` trio, all started under the test's supervisor with
+  UNIQUE registered names, so the app-global singletons are never touched and
+  tests may run concurrently (`async: true`).
 
   The store still opens a per-test SQLite FILE (`<root>/tasks.sqlite`), but that
   file starts as a byte copy of a schema-complete TEMPLATE built once per module
-  (`EvoGit.TestSupport.StoreTemplate`): the six migrations' DDL is paid once per
-  module instead of once per test (measured ~19 ms → ~2 ms of store boot per
+  (`EvoGit.TestSupport.StoreTemplate`): the seven migrations' DDL is paid once
+  per module instead of once per test (measured ~19 ms → ~2 ms of store boot per
   test). Only connection setup and the probe-guarded no-op migration run remain
   per test.
 
-  Isolation works through the runtime seam on `EvoGit.TaskRegistry.server/0`:
+  Isolation works through the runtime seams:
 
     * `EvoGit.TaskRegistry` resolves its target instance from the process
       dictionary key `:evogit_task_registry_server` at CALL time (falling back
@@ -27,6 +27,14 @@ defmodule EvoGit.TaskRegistryCase do
     * `EvoGit.Store` needs no seam: every client function takes the store name
       as its first argument. The isolated store name is stored in the test
       process under `:evogit_test_store` and exposed via `store/0`.
+    * Project mounts live in the Virtual Context Tree, whose mount table is a
+      SQLite table (`vct_mounts`) owned by the task store — so each test starts
+      its OWN `EvoGit.VCT` bound to this test's isolated store (`store:`), with
+      `data_dir: root` for its global context. `setup/1` points the TEST
+      process at it through the `:evogit_vct_server` key, so direct
+      `EvoGit.VCT` calls and `EvoGit.Core.ContextNode` /
+      `EvoGit.Agent.ContextBuilder` reads made from the test resolve to the
+      same instance. It is exposed as `context.vct`.
 
   Nothing global is mutated: the temporary data directory is removed on exit and
   the per-test processes are stopped by `start_supervised!/1`.
@@ -35,7 +43,8 @@ defmodule EvoGit.TaskRegistryCase do
 
       defmodule EvoGit.TaskRegistry.XxxTest do
         use EvoGit.TaskRegistryCase, async: true
-        # ... context: %{data_dir: root, sqlite_path: path, store: name, registry: name}
+        # ... context: %{data_dir: root, sqlite_path: path, store: name,
+        #                vct: name, registry: name}
       end
   """
 
@@ -51,7 +60,7 @@ defmodule EvoGit.TaskRegistryCase do
 
       alias EvoGit.TestSupport.StoreTemplate
 
-      # ONE schema-complete, checkpointed SQLite template per module (the six
+      # ONE schema-complete, checkpointed SQLite template per module (the seven
       # migrations' DDL is paid once here, not once per test). Each test still
       # gets its OWN database file — a copy of this template — so isolation is
       # unchanged.
@@ -77,13 +86,24 @@ defmodule EvoGit.TaskRegistryCase do
     copy_template.(sqlite_path)
 
     store_name = :"evogit_test_store_#{unique}"
+    vct_name = :"evogit_test_vct_#{unique}"
     registry_name = :"evogit_test_registry_#{unique}"
 
-    # Explicit `id` overrides are required because both modules hardcode
+    # Explicit `id` overrides are required because the modules hardcode
     # `id: __MODULE__` in their `child_spec/1`.
     start_supervised!(
       Supervisor.child_spec({EvoGit.Store, data_dir: sqlite_path, name: store_name},
         id: store_name
+      )
+    )
+
+    # The isolated VCT owns this test's project mounts. Its mount table is the
+    # `vct_mounts` table of THIS test's isolated store (`store:`); the global
+    # context file lives under the test's own temp root.
+    start_supervised!(
+      Supervisor.child_spec(
+        {EvoGit.VCT, name: vct_name, data_dir: root, store: store_name},
+        id: vct_name
       )
     )
 
@@ -97,11 +117,19 @@ defmodule EvoGit.TaskRegistryCase do
     # `setup/1` runs in the test process: point every in-test call at the
     # isolated instances.
     Process.put(:evogit_task_registry_server, registry_name)
+    Process.put(:evogit_vct_server, vct_name)
     Process.put(:evogit_test_store, store_name)
 
     on_exit(fn -> File.rm_rf(root) end)
 
-    {:ok, %{data_dir: root, sqlite_path: sqlite_path, store: store_name, registry: registry_name}}
+    {:ok,
+     %{
+       data_dir: root,
+       sqlite_path: sqlite_path,
+       store: store_name,
+       vct: vct_name,
+       registry: registry_name
+     }}
   end
 
   @doc """

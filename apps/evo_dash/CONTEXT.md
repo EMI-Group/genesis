@@ -4,7 +4,7 @@
 
 EvoDash is the web dashboard for the EvoGit umbrella project — a project-based real-time Phoenix LiveView interface for launching and monitoring EvoGit tasks (genesis / evolve), inspecting the agent tree hierarchy, viewing task logs, managing runtime scheduler settings, editing user configuration, and managing per-project settings including foreign repositories.
 
-Users open a Project (a Git repository path) and the dashboard auto-detects the appropriate task mode; multiple projects can be open simultaneously with tab-based navigation. This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibling `:evo_git` application.
+Users open a Project (a Git repository path) through the command-palette selector, which mounts it in the core's Virtual Context Tree and makes it the single active project; the dashboard auto-detects the appropriate task mode. This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibling `:evo_git` application.
 
 ## Routing Table
 
@@ -153,7 +153,7 @@ The dashboard controls a remote headless daemon over Erlang distribution via an 
 | `"agents"` | `{:agent_registered, id, summary, node}`, `{:agent_updated, id, changed_fields, node}` (NEVER `:context`; carries `:message_count` when context changed), `{:agent_removed, id, node}`, `{:agents_updated, node}` | AgentsLive |
 | `"scheduler_config"` | `{:scheduler_config_updated, node}` | SettingsLive, SystemLive (node-filtered → async reloads) |
 | `"system"` | `{:system_sample, node, seq, sample}` every 3 s: legacy aggregates plus **`llm_slots`** (per-PROVIDER-PROFILE pool `%{used:, waiting:, capacity:}` keyed by `[[llm.providers]]` account id — all models of one profile share the pool — real counts for every configured profile incl. peak-paused 0-capacity; `%{}` when the scheduler is dead) and the OPTIONAL **`llm_pools`** label metadata (`%{pool_id => %{label:, models:}}`, read defensively, never required) | SystemLive charts (ring buffer, cap 60) |
-| `"recent_projects"` | `{:recent_projects_updated}` | ProjectsLive |
+| `"vct"` | `{:vct_updated, node}` | ProjectsLive |
 | `"guides"` | `{:guide_updated, id, %{message, page, selector, dismissible}, node}` | `LiveHooks.Guide` overlay |
 | `"updates"` | `{:update_status, state}` | UpdateStatus hook, SystemLive |
 
@@ -267,12 +267,15 @@ Detailed health, save, selection and node-loading contracts belong to `live/CONT
 - Depends on `:evo_git` at compile and runtime (persistence/registry code lives there; evo_dash owns none).
 - Runs on port 4100 in development, uses the Bandit adapter.
 - Tailwind CSS 4 + DaisyUI (no Node.js toolchain); JS bundled by esbuild.
-- Task state and recent projects persisted via SQLite (xqlite — Rust NIFs, precompiled for Win/macOS/Linux incl. ARM); no external DB server. Store + TaskRegistry are evo_git-owned (see `apps/evo_git/CONTEXT.md`).
+- Task state persisted via SQLite in the core (xqlite — Rust NIFs, precompiled for Win/macOS/Linux incl. ARM); no external DB server. Store + TaskRegistry are evo_git-owned (see `apps/evo_git/CONTEXT.md`).
+- The project registry is the core's Virtual Context Tree: `EvoGit.VCT` owns the persisted mount table (`vct_mounts` in the task-store SQLite database), mounting each opened project at `vct:///projects/<basename>[-N]` with `last_opened_at` ordering (newest first) and a `EvoGit.VCT.max_projects/0` cap (100 by default, over-cap registration evicts the oldest).
+- The dashboard reads and mutates that registry only through `EvoDash.NodeContext.projects/1` / `mount_project/3` / `forget_project/2`, and `EvoGit.VCT` broadcasts `{:vct_updated, node}` on the `"vct"` topic after every successful mutation; `%EvoGit.VCT.Mount{}` carries `point`, `path`, `name`, `kind` and `last_opened_at`, and the palette shows `point` as the project's primary identity with the OS path secondary.
 - **Data-safety architecture**: TaskRegistry/Store `handle_*` callbacks have NO try/rescue — a Store failure crashes the GenServer and the supervisor restarts it (WAL mode keeps data safe). Serialization is `EvoGit.Store.Codec` (total encode, raise-on-bad-decode). `safe_select_all_tasks/projects` SKIP corrupt rows with a `Logger.warning` (never raise, no quarantine). `cleanup_expired_tasks` runs only on completion transitions / explicit clear / init, and the completed task's `put_task` runs BEFORE cleanup. **Lease & heartbeat**: running tasks carry `lease_expires_at` (renewed every 60 s); lease checking is two-check, one-shot (startup reconcile + one `:lease_sweep`); a task is marked `:failed` only when the lease has genuinely expired (a second BEAM instance cannot kill the first's running tasks). Detail: `apps/evo_git/CONTEXT.md`.
 - **Supervision robustness**: `:one_for_one` with `max_restarts: 10`, `max_seconds: 60` so the Endpoint survives a transient TaskRegistry restart.
 - **`try/rescue` anti-pattern policy**: never wrap LiveView config/core-value loading (`EvoGit.Config.*`, `EvoGit.AgentScheduler.*`) — let the LiveView crash truthfully; JSON via non-crashing `Jason.encode/1` + `case`; atom conversion from untrusted input via whitelist `Map.get/3` (never `String.to_existing_atom/1` + rescue, never bare `String.to_atom/1`); ETS existence via `:ets.info/1`. Acceptable try/rescue (MUST carry a comment answering "expected error?" + "cleanest approach?"): GenServer `terminate/2`, deliberate data-recovery boundaries, untrusted persisted data with no non-crashing variant, the Store's `ALTER TABLE DROP COLUMN` migration, test-cleanup rescues in `on_exit`/teardown.
 - Naming: domain modules in `./lib/evo_dash/`, web modules in `./lib/evo_dash_web/`.
 - Build: `mix assets.build` (esbuild + tailwind), `mix assets.deploy` (minified + digested).
+- **No context-tree UI**: the dashboard renders no repo directory/node hierarchy, no node browser and no CONTEXT.md viewer; context-tree addressing exists only as the evolve-only free-text "Starting Node" (`:node_path`) task field (`task_form_components.ex:988-1005`) and AgentsLive's per-turn `CONTEXT_TREE` history dump (`agents_live.html.heex:777`, `:1008`), while the nearest hierarchies are the agent tree (`agents_components.ex:16`), the review file/diff tree (`review_components/diff_viewer.ex:24`) and archive trees.
 - Desktop-mode gating: desktop-only code (`DesktopLifetime`, update-status integration) lives in the frontend app and stays inert outside the Tauri shell, so the headless `genesis_server` release never activates it; gating env vars `EVOGIT_DESKTOP` / `EVOGIT_LIFETIME_PORT` (see Desktop Mode).
 
 ## Desktop Mode (Tauri Shell)

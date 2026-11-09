@@ -55,7 +55,6 @@ defmodule EvoGit.TaskRegistry.ReadFaultIsolationTest do
           assert TaskRegistry.get_task(id) == nil
           assert TaskRegistry.get_unique_paths() == []
           assert TaskRegistry.list_tasks() == []
-          assert TaskRegistry.list_recent_projects() == []
         end)
 
       # The fault is observable (never silent) …
@@ -71,10 +70,6 @@ defmodule EvoGit.TaskRegistry.ReadFaultIsolationTest do
       capture_log(fn ->
         # The delete path reports the degraded error atom (like disk-full).
         assert TaskRegistry.clear_finished_tasks() == {:error, :store_unavailable}
-
-        # Convenience writes swallow the fault and continue in-memory.
-        assert TaskRegistry.add_recent_project("/tmp/read_fault_project", "fault") == :ok
-        assert TaskRegistry.remove_recent_project("/tmp/read_fault_project") == :ok
       end)
 
       assert Process.alive?(Process.whereis(registry))

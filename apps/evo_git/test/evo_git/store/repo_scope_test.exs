@@ -24,7 +24,7 @@ defmodule EvoGit.Store.RepoScopeTest do
   alias EvoGit.Repo
   alias EvoGit.Store.Boot
   alias EvoGit.Store.RepoScope
-  alias EvoGit.Store.Schemas.ProjectRow
+  alias EvoGit.Store.Schemas.VctMountRow
   alias EvoGit.TestSupport.StoreTemplate
 
   @canonical_default Repo
@@ -88,17 +88,25 @@ defmodule EvoGit.Store.RepoScopeTest do
     pid
   end
 
-  # ProjectRow's `last_opened_at` is a `Types.TaskTimestamp` — a %DateTime{}
+  # VctMountRow's `last_opened_at` is a `Types.TaskTimestamp` — a %DateTime{}
   # dumps to the fixed-ms ISO wire format, so insert_all through the TYPED
   # schema is the correct write path (raw schemas are read-projection only).
-  defp insert_project(path, name) do
-    Repo.insert_all(ProjectRow, [
-      [path: path, name: name, last_opened_at: ~U[2024-05-05 05:05:05.555Z]]
+  # Every column is supplied explicitly: `insert_all` bypasses the schema's
+  # `kind` default, and the column is NOT NULL.
+  defp insert_mount(point, path, name) do
+    Repo.insert_all(VctMountRow, [
+      [
+        point: point,
+        path: path,
+        name: name,
+        kind: "git",
+        last_opened_at: ~U[2024-05-05 05:05:05.555Z]
+      ]
     ])
   end
 
-  defp project_count do
-    Repo.aggregate(ProjectRow, :count)
+  defp mount_count do
+    Repo.aggregate(VctMountRow, :count)
   end
 
   # ── with_repo/2 happy path ───────────────────────────────────────────────
@@ -108,17 +116,19 @@ defmodule EvoGit.Store.RepoScopeTest do
       pid = start_repo!(:happy)
 
       assert RepoScope.with_repo(pid, fn ->
-               {insert_project("/tmp/x", "X"), project_count()}
+               {insert_mount("vct:///projects/x", "/tmp/x", "X"), mount_count()}
              end) == {{1, nil}, 1}
     end
 
     test "writes made inside the scope are readable through the same pid" do
       pid = start_repo!(:readback)
 
-      RepoScope.with_repo(pid, fn -> insert_project("/tmp/y", "Y") end)
+      RepoScope.with_repo(pid, fn ->
+        insert_mount("vct:///projects/y", "/tmp/y", "Y")
+      end)
 
       assert RepoScope.with_repo(pid, fn ->
-               Repo.get(ProjectRow, "/tmp/y").name
+               Repo.get(VctMountRow, "vct:///projects/y").name
              end) == "Y"
     end
 
@@ -185,17 +195,17 @@ defmodule EvoGit.Store.RepoScopeTest do
         assert Repo.get_dynamic_repo() == pid_a
 
         RepoScope.with_repo(pid_b, fn ->
-          insert_project("/tmp/b", "B")
+          insert_mount("vct:///projects/b", "/tmp/b", "B")
 
           # Inside the inner scope the binding is pid_b, and its writes land
           # in pid_b's database — NOT pid_a's.
           assert Repo.get_dynamic_repo() == pid_b
-          assert project_count() == 1
+          assert mount_count() == 1
         end)
 
         # The inner call restored the OUTER binding — still pid_a.
         assert Repo.get_dynamic_repo() == pid_a
-        assert project_count() == 0
+        assert mount_count() == 0
       end)
 
       # Only the outermost call returns the process to its original state.
@@ -206,15 +216,20 @@ defmodule EvoGit.Store.RepoScopeTest do
       pid_a = start_repo!(:iso_a)
       pid_b = start_repo!(:iso_b)
 
-      RepoScope.with_repo(pid_a, fn -> insert_project("/tmp/a", "A") end)
-      RepoScope.with_repo(pid_b, fn -> insert_project("/tmp/b", "B") end)
+      RepoScope.with_repo(pid_a, fn ->
+        insert_mount("vct:///projects/a", "/tmp/a", "A")
+      end)
+
+      RepoScope.with_repo(pid_b, fn ->
+        insert_mount("vct:///projects/b", "/tmp/b", "B")
+      end)
 
       assert RepoScope.with_repo(pid_a, fn ->
-               {project_count(), Repo.get(ProjectRow, "/tmp/a").name}
+               {mount_count(), Repo.get(VctMountRow, "vct:///projects/a").name}
              end) == {1, "A"}
 
       assert RepoScope.with_repo(pid_b, fn ->
-               {project_count(), Repo.get(ProjectRow, "/tmp/b").name}
+               {mount_count(), Repo.get(VctMountRow, "vct:///projects/b").name}
              end) == {1, "B"}
     end
   end

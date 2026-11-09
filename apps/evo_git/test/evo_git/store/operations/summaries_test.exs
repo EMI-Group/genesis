@@ -23,7 +23,7 @@ defmodule EvoGit.Store.Operations.SummariesTest do
   seeding rows with `Repo.insert_all(TaskRow, ...)` — typed dumps through the
   Codec (raw schemas are read-projection only). Each instance starts as a byte
   copy of the module's schema-complete template
-  (`EvoGit.TestSupport.StoreTemplate`), so the six migrations' DDL is paid once
+  (`EvoGit.TestSupport.StoreTemplate`), so the seven migrations' DDL is paid once
   per module instead of once per test.
   """
 
@@ -74,7 +74,7 @@ defmodule EvoGit.Store.Operations.SummariesTest do
 
   # Starts an unnamed dynamic repo on a UNIQUE tmp database file (per test
   # process, per call — `async: true` safe) and stops it on test exit. The file
-  # is a byte copy of the module's schema template, so the six migrations' DDL
+  # is a byte copy of the module's schema template, so the seven migrations' DDL
   # is paid once per module instead of once per test.
   # The production `EvoGit.Store.Boot` serializes concurrent migration runs
   # globally (`:global.trans`), so parallel boots are safe.
