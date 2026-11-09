@@ -2,7 +2,7 @@
 
 ## Intent
 Owns the EXECUTION of a batch of standard (non-subagent) agent tool calls: serial/parallel partition, per-call timeouts, tool slots, the spawned tool task, `EvoGit.ProcessManager` tracking and the sanitize pipeline.
-The agent no longer owns concurrency logic: `EvoGit.Agent.ToolDispatch.batch_execute_tools/5` resolves ONE `%EvoGit.ToolRuntime.Request{}` (owner identity, repo paths, node path, taskdir, role) and delegates.
+The agent no longer owns concurrency logic: `EvoGit.Agent.ToolDispatch.batch_execute_tools/4,5` resolves ONE `%EvoGit.ToolRuntime.Request{}` (owner identity, repo paths, node path, taskdir, role) and delegates.
 
 ## API Surface
 - `EvoGit.ToolRuntime.execute_batch(indexed_calls, %Request{}) :: [{index, tool_call_id, name, output}]` — the facade; results are SORTED BY INDEX, sanitized but NOT hint-adjusted.
@@ -20,3 +20,11 @@ The agent no longer owns concurrency logic: `EvoGit.Agent.ToolDispatch.batch_exe
 - Per-call tracking lives in the RUNTIME process, not the tool task: `:completed` on a normal return (including an `Error: …` string or an invalid-arguments error), `:failed` on `{:tool_crashed, _}` / `{:error, _}` / `{:exit, _}`, and `kill(:timeout)` + `finish(:killed)` on a `Task.yield` timeout.
 - Delegation hints and the redundant-cd warning stay AGENT-side (`ToolDispatch.apply_tool_output_tracking/3`), applied after the batch in the parent process, in index order.
 - Do NOT duplicate timeout or slot logic here and in `agent/tool_dispatch.ex`; this node is the ONLY execution engine.
+
+## Routing Table
+
+- `./request.ex` → `%EvoGit.ToolRuntime.Request{}` (the one batch context struct) + `new/1` defaults.
+- `./executor.ex` → the execution engine: `execute_batch/2`, serial/parallel partition, per-call timeout resolution, slot acquisition, the spawned tool task and its pd re-installation, result mapping.
+- `./tracking.ex` → `EvoGit.ProcessManager` integration (`kind: :tool_call`): backend probe, `track/4`, `finish/2`, `kill/2`, label/command derivation.
+- `./output.ex` → `Output.sanitize/3`, the sanitize/wrap boundary shared with `ToolDispatch.sanitize_tool_result/3`.
+- Sandbox execution handles / `:execution_id` → `../sandbox/CONTEXT.md`; the registry itself → `../process_manager.ex`; the timeout + hint policy owned agent-side → `../agent/CONTEXT.md`; per-task tmpdir → `../sandbox/` (`EvoGit.TaskTmpdir`).
