@@ -638,3 +638,121 @@ defmodule EvoDash.NodeContextConfigTest do
     end
   end
 end
+
+# `async: false` — the forcing global is the `EvoGit.VCT` mount table: a
+# BEAM-global singleton GenServer (`EvoGit.VCT`, started by `EvoGit.Application`)
+# whose whole mount list is persisted on the run-wide test store
+# (`vct_mounts`) and is a read cache of it. Other concurrently running modules
+# observe and mutate that SAME table (the evo_git tool/command-shell suites
+# mount their own rows), so these tests must not run in the async phase; they
+# assert only their own per-test-unique mounts and never clear the table.
+defmodule EvoDash.NodeContextVctTest do
+  use EvoDashWeb.ConnCase, async: false
+
+  import ExUnit.CaptureLog
+
+  # A node atom that is never connected: `:erpc.call/5` against it fails fast in
+  # the test env (the local BEAM is not distributed), which is exactly the
+  # remote transport-failure path `NodeContext` must degrade through.
+  @remote_node :"genesis_remote@127.0.0.1"
+
+  # Mounts ONE unique absolute path (unique basename => unique VCT point, so it
+  # can never collide with another suite's row) and forgets it on teardown.
+  # The mount table caps at `EvoGit.VCT.max_projects/0`, so keeping every test
+  # at ≤3 mounts and forgetting them is what keeps this module a good citizen.
+  defp mount_unique!(name_prefix) do
+    unique = System.unique_integer([:positive])
+    path = "/tmp/node_context_vct_#{name_prefix}_#{unique}"
+    name = "NodeContext #{name_prefix} #{unique}"
+    assert {:ok, %EvoGit.VCT.Mount{} = mount} = EvoGit.VCT.mount(path, name: name)
+    on_exit(fn -> EvoGit.VCT.forget(mount.point) end)
+    mount
+  end
+
+  describe "projects/1 (VCT project-registry delegate)" do
+    test "includes a newly mounted local project with its point/path/name" do
+      mount = mount_unique!("projects")
+
+      projects = EvoDash.NodeContext.projects(node())
+      assert Enum.all?(projects, &match?(%EvoGit.VCT.Mount{}, &1))
+
+      found = Enum.find(projects, &(&1.point == mount.point))
+      assert %EvoGit.VCT.Mount{} = found
+      assert found.path == mount.path
+      assert found.name == mount.name
+    end
+
+    test "degrades to [] on a remote node" do
+      # The core turns a failed remote RPC (and any non-list reply) into `[]`,
+      # so the dashboard never crashes or blocks on the project list.
+      {result, _log} = with_log(fn -> EvoDash.NodeContext.projects(@remote_node) end)
+      assert result == []
+    end
+  end
+
+  describe "mount_project/3 (VCT project-registry delegate)" do
+    test "mounts a unique absolute path and re-mounting keeps the same point" do
+      unique = System.unique_integer([:positive])
+      path = "/tmp/node_context_vct_mount_#{unique}"
+      name = "NodeContext mount #{unique}"
+
+      assert {:ok, %EvoGit.VCT.Mount{} = mount} =
+               EvoDash.NodeContext.mount_project(node(), path, name)
+
+      on_exit(fn -> EvoGit.VCT.forget(mount.point) end)
+      assert mount.path == path
+      assert mount.name == name
+
+      # Mounting is idempotent: the same OS path refreshes the mount and keeps
+      # its point instead of accumulating a second row.
+      assert {:ok, %EvoGit.VCT.Mount{point: same_point}} =
+               EvoDash.NodeContext.mount_project(node(), path, name)
+
+      assert same_point == mount.point
+    end
+
+    test "rejects a relative path with the core contract error" do
+      assert EvoDash.NodeContext.mount_project(node(), "relative/repo", "rel") ==
+               {:error, :relative_path}
+    end
+
+    test "surfaces a remote transport failure as an error tuple" do
+      {result, _log} =
+        with_log(fn -> EvoDash.NodeContext.mount_project(@remote_node, "/tmp/x", "x") end)
+
+      assert {:error, {_kind, _reason}} = result
+    end
+  end
+
+  describe "forget_project/2 (VCT project-registry delegate)" do
+    test "forgets a local mount by point, then reports :not_found" do
+      mount = mount_unique!("forget")
+
+      assert :ok = EvoDash.NodeContext.forget_project(node(), mount.point)
+      refute Enum.any?(EvoGit.VCT.projects(), &(&1.point == mount.point))
+
+      assert EvoDash.NodeContext.forget_project(node(), mount.point) == {:error, :not_found}
+    end
+
+    test "distinguishes an unknown local point from a non-local VCT authority" do
+      unique = System.unique_integer([:positive])
+
+      assert EvoDash.NodeContext.forget_project(
+               node(),
+               "vct:///projects/does-not-exist-#{unique}"
+             ) == {:error, :not_found}
+
+      # A non-empty authority is reserved for a future remote form and is
+      # rejected as a bad point, never treated as a local mount.
+      assert EvoDash.NodeContext.forget_project(node(), "vct://host/x") ==
+               {:error, :invalid_point}
+    end
+
+    test "surfaces a remote transport failure as an error tuple" do
+      {result, _log} =
+        with_log(fn -> EvoDash.NodeContext.forget_project(@remote_node, "/tmp/x") end)
+
+      assert {:error, {_kind, _reason}} = result
+    end
+  end
+end

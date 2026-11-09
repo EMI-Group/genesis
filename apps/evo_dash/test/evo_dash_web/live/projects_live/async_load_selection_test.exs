@@ -70,7 +70,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoadSelectionTest do
              {original, false}
 
     assert AsyncLoad.default_batch(node(), false, "target-a", "/remote/repo", true, true) == %{
-             recent_projects: [],
+             projects: [],
              terminal_ids: nil,
              auto_activate?: false
            }
