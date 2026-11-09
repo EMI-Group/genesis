@@ -1171,6 +1171,106 @@ defmodule EvoDash.NodeContext do
     EvoGit.RemoteNode.list_task_commit_graph(node, task_id, repo_path, live_tips, opts)
   end
 
+  # ── Managed processes (node-local OS executions) ─────────────────
+  #
+  # Every function delegates to `EvoGit.RemoteNode.call_remote/4` with the
+  # core's `EvoGit.AgentScheduler.RemoteAPI` managed-process functions, so the
+  # work happens on the TARGET node (local → direct call, remote → `:erpc`).
+  # The list read is the only degrading one; the id-keyed reads and the control
+  # call unwrap the RPC envelope and return the core's own answer verbatim.
+
+  @doc """
+  Lists the OS executions `EvoGit.ProcessManager` tracks on the given node,
+  newest first.
+
+  Delegates to `EvoGit.RemoteNode.call_remote/4` (function
+  `EvoGit.AgentScheduler.RemoteAPI.list_processes/1`). `opts` are the
+  manager's filters (`:agent_id`, `:task_id`, `:kind` =
+  `:tool_call | :background_job`, `:status`, `:backend`) and pass through
+  verbatim. Returns native `%EvoGit.ProcessManager.Execution{}` structs.
+  Total: a failed remote call, `{:ok, other}` for a non-list payload, or
+  `{:error, reason}` all degrade to `[]`.
+  """
+  @spec list_processes(node(), keyword()) :: [EvoGit.ProcessManager.Execution.t()]
+  def list_processes(node, opts \\ []) do
+    case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_processes, [opts]) do
+      {:ok, list} when is_list(list) -> list
+      _other -> []
+    end
+  end
+
+  @doc """
+  Fetches ONE tracked execution by id (`"proc-<n>"`) on the given node.
+
+  Delegates to `EvoGit.RemoteNode.call_remote/4` (function
+  `EvoGit.AgentScheduler.RemoteAPI.get_process/1`). Returns
+  `{:ok, %EvoGit.ProcessManager.Execution{}}`, `{:error, :not_found}` or
+  `{:error, :process_manager_unavailable}` — the RPC envelope is unwrapped so
+  the core's own answer is returned verbatim (local and remote alike); only a
+  transport failure surfaces as `{:error, reason}`. A non-binary `id` answers
+  `{:error, :not_found}` without an RPC.
+  """
+  @spec get_process(node(), String.t()) ::
+          {:ok, EvoGit.ProcessManager.Execution.t()} | {:error, term()}
+  def get_process(node, id) when is_binary(id) do
+    node
+    |> call_remote(EvoGit.AgentScheduler.RemoteAPI, :get_process, [id])
+    |> unwrap_rpc()
+  end
+
+  def get_process(_node, _id), do: {:error, :not_found}
+
+  @doc """
+  Probes ONE execution's live resource usage on the given node.
+
+  Delegates to `EvoGit.RemoteNode.call_remote/4` (function
+  `EvoGit.AgentScheduler.RemoteAPI.process_stats/1`), which samples in the
+  remote caller's process. Returns `{:ok, stats}` with the frozen stats map
+  (`cpu_time_ms`, `cpu_percent`, `memory_bytes`, `rss_bytes`, `pids`,
+  `sampled_at`) or the manager's own error — the RPC envelope is unwrapped so
+  the core's own answer is returned verbatim; only a transport failure
+  surfaces as `{:error, reason}`. A non-binary `id` answers `{:error,
+  :not_found}` without an RPC.
+  """
+  @spec process_stats(node(), String.t()) :: {:ok, map()} | {:error, term()}
+  def process_stats(node, id) when is_binary(id) do
+    node
+    |> call_remote(EvoGit.AgentScheduler.RemoteAPI, :process_stats, [id])
+    |> unwrap_rpc()
+  end
+
+  def process_stats(_node, _id), do: {:error, :not_found}
+
+  @doc """
+  Applies one control action to a tracked execution on the given node.
+
+  Delegates to `EvoGit.RemoteNode.call_remote/4` (function
+  `EvoGit.AgentScheduler.RemoteAPI.process_control/3`). `action` passes through
+  verbatim (`:pause | :resume | :kill | {:signal, signal}`) and `reason` is any
+  term — typically a human-entered reason string — recorded on the execution's
+  control log. Returns `:ok` or the manager's own error — the RPC envelope is
+  unwrapped so the core's own answer is returned verbatim; only a transport
+  failure surfaces as `{:error, reason}`. A non-binary `id` answers `{:error,
+  :not_found}` without an RPC.
+  """
+  @spec process_control(node(), String.t(), atom() | {:signal, term()}, term()) ::
+          :ok | {:error, term()}
+  def process_control(node, id, action, reason) when is_binary(id) do
+    node
+    |> call_remote(EvoGit.AgentScheduler.RemoteAPI, :process_control, [id, action, reason])
+    |> unwrap_rpc()
+  end
+
+  def process_control(_node, _id, _action, _reason), do: {:error, :not_found}
+
+  # Unwraps the `EvoGit.RemoteNode.call_remote/4` envelope so the core's OWN
+  # answer (`{:ok, _} | {:error, _}` / `:ok | {:error, _}`) reaches the caller
+  # unchanged on both the local and the remote path — without this, a local
+  # `{:error, :not_found}` would arrive as `{:ok, {:error, :not_found}}`. A
+  # transport failure (`{:error, reason}`) is passed through as-is.
+  defp unwrap_rpc({:ok, result}), do: result
+  defp unwrap_rpc({:error, reason}), do: {:error, reason}
+
   # ── Private helpers ──────────────────────────────────────────────
 
   # Invokes `apply(EvoGit.RemoteConnection, function, args)`, returning
