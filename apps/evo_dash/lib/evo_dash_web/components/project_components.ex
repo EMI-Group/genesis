@@ -23,8 +23,9 @@ defmodule EvoDashWeb.ProjectComponents do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Filters `recent_projects` by a search query, matching against both the
-  project name and path (case-insensitive substring match).
+  Filters `recent_projects` by a search query, matching against the project
+  name, OS path AND Virtual Context Tree path (case-insensitive substring
+  match). The VCT path is optional (`nil` for an unmapped legacy entry).
   Returns the full list when the query is empty.
   """
   def filter_projects(recent_projects, search) do
@@ -38,9 +39,12 @@ defmodule EvoDashWeb.ProjectComponents do
       recent_projects
     else
       Enum.filter(recent_projects, fn project ->
-        name = (project.name || "") |> String.downcase()
-        path = (project.path || "") |> String.downcase()
-        String.contains?(name, query) or String.contains?(path, query)
+        name = (Map.get(project, :name) || "") |> String.downcase()
+        path = (Map.get(project, :path) || "") |> String.downcase()
+        vct_path = (Map.get(project, :vct_path) || "") |> String.downcase()
+
+        String.contains?(name, query) or String.contains?(path, query) or
+          String.contains?(vct_path, query)
       end)
     end
   end
@@ -74,8 +78,11 @@ defmodule EvoDashWeb.ProjectComponents do
           <span class="text-base font-bold text-base-content truncate leading-tight">
             {@active_project.name}
           </span>
-          <span class="text-sm text-base-content/80 font-mono truncate hidden md:inline">
-            {@active_project.path}
+          <span
+            class="text-sm text-base-content/80 font-mono truncate hidden md:inline"
+            title={@active_project.path}
+          >
+            {Map.get(@active_project, :vct_path) || @active_project.path}
           </span>
         <% else %>
           <.icon name="hero-folder-open" class="size-4 text-base-content/60 shrink-0" />
@@ -179,8 +186,12 @@ defmodule EvoDashWeb.ProjectComponents do
             >
               <.icon name="hero-folder" class="size-4 shrink-0" />
               <div class="min-w-0 flex-1">
-                <div class="text-sm font-medium truncate">{project.name}</div>
-                <div class="text-xs text-base-content/70 font-mono truncate">{project.path}</div>
+                <div class="text-sm font-medium font-mono truncate">
+                  {Map.get(project, :vct_path) || project.name}
+                </div>
+                <div class="text-xs text-base-content/70 font-mono truncate" title={project.path}>
+                  {project.path}
+                </div>
               </div>
             </button>
             <%= unless @remote do %>

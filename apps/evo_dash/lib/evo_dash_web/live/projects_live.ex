@@ -2863,6 +2863,19 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
+  # The display-only VCT identity for a project comes from the recents list
+  # ALREADY loaded in assigns (the VCT owns it) — a pure in-memory lookup, so
+  # no VCT/TaskRegistry/RPC call ever runs here. Unmapped/legacy entries
+  # (nil `vct_path`) and absent recents both fall back to nil.
+  defp recent_project_vct_path(socket, path) do
+    entries = socket.assigns[:recent_projects] || []
+
+    case Enum.find(entries, &(Map.get(&1, :path) == path)) do
+      nil -> nil
+      entry -> Map.get(entry, :vct_path)
+    end
+  end
+
   defp activate_project(socket, path) do
     name = Path.basename(path)
     is_project_change = socket.assigns[:active_project_path] != path
@@ -2886,7 +2899,7 @@ defmodule EvoDashWeb.ProjectsLive do
 
     socket
     |> assign(
-      active_project: %{path: path, name: name},
+      active_project: %{path: path, name: name, vct_path: recent_project_vct_path(socket, path)},
       active_project_path: path,
       # Re-arm the no-project hint so it returns for a future no-project
       # session (dismissal is per no-project session, not permanent).

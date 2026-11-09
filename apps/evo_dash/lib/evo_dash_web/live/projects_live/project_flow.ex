@@ -261,6 +261,20 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
     Enum.filter(recent_projects, &absolute_path_for_node?(node, &1.path))
   end
 
+  # Display-only `vct_path` for the active project, resolved from the recents
+  # list the activation flow ALREADY fetched (no extra RPC/read). A project
+  # whose recents entry is unmapped/absent — or carries a nil `vct_path` —
+  # yields nil; a mount pointing at a missing OS path is still returned as-is
+  # (portability: such entries are never filtered or re-created).
+  defp vct_path_for(recent_projects, path) when is_list(recent_projects) do
+    case Enum.find(recent_projects, &(&1.path == path)) do
+      nil -> nil
+      entry -> Map.get(entry, :vct_path)
+    end
+  end
+
+  defp vct_path_for(_recent_projects, _path), do: nil
+
   # ───────────────────────────────────────────────────────────────────────────
   # Project creation
   # ───────────────────────────────────────────────────────────────────────────
@@ -670,7 +684,8 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
   # The RPC-heavy remote activation sequence, run in the supervised task.
   # Returns `{:ok, results_map}` (the assigns the sync flow applied: recents
-  # reloaded + node-filtered, the display-only active project, the auto-
+  # reloaded + node-filtered, the display-only active project — carrying the
+  # `vct_path` of the recents row just fetched, no extra read — the auto-
   # detected task mode + info, and the project config / worktree script /
   # commands / foreign repos) or `{:error, :not_a_directory}`. NodeContext's
   # graceful degradation handles transport failures — no try/rescue.
@@ -696,7 +711,11 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
       {:ok,
        %{
          recent_projects: recent_projects,
-         active_project: %{path: expanded, name: Path.basename(expanded)},
+         active_project: %{
+           path: expanded,
+           name: Path.basename(expanded),
+           vct_path: vct_path_for(recent_projects, expanded)
+         },
          active_project_path: expanded,
          task_mode: mode,
          task_mode_info: mode_info,
