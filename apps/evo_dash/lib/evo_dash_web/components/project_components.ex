@@ -50,6 +50,25 @@ defmodule EvoDashWeb.ProjectComponents do
   end
 
   # ---------------------------------------------------------------------------
+  # vct_path_for/2 — Public helper used by BOTH the local (ProjectsLive) and
+  # remote (ProjectsLive.ProjectFlow) active-project flows.
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns the display-only VCT path (`vct:///...`) of the recent project whose
+  OS path is `path`, or nil when there is no matching/unmapped entry.
+  Total: a nil/non-list list or an entry with a nil `vct_path` yields nil.
+  """
+  def vct_path_for(recent_projects, path) when is_list(recent_projects) do
+    case Enum.find(recent_projects, &(is_map(&1) and Map.get(&1, :path) == path)) do
+      nil -> nil
+      entry -> Map.get(entry, :vct_path)
+    end
+  end
+
+  def vct_path_for(_recent_projects, _path), do: nil
+
+  # ---------------------------------------------------------------------------
   # project_omnibox/1 — Command Palette trigger + overlay
   # ---------------------------------------------------------------------------
 

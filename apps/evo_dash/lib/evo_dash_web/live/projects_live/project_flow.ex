@@ -261,20 +261,6 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
     Enum.filter(recent_projects, &absolute_path_for_node?(node, &1.path))
   end
 
-  # Display-only `vct_path` for the active project, resolved from the recents
-  # list the activation flow ALREADY fetched (no extra RPC/read). A project
-  # whose recents entry is unmapped/absent — or carries a nil `vct_path` —
-  # yields nil; a mount pointing at a missing OS path is still returned as-is
-  # (portability: such entries are never filtered or re-created).
-  defp vct_path_for(recent_projects, path) when is_list(recent_projects) do
-    case Enum.find(recent_projects, &(&1.path == path)) do
-      nil -> nil
-      entry -> Map.get(entry, :vct_path)
-    end
-  end
-
-  defp vct_path_for(_recent_projects, _path), do: nil
-
   # ───────────────────────────────────────────────────────────────────────────
   # Project creation
   # ───────────────────────────────────────────────────────────────────────────
@@ -714,7 +700,9 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
          active_project: %{
            path: expanded,
            name: Path.basename(expanded),
-           vct_path: vct_path_for(recent_projects, expanded)
+           # Display-only `vct_path`, resolved from the recents list ALREADY
+           # fetched above (no extra RPC/read).
+           vct_path: EvoDashWeb.ProjectComponents.vct_path_for(recent_projects, expanded)
          },
          active_project_path: expanded,
          task_mode: mode,

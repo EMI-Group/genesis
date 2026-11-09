@@ -269,6 +269,7 @@ The project-settings foreign-repo editor implements the multi-repo read-write UI
   A nil `vct_path` (an unmapped legacy entry) falls back to the project name plus the OS path, so legacy display is unchanged.
   A VCT entry may point at a missing OS path: the palette never filters on existence and never creates directories.
   `filter_projects/2` matches the name, the OS path and the VCT path (case-insensitive substring, empty query short-circuits to the full list).
+  `vct_path_for/2` is the shared nil-safe OS-path→`vct_path` lookup used by both the local and remote active-project flows (no struct required, no extra read).
   Row events stay OS-path-keyed — `phx-value-path={project.path}` on both the select and the remove buttons — so all selection/removal behavior is unchanged and the remote palette stays read-only (no remove button).
 - **Click-outside**: `phx-click-away="close_project_palette"` is on `.project-palette-overlay`; the backdrop's `phx-click="close_project_palette"` remains as belt-and-braces.
 - **Overlay backgrounds**: the legacy `--b1/--b2/--b3` DaisyUI namespace does not exist in the vendored DaisyUI 5 themes — overlay rules in `app.css` use `color-mix(...)` / `var(--color-base-*)`.
