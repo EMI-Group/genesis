@@ -26,6 +26,7 @@ defmodule EvoGit.BackgroundJobsTest do
   use ExUnit.Case, async: false
 
   alias EvoGit.BackgroundJobs
+  alias EvoGit.ProcessManager
 
   @moduletag :tmp_dir
 
@@ -78,7 +79,18 @@ defmodule EvoGit.BackgroundJobsTest do
 
     # An ISOLATED registry per test: the test supervisor guarantees a graceful
     # shutdown, whose `terminate/2` kills every job still live.
-    start_supervised!({EvoGit.BackgroundJobs, [name: name]})
+    # A per-test ISOLATED process registry: every started job is tracked as ONE
+    # `:background_job` execution, and pointing the job registry at a PRIVATE
+    # manager keeps that bookkeeping off the app-global instance (whose sampling
+    # timer would otherwise probe this module's throw-away `:unit` stand-in
+    # handles with `systemctl`/`ps` forks). The manager is started FIRST so the
+    # supervisor terminates it LAST — the job registry's `terminate/2` can still
+    # settle the executions it is killing. OS resource SAMPLING stays off: this
+    # module asserts event-driven job state, never resource numbers.
+    put_test_env(:process_stats_enabled, false)
+    manager = :"bg_jobs_test_pm_#{System.unique_integer([:positive])}"
+    start_supervised!({EvoGit.ProcessManager, name: manager})
+    start_supervised!({EvoGit.BackgroundJobs, [name: name, process_manager: manager]})
 
     Process.put(:evogit_background_jobs_server, name)
     Process.put(:evogit_agent_pid, self())
@@ -91,7 +103,7 @@ defmodule EvoGit.BackgroundJobsTest do
       Process.delete(:evogit_background_jobs_server)
     end)
 
-    %{registry: name, tmp_dir: tmp_dir}
+    %{registry: name, tmp_dir: tmp_dir, process_manager: manager}
   end
 
   describe "start_job/1" do
@@ -316,6 +328,160 @@ defmodule EvoGit.BackgroundJobsTest do
       assert job.exit_code == 3
       assert job.detail == "exit code: 3"
       assert %DateTime{} = job.finished_at
+    end
+  end
+
+  describe "process registry integration (:background_job executions)" do
+    # Every started job is recorded as ONE `:background_job` execution in
+    # `EvoGit.ProcessManager`; `setup` points the registry at an ISOLATED
+    # manager, so these assertions see only THIS test's executions.
+    test "a started job is tracked as ONE running :background_job execution", %{
+      tmp_dir: tmp_dir,
+      process_manager: manager
+    } do
+      port = open_observer_port()
+
+      job =
+        start_unit_handle_job!(
+          tmp_dir,
+          "tracked",
+          %{command: "echo tracked", agent_id: "agent-7", task_id: "99", repo_root: tmp_dir},
+          %{port: port}
+        )
+
+      assert is_binary(job.execution_id)
+
+      assert [execution] = ProcessManager.list(server: manager)
+      assert execution.id == job.execution_id
+      assert execution.kind == :background_job
+      assert execution.job_id == job.id
+      assert execution.tool == "bash"
+      assert execution.command == "echo tracked"
+      assert execution.label == "echo tracked"
+      assert execution.cwd == tmp_dir
+      assert execution.repo_root == tmp_dir
+      assert execution.agent_id == "agent-7"
+      assert execution.task_id == "99"
+      assert execution.owner_pid == self()
+      assert execution.runtime == :detached
+      assert execution.backend == :systemd
+      assert execution.status == :running
+      # The normalized handle is ATTACHED, so the execution also carries the OS
+      # addressing (the observer port + the unit name).
+      assert execution.unit == EvoGit.Sandbox.Background.unit_name("bash-tracked")
+      assert %DateTime{} = execution.started_at
+
+      # The observer port's exit is the completion signal, and the execution
+      # settles through the SAME funnel as the job record.
+      send(registry(), {port, {:exit_status, 0}})
+      assert %{status: :completed, exit_code: 0} = await_status!(job.id, :completed)
+
+      assert {:ok, execution} = ProcessManager.get(job.execution_id, server: manager)
+      assert execution.status == :completed
+      assert execution.exit_code == 0
+      assert %DateTime{} = execution.ended_at
+    end
+
+    test "a non-zero exit fails the execution with its exit code", %{
+      tmp_dir: tmp_dir,
+      process_manager: manager
+    } do
+      {job, port} = start_observed_unit_job!(tmp_dir)
+      send(registry(), {port, {:exit_status, 3}})
+      assert %{status: :failed, exit_code: 3} = await_status!(job.id, :failed)
+
+      assert {:ok, execution} = ProcessManager.get(job.execution_id, server: manager)
+      assert execution.status == :failed
+      assert execution.exit_code == 3
+      assert execution.reason == "exit code: 3"
+    end
+
+    test "an exit observed during the spawn itself still leaves a TERMINAL record", %{
+      tmp_dir: tmp_dir,
+      process_manager: manager
+    } do
+      # `settle_start_exit/1` runs AFTER the execution is tracked, so a job that
+      # is already finished when `start_job/1` returns can never leave a ghost
+      # `:running`/`:starting` execution behind.
+      job = start_terminal_unit_job!(tmp_dir, "tracked-immediate")
+      assert job.status == :completed
+      assert is_binary(job.execution_id)
+
+      assert [execution] = ProcessManager.list(server: manager)
+      assert execution.job_id == job.id
+      assert execution.status == :completed
+      assert execution.exit_code == 0
+      assert %DateTime{} = execution.ended_at
+    end
+
+    test "kill/3 settles the execution as :killed", %{
+      tmp_dir: tmp_dir,
+      process_manager: manager
+    } do
+      job = start_live_unit_job!(tmp_dir, "tracked-kill")
+      assert {:ok, %{status: :running}} = BackgroundJobs.job(job.id)
+
+      assert {:ok, killed} = quiet_kill(job)
+      assert killed.status == :killed
+
+      assert {:ok, execution} = ProcessManager.get(job.execution_id, server: manager)
+      assert execution.status == :killed
+      assert execution.reason == "killed (stopped by request)"
+      assert %DateTime{} = execution.ended_at
+    end
+
+    test "a kill through the process manager stops the job and settles BOTH records", %{
+      tmp_dir: tmp_dir,
+      process_manager: manager
+    } do
+      # `EvoGit.ProcessManager.kill/2` routes a `:background_job` execution with a
+      # `job_id` to `EvoGit.BackgroundJobs.kill/3` — the reverse direction must
+      # work end to end, and both records must end up terminal.
+      job = start_live_unit_job!(tmp_dir, "tracked-manager-kill")
+
+      _log =
+        ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+          assert :ok =
+                   ProcessManager.kill(job.execution_id, server: manager, reason: :operator)
+        end)
+
+      # The unit stop is a fire-and-forget Task; wait for its completion report
+      # (`setup` installs the notify seam) instead of sleeping a fixed margin.
+      receive do
+        {:background_unit_stop_finished, _unit} -> :ok
+      after
+        @deadline_ms -> flunk("the registry's systemd stop task never reported back")
+      end
+
+      assert {:ok, %{status: :killed} = killed} = BackgroundJobs.job(job.id)
+      assert killed.detail =~ "killed ("
+
+      assert {:ok, execution} = ProcessManager.get(job.execution_id, server: manager)
+      assert execution.status == :killed
+      assert %DateTime{} = execution.ended_at
+    end
+
+    test "a registry shutdown settles its live jobs' executions as :killed", %{
+      tmp_dir: tmp_dir,
+      process_manager: manager
+    } do
+      job = start_live_unit_job!(tmp_dir, "tracked-shutdown")
+      assert {:ok, %{status: :running}} = BackgroundJobs.job(job.id)
+
+      _log =
+        ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+          assert :ok = stop_supervised(EvoGit.BackgroundJobs)
+        end)
+
+      receive do
+        {:background_unit_stop_finished, _unit} -> :ok
+      after
+        @deadline_ms -> flunk("the registry's systemd stop task never reported back")
+      end
+
+      assert {:ok, execution} = ProcessManager.get(job.execution_id, server: manager)
+      assert execution.status == :killed
+      assert execution.reason == :registry_shutdown
     end
   end
 

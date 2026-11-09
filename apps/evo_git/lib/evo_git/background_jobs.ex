@@ -6,12 +6,14 @@ defmodule EvoGit.BackgroundJobs do
   Job lifetime — every job is bound to its OWNING AGENT process (`:owner_pid`); `start_job/1` installs ONE `Process.monitor/1` per owner, and when that process dies EVERY job it started is killed and the monitor bookkeeping is dropped. Because agent processes are unlinked `Task.Supervisor.async_nolink` children killed by `Lifecycle.cancel_agent/2`, this single monitor covers every way an agent can end — normal completion, crash, graceful cancel AND force kill — so no hooks are needed at `EvoGit.TaskRegistry`'s terminal-write sites. The monitor is deliberately installed on the AGENT pid, never on the short-lived tool task that calls this module.
   Completion detection — ONE primary mechanism plus two cheap, idempotent fallbacks: the **observer port** (every backend keeps a port on the handle that reports the job's exit — a `:port` job's own child, and a `:unit` job's `systemd-run --wait` client, which exits with the UNIT's status), the **lazy reconcile** (every `read/2` / `list/1` / `job/2` re-checks a live job against the backend via `EvoGit.Sandbox.detached_status/1`) and the **periodic tick** (while at least one live job uses a `:unit` handle, ONE `@tick_interval_ms` timer re-reconciles them so `finished_at` / `exit_code` land promptly even if nobody reads; it is disarmed as soon as no such job remains). `{:unknown, nil}` from the backend is never treated as "running forever": a job that stays unreportable with no live observer port is settled terminally as `:failed` after a bounded `@unknown_grace_ms` grace.
   Error vocabulary — failures a caller must act on are returned as ONE actionable prose sentence, never a bare atom: `start_job/1` and `read/2` answer `{:error, message}` for EVERY failure INCLUDING an unreachable registry (the dead-registry fallback is wrapped in that tuple at both call sites, since their callers pattern-match it exactly); the ownership/finished probes in `job/2` and `kill/3` keep the small semantic tuples documented on those functions so a caller can branch on them before formatting prose. No input is ever converted with `String.to_atom/1`.
+  Process registry — every job is ALSO recorded as ONE `:background_job` execution in `EvoGit.ProcessManager` (the single source of truth for what this node runs): the start path `track`s it with the agent-visible identity, `attach`es the normalized OS handle (`EvoGit.Sandbox.Background.normalize_handle/1`) and stores the returned `execution_id` on the job record, and ONE terminal funnel in `put_job/2` `finish`es that execution when the job reaches a terminal status (`:completed` / `:failed` / `:killed`, plus `:killed` on a registry shutdown). The registry resolves its manager ONCE at `start_link/1` (`:process_manager` opt, default `EvoGit.ProcessManager`) and passes it as `server:`; every call is total, so an unavailable manager never affects job bookkeeping. Because the manager routes a `:background_job` kill back to `kill/3`, killing through either door stops the process and settles both records.
   """
 
   use GenServer
 
   require Logger
 
+  alias EvoGit.ProcessManager
   alias EvoGit.Platform
 
   # Compile-time Mix env — safe in releases (`Mix.env/0` is evaluated at compile time; in prod releases it resolves to `:prod`).
@@ -94,6 +96,7 @@ defmodule EvoGit.BackgroundJobs do
           cwd: String.t(),
           output_path: String.t(),
           handle: map() | nil,
+          execution_id: String.t() | nil,
           status: status(),
           exit_code: integer() | nil,
           detail: String.t() | nil,
@@ -126,7 +129,9 @@ defmodule EvoGit.BackgroundJobs do
     Process.get(:evogit_background_jobs_server) || __MODULE__
   end
 
-  @doc "Starts the registry. Honours `:name` (default `#{inspect(__MODULE__)}`)."
+  @doc """
+  Starts the registry. Honours `:name` (default `#{inspect(__MODULE__)}`) and `:process_manager` — the `EvoGit.ProcessManager` instance every execution is registered with (default `EvoGit.ProcessManager`), resolved ONCE here so an isolated manager is the suite's test-isolation seam.
+  """
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
     GenServer.start_link(__MODULE__, opts, name: name)
@@ -466,7 +471,7 @@ defmodule EvoGit.BackgroundJobs do
   ## GenServer callbacks
 
   @impl true
-  def init(_opts) do
+  def init(opts) do
     # Trapping exits is what makes `terminate/2` reachable on a shutdown that is not an explicit `GenServer.stop/2`: an UNTRAPPED exit signal from the supervisor kills this process outright, so the "kill every live job" defence would never run. Trapped, the `:gen_server` behaviour turns the PARENT's exit signal into a `terminate/2` call, while any other linked exit reaches the `{:EXIT, pid, reason}` handler below (logged, registry stays up).
     Process.flag(:trap_exit, true)
 
@@ -487,7 +492,30 @@ defmodule EvoGit.BackgroundJobs do
       end)
     end
 
-    {:ok, %{jobs: %{}, owners: %{}, tick_timer: nil, unknown_since: %{}, next_id: 1}}
+    {:ok,
+     %{
+       jobs: %{},
+       owners: %{},
+       tick_timer: nil,
+       unknown_since: %{},
+       next_id: 1,
+       process_manager: process_manager_from(opts)
+     }}
+  end
+
+  # Resolved ONCE per registry (never per job) so every `EvoGit.ProcessManager`
+  # call in this GenServer targets the SAME instance — the `:process_manager`
+  # start option is the suite's isolation seam, the module itself is production.
+  defp process_manager_from(opts) do
+    configured =
+      if is_list(opts) and Keyword.keyword?(opts),
+        do: Keyword.get(opts, :process_manager),
+        else: nil
+
+    case configured do
+      server when is_atom(server) or is_pid(server) or is_tuple(server) -> server
+      _other -> EvoGit.ProcessManager
+    end
   end
 
   @impl true
@@ -729,8 +757,26 @@ defmodule EvoGit.BackgroundJobs do
     # Defence in depth: the supervisor is shutting down, so no detached process started by this registry may outlive it.
     # Bounded by construction: the `:unit` path's `Sandbox.Background.kill/1` delegates to `stop_unit_async/1`, which spawns a `Task` for `systemctl --user stop` and returns immediately, and a `:port` handle's port closes with this process (its child dies with it). The ONE genuinely async risk is therefore a `systemctl --user stop` that does not finish before the VM goes down, and `EvoGit.Sandbox.Background.sweep_stale_units/0` closes it at the next boot by garbage-collecting `genesis-job-*` units whose embedded `b<beam_os_pid>` is no longer alive.
     Enum.each(state.jobs, fn {_id, job} ->
-      if live?(job), do: kill_detached(job.handle)
+      if live?(job) do
+        kill_detached(job.handle)
+        settle_shutdown(state, job)
+      end
     end)
+
+    :ok
+  end
+
+  # The registry is going away, so every job it was holding a live process for
+  # is being killed right here: settle its execution TERMINALLY (never leave a
+  # ghost `:running` record behind). Bounded by the manager's own call timeout,
+  # and total — a manager that already terminated answers nothing and the job
+  # record is gone with this process anyway.
+  defp settle_shutdown(state, job) do
+    if is_binary(Map.get(job, :execution_id)) do
+      safe_finish(state.process_manager, Map.get(job, :execution_id), :killed,
+        reason: :registry_shutdown
+      )
+    end
 
     :ok
   end
@@ -778,6 +824,7 @@ defmodule EvoGit.BackgroundJobs do
           cwd: spec.cwd,
           output_path: output_path,
           handle: handle,
+          execution_id: nil,
           status: :running,
           exit_code: nil,
           detail: nil,
@@ -787,6 +834,7 @@ defmodule EvoGit.BackgroundJobs do
           lines_read: 0,
           announced: false
         }
+        |> track_execution(spec, state.process_manager)
         |> settle_start_exit()
 
       {:ok, job, put_job(add_owner_job(state, spec.owner_pid, id), job)}
@@ -806,6 +854,101 @@ defmodule EvoGit.BackgroundJobs do
     do: mark_finished(job, code)
 
   defp settle_start_exit(job), do: job
+
+  ## Process registry integration
+  #
+  # Every started job becomes ONE `:background_job` execution in
+  # `EvoGit.ProcessManager`, so "what is this node running right now" has a single
+  # answer. This happens BEFORE `settle_start_exit/1` deliberately: a job whose
+  # exit is already known at spawn time must still leave a TERMINAL execution
+  # record instead of none.
+
+  defp track_execution(job, spec, manager) do
+    meta = %{
+      tool: "bash",
+      command: spec.command,
+      label: spec.label,
+      agent_id: spec.agent_id,
+      task_id: spec.task_id,
+      owner_pid: spec.owner_pid,
+      cwd: spec.cwd,
+      repo_root: spec.repo_root,
+      backend: backend_atom(job.handle),
+      runtime: :detached,
+      job_id: job.id
+    }
+
+    case safe_track(manager, meta) do
+      {:ok, execution_id} when is_binary(execution_id) ->
+        safe_attach(manager, execution_id, job.handle)
+        %{job | execution_id: execution_id}
+
+      _unavailable ->
+        %{job | execution_id: nil}
+    end
+  end
+
+  # The execution's `backend` vocabulary (`:systemd | :bwrap | :sandbox_exec |
+  # :none`) — derived from the handle's backend MODULE through the process
+  # registry's ONE detection point, with `:none` as the safe fallback (an
+  # unknown/absent backend must never leave the field empty).
+  defp backend_atom(handle) when is_map(handle) do
+    case ProcessManager.Handle.execution_backend(%ProcessManager.Handle{
+           backend: Map.get(handle, :backend)
+         }) do
+      nil -> :none
+      backend -> backend
+    end
+  end
+
+  defp backend_atom(_handle), do: :none
+
+  defp safe_track(manager, meta) do
+    ProcessManager.track(:background_job, meta, server: manager)
+  rescue
+    exception ->
+      Logger.debug(
+        "BackgroundJobs: process tracking unavailable (#{Exception.message(exception)})"
+      )
+
+      {:error, :process_manager_unavailable}
+  catch
+    kind, reason ->
+      Logger.debug("BackgroundJobs: process tracking unavailable (#{kind}: #{describe(reason)})")
+
+      {:error, :process_manager_unavailable}
+  end
+
+  defp safe_attach(manager, execution_id, handle) do
+    # `normalize_handle/1` is the ONE handle conversion point (nil = not
+    # addressable, so the execution simply stays without OS addressing).
+    case EvoGit.Sandbox.Background.normalize_handle(handle) do
+      nil -> :ok
+      normalized -> ProcessManager.attach(execution_id, normalized, server: manager)
+    end
+  rescue
+    exception ->
+      Logger.debug("BackgroundJobs: handle attach failed (#{Exception.message(exception)})")
+
+      :ok
+  catch
+    kind, reason ->
+      Logger.debug("BackgroundJobs: handle attach failed (#{kind}: #{describe(reason)})")
+      :ok
+  end
+
+  # Total: a dead/unreachable manager is never allowed to affect job bookkeeping.
+  defp safe_finish(manager, execution_id, status, opts) do
+    ProcessManager.finish(execution_id, status, [{:server, manager} | opts])
+  rescue
+    exception ->
+      Logger.debug("BackgroundJobs: process finish failed (#{Exception.message(exception)})")
+      :ok
+  catch
+    kind, reason ->
+      Logger.debug("BackgroundJobs: process finish failed (#{kind}: #{describe(reason)})")
+      :ok
+  end
 
   # Output destination is decided ONCE, at spawn time, and stored on the job: a detached process has no process dictionary to re-derive it from later.
   defp scratch_dir do
@@ -1271,7 +1414,41 @@ defmodule EvoGit.BackgroundJobs do
 
   ## Records / helpers
 
-  defp put_job(state, job), do: %{state | jobs: Map.put(state.jobs, job.id, job)}
+  # The single state writer — and therefore the ONE terminal funnel for the
+  # process registry: a job that becomes terminal here settles its
+  # `:background_job` execution exactly once (a re-put of an already-terminal
+  # record, e.g. marking it `announced`, is a no-op). `EvoGit.ProcessManager.finish/3`
+  # is idempotent too, so a double settle could never hurt — this guard only
+  # avoids pointless calls. A job killed only through the manager settles here
+  # as well, because the manager routes a `:background_job` kill to `kill/3`.
+  defp put_job(state, job) do
+    settle_execution(state, Map.get(state.jobs, job.id), job)
+    %{state | jobs: Map.put(state.jobs, job.id, job)}
+  end
+
+  defp settle_execution(state, previous, job) do
+    execution_id = Map.get(job, :execution_id)
+    status = Map.get(job, :status)
+
+    if is_binary(execution_id) and status in [:completed, :failed, :killed] and
+         not match?(%{status: ^status}, previous) do
+      safe_finish(state.process_manager, execution_id, status,
+        exit_code: Map.get(job, :exit_code),
+        reason: settle_reason(job)
+      )
+    end
+
+    :ok
+  end
+
+  # A completed job reports no reason; a failed/killed one carries its own
+  # `detail` prose (e.g. `"killed (owner_exited)"`), which is exactly what an
+  # operator wants on the execution record.
+  defp settle_reason(%{status: :completed}), do: nil
+  defp settle_reason(%{detail: detail}) when is_binary(detail), do: detail
+  defp settle_reason(%{status: status}), do: status
+
+  defp settle_reason(_job), do: nil
 
   defp live?(%{status: status}), do: status in [:running, :stopping]
   defp live?(_job), do: false

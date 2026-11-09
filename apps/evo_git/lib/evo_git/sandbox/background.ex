@@ -66,6 +66,14 @@ defmodule EvoGit.Sandbox.Background do
   port, used only as the exit OBSERVER, so any `{:data, _}` arriving on it is
   client diagnostics and is discarded by the registry.
 
+  ## Process registry
+
+  `normalize_handle/1` is the ONE conversion point between the backend-shaped
+  handles above and the normalized `%EvoGit.ProcessManager.Handle{}` the process
+  registry stores (`EvoGit.BackgroundJobs` attaches it to every job it starts),
+  so no caller re-derives OS addressing from the legacy maps. It is total:
+  an unrecognizable handle yields `nil`.
+
   ## Boot sweep
 
   `sweep_stale_units/0` runs at registry boot and closes the systemd-run
@@ -85,6 +93,7 @@ defmodule EvoGit.Sandbox.Background do
 
   require Logger
 
+  alias EvoGit.ProcessManager.Handle
   alias EvoGit.{Platform, Sandbox.Helpers}
 
   # Upper bound on the START GRACE window of a detached systemd job. The
@@ -199,6 +208,58 @@ defmodule EvoGit.Sandbox.Background do
   def status(%{kind: :unit} = handle), do: unit_status(handle)
   def status(%{kind: :port, port: port}), do: port_status(port)
   def status(_handle), do: {:unknown, nil}
+
+  @doc """
+  Converts a backend `handle()` into the process registry's normalized
+  `%EvoGit.ProcessManager.Handle{}` — the ONE conversion point for detached
+  jobs, reused by any caller that already holds a handle (the registry records
+  it with `EvoGit.ProcessManager.attach/3`).
+
+  Mapping:
+
+    * `%{kind: :unit, unit: unit}` (optional `backend`, `port`,
+      `pending_exit_code`) → a `:systemd_unit` handle addressing `unit` through
+      `systemctl --user`, keeping the `systemd-run --wait` OBSERVER port.
+    * `%{kind: :port, port: port, os_pid: os_pid}` (optional `backend`) →
+      a `:posix` handle on Linux/macOS, a `:windows` handle when
+      `EvoGit.Platform.windows?/0` — both keeping the observer port.
+    * an already normalized `%EvoGit.ProcessManager.Handle{}` → itself.
+    * anything else (`nil`, a foreign term, a `:port` shape with neither a port
+      nor an os pid) → `nil`.
+
+  Total: it never raises, so a caller with an unexpected handle degrades to "no
+  OS addressing recorded" instead of crashing a job start.
+  """
+  @spec normalize_handle(handle() | term()) :: Handle.t() | nil
+  def normalize_handle(%Handle{kind: kind} = handle)
+      when kind in [:systemd_unit, :posix, :windows],
+      do: handle
+
+  def normalize_handle(%{kind: :unit, unit: unit} = handle) when is_binary(unit) and unit != "" do
+    Handle.systemd_unit(unit,
+      backend: Map.get(handle, :backend),
+      port: Map.get(handle, :port),
+      pending_exit_code: Map.get(handle, :pending_exit_code)
+    )
+  end
+
+  def normalize_handle(%{kind: :port} = handle) do
+    case {Map.get(handle, :port), Map.get(handle, :os_pid)} do
+      {port, os_pid} when is_port(port) or is_integer(os_pid) ->
+        attrs = [backend: Map.get(handle, :backend), port: port]
+
+        if Platform.windows?() do
+          Handle.windows(os_pid, attrs)
+        else
+          Handle.posix(os_pid, attrs)
+        end
+
+      _other ->
+        nil
+    end
+  end
+
+  def normalize_handle(_handle), do: nil
 
   @doc """
   Garbage-collects detached units a CRASHED runtime left behind.

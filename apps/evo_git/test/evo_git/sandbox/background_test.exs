@@ -123,6 +123,21 @@ defmodule EvoGit.Sandbox.BackgroundTest do
     end
   end
 
+  # A REAL port owned by the test process, standing in for a backend's observer
+  # port (the `systemd-run --wait` client port, or a `:port` job's own child).
+  # Only its IDENTITY matters for the pure handle-normalization assertions, but a
+  # genuine port keeps the shape faithful; it is closed on exit.
+  defp open_port_fixture do
+    port =
+      Port.open(
+        {:spawn_executable, System.find_executable(Platform.shell())},
+        [:binary, :exit_status, :hide, {:args, Platform.shell_args("sleep 30")}]
+      )
+
+    on_exit(fn -> Helpers.close_port(port) end)
+    port
+  end
+
   defp nonexistent_path do
     Path.join(
       System.tmp_dir!(),
@@ -632,6 +647,69 @@ defmodule EvoGit.Sandbox.BackgroundTest do
       assert Sandbox.detached_status(%{}) == {:unknown, nil}
       assert Sandbox.detached_status(:not_a_handle) == {:unknown, nil}
       assert Sandbox.detached_status(nil) == {:unknown, nil}
+    end
+  end
+
+  describe "normalize_handle/1 (the ONE process-registry handle conversion)" do
+    # Pure: no OS process is involved. These pin the exact
+    # `%EvoGit.ProcessManager.Handle{}` mapping the registry attaches, including
+    # the TOTALITY property (an unrecognizable handle is `nil`, never a raise).
+    test "a systemd :unit handle becomes a :systemd_unit handle" do
+      port = open_port_fixture()
+
+      handle = %{
+        kind: :unit,
+        unit: "genesis-job-b123-bash-1",
+        backend: Linux,
+        port: port,
+        pending_exit_code: 7
+      }
+
+      assert %EvoGit.ProcessManager.Handle{} = normalized = Background.normalize_handle(handle)
+      assert normalized.kind == :systemd_unit
+      assert normalized.unit == "genesis-job-b123-bash-1"
+      assert normalized.backend == Linux
+      assert normalized.port == port
+      assert normalized.pending_exit_code == 7
+      assert normalized.os_pid == nil
+      assert normalized.pgid == nil
+
+      # The optional fields are genuinely optional.
+      assert %EvoGit.ProcessManager.Handle{kind: :systemd_unit, port: nil} =
+               Background.normalize_handle(%{kind: :unit, unit: "genesis-job-b123-bash-2"})
+    end
+
+    test "a :port handle becomes a :posix (or :windows) handle" do
+      port = open_port_fixture()
+      handle = %{kind: :port, port: port, os_pid: 4242, backend: Linux}
+
+      assert %EvoGit.ProcessManager.Handle{} = normalized = Background.normalize_handle(handle)
+      assert normalized.kind == if(Platform.windows?(), do: :windows, else: :posix)
+      assert normalized.os_pid == 4242
+      assert normalized.backend == Linux
+      assert normalized.port == port
+      assert normalized.unit == nil
+    end
+
+    test "an already normalized handle is returned untouched" do
+      handle = EvoGit.ProcessManager.Handle.posix(4242, backend: Linux)
+
+      assert Background.normalize_handle(handle) == handle
+    end
+
+    test "anything unrecognizable is nil and never raises" do
+      assert Background.normalize_handle(nil) == nil
+      assert Background.normalize_handle(%{}) == nil
+      assert Background.normalize_handle(%{kind: :bogus}) == nil
+      assert Background.normalize_handle(%{kind: :unit}) == nil
+      assert Background.normalize_handle(%{kind: :unit, unit: ""}) == nil
+      assert Background.normalize_handle(%{kind: :port}) == nil
+      # A `:port` handle with neither an open port nor an os pid carries no OS
+      # addressing at all — degrading to `nil` keeps the execution record honest.
+      assert Background.normalize_handle(%{kind: :port, port: nil, os_pid: nil}) == nil
+      assert Background.normalize_handle(:not_a_handle) == nil
+      assert Background.normalize_handle("nope") == nil
+      assert Background.normalize_handle(kind: :unit) == nil
     end
   end
 
