@@ -2886,7 +2886,18 @@ defmodule EvoDashWeb.ProjectsLive do
 
     socket
     |> assign(
-      active_project: %{path: path, name: name},
+      # The display-only VCT identity comes from the recents list ALREADY
+      # loaded in assigns (the VCT owns it) — a pure in-memory lookup, so no
+      # VCT/TaskRegistry/RPC call ever runs here.
+      active_project: %{
+        path: path,
+        name: name,
+        vct_path:
+          EvoDashWeb.ProjectComponents.vct_path_for(
+            socket.assigns[:recent_projects] || [],
+            path
+          )
+      },
       active_project_path: path,
       # Re-arm the no-project hint so it returns for a future no-project
       # session (dismissal is per no-project session, not permanent).

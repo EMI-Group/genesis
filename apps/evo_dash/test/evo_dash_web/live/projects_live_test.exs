@@ -1598,6 +1598,93 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ ~s(phx-value-path="#{project_a}")
     end
 
+    # The VCT owns the project's identity: the palette's primary line is the
+    # mount point (`vct:///projects/<basename>[-N]`), the OS path is secondary,
+    # and row EVENTS stay OS-path-keyed. Unique basenames keep the VCT's `-N`
+    # dedup suffix out of the picture, and the expected point is derived from
+    # the registry (never hardcoded).
+    test "palette_menu shows the VCT path as the project identity", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      project_a = Path.join(tmp_dir, "vct-identity-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(project_a)
+      seed_recent_project(project_a, Path.basename(project_a))
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_for_recent_projects(view, [project_a])
+
+      entry = Enum.find(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == project_a))
+      assert is_binary(entry.vct_path)
+      assert String.starts_with?(entry.vct_path, "vct:///projects/")
+
+      html = render_click(view, "open_project_palette", %{})
+
+      assert html =~ entry.vct_path
+      assert html =~ project_a
+      assert html =~ ~s(phx-value-path="#{project_a}")
+    end
+
+    test "palette_search matches the VCT path", %{conn: conn, tmp_dir: tmp_dir} do
+      unique = System.unique_integer([:positive])
+      # Neither basename can be a substring of the other, so the query below
+      # matches exactly one row.
+      project_a = Path.join(tmp_dir, "vct-search-alpha-#{unique}")
+      project_b = Path.join(tmp_dir, "vct-search-bravo-#{unique}")
+      File.mkdir_p!(project_a)
+      File.mkdir_p!(project_b)
+      seed_recent_project(project_a, Path.basename(project_a))
+      seed_recent_project(project_b, Path.basename(project_b))
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_for_recent_projects(view, [project_a, project_b])
+
+      entry_a = Enum.find(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == project_a))
+      assert is_binary(entry_a.vct_path)
+
+      render_click(view, "open_project_palette", %{})
+
+      html =
+        render_change(view, "palette_search", %{
+          "palette_search" => entry_a.vct_path,
+          "_target" => ["palette_search"]
+        })
+
+      assert html =~ ~s(phx-value-path="#{project_a}")
+      refute html =~ ~s(phx-value-path="#{project_b}")
+
+      # Exactly ONE recent-project row is rendered (the filter did not fall back
+      # to the full list); each row button carries exactly one select event.
+      assert length(String.split(html, ~s(phx-click="select_project"))) == 2
+    end
+
+    test "selecting a recent project shows its VCT path in the top bar", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      project_a = Path.join(tmp_dir, "vct-topbar-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(project_a)
+      seed_recent_project(project_a, Path.basename(project_a))
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_for_recent_projects(view, [project_a])
+
+      entry = Enum.find(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == project_a))
+      assert is_binary(entry.vct_path)
+
+      render_click(view, "open_project_palette", %{})
+      html = render_click(view, "select_project", %{"path" => project_a})
+
+      assert assigns(view)[:active_project_path] == project_a
+      assert assigns(view)[:active_project].vct_path == entry.vct_path
+
+      # The palette is closed, so the VCT point can only come from the omnibox
+      # trigger's subtitle (beside the project name).
+      refute html =~ ~s(id="palette-search-input")
+      assert html =~ entry.vct_path
+      assert html =~ Path.basename(project_a)
+    end
+
     test "palette_menu renders a per-entry remove button wired to the project path", %{
       conn: conn,
       tmp_dir: tmp_dir
@@ -2782,7 +2869,19 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # The node-filtered recents (incl. the freshly registered tmp_dir) were
       # assigned — the exact output of the fixed filter line.
       assert Enum.any?(socket.assigns[:recent_projects], &(&1.path == tmp_dir))
-      assert socket.assigns[:active_project] == %{path: tmp_dir, name: Path.basename(tmp_dir)}
+
+      # The active project carries the display-only `vct_path` resolved from the
+      # just-fetched recents row (never a hardcoded suffix — the VCT owns it).
+      active_project = socket.assigns[:active_project]
+      assert active_project.path == tmp_dir
+      assert active_project.name == Path.basename(tmp_dir)
+
+      entry = Enum.find(socket.assigns[:recent_projects], &(&1.path == tmp_dir))
+
+      assert is_binary(active_project.vct_path)
+      assert String.starts_with?(active_project.vct_path, "vct:///projects/")
+      assert active_project.vct_path == Map.get(entry, :vct_path)
+
       assert socket.assigns[:active_project_path] == tmp_dir
       assert socket.assigns[:remote_project_loading] == nil
       assert socket.assigns[:show_add_foreign_repo_form] == false

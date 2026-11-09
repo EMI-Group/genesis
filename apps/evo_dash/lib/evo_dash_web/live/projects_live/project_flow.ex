@@ -670,7 +670,8 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
   # The RPC-heavy remote activation sequence, run in the supervised task.
   # Returns `{:ok, results_map}` (the assigns the sync flow applied: recents
-  # reloaded + node-filtered, the display-only active project, the auto-
+  # reloaded + node-filtered, the display-only active project — carrying the
+  # `vct_path` of the recents row just fetched, no extra read — the auto-
   # detected task mode + info, and the project config / worktree script /
   # commands / foreign repos) or `{:error, :not_a_directory}`. NodeContext's
   # graceful degradation handles transport failures — no try/rescue.
@@ -696,7 +697,13 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
       {:ok,
        %{
          recent_projects: recent_projects,
-         active_project: %{path: expanded, name: Path.basename(expanded)},
+         active_project: %{
+           path: expanded,
+           name: Path.basename(expanded),
+           # Display-only `vct_path`, resolved from the recents list ALREADY
+           # fetched above (no extra RPC/read).
+           vct_path: EvoDashWeb.ProjectComponents.vct_path_for(recent_projects, expanded)
+         },
          active_project_path: expanded,
          task_mode: mode,
          task_mode_info: mode_info,
