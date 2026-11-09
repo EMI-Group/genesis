@@ -11,7 +11,8 @@ Measured run: 1 852 passed in 19.7 s — 11.9 s async, 7.7 s sync — ~23 s wall
 The ~3–4 s gap between ExUnit's total and the wall clock is the umbrella's app boot, paid once per `mix test` invocation.
 Stable across explicit seeds (0, 1, 2, 12345, 533180, 8000147, 987654321) and across back-to-back runs.
 `mix test apps/evo_dash/test` from the umbrella root runs exactly this app's suite; bare root `mix test` also runs the `evo_git` suite first (~67 s).
-The domain singletons (`EvoGit.Store`, `EvoGit.TaskRegistry`, `EvoGit.TaskInfo`, `EvoGit.RecentProject`) live in `:evo_git` and are tested there; no suite here owns them.
+The domain singletons (`EvoGit.Store`, `EvoGit.TaskRegistry`, `EvoGit.TaskInfo`, `EvoGit.VCT`) live in `:evo_git` and are tested there; no suite here owns them.
+`EvoGit.VCT` is the project registry: each opened project is a `%EvoGit.VCT.Mount{}` (`point` = `vct:///projects/<name>`, absolute OS `path`, `name`, `kind`, `last_opened_at`) persisted in the shared task store's `vct_mounts` table, newest-opened first, capped by `EvoGit.VCT.max_projects/0` (100 by default; over-cap registration evicts the oldest).
 Web-layer tests reference those singletons directly; per-test Store/TaskRegistry isolation is `EvoDash.Test.IsolatedTaskStore` (they are children of `EvoGit.Supervisor`, NOT `EvoDash.Supervisor`).
 
 ## Routing Table
@@ -79,7 +80,8 @@ Files that depend on this ordering: `projects_live_test.exs`, `settings_live_tes
 ### Flipping a module to async exposes run-wide-store hazards
 Every suite shares ONE `EvoGit.Store`; only the `IsolatedTaskStore` users swap it.
 A test that sweeps globally — `clear_finished_tasks/0` (`clear_task_history`), retention/cleanup sweeps, deleting rows it did not create — removes another module's live fixture the moment it runs concurrently, so such a test belongs in an `async: false` module (`ProjectsLiveSyncTest` owns exactly those two notification tests).
-`projects_live_test.exs`'s `Helpers.clear_recent_projects/0` removes EVERY recent project from the process-global registry — safe only while no other module asserts on recents.
+The project registry is process-global too: opening a project calls `EvoDash.NodeContext.mount_project/3` → `EvoGit.VCT`, whose ONE mount table is visible to every suite, so a test that mounts projects must clean up with `EvoGit.VCT.forget/1` (a VCT point or an OS path) and a page-load assertion about "no active project / no launch button" is only conclusive while no other module can open a project.
+`projects_live_test.exs`'s `Helpers.clear_recent_projects/0`, `seed_recent_project/2` and `wait_for_recent_projects/2` call `EvoGit.RecentProject` / `EvoGit.TaskRegistry.add_recent_project/2` / `list_recent_projects/0` / `remove_recent_project/1` and read a `recent_projects` assign the page does not define, so the file does not compile against the current library; a VCT-backed fixture mounts with `EvoGit.VCT.mount/2` and cleans up with `EvoGit.VCT.forget/1`.
 The matching quiet-side rule: a `refute_push_event`/`refute_receive` about a `"tasks"` broadcast is conclusive only when no async module can publish one.
 
 ### Async review actions — every review test must await the settle
@@ -111,6 +113,7 @@ Process-global `EvoGit.Store`/`EvoGit.TaskRegistry` isolation is `EvoDash.Test.I
 Every other store-touching suite writes into the RUN-WIDE per-run store instead (`EvoGit.Store`, started once per run and never terminated) in a whole-store-safe way: per-test unique ids (`System.unique_integer/1`, sometimes under a unique `project_path` so a filtered paged read is an exact-count anchor), assertions scoped to exactly those ids, and an `on_exit` that deletes the row through the DIRECT Store (`EvoGit.Store.delete_task(EvoGit.Store, id)` — never a `TaskRegistry` cast, which broadcasts on `"tasks"` and would arm every mounted page's reload debounce).
 Suites using that idiom: `node_context_test`'s async module (its config module writes only config), `NodeAwareRunWideTest`, every `ReviewLive*Test` module (fixture cleanup via `delete_seeded_task!/1`), `projects_live_test`, and `agents_live_test`'s per-test agent ids.
 `review_live_test` runs on the production pair and asserts it with `IsolatedTaskStore.assert_production!/0` in every module's `setup`.
+`EvoGit.VCT` loads its mount table ONCE at boot into one process-global in-memory list shared by every suite, and `EvoDash.Test.IsolatedTaskStore.isolate!/1` swaps `EvoGit.Store`/`EvoGit.TaskRegistry` without reloading it, so project mounts are never per-test isolated.
 Prefer unique task ids plus explicit cleanup over assumptions about global emptiness.
 `XDG_CONFIG_HOME` is process-global, but no suite writes it: the config dir is resolved per process through the `:config_dir_fun` seam the helper installs (`EvoDash.Test.ConfigDir.isolate!/1` in `setup` — own process dictionary, then the `$callers` chain), proven end-to-end by `support/config_dir_test.exs` (test process, a real page render in the mounted view, `Task.Supervisor` children via `EvoDash.SafeCall.start/4`; a raw `spawn/1` and the boot-time app-global singletons are the documented escape classes).
 
