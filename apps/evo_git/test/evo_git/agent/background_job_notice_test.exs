@@ -39,6 +39,7 @@ defmodule EvoGit.Agent.BackgroundJobNoticeTest do
       assert section =~ "## Background Jobs"
       assert section =~ "`job_output`"
       assert section =~ "`job_list`"
+      assert section =~ "as `job_id`"
       assert section =~ "bash-0123456789abcdef"
       assert section =~ "running"
       assert section =~ "mix test"
@@ -154,6 +155,7 @@ defmodule EvoGit.Agent.BackgroundJobNoticeTest do
       assert notice =~ "completed (exit code: 0)"
       assert notice =~ "`job_output`"
       assert notice =~ "`job_list`"
+      assert notice =~ ~s|Call `job_output` with job_id "bash-0123456789abcdef"|
     end
 
     test "lists multiple finished jobs and pluralizes the header" do

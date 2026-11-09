@@ -354,10 +354,12 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
       # STRING keys: this schema is JSON, and the implementation reads strings.
       assert Enum.all?(Map.keys(properties), &is_binary/1)
-      # `job_id` is OPTIONAL: it may be omitted when this agent has exactly one
-      # background job, so nothing is required.
-      assert parameter_schema["required"] == []
-      assert properties["job_id"]["description"] =~ "May be omitted"
+      # `job_id` is REQUIRED: the execute path still TOLERATES a provider that
+      # omits it, but the model-facing schema asks for it every time.
+      assert parameter_schema["required"] == ["job_id"]
+      assert properties["job_id"]["description"] =~ "Always pass it"
+      assert properties["job_id"]["description"] =~ "job_list"
+      refute properties["job_id"]["description"] =~ "May be omitted"
     end
 
     test "job_list takes no arguments" do
@@ -402,14 +404,34 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       job = start_job("echo only-job", cwd)
       await_job_status(job.id, :completed)
 
-      assert JobOutput.execute(%{}, cwd, cwd) =~ "only-job"
+      note =
+        "[note: no job_id given — read the only background job #{job.id}; " <>
+          "pass job_id explicitly next time]"
+
+      first = JobOutput.execute(%{}, cwd, cwd)
+      assert first =~ "only-job"
+      assert first =~ note
+
       # A blank or non-string id takes the SAME auto-selected path (the only job
       # is read, so the second read is an empty delta with the status line).
       assert JobOutput.execute(%{"job_id" => "   "}, cwd, cwd) ==
-               "(no new output)\n[status: completed, exit code: 0]"
+               "(no new output)\n[status: completed, exit code: 0]\n" <> note
 
       assert JobOutput.execute(%{"job_id" => 123}, cwd, cwd) ==
-               "(no new output)\n[status: completed, exit code: 0]"
+               "(no new output)\n[status: completed, exit code: 0]\n" <> note
+    end
+
+    test "an explicit job_id carries no note line", %{tmp_dir: cwd} do
+      job = start_job("echo explicit-note", cwd)
+      await_job_status(job.id, :completed)
+
+      explicit = JobOutput.execute(%{"job_id" => job.id}, cwd, cwd)
+
+      assert explicit =~ "explicit-note"
+      refute explicit =~ "[note:"
+
+      # The SAME job read through the inferred path DOES explain the inference.
+      assert JobOutput.execute(%{}, cwd, cwd) =~ "[note: no job_id given"
     end
 
     test "omitted job_id still honours wait: true", %{tmp_dir: cwd} do
@@ -417,10 +439,11 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
       text = JobOutput.execute(%{"wait" => true, "timeout_ms" => 5_000}, cwd, cwd)
 
-      # The full omitted-id shape: the delta, the byte-identical status line and
-      # the wait marker that proves the wait path (not just a read) ran.
+      # The full omitted-id shape: the delta, the byte-identical status line,
+      # the wait marker that proves the wait path (not just a read) ran, and the
+      # trailing inferred-read note.
       assert text =~
-               ~r/\Awaited\n\[status: completed, exit code: 0\]\n\[wait: finished after \d+ ms, status: completed\]\z/
+               ~r/\Awaited\n\[status: completed, exit code: 0\]\n\[wait: finished after \d+ ms, status: completed\]\n\[note: no job_id given — read the only background job bash-\d+; pass job_id explicitly next time\]\z/
     end
 
     test "omitted job_id with no jobs explains how to start one", %{tmp_dir: cwd} do
@@ -431,6 +454,8 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       assert String.starts_with?(result, "Error: ")
       assert result =~ "no background jobs"
       assert result =~ "run_in_background: true"
+      assert result =~ "call job_output with its job_id"
+      refute result =~ "may be omitted"
     end
 
     test "omitted job_id with no owning agent keeps the explicit-id error", %{tmp_dir: cwd} do
@@ -457,6 +482,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       assert result =~ "Multiple background jobs"
       assert result =~ ~s|#{running.id} (running, "sleep 5")|
       assert result =~ ~s|#{finished.id} (completed, "echo first-done")|
+      assert result =~ "pass job_id with one of these ids"
       assert result =~ "Call job_list for details."
 
       # Newest first: the running job (started second) is named before the
@@ -1142,9 +1168,12 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       command = "echo bg-hi\nsleep 5"
 
       result = ShellTool.execute(%{"command" => command, "run_in_background" => true}, cwd, cwd)
-      assert result =~ ~r/\Astarted background job bash-\d+\z/
 
-      id = String.replace_prefix(result, "started background job ", "")
+      assert result =~
+               ~r/\Astarted background job bash-\d+ — read its output with job_output using job_id "bash-\d+"\z/
+
+      [_, id] = Regex.run(~r/\Astarted background job (bash-\d+) /, result)
+      assert result =~ ~s|using job_id "#{id}"|
 
       jobs = BackgroundJobs.list()
       assert [job] = jobs
@@ -1169,9 +1198,13 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
         )
 
       refute String.starts_with?(result, "Error: ")
-      assert result =~ ~r/\Astarted background job bash-\d+\z/
 
-      id = String.replace_prefix(result, "started background job ", "")
+      assert result =~
+               ~r/\Astarted background job bash-\d+ — read its output with job_output using job_id "bash-\d+"\z/
+
+      [_, id] = Regex.run(~r/\Astarted background job (bash-\d+) /, result)
+      assert result =~ ~s|using job_id "#{id}"|
+
       job = await_job_status(id, :running)
       track_log!(job)
       pid = job_os_pid(job)
