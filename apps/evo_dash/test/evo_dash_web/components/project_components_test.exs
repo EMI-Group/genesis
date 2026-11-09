@@ -580,6 +580,45 @@ defmodule EvoDashWeb.ProjectComponentsTest do
     end
   end
 
+  # The palette's project filter matches the VCT identity (`vct_path`) in
+  # addition to the display name and the OS path, so a user can find a project
+  # by the name the VCT owns. Legacy unmapped entries (nil `vct_path`) must
+  # keep matching by name/path and never crash.
+  describe "filter_projects/2" do
+    test "matches a vct_path substring case-insensitively" do
+      projects = [
+        %{name: "alpha", path: "/home/user/alpha", vct_path: "vct:///projects/Alpha-One"},
+        %{name: "bravo", path: "/home/user/bravo", vct_path: "vct:///projects/bravo"}
+      ]
+
+      assert [%{name: "alpha"}] = ProjectComponents.filter_projects(projects, "alpha-one")
+
+      assert [%{name: "alpha"}] =
+               ProjectComponents.filter_projects(projects, "VCT:///PROJECTS/ALPHA")
+    end
+
+    test "nil vct_path still matches by name and path and does not crash" do
+      projects = [%{name: "legacy", path: "/home/user/legacy", vct_path: nil}]
+
+      assert [%{name: "legacy"}] = ProjectComponents.filter_projects(projects, "legacy")
+
+      assert [%{name: "legacy"}] =
+               ProjectComponents.filter_projects(projects, "/HOME/USER/LEGACY")
+
+      assert ProjectComponents.filter_projects(projects, "missing") == []
+    end
+
+    test "empty query returns the full list unchanged" do
+      projects = [
+        %{name: "alpha", path: "/home/user/alpha", vct_path: "vct:///projects/alpha"},
+        %{name: "bravo", path: "/home/user/bravo", vct_path: nil}
+      ]
+
+      assert ProjectComponents.filter_projects(projects, "") == projects
+      assert ProjectComponents.filter_projects(projects, "   ") == projects
+    end
+  end
+
   # --- helpers ---
 
   defp trigger_class(html) do
