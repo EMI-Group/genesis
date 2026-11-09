@@ -40,7 +40,7 @@ defmodule EvoGit.Store.PoolSizeTest do
   alias EvoGit.Store.RepoScope
 
   # One schema-complete, CHECKPOINTED database built per module: a brand-new
-  # file plus the six migrations costs ~12 ms per boot, a byte copy of this
+  # file plus the seven migrations costs ~12 ms per boot, a byte copy of this
   # template ~0.1 ms. Every test still gets its own isolated file with the
   # identical schema, so the isolation semantics are unchanged (same idiom as
   # `test/evo_git/store_test.exs`).

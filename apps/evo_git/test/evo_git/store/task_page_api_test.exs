@@ -12,7 +12,7 @@ defmodule EvoGit.Store.TaskPageApiTest do
   shapes. Each test starts its OWN uniquely-named store GenServer so it never
   touches the shared application store; its database file is a byte copy of the
   module's schema-complete template (`EvoGit.TestSupport.StoreTemplate`), so the
-  six migrations' DDL is paid once per module instead of once per test.
+  seven migrations' DDL is paid once per module instead of once per test.
   """
 
   use ExUnit.Case, async: true

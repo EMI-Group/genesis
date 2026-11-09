@@ -1,7 +1,7 @@
 defmodule EvoGit.Store.ArchiveMigrationTest do
   @moduledoc """
   Coverage for `20260815000005_task_agent_archives` — the ONE step of the
-  six-migration chain that both CREATES the relational per-agent archive and
+  seven-migration chain that both CREATES the relational per-agent archive and
   moves a legacy `tasks.archive_metadata` JSON array into it.
 
   ## What the migration does

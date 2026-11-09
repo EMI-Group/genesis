@@ -7,7 +7,7 @@ defmodule EvoGit.Store.RepoTest do
 
   Pinned contracts:
 
-    * `start_dynamic/1` applies exactly the six shipped migration versions
+    * `start_dynamic/1` applies exactly the seven shipped migration versions
     * the resulting `tasks` table has the exact 19-column shape (names, ORDER,
       DDL types, notnull/pk flags) — declared in ONE step by the baseline
       migration, which never creates the retired `archive_metadata` column (only

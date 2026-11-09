@@ -6,7 +6,7 @@ defmodule EvoGit.Store.Operations.TasksTest do
   Each test boots its own UNNAMED dynamic repo (`EvoGit.Store.Boot.start_dynamic/1`)
   on a unique tmp SQLite file, so `async: true` is safe. The file starts as a
   byte copy of the module's schema-complete template
-  (`EvoGit.TestSupport.StoreTemplate`), so the six migrations' DDL is paid once
+  (`EvoGit.TestSupport.StoreTemplate`), so the seven migrations' DDL is paid once
   per module instead of once per test. The production `EvoGit.Store.Boot`
   serializes concurrent migration runs globally (`:global.trans`), so parallel
   boots are safe. Raw-column assertions go

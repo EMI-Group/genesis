@@ -449,8 +449,9 @@ defmodule EvoGit.VCTTest do
       assert :ok = VCT.put_global_context("# Global context\n")
       assert_receive {:vct_updated, ^own_node}, 2_000
 
-      # The retired "recent_projects" topic is never emitted again (it has no
-      # publisher left, so this refute cannot observe a sibling test).
+      # Mount mutations publish only `{:vct_updated, node}` on "vct": there is
+      # no "recent_projects" topic, so nothing is ever published there (no
+      # publisher exists, so this refute cannot observe a sibling test).
       refute_receive {:recent_projects_updated}, 200
     end
 
