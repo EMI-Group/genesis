@@ -61,7 +61,16 @@ defmodule EvoDashWeb.ProcessesLive.Load do
     runner = Application.get_env(:evo_dash, :processes_page_load_runner, &load/2)
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      result = SafeCall.run(fn -> runner.(node, opts) end) |> normalize()
+      result =
+        case SafeCall.run(fn -> runner.(node, opts) end) do
+          # `SafeCall` wraps whatever the runner RETURNED. A seam runner may
+          # answer the documented `{:ok, list}` / `{:error, reason}` envelope,
+          # while the default runner (`EvoDash.NodeContext.list_processes/2`)
+          # answers the bare list — both shapes normalize to the same result.
+          {:ok, value} -> normalize(value)
+          {:error, reason} -> {:error, reason}
+        end
+
       send(parent, {:processes_loaded, seq, node, result})
     end)
 
@@ -125,4 +134,7 @@ defmodule EvoDashWeb.ProcessesLive.Load do
   defp normalize({:ok, list}) when is_list(list), do: {:ok, list}
   defp normalize({:ok, other}), do: {:error, {:invalid_result, other}}
   defp normalize({:error, reason}), do: {:error, reason}
+  # The default runner answers the bare list (the RPC already degrades to `[]`).
+  defp normalize(list) when is_list(list), do: {:ok, list}
+  defp normalize(other), do: {:error, {:invalid_result, other}}
 end

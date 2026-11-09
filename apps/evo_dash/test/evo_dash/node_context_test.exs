@@ -20,6 +20,7 @@ defmodule EvoDash.NodeContextTest do
 
   import ExUnit.CaptureLog
 
+  alias EvoGit.ProcessManager.Execution
   alias EvoGit.TaskInfo
 
   # Fixtures go into the RUN-WIDE test store (a per-run unique sqlite DB, see
@@ -427,6 +428,162 @@ defmodule EvoDash.NodeContextTest do
       else
         assert result == {:error, :nodedown}
       end
+    end
+  end
+
+  describe "managed-process RPC delegates (isolated ProcessManager instance)" do
+    # These four helpers reach `EvoGit.ProcessManager` through
+    # `EvoGit.RemoteNode.call_remote/4` → `RemoteAPI`: the LOCAL path runs
+    # `apply/3` IN THIS PROCESS, and every manager call resolves its registry
+    # name at CALL time via `EvoGit.ProcessManager.server/0`
+    # (`Process.get(:evogit_process_manager_server) || EvoGit.ProcessManager`).
+    #
+    # So each test starts its OWN named instance and points this process at it:
+    # the app-global `EvoGit.ProcessManager` (a child of `EvoGit.Application`) is
+    # never reconfigured, and both the instance name and the process-dictionary
+    # pointer are per-test — nothing process-global is mutated, so the module
+    # stays `async: true`.
+    setup do
+      name = :"proc_mgr_test_#{System.unique_integer([:positive])}"
+      start_supervised!({EvoGit.ProcessManager, [name: name]})
+      Process.put(:evogit_process_manager_server, name)
+      on_exit(fn -> Process.delete(:evogit_process_manager_server) end)
+      :ok
+    end
+
+    # Seeds ONE `:tool_call` execution on the isolated instance. `:owner_pid` is
+    # deliberately omitted: the record then outlives nobody and no monitor is
+    # created for the test process.
+    defp track_execution!(command, meta) do
+      meta =
+        Enum.into(meta, %{command: command, tool: "bash", runtime: :foreground})
+
+      assert {:ok, id} = EvoGit.ProcessManager.track(:tool_call, meta)
+      id
+    end
+
+    test "list_processes/2 returns the tracked executions, newest first" do
+      first = track_execution!("echo first", %{agent_id: 4242, task_id: "task-x"})
+      second = track_execution!("echo second", %{agent_id: 4242, task_id: "task-x"})
+
+      # Exact: the isolated instance holds exactly these two records.
+      assert [%Execution{} = newest, %Execution{} = oldest] =
+               EvoDash.NodeContext.list_processes(node())
+
+      assert newest.id == second
+      assert oldest.id == first
+
+      assert %Execution{
+               id: ^second,
+               kind: :tool_call,
+               tool: "bash",
+               command: "echo second",
+               agent_id: 4242,
+               task_id: "task-x",
+               runtime: :foreground,
+               backend: :none,
+               status: :starting
+             } = newest
+
+      assert oldest.command == "echo first"
+    end
+
+    test "list_processes/2 passes the agent_id/task_id filters through exactly" do
+      mine = track_execution!("echo mine", %{agent_id: 4242, task_id: "task-x"})
+      _other = track_execution!("echo other", %{agent_id: 7777, task_id: "task-y"})
+
+      assert [%Execution{id: ^mine}] = EvoDash.NodeContext.list_processes(node(), agent_id: 4242)
+
+      assert [%Execution{id: ^mine}] =
+               EvoDash.NodeContext.list_processes(node(), task_id: "task-x")
+
+      # Filters are AND-ed and exact: no record matches a foreign identity.
+      assert EvoDash.NodeContext.list_processes(node(), agent_id: 9999) == []
+      assert EvoDash.NodeContext.list_processes(node(), agent_id: 7777, task_id: "task-x") == []
+    end
+
+    test "an unreachable manager degrades: list is [] and the id read unwraps its answer" do
+      track_execution!("echo x", %{agent_id: 4242, task_id: "task-x"})
+
+      # A NAME with no registered process: `RemoteAPI.with_manager/2` liveness
+      # check fails, so the documented degraded values come back instead of an
+      # exit (and `list_processes/2` never leaks the `{:ok, []}` envelope).
+      Process.put(
+        :evogit_process_manager_server,
+        :"no_such_manager_#{System.unique_integer([:positive])}"
+      )
+
+      assert EvoDash.NodeContext.list_processes(node(), []) == []
+
+      assert EvoDash.NodeContext.get_process(node(), "proc-1") ==
+               {:error, :process_manager_unavailable}
+    end
+
+    test "get_process/2 returns the execution, or :not_found for unknown/non-binary ids" do
+      id = track_execution!("echo x", %{agent_id: 4242, task_id: "task-x"})
+
+      assert {:ok, %Execution{id: ^id, command: "echo x", agent_id: 4242, task_id: "task-x"}} =
+               EvoDash.NodeContext.get_process(node(), id)
+
+      # The envelope is unwrapped: the core's own `{:error, :not_found}` arrives
+      # bare, never as `{:ok, {:error, :not_found}}`.
+      assert EvoDash.NodeContext.get_process(node(), "proc-999999") == {:error, :not_found}
+      assert EvoDash.NodeContext.get_process(node(), 123) == {:error, :not_found}
+
+      # A non-binary id answers without an RPC: an unreachable manager would
+      # report `:process_manager_unavailable`, so `:not_found` proves the local
+      # short-circuit.
+      Process.put(
+        :evogit_process_manager_server,
+        :"no_such_manager_#{System.unique_integer([:positive])}"
+      )
+
+      assert EvoDash.NodeContext.get_process(node(), 123) == {:error, :not_found}
+    end
+
+    test "process_stats/2 is the core's own answer for a missing/unprobeable id" do
+      missing = "proc-999999"
+
+      # Verbatim core answer, both read the same isolated manager.
+      assert EvoDash.NodeContext.process_stats(node(), missing) ==
+               EvoGit.ProcessManager.sample(missing)
+
+      assert EvoDash.NodeContext.process_stats(node(), missing) == {:error, :not_found}
+
+      # A tracked record that never attached an OS handle: the manager's own
+      # `{:error, :not_running}` reaches the caller unchanged.
+      id = track_execution!("echo x", %{agent_id: 4242, task_id: "task-x"})
+
+      assert EvoDash.NodeContext.process_stats(node(), id) ==
+               EvoGit.ProcessManager.sample(id)
+
+      assert EvoDash.NodeContext.process_stats(node(), id) == {:error, :not_running}
+
+      assert EvoDash.NodeContext.process_stats(node(), 123) == {:error, :not_found}
+    end
+
+    test "process_control/4 unwraps core errors and never forwards an unknown action" do
+      id = track_execution!("echo x", %{agent_id: 4242, task_id: "task-x"})
+
+      assert EvoDash.NodeContext.process_control(node(), "proc-999999", :pause, "no such id") ==
+               {:error, :not_found}
+
+      # A tracked record with no OS handle: the manager's own `:no_handle`, not
+      # `:process_manager_unavailable` — the answer is passed through verbatim.
+      assert EvoDash.NodeContext.process_control(node(), id, :pause, "no handle yet") ==
+               {:error, :no_handle}
+
+      # An unrecognized action is answered by `RemoteAPI` itself (never
+      # forwarded to the manager, so the isolated registry cannot crash).
+      assert EvoDash.NodeContext.process_control(node(), id, :bogus, "bad action") ==
+               {:error, {:unknown_action, :bogus}}
+
+      assert EvoDash.NodeContext.process_control(node(), 123, :pause, "non-binary id") ==
+               {:error, :not_found}
+
+      # The manager survived the invalid action and still answers a valid read.
+      assert {:ok, %Execution{id: ^id, status: :starting, control_log: []}} =
+               EvoDash.NodeContext.get_process(node(), id)
     end
   end
 end

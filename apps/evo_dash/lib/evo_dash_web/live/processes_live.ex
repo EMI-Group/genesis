@@ -54,6 +54,11 @@ defmodule EvoDashWeb.ProcessesLive do
     # query the LOCAL node.
     {:ok,
      assign(socket,
+       # `Layouts.app` reads `@config_status` on EVERY render (dead render
+       # included), so the page must own the assign — an unset one raises
+       # KeyError before the first paint. Resolved here like the other pages
+       # (local read of config.toml, no RPC).
+       config_status: config_status(),
        executions: [],
        executions_loading: false,
        executions_error: nil,
@@ -719,6 +724,7 @@ defmodule EvoDashWeb.ProcessesLive do
             message = gettext("A reason is required.")
 
             socket
+            |> assign(:confirm_reason, reason_text(reason))
             |> assign(:confirm_error, message)
             |> put_flash(:error, message)
 
@@ -742,8 +748,11 @@ defmodule EvoDashWeb.ProcessesLive do
 
               {:error, _reason} ->
                 # The modal stays open with the operator's text preserved and the
-                # failure shown in place, so a retry needs no retyping.
-                assign(socket, :confirm_error, message)
+                # failure shown in place, so a retry needs no retyping. The text
+                # MUST be re-assigned (not just left in the DOM): the modal is
+                # rendered from `:confirm_reason`, so without this a re-render
+                # paints an empty textarea.
+                assign(socket, confirm_error: message, confirm_reason: reason_text(reason))
             end
         end
 
@@ -751,6 +760,9 @@ defmodule EvoDashWeb.ProcessesLive do
         socket
     end
   end
+
+  defp reason_text(reason) when is_binary(reason), do: reason
+  defp reason_text(_reason), do: ""
 
   # Terminate asks politely (TERM); Kill is the destructive escalation.
   defp control_action(:kill), do: :kill
