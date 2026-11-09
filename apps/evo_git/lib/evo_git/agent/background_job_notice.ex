@@ -134,11 +134,10 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
   end
 
   # The FIRST job's usable id: the copy-ready `job_id` spelling the notice
-  # shows. Total: a nil list, a non-map first element, a missing/non-binary id
-  # or a blank id all yield `nil` so the renderer falls back to a generic line.
+  # shows. Total: an empty list, a non-map first element, a missing/non-binary
+  # id or a blank id all yield `nil` so the renderer falls back to a generic
+  # line. Only ever called with a list (the caller guards on `is_list/1`).
   defp first_job_id(jobs) when is_list(jobs), do: usable_id(List.first(jobs))
-
-  defp first_job_id(_jobs), do: nil
 
   defp usable_id(job) when is_map(job) do
     case Map.get(job, :id) do
