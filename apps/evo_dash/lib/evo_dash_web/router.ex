@@ -32,6 +32,7 @@ defmodule EvoDashWeb.Router do
     live("/welcome", WelcomeLive, :index)
     live("/welcome/complete", WelcomeCompleteLive, :index)
     live("/tasks", TasksLive, :index)
+    live("/processes", ProcessesLive, :index)
     live("/agents", AgentsLive, :index)
     live("/settings", SettingsLive, :index)
     live("/system", SystemLive, :index)

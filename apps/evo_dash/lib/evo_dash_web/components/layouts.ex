@@ -156,6 +156,13 @@ defmodule EvoDashWeb.Layouts do
               current={@current_page == :tasks}
               icon="hero-clipboard-document-list"
             >{gettext("Tasks")}</.sidebar_nav_link>
+            <%!-- zh_CN: "进程" — 指 Genesis 跟踪的操作系统进程（智能体工具调用与后台任务），不是 Erlang 进程 --%>
+            <.sidebar_nav_link
+              navigate={with_node_param(current_page(:processes), @current_node_id)}
+              current={@current_page == :processes}
+              icon="hero-cpu-chip"
+              data_nav="processes"
+            ><span class="sidebar-label">{gettext("Processes")}</span></.sidebar_nav_link>
             <.sidebar_nav_link
               navigate={with_node_param(~p"/settings", @current_node_id)}
               current={@current_page == :settings}
@@ -491,6 +498,7 @@ defmodule EvoDashWeb.Layouts do
   attr(:navigate, :string, required: true)
   attr(:current, :boolean, default: false)
   attr(:icon, :string, required: true)
+  attr(:data_nav, :string, default: nil, doc: "optional data-nav marker on the link")
 
   attr(:notification, :atom,
     default: nil,
@@ -510,6 +518,7 @@ defmodule EvoDashWeb.Layouts do
           "text-base-content/80 hover:bg-base-300/70 hover:text-base-content"
       ]}
       aria-current={if @current, do: "page", else: false}
+      data-nav={@data_nav}
     >
       <.icon
         name={@icon}
@@ -602,6 +611,7 @@ defmodule EvoDashWeb.Layouts do
   def current_page(:phx_dashboard), do: "/dashboard"
   def current_page(:agents), do: "/agents"
   def current_page(:tasks), do: "/tasks"
+  def current_page(:processes), do: "/processes"
   def current_page(:settings), do: "/settings"
   def current_page(:system), do: "/system"
   def current_page(:help), do: "/help"
