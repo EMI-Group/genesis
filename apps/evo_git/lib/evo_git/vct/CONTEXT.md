@@ -7,7 +7,7 @@ It is NOT a filesystem — no directory is ever created for a point, a mount's O
 The mount table is ordinary relational store state (`vct_mounts` in `tasks.sqlite`); the only files the VCT owns are the OPTIONAL global context `<data_dir>/vct/CONTEXT.md` and its local git repository.
 A project list is a persistent, CAPPED list of mounts (oldest evicted), not a "recently opened" history.
 VCT URLs are INTERNAL metadata: nothing renders a `vct:///` URL (or an OS path) as a CONTEXT.md file path in a prompt, and agent execution keeps one concrete repo worktree.
-The supervised store, its client API and the global context file live one level up in `EvoGit.VCT` (`../vct.ex`); consumers are `EvoGit.RemoteAPI`/`EvoGit.RemoteNode` (`projects/0`, `mount_project/2`, `forget_project/1`), the `ListProjects.list_projects` command, and prompt rendering in `EvoGit.Core.ContextNode`.
+The supervised store, its client API and the global context file live one level up in `EvoGit.VCT` (`../vct.ex`); consumers are `EvoGit.AgentScheduler.RemoteAPI`/`EvoGit.RemoteNode` (`projects/0`, `mount_project/2`, `forget_project/1`), the `ListProjects.list_projects` command, and prompt rendering in `EvoGit.Core.ContextNode`.
 
 ## API Surface
 
