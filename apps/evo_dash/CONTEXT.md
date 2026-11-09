@@ -4,7 +4,7 @@
 
 EvoDash is the web dashboard for the EvoGit umbrella project — a project-based real-time Phoenix LiveView interface for launching and monitoring EvoGit tasks (genesis / evolve), inspecting the agent tree hierarchy, viewing task logs, managing runtime scheduler settings, editing user configuration, and managing per-project settings including foreign repositories.
 
-Users open a Project (a Git repository path) and the dashboard auto-detects the appropriate task mode; multiple projects can be open simultaneously with tab-based navigation. This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibling `:evo_git` application.
+Users open a Project (a Git repository path) through the command-palette selector, which mounts it in the core's Virtual Context Tree and makes it the single active project; the dashboard auto-detects the appropriate task mode. This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibling `:evo_git` application.
 
 ## Routing Table
 
