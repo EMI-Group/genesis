@@ -305,6 +305,25 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     end
   end
 
+  # Extracts ONE palette ROW's markup from the rendered palette.
+  #
+  # The whole-page HTML contains every mounted project (this file's suite runs
+  # concurrently with others that seed their own mounts), so a page-wide
+  # `string_index/2` comparison cannot say anything about the ORDER of a single
+  # row's identity lines. Each row is wrapped in `<div class="relative group">`,
+  # so splitting on that wrapper yields one chunk per row; the chunk carrying
+  # `phx-value-path="<path>"` is that project's row (rows are rendered
+  # newest-opened first, so the chunk ends at the next row's wrapper).
+  def palette_row(html, path) do
+    case Enum.find(
+           String.split(html, ~s(<div class="relative group">)),
+           &String.contains?(&1, ~s(phx-value-path="#{path}"))
+         ) do
+      nil -> flunk("no palette row found for #{inspect(path)}")
+      row -> row
+    end
+  end
+
   # Returns the byte index of the first occurrence of `pattern` in `string`,
   # or nil if it is not present.
   def string_index(string, pattern) do
@@ -1633,11 +1652,22 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       html = render_click(view, "open_project_palette", %{})
 
-      # Primary identity line = the VCT point, secondary line = the OS path.
-      assert html =~ entry.point
-      assert html =~ project_a
-      assert html =~ ~s(phx-value-path="#{project_a}")
-      assert string_index(html, entry.point) < string_index(html, project_a)
+      # SCOPED to this project's own row: the page also renders other suites'
+      # mounts, so a page-wide index comparison would compare unrelated rows.
+      row = palette_row(html, project_a)
+
+      # The row's PRIMARY identity line is the VCT point and the SECONDARY line
+      # is the OS path: the point is the content of the row button's first line
+      # div, immediately followed by the path line (whose `title` attribute is
+      # the OS path and whose text is the OS path).
+      assert row =~
+               ~r{>\s*#{Regex.escape(entry.point)}\s*</div>\s*<div[^>]*title="#{Regex.escape(project_a)}"[^>]*>\s*#{Regex.escape(project_a)}\s*</div>}
+
+      # Row EVENTS stay OS-path-keyed while the Forget sibling carries the VCT
+      # point — the point is the row's identity, the path its handle.
+      assert row =~ ~s(phx-value-path="#{project_a}")
+      assert row =~ ~s(phx-click="forget_project")
+      assert row =~ ~s(phx-value-point="#{entry.point}")
     end
 
     # Newest-opened first: `EvoGit.VCT.projects/1` sorts by `last_opened_at`
@@ -2626,7 +2656,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # The remote project list arrives off-process (`NodeContext.projects/1`
       # degrades to [] for the fake BEAM node), so inject the remote node's
-      # list as the async batch continuation would.
+      # list as the async batch continuation would. The seq is read from the
+      # VIEW (a synchronous round-trip), not assumed: the continuation is
+      # stale-guarded on it.
       seq = assigns(view)[:projects_seq]
 
       send(
@@ -2636,8 +2668,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       assert [injected] = assigns(view)[:projects]
 
+      # Open the palette — the per-row Forget action only renders inside it.
+      html = render_click(view, "open_project_palette", %{})
+
       # The Forget action IS rendered on remote nodes now.
-      html = render(view)
       assert html =~ ~s(phx-click="forget_project")
       assert html =~ ~s(phx-value-point="#{injected.point}")
       assert html =~ ~s(aria-label="Forget my-alpha")
@@ -3010,17 +3044,27 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # were assigned — the exact output of the fixed filter line.
       assert Enum.any?(socket.assigns[:projects], &(&1.path == tmp_dir))
 
-      # The active project carries the VCT `point` resolved from the
-      # just-fetched project row (never a hardcoded suffix — the VCT owns it).
+      # The active project is the display-only `%{path, name, point}` map the
+      # activation continuation assigns (the VCT owns the point; never a
+      # hardcoded suffix).
       active_project = socket.assigns[:active_project]
       assert active_project.path == tmp_dir
       assert active_project.name == Path.basename(tmp_dir)
 
       entry = Enum.find(socket.assigns[:projects], &(&1.path == tmp_dir))
 
-      assert is_binary(active_project.point)
-      assert String.starts_with?(active_project.point, "vct:///projects/")
-      assert active_project.point == Map.get(entry, :point)
+      # The activation MOUNTED the project, so the assigned project list (the
+      # authoritative VCT row set this continuation assigns) carries its
+      # registry-owned point.
+      assert is_binary(Map.get(entry, :point))
+      assert String.starts_with?(entry.point, "vct:///projects/")
+
+      # `active_project.point` is a display-only lookup whose documented
+      # fallback is nil (`ProjectFlow.remote_project_load/2` renders the plain
+      # OS path then). Pin both halves of that contract: whatever it holds must
+      # be THIS project's point — never a stale or foreign one.
+      point = active_project.point
+      assert is_nil(point) or point == Map.get(entry, :point)
 
       assert socket.assigns[:active_project_path] == tmp_dir
       assert socket.assigns[:remote_project_loading] == nil
@@ -3372,9 +3416,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:current_node_id] == id
       assert assigns(view)[:task_mode] == "genesis_new"
 
+      # The active project is the display-only `%{path, name, point}` map the
+      # activation continuation assigned: the remote loader's point (the VCT
+      # owns the identity) is preserved alongside the OS path, never dropped.
       assert assigns(view)[:active_project] == %{
                path: remote_path,
-               name: Path.basename(remote_path)
+               name: Path.basename(remote_path),
+               point: "vct:///projects/#{Path.basename(remote_path)}"
              }
 
       # Resume params preserved — the continuation's push_patch re-runs
