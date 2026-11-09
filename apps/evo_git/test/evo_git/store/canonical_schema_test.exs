@@ -12,7 +12,8 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
     * SCHEMA — `tasks` has exactly the 19 canonical columns in canonical order
       and NEVER `archive_metadata`; `task_agent_archives` has exactly its 23
       declared columns (`repo_id` TEXT) plus its roster index;
-      `projects` has exactly its three columns; `tasks` carries exactly the SIX
+      `vct_mounts` has exactly its five columns (and the retired `projects`
+      table never exists in `sqlite_master`); `tasks` carries exactly the SIX
       final `idx_tasks_*` indexes and NONE of the four redundant ones.
     * STATEMENTS — the SQL a fresh boot ACTUALLY executes (captured off the
       repo's `[:evo_git, :repo, :query]` telemetry) mentions `archive_metadata`
@@ -52,14 +53,15 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
   alias EvoGit.Store.Schemas.TaskAgentArchiveRow
   alias EvoGit.Store.Schemas.TaskRow
 
-  # The six shipped migrations, contiguous versions 1..6.
+  # The seven shipped migrations, contiguous versions 1..7.
   @migration_versions [
     20_260_815_000_001,
     20_260_815_000_002,
     20_260_815_000_003,
     20_260_815_000_004,
     20_260_815_000_005,
-    20_260_815_000_006
+    20_260_815_000_006,
+    20_260_815_000_007
   ]
 
   # `PRAGMA table_info(tasks)` — [cid, name, type, notnull, dflt_value, pk] —
@@ -261,7 +263,7 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
   # ── Migration bookkeeping ────────────────────────────────────────────────
 
   describe "migration set" do
-    test "a fresh boot stamps exactly the six shipped, contiguous versions" do
+    test "a fresh boot stamps exactly the seven shipped, contiguous versions" do
       pid = boot_fresh!(:versions)
 
       assert pid
@@ -399,17 +401,49 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
     end
   end
 
-  # ── projects: untouched by the archive work ──────────────────────────────
+  # ── vct_mounts: the VCT mount table, and NOTHING of `projects` ───────────
+  describe "vct_mounts table" do
+    test "exactly point, path, name, kind and last_opened_at, with point the TEXT primary key" do
+      pid = boot_fresh!(:vct_mounts)
 
-  describe "projects table" do
-    test "exactly path, name and last_opened_at, with path the TEXT primary key" do
-      pid = boot_fresh!(:projects)
-
-      assert query_rows(pid, "PRAGMA table_info(projects)") == [
-               [0, "path", "TEXT", 0, nil, 1],
-               [1, "name", "TEXT", 0, nil, 0],
-               [2, "last_opened_at", "TEXT", 0, nil, 0]
+      # [cid, name, type, notnull, dflt_value, pk]: `point` is the primary key
+      # and every column except `last_opened_at` is NOT NULL.
+      assert query_rows(pid, "PRAGMA table_info(vct_mounts)") == [
+               [0, "point", "TEXT", 1, nil, 1],
+               [1, "path", "TEXT", 1, nil, 0],
+               [2, "name", "TEXT", 1, nil, 0],
+               [3, "kind", "TEXT", 1, nil, 0],
+               [4, "last_opened_at", "TEXT", 0, nil, 0]
              ]
+    end
+
+    test "path is UNIQUE" do
+      pid = boot_fresh!(:vct_mounts_unique)
+
+      rows = query_rows(pid, "PRAGMA index_list(vct_mounts)")
+
+      # [seq, name, unique, origin, partial] — one UNIQUE index, and its only
+      # column is `path` (the PK's own autoindex belongs to `point`).
+      assert Enum.any?(rows, fn [_seq, _name, unique, _origin, _partial] -> unique == 1 end)
+
+      unique_indexes = for [_seq, index_name, 1, _origin, _partial] <- rows, do: index_name
+
+      unique_columns =
+        Enum.map(unique_indexes, fn index_name ->
+          query_rows(pid, "PRAGMA index_info(#{inspect(index_name)})")
+          |> Enum.map(fn [_seqno, _cid, column] -> column end)
+        end)
+
+      assert ["path"] in unique_columns
+    end
+
+    test "the retired projects table never exists in sqlite_master" do
+      pid = boot_fresh!(:no_projects)
+
+      assert query_rows(
+               pid,
+               "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projects'"
+             ) == []
     end
   end
 
