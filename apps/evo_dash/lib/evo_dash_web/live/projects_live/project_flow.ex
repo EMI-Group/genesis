@@ -261,6 +261,30 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
   def mount_point_for(_projects, _path), do: nil
 
+  # The ONE mount-registration call shape of this module: mounts `path` in the
+  # node's VCT project registry and returns the registered mount's `vct:` point
+  # (or nil when the mount failed, which degrades to rendering the plain OS
+  # path).
+  #
+  # `NodeContext.mount_project/3` ALREADY returns `{:ok, %EvoGit.VCT.Mount{}}`
+  # — it unwraps `EvoGit.AgentScheduler.RemoteAPI`'s own `{:ok, _}` for both the
+  # local call and the remote `:erpc` round-trip — so `SafeCall.run/1` wraps it
+  # exactly ONCE MORE into `{:ok, {:ok, %EvoGit.VCT.Mount{}}}`. The success
+  # clause therefore has to unwrap one extra level; every failure shape
+  # (`{:error, {kind, reason}}` from a failed RPC, `{:ok, {:error, reason}}`
+  # from the local/remote call itself, or a non-mount payload) falls through to
+  # nil.
+  #
+  # The call stays inside `EvoDash.SafeCall`: a `GenServer.call` to a
+  # dead/timed-out store EXITS the caller, which must never crash the page.
+  @spec mount_project_point(node(), String.t(), String.t() | nil) :: String.t() | nil
+  defp mount_project_point(node, path, name) do
+    case SafeCall.run(fn -> NodeContext.mount_project(node, path, name) end) do
+      {:ok, {:ok, %{point: point}}} when is_binary(point) -> point
+      _ -> nil
+    end
+  end
+
   # ───────────────────────────────────────────────────────────────────────────
   # Project creation
   # ───────────────────────────────────────────────────────────────────────────
@@ -322,10 +346,10 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   # The two registry calls run inside `EvoDash.SafeCall`: a `GenServer.call`
   # to a dead/timed-out store EXITS the LiveView, so a mount failure is
   # tolerated (the project-list reload falls back to the currently shown list).
+  # The mount's returned VCT point is unused here — the reload below is the
+  # authoritative project list.
   defp register_and_open_project(socket, expanded) do
-    SafeCall.run(fn ->
-      NodeContext.mount_project(node(), expanded, Path.basename(expanded))
-    end)
+    mount_project_point(node(), expanded, Path.basename(expanded))
 
     projects =
       SafeCall.run(
@@ -367,9 +391,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
         {:ok, expanded} ->
           if File.dir?(expanded) do
             # Exit-safe store calls (see register_and_open_project/2).
-            SafeCall.run(fn ->
-              NodeContext.mount_project(node(), expanded, Path.basename(expanded))
-            end)
+            mount_project_point(node(), expanded, Path.basename(expanded))
 
             projects =
               SafeCall.run(
@@ -420,9 +442,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
         {:ok, expanded} ->
           if File.dir?(expanded) do
             # Exit-safe store calls (see register_and_open_project/2).
-            SafeCall.run(fn ->
-              NodeContext.mount_project(node(), expanded, Path.basename(expanded))
-            end)
+            mount_project_point(node(), expanded, Path.basename(expanded))
 
             projects =
               SafeCall.run(
@@ -676,13 +696,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   # try/rescue.
   defp remote_project_load(node, expanded) do
     if NodeContext.dir?(node, expanded) do
-      mount_point =
-        case SafeCall.run(fn ->
-               NodeContext.mount_project(node, expanded, Path.basename(expanded))
-             end) do
-          {:ok, %{point: point}} when is_binary(point) -> point
-          _ -> nil
-        end
+      mount_point = mount_project_point(node, expanded, Path.basename(expanded))
 
       projects =
         AsyncLoad.filter_absolute_projects_for_node(node, NodeContext.projects(node))
