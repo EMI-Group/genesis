@@ -32,14 +32,14 @@ Each builder is the single source of truth for its backend (the detached path re
   No `--scope` and no `--pty`: the default transient **service** unit is used, `--wait` blocks the client until exit, `--pipe` carries stdout/stderr, and `--collect` GCs the unit on termination — so `systemctl --user show <unit> -p ActiveState,ExecMainStatus` is queryable only WHILE it is alive, which is why `detached_args/5` omits `--collect`.
   `security_args/0` emits `ProtectSystem=strict`, `ProtectHome=read-only`, `ProtectKernelTunables`, `ProtectControlGroups`, the `SystemCallArchitectures`/`SystemCallFilter` set and `NoNewPrivileges` (each toggleable under `[sandbox.linux]`); `resource_args/0` emits `-p CPUQuota=`, `MemoryMax=`, `LimitNOFILE=`, `OOMScoreAdjust=` from `[sandbox.process]` when set (`[sandbox.resources]` sizes the slice) — keys/defaults: `../config/CONTEXT.md`.
 - bwrap `args/4` wraps the private `build_args/5`: `["--die-with-parent","--new-session"] ++ unshare_flags ++ ["--ro-bind","/","/","--dev","/dev","--proc","/proc"] ++ tmp_bind_args ++ writable_bind_args ++ task_tmp_bind_args ++ deny_args ++ ["--chdir", cwd] ++ env_setenv_args ++ ["--", cmd | cmd_args]` — every option precedes the `--` separator.
-- macOS: `run/4`/`run_with_partial/6` spawn `System.cmd("sandbox-exec", ["-p", <profile>, "--", exec | exec_args], cd: cwd, env: [{"TMPDIR", tmpdir} | git_env])`; SBPL from `generate_profile/2`.
-- none: `run/4` = `System.cmd(executable, args, cd: cwd, stderr_to_stdout: true, env: …)`; `run_with_partial/6` = direct `Port.open({:spawn_executable, resolved}, [:binary, :exit_status, :hide, :stderr_to_stdout, {:args, args}, {:cd, cwd}, {:env, Helpers.port_env(git_env)}])`.
+- macOS: `run/4` spawns `System.cmd("sandbox-exec", ["-p", <profile>, "--", exec | exec_args], cd: cwd, env: [{"TMPDIR", tmpdir} | git_env])`; `run_with_partial/7` spawns the SAME argv through `Helpers.run_tracked_command/7` (directly owned port, real pid, tree kill on timeout); SBPL from `generate_profile/2`.
+- none: `run/4` = `System.cmd(executable, args, cd: cwd, stderr_to_stdout: true, env: …)`; Windows `run_with_partial/7` = direct `Port.open({:spawn_executable, resolved}, [:binary, :exit_status, :hide, :stderr_to_stdout, {:args, args}, {:cd, cwd}, {:env, Helpers.port_env(git_env)}])`; Unix `run_with_partial/7` = `Helpers.run_task_with_partial/9` (the same port shape around `bash -c <redirected cmd>`, nix-wrapped when active).
 
 Kill/timeout primitives:
 - Linux: the timeout shuts down the CLIENT `Task` only — the unit keeps running and is stopped asynchronously by `SandboxProcessRegistry.release(unit)` → `systemctl --user stop <unit>.service`; `run/4` has NO timeout (`--wait` blocks indefinitely).
 - bwrap: `kill_process_group/1` runs `kill -TERM -- -<pgid>` → 100 ms → `kill -KILL -- -<pgid>` → `kill -KILL <pid>`; the negative pgid is valid because `--new-session` makes bwrap the session leader.
 - Windows/none: `taskkill /PID <pid> /T /F`, pid from `Helpers.wait_for_os_pid/1`.
-- macOS: `Task.shutdown` only — the `sandbox-exec` child is never explicitly killed.
+- macOS: `sandbox-exec` is spawned through the shared port runner, so its timeout kills the whole child tree via `Helpers.kill_process_tree/1` (TERM → 100 ms → KILL on the port child's process group) and then closes the port — no wrapper-only `Task.shutdown` anymore.
 - Other long-lived spawns: the SSH remote daemon (its systemd unit / launchd agent is created and removed by the `genesis_server` release's own `bin/genesis` CLI, so Elixir only shells out `<launcher> remote stop --unit genesis-remote-<id>` on a permitted re-bootstrap — `remote_connection.ex`) and `Background`'s per-job units.
 
 ## Behaviour Contract
@@ -48,18 +48,19 @@ All four backends (`Linux`, `Bwrap`, `MacOS`, `None`) implement `@behaviour EvoG
 The dispatcher calls the 7-arity form only when the selected backend exports it (`Code.ensure_loaded?` + `function_exported?`) and otherwise the 6-arity form, so every backend's `/6` and `/5`…/`3` arities keep working unchanged.
 Every backend's `/7` is the existing `/6` body plus ONE `Helpers.attach_execution/3` call at the point where its OS identity is known; with `:execution_id` nil (or absent) the attach is a no-op and no handle is built.
 Tracking is best-effort and observability-only: `Helpers.attach_execution/3` never raises, and a missing/restarting manager cannot fail, slow or alter a command.
+`Helpers.run_task_with_partial/9` (the shared non-sandbox/Unix tail) now spawns through a directly owned port — `Port.open({:spawn_executable, <resolved>}, [:binary, :exit_status, :hide, :stderr_to_stdout, {:args, …}, {:cd, cwd}, {:env, Helpers.port_env(env)}])` — resolves the executable with `EvoGit.Sandbox.None.resolve_executable/1` (nil → `:erlang.error(:enoent)`, `System.cmd/3` semantics), publishes the real OS pid via `wait_for_os_pid/2` + `attach_execution/3`, drains/discards `{:data, _}`, and on timeout kills the whole process TREE (`kill_process_tree/1`) before closing the port. `Helpers.run_tracked_command/7` is the same primitive reused by the macOS `sandbox-exec` path.
 
 ## Foreground Execution Tracking — per-backend attach points
 
 - `Linux` sandboxed: `%Handle{kind: :systemd_unit, unit: unit, backend: EvoGit.Sandbox.Linux}` immediately after `EvoGit.SandboxProcessRegistry.register/0` — the only place that generated unit name is known.
-- `Linux` non-sandbox: `:posix` handle with NO pid, attached before `Helpers.run_task_with_partial/7`.
+- `Linux` non-sandbox: `:posix` handle carrying the bash child's REAL pid, attached inside `Helpers.run_task_with_partial/9` (after `wait_for_os_pid/2`).
 - `Bwrap` enabled: `:posix` handle with bwrap's own pid, attached right after `Helpers.wait_for_os_pid/2` (`:undefined` normalizes to nil `os_pid`).
-- `Bwrap` disabled: `:posix` handle with no pid, attached before `Helpers.run_task_with_partial/7`.
-- `MacOS` both paths: `:posix` handle with no pid, attached before running (no systemd, and `sandbox-exec` is spawned through `System.cmd` inside an internal Task).
-- `None` Unix: `:posix` handle with no pid, attached before `Helpers.run_task_with_partial/7`.
+- `Bwrap` disabled: `:posix` handle carrying the bash child's real pid, attached inside `Helpers.run_task_with_partial/9`.
+- `MacOS` both paths: `:posix` handle carrying the real pid — the `sandbox-exec` child on the enabled path (via `Helpers.run_tracked_command/7`) and the bash child on the disabled path (via `Helpers.run_task_with_partial/9`); macOS has no systemd, so a pid is the only address.
+- `None` Unix: `:posix` handle carrying the bash child's real pid, attached inside `Helpers.run_task_with_partial/9`.
 - `None` Windows: `%Handle{kind: :windows, os_pid: os_pid, backend: EvoGit.Sandbox.None}` right after `Helpers.wait_for_os_pid/2` (`:undefined` → nil).
-- **No portable pid → degraded stats**: on the shared `System.cmd`-inside-a-Task tail (`Linux`/`Bwrap`/`MacOS` disabled paths and `None` Unix) the record becomes `:running` with `os_pid: nil`, so `ProcessManager.sample/2` degrades to nil stats fields — the record is still listed and still finishable.
-- `Helpers.run_task_with_partial/7` deliberately stays arity-7 and opens no port of its own; the attach lives in the calling backend.
+- **Every foreground path now carries an OS identity**: the record becomes `:running` WITH an `os_pid` (or a `unit` on the systemd path), so `ProcessManager.sample/2` reports real CPU/memory and pause/resume/signal reach the child. The only remaining pid-less degradation is the pathological `:undefined` case (the pid never materialized before the poll exhausted, e.g. a child that exits within microseconds) — the record stays listed and finishable.
+- `Helpers.run_task_with_partial/9` OWNS the port (callers no longer pre-attach before it): `opts` + the backend module are threaded from every call site (`Linux`/`Bwrap`/`MacOS` disabled paths, `None` Unix, and the macOS `sandbox-exec` path through `run_tracked_command/7`); the 7-arity form still works (defaults `opts=[]`, `backend=nil`).
 - No tracking is added for internal `rg`/git/skill invocations: threading happens ONLY when a caller supplies `:execution_id`.
 
 ## Detached / Background Execution — `EvoGit.Sandbox.Background`

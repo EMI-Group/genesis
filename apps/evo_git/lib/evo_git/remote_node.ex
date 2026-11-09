@@ -1376,6 +1376,81 @@ defmodule EvoGit.RemoteNode do
     end
   end
 
+  @doc """
+  Lists the OS executions `EvoGit.ProcessManager` tracks on the given node,
+  newest first.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_processes/1`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`. Every documented filter is accepted (`:agent_id`,
+  `:task_id`, `:kind`, `:status`, `:backend`).
+
+  Returns `[]` when the remote call fails (or answers something other than a
+  list), mirroring the other list wrappers here.
+  """
+  @spec list_processes(node(), keyword()) :: [EvoGit.ProcessManager.Execution.t()]
+  def list_processes(node, opts \\ []) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_processes(opts)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_processes, [opts]) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
+  Fetches ONE tracked execution by id (`"proc-<n>"`) from the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.get_process/1`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`.
+
+  Returns `{:ok, %EvoGit.ProcessManager.Execution{}}`, `{:error, :not_found}`,
+  `{:error, :process_manager_unavailable}` or the RPC failure reason.
+  """
+  @spec get_process(node(), String.t()) ::
+          {:ok, EvoGit.ProcessManager.Execution.t()} | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.get_process(id))
+
+  @doc """
+  Probes ONE execution's live resource usage on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.process_stats/1`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`.
+
+  Returns `{:ok, stats}`, the manager's own error (`{:error, :not_found}`,
+  `{:error, :not_running}`, `{:error, :process_manager_unavailable}`, …) or the
+  RPC failure reason.
+  """
+  @spec process_stats(node(), String.t()) ::
+          {:ok, EvoGit.ProcessManager.Stats.t()} | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.process_stats(id))
+
+  @doc """
+  Applies one control action (`:pause`, `:resume`, `:kill` or
+  `{:signal, signal}`) to a tracked execution on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.process_control/3` directly. On a remote
+  node, routes the call through `:erpc` via `call_remote/4`. `reason` is
+  recorded on the execution's `control_log`; the actor is `:remote`.
+
+  Returns `:ok`, the manager's own error (`{:error, :not_found}`,
+  `{:error, :terminal}`, `{:error, :invalid_signal}`, …),
+  `{:error, {:unknown_action, action}}` or the RPC failure reason.
+  """
+  @spec process_control(
+          node(),
+          String.t(),
+          EvoGit.AgentScheduler.RemoteAPI.process_control_action(),
+          term()
+        ) :: :ok | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.process_control(id, action, reason))
+
   # Safe degraded config-status map returned when a remote config-status RPC
   # fails. Matches the shape of EvoGit.Config.config_status/0 so callers see a
   # well-formed (but unhealthy) status rather than a crash.

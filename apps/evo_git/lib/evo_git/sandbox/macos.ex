@@ -542,9 +542,10 @@ defmodule EvoGit.Sandbox.MacOS do
   partial output written so far can still be read from the temp file.
 
   `opts` is the observability option list (only `:execution_id` is defined): both
-  paths attach a pid-less `:posix` handle before running, because macOS has no
-  systemd and `sandbox-exec` here is spawned through `System.cmd` inside an
-  internal Task, which exposes no portable OS pid.
+  paths spawn the child through a directly owned port (the enabled one via
+  `sandbox-exec`) and attach a `:posix` handle carrying its real OS pid, so
+  foreground executions are observable and controllable (macOS has no systemd,
+  so there is no unit to address instead).
 
   Returns:
     * `{:ok, output, exit_code}` — command completed within timeout
@@ -577,19 +578,13 @@ defmodule EvoGit.Sandbox.MacOS do
     # Detect git on the ORIGINAL executable (before we wrap it in bash)
     is_git = EvoGit.GitEnv.git_command?(executable)
 
-    # Both the sandbox-exec and the disabled path spawn through `System.cmd`
-    # inside a Task, so no portable pid is ever available: record a pid-less
-    # handle and let the stats degrade to nil fields.
-    Helpers.attach_execution(opts, :posix, backend: __MODULE__)
-
     if enabled?() do
       resolved_tmpdir = EvoGit.Sandbox.resolve_tmpdir()
       profile = generate_profile(cwd, repo_root)
 
-      # The cached decision (if any) is resolved BEFORE spawning the Task so
-      # a known-rejecting macOS skips the guaranteed-failing first attempt.
-      # The attempt-then-retry dance only happens when no decision is cached
-      # yet — and it runs inside the Task so it stays within the timeout.
+      # The cached decision (if any) is resolved BEFORE the first attempt so a
+      # known-rejecting macOS skips the guaranteed-failing one; the retry keeps
+      # within the SAME overall timeout budget.
       profile = if process_limit_rejected?(), do: strip_process_limit(profile), else: profile
 
       {exec, exec_args} =
@@ -600,28 +595,28 @@ defmodule EvoGit.Sandbox.MacOS do
         end
 
       git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
+      env = [{"TMPDIR", resolved_tmpdir} | git_env]
+      deadline = System.monotonic_time(:millisecond) + timeout
 
-      task =
-        Task.async(fn ->
-          result = sandbox_exec(profile, exec, exec_args, cwd, resolved_tmpdir, git_env)
+      case run_sandbox_exec(profile, exec, exec_args, cwd, env, opts, timeout) do
+        {:ok, 0} = _success ->
+          {:ok, Helpers.read_tempfile(tmpfile, max_bytes), 0}
 
-          maybe_retry_without_process_limit(
+        {:ok, _non_zero_exit_code} = result ->
+          retry_without_process_limit(
             result,
             profile,
             exec,
             exec_args,
             cwd,
-            resolved_tmpdir,
-            git_env
+            env,
+            opts,
+            deadline,
+            tmpfile,
+            max_bytes
           )
-        end)
 
-      case Task.yield(task, timeout) || Task.shutdown(task) do
-        {:ok, {_output, exit_code}} ->
-          content = Helpers.read_tempfile(tmpfile, max_bytes)
-          {:ok, content, exit_code}
-
-        nil ->
+        {:timeout, :killed} ->
           partial = Helpers.read_tempfile(tmpfile, max_bytes)
           {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
       end
@@ -639,8 +634,83 @@ defmodule EvoGit.Sandbox.MacOS do
         git_env,
         timeout,
         tmpfile,
-        max_bytes
+        max_bytes,
+        opts,
+        __MODULE__
       )
     end
+  end
+
+  # One `sandbox-exec -p <profile> -- <exec> <args>` attempt through the shared
+  # port-based runner: real OS pid, tracked attach, tree kill on timeout.
+  defp run_sandbox_exec(profile, exec, exec_args, cwd, env, opts, timeout) do
+    Helpers.run_tracked_command(
+      "sandbox-exec",
+      ["-p", profile, "--", exec | exec_args],
+      cwd,
+      env,
+      timeout,
+      opts,
+      __MODULE__
+    )
+  end
+
+  # Fail-safe process-limit retry for the `run_with_partial` path: the first
+  # attempt already failed non-zero, so — unless another caller has ALREADY
+  # discovered the rejection — retry once with the `(limit ...)` rule stripped,
+  # inside whatever is LEFT of the original timeout budget. On success the
+  # decision is cached in `:persistent_term` (warned about once).
+  defp retry_without_process_limit(
+         result,
+         profile,
+         exec,
+         exec_args,
+         cwd,
+         env,
+         opts,
+         deadline,
+         tmpfile,
+         max_bytes
+       ) do
+    if process_limit_rejected?() do
+      # Another caller already discovered the rejection (and the profile we
+      # ran was already stripped) — report this attempt's result as-is.
+      finalize_exit(result, tmpfile, max_bytes)
+    else
+      remaining = max(deadline - System.monotonic_time(:millisecond), 1)
+
+      case run_sandbox_exec(
+             strip_process_limit(profile),
+             exec,
+             exec_args,
+             cwd,
+             env,
+             opts,
+             remaining
+           ) do
+        {:ok, 0} ->
+          :persistent_term.put(@process_limit_rejected_key, true)
+
+          Logger.warning(
+            "sandbox-exec rejected the (limit ...) rule on this macOS; " <>
+              "running with the process-count limit disabled"
+          )
+
+          {:ok, Helpers.read_tempfile(tmpfile, max_bytes), 0}
+
+        other ->
+          finalize_exit(other, tmpfile, max_bytes)
+      end
+    end
+  end
+
+  # Converts a port-runner result into `run_with_partial`'s contract.
+  defp finalize_exit({:ok, exit_code}, tmpfile, max_bytes) do
+    {:ok, Helpers.read_tempfile(tmpfile, max_bytes), exit_code}
+  end
+
+  defp finalize_exit({:timeout, :killed}, tmpfile, max_bytes) do
+    partial = Helpers.read_tempfile(tmpfile, max_bytes)
+    {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
   end
 end
