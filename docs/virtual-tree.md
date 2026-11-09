@@ -1,417 +1,194 @@
-# The Virtual Tree — Workspaces, a Workspace Rootfs, and Repo Mounts
+# The Virtual Context Tree (VCT)
 
-Status: **proposal** (nothing implemented).
-This record supersedes the earlier all-in-one draft (capability mounts, virtual nodes, MCP).
-The first shippable step is deliberately narrower: **git repos only, mounted into a virtual tree whose `/` is a real git repo in the Genesis state directory — the workspace "rootfs"**.
-Skills, memory, MCP and non-code workloads are deferred, but they are designed *as future mounts of git repos*, so the first step is their foundation rather than a detour.
+Status: **implemented — deliberately minimal, internal only**.
+What shipped is a data-structure and namespace refactor, not a kernel filesystem and not a visible workspace feature.
+The VCT is an **analogy and an internal namespace**: a canonical `vct:///…` point is bound to an absolute OS path so Genesis can name repositories and context levels independently of where the bytes live.
+This step does **NOT** create symlink farms, bind mounts, FUSE mounts, directory junctions, per-mount worktrees, or change any filesystem layout.
+A task still executes in exactly one concrete repo worktree, and every user-visible path is what it was before.
+The intended future extension (remote hosts, capability mounts, nested mounts) is described at the end; none of it is built.
 
-## 1. Problem
+This record replaces the earlier heavyweight proposal (workspace rootfs as a mount, symlink farm per agent, shared pinned read-only views, per-mount review).
 
-Genesis today models a task as **one primary repo + N read-mostly "foreign repos"**.
-The following are verified facts about the current code, not impressions:
+## 1. Scope of the implemented step
 
-| Symptom | Root cause in the current design |
+The VCT currently provides three things and nothing more:
+
+1. A canonical, parseable **namespace** for repositories (`vct:///projects/<name>`) — `EvoGit.VCT.Path`.
+2. A machine-local **mount table** binding those points to absolute OS paths — `EvoGit.VCT`, `EvoGit.VCT.Mount`, `EvoGit.VCT.Table`, `EvoGit.VCT.Persistence`.
+3. A **spatial-dimension annotation** (`%EvoGit.Core.ContextNode{}.vct_path`) and an optional **global context level** rendered ahead of the in-repo context chain.
+
+Everything else that the word "virtual tree" might suggest is out of scope for this step.
+
+## 2. Unchanged behaviour (verify before touching any of these)
+
+- A task runs in **one concrete repo worktree**; `opts[:path]` is still the primary repo and the worktree/branch layout is untouched.
+- **Foreign repositories are unchanged**: `%EvoGit.Core.ForeignRepo{}` keeps read-only vs writable (`writable`), absolute OS paths (`root`) and `base_sha`, and is passed through task opts exactly as before.
+- **In-repo references stay relative**: a node is still `"./src/auth"`, byte-identical to before; no `vct:///` URL is ever written where a node path is expected.
+- The `# Foreign Repositories` prompt block is still emitted as before.
+- Agent `cwd`, the sandbox writable set, worktree create/teardown, branch names, the completion/merge path and task execution are all untouched.
+- No `vct:///` URL and no OS path is rendered as a CONTEXT.md file path in a prompt (the one global stage uses the fixed label `global/CONTEXT.md`).
+- Legacy SQLite `projects` rows remain readable; the table is deprecated but not dropped.
+
+The mount table is **pure metadata**: creating a mount never touches the filesystem, never resolves symlinks and never requires the OS path to exist.
+
+## 3. URL format — `EvoGit.VCT.Path`
+
+Canonical forms:
+
+```
+vct:///                     # the VCT root
+vct:///projects             # the projects folder
+vct:///projects/foo         # a project mount point
+vct:///projects/foo/bar     # a nested node under a mount
+```
+
+Only **local** addressing is supported today: the authority must be empty.
+`vct://host/projects/foo` is rejected with `{:error, :non_local_authority}`, and that reserved error (not a different scheme) is what leaves the door open for a future `vct://<host>/<path>` remote form.
+
+Parsing/normalization rules (`parse/1`; `parse!/1` raises `ArgumentError`):
+
+- the input must begin with the literal `vct://` scheme (`{:error, :invalid_scheme}` otherwise);
+- after the scheme, a `vct://` with no path is `{:error, :invalid_path}`; a remainder that does not start with `/` is a host authority (`{:error, :non_local_authority}`);
+- duplicate and trailing slashes are collapsed (`vct:////projects//foo/` → `vct:///projects/foo`);
+- a segment is rejected when it is empty, `"."`, `".."`, contains `/`, or contains control characters (`\x00`–`\x1F`, `\x7F`) — reported as `{:error, {:invalid_segment, segment}}`;
+- non-binary input is `{:error, :invalid_path}`.
+
+`format/1` always emits the canonical form: one slash between segments and no trailing slash except the root (`vct:///`).
+The canonical round-trip holds: `parse(format(p)) == {:ok, p}` for every successfully parsed URL, and formatting is stable under repeated parse/format.
+`join/2`, `segments/1`, `name/1`, `ancestor?/2` (strict segment prefix), `under?/2` (prefix incl. equality) and `relative_to/2` operate on segments only — never on a filesystem.
+A `String.Chars` implementation renders the canonical URL.
+
+Mount points are **virtual**: they are never created as directories, and a mount entry may point at an OS path that does not exist (portability across machines, backup/restore, or a repo on a detached volume).
+
+## 4. Storage — `<data_dir>/vct/`
+
+`<data_dir>` is `EvoGit.Platform.data_dir/0`, so a `[data] dir` config override relocates the VCT coherently with the task DB and logs.
+
+```
+<data_dir>/vct/
+  virtual-tree.json   # machine-local mount table (never committed)
+  CONTEXT.md          # optional GLOBAL context (committed when present)
+  .gitignore          # only when the git repo is lazily initialized
+```
+
+### 4.1 The mount table
+
+`<data_dir>/vct/virtual-tree.json` is the single machine-local table, encoded by `EvoGit.VCT.Persistence`:
+
+```json
+{
+  "version": 1,
+  "legacy_projects_imported": true,
+  "mounts": [
+    {"point": "vct:///projects/foo", "path": "/home/me/src/foo", "name": "foo", "kind": "git", "last_opened_at": "2026-11-09T05:53:00Z"}
+  ]
+}
+```
+
+- `save/3` writes to a temporary file in the **same** directory and renames it into place atomically, so a reader never observes a partial table; a failed rename removes the temporary.
+- `load/1` is **total**: a missing, unreadable or corrupt file yields the empty state (with a `Logger.warning`) instead of raising, and invalid individual mount entries are skipped with a warning.
+- `Mount.from_map/1` accepts string- or atom-keyed maps; an absent, `nil` or unparseable `last_opened_at` decodes to `nil` without raising.
+- `legacy_projects_imported` gates the one-time legacy import (§7).
+
+### 4.2 The optional global context
+
+`<data_dir>/vct/CONTEXT.md` is the **global context level**, read by `global_context/0` (`""` when absent or unreadable) and written verbatim by `put_global_context/1`.
+
+When content is non-blank, writing it lazily initializes a git repository at `<data_dir>/vct/` (idempotent — an existing `.git` is reused), writes a `.gitignore` excluding the machine-local mount table and atomic-write temporaries (`virtual-tree.json`, `*.tmp`, `*.tmp.*`), stages the context and commits it as `Update global context`; a clean tree commits nothing.
+Git failures are logged and never lose the written file.
+**Blank content never initializes a repository** — an empty global context leaves `<data_dir>/vct/` a plain directory.
+
+## 5. Spatial dimension — `%EvoGit.Core.ContextNode{}`
+
+The node struct now separates **identity** from **presentation**:
+
+| Field | Meaning |
 |---|---|
-| Multi-repo work is awkward; the primary repo is implicit | `opts[:path]` *is* the task: it is the only required runtime opt (`task_registry/runtime_opts.ex:68`), and the repo root only exists as `Path.expand` at phase entry (`runtime/evolution.ex:30`, `runtime/genesis.ex:19`). Everything else is a per-task attachment (`:foreign_repos`, passed verbatim at `runtime_opts.ex:83`) |
-| Git submodules cannot be modelled | `%EvoGit.Core.ForeignRepo{id, root, description, writable, base_sha}` (`core/foreign_repo.ex:25-27`) is a **flat, unanchored** list of roots; there is no parent / path-in-parent relation, so a submodule is indistinguishable from "another repo at an absolute path" |
-| The self-reflective agent is blind to multi-repo tasks | `Runtime.SelfReflective.build_spec/2` never loads repos (`runtime/self_reflective.ex:72-93` has no `load_foreign_repos/2`), the CLI `reflect` builds only `[objective: …]` (`cli.ex:154-172`), and `ElixirEval.Authorization` *requires* `foreign_repos == []` |
-| No global/external skills or MCP | Skills have exactly one source, `<worktree>/.agents/skills` (`skills.ex:60-63`), and the tool set is four hard-coded concatenations in `Runner.effective_tools/1` (`agent/runner.ex:801-816`); no tool-source registry, no MCP |
-| Coding-only | A node is by definition an existing **directory containing `CONTEXT.md`** inside the one repo (`runtime/helpers.ex:207-229`), so a node that is not a folder cannot be expressed |
-| "Which repo may I write?" is ad-hoc and partly broken | Writability is a boolean on `%ForeignRepo{}` enforced through **process-dictionary** keys (`:repo_path`, `:evogit_repo_id`, `:foreign_repos`) that `ToolDispatch.execute_tool_task/7` never re-installs (`agent/tool_dispatch.ex:1579-1639` only sets tmpdir/agent ids), so on the normal dispatch path the read-only-foreign and repo-less guards degrade to ALLOW (`agent/tools.ex:584`, `:643`) |
-| A single agent cannot see a second tree | One agent = one repo (`AgentState.repo_id`/`repo_root`, `agent_scheduler/agent_state.ex:69-70`), one worktree (`agent_scheduler/dispatch.ex:231-236`), one `LoopState.repo_path`, one commit (`agent/completion.ex:50-55`); the sandbox only enumerates **writes** for that one cwd plus the repo's `.git` (`sandbox/linux.ex:205-212`, `:254-259`) |
+| `path` | in-repo relative `"./…"` string; byte-identical to before; the ONLY field used to expand files |
+| `repo` | the concrete repo root (absolute OS path); unchanged |
+| `repo_id` | which repository this node belongs to (`"primary"` by default); unchanged |
+| `vct_path` | canonical VCT URL (`vct:///projects/foo/src/auth`) or `nil`; INTERNAL metadata |
 
-The fix is not a feature but a re-basing: replace "primary repo + foreign repos" with **one mount table per workspace**, whose root is a small git repo Genesis owns.
+`load/2,3` populates `vct_path` via `EvoGit.VCT.vct_path_for(repo_path, normalized_path)`, which finds the mount containing `repo_path` (longest OS-path prefix, path-boundary aware) and joins the relative segments.
+The read is **total**: a missing/dead VCT server, an unmounted repository, an absolute/`..`-bearing relative path or a non-binary input all yield `nil`.
+`vct_path` is never used to expand a file, never derived from `path` and never rendered in a prompt.
 
-## 2. Goals and non-goals of this step
+**Routing to a deeper node still works exactly as before**: `hierarchy_nodes/2,3` remains purely syntactic (it builds the `"./"; "./foo"; "./foo/bar"` chain and never touches the filesystem), `build_context/2` filters by `File.dir?/1`, and the agent loop still addresses nodes by their relative `path`.
 
-Goals:
-1. One spatial namespace per task: `/` plus mount points, with a deterministic path → `{mount_id, mount-relative path}` resolution.
-2. A **workspace rootfs**: a real git repo under the data dir that holds the workspace definition (`workspace.toml`) and the workspace-level context (`CONTEXT.md`), committed, diffable and shareable.
-3. First-class peer repos, read-only vs read-write mounts, per-mount commit/report/review.
-4. Zero behaviour change for a legacy single-repo task until a flag is flipped.
-5. One write-authority chokepoint, explicit (not process-dictionary), testable as a matrix.
-6. The data model already carries nesting (`parent`, `path_in_parent`) so submodules become a small follow-up, not a redesign.
+## 6. Context-tree generation
 
-Non-goals for this step (deliberately deferred):
-- `:dir`, `:memory`, `:virtual`, `:skills`, `:mcp` mount kinds — later everything is *a git repo mounted at a point*, so no new backend machinery is needed for them.
-- A kernel filesystem / FUSE driver.
-- Cross-host (remote-node) mounts.
-- Session-level config overrides — unchanged: the mount table is task data + workspace data, never scheduler config.
+`EvoGit.Core.ContextNode.build_context/2` is still the only function that turns the context tree into prompt text.
+Its output is: the **global level first** (when the VCT global context is non-empty), then the in-repo directory chain, then the unchanged location block.
 
-## 3. Core model
+- The global stage is read from `EvoGit.VCT.global_context()` and is always labelled with the literal `File: global/CONTEXT.md` — **never `/`** and never an OS path or the `vct:///` URL of the file.
+- Every stage whose `CONTEXT.md` is absent or blank **after front-matter stripping** is skipped, so no empty fenced code block is ever rendered.
+- If nothing renders (no global context and no non-blank in-repo stage), only the location block is emitted — `build_context/2` still returns `{:ok, location_info}`.
+- The rest of the `<context>` block is unchanged: authority paragraph, foreign-repositories table, repo notes, quality guidance, background-job snapshot and clock are all injected by `EvoGit.Agent.ContextBuilder` as before.
+- The message-#1 byte-identity / refresh contract is unchanged: dynamic context is assembled into the first user message, compression refreshes append a runtime-context message rather than rewriting `[system, first_user]`.
 
-```elixir
-%EvoGit.Core.Workspace{
-  id: "w_3f9c1a2b",              # stable, derived from rootfs path when auto-created
-  name: "platform",
-  rootfs_path: "<data_dir>/workspaces/w_3f9c1a2b/rootfs",
-  primary: "app",                # mount id of the repo task entry points default to
-  root_home: :auto,              # :auto | :root | :primary  (§9)
-  mounts: [%EvoGit.Core.Mount{}] # the table, minus the implicit rootfs mount
-}
+The VCT therefore changes **what can appear at the top of the tree**, not how context is assembled or refreshed.
 
-%EvoGit.Core.Mount{
-  id: "app",                     # stable identity, slug, unique in the table
-  point: "/app",                 # presentation in the tree; validated (§4.4)
-  kind: :git,                    # P1 accepts only :git
-  source: "/home/me/src/app",    # P1: a local git repo path
-  ref: nil,                      # branch | tag | sha | nil = HEAD at admission
-  mode: :rw,                     # :rw | :ro (a task may only narrow to :ro)
-  parent: nil,                   # nested mount: parent mount id (submodule shape)
-  path_in_parent: nil,           # nested mount: path inside the parent worktree
-  description: nil,              # rendered in the prompt tree block
-  options: %{}                   # open map, no new kind-specific keys yet
-}
-```
+## 7. Recently opened projects, reworked onto the VCT
 
-Mount kinds beyond `:git` are **reserved field values**, not implemented code paths.
+The dashboard/CLI "recent projects" list is now VCT-backed.
 
-### 3.1 The rootfs is a mount, not a special case
+- The SQLite `projects(path PK, name, last_opened_at)` table is **deprecated legacy**.
+  At most once, on first boot, the VCT imports its rows as mounts (absolute-path rows only; `name` and `last_opened_at` preserved; `nil` timestamps stay `nil`), then records `legacy_projects_imported: true`.
+  A failed save during the import leaves the marker false so the next boot retries; the import is idempotent per OS path.
+- `EvoGit.TaskRegistry`'s public recents API keeps its **exact signatures and semantics**: `add_recent_project/2` always replies `:ok` (failures are logged), `list_recent_projects/0` returns `%EvoGit.RecentProject{path, name, last_opened_at, vct_path}`, and `remove_recent_project/1` is idempotent.
+  The registry no longer touches the SQLite `projects` table and never broadcasts on its own; it delegates to `EvoGit.VCT`.
+- `RecentProject.vct_path` is the mount point; the max-10 cap is a **display projection** only — the VCT retains every mount.
+- Registration derives a stable, deduplicated `vct:///projects/<basename>` point (a basename collision gets `-N`), is idempotent per normalized OS path (refreshes recency, keeps the point, updates the name only for a non-blank name), and **re-points** a same-named/same-basename mount whose recorded OS path is gone instead of accumulating a second point. A new path is never required to exist.
+- PubSub: the legacy node-less `{:recent_projects_updated}` on `"recent_projects"` is kept for existing consumers, and every successful mount mutation additionally publishes the node-aware `{:vct_updated, node}` on `"vct"`.
+  A successful `put_global_context/1` publishes `{:vct_updated, node}`.
 
-The workspace rootfs is materialized as the mount at `/`:
+## 8. API surface — `EvoGit.VCT`
 
-```elixir
-%Mount{id: "root", point: "/", kind: :git,
-       source: "<data_dir>/workspaces/<ws>/rootfs",
-       mode: :rw, options: %{role: :rootfs}}
-```
+The supervised GenServer owns I/O (persistence, broadcasts, the global context file and its git history); the pure rules live in `EvoGit.VCT.Table` so they can be tested without a process or a data directory.
 
-`/` is therefore a normal git-backed node: it has `CONTEXT.md`, it commits, it can be reviewed.
-This removes the need for a "virtual node" concept in this step: a context-only node is just **a directory in the rootfs containing only `CONTEXT.md`**.
-
-### 3.2 Identity vs presentation
-
-**`mount_id` is identity; `point` is presentation.**
-A node is `{mount_id, node_path}` and `node_path` stays **mount-relative** (`./src/auth`) — byte-identical to today's node paths.
-Tree-absolute paths (`/app/src/auth`) are a *new, additive* form used for cross-mount references, subagent routing, the dashboard and the review report.
-Consequence: adding a second repo never rewrites a stored node path, a prompt node, an archive row or a git note.
-
-### 3.3 `repo_id` stays as a legacy alias
-
-Every existing consumer of `AgentSpec.repo_id` (dispatch, subagent role gate, completion, merge, archives, `TaskCommitGraph`, review) expects `"primary"` (`agent_spec.ex:28`, `dispatch.ex:675-691`, `completion.ex:100-106`, `runtime/helpers.ex:119-124`).
-So: `AgentSpec.repo_id` remains, and one translation function maps it to/from mount ids — the primary mount of a workspace reports as `"primary"`, every other mount reports as its mount id.
-That keeps `result["repos"]` (`%{repo_id => %{commit_sha, branch_name}}`) a drop-in compatible shape while `result["mounts"]` carries the rich descriptor (§12).
-
-## 4. The workspace rootfs
-
-### 4.1 Location and contents
-
-```
-<data_dir>/workspaces/<ws_id>/
-  rootfs/                       # a real git repo, branch `main`
-    workspace.toml              # the mount table (tracked — the source of truth)
-    CONTEXT.md                  # workspace root node context (optional for auto workspaces)
-    .gitignore                  # generated: every mount point + `.genesis/`
-    policies/CONTEXT.md         # optional context-only nodes ("virtual" nodes for free)
-```
-
-`<data_dir>` is resolved by `EvoGit.Platform.data_dir/0`, so a `[data] dir` override relocates the whole tree coherently, exactly like the task DB.
-
-`rootfs_path` is configurable in principle (a user-owned git repo), which is what makes a workspace shareable across machines later; the default is Genesis-owned.
-
-### 4.2 Why a git repo and not a row in SQLite
-
-- The workspace definition and the workspace-level context get **history, diffs and review** instead of being mutable settings.
-- The workspace becomes portable: push/copy the rootfs repo and the mount table travels with its intent.
-- It is the same mechanism the later features need: a personal-memory repo, a skills repo, an instruction-tree repo are all "a git repo mounted at a point" — the rootfs proves the mechanism on Genesis' own data first.
-- `/` stops being a special case: it is a git mount, so context resolution, commits, archives and review reuse the existing machinery.
-
-The task store keeps only a cache/roster row (`workspaces`, §11); the **rootfs is the truth**.
-
-### 4.3 `workspace.toml`
-
-```toml
-[workspace]
-id = "w_3f9c1a2b"
-name = "platform"
-primary = "app"
-
-[tree]
-root_home = "auto"          # auto | root | primary  (§9)
-max_mounts = 16
-
-[[mounts]]
-id = "app"
-point = "/app"
-source = "/home/me/src/app"
-mode = "rw"
-description = "Backend application"
-
-[[mounts]]
-id = "lib"
-point = "/lib"
-source = "/home/me/src/lib"
-mode = "ro"
-ref = "v2.3.0"
-```
-
-The rootfs mount is implicit and never listed (no self-reference).
-Edits are made by the dashboard / CLI, which write the file and **commit it in the rootfs**; agents may not add mounts (§8.3).
-
-### 4.4 Validation invariants (pure function, one implementation)
-
-`EvoGit.VirtualTree.validate/1`, used by CLI, dashboard and task admission alike:
-
-1. Exactly one rootfs mount, `id: "root"`, `point: "/"`; it is never listed in `workspace.toml`.
-2. `id` is a slug and unique; `point` is unique, absolute, has no `.`/`..`/empty segments and no trailing `/`; `id` and the last point segment are independent (no implicit coupling).
-3. A mount point must not collide with a tracked path in the rootfs; `shadowed: true` grafts are rejected in this step (revisit when submodules land).
-4. A mount `source` must be an existing git repo, must not live inside another mount's `.genesis/`, and must not live inside the data dir.
-5. `:ro` is never silently widened: a child mount inside a `:ro` parent must be explicitly `:rw`-granted or is rejected.
-6. `parent` must exist, `path_in_parent` must be a relative path inside the parent, and the child's point must equal `<parent point>/<path_in_parent>`.
-7. Mount count ≤ `[tree] max_mounts` (default 16) — bounds prompt size and worktree cost.
-
-## 5. How a mount is materialized
-
-Agents run **real subprocesses** (`bash`, `rg`, `git`, builds) under a sandbox that today takes one `cwd` and enumerates writable paths (`sandbox/helpers.ex:191-201`; systemd `-p WorkingDirectory`/`ReadWritePaths`, `sandbox/linux.ex:301-325`; bwrap `--chdir`/`--bind`, `sandbox/bwrap.ex:486-506`; macOS `allow file-write* (subpath …)`, `sandbox/macos.ex:430-464`).
-A purely in-process virtual path resolver would break every one of those tools, so the table is **materialized**.
-
-### 5.1 A per-agent mount farm
-
-```
-<data_dir>/workspaces/<ws_id>/tasks/<task_id>/agents/<agent_id>/tree/
-  root -> <rootfs view>                # rw worktree, or shared ro view
-  app  -> <repo>/.genesis/workers/worker_T<n>_A<m>     # rw: per-agent worktree (same path as today)
-  lib  -> <repo>/.genesis/mounts/lib@a1b2c3d4          # ro: shared, pinned, chmod a-w
-```
-
-- Symlinks are POSIX-transparent: `read`, `rg`, `glob`, `git -C lib`, `ls`, builds all work unchanged, and the sandbox only has to allow the *real* roots.
-- Rejected alternatives: FUSE (daemon per task, unportable), real bind mounts from the BEAM (not possible in-process; would diverge from in-process tools), pure resolver (breaks shell tools and every build).
-- Windows: directory junctions (`mklink /J`), behind a flag in this step.
-
-Per-mount views:
-
-| mount | view |
+| Function | Contract |
 |---|---|
-| `:rw` repo mount | one `git worktree` per agent **only when the agent is granted write** — the existing path/branch scheme `<repo>/.genesis/workers/worker_T<n>_A<m>` / `evogit-agent-T<n>-A<m>` (`agent_scheduler/worktrees.ex:26`, `:44-45`) |
-| `:ro` repo mount | one **shared, pinned** read view per task at `<repo>/.genesis/mounts/<mount_id>@<sha12>`, `chmod a-w`, refcounted, GC-able (`mix mounts.gc`) |
-| rootfs (`:rw`) | per-agent worktree when the agent may write `/` (root agent, or a subagent homed in the rootfs); otherwise the task's shared ro rootfs view |
+| `mounts/0` | every mount in raw persisted order |
+| `list_projects/1` | mounts sorted by `last_opened_at` DESC (`nil` last); `:limit` is a display cap only |
+| `register_project/2` | absolute OS path → `{:ok, mount}`; idempotent per path; `{:error, :relative_path \| :invalid_path}` for bad input |
+| `remove_project/1` | by VCT point (`"vct:…"` / `%Path{}`) or OS path → `:ok`; `{:error, :not_found}` where callers may map to `:ok` |
+| `resolve/1` | point or exact OS path → `{:ok, mount}` \| `{:error, :not_found}` |
+| `mount_for_path/1` | mount containing an OS path (longest path-boundary prefix), or `nil` |
+| `vct_path_for/2` | canonical URL for a relative path inside the mount containing `repo_root`, or `nil` |
+| `global_context_path/0` | `<vct_dir>/CONTEXT.md` (computed default even with no server) |
+| `global_context/0` | file contents, `""` when absent or unreadable |
+| `put_global_context/1` | write verbatim; lazily `git init` + commit only for non-blank content |
 
-Laziness matters: a mount the agent never touches costs no worktree.
+**Reads are total, mutations degrade.** Every client call resolves a missing/dead server to its documented empty value (`[]`, `nil`, `""`, `{:error, :not_found}`); mutations return `{:error, :vct_unavailable}`. A VCT fault can never crash a caller (for example a boot race from `ContextNode`), and broadcasts are best-effort.
 
-### 5.2 cwd and the shell
+**Isolation seam.** `server/0` is read at call time from the `:evogit_vct_server` process-dictionary key (set by `init/1` for self-calls), falling back to the registered singleton `EvoGit.VCT`.
+`start_link/1` accepts `:name`, `:data_dir` (default `EvoGit.Platform.data_dir/0`), `:path` (the JSON table file), `:legacy_projects` and `:legacy_projects_fun`.
+Tests start isolated instances with a unique name, path and data dir, and pass `legacy_projects: []`; the app-global table is never touched.
 
-- `cwd` = the agent's **home mount view** — for a repo-homed subagent that is exactly today's worktree path, so every existing prompt, relative path and `mix test` keeps working.
-- `GENESIS_TREE_ROOT` is exported to every sandboxed command and points at the agent's farm.
-- The shell does **not** interpret tree-absolute paths: `/app` inside the sandbox is the real filesystem root. Only in-process tools resolve `/…` (§6). This is stated in the prompt.
-- The root agent's `cwd` = `<farm>/root` (home = rootfs) or `<farm>/<primary>` (§9).
+## 9. Migration and test strategy
 
-### 5.3 Lifecycle
+- **One-time legacy import, no migration-time repo creation.** Nothing in an Ecto migration creates a git repo or a mount; the import runs in `EvoGit.VCT.init/1` and only reads rows. The `projects` table stays in place as a read-only legacy source.
+- The VCT child starts **after** `EvoGit.Store` (the import reads the legacy rows) and **before** `EvoGit.TaskRegistry` (so every later reader finds a ready table).
+- Tests are `async: true` and touch only pure modules or isolated instances:
+  - `path_test.exs` — parsing, normalization, rejection of non-local authorities / dot / control segments, and the parse/format round-trip.
+  - `persistence_test.exs` — mount round-trip, total loads (missing/corrupt/unexpected shape), invalid-entry skipping, atomic save leaving no temp file.
+  - `vct_test.exs` — registration idempotency and dedup, portability re-pointing, resolution, recency sorting and the display cap, the one-time import, broadcasts, global-context git initialization, and total reads with no running server.
+  - `recent_projects_vct_test.exs` — the unchanged `TaskRegistry` recents API, durability across a registry restart, the max-10 display projection over 12 mounts, and the legacy notification.
+- **Equivalence expectation**: with an empty global context and an unmounted repo, every rendered context chain, node `path`, `repo_id`, foreign-repositories block, worktree path and prompt is byte-identical to before the VCT.
 
-1. **Resolve** (at admission, pure): `workspace.toml` + task overrides + legacy inputs → `%MountTable{}`; validate; **snapshot into task opts** (`workspace_id`, `mounts`) so a later workspace edit cannot change a running task.
-2. **Prepare** (per task): resolve each `ref` to a `base_sha` and record it; create/reuse pinned ro views lazily.
-3. **Materialize** (per agent): farm dir + symlinks; home view; rootfs view; other mounts lazily on first use.
-4. **Enforce**: `%Tools.Context{}` gate (§8) + sandbox writable set (§8.2).
-5. **Collect**: commit each materialized mount in its own repo (`evogit-agent-T<n>-A<m>`), then the rootfs; nested mounts **child first**, then the parent so the gitlink points at the child's new commit.
-6. **Report**: `result["repos"]` (compat) + `result["mounts"]` (rich) + one review branch per mount.
-7. **Teardown**: per-(agent, mount) worktree destroy in the existing order (`agent_scheduler/worktree_manager.ex:699-731`: reap jobs → `rm_rf` → prune → delete branch), decrement ro-view refcounts, remove the farm.
+## 10. Deliberately deferred / future extension
 
-### 5.4 Read-path safety
+The following are design intent, **not implemented**, and the first two are explicitly rejected for now:
 
-- The sandbox read side is ambient today (`ProtectSystem=strict` + `ProtectHome=read-only` for systemd, `--ro-bind / /` for bwrap, `allow file-read* "/"` for macOS): an `:ro` mount is therefore *readable* for free but must be made **unwritable** — by not adding it to the writable set **and** `chmod a-w` on the shared view (belt and braces).
-- Path hygiene: `ContextNode.normalize_relpath/1` keeps interior `..` (`core/context_node.ex:69-81`); mount-aware resolution must reject any `..` that leaves its mount, and must `realpath` the result to defeat a symlink an agent created inside a writable mount.
+- **`vct://<host>/<path>` — remote/cross-node mounts.** The URL format reserves the authority segment, and `Path.parse/1` already returns `:non_local_authority`; no transport or resolution exists.
+- **Filesystem materialization — symlink farms, bind mounts, FUSE, junctions, per-mount worktrees.** Rejected for this step: a task runs in one concrete worktree and the mount table never creates layout. Any future materialization would have to solve sandbox containment and `realpath` TOCTOU before it could be considered.
+- **Global-context UI.** There is no dashboard editor for `<data_dir>/vct/CONTEXT.md` yet; it is written through the API only.
+- **Capability mounts as future mounts of git repos** — skills, memory and MCP servers expressed as ordinary git repos mounted at a point, so no new backend is needed per kind.
+- **Nested / submodule mounts.** The mount model has no `parent`/`path_in_parent` yet; submodules remain indistinguishable from an unrelated repo at an absolute path.
 
-## 6. Path resolution for tools
+Open questions:
 
-Two canonical forms, one parser (`EvoGit.VirtualTree.resolve/2`):
-
-- **mount-relative** `./src/auth` — canonical for `node_path`, task opts and archives (unchanged strings).
-- **tree-absolute** `/app/src/auth` — canonical for cross-mount references, subagent routing, dashboard and the review report.
-
-```
-resolve(table, "/app/vendor/lib/x") -> {:ok, %{mount_id: "lib", node_path: "./x", mount: ...}}
-```
-
-Resolution is longest-point-prefix, never crosses a mount boundary implicitly, and a mount-relative path always resolves inside its own mount (so `./vendor/lib/x` inside `app` is `app`'s tree, never the shadowed files).
-
-Chokepoints (there are exactly two, both already exist):
-`Shared.expand_path/2` → `Platform.safe_expand/2` (`agent/tools/shared.ex:318-326`, `platform.ex:375-391`), and `ToolDispatch`'s tool-task boundary (`agent/tool_dispatch.ex:1579-1639`).
-
-## 7. Context tree in the virtual tree
-
-### 7.1 Concatenation along the tree path
-
-```
-/             CONTEXT.md   workspace intent, member repos, cross-repo invariants   (rootfs)
-/app          CONTEXT.md   the repo's own root                                     (repo mount)
-/app/src/auth CONTEXT.md   the assigned node                                        (repo mount)
-```
-
-- `%EvoGit.Core.ContextNode{}` gains `mount_id` (`core/context_node.ex:17-18`: today `[:path, :repo, repo_id: "primary"]`).
-- `hierarchy_nodes/2` (`core/context_node.ex:125-150`, today purely syntactic) becomes mount-aware: emit the rootfs chain (only `/CONTEXT.md`, since the rootfs is flat) then the in-mount chain. **For an auto workspace without a `/CONTEXT.md` the emitted chain is byte-identical to today.**
-- `build_context/2` resolves each node against its own mount root instead of the single `node.repo` (`core/context_node.ex:172`).
-- Node validity: `validate_node/2` = a real directory containing `CONTEXT.md` in that mount (`runtime/helpers.ex:207-229` checked against one root today). `./` stays always-valid. Context-only nodes (rootfs directories holding only `CONTEXT.md`) are valid with no new concept.
-- Frontmatter stripping/interpretation is unchanged (`skills/context_integration.ex:42-47`).
-
-### 7.2 Prompt
-
-`# Foreign Repositories` (`agent/context_builder.ex:57-88`, a 3-column table that never renders `mode` or `base_sha`) becomes `# Virtual Tree` when the flag is on:
-
-```
-# Virtual Tree — workspace "platform"
-/            root   rw   workspace context (rootfs)
-/app         repo   rw   Backend application (primary)
-/lib         repo   ro   Shared libraries @ v2.3.0
-Your node: ./src/auth (mount app). Tree root: $GENESIS_TREE_ROOT.
-```
-
-The authority paragraph is derived from the agent's `write_mounts` (it is already pure over `%{parent_id, repo_less, foreign_repos}`, `context_builder.ex:114-131`).
-The block is stable across compression refresh (the refresh message is appended, not rewritten — `context_builder.ex:542-555`, so `[system, first_user]` stays byte-identical, as designed today).
-
-### 7.3 Cross-mount conflict resolution
-
-`EvoGit.Agent.ContextMerge` keys ownership by path segments only (`agent/context_merge.ex:626-638`) and merges one repo per call (`:113`), while cross-repo children are never merged (`agent/subagent_processing.ex:541-569`).
-In this step: ownership key becomes `{mount_id, node_path}`, merges stay **per mount** (one call per mount, same octopus→sequential fallback), and the workspace-root `CONTEXT.md` is owned by the root agent.
-A subagent that edited the rootfs merges into the parent's rootfs view.
-
-## 8. Write authority
-
-### 8.1 One explicit context, no new process-dictionary keys
-
-```elixir
-%EvoGit.Agent.Tools.Context{
-  workspace_id: "w_3f9c1a2b",
-  farm: "<…>/tree", cwd: "<…>/tree/app",
-  home: %{mount_id: "app", node_path: "./src/auth"},
-  mounts: %{"app" => %{point: "/app", view: "<…>", repo_root: "<repo>", mode: :rw}, …},
-  table: %MountTable{}
-}
-```
-
-Passed **as an argument** through `Tools.execute/5` into the tool task (which does not inherit the caller's process dictionary — `agent/tool_dispatch.ex:1588`).
-This single change fixes the currently-inert guards and makes "tool × mount mode × node scope" a unit-testable matrix.
-
-Rule order at the gate:
-1. resolve the target path → `mount_id` (or the farm root for tree-absolute paths);
-2. `mount.mode == :rw` and the agent holds a grant for it? else reject naming the mount and its mode;
-3. the target node must be the agent's own node, a descendant, or — when `node_path == "./"` — any node **of a mount the agent holds rw on**. Note the tightening: today `./` means "anywhere in the repo"; it must not become "anywhere in the tree";
-4. write calls to the rootfs are allowed only for agents with rw on `root`.
-
-### 8.2 Sandbox
-
-The writable set becomes table-derived instead of `cwd`-derived:
-- `:rw` mount views + the rootfs view + the farm + task tmpdir + each git metadata dir (`git rev-parse --git-common-dir`; today only the primary repo's `.git` is granted, `sandbox/linux.ex:205-212`).
-- `:ro` views are excluded and `chmod a-w`.
-- `[sandbox] write_paths` stays as a global extra; no new per-task config override is introduced.
-- `strict_tree` (default-deny reads outside mounted paths) is a later hardening, after the TOCTOU checks exist.
-
-### 8.3 Grants
-
-- Modes come from `workspace.toml`; a task may only **narrow** (`:rw` → `:ro`) — a widening needs an explicit user action (dashboard/CLI).
-- **Agents can never add a mount.** No `mount_add` tool. Needing more access escalates to the user.
-- Root agent: rw on every `:rw` mount (`[tree] rw_grant = "root_all"`, today's root authority).
-- Subagent: rw on its **home mount only** by default (today's behaviour: it writes the worktree it was spawned into); the root agent may grant extra mounts in the spawn spec.
-- One writer per mount is *not* needed: per-agent worktrees already isolate writers; the merge machinery (existing, per repo) reconciles them. Leases are deferred and only become relevant if a shared per-mount worktree is introduced to save cost.
-
-## 9. Root agent and subagents
-
-| Today | After |
-|---|---|
-| `AgentSpec{repo_id: "primary", foreign_repos: [...]}` (`agent_spec.ex:21-32`) | `AgentSpec{mounts: %MountTable{}, home_mount: "root"|"app", write_mounts: [...], repo_id: <legacy alias>}`, `foreign_repos` kept as a **derived view** of the table so old consumers keep working |
-| root cwd = its primary worktree | root cwd = `<farm>/root` (home = rootfs) or `<farm>/<primary>` (`root_home`), so `ls`, `rg` and cross-repo builds work; subagent cwd = its home view (unchanged) |
-| children inherit `foreign_repos`; a repo is chosen by id | children inherit the table; a child spec names `{mount_id, node_path}`; routing accepts `/app/src` or `mount: "app", path: "./src"` |
-| writable-foreign spawn is root-only | mount grants: root = all rw mounts, subagent = home mount by default, extra mounts explicit |
-| prompt `# Foreign Repositories` table | prompt `# Virtual Tree` block + authority from `write_mounts` |
-| `bash` sees only its repo | `bash` still runs in a real filesystem, but with all rw mount views writable and `GENESIS_TREE_ROOT` exported |
-
-`root_home = "auto"` (default): a workspace with **one repo mount and no `/CONTEXT.md`** puts the root agent in that mount — i.e. a legacy single-repo task behaves exactly as today (same cwd, same node `./`, same prompt node tree).
-Two or more repo mounts (or a non-empty rootfs context) put the root agent at the tree root, which is the whole point of multi-repo work.
-
-`merge_and_report/4` (`runtime/helpers.ex:16-97`) already iterates "primary + writable foreign repos with a commit"; it becomes "every mount with a commit", including the rootfs, still reusing one branch name per mount (`genesis/agent_<8hex>`, `:192-195`).
-
-## 10. Legacy inputs → mounts
-
-| Legacy input | Compiles to |
-|---|---|
-| `opts[:path] = "/repo"` | an auto workspace: mount `id: "app"` (slugged basename), `point: "/app"`, `mode: :rw`, `primary: "app"`; rootfs created and seeded with `workspace.toml` only (no `/CONTEXT.md`, so prompts and node chains stay identical) |
-| `<repo>/genesis.toml [foreign_repos.<id>]` (`project_config.ex:288-307`) | extra mounts, `point: "/<id>"`, `source: root`, `mode: writable ? :rw : :ro`, `ref: base_sha` |
-| `-R <id:>path` | the same, as an ad-hoc mount on the task's auto workspace |
-| `writable = true` (`core/foreign_repo.ex:27`) | `mode: :rw` |
-| `base_sha` | `ref`; a task may narrow it but not widen it |
-| `result["repos"]` (`runtime/helpers.ex:119-124`) | kept, keyed by `repo_id` with the primary as `"primary"`; `result["mounts"]` added alongside |
-| `<root>/.genesis/foreign_repos/<id>` (`core/foreign_repo.ex:189-192`) | replaced by pinned `<root>/.genesis/mounts/<id>@<sha12>`; legacy dirs are cleaned by `mix mounts.gc` |
-| `ProjectConfig.foreign_repos/1` + `load_foreign_repos/2` (`runtime/helpers.ex:312-318`) | stays as the legacy reader; it now produces mounts, and `ForeignWorktree.ensure_all/1` becomes the ro-view materializer |
-
-Legacy inputs stay accepted indefinitely (a deprecation notice points at `workspace.toml`), because they are also how the dashboard's current project flow keeps working during the transition.
-
-## 11. Workspaces and "recently opened projects"
-
-Today: `projects(path PK, name, last_opened_at)` — three columns, recent-only, capped at 10 in Elixir (`task_registry.ex:33`, `:1636-1660`), and its PubSub event is the one node-less message in the system (`task_registry.ex:938`, `:969`).
-
-Change:
-- New table (one additive migration, next version above `20260815000006`) following the v5 precedent: `workspaces(id TEXT PK, name TEXT, rootfs_path TEXT UNIQUE, primary_mount TEXT, last_opened_at TEXT, inserted_at TEXT)` + an index on `last_opened_at`.
-- Recents = `workspaces ORDER BY last_opened_at`, still capped in `TaskRegistry` (SQL ordering is against the store's convention); `projects` stays readable and its rows are converted **lazily** (opening a recent repo path auto-creates/reuses its workspace — never create git repos inside a migration).
-- `tasks.opts` gains `workspace_id` + `mounts` — zero DDL (opaque JSON TEXT via `Types.OptsJson`, `types/json_columns.ex:1-74`), but the key must be registered in the codec whitelist (`store/codec.ex:404-406`) or `store_invariants_test.exs` fails.
-- `task_agent_archives` is **not** changed: `repo_id`/`repo_root`/`repo_path`/`foreign_repos` (`operations/archives.ex:94-118`) already carry per-agent repo identity; the derived mount descriptors ride in `foreign_repos`, which is plain JSON with a pair-normalizing dumper (`types/archive_columns.ex:197`, `:53-87`).
-- The dashboard's recent-projects event gains the node (`{:workspaces_updated, node}`) — today's payload-less event forces a re-read and breaks cross-node lists.
-- The dashboard's foreign-repo editor (`components/project_components.ex:490-819`) becomes the **mount editor** and finally **persists**: it writes `workspace.toml` in the rootfs and commits it. Today the edits live only in the assign, `sessionStorage` and the started task's opts, so they vanish on reload.
-- New **Tree page** (greenfield; nothing in the dashboard renders a context tree today): mounts with kind/mode/ref, node `CONTEXT.md` editor, "you are here" node, and the workspace rootfs context.
-
-CLI: `--workspace <id|path|toml>`, `-M <point>=<path>[:rw|:ro]` (repeatable), `-R` retained as an alias, `--root-home`.
-
-## 12. Collection, report and review
-
-```elixir
-result["repos"] = %{                    # compat: keyed by repo_id, primary = "primary"
-  "primary" => %{commit_sha: "…", branch_name: "genesis/agent_1a2b3c4d"},
-  "lib"     => %{commit_sha: "…", branch_name: "genesis/agent_1a2b3c4d"}
-}
-result["mounts"] = %{                   # rich: keyed by mount_id
-  "root" => %{point: "/", role: :rootfs, mode: :rw, base_sha: "…", commit_sha: "…",
-              branch_name: "genesis/agent_1a2b3c4d", applied: true},
-  "app"  => %{point: "/app", mode: :rw, base_sha: "…", commit_sha: "…", branch_name: "…"},
-  "lib"  => %{point: "/lib", mode: :ro, base_sha: "…", commit_sha: nil}
-}
-```
-
-- `EvoGit.Review` is already repo-path parameterized (`review.ex:235`, `:301`, `:273`) and the dashboard already iterates `[primary | foreign]` per repo with merge / merge-all / per-repo merge check (`review_live/load_data.ex:206-260`, `actions.ex:26-59`, `merge_check.ex:47-232`) — per-mount review is nearly free. Add the mount id + point to each review entry, key cards by mount id, and add a "workspace (rootfs)" card.
-- Rootfs edits (context only, root agent only) are applied to `main` on task completion by fast-forward, else a 3-way merge that auto-resolves by node ownership; `[tree] rootfs_review = "auto" | "manual"` (default `auto`). Concurrent tasks on one workspace can genuinely conflict on `/CONTEXT.md`; that is reported, not guessed.
-- `TaskCommitGraph` reads `task.commit_sha` + `branch_name` + every `result["repos"]` entry (`task_commit_graph.ex:189-214`), so it keeps working; `mounts` gives it the tree paths it lacks today.
-- Nested mounts: collect child → parent; review applies child → parent; a rejected parent merge leaves the child branch recorded as "applied, parent pending" (never silently dropped).
-
-## 13. Phasing
-
-| Phase | Content | Ships independently |
-|---|---|---|
-| **V1a — model** | `%Mount{}` / `%MountTable{}` / `%Workspace{}`, `VirtualTree.validate/resolve`, legacy normalization (`path`, `foreign_repos`, `-R`), rootfs bootstrap (`ensure_rootfs/1`: init, `workspace.toml`, `.gitignore`, first commit), `workspace_id`+`mounts` in task opts, prompt block rendered **behind `[tree] enabled`** (shadow mode compiles but does not render) | yes, zero behaviour change |
-| **V1b — repo mounts end-to-end** | farm materialization, per-agent home worktree (unchanged path), shared pinned ro views, rootfs view, `%Tools.Context{}` + tool gate (fixes the PD bug), sandbox writable set from the table, per-mount commit/report, `result["mounts"]`, review entries per mount, root-agent multi-repo cwd | yes — replaces foreign repos |
-| **V1c — workspaces** | `workspaces` table + migration, dashboard workspace switcher + mount editor (persisted), Tree page, recents with node-aware events, CLI `--workspace`/`-M` | yes |
-| **V1d — nesting** | `parent`/`path_in_parent`, submodule-shaped mounts, child-first collect, topological review apply, `[tree] submodules = "as-mounts"` expansion from `.gitmodules` | yes |
-| **V2** | capability mounts as git mounts: skills repo at `/skills` (bundle install + lockfile + scoped enablement + tool-budget cap), memory repo at `/memory` (append-only), MCP servers (config in the rootfs, tools registered in a tool-source registry) | yes |
-| **V3** | remote/cross-node mounts, workload driver hooks (computer use, `:device`) | later |
-
-Rollback: V1a shadow mode asserts the compiled table against the legacy inputs without changing any output; V1b sits behind `[tree] enabled` (flag flip); every DB change is additive.
-
-## 14. Verified constraints that shape the implementation
-
-- **Repo root is inferred from a path string**: `String.split(path, "/.genesis/workers/", parts: 2)` (`agent_scheduler/worktrees.ex:33-38`). Replace with `git rev-parse --show-toplevel` (or use the already-stored `AgentState.repo_root`) before adding a second repo per task.
-- **Worktree/branch names are unique per repo only** (`worker_T<n>_A<m>`, `evogit-agent-T<n>-A<m>`), and `task_number` comes from a scan of the *root* repo's workers dir (`dispatch.ex:164-190`, `agent_scheduler.ex:678-679`). Per-mount worktrees make this correct again; a global namespace would collide.
-- **The tool task does not inherit the agent's process dictionary** (`tool_dispatch.ex:1588`, `:1609-1611`), which is why the role guards are inert; the fix is the explicit struct, not more PD keys.
-- **The sandbox enumerates writes only** (reads are ambient), so `:ro` enforcement needs both exclusion from the writable set and `chmod a-w` on shared views.
-- **`tasks.opts` is opaque JSON** but its key whitelist is pinned by a test; a new key must be registered (`codec.ex:404-406`).
-- **Archive rows are written from the completing agent's process** and must stay JSON-clean; `foreign_repos` already normalizes keyword lists/tuples.
-- **The self-reflective agent** has no repo loading at all (`runtime/self_reflective.ex:72-93`) and `ElixirEval.Authorization` requires `foreign_repos == []`; it should get a **read-only farm** of the workspace and the authorization rule should become "no writable mounts".
-- **The dashboard never renders a context tree** and its foreign-repo edits are not persisted; both are prerequisites for a workspace UI that makes sense.
-
-## 15. Risks and open questions
-
-1. **Worktree cost.** N mounts × M agents is expensive (`mix bench.io` measures the underlying I/O). Mitigations: lazy materialization, per-task shared ro views with refcounting and GC, and a hard `max_mounts`. Re-measure before enabling per-agent worktrees for `:ro` mounts.
-2. **Symlink farm vs sandbox.** The sandbox must allow the *real* roots of every view, and a writable mount lets an agent create a symlink pointing outside; containment must be `realpath`-checked in `Tools.Context.resolve`, and `strict_tree` stays off until it is.
-3. **cwd through a symlink.** The farm subpath is a symlink; most tools (git, mix) resolve it, but anything that compares `cwd` strings may not. Keep the real view path in the context so the runtime never relies on the symlink for its own operations.
-4. **Prompt growth** with many mounts — cap count, truncate descriptions, keep the block stable across compression.
-5. **Rootfs write concurrency** across tasks on one workspace (genuine `/CONTEXT.md` conflicts); auto-apply must degrade to a reported manual conflict, never to a silent overwrite.
-6. **Windows symlinks** need privileges; directory junctions or a `subst`-style fallback, behind a flag.
-7. **Open:** should the rootfs be per workspace (recommended: the workspace *is* the rootfs) or one global rootfs with per-workspace subtrees (simpler sharing, harder `/CONTEXT.md` ownership)?
-8. **Open:** should a root agent's default write scope be every `:rw` mount (recommended, matches today's root authority) or only its home mount?
-9. **Open:** may a task narrow a mount `ref`/`base_sha` (recommended: yes, narrow-only, recorded in the snapshot) or not at all?
-10. **Open:** keep the legacy `[foreign_repos]` + `-R` entry points forever (recommended) or deprecate them once workspaces are stable?
-
-## 16. Test strategy
-
-- Pure `VirtualTree` tests (`async: true`): validation matrix, resolution table, legacy normalization, `repo_id` translation.
-- Rootfs bootstrap tests: init is idempotent, `workspace.toml` round-trips, `.gitignore` matches the mount points, commits use the Genesis identity.
-- Farm materialization against a temp multi-repo fixture: symlinks, per-agent rw worktree paths, shared ro view pinning + `chmod`, teardown order, refcount GC.
-- `%Tools.Context{}` guard matrix (tool × mount mode × node scope × tree-absolute vs relative) — this is currently untestable because the guards read process-dictionary state.
-- Golden prompt snapshots for `# Virtual Tree` plus the **V1a equivalence assertion**: for a corpus of real tasks, the compiled table, node chain, `repo_id`/`result["repos"]` shape and the legacy prompt are byte-identical with the flag off.
-- Sandbox argv snapshots for systemd / bwrap / macOS derived from a table.
-- One end-to-end two-mount task: both repos commit, report has `repos` + `mounts`, review shows two cards, rootfs context applied.
-- Store: migration shard (fresh DB = one extra create, existing DB = one guarded DDL), codec whitelist invariant, archives unaffected.
+1. Should the global context be one per machine (today's single `<data_dir>/vct/CONTEXT.md`) or per workspace/project?
+2. When remote mounts arrive, is the authority a host identity or a named connection, and how does a mount point stay stable across hosts?
+3. Should `kind` grow beyond `"git"` in the in-memory model before any non-git mount exists, or only when the first one is built?
+4. Does the deprecated `projects` table ever get dropped, or stay as a permanent read-only legacy source?
