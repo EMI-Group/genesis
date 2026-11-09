@@ -47,9 +47,13 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
   Non-empty shape (one line per job, newest first as handed in):
 
       ## Background Jobs
-      These are THIS agent's background shell jobs, live or finished. Read a job's output by calling `job_output` with that job's id as `job_id` (for example `job_id: "bash-1"`), and list them with `job_list`.
+      These are THIS agent's background shell jobs, live or finished. Read a job's output by calling `job_output` with that job's id as `job_id` (the id shown in backticks on each line below), and list them with `job_list`.
       - `bash-1` — running — `mix test`
       - `bash-2` — completed (exit code: 0) — `mix format --check-formatted`
+
+  The orientation line deliberately names no concrete id: a fabricated example
+  (`bash-1`) can collide with a REAL job of another snapshot, so it points at
+  the ids the per-job lines already render instead.
 
   Each job line is `- `id` — status (detail) — label`; the parenthesised
   `detail` is omitted when absent/blank, and the ` — label` segment is omitted
@@ -68,7 +72,7 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
     ("## Background Jobs\n" <>
        "These are THIS agent's background shell jobs, live or finished. " <>
        "Read a job's output by calling `job_output` with that job's id as `job_id` " <>
-       "(for example `job_id: \"bash-1\"`), and list them with `job_list`.\n" <>
+       "(the id shown in backticks on each line below), and list them with `job_list`.\n" <>
        lines)
     |> cap()
   end
