@@ -118,3 +118,10 @@ Every component here is a pure function component re-executed on EVERY LiveView 
 | `task_card_components.ex` logs (`@in_card_log_limit`) | the LAST `200` entries (`log_preview/1` = one reverse pass + `list_preview/2`, so no extra `length/1`); the summary badge comes from `log_summary_label/1` so it can never contradict the rendered rows ("last %{shown} of %{count}" above the cap, plain "%{count}" below it) |
 | `task_card_components.ex` copy payloads (`@copy_payload_limit`) | `1_048_576` bytes — `data-content` IS materialized in the rendered HTML; `copy_payload_title/1` adds the hint title only when truncated |
 | `archive_components.ex` archive tree (task-card path) | `300` records (`@max_agent_records`) per render; paging (100 per page) is the real archive bound, each record's `result` is `8_192` / `objective` `4_096` bytes |
+
+## Narrow-width (mobile) — branch-name badges
+
+The branch-name badge appears at three sites: the per-repo badge in `result_repos_badges/1` and the two top-level branch badges in `render_result/2`.
+They truncate on narrow viewports via the shared `ResultRender.branch_badge_class/0` (`min-w-0 max-w-[10rem] sm:max-w-[14rem] md:max-w-none`) plus an inner `<span class="truncate min-w-0">`.
+daisyUI's `.badge` is `inline-flex` with no wrapping, so the ellipsis must live on a blockified inner span, and flex parents need `min-w-0` to shrink.
+Reuse the helper for any NEW branch-badge site and keep the class string a literal so the Tailwind v4 scanner picks it up; the full branch name always shows at `md`+.

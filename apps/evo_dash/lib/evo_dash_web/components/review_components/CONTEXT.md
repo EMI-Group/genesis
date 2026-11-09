@@ -240,21 +240,21 @@ All components are **purely display** — none re-fetches data (no `EvoDash.Node
 
 **Locked `EvoDashWeb.Helpers` helpers consumed** (never re-implemented locally): `review_status_badge/icon/label` (page_header), `task_status_badge` (page_header, task_summary), `relative_time` (page_header, task_summary, commits_list, commit_detail_header, archive_tree_node), `format_number` (page_header, task_summary, archive_tree_node), `format_cost` (task_summary, archive_tree_node), `format_cache_hit_rate` (task_summary), `format_datetime` (archive_tree_node).
 
+### Render caps in this subtree
+
+Every component here re-executes on EVERY LiveView render (nothing memoizes), so no render path may materialize an unbounded blob or collection.
+The preview primitives are the shared `EvoDashWeb.Helpers` functions — `blob_preview/2` (a UTF-8-safe prefix of at most `limit` BYTES, default `16_384`; TOTAL) and `list_preview/2` (at most `limit` leading elements; TOTAL) — never an ad-hoc `String.slice` cap.
+A truncation note renders ONLY when `truncated?: true`; a complete payload renders no note and no cap-related `title`.
+Never hand a multi-MB string to `EvoDash.MarkdownRender.render/1` — preview the binary first, then render.
+
+- `header.ex` `agent_summary/1` / `objective_section/1`: ONE `16_384`-byte `blob_preview/2` per render, computed once and reused by BOTH the Markdown and Raw branches; the copy payload is capped at `1_048_576` with a hint `title` (`copy_button_title/2`).
+- `diff_viewer.ex` per-file diff: `parse_diff_lines_bounded/1` renders at most `2_000` lines (raw-binary newline slice first, the remainder merely counted) plus ONE `col-span-full` "%{count} more lines not shown" row — `.diff-split-table` is a 4-column grid, so a non-spanning row breaks the layout.
+- `parse_diff_lines/1` stays public, unbounded and behaviour-identical: the render path must go through `parse_diff_lines_bounded/1` and never back through the unbounded one.
+- `diff_viewer/1` still renders ONE HEADER ROW per file: file CONTENT is bounded, per-file headers are not. Context expansion (`diff_expand_bar/1`, `expand_context`, `:all`) is orthogonal — an expanded diff is capped the same way.
+- `file_tree_sidebar/1` (and its filtered matches list): at most `500` rendered entries via `list_preview/2` + "Showing %{shown} of %{total} files".
+- The ONLY uncapped payload paths are explicit user actions: the Full Result / Full Options modal bodies (`truncate: false`), the public copy-text helpers and the `TaskExportController` JSON export.
+- Msgids owned here (keep verbatim for the release-time extraction pass): "%{count} more lines not shown", "Showing %{shown} of %{total} files", and the review copy hint "… open the Full view for the complete text" — DISTINCT from the task card's "… open Full for the complete text"; do not merge them.
+
 ## Constraints
 
 ### `try/rescue` Policy
-
-`try/rescue` is normally an anti-pattern in Elixir. Within these component files:
-
-- **Do NOT** wrap `String.to_existing_atom/1` in `try/rescue`. When normalizing potentially untrusted DB-sourced data (e.g. agent archive maps after a Jason.decode round-trip), use an explicit **whitelist map lookup** (`@known_agent_keys` in `normalize_agent_keys/1`) with `Map.get/3` defaulting to the original key. This avoids dynamic atom creation AND avoids try/rescue.
-- If any new `try/rescue` is introduced, it MUST include a clear inline comment explaining why it is justified.
-mary), `relative_time` (page_header, task_summary, commits_list, commit_detail_header, archive_tree_node), `format_number` (page_header, task_summary, archive_tree_node), `format_cost` (task_summary, archive_tree_node), `format_cache_hit_rate` (task_summary), `format_datetime` (archive_tree_node).
-
-## Constraints
-
-### `try/rescue` Policy
-
-`try/rescue` is normally an anti-pattern in Elixir. Within these component files:
-
-- **Do NOT** wrap `String.to_existing_atom/1` in `try/rescue`. When normalizing potentially untrusted DB-sourced data (e.g. agent archive maps after a Jason.decode round-trip), use an explicit **whitelist map lookup** (`@known_agent_keys` in `normalize_agent_keys/1`) with `Map.get/3` defaulting to the original key. This avoids dynamic atom creation AND avoids try/rescue.
-- If any new `try/rescue` is introduced, it MUST include a clear inline comment explaining why it is justified.

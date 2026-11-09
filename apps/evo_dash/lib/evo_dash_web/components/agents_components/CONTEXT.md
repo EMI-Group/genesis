@@ -152,3 +152,14 @@ The `CommitGraph` hook (see `assets/js/hooks/commit_graph.js`) owns three behavi
 - States handled: `:loading` (spinning `hero-arrow-path` + `"Loading commit history…"`), `:empty` (dimmed `hero-server` + `"No commit history yet."` + a hint line), `:error` (small `text-error`/`bg-error/10` strip `#commit-graph-error` — only when there is no data), and `:repos` (last-good graph KEPT when `@error != nil`, with a subtle `text-warning` `#commit-graph-stale-warning` strip above it).
 - Wiring into the left panel (view switcher, `selected_id`/`node_key` assigns) is owned by `agents_live.ex` / `agents_live.html.heex` (outside this subtree); the call site invokes it fully-qualified with `repos={@commit_graph}`, `selected_id={@selected_agent_id}`, `loading={@commit_graph_loading}`, `error={@commit_graph_error}`, `node_key={@current_node_id || "local"}`.
 - The JS hook (`assets/js/hooks/commit_graph.js` — enter animations + the interaction layer above: hover sync, keyboard activation, scroll-to-selection; no pan/zoom) and the assembly builder are sibling workstreams — re-verify them against the FROZEN contract above before assuming the graph animates. The component tests (`test/evo_dash_web/components/commit_graph_view_test.exs`) use HAND-CRAFTED fixtures against this same contract (not builder output) while the builder wave lands.
+
+## Render cost (per render)
+
+`commit_graph_view/1` re-executes on every render, so `commit_list/1` recomputes `Geometry.positions` / `geom` / `lane_chips` per render and each `<.edge_path>` calls `Geometry.edge_geo/3` (a scan of the full edge list — quadratic in edges, bounded by the builder's 100-commit cap).
+`lane_header/1` re-filters its chips per stagger row.
+
+## Narrow-width (mobile) — agent-tree indent
+
+`path_tree/1`'s per-level agents-row wrapper carries `pl-7 xl:pl-0`.
+Below `xl` the row stacks (`flex-col`), and the 28px indent (folder icon `size-5` + `gap-2`) puts the first agent box and every wrapped line exactly at that level's directory-text left edge, clear of the children trunk (`absolute left-2.5`).
+Do NOT remove the indent — wrapped boxes overlap the trunk on mobile; `xl:pl-0` keeps the desktop two-column layout byte-identical.
