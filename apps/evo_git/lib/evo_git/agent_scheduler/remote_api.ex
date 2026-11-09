@@ -21,6 +21,20 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
 
   ETS table reads are guarded with `:ets.whereis/1` (returns `:undefined`
   before the scheduler has started). No `try/rescue` blocks are used.
+
+  `EvoGit.ProcessManager` reads and controls add a liveness check on the
+  manager's registered name plus a `catch :exit` around the call (a caller
+  blocks on a GenServer, so a dead or restarting manager is an exit, not an
+  error tuple) — always through the private `with_manager/2` helper.
+
+  ## Process control is node-local state
+
+  `list_processes/1`, `get_process/1`, `process_stats/1` and
+  `process_control/3` expose `EvoGit.ProcessManager` — the live OS executions
+  of agents/tasks running on THIS node. They are straight pass-throughs (no
+  cached or copied manager state), and mutations are BEST-EFFORT: an execution
+  can exit between the read and the action, and a dead/restarting manager
+  degrades to an empty read or the documented error instead of raising.
   """
 
   alias EvoGit.Agent.Compression.Threshold
@@ -1143,6 +1157,94 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     EvoGit.ProjectConfig.read(path)
   end
 
+  # ── Public: managed-process control (node-local) ───────────────────
+
+  @doc """
+  Lists the OS executions `EvoGit.ProcessManager` tracks on this node, newest
+  first.
+
+  Delegates to `EvoGit.ProcessManager.list/1`, so every documented filter is
+  accepted (`:agent_id`, `:task_id`, `:kind`, `:status`, `:backend`). Returns
+  native `%EvoGit.ProcessManager.Execution{}` structs — `:erpc.call/5`
+  transfers them intact — and `[]` when no manager is running.
+
+  The list is the node's OWN live work; it is never cached here.
+  """
+  @spec list_processes(keyword()) :: [EvoGit.ProcessManager.Execution.t()]
+  def list_processes(opts \\ []) do
+    with_manager(fn -> EvoGit.ProcessManager.list(opts) end, [])
+  end
+
+  @doc """
+  Fetches ONE tracked execution by id (`"proc-<n>"`).
+
+  Delegates to `EvoGit.ProcessManager.get/1`. Answers `{:ok, %Execution{}}`,
+  `{:error, :not_found}` for an unknown id, or
+  `{:error, :process_manager_unavailable}` when the manager is not running.
+  """
+  @spec get_process(String.t()) ::
+          {:ok, EvoGit.ProcessManager.Execution.t()}
+          | {:error, :not_found | :process_manager_unavailable}
+  def get_process(id) do
+    with_manager(
+      fn -> EvoGit.ProcessManager.get(id) end,
+      {:error, :process_manager_unavailable}
+    )
+  end
+
+  @doc """
+  Probes ONE execution's live resource usage on demand.
+
+  Delegates to `EvoGit.ProcessManager.sample/1`, which does the OS work in THIS
+  calling process and stores the observation on the record. Answers
+  `{:ok, stats}` (the frozen stats map), the manager's own error
+  (`{:error, :not_found}`, `{:error, :not_running}`, a backend error) or
+  `{:error, :process_manager_unavailable}` when the manager is not running.
+  """
+  @spec process_stats(String.t()) ::
+          {:ok, EvoGit.ProcessManager.Stats.t()} | {:error, term()}
+  def process_stats(id) do
+    with_manager(
+      fn -> EvoGit.ProcessManager.sample(id) end,
+      {:error, :process_manager_unavailable}
+    )
+  end
+
+  @doc """
+  Applies one control action to a tracked execution.
+
+  `action` is `:pause`, `:resume`, `:kill` or `{:signal, signal}`, where
+  `signal` is the manager's vocabulary (`:term | :kill | :int | :hup | :stop |
+  :cont | :usr1 | :usr2` or a signal name such as `"TERM"`). `reason` is
+  recorded on the execution's `control_log` and the actor is `:remote`.
+
+  Delegates to `EvoGit.ProcessManager.pause/2`, `.resume/2`, `.kill/2` or
+  `.signal/3` verbatim, so answers are `:ok` or the manager's own error
+  (`{:error, :not_found}`, `{:error, :terminal}`, `{:error, :invalid_signal}`,
+  `{:error, :no_handle}`, a backend error) plus
+  `{:error, :process_manager_unavailable}` when the manager is not running.
+  An unrecognized `action` is `{:error, {:unknown_action, action}}` and is
+  NEVER forwarded to the manager.
+
+  Best-effort: an execution may exit between this call's read and the action.
+  """
+  @type process_control_action ::
+          :pause | :resume | :kill | {:signal, EvoGit.ProcessManager.Control.signal()}
+
+  @spec process_control(String.t(), process_control_action(), term()) :: :ok | {:error, term()}
+  def process_control(id, action, reason) do
+    case normalize_control_action(action) do
+      :error ->
+        {:error, {:unknown_action, action}}
+
+      {:ok, valid_action} ->
+        with_manager(
+          fn -> apply_control(id, valid_action, reason) end,
+          {:error, :process_manager_unavailable}
+        )
+    end
+  end
+
   # ── Private: ETS access ────────────────────────────────────────────
 
   # Reads all `{key, value}` pairs from a named ETS table.
@@ -1278,4 +1380,60 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   # default (never raises — no try/rescue needed).
   defp normalize_context_window(window) when is_integer(window) and window > 0, do: window
   defp normalize_context_window(_other), do: EvoGit.Config.Schema.LLM.default_context_window()
+
+  # ── Private: process-manager access ────────────────────────────────
+
+  # Validates the control action BEFORE touching the manager, so an unknown
+  # action can never be mistaken for an unavailable manager.
+  defp normalize_control_action(action) when action in [:pause, :resume, :kill],
+    do: {:ok, action}
+
+  defp normalize_control_action({:signal, signal}), do: {:ok, {:signal, signal}}
+  defp normalize_control_action(_action), do: :error
+
+  # The manager's own call-time server resolution (an isolated named instance
+  # wins over the app-global singleton) — read on every call, never cached.
+  defp apply_control(id, :pause, reason) do
+    EvoGit.ProcessManager.pause(id, reason: reason, actor: :remote)
+  end
+
+  defp apply_control(id, :resume, reason) do
+    EvoGit.ProcessManager.resume(id, reason: reason, actor: :remote)
+  end
+
+  defp apply_control(id, :kill, reason) do
+    EvoGit.ProcessManager.kill(id, reason: reason, actor: :remote)
+  end
+
+  defp apply_control(id, {:signal, signal}, reason) do
+    EvoGit.ProcessManager.signal(id, signal, reason: reason, actor: :remote)
+  end
+
+  # The ONE degradation pattern for manager calls: a liveness check on the
+  # resolved name (a `GenServer.call` to a dead manager is an exit, and the
+  # liveness check yields the documented degraded value instead), plus a
+  # `catch :exit` for the restart race between the check and the call.
+  defp with_manager(fun, degraded) do
+    if manager_alive?() do
+      try do
+        fun.()
+      catch
+        :exit, _reason -> degraded
+      end
+    else
+      degraded
+    end
+  end
+
+  # Mirrors `EvoGit.ProcessManager.server/0`'s shapes: a registered atom, a pid
+  # or `{name, node}`. An unknown shape is treated as alive and left to the
+  # manager's own guarded call.
+  defp manager_alive? do
+    case EvoGit.ProcessManager.server() do
+      pid when is_pid(pid) -> Process.alive?(pid)
+      {name, _node} when is_atom(name) -> Process.whereis(name) != nil
+      name when is_atom(name) -> Process.whereis(name) != nil
+      _other -> true
+    end
+  end
 end
