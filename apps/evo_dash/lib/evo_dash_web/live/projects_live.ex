@@ -652,9 +652,9 @@ defmodule EvoDashWeb.ProjectsLive do
     node_context_changed? = prev_scope != ModelSelectionScope.current(socket.assigns)
 
     # Auto-activation candidate: no `?project=` in the URL and a LOCAL context.
-    # The actual activation runs in the AsyncLoad continuation once the recent
-    # projects have been loaded (maybe_auto_activate_recent_project/1) — the
-    # mount seeds no projects, so nothing can be activated synchronously here.
+    # The actual activation runs in the AsyncLoad continuation once the projects
+    # have been loaded (maybe_auto_activate_project/1) — the mount seeds no
+    # projects, so nothing can be activated synchronously here.
     socket =
       assign(
         socket,
@@ -737,7 +737,7 @@ defmodule EvoDashWeb.ProjectsLive do
         # same-path-in-flight guard in `spawn_remote_project_activation` covers
         # double-Enter within one frame). All other remote handle_params runs
         # (no project param) keep skipping local expansion / `File.dir?` /
-        # auto-load-most-recent entirely: a display-only remote project
+        # auto-load-newest entirely: a display-only remote project
         # selection made via the palette must survive same-node handle_params
         # runs; the node-switch clear above is what resets it.
         cond do
@@ -796,7 +796,7 @@ defmodule EvoDashWeb.ProjectsLive do
         else
           # No project in URL — the newest-opened project is auto-activated by
           # the async load continuation once the projects land (see
-          # maybe_auto_activate_recent_project/1). Nothing to load here.
+          # maybe_auto_activate_project/1). Nothing to load here.
           socket
         end
       end
@@ -2204,17 +2204,18 @@ defmodule EvoDashWeb.ProjectsLive do
 
         {:error, reason} ->
           socket =
-            case SafeCall.run(
-                   fn ->
-                     AsyncLoad.load_projects(
-                       socket.assigns.remote? == true,
-                       socket.assigns[:current_node_id],
-                       node
-                     )
-                   end
-                 ) do
-              {:ok, projects} -> assign(socket, :projects, AsyncLoad.filter_absolute_projects(projects))
-              {:error, _reason} -> socket
+            case SafeCall.run(fn ->
+                   AsyncLoad.load_projects(
+                     socket.assigns.remote? == true,
+                     socket.assigns[:current_node_id],
+                     node
+                   )
+                 end) do
+              {:ok, projects} ->
+                assign(socket, :projects, AsyncLoad.filter_absolute_projects(projects))
+
+              {:error, _reason} ->
+                socket
             end
 
           {:noreply,
@@ -2439,8 +2440,8 @@ defmodule EvoDashWeb.ProjectsLive do
          is_nil(socket.assigns[:current_node_id]) and
          is_nil(socket.assigns[:active_project]) do
       case List.first(socket.assigns[:projects]) do
-        %{path: recent_path} when is_binary(recent_path) ->
-          if File.dir?(recent_path), do: activate_project(socket, recent_path), else: socket
+        %{path: project_path} when is_binary(project_path) ->
+          if File.dir?(project_path), do: activate_project(socket, project_path), else: socket
 
         _ ->
           socket
