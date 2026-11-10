@@ -105,7 +105,7 @@ Fields: `name`, `description`, `parameters` (list of `{name, type, description, 
 - **`skill_enable`/`skill_disable` accept an ABSOLUTE `node_path`**: `ContextIntegration.enable_skill/3` / `disable_skill/3` resolve `Platform.safe_expand(node_path, repo_path)` (`platform.ex:359-375`), which returns an absolute input UNCHANGED — no containment/`Platform.path_under?` check — so an LLM-supplied absolute `node_path` rewrites a `CONTEXT.md` outside the repo (the skill tools never call `Shared.validate_file_scope/3`).
 - **Parameter `type` is passed through unvalidated**: `Skills.to_tool_schemas/1` copies the frontmatter `type` string straight into the JSON schema (`skills.ex:143-176`); a bogus type reaches the provider.
 - **A skill whose name collides with a built-in tool is unreachable**: the built-in `execute_tool/5` name clauses match FIRST (`tools.ex:451-492`); the dynamic-skill lookup runs only in the catch-all (`tools.ex:494-529`), and a loaded custom tool of the same name also wins. Skill lookup itself is case-SENSITIVE (`find_skill/2`).
-- **Tool schemas are snapshotted once per agent run** (`runner.ex:239-249`), while dispatch reloads `load_skills/1` at CALL time (`tools.ex:519`) — a skill added mid-run is callable if the model guesses its name but is never advertised, and `skill_enable` only affects agents spawned afterwards.
+- **Tool schemas are snapshotted once per agent run** (`agent/session/setup.ex` `Session.Setup.build_initial_state/3` → `state.skill_schemas`), while dispatch reloads `load_skills/1` at CALL time (`tools.ex:519`) — a skill added mid-run is callable if the model guesses its name but is never advertised, and `skill_enable` only affects agents spawned afterwards.
 
 ## Constraints
 
