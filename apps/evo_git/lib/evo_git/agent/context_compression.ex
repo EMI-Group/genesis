@@ -79,7 +79,7 @@ defmodule EvoGit.Agent.ContextCompression do
 
   ## Usage
 
-  Called at the top of every `EvoGit.Agent.Runner.loop/1` iteration to check if
+  Called at the top of every exchange turn (`EvoGit.Agent.Exchange`) to check if
   compression is needed:
 
       case EvoGit.Agent.ContextCompression.compress_if_needed(state,
@@ -137,7 +137,7 @@ defmodule EvoGit.Agent.ContextCompression do
       rejected with a NON-RETRYABLE provider error (see
       `EvoGit.Agent.LlmError`), so nothing was compacted and nothing was
       charged. This is the same terminal shape the main turn's fail-fast path
-      uses; the caller (`EvoGit.Agent.Runner.loop/1`) propagates it out of
+      uses; the exchange engine propagates it out of
       `Runner.run/3` unchanged.
 
   Every OTHER stage-2 LLM failure (transient transport errors, 5xx, 402/429
@@ -306,7 +306,7 @@ defmodule EvoGit.Agent.ContextCompression do
         # Fail fast EXACTLY like `EvoGit.Agent.LLMPrompting.handle_llm_failure/7`'s fail-fast
         # branch: ONE `Logger.error` line naming the agent, NO scheduler
         # backoff report, NO sleep. The terminal tuple is returned unchanged for
-        # `Runner.loop/1` to propagate.
+        # the exchange engine to propagate.
         Logger.error("Agent #{agent_id}: #{message}")
 
         terminal

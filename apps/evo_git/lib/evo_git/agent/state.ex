@@ -1,26 +1,20 @@
 defmodule EvoGit.Agent.State do
   @moduledoc """
-  The ONE authoritative agent state of the post-refactor runtime.
+  The ONE authoritative agent state of the runtime.
 
-  This is the merge of today's `%EvoGit.Agent.LoopState{}` (the heap copy the
-  turn loop threads through every turn) with the authoritative half of
-  `%EvoGit.AgentScheduler.AgentState{}` (the copy mirrored into
-  `:evogit_agent_state`). After the refactor there is exactly ONE copy of it in
-  the system, owned by exactly one process — in P1 the agent `Task`, from P2 the
-  per-agent `EvoGit.Agent.Session` process. `%EvoGit.AgentScheduler.AgentState{}`
-  degrades to the ETS/summary *projection* (a read model) of this struct.
+  There is exactly ONE copy of it in the system, owned by exactly one process —
+  the agent `Task`. `%EvoGit.AgentScheduler.AgentState{}` is only the
+  ETS/summary *projection* (a read model) of this struct.
 
-  ## Transitional status (P1)
-
-  P1 is additive: the turn loop still runs on `%EvoGit.Agent.LoopState{}` and
-  still reads its control plane from ETS. Every `LoopState` field therefore
-  keeps its name and its default here VERBATIM, so a caller can move onto this
-  struct by renaming the struct only (no field remap).
+  Its fields fall into four groups: identity, conversation, control and budget.
+  `EvoGit.Agent.Exchange.run/2` consumes the struct and threads it through every
+  turn of ONE exchange, and `EvoGit.Agent.Runner.InitialState.build/2` builds the
+  initial value before `EvoGit.Agent.Exchange.run/2` is called.
 
   The control-group fields `pending_inputs`, `cancel`, `phase`, `exchange_ref`,
-  `event_seq`, `watchers` and `last_checkpoint_at` are CARRIED here from P1 but
-  only become authoritative in P2 — in P1 the loop still reads the ETS control
-  plane (`pending_user_messages` / `cancel_requested`).
+  `event_seq`, `watchers` and `last_checkpoint_at` are CARRIED here but are not
+  yet authoritative — the loop still reads the ETS control plane
+  (`pending_user_messages` / `cancel_requested`).
 
   ## Plain data, no runtime handles
 
@@ -57,9 +51,8 @@ defmodule EvoGit.Agent.State do
   `skill_schemas`.
 
   The LLM conversation plus everything derived from the objective and the
-  resolved model selection. After the refactor this is the ONLY copy of the
-  context: the ETS summary row no longer carries it, so the dominant per-turn
-  copy disappears.
+  resolved model selection. This is the ONLY copy of the context: the ETS
+  summary row carries no context at all.
 
   ### control (written only via commands)
 
@@ -67,12 +60,11 @@ defmodule EvoGit.Agent.State do
   (default `nil`), `event_seq` (default `0`), `watchers` (default `%{}`),
   `last_checkpoint_at` (default `nil`).
 
-  Cross-process control state. Replacing the race-prone whole-struct
-  read-modify-write ETS writes of today, these fields change only through
-  explicit session commands (`input` / `cancel` / `close`). `watchers` is the
-  streaming gate: zero watchers ⇒ no chunk callbacks and no broadcast, so the
-  LLM call path is byte-identical to today. Carried but NOT authoritative in
-  P1.
+  Cross-process control state, changed only through explicit session commands
+  (`input` / `cancel` / `close`). `watchers` is the streaming gate: zero
+  watchers ⇒ no chunk callbacks and no broadcast, so the LLM call path carries
+  no streaming overhead. Carried but NOT authoritative in P1 — the loop still
+  reads the ETS control plane.
 
   ### budget (per-run terminal budgets, unchanged semantics)
 
@@ -81,8 +73,10 @@ defmodule EvoGit.Agent.State do
   `delegation_level`, `last_warned_level`, `turns_since_subagent`,
   `quality_level`.
 
-  The turn/grace/depth budgets and the delegation-nudge bookkeeping: the same
-  values, with the same meaning, as today's `LoopState`.
+  The per-run terminal budgets and the delegation-nudge bookkeeping, read
+  directly from the struct by the exchange engine
+  (`EvoGit.Agent.Exchange.Grace` / `Exchange.Warnings`) instead of re-reading
+  ETS every turn.
 
   ## Field reference
 

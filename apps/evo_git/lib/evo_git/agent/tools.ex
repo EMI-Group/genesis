@@ -839,7 +839,7 @@ defmodule EvoGit.Agent.Tools do
       :unknown ->
         # Try dynamic skill execution — skills are loaded from .agents/skills/
         # in the agent's WORKTREE (`repo_path`), mirroring the schema load in
-        # Runner.do_run/2, so skills created/edited by the agent are found.
+        # Runner.InitialState.build/2, so skills created/edited by the agent are found.
         if repo_root && is_binary(repo_root) do
           skills = EvoGit.Skills.load_skills(repo_path)
 

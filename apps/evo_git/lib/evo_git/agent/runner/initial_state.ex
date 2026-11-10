@@ -1,7 +1,7 @@
 defmodule EvoGit.Agent.Runner.InitialState do
   @moduledoc """
-  Builds the initial `%EvoGit.Agent.State{}` of one agent run — moved verbatim out
-  of `EvoGit.Agent.Runner.do_run/2`.
+  Builds the initial `%EvoGit.Agent.State{}` of one agent run — the initial-context
+  build, given the agent's scheduler row and assigned node path.
 
   `build/2` reads the agent's scheduler row, validates the assigned node path,
   assembles the framed `<context>` / `<objective>` first user prompt, loads the

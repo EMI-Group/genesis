@@ -279,7 +279,7 @@ defmodule EvoGit.Agent.ContextBuilder do
   @doc """
   Builds the FULL `<context>...</context>` block of the first user prompt.
 
-  The single shared assembly path used BOTH at run start (`Runner.do_run/2`)
+  The single shared assembly path used BOTH at run start (`Runner.InitialState.build/2`)
   and by the mid-run compression refresh
   (`refresh_first_user_message/2`), so the two can never drift.
 
