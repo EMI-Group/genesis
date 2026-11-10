@@ -2,9 +2,17 @@ defmodule EvoGit.ProcessManagerTest do
   # async-safe: every test starts its OWN named registry (never the app-global
   # `EvoGit.ProcessManager`), so no app-env seam is touched here. The
   # `"processes"` topic itself IS shared — the app-global manager (fed by
-  # `EvoGit.BackgroundJobs` in other modules) publishes the same message shapes
-  # — so every assertion, including the negative ones, is scoped to an
-  # execution id THIS registry created (`"proc-404"` for the unknown-id cases).
+  # `EvoGit.BackgroundJobs` in other modules) AND any other module's isolated
+  # registry publish the same message shapes.
+  # Execution ids are PER-REGISTRY counters (`proc-1`, `proc-2`, …), so the
+  # shared topic can legitimately carry a `%Execution{id: "proc-1"}` minted by a
+  # CONCURRENTLY running registry — an id-only negative assertion would be
+  # falsified by that foreign execution, never by this registry's own.
+  # Every id-scoped NEGATIVE assertion therefore ALSO pins a per-execution unique
+  # value, the execution's `inserted_at` (a microsecond `DateTime`, unique per
+  # execution), so it can only ever match an execution this registry created.
+  # `"proc-404"` is the unknown-id case — an id this registry never mints, so
+  # there is nothing to pin — and `:process_control` refutes stay id-only.
   use ExUnit.Case, async: true
 
   alias EvoGit.ProcessManager
@@ -152,8 +160,13 @@ defmodule EvoGit.ProcessManagerTest do
     assert :ok = ProcessManager.finish(id, :completed, srv ++ [exit_code: 7, reason: :exited])
     assert_receive {:process_exited, %Execution{id: ^id, status: :completed}, _}, 500
 
-    assert {:ok, %Execution{status: :completed, exit_code: 7, reason: :exited} = finished} =
-             ProcessManager.get(id, srv)
+    assert {:ok,
+            %Execution{
+              status: :completed,
+              exit_code: 7,
+              reason: :exited,
+              inserted_at: inserted_at
+            } = finished} = ProcessManager.get(id, srv)
 
     refute Execution.sampleable?(finished)
     # The FIRST terminal write wins: a later settle cannot rewrite the facts.
@@ -163,7 +176,7 @@ defmodule EvoGit.ProcessManagerTest do
     assert {:ok, %Execution{status: :completed, exit_code: 7, reason: :exited}} =
              ProcessManager.get(id, srv)
 
-    refute_receive {:process_exited, %Execution{id: ^id}, _}, 100
+    refute_receive {:process_exited, %Execution{id: ^id, inserted_at: ^inserted_at}, _}, 100
   end
 
   ## Attach
@@ -174,7 +187,11 @@ defmodule EvoGit.ProcessManagerTest do
 
     assert :ok = ProcessManager.attach(id, %Handle{kind: :posix, os_pid: 424_242}, srv)
 
-    assert_receive {:process_started, %Execution{id: ^id, status: :running} = started, node}, 500
+    assert_receive {:process_started,
+                    %Execution{id: ^id, status: :running, inserted_at: inserted_at} = started,
+                    node},
+                   500
+
     assert node == node()
     assert started.os_pid == 424_242
     assert started.started_at != nil
@@ -185,7 +202,7 @@ defmodule EvoGit.ProcessManagerTest do
 
     # A re-attach does not move started_at and does not broadcast again.
     assert :ok = ProcessManager.attach(id, %Handle{kind: :posix, os_pid: 424_242}, srv)
-    refute_receive {:process_started, %Execution{id: ^id}, _}, 100
+    refute_receive {:process_started, %Execution{id: ^id, inserted_at: ^inserted_at}, _}, 100
     assert {:ok, %Execution{started_at: started_at}} = ProcessManager.get(id, srv)
     assert started_at == started.started_at
   end
@@ -218,7 +235,9 @@ defmodule EvoGit.ProcessManagerTest do
     assert_receive {:process_exited, %Execution{id: ^id, status: :completed}, node}, 500
     assert node == node()
 
-    {:ok, execution} = ProcessManager.get(id, srv)
+    assert {:ok, %Execution{inserted_at: inserted_at} = execution} =
+             ProcessManager.get(id, srv)
+
     assert execution.status == :completed
     assert execution.exit_code == 0
     assert execution.reason == :exited
@@ -227,7 +246,7 @@ defmodule EvoGit.ProcessManagerTest do
     # A second terminal write and a NON-terminal status are both no-ops.
     assert :ok = ProcessManager.finish(id, :failed, srv)
     assert :ok = ProcessManager.finish(id, :starting, srv)
-    refute_receive {:process_exited, %Execution{id: ^id}, _}, 100
+    refute_receive {:process_exited, %Execution{id: ^id, inserted_at: ^inserted_at}, _}, 100
 
     assert {:ok, %Execution{status: :completed}} = ProcessManager.get(id, srv)
   end
@@ -336,12 +355,16 @@ defmodule EvoGit.ProcessManagerTest do
     assert :ok = ProcessManager.kill(id, srv)
     assert_receive {:process_exited, %Execution{id: ^id, status: :killed}, _}, 500
 
-    assert {:ok, %Execution{status: :killed, reason: {:killed_by, :operator}}} =
-             ProcessManager.get(id, srv)
+    assert {:ok,
+            %Execution{
+              status: :killed,
+              reason: {:killed_by, :operator},
+              inserted_at: inserted_at
+            }} = ProcessManager.get(id, srv)
 
     # Idempotent: a second kill of a terminal execution is :ok and silent.
     assert :ok = ProcessManager.kill(id, srv)
-    refute_receive {:process_exited, %Execution{id: ^id}, _}, 100
+    refute_receive {:process_exited, %Execution{id: ^id, inserted_at: ^inserted_at}, _}, 100
     assert {:error, :not_found} = ProcessManager.kill("proc-404", srv)
   end
 
@@ -358,6 +381,8 @@ defmodule EvoGit.ProcessManagerTest do
     :ok = ProcessManager.attach(id, %Handle{kind: :posix}, srv)
     flush()
 
+    assert {:ok, %Execution{inserted_at: inserted_at}} = ProcessManager.get(id, srv)
+
     assert {:error, :no_pid} =
              ProcessManager.kill(id, srv ++ [reason: :operator_kill, actor: :operator])
 
@@ -371,7 +396,10 @@ defmodule EvoGit.ProcessManagerTest do
                    500
 
     # No terminal transition was broadcast, and the record is untouched.
-    refute_receive {:process_exited, %Execution{id: ^id, command: "kill-no-pid-marker"}, _}, 200
+    refute_receive {:process_exited,
+                    %Execution{id: ^id, command: "kill-no-pid-marker", inserted_at: ^inserted_at},
+                    _},
+                   200
 
     assert {:ok, %Execution{status: :running, reason: nil, ended_at: nil, control_log: log}} =
              ProcessManager.get(id, srv)
