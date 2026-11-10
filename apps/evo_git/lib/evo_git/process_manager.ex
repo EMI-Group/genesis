@@ -2,14 +2,22 @@ defmodule EvoGit.ProcessManager do
   @moduledoc """
   THE single source of truth for the live OS executions an agent/task holds.
 
-  Genesis spawns processes in three shapes — a foreground tool call (a shell
-  command an agent blocks on), a detached background job
+  Genesis holds work in three shapes — a foreground tool call (a shell command
+  or a built-in tool an agent blocks on), a detached background job
   (`EvoGit.BackgroundJobs`) and the sandbox trees those imply — and until now
   nothing could answer "what is this node running right now, for which agent,
   and how much memory is it using?". This module owns ONE in-memory record per
   execution (`EvoGit.ProcessManager.Execution`), ONE normalized OS handle
   (`…Handle`), one sampling timer and one PubSub topic (`"processes"`), so
-  operators, the dashboard (phase 2) and the tool layer all read the SAME view.
+  operators, the dashboard and the tool layer all read the SAME view.
+
+  Two independent axes describe an execution: its ORIGIN — `:runtime`, either
+  `:foreground` (the agent is blocked on the call) or `:background` (the call
+  outlives the turn) — and its BACKEND — `:builtin` (the call ran inside the
+  BEAM, so it has NO OS process, no stats and answers
+  `{:error, :no_os_process}` to `sample/2`, `signal/3`, `pause/2`, `resume/2`
+  and `kill/2`) or `:systemd | :bwrap | :sandbox_exec | :none` (an external OS
+  process anchored by that sandbox backend).
 
   It records and observes; it does NOT become the thing that starts processes.
   Round 1 (this module) is the registry, the control layer and the sampling;
@@ -129,13 +137,15 @@ defmodule EvoGit.ProcessManager do
   @doc """
   Records a new execution and returns its id (`"proc-<n>"`).
 
-  `kind` is `:tool_call` (a foreground command an agent is blocked on) or
+  `kind` is `:tool_call` (a tool call an agent is blocked on) or
   `:background_job` (a detached job); a string is accepted and normalized.
 
   `meta` carries the AGENT-visible identity — `:tool`, `:command`, `:label`,
-  `:agent_id`, `:task_id`, `:owner_pid`, `:cwd`, `:repo_root`, `:backend`,
-  `:runtime` (`:foreground` by default, `:detached` for background jobs),
-  `:job_id`. Atom keys are preferred; the documented string keys are accepted
+  `:agent_id`, `:task_id`, `:owner_pid`, `:cwd`, `:repo_root`, `:backend`
+  (`:builtin` for a tool that ran inside the BEAM, else the sandbox backend
+  `:systemd | :bwrap | :sandbox_exec | :none`, default `:none`), `:runtime`
+  (`:foreground` by default, `:background` for background jobs), `:job_id`.
+  Atom keys are preferred; the documented string keys are accepted
   and unknown keys are ignored (no atom is ever created from input).
 
   When `:owner_pid` is a pid it is MONITORED: the owner's death kills every
@@ -174,8 +184,12 @@ defmodule EvoGit.ProcessManager do
   A non-terminal status is ignored (`:ok`, no broadcast); a second `finish` for
   an already-terminal execution is a no-op; an unknown id is `:ok`.
 
-  Options: `:exit_code` (integer, kept when omitted), `:reason` (any term; the
-  owner-death path uses `:owner_died`). Stamps `ended_at` and broadcasts
+  Options: `:exit_code` (integer, kept when omitted), `:reason` (any terminal
+  cause — `:exited`, `:timeout`, `:invalid_arguments`, `:owner_died`,
+  `{:killed_by, actor}`, `{:crashed, detail}`, `:no_os_process` or
+  `{:tool_error, reason}`; the owner-death path uses `:owner_died`, see
+  `EvoGit.ProcessManager.Execution.status_for_reason/1` for the uniform status
+  mapping). Stamps `ended_at` and broadcasts
   `{:process_exited, execution, node}` exactly once.
   """
   @spec finish(String.t(), Execution.status() | term(), keyword()) :: :ok
@@ -223,8 +237,10 @@ defmodule EvoGit.ProcessManager do
   The record is read from the registry and the OS work runs HERE, in the
   caller; the observed stats are then stored on the record (no broadcast — a
   read must not churn the topic). Answers `{:ok, stats}`, `{:error, :not_found}`
-  (unknown id), `{:error, :not_running}` (a terminal execution, or one that
-  never attached a handle) or `{:error, reason}` from the backend. Never raises.
+  (unknown id), `{:error, :no_os_process}` (a `:builtin` execution — it ran
+  inside the BEAM, so there is nothing to probe), `{:error, :not_running}` (a
+  terminal execution, or one that never attached a handle) or `{:error, reason}`
+  from the backend. Never raises.
   """
   @spec sample(String.t(), keyword()) :: {:ok, Stats.t()} | {:error, term()}
   def sample(id, opts \\ [])
@@ -235,6 +251,7 @@ defmodule EvoGit.ProcessManager do
     case Registry.lookup(server, id) do
       {:ok, execution, handle} ->
         cond do
+          Execution.builtin?(execution) -> {:error, :no_os_process}
           not Execution.live?(execution.status) -> {:error, :not_running}
           is_nil(handle) -> {:error, :not_running}
           true -> store_sample(server, id, probe(handle))
@@ -248,9 +265,10 @@ defmodule EvoGit.ProcessManager do
   def sample(_id, _opts), do: {:error, :not_found}
 
   @doc """
-  Probes EVERY `:running`/`:paused` execution with bounded concurrency
+  Probes EVERY sampleable (live and external) execution with bounded concurrency
   (`#{@sample_concurrency}` at a time, `EvoGit.ProcessManager.Stats.sample_timeout_ms/0`
-  per probe, timed-out probes killed) and returns `%{id => stats}`.
+  per probe, timed-out probes killed) and returns `%{id => stats}`. A live
+  `:builtin` execution is never probed, so it never appears here.
 
   Failed probes are OMITTED from the map rather than reported as errors — this
   is the dashboard-shaped read, and one dead handle must not hide the other
@@ -294,9 +312,10 @@ defmodule EvoGit.ProcessManager do
   and `SIGCONT` sets `:running` on a paused execution (each broadcasting
   `{:process_updated, id, %{status: …}, node}`).
 
-  Answers `{:error, :not_found}`, `{:error, :terminal}` (the OS already ended
-  it), `{:error, :invalid_signal}`, `{:error, :no_handle}` (nothing to signal
-  yet) or the backend's own error. Never raises.
+  Answers `{:error, :not_found}`, `{:error, :no_os_process}` (a `:builtin`
+  execution — nothing runs outside the BEAM to signal), `{:error, :terminal}`
+  (the OS already ended it), `{:error, :invalid_signal}`, `{:error, :no_handle}`
+  (nothing to signal yet) or the backend's own error. Never raises.
   """
   @spec signal(String.t(), Control.signal(), keyword()) :: :ok | {:error, term()}
   def signal(id, signal, opts \\ [])
@@ -309,6 +328,9 @@ defmodule EvoGit.ProcessManager do
     case Registry.lookup(server, id) do
       {:ok, execution, handle} ->
         cond do
+          Execution.builtin?(execution) ->
+            {:error, :no_os_process}
+
           Execution.terminal?(execution.status) ->
             {:error, :terminal}
 
@@ -341,11 +363,21 @@ defmodule EvoGit.ProcessManager do
 
   def signal(_id, _signal, _opts), do: {:error, :not_found}
 
-  @doc "Suspends an execution (`SIGSTOP`) — status becomes `:paused`."
+  @doc """
+  Suspends an execution (`SIGSTOP`) — status becomes `:paused`.
+
+  Delegates to `signal/3`, so a `:builtin` execution answers
+  `{:error, :no_os_process}`.
+  """
   @spec pause(String.t(), keyword()) :: :ok | {:error, term()}
   def pause(id, opts \\ []), do: signal(id, :stop, opts)
 
-  @doc "Resumes a paused execution (`SIGCONT`) — status becomes `:running`."
+  @doc """
+  Resumes a paused execution (`SIGCONT`) — status becomes `:running`.
+
+  Delegates to `signal/3`, so a `:builtin` execution answers
+  `{:error, :no_os_process}`.
+  """
   @spec resume(String.t(), keyword()) :: :ok | {:error, term()}
   def resume(id, opts \\ []), do: signal(id, :cont, opts)
 
@@ -358,15 +390,27 @@ defmodule EvoGit.ProcessManager do
   Every other execution is killed through `Control` (TERM → short grace →
   KILL) in the CALLER — the registry is never blocked.
 
-  Options: `:reason` — recorded on the record; ALWAYS supply one, the default
-  is `#{inspect(@default_kill_reason)}` — and `:actor`.
+  A `:builtin` execution answers `{:error, :no_os_process}` FIRST and is never
+  finished: nothing runs outside the BEAM to kill.
+
+  Options:
+
+    * `:reason` — the HUMAN-supplied text; it survives in `control_log` only.
+      ALWAYS supply one, the default is `#{inspect(@default_kill_reason)}`.
+    * `:actor` — the human/agent that asked; defaults to `:operator`, never nil.
+    * `:terminal_reason` — the terminal `:reason` recorded on the finished
+      record; defaults to `{:killed_by, actor}` (so it follows the supplied
+      `:actor`).
 
   Answers `:ok` (already terminal: idempotent), `{:error, :not_found}`, or the
   backend's error.
 
-  The record becomes `:killed` ONLY when the backend reports success. A failed
-  or refused kill leaves the status untouched — the execution stays observable
-  and controllable — appends
+  The record becomes `:killed` ONLY when the backend reports success: an
+  accepted kill appends `%{action: :kill, reason: <human text>, actor: actor}`
+  to `control_log` and finishes with `:killed`, `reason: terminal_reason` and
+  `exit_code: nil` (a kill never fabricates an exit code). A failed or refused
+  kill leaves the status untouched — the execution stays observable and
+  controllable — appends
   `%{action: :kill, reason: {:kill_failed, reason}, actor: actor}` to
   `control_log`, and returns that error.
   """
@@ -375,29 +419,13 @@ defmodule EvoGit.ProcessManager do
 
   def kill(id, opts) when is_binary(id) do
     server = server_from(opts)
-    reason = Keyword.get(opts, :reason, @default_kill_reason)
-    actor = Keyword.get(opts, :actor)
 
     case Registry.lookup(server, id) do
       {:ok, execution, handle} ->
-        if Execution.terminal?(execution.status) do
-          :ok
-        else
-          case stop_execution(execution, handle, reason) do
-            :ok ->
-              finish(id, :killed, server: server, reason: reason, exit_code: exit_code(handle))
-
-            {:error, reason_error} ->
-              entry =
-                Execution.control_entry(
-                  action: :kill,
-                  reason: {:kill_failed, reason_error},
-                  actor: actor
-                )
-
-              Registry.record_control(server, id, entry)
-              {:error, reason_error}
-          end
+        cond do
+          Execution.builtin?(execution) -> {:error, :no_os_process}
+          Execution.terminal?(execution.status) -> :ok
+          true -> kill_execution(server, id, execution, handle, opts)
         end
 
       {:error, :not_found} ->
@@ -472,8 +500,36 @@ defmodule EvoGit.ProcessManager do
     kind, reason_error -> {:error, {:background_jobs_unavailable, {kind, reason_error}}}
   end
 
-  defp exit_code(%Handle{pending_exit_code: code}) when is_integer(code), do: code
-  defp exit_code(_handle), do: nil
+  # One accepted/failed kill, mirroring the `control_log` entry shape the signal
+  # path uses. The human `:reason` text lives in the log only; the record's
+  # terminal `:reason` is `:terminal_reason` and no exit code is ever fabricated.
+  defp kill_execution(server, id, execution, handle, opts) do
+    reason = Keyword.get(opts, :reason, @default_kill_reason)
+    actor = Keyword.get(opts, :actor) || :operator
+    terminal_reason = Keyword.get(opts, :terminal_reason, {:killed_by, actor})
+
+    case stop_execution(execution, handle, reason) do
+      :ok ->
+        Registry.record_control(
+          server,
+          id,
+          Execution.control_entry(action: :kill, reason: reason, actor: actor)
+        )
+
+        finish(id, :killed, server: server, reason: terminal_reason, exit_code: nil)
+
+      {:error, reason_error} ->
+        entry =
+          Execution.control_entry(
+            action: :kill,
+            reason: {:kill_failed, reason_error},
+            actor: actor
+          )
+
+        Registry.record_control(server, id, entry)
+        {:error, reason_error}
+    end
+  end
 
   defp action_for(signal) do
     case Control.normalize_signal(signal) do
@@ -484,7 +540,7 @@ defmodule EvoGit.ProcessManager do
   end
 
   @doc false
-  # The statuses `sample_all/1` probes (documented for consumers).
+  # The statuses a SAMPLEABLE execution may carry (documented for consumers).
   @spec live_statuses() :: [Execution.status()]
   def live_statuses, do: @live
 

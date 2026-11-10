@@ -3,12 +3,41 @@ defmodule EvoGit.ProcessManager.Execution do
   One tracked live OS execution — the record `EvoGit.ProcessManager` is the
   single source of truth for.
 
-  An execution is either a **tool call** (`kind: :tool_call`: a foreground shell
-  command an agent is blocked on) or a **background job**
-  (`kind: :background_job`: a detached job owned by `EvoGit.BackgroundJobs`).
-  Both are "live OS work an agent/task holds", which is why one struct models
-  both: phase 2's dashboard, the agent tree and any operator action (pause,
-  signal, kill) all read THIS shape and never the backend-specific maps.
+  An execution is either a **tool call** (`kind: :tool_call`: a call an agent is
+  blocked on — a shell command, or a BEAM-local built-in such as `read`) or a
+  **background job** (`kind: :background_job`: a detached job owned by
+  `EvoGit.BackgroundJobs`).
+  Both are "work an agent/task holds", which is why one struct models both: the
+  dashboard, the agent tree and any operator action (pause, signal, kill) all
+  read THIS shape and never the backend-specific maps.
+
+  ## Origin (`:runtime`) vs backend (`:backend`)
+
+  `:runtime` answers WHERE the call sits relative to the agent's turn, never
+  what runs it: `:foreground` (the agent is blocked on it) or `:background`
+  (the call outlives the turn, i.e. a `EvoGit.BackgroundJobs` job).
+
+  `:backend` answers WHAT runs it: `:builtin` means the call ran INSIDE the BEAM
+  (a built-in tool — `read`/`write`/`edit`/`rg`/`search_*`/`elixir_eval`/
+  `job_output` — anything that is not the platform shell), so such an execution
+  has NO OS process: no `:os_pid`, no `:unit`, no uptime and no CPU/memory
+  stats (`:stats` stays `EvoGit.ProcessManager.Stats.empty/0`).
+  `:systemd | :bwrap | :sandbox_exec | :none` mean an EXTERNAL OS process
+  anchored by that sandbox backend (`:none` is external but unsandboxed).
+
+  ## Terminal facts (`:exit_code` + `:reason`)
+
+  `:exit_code` is an integer `0..255` when an external execution's OS process
+  actually exited; it is `nil` for timeouts, kills, builtin calls and
+  never-started calls.
+
+  `:reason` is the ONE terminal cause and stays `nil` while the execution is
+  live: `:exited` (the process ended on its own — consult `:exit_code`),
+  `:timeout`, `:invalid_arguments` (never started: unparseable/malformed tool
+  arguments), `:owner_died`, `{:killed_by, actor}`, `{:crashed, detail}`,
+  `:no_os_process` (a builtin call finished; nothing ran) or the additive
+  `{:tool_error, reason}` (a tool-returned `{:error, reason}`, not a
+  raise/exit). `status_for_reason/1` is the uniform status mapping.
 
   ## Lifecycle
 
@@ -35,14 +64,17 @@ defmodule EvoGit.ProcessManager.Execution do
       integers, strings or nil).
     * `:owner_pid` — the pid whose death kills this execution.
     * `:cwd` / `:repo_root` — where it runs (context for a human).
-    * `:backend` — `:systemd | :bwrap | :sandbox_exec | :none`: which sandbox
-      backend anchors it.
-    * `:runtime` — `:foreground` (the agent is blocked on it) or `:detached`
+    * `:backend` — `:builtin | :systemd | :bwrap | :sandbox_exec | :none`:
+      `:builtin` runs inside the BEAM (no OS process), the rest anchor an
+      external OS process.
+    * `:runtime` — `:foreground` (the agent is blocked on it) or `:background`
       (it outlives the turn).
     * `:status` — see the lifecycle above.
-    * `:os_pid` / `:unit` — the OS identity, filled by `attach/3`.
+    * `:os_pid` / `:unit` — the OS identity, filled by `attach/3` (always nil
+      for a builtin execution).
     * `:job_id` — the `EvoGit.BackgroundJobs` job id, for `:background_job`.
-    * `:exit_code` / `:reason` — the terminal facts, filled by `finish/3`.
+    * `:exit_code` / `:reason` — the terminal facts, filled by `finish/3` (see
+      "Terminal facts" above).
     * `:inserted_at` / `:started_at` / `:ended_at` — the timeline.
     * `:stats` — the LAST stats map (ALWAYS a map, see
       `EvoGit.ProcessManager.Stats`), never nil.
@@ -53,8 +85,8 @@ defmodule EvoGit.ProcessManager.Execution do
 
   @type kind :: :tool_call | :background_job
   @type status :: :starting | :running | :paused | :completed | :failed | :killed | :unknown
-  @type runtime :: :foreground | :detached
-  @type backend :: :systemd | :bwrap | :sandbox_exec | :none
+  @type runtime :: :foreground | :background
+  @type backend :: :builtin | :systemd | :bwrap | :sandbox_exec | :none
 
   @type control_entry :: %{
           action: atom(),
@@ -122,13 +154,58 @@ defmodule EvoGit.ProcessManager.Execution do
   @spec terminal?(status() | nil) :: boolean()
   def terminal?(status), do: status in terminal_statuses()
 
-  @doc "The statuses the sampling timer probes."
+  @doc "The statuses the sampling timer probes (see `sampleable?/1`)."
   @spec live_statuses() :: [status()]
   def live_statuses, do: [:running, :paused]
 
-  @doc "Whether a status is live (probed by the sampling timer)."
+  @doc "Whether a status is live (`:running` or `:paused`)."
   @spec live?(status() | nil) :: boolean()
   def live?(status), do: status in live_statuses()
+
+  @doc """
+  Whether this execution ran INSIDE the BEAM (`backend: :builtin`).
+
+  Total: only a `%Execution{backend: :builtin}` answers `true`; any other term
+  (including nil and a non-struct) answers `false`.
+  """
+  @spec builtin?(term()) :: boolean()
+  def builtin?(%__MODULE__{backend: :builtin}), do: true
+  def builtin?(_execution), do: false
+
+  @doc """
+  Whether this execution is an EXTERNAL OS process (`not builtin?/1`).
+
+  Total: `true` for every term that is not a `%Execution{backend: :builtin}`.
+  """
+  @spec external?(term()) :: boolean()
+  def external?(execution), do: not builtin?(execution)
+
+  @doc """
+  Whether the sampling timer probes this execution: live (`live?/1`) AND
+  external (`external?/1`).
+
+  A live builtin record is never probeable — it has no OS process — so it never
+  arms the sampling timer and never contributes to `sample_all/1`. Total.
+  """
+  @spec sampleable?(term()) :: boolean()
+  def sampleable?(execution), do: external?(execution) and live?(status_of(execution))
+
+  @doc """
+  The uniform terminal-status mapping for a terminal `:reason`.
+
+  `:exited` and `:no_os_process` → `:completed` — and `:completed` ALSO covers a
+  NON-ZERO `:exit_code`: the tool call itself succeeded and the model receives a
+  normal result (the dashboard colors the code).
+  `:timeout` and `{:killed_by, _}` → `:killed`; `:invalid_arguments`,
+  `{:crashed, _}`, `:owner_died`, `{:tool_error, _}` and any other term →
+  `:failed`. Total.
+  """
+  @spec status_for_reason(term()) :: status()
+  def status_for_reason(:exited), do: :completed
+  def status_for_reason(:no_os_process), do: :completed
+  def status_for_reason(:timeout), do: :killed
+  def status_for_reason({:killed_by, _actor}), do: :killed
+  def status_for_reason(_reason), do: :failed
 
   @doc """
   The empty control-log entry shape (`EvoGit.ProcessManager.Control` fills it).
@@ -145,4 +222,7 @@ defmodule EvoGit.ProcessManager.Execution do
       at: Map.get(attrs, :at) || DateTime.utc_now()
     }
   end
+
+  defp status_of(%__MODULE__{status: status}), do: status
+  defp status_of(_execution), do: nil
 end
