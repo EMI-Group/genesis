@@ -23,11 +23,20 @@ defmodule EvoGit.Agent.Exchange do
 
   ## Runnable in a bare process
 
-  The engine's ONLY outside-world interactions are the three seams of
-  `EvoGit.Agent.Exchange.Seams` (`:llm_call`, `:tool_batch`, `:scheduler`).
-  With all three supplied, an exchange runs in a bare process: no scheduler, no
-  ETS table and no live agent process. An absent seam is the PRODUCTION path,
-  byte-identical to the un-seamed loop.
+  The engine's ONLY outside-world interactions are the four seams of
+  `EvoGit.Agent.Exchange.Seams` (`:llm_call`, `:tool_batch`, `:scheduler`,
+  `:checkpoint`). With all four supplied, an exchange runs in a bare process: no
+  scheduler, no ETS table and no live agent process. An absent seam is the
+  PRODUCTION path, byte-identical to the un-seamed loop.
+
+  ## The checkpoint boundary (`checkpoint/2`)
+
+  `:checkpoint` is observable-only: it receives the state EXACTLY ONCE PER TURN,
+  after that turn's state update — the state handed to the recursive loop step
+  for a continuing turn (`continuations/2`), and the final state once before the
+  outcome is returned for a finishing turn (`run/2`). Its return value is
+  discarded and it can never change the state or the outcome; an absent seam
+  performs no extra state work at all.
 
   ## Role-agnostic
 
@@ -54,9 +63,10 @@ defmodule EvoGit.Agent.Exchange do
   @doc """
   Runs ONE exchange over `state` until it yields a terminal outcome.
 
-  `opts` is the seam keyword list (`:llm_call`, `:tool_batch`, `:scheduler`; see
-  `EvoGit.Agent.Exchange.Seams`). The SAME `opts` is threaded down to every
-  turn, so an explicit seam is honoured consistently for the whole exchange.
+  `opts` is the seam keyword list (`:llm_call`, `:tool_batch`, `:scheduler`,
+  `:checkpoint`; see `EvoGit.Agent.Exchange.Seams`). The SAME `opts` is threaded
+  down to every turn, so an explicit seam is honoured consistently for the whole
+  exchange.
   """
   @spec run(State.t(), keyword()) :: outcome()
   def run(%State{} = state, opts \\ []) do
@@ -65,8 +75,30 @@ defmodule EvoGit.Agent.Exchange do
     # and `Grace` yields the identical seam set (the explicit-key-wins rule is
     # order-independent and the app-env default is read at call time).
     seams = Seams.from_opts(opts)
-    loop(state, opts, seams)
+
+    case loop(state, opts, seams) do
+      # The FINISHING turn never reaches the recursive loop, so its state is
+      # checkpointed here — the single place the terminal state is observable.
+      # Invariant: exactly ONE checkpoint per turn (a continuing turn fired
+      # inside `continuations/2`), and the return value is discarded.
+      {:finish, %State{} = final_state, _result} = outcome ->
+        checkpoint(final_state, seams)
+        outcome
+
+      {:error, _reason} = error ->
+        error
+    end
   end
+
+  # The ONE `:checkpoint` call site shared by both turn paths: called once per
+  # turn AFTER that turn's state update, with the seam's return value DISCARDED
+  # (observable-only — it must never change the state or the outcome). An absent
+  # seam (nil or `false`) is a no-op, so an un-seamed exchange performs no extra
+  # state work and stays byte-identical.
+  defp checkpoint(_state, %Seams{checkpoint: seam}) when seam in [nil, false], do: :ok
+
+  defp checkpoint(%State{} = state, %Seams{checkpoint: seam}) when is_function(seam, 1),
+    do: seam.(state)
 
   @doc false
   # The ONE scheduler-seam adapter shared by the engine and its helpers: the
@@ -171,7 +203,14 @@ defmodule EvoGit.Agent.Exchange do
   # ever enters `%State{}`.
   defp continuations(opts, seams) do
     %{
-      loop: fn st -> loop(st, opts, seams) end,
+      loop: fn st ->
+        # A CONTINUING turn's state is checkpointed here — exactly once, at the
+        # boundary where that state becomes the input of the next turn. The
+        # initial (turn-0) state never passes through this closure, so it is not
+        # counted as a turn.
+        checkpoint(st, seams)
+        loop(st, opts, seams)
+      end,
       trigger_recovery: fn st, reason -> trigger_recovery(st, reason, opts) end
     }
   end

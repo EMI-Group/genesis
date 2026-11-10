@@ -30,7 +30,9 @@ defmodule EvoGit.Agent.Turn do
   The seams documented in `EvoGit.Agent.Exchange.Seams` (`:llm_call`,
   `:tool_batch`, `:scheduler`) are consumed by `ToolDispatch.do_turn/6` through
   the SAME `opts` keyword list passed here. They are default-inert: an absent
-  seam is the production path, byte-identical to the un-seamed turn.
+  seam is the production path, byte-identical to the un-seamed turn. (The fourth
+  seam, `:checkpoint`, belongs to the engine's turn BOUNDARY and is never reached
+  from inside a turn.)
   """
 
   alias EvoGit.Agent.State

@@ -2,11 +2,12 @@ defmodule EvoGit.Agent.Exchange.Seams do
   @moduledoc """
   The seam contract that makes ONE exchange runnable in a bare process.
 
-  `EvoGit.Agent.Exchange.run/2` (the engine, landed in the next step) is a plain
-  function over `%EvoGit.Agent.State{}`: it needs no scheduler, no ETS table and
-  no live agent process. The three seams below are the ONLY places it touches
-  the outside world, so an exchange can be executed and asserted in a bare test
-  process with three stubs.
+  `EvoGit.Agent.Exchange.run/2` (the engine) is a plain function over
+  `%EvoGit.Agent.State{}`: it needs no scheduler, no ETS table and no live agent
+  process. The four seams below are the ONLY places it touches the outside
+  world, so an exchange can be executed and asserted in a bare test process with
+  four stubs (the first three are the behaviour seams, `:checkpoint` is
+  observable-only).
 
   ## Default-inert by construction
 
@@ -20,15 +21,16 @@ defmodule EvoGit.Agent.Exchange.Seams do
 
   For each seam, in order:
 
-  1. the explicit `opts` key (`:llm_call` / `:tool_batch` / `:scheduler`) when
-     present — even when its value is `nil` (an explicit `nil` means "use the
-     production path", overriding any app-env default);
+  1. the explicit `opts` key (`:llm_call` / `:tool_batch` / `:scheduler` /
+     `:checkpoint`) when present — even when its value is `nil` (an explicit
+     `nil` means "use the production path", overriding any app-env default);
   2. the app-env default, read AT CALL TIME (`Application.get_env(:evo_git,
      :agent_exchange_llm_call)` / `:agent_exchange_tool_batch` /
-     `:agent_exchange_scheduler`), `nil` when unset;
+     `:agent_exchange_scheduler` / `:agent_exchange_checkpoint`), `nil` when
+     unset;
   3. `nil`.
 
-  ## The three seams
+  ## The four seams
 
   ### `llm_call` — arity 5
 
@@ -75,11 +77,28 @@ defmodule EvoGit.Agent.Exchange.Seams do
   `{:batch, fields}` carries its keyword in the KIND so the batch is visible at
   the call site; the payload slot repeats it so every kind keeps the same
   3-arity shape.
+
+  ### `checkpoint` — arity 1
+
+      (state) -> term()
+
+  Receives the state at EVERY turn boundary: once per turn, AFTER that turn's
+  state update, and it is called with the state the turn produced — for a
+  continuing turn the state handed to the recursive loop step, for a finishing
+  turn the final state, once, before the outcome is returned.
+
+  The return value is DISCARDED — this seam is observable-only and MUST NOT
+  change the state or the outcome. It exists so a session/streaming layer can
+  observe each turn boundary without being wired into the engine's control flow.
+
+  Default-inert by construction: an absent key (nil, or an explicit `false`)
+  means "no checkpointing" and the engine performs NO extra state work, so an
+  un-seamed exchange stays byte-identical to the un-checkpointed loop.
   """
 
   alias EvoGit.Agent.State
 
-  defstruct llm_call: nil, tool_batch: nil, scheduler: nil
+  defstruct llm_call: nil, tool_batch: nil, scheduler: nil, checkpoint: nil
 
   @typedoc "See the moduledoc for the contract of each seam."
   @type llm_call ::
@@ -103,15 +122,23 @@ defmodule EvoGit.Agent.Exchange.Seams do
 
   @type scheduler :: (scheduler_kind(), term(), State.t() -> term())
 
+  @typedoc """
+  Observable-only per-turn checkpoint hook: called once per turn AFTER the
+  turn's state update; the return value is discarded.
+  """
+  @type checkpoint :: (State.t() -> term())
+
   @type t :: %__MODULE__{
           llm_call: llm_call() | nil,
           tool_batch: tool_batch() | nil,
-          scheduler: scheduler() | nil
+          scheduler: scheduler() | nil,
+          checkpoint: checkpoint() | nil
         }
 
   @llm_call_env :agent_exchange_llm_call
   @tool_batch_env :agent_exchange_tool_batch
   @scheduler_env :agent_exchange_scheduler
+  @checkpoint_env :agent_exchange_checkpoint
 
   @doc """
   Builds the seam set for one exchange from a keyword list.
@@ -124,7 +151,8 @@ defmodule EvoGit.Agent.Exchange.Seams do
     %__MODULE__{
       llm_call: resolve(opts, :llm_call, @llm_call_env),
       tool_batch: resolve(opts, :tool_batch, @tool_batch_env),
-      scheduler: resolve(opts, :scheduler, @scheduler_env)
+      scheduler: resolve(opts, :scheduler, @scheduler_env),
+      checkpoint: resolve(opts, :checkpoint, @checkpoint_env)
     }
   end
 
