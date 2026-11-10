@@ -363,7 +363,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert execution.agent_id == "agent-7"
       assert execution.task_id == "99"
       assert execution.owner_pid == self()
-      assert execution.runtime == :detached
+      assert execution.runtime == :background
       assert execution.backend == :systemd
       assert execution.status == :running
       # The normalized handle is ATTACHED, so the execution also carries the OS
@@ -382,7 +382,28 @@ defmodule EvoGit.BackgroundJobsTest do
       assert %DateTime{} = execution.ended_at
     end
 
-    test "a non-zero exit fails the execution with its exit code", %{
+    test "a NATIVE integer agent/task id lands on the execution unchanged", %{
+      tmp_dir: tmp_dir,
+      process_manager: manager
+    } do
+      job =
+        start_live_unit_job!(tmp_dir, "native-ids", %{
+          command: "echo native",
+          agent_id: 42,
+          task_id: 7
+        })
+
+      assert {:ok, execution} = ProcessManager.get(job.execution_id, server: manager)
+      # `:agent_id` / `:task_id` keep their NATIVE term: a job started with the
+      # INTEGER id 42 must reach the execution as that same integer, never as its
+      # stringification (which would break every agent/task filter downstream).
+      assert execution.agent_id == 42
+      assert execution.task_id == 7
+      assert [listed] = ProcessManager.list(agent_id: 42, server: manager)
+      assert listed.id == job.execution_id
+    end
+
+    test "a non-zero exit still COMPLETES the execution with its real exit code", %{
       tmp_dir: tmp_dir,
       process_manager: manager
     } do
@@ -391,9 +412,12 @@ defmodule EvoGit.BackgroundJobsTest do
       assert %{status: :failed, exit_code: 3} = await_status!(job.id, :failed)
 
       assert {:ok, execution} = ProcessManager.get(job.execution_id, server: manager)
-      assert execution.status == :failed
+      # The JOB record keeps the failure (`await_status!` above), while the
+      # EXECUTION follows the uniform mapping: an OS process that actually
+      # exited is `:completed` + `:exited`, whatever its status code.
+      assert execution.status == :completed
       assert execution.exit_code == 3
-      assert execution.reason == "exit code: 3"
+      assert execution.reason == :exited
     end
 
     test "an exit observed during the spawn itself still leaves a TERMINAL record", %{
@@ -426,7 +450,8 @@ defmodule EvoGit.BackgroundJobsTest do
 
       assert {:ok, execution} = ProcessManager.get(job.execution_id, server: manager)
       assert execution.status == :killed
-      assert execution.reason == "killed (stopped by request)"
+      assert execution.reason == {:killed_by, :operator}
+      assert execution.exit_code == nil
       assert %DateTime{} = execution.ended_at
     end
 
@@ -458,6 +483,8 @@ defmodule EvoGit.BackgroundJobsTest do
 
       assert {:ok, execution} = ProcessManager.get(job.execution_id, server: manager)
       assert execution.status == :killed
+      # `ProcessManager.kill/2` defaults its actor to `:operator`.
+      assert execution.reason == {:killed_by, :operator}
       assert %DateTime{} = execution.ended_at
     end
 
@@ -481,7 +508,7 @@ defmodule EvoGit.BackgroundJobsTest do
 
       assert {:ok, execution} = ProcessManager.get(job.execution_id, server: manager)
       assert execution.status == :killed
-      assert execution.reason == :registry_shutdown
+      assert execution.reason == {:killed_by, :registry_shutdown}
     end
   end
 

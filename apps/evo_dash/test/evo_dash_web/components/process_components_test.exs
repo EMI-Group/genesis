@@ -151,14 +151,180 @@ defmodule EvoDashWeb.ProcessComponentsTest do
           status: :failed,
           command: "unknown command",
           backend: :none,
-          runtime: :detached
+          runtime: :background
         })
 
       assert html =~ ~s(id="process-row-proc-empty")
       assert html =~ "Failed"
       assert html =~ "unknown command"
-      assert html =~ "Detached"
+      assert html =~ "Background"
+      # An external-but-unsandboxed execution is spelled out, not dashed.
+      assert html =~ "Unsandboxed"
       assert html =~ "—"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Built-in (in-BEAM) executions: no OS process, so no OS figures and no
+  # action cluster
+  # ---------------------------------------------------------------------------
+
+  describe "execution_row/1 with a built-in execution" do
+    test "renders — in Target, Uptime, CPU and Memory" do
+      cells = row_cells(builtin_execution())
+
+      assert length(cells) == 12
+      # The render layer owns the translatable label (`Format` stays gettext-free).
+      assert Enum.at(cells, 5) == "In-process (built-in)"
+      # Target / Uptime / CPU / Memory: there is no OS process behind the call,
+      # even though this record carries a start time and a stale stats map.
+      assert Enum.at(cells, 6) == "—"
+      assert Enum.at(cells, 7) == "—"
+      assert Enum.at(cells, 8) == "—"
+      assert Enum.at(cells, 9) == "—"
+    end
+
+    test "renders no pause/resume/terminate/kill action at all" do
+      html = render_row(builtin_execution())
+
+      # The record is LIVE (`status: :running`, an id), so only the
+      # no-OS-process gate can remove the cluster.
+      assert html =~ "Running"
+      assert html =~ ~s(phx-click="toggle_process_row")
+      refute html =~ ~s(phx-click="pause_process")
+      refute html =~ ~s(phx-click="resume_process")
+      refute html =~ ~s(phx-click="open_terminate")
+      refute html =~ ~s(phx-click="open_kill")
+      refute html =~ ~s(aria-label="Pause")
+      refute html =~ ~s(aria-label="Terminate")
+      refute html =~ ~s(aria-label="Kill")
+    end
+
+    test "compact_rows/1 still renders the row, with — for target and memory" do
+      html =
+        render_component(&ProcessComponents.compact_rows/1, %{executions: [builtin_execution()]})
+
+      doc = Floki.parse_document!(html)
+
+      assert [row] = Floki.find(doc, "#agent-process-proc-3")
+      text = row |> Floki.text() |> String.trim()
+
+      assert text =~ "Running"
+      assert text =~ "read apps/evo_git/mix.exs"
+      assert text =~ "—"
+      refute text =~ "unit "
+      refute text =~ "50.0 MB"
+    end
+  end
+
+  describe "execution_row/1 actions for an external execution" do
+    test "a live running row keeps pause/terminate/kill" do
+      html = render_row(running_execution())
+
+      assert html =~ ~s(phx-click="pause_process")
+      assert html =~ ~s(phx-click="open_terminate")
+      assert html =~ ~s(phx-click="open_kill")
+      assert html =~ ~s(phx-value-id="proc-1")
+      # Resume is the paused-state counterpart of pause (the two are exclusive).
+      refute html =~ ~s(phx-click="resume_process")
+    end
+
+    test "a live paused row keeps resume/terminate/kill" do
+      html = render_row(running_execution(status: :paused))
+
+      assert html =~ ~s(phx-click="resume_process")
+      assert html =~ ~s(phx-click="open_terminate")
+      assert html =~ ~s(phx-click="open_kill")
+      refute html =~ ~s(phx-click="pause_process")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # The table's Exit cell
+  # ---------------------------------------------------------------------------
+
+  describe "execution_row/1 Exit cell" do
+    test "shows the integer exit code when the OS process exited" do
+      assert exit_cell(completed_execution()) == "0"
+
+      assert exit_cell(completed_execution(id: "proc-code", exit_code: 137)) ==
+               "137"
+    end
+
+    test "shows the reason label when the termination was not a plain exit" do
+      killed =
+        completed_execution(id: "proc-killed", exit_code: nil, reason: {:killed_by, "operator"})
+
+      assert exit_cell(killed) == "Killed by operator"
+
+      timeout = completed_execution(id: "proc-timeout", exit_code: nil, reason: :timeout)
+      assert exit_cell(timeout) == "Timeout"
+    end
+
+    test "stays a placeholder for a plain exit without a code and for a live row" do
+      exited = completed_execution(id: "proc-exited", exit_code: nil, reason: :exited)
+      assert exit_cell(exited) == "—"
+      assert exit_cell(running_execution()) == "—"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # The expanded detail block: Exit Code, Target and Reason are all explicit
+  # ---------------------------------------------------------------------------
+
+  describe "execution_details/1 fields" do
+    test "shows Exit Code, Target and Reason of a terminal external execution" do
+      text = detail_text(completed_execution())
+
+      assert text =~ "Exit Code: 0"
+      assert text =~ "Target: unit genesis-tool-1.service"
+      assert text =~ "Reason: —"
+      assert text =~ "Runtime: Foreground"
+      assert text =~ "Backend: systemd"
+    end
+
+    test "shows the gettext-wrapped reason label of a non-exit termination" do
+      timeout = completed_execution(id: "proc-timeout", exit_code: nil, reason: :timeout)
+      text = detail_text(timeout)
+
+      assert text =~ "Reason: Timeout"
+      assert text =~ "Exit Code: —"
+
+      owner =
+        completed_execution(id: "proc-owner", exit_code: nil, reason: :owner_died)
+
+      assert detail_text(owner) =~ "Reason: Owner died"
+    end
+
+    test "renders a built-in execution with dashes and no OS figures" do
+      text = detail_text(builtin_execution())
+
+      assert text =~ "Backend: In-process"
+      assert text =~ "Target: —"
+      assert text =~ "Exit Code: —"
+      assert text =~ "Reason: —"
+    end
+
+    test "renders an unsandboxed external execution by name" do
+      execution = completed_execution(id: "proc-none", backend: :none)
+      assert detail_text(execution) =~ "Backend: Unsandboxed"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # The `entering` animation class (page-owned state)
+  # ---------------------------------------------------------------------------
+
+  describe "execution_row/1 entering" do
+    test "entering: true adds the process-row-enter class and keeps the row id" do
+      html = render_row(running_execution(), entering: true)
+
+      assert html =~ "process-row-enter"
+      assert html =~ ~s(id="process-row-proc-1")
+    end
+
+    test "the default adds no animation class" do
+      refute render_row(running_execution()) =~ "process-row-enter"
     end
   end
 
@@ -192,7 +358,7 @@ defmodule EvoDashWeb.ProcessComponentsTest do
         command: "npm run dev",
         cwd: "/work/app",
         repo_root: "/work/app",
-        runtime: :detached,
+        runtime: :background,
         backend: :bwrap,
         started_at: @started_at,
         ended_at: nil,
@@ -212,7 +378,7 @@ defmodule EvoDashWeb.ProcessComponentsTest do
 
       assert html =~ "npm run dev"
       assert html =~ "/work/app"
-      assert html =~ "Detached"
+      assert html =~ "Background"
       assert html =~ "bwrap"
       assert html =~ "2026-11-09 10:00"
       # A nil `ended_at` is a placeholder, never a crash.
@@ -297,6 +463,29 @@ defmodule EvoDashWeb.ProcessComponentsTest do
     )
   end
 
+  # An IN-PROCESS (built-in) tool call: it ran inside the BEAM, so it has no OS
+  # identity — yet the record still carries a start time, an ended time and a
+  # stale stats map, which must never leak into the OS columns.
+  defp builtin_execution(overrides \\ []) do
+    struct!(
+      running_execution(),
+      [
+        id: "proc-3",
+        tool: "read",
+        command: "read apps/evo_git/mix.exs",
+        backend: :builtin,
+        runtime: :foreground,
+        status: :running,
+        os_pid: nil,
+        unit: nil,
+        job_id: nil,
+        started_at: @started_at,
+        ended_at: nil,
+        stats: %{cpu_percent: 12.3, rss_bytes: 52_428_800}
+      ] ++ overrides
+    )
+  end
+
   # ---------------------------------------------------------------------------
   # Render helpers
   # ---------------------------------------------------------------------------
@@ -305,11 +494,37 @@ defmodule EvoDashWeb.ProcessComponentsTest do
     render_component(&ProcessComponents.execution_row/1, %{
       execution: execution,
       expanded: Keyword.get(opts, :expanded, false),
+      entering: Keyword.get(opts, :entering, false),
       node_id: Keyword.get(opts, :node_id)
     })
   end
 
   defp render_details(execution) do
     render_component(&ProcessComponents.execution_details/1, %{execution: execution})
+  end
+
+  # The text of each `<td>` of the rendered summary row (12 columns: status,
+  # agent, task, command, runtime, backend, target, uptime, CPU, memory, exit,
+  # actions).
+  defp row_cells(execution) do
+    execution
+    |> render_row()
+    |> Floki.parse_document!()
+    |> Floki.find("tr[id^='process-row-']")
+    |> List.first()
+    |> Floki.find("td")
+    |> Enum.map(&(&1 |> Floki.text() |> String.trim()))
+  end
+
+  defp exit_cell(execution), do: execution |> row_cells() |> Enum.at(10)
+
+  # The detail block's visible text, with whitespace collapsed so adjacent
+  # timestamp spans read as one line.
+  defp detail_text(execution) do
+    execution
+    |> render_details()
+    |> Floki.parse_document!()
+    |> Floki.text()
+    |> String.replace(~r/\s+/, " ")
   end
 end

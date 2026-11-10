@@ -19,8 +19,11 @@ defmodule EvoGit.ToolRuntimeTest do
       `:evogit_repo_id`) — the gap this runtime closed, because a spawned task
       has an EMPTY process dictionary;
     * `EvoGit.ProcessManager` TRACKING — one `:tool_call` execution per call,
-      `command` set only for the platform shell call, `:completed` / `:failed` /
-      `:killed` terminal statuses.
+      `command` set only for the platform shell call, the PER-CALL backend
+      (`:builtin` for a tool that ran inside the BEAM, the batch's resolved
+      sandbox backend for the shell call, classified by
+      `Execution.builtin?/1` / `external?/1`) and the terminal facts
+      (`:no_os_process`, `:timeout` with no exit code, `{:crashed, detail}`).
 
   ## The fake-tool seam (app env, test-only)
 
@@ -62,8 +65,10 @@ defmodule EvoGit.ToolRuntimeTest do
   alias EvoGit.Agent.ToolNames
   alias EvoGit.AgentScheduler
   alias EvoGit.ProcessManager
+  alias EvoGit.ProcessManager.Execution
   alias EvoGit.TaskTmpdir
   alias EvoGit.ToolRuntime
+  alias EvoGit.ToolRuntime.Tracking
 
   alias ReqLLM.ToolCall
 
@@ -253,7 +258,7 @@ defmodule EvoGit.ToolRuntimeTest do
     # The tracking record settles as `:killed` and names the real timeout.
     assert [%{id: execution_id, status: :killed}] = tool_executions(agent_id, "read_file")
 
-    assert {:ok, %{status: :killed, reason: :timeout}} =
+    assert {:ok, %{status: :killed, reason: :timeout, exit_code: nil}} =
              ProcessManager.get(execution_id)
   end
 
@@ -368,6 +373,23 @@ defmodule EvoGit.ToolRuntimeTest do
     read = Enum.find(executions, &(&1.tool == "read_file"))
     assert read.command == nil
     assert read.label == "read_file"
+
+    # The per-call BACKEND is what ran the call, not where the agent sits: a
+    # non-shell tool ran inside the BEAM (`:builtin`, no OS process at all),
+    # while the shell call carries the batch's resolved sandbox backend.
+    assert read.backend == :builtin
+    assert Execution.builtin?(read)
+    refute Execution.external?(read)
+    assert read.reason == :no_os_process
+    assert read.os_pid == nil
+
+    assert shell.backend == Tracking.backend()
+    assert Execution.external?(shell)
+    refute Execution.builtin?(shell)
+    # A fake shell tool never reached the OS, so its terminal fact is the
+    # executor's own `:no_os_process` — no exit code is ever fabricated.
+    assert shell.reason == :no_os_process
+    assert shell.exit_code == nil
   end
 
   test "records a crashing tool as :failed while the batch still returns the crash result", %{
@@ -387,9 +409,13 @@ defmodule EvoGit.ToolRuntimeTest do
     # Contained: the agent gets a normal, self-correcting tool result ...
     assert output =~ "Error: Tool execution crashed: ** (RuntimeError) boom"
 
-    # ... and the call is recorded as a FAILED execution.
-    assert [%{tool: "read_file", status: :failed}] =
+    # ... and the call is recorded as a FAILED execution naming the crash.
+    assert [%{tool: "read_file", status: :failed} = execution] =
              tool_executions(agent_id, "read_file")
+
+    assert {:crashed, message} = execution.reason
+    assert message =~ "boom"
+    assert execution.exit_code == nil
   end
 
   # ---------------------------------------------------------------------------

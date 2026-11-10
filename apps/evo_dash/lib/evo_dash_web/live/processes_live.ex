@@ -1,8 +1,11 @@
 defmodule EvoDashWeb.ProcessesLive do
   @moduledoc """
-  Managed-process inspector: every OS execution `EvoGit.ProcessManager` tracks
-  on the viewed node — agent tool calls and background jobs — with its live
-  resource usage and the operator controls (pause / resume / terminate / kill).
+  Managed-process inspector: every execution `EvoGit.ProcessManager` tracks on
+  the viewed node — built-in tool calls that run in-process (no OS process),
+  external commands and background jobs — with its live resource usage.
+  External OS processes additionally carry the operator controls
+  (pause / resume / terminate / kill); a built-in in-BEAM execution has no OS
+  process handle, so it renders no controls.
 
   Node-aware like every other dashboard page: the initial snapshot is fetched
   from `@current_node` and liveness is PUSH-based. `EvoGit.ProcessManager`
@@ -30,6 +33,23 @@ defmodule EvoDashWeb.ProcessesLive do
   `?task_id=`, plus `node`): status/kind/text are render-time
   (`EvoDashWeb.ProcessesLive.Format.filter/2`), while `agent_id`/`task_id`
   narrow the tracked set itself and therefore refetch.
+
+  ## Row enter animation
+
+  A row that arrives AFTER the initial snapshot — a genuinely new id, i.e. one
+  the page does not already show — is rendered with the `process-row-enter`
+  class (`EvoDashWeb.ProcessComponents.execution_row/1`'s `entering` attr) for
+  one TTL, then cleared by a `{:clear_entering, ids}` self-message. The initial
+  load, a refetch, a Retry and a node/core-filter switch NEVER animate (they
+  replace the whole table), and a later `{:process_sample, ...}` /
+  `{:process_updated, ...}` patch for an already-cleared id cannot bring the
+  class back.
+
+  The TTL is read AT CALL TIME from
+  `Application.get_env(:evo_dash, :processes_entering_ttl_ms, 1500)` — the
+  default is 1500 ms; the key exists as a TEST seam (production never sets it),
+  and a non-integer/negative value falls back to the default. Timers are only
+  scheduled on a connected socket, so the static render arms none.
   """
 
   use EvoDashWeb, :live_view
@@ -42,6 +62,11 @@ defmodule EvoDashWeb.ProcessesLive do
   alias EvoDashWeb.ProcessesLive.Load
 
   @processes_topic "processes"
+
+  # How long a newly joined row keeps the enter-animation class. Overridable at
+  # call time through `Application.get_env(:evo_dash, :processes_entering_ttl_ms)`
+  # (test seam only — production never sets it).
+  @default_entering_ttl_ms 1500
 
   @impl true
   def mount(_params, _session, socket) do
@@ -70,6 +95,9 @@ defmodule EvoDashWeb.ProcessesLive do
        agent_filter: nil,
        task_filter: nil,
        expanded: MapSet.new(),
+       # String ids of rows that arrived AFTER the initial snapshot; each one
+       # renders with the enter-animation class until its own TTL expires.
+       entering: MapSet.new(),
        confirm: nil,
        confirm_reason: "",
        confirm_error: nil
@@ -100,7 +128,15 @@ defmodule EvoDashWeb.ProcessesLive do
 
     socket =
       if current != previous do
-        assign(socket, executions: [], executions_loaded: false, confirm: nil)
+        # A node or core-filter switch replaces the whole table, so nothing on
+        # screen is "newly joined": drop the previous node's rows, any open
+        # confirmation modal and every pending enter animation.
+        assign(socket,
+          executions: [],
+          executions_loaded: false,
+          entering: MapSet.new(),
+          confirm: nil
+        )
       else
         socket
       end
@@ -141,7 +177,7 @@ defmodule EvoDashWeb.ProcessesLive do
 
   def handle_info({:process_started, execution, node}, socket) do
     if NodeAware.event_from_current_node?(socket.assigns, node) do
-      {:noreply, update_executions(socket, &prepend_execution(&1, execution))}
+      {:noreply, upsert_execution(socket, execution, &prepend_execution/2)}
     else
       {:noreply, socket}
     end
@@ -157,7 +193,7 @@ defmodule EvoDashWeb.ProcessesLive do
 
   def handle_info({:process_exited, execution, node}, socket) do
     if NodeAware.event_from_current_node?(socket.assigns, node) do
-      {:noreply, update_executions(socket, &put_execution(&1, execution))}
+      {:noreply, upsert_execution(socket, execution, &put_execution/2)}
     else
       {:noreply, socket}
     end
@@ -177,6 +213,13 @@ defmodule EvoDashWeb.ProcessesLive do
     else
       {:noreply, socket}
     end
+  end
+
+  # Enter-animation expiry: drop exactly the ids whose TTL elapsed, so a later
+  # patch of that row can never re-run the animation.
+  def handle_info({:clear_entering, ids}, socket) when is_list(ids) do
+    entering = MapSet.difference(socket.assigns.entering, MapSet.new(ids))
+    {:noreply, assign(socket, :entering, entering)}
   end
 
   # ---------------------------------------------------------------------------
@@ -296,8 +339,11 @@ defmodule EvoDashWeb.ProcessesLive do
         <div class="mb-4">
           <h1 class="text-xl font-semibold text-base-content">{gettext("Processes")}</h1>
           <p class="text-sm text-base-content/60 mt-0.5">
+            <%!--
+              zh_CN: 内置工具调用在 BEAM 内部执行，没有操作系统进程；外部命令与后台任务才有 PID/CPU/内存与终止操作。
+            --%>
             {gettext(
-              "Operating-system processes Genesis tracks on this node — tool calls and background jobs — with their resource usage and operator controls."
+              "Executions Genesis tracks on this node — built-in tool calls that run in-process, external commands and background jobs — with their resource usage and operator controls."
             )}
           </p>
         </div>
@@ -477,6 +523,7 @@ defmodule EvoDashWeb.ProcessesLive do
                 :for={execution <- @filtered}
                 execution={execution}
                 expanded={MapSet.member?(@expanded, Format.id_string(Map.get(execution, :id)))}
+                entering={MapSet.member?(@entering, Format.id_string(Map.get(execution, :id)))}
                 node_id={@current_node_id}
               />
             </tbody>
@@ -503,7 +550,9 @@ defmodule EvoDashWeb.ProcessesLive do
       executions: executions,
       executions_loaded: true,
       executions_loading: false,
-      executions_error: nil
+      executions_error: nil,
+      # The whole table was replaced: nothing on screen is newly joined.
+      entering: MapSet.new()
     )
   end
 
@@ -514,7 +563,8 @@ defmodule EvoDashWeb.ProcessesLive do
   defp apply_load_result(socket, {:error, reason}) do
     assign(socket,
       executions_loading: false,
-      executions_error: Format.term_text(reason)
+      executions_error: Format.term_text(reason),
+      entering: MapSet.new()
     )
   end
 
@@ -530,6 +580,59 @@ defmodule EvoDashWeb.ProcessesLive do
     case Map.get(socket.assigns, :executions) do
       list when is_list(list) -> assign(socket, :executions, fun.(list))
       _other -> assign(socket, :executions, fun.([]))
+    end
+  end
+
+  # A broadcast that introduces an id the page does NOT already show is a
+  # genuinely new row: it joins the head (`fun` is `prepend_execution/2` for a
+  # start, `put_execution/2` for an exit the page never saw start) and is
+  # marked `entering` for one TTL so its enter animation runs exactly once.
+  # A repeat broadcast for a known id only patches its row — no row movement,
+  # no animation.
+  defp upsert_execution(socket, execution, fun) when is_function(fun, 2) do
+    executions = Map.get(socket.assigns, :executions)
+    id = Map.get(execution, :id)
+
+    socket = update_executions(socket, fn rows -> fun.(rows, execution) end)
+
+    if find_execution(executions, id) == nil do
+      mark_entering(socket, [id])
+    else
+      socket
+    end
+  end
+
+  # Adds ids to `:entering` and schedules their own clear; ids are compared in
+  # their STRING form (`Format.id_string/1`), the same form the render uses, so
+  # a native integer id from the core and a string id from a DOM value agree.
+  # An empty-string id (a malformed record) is never animated, and the static
+  # render arms no timers because it has no connected socket to message.
+  defp mark_entering(socket, ids) do
+    new_ids =
+      ids
+      |> Enum.map(&Format.id_string/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.uniq()
+
+    case new_ids do
+      [] ->
+        socket
+
+      ids ->
+        if connected?(socket) do
+          Process.send_after(self(), {:clear_entering, ids}, entering_ttl_ms())
+        end
+
+        entering = Enum.reduce(ids, socket.assigns.entering, &MapSet.put(&2, &1))
+        assign(socket, :entering, entering)
+    end
+  end
+
+  # Read AT CALL TIME (never a compile-time constant) so a test can shrink it.
+  defp entering_ttl_ms do
+    case Application.get_env(:evo_dash, :processes_entering_ttl_ms, @default_entering_ttl_ms) do
+      ttl when is_integer(ttl) and ttl >= 0 -> ttl
+      _other -> @default_entering_ttl_ms
     end
   end
 

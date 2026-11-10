@@ -1,9 +1,10 @@
 # ProcessesLive (managed OS processes) test suite.
 #
-# async: false — this module writes two PROCESS-GLOBAL app-env seams
-# (`:processes_page_load_runner`, `:processes_control_runner`) that every
-# concurrently mounted ProcessesLive would observe, and it BROADCASTS on the
-# shared global `EvoGit.PubSub` topic `"processes"`, which any other module's
+# async: false — this module writes PROCESS-GLOBAL app-env seams
+# (`:processes_page_load_runner`, `:processes_control_runner` and the
+# `:processes_entering_ttl_ms` animation TTL) that every concurrently mounted
+# ProcessesLive would observe, and it BROADCASTS on the shared global
+# `EvoGit.PubSub` topic `"processes"`, which any other module's
 # mounted view (or the app-global `EvoGit.ProcessManager`) subscribes to. Both
 # are BEAM-wide state, so the module stays in ExUnit's serial phase. Every seam
 # is restored in `on_exit` from the value captured before the write.
@@ -82,6 +83,11 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     end)
   end
 
+  # The enter-animation TTL is read AT CALL TIME by the page, so a test can
+  # shrink it (observe the clear without a 1.5s wait) or lengthen it (assert the
+  # class is present without racing the timer on a loaded host).
+  defp install_entering_ttl(ms), do: put_seam(:processes_entering_ttl_ms, ms)
+
   # ---------------------------------------------------------------------------
   # Fixtures
   # ---------------------------------------------------------------------------
@@ -145,7 +151,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
         command: "npm run dev",
         agent_id: 202,
         task_id: "task-2",
-        runtime: :detached,
+        runtime: :background,
         backend: :bwrap,
         status: :paused,
         os_pid: 4242,
@@ -170,7 +176,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
         command: "sleeper --queue",
         agent_id: 404,
         task_id: "task-4",
-        runtime: :detached,
+        runtime: :background,
         backend: :none,
         unit: nil,
         job_id: "job_abc",
@@ -289,7 +295,7 @@ defmodule EvoDashWeb.ProcessesLiveTest do
 
     paused = row(view, "proc-2")
     assert paused =~ "Paused"
-    assert paused =~ "Detached"
+    assert paused =~ "Background"
     assert paused =~ "bwrap"
     assert paused =~ "pid 4242"
     assert paused =~ "1.5%"
@@ -837,6 +843,139 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     assert expanded_completed =~ "TERM"
     assert expanded_completed =~ "10:02:04"
     assert expanded_completed =~ "Dashboard"
+  end
+
+  # ---------------------------------------------------------------------------
+  # 12. New-row enter animation
+  # ---------------------------------------------------------------------------
+
+  # The class only ever marks a row that arrived AFTER the initial snapshot; a
+  # load, a refetch (Retry) and a node/filter switch replace the whole table and
+  # therefore animate nothing.
+  test "the initial load renders no entering row", %{conn: conn} do
+    install_load_runner(fn _node, _opts -> {:ok, executions()} end)
+
+    view = mount_page(conn)
+    html = render(view)
+
+    assert html =~ "process-row-proc-1"
+    assert html =~ "process-row-proc-2"
+    refute html =~ "process-row-enter"
+  end
+
+  test "a started process is prepended with the enter class", %{conn: conn} do
+    install_load_runner(fn _node, _opts -> {:ok, executions()} end)
+    # A long TTL so the class cannot expire before the assertion on a loaded
+    # host (that it CLEARS is the next test's concern).
+    install_entering_ttl(30_000)
+
+    view = mount_page(conn)
+
+    broadcast(
+      {:process_started,
+       execution(%{id: "proc-new", command: "freshly started command", agent_id: 909}), node()}
+    )
+
+    html = wait_for_html(view, "process-row-proc-new")
+    assert html =~ "freshly started command"
+    assert index_of(html, "process-row-proc-new") < index_of(html, "process-row-proc-1")
+
+    # Only the newly joined row animates; the rows from the snapshot do not.
+    assert row(view, "proc-new") =~ "process-row-enter"
+    refute row(view, "proc-1") =~ "process-row-enter"
+    refute row(view, "proc-2") =~ "process-row-enter"
+
+    refute_receive {:load_called, _node, _opts}, @no_refetch_window_ms
+  end
+
+  test "the enter class clears after the TTL", %{conn: conn} do
+    install_load_runner(fn _node, _opts -> {:ok, executions()} end)
+    install_entering_ttl(30)
+
+    view = mount_page(conn)
+
+    broadcast(
+      {:process_started, execution(%{id: "proc-new", command: "freshly started command"}), node()}
+    )
+
+    wait_until(fn -> render(view) =~ "process-row-proc-new" end)
+    # The page schedules its own `{:clear_entering, ids}` self-message, so this
+    # is a bounded poll for that transition — never a fixed sleep.
+    wait_until(fn -> not (render(view) =~ "process-row-enter") end)
+
+    html = render(view)
+    refute html =~ "process-row-enter"
+    # The row itself survives the clear.
+    assert html =~ "process-row-proc-new"
+  end
+
+  test "a later patch for a cleared row never re-runs the animation", %{conn: conn} do
+    install_load_runner(fn _node, _opts -> {:ok, executions()} end)
+    install_entering_ttl(30)
+
+    view = mount_page(conn)
+
+    broadcast(
+      {:process_started, execution(%{id: "proc-new", command: "freshly started command"}), node()}
+    )
+
+    wait_until(fn -> render(view) =~ "process-row-proc-new" end)
+    wait_until(fn -> not (render(view) =~ "process-row-enter") end)
+
+    # A resource sample patches the SAME id in place: no animation comes back.
+    broadcast(
+      {:process_sample, node(), 2,
+       [%{id: "proc-new", status: :running, stats: %{cpu_percent: 7.5, rss_bytes: 2_097_152}}]}
+    )
+
+    sampled = wait_for_row(view, "proc-new", "7.5%")
+    refute sampled =~ "process-row-enter"
+
+    # Neither does a field update.
+    broadcast({:process_updated, "proc-new", %{status: :paused}, node()})
+
+    paused = wait_for_row(view, "proc-new", "Paused")
+    refute paused =~ "process-row-enter"
+
+    # A repeat `started` broadcast for a now-known id is dropped entirely: no
+    # duplicate row and no re-animation.
+    broadcast(
+      {:process_started, execution(%{id: "proc-new", command: "freshly started command"}), node()}
+    )
+
+    :sys.get_state(view.pid, @assigns_timeout_ms)
+    html = render(view)
+
+    assert count_occurrences(html, ~s(id="process-row-proc-new")) == 1
+    assert row(view, "proc-new") =~ "Paused"
+    refute html =~ "process-row-enter"
+  end
+
+  test "an exit for a process the page never saw start also animates", %{conn: conn} do
+    install_load_runner(fn _node, _opts -> {:ok, executions()} end)
+    install_entering_ttl(30_000)
+
+    # An exited process is FINISHED, so the live tab would hide it.
+    view = mount_page(conn, ~p"/processes?status=all")
+
+    broadcast(
+      {:process_exited,
+       execution(%{
+         id: "proc-late",
+         command: "exited before this page opened",
+         status: :completed,
+         exit_code: 0,
+         ended_at: DateTime.utc_now()
+       }), node()}
+    )
+
+    html = wait_for_html(view, "process-row-proc-late")
+    assert html =~ "exited before this page opened"
+    # The unknown id is PREPENDED (newest first) and animated.
+    assert index_of(html, "process-row-proc-late") < index_of(html, "process-row-proc-1")
+
+    assert row(view, "proc-late") =~ "process-row-enter"
+    refute row(view, "proc-1") =~ "process-row-enter"
   end
 
   # ---------------------------------------------------------------------------

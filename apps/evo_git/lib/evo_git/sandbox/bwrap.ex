@@ -583,7 +583,7 @@ defmodule EvoGit.Sandbox.Bwrap do
       # `Handle.new/2`: the execution stays `:running` with degraded stats.
       Helpers.attach_execution(opts, :posix, os_pid: os_pid, backend: __MODULE__)
 
-      collect_output(port, timeout, max_bytes, os_pid, tmpfile)
+      collect_output(port, timeout, max_bytes, os_pid, tmpfile, opts)
     else
       # Disabled path: identical to linux.ex — a directly owned port + bash -c
       # (no nix wrapping, consistent with run/4's disabled path). The managed
@@ -622,16 +622,20 @@ defmodule EvoGit.Sandbox.Bwrap do
 
   # Collects the exit status of the bwrap port, killing the whole sandbox
   # process group on timeout and recovering partial output from the temp file.
-  defp collect_output(port, timeout, max_bytes, os_pid, tmpfile) do
+  # The observed status is recorded as the tracked execution's terminal fact
+  # (on the timeout AFTER the group kill, so the recorded fact is truthful).
+  defp collect_output(port, timeout, max_bytes, os_pid, tmpfile, opts) do
     receive do
       {^port, {:exit_status, exit_code}} ->
         content = Helpers.read_tempfile(tmpfile, max_bytes)
+        Helpers.record_exit(opts, exit_code)
         {:ok, content, exit_code}
     after
       timeout ->
         kill_process_group(os_pid)
         Helpers.close_port(port)
         Helpers.drain_port_messages(port)
+        Helpers.record_timeout(opts)
 
         partial = Helpers.read_tempfile(tmpfile, max_bytes)
         {:timeout, partial <> "\n[TRUNCATED due to timeout]"}

@@ -9,10 +9,19 @@ defmodule EvoGit.Sandbox.ForegroundTrackingTest do
 
     * the tracked record gets a non-nil `os_pid` (POSIX/Windows backends) or a
       non-nil `unit` (the systemd-run backend), i.e. the previous "degraded
-      pid-less foreground execution" gap is closed;
-    * the record can be settled (`:completed`);
+      pid-less foreground execution" gap is closed, and that identity STAYS on
+      the terminal record;
+    * the record settles ITSELF when the sandbox layer observes the OS exit
+      status, so it is already `:completed` (with its real `exit_code` and
+      `reason: :exited`) by the time `run_with_partial/7` returns;
     * on the POSIX path a long-running command can be paused, resumed and
-      killed through `EvoGit.ProcessManager`, which reaches the real child.
+      killed through `EvoGit.ProcessManager`, which reaches the real child, and
+      the operator's kill is authoritative over the signal exit it causes;
+    * the TERMINAL FACTS are recorded by the helper that observes the OS exit
+      status: an exit settles `:completed` + its integer `exit_code` +
+      `reason: :exited`, a timeout settles `:killed` + `exit_code: nil` +
+      `reason: :timeout`, and a later, coarser `finish/3` (the executor's) is a
+      no-op that never clears what the helper observed.
 
   `async: true` — every test points the manager's documented CALL-TIME seam
   (`:evogit_process_manager_server` in the calling process dictionary) at its
@@ -103,8 +112,32 @@ defmodule EvoGit.Sandbox.ForegroundTrackingTest do
     end
   end
 
+  # Bounded poll for the execution to reach a TERMINAL record (a `reason` is set
+  # only once it is terminal). The settle happens synchronously in the process
+  # that observed the OS exit status, so this resolves on the first look; the
+  # deadline only protects against a broken settle path hanging the suite.
+  defp await_terminal(id, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + 5_000
+
+    case ProcessManager.get(id) do
+      {:ok, %Execution{reason: reason} = execution} when not is_nil(reason) ->
+        execution
+
+      {:ok, execution} ->
+        if System.monotonic_time(:millisecond) < deadline do
+          Process.sleep(20)
+          await_terminal(id, deadline)
+        else
+          flunk("execution #{id} never became terminal, last seen: #{inspect(execution)}")
+        end
+
+      other ->
+        flunk("expected a tracked execution for #{id}, got: #{inspect(other)}")
+    end
+  end
+
   describe "foreground execution tracking" do
-    test "a real command attaches a real OS pid/unit and can be settled" do
+    test "a real command attaches a real OS pid/unit and settles itself on exit" do
       isolated_manager!()
 
       {:ok, id} = ProcessManager.track(:tool_call, %{tool: "bash", command: "echo hello"})
@@ -122,14 +155,94 @@ defmodule EvoGit.Sandbox.ForegroundTrackingTest do
 
       assert output =~ "hello"
 
-      # THE regression this suite exists for: the handle is NOT pid-less.
-      execution = await_handle(id)
-      assert execution.status == :running
+      # THE regression this suite exists for: the handle is NOT pid-less, and a
+      # command that already exited keeps its OS identity on the terminal record.
+      execution = await_terminal(id)
       assert os_identity(execution) != nil
       assert execution.kind == :tool_call
 
-      assert :ok = ProcessManager.finish(id, :completed)
-      assert {:ok, %Execution{status: :completed}} = ProcessManager.get(id)
+      # The sandbox layer OBSERVES the OS exit status, so it settles the record
+      # itself: by the time `run_with_partial/7` returns the call is already
+      # `:completed` with its real (zero) exit code and `:exited`.
+      assert execution.status == :completed
+      assert execution.exit_code == 0
+      assert execution.reason == :exited
+
+      # A later, coarser finish (the executor's) is a no-op on the settled record:
+      # it never clears the exit code it did not observe.
+      assert :ok = EvoGit.ToolRuntime.Tracking.finish(id, :completed)
+
+      assert {:ok, after_executor} = ProcessManager.get(id)
+      assert after_executor.status == :completed
+      assert after_executor.exit_code == 0
+      assert after_executor.reason == :exited
+      assert after_executor.ended_at == execution.ended_at
+    end
+  end
+
+  describe "foreground terminal facts" do
+    @tag skip: @posix_skip
+    test "a real exit status settles :completed with its exit code and :exited" do
+      isolated_manager!()
+
+      {:ok, id} = ProcessManager.track(:tool_call, %{tool: "bash", command: "exit 7"})
+
+      assert {:ok, _output, 7} =
+               Sandbox.run_with_partial(
+                 System.tmp_dir!(),
+                 "bash",
+                 ["-c", "exit 7"],
+                 nil,
+                 10_000,
+                 nil,
+                 execution_id: id
+               )
+
+      # `EvoGit.Sandbox.Helpers` is the process that OBSERVES the OS exit status,
+      # so it owns the terminal facts: a NON-ZERO exit still COMPLETES the
+      # execution (the uniform mapping keys on "the OS process actually exited",
+      # not on the status code).
+      execution = await_terminal(id)
+      assert execution.status == :completed
+      assert execution.exit_code == 7
+      assert execution.reason == :exited
+      assert %DateTime{} = execution.ended_at
+
+      # The executor's LATER, coarser finish only knows the tool call is over; it
+      # must be a no-op on the already-terminal record and must never clear the
+      # exit code it did not observe.
+      EvoGit.ToolRuntime.Tracking.finish(id, :completed)
+
+      assert {:ok, after_executor} = ProcessManager.get(id)
+      assert after_executor.status == :completed
+      assert after_executor.exit_code == 7
+      assert after_executor.reason == :exited
+    end
+
+    @tag skip: @posix_skip
+    test "a timeout settles :killed with no exit code and reason :timeout" do
+      isolated_manager!()
+
+      {:ok, id} = ProcessManager.track(:tool_call, %{tool: "bash", command: "sleep 5"})
+
+      assert {:timeout, _partial} =
+               Sandbox.run_with_partial(
+                 System.tmp_dir!(),
+                 "bash",
+                 ["-c", "sleep 5"],
+                 nil,
+                 200,
+                 nil,
+                 execution_id: id
+               )
+
+      # No OS exit status was observed (the tree was killed by the timeout), so
+      # there is NO integer exit code — a timeout is `:killed` + `:timeout`.
+      execution = await_terminal(id)
+      assert execution.status == :killed
+      assert execution.exit_code == nil
+      assert execution.reason == :timeout
+      assert %DateTime{} = execution.ended_at
     end
   end
 
@@ -206,7 +319,17 @@ defmodule EvoGit.Sandbox.ForegroundTrackingTest do
       assert {:ok, %Execution{status: :running}} = ProcessManager.get(id)
 
       assert :ok = ProcessManager.kill(id, reason: "foreground tracking test cleanup")
-      assert {:ok, %Execution{status: :killed}} = ProcessManager.get(id)
+
+      # The OPERATOR's kill is AUTHORITATIVE over the sandbox layer's own
+      # observation of the signal exit it caused: the record settles `:killed`
+      # with the attributable cause and NO exit code, rather than `:completed` +
+      # `:exited` + the signal's 143.
+      assert {:ok, killed} = ProcessManager.get(id)
+      assert killed.status == :killed
+      assert killed.reason == {:killed_by, :operator}
+      assert killed.exit_code == nil
+      # The OS identity stays on the terminal record.
+      assert {:pid, ^os_pid} = os_identity(killed)
 
       # The foreground call observes the child's death and returns instead of
       # waiting out its 60 s timeout.

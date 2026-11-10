@@ -334,13 +334,13 @@ defmodule EvoGit.Sandbox.None do
     # `Handle.new/2`: the execution stays `:running` with degraded stats.
     Helpers.attach_execution(opts, :windows, os_pid: os_pid, backend: __MODULE__)
 
-    collect_windows_output(port, [], timeout, max_bytes, os_pid)
+    collect_windows_output(port, [], timeout, max_bytes, os_pid, opts)
   end
 
-  defp collect_windows_output(port, acc, timeout, max_bytes, os_pid) do
+  defp collect_windows_output(port, acc, timeout, max_bytes, os_pid, opts) do
     receive do
       {^port, {:data, data}} ->
-        collect_windows_output(port, [data | acc], timeout, max_bytes, os_pid)
+        collect_windows_output(port, [data | acc], timeout, max_bytes, os_pid, opts)
 
       {^port, {:exit_status, exit_code}} ->
         output =
@@ -349,12 +349,14 @@ defmodule EvoGit.Sandbox.None do
           |> IO.iodata_to_binary()
           |> EvoGit.Powershell.decode_output()
 
+        Helpers.record_exit(opts, exit_code)
         {:ok, Helpers.truncate_output(output, max_bytes), exit_code}
     after
       timeout ->
         kill_windows_tree(os_pid)
         Helpers.close_port(port)
         Helpers.drain_port_messages(port)
+        Helpers.record_timeout(opts)
 
         partial =
           acc
