@@ -59,7 +59,7 @@ defmodule EvoGit.Store.Codec do
 
   alias EvoGit.TaskInfo
 
-  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error)
+  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error session_mode)
 
   @usage_fields [
     :input_tokens,
@@ -123,7 +123,8 @@ defmodule EvoGit.Store.Codec do
       task.model_id,
       task.project_path || extract_project_path(task.opts),
       task.branch_name || extract_branch_name(task.result),
-      encode_error(task.error)
+      encode_error(task.error),
+      task_session_mode(task)
     ]
   end
 
@@ -167,7 +168,8 @@ defmodule EvoGit.Store.Codec do
       model_id,
       project_path,
       branch_name,
-      error
+      error,
+      session_mode
     ] = row
 
     %TaskInfo{
@@ -189,7 +191,8 @@ defmodule EvoGit.Store.Codec do
       lease_expires_at: lease_expires_at,
       model_id: model_id,
       project_path: project_path,
-      branch_name: branch_name
+      branch_name: branch_name,
+      session_mode: decode_session_mode(session_mode)
     }
   end
 
@@ -215,7 +218,8 @@ defmodule EvoGit.Store.Codec do
 
   # The complete set of known atom values across the three atom fields:
   #   * type — :genesis, :evolve, :extract_skills, :reflect (repo-less)
-  #   * status — the `tasks.status` value set (see `@known_statuses`)
+  #   * status — the `tasks.status` value set (see `@known_statuses`), which
+  #     includes the NON-TERMINAL `:awaiting_input` of an interactive session
   #   * review_status — :open, :merged, :rejected, :continued, :ignored, :no_changes
   #
   # Using String.to_atom/1 is SAFE here because the set is closed, bounded, and
@@ -231,7 +235,7 @@ defmodule EvoGit.Store.Codec do
   # (`test/evo_git/store/store_invariants_test.exs`) fails when a status is
   # added there without being added to `@known_atoms` here.
   @known_types ~w(genesis evolve extract_skills reflect)a
-  @known_statuses ~w(pending running finalizing completed failed cancelled cancelling)a
+  @known_statuses ~w(pending running awaiting_input finalizing completed failed cancelled cancelling)a
   @known_review_statuses ~w(open merged rejected continued ignored no_changes)a
   @known_atoms @known_types ++ @known_statuses ++ @known_review_statuses
   @known_atom_strings MapSet.new(@known_atoms, &Atom.to_string/1)
@@ -310,6 +314,104 @@ defmodule EvoGit.Store.Codec do
   defp mask_unknown_status(nil), do: :pending
   defp mask_unknown_status(status), do: status
 
+  # --- session_mode ---
+  # `tasks.session_mode` is a SHORT plain-TEXT column holding the task's driver
+  # mode: `"oneshot"` (today's one-shot agent — a tool-free reply finishes the
+  # run) or `"interactive"` (a session that yields to `:awaiting_input` and
+  # waits for the next message). It is persisted so the dashboard can filter
+  # sessions out of the ordinary task list.
+  #
+  # The data-plane boundary carries the STRING (`opts[:session_mode] =
+  # "interactive"`); the store never sees an atom. Both encoders below are
+  # therefore TOTAL and normalize anything they do not recognize — a NULL from
+  # a pre-`20260815000008` row, an unknown spelling, a non-text cell — to the
+  # `"oneshot"` default, so neither a read nor a write can ever crash (or
+  # change a task's meaning) because of this column.
+  @session_modes ~w(oneshot interactive)
+  @default_session_mode "oneshot"
+
+  @doc "The `tasks.session_mode` values this Codec recognizes, in default-first order."
+  @spec session_modes() :: [String.t()]
+  def session_modes, do: @session_modes
+
+  @doc "The mode a task gets when the column/option is NULL, absent or unrecognized."
+  @spec default_session_mode() :: String.t()
+  def default_session_mode, do: @default_session_mode
+
+  @doc """
+  Encodes a `session_mode` value for storage — TOTAL.
+
+  Accepts the canonical mode strings, the equivalent atoms (round-trip safety
+  for a decoded value), and nil; everything else becomes the `"oneshot"`
+  default.
+  """
+  @spec encode_session_mode(nil | atom() | String.t() | term()) :: String.t()
+  def encode_session_mode(nil), do: @default_session_mode
+
+  def encode_session_mode(mode) when is_atom(mode),
+    do: encode_session_mode(Atom.to_string(mode))
+
+  def encode_session_mode(mode) when is_binary(mode) do
+    if mode in @session_modes, do: mode, else: @default_session_mode
+  end
+
+  def encode_session_mode(_other), do: @default_session_mode
+
+  @doc """
+  Decodes a stored `session_mode` value — TOTAL, never raises.
+
+  `nil` (a row written before the column existed), an empty value, an unknown
+  spelling and a non-text cell all normalize to `default_session_mode/0`; an
+  unknown non-empty value is logged so a typo does not disappear silently.
+  """
+  @spec decode_session_mode(nil | String.t() | term()) :: String.t()
+  def decode_session_mode(nil), do: @default_session_mode
+  def decode_session_mode(""), do: @default_session_mode
+
+  def decode_session_mode(mode) when is_binary(mode) do
+    if mode in @session_modes do
+      mode
+    else
+      Logger.warning(
+        "Codec: unrecognized task session_mode in DB: #{inspect(mode)} — " <>
+          "using #{@default_session_mode}"
+      )
+
+      @default_session_mode
+    end
+  end
+
+  def decode_session_mode(other) do
+    Logger.warning(
+      "Codec: non-text task session_mode in DB: #{inspect(other)} — " <>
+        "using #{@default_session_mode}"
+    )
+
+    @default_session_mode
+  end
+
+  @doc """
+  The value to STORE for a task's `session_mode`: the struct field when set,
+  else the data-plane `opts[:session_mode]` (atom or string key), else the
+  `"oneshot"` default — normalized by `encode_session_mode/1`, so neither the
+  write path nor a pre-migration row can carry an invalid value.
+  """
+  @spec task_session_mode(%TaskInfo{}) :: String.t()
+  def task_session_mode(%TaskInfo{} = task) do
+    encode_session_mode(task.session_mode || session_mode_from_opts(task.opts))
+  end
+
+  defp session_mode_from_opts(nil), do: nil
+
+  defp session_mode_from_opts(opts) when is_list(opts) do
+    Keyword.get(opts, :session_mode) || Map.get(Map.new(opts), "session_mode")
+  end
+
+  defp session_mode_from_opts(opts) when is_map(opts),
+    do: Map.get(opts, :session_mode) || Map.get(opts, "session_mode")
+
+  defp session_mode_from_opts(_other), do: nil
+
   # --- DateTime ---
   @doc """
   Encodes a `%DateTime{}` to a fixed-precision ISO-8601 string.
@@ -377,7 +479,7 @@ defmodule EvoGit.Store.Codec do
   # Only the outer :model_spec key is atomized; its canonical selection map
   # keeps string keys. Admission owns projecting identity without credentials.
   @atomized_opt_keys ~w(path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from attachments quality_level model_spec)a
-  @string_opt_keys ~w(model_id model_id_locked agent build_system merge_from merge_target)a
+  @string_opt_keys ~w(model_id model_id_locked agent build_system merge_from merge_target session_mode)a
   @known_opt_keys @atomized_opt_keys ++ @string_opt_keys
   @atomized_opt_key_strings MapSet.new(@atomized_opt_keys, &Atom.to_string/1)
 
