@@ -60,23 +60,19 @@ defmodule EvoGit.Agent.Exchange.Seams do
 
       (kind, payload, state) -> term()
 
-  ONE adapter for every scheduler/ETS interaction the loop performs. A test seam
-  is normally `fn _kind, _payload, _state -> :ok end`. The kinds and their
-  production defaults (`default_scheduler/3`):
+  ONE adapter for every scheduler CONTROL-PLANE interaction the loop performs.
+  It carries only the input/control surface (`:drain_inputs`,
+  `:cancel_requested?`, `:clear_cancel`) — the conversation state itself is
+  owned by the session process and published through the `:checkpoint` seam, so
+  there is no per-turn ETS write-through anymore. A test seam is normally
+  `fn _kind, _payload, _state -> :ok end`. The kinds and their production
+  defaults (`default_scheduler/3`):
 
   | `kind` | `payload` | default implementation |
   |---|---|---|
   | `:drain_inputs` | ignored | `EvoGit.AgentScheduler.Store.drain_pending_user_messages(state.agent_id)` → `[String.t() \\| map()]` |
   | `:cancel_requested?` | ignored | `EvoGit.AgentScheduler.Store.cancel_requested?(state.agent_id)` → `boolean()` |
   | `:clear_cancel` | ignored | `EvoGit.AgentScheduler.Store.clear_cancel_requested(state.agent_id)` |
-  | `:context` | `%ReqLLM.Context{}` | `EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, ctx)` |
-  | `:total_tokens` | integer | `EvoGit.Agent.ContextBuilder.sync_total_tokens_to_ets(state.agent_id, n)` |
-  | `:turn` | integer | `EvoGit.Agent.ContextBuilder.sync_turn_to_ets(state.agent_id, n)` |
-  | `{:batch, fields}` | `fields` (the same keyword) | `EvoGit.AgentScheduler.batch_update_agent(state.agent_id, fields)` |
-
-  `{:batch, fields}` carries its keyword in the KIND so the batch is visible at
-  the call site; the payload slot repeats it so every kind keeps the same
-  3-arity shape.
 
   ### `checkpoint` — arity 1
 
@@ -115,10 +111,6 @@ defmodule EvoGit.Agent.Exchange.Seams do
           :drain_inputs
           | :cancel_requested?
           | :clear_cancel
-          | :context
-          | :total_tokens
-          | :turn
-          | {:batch, keyword()}
 
   @type scheduler :: (scheduler_kind(), term(), State.t() -> term())
 
@@ -171,7 +163,7 @@ defmodule EvoGit.Agent.Exchange.Seams do
   def default_llm_call, do: &EvoGit.Agent.LLMPrompting.prompt_until_tools_or_limit/5
 
   @doc """
-  The production `scheduler` seam: the exact ETS/scheduler calls the turn loop
+  The production `scheduler` seam: the exact control-plane calls the turn loop
   performs today.
 
   See the moduledoc for the kind list. An unknown kind raises a
@@ -189,23 +181,5 @@ defmodule EvoGit.Agent.Exchange.Seams do
 
   def default_scheduler(:clear_cancel, _payload, %State{agent_id: agent_id}) do
     EvoGit.AgentScheduler.Store.clear_cancel_requested(agent_id)
-  end
-
-  def default_scheduler(:context, %ReqLLM.Context{} = ctx, %State{agent_id: agent_id}) do
-    EvoGit.Agent.ContextBuilder.sync_context_to_ets(agent_id, ctx)
-  end
-
-  def default_scheduler(:total_tokens, total, %State{agent_id: agent_id})
-      when is_integer(total) do
-    EvoGit.Agent.ContextBuilder.sync_total_tokens_to_ets(agent_id, total)
-  end
-
-  def default_scheduler(:turn, turn, %State{agent_id: agent_id}) when is_integer(turn) do
-    EvoGit.Agent.ContextBuilder.sync_turn_to_ets(agent_id, turn)
-  end
-
-  def default_scheduler({:batch, fields}, _payload, %State{agent_id: agent_id})
-      when is_list(fields) do
-    EvoGit.AgentScheduler.batch_update_agent(agent_id, fields)
   end
 end

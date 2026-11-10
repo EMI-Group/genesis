@@ -122,8 +122,6 @@ defmodule EvoGit.Agent.Exchange do
   # --- Loop control ---
 
   defp loop(%State{} = state, opts, seams) do
-    context_before = state.context
-
     case EvoGit.Agent.ContextCompression.compress_if_needed(state,
            agent_id: state.agent_id,
            llm_model: state.llm_model,
@@ -131,7 +129,7 @@ defmodule EvoGit.Agent.Exchange do
            llm_generation_params: state.llm_generation_params
          ) do
       %State{} = state ->
-        continue_loop(state, context_before, opts, seams)
+        continue_loop(state, opts, seams)
 
       {:error, {:llm_request_rejected, _message} = terminal} ->
         # The compression call hit a NON-RETRYABLE provider rejection (the
@@ -147,16 +145,12 @@ defmodule EvoGit.Agent.Exchange do
 
   # The remainder of the turn, after compression returned a `%State{}`
   # (compressed or unchanged — byte-identical to the pre-existing flow).
-  defp continue_loop(%State{} = state, context_before, opts, seams) do
+  defp continue_loop(%State{} = state, opts, seams) do
     state = Warnings.check_limit_warnings(state)
 
-    # Sync context after any updates (compression, warnings). The in-memory
-    # context is already stamped at creation; the `:context`/`:total_tokens`
-    # seams return `:ok`, so they are called for the side effect only.
-    if context_before != state.context do
-      scheduler(seams, :context, state.context, state)
-      scheduler(seams, :total_tokens, state.total_tokens, state)
-    end
+    # No ETS write-through here anymore: the state this turn produces is the
+    # authority and is published by the ONE `:checkpoint` seam at the turn
+    # boundary (`continuations/2` / `run/2`).
 
     # Drain any pending user messages (injected externally via dashboard/RPC)
     # and append them to the context as user-role messages before the next LLM call.

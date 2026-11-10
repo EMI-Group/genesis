@@ -161,6 +161,51 @@ defmodule EvoGit.Agent.ExchangeCheckpointSeamTest do
       assert length(collect_checkpoints(agent_id)) == 2
     end
 
+    test "is the per-turn ETS publication path: :checkpoint -> Session.Summary.publish/3",
+         %{agent_id: agent_id} do
+      test_pid = self()
+
+      # The PRODUCTION wiring (`Session.Worker`): the checkpoint hook is what
+      # publishes the summary row the dashboard reads. No other per-turn ETS
+      # write exists anymore, so a row that advances turn-by-turn is the proof.
+      opts = [
+        llm_call: llm_stub(),
+        tool_batch: tool_batch_stub(),
+        scheduler: scheduler_stub(),
+        checkpoint: fn state ->
+          :ok = EvoGit.Agent.Session.Summary.publish(state.agent_id, state)
+          send(test_pid, {:published, state.turn, EvoGit.Agent.Session.Summary.read(agent_id)})
+        end
+      ]
+
+      assert {:finish, %State{} = final_state, %Result{}} =
+               Exchange.run(initial_state(agent_id), opts)
+
+      # ONE publication per turn, each carrying that turn's summary fields.
+      assert_receive {:published, 1, %AgentState{} = first_row}, 1_000
+      assert_receive {:published, 2, %AgentState{} = second_row}, 1_000
+
+      assert first_row.turn == 1
+      assert first_row.total_tokens == 120
+      assert first_row.usage.input_tokens == 100
+      assert first_row.message_count < second_row.message_count
+
+      # The finishing turn's publication is the terminal summary — and it never
+      # writes `context` (the row keeps its registration-time value).
+      assert second_row.turn == 2
+      assert second_row.total_tokens == 120
+      assert second_row.usage.input_tokens == 200
+      assert second_row.message_count == message_count(final_state)
+
+      final_row = EvoGit.Agent.Session.Summary.read(agent_id)
+      assert final_row.turn == 2
+      assert final_row.message_count == message_count(final_state)
+      assert final_row.total_tokens == second_row.total_tokens
+      assert final_row.usage == second_row.usage
+
+      refute_receive {:published, _turn, _row}, 100
+    end
+
     test "an explicit nil opts[:checkpoint] wins over the app-env default", %{
       agent_id: agent_id
     } do

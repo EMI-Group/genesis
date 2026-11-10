@@ -1125,22 +1125,9 @@ defmodule EvoGit.AgentScheduler do
   @spec batch_update_agent(pos_integer(), keyword()) :: :ok
   def batch_update_agent(agent_id, fields), do: Store.batch_update_agent(agent_id, fields)
 
-  @doc "Updates the conversation context for an agent in the agent state table."
-  @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: :ok
-  def update_agent_context(agent_id, context), do: Store.update_agent_context(agent_id, context)
-
   @doc "Updates the cumulative usage for an agent in the agent state table."
   @spec update_agent_usage(pos_integer(), EvoGit.Agent.Usage.t()) :: :ok
   def update_agent_usage(agent_id, usage), do: Store.update_agent_usage(agent_id, usage)
-
-  @doc "Updates the current turn for an agent in the agent state table."
-  @spec update_agent_turn(pos_integer(), non_neg_integer()) :: :ok
-  def update_agent_turn(agent_id, turn), do: Store.update_agent_turn(agent_id, turn)
-
-  @doc "Updates the cumulative token count for an agent in the agent state table."
-  @spec update_total_tokens(pos_integer(), non_neg_integer()) :: :ok
-  def update_total_tokens(agent_id, total_tokens),
-    do: Store.update_total_tokens(agent_id, total_tokens)
 
   @doc "Increments the compression count for an agent in the agent state table."
   @spec increment_compression_count(pos_integer()) :: :ok

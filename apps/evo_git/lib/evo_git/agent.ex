@@ -91,13 +91,6 @@ defmodule EvoGit.Agent do
 
       import ReqLLM.Context, only: [user: 1, assistant: 1, system: 1, tool_result: 3]
 
-      @doc """
-      Runs the agent synchronously. Delegates to the shared Runner module.
-      """
-      def run(objective, dispatch_ctx) do
-        EvoGit.Agent.Runner.run(__MODULE__, objective, dispatch_ctx)
-      end
-
       def available_tools do
         EvoGit.Agent.Tools.schemas() ++
           EvoGit.Agent.SubagentSchemas.schemas(__MODULE__)

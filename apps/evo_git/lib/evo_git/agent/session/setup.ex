@@ -1,7 +1,7 @@
 defmodule EvoGit.Agent.Session.Setup do
   @moduledoc """
-  The ONE durable/per-process setup implementation shared by the current
-  `EvoGit.Agent.Runner` driver and the `EvoGit.Agent.Session` process.
+  The ONE durable/per-process setup implementation used by the
+  `EvoGit.Agent.Session` process and its per-exchange worker.
 
   Two halves with different lifetimes:
 
@@ -219,7 +219,7 @@ defmodule EvoGit.Agent.Session.Setup do
   Returns `{:error, :path_not_exist}` (after logging) when the agent's assigned
   node path does not exist and the agent is not repo-less. Performs NO ETS
   writes and installs nothing on the process dictionary — the caller owns those
-  side effects (`Runner.InitialState` keeps the ETS ones).
+  side effects.
   """
   def build_initial_state(agent_module, objective, ctx) do
     agent_id = fetch_field!(ctx, :agent_id)

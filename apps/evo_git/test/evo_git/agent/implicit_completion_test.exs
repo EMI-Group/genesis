@@ -383,8 +383,11 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
       # No refusal / workspace-state tool result appears anywhere in the agent's
       # context: the finish was a Result, not a {:continue, ...}.
       # (The positive half keeps the negative assertion non-vacuous: the context
-      # really was synced and really does carry the model's final message.)
-      live_context = context_text(agent_id)
+      # really does carry the model's final message.)
+      # NOTE: P2 removed the per-turn ETS `:context` write, so the owned state
+      # returned by the finish is the authority for the conversation, not the
+      # scheduler's summary row.
+      live_context = context_text(finished_state.context)
       assert live_context =~ @report_text
       refute live_context =~ ~r/\bdirty\b|workspace|uncommitted changes/i
     end
@@ -442,7 +445,8 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
 
       # The finish was a Result, never a refusal tool result: the live context
       # carries the report (positive half) and no workspace-state wording.
-      live_context = context_text(agent_id)
+      # (P2: the returned state's context is the authority, not the ETS row.)
+      live_context = context_text(finished_state.context)
       assert live_context =~ @report_text
       refute live_context =~ ~r/\bdirty\b|workspace|uncommitted changes/i
     end
@@ -666,13 +670,12 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
     agent_id
   end
 
-  # The agent's LIVE context as text, read back from the app-global ETS table
-  # (`process_llm_response/6` syncs it there) — used to prove the finish ended
-  # the run instead of entering a tool-result/refusal conversation.
-  defp context_text(agent_id) do
-    {:ok, agent_state} = SchedStore.get_agent_state(agent_id)
-
-    agent_state.context
+  # A conversation as text — used to prove the finish ended the run instead of
+  # entering a tool-result/refusal conversation. P2 removed the per-turn ETS
+  # `:context` publication seam, so the conversation lives in the state the
+  # engine hands back, never in the scheduler's summary row.
+  defp context_text(%ReqLLM.Context{} = context) do
+    context
     |> ReqLLM.Context.to_list()
     |> Enum.map_join("\n", &context_text_of/1)
   end
