@@ -433,7 +433,7 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
       assert Keyword.fetch!(ToolDispatch.current_generation_params(), :reasoning_effort) == :high
       never = fn _ -> flunk("a successful text reply must not retry or enter recovery") end
 
-      assert {:ok, result} =
+      assert {:finish, _state, result} =
                ToolDispatch.do_turn(loop_state(id, ctx.repo), fn _ -> [] end, [], never, never)
 
       assert result.result == "Selected account reply"
@@ -458,7 +458,7 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
     assert ToolDispatch.current_context_window() == 64_000
     never = fn _ -> flunk("successful completion must not re-enter the loop") end
 
-    assert {:ok, result} =
+    assert {:finish, _state, result} =
              ToolDispatch.do_turn(loop_state(child, ctx.repo), fn _ -> [] end, [], never, never)
 
     assert result.result == "Selected account reply"
@@ -638,6 +638,7 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
 
   defp loop_state(id, repo) do
     meta = meta!(id)
+    agent = agent!(id)
 
     %State{
       agent_id: id,
@@ -649,7 +650,14 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
       context:
         ReqLLM.Context.new([ReqLLM.Context.system("SYSTEM"), ReqLLM.Context.user("OBJECTIVE")]),
       objective: "Test canonical inheritance",
-      repo_less: Process.get(:repo_less, false)
+      repo_less: Process.get(:repo_less, false),
+      # The engine reads these from the STRUCT now (the old `do_turn/5` read them
+      # from this same scheduler row). The Runner's `InitialState` copies them
+      # from that row; a missing generation-params value would silently send
+      # ReqLLM's own defaults and a nil `max_retries` would make a transient
+      # failure retry unboundedly.
+      llm_generation_params: agent.llm_generation_params,
+      max_retries: agent.max_retries
     }
   end
 
