@@ -19,6 +19,31 @@ defmodule EvoGit.Application do
     # application restart after a soft crash), creation is a no-op.
     ensure_ets_table(:evogit_agent_state, [:named_table, :public, :set, read_concurrency: true])
     ensure_ets_table(:evogit_sched_meta, [:named_table, :public, :set, read_concurrency: true])
+    # CONTROL PLANE (see `EvoGit.AgentScheduler.ControlPlane`): everything a
+    # process OTHER than the agent writes about a live agent, so no cross-process
+    # write ever read-modify-writes the agent's own `:evogit_agent_state` row.
+    #   * `:evogit_agent_inbox` — a BAG of `{agent_id, {seq, message}}`: appends
+    #     are one atomic insert, and `:ets.take/2` drains a key atomically, so a
+    #     concurrent append is never lost or delivered twice. `seq` (a
+    #     BEAM-monotonic integer) restores append order on drain.
+    #   * `:evogit_agent_control` — a SET of
+    #     `{agent_id, cancel_requested, compression_count}`, each element updated
+    #     with ONE atomic op (`:ets.update_element/3` / `:ets.update_counter/4`).
+    # App-owned so they survive AgentScheduler crashes/restarts.
+    ensure_ets_table(:evogit_agent_inbox, [
+      :bag,
+      :named_table,
+      :public,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
+
+    ensure_ets_table(:evogit_agent_control, [
+      :set,
+      :named_table,
+      :public,
+      read_concurrency: true
+    ])
 
     # Graceful-cancel marker: task_ids currently in a graceful cancel. The
     # scheduler registers task_ids here via begin_graceful_cancel/1; run_agent

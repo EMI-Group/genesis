@@ -91,9 +91,31 @@ defmodule EvoGit.Agent.CancelGraceTest do
 
   # Seeds an agent row under a UNIQUE id (this file's own range) and schedules
   # its deletion, so no concurrently running module can observe or clobber it.
+  #
+  # The state ROW carries only the agent's own fields: `cancel_requested` and
+  # `pending_user_messages` live in the control plane, so those two seed
+  # through the public Store control API after the row is in place (exactly what
+  # the scheduler's graceful cancel does). Reads go through
+  # `Store.get_agent_state/1`, which projects them back onto the struct.
   defp put_agent_state!(overrides \\ []) do
     agent_id = 9_900_000 + :erlang.unique_integer([:positive])
-    :ok = Store.put_agent_state(agent_id, agent_state(overrides))
+
+    {control, row_overrides} =
+      Keyword.split(overrides, [:cancel_requested, :pending_user_messages])
+
+    :ok = Store.put_agent_state(agent_id, agent_state(row_overrides))
+
+    case Keyword.fetch(control, :cancel_requested) do
+      {:ok, value} -> :ok = Store.set_cancel_requested(agent_id, value)
+      :error -> :ok
+    end
+
+    control
+    |> Keyword.get(:pending_user_messages, [])
+    |> Enum.each(fn message ->
+      :ok = Store.append_pending_user_message(agent_id, message)
+    end)
+
     on_exit(fn -> Store.delete_agent_state(agent_id) end)
     agent_id
   end

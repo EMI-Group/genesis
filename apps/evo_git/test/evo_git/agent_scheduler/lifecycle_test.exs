@@ -100,10 +100,14 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     :ets.insert(:evogit_agent_state, {agent_id, state})
   end
 
+  # Reads through the public Store API, which PROJECTS the control-plane values
+  # (`cancel_requested`, `pending_user_messages`, `compression_count`) back onto
+  # the struct — they are written to `:evogit_agent_inbox` /
+  # `:evogit_agent_control`, never to the state row.
   defp get_agent_state(agent_id) do
-    case :ets.lookup(:evogit_agent_state, agent_id) do
-      [{^agent_id, state}] -> {:ok, state}
-      [] -> :missing
+    case EvoGit.AgentScheduler.Store.get_agent_state(agent_id) do
+      {:ok, state} -> {:ok, state}
+      :error -> :missing
     end
   end
 
@@ -130,6 +134,11 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
     create_ets_if_missing(:evogit_cancelling_tasks)
+    create_ets_if_missing(:evogit_agent_control)
+
+    if :ets.whereis(:evogit_agent_inbox) == :undefined,
+      do: :ets.new(:evogit_agent_inbox, [:bag, :named_table, :public])
+
     :ok
   end
 

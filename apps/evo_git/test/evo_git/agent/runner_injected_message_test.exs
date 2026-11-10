@@ -64,20 +64,27 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
 
     if :ets.whereis(:evogit_sched_meta) != :undefined,
       do: :ets.delete(:evogit_sched_meta, agent_id)
+
+    EvoGit.AgentScheduler.ControlPlane.delete(agent_id)
   end
 
   # Seeds the agent's pending-message queue EXACTLY as the scheduler's queue
-  # append would (a direct state write, so the test does not depend on the
-  # queue's own normalization/validation).
+  # append would: the row first, then one atomic inbox append per message
+  # (`Store.append_pending_user_message/2` — the queue's single writer; the
+  # state row never stores pending messages).
   defp seed_pending_queue(agent_id, pending) do
-    Store.put_agent_state(agent_id, %AgentState{
-      context_node: %ContextNode{path: "./", repo: "/tmp/test"},
-      phylo_node: %PhyloGraphNode{repo: "/tmp/test", base_commit: "abc", current_commit: "abc"},
-      llm_model: "test:model",
-      max_retries: 3,
-      max_depth: 8,
-      pending_user_messages: pending
-    })
+    :ok =
+      Store.put_agent_state(agent_id, %AgentState{
+        context_node: %ContextNode{path: "./", repo: "/tmp/test"},
+        phylo_node: %PhyloGraphNode{repo: "/tmp/test", base_commit: "abc", current_commit: "abc"},
+        llm_model: "test:model",
+        max_retries: 3,
+        max_depth: 8
+      })
+
+    Enum.each(pending, fn message ->
+      :ok = Store.append_pending_user_message(agent_id, message)
+    end)
   end
 
   defp loop_state(agent_id) do
