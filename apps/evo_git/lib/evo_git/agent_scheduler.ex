@@ -11,11 +11,21 @@ defmodule EvoGit.AgentScheduler do
   - LLM and tool execution slot management with concurrency control and backoff
 
   The scheduler NEVER touches worktree I/O. Worktree lifecycle is owned by
-  `EvoGit.AgentScheduler.WorktreeManager`: the agent Runner requests a fresh
+  `EvoGit.AgentScheduler.WorktreeManager`: the agent's session requests a fresh
   worktree (the call waits indefinitely — no call timeout, so a slow create is
   never aborted, while a genuine failure inside the create pipeline still
   errors promptly; WorktreeManager offloads the I/O to a spawned task),
-  WorktreeManager monitors the agent process and destroys the worktree on exit.
+  WorktreeManager monitors the session process and destroys the worktree on exit.
+
+  ## Agent lifecycle
+
+  Every agent is ONE `EvoGit.Agent.Session` process, started here by
+  `EvoGit.AgentScheduler.Dispatch.do_try_dispatch/4` under
+  `EvoGit.Agent.Session.Supervisor`. The session owns the authoritative agent
+  state and sends exactly ONE terminal
+  `{:agent_session_result, agent_id, session_pid, result}` before it stops; the
+  scheduler admits it (`Lifecycle.handle_session_result/3`) and keeps only a
+  best-effort `SchedMeta` mirror (`session_pid`, `mode`, `phase`).
 
   ## ETS Tables
 
@@ -28,8 +38,8 @@ defmodule EvoGit.AgentScheduler do
     after each commit via `update_phylo_node/2`.
 
   - **`:evogit_sched_meta`** — Owned by the scheduler process. Contains all
-    scheduling bookkeeping: status, worktree assignment, task refs, parent/child
-    tracking, retry counts, etc. Agents do not write to this table.
+    scheduling bookkeeping: status, worktree assignment, session refs,
+    parent/child tracking, retry counts, etc. Agents do not write to this table.
 
   ## Slot Management
 
@@ -726,7 +736,7 @@ defmodule EvoGit.AgentScheduler do
 
         cancel_set = MapSet.new(agent_ids)
 
-        # 3. Remove refs from ref_to_agent BEFORE killing Tasks (so DOWN handler is a no-op)
+        # 3. Remove refs from ref_to_agent BEFORE killing sessions (so DOWN handler is a no-op)
         ref_to_agent =
           state.ref_to_agent
           |> Enum.reject(fn {_ref, aid} -> MapSet.member?(cancel_set, aid) end)
@@ -792,6 +802,8 @@ defmodule EvoGit.AgentScheduler do
     # 2. Find all agents of this task (SchedMeta.task_id scan — same pattern
     #    as force_kill_task_agents) and put each live agent into cancel-grace:
     #    append the cancel notification message and set cancel_requested=true.
+    #    Then drive the agent's SESSION into `:cancelling` as well, so the
+    #    session's own summary row follows and its phase mirror is accurate.
     agent_ids = agent_ids_for_task(task_id)
 
     Enum.each(agent_ids, fn agent_id ->
@@ -799,6 +811,7 @@ defmodule EvoGit.AgentScheduler do
         {:ok, _agent_state} ->
           Store.append_pending_user_message(agent_id, cancel_message())
           Store.set_cancel_requested(agent_id)
+          drive_session_graceful_cancel(agent_id)
 
         :error ->
           :ok
@@ -1061,28 +1074,42 @@ defmodule EvoGit.AgentScheduler do
     {:noreply, state}
   end
 
-  # Task returned a result
-  @impl true
-  def handle_info({ref, result}, %State{} = state) when is_reference(ref) do
-    Lifecycle.handle_task_result(ref, result, state)
-  end
-
-  # Task process exited (monitor :DOWN).
+  # Session process exited (monitor :DOWN).
   @impl true
   def handle_info({:DOWN, ref, :process, pid, reason}, %State{} = state) do
     Lifecycle.handle_agent_down(ref, pid, reason, state)
   end
 
-  # A session delivers its terminal result here before stopping (signal ordering
-  # guarantees it arrives before the session's :DOWN). Nothing starts a session yet,
-  # so the message is acknowledged and ignored; the session-wiring checkpoint replaces
-  # this with real handling (from-reply, agent_count/foreign_repo_commits, subagent routing).
-  def handle_info({:agent_session_result, agent_id, session_pid, result}, state) do
-    Logger.debug(
-      "agent_session_result for #{inspect(agent_id)} from #{inspect(session_pid)}: #{inspect(result)}"
-    )
+  # A session's ONE terminal result, delivered BEFORE it stops (signal ordering
+  # guarantees it arrives before that session's :DOWN). Admitted only from the
+  # CURRENT session of a live agent: a `session_pid` of `nil` means the run is
+  # already recycled/being retried, so a late result for it is still the run's
+  # outcome; any OTHER pid is a stale session and is ignored.
+  @impl true
+  def handle_info({:agent_session_result, agent_id, session_pid, result}, %State{} = state) do
+    case Store.get_sched_meta(agent_id) do
+      {:ok, %SchedMeta{session_pid: nil}} ->
+        Lifecycle.handle_session_result(agent_id, result, state)
 
-    {:noreply, state}
+      {:ok, %SchedMeta{session_pid: ^session_pid}} ->
+        Lifecycle.handle_session_result(agent_id, result, state)
+
+      {:ok, %SchedMeta{session_pid: other}} ->
+        Logger.debug(
+          "AgentScheduler: ignoring result from stale session #{inspect(session_pid)} " <>
+            "for agent #{agent_id} (current: #{inspect(other)})"
+        )
+
+        {:noreply, state}
+
+      :error ->
+        Logger.debug(
+          "AgentScheduler: ignoring session result for unknown agent " <>
+            "#{inspect(agent_id)} from #{inspect(session_pid)}"
+        )
+
+        {:noreply, state}
+    end
   end
 
   # --- ETS Helpers (Agent History Table) ---
@@ -1154,6 +1181,24 @@ defmodule EvoGit.AgentScheduler do
     Store.list_sched_meta()
     |> Enum.filter(fn {_id, %SchedMeta{task_id: tid}} -> tid == task_id end)
     |> Enum.map(fn {id, _meta} -> id end)
+  end
+
+  # Drives one agent's SESSION into cancel-grace. The engine-facing signal above
+  # (pending message + cancel_requested flag) is what makes the RUNNING exchange
+  # save work; this call makes the session itself enter `:cancelling` (so its
+  # summary row follows) and mirrors the phase onto sched_meta. Best-effort: a
+  # session that cannot serve the call (still `:starting`, already finished, or
+  # gone) is left to the pending-message drain, and a `nil` pid (registered but
+  # never dispatched) is a no-op.
+  defp drive_session_graceful_cancel(agent_id) do
+    case Store.get_sched_meta(agent_id) do
+      {:ok, %SchedMeta{session_pid: pid} = meta} when is_pid(pid) ->
+        EvoGit.Agent.Session.cancel(pid, :graceful)
+        Store.put_sched_meta(agent_id, %{meta | phase: :cancelling})
+
+      _other ->
+        :ok
+    end
   end
 
   @doc false

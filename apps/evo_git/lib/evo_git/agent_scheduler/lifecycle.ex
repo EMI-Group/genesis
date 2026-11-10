@@ -22,14 +22,17 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
   Called on normal completion or when an agent's result has already been sent.
   Decrements the running count. Worktree cleanup is WorktreeManager's job via
-  its process monitor (the agent Task exited).
+  its process monitor (the agent's session exited).
   """
   @spec recycle_agent(State.t(), pos_integer()) :: State.t()
   def recycle_agent(%State{} = state, agent_id) do
     # Genuine race: the :DOWN completion may race with another cleanup path.
     # If the entry is already gone, return state unchanged.
     case Store.get_sched_meta(agent_id) do
-      {:ok, _meta} ->
+      {:ok, meta} ->
+        # Best-effort phase mirror on the ONE finalize/recycle site; the rows are
+        # deleted immediately after, and the session was the live phase owner.
+        Store.put_sched_meta(agent_id, %{meta | phase: :done})
         Store.delete_agent_state(agent_id)
         Store.delete_sched_meta(agent_id)
         state
@@ -41,15 +44,16 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   end
 
   @doc """
-  Cancels an agent by killing its Task process and replying to blocked callers.
+  Cancels an agent by force-stopping its session and replying to blocked callers.
 
   Unlike `recycle_agent/2` (which assumes normal completion), this function:
-  - Kills the agent's Task process if still alive (via the stored task_ref)
+  - Force-stops the agent's `EvoGit.Agent.Session` if still alive (via the
+    stored `session_pid`)
   - Replies to the top-level `from` caller with `{:error, :cancelled}`
   - Replies to the `sub_agent_from` caller (waiting parent) with `{:error, :cancelled}`
   - Then removes the ETS entries
 
-  Killing the Task fires the WorktreeManager monitor, which reclaims the
+  Killing the session fires the WorktreeManager monitor, which reclaims the
   worktree.
 
   **Important**: The caller MUST remove the agent's ref from `state.ref_to_agent`
@@ -60,11 +64,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   def cancel_agent(%State{} = state, agent_id) do
     case Store.get_sched_meta(agent_id) do
       {:ok, meta} ->
-        # Kill the agent's Task process if it has one and is alive
-        if meta.task_ref do
-          # task_ref is a %Task{} struct — Task.shutdown accepts it directly
-          Task.shutdown(meta.task_ref, :brutal_kill)
-        end
+        force_stop_session(meta.session_pid)
 
         # Reply to the top-level caller (EvoDash Task process) if not yet replied
         if meta.from do
@@ -87,6 +87,24 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
         state
     end
   end
+
+  # `Session.cancel(pid, :force)` is the normal path: the session kills its
+  # exchange worker and stops WITHOUT delivering a result, so no reply can race
+  # the `{:error, :cancelled}` replies above. The call is BOUNDED, and a session
+  # still stuck in `:starting` (blocked in the worktree-create call) answers
+  # `{:error, :not_found}` — so anything other than `:ok` kills the still-alive
+  # pid directly. A force cancel therefore never leaves a live session behind,
+  # and a `nil` pid (registered but never dispatched) is a no-op.
+  defp force_stop_session(pid) when is_pid(pid) do
+    case EvoGit.Agent.Session.cancel(pid, :force) do
+      :ok -> :ok
+      _other -> Process.exit(pid, :kill)
+    end
+
+    :ok
+  end
+
+  defp force_stop_session(_pid), do: :ok
 
   # --- Status Updates ---
 
@@ -117,7 +135,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   @doc """
   Handles an agent crash by either retrying the agent or marking it as permanently failed.
 
-  On retry: increments retry count and re-dispatches (the retry's Runner
+  On retry: increments retry count and re-dispatches (the retry's session
   requests a FRESH worktree; the crashed agent's worktree is reclaimed by
   WorktreeManager via its monitor).
   On permanent failure: removes the ETS entries (worktree cleanup is
@@ -148,12 +166,13 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
     if meta.retries < state.agent_max_retries do
       # On retry, just update retry count and status. The crashed agent's
       # worktree is reclaimed by WorktreeManager via its monitor; the retry's
-      # Runner requests a FRESH worktree.
+      # session requests a FRESH worktree.
       Store.put_sched_meta(agent_id, %{
         meta
         | retries: meta.retries + 1,
           status: :pending,
-          task_ref: nil
+          session_pid: nil,
+          phase: nil
       })
 
       # Reset agent state phylo_node (will be re-set on dispatch)
@@ -169,8 +188,8 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
           :ok
       end
 
-      # Re-dispatch the agent (the retry's Runner requests a fresh worktree).
-      # Note: the crashed task's ref was already popped from ref_to_agent
+      # Re-dispatch the agent (the retry's session requests a fresh worktree).
+      # Note: the crashed session's ref was already popped from ref_to_agent
       # in the :DOWN handler, so the derived running count is correct.
       state =
         if state.paused do
@@ -212,62 +231,60 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
     end
   end
 
-  # --- Task Result Handling ---
+  # --- Session Result Handling ---
 
   @doc """
-  Handles a task result from an agent's Task process.
+  Handles the ONE terminal result a session delivers before it stops
+  (`{:agent_session_result, agent_id, session_pid, result}`).
   Stores the result for subagents or replies to the top-level caller.
+
+  Keyed on `agent_id` directly: the session names its agent, so no
+  monitor-reference lookup is involved.
   """
-  @spec handle_task_result(reference(), term(), State.t()) :: {:noreply, State.t()}
-  def handle_task_result(ref, result, %State{} = state) do
-    case Map.get(state.ref_to_agent, ref) do
-      nil ->
-        {:noreply, state}
+  @spec handle_session_result(pos_integer(), term(), State.t()) :: {:noreply, State.t()}
+  def handle_session_result(agent_id, result, %State{} = state) do
+    case Store.get_sched_meta(agent_id) do
+      {:ok, meta} ->
+        Store.put_sched_meta(agent_id, %{meta | result_sent: true})
 
-      agent_id ->
-        case Store.get_sched_meta(agent_id) do
-          {:ok, meta} ->
-            Store.put_sched_meta(agent_id, %{meta | result_sent: true})
+        # Inject this agent's subtree foreign-repo commit map into the result
+        # BEFORE the parent/root split, so both the subagent path
+        # (Subagents.store_sub_result rolls it up into the parent's map) and
+        # the root reply path carry it.
+        result = inject_foreign_repo_commits(result, meta.foreign_repo_commits)
 
-            # Inject this agent's subtree foreign-repo commit map into the result
-            # BEFORE the parent/root split, so both the subagent path
-            # (Subagents.store_sub_result rolls it up into the parent's map) and
-            # the root reply path carry it.
-            result = inject_foreign_repo_commits(result, meta.foreign_repo_commits)
+        if meta.parent_id do
+          Subagents.store_sub_result(meta.parent_id, agent_id, result, meta.spec)
+          state = Subagents.maybe_resume_parent(state, meta.parent_id)
+          {:noreply, state}
+        else
+          agent_count = Map.get(state.task_agent_counts, meta.task_id, 1)
+          result = inject_agent_count(result, agent_count)
 
-            if meta.parent_id do
-              Subagents.store_sub_result(meta.parent_id, agent_id, result, meta.spec)
-              state = Subagents.maybe_resume_parent(state, meta.parent_id)
-              {:noreply, state}
-            else
-              agent_count = Map.get(state.task_agent_counts, meta.task_id, 1)
-              result = inject_agent_count(result, agent_count)
+          GenServer.reply(meta.from, result)
 
-              GenServer.reply(meta.from, result)
+          state = %{
+            state
+            | task_agent_counts: Map.delete(state.task_agent_counts, meta.task_id)
+          }
 
-              state = %{
-                state
-                | task_agent_counts: Map.delete(state.task_agent_counts, meta.task_id)
-              }
-
-              {:noreply, state}
-            end
-
-          :error ->
-            Logger.warning(
-              "AgentScheduler: result for agent #{agent_id} but no sched_meta found. Ignoring."
-            )
-
-            {:noreply, state}
+          {:noreply, state}
         end
+
+      :error ->
+        Logger.warning(
+          "AgentScheduler: result for agent #{agent_id} but no sched_meta found. Ignoring."
+        )
+
+        {:noreply, state}
     end
   end
 
   @doc """
-  Handles a :DOWN monitor message for a crashed or completed agent Task process.
+  Handles a :DOWN monitor message for a crashed or completed agent session process.
   Releases slots, recycles/cleans up on normal exit, and triggers crash recovery
   on abnormal exit. (Worktree reclamation is WorktreeManager's job via its own
-  process monitor on the agent Task.)
+  process monitor on the session process.)
   """
   @spec handle_agent_down(reference(), pid(), term(), State.t()) :: {:noreply, State.t()}
   def handle_agent_down(ref, _pid, reason, %State{} = state) do

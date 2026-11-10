@@ -80,7 +80,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
            depth: 0,
            parent_id: nil,
            task_id: task_id,
-           task_ref: %Task{pid: owner},
+           session_pid: owner,
            status: status,
            result_sent: false,
            spec: %AgentSpec{

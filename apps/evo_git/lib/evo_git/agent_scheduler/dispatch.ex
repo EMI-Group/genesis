@@ -194,14 +194,17 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   # --- Dispatch ---
 
   @doc """
-  Dispatches an agent by computing the worktree path and spawning a Task.
+  Dispatches an agent by computing the worktree path and starting its session.
 
   The GenServer phase (this function) is fast: it computes the worktree path,
-  stores it in sched_meta (so cancel_agent can find the worktree), and spawns
-  the agent Task. Worktree creation is requested by the agent's Runner from
-  `EvoGit.AgentScheduler.WorktreeManager.create_worktree_for_agent/6` (the call
-  waits indefinitely — creation is never aborted by a timeout; WorktreeManager
-  offloads the I/O to a spawned task and monitors the agent process).
+  stores it in sched_meta (so cancel_agent can find the worktree), and starts
+  the agent's `EvoGit.Agent.Session` under `EvoGit.Agent.Session.Supervisor`.
+  Worktree creation is requested by the SESSION from
+  `EvoGit.AgentScheduler.WorktreeManager.create_worktree_for_agent/6` (via
+  `EvoGit.Agent.Session.Setup.bind_worktree/2`, with the session's own pid as
+  the monitored owner; the call waits indefinitely — creation is never aborted
+  by a timeout; WorktreeManager offloads the I/O to a spawned task and monitors
+  the session process).
   """
   @spec try_dispatch(State.t(), pos_integer()) :: State.t()
   def try_dispatch(%State{} = state, agent_id) do
@@ -223,8 +226,8 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     task_local_id = agent_state.task_local_id
 
     # Phase 1 — GenServer phase (fast, no blocking I/O):
-    # Compute the worktree path and store it in sched_meta BEFORE spawning the
-    # task, so cancel_agent can find the worktree even if the task hasn't
+    # Compute the worktree path and store it in sched_meta BEFORE starting the
+    # session, so cancel_agent can find the worktree even if the session hasn't
     # finished its setup yet.
     agent_repo_root = resolve_agent_repo_root(spec, state)
 
@@ -237,11 +240,15 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
     Store.put_sched_meta(agent_id, %{meta | worktree: worktree_path})
 
-    # Phase 2 — Task phase (slow, concurrent):
-    # Worktree creation does NOT run here. The agent's Runner requests a fresh
-    # worktree from WorktreeManager (call waits indefinitely) inside `run/2`;
-    # WorktreeManager offloads the I/O to a spawned task, so multiple
-    # subagents create worktrees in parallel.
+    # Phase 2 — Session phase (slow, concurrent):
+    # Worktree creation does NOT run here. The session requests a fresh worktree
+    # from WorktreeManager (`Setup.bind_worktree/2`, call waits indefinitely)
+    # during its own start event; WorktreeManager offloads the I/O to a spawned
+    # task, so multiple agents create worktrees in parallel.
+    #
+    # `scheduler: self()` is explicit rather than relying on the registered
+    # name: the session sends its ONE terminal `{:agent_session_result, ...}`
+    # to this pid, so a named/test scheduler instance is served too.
     dispatch_ctx =
       [
         agent_id: agent_id,
@@ -251,36 +258,82 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         worktree_path: worktree_path,
         retries: retries,
         spec: spec,
-        meta: meta
+        meta: meta,
+        scheduler: self()
       ]
       |> append_repo_less_ctx(spec, agent_repo_root)
 
-    task =
-      Task.Supervisor.async_nolink(
-        EvoGit.TaskSupervisor,
-        spec.agent_module,
-        :run,
-        [spec.objective, dispatch_ctx]
-      )
+    case start_session(dispatch_ctx) do
+      {:ok, pid} ->
+        track_session(state, agent_id, meta, worktree_path, pid)
 
-    # Update scheduler metadata with running status and the task reference.
-    # Store the full %Task{} struct so cancel_agent can call Task.shutdown/2.
-    # ref_to_agent still keys on task.ref (the monitor reference).
+      # A stale registry entry (the previous session for this agent id is still
+      # registered): that pid IS the agent's session, so it is tracked exactly
+      # like a fresh start.
+      {:error, {:already_started, pid}} ->
+        track_session(state, agent_id, meta, worktree_path, pid)
+
+      {:error, reason} ->
+        # The agent is never silently dropped: a session that cannot even start
+        # is handled EXACTLY like a dispatch crash — logged, retried up to
+        # `agent_max_retries` (each retry re-enters this function), and at
+        # permanent failure the parent/root caller is replied an error. The meta
+        # stays `:pending` (nothing was recorded on it) so a retry starts clean.
+        Logger.error(
+          "AgentScheduler: failed to start session for agent #{agent_id}: #{inspect(reason)}"
+        )
+
+        {:noreply, state} =
+          EvoGit.AgentScheduler.Lifecycle.handle_agent_crash(
+            state,
+            agent_id,
+            {:session_start_failed, reason}
+          )
+
+        state
+    end
+  end
+
+  # `ref_to_agent` keys on the SESSION monitor ref; the session sends its
+  # terminal result before it stops, so result-before-:DOWN ordering holds.
+  # `phase: :starting` is a best-effort mirror — the session owns the live phase
+  # (`EvoGit.Agent.Session.inspect/2`).
+  defp track_session(state, agent_id, meta, worktree_path, pid) do
+    ref = Process.monitor(pid)
+
     Store.put_sched_meta(agent_id, %{
       meta
       | status: :running,
         worktree: worktree_path,
-        task_ref: task
+        session_pid: pid,
+        phase: :starting
     })
 
     %{
       state
-      | ref_to_agent: Map.put(state.ref_to_agent, task.ref, agent_id)
+      | ref_to_agent: Map.put(state.ref_to_agent, ref, agent_id)
     }
   end
 
+  # One supervised session per agent. The supervisor is absent in a runtime
+  # started without the application tree (e.g. an isolated test scheduler);
+  # that is a START failure routed through the crash/retry path below, never a
+  # reason to exit the shared GenServer.
+  defp start_session(dispatch_ctx) do
+    case Process.whereis(EvoGit.Agent.Session.Supervisor) do
+      nil ->
+        {:error, :session_supervisor_not_started}
+
+      _pid ->
+        DynamicSupervisor.start_child(
+          EvoGit.Agent.Session.Supervisor,
+          {EvoGit.Agent.Session, dispatch_ctx}
+        )
+    end
+  end
+
   # For repo-less agents, carry the marker plus the resolved repo path in the
-  # dispatch context: the Runner skips `create_worktree_for_agent` and uses
+  # dispatch context: the session skips `create_worktree_for_agent` and uses
   # `repo_less_repo_path` as its `Process.get(:repo_path)`. No worktree is ever
   # created for a repo-less agent — `worktree_path` above is synthetic (stored
   # in sched_meta for cancel lookup) and never materialized on disk.
@@ -297,8 +350,8 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   @doc """
   Best-effort commit of pending changes in the agent's worktree.
 
-  Designed to run in the AGENT (Task) process — not the scheduler. Uses
-  `Process.get(:repo_path)` for the worktree path. This is a safety net
+  Designed to run in the AGENT (exchange worker) process — not the scheduler.
+  Uses `Process.get(:repo_path)` for the worktree path. This is a safety net
   called after agent execution completes (normal or max-turns).
 
   Git can legitimately fail here (nothing to commit, worktree in a bad
