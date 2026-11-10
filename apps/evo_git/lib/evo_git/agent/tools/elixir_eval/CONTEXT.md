@@ -26,7 +26,7 @@ Related integration suites include `reflect_tools_test.exs` and the parent tool-
 | `allowlist.ex` | Read/write wrappers enforce exact EvoGit MFA/tier admission before Dune default fallback, with explicit IO shims and dbg rejection; `ensure_initialized/0` loads the generated Base allowlists at the parse chokepoint, while `AllowlistAliases.atoms/1` supplies the compile-time alias atoms for the boot-safe `@on_load`. |
 | `direct_api.ex` / `DirectAPI` | Literal exact-MFA/tier registry, generated fixed real-function invocations and shared direct-API help. |
 | `read.ex` / `Read`, `Write` | Fixed broker-backed runtime inspection and mutation APIs, not direct access to runtime structs or configuration. |
-| `projection.ex` / `Projection` | Scalar runtime projections, paginated task options, task-id validation and scalar normalization. |
+| `projection.ex` / `Projection` | Scalar runtime projections, paginated task options, task-id validation, scalar normalization and the `@doc false` `statuses/0`/`agent_statuses/0` whitelist accessors. |
 | `validation.ex` / `Validation` | `start_options/2`, `guide/2` and `scheduler_options/1` validate mutation arguments using literal keys and enums. |
 | `render.ex` / `Render`, `IOShim` | UTF-8-safe byte-capped rendering and Dune stdout shims. |
 | `bounded_io.ex` / `BoundedIO` | `start/1`, `output/1`, `stop/1` supply a bounded monitored group leader for native character output. |
@@ -145,7 +145,9 @@ Guides require a message of at most 2,000 bytes, an allowlisted local page, opti
 
 ## Projection and Output Contracts
 Facade task reads retain only id, type, status, review_status, timestamps and agent_count.
-The projected task-status whitelist admits `:awaiting_input`, so an idle interactive session's status survives the facade (and the cancel/force-kill gates) instead of normalizing to nil.
+The projected task-status whitelist (`Projection.statuses/0`) admits `:awaiting_input`, so an idle interactive session's status survives the facade (and the cancel/force-kill gates) instead of normalizing to nil.
+The projected agent-status whitelist (`Projection.agent_statuses/0`, used by the `list_agents` facade) admits `:awaiting_input` too, so an idle interactive root is visible as alive-but-idle instead of projecting `status: nil`.
+Both whitelists are exposed as `@doc false` accessors so the status-admission totality test asserts the `:running ⇒ :awaiting_input` implication instead of restating the lists.
 The following projection rules apply to convenience facades, not admitted direct APIs, which retain actual return values as described above.
 Facade task reads omit objective, opts, result, attachments, errors, usage, histories and credential fields.
 Task pages default to limit 25/offset 0/status all, accept limit 1..50 and offset 0..10,000, and validate status against literal enums; task ids are 1..128 bytes of ASCII letters, digits, underscore or hyphen.
