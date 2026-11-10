@@ -23,6 +23,15 @@ defmodule EvoGit.VCT.Table do
       `vct:///projects/<basename>[-N]` point.
 
   Points are unique within a table; `unique_point/2` enforces that.
+
+  ## Project mounts vs reserved (system) mounts
+
+  A point is a PROJECT mount exactly when it carries at least two segments and
+  the first one is `"projects"` (`vct:///projects/<name>` and anything nested
+  below it). Everything else — `vct:///`, `vct:///projects` (no name), and any
+  other top-level namespace such as `vct:///genesis-source` — is a RESERVED
+  (system) mount: it is not part of the user's project list, it is never
+  forgotten through `EvoGit.VCT.forget/1`, and `enforce_cap/2` never evicts it.
   """
 
   alias EvoGit.VCT.Mount
@@ -109,6 +118,64 @@ defmodule EvoGit.VCT.Table do
 
   def normalize_name(_name), do: nil
 
+  ## Reserved (system) vs project mounts
+
+  @doc """
+  Returns `true` when `point` is a PROJECT mount point.
+
+  A project mount sits in the `projects` namespace with a name:
+  `vct:///projects/<name>` (and anything nested below it). Accepts a canonical
+  point string or an `EvoGit.VCT.Path`; TOTAL — an unparseable or non-path
+  input is not a project mount (`false`).
+  """
+  @spec project_mount?(VctPath.t() | String.t() | term()) :: boolean()
+  def project_mount?(point) do
+    case point_segments(point) do
+      {:ok, ["projects", _name | _rest]} -> true
+      _other -> false
+    end
+  end
+
+  @doc """
+  Returns `true` when `point` is RESERVED — a system mount outside
+  `vct:///projects/<name>` (`vct:///`, `vct:///projects`, `vct:///<namespace>`).
+
+  Reserved mounts are never listed as projects, never forgotten and never
+  evicted by the cap. TOTAL: an unparseable or non-path input is NOT reserved
+  (`false`), so a caller can distinguish "reserved" from "not a point at all".
+  """
+  @spec reserved?(VctPath.t() | String.t() | term()) :: boolean()
+  def reserved?(point) do
+    case point_segments(point) do
+      {:ok, segments} -> not project_segments?(segments)
+      :error -> false
+    end
+  end
+
+  @doc """
+  Keeps only the PROJECT mounts of a mount list, preserving order.
+  """
+  @spec project_mounts([Mount.t()]) :: [Mount.t()]
+  def project_mounts(mounts) when is_list(mounts), do: Enum.filter(mounts, &project_entry?/1)
+  def project_mounts(_mounts), do: []
+
+  defp project_entry?(%Mount{point: point}), do: project_mount?(point)
+  defp project_entry?(_mount), do: false
+
+  defp project_segments?(["projects", _name | _rest]), do: true
+  defp project_segments?(_segments), do: false
+
+  defp point_segments(%VctPath{segments: segments}) when is_list(segments), do: {:ok, segments}
+
+  defp point_segments(point) when is_binary(point) do
+    case VctPath.parse(point) do
+      {:ok, parsed} -> {:ok, parsed.segments}
+      {:error, _reason} -> :error
+    end
+  end
+
+  defp point_segments(_point), do: :error
+
   ## Queries
 
   @doc """
@@ -171,19 +238,32 @@ defmodule EvoGit.VCT.Table do
   end
 
   @doc """
-  Caps the mount list at `cap` entries by EVICTING the oldest mounts.
+  Caps the PROJECT mounts at `cap` entries by EVICTING the oldest ones.
 
-  A `nil` `last_opened_at` counts as the oldest, and the sort is stable over the
-  incoming list — which is the store's order (newest first, ties by point
-  ascending) — so the outcome is deterministic. A non-positive or non-integer
-  `cap` leaves the list untouched.
+  RESERVED (system) mounts are always retained, and they do not count against
+  the cap. A `nil` `last_opened_at` counts as the oldest, and the sort is stable
+  over the incoming list — which is the store's order (newest first, ties by
+  point ascending) — so the outcome is deterministic. Surviving mounts keep
+  their original list positions, so membership (not just count) is preserved.
+  A non-positive or non-integer `cap` leaves the list untouched.
   """
   @spec enforce_cap([Mount.t()], term()) :: [Mount.t()]
   def enforce_cap(mounts, cap) when is_list(mounts) and is_integer(cap) and cap > 0 do
-    if length(mounts) <= cap do
+    project_count = mounts |> project_mounts() |> length()
+
+    if project_count <= cap do
       mounts
     else
-      mounts |> sort_by_recency() |> Enum.take(cap)
+      kept_points =
+        mounts
+        |> project_mounts()
+        |> sort_by_recency()
+        |> Enum.take(cap)
+        |> MapSet.new(& &1.point)
+
+      Enum.filter(mounts, fn mount ->
+        not project_entry?(mount) or MapSet.member?(kept_points, mount.point)
+      end)
     end
   end
 
@@ -252,6 +332,108 @@ defmodule EvoGit.VCT.Table do
         not File.exists?(mount.path)
     end)
   end
+
+  @doc """
+  Ensures `os_path` is mounted at exactly `point` — the POINT-first rule used by
+  reserved (system) mounts.
+
+  PURE: no clock, no filesystem probe, no I/O. `last_opened_at` is never
+  refreshed here (only `register/4` does that for a user "open"), so a repeated
+  ensure never churns a timestamp. Returns
+  `{:ok, mounts, mount, changed?}` — or `{:error, reason}` for an unparseable
+  point (`:invalid_point`) or a blank/non-binary OS path (`:invalid_path`).
+
+  The rules, in order:
+
+    1. `point` already holds the SAME normalized OS path → the existing mount,
+       unchanged (`changed? = false`): no rename, no timestamp churn;
+    2. `point` already holds a DIFFERENT path → RE-POINT it (new path, the
+       supplied name only when non-blank, point and `last_opened_at` kept); a
+       row mounting that same path at another point is removed, so an OS path
+       never has two rows;
+    3. no row at `point`, but the OS path is mounted at another point → MOVE
+       that row to `point` (path, name and `last_opened_at` preserved, the
+       supplied name winning when non-blank);
+    4. otherwise INSERT a new mount at `point` with `last_opened_at: nil`
+       (a system mount is not "opened", so it sorts last among projects).
+
+  Points stay unique: a row at `point` is never duplicated.
+  """
+  @spec ensure_mount([Mount.t()], VctPath.t() | String.t(), String.t(), String.t() | nil) ::
+          {:ok, [Mount.t()], Mount.t(), boolean()} | {:error, term()}
+  def ensure_mount(mounts, point, os_path, name) when is_list(mounts) do
+    with {:ok, canonical} <- canonical_point(point),
+         {:ok, normalized} <- ensure_os_path(os_path) do
+      name = normalize_name(name)
+      do_ensure_mount(mounts, canonical, normalized, name)
+    end
+  end
+
+  def ensure_mount(_mounts, _point, _os_path, _name), do: {:error, :invalid_mounts}
+
+  defp do_ensure_mount(mounts, point, normalized, name) do
+    case find_by_point(mounts, point) do
+      %Mount{} = existing ->
+        if comparison_form(existing.path) == comparison_form(normalized) do
+          {:ok, mounts, existing, false}
+        else
+          updated = %{existing | path: normalized, name: name || existing.name}
+
+          mounts =
+            mounts
+            |> drop_other_path_row(normalized, point)
+            |> replace(existing, updated)
+
+          {:ok, mounts, updated, true}
+        end
+
+      nil ->
+        case find_by_os_path(mounts, normalized) do
+          %Mount{} = existing ->
+            moved = %{existing | point: point, path: normalized, name: name || existing.name}
+            {:ok, replace(mounts, existing, moved), moved, true}
+
+          nil ->
+            mount =
+              Mount.new(point, normalized,
+                name: name || display_name(normalized),
+                last_opened_at: nil
+              )
+
+            {:ok, mounts ++ [mount], mount, true}
+        end
+    end
+  end
+
+  # One OS path, one row: a re-point must not leave the previous owner behind.
+  defp drop_other_path_row(mounts, normalized, point) do
+    case find_by_os_path(mounts, normalized) do
+      %Mount{point: ^point} -> mounts
+      %Mount{} = other -> List.delete(mounts, other)
+      nil -> mounts
+    end
+  end
+
+  defp canonical_point(%VctPath{segments: segments}) do
+    if Enum.all?(segments, &is_binary/1),
+      do: {:ok, VctPath.format(segments)},
+      else: {:error, :invalid_point}
+  end
+
+  defp canonical_point(point) when is_binary(point) do
+    case VctPath.parse(point) do
+      {:ok, parsed} -> {:ok, VctPath.format(parsed)}
+      {:error, _reason} -> {:error, :invalid_point}
+    end
+  end
+
+  defp canonical_point(_point), do: {:error, :invalid_point}
+
+  defp ensure_os_path(path) when is_binary(path) do
+    if String.trim(path) == "", do: {:error, :invalid_path}, else: {:ok, normalize_os_path(path)}
+  end
+
+  defp ensure_os_path(_path), do: {:error, :invalid_path}
 
   defp replace(mounts, old, new) do
     Enum.map(mounts, fn mount -> if mount.point == old.point, do: new, else: mount end)

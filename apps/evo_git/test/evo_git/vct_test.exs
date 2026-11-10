@@ -428,6 +428,329 @@ defmodule EvoGit.VCTTest do
     end
   end
 
+  ## Reserved (system) mounts
+
+  describe "ensure_mount/3 at a reserved point" do
+    test "inserts a reserved mount without requiring the path to exist", %{tmp_dir: tmp} do
+      stack = start_stack(tmp)
+      path = Path.join(tmp, "genesis-source-does-not-exist")
+
+      assert {:ok, %Mount{} = mount} =
+               VCT.ensure_mount("vct:///genesis-source", path, name: "genesis-source")
+
+      assert mount.point == "vct:///genesis-source"
+      assert mount.path == path
+      assert mount.name == "genesis-source"
+      assert mount.kind == "git"
+      # A system mount is not "opened": it carries no recency timestamp.
+      assert mount.last_opened_at == nil
+      refute File.exists?(path)
+
+      # Persisted…
+      assert [row] = EvoGit.Store.list_vct_mounts(stack.store)
+      assert row["point"] == "vct:///genesis-source"
+      assert row["path"] == path
+      assert row["last_opened_at"] == nil
+
+      # …but NOT part of the user's project list.
+      assert VCT.projects() == []
+      assert VCT.search("") == []
+    end
+
+    test "is idempotent for the same point and path (no write, no churn)", %{tmp_dir: tmp} do
+      old = ~U[2020-01-01 00:00:00.000Z]
+      stack = start_stack(tmp)
+      path = Path.join(tmp, "source")
+
+      :ok =
+        EvoGit.Store.save_vct_mounts(stack.store, [
+          %{
+            "point" => "vct:///genesis-source",
+            "path" => path,
+            "name" => "Source",
+            "kind" => "git",
+            "last_opened_at" => old
+          }
+        ])
+
+      stop_vct!(stack)
+      restart_stack(tmp, stack)
+
+      assert {:ok, first} = VCT.ensure_mount("vct:///genesis-source", path)
+      assert first.name == "Source"
+      assert ms(first.last_opened_at) == ms(old)
+
+      # A second ensure — even with a trailing separator and a blank name — is a
+      # no-op: same mount, unchanged name and timestamp.
+      assert {:ok, second} =
+               VCT.ensure_mount(VctPath.parse!("vct:///genesis-source"), path <> "/")
+
+      assert second == first
+      assert ms(second.last_opened_at) == ms(old)
+      assert second.name == "Source"
+
+      # Exactly one row, still at the original timestamp.
+      assert [row] = EvoGit.Store.list_vct_mounts(stack.store)
+      assert row["point"] == "vct:///genesis-source"
+      assert row["name"] == "Source"
+      assert row["last_opened_at"] == ms(old)
+    end
+
+    test "re-points an existing reserved point to a different path", %{tmp_dir: tmp} do
+      stack = start_stack(tmp)
+      first_path = Path.join(tmp, "machine-a/source")
+      second_path = Path.join(tmp, "machine-b/source")
+
+      assert {:ok, first} = VCT.ensure_mount("vct:///genesis-source", first_path, name: "Source")
+
+      # No supplied name: the previous display name is kept.
+      assert {:ok, second} = VCT.ensure_mount("vct:///genesis-source", second_path)
+      assert second.point == first.point
+      assert second.path == second_path
+      assert second.name == "Source"
+      assert second.last_opened_at == first.last_opened_at
+
+      # A same-path ensure never renames (no churn)…
+      assert {:ok, %Mount{name: "Source"}} =
+               VCT.ensure_mount("vct:///genesis-source", second_path, name: " Ignored ")
+
+      # …while a re-point to a new path takes a non-blank name.
+      third_path = Path.join(tmp, "machine-c/source")
+
+      assert {:ok, third} =
+               VCT.ensure_mount("vct:///genesis-source", third_path, name: " Renamed ")
+
+      assert third.name == "Renamed"
+      assert third.path == third_path
+
+      assert [row] = EvoGit.Store.list_vct_mounts(stack.store)
+      assert row["point"] == "vct:///genesis-source"
+      assert row["path"] == third_path
+      assert row["name"] == "Renamed"
+    end
+
+    test "moves a mount that the same path holds at another point", %{tmp_dir: tmp} do
+      stack = start_stack(tmp)
+      path = dir!(Path.join(tmp, "shared-source"))
+
+      assert {:ok, project} = VCT.mount(path, name: "Project")
+      assert project.point == "vct:///projects/shared-source"
+
+      assert {:ok, moved} = VCT.ensure_mount("vct:///genesis-source", path)
+      assert moved.point == "vct:///genesis-source"
+      assert moved.path == path
+      assert moved.name == "Project"
+      assert ms(moved.last_opened_at) == ms(project.last_opened_at)
+
+      # The project row is gone — one OS path, one row.
+      assert VCT.projects() == []
+      assert [row] = EvoGit.Store.list_vct_mounts(stack.store)
+      assert row["point"] == "vct:///genesis-source"
+      assert VCT.resolve(path) == {:ok, moved}
+    end
+
+    test "removes a row that already mounts the new path elsewhere", %{tmp_dir: tmp} do
+      stack = start_stack(tmp)
+      first_path = Path.join(tmp, "first")
+      shared = Path.join(tmp, "shared")
+
+      assert {:ok, _} = VCT.ensure_mount("vct:///genesis-source", first_path)
+      assert {:ok, other} = VCT.mount(shared)
+      assert other.point == "vct:///projects/shared"
+
+      assert {:ok, repointed} = VCT.ensure_mount("vct:///genesis-source", shared)
+      assert repointed.point == "vct:///genesis-source"
+      assert repointed.path == shared
+
+      points_in_store =
+        stack.store |> EvoGit.Store.list_vct_mounts() |> Enum.map(& &1["point"])
+
+      assert points_in_store == ["vct:///genesis-source"]
+      assert VCT.projects() == []
+    end
+
+    test "rejects an invalid point or path", %{tmp_dir: tmp} do
+      start_stack(tmp)
+      path = Path.join(tmp, "repo")
+
+      assert {:error, :invalid_point} = VCT.ensure_mount("not-a-vct-url", path)
+      assert {:error, :invalid_point} = VCT.ensure_mount("vct://host/genesis-source", path)
+      assert {:error, :invalid_point} = VCT.ensure_mount(nil, path)
+      assert {:error, :relative_path} = VCT.ensure_mount("vct:///genesis-source", "relative/dir")
+      assert {:error, :invalid_path} = VCT.ensure_mount("vct:///genesis-source", "  ")
+      assert EvoGit.Store.list_vct_mounts(start_stack(tmp).store) == []
+    end
+  end
+
+  describe "reserved mounts and the project-facing API" do
+    test "projects/1 and search/2 hide them while resolution finds them", %{tmp_dir: tmp} do
+      start_stack(tmp)
+      source = dir!(Path.join(tmp, "source"))
+      project = Path.join(tmp, "project")
+
+      assert {:ok, reserved} = VCT.ensure_mount("vct:///genesis-source", source, name: "Source")
+      assert {:ok, project_mount} = VCT.mount(project)
+
+      # Lists/searches see the project only — even a blank search, and even a
+      # query that only the reserved mount would match.
+      assert points(VCT.projects()) == [project_mount.point]
+      assert points(VCT.search("")) == [project_mount.point]
+      assert VCT.search("genesis-source") == []
+      assert VCT.search("vct:///genesis-source") == []
+
+      # Resolution includes the reserved mount.
+      assert {:ok, ^reserved} = VCT.resolve("vct:///genesis-source")
+      assert {:ok, ^reserved} = VCT.resolve(source)
+      assert %Mount{point: "vct:///genesis-source"} = VCT.mount_for_path(source)
+
+      assert VCT.mount_for_path(Path.join(source, "src/auth")).point == "vct:///genesis-source"
+      assert VCT.vct_path_for(source, "./src") == "vct:///genesis-source/src"
+      assert VCT.vct_path_for(source, "./") == "vct:///genesis-source"
+      # The project mount still wins for paths under it.
+      assert VCT.vct_path_for(project, "./src") == project_mount.point <> "/src"
+    end
+
+    test "forget/1 refuses a reserved point and its OS path", %{tmp_dir: tmp} do
+      stack = start_stack(tmp)
+      source = Path.join(tmp, "source")
+
+      assert {:ok, reserved} = VCT.ensure_mount("vct:///genesis-source", source)
+
+      # A reserved POINT is refused whether or not a row exists.
+      assert {:error, :reserved_point} = VCT.forget("vct:///genesis-source")
+      assert {:error, :reserved_point} = VCT.forget(VctPath.parse!("vct:///genesis-source"))
+      assert {:error, :reserved_point} = VCT.forget("vct:///genesis-source/nested")
+      assert {:error, :reserved_point} = VCT.forget("vct:///")
+      assert {:error, :reserved_point} = VCT.forget("vct:///projects")
+      assert {:error, :reserved_point} = VCT.forget("vct:///not-mounted-at-all")
+
+      # …and so is the OS-path form.
+      assert {:error, :reserved_point} = VCT.forget(source)
+
+      # The mount survives and is still resolvable, and nothing was persisted away.
+      assert VCT.resolve("vct:///genesis-source") == {:ok, reserved}
+      assert [row] = EvoGit.Store.list_vct_mounts(stack.store)
+      assert row["point"] == "vct:///genesis-source"
+
+      # Project mounts keep today's behaviour.
+      assert {:ok, project} = VCT.mount(Path.join(tmp, "project"))
+      assert :ok = VCT.forget(project.point)
+      assert {:error, :not_found} = VCT.forget("vct:///projects/absent")
+      assert {:error, :invalid_point} = VCT.forget("vct://host/projects/foo")
+    end
+  end
+
+  describe "Table.enforce_cap/2 (pure)" do
+    test "caps project mounts only and retains reserved ones" do
+      reserved = Mount.new("vct:///genesis-source", "/src/genesis-source", last_opened_at: nil)
+
+      oldest =
+        Mount.new("vct:///projects/oldest", "/p/oldest", last_opened_at: ~U[2020-01-01 00:00:00Z])
+
+      middle =
+        Mount.new("vct:///projects/middle", "/p/middle", last_opened_at: ~U[2022-01-01 00:00:00Z])
+
+      newest =
+        Mount.new("vct:///projects/newest", "/p/newest", last_opened_at: ~U[2024-01-01 00:00:00Z])
+
+      mounts = [oldest, reserved, middle, newest]
+
+      # cap 2 over 3 projects: exactly the oldest project is evicted, the
+      # reserved mount survives, and surviving members keep their positions.
+      assert EvoGit.VCT.Table.enforce_cap(mounts, 2) == [reserved, middle, newest]
+      # A cap at (or above) the project count is a no-op.
+      assert EvoGit.VCT.Table.enforce_cap(mounts, 3) == mounts
+      assert EvoGit.VCT.Table.enforce_cap(mounts, 10) == mounts
+      # Non-positive / non-integer caps leave the list untouched.
+      assert EvoGit.VCT.Table.enforce_cap(mounts, 0) == mounts
+      assert EvoGit.VCT.Table.enforce_cap(mounts, "many") == mounts
+    end
+
+    test "reserved mounts alone never trigger eviction" do
+      reserved = [
+        Mount.new("vct:///genesis-source", "/src/a"),
+        Mount.new("vct:///", "/src/b")
+      ]
+
+      assert EvoGit.VCT.Table.enforce_cap(reserved, 1) == reserved
+    end
+  end
+
+  describe "the :system_mounts init option" do
+    test "ensures a host-declared reserved mount at boot", %{tmp_dir: tmp} do
+      stack = start_stack(tmp)
+      source = Path.join(tmp, "genesis-source")
+
+      # Booted without system mounts first: the table is empty.
+      assert VCT.projects() == []
+
+      stop_vct!(stack)
+
+      system_mounts = [
+        %{point: "vct:///genesis-source", path: source, name: "genesis-source"},
+        %{point: "vct:///extra-system", path: Path.join(tmp, "extra")}
+      ]
+
+      restart_stack(tmp, stack, system_mounts: system_mounts)
+
+      assert {:ok, %Mount{} = mount} = VCT.resolve("vct:///genesis-source")
+      assert mount.path == source
+      assert mount.name == "genesis-source"
+      assert {:ok, %Mount{name: "extra"}} = VCT.resolve("vct:///extra-system")
+
+      # Persisted, but invisible to the project list.
+      assert stack.store
+             |> EvoGit.Store.list_vct_mounts()
+             |> Enum.map(& &1["point"])
+             |> Enum.sort() ==
+               ["vct:///extra-system", "vct:///genesis-source"]
+
+      assert VCT.projects() == []
+      assert VCT.search("") == []
+
+      # A SECOND boot with the same list must not duplicate the rows.
+      stop_vct!(stack)
+      restart_stack(tmp, stack, system_mounts: system_mounts)
+
+      rows = EvoGit.Store.list_vct_mounts(stack.store)
+      assert length(rows) == 2
+      assert {:ok, %Mount{path: ^source}} = VCT.resolve("vct:///genesis-source")
+    end
+
+    test "skips malformed system mounts and never fails boot", %{tmp_dir: tmp} do
+      good = Path.join(tmp, "good")
+
+      {stack, log} =
+        with_log(fn ->
+          start_stack(tmp,
+            system_mounts: [
+              "garbage",
+              %{point: "not-a-vct-url", path: good},
+              %{point: "vct:///blank-path", path: "   "},
+              %{path: good},
+              %{point: "vct:///good", path: good}
+            ]
+          )
+        end)
+
+      assert {:ok, %Mount{path: ^good}} = VCT.resolve("vct:///good")
+      assert log =~ "malformed system mount"
+
+      # Only the well-formed entry reached the table (and the store).
+      assert stack.store |> EvoGit.Store.list_vct_mounts() |> Enum.map(& &1["point"]) ==
+               ["vct:///good"]
+    end
+
+    test "defaults to no system mounts", %{tmp_dir: tmp} do
+      stack = start_stack(tmp)
+
+      assert VCT.projects() == []
+      assert VCT.search("") == []
+      assert VCT.resolve("vct:///genesis-source") == {:error, :not_found}
+      assert EvoGit.Store.list_vct_mounts(stack.store) == []
+    end
+  end
+
   ## Broadcasts
 
   describe "broadcasts" do
@@ -645,11 +968,11 @@ defmodule EvoGit.VCTTest do
 
   # Reboots the SAME store-backed VCT (fresh pid, same store, same data dir),
   # which re-reads the mount table from SQLite exactly like a process restart.
-  defp restart_stack(_tmp, %{name: name, data_dir: data_dir, store: store} = stack) do
+  defp restart_stack(_tmp, %{name: name, data_dir: data_dir, store: store} = stack, opts \\ []) do
     pid =
       start_supervised!(
         Supervisor.child_spec(
-          {EvoGit.VCT, name: name, data_dir: data_dir, store: store},
+          {EvoGit.VCT, Keyword.merge([name: name, data_dir: data_dir, store: store], opts)},
           id: name
         ),
         restart: :temporary
