@@ -865,9 +865,21 @@ defmodule EvoGit.AgentScheduler.ModelSelectionDispatchTest do
     assert_receive {:dispatched_binding, observed}, 10_000
 
     # Every field the session did not itself move must be IDENTICAL: only the
-    # session's own runtime bookkeeping changes between registration and the
-    # exchange (`turn`, `usage`, `status`, `message_count`, `last_activity_at`).
-    runtime_fields = [:turn, :usage, :status, :message_count, :last_activity_at]
+    # session's own runtime bookkeeping — published from its
+    # `%EvoGit.Agent.State{}` onto the summary row — changes between
+    # registration and the exchange (`turn`, `usage`, `status`, `message_count`,
+    # the resolved `context_window`, `objective_preview` and
+    # `last_activity_at`).
+    runtime_fields = [
+      :turn,
+      :usage,
+      :status,
+      :message_count,
+      :context_window,
+      :objective_preview,
+      :last_activity_at
+    ]
+
     assert Map.drop(observed, runtime_fields) == Map.drop(binding, runtime_fields)
     assert_binding(observed, config, chosen)
 

@@ -219,26 +219,17 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert is_nil(summary.model_id)
     end
 
-    test "includes message_count for an agent with a populated context" do
-      message1 = %ReqLLM.Message{role: :user, content: [ReqLLM.Message.ContentPart.text("one")]}
-
-      message2 = %ReqLLM.Message{
-        role: :assistant,
-        content: [ReqLLM.Message.ContentPart.text("two")]
-      }
-
-      context = %ReqLLM.Context{messages: [message1, message2]}
-
+    test "includes the session-published message_count" do
       put_sched_meta(1, %SchedMeta{id: 1, depth: 0, spec: agent_spec()})
-      put_agent_state(1, agent_state(context: context))
+      put_agent_state(1, agent_state(message_count: 2))
 
       [summary] = RemoteAPI.list_agents()
       assert summary.message_count == 2
     end
 
-    test "message_count is 0 for an agent with no context" do
+    test "message_count is 0 before the session published one" do
       put_sched_meta(1, %SchedMeta{id: 1, depth: 0, spec: agent_spec()})
-      put_agent_state(1, agent_state(context: nil))
+      put_agent_state(1, agent_state())
 
       [summary] = RemoteAPI.list_agents()
       assert summary.message_count == 0
@@ -252,12 +243,6 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     end
 
     test "includes repo_root, context_path, worktree, commits, and task fields from state" do
-      phylo = %PhyloGraphNode{
-        repo: "/tmp/test",
-        base_commit: "base123",
-        current_commit: "head456"
-      }
-
       meta = %SchedMeta{
         id: 1,
         depth: 0,
@@ -273,7 +258,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       state =
         agent_state(
           repo_root: "/home/user/project",
-          phylo_node: phylo
+          current_commit: "head456"
         )
 
       put_sched_meta(1, meta)
@@ -284,14 +269,16 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert summary.repo_root == "/home/user/project"
       assert summary.context_path == "./"
       assert summary.worktree == "/worktrees/worker_T1_A1"
-      assert summary.base_commit == "base123"
+      # `base_commit` is the spec's registration-time base; `current_commit` is
+      # the commit the agent's session last observed (published on the row).
+      assert summary.base_commit == "abc"
       assert summary.current_commit == "head456"
       assert summary.task_id == "aabbccddeeff0011"
       assert summary.task_number == 1
       assert summary.retries == 2
     end
 
-    test "falls back to spec.phylo_node for commits when state.phylo_node is nil" do
+    test "reads current_commit from the state and base_commit from the spec" do
       meta = %SchedMeta{
         id: 1,
         depth: 0,
@@ -302,16 +289,16 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
         retries: 0
       }
 
-      state = agent_state(phylo_node: nil, repo_root: "/repo/root")
+      state = agent_state(current_commit: nil, repo_root: "/repo/root")
 
       put_sched_meta(1, meta)
       put_agent_state(1, state)
 
       [summary] = RemoteAPI.list_agents()
 
-      # spec.phylo_node has base_commit/current_commit "abc"
+      # A not-yet-published commit reads nil; the spec still supplies the base.
       assert summary.base_commit == "abc"
-      assert summary.current_commit == "abc"
+      assert is_nil(summary.current_commit)
       assert summary.context_path == "./"
       assert summary.worktree == "/worktrees/wt1"
       assert summary.task_id == "1122334455667788"
@@ -377,7 +364,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       }
 
       put_sched_meta(1, meta)
-      put_agent_state(1, agent_state(phylo_node: nil))
+      put_agent_state(1, agent_state())
 
       [summary] = RemoteAPI.list_agents()
 
@@ -417,6 +404,98 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
 
       ids = Enum.map(summaries, & &1.id) |> Enum.sort()
       assert ids == [1, 2]
+    end
+
+    test "row shape is unchanged for a row published through Session.Summary.publish/3" do
+      # The ONE runtime writer of the summary row is the agent's session. A row
+      # it published must produce EXACTLY the documented dashboard summary
+      # shape — the session adds no key and drops none.
+      agent_id = 1
+
+      meta = %SchedMeta{
+        id: agent_id,
+        depth: 0,
+        spec: agent_spec(),
+        status: :running,
+        parent_id: nil,
+        task_id: "abcdef0123456789",
+        task_number: 2,
+        retries: 0
+      }
+
+      put_sched_meta(agent_id, meta)
+      put_agent_state(agent_id, agent_state())
+
+      state =
+        struct!(
+          EvoGit.Agent.State,
+          agent_id: agent_id,
+          agent_module: __MODULE__,
+          depth: 0,
+          node_path: "./",
+          context:
+            ReqLLM.Context.new([
+              %ReqLLM.Message{role: :system, content: [ReqLLM.Message.ContentPart.text("sys")]},
+              %ReqLLM.Message{
+                role: :user,
+                content: [ReqLLM.Message.ContentPart.text("objective")]
+              },
+              %ReqLLM.Message{
+                role: :assistant,
+                content: [ReqLLM.Message.ContentPart.text("reply")]
+              }
+            ]),
+          turn: 2,
+          total_tokens: 750,
+          compression_count: 1,
+          llm_context_window: 96_000
+        )
+
+      assert :ok =
+               EvoGit.Agent.Session.Summary.publish(agent_id, state,
+                 status: :running,
+                 current_commit: "feedface"
+               )
+
+      [summary] = RemoteAPI.list_agents()
+
+      assert Enum.sort(Map.keys(summary)) == [
+               :agent_module,
+               :base_commit,
+               :compression_count,
+               :compression_threshold,
+               :context_path,
+               :context_window,
+               :current_commit,
+               :depth,
+               :id,
+               :llm_model,
+               :message_count,
+               :model_id,
+               :model_spec,
+               :objective,
+               :parent_id,
+               :provider_profile_id,
+               :repo_id,
+               :repo_root,
+               :result,
+               :retries,
+               :started_at,
+               :status,
+               :task_id,
+               :task_local_id,
+               :task_number,
+               :total_tokens,
+               :usage,
+               :worktree
+             ]
+
+      # Values published by the session, not the registration defaults.
+      assert summary.message_count == 3
+      assert summary.current_commit == "feedface"
+      assert summary.status == :running
+      assert summary.total_tokens == 750
+      assert summary.compression_count == 1
     end
   end
 
@@ -540,75 +619,21 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
   # ── get_agent_history/1 ───────────────────────────────────────────
 
   describe "get_agent_history/1" do
+    # The conversation lives ONLY in the agent's session: the summary row carries
+    # no messages at all, so a message-shape assertion belongs to the SESSION
+    # (`test/evo_git/agent/session_test.exs`). Here we pin the read path's
+    # totality: no session serving the agent always degrades to `[]`.
     test "returns [] for an unknown agent" do
       assert RemoteAPI.get_agent_history(999_999) == []
     end
 
-    test "returns [] for an agent with nil context" do
-      put_agent_state(1, agent_state(context: nil))
+    test "returns [] for a registered agent with no live session" do
+      # A summary row exists (registration wrote it) but no session ever started,
+      # so the history read answers `[]` instead of raising.
+      put_sched_meta(1, %SchedMeta{id: 1, depth: 0, spec: agent_spec()})
+      put_agent_state(1, agent_state())
+
       assert RemoteAPI.get_agent_history(1) == []
-    end
-
-    test "returns native ReqLLM.Message structs for an agent with a populated context" do
-      content_part = ReqLLM.Message.ContentPart.text("hello world")
-
-      message = %ReqLLM.Message{
-        role: :user,
-        content: [content_part],
-        metadata: %{turn: 0}
-      }
-
-      context = %ReqLLM.Context{messages: [message]}
-      put_agent_state(1, agent_state(context: context))
-
-      [msg] = RemoteAPI.get_agent_history(1)
-
-      # The returned message is the native struct, not a converted map.
-      assert %ReqLLM.Message{} = msg
-      assert msg.role == :user
-      assert msg.content == [content_part]
-      assert msg.metadata == %{turn: 0}
-      assert is_nil(msg.tool_calls)
-    end
-
-    test "returns multiple messages as native structs" do
-      message1 = %ReqLLM.Message{role: :user, content: [ReqLLM.Message.ContentPart.text("one")]}
-
-      message2 = %ReqLLM.Message{
-        role: :assistant,
-        content: [ReqLLM.Message.ContentPart.text("two")]
-      }
-
-      context = %ReqLLM.Context{messages: [message1, message2]}
-      put_agent_state(1, agent_state(context: context))
-
-      messages = RemoteAPI.get_agent_history(1)
-      assert length(messages) == 2
-
-      assert Enum.all?(messages, &match?(%ReqLLM.Message{}, &1))
-      assert Enum.map(messages, & &1.role) == [:user, :assistant]
-    end
-
-    test "preserves tool_calls as native structs" do
-      tool_call = ReqLLM.ToolCall.new("call_1", "search", ~s({"query":"elixir"}))
-
-      message = %ReqLLM.Message{
-        role: :assistant,
-        content: [],
-        tool_calls: [tool_call]
-      }
-
-      context = %ReqLLM.Context{messages: [message]}
-      put_agent_state(1, agent_state(context: context))
-
-      [msg] = RemoteAPI.get_agent_history(1)
-
-      # tool_calls are returned as native structs
-      assert [tc] = msg.tool_calls
-      assert %ReqLLM.ToolCall{} = tc
-      assert tc.id == "call_1"
-      assert tc.function.name == "search"
-      assert tc.function.arguments == ~s({"query":"elixir"})
     end
   end
 
@@ -619,15 +644,17 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert RemoteAPI.get_agent_state(999_999) == nil
     end
 
-    test "returns a native AgentState struct with :context dropped" do
+    test "returns the native RAW AgentState summary struct" do
       state = agent_state(foreign_repos: [%ForeignRepo{id: "orig", root: "/tmp/orig"}])
       put_agent_state(1, state)
 
       result = RemoteAPI.get_agent_state(1)
 
-      # A native AgentState struct (with :context set to nil)
+      # A native AgentState struct, returned verbatim: the row is a summary with
+      # no conversation and no control state, so there is no projection to apply.
       assert %AgentState{} = result
-      assert is_nil(result.context)
+      assert result == state
+      refute Map.has_key?(result, :context)
 
       # Native field values
       assert result.llm_model == "test:model"
