@@ -82,12 +82,9 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @spec list_agents() :: [map()]
   def list_agents do
     sched_metas = read_table(:evogit_sched_meta)
-    agent_states = read_table(:evogit_agent_state)
-
-    states_by_id = Map.new(agent_states, fn {id, state} -> {id, state} end)
 
     Enum.map(sched_metas, fn {id, meta} ->
-      build_agent_summary(id, meta, Map.get(states_by_id, id))
+      build_agent_summary(id, meta, projected_agent_state(id))
     end)
   end
 
@@ -142,9 +139,13 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   """
   @spec get_agent_state(agent_id :: pos_integer()) :: AgentState.t() | nil
   def get_agent_state(agent_id) do
-    case lookup_agent_state(agent_id) do
-      nil -> nil
-      %AgentState{} = state -> %{state | context: nil}
+    # Read through the Store so the CONTROL-PLANE values (pending queue, cancel
+    # flag, compression count) are projected onto the struct — the raw row never
+    # carries them (see `EvoGit.AgentScheduler.ControlPlane`).
+    case EvoGit.AgentScheduler.Store.get_agent_state(agent_id) do
+      {:ok, %AgentState{} = state} -> %{state | context: nil}
+      {:ok, other} -> other
+      :error -> nil
     end
   end
 
@@ -1267,6 +1268,24 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
         case :ets.lookup(:evogit_agent_state, agent_id) do
           [{^agent_id, state}] -> state
           [] -> nil
+        end
+    end
+  end
+
+  # The roster's per-agent state, read through `Store.get_agent_state/1` so the
+  # CONTROL-PLANE values are projected onto it — `compression_count` (and the
+  # pending queue / cancel flag) live in `EvoGit.AgentScheduler.ControlPlane`,
+  # not in the state row, so a raw row would always report a stale 0.
+  # Only a real `%AgentState{}` row is a usable summary source.
+  defp projected_agent_state(agent_id) do
+    case :ets.whereis(:evogit_agent_state) do
+      :undefined ->
+        nil
+
+      _ ->
+        case EvoGit.AgentScheduler.Store.get_agent_state(agent_id) do
+          {:ok, %AgentState{} = state} -> state
+          _other -> nil
         end
     end
   end

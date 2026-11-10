@@ -2,11 +2,23 @@ defmodule EvoGit.AgentScheduler.Store do
   @moduledoc """
   Shared ETS helpers for the AgentScheduler.
 
-  Centralizes read/write/delete operations on the two scheduler-owned ETS
-  tables (`:evogit_agent_state` and `:evogit_sched_meta`). Every write/delete on
-  the agent-state and sched-meta tables broadcasts enriched PubSub delta events
-  so the dashboard can apply incremental updates, plus a throttled
-  `:agents_updated` fallback for backward compat.
+  Centralizes read/write/delete operations on the three scheduler-owned ETS
+  tables:
+  `:evogit_sched_meta` (scheduler metadata), `:evogit_agent_state` (the agent's
+  own live state) and the CONTROL PLANE — `:evogit_agent_inbox` +
+  `:evogit_agent_control`, owned by `EvoGit.AgentScheduler.ControlPlane`.
+
+  **One writer per row.** The agent process is the ONLY writer of its
+  `:evogit_agent_state` row. Everything another process writes about a live
+  agent (`pending_user_messages`, `cancel_requested`, `compression_count`) goes
+  through `ControlPlane` with atomic ETS operations, so a cross-process write
+  never read-modify-writes the whole struct and never loses the agent's own
+  concurrent context writes. `get_agent_state/1` PROJECTS the control-plane
+  values back onto the struct, so every consumer still reads one struct.
+
+  Every write/delete on the agent-state and sched-meta tables broadcasts
+  enriched PubSub delta events so the dashboard can apply incremental updates,
+  plus a throttled `:agents_updated` fallback for backward compat.
 
   All broadcasts carry a trailing `node` element (the emitting BEAM node), and
   agent-state broadcast kwlists exclude the heavy `:context` field with a
@@ -14,6 +26,7 @@ defmodule EvoGit.AgentScheduler.Store do
   """
 
   alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.ControlPlane
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.PubSub
   alias EvoGit.Agent.Usage
@@ -22,6 +35,16 @@ defmodule EvoGit.AgentScheduler.Store do
 
   @agent_table :evogit_agent_state
   @sched_table :evogit_sched_meta
+
+  # The three control-plane fields whose live values live in `ControlPlane`
+  # (its inbox/control tables), NOT in this row — plus their struct defaults.
+  # They are reset to those defaults on every state write, so a projected struct
+  # can never be written back and resurrect drained messages or a stale flag.
+  @control_field_defaults %{
+    pending_user_messages: [],
+    cancel_requested: nil,
+    compression_count: 0
+  }
 
   # ---------------------------------------------------------------------------
   # Scheduler Metadata Table
@@ -96,17 +119,34 @@ defmodule EvoGit.AgentScheduler.Store do
   @doc """
   Reads the live agent state for the given agent ID.
   Returns `{:ok, %AgentState{}}` or `:error` if not found.
+
+  The returned struct carries the PROJECTED control-plane values
+  (`pending_user_messages`, `cancel_requested`, `compression_count`) — see
+  `EvoGit.AgentScheduler.ControlPlane.project/2` — while the row itself only
+  stores their struct defaults.
   """
   @spec get_agent_state(pos_integer()) :: {:ok, AgentState.t() | map()} | :error
   def get_agent_state(agent_id) do
     case :ets.lookup(@agent_table, agent_id) do
-      [{^agent_id, %{} = agent_state}] -> {:ok, agent_state}
+      [{^agent_id, %{} = agent_state}] -> {:ok, ControlPlane.project(agent_id, agent_state)}
       [] -> :error
     end
   end
 
   @doc """
   Inserts/updates agent state for the given agent ID.
+
+  **Invariant — the agent process is the ONLY writer of this row.** Nothing
+  else may read-modify-write it: a cross-process write of `pending_user_messages`,
+  `cancel_requested` or `compression_count` goes through
+  `EvoGit.AgentScheduler.ControlPlane` (atomic ETS operations), because a
+  whole-struct write from another process races the agent's own context writes
+  and silently loses one of them.
+
+  The three control-plane fields are therefore RESET to their struct defaults
+  before the ETS write: a projected struct (the shape `get_agent_state/1`
+  returns) must never be written back, which would resurrect drained messages or
+  a stale cancel flag.
 
   Broadcasts an `:agent_updated` delta event with the changed fields plus
   the throttled `:agents_updated` fallback for backward compatibility.
@@ -116,6 +156,8 @@ defmodule EvoGit.AgentScheduler.Store do
   """
   @spec put_agent_state(pos_integer(), AgentState.t()) :: :ok
   def put_agent_state(agent_id, agent_state) do
+    agent_state = reset_control_fields(agent_state)
+
     old_state =
       case :ets.lookup(@agent_table, agent_id) do
         [{^agent_id, existing}] -> existing
@@ -158,12 +200,16 @@ defmodule EvoGit.AgentScheduler.Store do
   @doc """
   Deletes agent state for the given agent ID.
 
+  Also drops the agent's control-plane rows (inbox + control), so a finished
+  agent never leaks them.
+
   Broadcasts an `:agent_removed` event plus the throttled `:agents_updated`
   fallback for backward compatibility.
   """
   @spec delete_agent_state(pos_integer()) :: :ok
   def delete_agent_state(agent_id) do
     :ets.delete(@agent_table, agent_id)
+    ControlPlane.delete(agent_id)
     PubSub.broadcast_agent_removed(agent_id)
     PubSub.broadcast_agents_updated()
   end
@@ -184,58 +230,59 @@ defmodule EvoGit.AgentScheduler.Store do
   `ArgumentError` from `EvoGit.Attachments.message/1` (spec-error style — never
   silently dropped), and nothing is queued.
 
-  Called through the AgentScheduler GenServer (serialized), so concurrent
-  appends are safe. The message will be drained and injected into the agent's
-  context at the top of its next turn by `drain_pending_user_messages/1`.
+  The message is appended to the agent's inbox
+  (`EvoGit.AgentScheduler.ControlPlane.append_message/2`) with ONE atomic ETS
+  insert — a single atomic op with no read, so concurrent appends and drains can
+  never lose a message. The message will be drained and injected into the
+  agent's context at the top of its next turn by
+  `drain_pending_user_messages/1`.
   """
   @spec append_pending_user_message(pos_integer(), String.t() | Attachments.message()) ::
           :ok | {:error, :not_found}
   def append_pending_user_message(agent_id, message) when is_binary(message) or is_map(message) do
     stored = canonical_pending_message(message)
 
-    case get_agent_state(agent_id) do
-      {:ok, agent_state} ->
-        updated = %{
-          agent_state
-          | pending_user_messages: agent_state.pending_user_messages ++ [stored]
-        }
+    case ControlPlane.append_message(agent_id, stored) do
+      :ok ->
+        PubSub.broadcast_agent_updated(agent_id,
+          pending_user_messages: ControlPlane.pending_messages(agent_id)
+        )
 
-        put_agent_state(agent_id, updated)
+        PubSub.broadcast_agents_updated()
+        :ok
 
-      :error ->
-        {:error, :not_found}
+      {:error, :not_found} = error ->
+        error
     end
   end
 
   @doc """
   Drains and returns the list of pending user messages for an agent.
 
-  Reads the latest agent state from ETS, extracts the pending messages, and
-  resets the `pending_user_messages` field to `[]`. Returns the drained list.
-  Returns `[]` if the agent doesn't exist or has no pending messages.
+  `:ets.take/2` in the control plane removes and returns every queued message in
+  ONE atomic BIF, so an append landing mid-drain is either fully included or
+  fully left for the next drain — never lost and never delivered twice. Returns
+  the messages in append order, or `[]` when the agent has nothing pending (or
+  doesn't exist).
 
   Every returned entry has the same shape that was appended (see
   `append_pending_user_message/2`): a legacy binary verbatim, or the canonical
   multimodal message map `%{text: String.t(), attachments: [map] | nil}`.
 
   Called by the agent process at the top of its turn loop (before the LLM call).
-  The re-read of the full struct ensures we get the latest context/turn/etc.
-  from the agent's own writes, minimizing the race window.
+  The state row is NOT read or written here, so the agent's own concurrent
+  context/turn writes are untouched.
   """
   @spec drain_pending_user_messages(pos_integer()) :: [String.t() | Attachments.message()]
   def drain_pending_user_messages(agent_id) do
-    case get_agent_state(agent_id) do
-      {:ok, agent_state} ->
-        messages = agent_state.pending_user_messages
-
-        if messages != [] do
-          put_agent_state(agent_id, %{agent_state | pending_user_messages: []})
-        end
-
-        messages
-
-      :error ->
+    case ControlPlane.drain_messages(agent_id) do
+      [] ->
         []
+
+      messages ->
+        PubSub.broadcast_agent_updated(agent_id, pending_user_messages: [])
+        PubSub.broadcast_agents_updated()
+        messages
     end
   end
 
@@ -253,11 +300,12 @@ defmodule EvoGit.AgentScheduler.Store do
   defp canonical_pending_message(message) when is_map(message), do: Attachments.message(message)
 
   @doc """
-  Sets the `cancel_requested` flag to `true` on an agent's state.
+  Sets the `cancel_requested` flag to `true` on an agent's control row.
 
   Called by the scheduler when a graceful cancel is requested for the agent's
   task; the runner checks the flag at the top of each turn and clears it when
-  it enters cancel-grace.
+  it enters cancel-grace. The agent's state row is never written here (one
+  atomic `:ets.update_element/3` on the control row instead).
   """
   @spec set_cancel_requested(pos_integer()) :: :ok | {:error, :not_found}
   def set_cancel_requested(agent_id) do
@@ -265,48 +313,47 @@ defmodule EvoGit.AgentScheduler.Store do
   end
 
   @doc """
-  Sets the `cancel_requested` flag on an agent's state to the given value
+  Sets the `cancel_requested` flag on an agent's control row to the given value
   (`true` to request graceful cancellation, `false`/`nil` to clear it).
 
   Returns `:ok` when the agent exists, `{:error, :not_found}` otherwise.
   """
   @spec set_cancel_requested(pos_integer(), boolean() | nil) :: :ok | {:error, :not_found}
   def set_cancel_requested(agent_id, value) do
-    case get_agent_state(agent_id) do
-      {:ok, agent_state} ->
-        put_agent_state(agent_id, %{agent_state | cancel_requested: value})
+    case ControlPlane.set_cancel(agent_id, value) do
+      :ok ->
+        PubSub.broadcast_agents_updated()
+        :ok
 
-      :error ->
-        {:error, :not_found}
+      {:error, :not_found} = error ->
+        error
     end
   end
 
   @doc """
   Returns whether a graceful cancel has been requested for the agent.
 
-  Returns `false` when the agent state is missing or the flag is `nil`/`false`.
+  Reads the control row (never the state row); returns `false` when the agent
+  is missing or the flag is `nil`/`false`.
   """
   @spec cancel_requested?(pos_integer()) :: boolean()
-  def cancel_requested?(agent_id) do
-    case get_agent_state(agent_id) do
-      {:ok, agent_state} -> agent_state.cancel_requested == true
-      :error -> false
-    end
-  end
+  def cancel_requested?(agent_id), do: ControlPlane.cancel_requested?(agent_id)
 
   @doc """
-  Clears the `cancel_requested` flag on an agent's state (sets it back to `nil`).
+  Clears the `cancel_requested` flag on an agent's control row (sets it back to
+  `nil`).
 
   Returns `:ok` when the agent exists, `{:error, :not_found}` otherwise.
   """
   @spec clear_cancel_requested(pos_integer()) :: :ok | {:error, :not_found}
   def clear_cancel_requested(agent_id) do
-    case get_agent_state(agent_id) do
-      {:ok, agent_state} ->
-        put_agent_state(agent_id, %{agent_state | cancel_requested: nil})
+    case ControlPlane.set_cancel(agent_id, nil) do
+      :ok ->
+        PubSub.broadcast_agents_updated()
+        :ok
 
-      :error ->
-        {:error, :not_found}
+      {:error, :not_found} = error ->
+        error
     end
   end
 
@@ -396,7 +443,11 @@ defmodule EvoGit.AgentScheduler.Store do
   @spec batch_update_agent(pos_integer(), keyword()) :: :ok
   def batch_update_agent(agent_id, fields) when is_list(fields) do
     {:ok, agent_state} = get_agent_state(agent_id)
-    updated_state = Kernel.struct!(agent_state, fields)
+
+    # `agent_state` is PROJECTED (see `get_agent_state/1`), so the control
+    # fields are reset to their struct defaults before the write — the live
+    # values belong to `ControlPlane`, never to this row.
+    updated_state = agent_state |> Kernel.struct!(fields) |> reset_control_fields()
 
     # Direct ETS write (no put_agent_state round-trip) plus a focused delta
     # broadcast — heavy fields stripped (`:context`), `message_count` added
@@ -463,23 +514,37 @@ defmodule EvoGit.AgentScheduler.Store do
   end
 
   @doc """
-  Increments the compression count for an agent in the agent state table.
+  Increments the compression count for an agent.
 
   Called once per successful context-compression event to track how many times
-  an agent's context has been compressed.
+  an agent's context has been compressed. ONE atomic
+  `:ets.update_counter/4` on the control row (no read-modify-write of the state
+  row), and the resulting count is broadcast as the `:agent_updated` delta.
   """
   @spec increment_compression_count(pos_integer()) :: :ok
   def increment_compression_count(agent_id) do
-    {:ok, agent_state} = get_agent_state(agent_id)
+    # A missing agent still crashes (MatchError) — that is the documented
+    # contract this helper has always had.
+    {:ok, _agent_state} = get_agent_state(agent_id)
+    {:ok, count} = ControlPlane.increment_compression_count(agent_id)
 
-    updated_state = %{
-      agent_state
-      | compression_count: agent_state.compression_count + 1
-    }
-
-    put_agent_state(agent_id, updated_state)
+    PubSub.broadcast_agent_updated(agent_id, compression_count: count)
+    PubSub.broadcast_agents_updated()
 
     :ok
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers — control-plane write hygiene
+  # ---------------------------------------------------------------------------
+
+  # Resets the control-plane fields to their struct defaults before a state-row
+  # write, so a projected struct (the shape `get_agent_state/1` returns) can
+  # never be written back and resurrect drained messages or a stale flag.
+  # `Map.merge/2` keeps the write safe for the tolerant `map()` rows some tests
+  # seed directly.
+  defp reset_control_fields(state) when is_map(state) do
+    Map.merge(state, @control_field_defaults)
   end
 
   # ---------------------------------------------------------------------------

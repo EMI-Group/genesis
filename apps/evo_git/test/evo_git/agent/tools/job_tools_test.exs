@@ -196,14 +196,21 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
   # Sets/clears the owning agent's graceful-cancel flag for the tool task. The
   # wait loop reads `:evogit_agent_id` from the process dictionary and the flag
-  # from the app-owned `:evogit_agent_state` ETS table, so this mirrors exactly
+  # through `EvoGit.AgentScheduler.Store.cancel_requested?/1`, whose source of
+  # truth is the CONTROL PLANE (`:evogit_agent_control`), so the flag is seeded
+  # through the public Store API after the agent's state row exists — exactly
   # what `TaskRegistry.cancel_task/1` + `AgentScheduler` leave behind. A UNIQUE
-  # agent id keeps the row invisible to every other consumer of that table, and
-  # the row is deleted afterwards.
+  # agent id keeps the rows invisible to every other consumer, and they are
+  # deleted afterwards.
   defp put_cancel_flag!(agent_id, value) do
-    :ets.insert(:evogit_agent_state, {agent_id, %{cancel_requested: value}})
+    :ets.insert(:evogit_agent_state, {agent_id, %{}})
+    :ok = EvoGit.AgentScheduler.Store.set_cancel_requested(agent_id, value)
 
-    on_exit(fn -> :ets.delete(:evogit_agent_state, agent_id) end)
+    on_exit(fn ->
+      :ets.delete(:evogit_agent_state, agent_id)
+      EvoGit.AgentScheduler.ControlPlane.delete(agent_id)
+    end)
+
     :ok
   end
 

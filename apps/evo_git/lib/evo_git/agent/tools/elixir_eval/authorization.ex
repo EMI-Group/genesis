@@ -105,6 +105,11 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
 
   # Project inside ETS: do not copy the agent's conversation or generation
   # parameters just to check its role. A missing row/field never grants access.
+  #
+  # The cancellation flag is read from the CONTROL PLANE (its single writer is
+  # the scheduler's `Store.set_cancel_requested/1`), because the state row only
+  # carries the flag's struct default — the row's own `cancel_requested` guard
+  # stays for legacy/fixture rows seeded directly.
   defp valid_state?(id) do
     pattern =
       {id,
@@ -118,7 +123,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
 
     # The scheduler represents an unset/cleared cancellation flag as nil.
     guards = [{:orelse, {:"=:=", :"$1", false}, {:"=:=", :"$1", nil}}]
-    match?({[true], _}, :ets.select(:evogit_agent_state, [{pattern, guards, [true]}], 1))
+
+    match?({[true], _}, :ets.select(:evogit_agent_state, [{pattern, guards, [true]}], 1)) and
+      not EvoGit.AgentScheduler.ControlPlane.cancel_requested?(id)
   end
 
   defp local_target?(target) when target in [nil, :current, :local, "current", "local"], do: true
