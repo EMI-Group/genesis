@@ -10,15 +10,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
   alias EvoDashWeb.AgentsLive.LoadData
   alias EvoDashWeb.AgentsLive.ThresholdCache
-  alias EvoDashWeb.Helpers
   alias EvoGit.AgentSpec
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
 
-  # A fixed UTC instant: 2023-11-14 22:13:20Z
-  @unix_seconds 1_700_000_000
   # Exit-safe `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be
   # starved for seconds on a loaded host, where the 5 s default would turn a
   # state read into an `(EXIT) time out` failure.
@@ -2458,76 +2455,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
     wait_loop.(wait_loop)
   end
 
-  # Polls the rendered HTML until `text` appears (async results apply out of
-  # band) and returns the final HTML.
-  defp wait_for_text(view, text, timeout \\ @async_wait_budget_ms) do
-    wait_until(fn -> render(view) =~ text end, timeout)
-    render(view)
-  end
-
-  # Polls `render/1` until `predicate` matches (async results apply out of band
-  # on this page) and returns the LAST render either way — it never raises, so
-  # the caller's assertion still fails loudly with the real output instead of a
-  # synthetic timeout message.
-  defp render_until(view, predicate, budget_ms \\ @async_wait_budget_ms) do
-    render_until_loop(view, predicate, System.monotonic_time(:millisecond) + budget_ms)
-  end
-
-  defp render_until_loop(view, predicate, deadline) do
-    html = render(view)
-
-    cond do
-      predicate.(html) ->
-        html
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        html
-
-      true ->
-        Process.sleep(20)
-        render_until_loop(view, predicate, deadline)
-    end
-  end
-
-  # The optimistic pending hint of a sent-but-not-yet-drained user message
-  # (the apostrophe is HTML-escaped to &#39; in HEEx).
-  defp pending_hint?(html), do: html =~ "will be added on the agent&#39;s next turn"
-  # Load-tolerant send for the optimistic-display tests: renders the submit and
-  # returns the render that carries the OPTIMISTIC pending hint.
-  # `send_agent_message` performs a REAL scheduler + store write, so on a loaded
-  # host its (production) 5 s `GenServer.call` budget can elapse — the page then
-  # flashes "Failed to send message" and deliberately KEEPS the modal and the
-  # typed text (the user's retry affordance), so the textarea alone would still
-  # satisfy a bare `html =~ message` check while the pending hint is missing.
-  # Resubmitting is exactly the action that failure state exists for, and the
-  # render is polled for the out-of-band apply, so neither assertion is
-  # relaxed: a persistent failure still returns the last render and fails the
-  # caller's assertions with the real output.
-  defp submit_until_pending_hint(view, params, attempts \\ 3) do
-    html = render_submit(view, "send_agent_message", params)
-
-    cond do
-      pending_hint?(html) ->
-        html
-
-      attempts <= 1 ->
-        html
-
-      html =~ "Failed to send message" ->
-        Process.sleep(20)
-        submit_until_pending_hint(view, params, attempts - 1)
-
-      true ->
-        render_until(view, &pending_hint?/1)
-    end
-  end
-
-  # Joins an element's class attribute(s) into one searchable string (Floki
-  # splits multiple `class` attributes; a well-formed element has exactly one).
-  defp class_string(element) do
-    element |> Floki.attribute("class") |> Enum.join(" ")
-  end
-
   # Deletes ALL the AgentsLive env seams (each is resolved at call time inside
   # the async tasks, so a leaked value would leak into later tests). The
   # commit-graph seam is resolved at SPAWN time too, so it is cleared as well.
@@ -2744,30 +2671,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
     :ets.insert(:evogit_agent_state, {id, state})
   end
 
-  # Updates a seeded agent's scheduler status in ETS (leaves the context —
-  # and therefore :message_count — untouched).
-  defp update_agent_status(id, status) do
-    case :ets.lookup(:evogit_sched_meta, id) do
-      [{^id, meta}] -> :ets.insert(:evogit_sched_meta, {id, %{meta | status: status}})
-      [] -> :ok
-    end
-  end
-
-  # Replaces a seeded agent's conversation context in ETS (grows its
-  # :message_count).
-  defp update_agent_context(id, messages) do
-    case :ets.lookup(:evogit_agent_state, id) do
-      [{^id, state}] ->
-        :ets.insert(
-          :evogit_agent_state,
-          {id, %{state | context: %ReqLLM.Context{messages: messages}}}
-        )
-
-      [] ->
-        :ok
-    end
-  end
-
   # A minimal RemoteAPI-shaped agent summary (the shape
   # EvoDashWeb.AgentsLive.LoadData.build_agents consumes). `task_id` defaults to a
   # non-nil BINARY because the task-scoped commit-graph RPC is grouped by
@@ -2852,5 +2755,4 @@ defmodule EvoDashWeb.AgentsLiveTest do
       Map.new(overrides)
     )
   end
-
 end
