@@ -189,6 +189,13 @@ AgentSpec.new(context_node, phylo_node, agent_module, objective, opts)
 
 The scheduler: 1) assigns a unique `task_id` (GUID), `task_number` (short integer), `agent_id` (`T<task_number>_A<task_local_id>`); 2) computes the worktree path (`worker_T<task_number>_A<task_local_id>`) into sched_meta — **no worktree I/O here**; 3) stores initial state in `:evogit_agent_state` (agent-owned) + `:evogit_sched_meta` (scheduler-owned); 4) spawns a Task running the agent loop; 5) inside the Task, `Runner.setup_dispatch_context/1` requests a FRESH worktree from `WorktreeManager.create_worktree_for_agent/6` (waits indefinitely — no call timeout; lazy per-repo init + the create pipeline — `git clean`/checkout/init script — is offloaded inside WorktreeManager); 6) on completion (a plain-text reply, which ends the run)/crash/cancel → WorktreeManager reclaims the worktree via its `:DOWN` process monitor and the scheduler replies to the caller.
 
+### Agent Lifecycle: One-Shot, No Resident/Session Model
+
+Every phase is ONE-SHOT: it blocks in `AgentScheduler.run_agent/2` (`GenServer.call(…, :infinity)`, `agent_scheduler.ex:81-83`) until the scheduler answers that root via `GenServer.reply(meta.from, result)` (`agent_scheduler/lifecycle.ex:246`), then does post-processing and RETURNS — no phase process outlives the wrapper Task and none waits for new user input.
+Root count per phase: exactly ONE for Genesis Mode A, Evolution and SkillExtraction, TWO SEQUENTIAL (architect then manager, same `task_id`) for Genesis Mode B — never a re-dispatch of the same root for a follow-up message.
+A run ends at the model's FIRST assistant reply with zero tool calls: `EvoGit.Agent.CompletionProtocol.classify/1` → `{:text_reply, text}` (`agent/completion_protocol.ex:44-49`) becomes the run result; continued conversation is NOT a runtime concern — mid-run input is only `AgentScheduler.send_user_message/2` injected into the LIVE run, and a later follow-up is a NEW task (`resume_from` / Review page), not a resumed session.
+There is no `EvoGit.Runtime.Phase` and no `EvoGit.Runtime.Prompts` module; the only `run_agent` call sites under `runtime/` are those four roots.
+
 ### Root-Agent Spec Builder (`Helpers.build_root_agent_spec/7`)
 
 `Helpers.build_root_agent_spec/7` is the shared builder producing the root `AgentSpec` for evolution (simple AND custom) and the genesis phase roots.
