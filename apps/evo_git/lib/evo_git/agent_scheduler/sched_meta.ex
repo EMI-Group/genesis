@@ -10,15 +10,19 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
 
   - `id` — scheduler-assigned integer agent ID
   - `depth` — recursion depth (0 for top-level agents)
-  - `status` — `:pending | :running | :waiting | :ready | :blocked`
+  - `status` — `:pending | :running | :waiting | :ready | :blocked | :awaiting_input`
     - :pending — just registered, ready to run when a worktree is available
     - :running — currently executing in a worktree
     - :waiting — execution paused due to subagent calls
     - :ready — execution paused, all subagents completed, ready to resume
     - :blocked — waiting for an LLM or tool slot to become available
+    - :awaiting_input — an INTERACTIVE session idle between exchanges: live,
+      cancellable and closeable, but not busy (no worker, no slot, no timer)
   - `worktree` — path to the assigned worktree, or `nil` when unassigned
   - `session_pid` — the agent's `EvoGit.Agent.Session` owner pid, or `nil`
-  - `mode` — `:oneshot | :interactive` (always `:oneshot` today)
+  - `mode` — `:oneshot | :interactive`. `:oneshot` is the default (one exchange,
+    then the session ends); `:interactive` is ROOT-ONLY and lets one session
+    process serve many exchanges until it is explicitly closed.
   - `phase` — a BEST-EFFORT mirror of the session's phase
   - `from` — the `GenServer.reply/2` destination for top-level agents
   - `parent_id` — the parent agent's ID, or `nil` for top-level agents
@@ -41,20 +45,57 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
   — the scheduler force-cancels through `EvoGit.Agent.Session.cancel/2` and re-monitors the
   session pid after a `WorktreeManager` restart.
 
-  `mode` is `:oneshot | :interactive` and is always `:oneshot` in this stage: an agent runs
-  exactly one exchange and ends.
+  `mode` is `:oneshot | :interactive`. `:oneshot` is the default an agent registered by
+  `run_agent/2` (and every subagent) carries: one exchange and the session ends.
+  `:interactive` is set by `EvoGit.AgentScheduler.start_session/1` (root-only this version):
+  one session process, many exchanges, until an explicit close/cancel.
 
-  `phase` is a scheduler-side BEST-EFFORT MIRROR ONLY (`:starting | :running | :cancelling |
-  :finalizing | :done | nil`): the scheduler sets `:starting` when it starts a session,
-  `:cancelling` when it drives a graceful cancel and `:done` when it recycles the agent.
+  `phase` is a scheduler-side BEST-EFFORT MIRROR ONLY (`:starting | :running |
+  :awaiting_input | :cancelling | :finalizing | :done | nil`): the scheduler sets
+  `:starting` when it starts a session, `:awaiting_input` on a session yield,
+  `:running` when a yielded session resumes, `:cancelling` when it drives a graceful
+  cancel and `:done` when it recycles the agent.
   It is never the truth about a live run — the AUTHORITATIVE live phase is answered by
   `EvoGit.Agent.Session.inspect/2`.
+
+  ## Status/phase enumerations
+
+  The lists below are the single source of truth for this struct's enumerations
+  (`statuses/0`, `phases/0`, …), so consumers — and one table-driven test — can
+  assert totality instead of duplicating the unions. NOTE the semantic split:
+
+  - every list containing `:running` whose meaning is "a live session" also
+    contains `:awaiting_input`;
+  - `:blocked` keeps its own meaning ("parked in an LLM/tool slot queue") and is
+    NEVER overloaded to mean an idle session;
+  - `:awaiting_input` is a live-but-not-busy status: it holds no worker, no slot
+    and no timer, yet it must be cancellable, closeable and lease-renewable.
   """
 
   alias EvoGit.AgentSpec
 
+  # Every status a REGISTERED agent can carry — including the idle-but-live
+  # `:awaiting_input` of an interactive session.
+  @statuses [:pending, :running, :waiting, :ready, :blocked, :awaiting_input]
+
+  # Every phase the scheduler may mirror from a session (`nil` = not mirrored).
+  @phases [:starting, :running, :awaiting_input, :cancelling, :finalizing, :done]
+
+  # Statuses of an agent whose session process is alive (running an exchange,
+  # idle between exchanges, or parked in a slot queue).
+  @live_statuses @statuses
+
+  # Statuses of a live session that is IDLE: no worker, no slot, no timer.
+  @idle_statuses [:awaiting_input]
+
+  # Statuses from which a graceful cancel or a force kill must still work.
+  @cancel_reachable_statuses @statuses
+
+  @type status :: :pending | :running | :waiting | :ready | :blocked | :awaiting_input
   @type mode :: :oneshot | :interactive
-  @type phase :: :starting | :running | :cancelling | :finalizing | :done | nil
+
+  @type phase ::
+          :starting | :running | :awaiting_input | :cancelling | :finalizing | :done | nil
 
   @enforce_keys [:id, :depth, :spec]
   defstruct [
@@ -83,7 +124,7 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
   @type t :: %__MODULE__{
           id: pos_integer(),
           depth: non_neg_integer(),
-          status: :pending | :running | :waiting | :ready | :blocked,
+          status: status(),
           worktree: String.t() | nil,
           session_pid: pid() | nil,
           mode: mode(),
@@ -102,4 +143,24 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
           sub_agent_indices: %{optional(pos_integer()) => non_neg_integer()},
           foreign_repo_commits: %{atom() => String.t()}
         }
+
+  @doc false
+  @spec statuses() :: [status()]
+  def statuses, do: @statuses
+
+  @doc false
+  @spec phases() :: [phase()]
+  def phases, do: @phases
+
+  @doc false
+  @spec live_statuses() :: [status()]
+  def live_statuses, do: @live_statuses
+
+  @doc false
+  @spec idle_statuses() :: [status()]
+  def idle_statuses, do: @idle_statuses
+
+  @doc false
+  @spec cancel_reachable_statuses() :: [status()]
+  def cancel_reachable_statuses, do: @cancel_reachable_statuses
 end
