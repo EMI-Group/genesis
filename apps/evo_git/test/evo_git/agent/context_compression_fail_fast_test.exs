@@ -51,7 +51,7 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
   import ExUnit.CaptureLog
 
   alias EvoGit.Agent.ContextCompression
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State, as: LoopState
   alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.State

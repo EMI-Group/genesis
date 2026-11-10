@@ -420,7 +420,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   end
 
   describe "build_subagent_specs/3 — model_id inheritance" do
-    alias EvoGit.Agent.LoopState
+    alias EvoGit.Agent.State
     alias EvoGit.AgentSpec
     alias EvoGit.AgentScheduler.AgentState
     alias EvoGit.Agents.Investigator
@@ -475,7 +475,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "child spec inherits parent's model_id", %{agent_id: agent_id} do
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: DummyAgentModule,
         depth: 0,
@@ -514,7 +514,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
       :ets.insert(:evogit_agent_state, {agent_id, parent_state})
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: DummyAgentModule,
         depth: 0,
@@ -537,7 +537,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "child spec inherits the parent's repo_notes", %{agent_id: agent_id} do
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: DummyAgentModule,
         depth: 0,
@@ -561,7 +561,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "child spec repo_notes is nil when the parent has none", %{agent_id: agent_id} do
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: DummyAgentModule,
         depth: 0,
@@ -585,7 +585,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   end
 
   describe "build_subagent_specs/3 — foreign repo phylo nodes" do
-    alias EvoGit.Agent.LoopState
+    alias EvoGit.Agent.State
     alias EvoGit.AgentSpec
     alias EvoGit.Adapters.Git
     alias EvoGit.AgentScheduler.AgentState
@@ -710,7 +710,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
          %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: _template} do
       missing_root = Path.join(tmp_dir, "does_not_exist")
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignDummyAgentModule,
         depth: 0,
@@ -734,7 +734,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       foreign_root = Path.join(tmp_dir, "foreign")
       [sha1] = copy_fixture!(fixture, foreign_root)
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignDummyAgentModule,
         depth: 0,
@@ -766,7 +766,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
       refute sha1 == sha2
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignDummyAgentModule,
         depth: 0,
@@ -798,7 +798,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       foreign_root = Path.join(tmp_dir, "foreign")
       copy_fixture!(fixture, foreign_root)
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignDummyAgentModule,
         depth: 0,
@@ -830,7 +830,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       foreign_root = Path.join(tmp_dir, "foreign")
       copy_fixture!(fixture, foreign_root)
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignWriteDummyAgentModule,
         depth: 0,
@@ -867,7 +867,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
       :ets.insert(:evogit_agent_state, {agent_id, %{agent_state | repo_id: "orig"}})
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignWriteDummyAgentModule,
         depth: 1,
@@ -896,7 +896,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
       :ets.insert(:evogit_agent_state, {agent_id, %{agent_state | repo_id: "orig"}})
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignWriteDummyAgentModule,
         depth: 1,
@@ -953,7 +953,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         :ets.delete(:evogit_sched_meta, primary_parent)
       end)
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignWriteDummyAgentModule,
         depth: 0,

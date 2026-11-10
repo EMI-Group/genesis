@@ -217,7 +217,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
   use ExUnit.Case, async: false
 
   alias EvoGit.Agent.ImplicitCompletionTest.StubLlmServer
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.Result
   alias EvoGit.Agent.SubagentProcessing
   alias EvoGit.Agent.ToolDispatch
@@ -451,7 +451,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
       File.write!(Path.join(repo, @uncommitted_file), @uncommitted_content)
 
       # The child's `%Result{}` is produced by driving the SAME production
-      # `ToolDispatch` path with a child-shaped `LoopState`/`AgentState` (depth 1,
+      # `ToolDispatch` path with a child-shaped `State`/`AgentState` (depth 1,
       # non-nil parent_id) rather than spawning a full heavyweight agent run —
       # the protocol classification under test is identical either way.
       context = initial_context()
@@ -583,7 +583,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
   end
 
   defp loop_state(agent_id, context, repo, opts) do
-    %LoopState{
+    %State{
       agent_id: agent_id,
       agent_module: __MODULE__,
       depth: Keyword.get(opts, :depth, 0),
