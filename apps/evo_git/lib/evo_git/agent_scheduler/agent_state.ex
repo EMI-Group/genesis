@@ -16,10 +16,9 @@ defmodule EvoGit.AgentScheduler.AgentState do
 
   ## Transitional fields (removed from this row in a later phase)
 
-  These five fields exist only because the loop still runs on
-  `%EvoGit.Agent.LoopState{}` plus this ETS row (P1/P2). The loop reads them
-  TODAY, so they must stay until the engine reads its control plane from
-  `%EvoGit.Agent.State{}` instead:
+  These five fields exist only because the loop still reads them from this ETS
+  row (P1/P2). They must stay until the engine reads that control plane from the
+  `%EvoGit.Agent.State{}` it owns instead:
 
   - `context` — the conversation context (to be replaced by the authoritative
     `State.context`; the ETS copy disappears with the summary re-keying)
@@ -56,10 +55,10 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from CLI opts or genesis.toml)
   - `repo_notes` — the already-rendered git-submodules note block (markdown text) for this agent's repo tree, or `nil` when the repo has no submodules (or detection failed). Rendered into the agent's `<context>` block; subagents inherit it from the parent (no re-detection).
   - `usage` — cumulative token and cost usage for this agent (`nil` until the first LLM call completes)
-  - `turn` — the current turn number for this agent (`nil` until the loop starts; mirrors `LoopState.turn`). Used by the dashboard to display the actual turn rather than a fabricated index.
+  - `turn` — the current turn number for this agent (`nil` until the loop starts; mirrors `EvoGit.Agent.State.turn`). Used by the dashboard to display the actual turn rather than a fabricated index.
   - `archive` — whether task archiving is enabled for this agent (writes git refs + ETS records on completion)
   - `compression_count` — number of times context compression has fired for this agent
-  - `total_tokens` — cumulative token count across all LLM calls since the last compression (mirrors `LoopState.total_tokens`). Used by the dashboard to display context progress. Reset to 0 on each compression.
+  - `total_tokens` — cumulative token count across all LLM calls since the last compression (mirrors `EvoGit.Agent.State.total_tokens`). Used by the dashboard to display context progress. Reset to 0 on each compression.
   """
 
   alias EvoGit.Agent.Usage
