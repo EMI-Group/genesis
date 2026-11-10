@@ -304,13 +304,21 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
       # not one byte moved. The two no-op data migrations (`…00002`,
       # `…00003`) are STAMPED on this fixture and never re-run, so this
       # proves the pending set leaves healthy v0.13.8 rows alone.
+      # `session_mode` is the ONE new value: migration 8 appends a NULL column
+      # and backfills nothing, so an upgraded legacy row carries nil (the codec
+      # reads that back as "oneshot").
       for id <- [@legacy_id, @canonical_id] do
-        assert after_[id] == Map.drop(before[id], ["archive_metadata"])
+        assert after_[id]["session_mode"] == nil
+
+        assert Map.drop(after_[id], ["session_mode"]) ==
+                 Map.drop(before[id], ["archive_metadata"])
       end
 
-      # (a) the archived task differs ONLY by the dropped archive column and
-      # the stripped `result`.
-      assert Map.drop(after_[@archived_id], ["result"]) ==
+      # (a) the archived task differs ONLY by the dropped archive column, the
+      # NULL-appended `session_mode` and the stripped `result`.
+      assert after_[@archived_id]["session_mode"] == nil
+
+      assert Map.drop(after_[@archived_id], ["result", "session_mode"]) ==
                Map.drop(before[@archived_id], ["archive_metadata", "result"])
 
       # No `"z1:"`-prefixed value survives anywhere. v0.13.8 never wrote that

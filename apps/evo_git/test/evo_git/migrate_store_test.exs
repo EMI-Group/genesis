@@ -39,7 +39,8 @@ defmodule EvoGit.MigrateStoreTest do
   @archive_table_version 20_260_815_000_005
   @prune_indexes_version 20_260_815_000_006
   @vct_mounts_version 20_260_815_000_007
-  # Ascending, exactly as `schema_migrations` reports it — seven contiguous
+  @session_mode_version 20_260_815_000_008
+  # Ascending, exactly as `schema_migrations` reports it — eight contiguous
   # versions, no gaps.
   @migration_versions [
     @baseline_version,
@@ -48,16 +49,21 @@ defmodule EvoGit.MigrateStoreTest do
     @covering_index_version,
     @archive_table_version,
     @prune_indexes_version,
-    @vct_mounts_version
+    @vct_mounts_version,
+    @session_mode_version
   ]
 
   @migration_count length(@migration_versions)
 
-  # The 19 LIVE `tasks` columns AFTER `20260815000005_task_agent_archives`
-  # drops the legacy `archive_metadata` column.
+  # The 20 LIVE `tasks` columns AFTER `20260815000005_task_agent_archives`
+  # drops the legacy `archive_metadata` column, in the FRESH-database canonical
+  # order (`session_mode` sits between `error` and `updated_at`). An ADOPTED
+  # legacy table legitimately carries `session_mode` appended at the tail
+  # instead (SQLite ALTERs can only append), which is why the comparisons below
+  # are order-insensitive.
   @live_task_columns ~w(id type status opts started_at finished_at logs result review_status
                         usage agent_count base_sha commit_sha lease_expires_at model_id
-                        project_path branch_name error updated_at)
+                        project_path branch_name error session_mode updated_at)
 
   # The v0.9.0–v0.12.5 "reported crash-on-upgrade" shape: `updated_at` is the
   # 19th column and `error` does not exist yet — the canonical legacy DB a
@@ -151,11 +157,12 @@ defmodule EvoGit.MigrateStoreTest do
       assert output =~ "20260815000005_task_agent_archives"
       assert output =~ "20260815000006_prune_redundant_indexes"
       assert output =~ "20260815000007_vct_mounts"
+      assert output =~ "20260815000008_session_mode"
 
       assert output =~ "Database is now current (#{@migration_count} migration(s) applied)."
 
       # Every version is stamped and the canonical tables exist (`tasks` ends at
-      # its 19 live columns — the archive column is gone).
+      # its 20 live columns — the archive column is gone).
       assert migration_versions(path) == @migration_versions
 
       # The legacy `projects` table is retired (migration 7 drops it), so the
@@ -165,7 +172,11 @@ defmodule EvoGit.MigrateStoreTest do
 
       assert Enum.sort(columns(path)) == Enum.sort(@live_task_columns)
       assert "error" in columns(path)
+      assert "session_mode" in columns(path)
       assert "updated_at" in columns(path)
+      # A fresh database gets the CANONICAL order: `session_mode` directly
+      # before `updated_at`.
+      assert Enum.take(columns(path), -3) == ~w(error session_mode updated_at)
     end
   end
 
@@ -192,13 +203,16 @@ defmodule EvoGit.MigrateStoreTest do
       assert output =~ "Applying #{@migration_count} migration(s):"
 
       # Adoption: `error` appended (SQLite ALTERs append at the tail), then the
-      # archive migration drops `archive_metadata` → the 19 live columns, with
-      # every version stamped.
+      # archive migration drops `archive_metadata` and `session_mode` is
+      # appended last → the 20 live columns, with every version stamped.
       cols = columns(path)
       assert Enum.sort(cols) == Enum.sort(@live_task_columns)
       assert "error" in cols
+      assert "session_mode" in cols
       assert "updated_at" in cols
       refute "archive_metadata" in cols
+      # An adopted table keeps the appended tail order: `session_mode` last.
+      assert List.last(cols) == "session_mode"
       assert migration_versions(path) == @migration_versions
 
       # Data normalization ran through the same migrations: the seeded
@@ -219,7 +233,10 @@ defmodule EvoGit.MigrateStoreTest do
       run_task!(path)
 
       assert migration_versions(path) == @migration_versions
-      assert Enum.sort(columns(path)) == Enum.sort(@live_task_columns)
+      cols = columns(path)
+      assert Enum.sort(cols) == Enum.sort(@live_task_columns)
+      # `error` after `updated_at`, then `session_mode` appended last.
+      assert Enum.take(cols, -3) == ~w(updated_at error session_mode)
     end
   end
 
