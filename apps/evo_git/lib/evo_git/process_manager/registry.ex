@@ -17,10 +17,25 @@ defmodule EvoGit.ProcessManager.Registry do
       mechanics).
     * `owner_refs` — `%{monitor_ref => owner_pid}`: one monitor per distinct
       `:owner_pid`, so an agent's death fails every execution it owned.
+    * `kill_intents` — `%{id => actor}`, the executions an OPERATOR has asked to
+      kill and whose stop is still in flight (see "Pending kill").
     * `next_id`, `sample_seq` — the `"proc-<n>"` counter and the monotonic
       sample sequence (both reset on restart).
     * `sample_timer`, `sample_ref` — the ONE sampling timer and the monitor of
       the in-flight probe worker.
+
+  ## Pending kill against an observed exit
+
+  `EvoGit.ProcessManager.kill/2` stops the OS process BEFORE it finishes the
+  record, and the sandbox layer observes that same exit and settles the record
+  itself (`:completed` + `:exited` + the exit code). So the registry keeps a
+  per-id kill INTENT (the requested `:actor`) while the stop is in flight: the
+  first non-killed terminal finish for that id settles as `:killed`,
+  `reason: {:killed_by, actor}` and `exit_code: nil` — the observed exit is the
+  kill's consequence, not a terminal fact of its own. An already-`:killed`
+  finish and an owner death (`:owner_died`, set directly by `fail_owned/2`)
+  are never translated, and consuming the intent keeps `do_finish/4`
+  idempotent for every later finish.
 
   ## Why the OS work never runs here
 
@@ -198,6 +213,17 @@ defmodule EvoGit.ProcessManager.Registry do
   @spec prune(GenServer.server()) :: {:ok, non_neg_integer()}
   def prune(server), do: call(server, :prune, {:ok, 0})
 
+  @doc false
+  # Declares an OPERATOR kill in flight for `id`: until it is cleared (or the
+  # record is pruned), a non-killed terminal finish resolves to the kill outcome.
+  @spec put_kill_intent(GenServer.server(), String.t(), term()) :: :ok
+  def put_kill_intent(server, id, actor), do: call(server, {:put_kill_intent, id, actor}, :ok)
+
+  @doc false
+  # Drops a pending kill intent (accepted kill settled, or the stop failed).
+  @spec clear_kill_intent(GenServer.server(), String.t()) :: :ok
+  def clear_kill_intent(server, id), do: call(server, {:clear_kill_intent, id}, :ok)
+
   ## Call-time seams (app env only — deliberately no TOML keys)
 
   @doc "Sampling interval (ms) — app env `:process_manager_sample_interval_ms`."
@@ -250,6 +276,7 @@ defmodule EvoGit.ProcessManager.Registry do
        executions: %{},
        handles: %{},
        owner_refs: %{},
+       kill_intents: %{},
        next_id: 0,
        sample_seq: 0,
        sample_timer: nil,
@@ -320,6 +347,14 @@ defmodule EvoGit.ProcessManager.Registry do
   def handle_call(:prune, _from, state) do
     {state, removed} = prune_state(state)
     {:reply, {:ok, removed}, arm_sampling(state)}
+  end
+
+  def handle_call({:put_kill_intent, id, actor}, _from, state) do
+    {:reply, :ok, %{state | kill_intents: Map.put(state.kill_intents, id, actor)}}
+  end
+
+  def handle_call({:clear_kill_intent, id}, _from, state) do
+    {:reply, :ok, %{state | kill_intents: Map.delete(state.kill_intents, id)}}
   end
 
   def handle_call(_request, _from, state), do: {:reply, :ok, state}
@@ -465,24 +500,61 @@ defmodule EvoGit.ProcessManager.Registry do
   # (`:completed` / `:no_os_process`) must be a no-op that never overwrites that
   # exit code. Keep the terminal guard, `int_or_keep/2` and the
   # default-to-current `:reason` exactly as they are.
+  #
+  # A pending OPERATOR kill outranks whatever the OS layer just observed: the
+  # exit is that kill's consequence, so the record settles `:killed` /
+  # `{:killed_by, actor}` with no exit code (and the intent is consumed).
   defp do_finish(state, id, status, opts) do
     with true <- status in @terminal,
          {:ok, execution} <- Map.fetch(state.executions, id),
          false <- Execution.terminal?(execution.status) do
-      execution = %{
-        execution
-        | status: status,
-          ended_at: DateTime.utc_now(),
-          exit_code: int_or_keep(Keyword.get(opts, :exit_code), execution.exit_code),
-          reason: Keyword.get(opts, :reason, execution.reason)
-      }
-
+      {state, execution} = settle_finish(state, execution, status, opts)
       state = %{state | executions: Map.put(state.executions, id, execution)}
       broadcast({:process_exited, execution, node()})
       {state, _removed} = prune_state(state)
       arm_sampling(state)
     else
       _ -> state
+    end
+  end
+
+  defp settle_finish(state, execution, status, opts) do
+    {kill_intents, {status, reason, exit_code}} =
+      resolve_kill_intent(state, execution, status, opts)
+
+    execution = %{
+      execution
+      | status: status,
+        ended_at: DateTime.utc_now(),
+        exit_code: exit_code,
+        reason: reason
+    }
+
+    {%{state | kill_intents: kill_intents}, execution}
+  end
+
+  # A pending kill intent translates only a NON-killed terminal finish that is
+  # not an owner death; in that case it is CONSUMED (one translation, never a
+  # second) and the observed exit code is dropped — the operator's kill is the
+  # terminal fact.
+  defp resolve_kill_intent(state, execution, status, opts) do
+    observed_reason = Keyword.get(opts, :reason)
+    observed_exit = int_or_keep(Keyword.get(opts, :exit_code), execution.exit_code)
+    ordinary = {status, Keyword.get(opts, :reason, execution.reason), observed_exit}
+
+    case Map.pop(state.kill_intents, execution.id) do
+      {nil, kill_intents} ->
+        {kill_intents, ordinary}
+
+      {actor, kill_intents} ->
+        if status == :killed or observed_reason == :owner_died do
+          # Not this intent's outcome (already the kill itself, or an owner
+          # death, which `fail_owned/2` never routes through here): keep the
+          # ordinary finish and the intent for a later observation.
+          {Map.put(kill_intents, execution.id, actor), ordinary}
+        else
+          {kill_intents, {:killed, {:killed_by, actor}, nil}}
+        end
     end
   end
 
@@ -744,7 +816,8 @@ defmodule EvoGit.ProcessManager.Registry do
       %{
         state
         | executions: Map.drop(state.executions, doomed_ids),
-          handles: Map.drop(state.handles, doomed_ids)
+          handles: Map.drop(state.handles, doomed_ids),
+          kill_intents: Map.drop(state.kill_intents, doomed_ids)
       }
       |> drop_unused_owner_refs()
       |> then(&{&1, length(doomed_ids)})

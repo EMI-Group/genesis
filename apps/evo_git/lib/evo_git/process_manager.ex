@@ -413,6 +413,14 @@ defmodule EvoGit.ProcessManager do
   controllable — appends
   `%{action: :kill, reason: {:kill_failed, reason}, actor: actor}` to
   `control_log`, and returns that error.
+
+  The operator's kill is AUTHORITATIVE against the sandbox layer's own exit
+  observation of the same process: a kill intent carrying the `:actor` is
+  declared before the stop, so if the sandbox settles the record first (usually
+  `:completed` + `:exited` + the signal's exit code) it settles as `:killed`,
+  `reason: {:killed_by, actor}` and `exit_code: nil` instead — the operator
+  asked for the kill, so the observed exit is its consequence, not a terminal
+  fact.
   """
   @spec kill(String.t(), keyword()) :: :ok | {:error, term()}
   def kill(id, opts \\ [])
@@ -504,10 +512,17 @@ defmodule EvoGit.ProcessManager do
   # One accepted/failed kill, mirroring the `control_log` entry shape the signal
   # path uses. The human `:reason` text lives in the log only; the record's
   # terminal `:reason` is `:terminal_reason` and no exit code is ever fabricated.
+  #
+  # The OPERATOR kill is authoritative even though the sandbox layer observes
+  # the very exit this stop causes: the intent is declared BEFORE the stop, so
+  # whichever finish lands first settles `:killed` / `{:killed_by, actor}` and
+  # every later finish is a no-op. A failed stop clears it again.
   defp kill_execution(server, id, execution, handle, opts) do
     reason = Keyword.get(opts, :reason, @default_kill_reason)
     actor = Keyword.get(opts, :actor) || :operator
     terminal_reason = Keyword.get(opts, :terminal_reason, {:killed_by, actor})
+
+    Registry.put_kill_intent(server, id, actor)
 
     case stop_execution(execution, handle, reason, actor) do
       :ok ->
@@ -518,8 +533,11 @@ defmodule EvoGit.ProcessManager do
         )
 
         finish(id, :killed, server: server, reason: terminal_reason, exit_code: nil)
+        Registry.clear_kill_intent(server, id)
 
       {:error, reason_error} ->
+        Registry.clear_kill_intent(server, id)
+
         entry =
           Execution.control_entry(
             action: :kill,

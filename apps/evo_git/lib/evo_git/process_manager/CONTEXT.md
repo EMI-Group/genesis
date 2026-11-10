@@ -26,12 +26,20 @@ Sampling keys on `Execution.sampleable?/1`, so a live builtin record never arms 
 `:completed` also covers a NON-ZERO `:exit_code`: the tool call itself succeeded and the model receives a normal result (the dashboard colors the code).
 `do_finish/4` is idempotent by contract: the sandbox layer settles a shell call with `:exited` plus its real `exit_code`, and the later tool-runtime finish (`:completed` / `:no_os_process`) is a no-op that never overwrites that exit code.
 
+## Pending Kill vs an Observed Exit
+
+`EvoGit.ProcessManager.kill/2` stops the OS process BEFORE it finishes the record, and the sandbox layer observes that same exit and settles the record itself.
+The registry therefore holds a per-id kill INTENT (the requesting `:actor`) while the stop is in flight: `Registry.put_kill_intent/3` declares it, and `Registry.clear_kill_intent/2` drops it after an accepted or failed stop.
+While an intent is pending, the FIRST non-killed terminal finish settles the record `:killed` with `reason: {:killed_by, actor}` and `exit_code: nil`, because the observed exit is the kill's consequence rather than a terminal fact of its own.
+An incoming `:killed` finish and an `:owner_died` finish are never translated, and the intent is consumed by its ONE translation, so `do_finish/4` stays idempotent for every later finish.
+An intent is dropped together with its record during retention, and a FAILED stop clears it so a later natural exit keeps its own terminal facts.
+
 ## API Surface
 
 | Module | Role |
 |---|---|
 | `EvoGit.ProcessManager` | Public facade: `track/3`, `attach/3`, `finish/3`, `list/1`, `get/2`, `sample/2`, `sample_all/1`, `signal/3`, `pause/2`, `resume/2`, `kill/2`, `subscribe/0`, `unsubscribe/0`, `server/0`, `start_link/1`, `child_spec/1`, plus the extra `prune/1` retention entry point |
-| `EvoGit.ProcessManager.Registry` | The GenServer: executions + handles maps, owner monitors, ONE sampling timer, `"proc-<n>"` counter, monotonic sample seq, retention (`prune/1`, `max_terminal_records/0`, `finished_retention_ms/0`) |
+| `EvoGit.ProcessManager.Registry` | The GenServer: executions + handles + kill-intent maps, owner monitors, ONE sampling timer, `"proc-<n>"` counter, monotonic sample seq, retention (`prune/1`, `max_terminal_records/0`, `finished_retention_ms/0`) |
 | `EvoGit.ProcessManager.Execution` | FROZEN defstruct + `terminal?/1`, `live?/1`, `builtin?/1`, `external?/1`, `sampleable?/1`, `status_for_reason/1`, `control_entry/1` |
 | `EvoGit.ProcessManager.Handle` | Normalized OS handle (`:systemd_unit | :posix | :windows`) and `normalize/1` for legacy `%{kind: :unit | :port}` sandbox handles |
 | `EvoGit.ProcessManager.Control` | Behaviour (`stats/1`, `signal/2`, `kill/1`, `alive?/1`) + dispatcher on `Handle.kind`, signal normalization, `kill_grace_ms/0` |
@@ -41,7 +49,7 @@ Sampling keys on `Execution.sampleable?/1`, so a live builtin record never arms 
 ## Constraints
 
 - NO OS call ever runs inside the registry: `sample/2`, `sample_all/1`, `signal/3`, `pause/2`, `resume/2` and `kill/2` do the OS work in the CALLER; the sampling tick probes in a monitored throwaway worker and skips ticks while one is in flight.
-- `kill/2` on a `:builtin` execution answers `{:error, :no_os_process}` FIRST and never finishes the record; an accepted kill appends `%{action: :kill, reason: <human text>, actor: actor}` to `control_log` and finishes with `:killed`, `reason: {:killed_by, actor}` by default (overridable through the `:terminal_reason` option) and `exit_code: nil`, so a kill never fabricates an exit code and the human `:reason` text survives in `control_log` only.
+- `kill/2` on a `:builtin` execution answers `{:error, :no_os_process}` FIRST and never finishes the record; an accepted kill appends `%{action: :kill, reason: <human text>, actor: actor}` to `control_log` and finishes with `:killed`, `reason: {:killed_by, actor}` by default (overridable through the `:terminal_reason` option) and `exit_code: nil`, so a kill never fabricates an exit code and the human `:reason` text survives in `control_log` only; the operator outcome is authoritative over the sandbox layer's own observation of the exit it caused.
 - `kill/2`'s `:actor` defaults to `:operator` and is never nil; the default terminal reason `{:killed_by, actor}` therefore follows a supplied actor.
 - The `stats` field is ALWAYS the six-key map from `Stats.empty/0` (`cpu_time_ms`, `cpu_percent`, `memory_bytes`, `rss_bytes`, `pids`, `sampled_at`) — never `nil`, never a partial map.
 - `pgid` lives on the `Handle`, not on `Execution` (the frozen `Execution` schema models identity, not OS addressing).
