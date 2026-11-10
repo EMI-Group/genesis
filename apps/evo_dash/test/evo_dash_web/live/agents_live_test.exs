@@ -1,6 +1,6 @@
 defmodule EvoDashWeb.AgentsLiveTest do
   # async: true — the scheduler ETS tables this file seeds
-  # (:evogit_sched_meta / :evogit_agent_state) are shared across the whole
+  # (:evogit_sched_meta / :evogit_agent_summary) are shared across the whole
   # cohort, so each test seeds its agent under a UNIQUE id (see `agent_id/0`)
   # instead of a fixed literal. The `:agents_*` runner app-env seams are used
   # by NO other module, and the one real core write (send_agent_message)
@@ -27,7 +27,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
   @async_wait_budget_ms 30_000
 
   setup do
-    # The scheduler ETS tables (:evogit_sched_meta / :evogit_agent_state) are
+    # The scheduler ETS tables (:evogit_sched_meta / :evogit_agent_summary) are
     # owned by the :evo_git application process and survive the test process,
     # i.e. they are SHARED across the whole async cohort. Seed this test's
     # agent under a UNIQUE id (never a fixed 1, which the global
@@ -49,7 +49,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
     on_exit(fn ->
       # Clean up only the rows this test seeded; the tables themselves are
       # owned by the :evo_git application process (survive the test process).
-      for table <- [:evogit_sched_meta, :evogit_agent_state] do
+      for table <- [:evogit_sched_meta, :evogit_agent_summary] do
         if :ets.whereis(table) != :undefined, do: :ets.delete(table, agent_id)
       end
     end)
@@ -2641,9 +2641,13 @@ defmodule EvoDashWeb.AgentsLiveTest do
     }
   end
 
-  # Seeds a single agent (sched_meta + agent_state) directly into the ETS
+  # Seeds a single agent (sched_meta + summary row) directly into the ETS
   # tables the RemoteAPI reads, so the agents page renders a real agent with
-  # the given conversation history. Cleaned up in on_exit.
+  # the given conversation size. Cleaned up in on_exit.
+  #
+  # The `:evogit_agent_summary` row is a READ MODEL with no conversation (the
+  # transcript lives only in the live `EvoGit.Agent.Session`), so `messages`
+  # only feeds its `:message_count`.
   defp seed_agent(id, messages) do
     context_node = %ContextNode{path: "./", repo: "test"}
     phylo_node = %PhyloGraphNode{current_commit: "abc123", base_commit: "def456"}
@@ -2662,13 +2666,13 @@ defmodule EvoDashWeb.AgentsLiveTest do
       llm_model: "test-model",
       max_retries: 1,
       max_depth: 1,
-      phylo_node: phylo_node,
       objective: "test objective",
-      context: %ReqLLM.Context{messages: messages}
+      status: :running,
+      message_count: length(messages)
     }
 
     :ets.insert(:evogit_sched_meta, {id, meta})
-    :ets.insert(:evogit_agent_state, {id, state})
+    :ets.insert(:evogit_agent_summary, {id, state})
   end
 
   # A minimal RemoteAPI-shaped agent summary (the shape

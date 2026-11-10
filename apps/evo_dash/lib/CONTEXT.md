@@ -124,7 +124,7 @@ EvoDash has its own `EvoDash.PubSub` but it is not used for cross-app communicat
 #### 6. Shared ETS Tables (owned by EvoGit.AgentScheduler)
 
 AgentsLive reads directly from two public ETS tables:
-- `:evogit_agent_state` — agent spatial/temporal state
+- `:evogit_agent_summary` — the SUMMARY read model per agent (status/turn/usage/message_count/model selection/repo fields; it carries NO conversation — `RemoteAPI.get_agent_history/1` reads the live `EvoGit.Agent.Session` and answers `[]` once the session is gone)
 - `:evogit_sched_meta` — scheduling metadata (status, worktree, depth, retries, spec)
 
 No `Application.put_env` calls to `:evo_git` exist in EvoDash. All config changes go through `EvoGit.AgentScheduler.update_config/1`.

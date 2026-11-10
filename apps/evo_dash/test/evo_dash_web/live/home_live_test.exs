@@ -40,6 +40,30 @@
 #      `:source_availability_runner`, `:source_clone_runner`, `:config_dir_fun`)
 #      are written and restored by the tests that use them; canonical launch
 #      fixtures must also reach TaskRegistry outside the test's caller chain.
+defmodule EvoDashWeb.HomeLiveTest.ScriptedAgent do
+  @moduledoc """
+  The role a scripted HomeLive fixture session runs AS.
+
+  A real `EvoGit.Agent.Session` needs a module implementing the `EvoGit.Agent`
+  behaviour (`system_prompt/0`, `available_tools/0`, `delegation_level/0`). The
+  tool list is deliberately EMPTY: every fixture conversation is driven
+  end-to-end by the `dispatch_ctx[:exchange_opts]` engine seams, so no real tool
+  schema is ever dispatched.
+
+  Defined ABOVE the test module on purpose: `mix test` starts the ExUnit async
+  runner BEFORE requiring the test files, so a helper defined after the test
+  module can still be unloaded when the first test runs.
+  """
+
+  use EvoGit.Agent
+
+  @doc "The fixed system prompt of the scripted role."
+  def system_prompt, do: "You are the HomeLive scripted fixture agent."
+
+  @doc "No tools: the scripted model always answers with a scripted reply."
+  def available_tools, do: []
+end
+
 defmodule EvoDashWeb.HomeLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
@@ -211,9 +235,9 @@ defmodule EvoDashWeb.HomeLiveTest do
       end
 
       # The reflect agent's scheduler rows (agent_id -> %{task_id: ...} in
-      # :evogit_sched_meta, plus :evogit_agent_state) are NOT removed by
-      # cancel/delete — the agent stays alive/blocked on an LLM slot with no
-      # credentials, so without this sweep its ETS rows leak into
+      # :evogit_sched_meta, plus the :evogit_agent_summary read model) are NOT
+      # removed by cancel/delete — the agent stays alive/blocked on an LLM slot
+      # with no credentials, so without this sweep its ETS rows leak into
       # agents_live_test.exs (which expects an empty agent registry).
       try do
         if :ets.whereis(:evogit_sched_meta) != :undefined do
@@ -221,8 +245,8 @@ defmodule EvoDashWeb.HomeLiveTest do
               Map.get(meta, :task_id) == task_id do
             :ets.delete(:evogit_sched_meta, agent_id)
 
-            if :ets.whereis(:evogit_agent_state) != :undefined,
-              do: :ets.delete(:evogit_agent_state, agent_id)
+            if :ets.whereis(:evogit_agent_summary) != :undefined,
+              do: :ets.delete(:evogit_agent_summary, agent_id)
           end
         end
 
@@ -413,10 +437,6 @@ defmodule EvoDashWeb.HomeLiveTest do
       }
     ]
   end
-
-  # Builds a %ReqLLM.Context{} from the real history (for seeding REAL
-  # :evogit_agent_state rows).
-  defp real_context, do: ReqLLM.Context.new(real_history())
 
   describe "render" do
     test "renders the idle chat page", %{conn: conn} do
@@ -762,26 +782,170 @@ defmodule EvoDashWeb.HomeLiveTest do
     })
   end
 
-  # Seeds a REAL %AgentState{} row into the scheduler ETS (the exact shape the
-  # core keeps) and sweeps it in on_exit.
-  defp seed_agent_state!(agent_id, context \\ real_context()) do
-    state = %EvoGit.AgentScheduler.AgentState{
-      context: context,
-      context_node: %EvoGit.Core.ContextNode{path: "/tmp/x", repo: "/tmp/x"},
-      llm_model: nil,
-      max_retries: 1,
-      max_depth: 1,
-      turn: 4,
-      task_local_id: 9
+  # Seeds a REAL conversation the ONLY way it can still exist: a live
+  # `EvoGit.Agent.Session` parked mid-exchange.
+  #
+  # WHY a session: the `:evogit_agent_summary` row is a READ MODEL with no
+  # conversation (`AgentState` declares no `:context`), and
+  # `RemoteAPI.get_agent_history/1` answers from the live session
+  # (`EvoGit.Agent.Session.history/1`, `[]` once the session is gone). A
+  # transcript can therefore no longer be seeded through ETS at all.
+  #
+  # The conversation is scripted through the `dispatch_ctx[:exchange_opts]`
+  # engine seams (`:llm_call` + `:tool_batch`) — the pattern of
+  # `apps/evo_git/test/evo_git/agent_scheduler/session_runtime_invariants_test.exs`.
+  # Each `steps` entry is ONE turn's assistant reply. A reply carrying a tool
+  # call CONTINUES the run, so the state it produced is checkpointed (and
+  # readable through `Session.history/1`) while the NEXT turn's LLM call is
+  # parked — the script simply has no step left for that turn, and every
+  # fixture below ends with such a parked turn. A reply with NO tool call would
+  # FINISH the run and stop the session (history → `[]`), which is why the
+  # parked turn is load-bearing.
+  defp seed_scripted_session!(agent_id, steps, opts \\ []) do
+    task_id = Keyword.get(opts, :task_id, "t1")
+    tmp_dir = Path.join(System.tmp_dir!(), "evogit_home_live_session_#{agent_id}")
+    File.mkdir_p!(tmp_dir)
+
+    context_node = %EvoGit.Core.ContextNode{path: "./", repo: tmp_dir}
+
+    spec = %EvoGit.AgentSpec{
+      context_node: context_node,
+      phylo_node: nil,
+      agent_module: EvoDashWeb.HomeLiveTest.ScriptedAgent,
+      objective: "New message: hi",
+      opts: [repo_less: true, task_tmpdir: tmp_dir]
     }
 
-    :ets.insert(:evogit_agent_state, {agent_id, state})
+    meta = %EvoGit.AgentScheduler.SchedMeta{
+      id: agent_id,
+      depth: 0,
+      task_id: task_id,
+      spec: spec,
+      status: :running
+    }
+
+    :ok =
+      EvoGit.AgentScheduler.Store.put_agent_state(agent_id, %EvoGit.AgentScheduler.AgentState{
+        context_node: context_node,
+        objective: "New message: hi",
+        llm_model: "test:model",
+        model_id: "home-live-scripted",
+        max_turns: 128,
+        max_retries: 3,
+        max_depth: 8,
+        repo_id: "primary",
+        repo_root: tmp_dir,
+        llm_context_window: 200_000
+      })
+
+    :ok = EvoGit.AgentScheduler.Store.put_sched_meta(agent_id, meta)
+
+    # Repo-less: no worktree, no git, no `WorktreeManager` lease. The terminal
+    # result (never delivered while the run is parked) targets THIS test rather
+    # than the app-global scheduler.
+    {:ok, pid} =
+      EvoGit.Agent.Session.start_link(
+        agent_id: agent_id,
+        depth: 0,
+        repo_root: tmp_dir,
+        repo_id: "primary",
+        worktree_path: Path.join(tmp_dir, "worker"),
+        retries: 0,
+        spec: spec,
+        meta: meta,
+        repo_less: true,
+        repo_less_repo_path: tmp_dir,
+        exchange_opts: [
+          llm_call: scripted_llm_call(self(), steps),
+          tool_batch: scripted_tool_batch()
+        ],
+        scheduler: self()
+      )
+
+    # The session's own stop is never an assertion failure here; the monitor
+    # keeps it observable without linking the test process.
+    Process.unlink(pid)
+    ref = Process.monitor(pid)
 
     on_exit(fn ->
-      :ets.delete(:evogit_agent_state, agent_id)
+      # Force-cancel FIRST: that is the only path that also shuts the parked
+      # exchange worker down (`Session` kills it via `Task.shutdown/2`).
+      _ = EvoGit.Agent.Session.cancel(pid, :force)
+      if Process.alive?(pid), do: Process.exit(pid, :kill)
+
+      EvoGit.AgentScheduler.Store.delete_agent_state(agent_id)
+      EvoGit.AgentScheduler.Store.delete_sched_meta(agent_id)
+      EvoGit.AgentScheduler.Store.clear_cancel_requested(agent_id)
+      File.rm_rf(tmp_dir)
     end)
 
-    state
+    ref
+  end
+
+  # The `:llm_call` seam: plays the next scripted reply, then PARKS (see
+  # `seed_scripted_session!/3`). The turn index is the number of assistant
+  # messages already in the conversation, so the script needs no state of its
+  # own.
+  defp scripted_llm_call(test_pid, steps) do
+    fn context, _tools, _params, _agent_id, _retries ->
+      turn = Enum.count(context.messages, &(&1.role == :assistant))
+
+      case Enum.at(steps, turn) do
+        nil ->
+          send(test_pid, {:scripted_llm_parked, self()})
+
+          receive do
+            :release -> :ok
+          after
+            # Bounded only so a worker that outlives the test can never park
+            # forever; `on_exit` kills the session (and this worker) first.
+            @async_wait_budget_ms -> :ok
+          end
+
+          {:implicit_completion, scripted_response(context, %{content: []}), "parked"}
+
+        step ->
+          {:ok, scripted_response(context, step)}
+      end
+    end
+  end
+
+  # The `:tool_batch` seam: replaces the whole standard-call batch, so no real
+  # tool runs (and no tool runtime/slot is touched) while the engine still
+  # builds the `%ReqLLM.Message{}` tool messages itself.
+  defp scripted_tool_batch do
+    fn indexed_calls, _state ->
+      Enum.map(indexed_calls, fn {call, index} ->
+        {index, call.id, ReqLLM.ToolCall.name(call), "result..."}
+      end)
+    end
+  end
+
+  # One scripted assistant reply. The response carries the SAME message on top
+  # of the conversation — exactly how the engine advances `state.context`.
+  defp scripted_response(context, step) do
+    message = %ReqLLM.Message{
+      role: :assistant,
+      content: Map.get(step, :content, []),
+      tool_calls: Map.get(step, :tool_calls),
+      reasoning_details: Map.get(step, :reasoning_details)
+    }
+
+    %ReqLLM.Response{
+      id: "home-live-scripted-response",
+      model: "test:model",
+      context: ReqLLM.Context.append(context, message),
+      message: message,
+      usage: %{input_tokens: 10, output_tokens: 2, total_tokens: 12}
+    }
+  end
+
+  defp scripted_tool_call(id, name \\ "spawn_investigator") do
+    %ReqLLM.ToolCall{
+      id: id,
+      type: "function",
+      function: %{name: name, arguments: "{}"}
+    }
   end
 
   describe "streaming display" do
@@ -850,15 +1014,15 @@ defmodule EvoDashWeb.HomeLiveTest do
       # never updated after the first history fetch.
       agent_id = 200_000 + rem(System.unique_integer([:positive]), 50_000)
 
-      ctx =
-        ReqLLM.Context.new([
-          %ReqLLM.Message{
-            role: :assistant,
-            content: [%ReqLLM.Message.ContentPart{type: :text, text: "kwlist response"}]
-          }
-        ])
-
-      seed_agent_state!(agent_id, ctx)
+      # A real session parked after ONE tool-calling turn, so its checkpointed
+      # transcript is [system, user, assistant("kwlist response"), tool result]
+      # — 4 messages, the real shape a mid-run Assistant agent exposes.
+      seed_scripted_session!(agent_id, [
+        %{
+          content: [%ReqLLM.Message.ContentPart{type: :text, text: "kwlist response"}],
+          tool_calls: [scripted_tool_call("kwlist-1")]
+        }
+      ])
 
       {:ok, view, _html} = live(conn, "/help")
 
@@ -880,9 +1044,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       render(view)
       assert assigns(view)[:chat_fetch_seq] == seq + 1
 
-      # The real refetch lands against the ETS row → the streamed text appears
-      # (this is the exact production data path, no injected result).
-      wait_until(fn -> assigns(view)[:agent_message_count] == 1 end)
+      # The real refetch lands against the LIVE session's transcript → the
+      # streamed text appears (the exact production data path, no injected
+      # result).
+      wait_until(fn -> assigns(view)[:agent_message_count] == 4 end)
       html = render(view)
       assert html =~ "kwlist response"
     end
@@ -987,9 +1152,22 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert page_heading(html) == "Genesis Assistant"
     end
 
-    test "real AgentState ETS row flows through the real get_agent_history path", %{conn: conn} do
+    test "real live session flows through the real get_agent_history path", %{conn: conn} do
       agent_id = 300_000 + rem(System.unique_integer([:positive]), 50_000)
-      seed_agent_state!(agent_id)
+
+      # A real parked session whose first (tool-calling) turn already produced
+      # the thinking part, the tool call and the assistant text, so the fetch
+      # returns [system, user, assistant(thinking + tool_call), tool result].
+      seed_scripted_session!(agent_id, [
+        %{
+          content: [
+            %ReqLLM.Message.ContentPart{type: :thinking, text: "let me inspect the source"},
+            %ReqLLM.Message.ContentPart{type: :text, text: "Genesis is an Elixir framework."}
+          ],
+          tool_calls: [scripted_tool_call("call_1")],
+          reasoning_details: [%ReqLLM.Message.ReasoningDetails{text: "think", index: 0}]
+        }
+      ])
 
       {:ok, view, _html} = live(conn, "/help")
 
@@ -1017,10 +1195,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       )
 
       # The REAL async fetch (NodeContext → RemoteNode → RemoteAPI
-      # .get_agent_history) reads the ETS row and returns the native
-      # %ReqLLM.Message{} structs — nil metadata, thinking parts, tool_calls
-      # and all.
-      wait_until(fn -> assigns(view)[:agent_message_count] == 5 end)
+      # .get_agent_history → Agent.Session.history/1) returns the native
+      # %ReqLLM.Message{} structs the SESSION owns — thinking parts,
+      # reasoning details, tool calls and the tool result included.
+      wait_until(fn -> assigns(view)[:agent_message_count] == 4 end)
 
       html = render(view)
       assert html =~ "Genesis is an Elixir framework."
@@ -2300,39 +2478,32 @@ defmodule EvoDashWeb.HomeLiveTest do
   end
 
   describe "production-mimicking crash repro" do
-    test "real reflect task + real agent ETS rows + real broadcasts end-to-end", %{conn: conn} do
+    test "real reflect task + real live session + real broadcasts end-to-end", %{conn: conn} do
       # A REAL agent id in the scheduler's id space (integer, like production).
       agent_id = 400_000 + rem(System.unique_integer([:positive]), 50_000)
-      # REAL scheduler ETS rows: SchedMeta + AgentState with a REAL
-      # %ReqLLM.Context{} whose history includes thinking parts, tool_calls,
-      # reasoning_details, nil metadata AND an assistant message with
-      # content: [] (the empty-list hardening case).
-      spec = %EvoGit.AgentSpec{
-        context_node: %EvoGit.Core.ContextNode{path: "/tmp/x", repo: "/tmp/x"},
-        phylo_node: %EvoGit.Core.PhyloGraphNode{
-          repo: "/tmp/x",
-          base_commit: "abc",
-          current_commit: "abc"
-        },
-        agent_module: EvoGit.Agents.SelfReflective,
-        objective: "New message: crash"
-      }
-
-      meta = %EvoGit.AgentScheduler.SchedMeta{
-        id: agent_id,
-        depth: 0,
-        task_id: "t_crash",
-        spec: spec
-      }
-
-      :ets.insert(:evogit_sched_meta, {agent_id, meta})
-      on_exit(fn -> :ets.delete(:evogit_sched_meta, agent_id) end)
-
-      seed_agent_state!(
+      # REAL scheduler rows (SchedMeta + the summary read model) plus a REAL
+      # live session whose scripted conversation includes thinking parts,
+      # tool_calls, reasoning_details AND an assistant reply with content: []
+      # (the empty-list hardening case). The session is parked after its SECOND
+      # tool-calling turn, so the transcript it exposes is
+      # [system, user, assistant, tool, assistant(content: []), tool].
+      seed_scripted_session!(
         agent_id,
-        ReqLLM.Context.new(
-          real_history() ++ [%ReqLLM.Message{role: :assistant, content: [], metadata: nil}]
-        )
+        [
+          %{
+            content: [
+              %ReqLLM.Message.ContentPart{type: :thinking, text: "let me inspect the source"},
+              %ReqLLM.Message.ContentPart{type: :text, text: "Genesis is an Elixir framework."}
+            ],
+            tool_calls: [scripted_tool_call("call_1")],
+            reasoning_details: [%ReqLLM.Message.ReasoningDetails{text: "think", index: 0}]
+          },
+          %{
+            content: [],
+            tool_calls: [scripted_tool_call("call_2")]
+          }
+        ],
+        task_id: "t_crash"
       )
 
       # A REAL reflect task row: :running, nil project_path (repo-less), the
@@ -2380,8 +2551,9 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       html = render(view)
       assert page_heading(html) == "Genesis Assistant"
-      # The real history fetch lands: 6 messages (5 real + the empty-content
-      # assistant) — nil metadata, thinking parts, tool_calls and all.
+      # The real history fetch lands: 6 messages from the live session: thinking
+      # parts, tool_calls, reasoning_details and the empty-content assistant
+      # reply included.
       wait_until(fn -> assigns(view)[:agent_message_count] == 6 end)
       html = render(view)
       assert html =~ "Genesis is an Elixir framework."
