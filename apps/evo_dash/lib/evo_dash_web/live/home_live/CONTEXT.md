@@ -93,6 +93,8 @@ The final truncation keeps the beginning of those retained blocks, so a full bud
 Only role-labelled bubble text enters the preamble, not thought-process tool results, reasoning details, approvals, or structured task references.
 Transcript append/restore, `Messages.to_entries/1`, and persisted `thought_process` have no per-chat count or byte cap in these support modules; the thought panels' `max-h-32` limits visual height only.
 `Transcript.normalize/1` is not fully total despite its documentation: non-binary text uses `to_string/1`, which can raise for maps or tuples without `String.Chars` support.
+The parent composes each send's objective as `preamble <> "New message: " <> text` (bare `text` when the preamble is `:empty`) — no `history:`/`messages:`/`resume_from:`/conversation option is ever passed, because every send starts a NEW `:reflect` task.
+HomeLive never reuses a running task: it never calls `NodeContext.send_user_message/3` (only AgentsLive does), and `do_send_chat/2` silently returns the socket unless `chat_status == :idle`, so a mid-run follow-up is impossible by construction.
 `Messages.assistant_text/1`, `message_text/1`, and `to_entries/1` are total converters over native ReqLLM history and malformed RPC payloads.
 Text extraction uses `EvoDashWeb.ContentText.text_of/1` so explicit thinking/media parts never leak into the assistant response; reasoning remains in `reasoning_details` for the thought disclosure.
 `AgentStream` provides root-agent lookup, message-count gating, task-id extraction from a bare map or `{:ok, map}`, final-result extraction, and total structured failure-message extraction.
