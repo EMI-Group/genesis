@@ -95,6 +95,7 @@ Transcript append/restore, `Messages.to_entries/1`, and persisted `thought_proce
 `Transcript.normalize/1` is not fully total despite its documentation: non-binary text uses `to_string/1`, which can raise for maps or tuples without `String.Chars` support.
 `Messages.assistant_text/1`, `message_text/1`, and `to_entries/1` are total converters over native ReqLLM history and malformed RPC payloads.
 Text extraction uses `EvoDashWeb.ContentText.text_of/1` so explicit thinking/media parts never leak into the assistant response; reasoning remains in `reasoning_details` for the thought disclosure.
+Each send enqueues a BRAND-NEW `:reflect` task with opts exactly `[mode: "reflect", objective: <preamble + "New message: " + text>]`, plus — only for an explicit model choice — a string-keyed `model_spec` and `model_id_locked: true`; no `:path`, `:source_root`, `:attachments`, `:model_id`, conversation/session key, or previous task id is ever passed, so prior turns reach the agent only as the bounded textual preamble inside `objective`.
 `AgentStream` provides root-agent lookup, message-count gating, task-id extraction from a bare map or `{:ok, map}`, final-result extraction, and total structured failure-message extraction.
 `extract_failed_message/1` accepts atom/string message keys and returns only a nonblank binary, preserving its original whitespace.
 
