@@ -5,6 +5,8 @@ It is not just a help page: it understands Genesis itself — the context tree, 
 It answers as Genesis in the first person (“I can …”), in your language, and its final chat reply is the answer you read.
 
 If the Genesis source has not been downloaded yet, a banner blocks the composer until you press **Download source**; the Assistant reads that checkout, so source-backed answers need it.
+That checkout is registered as the VCT system mount `vct:///genesis-source`, which is how the Assistant names the source tree it is reading; the mount is not a project and does not appear in the project list.
+To make it read a different local source tree, re-point `vct:///genesis-source` at that checkout (setting `GENESIS_SOURCE_ROOT` also works and takes precedence).
 The gate is local-only: on a remote node it stays hidden instead of blocking the chat.
 
 ## What it can do

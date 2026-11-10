@@ -3,19 +3,21 @@
 Status: **implemented — deliberately minimal, internal only**.
 What shipped is a data-structure and namespace refactor, not a kernel filesystem and not a visible workspace feature.
 The VCT is an **analogy and an internal namespace**: a canonical `vct:///…` point is bound to an absolute OS path so Genesis can name repositories and context levels independently of where the bytes live.
+Its scope is the project registry (`vct:///projects/<name>`) plus one **reserved system mount**, `vct:///genesis-source` (Genesis's own source checkout, §8).
 This step does **NOT** create symlink farms, bind mounts, FUSE mounts, directory junctions, per-mount worktrees, or change any filesystem layout.
 A task still executes in exactly one concrete repo worktree, and every user-visible path is what it was before.
-The intended future extension (remote hosts, capability mounts, nested mounts) is described at the end; none of it is built.
+The intended future extension (remote hosts, further capability mounts, nested mounts) is described at the end; none of it is built.
 
 This record replaces the earlier heavyweight proposal (workspace rootfs as a mount, symlink farm per agent, shared pinned read-only views, per-mount review).
 
 ## 1. Scope of the implemented step
 
-The VCT currently provides three things and nothing more:
+The VCT currently provides four things and nothing more:
 
 1. A canonical, parseable **namespace** for repositories (`vct:///projects/<name>`) — `EvoGit.VCT.Path`.
 2. A machine-local **mount registry** (SQLite `vct_mounts` in the task store) binding those points to absolute OS paths — `EvoGit.VCT`, `EvoGit.VCT.Mount`, `EvoGit.VCT.Table`.
 3. A **spatial-dimension annotation** (`%EvoGit.Core.ContextNode{}.vct_path`) and an optional **global context level** rendered ahead of the in-repo context chain.
+4. One **reserved system mount** at `vct:///genesis-source`, giving Genesis's own source checkout a VCT identity (§8).
 
 Everything else that the word "virtual tree" might suggest is out of scope for this step.
 
@@ -24,6 +26,7 @@ Everything else that the word "virtual tree" might suggest is out of scope for t
 - A task runs in **one concrete repo worktree**; `opts[:path]` is still the primary repo and the worktree/branch layout is untouched.
 - **Foreign repositories are unchanged**: `%EvoGit.Core.ForeignRepo{}` keeps read-only vs writable (`writable`), absolute OS paths (`root`) and `base_sha`, and is passed through task opts exactly as before.
 - **In-repo references stay relative**: a node is still `"./src/auth"`, byte-identical to before; no `vct:///` URL is ever written where a node path is expected.
+- **The project list stays project-only**: the reserved system mount `vct:///genesis-source` never appears in `projects/1` / `search/2`, so the dashboard project palette, project auto-activation and the `ListProjects` agent command are unchanged.
 - The `# Foreign Repositories` prompt block is still emitted as before.
 - Agent `cwd`, the sandbox writable set, worktree create/teardown, branch names, the completion/merge path and task execution are all untouched.
 - No `vct:///` URL and no OS path is rendered as a CONTEXT.md file path in a prompt (the one global stage uses the fixed label `global/CONTEXT.md`).
@@ -40,6 +43,7 @@ vct:///                     # the VCT root
 vct:///projects             # the projects folder
 vct:///projects/foo         # a project mount point
 vct:///projects/foo/bar     # a nested node under a mount
+vct:///genesis-source       # a reserved SYSTEM mount point (§8)
 ```
 
 Only **local** addressing is supported today: the authority must be empty.
@@ -79,7 +83,7 @@ The **mount registry is relational state in the task store** (`<data_dir>/tasks.
 
 | column | type | notes |
 |---|---|---|
-| `point` | TEXT PRIMARY KEY | canonical `vct:///projects/<name>` point; unique within the table |
+| `point` | TEXT PRIMARY KEY | canonical `vct:///projects/<name>` point, or a reserved system point such as `vct:///genesis-source`; unique within the table |
 | `path` | TEXT NOT NULL UNIQUE | absolute OS path the point binds to |
 | `name` | TEXT NOT NULL | display name |
 | `kind` | TEXT NOT NULL | mount kind, `"git"` today |
@@ -89,6 +93,7 @@ The **mount registry is relational state in the task store** (`<data_dir>/tasks.
 - `EvoGit.Store.save_vct_mounts/2` is an **atomic replace-all** inside one transaction, so a reader sees either the old table or the new one.
 - `EvoGit.VCT` keeps the authoritative list in memory as a read cache and writes the whole table back before its state changes, so memory and database can never disagree.
 - `last_opened_at` uses the store's shared ISO-8601 TEXT wire format (`EvoGit.Store.Types.TaskTimestamp`).
+- The one table holds **both** user project mounts and reserved system mounts (§8); the two differ only in their point namespace and in the rules applied to them, never in storage or in the write path.
 - There is no JSON mount table and no boot-time import.
 
 ### 4.2 The optional global context
@@ -131,7 +136,7 @@ The VCT therefore changes **what can appear at the top of the tree**, not how co
 
 ## 7. The VCT project registry
 
-The dashboard and CLI project list is a **persistent, capped registry of mounts**.
+The dashboard and CLI project list is a **persistent, capped registry of project mounts**.
 
 - Opening or creating a project mounts it (`EvoGit.VCT.mount/2`), which refreshes `last_opened_at`; mounting an already-mounted normalized OS path is idempotent and keeps the existing point.
 - Registration derives a stable, deduplicated `vct:///projects/<basename>` point (a basename collision gets `-N`), updates the name only for a non-blank name, and **re-points** a same-named mount whose recorded OS path is gone instead of accumulating a second point. A new path is never required to exist.
@@ -141,20 +146,57 @@ The dashboard and CLI project list is a **persistent, capped registry of mounts*
 - Cross-node access: `EvoGit.AgentScheduler.RemoteAPI.projects/0 | mount_project/2 | forget_project/1`, mirrored by `EvoGit.RemoteNode.projects/1 | mount_project/3 | forget_project/2` and `EvoDash.NodeContext.projects/1 | mount_project/3 | forget_project/2`.
 - Agent command: `ListProjects.list_projects` (`EvoGit.Agent.Tools.ListProjects`) lists this node's mounts newest-first.
 
+The registry is **project-only where it is visible**: `projects/1` and `search/2` exclude reserved system mounts (§8), so the cap, the palette and the agent command never see them. They are still resolvable by point and by OS path through `resolve/1`, `mount_for_path/1` and `vct_path_for/2`.
+
 **Dashboard.** The Projects palette lists the persisted VCT projects newest-first and renders the mount `point` (`vct:///projects/<name>`) as the primary identity with the OS path as the secondary line.
 Opening or creating a project mounts it, "Forget project" is offered for local AND remote nodes, and the palette reloads on `{:vct_updated, node}`.
 Ordering is by mount recency only.
 
-## 8. API surface — `EvoGit.VCT`
+## 8. Reserved system mounts — the first one: `vct:///genesis-source`
+
+A **system mount** is a mount Genesis owns for its own operation rather than one the user opens.
+The first (and, today, only) one is `vct:///genesis-source`, the VCT identity of Genesis's own source checkout.
+
+### 8.1 The reserved-point rule
+
+- Project mounts live under `vct:///projects/…`; **every point outside that subtree is reserved** for a system mount and is a fixed literal, never derived from a user path.
+- Reserved mounts live in the **same `vct_mounts` table** and the same `%EvoGit.VCT.Mount{}` struct, with the same atomic replace-all write and the same node-aware `"vct"` broadcast — there is no second registry, no separate file and no new transport.
+- They **are** resolvable like any mount: `resolve/1`, `mount_for_path/1` and `vct_path_for/2` see them, which is what gives a node inside the source tree a `vct_path` (the repo-less assistant's context node carries `vct:///genesis-source`).
+- They are **excluded** from `projects/1` and `search/2`, so the dashboard project palette, project auto-activation and `ListProjects` keep listing user projects only.
+- They are **never evicted**: the `max_projects/0` cap applies to project mounts only.
+- `forget/1` **refuses** them with `{:error, :reserved_point}`.
+
+### 8.2 Registration and the source-root chain
+
+- `vct:///genesis-source` binds to the managed shallow clone directory (`<data_dir>/genesis-source`, app env `:self_reflective_source_dir` to override), which `EvoGit.SelfReflectiveSource` owns.
+- The mount is **seeded at boot** from `EvoGit.SelfReflectiveSource.system_mounts/0` through an `EvoGit.VCT` init option, and **re-ensured after a successful clone or update** via `EvoGit.VCT.ensure_mount/3`. Like every mount it is pure metadata: seeding does not clone, does not touch the filesystem, and a not-yet-downloaded checkout is a mount pointing at an absent path.
+- **Point-addressed registration is idempotent**: the same OS path is a no-op (no write, no broadcast, no `last_opened_at` churn), a different OS path **re-points** the same point, and the same OS path already mounted elsewhere (for example as a project) is **moved** to the reserved point rather than duplicated.
+- Re-pointing `vct:///genesis-source` at another local checkout is therefore the supported way to make the self-reflective agent read a different source tree. The source-root chain is: `:self_reflective_source_root` app env → `GENESIS_SOURCE_ROOT` → the VCT mount at `vct:///genesis-source` when it is a valid Genesis checkout → the managed clone directory → `nil`.
+- `EvoGit.SelfReflectiveSource.status/0` reports `point` and `mounted` alongside the existing fields, and the dashboard System page's **Source** card shows the mount point (a VCT row) next to the checkout directory.
+
+### 8.3 What changes and what explicitly does not
+
+Changes: the source tree has a VCT identity, so it resolves through the ordinary mount API (`resolve/1`, `mount_for_path/1`, `vct_path_for/2`) and appears on the System page's Source card.
+
+Does **not** change:
+
+- **No materialization and no filesystem-layout change**: nothing is created, linked or mounted on disk; the clone directory stays an ordinary directory at its usual path.
+- **No new transport or protocol**: the mount rides the existing `vct_mounts` table, the existing API and the existing `"vct"` topic.
+- **The project list/palette is untouched**: no reserved point appears in `projects/1`, `search/2`, the dashboard palette or `ListProjects`.
+- **Task execution is untouched**: `reflect` tasks are repo-less and have no worktree; every other task still runs in one concrete repo worktree with unchanged `foreign_repos`.
+- **Nothing becomes user-editable in the VCT**: the mount exposes a location, not an editor; the source gate, clone/update actions and configuration stay where they are.
+
+## 9. API surface — `EvoGit.VCT`
 
 The supervised GenServer owns I/O (the store-backed table, broadcasts, the global context file and its git history); the pure rules live in `EvoGit.VCT.Table` so they can be tested without a process, a store or a data directory.
 
 | Function | Contract |
 |---|---|
 | `mount(path, opts \\ [])` | absolute OS path → `{:ok, %Mount{}}` (`:name` sets the display name); idempotent per normalized OS path (refreshes `last_opened_at`, keeps the point); `{:error, :relative_path \| :invalid_path}` for bad input |
-| `projects(opts \\ [])` | mounts newest-first (`last_opened_at` DESC, `nil` last); `:limit` is a positive-integer cap, any other value ignored |
-| `search(query, opts \\ [])` | case-insensitive substring over display name, OS path and point; a blank query matches every mount, a non-binary query none; `:limit` as in `projects/1` |
-| `forget(key)` | by VCT point (`"vct:…"` / `%Path{}`) or OS path → `:ok`; `{:error, :not_found}` when no mount matches; `{:error, :invalid_point}` for a bad key |
+| `ensure_mount(point, path, opts \\ [])` | point-addressed registration used for reserved system mounts: same point+path → `:ok` no-op (no write, no broadcast, no recency churn); same point, different path → re-points it; same normalized OS path mounted at another point → moves it here |
+| `projects(opts \\ [])` | **project** mounts newest-first (`last_opened_at` DESC, `nil` last), reserved system mounts excluded; `:limit` is a positive-integer cap, any other value ignored |
+| `search(query, opts \\ [])` | case-insensitive substring over display name, OS path and point, reserved system mounts excluded; a blank query matches every project mount, a non-binary query none; `:limit` as in `projects/1` |
+| `forget(key)` | by VCT point (`"vct:…"` / `%Path{}`) or OS path → `:ok`; `{:error, :not_found}` when no mount matches; `{:error, :invalid_point}` for a bad key; `{:error, :reserved_point}` for a reserved system mount |
 | `resolve/1` | point or exact OS path → `{:ok, mount}` \| `{:error, :not_found}` |
 | `mount_for_path/1` | mount containing an OS path (longest path-boundary prefix), or `nil` |
 | `vct_path_for/2` | canonical URL for a relative path inside the mount containing `repo_root`, or `nil` |
@@ -166,10 +208,10 @@ The supervised GenServer owns I/O (the store-backed table, broadcasts, the globa
 **Reads are total, mutations degrade.** Every client call resolves a missing/dead server to its documented empty value (`[]`, `nil`, `""`, `{:error, :not_found}`); mutations return `{:error, :vct_unavailable}`. A VCT fault can never crash a caller (for example a boot race from `ContextNode`), and broadcasts are best-effort.
 
 **Isolation seam.** `server/0` is read at call time from the `:evogit_vct_server` process-dictionary key (set by `init/1` for self-calls), falling back to the registered singleton `EvoGit.VCT`.
-`start_link/1` accepts `:name`, `:data_dir` (default `EvoGit.Platform.data_dir/0`) and `:store` (default `EvoGit.Store`).
+`start_link/1` accepts `:name`, `:data_dir` (default `EvoGit.Platform.data_dir/0`), `:store` (default `EvoGit.Store`) and `:system_mounts` (reserved mounts to seed at boot, default `[]`, fed from `EvoGit.SelfReflectiveSource.system_mounts/0`).
 Tests start isolated instances with a unique name, data dir and store (an isolated `EvoGit.Store` owning its own database), so the app-global table is never touched.
 
-## 9. Migration and test strategy
+## 10. Migration and test strategy
 
 - **One migration owns the table.** `…000007_vct_mounts` is the only create site for `vct_mounts`. On a legacy database it moves the `projects` rows into `vct_mounts` (VCT-identical point derivation from the basename with `-N` dedupe, preserved display names, newest-first, non-absolute rows skipped with a `Logger.warning`, inserts `INSERT OR IGNORE`) and then drops `projects`. A fresh database never creates `projects` at all (`…000001` deliberately omits it), so the legacy section is an O(1) no-op there.
 - The fan-out is capped to the 100 NEWEST mounts, so a migration can never produce a table the VCT itself would refuse to grow.
@@ -177,19 +219,19 @@ Tests start isolated instances with a unique name, data dir and store (an isolat
 - The VCT child starts **after** `EvoGit.Store` (its table lives there) and **before** `EvoGit.TaskRegistry` (so every later reader finds a ready list).
 - Tests are `async: true` and touch only pure modules or isolated instances:
   - `vct/path_test.exs` — parsing, normalization, rejection of non-local authorities / dot / control segments, and the parse/format round-trip.
-  - `vct_test.exs` — mount idempotency and dedup, portability re-pointing, resolution, newest-first ordering, search, the cap/oldest-eviction rule, broadcasts, global-context git initialization, degradation with an unavailable store or dead server, and durability across a server restart.
+  - `vct_test.exs` — mount idempotency and dedup, portability re-pointing, resolution, newest-first ordering, search, the cap/oldest-eviction rule, reserved system mounts (boot seeding, point-addressed no-op / re-point / move, exclusion from `projects/1` and `search/2`, exemption from the cap, `{:error, :reserved_point}` on forget), broadcasts, global-context git initialization, degradation with an unavailable store or dead server, and durability across a server restart.
   - `store/operations/vct_mounts_test.exs` — newest-first ordering, string-keyed entries with a loaded `DateTime`, the atomic replace-all write (including a rolled-back failure) and disk-full mapping.
   - `store/vct_mounts_migration_test.exs` — the legacy→`vct_mounts` move + drop + cap, and the fresh-database path with no `projects` table.
 - **Equivalence expectation**: with an empty global context and an unmounted repo, every rendered context chain, node `path`, `repo_id`, foreign-repositories block, worktree path and prompt is byte-identical to before the VCT.
 
-## 10. Deliberately deferred / future extension
+## 11. Deliberately deferred / future extension
 
 The following are design intent, **not implemented**, and the first two are explicitly rejected for now:
 
 - **`vct://<host>/<path>` — remote/cross-node mounts.** The URL format reserves the authority segment, and `Path.parse/1` already returns `:non_local_authority`; no transport or resolution exists.
 - **Filesystem materialization — symlink farms, bind mounts, FUSE, junctions, per-mount worktrees.** Rejected for this step: a task runs in one concrete worktree and the mount table never creates layout. Any future materialization would have to solve sandbox containment and `realpath` TOCTOU before it could be considered.
 - **Global-context UI.** There is no dashboard editor for `<data_dir>/vct/CONTEXT.md` yet; it is written through the API only.
-- **Capability mounts as future mounts of git repos** — skills, memory and MCP servers expressed as ordinary git repos mounted at a point, so no new backend is needed per kind.
+- **Capability mounts as future mounts of git repos** — skills, memory and MCP servers expressed as ordinary git repos mounted at a point, so no new backend is needed per kind. `vct:///genesis-source` (§8) is the **first system mount** and the proof of the reserved-point mechanism, but it is the only one built: no skills/memory/MCP capability mount, no per-capability backend and no capability UI exists yet, and adding one stays deferred.
 - **Nested / submodule mounts.** The mount model has no `parent`/`path_in_parent` yet; submodules remain indistinguishable from an unrelated repo at an absolute path.
 
 Open questions:
