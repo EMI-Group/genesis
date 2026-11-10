@@ -6,9 +6,13 @@ defmodule EvoDashWeb.ProcessComponents do
   confirmation modal for destructive control actions.
 
   Every function here is PURE and TOTAL: no data loading, no socket/assigns
-  mutation, no I/O. Values are read through `EvoDashWeb.ProcessesLive.Format`,
-  which tolerates atom- OR string-keyed maps and never raises, so a malformed
-  event payload renders a placeholder instead of breaking a render.
+  mutation, no I/O. An execution arrives EITHER as the core's own
+  `%EvoGit.ProcessManager.Execution{}` struct OR as a plain atom-keyed map
+  (PubSub payloads, tests), so its fields are read with `Map.get/2` — structs do
+  NOT implement Access, and `record[:key]` raises on them. Formatting goes
+  through `EvoDashWeb.ProcessesLive.Format`, which tolerates atom- OR
+  string-keyed maps and never raises, so a malformed event payload renders a
+  placeholder instead of breaking a render.
 
   The page owns state (`expanded`, the pending confirmation, the reason text);
   these components only render it and emit the event names passed in as attrs,
@@ -63,10 +67,10 @@ defmodule EvoDashWeb.ProcessComponents do
 
   def execution_row(assigns) do
     execution = assigns.execution
-    status = Map.get(execution, :status)
+    status = field(execution, :status)
     command = Format.command_text(execution)
     tool = Format.tool_name(execution)
-    id = Map.get(execution, :id)
+    id = field(execution, :id)
 
     assigns =
       assigns
@@ -74,6 +78,10 @@ defmodule EvoDashWeb.ProcessComponents do
       |> assign(:status, status)
       |> assign(:command, command)
       |> assign(:tool, tool)
+      |> assign(:agent_id, field(execution, :agent_id))
+      |> assign(:task_id, field(execution, :task_id))
+      |> assign(:runtime, Format.runtime_label(field(execution, :runtime)))
+      |> assign(:backend, Format.backend_label(field(execution, :backend)))
       |> assign(:live?, Format.live?(status) and is_binary(id))
       |> assign(:paused?, status == :paused)
       |> assign(:running?, status == :running)
@@ -104,18 +112,18 @@ defmodule EvoDashWeb.ProcessComponents do
         </div>
       </td>
       <td class="py-2 pr-2 whitespace-nowrap">
-        <%= if present?(@execution[:agent_id]) do %>
+        <%= if present?(@agent_id) do %>
           <.link navigate={@agents_link} class="link link-hover text-xs font-mono">
-            #{Format.id_string(@execution[:agent_id])}
+            #{Format.id_string(@agent_id)}
           </.link>
         <% else %>
           <span class="text-xs text-base-content/50">—</span>
         <% end %>
       </td>
       <td class="py-2 pr-2 whitespace-nowrap">
-        <%= if present?(@execution[:task_id]) do %>
+        <%= if present?(@task_id) do %>
           <.link navigate={@tasks_link} class="link link-hover text-xs font-mono">
-            #{Format.id_string(@execution[:task_id])}
+            #{Format.id_string(@task_id)}
           </.link>
         <% else %>
           <span class="text-xs text-base-content/50">—</span>
@@ -132,10 +140,10 @@ defmodule EvoDashWeb.ProcessComponents do
         </div>
       </td>
       <td class="py-2 pr-2 text-xs whitespace-nowrap" {@row_attrs}>
-        {Format.runtime_label(@execution[:runtime])}
+        {@runtime}
       </td>
       <td class="py-2 pr-2 text-xs whitespace-nowrap" {@row_attrs}>
-        {Format.backend_label(@execution[:backend])}
+        {@backend}
       </td>
       <td
         class="py-2 pr-2 text-xs font-mono whitespace-nowrap"
@@ -229,12 +237,18 @@ defmodule EvoDashWeb.ProcessComponents do
   attr(:execution, :map, required: true)
 
   def execution_details(assigns) do
-    log = Format.control_log(assigns.execution)
+    execution = assigns.execution
 
     assigns =
       assigns
-      |> assign(:log, log)
-      |> assign(:command, Format.command_text(assigns.execution))
+      |> assign(:log, Format.control_log(execution))
+      |> assign(:command, Format.command_text(execution))
+      |> assign(:cwd, field(execution, :cwd))
+      |> assign(:repo_root, field(execution, :repo_root))
+      |> assign(:runtime, Format.runtime_label(field(execution, :runtime)))
+      |> assign(:backend, Format.backend_label(field(execution, :backend)))
+      |> assign(:started_at, format_time(field(execution, :started_at)))
+      |> assign(:ended_at, format_time(field(execution, :ended_at)))
 
     ~H"""
     <div class="grid gap-3 md:grid-cols-2">
@@ -246,19 +260,13 @@ defmodule EvoDashWeb.ProcessComponents do
           <pre class="text-xs bg-base-100 border border-base-300 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all"><%= @command %></pre>
         </div>
         <div class="grid grid-cols-1 gap-1.5">
-          <.detail_field label={gettext("Working Directory")} value={@execution[:cwd]} mono />
-          <.detail_field label={gettext("Repository Root")} value={@execution[:repo_root]} mono />
+          <.detail_field label={gettext("Working Directory")} value={@cwd} mono />
+          <.detail_field label={gettext("Repository Root")} value={@repo_root} mono />
           <.detail_field label={gettext("Reason")} value={Format.reason_label(@execution)} />
-          <.detail_field
-            label={gettext("Runtime")}
-            value={Format.runtime_label(@execution[:runtime])}
-          />
-          <.detail_field
-            label={gettext("Backend")}
-            value={Format.backend_label(@execution[:backend])}
-          />
-          <.detail_field label={gettext("Started")} value={format_time(@execution[:started_at])} />
-          <.detail_field label={gettext("Ended")} value={format_time(@execution[:ended_at])} />
+          <.detail_field label={gettext("Runtime")} value={@runtime} />
+          <.detail_field label={gettext("Backend")} value={@backend} />
+          <.detail_field label={gettext("Started")} value={@started_at} />
+          <.detail_field label={gettext("Ended")} value={@ended_at} />
         </div>
       </div>
       <div class="min-w-0">
@@ -322,27 +330,46 @@ defmodule EvoDashWeb.ProcessComponents do
   attr(:executions, :list, required: true)
 
   def compact_rows(assigns) do
+    rows =
+      assigns.executions
+      |> List.wrap()
+      |> Enum.map(&compact_row/1)
+
+    assigns = assign(assigns, :rows, rows)
+
     ~H"""
     <div class="space-y-1">
-      <%= for execution <- @executions do %>
+      <%= for row <- @rows do %>
         <div
-          id={"agent-process-#{execution[:id] || "unknown"}"}
+          id={"agent-process-#{row.id || "unknown"}"}
           class="flex items-center gap-2 rounded border border-base-300/60 bg-base-200/30 px-2 py-1"
         >
-          {status_badge(%{status: execution[:status], class: "badge-xs"})}
-          <code class="text-xs truncate flex-1 min-w-0" title={Format.command_text(execution)}>
-            {truncate_string(Format.command_text(execution), 60)}
+          {status_badge(%{status: row.status, class: "badge-xs"})}
+          <code class="text-xs truncate flex-1 min-w-0" title={row.command}>
+            {truncate_string(row.command, 60)}
           </code>
           <span class="text-xs font-mono text-base-content/70 whitespace-nowrap">
-            {Format.target_label(execution)}
+            {row.target}
           </span>
           <span class="text-xs text-base-content/70 whitespace-nowrap">
-            {Format.memory_label(execution)}
+            {row.memory}
           </span>
         </div>
       <% end %>
     </div>
     """
+  end
+
+  # One compact row's render-bound values, computed once from the record (a
+  # struct or a plain atom-keyed map).
+  defp compact_row(execution) do
+    %{
+      id: field(execution, :id),
+      status: field(execution, :status),
+      command: Format.command_text(execution),
+      target: Format.target_label(execution),
+      memory: Format.memory_label(execution)
+    }
   end
 
   @doc """
@@ -455,6 +482,14 @@ defmodule EvoDashWeb.ProcessComponents do
   defp present?(value) when is_binary(value), do: String.trim(value) != ""
   defp present?(nil), do: false
   defp present?(_value), do: true
+
+  # Process records reach these components BOTH ways: a
+  # `%EvoGit.ProcessManager.Execution{}` struct (the registry's own records,
+  # which do NOT implement Access) and a plain atom-keyed map (PubSub payloads,
+  # tests). `Map.get/2` reads both; dot-access and `record[key]` do not. Total:
+  # a non-map yields nil, so a malformed payload renders a placeholder.
+  defp field(record, key) when is_map(record), do: Map.get(record, key)
+  defp field(_record, _key), do: nil
 
   defp blank_text(nil), do: "—"
 

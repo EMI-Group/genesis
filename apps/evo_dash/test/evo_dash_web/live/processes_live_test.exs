@@ -16,6 +16,8 @@ defmodule EvoDashWeb.ProcessesLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 
+  alias EvoGit.ProcessManager.Execution
+
   @processes_topic "processes"
 
   # Poll cadence for wait_until/3: each poll is a cheap synchronous round-trip
@@ -773,5 +775,131 @@ defmodule EvoDashWeb.ProcessesLiveTest do
     # Clicking again collapses it.
     html = view |> element("#process-row-proc-1 td:first-child") |> render_click()
     refute html =~ "Full Command"
+  end
+
+  # ---------------------------------------------------------------------------
+  # 11. REAL struct records (the registry's own shape)
+  # ---------------------------------------------------------------------------
+
+  # The core hands the page `%EvoGit.ProcessManager.Execution{}` STRUCTS (the
+  # registry's own records), which do NOT implement Access: every `record[:key]`
+  # read raises `UndefinedFunctionError` at render time. This exercises the
+  # whole page over real structs — collapsed rows, the expanded detail block
+  # and a terminal record with a control log.
+  test "renders REAL Execution structs end to end", %{conn: conn} do
+    install_load_runner(fn _node, _opts -> {:ok, struct_executions()} end)
+
+    view = mount_page(conn, ~p"/processes?status=all")
+
+    html = render(view)
+    assert html =~ "process-row-proc-s1"
+    assert html =~ "process-row-proc-s2"
+
+    running = row(view, "proc-s1")
+    assert running =~ "Running"
+    assert running =~ "#101"
+    assert running =~ "#task-1"
+    assert running =~ "mix test --struct"
+    assert running =~ "Foreground"
+    assert running =~ "systemd"
+    assert running =~ "unit genesis-tool-1.service"
+    assert running =~ "12.3%"
+    assert running =~ "50.0 MB"
+    assert running =~ ~s(aria-label="Pause")
+
+    completed = row(view, "proc-s2")
+    assert completed =~ "Completed"
+    assert completed =~ "cargo build --release"
+    assert completed =~ "pid 4242"
+    assert completed =~ "1.0 MB"
+    # A terminal struct offers no operator controls.
+    refute completed =~ ~s(aria-label="Kill")
+    refute completed =~ ~s(aria-label="Terminate")
+
+    # The expanded branch (`execution_details/1`) is the second latent crash.
+    expanded = view |> element("#process-row-proc-s1 td:first-child") |> render_click()
+    assert expanded =~ "Full Command"
+    assert expanded =~ "mix test --struct"
+    assert expanded =~ "Working Directory"
+    assert expanded =~ "Repository Root"
+    assert expanded =~ "/tmp/repo"
+    assert expanded =~ "Started"
+    assert expanded =~ "No control actions recorded."
+
+    expanded_completed =
+      view |> element("#process-row-proc-s2 td:first-child") |> render_click()
+
+    assert expanded_completed =~ "cargo build --release"
+    assert expanded_completed =~ "Ended"
+    assert expanded_completed =~ "2026-11-09 10:02"
+    # Control log of the terminal struct: reason, signal, time and actor.
+    assert expanded_completed =~ "operator killed it"
+    assert expanded_completed =~ "TERM"
+    assert expanded_completed =~ "10:02:04"
+    assert expanded_completed =~ "Dashboard"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Struct fixture helpers
+  # ---------------------------------------------------------------------------
+
+  # A live foreground tool call, built as the REAL struct.
+  defp struct_execution(overrides \\ []) do
+    struct!(
+      %Execution{
+        id: "proc-s1",
+        kind: :tool_call,
+        tool: "bash",
+        command: "mix test --struct",
+        label: nil,
+        agent_id: 101,
+        task_id: "task-1",
+        owner_pid: nil,
+        cwd: "/tmp/repo",
+        repo_root: "/tmp/repo",
+        backend: :systemd,
+        runtime: :foreground,
+        status: :running,
+        os_pid: nil,
+        unit: "genesis-tool-1.service",
+        job_id: nil,
+        exit_code: nil,
+        reason: nil,
+        inserted_at: ~U[2026-11-09 10:00:00Z],
+        started_at: DateTime.add(DateTime.utc_now(), -125, :second),
+        ended_at: nil,
+        stats: %{cpu_percent: 12.3, rss_bytes: 52_428_800},
+        control_log: []
+      },
+      overrides
+    )
+  end
+
+  # A terminal foreground tool call addressed by OS pid, with one control-log
+  # entry (the operator killed it).
+  defp struct_executions do
+    [
+      struct_execution(),
+      struct_execution(
+        id: "proc-s2",
+        command: "cargo build --release",
+        status: :completed,
+        exit_code: 0,
+        unit: nil,
+        os_pid: 4242,
+        started_at: ~U[2026-11-09 10:00:00Z],
+        ended_at: ~U[2026-11-09 10:02:05Z],
+        stats: %{cpu_percent: 0.0, rss_bytes: 1_048_576},
+        control_log: [
+          %{
+            action: :kill,
+            signal: "TERM",
+            reason: "operator killed it",
+            actor: :remote,
+            at: ~U[2026-11-09 10:02:04Z]
+          }
+        ]
+      )
+    ]
   end
 end
