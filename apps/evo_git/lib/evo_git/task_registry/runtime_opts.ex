@@ -3,7 +3,9 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
   Runtime options builder for `EvoGit.TaskRegistry`.
 
   Builds the `runtime_opts` keyword list passed to `EvoGit.Runtime.*` modules
-  when executing genesis, evolve, or skill extraction tasks.
+  when executing genesis, evolve, or skill extraction tasks, and owns the two
+  task-option admissions (`:model_spec` / legacy `:model_id` and the optional
+  `:session_mode` driver selection).
   """
 
   @doc """
@@ -54,6 +56,46 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
   defp legacy_selection(value) when value in [nil, ""], do: :auto
   defp legacy_selection(value), do: {:explicit, value}
 
+  ## Interactive sessions (`:session_mode`)
+
+  # The closed set of session drivers: `"oneshot"` (today's one-shot agent —
+  # finish on the first tool-free reply) and `"interactive"` (yield to
+  # `:awaiting_input` and wait for the next user message).
+  @session_modes ["oneshot", "interactive"]
+
+  @doc """
+  Normalizes an interactive-session mode VALUE to its canonical string form.
+
+  `nil` (the opt is absent) means the default `"oneshot"`. The value is a
+  STRING at the data plane — exactly like `:mode` — so an atom or any other
+  value raises a descriptive `ArgumentError` rather than being coerced.
+  """
+  @spec session_mode(term()) :: String.t()
+  def session_mode(nil), do: "oneshot"
+  def session_mode(mode) when mode in @session_modes, do: mode
+
+  def session_mode(other),
+    do: raise(ArgumentError, "invalid session_mode: #{inspect(other)}")
+
+  @doc """
+  Admits the OPTIONAL `:session_mode` task opt before the task is enqueued and
+  persisted — the non-raising counterpart of `session_mode/1`, because it runs
+  inside the registry GenServer (a raise there would kill the registry).
+
+  - absent → `{:ok, opts}` unchanged; `"oneshot"` applies at build time, so the
+    opt is never required and no existing caller changes;
+  - `"oneshot"` / `"interactive"` → `{:ok, opts}` with the canonical string;
+  - anything else (including an atom) → `{:error, :invalid_session_mode}`.
+  """
+  @spec admit_session_mode(keyword()) :: {:ok, keyword()} | {:error, :invalid_session_mode}
+  def admit_session_mode(opts) do
+    case Keyword.fetch(opts, :session_mode) do
+      :error -> {:ok, opts}
+      {:ok, mode} when mode in @session_modes -> {:ok, Keyword.put(opts, :session_mode, mode)}
+      {:ok, _other} -> {:error, :invalid_session_mode}
+    end
+  end
+
   @doc """
   Builds common runtime options for genesis and evolve tasks.
 
@@ -75,6 +117,12 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
       mode: mode_atom(task_type, mode),
       task_id: task_id
     ]
+
+    # Interactive-session driver selection. Same strictness convention as
+    # `:mode` above: the data-plane value is a STRING, an atom (or any other
+    # value) raises. Omitted when it is the default so every one-shot runtime
+    # path is unchanged.
+    session_mode = session_mode(Keyword.get(opts, :session_mode))
 
     node_path = Keyword.get(opts, :node_path)
     starting_commit = Keyword.get(opts, :starting_commit)
@@ -117,6 +165,7 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
       |> put_if(:build_system, build_system)
       |> put_if(:attachments, attachments, fn value -> value not in [nil, []] end)
       |> put_if(:quality_level, quality_level, fn value -> value != "balanced" end)
+      |> put_if(:session_mode, session_mode, fn value -> value != "oneshot" end)
 
     {nil, runtime_opts}
   end
