@@ -1,15 +1,15 @@
 defmodule EvoGit.Agent.RunnerAutoCommitTest do
   @moduledoc """
-  Regression tests for the `commit_sha` ordering fix around the Runner's
-  auto-commit fallback.
+  Regression tests for the `commit_sha` ordering fix around the auto-commit
+  fallback.
 
-  `EvoGit.Agent.Runner.run/3` runs the agent loop in a `try` whose `after`
+  `EvoGit.Agent.Session.Worker.run/3` runs the exchange in a `try` whose `after`
   calls `EvoGit.AgentScheduler.Dispatch.commit_pending_in_worktree/0` (a
   best-effort `git add --all` + `git commit -m "Agent: auto-commit fallback"`).
   That `after` block may create the ONLY commit of a run, while
   `Result.commit_sha` was captured earlier — inside `do_complete/2`, BEFORE the
-  fallback committed. `run/3` now rebinds the `try/after` value and passes it
-  through `EvoGit.Agent.Runner.refresh_commit_sha/1` AFTER the fallback ran, so
+  fallback committed. The worker passes the outcome through
+  `EvoGit.Agent.Runner.refresh_commit_sha/1` AFTER the fallback ran, so
   the reported sha points at the post-fallback worktree HEAD and
   `Runtime.Helpers.merge_and_report/3,4` (which treats "final == live HEAD" as
   "no changes") still produces a reviewable `genesis/agent_*` branch.

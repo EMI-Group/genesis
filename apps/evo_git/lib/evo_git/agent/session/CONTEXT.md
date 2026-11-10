@@ -2,7 +2,7 @@
 
 ## Intent
 
-Holds the per-agent session process that owns `%EvoGit.Agent.State{}` for its whole life, plus the durable/per-process setup it shares with `EvoGit.Agent.Runner`.
+Holds the per-agent session process that owns `%EvoGit.Agent.State{}` for its whole life, plus the durable/per-process setup (the retired one-shot `Runner` driver's setup lives here now).
 `%EvoGit.Agent.State{}` is the ONE authoritative agent state; the process dictionary installed here is a DERIVED projection of it, never authoritative.
 The exchange engine (`EvoGit.Agent.Exchange`) stays a pure function over the struct: the session spawns a short-lived WORKER task per exchange and never runs the turn loop inside its own process, so inspection/cancel/input stay answerable mid-run.
 The session IS the one lifecycle for every agent: `EvoGit.AgentScheduler.Dispatch.do_try_dispatch/4` starts it under `EvoGit.Agent.Session.Supervisor` and `EvoGit.AgentScheduler` admits its ONE terminal `{:agent_session_result, …}`.
@@ -21,14 +21,13 @@ This is still the ONE-SHOT subset only (no `:awaiting_input`, no yield, no close
 | `EvoGit.Agent.Session` | `history(target, timeout \\ 5_000)` | TOTAL conversation read → `[%ReqLLM.Message{}]`, `[]` when gone/unresponsive. |
 | `EvoGit.Agent.Session` | `cancel(target, :graceful \| :force)` | TOTAL → `:ok | {:error, :not_found}`; `:graceful` keeps the worker alive (the engine's 3-turn save-work grace runs), `:force` kills it with no result delivery. |
 | `EvoGit.Agent.Session` | `input(target, message)` | TOTAL → `:ok | {:error, :not_found \| :finished}`; a binary or the canonical multimodal map, appended through `Store.append_pending_user_message/2` (the settled P2 transport). |
-| `EvoGit.Agent.Session.Worker` | `run(%State{}, session_pid, opts \\ [])` | The per-exchange worker body, executed inside `Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, …)`: installs the process context with the SESSION as owner, runs `Exchange.run/2` in `try/after` (fallback commit then foreign-worktree sync), refreshes `Result.commit_sha` exactly like `Runner.run/3`, then sends ONE `{:exchange_finished, self(), outcome}`. |
+| `EvoGit.Agent.Session.Worker` | `run(%State{}, session_pid, opts \\ [])` | The per-exchange worker body, executed inside `Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, …)`: installs the process context with the SESSION as owner, runs `Exchange.run/2` in `try/after` (fallback commit then foreign-worktree sync), refreshes `Result.commit_sha` through `EvoGit.Agent.Runner.refresh_commit_sha/1`, then sends ONE `{:exchange_finished, self(), outcome}`. |
 | `EvoGit.Agent.Session.Summary` | `publish(agent_id, %State{}, extra \\ [])`, `read(agent_id)`, `select_all()` | The ONE writer/reader helper for the `:evogit_agent_summary` table: merges turn/message_count/usage/total_tokens/compression_count/last_activity_at/status/current_commit (plus any remaining `extra` keys) onto the EXISTING row through `Store.put_agent_state/2`; total, and it deliberately never touches `context` (a later checkpoint deletes that field). |
 | `EvoGit.Agent.Session.Registry` | `start_link/1`, `child_spec/1` | The named `Registry` (`keys: :unique`) for the per-agent id → pid lookup, mirroring `EvoGit.RemoteConnection.Registry`. |
 | `EvoGit.Agent.Session.Supervisor` | `start_link/1`, `child_spec/1` | The named `DynamicSupervisor` (`strategy: :one_for_one`) hosting sessions. |
 
-`EvoGit.Agent.Runner.Setup.setup/1` and `EvoGit.Agent.Runner.InitialState.build/2` are THIN delegations.
-`Runner.Setup.setup/1` = `bind_worktree/2` → `ensure_tmpdir/1` → `install_process_context/3` for `self()`.
-`Runner.InitialState.build/2` gathers the inputs from the scheduler row and the process dictionary, calls `build_initial_state/3`, then keeps its Runner-only ETS writes (`AgentScheduler.update_agent_context/2`, `ContextBuilder.sync_turn_to_ets/2`).
+The session's start path composes them: `bind_worktree/2` (owner = the SESSION pid) → `ensure_tmpdir/1` → `install_process_context/3`, then reads the scheduler row, calls `build_initial_state/3` and publishes `status: :running`.
+There is no `Runner.Setup` / `Runner.InitialState` module any more, and no per-turn ETS write-through: the only per-turn publication is the `:checkpoint` event → `Summary.publish/3` (summary fields only, never `context`).
 
 ## Phases, Events and Commands (ONE-SHOT subset)
 

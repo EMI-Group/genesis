@@ -10,8 +10,10 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
   (`EvoGit.Agent.BackgroundJobNotice.notice/1`).
 
   `EvoGit.Agent.Exchange.Pending.inject_background_job_notices/2` is driven
-  directly here with a pure `:scheduler` seam (`EvoGit.Agent.Exchange.Seams`), so
-  the engine runs in this plain ExUnit process with no scheduler and no ETS row.
+  directly here, so the engine runs in this plain ExUnit process with no
+  scheduler and no ETS row. The RETURNED state is the authority (the engine
+  publishes it at the next turn boundary through `:checkpoint`); nothing here
+  writes ETS.
   The background jobs themselves are REAL detached children in this test's OWN
   isolated `EvoGit.BackgroundJobs` registry (the tool plane, not the scheduler
   seam), under a unique name with uniquely named job log files, so they never
@@ -62,11 +64,10 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
   # test: an IN-MEMORY stand-in for the scheduler's per-agent control plane, so
   # the engine runs with no scheduler and no ETS row.
   #
-  #   * `calls` — every `{kind, payload}` interaction, in order;
-  #   * `synced` — every context handed to the `:context` sync, in order.
+  #   * `calls` — every `{kind, payload}` interaction, in order.
   #
-  # Assertions observe this record where a test previously observed the ETS side
-  # effect it produced (the synced context).
+  # A background-notice turn performs NO control-plane interaction at all (the
+  # notice is a tool-plane claim), so `kinds/1` stays `[]`.
   defp scheduler_stub do
     {:ok, pid} = Agent.start_link(fn -> %{calls: []} end)
     {fn kind, payload, _state -> record(pid, kind, payload) end, pid}
@@ -81,7 +82,6 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
 
   defp calls(pid), do: Agent.get(pid, & &1.calls)
   defp kinds(pid), do: for({kind, _payload} <- calls(pid), do: kind)
-  defp synced(pid), do: for({:context, ctx} <- calls(pid), do: ctx)
 
   defp loop_state(agent_id, context \\ ReqLLM.Context.new([])) do
     %State{
@@ -200,19 +200,21 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     assert text_of(notice) =~ "1 background shell job finished"
   end
 
-  test "the new context is synced through the :context seam (dashboard visibility)",
+  test "the returned state carries the notice and touches no scheduler control plane",
        %{agent_id: agent_id, tmp_dir: tmp_dir} do
     job = start_job!("echo done", tmp_dir)
     _ = await_terminal!(job.id)
 
     {seam, stub} = scheduler_stub()
-    new_state = Pending.inject_background_job_notices(loop_state(agent_id), scheduler: seam)
+    state = loop_state(agent_id)
+    new_state = Pending.inject_background_job_notices(state, scheduler: seam)
 
-    # The ONE side effect the ETS write-through provided: the updated context
-    # (carrying the notice) is handed to the scheduler for dashboard/history.
-    assert synced(stub) == [new_state.context]
+    # The ONE observable side effect: the state now carries the notice appended
+    # to its own context (the engine publishes it at the turn boundary).
     assert [notice] = notice_messages(new_state.context)
     assert text_of(notice) =~ job.id
+    assert new_state == %{state | context: ReqLLM.Context.append(state.context, notice)}
+    assert kinds(stub) == []
   end
 
   test "a second call appends nothing — the claim marked the job announced",
@@ -230,8 +232,8 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     assert twice == once
     assert length(twice.context.messages) == 1
 
-    # The second call claimed nothing, so it synced nothing either.
-    assert synced(stub) == [once.context]
+    # The second call claimed nothing, so it changed nothing either.
+    assert kinds(stub) == []
 
     # And the registry agrees: nothing left to claim.
     assert {:ok, []} = BackgroundJobs.claim_finished_notices()
@@ -247,7 +249,7 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     {seam, stub} = scheduler_stub()
 
     assert Pending.inject_background_job_notices(state, scheduler: seam) == state
-    # Nothing claimed → nothing synced.
+    # Nothing claimed → no control-plane interaction at all.
     assert kinds(stub) == []
   end
 
@@ -343,7 +345,7 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
 
     assert Pending.inject_background_job_notices(grace_state, scheduler: seam) == grace_state
     assert grace_state.context.messages == []
-    # Skipped BEFORE any interaction: not even a context sync.
+    # Skipped BEFORE any interaction: not even a control-plane call.
     assert kinds(stub) == []
 
     # The job was NOT claimed: `job/2` still reports it unannounced, and a later
@@ -357,7 +359,7 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
 
     assert [notice] = resumed.context.messages
     assert text_of(notice) =~ job.id
-    assert synced(stub) == [resumed.context]
+    assert kinds(stub) == []
   end
 
   test "an unreachable registry leaves the state unchanged and never raises", %{

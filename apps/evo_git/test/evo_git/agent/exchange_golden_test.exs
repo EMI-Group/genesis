@@ -52,10 +52,11 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
   process — no `EvoGit.AgentScheduler` agent process, no scheduler call, no ETS
   control plane beyond the ONE read the completion path still performs in P1.
 
-  The whole exchange is executed inline in the test process through the three
+  The whole exchange is executed inline in the test process through the
   default-inert seams of `EvoGit.Agent.Exchange.Seams` (`:llm_call`,
-  `:tool_batch`, `:scheduler`), all passed via `opts`. Nothing here mutates app
-  env, the scheduler config, the Logger level or any other BEAM-global state.
+  `:tool_batch`, `:scheduler`, `:checkpoint`), all passed via `opts`. Nothing
+  here mutates app env, the scheduler config, the Logger level or any other
+  BEAM-global state.
 
   ## The scripted scenario (3 turns)
 
@@ -79,9 +80,13 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
   * the final conversation: ordered roles, the three tool results with their
     call ids/outputs, and the engine's exact turn tags (assistant messages 1-2-3,
     tool results 1-1-2);
-  * the `:scheduler` seam's side-effect sequence — the `{:batch, fields}` write
-    per turn and the `:context` syncs that used to hit ETS — including that each
-    synced context is byte-identical to what the NEXT LLM call received.
+  * the `:scheduler` seam's CONTROL-PLANE sequence — one input drain and one
+    cancel check per turn and nothing else (the per-turn ETS write-through kinds
+    are gone);
+  * the `:checkpoint` seam firing exactly once per turn, each checkpointed state
+    carrying that turn's `turn`, `context`, `total_tokens` and `usage` — the ONE
+    state-publication path now (`EvoGit.Agent.Session.Summary.publish/3`), with
+    each checkpointed context byte-identical to what the NEXT LLM call received.
 
   ## The ONE remaining ETS touch
 
@@ -147,7 +152,8 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
       opts = [
         llm_call: llm_stub(counters),
         tool_batch: tool_batch_stub(),
-        scheduler: scheduler_stub()
+        scheduler: scheduler_stub(),
+        checkpoint: checkpoint_stub()
       ]
 
       state = initial_state(agent_id)
@@ -159,6 +165,7 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
       llm_calls = recorded(:llm_calls)
       tool_batches = recorded(:tool_batches)
       scheduler_calls = recorded(:scheduler_calls)
+      checkpoints = recorded(:checkpoints)
 
       # --- 1. The exact ordered tool-call sequence ---------------------------
       #
@@ -272,48 +279,56 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
       # Still unwatched at the end of the run.
       assert final_state.watchers == %{}
 
-      # --- 6. The scheduler side-effect sequence ----------------------------
+      # --- 6. The scheduler CONTROL-PLANE sequence ---------------------------
       #
-      # This is the exact interaction pattern that used to hit ETS directly:
-      # one input drain + one cancel check per turn, one `{:batch, fields}`
-      # write per turn, and a `:context` sync after each tool batch.
-      assert Enum.map(scheduler_calls, fn {kind, _payload} -> normalize_kind(kind) end) == [
+      # One input drain + one cancel check per turn, and NOTHING else: the
+      # per-turn ETS write-through kinds (`:context`, `:total_tokens`, `:turn`,
+      # `{:batch, fields}`) no longer exist — the exchange's own state is the
+      # authority and is published by the `:checkpoint` seam below.
+      assert Enum.map(scheduler_calls, fn {kind, _payload} -> kind end) == [
                :drain_inputs,
                :cancel_requested?,
-               :batch,
-               :context,
-               :batch,
                :drain_inputs,
                :cancel_requested?,
-               :batch,
-               :context,
-               :batch,
                :drain_inputs,
-               :cancel_requested?,
-               :batch
+               :cancel_requested?
              ]
 
-      # Every batch carries its fields BOTH in the kind and in the payload (the
-      # seam's one 3-arity contract), and the per-turn batches carry the turn.
-      batches = for {{:batch, fields}, payload} <- scheduler_calls, do: {fields, payload}
-      assert length(batches) == 5
-      assert Enum.all?(batches, fn {fields, payload} -> fields == payload end)
+      # --- 7. The per-turn `:checkpoint` publication ------------------------
+      #
+      # ONE checkpoint per turn, in turn order, each carrying that turn's state:
+      # `turn`, `context`, `total_tokens` and `usage` all agree with the turn
+      # that produced it. This is the ONLY per-turn state-publication path now —
+      # `EvoGit.Agent.Session.Summary.publish/3` merges the summary fields
+      # (`turn`, `message_count`, `usage`, `total_tokens`, `compression_count`)
+      # onto the dashboard row and deliberately never copies `context`.
+      assert Enum.map(checkpoints, & &1.turn) == [1, 2, 3]
+      assert Enum.all?(checkpoints, &match?(%State{}, &1))
+      assert Enum.all?(checkpoints, &(&1.agent_id == agent_id))
 
-      turn_batches = Enum.filter(batches, fn {fields, _} -> Keyword.has_key?(fields, :turn) end)
+      # The checkpointed contexts ARE the conversations the next LLM call saw
+      # (turn 1 → call 2, turn 2 → call 3) and the finishing turn's checkpoint
+      # is the terminal state.
+      assert Enum.map(checkpoints, fn cp -> cp.context.messages |> length() end) == [5, 7, 8]
 
-      assert Enum.map(turn_batches, fn {fields, _} -> Keyword.fetch!(fields, :turn) end) ==
-               [1, 2, 3]
+      assert Enum.map(checkpoints, & &1.context) == [
+               second.context,
+               third.context,
+               final_state.context
+             ]
 
-      assert Enum.map(turn_batches, fn {fields, _} ->
-               {Keyword.fetch!(fields, :total_tokens), fields[:context].messages |> length()}
-             end) == [{120, 3}, {120, 6}, {120, 8}]
+      assert Enum.map(checkpoints, &roles(&1.context)) ==
+               [roles(second.context), roles(third.context), roles(final_state.context)]
 
-      # The two `:context` syncs are the contexts the NEXT turn's LLM call saw:
-      # the side effect is byte-identical to the in-memory conversation.
-      context_syncs = for {:context, payload} <- scheduler_calls, do: payload
-      assert length(context_syncs) == 2
-      assert Enum.map(context_syncs, &roles/1) == [roles(second.context), roles(third.context)]
-      assert context_syncs == [second.context, third.context]
+      # The finishing turn's checkpointed state IS the final state.
+      assert List.last(checkpoints) == final_state
+
+      # Token accounting rides the checkpoint: `total_tokens` is the CURRENT
+      # context length (replace semantics), `usage` the CUMULATIVE usage.
+      assert Enum.map(checkpoints, & &1.total_tokens) == [120, 120, 120]
+      assert Enum.map(checkpoints, & &1.usage.input_tokens) == [100, 200, 300]
+      assert Enum.map(checkpoints, & &1.usage.output_tokens) == [20, 40, 60]
+      assert Enum.map(checkpoints, & &1.compression_count) == [0, 0, 0]
     end
   end
 
@@ -392,9 +407,9 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
     end
   end
 
-  # The `:scheduler` seam: one adapter for every scheduler/ETS interaction the
-  # loop performs. It records the kind + payload and answers the sane values a
-  # bare process needs (no pending inputs, no cancellation).
+  # The `:scheduler` seam: one adapter for every scheduler CONTROL-PLANE
+  # interaction the loop performs. It records the kind + payload and answers the
+  # sane values a bare process needs (no pending inputs, no cancellation).
   defp scheduler_stub do
     fn kind, payload, _state ->
       record(:scheduler_calls, {kind, payload})
@@ -402,8 +417,16 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
       case kind do
         :drain_inputs -> []
         :cancel_requested? -> false
-        _other -> :ok
       end
+    end
+  end
+
+  # The `:checkpoint` seam: records every state handed to it. Its return value is
+  # discarded by the engine (observable-only), so `:ok` is the whole contract.
+  defp checkpoint_stub do
+    fn state ->
+      record(:checkpoints, state)
+      :ok
     end
   end
 
@@ -518,10 +541,4 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
     |> Enum.filter(&(&1.type == :text))
     |> Enum.map_join("", & &1.text)
   end
-
-  # `{:batch, fields}` carries its keyword in the KIND (and repeats it in the
-  # payload); normalizing it keeps the side-effect ORDER readable.
-  defp normalize_kind({:batch, fields}) when is_list(fields), do: :batch
-  defp normalize_kind(:batch), do: :batch
-  defp normalize_kind(other), do: other
 end

@@ -652,8 +652,8 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
       objective: "Test canonical inheritance",
       repo_less: Process.get(:repo_less, false),
       # The engine reads these from the STRUCT now (the old `do_turn/5` read them
-      # from this same scheduler row). The Runner's `InitialState` copies them
-      # from that row; a missing generation-params value would silently send
+      # from this same scheduler row). The session's initial-state builder copies
+      # them from that row; a missing generation-params value would silently send
       # ReqLLM's own defaults and a nil `max_retries` would make a transient
       # failure retry unboundedly.
       llm_generation_params: agent.llm_generation_params,

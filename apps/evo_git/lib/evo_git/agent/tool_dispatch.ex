@@ -194,20 +194,6 @@ defmodule EvoGit.Agent.ToolDispatch do
     raise "Git rev_parse failed (#{code}): #{msg}"
   end
 
-  # --- Scheduler / ETS seam ---
-
-  # The ONE adapter for every scheduler/ETS interaction this module performs:
-  # the `:scheduler` seam when one is set, else `Seams.default_scheduler/3` (the
-  # exact production calls, so an absent seam is byte-identical to before). See
-  # `EvoGit.Agent.Exchange.Seams` for the kind/payload contract.
-  defp scheduler(%Seams{scheduler: nil}, kind, payload, %State{} = state) do
-    Seams.default_scheduler(kind, payload, state)
-  end
-
-  defp scheduler(%Seams{scheduler: seam}, kind, payload, %State{} = state) do
-    seam.(kind, payload, state)
-  end
-
   # --- Main Turn ---
 
   @doc false
@@ -280,7 +266,8 @@ defmodule EvoGit.Agent.ToolDispatch do
       {:error, {:llm_request_rejected, _} = terminal} ->
         # Non-retryable provider rejection (the fail-fast path of
         # `handle_llm_failure/7`): the turn ends with a GRACEFUL terminal error
-        # that propagates out of `Runner.run/3` unchanged. Deliberately NOT
+        # that propagates out of `Exchange.run/2` (and the session worker)
+        # unchanged. Deliberately NOT
         # routed through `handle_protocol_violation/3` — that would burn the
         # grace budget / trigger recovery against a request that can never
         # succeed, when the only real fix is a model-profile / request-parameter
@@ -461,19 +448,12 @@ defmodule EvoGit.Agent.ToolDispatch do
         completion_text,
         opts
       ) do
-    seams = Seams.from_opts(opts)
     state = update_turn_usage(state, response)
     {tool_calls, response} = prepare_tool_calls(response, state.agent_id)
     state = advance_turn_context(state, response)
 
-    batch_fields = [
-      context: state.context,
-      turn: state.turn,
-      usage: state.usage,
-      total_tokens: state.total_tokens
-    ]
-
-    scheduler(seams, {:batch, batch_fields}, batch_fields, state)
+    # No ETS write-through here: this turn's state is published by the engine's
+    # ONE `:checkpoint` seam at the turn boundary.
 
     # Initialize delegation hints in process dictionary for this turn
     Process.put(:delegation_hints, state.delegation_hints)
@@ -573,8 +553,8 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   # Handles the {:continue, ...} outcome of tool-call processing: picks up the
   # updated delegation hints from the process dictionary, tags and appends the
-  # tool responses to the context, accumulates subagent usage, syncs state to
-  # ETS, and re-enters the loop.
+  # tool responses to the context, accumulates subagent usage, and re-enters the
+  # loop. The turn's state is the authority; no ETS write happens here.
   defp continue_after_tools(
          tool_responses,
          subagent_usage,
@@ -582,13 +562,11 @@ defmodule EvoGit.Agent.ToolDispatch do
          %State{} = state,
          subagent_modules,
          loop_fn,
-         opts
+         _opts
        ) do
     if EvoGit.Agent.grace_period_continue_failed?(state) do
       {:error, :recovery_failed}
     else
-      seams = Seams.from_opts(opts)
-
       # A turn ended without finishing the run: if in a grace period, consume
       # one grace turn (decrement grace_turns_remaining). Outside a grace
       # period this is a no-op (counter stays at its default 0).
@@ -640,13 +618,8 @@ defmodule EvoGit.Agent.ToolDispatch do
           usage: usage
       }
 
-      # Sync updated context to ETS for dashboard visibility (returns :ok).
-      # The in-memory context is already stamped at creation — no rebind.
-      scheduler(seams, :context, state.context, state)
-
-      # Sync accumulated subagent usage to ETS
-      scheduler(seams, {:batch, [usage: state.usage]}, [usage: state.usage], state)
-
+      # No ETS write-through: the updated context and accumulated usage ride the
+      # returned state, and the engine publishes it at the turn boundary.
       loop_fn.(state)
     end
   end
@@ -778,8 +751,9 @@ defmodule EvoGit.Agent.ToolDispatch do
   # The completion route (a text reply with no tool calls).
   #
   # Any pending work is committed FIRST so the sha reported to the runtime is
-  # reviewable: without this the commit would only happen in `Runner.run/3`'s
-  # post-run auto-commit fallback, i.e. AFTER `commit_sha` was captured, and
+  # reviewable: without this the commit would only happen in the post-run
+  # auto-commit fallback (`Session.Worker`'s `after` block), i.e. AFTER
+  # `commit_sha` was captured, and
   # `Runtime.Helpers.merge_and_report/3,4` would take the no-changes path and
   # drop the work with the worktree. `commit_pending_in_worktree/0` is a no-op
   # for a clean workspace and for repo-less agents, and it never raises (git

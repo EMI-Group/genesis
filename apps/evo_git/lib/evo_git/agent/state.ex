@@ -9,8 +9,7 @@ defmodule EvoGit.Agent.State do
   Its fields fall into four groups: identity, conversation, control and budget.
   `EvoGit.Agent.Exchange.run/2` consumes the struct and threads it through every
   turn of ONE exchange, and `EvoGit.Agent.Session.Setup.build_initial_state/3`
-  builds the initial value (today reached through
-  `EvoGit.Agent.Runner.InitialState.build/2`) before that call.
+  builds the initial value before that call.
 
   The `EvoGit.Agent.Session` process owns this struct — the exchange engine stays
   a pure function over it — and the per-exchange worker installs the DERIVED

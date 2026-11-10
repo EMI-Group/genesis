@@ -2,13 +2,18 @@ defmodule EvoGit.Agent.Exchange.Pending do
   @moduledoc """
   The turn-top input surface: pending user messages and background-job notices.
 
-  Both append user-role messages to the conversation and sync the new context
-  through the `:context` seam (`EvoGit.Agent.Exchange.Seams`), so an exchange in
-  a bare process produces exactly the same context updates as a live agent.
+  Both append user-role messages to the conversation and return a state carrying
+  the new context; that state IS the authority (the session process owns it and
+  publishes it at the turn boundary through the `:checkpoint` seam), so nothing
+  here writes ETS.
+
+  Only the pending-message drain touches the scheduler control plane, through
+  the `:drain_inputs` seam (`EvoGit.Agent.Exchange.Seams`), so an exchange in a
+  bare process drains exactly like a live agent.
 
   Neither helper owns the tool plane: `EvoGit.BackgroundJobs` claims finished
   notices itself (a tool-plane call, not a scheduler effect), so that call stays
-  direct even when a scheduler seam is supplied.
+  direct.
   """
 
   alias EvoGit.Agent.Exchange
@@ -45,11 +50,8 @@ defmodule EvoGit.Agent.Exchange.Pending do
             ReqLLM.Context.append(ctx, tagged)
           end)
 
-        # Sync updated context for dashboard visibility (returns :ok). The
-        # in-memory new_context is already stamped at creation
-        # (build_injected_message above) — no rebind needed.
-        Exchange.scheduler(seams, :context, new_context, state)
-
+        # The new context rides the returned state (no ETS sync): the in-memory
+        # context is already stamped at creation (build_injected_message above).
         %{state | context: new_context}
     end
   end
@@ -68,9 +70,7 @@ defmodule EvoGit.Agent.Exchange.Pending do
 
   def inject_background_job_notices(%State{in_grace_period: true} = state, _opts), do: state
 
-  def inject_background_job_notices(%State{} = state, opts) do
-    seams = Seams.from_opts(opts)
-
+  def inject_background_job_notices(%State{} = state, _opts) do
     # `notice/1` answers `nil` for an empty list; the guard already excludes it,
     # but the explicit `is_binary` match keeps the append total.
     # The owner is the AGENT/session pid, NOT this exchange worker's `self()`:
@@ -86,10 +86,7 @@ defmodule EvoGit.Agent.Exchange.Pending do
       message = EvoGit.Agent.ContextBuilder.build_injected_message(text, state.turn)
       new_context = ReqLLM.Context.append(state.context, message)
 
-      # Sync for dashboard/history visibility (same side effect as the
-      # pending-message drain).
-      Exchange.scheduler(seams, :context, new_context, state)
-
+      # The new context rides the returned state (no ETS sync).
       %{state | context: new_context}
     else
       _ -> state

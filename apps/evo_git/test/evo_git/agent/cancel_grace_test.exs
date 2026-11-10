@@ -138,11 +138,10 @@ defmodule EvoGit.Agent.CancelGraceTest do
   #   * `queue` — the pending user-message queue; `:drain_inputs` POPS it, so a
   #     second drain is a no-op exactly as the real queue behaves;
   #   * `cancel?` — the `cancel_requested` flag (`:clear_cancel` clears it);
-  #   * `calls` — every `{kind, payload}` interaction, in order;
-  #   * `synced` — every context handed to the `:context` sync, in order.
+  #   * `calls` — every `{kind, payload}` interaction, in order.
   #
-  # Assertions observe this record where a test previously observed the ETS side
-  # effect it produced (the cleared flag, the drained queue, the synced context).
+  # Assertions observe this record for the control-plane effects (the cleared
+  # flag, the drained queue) and the RETURNED state for the conversation.
   #
   # `Elixir.Agent` is spelled out because `Agent` is aliased to `EvoGit.Agent` in
   # this module.
@@ -176,7 +175,6 @@ defmodule EvoGit.Agent.CancelGraceTest do
   defp kinds(pid), do: for({kind, _payload} <- calls(pid), do: kind)
   defp queue(pid), do: Elixir.Agent.get(pid, & &1.queue)
   defp cancel?(pid), do: Elixir.Agent.get(pid, & &1.cancel?)
-  defp synced(pid), do: for({:context, ctx} <- calls(pid), do: ctx)
 
   defp message_texts(%ReqLLM.Context{} = context) do
     Enum.map(context.messages, &message_text/1)
@@ -334,8 +332,8 @@ defmodule EvoGit.Agent.CancelGraceTest do
       drained = Exchange.Pending.drain_and_inject_user_messages(state(), scheduler: seam)
 
       assert Enum.any?(message_texts(drained.context), &(&1 =~ cancel_message))
-      # The drain synced the updated context for dashboard visibility.
-      assert synced(stub) == [drained.context]
+      # The drained message rides the returned state; the queue is empty.
+      assert [_cancel_message] = drained.context.messages
       assert queue(stub) == []
 
       {:cancel_grace, grace_state} =
@@ -347,7 +345,7 @@ defmodule EvoGit.Agent.CancelGraceTest do
       # The cancel flag is cleared (the engine owns it — scheduler may re-set it
       # only for a later cancel request): exactly ONE flag read followed by ONE
       # `:clear_cancel`, and the flag is false afterwards.
-      assert kinds(stub) == [:drain_inputs, :context, :cancel_requested?, :clear_cancel]
+      assert kinds(stub) == [:drain_inputs, :cancel_requested?, :clear_cancel]
       refute cancel?(stub)
 
       # The cancel message is present in the context (from the drain)...

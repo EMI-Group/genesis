@@ -807,8 +807,8 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   describe "current_context_window/0" do
     setup do
       # Unique id so this row can never collide with a sibling test's; the
-      # process dictionary entry mirrors what Runner.setup_dispatch_context/1
-      # installs for a scheduled agent.
+      # process dictionary entry mirrors what the session setup
+      # (`EvoGit.Agent.Session.Setup.install_process_context/3`) installs.
       agent_id = 9_980_000 + :erlang.unique_integer([:positive])
       Process.put(:evogit_agent_id, agent_id)
 

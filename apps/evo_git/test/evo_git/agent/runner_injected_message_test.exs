@@ -21,6 +21,8 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
   `async: true` — every case is a pure function of `%EvoGit.Agent.State{}` plus
   its OWN in-memory `:scheduler` seam (`EvoGit.Agent.Exchange.Seams`), so the
   engine runs in this plain ExUnit process with no scheduler and no ETS row.
+  The returned state — not an ETS write — is the authority: these tests assert
+  on the state the helper hands back.
   """
 
   use ExUnit.Case, async: true
@@ -49,11 +51,10 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
   #
   #   * `queue` — the pending user-message queue; `:drain_inputs` POPS it, so a
   #     second drain is a no-op exactly as the real queue behaves;
-  #   * `calls` — every `{kind, payload}` interaction, in order;
-  #   * `synced` — every context handed to the `:context` sync, in order.
+  #   * `calls` — every `{kind, payload}` interaction, in order.
   #
-  # Assertions observe this record where a test previously observed the ETS side
-  # effect it produced (the synced context, the emptied queue).
+  # Assertions observe this record for the control-plane interactions (the
+  # emptied queue) and the RETURNED state for the conversation itself.
   defp scheduler_stub(opts \\ []) do
     {:ok, pid} = Agent.start_link(fn -> %{queue: Keyword.get(opts, :queue, []), calls: []} end)
 
@@ -66,8 +67,6 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
 
       case kind do
         :drain_inputs -> {stub.queue, %{stub | queue: []}}
-        :context -> {:ok, stub}
-        _other -> {:ok, stub}
       end
     end)
   end
@@ -75,7 +74,6 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
   defp calls(pid), do: Agent.get(pid, & &1.calls)
   defp kinds(pid), do: for({kind, _payload} <- calls(pid), do: kind)
   defp queue(pid), do: Agent.get(pid, & &1.queue)
-  defp synced(pid), do: for({:context, ctx} <- calls(pid), do: ctx)
 
   defp loop_state(agent_id) do
     %State{
@@ -213,9 +211,11 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
     assert first.content == existing.content
     assert injected.content == [ReqLLM.Message.ContentPart.text("injected")]
 
-    # The updated context was synced through the `:context` seam — the
-    # dashboard/history side effect the ETS write-through used to provide.
-    assert synced(stub) == [new_state.context]
+    # The returned state IS the updated conversation (the engine publishes it at
+    # the next turn boundary through `:checkpoint`) — nothing else was touched.
+    assert new_state.context == ReqLLM.Context.append(state.context, injected)
+
+    assert kinds(stub) == [:drain_inputs]
   end
 
   test "the queue is emptied by the drain (a second drain is a no-op)", %{agent_id: agent_id} do
@@ -228,9 +228,9 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
     # The queue itself is empty now: the drain POPPED it.
     assert queue(stub) == []
 
-    # A second drain therefore adds nothing (and syncs nothing).
+    # A second drain therefore adds nothing (and touches nothing).
     assert Pending.drain_and_inject_user_messages(drained, scheduler: seam) == drained
-    assert synced(stub) == [drained.context]
+    assert kinds(stub) == [:drain_inputs, :drain_inputs]
   end
 
   test "an empty queue leaves the state untouched", %{agent_id: agent_id} do
@@ -241,7 +241,6 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
 
     # A drain that found nothing touched no context at all.
     assert kinds(stub) == [:drain_inputs]
-    assert synced(stub) == []
   end
 
   test "no root gate — media is materialized for an injected message via build_injected_message/2 (arity 2, no parent input)",

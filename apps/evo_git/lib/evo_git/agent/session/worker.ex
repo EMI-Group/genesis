@@ -21,8 +21,8 @@ defmodule EvoGit.Agent.Session.Worker do
 
   The completion side effects (git note, archive refs, `%Result{}`) are written
   INSIDE the exchange by `EvoGit.Agent.ToolDispatch.build_completion/2,3`, so
-  this module only adds the post-run worktree bookkeeping that
-  `EvoGit.Agent.Runner.run/3` does for the one-shot driver.
+  this module only adds the post-run worktree bookkeeping (the same
+  `refresh_commit_sha/1` refresh the retired one-shot driver performed).
   """
 
   alias EvoGit.Agent.Exchange
