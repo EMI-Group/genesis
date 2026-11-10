@@ -20,7 +20,13 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
       `Types.Status.statuses/0`) — the value must decode to itself, never to
       `nil`/`:pending`;
     * the scheduler's own `SchedMeta` enumerations — a session's status/phases
-      must be reported and its cancel path must remain reachable.
+      must be reported and its cancel path must remain reachable;
+    * the evaluation (`elixir_eval`) admission sets owned by
+      `Agent.Tools.ElixirEval.Broker` (`cancel_statuses/0`,
+      `force_kill_statuses/0`) and `Agent.Tools.ElixirEval.Authorization`
+      (`accepted_agent_statuses/0`, `accepted_agent_task_statuses/0`) — an idle
+      interactive session must stay inspectable, drivable, cancellable and
+      force-killable through the Assistant's task facades.
 
   The rule is enforced by the `@lists` data table below: for EVERY entry that
   advertises `:running`, the same list must also advertise `:awaiting_input`.
@@ -56,6 +62,8 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
 
   use ExUnit.Case, async: true
 
+  alias EvoGit.Agent.Tools.ElixirEval.Authorization
+  alias EvoGit.Agent.Tools.ElixirEval.Broker
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.CLI
   alias EvoGit.CommandApproval
@@ -101,6 +109,15 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
      :not_running},
     {"CommandApproval.eval_active_task_statuses/0", {CommandApproval, :eval_active_task_statuses},
      :atom, :running},
+    # ── evaluation (elixir_eval) capability admission ──
+    {"Agent.Tools.ElixirEval.Broker.cancel_statuses/0", {Broker, :cancel_statuses}, :atom,
+     :running},
+    {"Agent.Tools.ElixirEval.Broker.force_kill_statuses/0", {Broker, :force_kill_statuses}, :atom,
+     :running},
+    {"Agent.Tools.ElixirEval.Authorization.accepted_agent_statuses/0",
+     {Authorization, :accepted_agent_statuses}, :atom, :running},
+    {"Agent.Tools.ElixirEval.Authorization.accepted_agent_task_statuses/0",
+     {Authorization, :accepted_agent_task_statuses}, :atom, :running},
     # ── CLI foreground wait classification ──
     {"CLI.halted_wait_statuses/0", {CLI, :halted_wait_statuses}, :atom, :not_running},
     {"CLI.terminal_statuses/0", {CLI, :terminal_statuses}, :atom, :not_running},
@@ -187,6 +204,10 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
             "Store.Codec.known_statuses/0",
             "Store.Types.Status.statuses/0",
             "CommandApproval.eval_active_task_statuses/0",
+            "Agent.Tools.ElixirEval.Broker.cancel_statuses/0",
+            "Agent.Tools.ElixirEval.Broker.force_kill_statuses/0",
+            "Agent.Tools.ElixirEval.Authorization.accepted_agent_statuses/0",
+            "Agent.Tools.ElixirEval.Authorization.accepted_agent_task_statuses/0",
             "AgentScheduler.SchedMeta.statuses/0",
             "AgentScheduler.SchedMeta.live_statuses/0",
             "AgentScheduler.SchedMeta.cancel_reachable_statuses/0"

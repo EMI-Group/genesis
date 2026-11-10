@@ -13,8 +13,18 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Projection do
   ]
   @types [:genesis, :evolve, :reflect, :extract_skills]
   @reviews [:open, :merged, :rejected, :continued, :ignored, :no_changes]
-  @agent_statuses [:pending, :running, :waiting, :ready, :blocked]
+  # SchedMeta statuses (`SchedMeta.statuses/0`), including the live-but-idle
+  # `:awaiting_input` of an interactive session parked between exchanges.
+  @agent_statuses [:pending, :running, :awaiting_input, :waiting, :ready, :blocked]
   @timeout 1_000
+
+  # `@doc false` accessors so the status-admission totality test can assert the
+  # `:running ⇒ :awaiting_input` implication against these exact whitelists.
+  @doc false
+  def statuses, do: @statuses
+
+  @doc false
+  def agent_statuses, do: @agent_statuses
 
   # Explicit scalar projections ONLY. Never return a raw struct or a nested
   # runtime/config map; opts, errors, histories and generation params are absent.
