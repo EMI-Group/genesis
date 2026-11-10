@@ -1,14 +1,23 @@
 defmodule EvoGit.SelfReflectiveSource do
   @moduledoc """
   Manages the local clone of the Genesis repository used by the self-reflective
-  (repo-less) agent.
+  (repo-less) agent, and its reserved Virtual Context Tree (VCT) mount.
 
   The self-reflective agent reads the Genesis source/docs **read-only**. This
   module owns a shallow managed clone at `<data_dir>/genesis-source`
-  (`source_dir/0`) and is the **single source of truth** for the source-root
-  resolution chain (`reference_path/0`) consumed by both
+  (`source_dir/0`), declares it as the RESERVED VCT mount
+  `vct:///genesis-source` (`point/0`, `system_mounts/0`, `ensure_mount/0`), and
+  is the **single source of truth** for the source-root resolution chain
+  (`reference_path/0`) consumed by both
   `EvoGit.Runtime.SelfReflective.source_root/0` and
   `EvoGit.AgentScheduler.Dispatch.resolve_repo_less_root/0`.
+
+  The VCT mount is pure NAMESPACE metadata (`EvoGit.VCT`): it binds the reserved
+  point to the managed dir's OS path but never creates a directory, never
+  requires the path to exist, and is never listed as a user project (reserved
+  mounts are invisible to `EvoGit.VCT.projects/1`/`search/2`, never evicted and
+  never forgotten). Re-pointing that mount at another checkout is the supported
+  way to override the source the agent reads.
 
   Public API (all pure local reads except `clone/0`/`update/0`, which touch
   the network via git):
@@ -18,20 +27,31 @@ defmodule EvoGit.SelfReflectiveSource do
       `<data_dir>/genesis-source`).
     * `clone_url/0` — the upstream clone URL (overridable via the
       `:self_reflective_source_url` app env, default the GitHub repo).
-    * `status/0` — a read-only snapshot of the managed dir (never raises,
-      never touches the network).
+    * `point/0` — the reserved VCT point (`"vct:///genesis-source"`).
+    * `system_mounts/0` — the VCT `:system_mounts` entry declared at boot
+      (pure, no I/O).
+    * `ensure_mount/0` — registers/refreshes that mount (total, never raises).
+    * `status/0` — a read-only snapshot of the managed dir and its mount state
+      (never raises, never touches the network).
     * `clone/0` — shallow-clones the upstream into `source_dir/0`
-      (`{:error, :already_cloned}` when the dir already exists).
+      (`{:error, :already_cloned}` when the dir already exists) and then
+      ensures the VCT mount best effort.
     * `update/0` — fetches + fast-forwards the managed clone
-      (`{:error, :not_cloned}` / `{:error, :not_a_git_repo}` guards).
+      (`{:error, :not_cloned}` / `{:error, :not_a_git_repo}` guards) and then
+      ensures the VCT mount best effort.
     * `reference_path/0` — the resolution chain (see below).
     * `available?/0` — whether a usable Genesis source is available RIGHT NOW
       (pure local reads, no git subprocess — safe to call on every page load).
   """
 
+  require Logger
+
   alias EvoGit.Adapters.Git
+  alias EvoGit.VCT.Table
 
   @default_clone_url "https://github.com/EMI-Group/genesis.git"
+  @genesis_source_point "vct:///genesis-source"
+  @genesis_source_name "genesis-source"
 
   @doc """
   The managed clone directory: `Path.join(EvoGit.Platform.data_dir(), "genesis-source")`.
@@ -54,6 +74,52 @@ defmodule EvoGit.SelfReflectiveSource do
   end
 
   @doc """
+  The RESERVED VCT point bound to the managed Genesis source checkout:
+  `"vct:///genesis-source"`.
+
+  Canonical (accepted by `EvoGit.VCT.Path.parse/1`) and constant — there is no
+  app-env override, so the point is stable across boots and machines. Being
+  outside `vct:///projects/<name>`, it is a reserved (system) mount: resolvable,
+  but never listed as a project nor evicted.
+  """
+  @spec point() :: String.t()
+  def point, do: @genesis_source_point
+
+  @doc """
+  The host-declared VCT `:system_mounts` entry for the managed source checkout:
+  `[%{point: point(), path: source_dir(), name: "genesis-source"}]`.
+
+  Pure (no I/O, no VCT call) — `EvoGit.Application` passes it to the
+  `EvoGit.VCT` child spec so the reserved mount is ensured idempotently at boot.
+  The recorded OS path need not exist yet (a checkout is provisioned later).
+  """
+  @spec system_mounts() :: [map()]
+  def system_mounts do
+    [%{point: point(), path: source_dir(), name: @genesis_source_name}]
+  end
+
+  @doc """
+  Ensures the reserved VCT mount `point/0` binds `source_dir/0`
+  (`name: "genesis-source"`).
+
+  Idempotent: the same point holding the same normalized OS path is a no-op;
+  a different path re-points the mount (same point). TOTAL and never raising —
+  every failure (including an unreachable VCT server) is returned as
+  `{:error, reason}`.
+
+  Called best effort by `clone/0`/`update/0` after a successful clone/update, so
+  a VCT problem can never turn a successful sync into an error.
+  """
+  @spec ensure_mount() :: {:ok, EvoGit.VCT.Mount.t()} | {:error, term()}
+  def ensure_mount do
+    EvoGit.VCT.ensure_mount(point(), source_dir(), name: @genesis_source_name)
+  rescue
+    exception -> {:error, exception}
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
+  @doc """
   Read-only snapshot of the managed source dir. NEVER raises and NEVER touches
   the network — every field is a pure local read guarded by `case` on adapter
   tuples.
@@ -71,6 +137,10 @@ defmodule EvoGit.SelfReflectiveSource do
     * `remote_url` — `remote get-url origin`, nil on failure
     * `reference` — `reference_path/0` result
     * `is_reference` — `source_dir() == reference_path()`
+    * `point` — `point/0` (the reserved VCT point, always present)
+    * `mounted` — `true` ONLY when the VCT currently binds `point/0` to
+      `source_dir/0`; `false` whenever the VCT is unavailable or binds
+      something else
   """
   @spec status() :: map()
   def status do
@@ -78,6 +148,7 @@ defmodule EvoGit.SelfReflectiveSource do
     exists = File.dir?(dir)
     is_git_repo = exists and git_repo?(dir)
     valid = is_git_repo and File.regular?(Path.join(dir, "CONTEXT.md"))
+    reference = reference_path()
 
     %{
       dir: dir,
@@ -88,8 +159,10 @@ defmodule EvoGit.SelfReflectiveSource do
       branch: branch(dir, is_git_repo),
       version: version(dir),
       remote_url: remote_url(dir, is_git_repo),
-      reference: reference_path(),
-      is_reference: source_dir() == reference_path()
+      reference: reference,
+      is_reference: dir == reference,
+      point: point(),
+      mounted: mounted?()
     }
   end
 
@@ -100,6 +173,10 @@ defmodule EvoGit.SelfReflectiveSource do
   BEFORE cloning — the managed dir is never overwritten), or
   `{:ok, status/0}` on success. Shallow (`--depth 1`) is fine: the
   self-reflective agent only READS the tree, and `update/0` refreshes it.
+
+  After a SUCCESSFUL clone the reserved VCT mount is ensured best effort
+  (`ensure_mount/0`): a VCT failure is logged and never turns the clone into an
+  error.
   """
   @spec clone() :: {:ok, map()} | {:error, term()}
   def clone do
@@ -111,8 +188,12 @@ defmodule EvoGit.SelfReflectiveSource do
       case File.mkdir_p(Path.dirname(dir)) do
         :ok ->
           case Git.clone(clone_url(), dir, ["--depth", "1"]) do
-            {:ok, _} -> {:ok, status()}
-            {:error, reason} -> {:error, reason}
+            {:ok, _} ->
+              ensure_mount_after_sync()
+              {:ok, status()}
+
+            {:error, reason} ->
+              {:error, reason}
           end
 
         {:error, reason} ->
@@ -136,6 +217,10 @@ defmodule EvoGit.SelfReflectiveSource do
   the dir carries no local work. A non-shallow checkout (e.g. a
   manually-created managed dir) uses the non-destructive `fetch` +
   `merge --ff-only origin/<branch>` path instead.
+
+  After a SUCCESSFUL update the reserved VCT mount is ensured best effort
+  (`ensure_mount/0`): a VCT failure is logged and never turns the update into an
+  error.
   """
   @spec update() :: {:ok, map()} | {:error, term()}
   def update do
@@ -149,7 +234,14 @@ defmodule EvoGit.SelfReflectiveSource do
         {:error, :not_a_git_repo}
 
       true ->
-        do_update(dir)
+        case do_update(dir) do
+          {:ok, _status} = ok ->
+            ensure_mount_after_sync()
+            ok
+
+          other ->
+            other
+        end
     end
   end
 
@@ -159,10 +251,15 @@ defmodule EvoGit.SelfReflectiveSource do
 
     1. `:self_reflective_source_root` app env (if non-empty binary)
     2. `GENESIS_SOURCE_ROOT` env var (if non-empty binary)
-    3. `source_dir/0` IF the dir exists AND is a valid Genesis checkout
+    3. the VCT mount at `point/0` (`vct:///genesis-source`) WHEN its path is a
+       valid Genesis checkout (git repo + `CONTEXT.md` at root). Re-pointing
+       that reserved mount is the supported "override". This step is SKIPPED
+       entirely whenever the `:self_reflective_source_dir` app env seam is set,
+       so hermetic tests stay deterministic.
+    4. `source_dir/0` IF the dir exists AND is a valid Genesis checkout
        (git repo + `CONTEXT.md` at root) — auto-reference: cloning makes it
        the reference, no separate set-reference action
-    4. `nil` (callers supply their own terminal fallback — see
+    5. `nil` (callers supply their own terminal fallback — see
        `EvoGit.Runtime.SelfReflective.source_root/0` for `File.cwd!()` and
        `EvoGit.AgentScheduler.Dispatch` for `"[system]"`)
 
@@ -180,7 +277,7 @@ defmodule EvoGit.SelfReflectiveSource do
             path
 
           _ ->
-            managed_reference()
+            vct_reference() || managed_reference()
         end
     end
   end
@@ -215,7 +312,55 @@ defmodule EvoGit.SelfReflectiveSource do
   # another git repo (e.g. the real Genesis checkout) as a git repo.
   defp git_repo?(dir), do: File.dir?(Path.join(dir, ".git"))
 
-  # Step 3 of the reference chain: the managed dir qualifies only when it is
+  # Step 3 of the reference chain: the reserved VCT mount qualifies only when
+  # its path is a valid Genesis checkout (git repo + CONTEXT.md at root).
+  # Skipped entirely while the `:self_reflective_source_dir` app env seam is set
+  # so hermetic tests stay deterministic.
+  defp vct_reference do
+    if is_nil(Application.get_env(:evo_git, :self_reflective_source_dir)) do
+      case EvoGit.VCT.resolve(point()) do
+        {:ok, %EvoGit.VCT.Mount{path: path}} when is_binary(path) ->
+          if git_repo?(path) and genesis_checkout?(path), do: path, else: nil
+
+        _other ->
+          nil
+      end
+    else
+      nil
+    end
+  end
+
+  # `mounted` in status/0: the VCT currently binds the reserved point to the
+  # managed dir. False whenever the VCT is unavailable or binds another path.
+  defp mounted? do
+    case EvoGit.VCT.resolve(point()) do
+      {:ok, %EvoGit.VCT.Mount{path: path}} when is_binary(path) ->
+        Table.comparison_form(path) == Table.comparison_form(source_dir())
+
+      _other ->
+        false
+    end
+  rescue
+    _exception -> false
+  catch
+    _kind, _reason -> false
+  end
+
+  # Best effort after a successful clone/update: a VCT failure must NEVER turn
+  # the sync into an error, so it is only logged.
+  defp ensure_mount_after_sync do
+    case ensure_mount() do
+      {:ok, _mount} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "SelfReflectiveSource: could not ensure VCT mount #{point()}: #{inspect(reason)}"
+        )
+    end
+  end
+
+  # Step 4 of the reference chain: the managed dir qualifies only when it is
   # a valid Genesis checkout (git repo + CONTEXT.md at root). This mirrors the
   # `valid` field of status/0 without recursing through it.
   defp managed_reference do
@@ -229,7 +374,7 @@ defmodule EvoGit.SelfReflectiveSource do
   end
 
   # A usable Genesis source: the dir exists AND carries a CONTEXT.md at its
-  # root. Shared by `managed_reference/0` and `available?/0`.
+  # root. Shared by `vct_reference/0`, `managed_reference/0` and `available?/0`.
   defp genesis_checkout?(dir) do
     File.dir?(dir) and File.regular?(Path.join(dir, "CONTEXT.md"))
   end

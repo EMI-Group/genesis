@@ -13,11 +13,15 @@ defmodule EvoGit.Runtime.SelfReflective do
 
   Delegates to `EvoGit.SelfReflectiveSource.reference_path/0` — the single
   source of truth for the chain: `:self_reflective_source_root` app env →
-  `GENESIS_SOURCE_ROOT` env var → the managed clone at
+  `GENESIS_SOURCE_ROOT` env var → the reserved VCT mount at
+  `vct:///genesis-source` (`EvoGit.SelfReflectiveSource.point/0`) when it points
+  at a valid Genesis checkout (skipped while the
+  `:self_reflective_source_dir` app env seam is set) → the managed clone at
   `EvoGit.SelfReflectiveSource.source_dir/0` when it exists and is a valid
-  Genesis checkout (auto-reference) → `nil`. Falls back to `File.cwd!()`
-  (dev: the genesis repo itself) when the chain resolves to nil. The
-  scheduler resolves the repo-less agent's repo root from the SAME chain via
+  Genesis checkout (auto-reference) → `nil`. Re-pointing that VCT mount is the
+  supported "override". Falls back to `File.cwd!()` (dev: the genesis repo
+  itself) when the chain resolves to nil. The scheduler resolves the repo-less
+  agent's repo root from the SAME chain via
   `EvoGit.AgentScheduler.Dispatch.resolve_repo_less_root/0` — both delegate
   to `SelfReflectiveSource.reference_path/0` so they always agree.
   """
