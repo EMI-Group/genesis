@@ -7,7 +7,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   edges between the rows (the GitKraken/GitLen-style graph shape).
 
   The module is deliberately PURE — no I/O, no socket, no processes — mirroring
-  the sibling support modules (`PendingEvents`). It is fed:
+  the sibling support modules (`HistoryGate`, `OptimisticMessages`,
+  `PendingEvents`). It is fed:
 
     - `raw_by_repo` — the per-repo commit graph fetched by the node-aware
       commit RPC (`%{repo_key => %{commits: [commit], refs: %{sha => [name]},

@@ -8,14 +8,18 @@ defmodule EvoDashWeb.AgentsLiveTest do
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
 
+  alias EvoDashWeb.AgentsLive.HistoryGate
   alias EvoDashWeb.AgentsLive.LoadData
   alias EvoDashWeb.AgentsLive.ThresholdCache
+  alias EvoDashWeb.Helpers
   alias EvoGit.AgentSpec
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
 
+  # A fixed UTC instant: 2023-11-14 22:13:20Z
+  @unix_seconds 1_700_000_000
   # Exit-safe `:sys.get_state/2` timeout for `assigns/1`: the LiveView can be
   # starved for seconds on a loaded host, where the 5 s default would turn a
   # state read into an `(EXIT) time out` failure.
@@ -129,8 +133,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert html =~ "##{agent_id()}"
       assert html =~ "Primary Repo"
 
-      # The async load carries the summary's :message_count through as a row
-      # field.
+      # The async load carried the summary's :message_count through (the
+      # history gate keys off it — see "history fetch gating").
       assert [agent] = assigns(view)[:agents]
       assert agent.id == agent_id()
       assert agent.message_count == 1
@@ -224,6 +228,242 @@ defmodule EvoDashWeb.AgentsLiveTest do
       wait_until(fn -> Enum.any?(assigns(view)[:agents], &(&1.id == registered_id)) end)
       agent = assigns(view)[:agents] |> Enum.find(&(&1.id == registered_id))
       assert agent.model_label == "work - glm-4.6"
+    end
+  end
+
+  describe "history fetch gating" do
+    # The HistoryGate suppresses full-history re-transfers while an agent's
+    # :message_count is unchanged (see EvoDashWeb.AgentsLive.HistoryGate).
+
+    test "re-fetches history only when the message count moved", %{conn: conn} do
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
+      ])
+
+      counter = start_history_counter()
+      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # First selection fetches history (the gate has no last-seen entry).
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      wait_until(fn -> render(view) =~ "fake message 1" end)
+      assert Agent.get(counter, & &1) == 1
+
+      # Make the next refresh observable: change the agent's status in ETS
+      # while leaving its context (message_count) untouched.
+      update_agent_status(agent_id(), :waiting)
+      send(view.pid, {:agents_updated, node()})
+      flush_agent_events(view)
+      wait_until(fn -> render(view) =~ "WAITING" end)
+
+      # The refresh applied but the count is unchanged — the carried history is
+      # kept and the gate suppresses a re-fetch.
+      assert Agent.get(counter, & &1) == 1
+
+      # The conversation grows (2 messages) — the next refresh must drop the
+      # carried history and re-fetch for the selected agent.
+      update_agent_context(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}},
+        %ReqLLM.Message{role: :assistant, content: [%{text: "world"}], metadata: %{turn: 2}}
+      ])
+
+      send(view.pid, {:agents_updated, node()})
+      flush_agent_events(view)
+      wait_until(fn -> render(view) =~ "Turn 2" end)
+
+      assert Agent.get(counter, & &1) == 2
+    end
+  end
+
+  describe "incremental history refresh (panel stays mounted)" do
+    test "a batched message-count update keeps the mounted entries and appends the new tail (never blanked)",
+         %{conn: conn} do
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: "seed"}], metadata: %{turn: 0}}
+      ])
+
+      test_pid = self()
+      Application.put_env(:evo_dash, :agents_history_runner, blocking_history_runner(test_pid))
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      assert_receive {:history_fetch_called, first_task}, @async_wait_budget_ms
+
+      send(
+        first_task,
+        {:history_release,
+         [
+           %ReqLLM.Message{
+             role: :user,
+             content: [%{text: "first entry"}],
+             metadata: %{turn: 1}
+           }
+         ]}
+      )
+
+      wait_until(fn -> render(view) =~ "first entry" end)
+
+      update_agent_context(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: "first entry"}], metadata: %{turn: 1}},
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [%{text: "second entry"}],
+          metadata: %{turn: 2}
+        }
+      ])
+
+      send(view.pid, {:agent_updated, agent_id(), [message_count: 2], node()})
+      send(view.pid, {:agents_updated, node()})
+      flush_agent_events(view)
+
+      assert_receive {:history_fetch_called, second_task}, @async_wait_budget_ms
+      mid_flight = render(view)
+      assert mid_flight =~ "first entry"
+      refute mid_flight =~ "Loading history"
+
+      send(
+        second_task,
+        {:history_release,
+         [
+           %ReqLLM.Message{
+             role: :user,
+             content: [%{text: "first entry"}],
+             metadata: %{turn: 1}
+           },
+           %ReqLLM.Message{
+             role: :assistant,
+             content: [%{text: "second entry"}],
+             metadata: %{turn: 2}
+           }
+         ]}
+      )
+
+      wait_until(fn -> render(view) =~ "second entry" end)
+
+      final = render(view)
+      assert final =~ "first entry"
+      assert final =~ "second entry"
+      assert final =~ ~s{id="agent-history-entry-#{agent_id()}-0"}
+      assert final =~ ~s{id="agent-history-entry-#{agent_id()}-1"}
+    end
+
+    test "a diverging refetch (compression/rewrite) still updates the panel", %{conn: conn} do
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: "seed"}], metadata: %{turn: 0}}
+      ])
+
+      queue =
+        start_history_queue([
+          [%ReqLLM.Message{role: :user, content: [%{text: "old entry"}], metadata: %{turn: 1}}],
+          [
+            %ReqLLM.Message{role: :user, content: [%{text: "new entry A"}], metadata: %{turn: 5}},
+            %ReqLLM.Message{
+              role: :assistant,
+              content: [%{text: "new entry B"}],
+              metadata: %{turn: 6}
+            }
+          ]
+        ])
+
+      Application.put_env(:evo_dash, :agents_history_runner, queued_history_runner(queue))
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      wait_until(fn -> render(view) =~ "old entry" end)
+
+      update_agent_context(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: "old entry"}], metadata: %{turn: 1}},
+        %ReqLLM.Message{role: :assistant, content: [%{text: "x"}], metadata: %{turn: 2}}
+      ])
+
+      send(view.pid, {:agents_updated, node()})
+      flush_agent_events(view)
+
+      wait_until(fn -> render(view) =~ "new entry B" end)
+
+      html = render(view)
+      assert html =~ "new entry A"
+      assert html =~ "new entry B"
+      refute html =~ "old entry"
+    end
+
+    test "does not carry a previous node's history into a newly applied agent (no gate entry)",
+         %{conn: conn} do
+      # Regression: on a node switch the history gate is RESET while @agents is
+      # deliberately kept mounted. Agent ids are per-node, so a same-id row from
+      # the previous node can still be found in @agents — but the gate has NO
+      # entry for it (it was reset), so its history must NOT be carried into the
+      # newly-applied (new node's) rows.
+      Application.put_env(:evo_dash, :agents_history_runner, fn _node, _agent_id ->
+        [
+          %ReqLLM.Message{
+            role: :user,
+            content: [%{text: "NEW NODE HISTORY"}],
+            metadata: %{turn: 1}
+          }
+        ]
+      end)
+
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      leaked = %ReqLLM.Message{
+        role: :user,
+        content: [%{text: "PREVIOUS NODE HISTORY"}],
+        metadata: %{turn: 1}
+      }
+
+      # State left over by a node switch: @agents holds a row WITH its
+      # already-fetched history, while the gate is empty (reset on the switch).
+      send(
+        view.pid,
+        {:agents_data_loaded, node(), 1,
+         {:ok,
+          %{
+            agents: [full_agent(id: agent_id(), history: [leaked], message_count: 5)],
+            config_status: nil,
+            threshold_cache: nil
+          }}}
+      )
+
+      # The new node's async load lands: a fresh summary row for the SAME id
+      # (agent ids are per-node) with no history of its own and no gate entry.
+      send(
+        view.pid,
+        {:agents_data_loaded, node(), 1,
+         {:ok,
+          %{
+            agents: [full_agent(id: agent_id(), history: [], message_count: 5)],
+            config_status: nil,
+            threshold_cache: nil
+          }}}
+      )
+
+      render(view)
+
+      # The apply path must NOT carry the previous node's history into the
+      # new node's row (the gate never knew this id on the current node).
+      [agent] = Enum.filter(assigns(view)[:agents], &(&1.id == agent_id()))
+      assert agent.history == []
+      assert assigns(view)[:history_gate] == %{}
+
+      # Selecting the agent fetches ITS node's history — the previous node's
+      # content must never appear in the panel.
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      wait_until(fn -> render(view) =~ "NEW NODE HISTORY" end)
+
+      refute render(view) =~ "PREVIOUS NODE HISTORY"
     end
   end
 
@@ -406,13 +646,61 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # buffer / flush-timer / refresh / tree state (plus `foreign != node()`).
   end
 
+  describe "agent_updated message_count gating" do
+    # The {:agent_updated, id, changed_fields, node} broadcast carries
+    # :message_count whenever the agent's context changed (the contract).
+    # The selected-agent history refetch is gated on it via HistoryGate:
+    # fetch only when the count moved vs the gate's last-seen entry.
+
+    test "refetches selected history only when message_count moved on", %{conn: conn} do
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
+      ])
+
+      counter = start_history_counter()
+      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      wait_until(fn -> render(view) =~ "fake message 1" end)
+      assert Agent.get(counter, & &1) == 1
+
+      # ── (1) UNCHANGED count: the gate suppresses the refetch ────────────
+      # Same :message_count — the merge still applies (proven by the status
+      # change), but no history re-transfer is spawned.
+      send(view.pid, {:agent_updated, agent_id(), [message_count: 1, status: :waiting], node()})
+      flush_agent_events(view)
+
+      assert render(view) =~ "WAITING"
+      assert Agent.get(counter, & &1) == 1
+
+      # ── (2) NO :message_count key: nothing context-related moved ────────
+      send(view.pid, {:agent_updated, agent_id(), [status: :waiting], node()})
+      flush_agent_events(view)
+
+      assert render(view) =~ "WAITING"
+      assert Agent.get(counter, & &1) == 1
+
+      # ── (3) MOVED count: the refetch fires and the tail renders ─────────
+      send(view.pid, {:agent_updated, agent_id(), [message_count: 2], node()})
+      flush_agent_events(view)
+
+      wait_until(fn -> Agent.get(counter, & &1) == 2 end)
+      assert render(view) =~ "fake message 2"
+    end
+  end
+
   describe "agent event coalescing" do
     # The production fix buffers the high-frequency "agents" PubSub events and
     # applies them in ONE trailing-edge flush (EvoDashWeb.AgentsLive.PendingEvents,
     # coalescing window) instead of merging + re-rendering the whole tree per event.
     # These tests pin the buffer contract: coalescing, the single-timer rule,
     # node filtering BEFORE buffering, arrival-order drain, at-most-one
-    # fallback refresh, and the real trailing-edge timer itself.
+    # fallback refresh, at-most-one selected-agent history refetch, and the
+    # real trailing-edge timer itself.
     #
     # `flush_agent_events/1` (private helper below) bypasses the timer: the
     # LiveView mailbox is FIFO, so events sent before the flush message are
@@ -596,6 +884,60 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert state.refresh_seq == 0
       assert Enum.map(state.agents, & &1.id) == [agent_id()]
       assert Enum.find(state.agents, &(&1.id == agent_id())).status == :running
+    end
+
+    test "a burst refetches the selected agent's history at most once — and never without :message_count",
+         %{conn: conn} do
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
+      ])
+
+      counter = start_history_counter()
+      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # Selecting the agent fetches its history once (no gate entry yet).
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      wait_until(fn -> render(view) =~ "fake message 1" end)
+      assert Agent.get(counter, & &1) == 1
+
+      before = Agent.get(counter, & &1)
+
+      # ── The inverse contract first: changed_fields WITHOUT :message_count
+      # never means "the context grew", so no fetch is spawned even though the
+      # row merges (tokens fold in, last status wins).
+      send(view.pid, {:agent_updated, agent_id(), [status: :waiting], node()})
+      send(view.pid, {:agent_updated, agent_id(), [total_tokens: 123], node()})
+      send(view.pid, {:agent_updated, agent_id(), [status: :running], node()})
+      flush_agent_events(view)
+
+      assert assigns(view)[:previous_statuses][agent_id()] == :running
+      assert Enum.find(assigns(view)[:agents], &(&1.id == agent_id())).total_tokens == 123
+      # Exhaustive: refetch_selected_history/1 sets :history_loading_agent_id
+      # synchronously at spawn (in-flight) and bumps the counter on completion
+      # (finished), so both failure modes are caught without a timing window.
+      assert assigns(view)[:history_loading_agent_id] == nil
+      assert Agent.get(counter, & &1) == before
+
+      # ── Three rapid context-growth updates for the SELECTED agent — each
+      # carries :message_count (the contract). The flush must refetch ONCE for
+      # the whole burst, not once per event.
+      send(view.pid, {:agent_updated, agent_id(), [message_count: 2, status: :waiting], node()})
+      send(view.pid, {:agent_updated, agent_id(), [message_count: 3], node()})
+      send(view.pid, {:agent_updated, agent_id(), [message_count: 4], node()})
+
+      flush_agent_events(view)
+
+      # refetch_selected_history/1 has no other caller and the buffer is now
+      # drained with no flush timer armed, so a second fetch is structurally
+      # impossible (no timing window needed).
+      wait_until(fn -> Agent.get(counter, & &1) >= before + 1 end)
+      assert assigns(view)[:pending_agent_events] == []
+      refute assigns(view)[:agent_flush_scheduled]
+      assert Agent.get(counter, & &1) == before + 1
     end
 
     # NOTE: "the trailing-edge timer applies the buffer without a manual
@@ -895,6 +1237,643 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # empty agent tree with a node-aware config status" test in "agents page",
   # which asserts the assign shape directly — a strictly stronger check than
   # "the page renders without crashing".
+
+  describe "format_history_timestamp/1" do
+    # Session-memory messages carry a wall-clock timestamp in
+    # metadata[:timestamp] (stamped at the source by the :evo_git runtime;
+    # Unix-seconds integer or DateTime). The dashboard shows a short LOCAL
+    # time next to "Turn x" when present, and renders nothing when absent.
+
+    test "formats every supported input shape as the same short LOCAL time" do
+      # Unix-seconds integer, DateTime and ISO8601 binary all resolve to the
+      # SAME local rendering — computed independently of the helper under test.
+      expected = expected_local_time(@unix_seconds)
+      assert expected =~ ~r/^\d{2}:\d{2}:\d{2}$/
+
+      for input <- [
+            @unix_seconds,
+            DateTime.from_unix!(@unix_seconds, :second),
+            "2023-11-14T22:13:20Z"
+          ] do
+        assert Helpers.format_history_timestamp(input) == expected
+      end
+
+      # LOCAL, not UTC (unless the machine's offset happens to be zero).
+      utc = Calendar.strftime(DateTime.from_unix!(@unix_seconds, :second), "%H:%M:%S")
+
+      if local_offset_seconds() == 0 do
+        assert expected == utc
+      else
+        refute expected == utc
+      end
+    end
+
+    test "returns nil for an absent or unparseable timestamp" do
+      for input <- [nil, "not-a-time", :bogus, %{}] do
+        assert Helpers.format_history_timestamp(input) == nil
+      end
+    end
+  end
+
+  describe "history entry rendering in the agent detail panel" do
+    # ONE seeded history per rendering contract, one mount per contract: these
+    # are display-only assertions over the SAME joined-history panel, so the
+    # page mount (not any interaction) is the expensive part.
+
+    test "renders the short LOCAL time next to Turn x only when the message has one", %{
+      conn: conn
+    } do
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [%{text: "hello"}],
+          metadata: %{turn: 1, timestamp: @unix_seconds}
+        },
+        # Multimodal parts carry no text: image/audio render as a bracketed
+        # label instead of the "<empty message>" fallback.
+        %ReqLLM.Message{
+          role: :user,
+          content: [
+            %ReqLLM.Message.ContentPart{
+              type: :image,
+              data: <<137, 80, 78, 71, 1, 2, 3>>,
+              filename: "pic.png",
+              media_type: "image/png"
+            },
+            %ReqLLM.Message.ContentPart{type: :text, text: " look"}
+          ],
+          metadata: %{turn: 2}
+        },
+        %ReqLLM.Message{
+          role: :user,
+          content: [
+            %ReqLLM.Message.ContentPart{
+              type: :file,
+              data: <<1, 2, 3>>,
+              filename: "clip.mp3",
+              media_type: "audio/mpeg"
+            }
+          ],
+          metadata: %{turn: 3}
+        }
+      ])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      # History is fetched asynchronously on selection — wait for it.
+      expected = Helpers.format_history_timestamp(@unix_seconds)
+      html = wait_for_text(view, "Turn 3")
+
+      # Turn 1 carries metadata[:timestamp] ⇒ the local time rides next to it.
+      assert html =~ ~r/Turn 1\s*<span[^>]*>#{expected}<\/span>/
+      # Turn 2 has none ⇒ no time artifact (never a placeholder).
+      refute html =~ ~r/Turn 2\s*<span[^>]*>\d{2}:\d{2}:\d{2}<\/span>/
+
+      # Image part → "[image: pic.png]" joined (no separator) with the text
+      # part's " look" — non-empty content, so no empty fallback.
+      assert html =~ "[image: pic.png] look"
+      # Audio :file part with audio/* media_type → "[audio: clip.mp3]".
+      assert html =~ "[audio: clip.mp3]"
+      refute html =~ "<empty message>"
+    end
+
+    test "renders tool-call rows and tool results inline, and the modal carries full commands",
+         %{conn: conn} do
+      # A 260-char command: the inline panel caps shell commands at 200 chars +
+      # "…", the full-message modal renders the complete command.
+      long_cmd = String.duplicate("x", 260)
+
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [],
+          metadata: %{turn: 1},
+          tool_calls: [
+            %ReqLLM.ToolCall{
+              id: "call_1",
+              function: %{name: "run_bash", arguments: ~s({"command":"ls -la","timeout":30})}
+            },
+            %ReqLLM.ToolCall{
+              id: "call_2",
+              function: %{name: "read_file", arguments: ~s({"path":"./README.md"})}
+            },
+            %ReqLLM.ToolCall{
+              id: "call_bg",
+              function: %{
+                name: "bash",
+                arguments: ~s({"command":"npm run dev","run_in_background":true})
+              }
+            },
+            %ReqLLM.ToolCall{
+              id: "call_long",
+              function: %{name: "run_bash", arguments: Jason.encode!(%{"command" => long_cmd})}
+            }
+          ]
+        },
+        # One tool result per render kind: subagent report vs plain tool result
+        # vs background-job output.
+        %ReqLLM.Message{
+          role: :tool,
+          name: "subagent_investigator",
+          content: [%ReqLLM.Message.ContentPart{type: :text, text: "SUBAGENT_REPORT_BODY"}],
+          metadata: %{turn: 2}
+        },
+        %ReqLLM.Message{
+          role: :tool,
+          name: "read",
+          content: [%ReqLLM.Message.ContentPart{type: :text, text: "PLAIN_READ_BODY"}],
+          metadata: %{turn: 3}
+        },
+        %ReqLLM.Message{
+          role: :tool,
+          name: "job_output",
+          content: [%ReqLLM.Message.ContentPart{type: :text, text: "JOB_OUTPUT_BODY"}],
+          metadata: %{turn: 4}
+        }
+      ])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      panel = wait_for_text(view, "Background shell call")
+
+      # Shell call: context label + command rendered inline. Non-shell call:
+      # function name + (pretty) arguments inline.
+      assert panel =~ "Shell call"
+      assert panel =~ "ls -la"
+      assert panel =~ "read_file"
+      assert panel =~ "./README.md"
+      # Background shell call: its own label, command still rendered.
+      assert panel =~ "Background shell call"
+      assert panel =~ "npm run dev"
+
+      # Compact mode: the long command is capped at 200 chars + a trailing "…".
+      assert panel =~ String.slice(long_cmd, 0, 200) <> "…"
+      refute panel =~ long_cmd
+
+      # ONE parse for all structural assertions below.
+      tree = Floki.parse_document!(panel)
+
+      rows =
+        tree
+        |> Floki.find("div")
+        |> Enum.filter(&(class_string(&1) =~ "flex items-start gap-2"))
+
+      bg_row = Enum.find(rows, &(Floki.text(&1) =~ "Background shell call"))
+      fg_row = Enum.find(rows, &(Floki.text(&1) =~ "Shell call"))
+
+      assert bg_row
+      assert fg_row
+      # Background accent (`info` chip + clock icon) vs the plain secondary row.
+      assert class_string(bg_row) =~ "bg-info/10"
+      assert Floki.find(bg_row, "span.hero-clock") != []
+      refute class_string(fg_row) =~ "bg-info/10"
+      assert Floki.find(fg_row, "span.hero-clock") == []
+
+      # Distinct headers + accents per tool-result kind.
+      assert panel =~ "Subagent Report: subagent_investigator"
+      assert panel =~ "Tool Result: read"
+      assert panel =~ "Background job: job_output"
+
+      find_panel = fn class, body ->
+        Enum.find(
+          Floki.find(tree, "div"),
+          &(class_string(&1) =~ class and Floki.text(&1) =~ body)
+        )
+      end
+
+      subagent_panel = find_panel.("bg-accent/10", "SUBAGENT_REPORT_BODY")
+      read_panel = find_panel.("bg-success/10", "PLAIN_READ_BODY")
+      job_panel = find_panel.("bg-info/10", "JOB_OUTPUT_BODY")
+
+      assert subagent_panel
+      assert class_string(subagent_panel) =~ "text-accent"
+      assert class_string(subagent_panel) =~ "border-l-2 border-accent/40"
+      assert Floki.find(tree, "span.hero-user-group") != []
+
+      assert read_panel
+      assert class_string(read_panel) =~ "text-success"
+      refute class_string(read_panel) =~ "border-l-2"
+
+      assert job_panel
+      assert class_string(job_panel) =~ "text-info"
+      assert class_string(job_panel) =~ "border-l-2 border-info/40"
+
+      # The full-message modal carries the SAME distinctions plus the complete
+      # (untruncated) long command in a scrollable body.
+      view |> element("#agent-history-entry-#{agent_id()}-0 button") |> render_click()
+      modal = render(view)
+
+      assert modal =~ "Background shell call"
+      assert modal =~ "border-l-2 border-info/40"
+      assert modal =~ long_cmd
+      assert modal =~ "max-h-[60vh]"
+    end
+
+    test "thinking wraps in both render sites, keeps no template indent, and never leaks into the Response block",
+         %{conn: conn} do
+      # A LONG reasoning block must line-wrap instead of forcing a horizontal
+      # scrollbar. Both render sites carry `whitespace-pre-wrap break-words`.
+      # The modal's OUTER wrapper legitimately keeps `overflow-x-auto` (it
+      # scrolls wide ancestor content), so the "no horizontal scroller"
+      # assertion is SCOPED to the thinking <pre> itself.
+      #
+      # Regression (same message): on a reasoning turn the entry carries a
+      # :thinking content part (mirrored into reasoning_details, which drives
+      # the "Thinking" block) AND a :text part (the visible answer). The
+      # Response block must be built from :text parts ONLY.
+      #
+      # Regression (same element): the inline thinking body is a
+      # `whitespace-pre-wrap` element, so ANY newline/indentation the HEEx
+      # template emits between the opening tag and the interpolation renders as
+      # a spurious leading indent — the interpolation must stay flush.
+      sentinel = "THINKING_SENTINEL" <> String.duplicate("A", 300)
+
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [
+            %ReqLLM.Message.ContentPart{type: :thinking, text: "REASONING_TOKEN"},
+            %ReqLLM.Message.ContentPart{type: :text, text: "RESPONSE_TOKEN"}
+          ],
+          reasoning_details: [%{text: sentinel}],
+          metadata: %{turn: 1}
+        }
+      ])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      panel = wait_for_text(view, "Thinking")
+
+      # Inline panel: the thinking body wraps.
+      assert panel =~ "whitespace-pre-wrap break-words"
+
+      [thinking_body] =
+        panel
+        |> Floki.parse_document!()
+        |> Floki.find("#agent-history-entry-#{agent_id()}-0 .whitespace-pre-wrap.break-words")
+
+      assert Floki.attribute(thinking_body, "class") == ["whitespace-pre-wrap break-words"]
+
+      # Floki.text/1 KEEPS the whitespace the template indents around the
+      # content (see the `text/2` helper), so a leading whitespace character
+      # here is exactly the bug — the pre-wrap element renders it verbatim.
+      inline_text = Floki.text(thinking_body)
+      refute inline_text =~ ~r/^\s/
+      assert String.starts_with?(inline_text, "THINKING_SENTINEL")
+
+      # Full-message modal: the Thinking <pre> wraps and never introduces its
+      # own horizontal scroller; the Response <pre> carries the :text part only.
+      view |> element("#agent-history-entry-#{agent_id()}-0 button") |> render_click()
+      modal_html = render(view)
+
+      assert modal_html =~ ~r/<pre class="text-sm whitespace-pre-wrap break-words bg-warning\/10/
+
+      modal_pre_classes =
+        modal_html
+        |> Floki.parse_document!()
+        |> Floki.find("pre")
+        |> Enum.map(&List.first(Floki.attribute(&1, "class")))
+
+      thinking_pre_class =
+        Enum.find(modal_pre_classes, &(is_binary(&1) and &1 =~ "bg-warning/10"))
+
+      refute is_nil(thinking_pre_class)
+      assert thinking_pre_class =~ "whitespace-pre-wrap"
+      assert thinking_pre_class =~ "break-words"
+      refute thinking_pre_class =~ "overflow-x-auto"
+
+      # No tool calls on this message, so the modal's only <pre> pair is
+      # Thinking (from reasoning_details) then Response (from :text parts).
+      [thinking_pre, response_pre] =
+        modal_html
+        |> Floki.parse_document!()
+        |> Floki.find("#full-message-modal")
+        |> Floki.find("pre")
+
+      assert Floki.text(thinking_pre) =~ "THINKING_SENTINEL"
+      assert Floki.text(response_pre) =~ "RESPONSE_TOKEN"
+      refute Floki.text(response_pre) =~ "REASONING_TOKEN"
+    end
+  end
+
+  describe "send_agent_message optimistic display" do
+    # The optimistic-display flow (commit 04c82f82): sending a user message
+    # appends it to the @optimistic_messages assign and it renders in the
+    # agent's chat history with a pending hint until the agent drains it into
+    # context on its next turn (see EvoDashWeb.AgentsLive.OptimisticMessages).
+    # A missing agent must surface as a failure flash, not a false success.
+
+    test "successfully sent message appears optimistically in the chat history", %{conn: conn} do
+      seed_agent(agent_id(), [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # Select the agent to open its detail panel (renders the chat history).
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      # Open the send-message modal for the running agent.
+      view |> element("button[phx-click='open_send_message']") |> render_click()
+
+      html =
+        render_submit(view, "send_agent_message", %{
+          "agent_id" => to_string(agent_id()),
+          "message" => "hello optimistic world"
+        })
+
+      # The message text renders in the chat history...
+      assert html =~ "hello optimistic world"
+      # ...with the pending hint (apostrophe is HTML-escaped to &#39; in HEEx).
+      assert html =~ "will be added on the agent&#39;s next turn"
+      # ...and the success flash is shown.
+      assert html =~ "Message sent to agent"
+
+      # ── Flake containment (leak source) ───────────────────────────────
+      # This is the ONE test in the file that performs a REAL core write:
+      # `send_agent_message` → AgentScheduler → Store.put_agent_state/2,
+      # which emits a synchronous {:agent_updated, agent_id(), [pending_user_messages:
+      # ...]} delta AND (via broadcast_agents_updated/0) a THROTTLED
+      # {:agents_updated, node} bulk signal ~200ms later
+      # (EvoGit.AgentScheduler.PubSub @throttle_ms). Emitted into a LATER
+      # test's socket, the bulk signal would set that test's
+      # :pending_agents_refresh, arm a coalescing flush, and its authoritative
+      # (ETS-backed) refresh would then ERASE that test's synthetic in-memory
+      # merge — the historical cross-test flake on this file.
+      #
+      # Sleeping past the throttle and flushing here makes both broadcasts
+      # land on THIS socket (which is torn down at the end of the test), so
+      # nothing leaks past teardown. The assertions above already ran.
+      Process.sleep(250)
+      flush_agent_events(view)
+    end
+
+    test "missing agent shows a failure flash instead of a false success", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/agents")
+
+      html =
+        render_submit(view, "send_agent_message", %{
+          "agent_id" => "999",
+          "message" => "hello"
+        })
+
+      assert html =~ "Failed to send message"
+      assert html =~ "not_found"
+      refute html =~ "Message sent to agent"
+    end
+  end
+
+  describe "optimistic message pruning after compression" do
+    # BUG fix: an already-drained optimistic message used to come back as a
+    # PERMANENT "Pending" ghost. The optimistic entry was deduped only at render
+    # time against the fetched history, so once the core's context compression
+    # folded the real user entry into a summary the ghost reappeared — forever.
+    # The fix prunes `@optimistic_messages` TERMINALLY (see
+    # EvoDashWeb.AgentsLive.OptimisticMessages.prune/4): on every fetched
+    # history, and on every core `pending_user_messages` queue broadcast (a
+    # KNOWN queue anchors "drained"), so a pruned entry can never be
+    # resurrected. The second test pins the other direction — a genuinely
+    # still-queued message must KEEP its pending hint.
+
+    test "already-drained optimistic message does NOT resurrect as a pending ghost after compression",
+         %{conn: conn} do
+      msg = "hello optimistic world"
+      seed_agent(agent_id(), [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # Select the agent to open its detail panel (renders the chat history).
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      # Open the send-message modal for the running agent.
+      view |> element("button[phx-click='open_send_message']") |> render_click()
+
+      html =
+        render_submit(view, "send_agent_message", %{
+          "agent_id" => to_string(agent_id()),
+          "message" => msg
+        })
+
+      # The message renders optimistically with the pending hint.
+      assert html =~ msg
+      assert html =~ "will be added on the agent&#39;s next turn"
+
+      # ── Step 1: the realistic DRAIN ───────────────────────────────────
+      # The core resets the agent's queue to [] AND the injected message lands
+      # in the conversation context as a real user entry (turn 1). The
+      # `pending_user_messages: []` in the delta is what anchors the queue to
+      # KNOWN-drained: it is faithful to the real drain (the core broadcasts
+      # the drained queue) and removes any dependence on the ordering of the
+      # queue broadcast emitted by the real send above.
+      update_agent_context(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: msg}], metadata: %{turn: 1}}
+      ])
+
+      send(
+        view.pid,
+        {:agent_updated, agent_id(), [message_count: 1, pending_user_messages: []], node()}
+      )
+
+      flush_agent_events(view)
+      # The refetch the moved message count triggers renders the real entry.
+      html = wait_for_text(view, "Turn 1")
+
+      # Drained: the pending hint is gone for good and the optimistic bookkeeping
+      # was terminally pruned — the entry is NOT merely hidden by the render-time
+      # dedupe.
+      refute html =~ "will be added on the agent&#39;s next turn"
+      refute Map.has_key?(assigns(view)[:optimistic_messages], agent_id())
+
+      # ── Step 2: COMPRESSION ───────────────────────────────────────────
+      # The real user entry is folded into a summary and disappears from the
+      # history entirely (the exact scenario that resurrected the ghost). The
+      # queue stays KNOWN-drained.
+      update_agent_context(agent_id(), [
+        %ReqLLM.Message{role: :system, content: [%{text: "sys"}], metadata: %{turn: 0}},
+        %ReqLLM.Message{role: :user, content: [%{text: "initial"}], metadata: %{turn: 0}},
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [%{text: "summary"}],
+          metadata: %{turn: 1}
+        }
+      ])
+
+      send(
+        view.pid,
+        {:agent_updated, agent_id(), [message_count: 3, pending_user_messages: []], node()}
+      )
+
+      flush_agent_events(view)
+      html = wait_for_text(view, "summary")
+
+      # No pending ghost resurfaced.
+      refute html =~ "will be added on the agent&#39;s next turn"
+
+      # ── Flake containment (leak source) ───────────────────────────────
+      # This test performs a REAL core write (send_agent_message →
+      # AgentScheduler → Store.put_agent_state/2), whose
+      # broadcast_agents_updated/0 THROTTLED {:agents_updated, node} bulk signal
+      # lands ~200ms later (EvoGit.AgentScheduler.PubSub @throttle_ms). Emitted
+      # into a LATER test's socket, the bulk signal would set that test's
+      # :pending_agents_refresh, arm a coalescing flush, and its authoritative
+      # (ETS-backed) refresh would then ERASE that test's synthetic in-memory
+      # merge — the historical cross-test flake on this file.
+      #
+      # Sleeping past the throttle and flushing here makes the broadcast land on
+      # THIS socket (which is torn down at the end of the test), so nothing
+      # leaks past teardown. The assertions above already ran.
+      Process.sleep(250)
+      flush_agent_events(view)
+    end
+
+    test "a genuinely queued (not-yet-drained) message STILL renders its pending hint",
+         %{conn: conn} do
+      msg = "hello optimistic world"
+      seed_agent(agent_id(), [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      view |> element("button[phx-click='open_send_message']") |> render_click()
+
+      html =
+        submit_until_pending_hint(view, %{
+          "agent_id" => to_string(agent_id()),
+          "message" => msg
+        })
+
+      assert html =~ msg
+      assert html =~ "will be added on the agent&#39;s next turn"
+
+      # A history refetch that does NOT contain the message while the core's
+      # queue STILL holds it: the queue is the authority — the entry is kept.
+      update_agent_context(agent_id(), [
+        %ReqLLM.Message{
+          role: :user,
+          content: [%{text: "some other real message"}],
+          metadata: %{turn: 1}
+        }
+      ])
+
+      send(
+        view.pid,
+        {:agent_updated, agent_id(), [message_count: 1, pending_user_messages: [msg]], node()}
+      )
+
+      flush_agent_events(view)
+      html = wait_for_text(view, "some other real message")
+
+      # Still pending: the hint survives and the optimistic bookkeeping is kept.
+      assert html =~ "will be added on the agent&#39;s next turn"
+      assert Map.has_key?(assigns(view)[:optimistic_messages], agent_id())
+
+      # ── Flake containment (leak source) ───────────────────────────────
+      # Same REAL core write as above: its THROTTLED {:agents_updated, node}
+      # bulk signal (~200ms, EvoGit.AgentScheduler.PubSub @throttle_ms) is
+      # awaited and flushed here so it lands on THIS socket (torn down at
+      # teardown) instead of into a later test, where its authoritative
+      # ETS-backed refresh would erase that test's synthetic in-memory merge —
+      # the historical cross-test flake on this file.
+      Process.sleep(250)
+      flush_agent_events(view)
+    end
+  end
+
+  describe "safe_text/1" do
+    # BUG fix: message content / tool-call arguments that are Maps (not strings)
+    # crashed the LiveView with Protocol.UndefinedError: protocol
+    # Phoenix.HTML.Safe not implemented for Map. safe_text/1 converts any value
+    # to an HTML-safe string before it is rendered in HEEx.
+
+    test "converts every scalar/list/term shape to an HTML-safe string" do
+      # The crash report's exact value (a Map raised Phoenix.HTML.Safe) — the
+      # regression this helper exists for.
+      map = %{
+        "commit_id" => "",
+        "objective" => "Investigate and fix the GitHub Actions...",
+        "path" => "./.github/workflows"
+      }
+
+      result = Helpers.safe_text(map)
+
+      assert is_binary(result)
+      assert result =~ "objective: Investigate"
+      assert result =~ "path: ./.github/workflows"
+
+      # Any value at all must survive html_escape/1 — a total function, never a
+      # protocol crash in the HEEx template.
+      for value <- [
+            nil,
+            "hello world",
+            map,
+            %{"a" => %{"n" => 1}},
+            ["a", "b"],
+            [1, 2, 3],
+            :an_atom,
+            42
+          ] do
+        assert is_binary(Helpers.safe_text(value))
+        assert match?({:safe, _}, Phoenix.HTML.html_escape(Helpers.safe_text(value)))
+      end
+    end
+
+    test "sorts map keys, joins list items and inspects non-string leaves" do
+      # Flat map: alphabetically sorted `key: value` lines (an empty value stays
+      # an empty string, not "nil").
+      assert Helpers.safe_text(%{"commit_id" => "", "objective" => "foo", "path" => "./x"}) ==
+               "commit_id: \nobjective: foo\npath: ./x"
+
+      # Nested non-string leaf → inspect/1.
+      nested = Helpers.safe_text(%{"args" => %{"limit" => 10}, "name" => "sub_agent"})
+
+      assert nested =~ "args:"
+      assert nested =~ "%{\"limit\" => 10}"
+      assert nested =~ "name: sub_agent"
+
+      # Lists join on newlines; non-string elements fall back to inspect/1.
+      assert Helpers.safe_text(["a", "b", "c"]) == "a\nb\nc"
+      assert Helpers.safe_text([1, 2, 3]) =~ "[1, 2, 3]"
+
+      # Arbitrary terms fall back to inspect/1.
+      assert Helpers.safe_text(:an_atom) == ":an_atom"
+      assert Helpers.safe_text(42) == "42"
+    end
+  end
+
+  describe "HistoryGate" do
+    # The per-agent "which message count did I fetch" gate — the single reason
+    # a burst of agent updates cannot stampede the history endpoint.
+
+    test "need_fetch?/3 fetches on an unknown agent or a moved/nil count, and never otherwise" do
+      # No entry yet (brand-new agent, or a row from a previous node — the gate
+      # is reset on a node switch, agent ids are per-node).
+      assert HistoryGate.need_fetch?(%{}, 1, 5)
+
+      # A moved count.
+      assert HistoryGate.need_fetch?(%{1 => 3}, 1, 5)
+
+      # nil on EITHER side is "unknown" ⇒ fetch.
+      assert HistoryGate.need_fetch?(%{1 => 5}, 1, nil)
+      assert HistoryGate.need_fetch?(%{1 => nil}, 1, 5)
+
+      # The suppression path — the whole point of the gate.
+      refute HistoryGate.need_fetch?(%{1 => 5}, 1, 5)
+    end
+
+    test "record/3 stores the fetched count and known?/2 reports gate membership" do
+      assert HistoryGate.record(%{}, 1, 5) == %{1 => 5}
+      assert HistoryGate.record(%{1 => 3}, 1, 5) == %{1 => 5}
+
+      # Only THIS agent's entry counts as known (whatever its count).
+      refute HistoryGate.known?(%{}, 1)
+      refute HistoryGate.known?(%{2 => 5}, 1)
+      assert HistoryGate.known?(%{1 => 5}, 1)
+      assert HistoryGate.known?(%{1 => nil}, 1)
+    end
+  end
 
   describe "LoadData" do
     test "load/2 builds the full result shape with the configured threshold" do
@@ -2409,8 +3388,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # initial-load test. It polls a SHARED atomic (not a message) because the page
   # load runs in BOTH the dead render and the connected mount, so several
   # callers block at once and a per-pid release would free only one.
-  # Never raises: it returns after a generous 5s budget so a test bug can never
-  # wedge
+  # Never raises: it returns after a generous 5s budget (mirrors
+  # blocking_history_runner/1's `after` fallback) so a test bug can never wedge
   # a TaskSupervisor child at teardown — and a raise here would in any case be
   # swallowed by the load task's node-boundary rescue, silently degrading the
   # test instead of failing it.
@@ -2455,12 +3434,83 @@ defmodule EvoDashWeb.AgentsLiveTest do
     wait_loop.(wait_loop)
   end
 
+  # Polls the rendered HTML until `text` appears (async history fetches) and
+  # returns the final HTML.
+  defp wait_for_text(view, text, timeout \\ @async_wait_budget_ms) do
+    wait_until(fn -> render(view) =~ text end, timeout)
+    render(view)
+  end
+
+  # Polls `render/1` until `predicate` matches (async results apply out of band
+  # on this page) and returns the LAST render either way — it never raises, so
+  # the caller's assertion still fails loudly with the real output instead of a
+  # synthetic timeout message.
+  defp render_until(view, predicate, budget_ms \\ @async_wait_budget_ms) do
+    render_until_loop(view, predicate, System.monotonic_time(:millisecond) + budget_ms)
+  end
+
+  defp render_until_loop(view, predicate, deadline) do
+    html = render(view)
+
+    cond do
+      predicate.(html) ->
+        html
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        html
+
+      true ->
+        Process.sleep(20)
+        render_until_loop(view, predicate, deadline)
+    end
+  end
+
+  # The optimistic pending hint of a sent-but-not-yet-drained user message
+  # (the apostrophe is HTML-escaped to &#39; in HEEx).
+  defp pending_hint?(html), do: html =~ "will be added on the agent&#39;s next turn"
+  # Load-tolerant send for the optimistic-display tests: renders the submit and
+  # returns the render that carries the OPTIMISTIC pending hint.
+  # `send_agent_message` performs a REAL scheduler + store write, so on a loaded
+  # host its (production) 5 s `GenServer.call` budget can elapse — the page then
+  # flashes "Failed to send message" and deliberately KEEPS the modal and the
+  # typed text (the user's retry affordance), so the textarea alone would still
+  # satisfy a bare `html =~ message` check while the pending hint is missing.
+  # Resubmitting is exactly the action that failure state exists for, and the
+  # render is polled for the out-of-band apply, so neither assertion is
+  # relaxed: a persistent failure still returns the last render and fails the
+  # caller's assertions with the real output.
+  defp submit_until_pending_hint(view, params, attempts \\ 3) do
+    html = render_submit(view, "send_agent_message", params)
+
+    cond do
+      pending_hint?(html) ->
+        html
+
+      attempts <= 1 ->
+        html
+
+      html =~ "Failed to send message" ->
+        Process.sleep(20)
+        submit_until_pending_hint(view, params, attempts - 1)
+
+      true ->
+        render_until(view, &pending_hint?/1)
+    end
+  end
+
+  # Joins an element's class attribute(s) into one searchable string (Floki
+  # splits multiple `class` attributes; a well-formed element has exactly one).
+  defp class_string(element) do
+    element |> Floki.attribute("class") |> Enum.join(" ")
+  end
+
   # Deletes ALL the AgentsLive env seams (each is resolved at call time inside
   # the async tasks, so a leaked value would leak into later tests). The
   # commit-graph seam is resolved at SPAWN time too, so it is cleared as well.
   defp clear_agents_env do
     for key <- [
           :agents_list_runner,
+          :agents_history_runner,
           :agents_config_runner,
           :agents_commit_graph_runner
         ] do
@@ -2671,6 +3721,30 @@ defmodule EvoDashWeb.AgentsLiveTest do
     :ets.insert(:evogit_agent_state, {id, state})
   end
 
+  # Updates a seeded agent's scheduler status in ETS (leaves the context —
+  # and therefore :message_count — untouched).
+  defp update_agent_status(id, status) do
+    case :ets.lookup(:evogit_sched_meta, id) do
+      [{^id, meta}] -> :ets.insert(:evogit_sched_meta, {id, %{meta | status: status}})
+      [] -> :ok
+    end
+  end
+
+  # Replaces a seeded agent's conversation context in ETS (grows its
+  # :message_count for the history gate).
+  defp update_agent_context(id, messages) do
+    case :ets.lookup(:evogit_agent_state, id) do
+      [{^id, state}] ->
+        :ets.insert(
+          :evogit_agent_state,
+          {id, %{state | context: %ReqLLM.Context{messages: messages}}}
+        )
+
+      [] ->
+        :ok
+    end
+  end
+
   # A minimal RemoteAPI-shaped agent summary (the shape
   # EvoDashWeb.AgentsLive.LoadData.build_agents consumes). `task_id` defaults to a
   # non-nil BINARY because the task-scoped commit-graph RPC is grouped by
@@ -2713,7 +3787,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
   defp marker_agent, do: full_agent([])
 
   # A fully-shaped agent map (all fields the tree/detail render + carry-over
-  # path read), with `overrides` merged in so tests can set id/status/etc.
+  # path read), with `overrides` merged in so tests can set id/history/etc.
   # `task_id` is a non-nil BINARY (the task-scoped commit-graph grouping skips
   # agents without one).
   defp full_agent(overrides) do
@@ -2745,6 +3819,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
         sub_agent_results: %{},
         task_ref: nil,
         result_sent: false,
+        history: [],
         usage: EvoGit.Agent.Usage.zero(),
         total_tokens: 0,
         compression_count: 0,
@@ -2754,5 +3829,63 @@ defmodule EvoDashWeb.AgentsLiveTest do
       },
       Map.new(overrides)
     )
+  end
+
+  # A counter-backed :agents_history_runner fake. Each call returns one more
+  # message than the last (call N returns N messages with turns 1..N), so the
+  # display text reveals how many times history was fetched. MUST return
+  # %ReqLLM.Message{} structs — the display path pattern-matches structs.
+  defp counting_history_runner(counter) do
+    fn _node, _agent_id ->
+      count = Agent.get_and_update(counter, fn n -> {n + 1, n + 1} end)
+
+      Enum.map(1..count, fn i ->
+        %ReqLLM.Message{
+          role: :user,
+          content: [%{text: "fake message #{i}"}],
+          metadata: %{turn: i}
+        }
+      end)
+    end
+  end
+
+  defp start_history_counter do
+    start_supervised!({Agent, fn -> 0 end})
+  end
+
+  defp blocking_history_runner(test_pid) do
+    fn _node, _agent_id ->
+      send(test_pid, {:history_fetch_called, self()})
+
+      receive do
+        {:history_release, messages} -> messages
+      after
+        5_000 -> []
+      end
+    end
+  end
+
+  defp start_history_queue(responses), do: start_supervised!({Agent, fn -> responses end})
+
+  defp queued_history_runner(queue) do
+    fn _node, _agent_id -> Agent.get_and_update(queue, fn [head | tail] -> {head, tail} end) end
+  end
+
+  # The expected local "HH:MM:SS" for a given UTC instant, computed
+  # independently of the helper under test (via :calendar gregorian seconds +
+  # the machine's current local offset).
+  defp expected_local_time(unix_seconds) do
+    base = :calendar.datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}})
+
+    {_date, {h, m, s}} =
+      :calendar.gregorian_seconds_to_datetime(base + unix_seconds + local_offset_seconds())
+
+    :io_lib.format("~2..0B:~2..0B:~2..0B", [h, m, s]) |> IO.iodata_to_binary()
+  end
+
+  defp local_offset_seconds do
+    local = :calendar.local_time()
+    utc = :calendar.universal_time()
+    :calendar.datetime_to_gregorian_seconds(local) - :calendar.datetime_to_gregorian_seconds(utc)
   end
 end
