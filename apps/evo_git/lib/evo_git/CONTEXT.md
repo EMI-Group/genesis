@@ -6,7 +6,7 @@ Multi-repo: foreign repos from `genesis.toml` or CLI flags enable cross-repo sub
 This file is the module-level API surface plus the cross-cutting contracts; each section names the child CONTEXT.md owning its detail.
 
 ## Routing Table
-- `./agent/` → Agent behaviour, tool library, context compression, subagent processing, LLM error classification + retry/backoff policy, tool-name alias spine (`tool_names.ex`), completion protocol (`completion_protocol.ex`) + the completion side-effect writer (`completion.ex`).
+- `./agent/` → Agent behaviour, tool library, context compression, subagent processing, LLM error classification + retry/backoff policy, tool-name alias spine (`tool_names.ex`), completion protocol (`completion_protocol.ex`) + the completion side-effect writer (`completion.ex`); `./agent/session/` holds the agent-session infrastructure (registry, dynamic supervisor, summary writer, exchange worker, setup) that is STARTED but not driven by production dispatch yet.
 - `./agent/tools/elixir_eval/` → Genesis Assistant evaluator internals: explicit read/write MFA allowlists calling real runtime APIs with their actual returns, authenticated runtime-local capability broker, bounded evaluation/output and monitored worker cleanup; the single public tool wrapper is `./agent/tools/elixir_eval.ex`.
 - `./agents/` → SelfReflective exposes `elixir_eval` plus source-reading tools; evaluator tiers are explicit read/write/sudo, writes require exact-code approval, sudo additionally carries an unrestricted-privileges warning, and no tier auto-escalates.
 - `./agents/` → Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, ContextExtractor, SkillExtractor, GenesisPlanner)
@@ -29,7 +29,11 @@ This file is the module-level API surface plus the cross-cutting contracts; each
 - `./lib/mix/tasks/` → `Mix.Tasks.Changelog`, `Mix.Tasks.Bump.Version`, `Mix.Tasks.Migrate.Store`, `Mix.Tasks.Store.Maintenance` (+ their `root:`/`shell:`/summarizer-seam injection surface) — detail: `lib/mix/tasks/CONTEXT.md` and root `./CONTEXT.md` ("AI changelog generation")
 - **Owner identity from inside a tool call** (fresh tool-task process dictionary; the ONE inherited key `$callers`, `SchedMeta.task_ref.pid`, `AgentScheduler.task_id_for_agent/1`) → `./agent/` ("Tool-task owner identity") + `./agent_scheduler/`
 - Supervised per-resource registry that must die with its OWNER (`Process.monitor` in the registry, `:DOWN` = teardown) — precedent `EvoGit.SandboxProcessRegistry` (state map, NO ETS) + `EvoGit.TaskRegistry.server/0`
-- **Supervision tree**: built INLINE in `EvoGit.Application.start/2` — there is **no `lib/evo_git/supervisor.ex`**; `EvoGit.Supervisor` is only the root supervisor's registered name, and the nested agent group is `EvoGit.AgentGroupSupervisor` (`one_for_all`: `EvoGit.TaskSupervisor` + `EvoGit.AgentScheduler`)
+- **Supervision tree**: built INLINE in `EvoGit.Application.start/2` — there is **no `lib/evo_git/supervisor.ex`**; `EvoGit.Supervisor` is only the root supervisor's registered name, and the nested agent group is `EvoGit.AgentGroupSupervisor` (`one_for_all`: `EvoGit.TaskSupervisor` + `EvoGit.AgentScheduler`).
+- Boot child order: PubSub → Throttle → CommandApproval → RemoteConnection Registry/Supervisor → AgentSession Registry/DynamicSupervisor → Store → Store.Maintenance → VCT → TaskRegistry read supervisor/registry → TaskRegistry → ProcessManager → BackgroundJobs → WorktreeManager → ToolRuntime.TaskSupervisor → AgentGroupSupervisor → PeakHourEngine → SystemSampler.
+- `EvoGit.Agent.Session.Registry` (unique keys, child id `:agent_session_registry`) and `EvoGit.Agent.Session.Supervisor` (`DynamicSupervisor`, `:one_for_one`, child id `:agent_session_supervisor`) are started with those EXPLICIT ids because both `Registry` and `DynamicSupervisor` default to a fixed child id (a second one would be a duplicate-id boot failure); they exist so the per-agent session process has its registry and supervisor.
+- The agent-session infrastructure is STARTED but not yet used by production dispatch: nothing starts a session, and every agent still runs as one shot `Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, …)`; detail: `./agent/CONTEXT.md` (`./session/`).
+- The scheduler keeps ONE tolerance clause for a session's terminal message (`handle_info({:agent_session_result, agent_id, session_pid, result}, state)` after the `{:DOWN, …}` clause): it logs at debug and returns the state unchanged, so an unmatched session message can never crash the shared GenServer.
 
 ## API Surface
 
@@ -40,7 +44,7 @@ Per-function detail (signatures, arities, return shapes) lives in the child CONT
 | Module | Role |
 |---|---|
 | `EvoGit` | `sandbox_run/4`, `sandbox_args/4` — sandboxed command execution |
-| `EvoGit.Application` | OTP callback, supervision tree INLINE (no `supervisor.ex`) → § Backend Boot Profile |
+| `EvoGit.Application` | OTP callback, supervision tree INLINE (no `supervisor.ex`) → § Routing Table ("Supervision tree", boot child order) |
 | `EvoGit.Agent` / `AgentSpec` | behaviour + spec opts `:archive`, `:model_id`, `:custom_agent_id`, `:model_id_locked`, `:repo_less`, `:repo_notes`, `:foreign_repos` → `agent/` |
 | `EvoGit.AgentScheduler` | scheduling only (lifecycle, spawn, ETS state, slot pools, `get_llm_slot_status/0`) → `agent_scheduler/` |
 | `EvoGit.TaskRegistry` | task lifecycle (persistence, lease, PubSub, cancel/kill, reconciliation); `server/0` seam resolved at CALL time → `task_registry/` |

@@ -1073,6 +1073,18 @@ defmodule EvoGit.AgentScheduler do
     Lifecycle.handle_agent_down(ref, pid, reason, state)
   end
 
+  # A session delivers its terminal result here before stopping (signal ordering
+  # guarantees it arrives before the session's :DOWN). Nothing starts a session yet,
+  # so the message is acknowledged and ignored; the session-wiring checkpoint replaces
+  # this with real handling (from-reply, agent_count/foreign_repo_commits, subagent routing).
+  def handle_info({:agent_session_result, agent_id, session_pid, result}, state) do
+    Logger.debug(
+      "agent_session_result for #{inspect(agent_id)} from #{inspect(session_pid)}: #{inspect(result)}"
+    )
+
+    {:noreply, state}
+  end
+
   # --- ETS Helpers (Agent History Table) ---
 
   @doc """

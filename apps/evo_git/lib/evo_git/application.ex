@@ -119,6 +119,17 @@ defmodule EvoGit.Application do
       {EvoGit.CommandApproval, []},
       {Registry, keys: :unique, name: EvoGit.RemoteConnection.Registry},
       {DynamicSupervisor, name: EvoGit.RemoteConnection.Supervisor, strategy: :one_for_one},
+      # Agent-session infrastructure: the unique-name registry a session
+      # registers under, and the DynamicSupervisor sessions run under. Started
+      # so the session process (owned by a later checkpoint) has its registry
+      # and supervisor; nothing starts a session yet. Explicit ids are required —
+      # both child specs default to a fixed id, so a second Registry/
+      # DynamicSupervisor would be a duplicate-id boot failure.
+      {Registry, keys: :unique, name: EvoGit.Agent.Session.Registry, id: :agent_session_registry},
+      {DynamicSupervisor,
+       name: EvoGit.Agent.Session.Supervisor,
+       strategy: :one_for_one,
+       id: :agent_session_supervisor},
       {EvoGit.Store,
        data_dir:
          Path.join(
