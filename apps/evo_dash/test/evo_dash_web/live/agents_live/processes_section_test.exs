@@ -14,7 +14,7 @@ defmodule EvoDashWeb.AgentsLive.ProcessesSectionTest do
   # `:agents_processes_runner`: `AgentsLive` reads it on every `select_agent`
   # (via `ProcessesSection.start/2`), so the ASYNC `agents_live_test.exs`
   # would call this file's injected fake whenever the two overlap. The
-  # scheduler ETS rows (`:evogit_sched_meta` / `:evogit_agent_state`) this file
+  # scheduler ETS rows (`:evogit_sched_meta` / `:evogit_agent_summary`) this file
   # seeds use a UNIQUE per-test id and are deleted in `on_exit`, so they are
   # never the reason for the sync placement.
   use EvoDashWeb.ConnCase, async: false
@@ -48,7 +48,7 @@ defmodule EvoDashWeb.AgentsLive.ProcessesSectionTest do
     Process.put(:processes_section_test_agent_id, agent_id)
 
     on_exit(fn ->
-      for table <- [:evogit_sched_meta, :evogit_agent_state] do
+      for table <- [:evogit_sched_meta, :evogit_agent_summary] do
         if :ets.whereis(table) != :undefined, do: :ets.delete(table, agent_id)
       end
     end)
@@ -354,8 +354,10 @@ defmodule EvoDashWeb.AgentsLive.ProcessesSectionTest do
     end
   end
 
-  # Seeds one agent (sched_meta + agent_state) into the ETS tables the
-  # RemoteAPI reads, so the page renders a real agent card.
+  # Seeds one agent (sched_meta + summary row) into the ETS tables the
+  # RemoteAPI reads, so the page renders a real agent card. The summary row is
+  # a READ MODEL with no conversation: the transcript lives only in the live
+  # `EvoGit.Agent.Session`, so `messages` is used for its count alone.
   defp seed_agent(id, messages) do
     context_node = %ContextNode{path: "./", repo: "test"}
     phylo_node = %PhyloGraphNode{current_commit: "abc123", base_commit: "def456"}
@@ -374,12 +376,12 @@ defmodule EvoDashWeb.AgentsLive.ProcessesSectionTest do
       llm_model: "test-model",
       max_retries: 1,
       max_depth: 1,
-      phylo_node: phylo_node,
       objective: "test objective",
-      context: %ReqLLM.Context{messages: messages}
+      status: :running,
+      message_count: length(messages)
     }
 
     :ets.insert(:evogit_sched_meta, {id, meta})
-    :ets.insert(:evogit_agent_state, {id, state})
+    :ets.insert(:evogit_agent_summary, {id, state})
   end
 end
