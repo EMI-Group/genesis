@@ -14,6 +14,7 @@ Each file mirrors its source module under `apps/evo_git/lib/evo_git/agent/`.
 - `./compression/` → Pure compression-module unit suites (`Recency` boundary/tail budget + `shrink_to_budget/2`, `Checkpoint` split/build/prior-summary/oversized-tail regressions, `ToolResultPruner`, `Threshold`, `SummaryPrompt`) — detail: `./compression/CONTEXT.md`.
 - `./exchange_golden_test.exs` → The pure-engine golden pin: ONE unwatched `EvoGit.Agent.Exchange.run/2` inside a plain test process (no scheduler, no ETS-driven loop state) asserting the scripted LLM/tool call sequence, the resulting message roles/turn tags and the `{:finish, state, %Result{}}` outcome.
 - `./cancel_grace_test.exs`, `./runner_injected_message_test.exs`, `./runner_background_notice_test.exs` → Per-turn loop control driven directly through `EvoGit.Agent.Exchange.Grace` / `Exchange.Pending`, each file passing its own in-memory `scheduler:` seam stub instead of booting a scheduler.
+- `./session_test.exs` → `EvoGit.Agent.Session` started DIRECTLY from a repo-less `dispatch_ctx` (`async: true`, per-test-unique agent ids, engine seams passed via the default-inert `:exchange_opts`): the one-shot lifecycle with its ONE terminal `{:agent_session_result, …}` (observed by `:receive`-tracing the scheduler's mailbox), mid-run `inspect/2`/`history/2`, graceful vs force cancel, the crashing-worker exit, the `:evogit_agent_summary` projection and `input/2`; the SUCCESS scenarios are currently red because of the production defect in "Known Issues (Session success path)".
 
 ## Async-Safety Policy (this directory)
 
@@ -23,7 +24,7 @@ Every `async: false` module names its exact forcing global in its `@moduledoc`; 
 Genuinely `async: true` (pure functions / per-test `:tmp_dir` / process-local state):
 `coder_test`, `coder_2_test`, `completion_protocol_test`, `context_builder_test`, `context_compression_test`, `context_merge_test`, `delegation_hints_test`, `exchange_golden_test`, `llm_error_test`, `output_sanitizer_test`, `result_test`, `tool_invocation_test`, `turn_limit_test`, `turn_warning_test`, `truncation_feedback_test`, `usage_test`.
 Also `async: true` because they only touch app-global ETS tables through per-test UNIQUE agent ids (each row deleted on exit, nothing asserted about a table as a whole, no other BEAM-global mutated):
-`cancel_grace_test` (its completion case only — the grace/pending paths read the in-memory `scheduler:` stub), `runner_injected_message_test` + `runner_background_notice_test` (no ETS on the driven path: `Exchange.Pending` reads the stub), `subagent_processing_test` (unique agent ids for both the `AgentState` rows and the `store_sub_result/4` parents), `tool_output_pipeline_test`, `tool_dispatch_serial_batch_test` (file tools only — no shell fork whose wall clock a loaded async cohort could inflate), and `completion_test` (`EvoGit.TaskRegistryCase`, one row per test under a unique string agent id).
+`cancel_grace_test` (its completion case only — the grace/pending paths read the in-memory `scheduler:` stub), `runner_injected_message_test` + `runner_background_notice_test` (no ETS on the driven path: `Exchange.Pending` reads the stub), `subagent_processing_test` (unique agent ids for both the `AgentState` rows and the `store_sub_result/4` parents), `tool_output_pipeline_test`, `tool_dispatch_serial_batch_test` (file tools only — no shell fork whose wall clock a loaded async cohort could inflate), `completion_test` (`EvoGit.TaskRegistryCase`, one row per test under a unique string agent id), and `session_test` (one production-shaped `%AgentState{}` row per test under a unique agent id, deleted in `on_exit`; sessions are unlinked and force-stopped in `on_exit`, so no app-global state outlives the test).
 
 `async: false` and its forcing state:
 - `tools_test` — mutates the BEAM-global `:req_llm` app env (`:tavily_api_key` in the web-search tests, shared with `tools/web_search_test`). Its config dir is isolated PER PROCESS (`EvoGit.TestSupport.ConfigDir` via the private `with_isolated_config/1` helper), so `XDG_CONFIG_HOME` is NOT a forcing global.
@@ -150,6 +151,15 @@ Cold focused runs reproduce `UndefinedFunctionError` for `EvoGit.Agent.Tools.Eli
 The real dispatch tests intentionally do not preload facade or allowlist modules, because compilation or another suite can warm the aliases and conceal the failure.
 Tool Tasks propagate the genuine agent/task/owner identity but not the isolated TaskRegistry process-dictionary seam, so an owner whose task exists only in an isolated registry is refused.
 Production fixes belong to `apps/evo_git/lib/evo_git/agent/` and its evaluator subtree, not this test node.
+
+## Known Issues (Session success path)
+
+**`EvoGit.Agent.Session.Worker.refresh/1` (`apps/evo_git/lib/evo_git/agent/session/worker.ex:85-87`) crashes EVERY successful exchange, so no session run can deliver its result.**
+`refresh({:finish, %State{} = state, result})` does `result |> Runner.refresh_commit_sha() |> elem(1)`, but `EvoGit.Agent.Exchange.outcome/0` is `{:finish, State.t(), Result.t()}` — the third element is a BARE `%Result{}`, never an `{:ok, result}` tuple — and `Runner.refresh_commit_sha/1` returns that same struct shape (repo-less pass-through, or `refresh_success_shape/1`), so `elem/2` raises `ArgumentError` (`:erlang.element(2, %EvoGit.Agent.Result{…})`).
+The worker task then dies, `EvoGit.Agent.Session` re-raises the crash (`{:stop, reason, data}` on an abnormal current-worker `:DOWN`) and NO `{:agent_session_result, …}` is delivered, so `Summary.publish/3`'s `status: :done` path is unreachable too.
+The `{:error, reason}` outcome IS delivered verbatim, which is why the force-cancel and crashing-worker cases of `session_test.exs` pass while its five SUCCESS cases (lifecycle, mid-run inspect/history, graceful cancel, summary projection, `input/2`) fail — each for this one reason.
+The fix belongs to production: `refresh/1` must deliver the refreshed `%Result{}` itself (unwrap `{:ok, inner}` → `inner`, otherwise pass through unchanged).
+Those assertions are the correct pin of the intended contract and are NOT weakened, skipped or rewritten while the defect stands (same policy as the `SubagentProcessing` defect in `../CONTEXT.md`).
 
 ## Known Issues (edge shapes not reachable from the live dispatch path)
 
