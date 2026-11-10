@@ -371,8 +371,6 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
 
   describe "projected live agent state" do
     for {label, changes} <- [
-          {"cancellation requested", %{cancel_requested: true}},
-          {"malformed cancellation flag", %{cancel_requested: "false"}},
           {"nested agent", %{parent_id: 123}},
           {"foreign agent", %{repo_id: "foreign"}}
         ] do
@@ -382,8 +380,23 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
       end
     end
 
+    test "a cancellation request in the control plane rejects the agent", %{fixture: fixture} do
+      # The summary row carries no cancel flag any more; the control plane is its
+      # only home, and its writer only admits true/false/nil.
+      assert :ok = Fixture.set_cancel(fixture, true)
+      assert Fixture.cancel_requested?(fixture)
+      assert authorize(fixture) == @denied
+    end
+
+    test "an explicitly cleared cancellation flag is valid", %{fixture: fixture} do
+      Fixture.set_cancel(fixture, false)
+      refute Fixture.cancel_requested?(fixture)
+      assert {:ok, _} = authorize(fixture)
+    end
+
     test "an unset cancellation flag is valid", %{fixture: fixture} do
-      Fixture.update_state(fixture, &%{&1 | cancel_requested: nil})
+      Fixture.set_cancel(fixture, nil)
+      refute Fixture.cancel_requested?(fixture)
       assert {:ok, _} = authorize(fixture)
     end
 
@@ -456,9 +469,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
       fixture: fixture
     } do
       {handle, context} = held_context(fixture)
-      Fixture.update_state(fixture, &%{&1 | cancel_requested: true})
+      Fixture.set_cancel(fixture, true)
       assert Authorization.revalidate(context) == @denied
-      Fixture.update_state(fixture, &%{&1 | cancel_requested: false})
+      Fixture.set_cancel(fixture, false)
       assert Authorization.revalidate(context) == :ok
       Fixture.update_task(fixture, &%{&1 | status: :cancelled})
       assert Authorization.revalidate(context) == @denied
@@ -514,7 +527,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
 
         case unquote(invalidation) do
           :metadata_changed -> Fixture.update_meta(fixture, &%{&1 | depth: 1})
-          :state_cancelled -> Fixture.update_state(fixture, &%{&1 | cancel_requested: true})
+          :state_cancelled -> Fixture.set_cancel(fixture, true)
         end
 
         send(proxy, :reply)
