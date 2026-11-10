@@ -6,7 +6,7 @@ defmodule EvoGit.ToolRuntime.Tracking do
   AGENT-visible identity (`tool`, `command`, `label`, `agent_id`, `task_id`,
   `owner_pid`, `cwd`, `repo_root`, `backend`, `runtime: :foreground`). A shell
   call additionally carries the command text and a human label; a non-shell tool
-  is tracked too and simply never attaches an OS handle.
+  is tracked with the `:builtin` backend and simply never attaches an OS handle.
 
   Tracking is OBSERVABILITY: it must never change a tool result. Every call here
   is therefore failure-isolated, and `track/4` returns `nil` when the registry is
@@ -37,8 +37,21 @@ defmodule EvoGit.ToolRuntime.Tracking do
   end
 
   @doc """
+  The tracked backend of ONE call: the resolved sandbox backend for the platform
+  shell tool, `:builtin` (runs inside the BEAM, no OS process) for every other tool.
+  """
+  @spec tracked_backend(String.t() | nil, :systemd | :bwrap | :sandbox_exec | :none) ::
+          :builtin | :systemd | :bwrap | :sandbox_exec | :none
+  def tracked_backend(name, sandbox_backend) do
+    if shell?(name), do: sandbox_backend, else: :builtin
+  end
+
+  @doc """
   Records one foreground tool call and returns its execution id, or `nil` when
   the process manager is unavailable.
+
+  `backend` is the batch's resolved SANDBOX backend; the record itself carries the
+  per-call pick from `tracked_backend/2`.
   """
   @spec track(Request.t(), String.t() | nil, term(), atom()) :: String.t() | nil
   def track(%Request{} = request, name, args, backend) do
@@ -51,7 +64,7 @@ defmodule EvoGit.ToolRuntime.Tracking do
       owner_pid: request.agent_pid,
       cwd: request.repo_path,
       repo_root: request.repo_root,
-      backend: backend,
+      backend: tracked_backend(name, backend),
       runtime: :foreground
     }
 
@@ -62,30 +75,52 @@ defmodule EvoGit.ToolRuntime.Tracking do
   end
 
   @doc """
-  Marks the execution terminal (`:completed`, `:failed` or `:killed`).
+  Marks the execution terminal (`:completed`, `:failed` or `:killed`) and records
+  the terminal fact: `:exit_code` (a real OS process) and `:reason` (the settled
+  outcome, e.g. `:no_os_process`, `:timeout`, `{:crashed, detail}`).
 
   Total and idempotent: a `nil` id, an unknown id and a second `finish` for an
-  already-terminal execution are all no-ops.
+  already-terminal execution are all no-ops, so the FIRST fact wins.
   """
-  @spec finish(String.t() | nil, :completed | :failed | :killed) :: :ok
-  def finish(nil, _status), do: :ok
+  @spec finish(String.t() | nil, :completed | :failed | :killed, keyword()) :: :ok
+  def finish(id, status, opts \\ [])
 
-  def finish(id, status) when is_binary(id) do
-    isolated(fn -> ProcessManager.finish(id, status, exit_code: nil) end)
+  def finish(nil, _status, _opts), do: :ok
+
+  def finish(id, status, opts) when is_binary(id) do
+    isolated(fn ->
+      ProcessManager.finish(id, status, Keyword.take(opts, [:exit_code, :reason]))
+    end)
+
     :ok
   end
+
+  def finish(_id, _status, _opts), do: :ok
 
   @doc """
   Stops the execution's OS handle (a timed-out call must not be left running)
   and finishes the record itself.
+
+  The terminal fact is `:timeout` for a `:timeout` kill and `{:killed_by,
+  :tool_runtime}` for every other reason; the human prose stays in the record's
+  `control_log` entry.
   """
   @spec kill(String.t() | nil, term()) :: :ok
   def kill(nil, _reason), do: :ok
 
   def kill(id, reason) when is_binary(id) do
-    isolated(fn -> ProcessManager.kill(id, reason: reason, actor: :tool_runtime) end)
+    isolated(fn ->
+      ProcessManager.kill(id,
+        reason: kill_text(reason),
+        terminal_reason: terminal_reason(reason),
+        actor: :tool_runtime
+      )
+    end)
+
     :ok
   end
+
+  def kill(_id, _reason), do: :ok
 
   ## Isolation
 
@@ -110,6 +145,16 @@ defmodule EvoGit.ToolRuntime.Tracking do
   end
 
   ## Identity helpers
+
+  # The TERMINAL FACT of a kill: a dispatcher timeout is its own outcome, every
+  # other kill is an attributable kill by this layer.
+  defp terminal_reason(:timeout), do: :timeout
+
+  defp terminal_reason(_reason), do: {:killed_by, :tool_runtime}
+
+  # The human prose kept in the record's control log.
+  defp kill_text(:timeout), do: "tool call timed out"
+  defp kill_text(reason), do: "tool call killed: #{inspect(reason)}"
 
   # ALIAS-AWARE shell detection: the model-facing name is `bash` while the
   # internal dispatch keys are `run_bash` / `run_powershell`, so compare through
