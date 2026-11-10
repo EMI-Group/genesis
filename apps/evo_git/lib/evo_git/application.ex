@@ -110,8 +110,12 @@ defmodule EvoGit.Application do
       # Starts AFTER EvoGit.Store because its mount table lives in the task
       # store (`vct_mounts`) and is loaded at init — the store MUST already be
       # up — and BEFORE EvoGit.TaskRegistry so every later reader (dashboard,
-      # agents) finds a ready mount table.
-      {EvoGit.VCT, []},
+      # agents) finds a ready mount table. The host-declared `:system_mounts`
+      # registers the RESERVED `vct:///genesis-source` mount (the
+      # self-reflective agent's Genesis source checkout) idempotently at boot;
+      # a reserved point is never listed as a project, never evicted, and its
+      # recorded OS path need not exist yet.
+      {EvoGit.VCT, system_mounts: EvoGit.SelfReflectiveSource.system_mounts()},
       # Dedicated pool for the TaskRegistry's offloaded READS: a heavy decode
       # (`list_tasks`, `list_tasks_page`, archives, summaries) runs in one of
       # these workers and replies to its caller directly, so the decoded term
