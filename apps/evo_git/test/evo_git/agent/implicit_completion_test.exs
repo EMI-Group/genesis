@@ -177,7 +177,8 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
     **no nudge and no extra request** (the stub server's `request_count/1` stays
     at 1), and the text is returned verbatim.
   * The implicit route through `process_llm_response/6` (6th arg = the report
-    text) returns `{:ok, %EvoGit.Agent.Result{}}` whose `result` is exactly that
+    text) returns the one terminal outcome
+    `{:finish, state, %EvoGit.Agent.Result{}}` whose `result` is exactly that
     text, and `build_completion/2` commits pending work BEFORE capturing
     `commit_sha` — the reported sha therefore CONTAINS the agent's still
     uncommitted file change (the reviewable-commit guarantee) and the worktree
@@ -340,7 +341,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
       assert ReqLLM.Response.text(response) == @report_text
       assert StubLlmServer.request_count(server) == 1
 
-      assert {:ok, %Result{} = result} =
+      assert {:finish, finished_state, %Result{} = result} =
                ToolDispatch.process_llm_response(
                  response,
                  state,
@@ -349,6 +350,11 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
                  recovery_fn,
                  text
                )
+
+      # The finish hands back the agent's post-turn state, and the turn's
+      # bookkeeping really ran (the turn advanced by exactly one).
+      assert %EvoGit.Agent.State{} = finished_state
+      assert finished_state.turn == state.turn + 1
 
       assert result.result == @report_text
       assert is_binary(result.commit_sha)
@@ -406,7 +412,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
       assert {:implicit_completion, response, text} = prompt_once(agent_id, context)
       assert StubLlmServer.request_count(server) == 1
 
-      assert {:ok, %Result{} = result} =
+      assert {:finish, finished_state, %Result{} = result} =
                ToolDispatch.process_llm_response(
                  response,
                  state,
@@ -415,6 +421,11 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
                  recovery_fn,
                  text
                )
+
+      # The finish hands back the agent's post-turn state, and the turn's
+      # bookkeeping really ran (the turn advanced by exactly one).
+      assert %EvoGit.Agent.State{} = finished_state
+      assert finished_state.turn == state.turn + 1
 
       assert result.result == @report_text
       refute_received :loop_fn_called
@@ -462,7 +473,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
       assert text == @child_report_text
       assert StubLlmServer.request_count(server) == 1
 
-      assert {:ok, %Result{} = result} =
+      assert {:finish, finished_state, %Result{} = result} =
                ToolDispatch.process_llm_response(
                  response,
                  state,
@@ -471,6 +482,11 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
                  recovery_fn,
                  text
                )
+
+      # The finish hands back the agent's post-turn state, and the turn's
+      # bookkeeping really ran (the turn advanced by exactly one).
+      assert %EvoGit.Agent.State{} = finished_state
+      assert finished_state.turn == state.turn + 1
 
       assert result.result == @child_report_text
       assert StubLlmServer.request_count(server) == 1
