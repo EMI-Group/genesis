@@ -26,9 +26,8 @@ defmodule EvoGit.Application do
     #     are one atomic insert, and `:ets.take/2` drains a key atomically, so a
     #     concurrent append is never lost or delivered twice. `seq` (a
     #     BEAM-monotonic integer) restores append order on drain.
-    #   * `:evogit_agent_control` — a SET of
-    #     `{agent_id, cancel_requested, compression_count}`, each element updated
-    #     with ONE atomic op (`:ets.update_element/3` / `:ets.update_counter/4`).
+    #   * `:evogit_agent_control` — a SET of `{agent_id, cancel_requested}`, the
+    #     flag updated with ONE atomic op (`:ets.update_element/3`).
     # App-owned so they survive AgentScheduler crashes/restarts.
     ensure_ets_table(:evogit_agent_inbox, [
       :bag,

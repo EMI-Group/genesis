@@ -3,8 +3,8 @@ defmodule EvoGit.Agent.State do
   The ONE authoritative agent state of the runtime.
 
   There is exactly ONE copy of it in the system, owned by exactly one process —
-  the agent `Task`. `%EvoGit.AgentScheduler.AgentState{}` is only the
-  ETS/summary *projection* (a read model) of this struct.
+  the agent's `EvoGit.Agent.Session`. `%EvoGit.AgentScheduler.AgentState{}` is
+  only the summary read model of this struct.
 
   Its fields fall into four groups: identity, conversation, control and budget.
   `EvoGit.Agent.Exchange.run/2` consumes the struct and threads it through every
@@ -16,16 +16,17 @@ defmodule EvoGit.Agent.State do
   per-process values (the process dictionary the tools read) from it via
   `EvoGit.Agent.Session.Setup.install_process_context/3`.
 
-  The control-group fields `pending_inputs`, `cancel`, `phase`, `exchange_ref`,
-  `event_seq`, `watchers` and `last_checkpoint_at` are CARRIED here but are not
-  yet authoritative — the loop still reads the ETS control plane
-  (`pending_user_messages` / `cancel_requested`).
+  The state is SESSION-OWNED and is the ONLY copy of the conversation in the
+  system: no ETS row, archive or RPC payload carries the messages. It is also
+  the only copy of the cross-process control state (`pending_inputs`, `cancel`),
+  which `EvoGit.Agent.Session` writes through its commands and the exchange
+  drains at the top of each turn.
 
   ## Plain data, no runtime handles
 
   This struct holds no funs, no ETS handles, no ports or sockets, and no pids,
-  refs or monitors: the control group's `watchers` (`%{}`) and `exchange_ref`
-  (`nil`) are carried but unpopulated in P1. That is what makes a whole-struct
+  refs or monitors: `watchers` (`%{}`) and `exchange_ref` (`nil`) are carried
+  but unpopulated. That is what makes a whole-struct
   copy a valid SNAPSHOT at every exchange boundary and the payload serializable
   — the archive path already proves the result/settings payload is JSON-clean.
   (`watchers`/`exchange_ref` are the only members a later phase fills with
@@ -52,8 +53,8 @@ defmodule EvoGit.Agent.State do
   `context`, `turn`, `total_tokens`, `usage`, `compression_count`,
   `llm_context_window`, `llm_model`, `llm_generation_params`, `model_spec`,
   `provider_profile_id`, `model_id`, `model_id_locked`, `prompt_cache_key`,
-  `objective`, `attachments`, `repo_path`, `repo_notes`, `foreign_repos`,
-  `skill_schemas`.
+  `objective`, `attachments`, `repo_path`, `current_commit`, `repo_notes`,
+  `foreign_repos`, `skill_schemas`.
 
   The LLM conversation plus everything derived from the objective and the
   resolved model selection. This is the ONLY copy of the context: the ETS
@@ -68,8 +69,7 @@ defmodule EvoGit.Agent.State do
   Cross-process control state, changed only through explicit session commands
   (`input` / `cancel` / `close`). `watchers` is the streaming gate: zero
   watchers ⇒ no chunk callbacks and no broadcast, so the LLM call path carries
-  no streaming overhead. Carried but NOT authoritative in P1 — the loop still
-  reads the ETS control plane.
+  no streaming overhead.
 
   ### budget (per-run terminal budgets, unchanged semantics)
 
@@ -115,16 +115,17 @@ defmodule EvoGit.Agent.State do
   - `objective` — the RAW objective string this agent was started with (never rewritten). Re-rendered by the compression refresh so the `<objective>` block stays byte-identical.
   - `attachments` — the `:attachments` value passed to `ContextBuilder.build_initial_messages/4` (already `nil` for repo-less agents), retained so the compression refresh can reproduce the root agent's media content parts.
   - `repo_path` — absolute path to the agent's worktree, or `nil` before assignment
+  - `current_commit` — the worktree HEAD the engine last observed (recorded after tool execution and at completion), or `nil` — the source of the summary row's `current_commit`
   - `repo_notes` — the already-rendered git-submodules note block (markdown text) for this agent's repo tree, or `nil` when the repo has no submodules (or detection failed). Rendered into the agent's `<context>` block; subagents inherit it from the parent (no re-detection).
   - `foreign_repos` — list of foreign repos available to this agent tree (inherited from parent agent)
   - `skill_schemas` — tool schemas from enabled skills
-  - `pending_inputs` — queued user inputs awaiting the next turn (`String.t()` or the canonical multimodal message map). In P1 the loop still drains `pending_user_messages` from ETS instead; authoritative in P2.
-  - `cancel` — the pending cancel request, `nil` = none. In P1 the loop still reads the ETS `cancel_requested` flag instead; authoritative in P2.
-  - `phase` — the session lifecycle phase, `:starting` until the first exchange runs. Carried (always `:starting`) in P1.
-  - `exchange_ref` — the in-flight exchange worker reference, `nil` when none. Carried (always `nil`) in P1.
-  - `event_seq` — monotonic per-session delta sequence number; a watcher drops deltas with `seq <= snapshot.seq`. Carried (always `0`) in P1.
-  - `watchers` — the streaming consumers (consumer pid → monitor ref); empty means unwatched, which is the zero-cost default. Carried (always `%{}`) in P1.
-  - `last_checkpoint_at` — when the state was last checkpointed, or `nil`. Carried (always `nil`) in P1 — durability is deliberately deferred.
+  - `pending_inputs` — queued user inputs awaiting the next turn (`String.t()` or the canonical multimodal message map). The exchange drains and injects them at the top of each turn.
+  - `cancel` — the pending cancel request, `nil` = none. Set by the session's `cancel` command and consumed by the exchange's cancel-grace path.
+  - `phase` — the session lifecycle phase.
+  - `exchange_ref` — the in-flight exchange worker reference, `nil` when none. Carried (always `nil`).
+  - `event_seq` — monotonic per-session delta sequence number; a watcher drops deltas with `seq <= snapshot.seq`. Carried (always `0`).
+  - `watchers` — the streaming consumers (consumer pid → monitor ref); empty means unwatched, which is the zero-cost default. Carried (always `%{}`).
+  - `last_checkpoint_at` — when the state was last checkpointed, or `nil`. Carried (always `nil`) — durability is deliberately deferred.
   - `max_turns` — maximum turns allowed for this agent (from config)
   - `max_depth` — maximum agent recursion depth; `nil` means NO LIMIT CONFIGURED and must read that way at every comparison site. The scheduler row is always authoritative and populates it.
   - `max_retries` — maximum LLM call retries for this agent; `nil` means NO LIMIT CONFIGURED (same rule as `max_depth`). The scheduler row is always authoritative and populates it.
@@ -163,6 +164,7 @@ defmodule EvoGit.Agent.State do
     worktree: nil,
     # conversation
     repo_path: nil,
+    current_commit: nil,
     turn: 0,
     total_tokens: 0,
     usage: %EvoGit.Agent.Usage{},
@@ -239,6 +241,7 @@ defmodule EvoGit.Agent.State do
           objective: String.t() | nil,
           attachments: term(),
           repo_path: String.t() | nil,
+          current_commit: String.t() | nil,
           repo_notes: String.t() | nil,
           foreign_repos: [ForeignRepo.t()],
           skill_schemas: [ReqLLM.Tool.t()],

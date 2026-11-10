@@ -5,57 +5,37 @@ defmodule EvoGit.AgentScheduler.Store do
   Centralizes read/write/delete operations on the three scheduler-owned ETS
   tables:
   `:evogit_sched_meta` (scheduler metadata), `:evogit_agent_summary` (the agent
-  summary row — the read model of the agent's state) and the CONTROL PLANE —
+  SUMMARY row — the read model of the agent's state) and the CONTROL PLANE —
   `:evogit_agent_inbox` + `:evogit_agent_control`, owned by
   `EvoGit.AgentScheduler.ControlPlane`.
 
-  **One writer per row.** The agent process is the ONLY writer of its
-  `:evogit_agent_summary` row. Everything another process writes about a live
-  agent (`pending_user_messages`, `cancel_requested`, and the legacy
-  control-plane `compression_count`) goes through `ControlPlane` with atomic ETS
-  operations, so a cross-process write never read-modify-writes the whole struct
-  and never loses the agent's own concurrent context writes. `get_agent_state/1`
-  PROJECTS the control-plane values back onto the struct, so every consumer
-  still reads one struct. The row itself carries the STATE-OWNED
-  `compression_count` (`EvoGit.Agent.Session.Summary.publish/3` copies it from
-  the agent's `%EvoGit.Agent.State{}`); a legacy control-plane counter still
-  wins on the projection while its row exists.
+  **One writer per row.** The owning `EvoGit.Agent.Session` is the only RUNTIME
+  writer of its `:evogit_agent_summary` row (through
+  `EvoGit.Agent.Session.Summary.publish/3`); the other writes are registration
+  writes (`Dispatch` creates the row, `Worktrees`/`Lifecycle` update its commit
+  and retry fields). The row is a SUMMARY: it carries no conversation, so every
+  reader treats it as a possibly-stale snapshot.
+
+  Everything another process writes about a live agent (the injected message
+  queue and the graceful-cancel flag) goes through `ControlPlane` with atomic
+  ETS operations, so a cross-process write never read-modify-writes the agent's
+  row at all.
 
   Every write/delete on the agent-state and sched-meta tables broadcasts
   enriched PubSub delta events so the dashboard can apply incremental updates,
   plus a throttled `:agents_updated` fallback for backward compat.
 
-  All broadcasts carry a trailing `node` element (the emitting BEAM node), and
-  agent-state broadcast kwlists exclude the heavy `:context` field with a
-  `message_count` substituted — ETS writes stay verbatim.
+  All broadcasts carry a trailing `node` element (the emitting BEAM node).
   """
 
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.ControlPlane
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.PubSub
-  alias EvoGit.Agent.Usage
   alias EvoGit.Attachments
-  alias ReqLLM.Context
 
   @agent_table :evogit_agent_summary
   @sched_table :evogit_sched_meta
-
-  # The control-plane fields whose live values live in `ControlPlane` (its
-  # inbox/control tables), NOT in this row — plus their struct defaults. They
-  # are reset to those defaults on every state write, so a projected struct can
-  # never be written back and resurrect drained messages or a stale flag.
-  #
-  # `compression_count` is deliberately ABSENT: it is state-owned on the agent's
-  # `%EvoGit.Agent.State{}` and reaches this row through
-  # `EvoGit.Agent.Session.Summary.publish/3`, so resetting it here would force
-  # every published count back to 0. The LEGACY control-plane counter
-  # (`ControlPlane.increment_compression_count/1`) still takes precedence on the
-  # read path (`ControlPlane.project/2`) while its control row exists.
-  @control_field_defaults %{
-    pending_user_messages: [],
-    cancel_requested: nil
-  }
 
   # ---------------------------------------------------------------------------
   # Scheduler Metadata Table
@@ -131,16 +111,14 @@ defmodule EvoGit.AgentScheduler.Store do
   Reads the agent summary row for the given agent ID.
   Returns `{:ok, %AgentState{}}` or `:error` if not found.
 
-  The returned struct carries the PROJECTED control-plane values
-  (`pending_user_messages`, `cancel_requested`) — see
-  `EvoGit.AgentScheduler.ControlPlane.project/2` — and the row's own
-  state-owned `compression_count`, which the projection overrides only while a
-  legacy control row exists.
+  The RAW row is returned verbatim: it carries no conversation and no
+  cross-process control state, so no projection is applied (the injected queue
+  and the cancel flag live in `EvoGit.AgentScheduler.ControlPlane`).
   """
   @spec get_agent_state(pos_integer()) :: {:ok, AgentState.t() | map()} | :error
   def get_agent_state(agent_id) do
     case :ets.lookup(@agent_table, agent_id) do
-      [{^agent_id, %{} = agent_state}] -> {:ok, ControlPlane.project(agent_id, agent_state)}
+      [{^agent_id, %{} = agent_state}] -> {:ok, agent_state}
       [] -> :error
     end
   end
@@ -148,33 +126,20 @@ defmodule EvoGit.AgentScheduler.Store do
   @doc """
   Inserts/updates agent state for the given agent ID.
 
-  **Invariant — the agent process is the ONLY writer of this row.** Nothing
-  else may read-modify-write it: a cross-process write of `pending_user_messages`
-  or `cancel_requested` goes through `EvoGit.AgentScheduler.ControlPlane`
-  (atomic ETS operations), because a whole-struct write from another process
-  races the agent's own context writes and silently loses one of them.
+  **Invariant — the agent's session is the only RUNTIME writer of this row.**
+  Cross-process state (the injected message queue, the graceful-cancel flag)
+  goes through `EvoGit.AgentScheduler.ControlPlane` (atomic ETS operations on
+  its own tables), so it is never written here and never read-modify-written by
+  another process.
 
-  `pending_user_messages` and `cancel_requested` are therefore RESET to their
-  struct defaults before the ETS write: a projected struct (the shape
-  `get_agent_state/1` returns) must never be written back, which would
-  resurrect drained messages or a stale cancel flag.
-
-  `compression_count` is NOT reset — it is state-owned on the agent's
-  `%EvoGit.Agent.State{}` and this row is its read model, so the published
-  count survives an ordinary state write. The legacy control-plane counter
-  (`ControlPlane.increment_compression_count/1`) stays authoritative on the
-  projection while its row exists.
+  `message_count` is an ORDINARY tracked field: it is published by the session
+  like every other summary field.
 
   Broadcasts an `:agent_updated` delta event with the changed fields plus
   the throttled `:agents_updated` fallback for backward compatibility.
-  Broadcast kwlists exclude heavy fields (`:context` is stripped — a no-op
-  today since it is not tracked by the diff) and carry `message_count` on the
-  insert path when the new state has a context; ETS writes stay verbatim.
   """
   @spec put_agent_state(pos_integer(), AgentState.t()) :: :ok
   def put_agent_state(agent_id, agent_state) do
-    agent_state = reset_control_fields(agent_state)
-
     old_state =
       case :ets.lookup(@agent_table, agent_id) do
         [{^agent_id, existing}] -> existing
@@ -190,25 +155,8 @@ defmodule EvoGit.AgentScheduler.Store do
         initial_agent_state_fields(agent_state)
       end
 
-    # Broadcast kwlists exclude heavy fields — `:context` is stripped here
-    # defensively (a no-op today since it is untracked) so the invariant lives
-    # in one place. On the INSERT path a `message_count` is prepended when the
-    # state carries a context (the diff path never carries `:context`).
-    broadcast_fields =
-      if old_state do
-        strip_heavy_fields(changes)
-      else
-        case agent_state.context do
-          %ReqLLM.Context{messages: messages} ->
-            [message_count: length(messages)] ++ strip_heavy_fields(changes)
-
-          _ ->
-            strip_heavy_fields(changes)
-        end
-      end
-
-    if broadcast_fields != [] do
-      PubSub.broadcast_agent_updated(agent_id, broadcast_fields)
+    if changes != [] do
+      PubSub.broadcast_agent_updated(agent_id, changes)
     end
 
     PubSub.broadcast_agents_updated()
@@ -433,142 +381,6 @@ defmodule EvoGit.AgentScheduler.Store do
     end
   end
 
-  @doc """
-  Gets the conversation context for an agent from the agent state table.
-  Returns the context or nil if not set.
-  """
-  @spec get_agent_context(pos_integer()) :: ReqLLM.Context.t() | nil
-  def get_agent_context(agent_id) do
-    case get_agent_state(agent_id) do
-      {:ok, %{context: context}} -> context
-      _ -> nil
-    end
-  end
-
-  @doc """
-  Updates multiple fields for an agent in a single ETS get+put cycle.
-  Accepts a keyword list of field-value pairs (e.g., `[context: ctx, turn: 5, usage: usage, total_tokens: 100]`).
-  This avoids redundant `:ets.lookup` + `:ets.insert` round-trips when syncing
-  multiple fields per agent turn.
-
-  Broadcasts an enriched `:agent_updated` delta plus the throttled
-  `:agents_updated` fallback for backward compat. The broadcast kwlist is the
-  delta minus heavy fields — `:context` is stripped (it is the entire
-  conversation and changes every turn) and a `message_count` is added when a
-  context is among the updated fields — while the ETS write stays verbatim.
-  """
-  @spec batch_update_agent(pos_integer(), keyword()) :: :ok
-  def batch_update_agent(agent_id, fields) when is_list(fields) do
-    {:ok, agent_state} = get_agent_state(agent_id)
-
-    # `agent_state` is PROJECTED (see `get_agent_state/1`), so the control
-    # fields are reset to their struct defaults before the write — the live
-    # values belong to `ControlPlane`, never to this row. `compression_count` is
-    # state-owned and is therefore carried through verbatim.
-    updated_state = agent_state |> Kernel.struct!(fields) |> reset_control_fields()
-
-    # Direct ETS write (no put_agent_state round-trip) plus a focused delta
-    # broadcast — heavy fields stripped (`:context`), `message_count` added
-    # when a context is updated. Subscribers can use whichever granularity
-    # they prefer.
-    :ets.insert(@agent_table, {agent_id, updated_state})
-
-    broadcast_fields =
-      case fields[:context] do
-        nil ->
-          strip_heavy_fields(fields)
-
-        %ReqLLM.Context{messages: messages} ->
-          [message_count: length(messages)] ++ strip_heavy_fields(fields)
-
-        _ ->
-          [message_count: 0] ++ strip_heavy_fields(fields)
-      end
-
-    PubSub.broadcast_agent_updated(agent_id, broadcast_fields)
-    PubSub.broadcast_agents_updated()
-
-    :ok
-  end
-
-  @doc """
-  Updates the conversation context for an agent in the agent state table.
-
-  A dumb pass-through write — per-message `metadata[:timestamp]` stamping
-  happens at message-creation time in the agent code (see
-  `EvoGit.Agent.ContextBuilder.tag_message_turn/2`), never here. There is no
-  read-back: data flows one way, agent → ETS/pubsub → frontend.
-  """
-  @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: :ok
-  def update_agent_context(agent_id, %Context{} = context) do
-    batch_update_agent(agent_id, context: context)
-  end
-
-  @doc """
-  Updates the cumulative usage for an agent in the agent state table.
-  """
-  @spec update_agent_usage(pos_integer(), EvoGit.Agent.Usage.t()) :: :ok
-  def update_agent_usage(agent_id, %Usage{} = usage) do
-    batch_update_agent(agent_id, usage: usage)
-  end
-
-  @doc """
-  Updates the current turn for an agent in the agent state table.
-  """
-  @spec update_agent_turn(pos_integer(), non_neg_integer()) :: :ok
-  def update_agent_turn(agent_id, turn) when is_integer(turn) do
-    batch_update_agent(agent_id, turn: turn)
-  end
-
-  @doc """
-  Updates the cumulative token count for an agent in the agent state table.
-
-  This mirrors `LoopState.total_tokens` so the dashboard can display context
-  progress. Reset to 0 on each context compression.
-  """
-  @spec update_total_tokens(pos_integer(), non_neg_integer()) :: :ok
-  def update_total_tokens(agent_id, total_tokens) when is_integer(total_tokens) do
-    batch_update_agent(agent_id, total_tokens: total_tokens)
-  end
-
-  @doc """
-  Increments the LEGACY control-plane compression count for an agent.
-
-  The context-compression path no longer calls this: the counter is state-owned
-  on `%EvoGit.Agent.State{}` and reaches the row through
-  `EvoGit.Agent.Session.Summary.publish/3`. This helper keeps the old shape for
-  callers that still want the control-plane counter: ONE atomic
-  `:ets.update_counter/4` on the control row (no read-modify-write of the state
-  row), and the resulting count is broadcast as the `:agent_updated` delta.
-  """
-  @spec increment_compression_count(pos_integer()) :: :ok
-  def increment_compression_count(agent_id) do
-    # A missing agent still crashes (MatchError) — that is the documented
-    # contract this helper has always had.
-    {:ok, _agent_state} = get_agent_state(agent_id)
-    {:ok, count} = ControlPlane.increment_compression_count(agent_id)
-
-    PubSub.broadcast_agent_updated(agent_id, compression_count: count)
-    PubSub.broadcast_agents_updated()
-
-    :ok
-  end
-
-  # ---------------------------------------------------------------------------
-  # Private helpers — control-plane write hygiene
-  # ---------------------------------------------------------------------------
-
-  # Resets the control-plane fields to their struct defaults before a state-row
-  # write, so a projected struct (the shape `get_agent_state/1` returns) can
-  # never be written back and resurrect drained messages or a stale flag.
-  # `compression_count` is intentionally not among them: it is state-owned and
-  # this row is its read model.
-  # `Map.merge/2` keeps the write safe for the tolerant `map()` rows some tests
-  # seed directly.
-  defp reset_control_fields(state) when is_map(state) do
-    Map.merge(state, @control_field_defaults)
-  end
-
   # ---------------------------------------------------------------------------
   # Private helpers — field-level diffing
   # ---------------------------------------------------------------------------
@@ -595,21 +407,20 @@ defmodule EvoGit.AgentScheduler.Store do
     :foreign_repo_commits
   ]
 
-  # Fields to compare for agent-state change detection.
-  # `context` is intentionally excluded — it is large, changes every turn, and
-  # its progress is tracked via `total_tokens` which is sufficient for the
-  # dashboard.
+  # Fields to compare for agent-state change detection (the summary field set).
   @agent_state_tracked_fields [
     :turn,
     :usage,
     :total_tokens,
     :compression_count,
-    :phylo_node,
     :context_node,
     :objective,
     :llm_model,
     :llm_generation_params,
     :model_id,
+    :provider_profile_id,
+    :model_spec,
+    :model_id_locked,
     :archive,
     :repo_id,
     :repo_root,
@@ -619,18 +430,14 @@ defmodule EvoGit.AgentScheduler.Store do
     :max_depth,
     :max_turns,
     :task_local_id,
-    :pending_user_messages
+    :status,
+    :mode,
+    :objective_preview,
+    :message_count,
+    :context_window,
+    :current_commit,
+    :last_activity_at
   ]
-
-  # Heavy fields stripped from agent-state BROADCAST kwlists. `:context` holds
-  # the entire conversation (`%ReqLLM.Context{}`) and changes every LLM turn —
-  # broadcasting it would copy the conversation to every subscriber. ETS writes
-  # keep the full struct verbatim; only the broadcast kwlist is stripped.
-  @broadcast_stripped_fields [:context]
-
-  defp strip_heavy_fields(fields) do
-    Keyword.drop(fields, @broadcast_stripped_fields)
-  end
 
   defp sched_meta_changes(old, new) do
     diff_fields(old, new, @sched_meta_tracked_fields)

@@ -31,11 +31,12 @@ defmodule EvoGit.AgentScheduler do
 
   Agent data is split across two ETS tables with clear ownership:
 
-  - **`:evogit_agent_summary`** — Owned by agent processes. The agent summary row
-    (the read model of the agent's state): spatial/temporal state
-    (`context_node`, `phylo_node`).
-    The scheduler writes initial values on dispatch; agents update `phylo_node`
-    after each commit via `update_phylo_node/2`.
+  - **`:evogit_agent_summary`** — Owned by agent processes. The agent SUMMARY row
+    (the read model of the agent's state): identity, model selection, counters
+    and the session-published status/commit fields.
+    The scheduler writes the registration values on dispatch; from then on the
+    owning `EvoGit.Agent.Session` is the only runtime writer (at most one
+    summary publish per turn).
 
   - **`:evogit_sched_meta`** — Owned by the scheduler process. Contains all
     scheduling bookkeeping: status, worktree assignment, session refs,
@@ -68,7 +69,6 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.Subagents
   alias EvoGit.AgentSpec
-  alias EvoGit.Core.PhyloGraphNode
 
   @agent_table :evogit_agent_summary
   @sched_table :evogit_sched_meta
@@ -279,21 +279,12 @@ defmodule EvoGit.AgentScheduler do
 
   @doc """
   Reads the agent summary row from the agent summary table.
-  Called by agent processes every turn.
+
+  The row is a SUMMARY snapshot published by the agent's session; a reader must
+  never treat it as the authoritative agent state.
   """
   @spec get_agent_state(pos_integer()) :: {:ok, AgentState.t()} | :error
   def get_agent_state(agent_id), do: Store.get_agent_state(agent_id)
-
-  @doc """
-  Updates the phylo_node for the given agent in the agent state table.
-  Called by agents after they commit changes to keep state in sync.
-  """
-  @spec update_phylo_node(pos_integer(), PhyloGraphNode.t()) :: :ok | :error
-  def update_phylo_node(agent_id, %PhyloGraphNode{} = phylo_node) do
-    {:ok, agent_state} = Store.get_agent_state(agent_id)
-    updated = %{agent_state | phylo_node: phylo_node}
-    Store.put_agent_state(agent_id, updated)
-  end
 
   @doc """
   Sends a user message to a running agent.
@@ -1113,25 +1104,6 @@ defmodule EvoGit.AgentScheduler do
   end
 
   # --- ETS Helpers (Agent History Table) ---
-
-  @doc """
-  Gets the conversation context for an agent from the agent state table.
-  Returns the context or nil if not set.
-  """
-  @spec get_agent_context(pos_integer()) :: ReqLLM.Context.t() | nil
-  def get_agent_context(agent_id), do: Store.get_agent_context(agent_id)
-
-  @doc "Updates multiple fields for an agent in a single ETS get+put cycle."
-  @spec batch_update_agent(pos_integer(), keyword()) :: :ok
-  def batch_update_agent(agent_id, fields), do: Store.batch_update_agent(agent_id, fields)
-
-  @doc "Updates the cumulative usage for an agent in the agent state table."
-  @spec update_agent_usage(pos_integer(), EvoGit.Agent.Usage.t()) :: :ok
-  def update_agent_usage(agent_id, usage), do: Store.update_agent_usage(agent_id, usage)
-
-  @doc "Increments the compression count for an agent in the agent state table."
-  @spec increment_compression_count(pos_integer()) :: :ok
-  def increment_compression_count(agent_id), do: Store.increment_compression_count(agent_id)
 
   # --- Task archive reset ---
 

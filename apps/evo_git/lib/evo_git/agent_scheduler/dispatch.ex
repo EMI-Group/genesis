@@ -97,7 +97,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
     Store.put_agent_state(id, %AgentState{
       context_node: spec.context_node,
-      phylo_node: nil,
+      current_commit: spec.phylo_node && spec.phylo_node.current_commit,
       llm_model: resolved_model,
       llm_generation_params: resolved_params,
       llm_context_window: resolved_context_window,

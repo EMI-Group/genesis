@@ -175,10 +175,11 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
           phase: nil
       })
 
-      # Reset agent state phylo_node (will be re-set on dispatch)
+      # Reset the summary row's commit (the retry's session rebuilds its state
+      # from the fresh worktree on dispatch)
       case Store.get_agent_state(agent_id) do
         {:ok, %AgentState{} = agent_state} ->
-          Store.put_agent_state(agent_id, %AgentState{agent_state | phylo_node: nil, context: nil})
+          Store.put_agent_state(agent_id, %AgentState{agent_state | current_commit: nil})
 
         :error ->
           Logger.warning(

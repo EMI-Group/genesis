@@ -352,6 +352,7 @@ defmodule EvoGit.Agent.Session do
       depth: Keyword.fetch!(ctx, :depth),
       context_node: row.context_node,
       repo_path: agent_repo_path(ctx, repo_less),
+      current_commit: Map.get(row, :current_commit),
       repo_root: Keyword.fetch!(ctx, :repo_root),
       repo_id: Keyword.fetch!(ctx, :repo_id),
       repo_less: repo_less,

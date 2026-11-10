@@ -1,11 +1,12 @@
 defmodule EvoGit.AgentScheduler.ControlPlane do
   @moduledoc """
-  The per-agent CONTROL PLANE — every value a process OTHER than the agent writes.
+  The per-agent CONTROL PLANE — the atomic transport for everything a process
+  OTHER than the agent writes about a live agent.
 
-  The `:evogit_agent_summary` row has exactly ONE writer: the agent process itself
-  (see `EvoGit.AgentScheduler.Store.put_agent_state/2`). Everything the
-  scheduler, a dashboard or an RPC caller writes ABOUT a live agent lives in the
-  two app-owned tables this module owns, so a cross-process control write never
+  The agent's own state is a SUMMARY row with exactly ONE runtime writer: its
+  `EvoGit.Agent.Session` (see `EvoGit.AgentScheduler.Store.put_agent_state/2`).
+  Everything another process writes ABOUT a live agent lives in the two
+  app-owned tables this module owns, so a cross-process write never
   read-modify-writes — and therefore never loses — the agent's own state row:
 
     * `:evogit_agent_inbox` — a `:bag` keyed by `agent_id`, object shape
@@ -15,26 +16,20 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
       returns every object for the key in ONE atomic BIF, so a concurrent
       append is either fully drained now or fully left for the next drain.
     * `:evogit_agent_control` — a `:set` keyed by `agent_id`, object shape
-      `{agent_id, cancel_requested, compression_count}` (3-tuple, so each
-      writer updates ONE position atomically with `:ets.update_element/3` or
-      `:ets.update_counter/4`).
+      `{agent_id, cancel_requested}` (2-tuple, so the writer updates the flag
+      atomically with `:ets.update_element/3`).
 
   Both tables are created by `EvoGit.Application` (app-owned, `:public`), so
   they survive an `AgentScheduler` crash/restart.
 
+  Consumers: `EvoGit.Agent.Session` (the running exchange), plus
+  `EvoGit.AgentScheduler.Store.drain_pending_user_messages/1` and
+  `Store.cancel_requested?/1`, which are the only entry points other callers
+  use.
+
   Every function here is TOTAL: a missing table (app shutdown) reads as its
   empty value and answers a write with `{:error, :not_found}`; nothing in this
   module raises.
-
-  ## Read-side projection
-
-  `project/2` overlays the live `cancel_requested`, `compression_count` and
-  `pending_user_messages` values back onto a state struct, and
-  `EvoGit.AgentScheduler.Store.get_agent_state/1` applies it — so every consumer
-  (dashboard, `RemoteAPI`, tool dispatch/archive, tests) keeps reading ONE
-  struct while the values themselves are written atomically here.
-  An agent that has no control/inbox rows yet (a legacy or fixture row seeded
-  directly into `:evogit_agent_summary`) reads back its own stored values.
   """
 
   alias EvoGit.Attachments
@@ -54,7 +49,7 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
   @spec inbox_table() :: atom()
   def inbox_table, do: @inbox
 
-  @doc "The control table name (a `:set` of `{agent_id, cancel_requested, compression_count}`)."
+  @doc "The control table name (a `:set` of `{agent_id, cancel_requested}`)."
   @spec control_table() :: atom()
   def control_table, do: @control
 
@@ -115,19 +110,19 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
   end
 
   # ---------------------------------------------------------------------------
-  # Control row — cancel flag + compression counter
+  # Control row — cancel flag
   # ---------------------------------------------------------------------------
 
   @doc """
-  Ensures the agent has a control row (`{agent_id, nil, 0}`), idempotently.
+  Ensures the agent has a control row (`{agent_id, nil}`), idempotently.
 
   `:ets.insert_new/2` only writes when the key is absent, so an existing flag
-  and counter are never reset.
+  is never reset.
   """
   @spec ensure_row(pos_integer()) :: :ok | {:error, :not_found}
   def ensure_row(agent_id) do
     if table_exists?(@control) do
-      :ets.insert_new(@control, {agent_id, nil, 0})
+      :ets.insert_new(@control, {agent_id, nil})
       :ok
     else
       {:error, :not_found}
@@ -137,9 +132,9 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
   @doc """
   Sets the agent's `cancel_requested` flag (`true` | `false` | `nil`).
 
-  One atomic single-element update (`:ets.update_element/3`) — the rest of the
-  control row, and the agent's state row, are never touched. Returns
-  `{:error, :not_found}` when the agent is not live.
+  One atomic single-element update (`:ets.update_element/3`) — the agent's state
+  row is never touched. Returns `{:error, :not_found}` when the agent is not
+  live.
   """
   @spec set_cancel(pos_integer(), boolean() | nil) :: :ok | {:error, :not_found}
   def set_cancel(agent_id, value) when value in [true, false, nil] do
@@ -160,59 +155,14 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
   @spec cancel_requested?(pos_integer()) :: boolean()
   def cancel_requested?(agent_id) do
     case control_row(agent_id) do
-      {_agent_id, value, _count} -> value == true
+      {_agent_id, value} -> value == true
       nil -> false
     end
   end
 
-  @doc """
-  Atomically increments the agent's compression counter and returns the new value.
-
-  `:ets.update_counter/4` with a default object creates the row when missing and
-  increments in ONE atomic operation, so N concurrent increments always land.
-  """
-  @spec increment_compression_count(pos_integer()) ::
-          {:ok, non_neg_integer()} | {:error, :not_found}
-  def increment_compression_count(agent_id) do
-    if table_exists?(@control) do
-      {:ok, :ets.update_counter(@control, agent_id, {3, 1}, {agent_id, nil, 0})}
-    else
-      {:error, :not_found}
-    end
-  end
-
   # ---------------------------------------------------------------------------
-  # Projection + cleanup
+  # Cleanup
   # ---------------------------------------------------------------------------
-
-  @doc """
-  Overlays the live control-plane values onto an agent state struct.
-
-  This is the read side of the split: `cancel_requested`, the legacy
-  `compression_count` counter and `pending_user_messages` are read from the
-  control tables, so every existing consumer keeps seeing live values. The
-  state row no longer stores `pending_user_messages`/`cancel_requested` (they
-  are reset on every write), while it DOES store the state-owned
-  `compression_count` published by `EvoGit.Agent.Session.Summary.publish/3` —
-  which is what an agent with no legacy control row reads back, since the
-  control value wins whenever a counter row exists.
-  """
-  @spec project(pos_integer(), map()) :: map()
-  def project(agent_id, state) when is_map(state) do
-    {cancel_requested, compression_count} =
-      case control_row(agent_id) do
-        {_agent_id, value, count} ->
-          {value, count}
-
-        nil ->
-          {Map.get(state, :cancel_requested), Map.get(state, :compression_count, 0)}
-      end
-
-    state
-    |> Map.put(:cancel_requested, cancel_requested)
-    |> Map.put(:compression_count, compression_count)
-    |> Map.put(:pending_user_messages, projected_messages(agent_id, state))
-  end
 
   @doc """
   Deletes the agent's inbox and control rows.
@@ -239,13 +189,6 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
     objects
     |> Enum.sort_by(fn {_agent_id, {seq, _message}} -> seq end)
     |> Enum.map(fn {_agent_id, {_seq, message}} -> message end)
-  end
-
-  defp projected_messages(agent_id, state) do
-    case pending_messages(agent_id) do
-      [] -> Map.get(state, :pending_user_messages, [])
-      messages -> messages
-    end
   end
 
   defp control_row(agent_id) do

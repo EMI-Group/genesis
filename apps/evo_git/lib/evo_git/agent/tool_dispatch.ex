@@ -126,12 +126,11 @@ defmodule EvoGit.Agent.ToolDispatch do
   # --- Commit Syncing ---
 
   @doc false
-  # Keeps its `get_agent_state`/`update_phylo_node` ETS interaction in P1: the
-  # phylo node (and its `current_commit`) is not on `%State{}` yet, so advancing
-  # it is still a scheduler-row write. `sync_and_get_current_commit/1` below
-  # shares that interaction.
-  def sync_current_commit_after_tools(%State{} = state) do
-    # Repo-less agents have no worktree and no phylo_node — skip git entirely.
+  # Records the post-tool worktree HEAD as a PER-PROCESS derived value
+  # (`:evogit_current_commit`), which `continue_after_tools/7` moves onto the
+  # owned `%State{}` at the turn checkpoint — no ETS write happens here.
+  def sync_current_commit_after_tools(%State{}) do
+    # Repo-less agents have no worktree and no commit — skip git entirely.
     if Process.get(:repo_less) do
       :ok
     else
@@ -139,12 +138,8 @@ defmodule EvoGit.Agent.ToolDispatch do
 
       case Git.rev_parse(repo_path) do
         {:ok, current_sha} ->
-          {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
-
-          if agent_state.phylo_node.current_commit != current_sha do
-            updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
-            AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
-          end
+          Process.put(:evogit_current_commit, current_sha)
+          :ok
 
         {:error, reason} ->
           raise_rev_parse_error(reason)
@@ -152,29 +147,19 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
   end
 
-  # Syncs current commit and returns the SHA (for use in completion)
-  defp sync_and_get_current_commit(%State{} = state) do
-    # Repo-less agents have no worktree and no phylo_node — no commit to sync;
-    # completion receives a nil commit_sha.
+  # Reads the current commit for the completion payload (no ETS write).
+  defp sync_and_get_current_commit(%State{} = _state) do
+    # Repo-less agents have no worktree and no commit; completion receives a
+    # nil commit_sha.
     if Process.get(:repo_less) do
       nil
     else
       repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
-      current_sha =
-        case Git.rev_parse(repo_path) do
-          {:ok, sha} -> sha
-          {:error, reason} -> raise_rev_parse_error(reason)
-        end
-
-      {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
-
-      if agent_state.phylo_node.current_commit != current_sha do
-        updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
-        AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
+      case Git.rev_parse(repo_path) do
+        {:ok, sha} -> sha
+        {:error, reason} -> raise_rev_parse_error(reason)
       end
-
-      current_sha
     end
   end
 
@@ -622,6 +607,15 @@ defmodule EvoGit.Agent.ToolDispatch do
           usage: usage
       }
 
+      # Carry the commit recorded after tool execution (if any) onto the
+      # checkpointed state. Delete-on-read, so a stale sha can never leak into a
+      # later turn.
+      state =
+        case Process.delete(:evogit_current_commit) do
+          sha when is_binary(sha) -> %{state | current_commit: sha}
+          _ -> state
+        end
+
       # No ETS write-through: the updated context and accumulated usage ride the
       # returned state, and the engine publishes it at the turn boundary.
       loop_fn.(state)
@@ -772,17 +766,21 @@ defmodule EvoGit.Agent.ToolDispatch do
   # `base_commit` is set, archive refs/row when archiving), so every downstream
   # consumer is oblivious to how the agent finished.
   defp build_completion(%State{} = state, result, commit_sha) do
-    # REGISTRATION METADATA ONLY: `phylo_node.base_commit` and the archive /
-    # model registration metadata are not all on `%State{}` yet, and the
-    # completion side effects (git note, archive refs/row) must stay
-    # byte-identical. No conversation/loop value is read from the row here —
-    # notably `compression_count` comes from the owned state.
+    # REGISTRATION METADATA ONLY: `base_commit` comes from the spec's phylo node
+    # captured at registration, and the archive/model registration metadata from
+    # the summary row; the completion side effects (git note, archive refs/row)
+    # must stay byte-identical. No conversation/loop value is read from ETS here
+    # — notably `compression_count` and `current_commit` come from the owned state.
     {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
+    {:ok, meta} = EvoGit.AgentScheduler.Store.get_sched_meta(state.agent_id)
 
-    # Repo-less agents have a nil phylo_node — passing nil base_commit is safe:
+    # Repo-less agents have no spec phylo node — passing nil base_commit is safe:
     # Completion.complete/4 guards git-note/archive writes on base_commit
     # being truthy, so both are skipped for repo-less agents.
-    base_commit = if Process.get(:repo_less), do: nil, else: agent_state.phylo_node.base_commit
+    base_commit =
+      if Process.get(:repo_less),
+        do: nil,
+        else: meta.spec.phylo_node && meta.spec.phylo_node.base_commit
 
     Completion.complete(
       state.agent_id,

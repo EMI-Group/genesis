@@ -353,6 +353,7 @@ defmodule EvoGit.Agent.Session.Setup do
         depth: fetch_field!(ctx, :depth),
         node_path: node_path,
         repo_path: repo_path,
+        current_commit: get_field(ctx, :current_commit),
         context: context,
         max_turns: max_turns,
         skill_schemas: skill_schemas,

@@ -67,8 +67,8 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     * `:repo_root` — absolute path to the repo root (string | nil)
     * `:context_path` — the spatial node path the agent is targeting (string)
     * `:worktree` — path to the assigned worktree (string | nil)
-    * `:current_commit` — current git commit SHA (string)
-    * `:base_commit` — base git commit SHA (string)
+    * `:current_commit` — the commit the agent's session last observed (string | nil)
+    * `:base_commit` — the spec's base commit captured at registration (string | nil)
     * `:task_id` — task group ID string (string | nil)
     * `:task_number` — short task number for naming (integer | nil)
     * `:retries` — crash-retry count (integer)
@@ -82,9 +82,10 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @spec list_agents() :: [map()]
   def list_agents do
     sched_metas = read_table(:evogit_sched_meta)
+    states = agent_states_by_id()
 
     Enum.map(sched_metas, fn {id, meta} ->
-      build_agent_summary(id, meta, projected_agent_state(id))
+      build_agent_summary(id, meta, Map.get(states, id))
     end)
   end
 
@@ -116,34 +117,23 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   """
   @spec get_agent_history(agent_id :: pos_integer()) :: [ReqLLM.Message.t()]
   def get_agent_history(agent_id) do
-    case lookup_agent_state(agent_id) do
-      nil ->
-        []
-
-      %AgentState{context: nil} ->
-        []
-
-      %AgentState{context: %ReqLLM.Context{messages: messages}} ->
-        messages
-    end
+    # The conversation lives ONLY in the session (the summary row carries no
+    # context); a gone/unresponsive session answers `[]` after its 5 s deadline.
+    EvoGit.Agent.Session.history(agent_id)
   end
 
   @doc """
-  Returns the native `%AgentState{}` struct for the given id.
+  Returns the native `%AgentState{}` summary struct for the given id.
 
-  The `:context` field is dropped (it can be large — use
-  `get_agent_history/1` for conversation access). All other fields are kept
-  as native structs.
+  The row is the summary read model: it carries no conversation (use
+  `get_agent_history/1` for that). All fields are kept as native structs.
 
   Returns `nil` if the agent doesn't exist.
   """
   @spec get_agent_state(agent_id :: pos_integer()) :: AgentState.t() | nil
   def get_agent_state(agent_id) do
-    # Read through the Store so the CONTROL-PLANE values (pending queue, cancel
-    # flag, compression count) are projected onto the struct — the raw row never
-    # carries them (see `EvoGit.AgentScheduler.ControlPlane`).
     case EvoGit.AgentScheduler.Store.get_agent_state(agent_id) do
-      {:ok, %AgentState{} = state} -> %{state | context: nil}
+      {:ok, %AgentState{} = state} -> state
       {:ok, other} -> other
       :error -> nil
     end
@@ -1257,36 +1247,17 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     end
   end
 
-  # Looks up a single agent state by id.
-  # Returns `%AgentState{}` or `nil` (table missing or key not found).
-  defp lookup_agent_state(agent_id) do
+  # The roster's agent states, read with ONE value-returning `:ets.select/2`
+  # (never a `:tab2list/1` of the agent table) as `%{id => %AgentState{}}`.
+  defp agent_states_by_id do
     case :ets.whereis(:evogit_agent_summary) do
       :undefined ->
-        nil
+        %{}
 
       _ ->
-        case :ets.lookup(:evogit_agent_summary, agent_id) do
-          [{^agent_id, state}] -> state
-          [] -> nil
-        end
-    end
-  end
-
-  # The roster's per-agent state, read through `Store.get_agent_state/1` so the
-  # CONTROL-PLANE values are projected onto it — `compression_count` (and the
-  # pending queue / cancel flag) live in `EvoGit.AgentScheduler.ControlPlane`,
-  # not in the state row, so a raw row would always report a stale 0.
-  # Only a real `%AgentState{}` row is a usable summary source.
-  defp projected_agent_state(agent_id) do
-    case :ets.whereis(:evogit_agent_summary) do
-      :undefined ->
-        nil
-
-      _ ->
-        case EvoGit.AgentScheduler.Store.get_agent_state(agent_id) do
-          {:ok, %AgentState{} = state} -> state
-          _other -> nil
-        end
+        :evogit_agent_summary
+        |> :ets.select([{{:"$1", :"$2"}, [], [:"$1", :"$2"]}])
+        |> Map.new()
     end
   end
 
@@ -1335,11 +1306,6 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     usage = state.usage || Usage.zero()
     objective = state.objective || meta.spec.objective
 
-    # Prefer the live phylo_node (worktree-bound, advancing commit); fall back
-    # to the spec's phylo_node. For repo-less agents BOTH are nil (no worktree,
-    # no commits) — emit nil commits rather than crashing.
-    phylo = state.phylo_node || meta.spec.phylo_node
-
     # Normalized once so the dashboard tick (compression_threshold /
     # context_window) and the threshold itself can never disagree.
     context_window = normalize_context_window(state.llm_context_window)
@@ -1354,11 +1320,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       usage: usage,
       total_tokens: state.total_tokens,
       compression_count: state.compression_count,
-      message_count:
-        case state.context do
-          %ReqLLM.Context{messages: messages} -> length(messages)
-          _ -> 0
-        end,
+      message_count: state.message_count,
       objective: objective,
       result: nil,
       agent_module: meta.spec.agent_module,
@@ -1370,8 +1332,8 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       repo_root: state.repo_root,
       context_path: safe_context_path(state.context_node),
       worktree: meta.worktree,
-      current_commit: safe_phylo_commit(phylo, :current_commit),
-      base_commit: safe_phylo_commit(phylo, :base_commit),
+      current_commit: state.current_commit,
+      base_commit: safe_phylo_commit(meta.spec.phylo_node, :base_commit),
       task_id: meta.task_id,
       task_number: meta.task_number,
       retries: meta.retries,

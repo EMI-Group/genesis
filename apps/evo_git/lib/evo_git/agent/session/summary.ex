@@ -4,15 +4,23 @@ defmodule EvoGit.Agent.Session.Summary do
 
   A session owns its `%EvoGit.Agent.State{}`; the summary table is the
   DASHBOARD-FACING read model (the same rows `EvoGit.AgentScheduler.Store`
-  already serves today). `publish/3` copies only the summary-relevant fields of
-  a state onto the EXISTING row, so nothing here forms a second source of truth
-  and no ETS/broadcast logic is re-implemented — every write funnels through
+  already serves). `publish/3` copies EVERY summary field of a state onto the
+  EXISTING row, so nothing here forms a second source of truth and no
+  ETS/broadcast logic is re-implemented — every write funnels through
   `EvoGit.AgentScheduler.Store.put_agent_state/2`.
 
-  Notably `context` is deliberately NOT touched: it is still on the row today
-  (the turn loop reads it), and a later checkpoint deletes that field. Merging
-  onto the existing row instead of building a fresh struct is what keeps that
-  transition forward-compatible.
+  It NEVER writes `context`: the row carries no conversation, which stays owned
+  by the session (served by `EvoGit.Agent.Session.history/2`). Merging onto the
+  existing row instead of building a fresh struct keeps the registration-only
+  fields (`objective`, model selection, `repo_*`, limits) intact.
+
+  Two bounds shape the published fields:
+
+    * `objective_preview` is the objective truncated to at most 4_096 characters
+      with an UTF-8-safe `String.slice/3` (a preview, never the full text);
+    * a publish whose merged row is UNCHANGED (compared excluding
+      `:last_activity_at`) is a NO-OP — nothing is written and `:ok` is
+      returned, so `last_activity_at` only advances on a real change.
 
   Every function is TOTAL: a missing table, a missing row or a malformed row is
   never an error and never raises.
@@ -24,12 +32,16 @@ defmodule EvoGit.Agent.Session.Summary do
 
   @table :evogit_agent_summary
 
+  # The preview never carries more than this many characters of the objective.
+  @objective_preview_limit 4_096
+
   @doc """
   Publishes `state`'s summary fields onto the existing row for `agent_id`.
 
   Returns `:ok` always: a missing row (or a missing table) is a NO-OP, because
   a session never owns row creation — the scheduler registers the row before a
-  session can exist.
+  session can exist. A row that would not change (ignoring `last_activity_at`)
+  is not written either.
 
   `extra` keys override the derived fields (`:status`, `:current_commit`) and
   then any remaining key is applied as a plain struct update (e.g.
@@ -40,7 +52,7 @@ defmodule EvoGit.Agent.Session.Summary do
   def publish(agent_id, %State{} = state, extra \\ []) do
     case read(agent_id) do
       nil -> :ok
-      %AgentState{} = row -> persist(agent_id, merge(row, state, extra))
+      %AgentState{} = row -> maybe_persist(agent_id, row, merge(row, state, extra))
     end
   end
 
@@ -75,10 +87,14 @@ defmodule EvoGit.Agent.Session.Summary do
     end
   end
 
-  defp persist(agent_id, %AgentState{} = row) do
-    # `put_agent_state/2` broadcasts the delta and resets the control-plane
-    # fields; it returns `:ok` for every write.
-    Store.put_agent_state(agent_id, row)
+  # A publish that would not change the row is a NO-OP: `last_activity_at` is
+  # excluded from the comparison, so it only advances on a real change.
+  defp maybe_persist(agent_id, old_row, new_row) do
+    if Map.delete(old_row, :last_activity_at) == Map.delete(new_row, :last_activity_at) do
+      :ok
+    else
+      Store.put_agent_state(agent_id, new_row)
+    end
   end
 
   # Merges the derived summary fields, then the `extra` overrides on top of the
@@ -88,14 +104,17 @@ defmodule EvoGit.Agent.Session.Summary do
 
     row
     |> Map.merge(%{
+      mode: state.mode,
       turn: state.turn,
       message_count: message_count(state),
       usage: state.usage,
       total_tokens: state.total_tokens,
       compression_count: state.compression_count,
+      context_window: state.llm_context_window,
+      objective_preview: objective_preview(state.objective),
       last_activity_at: DateTime.utc_now(),
       status: Map.get(extra, :status, row.status),
-      current_commit: Map.get(extra, :current_commit, row.current_commit)
+      current_commit: Map.get(extra, :current_commit, state.current_commit)
     })
     |> apply_updates(Map.drop(extra, [:status, :current_commit]))
   end
@@ -110,6 +129,13 @@ defmodule EvoGit.Agent.Session.Summary do
     do: length(messages)
 
   defp message_count(_state), do: 0
+
+  # `String.slice/3` counts GRAPHEMES, so the truncation can never split a
+  # multi-byte codepoint.
+  defp objective_preview(objective) when is_binary(objective),
+    do: String.slice(objective, 0, @objective_preview_limit)
+
+  defp objective_preview(_objective), do: nil
 
   defp table?, do: :ets.whereis(@table) != :undefined
 end

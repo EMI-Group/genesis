@@ -295,8 +295,8 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   — `Git.clean`/`Git.checkout` against a plain unregistered dir would act on
   the repo's MAIN working copy, moving its HEAD onto the agent branch (the
   foreign-repo main-HEAD leak). Then cleans the worktree, checks out the
-  agent's branch, and updates the agent's phylo_node with the worktree-bound
-  repo path.
+  agent's branch, and records the worktree-bound commit on the agent's summary
+  row.
 
   Returns `{:ok, commit_sha}` or `{:error, {:worktree_prepare_failed, ...}}`
   (the guard failure shape is `{:error, {:worktree_prepare_failed,
@@ -315,14 +315,9 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     with :ok <- ensure_linked_worktree(wt, repo_root),
          {:ok, _} <- Git.clean(wt),
          {:ok, _} <- Git.checkout(wt, branch_name) do
-      # Build the worktree-bound phylo_node (repo points to worktree)
-      wt_phylo_node = %EvoGit.Core.PhyloGraphNode{
-        repo: wt,
-        base_commit: spec.phylo_node.base_commit,
-        current_commit: commit_sha
-      }
-
-      Store.put_agent_state(agent_id, %AgentState{agent_state | phylo_node: wt_phylo_node})
+      # The worktree is prepared at `commit_sha`: record it as the agent's
+      # current commit (registration write — the session publishes it onwards).
+      Store.put_agent_state(agent_id, %AgentState{agent_state | current_commit: commit_sha})
 
       {:ok, commit_sha}
     else

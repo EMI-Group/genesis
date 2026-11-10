@@ -127,11 +127,10 @@ defmodule EvoGit.Agent.SubagentProcessing do
         ) :: [AgentSpec.t() | {:error, {map(), non_neg_integer(), String.t()}}]
   def build_subagent_specs(indexed_calls, state, foreign_repo_commits \\ %{})
       when is_list(indexed_calls) and is_map(foreign_repo_commits) do
-    # REGISTRATION METADATA ONLY: `phylo_node` (and its `current_commit`) is not
-    # a `%State{}` field yet, so the parent's phylo node still comes from the
-    # scheduler row. Every LOOP value below (repo identity, selection identity,
-    # archive flag) is read from the owned `state`.
-    {:ok, parent_state} = AgentScheduler.get_agent_state(state.agent_id)
+    # Every value below is read from the OWNED `%State{}` — repo identity,
+    # selection identity, archive flag and the parent's live commit. The
+    # `:evogit_sched_meta` spec is registration metadata used only for the
+    # original spawn opts.
     repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
     parent_repo_id = state.repo_id
     # Get foreign repos from the agent's inherited state (per-task, not global)
@@ -204,7 +203,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
                  repo_path,
                  target_repo_root,
                  foreign_repo_commits,
-                 parent_state,
+                 state,
                  foreign_repos,
                  same_repo?
                ) do
@@ -666,7 +665,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
          repo_path,
          _target_repo_root,
          _foreign_repo_commits,
-         parent_state,
+         parent,
          _foreign_repos,
          true
        ) do
@@ -688,11 +687,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
            "Error: The specified commit ID '#{commit_id}' does not exist in the repository. Please verify the commit SHA is correct and exists in the current repository's git history. Git error: #{msg}"}
       end
     else
-      # REGISTRATION METADATA ONLY — `phylo_node` is not a `%State{}` field yet in
-      # P1: read the parent's live scheduler row instead (the parent is the agent
-      # currently spawning this subagent, so its row was already loaded into
-      # `parent_state` at the top of `build_subagent_specs/3`).
-      base = parent_state.phylo_node.current_commit
+      # The parent's LIVE commit comes from the OWNED `%State{}` it carries into
+      # this spawn (`state`), never from the summary row.
+      base = parent.current_commit
 
       {:ok,
        %PhyloGraphNode{
@@ -709,7 +706,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
          _repo_path,
          target_repo_root,
          foreign_repo_commits,
-         _parent_state,
+         _parent,
          foreign_repos,
          false
        ) do
