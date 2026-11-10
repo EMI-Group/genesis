@@ -39,6 +39,15 @@ The repo-less path never loads foreign repos: no `load_foreign_repos/2`, `ensure
 Because `build_spec/2` drops only `:objective`/`:source_root`/`:node_path`, a `:foreign_repos` key supplied by a direct API caller WOULD pass through UNVALIDATED into `AgentSpec.foreign_repos`; it is inert because `repo_less: true` short-circuits repo-root resolution (`Dispatch.resolve_repo_less_root/0`) and the tool layer blocks writes.
 Source cloning/validation belongs to `../self_reflective_source.ex`, task-type dispatch to `../task_registry/`, tool/evaluation policy to `../agents/` and `../agent/`, and repo-less filesystem/identity enforcement to `../agent_scheduler/`, not this runtime wrapper.
 
+### SelfReflective Single-Shot Semantics (one agent run per task)
+A reflect task is ONE agent run: `run/2` calls `AgentScheduler.run_agent/1` once (`self_reflective.ex:58`) and returns with it — nothing here accepts a follow-up turn or a second user message into that agent.
+The run itself ends on the completion protocol: a reply with no tool calls is the result (`ToolDispatch` `{:implicit_completion, ...}` → `EvoGit.Agent.Completion`), so no persistent conversation object exists.
+After completion the scheduler's `recycle_agent/2` deletes the agent's ETS state (`../agent_scheduler/lifecycle.ex:33-34`), so a later `AgentScheduler.send_user_message/2` → `Store.append_pending_user_message/2` answers `{:error, :not_found}` (`../agent_scheduler/store.ex:196-207`) — a finished reflect agent cannot receive another message.
+The task then terminates and is persisted: `TaskRegistry.handle_wrapper_result/3` maps `{:ok, _}` → `:completed` (`../task_registry.ex:1872-1921`) and writes `status`/`result` (`:1077`), broadcast on `"tasks"`; the per-task tmpdir is reclaimed (`:1141`).
+`resume_from` / `ResumeContext.apply_resume_context/3` is reachable ONLY from `do_execute_task(:evolve, ...)` (`../task_registry/task_executor.ex:84-93`); `do_execute_task(:reflect, ...)` never reads `:resume_from` (`:130-139`), so a supplied `:resume_from` (e.g. via `StartTask.start_task/2`, which forwards it for EVERY type, `../agent/tools/start_task.ex:31,48`) is inert for reflect.
+Multi-turn chat is a DASHBOARD construct, not runtime state: each chat send starts a NEW `:reflect` task and injects prior turns as TEXT inside the objective (`apps/evo_dash/lib/evo_dash_web/live/home_live.ex:1062-1066` via `Transcript.build_preamble/2`), while `ChatHistory` restores only UI state.
+No runtime opt injects prior chat turns: `build_spec/2` drops only `:objective`/`:source_root`/`:node_path`, and nothing under `../agent/` reads a `:messages`/`:history`/`:conversation` opt.
+
 ### `Genesis.run/2` — Steps
 
 1. `repo_path` = `opts[:repo_path]` (default `File.cwd!()`) through `EvoGit.Platform.safe_expand/1` (UNC-preserving).
