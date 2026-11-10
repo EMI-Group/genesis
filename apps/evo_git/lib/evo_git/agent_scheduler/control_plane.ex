@@ -2,7 +2,7 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
   @moduledoc """
   The per-agent CONTROL PLANE — every value a process OTHER than the agent writes.
 
-  The `:evogit_agent_state` row has exactly ONE writer: the agent process itself
+  The `:evogit_agent_summary` row has exactly ONE writer: the agent process itself
   (see `EvoGit.AgentScheduler.Store.put_agent_state/2`). Everything the
   scheduler, a dashboard or an RPC caller writes ABOUT a live agent lives in the
   two app-owned tables this module owns, so a cross-process control write never
@@ -34,14 +34,14 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
   (dashboard, `RemoteAPI`, tool dispatch/archive, tests) keeps reading ONE
   struct while the values themselves are written atomically here.
   An agent that has no control/inbox rows yet (a legacy or fixture row seeded
-  directly into `:evogit_agent_state`) reads back its own stored values.
+  directly into `:evogit_agent_summary`) reads back its own stored values.
   """
 
   alias EvoGit.Attachments
 
   @inbox :evogit_agent_inbox
   @control :evogit_agent_control
-  @agent_table :evogit_agent_state
+  @agent_table :evogit_agent_summary
 
   @typedoc "The queue tolerates both message shapes (see `Store.append_pending_user_message/2`)."
   @type message :: String.t() | Attachments.message()

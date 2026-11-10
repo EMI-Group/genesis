@@ -393,7 +393,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       reference = fixture_repo(Path.join(tmp_dir, "reference"))
 
       ensure_ets_table(:evogit_sched_meta)
-      ensure_ets_table(:evogit_agent_state)
+      ensure_ets_table(:evogit_agent_summary)
 
       on_exit(fn ->
         File.rm_rf!(primary)
@@ -402,7 +402,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
         for id <- [9000, 9100, 9101] do
           :ets.delete(:evogit_sched_meta, id)
-          :ets.delete(:evogit_agent_state, id)
+          :ets.delete(:evogit_agent_summary, id)
         end
       end)
 
@@ -420,7 +420,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       parent_meta = %{base_sched_meta(9000, %{}) | depth: 0}
       :ets.insert(:evogit_sched_meta, {9000, parent_meta})
 
-      :ets.insert(:evogit_agent_state, {
+      :ets.insert(:evogit_agent_summary, {
         9000,
         parent_state(path: "./", repo: primary, repo_id: "primary")
       })
@@ -444,7 +444,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       assert updated.sub_agent_indices == %{9100 => 0}
 
       # The accepted spec was registered and dispatched
-      assert :ets.lookup(:evogit_agent_state, 9100) != []
+      assert :ets.lookup(:evogit_agent_summary, 9100) != []
       assert :ets.lookup_element(:evogit_sched_meta, 9100, 2).parent_id == 9000
     end
 
@@ -456,7 +456,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       parent_meta = %{base_sched_meta(9000, %{}) | depth: 0}
       :ets.insert(:evogit_sched_meta, {9000, parent_meta})
 
-      :ets.insert(:evogit_agent_state, {
+      :ets.insert(:evogit_agent_summary, {
         9000,
         parent_state(path: "./", repo: primary, repo_id: "primary")
       })
@@ -493,7 +493,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       assert msg =~ "Manager"
 
       # The rejected second spec was never registered
-      assert :ets.lookup(:evogit_agent_state, 9101) == []
+      assert :ets.lookup(:evogit_agent_summary, 9101) == []
     end
 
     test "accepts multiple same-repo writable specs within a foreign repo (no serialization)", %{
@@ -502,7 +502,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       parent_meta = %{base_sched_meta(9000, %{}) | depth: 1}
       :ets.insert(:evogit_sched_meta, {9000, parent_meta})
 
-      :ets.insert(:evogit_agent_state, {
+      :ets.insert(:evogit_agent_summary, {
         9000,
         parent_state(path: "./", repo: original, repo_id: "original")
       })
@@ -540,8 +540,8 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       assert updated.sub_agent_indices == %{9100 => 0, 9101 => 1}
 
       # BOTH specs were registered
-      assert :ets.lookup(:evogit_agent_state, 9100) != []
-      assert :ets.lookup(:evogit_agent_state, 9101) != []
+      assert :ets.lookup(:evogit_agent_summary, 9100) != []
+      assert :ets.lookup(:evogit_agent_summary, 9101) != []
     end
   end
 
@@ -551,7 +551,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
     setup do
       # Ensure ETS tables exist (app may already create them)
       ensure_ets_table(:evogit_sched_meta)
-      ensure_ets_table(:evogit_agent_state)
+      ensure_ets_table(:evogit_agent_summary)
 
       on_exit(fn ->
         # Clean up test entries (don't delete the tables themselves)
@@ -827,13 +827,13 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
   describe "error paths — recycled parent entries" do
     setup do
       ensure_ets_table(:evogit_sched_meta)
-      ensure_ets_table(:evogit_agent_state)
+      ensure_ets_table(:evogit_agent_summary)
 
       on_exit(fn ->
         :ets.delete(:evogit_sched_meta, 9000)
         :ets.delete(:evogit_sched_meta, 9001)
         :ets.delete(:evogit_sched_meta, 9002)
-        :ets.delete(:evogit_agent_state, 9000)
+        :ets.delete(:evogit_agent_summary, 9000)
       end)
 
       :ok

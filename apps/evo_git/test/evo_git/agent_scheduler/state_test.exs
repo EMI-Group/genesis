@@ -20,7 +20,7 @@ defmodule EvoGit.AgentScheduler.StateTest do
   grant replies. Each test builds a `%State{}` in-process and calls the
   `State`/`Slots` functions directly — no live scheduler GenServer. The
   exercised code paths only READ the global named ETS tables (`Store`:
-  `:evogit_agent_state` for the model id, `:evogit_sched_meta` for depth /
+  `:evogit_agent_summary` for the model id, `:evogit_sched_meta` for depth /
   sched-meta status) and never write them, so no concurrently running module
   can observe state written here — hence `async: true`.
   """

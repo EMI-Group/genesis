@@ -2,7 +2,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   @moduledoc """
   `async: true` — the two `build_subagent_specs/3` describes insert/delete ONE
   parent `AgentState` row apiece in the app-owned BEAM-global
-  `:evogit_agent_state` ETS table, under a per-test unique agent id from this
+  `:evogit_agent_summary` ETS table, under a per-test unique agent id from this
   file's own id range (deleted on exit). Nothing is asserted about either table
   as a whole, so the writes are concurrent-safe; the remaining tests use
   per-test `:tmp_dir` git repos.
@@ -435,8 +435,8 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     setup do
       # Ensure the ETS table exists (app may already create it)
-      if :ets.whereis(:evogit_agent_state) == :undefined do
-        :ets.new(:evogit_agent_state, [:set, :public, :named_table])
+      if :ets.whereis(:evogit_agent_summary) == :undefined do
+        :ets.new(:evogit_agent_summary, [:set, :public, :named_table])
       end
 
       agent_id = 9_900_000 + :erlang.unique_integer([:positive])
@@ -455,14 +455,14 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         model_id: "claude-sonnet"
       }
 
-      :ets.insert(:evogit_agent_state, {agent_id, parent_state})
+      :ets.insert(:evogit_agent_summary, {agent_id, parent_state})
 
       # Set the repo_path in the process dictionary
       previous_repo_path = Process.get(:repo_path)
       Process.put(:repo_path, "/test/repo")
 
       on_exit(fn ->
-        :ets.delete(:evogit_agent_state, agent_id)
+        :ets.delete(:evogit_agent_summary, agent_id)
         # Restore previous repo_path
         if previous_repo_path do
           Process.put(:repo_path, previous_repo_path)
@@ -512,7 +512,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         model_id: "default"
       }
 
-      :ets.insert(:evogit_agent_state, {agent_id, parent_state})
+      :ets.insert(:evogit_agent_summary, {agent_id, parent_state})
 
       state = %State{
         agent_id: agent_id,
@@ -613,8 +613,8 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     setup do
       # Ensure the ETS tables exist (app may already create them)
-      if :ets.whereis(:evogit_agent_state) == :undefined do
-        :ets.new(:evogit_agent_state, [:set, :public, :named_table])
+      if :ets.whereis(:evogit_agent_summary) == :undefined do
+        :ets.new(:evogit_agent_summary, [:set, :public, :named_table])
       end
 
       if :ets.whereis(:evogit_sched_meta) == :undefined do
@@ -637,14 +637,14 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         model_id: "claude-sonnet"
       }
 
-      :ets.insert(:evogit_agent_state, {agent_id, parent_state})
+      :ets.insert(:evogit_agent_summary, {agent_id, parent_state})
 
       # Set the repo_path in the process dictionary
       previous_repo_path = Process.get(:repo_path)
       Process.put(:repo_path, "/test/repo")
 
       on_exit(fn ->
-        :ets.delete(:evogit_agent_state, agent_id)
+        :ets.delete(:evogit_agent_summary, agent_id)
         # Restore previous repo_path
         if previous_repo_path do
           Process.put(:repo_path, previous_repo_path)
@@ -865,7 +865,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       # resolve_subagent_path/4 both read.
       Process.put(:repo_path, foreign_root)
       {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
-      :ets.insert(:evogit_agent_state, {agent_id, %{agent_state | repo_id: "orig"}})
+      :ets.insert(:evogit_agent_summary, {agent_id, %{agent_state | repo_id: "orig"}})
 
       state = %State{
         agent_id: agent_id,
@@ -894,7 +894,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
       Process.put(:repo_path, foreign_root)
       {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
-      :ets.insert(:evogit_agent_state, {agent_id, %{agent_state | repo_id: "orig"}})
+      :ets.insert(:evogit_agent_summary, {agent_id, %{agent_state | repo_id: "orig"}})
 
       state = %State{
         agent_id: agent_id,

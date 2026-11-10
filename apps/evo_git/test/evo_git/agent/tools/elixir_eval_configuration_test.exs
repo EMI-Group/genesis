@@ -115,7 +115,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.ConfigurationTest do
     end
 
     test "numeric writes acknowledge only normalized requested runtime settings", ctx do
-      [{_, agent_before}] = :ets.lookup(:evogit_agent_state, ctx.fixture.agent_id)
+      [{_, agent_before}] = :ets.lookup(:evogit_agent_summary, ctx.fixture.agent_id)
 
       settings = %{
         default_llm_max_concurrency: 5,
@@ -138,7 +138,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.ConfigurationTest do
                {:ok, "Result: " <> inspect(Map.merge(@baseline, settings))}
 
       # Turn limits affect future registrations, never rewrite the live agent.
-      assert :ets.lookup(:evogit_agent_state, ctx.fixture.agent_id) ==
+      assert :ets.lookup(:evogit_agent_summary, ctx.fixture.agent_id) ==
                [{ctx.fixture.agent_id, agent_before}]
 
       assert_config_unchanged(ctx)

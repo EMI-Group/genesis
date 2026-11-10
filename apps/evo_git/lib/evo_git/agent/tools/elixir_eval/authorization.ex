@@ -124,7 +124,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
     # The scheduler represents an unset/cleared cancellation flag as nil.
     guards = [{:orelse, {:"=:=", :"$1", false}, {:"=:=", :"$1", nil}}]
 
-    match?({[true], _}, :ets.select(:evogit_agent_state, [{pattern, guards, [true]}], 1)) and
+    match?({[true], _}, :ets.select(:evogit_agent_summary, [{pattern, guards, [true]}], 1)) and
       not EvoGit.AgentScheduler.ControlPlane.cancel_requested?(id)
   end
 

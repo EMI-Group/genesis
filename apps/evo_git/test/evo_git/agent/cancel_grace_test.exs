@@ -29,7 +29,7 @@ defmodule EvoGit.Agent.CancelGraceTest do
   `EvoGit.Agent.ToolDispatch.process_llm_response/6` end to end: it completes
   through `EvoGit.Agent.Completion`, which still reads
   `phylo_node.base_commit`/archive metadata from ETS, so THAT case seeds ONE row
-  in the app-global named `:evogit_agent_state` table under a per-test unique
+  in the app-global named `:evogit_agent_summary` table under a per-test unique
   agent id from this file's own id range and deletes exactly that row on exit;
   nothing is asserted about the table as a whole, so the writes are
   concurrent-safe.
@@ -93,7 +93,7 @@ defmodule EvoGit.Agent.CancelGraceTest do
   end
 
   setup do
-    create_ets_if_missing(:evogit_agent_state)
+    create_ets_if_missing(:evogit_agent_summary)
     create_ets_if_missing(:evogit_sched_meta)
     :ok
   end

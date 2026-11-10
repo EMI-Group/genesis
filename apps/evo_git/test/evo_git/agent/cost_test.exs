@@ -5,7 +5,7 @@ defmodule EvoGit.Agent.CostTest do
 
     * `recompute_for_agent/2` / `apply_to_usage/3` read the GLOBAL
       `EvoGit.AgentScheduler` (`get_agent_state/1` → the app-owned
-      `:evogit_agent_state` ETS table), and the positive-path tests here
+      `:evogit_agent_summary` ETS table), and the positive-path tests here
       insert/delete rows in that table;
     * `period_for_model_id/1` reads the scheduler's LIVE `:model_profiles`
       config, so its tests temporarily REPLACE that list (restored on exit)
@@ -465,7 +465,7 @@ defmodule EvoGit.Agent.CostTest do
     :ok = AgentScheduler.update_config(model_profiles: profiles)
   end
 
-  # Registers an agent in the app-global `:evogit_agent_state` ETS table (the
+  # Registers an agent in the app-global `:evogit_agent_summary` ETS table (the
   # `EvoGit.AgentScheduler.get_agent_state/1` source) and removes it on exit.
   defp register_agent!(agent_id, attrs) do
     state =

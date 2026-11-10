@@ -204,7 +204,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
     api_key: ...}` makes the real ReqLLM stack produce a genuine
     `%ReqLLM.Response{}`. Its one-off `LLMDB.load/1` catalog decode is paid once
     in `setup_all/1`, never per test.
-  * Agents are registered in the app-global `:evogit_agent_state` ETS table via
+  * Agents are registered in the app-global `:evogit_agent_summary` ETS table via
     `EvoGit.AgentScheduler.Store.put_agent_state/2` (unique ids, deleted in
     `on_exit`), and the per-agent model is bound by that row — so the LLM slot
     request resolves to the pinned single-profile pool.
@@ -213,7 +213,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
 
   Serialized (`async: false`): the suite drives the global
   `EvoGit.AgentScheduler` (config update for a deterministic slot pool), the
-  app-global `:evogit_agent_state` ETS table, and the scheduler's LLM slot pool.
+  app-global `:evogit_agent_summary` ETS table, and the scheduler's LLM slot pool.
   """
   use ExUnit.Case, async: false
 

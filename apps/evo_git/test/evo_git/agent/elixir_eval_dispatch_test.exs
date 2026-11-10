@@ -226,8 +226,8 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
     code = "File.write!(#{inspect(path)}, \"unexpected\")"
     owner = start_batch(ctx, [eval(code, "sudo"), eval("42")])
     request = approval!(ctx, code, :sudo)
-    [{id, state}] = :ets.lookup(:evogit_agent_state, owner.agent_id)
-    :ets.insert(:evogit_agent_state, {id, %{state | cancel_requested: true}})
+    [{id, state}] = :ets.lookup(:evogit_agent_summary, owner.agent_id)
+    :ets.insert(:evogit_agent_summary, {id, %{state | cancel_requested: true}})
     assert :ok = CommandApproval.respond(request.request_id, :approve)
     results = finish(owner)
     assert output(results, 0) =~ @denied
@@ -370,12 +370,12 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
     }
 
     meta = Keyword.get(opts, :meta, &Function.identity/1).(meta)
-    :ets.insert(:evogit_agent_state, {id, state})
+    :ets.insert(:evogit_agent_summary, {id, state})
     :ets.insert(:evogit_sched_meta, {id, meta})
 
     on_exit(fn ->
       if Process.alive?(task.pid), do: Process.exit(task.pid, :kill)
-      :ets.delete(:evogit_agent_state, id)
+      :ets.delete(:evogit_agent_summary, id)
       :ets.delete(:evogit_sched_meta, id)
     end)
 

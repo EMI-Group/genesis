@@ -23,7 +23,7 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
   """
   # async: false — WorktreeManager is a named singleton GenServer with shared
   # state across tests, the tests manipulate the global named ETS tables
-  # (:evogit_agent_state / :evogit_sched_meta), and the two seams above are
+  # (:evogit_agent_summary / :evogit_sched_meta), and the two seams above are
   # global app env.
   use ExUnit.Case, async: false
 
@@ -121,7 +121,7 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
     # real git work is the manager's init/cleanup.
     EvoGit.GitEnv.prime_config_identity_cache(tmp_dir, "Genesis", "noreply@evogit.ai")
 
-    create_ets_if_missing(:evogit_agent_state)
+    create_ets_if_missing(:evogit_agent_summary)
     create_ets_if_missing(:evogit_sched_meta)
     # The WorktreeManager's persistent per-repo init-marker table. The app owns
     # it (created in EvoGit.Application.start/2); create it only as a fallback
@@ -532,8 +532,8 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
   end
 
   defp clear_ets do
-    if :ets.whereis(:evogit_agent_state) != :undefined,
-      do: :ets.delete_all_objects(:evogit_agent_state)
+    if :ets.whereis(:evogit_agent_summary) != :undefined,
+      do: :ets.delete_all_objects(:evogit_agent_summary)
 
     if :ets.whereis(:evogit_sched_meta) != :undefined,
       do: :ets.delete_all_objects(:evogit_sched_meta)

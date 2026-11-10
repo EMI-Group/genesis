@@ -75,7 +75,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
   sibling `tool_output_integration_test.exs`, so the two must never overlap) and
   the process-wide `XDG_CONFIG_HOME` redirect the timeout describe uses to pin
   `[:scheduler, :default_tool_timeout]`. Concurrent-safe on its own: agent state
-  rows go into the app-global `:evogit_agent_state` table under per-test unique
+  rows go into the app-global `:evogit_agent_summary` table under per-test unique
   ids (deleted on exit) and the global `EvoGit.AgentScheduler` only supplies
   tool slots.
   """

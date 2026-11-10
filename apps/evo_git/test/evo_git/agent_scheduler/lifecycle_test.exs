@@ -4,7 +4,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
   the cancellation logic in `cancel_agent/2`, and the defensive handling for missing ETS entries.
 
   Uses `async: true`: every row the module seeds lives in the app-global named
-  ETS tables (`:evogit_agent_state`, `:evogit_sched_meta` and
+  ETS tables (`:evogit_agent_summary`, `:evogit_sched_meta` and
   `:evogit_cancelling_tasks`), so it writes ONLY under per-test UNIQUE agent ids
   (`unique_agent_id/0`, its own 9_700_000+ range) and never wipes a table — a
   whole-table delete would destroy a concurrently running module's rows, and a
@@ -97,7 +97,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
   end
 
   defp put_agent_state(agent_id, state) do
-    :ets.insert(:evogit_agent_state, {agent_id, state})
+    :ets.insert(:evogit_agent_summary, {agent_id, state})
   end
 
   # Reads through the public Store API, which PROJECTS the control-plane values
@@ -131,7 +131,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
   # --- Setup ---
 
   setup do
-    create_ets_if_missing(:evogit_agent_state)
+    create_ets_if_missing(:evogit_agent_summary)
     create_ets_if_missing(:evogit_sched_meta)
     create_ets_if_missing(:evogit_cancelling_tasks)
     create_ets_if_missing(:evogit_agent_control)

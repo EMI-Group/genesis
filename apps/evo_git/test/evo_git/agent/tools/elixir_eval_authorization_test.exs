@@ -96,7 +96,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
           assert_receive {:DOWN, ^child_monitor, :process, ^child, :normal}, 15_000
           assert_receive {:DOWN, ^owner_monitor, :process, _, _}, 15_000
           assert_receive {:DOWN, ^supervisor_monitor, :process, _, ^shutdown_reason}, 15_000
-          assert :ets.lookup(:evogit_agent_state, fixture.agent_id) == []
+          assert :ets.lookup(:evogit_agent_summary, fixture.agent_id) == []
           assert :ets.lookup(:evogit_sched_meta, fixture.agent_id) == []
           assert Store.get_task(fixture.store, fixture.task_id) == nil
         after
@@ -119,7 +119,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
       assert_receive {:DOWN, ^tool_monitor, :process, _, _}, 15_000
       assert_receive {:DOWN, ^owner_monitor, :process, _, _}, 15_000
       assert_receive {:DOWN, ^supervisor_monitor, :process, _, :normal}, 15_000
-      assert :ets.lookup(:evogit_agent_state, fixture.agent_id) == []
+      assert :ets.lookup(:evogit_agent_summary, fixture.agent_id) == []
       assert :ets.lookup(:evogit_sched_meta, fixture.agent_id) == []
       assert Store.get_task(fixture.store, fixture.task_id) == nil
     end
@@ -135,7 +135,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
 
       assert :ok = Fixture.stop(fixture)
       assert :ok = Fixture.stop(fixture)
-      assert :ets.lookup(:evogit_agent_state, fixture.agent_id) == []
+      assert :ets.lookup(:evogit_agent_summary, fixture.agent_id) == []
       assert :ets.lookup(:evogit_sched_meta, fixture.agent_id) == []
       assert Store.get_task(fixture.store, fixture.task_id) == nil
     end
@@ -394,7 +394,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
     end
 
     test "missing live state fails closed", %{fixture: fixture} do
-      :ets.delete(:evogit_agent_state, fixture.agent_id)
+      :ets.delete(:evogit_agent_summary, fixture.agent_id)
       assert authorize(fixture) == @denied
     end
   end
@@ -619,7 +619,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
              {GenServer, :stop, [^supervisor, :normal, :infinity]}}} = result
 
     # A failed stop must not pretend teardown succeeded or erase evidence.
-    assert :ets.lookup(:evogit_agent_state, fixture.agent_id) != []
+    assert :ets.lookup(:evogit_agent_summary, fixture.agent_id) != []
     assert :ets.lookup(:evogit_sched_meta, fixture.agent_id) != []
     assert Store.get_task(fixture.store, fixture.task_id) != nil
     assert Fixture.stop(fixture) == :ok

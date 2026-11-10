@@ -14,7 +14,7 @@ defmodule EvoGit.Agent.ToolOutputPipelineTest do
   BINARY-ONLY and never see a `%ToolOutput{}`.
 
   `async: true` — the batch-assembly describe below registers ONE row in the
-  app-global `:evogit_agent_state` ETS table under a per-test unique agent id
+  app-global `:evogit_agent_summary` ETS table under a per-test unique agent id
   (deleted on exit, nothing asserted about the table as a whole) and takes tool
   slots from the global `EvoGit.AgentScheduler` (a serialized GenServer, not a
   global mutation). Everything else is process-local or per-test temp dirs.

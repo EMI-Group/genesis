@@ -58,7 +58,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
       `evogit-agent-*` task branches — get only the non-destructive prune +
       workers-dir ensure + init marker.
     * On restart, live agents are re-monitored from their scheduler ETS rows
-      (`:evogit_sched_meta` worktree + task_ref, `:evogit_agent_state`
+      (`:evogit_sched_meta` worktree + task_ref, `:evogit_agent_summary`
       repo_root + task_local_id), so `:DOWN`-driven cleanup keeps working for
       agents whose worktrees predate the crash.
 
@@ -781,7 +781,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   # the crash, but running agents' `:evogit_sched_meta` rows still carry their
   # live worktree path + `%Task{}` ref (Dispatch.try_dispatch/2 sets both
   # BEFORE the agent's Runner requests the worktree) and their
-  # `:evogit_agent_state` row carries `repo_root`/`task_local_id`. Re-monitor
+  # `:evogit_agent_summary` row carries `repo_root`/`task_local_id`. Re-monitor
   # them so `:DOWN`-driven cleanup keeps working for agents whose worktrees
   # predate the crash — otherwise their worktree dirs + branches leak until
   # the next full BEAM restart.

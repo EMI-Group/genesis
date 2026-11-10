@@ -73,7 +73,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       | task_agent_counts: Map.update(state.task_agent_counts, task_id, 1, &(&1 + 1))
     }
 
-    # Agent state table: live spatial/temporal state for the agent process
+    # Agent summary table: the agent process's read model (spatial/temporal state)
     # Resolve repo root from the spec's own data (avoids reading shared mutable state)
     agent_repo_root = resolve_agent_repo_root(spec, state)
 

@@ -30,7 +30,7 @@ defmodule EvoGit.Agent.ToolOutputIntegrationTest do
   `:evo_git, :tool_dispatch_test_tools` — a single key `Tools.execute/5` reads,
   also installed by the sibling `tool_dispatch_containment_test.exs`, so the two
   modules must never overlap. Everything else here is concurrent-safe: agent
-  state rows go into the app-global `:evogit_agent_state` table under per-test
+  state rows go into the app-global `:evogit_agent_summary` table under per-test
   unique ids (deleted on exit) and the global `EvoGit.AgentScheduler` only
   supplies tool slots (a serialized GenServer call, not a global mutation).
   """

@@ -4,12 +4,13 @@ defmodule EvoGit.AgentScheduler.Store do
 
   Centralizes read/write/delete operations on the three scheduler-owned ETS
   tables:
-  `:evogit_sched_meta` (scheduler metadata), `:evogit_agent_state` (the agent's
-  own live state) and the CONTROL PLANE — `:evogit_agent_inbox` +
-  `:evogit_agent_control`, owned by `EvoGit.AgentScheduler.ControlPlane`.
+  `:evogit_sched_meta` (scheduler metadata), `:evogit_agent_summary` (the agent
+  summary row — the read model of the agent's state) and the CONTROL PLANE —
+  `:evogit_agent_inbox` + `:evogit_agent_control`, owned by
+  `EvoGit.AgentScheduler.ControlPlane`.
 
   **One writer per row.** The agent process is the ONLY writer of its
-  `:evogit_agent_state` row. Everything another process writes about a live
+  `:evogit_agent_summary` row. Everything another process writes about a live
   agent (`pending_user_messages`, `cancel_requested`, `compression_count`) goes
   through `ControlPlane` with atomic ETS operations, so a cross-process write
   never read-modify-writes the whole struct and never loses the agent's own
@@ -33,7 +34,7 @@ defmodule EvoGit.AgentScheduler.Store do
   alias EvoGit.Attachments
   alias ReqLLM.Context
 
-  @agent_table :evogit_agent_state
+  @agent_table :evogit_agent_summary
   @sched_table :evogit_sched_meta
 
   # The three control-plane fields whose live values live in `ControlPlane`
@@ -113,11 +114,11 @@ defmodule EvoGit.AgentScheduler.Store do
   end
 
   # ---------------------------------------------------------------------------
-  # Agent State Table
+  # Agent Summary Table
   # ---------------------------------------------------------------------------
 
   @doc """
-  Reads the live agent state for the given agent ID.
+  Reads the agent summary row for the given agent ID.
   Returns `{:ok, %AgentState{}}` or `:error` if not found.
 
   The returned struct carries the PROJECTED control-plane values

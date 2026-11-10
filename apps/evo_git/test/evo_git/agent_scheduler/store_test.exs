@@ -6,7 +6,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
   code (`EvoGit.Agent.ContextBuilder`), never in the store.
 
   Uses `async: true`: the rows it seeds live in the app-global named ETS tables
-  (`:evogit_agent_state` and `:evogit_sched_meta`), so every test uses its own
+  (`:evogit_agent_summary` and `:evogit_sched_meta`), so every test uses its own
   `unique_agent_id/0` (its 9_950_000+ range) and never wipes a table. The
   `"agents"` PubSub topic (`PubSub.agent_topic`) of the global `EvoGit.PubSub`
   is shared, but every assertion matches on the agent id, so a sibling module's
@@ -76,7 +76,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
   # --- Setup ---
 
   setup do
-    create_ets_if_missing(:evogit_agent_state)
+    create_ets_if_missing(:evogit_agent_summary)
     create_ets_if_missing(:evogit_sched_meta)
     :ok
   end

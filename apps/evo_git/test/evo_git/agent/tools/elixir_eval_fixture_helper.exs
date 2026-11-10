@@ -120,7 +120,7 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
       status: :running
     }
 
-    true = :ets.insert(:evogit_agent_state, {agent_id, state})
+    true = :ets.insert(:evogit_agent_summary, {agent_id, state})
     true = :ets.insert(:evogit_sched_meta, {agent_id, meta})
     fixture
   end
@@ -169,9 +169,9 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
   end
 
   def update_state(fixture, fun) when is_function(fun, 1) do
-    [{id, current}] = :ets.lookup(:evogit_agent_state, fixture.agent_id)
+    [{id, current}] = :ets.lookup(:evogit_agent_summary, fixture.agent_id)
     %AgentState{} = updated = fun.(current)
-    true = :ets.insert(:evogit_agent_state, {id, updated})
+    true = :ets.insert(:evogit_agent_summary, {id, updated})
     updated
   end
 
@@ -192,7 +192,7 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
   def stop(fixture) do
     stop_supervisor(fixture.supervisor)
     Process.demonitor(fixture.owner.ref, [:flush])
-    delete_row(:evogit_agent_state, fixture.agent_id)
+    delete_row(:evogit_agent_summary, fixture.agent_id)
     delete_row(:evogit_sched_meta, fixture.agent_id)
 
     if GenServer.whereis(fixture.store) do

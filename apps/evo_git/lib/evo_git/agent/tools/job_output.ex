@@ -283,7 +283,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   # The scheduler-owned ETS table holding per-agent state (its `cancel_requested`
   # flag). Guarded with `:ets.whereis/1` before every probe — see
   # `cancel_requested?/1`.
-  @agent_state_table :evogit_agent_state
+  @agent_state_table :evogit_agent_summary
 
   # Returns `nil` (no wait requested) or the wait OUTCOME facts the renderer
   # turns into the marker line: how long the wait actually took, the CLAMPED
@@ -372,13 +372,13 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   # `cancel_requested` flag.
   #
   # TOTAL by construction, because it runs INSIDE a wait: no agent id (a
-  # non-agent caller), a non-integer id, an absent `:evogit_agent_state` table
+  # non-agent caller), a non-integer id, an absent `:evogit_agent_summary` table
   # (the app is shutting down) or a raise/exit out of the probe all mean "not
   # cancelled". Crashing here would turn a clean cancel into an `Error: …` string
   # instead of the delta + abort marker, and would fail a wait for a reason that
   # has nothing to do with the job.
   #
-  # The table is a PARAMETER (default `:evogit_agent_state`) so a test can probe
+  # The table is a PARAMETER (default `:evogit_agent_summary`) so a test can probe
   # the absent-table arm without deleting the app-owned singleton table.
   def cancel_requested?(table \\ @agent_state_table) do
     case Process.get(:evogit_agent_id) do

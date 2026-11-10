@@ -13,7 +13,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
       stored, and a malformed map raises the descriptive `ArgumentError`.
 
   Uses `async: true`: the rows it seeds live in the app-global named
-  `:evogit_agent_state` ETS table, so every test uses its own
+  `:evogit_agent_summary` ETS table, so every test uses its own
   `unique_agent_id/0` (its 9_950_000+ range) and never wipes the table. The
   `"agents"` PubSub topic of the global `EvoGit.PubSub` is shared, but every
   assertion matches on the agent id, so a sibling module's broadcast is benign.
@@ -60,7 +60,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
   end
 
-  # Per-test-unique agent id: `:evogit_agent_state` is app-global and shared
+  # Per-test-unique agent id: `:evogit_agent_summary` is app-global and shared
   # with every concurrently running `async: true` module, so this module never
   # reuses a small literal id and never wipes the table (see the moduledoc).
   defp unique_agent_id, do: 9_950_000 + System.unique_integer([:positive])
@@ -79,7 +79,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
   end
 
   setup do
-    create_ets_if_missing(:evogit_agent_state)
+    create_ets_if_missing(:evogit_agent_summary)
     create_ets_if_missing(:evogit_sched_meta)
     :ok
   end

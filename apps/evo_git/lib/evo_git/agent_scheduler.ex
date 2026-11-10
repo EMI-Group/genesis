@@ -21,8 +21,9 @@ defmodule EvoGit.AgentScheduler do
 
   Agent data is split across two ETS tables with clear ownership:
 
-  - **`:evogit_agent_state`** — Owned by agent processes. Contains the agent's
-    live spatial/temporal state (`context_node`, `phylo_node`).
+  - **`:evogit_agent_summary`** — Owned by agent processes. The agent summary row
+    (the read model of the agent's state): spatial/temporal state
+    (`context_node`, `phylo_node`).
     The scheduler writes initial values on dispatch; agents update `phylo_node`
     after each commit via `update_phylo_node/2`.
 
@@ -59,7 +60,7 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentSpec
   alias EvoGit.Core.PhyloGraphNode
 
-  @agent_table :evogit_agent_state
+  @agent_table :evogit_agent_summary
   @sched_table :evogit_sched_meta
 
   # --- Client API ---
@@ -267,7 +268,7 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
-  Reads the agent's live state from the agent state table.
+  Reads the agent summary row from the agent summary table.
   Called by agent processes every turn.
   """
   @spec get_agent_state(pos_integer()) :: {:ok, AgentState.t()} | :error
@@ -525,7 +526,7 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def init(opts) do
-    # ETS tables (:evogit_agent_state, :evogit_sched_meta)
+    # ETS tables (:evogit_agent_summary, :evogit_sched_meta)
     # are created by EvoGit.Application before the scheduler starts so they survive
     # scheduler crashes. Defensive check: warn if any table is unexpectedly missing.
     for table <- [@agent_table, @sched_table] do

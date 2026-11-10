@@ -246,7 +246,7 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   # where only a slot request is needed.
   #
   # `AgentScheduler.Slots.resolve_model_id/2` takes an agent's model pool from the
-  # app-global `:evogit_agent_state` ETS table and falls back to the scheduler's
+  # app-global `:evogit_agent_summary` ETS table and falls back to the scheduler's
   # DEFAULT model id only for an id with NO row at all. That table is VM-global
   # and shared with the whole suite, and sibling modules leave rows behind for
   # SMALL LITERAL ids — notably `agent_scheduler/slots_test.exs`, whose `on_exit`

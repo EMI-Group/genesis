@@ -203,11 +203,11 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   # agent id keeps the rows invisible to every other consumer, and they are
   # deleted afterwards.
   defp put_cancel_flag!(agent_id, value) do
-    :ets.insert(:evogit_agent_state, {agent_id, %{}})
+    :ets.insert(:evogit_agent_summary, {agent_id, %{}})
     :ok = EvoGit.AgentScheduler.Store.set_cancel_requested(agent_id, value)
 
     on_exit(fn ->
-      :ets.delete(:evogit_agent_state, agent_id)
+      :ets.delete(:evogit_agent_summary, agent_id)
       EvoGit.AgentScheduler.ControlPlane.delete(agent_id)
     end)
 

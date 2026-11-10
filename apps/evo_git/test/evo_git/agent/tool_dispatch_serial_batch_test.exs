@@ -18,7 +18,7 @@ defmodule EvoGit.Agent.ToolDispatchSerialBatchTest do
   involved anywhere in the fix or in these tests.
 
   `async: true` — the dispatcher registers ONE row in the app-global
-  `:evogit_agent_state` ETS table under a per-test unique agent id (deleted on
+  `:evogit_agent_summary` ETS table under a per-test unique agent id (deleted on
   exit, nothing asserted about the table as a whole) and takes tool slots from
   the global `EvoGit.AgentScheduler` (a serialized GenServer, not a global
   mutation). The batches call only fast file tools — no shell forks whose wall

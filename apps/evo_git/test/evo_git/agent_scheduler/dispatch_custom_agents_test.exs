@@ -4,7 +4,7 @@ defmodule EvoGit.AgentScheduler.DispatchCustomAgentsTest do
   # agents.toml path. `Dispatch.register_agent/7` is called DIRECTLY (never
   # through the app-global scheduler), so its config reads and model-script
   # evaluation happen in the test process; the only global effect is one row in
-  # the app-global `:evogit_agent_state` / `:evogit_sched_meta` ETS tables keyed
+  # the app-global `:evogit_agent_summary` / `:evogit_sched_meta` ETS tables keyed
   # by a per-test-unique agent id and deleted in `on_exit`.
   use ExUnit.Case, async: true
 

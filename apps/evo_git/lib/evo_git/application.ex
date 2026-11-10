@@ -17,11 +17,11 @@ defmodule EvoGit.Application do
     # Create ETS tables owned by the application process so they survive
     # AgentScheduler crashes/restarts. If a table already exists (e.g., on
     # application restart after a soft crash), creation is a no-op.
-    ensure_ets_table(:evogit_agent_state, [:named_table, :public, :set, read_concurrency: true])
+    ensure_ets_table(:evogit_agent_summary, [:named_table, :public, :set, read_concurrency: true])
     ensure_ets_table(:evogit_sched_meta, [:named_table, :public, :set, read_concurrency: true])
     # CONTROL PLANE (see `EvoGit.AgentScheduler.ControlPlane`): everything a
     # process OTHER than the agent writes about a live agent, so no cross-process
-    # write ever read-modify-writes the agent's own `:evogit_agent_state` row.
+    # write ever read-modify-writes the agent's own `:evogit_agent_summary` row.
     #   * `:evogit_agent_inbox` — a BAG of `{agent_id, {seq, message}}`: appends
     #     are one atomic insert, and `:ets.take/2` drains a key atomically, so a
     #     concurrent append is never lost or delivered twice. `seq` (a

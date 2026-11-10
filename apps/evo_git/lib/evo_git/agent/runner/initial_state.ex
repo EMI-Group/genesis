@@ -9,7 +9,7 @@ defmodule EvoGit.Agent.Runner.InitialState do
   (`EvoGit.Agent.Exchange`) threads through every turn.
 
   The struct carries BOTH the fields the old loop struct owned and the fields
-  that used to be read back from the `:evogit_agent_state` ETS row this builds
+  that used to be read back from the `:evogit_agent_summary` ETS row this builds
   from, so the engine's struct-based reads are value-identical to those reads.
   """
 

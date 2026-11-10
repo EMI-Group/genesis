@@ -3,7 +3,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   RPC-accessible API over scheduler ETS state (read-only state queries + config write).
 
   This module exposes pure functions that read the scheduler's global ETS
-  tables (`:evogit_sched_meta` and `:evogit_agent_state`) and return
+  tables (`:evogit_sched_meta` and `:evogit_agent_summary`) and return
   **native Elixir terms** (atoms, structs, maps, lists, tuples). It is
   designed to be invoked from a local dashboard process via
   `:erpc.call(remote_node, EvoGit.AgentScheduler.RemoteAPI, function, args)`.
@@ -47,7 +47,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @doc """
   Returns a list of agent summary maps.
 
-  Joins `:evogit_sched_meta` (master list) with `:evogit_agent_state` on
+  Joins `:evogit_sched_meta` (master list) with `:evogit_agent_summary` on
   `agent_id`. Each map contains native Elixir terms:
 
     * `:id` — agent ID (integer)
@@ -295,7 +295,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @spec send_agent_message(pos_integer(), String.t() | EvoGit.Attachments.message()) ::
           :ok | {:error, term()}
   def send_agent_message(agent_id, message) when is_binary(message) or is_map(message) do
-    case :ets.whereis(:evogit_agent_state) do
+    case :ets.whereis(:evogit_agent_summary) do
       :undefined -> {:error, :scheduler_not_started}
       _ -> EvoGit.AgentScheduler.send_user_message(agent_id, message)
     end
@@ -1260,12 +1260,12 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   # Looks up a single agent state by id.
   # Returns `%AgentState{}` or `nil` (table missing or key not found).
   defp lookup_agent_state(agent_id) do
-    case :ets.whereis(:evogit_agent_state) do
+    case :ets.whereis(:evogit_agent_summary) do
       :undefined ->
         nil
 
       _ ->
-        case :ets.lookup(:evogit_agent_state, agent_id) do
+        case :ets.lookup(:evogit_agent_summary, agent_id) do
           [{^agent_id, state}] -> state
           [] -> nil
         end
@@ -1278,7 +1278,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   # not in the state row, so a raw row would always report a stale 0.
   # Only a real `%AgentState{}` row is a usable summary source.
   defp projected_agent_state(agent_id) do
-    case :ets.whereis(:evogit_agent_state) do
+    case :ets.whereis(:evogit_agent_summary) do
       :undefined ->
         nil
 

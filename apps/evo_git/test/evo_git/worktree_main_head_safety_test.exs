@@ -9,7 +9,7 @@ defmodule EvoGit.WorktreeMainHeadSafetyTest do
   reads.
   """
   # async: true — every test uses its OWN temp repos and a per-test-unique agent
-  # id, so its rows in the shared named ETS tables (:evogit_agent_state,
+  # id, so its rows in the shared named ETS tables (:evogit_agent_summary,
   # :evogit_sched_meta) collide with nothing and are never wiped (a whole-table
   # delete would destroy a concurrently running module's rows).
   use ExUnit.Case, async: true
@@ -37,7 +37,7 @@ defmodule EvoGit.WorktreeMainHeadSafetyTest do
   # --------------------------------------------------------------------------
 
   setup do
-    create_ets_if_missing(:evogit_agent_state)
+    create_ets_if_missing(:evogit_agent_summary)
     create_ets_if_missing(:evogit_sched_meta)
 
     :ok

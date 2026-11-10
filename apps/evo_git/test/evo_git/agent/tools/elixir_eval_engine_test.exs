@@ -147,7 +147,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.EngineTest do
         {"native AST evaluation", "Code.eval_quoted({:+, [], [1, 2]})"},
         {"task registry wrong arity", "EvoGit.TaskRegistry.get_task()"},
         {"scheduler internals", "EvoGit.AgentScheduler.get_config()"},
-        {"ETS internals", ":ets.tab2list(:evogit_agent_state)"},
+        {"ETS internals", ":ets.tab2list(:evogit_agent_summary)"},
         {"broker operation", "EvoGit.Agent.Tools.ElixirEval.Broker.call(:system_info, [])"},
         {"broker creation", "EvoGit.Agent.Tools.ElixirEval.Broker.start(%{}, :sudo)"},
         {"command shell", ~s|EvoGit.CommandShell.execute("help", approval: :auto)|},

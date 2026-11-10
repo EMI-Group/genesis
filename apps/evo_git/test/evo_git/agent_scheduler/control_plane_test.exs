@@ -4,7 +4,7 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
   process OTHER than the agent writes about a live agent lives in
   `:evogit_agent_inbox` (a `:bag` of `{agent_id, {seq, message}}`) and
   `:evogit_agent_control` (a `:set` of `{agent_id, cancel_requested,
-  compression_count}`), never in the agent's own `:evogit_agent_state` row.
+  compression_count}`), never in the agent's own `:evogit_agent_summary` row.
 
   What these tests pin:
 
@@ -60,11 +60,11 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
 
   # The RAW row, exactly as stored — no projection.
   defp raw_row(agent_id) do
-    :ets.lookup(:evogit_agent_state, agent_id)
+    :ets.lookup(:evogit_agent_summary, agent_id)
   end
 
   setup do
-    create_ets_if_missing(:evogit_agent_state, [:named_table, :public, :set])
+    create_ets_if_missing(:evogit_agent_summary, [:named_table, :public, :set])
     create_ets_if_missing(:evogit_sched_meta, [:named_table, :public, :set])
     create_ets_if_missing(:evogit_agent_inbox, [:bag, :named_table, :public])
     create_ets_if_missing(:evogit_agent_control, [:named_table, :public, :set])

@@ -4,7 +4,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
   API over scheduler ETS state.
 
   Uses `async: false` because the tests (a) manipulate the global named ETS
-  tables (`:evogit_agent_state` and `:evogit_sched_meta` — `clear_ets/0` wipes
+  tables (`:evogit_agent_summary` and `:evogit_sched_meta` — `clear_ets/0` wipes
   them wholesale) and (b) write task rows directly into the app-level
   `EvoGit.Store` singleton (`insert_task/2` → `EvoGit.Store.put_task/2`,
   cleaned up in `on_exit`). The `list_agents/0 compression_threshold` describe
@@ -71,8 +71,8 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
   end
 
   defp clear_ets do
-    if :ets.whereis(:evogit_agent_state) != :undefined,
-      do: :ets.delete_all_objects(:evogit_agent_state)
+    if :ets.whereis(:evogit_agent_summary) != :undefined,
+      do: :ets.delete_all_objects(:evogit_agent_summary)
 
     if :ets.whereis(:evogit_sched_meta) != :undefined,
       do: :ets.delete_all_objects(:evogit_sched_meta)
@@ -83,7 +83,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
   end
 
   defp put_agent_state(agent_id, state) do
-    :ets.insert(:evogit_agent_state, {agent_id, state})
+    :ets.insert(:evogit_agent_summary, {agent_id, state})
   end
 
   # Inserts a task directly into the shared app store (same pattern as
@@ -110,7 +110,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
   # --- Setup ---
 
   setup do
-    create_ets_if_missing(:evogit_agent_state)
+    create_ets_if_missing(:evogit_agent_summary)
     create_ets_if_missing(:evogit_sched_meta)
     clear_ets()
 

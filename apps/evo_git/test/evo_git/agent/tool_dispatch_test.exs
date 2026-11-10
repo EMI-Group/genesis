@@ -10,7 +10,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   1.6-7.4s, which exceeds that budget and truncates the marker file. With
   exclusive access the tool calls stay three orders of magnitude under budget.
   Its shared state is benign: agent state rows go into the app-global
-  `:evogit_agent_state` table under per-test unique ids, the global
+  `:evogit_agent_summary` table under per-test unique ids, the global
   `EvoGit.AgentScheduler` only supplies tool slots, and everything else is
   process-local (`Process.put/2` for `:evogit_agent_id` / `:repo_path` /
   `:genesis_repo_root`) or a per-test temp dir.
@@ -784,7 +784,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   # ---------------------------------------------------------------------------
 
   # Registers a live agent-state row for `agent_id` (the app-global
-  # `:evogit_agent_state` ETS table, cleaned up by the caller) so the
+  # `:evogit_agent_summary` ETS table, cleaned up by the caller) so the
   # current-agent lookups resolve.
   defp put_agent_state!(agent_id, overrides) do
     state =

@@ -5,7 +5,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   The authoritative agent state is `%EvoGit.Agent.State{}`: exactly ONE copy of
   it, owned by exactly one process (in P1 the agent `Task`, from P2 the
   per-agent session process). This struct is what the scheduler publishes into
-  the `:evogit_agent_state` ETS table so that the dashboard/RPC read paths can
+  the `:evogit_agent_summary` ETS table so that the dashboard/RPC read paths can
   observe an agent without touching its process.
 
   Its row shape is bounded to what a reader needs (identity, counters, model

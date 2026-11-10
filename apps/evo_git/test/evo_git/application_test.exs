@@ -2,7 +2,7 @@ defmodule EvoGit.ApplicationTest do
   @moduledoc """
   Regression tests for ETS table ownership.
 
-  The two global ETS tables (`:evogit_agent_state`, `:evogit_sched_meta`)
+  The two global ETS tables (`:evogit_agent_summary`, `:evogit_sched_meta`)
   must be created by `EvoGit.Application.start/2`
   (owned by the application process) — NOT by `AgentScheduler.init/1`. This
   ensures they survive an `AgentScheduler` crash/restart.
@@ -18,7 +18,7 @@ defmodule EvoGit.ApplicationTest do
 
   use ExUnit.Case, async: false
 
-  @agent_table :evogit_agent_state
+  @agent_table :evogit_agent_summary
   @sched_table :evogit_sched_meta
   @tables [@agent_table, @sched_table]
   # A key unlikely to collide with real agent IDs (positive integers).

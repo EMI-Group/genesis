@@ -10,7 +10,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
     `:evogit_sched_meta` id `1` — an id the already-`async: true` sibling
     `agent_scheduler/subagents_test.exs` deletes in its own setup.
   - the `describe "graceful cancel_task / force_kill_task"` tests seed the
-    app-global `:evogit_sched_meta` / `:evogit_agent_state` /
+    app-global `:evogit_sched_meta` / `:evogit_agent_summary` /
     `:evogit_cancelling_tasks` tables and drive the GLOBAL
     `EvoGit.AgentScheduler` (`begin_graceful_cancel/1`,
     `force_kill_task_agents/1`, the `:evogit_cancelling_tasks` marker) through
@@ -1121,11 +1121,11 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # Register one live agent for the task (scheduler ETS) so we can verify
       # the cancel notification + cancel_requested flag injection.
       :ets.insert(:evogit_sched_meta, {agent_id, cancel_test_sched_meta(agent_id, task_id)})
-      :ets.insert(:evogit_agent_state, {agent_id, cancel_test_agent_state()})
+      :ets.insert(:evogit_agent_summary, {agent_id, cancel_test_agent_state()})
 
       on_exit(fn ->
         :ets.delete(:evogit_sched_meta, agent_id)
-        :ets.delete(:evogit_agent_state, agent_id)
+        :ets.delete(:evogit_agent_summary, agent_id)
         EvoGit.AgentScheduler.ControlPlane.delete(agent_id)
         :ets.delete(:evogit_cancelling_tasks, task_id)
       end)
@@ -1216,7 +1216,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         })
 
       :ets.insert(:evogit_sched_meta, {agent_id, cancel_test_sched_meta(agent_id, task_id)})
-      :ets.insert(:evogit_agent_state, {agent_id, cancel_test_agent_state()})
+      :ets.insert(:evogit_agent_summary, {agent_id, cancel_test_agent_state()})
       # Simulate the ORIGINAL graceful cancel (performed while the task was
       # :running): the agent already holds the cancel_requested flag. The
       # idempotent path must preserve it without re-sending any messages. The
@@ -1226,7 +1226,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       on_exit(fn ->
         :ets.delete(:evogit_sched_meta, agent_id)
-        :ets.delete(:evogit_agent_state, agent_id)
+        :ets.delete(:evogit_agent_summary, agent_id)
         EvoGit.AgentScheduler.ControlPlane.delete(agent_id)
         :ets.delete(:evogit_cancelling_tasks, task_id)
       end)
