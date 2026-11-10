@@ -50,7 +50,7 @@ hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateS
 | `BrowserNotifications` | `../app.js` (inline) | `projects_live.ex` (`phx-hook="BrowserNotifications"`) — HTML5 notifications on `task_notification` events |
 | `ClipboardCopy` | `../app.js` (inline) | `settings_live.ex`, `welcome_complete_live.ex`, `projects_live.ex`, `review_components/header.ex` — copies `data-content` to clipboard on click (`navigator.clipboard` with hidden-textarea `execCommand` fallback; pushes `"copied"` on success — see the "ClipboardCopy hook" section below) |
 | `AutoClearFlash` | `../app.js` (inline) | `core_components.ex` flash component — auto-dismisses flash messages after 4s (except `client-error`/`server-error`) |
-| `AgentHistoryAutoScroll` | `../app.js` (inline) | `agents_live.html.heex` (`phx-hook="AgentHistoryAutoScroll"`) — rAF-based ease-out auto-scroll when at the bottom |
+| `AgentHistoryAutoScroll` | `../app.js` (inline) | `home_live.ex` `#chat-messages` (`phx-hook="AgentHistoryAutoScroll"`) — rAF-based ease-out auto-scroll when at the bottom |
 | `TauriDetect` | `../app.js` (inline) | `projects_live.ex` `#tauri-detect` (`phx-hook="TauriDetect"`) — pushes `tauri_detected` |
 | `DesktopQuit` | `../app.js` (inline) | `layouts.ex` wrapper around `<main id="main-content">` (`#desktop-quit-hook`) — listens for Tauri `quit-requested`, pushes `desktop_quit_requested` |
 | `DesktopQuitConfirm` | `../app.js` (inline) | desktop quit dialog's red Quit button — invokes Tauri `begin_quit` then pushes `desktop_quit_confirmed` |
