@@ -349,6 +349,115 @@ defmodule EvoGit.ProcessManagerTest do
              ProcessManager.get(id, srv)
   end
 
+  ## Retention bounds + totality
+
+  test "a burst of terminal records keeps only the newest 200 and never drops live ones", %{
+    srv: srv
+  } do
+    ids =
+      for index <- 1..210 do
+        {:ok, id} = ProcessManager.track(:tool_call, %{tool: "bash"}, srv)
+
+        # Give the OLDEST record (the first to be pruned) a real OS handle while
+        # it is still live — `attach` on a terminal record is a documented no-op.
+        if index == 1 do
+          :ok =
+            ProcessManager.attach(
+              id,
+              %Handle{kind: :unit, unit: "genesis-retention-1.service"},
+              srv
+            )
+        end
+
+        ProcessManager.finish(id, :completed, srv)
+        id
+      end
+
+    oldest = Enum.at(ids, 0)
+
+    {:ok, live_one} = ProcessManager.track(:tool_call, %{tool: "bash"}, srv)
+    {:ok, live_two} = ProcessManager.track(:tool_call, %{tool: "bash"}, srv)
+
+    :ok =
+      ProcessManager.attach(
+        live_two,
+        %Handle{kind: :unit, unit: "genesis-retention-2.service"},
+        srv
+      )
+
+    retained = ProcessManager.list(srv)
+    retained_ids = Enum.map(retained, & &1.id)
+
+    # The payload is BOUNDED: live records + the terminal cap, nothing else.
+    assert length(retained) == 202
+    assert length(retained) <= 2 + 200
+
+    assert live_one in retained_ids
+    assert live_two in retained_ids
+
+    # The 10 oldest terminal records fell out; the newest 200 stay.
+    for id <- Enum.take(ids, 10) do
+      assert {:error, :not_found} = ProcessManager.get(id, srv)
+      refute id in retained_ids
+    end
+
+    for id <- Enum.drop(ids, 10) do
+      assert {:ok, %Execution{status: :completed}} = ProcessManager.get(id, srv)
+    end
+
+    handles = :sys.get_state(Keyword.fetch!(srv, :server)).handles
+    refute Map.has_key?(handles, oldest)
+    assert Map.has_key?(handles, live_two)
+  end
+
+  test "every direct API answers a degraded value when the registry is absent" do
+    Process.put(:evogit_process_manager_server, :process_manager_absent_for_test)
+
+    try do
+      assert ProcessManager.list() == []
+      assert {:error, :not_found} = ProcessManager.get("proc-1")
+      assert {:error, :not_found} = ProcessManager.sample("proc-1")
+      assert ProcessManager.sample_all() == %{}
+      assert {:error, :not_found} = ProcessManager.signal("proc-1", :term)
+      assert {:error, :not_found} = ProcessManager.pause("proc-1")
+      assert {:error, :not_found} = ProcessManager.resume("proc-1")
+      assert {:error, :not_found} = ProcessManager.kill("proc-1")
+      assert {:ok, 0} = ProcessManager.prune()
+    after
+      Process.delete(:evogit_process_manager_server)
+    end
+  end
+
+  test "an owner monitor is dropped once all of its records are pruned and re-installed on the next track",
+       %{srv: srv} do
+    server = Keyword.fetch!(srv, :server)
+    owner = spawn(fn -> receive do: (:stop -> :ok) end)
+
+    {:ok, owned} = ProcessManager.track(:tool_call, %{tool: "bash", owner_pid: owner}, srv)
+    ProcessManager.finish(owned, :completed, srv)
+
+    # The owned record is the oldest terminal record: enough later terminal
+    # records push it out of the cap, and its owner then holds no record.
+    for _ <- 1..200 do
+      {:ok, id} = ProcessManager.track(:tool_call, %{tool: "bash"}, srv)
+      ProcessManager.finish(id, :completed, srv)
+    end
+
+    assert :sys.get_state(server).owner_refs == %{}
+
+    # Re-tracking for the SAME owner re-installs the monitor, so its death still
+    # fails the execution.
+    {:ok, again} = ProcessManager.track(:tool_call, %{tool: "bash", owner_pid: owner}, srv)
+    assert map_size(:sys.get_state(server).owner_refs) == 1
+
+    Process.exit(owner, :kill)
+
+    assert_receive {:process_exited, %Execution{id: ^again, status: :failed}, _}, 1_000
+
+    assert {:ok, %Execution{status: :failed, reason: :owner_died}} =
+             ProcessManager.get(again, srv)
+  end
+
   ## Helpers
 
   defp open_sleep do
@@ -383,9 +492,10 @@ end
 
 defmodule EvoGit.ProcessManagerSeamsTest do
   # sync: these tests mutate the SHARED app-env seams
-  # (`:process_finished_retention_ms`, `:process_stats_enabled`,
-  # `:process_manager_sample_interval_ms`) that a concurrently running module
-  # could observe. Every seam is restored in `on_exit`.
+  # (`:process_finished_retention_ms`, `:process_finished_max_records`,
+  # `:process_stats_enabled`, `:process_manager_sample_interval_ms`) that a
+  # concurrently running module could observe. Every seam is restored in
+  # `on_exit`.
   use ExUnit.Case, async: false
 
   alias EvoGit.ProcessManager
@@ -430,6 +540,32 @@ defmodule EvoGit.ProcessManagerSeamsTest do
     assert List.last(retained).id == Enum.at(ids, 5)
     assert {:error, :not_found} = ProcessManager.get(Enum.at(ids, 0), srv)
     assert {:ok, _} = ProcessManager.get(Enum.at(ids, 5), srv)
+  end
+
+  test ":process_finished_max_records caps retained terminal records", %{srv: srv} do
+    Application.put_env(:evo_git, :process_finished_max_records, 5)
+
+    ids =
+      for _ <- 1..8 do
+        {:ok, id} = ProcessManager.track(:tool_call, %{tool: "bash"}, srv)
+        ProcessManager.finish(id, :completed, srv)
+        id
+      end
+
+    {:ok, live} = ProcessManager.track(:tool_call, %{tool: "bash"}, srv)
+
+    retained_ids = ProcessManager.list(srv) |> Enum.map(& &1.id)
+
+    assert length(retained_ids) == 6
+    assert live in retained_ids
+
+    for id <- Enum.drop(ids, 3) do
+      assert {:ok, %Execution{status: :completed}} = ProcessManager.get(id, srv)
+    end
+
+    for id <- Enum.take(ids, 3) do
+      assert {:error, :not_found} = ProcessManager.get(id, srv)
+    end
   end
 
   test ":process_stats_enabled false skips every OS probe and sample broadcast", %{srv: srv} do
@@ -495,6 +631,7 @@ defmodule EvoGit.ProcessManagerSeamsTest do
 
   defp restore_seams do
     Application.delete_env(:evo_git, :process_finished_retention_ms)
+    Application.delete_env(:evo_git, :process_finished_max_records)
     Application.delete_env(:evo_git, :process_stats_enabled)
     Application.delete_env(:evo_git, :process_manager_sample_interval_ms)
   end

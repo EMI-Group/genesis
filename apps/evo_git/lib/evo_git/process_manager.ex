@@ -60,6 +60,15 @@ defmodule EvoGit.ProcessManager do
   never broadcasts. `{:process_updated, …}` carries only the changed fields
   (`%{status: :paused}`, `%{stats: stats}`).
 
+  ## Locality
+
+  The roster is NODE-LOCAL and in-memory only, per BEAM: records are never
+  persisted to the task store, never archived with a task and never aggregated
+  across nodes, so they die with the process (a restart starts an empty roster).
+  A remote caller only ever sees them through the existing RPC
+  (`EvoGit.AgentScheduler.RemoteAPI` / `EvoGit.RemoteNode`), which calls THIS
+  local facade on the node that owns the executions.
+
   ## Call-time seams (app env; no TOML keys, so the suite stays async-safe)
 
     * `:process_manager_sample_interval_ms` — sampling tick (default `3_000`).
@@ -67,6 +76,8 @@ defmodule EvoGit.ProcessManager do
       `true`).
     * `:process_finished_retention_ms` — how long terminal records are kept
       (default `300_000`).
+    * `:process_finished_max_records` — maximum retained TERMINAL records
+      (default `200`); live records are never pruned.
     * `:process_stats_probe_timeout_ms` — per-execution `sample_all/1` budget
       (default `2_000`).
     * `:process_kill_grace_ms` — TERM→KILL escalation grace (default `1_500`).

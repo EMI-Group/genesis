@@ -53,10 +53,26 @@ defmodule EvoGit.ProcessManager.Registry do
 
   ## Retention
 
-  `finish/4` and `prune/1` drop terminal records older than
-  `finished_retention_ms/0` (app env `:process_finished_retention_ms`, default
-  `#{300_000}`) and cap the retained terminal records at the newest
-  `#{200}`. Live records are NEVER pruned.
+  Retention keeps a RECENT-ACTIONS list, not a full history. `finish/4`,
+  `prune/1`, an owner death and every sampling tick drop TERMINAL records older
+  than `finished_retention_ms/0` (app env `:process_finished_retention_ms`,
+  default `#{300_000}`) and cap the retained terminal records at the newest
+  `max_terminal_records/0` (app env `:process_finished_max_records`, default
+  `200`). Live records are NEVER pruned, so a running execution is always
+  observable and controllable.
+
+  `owner_refs` and `handles` are bounded by that same retained roster: a
+  doomed record's handle is dropped with it, and an owner's monitor is
+  demonitored once the owner has no retained record left (`track/4` re-installs
+  it if that process records again).
+
+  ## Locality
+
+  The registry is NODE-LOCAL and in-memory only: records live in this
+  GenServer's state for the lifetime of the BEAM and nowhere else. They are
+  never written to the task store, never archived with a task, and never
+  aggregated across nodes — a remote caller reaches them only by RPC to the
+  node that owns them (and then reads that node's own roster).
 
   ## Totality
 
@@ -75,7 +91,7 @@ defmodule EvoGit.ProcessManager.Registry do
   @terminal Execution.terminal_statuses()
   @live Execution.live_statuses()
   # Retained terminal records (live ones are never pruned).
-  @max_terminal 200
+  @default_max_terminal 200
   # Bounded history per execution — a pause/resume hammer must not grow a record.
   @max_control_log 50
 
@@ -208,6 +224,15 @@ defmodule EvoGit.ProcessManager.Registry do
          ) do
       ms when is_integer(ms) and ms >= 0 -> ms
       _other -> @default_finished_retention_ms
+    end
+  end
+
+  @doc "Maximum retained terminal records — app env `:process_finished_max_records`."
+  @spec max_terminal_records() :: non_neg_integer()
+  def max_terminal_records do
+    case Application.get_env(:evo_git, :process_finished_max_records, @default_max_terminal) do
+      count when is_integer(count) and count >= 0 -> count
+      _other -> @default_max_terminal
     end
   end
 
@@ -670,6 +695,7 @@ defmodule EvoGit.ProcessManager.Registry do
   defp prune_state(state) do
     now = DateTime.utc_now()
     retention = finished_retention_ms()
+    max_terminal = max_terminal_records()
 
     terminal =
       state.executions
@@ -693,7 +719,7 @@ defmodule EvoGit.ProcessManager.Registry do
       terminal
       |> Enum.reject(&(&1 in expired))
       |> Enum.sort_by(&sort_key/1, :desc)
-      |> Enum.take(@max_terminal)
+      |> Enum.take(max_terminal)
 
     doomed = MapSet.new(expired ++ (terminal -- keep_newest))
     doomed_ids = doomed |> Enum.map(& &1.id) |> Enum.reject(&is_nil/1)
@@ -706,8 +732,36 @@ defmodule EvoGit.ProcessManager.Registry do
         | executions: Map.drop(state.executions, doomed_ids),
           handles: Map.drop(state.handles, doomed_ids)
       }
+      |> drop_unused_owner_refs()
       |> then(&{&1, length(doomed_ids)})
     end
+  end
+
+  # One monitor per DISTINCT owner pid is needed only while that owner still has
+  # a retained record: drop the rest (and flush their `:DOWN`s) so `owner_refs`
+  # stays bounded by the retained roster instead of growing with every process
+  # that ever tracked. `track/4` re-installs the monitor if the owner records again.
+  defp drop_unused_owner_refs(state) do
+    owners =
+      state.executions
+      |> Map.values()
+      |> Enum.map(& &1.owner_pid)
+      |> Enum.reject(&is_nil/1)
+      |> MapSet.new()
+
+    owner_refs =
+      state.owner_refs
+      |> Enum.reject(fn {ref, pid} ->
+        if MapSet.member?(owners, pid) do
+          false
+        else
+          Process.demonitor(ref, [:flush])
+          true
+        end
+      end)
+      |> Map.new()
+
+    %{state | owner_refs: owner_refs}
   end
 
   ## Small helpers

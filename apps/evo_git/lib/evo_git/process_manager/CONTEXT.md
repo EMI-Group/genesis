@@ -6,13 +6,15 @@
 It records ONE `Execution` per foreground tool call and per detached background job, keeps the normalized OS `Handle` that addresses it, samples real resource usage on a timer, and exposes operator control (pause / resume / signal / kill).
 It records and observes; starting processes stays with `EvoGit.BackgroundJobs`, `EvoGit.Sandbox.*` and the tool-dispatch layer, which register into it.
 The public facade (`EvoGit.ProcessManager`) is a FROZEN contract: later rounds wire BackgroundJobs/Sandbox/tool-dispatch onto it and phase 2's dashboard consumes it.
+The registry is completely NODE-LOCAL and in-memory: records are never written to the task store, never archived with a task and never aggregated across nodes, and a remote caller reaches them only by RPC to the node that owns them.
+Retention makes the roster a recent-actions list, not a full history: terminal records age out and are capped, live ones are never pruned.
 
 ## API Surface
 
 | Module | Role |
 |---|---|
 | `EvoGit.ProcessManager` | Public facade: `track/3`, `attach/3`, `finish/3`, `list/1`, `get/2`, `sample/2`, `sample_all/1`, `signal/3`, `pause/2`, `resume/2`, `kill/2`, `subscribe/0`, `unsubscribe/0`, `server/0`, `start_link/1`, `child_spec/1`, plus the extra `prune/1` retention entry point |
-| `EvoGit.ProcessManager.Registry` | The GenServer: executions + handles maps, owner monitors, ONE sampling timer, `"proc-<n>"` counter, monotonic sample seq, retention |
+| `EvoGit.ProcessManager.Registry` | The GenServer: executions + handles maps, owner monitors, ONE sampling timer, `"proc-<n>"` counter, monotonic sample seq, retention (`prune/1`, `max_terminal_records/0`, `finished_retention_ms/0`) |
 | `EvoGit.ProcessManager.Execution` | FROZEN defstruct + `terminal?/1`, `live?/1`, `control_entry/1` |
 | `EvoGit.ProcessManager.Handle` | Normalized OS handle (`:systemd_unit | :posix | :windows`) and `normalize/1` for legacy `%{kind: :unit | :port}` sandbox handles |
 | `EvoGit.ProcessManager.Control` | Behaviour (`stats/1`, `signal/2`, `kill/1`, `alive?/1`) + dispatcher on `Handle.kind`, signal normalization, `kill_grace_ms/0` |
@@ -27,12 +29,18 @@ The public facade (`EvoGit.ProcessManager`) is a FROZEN contract: later rounds w
 - PubSub topic `"processes"` with the emitting node LAST: `{:process_started, execution, node}`, `{:process_updated, id, changes, node}`, `{:process_exited, execution, node}`, `{:process_sample, node, seq, entries}`, `{:process_control, id, entry, node}`; lifecycle changes only, never a no-op.
 - All handlers and all control callbacks are TOTAL: unknown id → `{:error, :not_found}` / `:ok`, failed probe → `{:error, reason}`, unrecognized handle → no-op.
 - Owner lifetime is ONE `Process.monitor/1` per owner pid; the owner's death marks every non-terminal execution it owned `:failed` with `reason: :owner_died` and best-effort kills the handle in a throwaway process.
-- Call-time app-env seams only (no TOML keys, so the suite stays async-safe): `:process_manager_sample_interval_ms` (3_000), `:process_stats_enabled` (true), `:process_finished_retention_ms` (300_000), `:process_stats_probe_timeout_ms` (2_000), `:process_kill_grace_ms` (1_500).
-- Terminal records are retained for the retention window and capped at the newest 200; live records are never pruned.
+- Call-time app-env seams only (no TOML keys, so the suite stays async-safe): `:process_manager_sample_interval_ms` (3_000), `:process_stats_enabled` (true), `:process_finished_retention_ms` (300_000), `:process_finished_max_records` (200), `:process_stats_probe_timeout_ms` (2_000), `:process_kill_grace_ms` (1_500).
+- Terminal records are retained for the retention window and capped at the newest `:process_finished_max_records` (default 200), live records are never pruned, and an owner's monitor is dropped once it has no retained record (re-installed by the next `track/4`); `owner_refs`/`handles` therefore stay bounded by the retained roster.
 - POSIX signals are delivered to the process GROUP only when the handle's `pgid` is known and differs from this BEAM's own group (a raw port child inherits it — an unguarded group signal would kill Genesis).
 - `server/0` is `Process.get(:evogit_process_manager_server) || __MODULE__` read at CALL time, and every function takes `:server`, so a suite starts isolated named instances.
 - Started unconditionally by `EvoGit.Application` AFTER `Phoenix.PubSub` and BEFORE `EvoGit.BackgroundJobs` (which registers its detached jobs here).
 - Foreground executions carry a REAL OS identity on every backend path: `EvoGit.Sandbox.Helpers.run_task_with_partial/9` and `run_tracked_command/7` spawn the child through a directly owned port and attach its pid (`:posix`) as soon as `wait_for_os_pid/2` observes it, so the non-sandboxed Linux/bwrap/macOS paths, the macOS `sandbox-exec` path and the `None` Unix path are observable and controllable instead of pid-less; the systemd path attaches the transient unit instead.
+
+## Design Decisions
+
+- Locality: the roster is per-BEAM live state, so it is neither persisted, archived nor aggregated — a node restart legitimately starts empty, and cross-node answers come from RPC into each owning node's own registry.
+- Retention is a recent-actions list: operators need "what did this node just run", never a full audit trail, so terminal records are both time-bounded and count-bounded while live executions are always kept.
+- Owner monitors are keyed by owner pid and reaped with the records they protect, so the monitor map can never outgrow the retained roster.
 
 ## Known Issues
 
