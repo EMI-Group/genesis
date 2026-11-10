@@ -391,14 +391,25 @@ defmodule EvoGit.Store.Codec do
   end
 
   @doc """
-  The value to STORE for a task's `session_mode`: the struct field when set,
-  else the data-plane `opts[:session_mode]` (atom or string key), else the
-  `"oneshot"` default — normalized by `encode_session_mode/1`, so neither the
-  write path nor a pre-migration row can carry an invalid value.
+  The value to STORE for a task's `session_mode`, normalized by
+  `encode_session_mode/1` so neither the write path nor a pre-migration row can
+  carry an invalid value.
+
+  Precedence: an EXPLICIT (non-default) struct value wins, because that is what
+  `update_task_columns/3` and a decoded row carry; otherwise the data-plane
+  `opts[:session_mode]` (atom or string key) wins, because `%TaskInfo{}`'s
+  `"oneshot"` default must never shadow an opt the data plane supplied; a task
+  with neither stores the `"oneshot"` default.
   """
   @spec task_session_mode(%TaskInfo{}) :: String.t()
   def task_session_mode(%TaskInfo{} = task) do
-    encode_session_mode(task.session_mode || session_mode_from_opts(task.opts))
+    field = task.session_mode
+
+    if field in [nil, @default_session_mode] do
+      encode_session_mode(session_mode_from_opts(task.opts) || field)
+    else
+      encode_session_mode(field)
+    end
   end
 
   defp session_mode_from_opts(nil), do: nil
