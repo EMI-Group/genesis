@@ -476,23 +476,24 @@ defmodule EvoGit.ProcessManager do
   defp stop_execution(
          %Execution{kind: :background_job, job_id: job_id} = execution,
          handle,
-         reason
+         reason,
+         actor
        )
        when is_binary(job_id) do
-    case background_kill(job_id, reason) do
+    case background_kill(job_id, reason, actor) do
       {:ok, _job} -> :ok
       {:error, {:already_finished, _job}} -> :ok
       _other -> handle_kill(execution, handle)
     end
   end
 
-  defp stop_execution(execution, handle, _reason), do: handle_kill(execution, handle)
+  defp stop_execution(execution, handle, _reason, _actor), do: handle_kill(execution, handle)
 
   defp handle_kill(_execution, nil), do: :ok
   defp handle_kill(_execution, handle), do: Control.kill(handle)
 
-  defp background_kill(job_id, reason) do
-    EvoGit.BackgroundJobs.kill(job_id, reason)
+  defp background_kill(job_id, reason, actor) do
+    EvoGit.BackgroundJobs.kill(job_id, reason, actor: actor)
   rescue
     e -> {:error, {:background_jobs_unavailable, Exception.message(e)}}
   catch
@@ -508,7 +509,7 @@ defmodule EvoGit.ProcessManager do
     actor = Keyword.get(opts, :actor) || :operator
     terminal_reason = Keyword.get(opts, :terminal_reason, {:killed_by, actor})
 
-    case stop_execution(execution, handle, reason) do
+    case stop_execution(execution, handle, reason, actor) do
       :ok ->
         Registry.record_control(
           server,

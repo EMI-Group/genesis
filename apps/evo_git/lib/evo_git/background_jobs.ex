@@ -91,14 +91,20 @@ defmodule EvoGit.BackgroundJobs do
           label: String.t(),
           owner_pid: pid() | nil,
           owner_ref: reference() | nil,
-          agent_id: String.t() | nil,
-          task_id: String.t() | nil,
+          agent_id: term(),
+          task_id: term(),
           cwd: String.t(),
           output_path: String.t(),
           handle: map() | nil,
           execution_id: String.t() | nil,
           status: status(),
           exit_code: integer() | nil,
+          # Execution-level terminal cause (the `:reason` the execution record is
+          # settled with) — `nil` while the job is live, then one of
+          # `:exited | :timeout | :owner_died | {:killed_by, term()} |
+          # {:crashed, term()} | :no_os_process`. The job's own `:detail` prose is
+          # a SEPARATE human-facing field.
+          terminal_reason: term(),
           detail: String.t() | nil,
           started_at: DateTime.t() | nil,
           finished_at: DateTime.t() | nil,
@@ -260,13 +266,14 @@ defmodule EvoGit.BackgroundJobs do
   Kills a job (and its detached process) if it is still live. `reason` is recorded in the job's `:detail` as `"killed (<reason>)"`; `nil` becomes `"stopped by request"`.
   Returns `{:ok, job}` (now `:killed`), `{:error, :not_found}` (unknown id, or an unreachable registry), `{:error, :not_owner}` (`opts[:owner_pid]` fences a different owner's job), `{:error, {:already_finished, job}}` (the job already reached a terminal status; nothing was killed) or `{:error, message}` (the backend could not stop the process — one actionable prose sentence; the job is left in `:stopping`).
   The caller REQUESTED the kill, so both the `{:ok, job}` and `{:error, {:already_finished, job}}` replies come back with `announced: true` — no completion notice is raised for them (`job/2` afterwards returns a record with `announced: true`). The `{:error, message}` branch deliberately does NOT mark it: the process may still be running, so the agent should still learn the final status from a notice. A `read/2` after a kill still returns the output produced before it.
+  `opts[:actor]` names who asked (defaults to `:operator`) and becomes the settled execution's terminal cause `{:killed_by, actor}`.
   """
   @spec kill(String.t(), term(), keyword()) ::
           {:ok, job()}
           | {:error, :not_found | :not_owner | {:already_finished, job()} | String.t()}
   def kill(id, reason \\ nil, opts \\ []) when is_binary(id) do
     call_registry(
-      {:kill, id, reason, Keyword.get(opts, :owner_pid)},
+      {:kill, id, reason, Keyword.get(opts, :owner_pid), Keyword.get(opts, :actor) || :operator},
       {:error, :not_found}
     )
   end
@@ -406,8 +413,8 @@ defmodule EvoGit.BackgroundJobs do
            repo_root: trimmed_binary(Map.get(keyed, :repo_root)),
            label: normalize_label(Map.get(keyed, :label), command),
            owner_pid: owner_pid,
-           agent_id: trimmed_binary(Map.get(keyed, :agent_id)),
-           task_id: trimmed_binary(Map.get(keyed, :task_id))
+           agent_id: normalize_identity(Map.get(keyed, :agent_id)),
+           task_id: normalize_identity(Map.get(keyed, :task_id))
          }}
     end
   end
@@ -459,6 +466,18 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   defp trimmed_binary(_value), do: nil
+
+  # Agent/task identities are OPAQUE terms, not text: a Genesis agent id is an
+  # integer, so routing it through `trimmed_binary/1` (which nils every
+  # non-binary) silently dropped it. Only a blank string is meaningless here;
+  # everything else — integers, atoms, tuples — is carried VERBATIM.
+  defp normalize_identity(nil), do: nil
+
+  defp normalize_identity(value) when is_binary(value) do
+    if String.trim(value) == "", do: nil, else: value
+  end
+
+  defp normalize_identity(value), do: value
 
   defp normalize_max_bytes(nil), do: {:ok, @default_max_bytes}
   defp normalize_max_bytes(bytes) when is_integer(bytes) and bytes > 0, do: {:ok, bytes}
@@ -605,14 +624,14 @@ defmodule EvoGit.BackgroundJobs do
     {:reply, {:ok, Enum.reverse(claimed)}, state}
   end
 
-  def handle_call({:kill, id, reason, owner_pid}, _from, state) do
+  def handle_call({:kill, id, reason, owner_pid, actor}, _from, state) do
     case fetch_owned_job(state, id, owner_pid) do
       {:error, err} ->
         {:reply, {:error, err}, state}
 
       {:ok, job} ->
         if live?(job) do
-          case stop_job(job, reason) do
+          case stop_job(job, reason, {:killed_by, actor}) do
             {:ok, job} ->
               # The CALLER requested this kill, so it already knows the job is ending: suppress the
               # completion notice (also covers a `:stopping` record a unit observer settles later).
@@ -624,8 +643,15 @@ defmodule EvoGit.BackgroundJobs do
               # unknown and the agent SHOULD still learn the final status from a later notice.
               Logger.warning("BackgroundJobs: kill of #{job.id} failed: #{message}")
 
+              # The stop is REQUESTED and in flight, so a later exit settles as a kill by this
+              # actor; carrying it on the record is what lets `mark_finished/2` keep it.
               {:reply, {:error, message},
-               put_job(state, %{job | status: :stopping, detail: message})}
+               put_job(state, %{
+                 job
+                 | status: :stopping,
+                   detail: message,
+                   terminal_reason: {:killed_by, actor}
+               })}
           end
         else
           # Same rule as `read/2` / `list/1`: a terminal job handed back to the caller counts as
@@ -640,7 +666,7 @@ defmodule EvoGit.BackgroundJobs do
     state =
       Enum.reduce(state.jobs, state, fn {_id, job}, acc ->
         if live?(job) and Platform.path_under?(job.cwd, prefix) do
-          case stop_job(job, :reaped) do
+          case stop_job(job, :reaped, {:killed_by, :operator}) do
             {:ok, job} ->
               put_job(acc, job)
 
@@ -715,7 +741,7 @@ defmodule EvoGit.BackgroundJobs do
             case Map.fetch(acc.jobs, id) do
               {:ok, job} ->
                 if live?(job) do
-                  case stop_job(job, :owner_exited) do
+                  case stop_job(job, :owner_exited, :owner_died) do
                     {:ok, job} ->
                       put_job(acc, job)
 
@@ -774,7 +800,8 @@ defmodule EvoGit.BackgroundJobs do
   defp settle_shutdown(state, job) do
     if is_binary(Map.get(job, :execution_id)) do
       safe_finish(state.process_manager, Map.get(job, :execution_id), :killed,
-        reason: :registry_shutdown
+        reason: {:killed_by, :registry_shutdown},
+        exit_code: nil
       )
     end
 
@@ -827,6 +854,7 @@ defmodule EvoGit.BackgroundJobs do
           execution_id: nil,
           status: :running,
           exit_code: nil,
+          terminal_reason: nil,
           detail: nil,
           started_at: DateTime.utc_now(),
           finished_at: nil,
@@ -874,7 +902,7 @@ defmodule EvoGit.BackgroundJobs do
       cwd: spec.cwd,
       repo_root: spec.repo_root,
       backend: backend_atom(job.handle),
-      runtime: :detached,
+      runtime: :background,
       job_id: job.id
     }
 
@@ -1228,7 +1256,9 @@ defmodule EvoGit.BackgroundJobs do
       {:error, "#{kind}: #{describe(reason)}"}
   end
 
-  defp stop_job(job, reason) do
+  # `terminal_reason` is the EXECUTION-level cause this stop implies (`:owner_died`, or
+  # `{:killed_by, actor}` for a requested kill); the job's own `:detail` prose stays human-facing.
+  defp stop_job(job, reason, terminal_reason) do
     case kill_detached(job.handle) do
       :ok ->
         {:ok,
@@ -1236,6 +1266,7 @@ defmodule EvoGit.BackgroundJobs do
            job
            | status: :killed,
              detail: "killed (#{kill_reason(reason)})",
+             terminal_reason: terminal_reason,
              finished_at: DateTime.utc_now()
          }}
 
@@ -1250,12 +1281,16 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   # Exit-status mapping: 0 → completed, other integer → failed, unknown → failed. A job we had already asked to stop (kill in flight) settles as killed.
+  # The execution-level cause is ALWAYS `:exited` for an observed exit status —
+  # the execution is `:completed` even for a non-zero code (the JOB record stays
+  # `:failed`); only a stop requested in flight turns the exit into a kill.
   defp mark_finished(%{status: :stopping} = job, code) do
     %{
       job
       | status: :killed,
         exit_code: code,
         detail: "killed (stop requested)",
+        terminal_reason: Map.get(job, :terminal_reason) || {:killed_by, :operator},
         finished_at: DateTime.utc_now()
     }
   end
@@ -1266,6 +1301,7 @@ defmodule EvoGit.BackgroundJobs do
       | status: :completed,
         exit_code: 0,
         detail: "exit code: 0",
+        terminal_reason: :exited,
         finished_at: DateTime.utc_now()
     }
   end
@@ -1276,6 +1312,7 @@ defmodule EvoGit.BackgroundJobs do
       | status: :failed,
         exit_code: code,
         detail: "exit code: #{code}",
+        terminal_reason: :exited,
         finished_at: DateTime.utc_now()
     }
   end
@@ -1286,6 +1323,7 @@ defmodule EvoGit.BackgroundJobs do
       | status: :failed,
         exit_code: nil,
         detail: "exit status unknown (the detached process ended without a readable exit code)",
+        terminal_reason: :exited,
         finished_at: DateTime.utc_now()
     }
   end
@@ -1432,23 +1470,37 @@ defmodule EvoGit.BackgroundJobs do
 
     if is_binary(execution_id) and status in [:completed, :failed, :killed] and
          not match?(%{status: ^status}, previous) do
-      safe_finish(state.process_manager, execution_id, status,
+      reason = settle_reason(job)
+
+      # The EXECUTION status is derived from the terminal cause, never copied from
+      # the job status: an observed non-zero exit settles `:completed` (with the
+      # real `:exit_code`) while the job record itself stays `:failed`.
+      safe_finish(
+        state.process_manager,
+        execution_id,
+        ProcessManager.Execution.status_for_reason(reason),
         exit_code: Map.get(job, :exit_code),
-        reason: settle_reason(job)
+        reason: reason
       )
     end
 
     :ok
   end
 
-  # A completed job reports no reason; a failed/killed one carries its own
-  # `detail` prose (e.g. `"killed (owner_exited)"`), which is exactly what an
-  # operator wants on the execution record.
-  defp settle_reason(%{status: :completed}), do: nil
-  defp settle_reason(%{detail: detail}) when is_binary(detail), do: detail
-  defp settle_reason(%{status: status}), do: status
+  # The execution-level terminal cause recorded by the ONE transition that made
+  # the job terminal. The fallback is unreachable in practice (every terminal
+  # transition sets the field) but keeps this reader total.
+  defp settle_reason(job) do
+    case Map.get(job, :terminal_reason) do
+      nil -> fallback_settle_reason(job)
+      reason -> reason
+    end
+  end
 
-  defp settle_reason(_job), do: nil
+  defp fallback_settle_reason(%{status: :completed}), do: :exited
+  defp fallback_settle_reason(%{status: :killed}), do: {:killed_by, :operator}
+
+  defp fallback_settle_reason(job), do: {:crashed, Map.get(job, :detail)}
 
   defp live?(%{status: status}), do: status in [:running, :stopping]
   defp live?(_job), do: false
