@@ -321,8 +321,9 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   Returns `{:ok, agent_id}` — the handle for `send_session_message/3`,
   `await_close/2` and `list_awaiting_input/0` — or
   `{:error, {:start_session_failed, reason}}` with the scheduler's own reason
-  (e.g. `:llm_not_configured`, `:cancelled`, `:scheduler_paused` or an invalid
-  model selection) passed through.
+  (e.g. `:llm_not_configured`, `:cancelled`, or a registration/model-selection
+  error) passed through. A paused scheduler is NOT a failure: the session is
+  registered and QUEUED, and the call still returns `{:ok, agent_id}`.
   """
   @spec start_session(EvoGit.AgentSpec.t() | keyword()) ::
           {:ok, pos_integer()} | {:error, {:start_session_failed, term()}}
@@ -336,15 +337,26 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @doc """
   Sends a user message to an interactive session on this node.
 
-  `target` is an agent id (or a session pid). `policy` is `:queue` (default —
-  delivered at the next turn boundary, or starting a new exchange immediately
-  when the session is parked at `:awaiting_input`) or `:interrupt` (stop the
-  in-flight generation and answer now).
+  `target` is an agent id (or a session pid). Both `:queue` (default) and
+  `:interrupt` are accepted policy values, and in the shipped implementation
+  they deliver IDENTICALLY: the message is appended and applied at the next turn
+  boundary (queue semantics). `:interrupt` is reserved for the future
+  chunk-level halt of the in-flight generation (`docs/agent-runtime-refactor.md`
+  §5, P4), so it cannot shorten the turn already running. A message sent while
+  the agent is mid-exchange is therefore never dropped, and one sent while the
+  session is parked at `:awaiting_input` starts a new exchange immediately on
+  the same session pid, worktree and context.
+
+  Unlike `EvoGit.AgentScheduler.send_session_message/3`, this wrapper does not
+  pre-validate the arguments, so a bad policy/target/message surfaces as the
+  session's own `:not_found` rather than `{:bad_policy, _}`/`{:bad_target, _}`/
+  `{:bad_message, _}`.
 
   Returns `:ok`, or `{:error, {:session, reason}}` with the session's own reason
-  passed through (`:not_found` for an unknown/stopped session, `:finished` for
-  a message arriving after the session ended, `{:bad_state, phase}` when the
-  phase refuses input — e.g. `:finalizing`).
+  passed through (`{:bad_state, phase}` when the phase refuses input — e.g.
+  `:finalizing` or `:cancelling`; `:finished` for a message arriving after the
+  session ended; `:not_found` for an unknown/stopped session or an unsupported
+  policy value).
   """
   @spec send_session_message(
           pos_integer() | pid(),
@@ -361,14 +373,19 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @doc """
   Closes an interactive session on this node.
 
-  Delegates to `EvoGit.Agent.Session.close/2` (`reason` defaults to `:normal`).
+  Delegates to `EvoGit.Agent.Session.close/2`. The second argument is the close
+  MODE (it defaults to `:normal` here); any atom is accepted so a later mode needs
+  no API change, but P3 has exactly ONE semantic (graceful close) and no mode
+  value selects different behavior.
   Closing is the ONLY non-cancellation way out of `:awaiting_input`: the session
   runs its completion bookkeeping once and stops, releasing its worktree.
   Closing an already-stopped session is not an error in itself — the session
   answers the documented fallback.
 
   Returns `:ok`, or `{:error, {:session, reason}}` with the session's reason
-  passed through (e.g. `:not_found` for an unknown/stopped session).
+  passed through (`:not_found` for an unknown/stopped session, `:finished` when
+  it is already finalizing/done, `{:bad_state, phase}` for a running/cancelling/
+  starting session — cancel it first).
   """
   @spec close_session(pos_integer() | pid(), term()) :: :ok | {:error, {:session, term()}}
   def close_session(target, reason \\ :normal) do
