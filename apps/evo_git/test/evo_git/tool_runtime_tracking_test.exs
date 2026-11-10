@@ -13,7 +13,11 @@ defmodule EvoGit.ToolRuntimeTrackingTest do
       `{:error, :no_os_process}` instead of raising — `kill/2` in particular
       leaves the record untouched;
     * sampling SKIPS builtin records: `ProcessManager.sample_all/1` omits them
-      and `EvoGit.ProcessManager.Registry.live/1` never lists them.
+      and `EvoGit.ProcessManager.Registry.live/1` never lists them;
+    * a call whose arguments never decode is tracked and settled `:failed` +
+      `reason: :invalid_arguments` WITHOUT ever running a tool, while the agent
+      still receives the standard self-correcting `Error: invalid arguments: …`
+      result (tracking never changes a tool result).
 
   ## Why the `write` tool
   `EvoGit.Agent.Tools.serial_tool?/1` puts every non-shell write tool in the
@@ -135,7 +139,7 @@ defmodule EvoGit.ToolRuntimeTrackingTest do
     # A refused kill leaves the record exactly as it was: still live, no
     # control-log entry, no terminal fact.
     assert {:ok, after_kill} = ProcessManager.get(execution.id, server: manager)
-    assert after_kill.status == :running
+    assert after_kill.status == :starting
     assert after_kill.reason == nil
     assert after_kill.exit_code == nil
     assert after_kill.control_log == []
@@ -164,6 +168,45 @@ defmodule EvoGit.ToolRuntimeTrackingTest do
     assert attached.os_pid == 424_242
   end
 
+  test "malformed arguments settle :failed / :invalid_arguments without ever running a tool", %{
+    manager: manager,
+    agent_id: agent_id,
+    task_id: task_id,
+    tmp_dir: tmp_dir
+  } do
+    # A call whose arguments never decode: the tolerant parse rejects it BEFORE
+    # any tool dispatch, so no tool (and no fake-tool registry) is involved.
+    # `write` is a SERIAL tool, so this still runs in the request's process and
+    # the isolated manager seam below applies.
+    call = %ToolCall{
+      id: "call_malformed_#{:erlang.unique_integer([:positive])}",
+      type: "function",
+      function: %{name: "write", arguments: nil}
+    }
+
+    assert [{0, _, "write", output}] =
+             ToolRuntime.execute_batch([{call, 0}], request(agent_id, task_id, tmp_dir))
+
+    # The agent still gets a normal, self-correcting tool result.
+    assert output =~ "Error: invalid arguments: "
+    assert output =~ "could not be decoded as JSON"
+
+    assert [execution] = tool_executions(manager, agent_id)
+    assert execution.kind == :tool_call
+    assert execution.tool == "write"
+    assert execution.status == :failed
+    assert execution.reason == :invalid_arguments
+    # Nothing reached the OS, so there is no exit code, no handle and no stats.
+    assert execution.exit_code == nil
+    assert execution.os_pid == nil
+    assert execution.unit == nil
+    assert execution.command == nil
+    assert execution.backend == :builtin
+    assert execution.stats == Stats.empty()
+    assert Execution.builtin?(execution)
+    assert %DateTime{} = execution.ended_at
+  end
+
   # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
@@ -176,7 +219,9 @@ defmodule EvoGit.ToolRuntimeTrackingTest do
     assert is_binary(execution_id)
     assert {:ok, execution} = ProcessManager.get(execution_id, server: manager)
     assert execution.backend == :builtin
-    assert execution.status == :running
+    # A builtin call never attaches an OS handle, so it has no `:starting →
+    # :running` transition to make: it stays `:starting` until it finishes.
+    assert execution.status == :starting
     execution
   end
 
@@ -207,7 +252,7 @@ defmodule EvoGit.ToolRuntimeTrackingTest do
 
   defp tool_executions(manager, agent_id) do
     manager
-    |> ProcessManager.list(agent_id: agent_id)
+    |> then(&ProcessManager.list(server: &1, agent_id: agent_id))
     |> Enum.filter(&(&1.kind == :tool_call))
   end
 end

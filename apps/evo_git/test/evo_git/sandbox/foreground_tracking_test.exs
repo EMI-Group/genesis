@@ -9,10 +9,14 @@ defmodule EvoGit.Sandbox.ForegroundTrackingTest do
 
     * the tracked record gets a non-nil `os_pid` (POSIX/Windows backends) or a
       non-nil `unit` (the systemd-run backend), i.e. the previous "degraded
-      pid-less foreground execution" gap is closed;
-    * the record can be settled (`:completed`);
+      pid-less foreground execution" gap is closed, and that identity STAYS on
+      the terminal record;
+    * the record settles ITSELF when the sandbox layer observes the OS exit
+      status, so it is already `:completed` (with its real `exit_code` and
+      `reason: :exited`) by the time `run_with_partial/7` returns;
     * on the POSIX path a long-running command can be paused, resumed and
-      killed through `EvoGit.ProcessManager`, which reaches the real child;
+      killed through `EvoGit.ProcessManager`, which reaches the real child, and
+      the operator's kill is authoritative over the signal exit it causes;
     * the TERMINAL FACTS are recorded by the helper that observes the OS exit
       status: an exit settles `:completed` + its integer `exit_code` +
       `reason: :exited`, a timeout settles `:killed` + `exit_code: nil` +
@@ -133,7 +137,7 @@ defmodule EvoGit.Sandbox.ForegroundTrackingTest do
   end
 
   describe "foreground execution tracking" do
-    test "a real command attaches a real OS pid/unit and can be settled" do
+    test "a real command attaches a real OS pid/unit and settles itself on exit" do
       isolated_manager!()
 
       {:ok, id} = ProcessManager.track(:tool_call, %{tool: "bash", command: "echo hello"})
@@ -151,14 +155,28 @@ defmodule EvoGit.Sandbox.ForegroundTrackingTest do
 
       assert output =~ "hello"
 
-      # THE regression this suite exists for: the handle is NOT pid-less.
-      execution = await_handle(id)
-      assert execution.status == :running
+      # THE regression this suite exists for: the handle is NOT pid-less, and a
+      # command that already exited keeps its OS identity on the terminal record.
+      execution = await_terminal(id)
       assert os_identity(execution) != nil
       assert execution.kind == :tool_call
 
-      assert :ok = ProcessManager.finish(id, :completed)
-      assert {:ok, %Execution{status: :completed}} = ProcessManager.get(id)
+      # The sandbox layer OBSERVES the OS exit status, so it settles the record
+      # itself: by the time `run_with_partial/7` returns the call is already
+      # `:completed` with its real (zero) exit code and `:exited`.
+      assert execution.status == :completed
+      assert execution.exit_code == 0
+      assert execution.reason == :exited
+
+      # A later, coarser finish (the executor's) is a no-op on the settled record:
+      # it never clears the exit code it did not observe.
+      assert :ok = EvoGit.ToolRuntime.Tracking.finish(id, :completed)
+
+      assert {:ok, after_executor} = ProcessManager.get(id)
+      assert after_executor.status == :completed
+      assert after_executor.exit_code == 0
+      assert after_executor.reason == :exited
+      assert after_executor.ended_at == execution.ended_at
     end
   end
 
@@ -301,7 +319,17 @@ defmodule EvoGit.Sandbox.ForegroundTrackingTest do
       assert {:ok, %Execution{status: :running}} = ProcessManager.get(id)
 
       assert :ok = ProcessManager.kill(id, reason: "foreground tracking test cleanup")
-      assert {:ok, %Execution{status: :killed}} = ProcessManager.get(id)
+
+      # The OPERATOR's kill is AUTHORITATIVE over the sandbox layer's own
+      # observation of the signal exit it caused: the record settles `:killed`
+      # with the attributable cause and NO exit code, rather than `:completed` +
+      # `:exited` + the signal's 143.
+      assert {:ok, killed} = ProcessManager.get(id)
+      assert killed.status == :killed
+      assert killed.reason == {:killed_by, :operator}
+      assert killed.exit_code == nil
+      # The OS identity stays on the terminal record.
+      assert {:pid, ^os_pid} = os_identity(killed)
 
       # The foreground call observes the child's death and returns instead of
       # waiting out its 60 s timeout.
