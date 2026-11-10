@@ -5,7 +5,7 @@
 `EvoGit.ProcessManager` is THE single source of truth for the live OS executions an agent or task holds on this node.
 It records ONE `Execution` per foreground tool call and per detached background job, keeps the normalized OS `Handle` that addresses it, samples real resource usage on a timer, and exposes operator control (pause / resume / signal / kill).
 It records and observes; starting processes stays with `EvoGit.BackgroundJobs`, `EvoGit.Sandbox.*` and the tool-dispatch layer, which register into it.
-The public facade (`EvoGit.ProcessManager`) is a FROZEN contract: later rounds wire BackgroundJobs/Sandbox/tool-dispatch onto it and phase 2's dashboard consumes it.
+The public facade (`EvoGit.ProcessManager`) is a FROZEN contract consumed by `EvoGit.BackgroundJobs`, `EvoGit.Sandbox.*`, `EvoGit.ToolRuntime` and the dashboard.
 The registry is completely NODE-LOCAL and in-memory: records are never written to the task store, never archived with a task and never aggregated across nodes, and a remote caller reaches them only by RPC to the node that owns them.
 Retention makes the roster a recent-actions list, not a full history: terminal records age out and are capped, live ones are never pruned.
 
@@ -53,4 +53,4 @@ Retention makes the roster a recent-actions list, not a full history: terminal r
 ## Routing Table
 
 No child directories — all modules live directly in this directory.
-Cross-node contracts: `../agent/` and `../agent_scheduler/` (later rounds register tool calls and background jobs), `../sandbox/` (the legacy `%{kind: :unit | :port}` handle shapes normalized by `Handle.normalize/1`).
+Cross-node contracts: `../tool_runtime/`, `../background_jobs` and `../sandbox/` register executions here; `../agent_scheduler/` exposes the node-local RPC reads/controls (`RemoteAPI.list_processes/get_process/process_stats/process_control`) that a remote dashboard calls into this node's manager.
