@@ -24,9 +24,10 @@ defmodule EvoGit.Agent.Session do
   ## Terminal delivery contract
 
   Exactly ONE message leaves the session when it ends normally:
-  `{:agent_session_result, agent_id, session_pid, result}` sent to the registered
-  `EvoGit.AgentScheduler`, where `result` is `{:ok, %EvoGit.Agent.Result{}}` for a finished
-  exchange and the `{:error, reason}` term VERBATIM for a failed one.
+  `{:agent_session_result, agent_id, session_pid, result}` sent to the `:scheduler` pid carried
+  in the dispatch context (falling back to the registered `EvoGit.AgentScheduler`), where `result`
+  is `{:ok, %EvoGit.Agent.Result{}}` for a finished exchange and the `{:error, reason}` term
+  VERBATIM for a failed one.
   The message is sent BEFORE the process stops, which is safe because Erlang guarantees signal
   ordering between two processes: the result always arrives before the monitor `:DOWN`.
   The session NEVER replies to the caller that started it — the scheduler owns that `from` reply,
@@ -44,15 +45,25 @@ defmodule EvoGit.Agent.Session do
 
   ## Wiring status
 
-  The infrastructure is STARTED: `EvoGit.Application` begins
+  The session IS the one lifecycle for every agent.
+  `EvoGit.AgentScheduler.Dispatch.do_try_dispatch/4` starts it under
+  `EvoGit.Agent.Session.Supervisor`, monitors it (`ref_to_agent` keys on the
+  session monitor ref) and admits its ONE `{:agent_session_result, ...}` in
+  `EvoGit.AgentScheduler.handle_info/2` — no agent runs as a bare
+  `Task.Supervisor.async_nolink` run any more.
+  `EvoGit.AgentScheduler.SchedMeta` carries `session_pid`, `mode` and `phase` as a
+  BEST-EFFORT scheduler-side mirror (`:starting` on start, `:cancelling` on a
+  graceful cancel, `:done` on recycle); the AUTHORITATIVE live phase is
+  `EvoGit.Agent.Session.inspect/2`, never that field.
+  A graceful cancel reaches the session through `cancel/2` (`:graceful`) and a
+  force kill through `cancel/2` (`:force`), and `WorktreeManager` re-monitors the
+  session pid after its own restart.
   `EvoGit.Agent.Session.Registry` (a unique-name `Registry`) and
-  `EvoGit.Agent.Session.Supervisor` (a `DynamicSupervisor`) before
+  `EvoGit.Agent.Session.Supervisor` (a `DynamicSupervisor`) are started before
   `EvoGit.AgentScheduler`, so a session always has a registry entry and an owner
   supervisor.
-  No production code starts a session yet: dispatch still runs one-shot agent
-  `Task`s, and `EvoGit.AgentScheduler` log-and-ignores `{:agent_session_result,
-  ...}` — that tolerance clause is a placeholder for the wiring checkpoint, which
-  replaces it with the real admission/result handling.
+  This remains the ONE-SHOT subset: no `:awaiting_input` phase, no yield/close and
+  no delta streaming yet.
   """
 
   @behaviour :gen_statem
@@ -247,9 +258,9 @@ defmodule EvoGit.Agent.Session do
   end
 
   def handle_event(:info, msg, phase, data) do
-    # The `async_nolink` reply (`{ref, result}`) and anything else outside this session's
-    # contract land here: logged at debug and ignored, so a stray message can never be
-    # mistaken for a real event.
+    # Anything outside this session's contract (a stray cast/plain send) lands
+    # here: logged at debug and ignored, so it can never be mistaken for a real
+    # event.
     log_ignored(phase, data, msg)
     {:keep_state, data}
   end
@@ -448,9 +459,12 @@ defmodule EvoGit.Agent.Session do
   defp final_extra(_data), do: [status: :done]
 
   defp deliver_result(data) do
-    # NON-BLOCKING and best-effort: a down scheduler is skipped silently. Sent BEFORE the stop,
-    # so the monitor `:DOWN` can never overtake it.
-    case Process.whereis(EvoGit.AgentScheduler) do
+    # NON-BLOCKING and best-effort: no reachable scheduler is skipped silently.
+    # The target is the `:scheduler` pid the dispatch context carries (set by
+    # `Dispatch.do_try_dispatch/4` to the scheduler that started this session, so
+    # a named/test scheduler instance is served), falling back to the registered
+    # name. Sent BEFORE the stop, so the monitor `:DOWN` can never overtake it.
+    case Keyword.get(data.dispatch_ctx, :scheduler) || Process.whereis(EvoGit.AgentScheduler) do
       nil -> :ok
       scheduler -> send(scheduler, {:agent_session_result, agent_id(data), self(), data.result})
     end
@@ -476,8 +490,8 @@ defmodule EvoGit.Agent.Session do
   defp resolve(pid) when is_pid(pid), do: {:ok, pid}
 
   defp resolve(agent_id) do
-    # Nothing starts these sessions in production yet, so an UNSTARTED registry must degrade to
-    # the same fallback as a missing key rather than raising.
+    # An UNSTARTED registry (a runtime without the application tree) must degrade to the same
+    # fallback as a missing key rather than raising.
     if Process.whereis(SessionRegistry) do
       case Registry.lookup(SessionRegistry, agent_id) do
         [{pid, _value}] when is_pid(pid) -> {:ok, pid}

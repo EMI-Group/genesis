@@ -8,8 +8,8 @@ defmodule EvoGit.Agent.Session.Supervisor do
   this supervisor; the scheduler's own crash/retry path owns that decision, and
   it is the only thing that knows whether the run may be retried.
 
-  The supervisor is started by name only; nothing starts a session here yet
-  (there is deliberately no production wiring in this checkpoint).
+  The supervisor is started by name only; every agent session is started here by
+  `EvoGit.AgentScheduler.Dispatch.do_try_dispatch/4` and owned by that dispatch.
   """
 
   @doc """

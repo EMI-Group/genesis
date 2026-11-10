@@ -2,10 +2,11 @@
 
 ## Intent
 
-Holds the per-agent session process that will own `%EvoGit.Agent.State{}` for its whole life, plus the durable/per-process setup it shares with today's `EvoGit.Agent.Runner` driver.
+Holds the per-agent session process that owns `%EvoGit.Agent.State{}` for its whole life, plus the durable/per-process setup it shares with `EvoGit.Agent.Runner`.
 `%EvoGit.Agent.State{}` is the ONE authoritative agent state; the process dictionary installed here is a DERIVED projection of it, never authoritative.
 The exchange engine (`EvoGit.Agent.Exchange`) stays a pure function over the struct: the session spawns a short-lived WORKER task per exchange and never runs the turn loop inside its own process, so inspection/cancel/input stay answerable mid-run.
-This checkpoint is the FOUNDATION ONLY — no production code starts a session yet; the scheduler-wiring checkpoint connects `EvoGit.AgentScheduler`/`Dispatch` to these modules.
+The session IS the one lifecycle for every agent: `EvoGit.AgentScheduler.Dispatch.do_try_dispatch/4` starts it under `EvoGit.Agent.Session.Supervisor` and `EvoGit.AgentScheduler` admits its ONE terminal `{:agent_session_result, …}`.
+This is still the ONE-SHOT subset only (no `:awaiting_input`, no yield, no close).
 
 ## API Surface
 
@@ -44,12 +45,12 @@ Graceful cancel publishes `status: :cancelling` and KEEPS the worker alive; forc
 
 ## Terminal Delivery Contract
 
-`finalize/1` sends exactly ONE `{:agent_session_result, agent_id, self(), result}` to `Process.whereis(EvoGit.AgentScheduler)` (skipped silently when the scheduler is down) and THEN returns `{:stop, :normal, data}`.
+`finalize/1` sends exactly ONE `{:agent_session_result, agent_id, self(), result}` to the dispatch context's `:scheduler` pid (`Dispatch.do_try_dispatch/4` sets it to the scheduler that started the session), falling back to `Process.whereis(EvoGit.AgentScheduler)` and skipped silently when neither exists, and THEN returns `{:stop, :normal, data}`.
 Sending BEFORE stopping exploits Erlang signal ordering: the result message always arrives before the monitor `:DOWN`, so the scheduler never observes a death without an outcome.
 The session NEVER calls `GenServer.reply` on the dispatch-caller's `from` — the scheduler owns that reply (it also injects `agent_count`/`foreign_repo_commits` and routes subagent results).
 Outcome mapping: `{:finish, state, result}` → terminal `{:ok, result}` (the worker already refreshed the sha), `{:error, reason}` → terminal `{:error, reason}` (delivered verbatim, never converted into a raise or a success); an unexpected shape logs a warning and becomes `{:error, {:unexpected_exchange_outcome, other}}`.
 The final summary publishes `status: :done` for `{:ok, result}`, `:failed` for `{:error, _}`, plus `current_commit` when the result is a `%EvoGit.Agent.Result{}` carrying a binary `commit_sha`.
-`EvoGit.AgentScheduler` currently only LOG-AND-IGNORES `{:agent_session_result, ...}`; the scheduler-wiring checkpoint replaces that with the real admission/result handling.
+`EvoGit.AgentScheduler.handle_info({:agent_session_result, agent_id, session_pid, result}, state)` admits that message only for an existing `SchedMeta` whose `session_pid` is `nil` (already recycled) or the sending pid, and delegates to `EvoGit.AgentScheduler.Lifecycle.handle_session_result/3`; a message from a stale session or for a missing agent is logged at `:debug` and ignored.
 
 ## Snapshot-Only Inspection (no streaming)
 
@@ -73,7 +74,7 @@ The `checkpoint:` opt handed to `Exchange.run/2` is inert in this checkpoint (`E
 - `Summary.select_all/0` uses `:ets.select/2` (never `:tab2list`), returning `[]` when the table is absent.
 - The session owns the worktree and the tmpdir; the worker owns nothing durable and installs the SESSION pid as `:evogit_agent_pid` (D7), so a worker death never orphans owner-bound state.
 - An exception inside the worker is deliberately NOT caught: it becomes an abnormal `:DOWN`, which the session maps onto its existing crash path.
-- `EvoGit.Agent.Session.Registry` and `EvoGit.Agent.Session.Supervisor` are started by `EvoGit.Application` before `EvoGit.AgentScheduler`; no production code starts a session yet, and the scheduler's log-and-ignore tolerance clause is a placeholder for the wiring checkpoint.
+- `EvoGit.Agent.Session.Registry` and `EvoGit.Agent.Session.Supervisor` are started by `EvoGit.Application` before `EvoGit.AgentScheduler`; every agent session is started by `Dispatch.do_try_dispatch/4`, a start failure is routed through the scheduler's existing crash/retry path, and `SchedMeta.session_pid`/`mode`/`phase` are only a best-effort mirror (`EvoGit.Agent.Session.inspect/2` is the live phase truth).
 
 ## Routing Table
 
