@@ -27,6 +27,7 @@ defmodule EvoDashWeb.AgentsLive.ProcessesSectionTest do
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
+  alias EvoGit.ProcessManager.Execution
 
   # Exit-safe `:sys.get_state/2` timeout: the LiveView can be starved for
   # seconds on a loaded host, where the 5 s default would turn a state read
@@ -172,6 +173,73 @@ defmodule EvoDashWeb.AgentsLive.ProcessesSectionTest do
       assert html =~ "Failed to load processes: :boom"
       refute html =~ "No processes for this agent."
       refute html =~ "agent-process-"
+    end
+
+    # The core hands the section the registry's OWN records —
+    # `%EvoGit.ProcessManager.Execution{}` structs, which do NOT implement
+    # Access. A `record[:field]` read raises at render time (the production P0),
+    # so this pins the struct shape end-to-end through the section.
+    test "renders REAL Execution structs, not only plain atom-keyed maps" do
+      html =
+        render_section(
+          executions: [
+            %Execution{
+              id: "proc-1",
+              kind: :tool_call,
+              tool: "bash",
+              command: "mix test",
+              agent_id: 777,
+              task_id: "task-1",
+              cwd: "/tmp/repo",
+              repo_root: "/tmp/repo",
+              backend: :systemd,
+              runtime: :foreground,
+              status: :running,
+              unit: "genesis-tool-1.service",
+              started_at: ~U[2026-11-09 10:00:00Z],
+              stats: EvoGit.ProcessManager.Stats.empty()
+            },
+            %Execution{
+              id: "proc-2",
+              kind: :background_job,
+              tool: "bash",
+              command: "npm run dev",
+              agent_id: 777,
+              task_id: "task-2",
+              cwd: "/tmp/repo",
+              repo_root: "/tmp/repo",
+              backend: :bwrap,
+              runtime: :detached,
+              status: :completed,
+              os_pid: 4242,
+              exit_code: 0,
+              started_at: ~U[2026-11-09 10:00:00Z],
+              ended_at: ~U[2026-11-09 10:02:05Z],
+              stats: %{cpu_percent: 0.0, rss_bytes: 1_048_576}
+            }
+          ]
+        )
+
+      doc = Floki.parse_document!(html)
+
+      # Count badge reflects both struct rows.
+      assert [badge] = Floki.find(doc, "#agent-processes-section h4 .badge")
+      assert badge |> Floki.text() |> String.trim() == "2"
+
+      for {id, status, command, target} <- [
+            {"proc-1", "Running", "mix test", "unit genesis-tool-1.service"},
+            {"proc-2", "Completed", "npm run dev", "pid 4242"}
+          ] do
+        assert [row] = Floki.find(doc, "#agent-process-#{id}")
+        text = row |> Floki.text() |> String.trim()
+
+        assert text =~ status
+        assert text =~ command
+        assert text =~ target
+      end
+
+      assert html =~ "1.0 MB"
+      refute html =~ "No processes for this agent."
     end
   end
 
