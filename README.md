@@ -55,10 +55,16 @@ Latest evidence: [EvoX Compiler](https://genesis.evox.group/evidence/evoxc) · 2
 
 ## The world persists. Agents do not.
 
-<picture>
-  <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/readme/recursive-world-inline.png">
-  <img align="right" src="docs/images/readme/recursive-world-inline.gif" alt="Managers delegate work to executors. Accepted contributions persist in version history after agent episodes end." width="400">
-</picture>
+<p align="center">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce) and (prefers-color-scheme: dark)" srcset="docs/images/readme/genesis-agent-history-dark.png">
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/readme/genesis-agent-history-light.png">
+    <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="docs/images/readme/genesis-agent-history-dark.avif">
+    <source type="image/avif" srcset="docs/images/readme/genesis-agent-history-light.avif">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/genesis-agent-history-dark.png">
+    <img src="docs/images/readme/genesis-agent-history-light.png" alt="Recursive Genesis agents delegate subtasks, commit changes on separate branches, and merge accepted work into main." width="720">
+  </picture>
+</p>
 
 **An objective becomes local work.** Managers break down the goal, delegate tasks, and review the results. Executors implement and validate candidate changes in isolated Git worktrees.
 
@@ -67,8 +73,6 @@ Latest evidence: [EvoX Compiler](https://genesis.evox.group/evidence/evoxc) · 2
 **Accepted results carry forward.** The hierarchy unfolds as development proceeds. Agents finish their episodes; software versions and project history remain as the starting point for subsequent work.
 
 [Explore the architecture →](https://genesis.evox.group/developer/architecture/high-level-design/)
-
-<br clear="all">
 
 ## Start with an objective
 
