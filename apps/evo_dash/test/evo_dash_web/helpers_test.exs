@@ -318,32 +318,6 @@ defmodule EvoDashWeb.HelpersTest do
     end
   end
 
-  describe "history_entry_icon/1" do
-    test "returns correct icon for known roles" do
-      assert history_entry_icon("system") == "hero-cog"
-      assert history_entry_icon("user") == "hero-chat-bubble-left-ellipsis"
-      assert history_entry_icon("assistant") == "hero-sparkles"
-      assert history_entry_icon("tool") == "hero-wrench-screwdriver"
-    end
-
-    test "falls back to document icon for unknown role" do
-      assert history_entry_icon("unknown") == "hero-document-text"
-    end
-  end
-
-  describe "history_entry_color/1" do
-    test "returns correct color for known roles" do
-      assert history_entry_color("system") == "text-accent"
-      assert history_entry_color("user") == "text-info"
-      assert history_entry_color("assistant") == "text-warning"
-      assert history_entry_color("tool") == "text-success"
-    end
-
-    test "falls back to muted color for unknown role" do
-      assert history_entry_color("unknown") == "text-base-content/70"
-    end
-  end
-
   describe "tool_call_name/1" do
     test "extracts name from :function.name atom-key map" do
       assert tool_call_name(%{function: %{name: "read_file"}}) == "read_file"
@@ -508,26 +482,6 @@ defmodule EvoDashWeb.HelpersTest do
     test "never crashes on unknown shapes" do
       assert tool_call_display(%{}) == {"unknown", "{}"}
       assert tool_call_display(nil) == {"unknown", "{}"}
-    end
-  end
-
-  describe "format_reasoning_details/1" do
-    test "returns nil for nil input" do
-      assert format_reasoning_details(nil) == nil
-    end
-
-    test "joins text from list of structs with :text" do
-      details = [%{text: "First"}, %{text: "Second"}]
-      assert format_reasoning_details(details) == "FirstSecond"
-    end
-
-    test "returns nil for empty list" do
-      assert format_reasoning_details([]) == nil
-    end
-
-    test "returns nil when all entries have blank text" do
-      details = [%{text: ""}, %{other: "x"}]
-      assert format_reasoning_details(details) == nil
     end
   end
 

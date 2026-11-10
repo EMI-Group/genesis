@@ -16,8 +16,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphRefresh do
       skips both the view-model rebuild and the git-RPC refetch, so
       status/token/usage-only agent updates cost nothing.
 
-  Like the sibling support modules (`PendingEvents`, `HistoryGate`,
-  `OptimisticMessages`) this module is deliberately PURE — no I/O, no socket,
+  Like the sibling support module (`PendingEvents`) this module is
+  deliberately PURE — no I/O, no socket,
   no processes, no `try/rescue`. It is invoked from INSIDE the
   `EvoDash.TaskSupervisor` fetch child (whose node-boundary rescue lives in
   `agents_live.ex`).

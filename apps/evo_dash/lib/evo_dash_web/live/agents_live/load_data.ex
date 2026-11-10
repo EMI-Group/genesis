@@ -77,9 +77,7 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
 
   # Builds the rich agent maps the template consumes from the RPC summaries.
   # `message_count` is carried through from the summary (`RemoteAPI.list_agents`
-  # provides it) — the history gate uses it to decide whether a
-  # `get_agent_history` fetch is needed, so the poll never re-transfers
-  # unchanged histories.
+  # provides it) as an informational row field.
   defp build_agents(summaries, compression_threshold) do
     # Minimal {id, parent_id, status} list used for children computation.
     parent_lookup = summaries_to_agents(summaries)
@@ -125,7 +123,6 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
         sub_agent_results: %{},
         task_ref: nil,
         result_sent: false,
-        history: [],
         usage: normalize_usage(summary[:usage]),
         total_tokens: total_tokens,
         compression_count: compression_count,
@@ -135,9 +132,8 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
         # OPTIONAL in the summary — remote/older daemons omit it, in which
         # case the core default (200_000) applies.
         context_window: ContextMeter.context_window_from(summary),
-        # History-gate input: number of messages in the agent's session-memory
-        # context (0 for not-yet-dispatched agents). NOT the history itself —
-        # the full history is fetched lazily and only when this count changes.
+        # Number of messages in the agent's context (0 for not-yet-dispatched
+        # agents); carried through from the summary.
         message_count: summary[:message_count]
       }
     end)

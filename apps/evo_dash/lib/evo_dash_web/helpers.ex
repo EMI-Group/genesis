@@ -328,81 +328,6 @@ defmodule EvoDashWeb.Helpers do
   end
 
   @doc """
-  Formats a per-message wall-clock timestamp as a short LOCAL 24h time string
-  (`"HH:MM:SS"`, seconds precision).
-
-  The `:evo_git` runtime stamps wall-clock time into message
-  `metadata[:timestamp]` at the source; the value is either a Unix-seconds
-  integer or a `DateTime` (ISO8601 binaries are also accepted defensively).
-  Historical messages may lack the key entirely.
-
-  The machine's LOCAL wall-clock time is computed without a tz database: the
-  default `Calendar.UTCOnlyTimeZoneDatabase` only supports "Etc/UTC", so
-  instead of `DateTime.shift_zone!` we derive the local offset from
-  `:calendar.local_time/0` vs `:calendar.universal_time/0` and apply it to the
-  UTC instant (via gregorian seconds so it is correct across day boundaries).
-
-  Returns `nil` for absent/unparseable values so callers can render nothing
-  (graceful fallback for pre-stamping history).
-  """
-  def format_history_timestamp(nil), do: nil
-
-  def format_history_timestamp(%DateTime{} = datetime) do
-    datetime
-    |> datetime_to_local_naive()
-    |> format_local_short_time()
-  end
-
-  def format_history_timestamp(timestamp) when is_integer(timestamp) do
-    case DateTime.from_unix(timestamp, :second) do
-      {:ok, datetime} -> format_history_timestamp(datetime)
-      {:error, _} -> nil
-    end
-  end
-
-  def format_history_timestamp(timestamp) when is_binary(timestamp) do
-    case DateTime.from_iso8601(timestamp) do
-      {:ok, datetime, _offset} -> format_history_timestamp(datetime)
-      {:error, _} -> nil
-    end
-  end
-
-  def format_history_timestamp(_), do: nil
-
-  # Converts a UTC-aware DateTime to a naive datetime in the machine's LOCAL
-  # wall-clock time: first strip the DateTime's own offset to get the UTC
-  # instant, then apply the machine's current local offset.
-  defp datetime_to_local_naive(%DateTime{} = datetime) do
-    utc_naive =
-      datetime
-      |> DateTime.to_naive()
-      |> NaiveDateTime.add(-(datetime.utc_offset + datetime.std_offset), :second)
-
-    NaiveDateTime.add(utc_naive, local_offset_seconds(), :second)
-  end
-
-  # The machine's current local offset in seconds, from the difference between
-  # :calendar.local_time/0 and :calendar.universal_time/0. Computed via
-  # gregorian seconds so it is correct across day boundaries (e.g. 00:30 local
-  # in UTC+2 vs 22:30 UTC on the previous day).
-  defp local_offset_seconds do
-    local = :calendar.local_time()
-    utc = :calendar.universal_time()
-    :calendar.datetime_to_gregorian_seconds(local) - :calendar.datetime_to_gregorian_seconds(utc)
-  end
-
-  defp format_local_short_time(%NaiveDateTime{} = naive) do
-    Calendar.strftime(naive, "%H:%M:%S")
-  end
-
-  @doc """
-  Formats a turn number as "Turn N".
-  """
-  def format_turn(turn) when is_integer(turn) do
-    gettext("Turn %{turn}", turn: turn)
-  end
-
-  @doc """
   Returns a human-friendly relative time string for a `DateTime`.
 
   Computes the difference between `DateTime.utc_now()` and the given datetime.
@@ -444,27 +369,8 @@ defmodule EvoDashWeb.Helpers do
   end
 
   # ---------------------------------------------------------------------------
-  # History / Message Helpers
+  # Tool Call Helpers
   # ---------------------------------------------------------------------------
-
-  @doc """
-  Returns heroicon name for a message role (`"system"`, `"user"`, `"assistant"`,
-  `"tool"`, etc.).
-  """
-  def history_entry_icon("system"), do: "hero-cog"
-  def history_entry_icon("user"), do: "hero-chat-bubble-left-ellipsis"
-  def history_entry_icon("assistant"), do: "hero-sparkles"
-  def history_entry_icon("tool"), do: "hero-wrench-screwdriver"
-  def history_entry_icon(_), do: "hero-document-text"
-
-  @doc """
-  Returns text color class for a message role.
-  """
-  def history_entry_color("system"), do: "text-accent"
-  def history_entry_color("user"), do: "text-info"
-  def history_entry_color("assistant"), do: "text-warning"
-  def history_entry_color("tool"), do: "text-success"
-  def history_entry_color(_), do: "text-base-content/70"
 
   @doc """
   Safely extracts the tool call name from various map formats.
@@ -680,24 +586,6 @@ defmodule EvoDashWeb.Helpers do
           border_class: nil
         }
     end
-  end
-
-  @doc """
-  Extracts and joins reasoning text from a list of ReasoningDetails structs.
-  Returns `nil` if the list is empty or contains no text.
-  """
-  def format_reasoning_details(nil), do: nil
-
-  def format_reasoning_details(details) when is_list(details) do
-    text =
-      details
-      |> Enum.map(fn
-        %{text: text} when is_binary(text) -> text
-        _ -> ""
-      end)
-      |> Enum.join("")
-
-    if text == "", do: nil, else: text
   end
 
   # ---------------------------------------------------------------------------
@@ -1038,52 +926,6 @@ defmodule EvoDashWeb.Helpers do
   # ---------------------------------------------------------------------------
   # String Helpers
   # ---------------------------------------------------------------------------
-
-  @doc """
-  Converts any value into an HTML-safe string so it can be rendered in a HEEx
-  template without crashing.
-
-  Message content and tool-call arguments may arrive as a Map (or other
-  non-string term) instead of a String. Rendering such a value directly via
-  `<%= ... %>` raises `Protocol.UndefinedError` for `Phoenix.HTML.Safe`. This
-  helper guarantees a string is always returned.
-
-  Returns:
-    * `""` for `nil`
-    * the binary as-is for strings
-    * a human-readable `"key: value"` representation (sorted by key, one pair
-      per line) for plain maps — nested non-string leaf values use
-      `inspect(value, pretty: true)`
-    * newline-joined for lists whose elements are all strings, otherwise
-      `inspect(value, pretty: true)`
-    * `inspect(value, pretty: true)` for structs and any other term
-  """
-  def safe_text(nil), do: ""
-  def safe_text(value) when is_binary(value), do: value
-
-  # Structs are maps, but they carry a meaningful `inspect/1` representation,
-  # so fall through to inspect rather than the key/value rendering below.
-  def safe_text(%{__struct__: _} = value), do: inspect(value, pretty: true)
-
-  def safe_text(value) when is_map(value) do
-    value
-    |> Enum.sort_by(fn {k, _v} -> to_string(k) end)
-    |> Enum.map(fn {k, v} -> "#{k}: #{safe_map_leaf(v)}" end)
-    |> Enum.join("\n")
-  end
-
-  def safe_text(value) when is_list(value) do
-    if Enum.all?(value, &is_binary/1) do
-      Enum.join(value, "\n")
-    else
-      inspect(value, pretty: true)
-    end
-  end
-
-  def safe_text(value), do: inspect(value, pretty: true)
-
-  defp safe_map_leaf(v) when is_binary(v), do: v
-  defp safe_map_leaf(v), do: inspect(v, pretty: true)
 
   @doc """
   Truncates a string to `len` characters, appending "..." if truncated.
