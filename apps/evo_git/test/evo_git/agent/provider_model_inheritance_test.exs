@@ -614,16 +614,12 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
     assert {^id, %SchedulerState{} = next} =
              Dispatch.register_agent(state, spec, nil, parent, depth, nil, 1)
 
-    # The Runner normally installs the live phylo node after registration. Same-
-    # repo building reads only that current commit and needs no git subprocess.
-    SchedulerStore.put_agent_state(id, %{
-      agent!(id)
-      | phylo_node: %PhyloGraphNode{
-          repo: Process.get(:repo_path),
-          base_commit: "fixture-base",
-          current_commit: "fixture-head"
-        }
-    })
+    # The Runner normally publishes the worktree HEAD it last observed on the
+    # SUMMARY row; the phylo identity itself is registration metadata that stays
+    # on the scheduler-meta spec (seeded from the spec above, `fixture-base`).
+    # Same-repo building reads only that observed current commit and needs no git
+    # subprocess.
+    SchedulerStore.put_agent_state(id, %{agent!(id) | current_commit: "fixture-head"})
 
     {id, next}
   end
@@ -653,6 +649,10 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
         ReqLLM.Context.new([ReqLLM.Context.system("SYSTEM"), ReqLLM.Context.user("OBJECTIVE")]),
       objective: "Test canonical inheritance",
       repo_less: Process.get(:repo_less, false),
+      # The parent's worktree HEAD is OWNED by the state (P2): same-repo subagent
+      # building reads `state.current_commit`, exactly the value the session
+      # publishes onto the summary row it seeds this state from.
+      current_commit: agent.current_commit,
       # The engine reads these from the STRUCT now (the old `do_turn/5` read them
       # from this same scheduler row). The session's initial-state builder copies
       # them from that row; a missing generation-params value would silently send
