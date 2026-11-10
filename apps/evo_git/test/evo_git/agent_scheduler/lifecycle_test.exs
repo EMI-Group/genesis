@@ -135,9 +135,10 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
   end
 
   # Reads through the public Store API, which PROJECTS the control-plane values
-  # (`cancel_requested`, `pending_user_messages`, `compression_count`) back onto
-  # the struct — they are written to `:evogit_agent_inbox` /
-  # `:evogit_agent_control`, never to the state row.
+  # (`cancel_requested`, `pending_user_messages`, and the legacy
+  # `compression_count` counter) back onto the struct — the first two are written
+  # to `:evogit_agent_inbox` / `:evogit_agent_control`, never to the state row,
+  # while the state-owned `compression_count` lives on the row itself.
   defp get_agent_state(agent_id) do
     case EvoGit.AgentScheduler.Store.get_agent_state(agent_id) do
       {:ok, state} -> {:ok, state}
