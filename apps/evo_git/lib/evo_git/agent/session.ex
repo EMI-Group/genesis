@@ -538,8 +538,9 @@ defmodule EvoGit.Agent.Session do
     meta = Keyword.fetch!(ctx, :meta)
 
     # Every key `Setup.build_initial_state/3` fetches, plus the ctx-derived ones. The identity
-    # and model fields come from the SAME scheduler row the old ETS reads supplied; only
-    # `prompt_cache_key` is not on the row struct yet, hence `Map.get/2`.
+    # and model fields come from the SAME scheduler row the old ETS reads supplied; the cache
+    # identity has no dedicated row field yet, so it is PROJECTED from `llm_generation_params`
+    # (see `prompt_cache_key/1`).
     state_ctx = [
       agent_id: Keyword.fetch!(ctx, :agent_id),
       depth: Keyword.fetch!(ctx, :depth),
@@ -565,13 +566,46 @@ defmodule EvoGit.Agent.Session do
       provider_profile_id: row.provider_profile_id,
       model_id: row.model_id,
       model_id_locked: row.model_id_locked,
-      prompt_cache_key: Map.get(row, :prompt_cache_key),
+      prompt_cache_key: prompt_cache_key(row),
       quality_level: Keyword.get(spec.opts, :quality_level),
       custom_agent_id: Keyword.get(spec.opts, :custom_agent_id),
       attachments: Keyword.get(spec.opts, :attachments)
     ]
 
     Setup.build_initial_state(spec.agent_module, spec.objective, state_ctx)
+  end
+
+  # The provider cache/routing identity of this agent run.
+  #
+  # It is attached EXACTLY ONCE, at scheduler registration
+  # (`EvoGit.Config.Schema.LLM.with_cache_identity/3` appends `prompt_cache_key:` — and, for
+  # `:openai_codex`, `session_id:` — onto the account's `provider_options`), because a key
+  # derived per request would defeat the cache it exists to hit. `%AgentState{}` carries no
+  # dedicated field for it, so the session PROJECTS the registered value onto the owned state:
+  # one value for the whole session, therefore identical across every exchange of it.
+  #
+  # A dedicated row field (when one exists) always wins, and an agent whose provider has no
+  # cache identity keeps `nil`.
+  defp prompt_cache_key(row) do
+    case Map.get(row, :prompt_cache_key) do
+      key when is_binary(key) and key != "" -> key
+      _ -> provider_prompt_cache_key(Map.get(row, :llm_generation_params))
+    end
+  end
+
+  defp provider_prompt_cache_key(params) do
+    with true <- is_list(params) and Keyword.keyword?(params),
+         provider_options when is_list(provider_options) <-
+           Keyword.get(params, :provider_options),
+         true <- Keyword.keyword?(provider_options) do
+      case Keyword.get(provider_options, :prompt_cache_key) ||
+             Keyword.get(provider_options, :session_id) do
+        key when is_binary(key) and key != "" -> key
+        _ -> nil
+      end
+    else
+      _ -> nil
+    end
   end
 
   defp agent_repo_path(ctx, repo_less) do
