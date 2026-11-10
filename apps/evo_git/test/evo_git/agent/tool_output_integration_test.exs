@@ -38,7 +38,7 @@ defmodule EvoGit.Agent.ToolOutputIntegrationTest do
   use ExUnit.Case, async: false
 
   alias EvoGit.Agent.DelegationHints
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.Agent.ToolOutput
   alias EvoGit.Adapters.Git
@@ -277,7 +277,7 @@ defmodule EvoGit.Agent.ToolOutputIntegrationTest do
   # sanitize/truncate + hint appenders per output, and materializes every output
   # at the `assemble_tool_result/3` message-construction site.
   defp run_pipeline(calls, repo) do
-    state = %LoopState{
+    state = %State{
       agent_id: Process.get(:evogit_agent_id),
       agent_module: EvoGit.Agents.Executor,
       depth: 0,

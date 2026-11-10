@@ -186,7 +186,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   alias EvoGit.Agent.Compression.ToolResultPruner
   alias EvoGit.Agent.ContextBuilder
   alias EvoGit.Agent.ContextCompression
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.AgentState
@@ -367,7 +367,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   end
 
   defp state(agent_id, messages, opts) do
-    %LoopState{
+    %State{
       agent_id: agent_id,
       agent_module: __MODULE__,
       depth: 0,
@@ -381,7 +381,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
     }
   end
 
-  defp messages_of(%LoopState{context: context}), do: ReqLLM.Context.to_list(context)
+  defp messages_of(%State{context: context}), do: ReqLLM.Context.to_list(context)
 
   defp text_of(%ReqLLM.Message{content: content}) when is_list(content) do
     content
@@ -548,7 +548,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
           llm_context_window: @window_128k
         )
 
-      assert %LoopState{} = result
+      assert %State{} = result
       messages = messages_of(result)
 
       # 14 original messages (none deleted — stage 1 never shortens the list)
@@ -613,7 +613,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
           llm_context_window: @window_128k
         )
 
-      assert %LoopState{} = result
+      assert %State{} = result
 
       refresh = result |> messages_of() |> List.last()
       assert refresh.role == :user
@@ -662,7 +662,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
           llm_context_window: @window_128k
         )
 
-      assert %LoopState{} = result
+      assert %State{} = result
 
       # Exactly ONE summarising request was served (Stage 2, over the ORIGINAL
       # list) — the rejected prune never became a second call.
@@ -711,7 +711,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       split = Checkpoint.split(original)
       assert length(split.old) == 4
       assert length(split.recent) == 8
-      assert match?(%LoopState{}, st)
+      assert match?(%State{}, st)
     end
   end
 
@@ -749,7 +749,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
           llm_context_window: @window_128k
         )
 
-      assert %LoopState{} = result
+      assert %State{} = result
 
       # Neither stage ran: the recorded count reset and the counter moved, but
       # the transcript (plus the appended refresh message) is untouched.
@@ -792,7 +792,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
           llm_context_window: @window_128k
         )
 
-      assert %LoopState{} = result
+      assert %State{} = result
 
       # Stage 2 ran once, and its request carried the huge tool output VERBATIM:
       # the middle sentinel Stage 1 always deletes is still there.
@@ -841,7 +841,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
           llm_context_window: @window_128k
         )
 
-      assert %LoopState{} = result
+      assert %State{} = result
       messages = messages_of(result)
 
       # 2 head + 1 checkpoint + the 8 retained recent messages + 1 refresh.
@@ -925,7 +925,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
           llm_context_window: @window_128k
         )
 
-      assert %LoopState{} = result
+      assert %State{} = result
       assert EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.request_count(server) == 1
 
       # The refresh appended by the SUMMARISING path carries the live snapshot.
@@ -963,7 +963,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
           llm_context_window: @window_128k
         )
 
-      assert %LoopState{} = first_result
+      assert %State{} = first_result
       assert first_result |> messages_of() |> List.last() |> text_of() =~ job_a.id
 
       # Turn the first result into a LATER conversation. The appended turns carry
@@ -998,7 +998,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
           llm_context_window: @window_128k
         )
 
-      assert %LoopState{} = second_result
+      assert %State{} = second_result
       assert EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.request_count(server) == 2
 
       messages = messages_of(second_result)
@@ -1060,7 +1060,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       assert blank.replaced == 0
       assert blank.messages == messages
 
-      assert %LoopState{} = state(@stage2_agent, messages, repo_path: repo_path, total_tokens: 0)
+      assert %State{} = state(@stage2_agent, messages, repo_path: repo_path, total_tokens: 0)
     end
   end
 

@@ -120,11 +120,13 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
   alias EvoGit.Agent.{
     ContextBuilder,
     ContextCompression,
-    LoopState,
     SubagentProcessing,
     ToolDispatch
   }
 
+  # `State` is already taken by `EvoGit.AgentScheduler.State` below, so the agent
+  # state struct keeps its historical local alias.
+  alias EvoGit.Agent.State, as: LoopState
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.{Dispatch, ModelSelection, State}
   alias EvoGit.AgentScheduler.Store, as: SchedulerStore

@@ -1,17 +1,17 @@
 defmodule EvoGit.Agent.TurnLimitTest do
   @moduledoc """
   `async: true` — pure turn-limit recovery trigger/budget checks over an
-  in-memory `EvoGit.Agent.LoopState`; no shared/global state is touched.
+  in-memory `EvoGit.Agent.State`; no shared/global state is touched.
   """
 
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
 
-  # Helper to build a minimal LoopState for testing
+  # Helper to build a minimal State for testing
   defp state(overrides) do
-    %LoopState{
+    %State{
       agent_id: 1,
       agent_module: __MODULE__,
       depth: 0,
@@ -26,7 +26,7 @@ defmodule EvoGit.Agent.TurnLimitTest do
   # checks `grace_period_continue_failed?/1` and, when allowed, decrements
   # `grace_turns_remaining`. Returns `{:recovery_failed, turns_completed}` —
   # the number of grace turns that ran before the hard-stop.
-  defp continue_until_fail(%LoopState{} = state, turns_completed) do
+  defp continue_until_fail(%State{} = state, turns_completed) do
     if Agent.grace_period_continue_failed?(state) do
       {:recovery_failed, turns_completed + 1}
     else

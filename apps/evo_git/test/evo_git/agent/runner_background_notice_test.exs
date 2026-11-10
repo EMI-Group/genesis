@@ -1,35 +1,31 @@
 defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
   @moduledoc """
-  Runner-side coverage of the background-job completion NOTICE.
+  Exchange-engine coverage of the background-job completion NOTICE.
 
   A `bash` call with `run_in_background: true` detaches a process that outlives
   the tool call. At the top of each turn (after compression and the pending
-  user-message drain, before the LLM call) the runner claims its own
+  user-message drain, before the LLM call) the exchange claims its own
   finished-but-unannounced jobs (`EvoGit.BackgroundJobs.claim_finished_notices/1`
   — exactly-once, owner-scoped) and appends ONE combined `[NOTICE]` user message
   (`EvoGit.Agent.BackgroundJobNotice.notice/1`).
 
-  `Runner.inject_background_job_notices/1` is public (`@doc false`) so it can be
-  driven directly here, the same convention as
-  `Runner.drain_and_inject_user_messages/1`.
+  `EvoGit.Agent.Exchange.Pending.inject_background_job_notices/2` is driven
+  directly here with a pure `:scheduler` seam (`EvoGit.Agent.Exchange.Seams`), so
+  the engine runs in this plain ExUnit process with no scheduler and no ETS row.
+  The background jobs themselves are REAL detached children in this test's OWN
+  isolated `EvoGit.BackgroundJobs` registry (the tool plane, not the scheduler
+  seam), under a unique name with uniquely named job log files, so they never
+  collide across modules.
 
-  `async: true` — the cases seed ONE row in the app-global named
-  `:evogit_agent_state` ETS table under a per-test unique agent id from this
-  file's own id range (deleted on exit, nothing asserted about the table as a
-  whole), and each test's background jobs live in its OWN isolated
-  `EvoGit.BackgroundJobs` registry under a unique name, writing uniquely named
-  job log files — so the real detached children never collide across modules.
+  `async: true` — nothing global is touched: the scheduler seam is in-memory and
+  each test's registry/rows are its own.
   """
 
   use ExUnit.Case, async: true
 
-  alias EvoGit.Agent.LoopState
-  alias EvoGit.Agent.Runner
-  alias EvoGit.AgentScheduler.AgentState
-  alias EvoGit.AgentScheduler.Store
+  alias EvoGit.Agent.Exchange.Pending
+  alias EvoGit.Agent.State
   alias EvoGit.BackgroundJobs
-  alias EvoGit.Core.ContextNode
-  alias EvoGit.Core.PhyloGraphNode
 
   @moduletag :tmp_dir
 
@@ -37,11 +33,8 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
   @deadline_ms 5_000
 
   setup %{tmp_dir: _tmp_dir} do
-    create_ets_if_missing(:evogit_agent_state)
-    create_ets_if_missing(:evogit_sched_meta)
-
-    # This file's own id range keeps the row unshared with every other module
-    # that seeds the same app-global tables concurrently.
+    # This file's own id range keeps the agent identity unshared with every
+    # other module. No ETS row is written: the scheduler seam is in-memory.
     agent_id = 9_961_000 + :erlang.unique_integer([:positive])
 
     name = :"runner_bg_notice_#{System.unique_integer([:positive])}"
@@ -50,16 +43,12 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     Process.put(:evogit_background_jobs_server, name)
     Process.put(:evogit_agent_pid, self())
 
-    seed_agent_state(agent_id)
-
     on_exit(fn ->
       # `on_exit` runs in a different process, so these deletes touch THAT
       # process's dictionary; the test process's keys die with it. Kept as
       # belt-and-braces for the seam contract.
       Process.delete(:evogit_agent_pid)
       Process.delete(:evogit_background_jobs_server)
-      # Delete ONLY this test's rows — never another module's.
-      delete_agent_rows(agent_id)
     end)
 
     %{agent_id: agent_id}
@@ -69,35 +58,33 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
   # Harness
   # ---------------------------------------------------------------------------
 
-  defp create_ets_if_missing(name) do
-    if :ets.whereis(name) == :undefined do
-      :ets.new(name, [:set, :named_table, :public])
-    end
+  # Builds the pure `:scheduler` seam (`EvoGit.Agent.Exchange.Seams`) for one
+  # test: an IN-MEMORY stand-in for the scheduler's per-agent control plane, so
+  # the engine runs with no scheduler and no ETS row.
+  #
+  #   * `calls` — every `{kind, payload}` interaction, in order;
+  #   * `synced` — every context handed to the `:context` sync, in order.
+  #
+  # Assertions observe this record where a test previously observed the ETS side
+  # effect it produced (the synced context).
+  defp scheduler_stub do
+    {:ok, pid} = Agent.start_link(fn -> %{calls: []} end)
+    {fn kind, payload, _state -> record(pid, kind, payload) end, pid}
   end
 
-  defp delete_agent_rows(agent_id) do
-    if :ets.whereis(:evogit_agent_state) != :undefined,
-      do: :ets.delete(:evogit_agent_state, agent_id)
-
-    if :ets.whereis(:evogit_sched_meta) != :undefined,
-      do: :ets.delete(:evogit_sched_meta, agent_id)
+  defp record(pid, kind, payload) do
+    Agent.get_and_update(pid, fn stub ->
+      stub = %{stub | calls: stub.calls ++ [{kind, payload}]}
+      {:ok, stub}
+    end)
   end
 
-  # A minimal registered agent — enough for `sync_context_to_ets/2` (a plain
-  # ETS write-through) and for the loop's ETS expectations.
-  defp seed_agent_state(agent_id) do
-    Store.put_agent_state(agent_id, %AgentState{
-      context_node: %ContextNode{path: "./", repo: "/tmp/test"},
-      phylo_node: %PhyloGraphNode{repo: "/tmp/test", base_commit: "abc", current_commit: "abc"},
-      llm_model: "test:model",
-      max_retries: 3,
-      max_depth: 8,
-      pending_user_messages: []
-    })
-  end
+  defp calls(pid), do: Agent.get(pid, & &1.calls)
+  defp kinds(pid), do: for({kind, _payload} <- calls(pid), do: kind)
+  defp synced(pid), do: for({:context, ctx} <- calls(pid), do: ctx)
 
   defp loop_state(agent_id, context \\ ReqLLM.Context.new([])) do
-    %LoopState{
+    %State{
       agent_id: agent_id,
       agent_module: __MODULE__,
       depth: 0,
@@ -198,8 +185,9 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
 
     existing = ReqLLM.Context.user("already here")
     state = loop_state(agent_id, ReqLLM.Context.append(ReqLLM.Context.new([]), existing))
+    {seam, _stub} = scheduler_stub()
 
-    new_state = Runner.inject_background_job_notices(state)
+    new_state = Pending.inject_background_job_notices(state, scheduler: seam)
 
     assert [first, notice] = new_state.context.messages
     # Everything before the notice is byte-identical (nothing is replaced).
@@ -212,15 +200,18 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     assert text_of(notice) =~ "1 background shell job finished"
   end
 
-  test "the ETS context is synced with the notice (dashboard visibility)",
+  test "the new context is synced through the :context seam (dashboard visibility)",
        %{agent_id: agent_id, tmp_dir: tmp_dir} do
     job = start_job!("echo done", tmp_dir)
     _ = await_terminal!(job.id)
 
-    _state = Runner.inject_background_job_notices(loop_state(agent_id))
+    {seam, stub} = scheduler_stub()
+    new_state = Pending.inject_background_job_notices(loop_state(agent_id), scheduler: seam)
 
-    assert {:ok, %AgentState{context: context}} = Store.get_agent_state(agent_id)
-    assert [notice] = notice_messages(context)
+    # The ONE side effect the ETS write-through provided: the updated context
+    # (carrying the notice) is handed to the scheduler for dashboard/history.
+    assert synced(stub) == [new_state.context]
+    assert [notice] = notice_messages(new_state.context)
     assert text_of(notice) =~ job.id
   end
 
@@ -229,13 +220,18 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     job = start_job!("echo done", tmp_dir)
     _ = await_terminal!(job.id)
 
-    once = Runner.inject_background_job_notices(loop_state(agent_id))
+    {seam, stub} = scheduler_stub()
+
+    once = Pending.inject_background_job_notices(loop_state(agent_id), scheduler: seam)
     assert [_notice] = notice_messages(once.context)
     assert length(once.context.messages) == 1
 
-    twice = Runner.inject_background_job_notices(once)
+    twice = Pending.inject_background_job_notices(once, scheduler: seam)
     assert twice == once
     assert length(twice.context.messages) == 1
+
+    # The second call claimed nothing, so it synced nothing either.
+    assert synced(stub) == [once.context]
 
     # And the registry agrees: nothing left to claim.
     assert {:ok, []} = BackgroundJobs.claim_finished_notices()
@@ -248,14 +244,20 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
         ReqLLM.Context.append(ReqLLM.Context.new([]), ReqLLM.Context.user("hi"))
       )
 
-    assert Runner.inject_background_job_notices(state) == state
+    {seam, stub} = scheduler_stub()
+
+    assert Pending.inject_background_job_notices(state, scheduler: seam) == state
+    # Nothing claimed → nothing synced.
+    assert kinds(stub) == []
   end
 
   test "a still-running job is not announced", %{agent_id: agent_id, tmp_dir: tmp_dir} do
     job = start_job!("sleep 30", tmp_dir)
 
+    {seam, _stub} = scheduler_stub()
     state = loop_state(agent_id)
-    assert Runner.inject_background_job_notices(state) == state
+
+    assert Pending.inject_background_job_notices(state, scheduler: seam) == state
     assert state.context.messages == []
 
     assert {:ok, _} = BackgroundJobs.kill(job.id)
@@ -275,8 +277,9 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     existing = ReqLLM.Context.user("already here")
     state = loop_state(agent_id, ReqLLM.Context.append(ReqLLM.Context.new([]), existing))
     before = length(state.context.messages)
+    {seam, _stub} = scheduler_stub()
 
-    new_state = Runner.inject_background_job_notices(state)
+    new_state = Pending.inject_background_job_notices(state, scheduler: seam)
 
     # Exactly ONE message is appended, and it is the single combined notice.
     assert length(new_state.context.messages) == before + 1
@@ -291,7 +294,7 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     assert length(String.split(text, "\n- ")) == 3
 
     # Exactly-once: nothing is left to claim, so a second turn appends nothing.
-    again = Runner.inject_background_job_notices(new_state)
+    again = Pending.inject_background_job_notices(new_state, scheduler: seam)
     assert again == new_state
     assert length(again.context.messages) == before + 1
     assert {:ok, []} = BackgroundJobs.claim_finished_notices()
@@ -313,7 +316,8 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     # below cannot pass vacuously.
     await_output!(job.output_path, marker)
 
-    state = Runner.inject_background_job_notices(loop_state(agent_id))
+    {seam, _stub} = scheduler_stub()
+    state = Pending.inject_background_job_notices(loop_state(agent_id), scheduler: seam)
 
     assert [notice] = notice_messages(state.context)
     text = text_of(notice)
@@ -335,17 +339,25 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     _ = await_terminal!(job.id)
 
     grace_state = %{loop_state(agent_id) | in_grace_period: true, grace_turns_remaining: 2}
+    {seam, stub} = scheduler_stub()
 
-    assert Runner.inject_background_job_notices(grace_state) == grace_state
+    assert Pending.inject_background_job_notices(grace_state, scheduler: seam) == grace_state
     assert grace_state.context.messages == []
+    # Skipped BEFORE any interaction: not even a context sync.
+    assert kinds(stub) == []
 
     # The job was NOT claimed: `job/2` still reports it unannounced, and a later
     # non-grace turn notices it.
     assert {:ok, %{announced: false}} = BackgroundJobs.job(job.id)
 
-    resumed = Runner.inject_background_job_notices(%{grace_state | in_grace_period: false})
+    resumed =
+      Pending.inject_background_job_notices(%{grace_state | in_grace_period: false},
+        scheduler: seam
+      )
+
     assert [notice] = resumed.context.messages
     assert text_of(notice) =~ job.id
+    assert synced(stub) == [resumed.context]
   end
 
   test "an unreachable registry leaves the state unchanged and never raises", %{
@@ -359,6 +371,8 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
         ReqLLM.Context.append(ReqLLM.Context.new([]), ReqLLM.Context.user("hi"))
       )
 
-    assert Runner.inject_background_job_notices(state) == state
+    {seam, _stub} = scheduler_stub()
+
+    assert Pending.inject_background_job_notices(state, scheduler: seam) == state
   end
 end

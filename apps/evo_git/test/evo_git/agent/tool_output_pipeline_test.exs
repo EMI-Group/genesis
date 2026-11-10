@@ -22,7 +22,7 @@ defmodule EvoGit.Agent.ToolOutputPipelineTest do
 
   use ExUnit.Case, async: true
 
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.Agent.ToolOutput
   alias EvoGit.Adapters.Git
@@ -312,7 +312,7 @@ defmodule EvoGit.Agent.ToolOutputPipelineTest do
       assert is_binary(raw)
       assert ToolDispatch.sanitize_tool_result(raw, "write_file", args) == raw
 
-      state = %LoopState{
+      state = %State{
         agent_id: Process.get(:evogit_agent_id),
         agent_module: EvoGit.Agents.Executor,
         depth: 0,

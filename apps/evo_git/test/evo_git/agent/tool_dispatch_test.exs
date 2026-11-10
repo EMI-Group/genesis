@@ -23,7 +23,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
 
   use ExUnit.Case, async: false
 
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolDispatch
 
   import ExUnit.CaptureLog
@@ -922,7 +922,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       Process.put(:repo_less, true)
       Process.put(:repo_path, "/nonexistent")
 
-      state = %LoopState{
+      state = %State{
         agent_id: 1,
         agent_module: EvoGit.Agents.SelfReflective,
         depth: 0,
@@ -951,7 +951,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       Process.delete(:repo_less)
       Process.put(:repo_path, "/nonexistent/tool_dispatch_worktree")
 
-      state = %LoopState{
+      state = %State{
         agent_id: 1,
         agent_module: EvoGit.Agents.SelfReflective,
         depth: 0,
@@ -992,7 +992,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       Process.delete(:repo_less)
       Process.put(:repo_path, repo_root)
 
-      state = %LoopState{
+      state = %State{
         agent_id: 1,
         agent_module: EvoGit.Agents.SelfReflective,
         depth: 0,

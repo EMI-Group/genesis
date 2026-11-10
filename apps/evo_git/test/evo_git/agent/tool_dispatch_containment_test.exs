@@ -83,7 +83,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
   use ExUnit.Case, async: false
 
   alias EvoGit.Adapters.Git
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.Agent.ToolNames
 
@@ -344,7 +344,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
                  fn _state -> flunk("recovery must not run for a soft tool failure") end
                )
 
-      assert_receive {:next_turn, %LoopState{} = state}
+      assert_receive {:next_turn, %State{} = state}
 
       assert [tool_message] = Enum.filter(state.context.messages, &(&1.role == :tool))
 
@@ -378,7 +378,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
                  fn _state -> flunk("recovery must not run for a contained tool raise") end
                )
 
-      assert_receive {:next_turn, %LoopState{} = state}
+      assert_receive {:next_turn, %State{} = state}
       assert [tool_message] = Enum.filter(state.context.messages, &(&1.role == :tool))
 
       # Exactly the exception banner (`Exception.format_banner/2`), not an
@@ -572,7 +572,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
   end
 
   defp loop_state do
-    %LoopState{
+    %State{
       agent_id: Process.get(:evogit_agent_id),
       agent_module: EvoGit.Agents.Executor,
       depth: 0,

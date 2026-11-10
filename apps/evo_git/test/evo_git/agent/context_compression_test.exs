@@ -2,7 +2,7 @@ defmodule EvoGit.Agent.ContextCompressionTest do
   @moduledoc """
   `async: true` — exercises the pure `compression_instruction/0` text and the
   threshold-gating/usage-accumulation paths of `compress_if_needed/2` with
-  in-memory `LoopState`/`ReqLLM.Response` values; the below-threshold gate
+  in-memory `State`/`ReqLLM.Response` values; the below-threshold gate
   performs only a read-only `EvoGit.Config.resolve/1` and never acquires an LLM
   slot. The context-tree refresh cases use per-test temp repo dirs (removed in
   `on_exit`) and the pure `ContextBuilder.refresh_first_user_message/2`. No
@@ -17,12 +17,12 @@ defmodule EvoGit.Agent.ContextCompressionTest do
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.ContextCompression
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.Usage
 
-  # Build a minimal LoopState for testing.
+  # Build a minimal State for testing.
   defp state(overrides) do
-    %LoopState{
+    %State{
       agent_id: 1,
       agent_module: __MODULE__,
       depth: 0,
@@ -285,8 +285,8 @@ defmodule EvoGit.Agent.ContextCompressionTest do
   # Regression: state.usage default and Usage struct shape
   # ---------------------------------------------------------------------------
 
-  describe "LoopState.usage default" do
-    test "a fresh LoopState starts with zero usage" do
+  describe "State.usage default" do
+    test "a fresh State starts with zero usage" do
       st = state(total_tokens: 0)
       assert st.usage == Usage.zero()
     end
@@ -323,8 +323,8 @@ defmodule EvoGit.Agent.ContextCompressionTest do
       repo
     end
 
-    # A LoopState carrying exactly the fields the refresh consumes. The `:now`
-    # CLOCK seam is set on the FINISHED struct — `state/1` builds a `%LoopState{}`
+    # A State carrying exactly the fields the refresh consumes. The `:now`
+    # CLOCK seam is set on the FINISHED struct — `state/1` builds a `%State{}`
     # via `struct/1`, which silently DROPS unknown keys, so putting `now:` in the
     # keyword list above would have no effect. Pinning it keeps every
     # refreshed-vs-original comparison deterministic instead of racing a

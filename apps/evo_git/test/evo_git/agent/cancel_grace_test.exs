@@ -1,11 +1,13 @@
 defmodule EvoGit.Agent.CancelGraceTest do
   @moduledoc """
-  Graceful-cancellation grace-period behavior for the agent Runner loop.
+  Graceful-cancellation grace-period behavior for the agent exchange engine
+  (`EvoGit.Agent.Exchange.run/2`).
 
-  Covers the runner-side contract of graceful cancellation (spec D2 + D3):
-    - the ETS `cancel_requested` flag is drained at the top of `loop/1` and
-      the agent enters cancel-grace (budget 3, no extra recovery message —
-      the cancel message arrives via the pending_user_messages drain);
+  Covers the engine-side contract of graceful cancellation (spec D2 + D3):
+    - the scheduler's `cancel_requested` flag is read through the `:scheduler`
+      seam at the top of the exchange loop and the agent enters cancel-grace
+      (budget 3, no extra recovery message — the cancel message arrives via the
+      pending_user_messages drain);
     - the `grace_turns_remaining` budget semantics: 3 for cancel-grace AND 3
       for turn-limit recovery (a real report window: a tool-calling turn does
       not finish the run, so one bounded final commit plus the tool-free report
@@ -17,21 +19,28 @@ defmodule EvoGit.Agent.CancelGraceTest do
       run (committing the pending work into the reported commit), exactly as it
       does outside a grace period.
 
-  `async: true` — the ETS-based tests seed ONE row in the app-global named
-  `:evogit_agent_state` table under a per-test unique agent id from this file's
-  own id range and delete exactly that row on exit; nothing is asserted about
-  the table as a whole, so the writes are concurrent-safe. The end-to-end
-  completion test drives `EvoGit.Agent.ToolDispatch.process_llm_response/6`
-  against that own row and its own temp git repo; every other test is pure
-  (`LoopState` structs / a per-test temp git repo).
+  `async: true` — the pure cases (`EvoGit.Agent.Exchange.Grace` /
+  `Exchange.Pending` against an in-memory `:scheduler` seam, see
+  `EvoGit.Agent.Exchange.Seams`) touch no global state at all: they run in this
+  plain ExUnit process with no scheduler and no ETS row. The two recovery
+  auto-commit cases are real-git integration cases (a temp repo supplied through
+  `state.repo_path` — the auto-commit reads the STRUCT, not the process
+  dictionary), and the plain-text completion case drives
+  `EvoGit.Agent.ToolDispatch.process_llm_response/6` end to end: it completes
+  through `EvoGit.Agent.Completion`, which still reads
+  `phylo_node.base_commit`/archive metadata from ETS, so THAT case seeds ONE row
+  in the app-global named `:evogit_agent_state` table under a per-test unique
+  agent id from this file's own id range and deletes exactly that row on exit;
+  nothing is asserted about the table as a whole, so the writes are
+  concurrent-safe.
   """
   use ExUnit.Case, async: true
 
   @moduletag :tmp_dir
 
   alias EvoGit.Agent
-  alias EvoGit.Agent.LoopState
-  alias EvoGit.Agent.Runner
+  alias EvoGit.Agent.Exchange
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.Store
@@ -47,11 +56,11 @@ defmodule EvoGit.Agent.CancelGraceTest do
   # sits just below this file's unique-id range (9_900_000 + unique_integer).
   @absent_agent_id 9_899_999
 
-  # Minimal LoopState builder (mirrors turn_limit_test.exs).
+  # Minimal State builder (mirrors turn_limit_test.exs).
   defp state, do: state([])
 
   defp state(overrides) do
-    %LoopState{
+    %State{
       agent_id: @absent_agent_id,
       agent_module: __MODULE__,
       depth: 0,
@@ -91,22 +100,61 @@ defmodule EvoGit.Agent.CancelGraceTest do
 
   # Seeds an agent row under a UNIQUE id (this file's own range) and schedules
   # its deletion, so no concurrently running module can observe or clobber it.
-  defp put_agent_state!(overrides \\ []) do
+  # Used ONLY by the plain-text completion integration case, whose completion
+  # side effects (git-note/archive metadata) still read the scheduler row.
+  defp put_agent_state!(overrides) do
     agent_id = 9_900_000 + :erlang.unique_integer([:positive])
     :ok = Store.put_agent_state(agent_id, agent_state(overrides))
     on_exit(fn -> Store.delete_agent_state(agent_id) end)
     agent_id
   end
 
-  # Replicates `Runner`'s drain_and_inject_user_messages/1 (which is private):
-  # drains pending messages via Store and appends them as turn-tagged user
-  # messages into the context.
-  defp inject_user_messages(%LoopState{} = state, messages) do
-    Enum.reduce(messages, state, fn msg, st ->
-      tagged = EvoGit.Agent.ContextBuilder.tag_message_turn(ReqLLM.Context.user(msg), st.turn)
-      %{st | context: ReqLLM.Context.append(st.context, tagged)}
+  # Builds the pure `:scheduler` seam (`EvoGit.Agent.Exchange.Seams`) for one
+  # test: an IN-MEMORY stand-in for the scheduler's per-agent control plane, so
+  # the engine runs with no scheduler and no ETS row.
+  #
+  #   * `queue` — the pending user-message queue; `:drain_inputs` POPS it, so a
+  #     second drain is a no-op exactly as the real queue behaves;
+  #   * `cancel?` — the `cancel_requested` flag (`:clear_cancel` clears it);
+  #   * `calls` — every `{kind, payload}` interaction, in order;
+  #   * `synced` — every context handed to the `:context` sync, in order.
+  #
+  # Assertions observe this record where a test previously observed the ETS side
+  # effect it produced (the cleared flag, the drained queue, the synced context).
+  #
+  # `Elixir.Agent` is spelled out because `Agent` is aliased to `EvoGit.Agent` in
+  # this module.
+  defp scheduler_stub(opts \\ []) do
+    {:ok, pid} =
+      Elixir.Agent.start_link(fn ->
+        %{
+          queue: Keyword.get(opts, :queue, []),
+          cancel?: Keyword.get(opts, :cancel?, false),
+          calls: []
+        }
+      end)
+
+    {fn kind, payload, _state -> interact(pid, kind, payload) end, pid}
+  end
+
+  defp interact(pid, kind, payload) do
+    Elixir.Agent.get_and_update(pid, fn stub ->
+      stub = %{stub | calls: stub.calls ++ [{kind, payload}]}
+
+      case kind do
+        :drain_inputs -> {stub.queue, %{stub | queue: []}}
+        :cancel_requested? -> {stub.cancel?, stub}
+        :clear_cancel -> {:ok, %{stub | cancel?: false}}
+        _other -> {:ok, stub}
+      end
     end)
   end
+
+  defp calls(pid), do: Elixir.Agent.get(pid, & &1.calls)
+  defp kinds(pid), do: for({kind, _payload} <- calls(pid), do: kind)
+  defp queue(pid), do: Elixir.Agent.get(pid, & &1.queue)
+  defp cancel?(pid), do: Elixir.Agent.get(pid, & &1.cancel?)
+  defp synced(pid), do: for({:context, ctx} <- calls(pid), do: ctx)
 
   defp message_texts(%ReqLLM.Context{} = context) do
     Enum.map(context.messages, &message_text/1)
@@ -133,7 +181,7 @@ defmodule EvoGit.Agent.CancelGraceTest do
   # checks `grace_period_continue_failed?/1` and, when allowed, decrements
   # `grace_turns_remaining`. Returns `{:recovery_failed, turns_completed}` —
   # the number of grace turns that ran before the hard-stop.
-  defp continue_until_fail(%LoopState{} = state, turns_completed) do
+  defp continue_until_fail(%State{} = state, turns_completed) do
     if Agent.grace_period_continue_failed?(state) do
       {:recovery_failed, turns_completed + 1}
     else
@@ -248,7 +296,7 @@ defmodule EvoGit.Agent.CancelGraceTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Cancel flag → cancel-grace entry (ETS integration)
+  # Cancel flag → cancel-grace entry (through the `:scheduler` seam)
   # ---------------------------------------------------------------------------
 
   describe "cancel_requested flag → cancel-grace entry" do
@@ -257,31 +305,28 @@ defmodule EvoGit.Agent.CancelGraceTest do
       # duplicated here — this test pins the drain/flag plumbing, not the text).
       cancel_message = EvoGit.AgentScheduler.cancel_message()
 
-      agent_id =
-        put_agent_state!(
-          objective: "Original objective",
-          pending_user_messages: [cancel_message],
-          cancel_requested: true
-        )
+      {seam, stub} = scheduler_stub(queue: [cancel_message], cancel?: true)
 
-      # loop/1 drains pending user messages BEFORE the cancel check; replicate
-      # that step so the cancel message is already in the context.
-      drained =
-        inject_user_messages(
-          state(agent_id: agent_id),
-          Store.drain_pending_user_messages(agent_id)
-        )
+      # The exchange loop drains pending user messages BEFORE the cancel check;
+      # the steps below are exactly the engine's (drain → cancel check).
+      drained = Exchange.Pending.drain_and_inject_user_messages(state(), scheduler: seam)
 
       assert Enum.any?(message_texts(drained.context), &(&1 =~ cancel_message))
+      # The drain synced the updated context for dashboard visibility.
+      assert synced(stub) == [drained.context]
+      assert queue(stub) == []
 
-      {:cancel_grace, grace_state} = Runner.maybe_enter_cancel_grace(drained)
+      {:cancel_grace, grace_state} =
+        Exchange.Grace.maybe_enter_cancel_grace(drained, scheduler: seam)
 
       assert grace_state.in_grace_period == true
       assert grace_state.grace_turns_remaining == 3
 
-      # The ETS flag is cleared (the runner owns it — scheduler may re-set it
-      # only for a later cancel request).
-      refute Store.cancel_requested?(agent_id)
+      # The cancel flag is cleared (the engine owns it — scheduler may re-set it
+      # only for a later cancel request): exactly ONE flag read followed by ONE
+      # `:clear_cancel`, and the flag is false afterwards.
+      assert kinds(stub) == [:drain_inputs, :context, :cancel_requested?, :clear_cancel]
+      refute cancel?(stub)
 
       # The cancel message is present in the context (from the drain)...
       assert Enum.any?(message_texts(grace_state.context), &(&1 =~ cancel_message))
@@ -292,22 +337,31 @@ defmodule EvoGit.Agent.CancelGraceTest do
     end
 
     test "flag not set → :no_cancel (loop continues normally)" do
-      agent_id = put_agent_state!()
+      {seam, stub} = scheduler_stub(cancel?: false)
 
-      assert :no_cancel == Runner.maybe_enter_cancel_grace(state(agent_id: agent_id))
-      refute Store.cancel_requested?(agent_id)
+      assert :no_cancel == Exchange.Grace.maybe_enter_cancel_grace(state(), scheduler: seam)
+
+      # The flag was READ and never cleared.
+      assert kinds(stub) == [:cancel_requested?]
+      refute cancel?(stub)
     end
 
     test "enter_grace with message: nil sets budget and appends nothing" do
+      {seam, stub} = scheduler_stub()
+
       grace_state =
-        Runner.enter_grace(state(context: ReqLLM.Context.new([])), "task cancelled",
+        Exchange.Grace.enter_grace(state(context: ReqLLM.Context.new([])), "task cancelled",
           message: nil,
-          grace_turns: 3
+          grace_turns: 3,
+          scheduler: seam
         )
 
       assert grace_state.in_grace_period == true
       assert grace_state.grace_turns_remaining == 3
       assert grace_state.context.messages == []
+
+      # Entering a grace period consults no scheduler state at all.
+      assert kinds(stub) == []
     end
   end
 
@@ -329,11 +383,16 @@ defmodule EvoGit.Agent.CancelGraceTest do
     end
 
     test "enter_grace default (turn-limit): the new message with budget 3" do
-      # No ETS agent state → objective is nil → the no-objective message variant.
-      grace_state = Runner.enter_grace(state(), "max turns (128) exceeded")
+      # No objective on the state → the no-objective message variant.
+      {seam, stub} = scheduler_stub()
+
+      grace_state =
+        Exchange.Grace.enter_grace(state(), "max turns (128) exceeded", scheduler: seam)
 
       assert grace_state.in_grace_period == true
       assert grace_state.grace_turns_remaining == 3
+      # Pure: entering grace consults no scheduler state.
+      assert kinds(stub) == []
 
       [text] = message_texts(grace_state.context)
       assert text =~ "You have exceeded your turn budget (max turns (128) exceeded)."
@@ -368,7 +427,7 @@ defmodule EvoGit.Agent.CancelGraceTest do
       # The production entry point grants a real report window (not a single
       # turn), and continuing without a tool-free reply always terminates:
       # a finite number of grace turns, then {:error, :recovery_failed}.
-      grace_state = Runner.enter_grace(state(), "max turns (128) exceeded")
+      grace_state = Exchange.Grace.enter_grace(state(), "max turns (128) exceeded")
 
       assert grace_state.grace_turns_remaining > 1
 
@@ -378,9 +437,11 @@ defmodule EvoGit.Agent.CancelGraceTest do
     end
 
     test "turn-limit message includes the objective when present" do
-      agent_id = put_agent_state!(objective: "Refactor the parser")
-
-      grace_state = Runner.enter_grace(state(agent_id: agent_id), "max turns (128) exceeded")
+      grace_state =
+        Exchange.Grace.enter_grace(
+          state(objective: "Refactor the parser"),
+          "max turns (128) exceeded"
+        )
 
       [text] = message_texts(grace_state.context)
       assert text =~ "Your original objective was:\nRefactor the parser"
@@ -388,9 +449,11 @@ defmodule EvoGit.Agent.CancelGraceTest do
     end
 
     test "objective variant: report what remains even if the objective cannot be completed" do
-      agent_id = put_agent_state!(objective: "Refactor the parser")
-
-      grace_state = Runner.enter_grace(state(agent_id: agent_id), "max turns (128) exceeded")
+      grace_state =
+        Exchange.Grace.enter_grace(
+          state(objective: "Refactor the parser"),
+          "max turns (128) exceeded"
+        )
 
       [text] = message_texts(grace_state.context)
       assert grace_state.grace_turns_remaining == 3
@@ -426,13 +489,16 @@ defmodule EvoGit.Agent.CancelGraceTest do
       init_repo(tmp_dir)
       File.write!(Path.join(tmp_dir, "uncommitted.txt"), "salvage me")
 
-      Process.put(:repo_path, tmp_dir)
-      on_exit(fn -> Process.delete(:repo_path) end)
+      {seam, _stub} = scheduler_stub(cancel?: true)
 
-      agent_id = put_agent_state!(cancel_requested: true)
-
+      # `Grace.maybe_recovery_auto_commit/1` reads the worktree path and the
+      # repo-less flag from the STATE STRUCT (not the process dictionary), so
+      # this real-git integration case supplies `repo_path` there.
       assert {:cancel_grace, grace_state} =
-               Runner.maybe_enter_cancel_grace(state(agent_id: agent_id))
+               Exchange.Grace.maybe_enter_cancel_grace(
+                 state(repo_path: tmp_dir),
+                 scheduler: seam
+               )
 
       assert grace_state.in_grace_period == true
       assert grace_state.grace_turns_remaining == 3
@@ -448,13 +514,13 @@ defmodule EvoGit.Agent.CancelGraceTest do
     test "clean worktree is a no-op (no commit) on cancel-grace entry", %{tmp_dir: tmp_dir} do
       init_repo(tmp_dir)
 
-      Process.put(:repo_path, tmp_dir)
-      on_exit(fn -> Process.delete(:repo_path) end)
-
-      agent_id = put_agent_state!(cancel_requested: true)
+      {seam, _stub} = scheduler_stub(cancel?: true)
 
       assert {:cancel_grace, _grace_state} =
-               Runner.maybe_enter_cancel_grace(state(agent_id: agent_id))
+               Exchange.Grace.maybe_enter_cancel_grace(
+                 state(repo_path: tmp_dir),
+                 scheduler: seam
+               )
 
       assert {:ok, ""} = EvoGit.Adapters.Git.status(tmp_dir)
 
@@ -496,7 +562,9 @@ defmodule EvoGit.Agent.CancelGraceTest do
 
       grace_state = state(agent_id: agent_id, in_grace_period: true, grace_turns_remaining: 3)
 
-      assert {:ok, %EvoGit.Agent.Result{} = result} =
+      # A turn that finishes the run returns the exchange outcome
+      # (`{:finish, state, %EvoGit.Agent.Result{}}`), not a bare `{:ok, result}`.
+      assert {:finish, _finished_state, %EvoGit.Agent.Result{} = result} =
                ToolDispatch.process_llm_response(
                  text_response("wrapping up"),
                  grace_state,
