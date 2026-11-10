@@ -55,6 +55,12 @@ defmodule EvoDashWeb.ProcessComponents do
   """
   attr(:execution, :map, required: true)
   attr(:expanded, :boolean, default: false)
+
+  attr(:entering, :boolean,
+    default: false,
+    doc: "adds the `process-row-enter` class (rows that just joined the top of the table)"
+  )
+
   attr(:node_id, :string, default: nil)
   attr(:row_event, :string, default: "toggle_process_row")
   attr(:pause_event, :string, default: "pause_process")
@@ -80,8 +86,8 @@ defmodule EvoDashWeb.ProcessComponents do
       |> assign(:tool, tool)
       |> assign(:agent_id, field(execution, :agent_id))
       |> assign(:task_id, field(execution, :task_id))
-      |> assign(:runtime, Format.runtime_label(field(execution, :runtime)))
-      |> assign(:backend, Format.backend_label(field(execution, :backend)))
+      |> assign(:runtime, runtime_text(field(execution, :runtime)))
+      |> assign(:backend, backend_text(field(execution, :backend)))
       |> assign(:live?, Format.live?(status) and is_binary(id))
       |> assign(:paused?, status == :paused)
       |> assign(:running?, status == :running)
@@ -98,7 +104,10 @@ defmodule EvoDashWeb.ProcessComponents do
     ~H"""
     <tr
       id={"process-row-#{@id || "unknown"}"}
-      class="border-b border-base-300/60 align-top hover:bg-base-200/50"
+      class={[
+        "border-b border-base-300/60 align-top hover:bg-base-200/50",
+        @entering && "process-row-enter"
+      ]}
     >
       <td class="py-2 pl-2 pr-2" {@row_attrs}>
         <div class="flex items-center gap-1">
@@ -160,7 +169,7 @@ defmodule EvoDashWeb.ProcessComponents do
         {Format.memory_label(@execution)}
       </td>
       <td class="py-2 pr-2 text-xs text-right whitespace-nowrap" {@row_attrs}>
-        {Format.exit_code_label(@execution)}
+        {Format.exit_label(@execution)}
       </td>
       <td class="py-2 pl-2 pr-2">
         <%!--
@@ -168,10 +177,12 @@ defmodule EvoDashWeb.ProcessComponents do
           no row handler, so a Pause/Terminate click can never also toggle the row.
           Terminate = send TERM and ask the process to exit gracefully;
           Kill = force-terminate (TERM, then SIGKILL after a grace period).
+          A built-in (in-BEAM) execution has NO OS process, so it renders no
+          action cluster at all — there is nothing to signal.
           zh_CN: Terminate = 发送 TERM 信号请求进程正常退出（可被进程捕获并清理）；
           Kill = 立即强制终止（TERM 后在宽限期内升级为 KILL），未保存的工作会丢失。
         --%>
-        <div class="flex items-center justify-end gap-0.5">
+        <div :if={Format.external?(@execution)} class="flex items-center justify-end gap-0.5">
           <button
             :if={@running? and @live?}
             type="button"
@@ -245,8 +256,11 @@ defmodule EvoDashWeb.ProcessComponents do
       |> assign(:command, Format.command_text(execution))
       |> assign(:cwd, field(execution, :cwd))
       |> assign(:repo_root, field(execution, :repo_root))
-      |> assign(:runtime, Format.runtime_label(field(execution, :runtime)))
-      |> assign(:backend, Format.backend_label(field(execution, :backend)))
+      |> assign(:runtime, runtime_text(field(execution, :runtime)))
+      |> assign(:backend, backend_text(field(execution, :backend)))
+      |> assign(:exit_code, Format.exit_code_label(execution))
+      |> assign(:target, Format.target_label(execution))
+      |> assign(:reason, reason_text(field(execution, :reason)))
       |> assign(:started_at, format_time(field(execution, :started_at)))
       |> assign(:ended_at, format_time(field(execution, :ended_at)))
 
@@ -262,7 +276,9 @@ defmodule EvoDashWeb.ProcessComponents do
         <div class="grid grid-cols-1 gap-1.5">
           <.detail_field label={gettext("Working Directory")} value={@cwd} mono />
           <.detail_field label={gettext("Repository Root")} value={@repo_root} mono />
-          <.detail_field label={gettext("Reason")} value={Format.reason_label(@execution)} />
+          <.detail_field label={gettext("Target")} value={@target} mono />
+          <.detail_field label={gettext("Exit Code")} value={@exit_code} />
+          <.detail_field label={gettext("Reason")} value={@reason} />
           <.detail_field label={gettext("Runtime")} value={@runtime} />
           <.detail_field label={gettext("Backend")} value={@backend} />
           <.detail_field label={gettext("Started")} value={@started_at} />
@@ -478,6 +494,37 @@ defmodule EvoDashWeb.ProcessComponents do
   defp status_text(:failed), do: gettext("Failed")
   defp status_text(:killed), do: gettext("Killed")
   defp status_text(_status), do: gettext("Unknown")
+
+  # Translatable labels live in the render layer: `Format` stays gettext-free
+  # (it is pure and also feeds a gettext-less path), so the English literals it
+  # returns are wrapped/overridden here.
+  defp runtime_text(:foreground), do: gettext("Foreground")
+  defp runtime_text(:background), do: gettext("Background")
+  defp runtime_text(other), do: Format.runtime_label(other)
+
+  # zh_CN: `:builtin` 表示内置工具在 BEAM 内部执行，没有操作系统进程。
+  # Backend product names (`systemd`/`bwrap`/`sandbox-exec`) are technical
+  # identifiers and must NOT be translated — only the built-in case is.
+  defp backend_text(:builtin), do: gettext("In-process (built-in)")
+  defp backend_text(other), do: Format.backend_label(other)
+
+  # Mirrors `Format.reason_text/1`, but translatable.
+  defp reason_text(:exited), do: gettext("Exited")
+  defp reason_text(:timeout), do: gettext("Timeout")
+  defp reason_text(:invalid_arguments), do: gettext("Invalid arguments")
+  # zh_CN: 发起该调用的 agent 进程已退出，执行因此被终止。
+  defp reason_text(:owner_died), do: gettext("Owner died")
+  # zh_CN: 该执行没有操作系统进程句柄，因此无法发送信号。
+  defp reason_text(:no_os_process), do: gettext("No OS process")
+
+  # zh_CN: 由哪个 agent / 操作者终止。
+  defp reason_text({:killed_by, actor}),
+    do: gettext("Killed by %{actor}", actor: Format.term_text(actor))
+
+  defp reason_text({:crashed, detail}),
+    do: gettext("Crashed: %{detail}", detail: Format.term_text(detail))
+
+  defp reason_text(other), do: Format.reason_text(other)
 
   defp present?(value) when is_binary(value), do: String.trim(value) != ""
   defp present?(nil), do: false
