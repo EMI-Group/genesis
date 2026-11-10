@@ -1,7 +1,16 @@
 defmodule EvoGit.Agent.Tools.ElixirEval.Projection do
   @moduledoc false
 
-  @statuses [:pending, :running, :finalizing, :cancelling, :completed, :failed, :cancelled]
+  @statuses [
+    :pending,
+    :running,
+    :awaiting_input,
+    :finalizing,
+    :cancelling,
+    :completed,
+    :failed,
+    :cancelled
+  ]
   @types [:genesis, :evolve, :reflect, :extract_skills]
   @reviews [:open, :merged, :rejected, :continued, :ignored, :no_changes]
   @agent_statuses [:pending, :running, :waiting, :ready, :blocked]

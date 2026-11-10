@@ -50,6 +50,18 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   @unavailable {:error, "Evaluation capability unavailable or expired."}
   @max_output_cap 65_536
 
+  @doc false
+  # Task statuses the `cancel_task` facade admits: the task registry's
+  # graceful-cancel set (`:running`, `:awaiting_input`) plus `:pending`, which
+  # this facade deliberately supports for pre-start cancellation. Delegated, so
+  # an idle `:awaiting_input` interactive session can never drift out of reach.
+  def cancel_statuses, do: [:pending | EvoGit.TaskRegistry.gracefully_cancellable_statuses()]
+
+  @doc false
+  # Task statuses the `force_kill_task` facade admits: exactly the task
+  # registry's killable set (`:running`, `:awaiting_input`, `:cancelling`).
+  def force_kill_statuses, do: EvoGit.TaskRegistry.killable_statuses()
+
   # This is an explicit handoff by the ORIGINAL tool, not re-authorization of
   # an unlinked guardian as if it were a tool. Keep context.tool_pid unchanged.
   def start(context, tier, controller \\ self(), timeout \\ 5_000)
@@ -394,8 +406,8 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
        when operation in [:cancel_task, :force_kill_task, :delete_task] do
     allowed =
       case operation do
-        :cancel_task -> [:pending, :running]
-        :force_kill_task -> [:running, :cancelling]
+        :cancel_task -> cancel_statuses()
+        :force_kill_task -> force_kill_statuses()
         :delete_task -> [:completed, :failed, :cancelled]
       end
 
