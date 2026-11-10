@@ -23,6 +23,7 @@ defmodule EvoGit.Agent do
   """
 
   alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
 
   @type state :: LoopState.t()
 
@@ -77,12 +78,12 @@ defmodule EvoGit.Agent do
   struct default, e.g. a state constructed without a budget) also hard-stops —
   preserving the historical default of "in grace means no more continues".
   """
-  @spec grace_period_continue_failed?(LoopState.t()) :: boolean()
-  def grace_period_continue_failed?(%LoopState{in_grace_period: true, grace_turns_remaining: n}) do
+  @spec grace_period_continue_failed?(LoopState.t() | State.t()) :: boolean()
+  def grace_period_continue_failed?(%{in_grace_period: true, grace_turns_remaining: n}) do
     n <= 1
   end
 
-  def grace_period_continue_failed?(%LoopState{in_grace_period: false}), do: false
+  def grace_period_continue_failed?(%{in_grace_period: false}), do: false
 
   defmacro __using__(_opts) do
     quote do
