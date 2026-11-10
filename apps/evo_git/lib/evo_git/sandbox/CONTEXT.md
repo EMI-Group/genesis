@@ -5,7 +5,7 @@ Platform-specific sandboxing for agent-executed commands.
 `EvoGit.Sandbox` (sibling `lib/evo_git/sandbox.ex`) dispatches to the active backend, chosen by `EvoGit.Platform.sandbox_backend/0` from `[sandbox] mode`/`[sandbox] backend` (`../config/CONTEXT.md`): systemd-run first, then bwrap, then no sandbox in `:auto`.
 
 ## Routing Table
-- `../process_manager/` → sibling node (`EvoGit.ProcessManager` + `.Handle`/`.Execution`/`.Control`/`.Stats`): the live-execution registry every backend ATTACHES its real OS handle to; read-only from here.
+- `../process_manager/` → sibling node (`EvoGit.ProcessManager` + `.Handle`/`.Execution`/`.Control`/`.Stats`): the live-execution registry every backend ATTACHES its real OS handle to and SETTLES with the run's terminal fact; read-only from here.
 No child directories — leaf directory (`background.ex`, `behaviour.ex`, `bwrap.ex`, `helpers.ex`, `linux.ex`, `macos.ex`, `nix.ex`, `none.ex`).
 The dispatcher `lib/evo_git/sandbox.ex` and the test suite `apps/evo_git/test/evo_git/sandbox/` are sibling nodes (read-only from here; escalate test-file changes to the parent).
 
@@ -14,7 +14,7 @@ The dispatcher `lib/evo_git/sandbox.ex` and the test suite `apps/evo_git/test/ev
 |---|---|
 | `EvoGit.Sandbox` | Dispatch module — `run/4`, `run_with_partial/6` and `run_with_partial/7` accept ANY executable + args list (no allowlist; the skills executor passes `("bash", [script_path])`), `backend/0`, `enabled?/0` → `backend().enabled?()`, `resolve_tmpdir/0`, `spawn_detached/1`/`kill_detached/1`/`detached_status/1` → `Background` |
 | `EvoGit.Sandbox.Behaviour` | `@behaviour`: `enabled?/0`, `ensure_initialized/0`, `run/4`, `run_with_partial/6`, plus the OPTIONAL `run_with_partial/7` (`@optional_callbacks`, observability opts) |
-| `EvoGit.Sandbox.Helpers` | Shared utilities, single definitions: `shell_escape/1` (POSIX-safe, security-sensitive), `read_tempfile/2` (+ `read_truncated/3`), `system_cmd/2`, `close_port/1` (idempotent — no-op on an already-closed/nil port), `kill_process_tree/1`, `git_metadata_dir/2`, `parse_gitdir_pointer/3`, `wait_for_os_pid/2`, `drain_port_messages/1`, `partial_output_tmpfile/0`, `resolve_write_paths/3`, `task_tmpdir_path/0`, `temp_env_vars/0`, `port_env/1`, `build_shell_command/2`, `build_redirected_command/3`, `run_task_with_partial/7`, `attach_execution/3` (the ONE best-effort execution-tracking attach), `sandbox_mode_enabled/1` (mode gate used by `SandboxSlice.sandbox_enabled?/0` + `SandboxProcessRegistry.sandbox_enabled?/0`) |
+| `EvoGit.Sandbox.Helpers` | Shared utilities, single definitions: `shell_escape/1` (POSIX-safe, security-sensitive), `read_tempfile/2` (+ `read_truncated/3`), `system_cmd/2`, `close_port/1` (idempotent — no-op on an already-closed/nil port), `kill_process_tree/1`, `git_metadata_dir/2`, `parse_gitdir_pointer/3`, `wait_for_os_pid/2`, `drain_port_messages/1`, `partial_output_tmpfile/0`, `resolve_write_paths/3`, `task_tmpdir_path/0`, `temp_env_vars/0`, `port_env/1`, `build_shell_command/2`, `build_redirected_command/3`, `run_task_with_partial/7`, `attach_execution/3` (the ONE best-effort execution-tracking attach), `record_exit/2` + `record_timeout/1` (the ONE best-effort terminal-fact recording, funnelled through a single private `finish_execution/3`), `sandbox_mode_enabled/1` (mode gate used by `SandboxSlice.sandbox_enabled?/0` + `SandboxProcessRegistry.sandbox_enabled?/0`) |
 | `EvoGit.Sandbox.Background` | Detached execution: `spawn/1`, `kill/1`, `status/1`, `sweep_stale_units/0` (see § Detached) |
 | `EvoGit.Sandbox.Linux` | systemd-run backend — full sandboxing (`ReadWritePaths`/`InaccessiblePaths`, `ProtectHome`/`ProtectSystem`, security toggles, resource limits, `--slice=evogit`); writable caches via `[sandbox] write_paths` |
 | `EvoGit.Sandbox.Bwrap` | bubblewrap backend — **filesystem-only isolation** (no resource limits/syscall filtering): `--ro-bind / /` + writable binds + empty-`--tmpfs` deny overlays; **no slice/unit-registry**; network retained; capability probing with `:degraded` fallback; env inherited, git identity via `--setenv` |
@@ -44,24 +44,36 @@ Kill/timeout primitives:
 
 ## Behaviour Contract
 All four backends (`Linux`, `Bwrap`, `MacOS`, `None`) implement `@behaviour EvoGit.Sandbox.Behaviour`: `enabled?/0` (sandboxing available for this platform/mode), `ensure_initialized/0` (lazily initialize backend resources, e.g. the systemd slice; no-op when unneeded), `run/4` (synchronous → `{output, exit_code}`) and `run_with_partial/6` (timeout + partial output → `{:ok, output, exit_code}` | `{:timeout, partial_output}`).
-`run_with_partial/7` is an OPTIONAL callback: the same params plus `opts :: keyword()`, whose only defined key is `:execution_id` (`"proc-<n>"`, a live `EvoGit.ProcessManager` record).
+`run_with_partial/7` is an OPTIONAL callback: the same params plus `opts :: keyword()`, whose keys are `:execution_id` (`"proc-<n>"`, a live `EvoGit.ProcessManager` record) and `:record_exit_status` (default `true`).
 The dispatcher calls the 7-arity form only when the selected backend exports it (`Code.ensure_loaded?` + `function_exported?`) and otherwise the 6-arity form, so every backend's `/6` and `/5`…/`3` arities keep working unchanged.
-Every backend's `/7` is the existing `/6` body plus ONE `Helpers.attach_execution/3` call at the point where its OS identity is known; with `:execution_id` nil (or absent) the attach is a no-op and no handle is built.
-Tracking is best-effort and observability-only: `Helpers.attach_execution/3` never raises, and a missing/restarting manager cannot fail, slow or alter a command.
-`Helpers.run_task_with_partial/9` (the shared non-sandbox/Unix tail) now spawns through a directly owned port — `Port.open({:spawn_executable, <resolved>}, [:binary, :exit_status, :hide, :stderr_to_stdout, {:args, …}, {:cd, cwd}, {:env, Helpers.port_env(env)}])` — resolves the executable with `EvoGit.Sandbox.None.resolve_executable/1` (nil → `:erlang.error(:enoent)`, `System.cmd/3` semantics), publishes the real OS pid via `wait_for_os_pid/2` + `attach_execution/3`, drains/discards `{:data, _}`, and on timeout kills the whole process TREE (`kill_process_tree/1`) before closing the port. `Helpers.run_tracked_command/7` is the same primitive reused by the macOS `sandbox-exec` path.
+Every backend's `/7` is the existing `/6` body plus ONE `Helpers.attach_execution/3` call at the point where its OS identity is known, and it SETTLES that execution's terminal fact when the run ends; with `:execution_id` nil (or absent) both are no-ops.
+Tracking is best-effort and observability-only: `Helpers.attach_execution/3` and `Helpers.record_exit/2`/`record_timeout/1` never raise, and a missing/restarting manager cannot fail, slow or alter a command.
+`Helpers.run_task_with_partial/9` (the shared non-sandbox/Unix tail) spawns through a directly owned port — `Port.open({:spawn_executable, <resolved>}, [:binary, :exit_status, :hide, :stderr_to_stdout, {:args, …}, {:cd, cwd}, {:env, Helpers.port_env(env)}])` — resolves the executable with `EvoGit.Sandbox.None.resolve_executable/1` (nil → `:erlang.error(:enoent)`, `System.cmd/3` semantics), publishes the real OS pid via `wait_for_os_pid/2` + `attach_execution/3`, drains/discards `{:data, _}`, and on timeout kills the whole process TREE (`kill_process_tree/1`) before closing the port. `Helpers.run_tracked_command/7` is the same primitive reused by the macOS `sandbox-exec` path.
 
-## Foreground Execution Tracking — per-backend attach points
+## Foreground Execution Terminal Fact (settlement)
 
-- `Linux` sandboxed: `%Handle{kind: :systemd_unit, unit: unit, backend: EvoGit.Sandbox.Linux}` immediately after `EvoGit.SandboxProcessRegistry.register/0` — the only place that generated unit name is known.
-- `Linux` non-sandbox: `:posix` handle carrying the bash child's REAL pid, attached inside `Helpers.run_task_with_partial/9` (after `wait_for_os_pid/2`).
-- `Bwrap` enabled: `:posix` handle with bwrap's own pid, attached right after `Helpers.wait_for_os_pid/2` (`:undefined` normalizes to nil `os_pid`).
-- `Bwrap` disabled: `:posix` handle carrying the bash child's real pid, attached inside `Helpers.run_task_with_partial/9`.
+`Helpers.record_exit/2` finishes the tracked execution `:completed` with `reason: :exited` and the real OS `exit_code`; a NON-ZERO exit code is still `:completed`, because the tool call itself succeeded.
+`Helpers.record_timeout/1` finishes it `:killed` with `reason: :timeout` and `exit_code: nil`.
+Both funnel through ONE private `finish_execution/3`, so the `EvoGit.ProcessManager.finish/3` option shape lives in exactly one place.
+Recording happens AFTER any kill (the Linux unit release, the bwrap/None tree kills), so the recorded fact describes a command that is actually stopped.
+`:record_exit_status: false` in `opts` suppresses the recording for a command that will be RE-RUN, so only the FINAL attempt's status becomes the execution's outcome — the macOS process-limit retry is the only such caller.
+A backend that cannot observe a status degrades to `exit_code: nil` on the same `:completed`/`:exited` fact.
+The helpers are total (no-op without `:execution_id`, rescue/catch everything) because observability must never change a command result.
+Detached/background jobs are NOT settled here: their handle observation and settlement belong to `EvoGit.BackgroundJobs` (sibling `background.ex`).
+
+## Foreground Execution Tracking — per-backend attach and settle points
+
+- `Linux` sandboxed: `%Handle{kind: :systemd_unit, unit: unit, backend: EvoGit.Sandbox.Linux}` immediately after `EvoGit.SandboxProcessRegistry.register/0` — the only place that generated unit name is known; settled with `Helpers.record_exit/2` after `unregister/1`, or `Helpers.record_timeout/1` after `release/1`.
+- `Linux` non-sandbox: `:posix` handle carrying the bash child's REAL pid, attached and settled inside `Helpers.run_task_with_partial/9` (after `wait_for_os_pid/2`).
+- `Bwrap` enabled: `:posix` handle with bwrap's own pid, attached right after `Helpers.wait_for_os_pid/2` (`:undefined` normalizes to nil `os_pid`), settled inside `collect_output/6`.
+- `Bwrap` disabled: `:posix` handle carrying the bash child's real pid, attached and settled inside `Helpers.run_task_with_partial/9`.
 - `MacOS` both paths: `:posix` handle carrying the real pid — the `sandbox-exec` child on the enabled path (via `Helpers.run_tracked_command/7`) and the bash child on the disabled path (via `Helpers.run_task_with_partial/9`); macOS has no systemd, so a pid is the only address.
-- `None` Unix: `:posix` handle carrying the bash child's real pid, attached inside `Helpers.run_task_with_partial/9`.
-- `None` Windows: `%Handle{kind: :windows, os_pid: os_pid, backend: EvoGit.Sandbox.None}` right after `Helpers.wait_for_os_pid/2` (`:undefined` → nil).
-- **Every foreground path now carries an OS identity**: the record becomes `:running` WITH an `os_pid` (or a `unit` on the systemd path), so `ProcessManager.sample/2` reports real CPU/memory and pause/resume/signal reach the child. The only remaining pid-less degradation is the pathological `:undefined` case (the pid never materialized before the poll exhausted, e.g. a child that exits within microseconds) — the record stays listed and finishable.
-- `Helpers.run_task_with_partial/9` OWNS the port (callers no longer pre-attach before it): `opts` + the backend module are threaded from every call site (`Linux`/`Bwrap`/`MacOS` disabled paths, `None` Unix, and the macOS `sandbox-exec` path through `run_tracked_command/7`); the 7-arity form still works (defaults `opts=[]`, `backend=nil`).
-- No tracking is added for internal `rg`/git/skill invocations: threading happens ONLY when a caller supplies `:execution_id`.
+- `MacOS` enabled settlement is `run_with_partial/7`'s OWN private `record_result/2` on the returned value, while each `sandbox-exec` attempt runs with `record_exit_status: false` — the process-limit retry re-runs the command, so only the final attempt is the execution's outcome.
+- `None` Unix: `:posix` handle carrying the bash child's real pid, attached and settled inside `Helpers.run_task_with_partial/9`.
+- `None` Windows: `%Handle{kind: :windows, os_pid: os_pid, backend: EvoGit.Sandbox.None}` right after `Helpers.wait_for_os_pid/2` (`:undefined` → nil), settled inside `collect_windows_output/6`.
+- **Every foreground path carries an OS identity**: the record becomes `:running` WITH an `os_pid` (or a `unit` on the systemd path), so `ProcessManager.sample/2` reports real CPU/memory and pause/resume/signal reach the child. The only pid-less degradation is the pathological `:undefined` case (the pid never materialized before the poll exhausted, e.g. a child that exits within microseconds) — the record stays listed and finishable.
+- `Helpers.run_task_with_partial/9` OWNS the port (callers never pre-attach before it): `opts` + the backend module are threaded from every call site (`Linux`/`Bwrap`/`MacOS` disabled paths, `None` Unix, and the macOS `sandbox-exec` path through `run_tracked_command/7`); the 7-arity form still works (defaults `opts=[]`, `backend=nil`).
+- No tracking or settlement is added for internal `rg`/git/skill invocations: threading happens ONLY when a caller supplies `:execution_id`.
 
 ## Detached / Background Execution — `EvoGit.Sandbox.Background`
 

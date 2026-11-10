@@ -37,7 +37,8 @@ defmodule EvoGit.ToolRuntime.Executor do
   @spec execute_batch([{ReqLLM.ToolCall.t(), non_neg_integer()}], Request.t()) :: [result()]
   def execute_batch(indexed_calls, %Request{} = request) do
     # Resolved ONCE per batch (it reads configuration) and threaded into every
-    # call's tracking meta.
+    # call's tracking meta; `Tracking.tracked_backend/2` then picks the SANDBOX
+    # backend for a shell call and `:builtin` for every other tool.
     backend = Tracking.backend()
 
     # Partition the batch: tool calls that read-modify-write files
@@ -122,10 +123,10 @@ defmodule EvoGit.ToolRuntime.Executor do
 
       {:error, reason} ->
         # An unusable argument payload still produced a NORMAL tool result (a
-        # self-correcting error string), so it is tracked and finished as
-        # `:completed` — no execution ever started, and nothing failed.
+        # self-correcting error string), but no tool ever ran: the record is
+        # settled `:failed` with the `:invalid_arguments` terminal fact.
         exec_id = Tracking.track(request, name, nil, backend)
-        Tracking.finish(exec_id, :completed)
+        Tracking.finish(exec_id, :failed, reason: :invalid_arguments)
 
         {index, tool_call_id, name, ToolInvocation.invalid_arguments_result(reason)}
     end
@@ -197,15 +198,20 @@ defmodule EvoGit.ToolRuntime.Executor do
 
         case Task.yield(task, tool_timeout) || Task.shutdown(task) do
           {:ok, {:tool_crashed, message}} ->
-            Tracking.finish(exec_id, :failed)
+            Tracking.finish(exec_id, :failed, reason: {:crashed, message})
             "Error: Tool execution crashed: #{message}"
 
           {:ok, {:error, reason}} ->
-            Tracking.finish(exec_id, :failed)
+            Tracking.finish(exec_id, :failed, reason: {:tool_error, reason})
             "Error: #{inspect(reason)}"
 
           {:ok, result} ->
-            Tracking.finish(exec_id, :completed)
+            # A builtin call has no OS process to exit, so its outcome is
+            # `:no_os_process`. For a shell call the SANDBOX layer has already
+            # settled the record `:exited` with its real exit code, and
+            # `ProcessManager.finish/3` is idempotent — the first fact wins — so
+            # this unconditional call never overwrites it.
+            Tracking.finish(exec_id, :completed, reason: :no_os_process)
             # Wrap → sanitize → truncation-feedback → re-wrap, all in one place
             # (the wrap boundary — see `Output.sanitize/3`). A plain binary
             # return round-trips BYTE-IDENTICALLY; a media-carrying return keeps
@@ -213,15 +219,17 @@ defmodule EvoGit.ToolRuntime.Executor do
             Output.sanitize(result, name, args)
 
           {:exit, reason} ->
-            Tracking.finish(exec_id, :failed)
+            Tracking.finish(exec_id, :failed, reason: {:crashed, reason})
             "Error: Tool execution crashed: #{inspect(reason)}"
 
           nil ->
             # The tool task was stopped, but the OS process it started is not
             # necessarily dead: kill the handle first, then settle the record
-            # (both calls are total and idempotent).
+            # (both calls are total and idempotent). The kill's terminal fact is
+            # `:timeout`; a builtin record (no OS handle, so the kill has
+            # nothing to stop) is settled by the follow-up finish.
             Tracking.kill(exec_id, :timeout)
-            Tracking.finish(exec_id, :killed)
+            Tracking.finish(exec_id, :killed, reason: :timeout)
 
             "Error: Tool execution timed out after #{tool_timeout}ms. Some output may have been partially captured by the tool."
         end
