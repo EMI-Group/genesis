@@ -262,6 +262,7 @@ defmodule EvoGit.Agent.Session do
   @spec start_input(dispatch_target(), String.t() | map(), :queue | :interrupt) ::
           :ok | {:error, :not_found | :finished | {:bad_state, phase()}}
   def start_input(target, message, mode \\ :queue)
+
   def start_input(target, message, mode) when mode in [:queue, :interrupt] do
     case call(target, {:start_input, message, mode}, @call_timeout) do
       :ok -> :ok
