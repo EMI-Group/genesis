@@ -27,12 +27,12 @@ defmodule EvoGit.Agent.CancelGraceTest do
   `state.repo_path` — the auto-commit reads the STRUCT, not the process
   dictionary), and the plain-text completion case drives
   `EvoGit.Agent.ToolDispatch.process_llm_response/6` end to end: it completes
-  through `EvoGit.Agent.Completion`, which still reads
-  `phylo_node.base_commit`/archive metadata from ETS, so THAT case seeds ONE row
-  in the app-global named `:evogit_agent_summary` table under a per-test unique
-  agent id from this file's own id range and deletes exactly that row on exit;
-  nothing is asserted about the table as a whole, so the writes are
-  concurrent-safe.
+  through `EvoGit.Agent.Completion`, which reads the registration
+  `base_commit` from the scheduler META row's spec phylo node and the archive
+  metadata from the SUMMARY row, so THAT case seeds ONE summary row plus ONE
+  meta row under a per-test unique agent id from this file's own id range and
+  deletes exactly those rows on exit; nothing is asserted about either table as
+  a whole, so the writes are concurrent-safe.
   """
   use ExUnit.Case, async: true
 
@@ -43,7 +43,9 @@ defmodule EvoGit.Agent.CancelGraceTest do
   alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.Store
+  alias EvoGit.AgentSpec
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
 
@@ -74,10 +76,14 @@ defmodule EvoGit.Agent.CancelGraceTest do
     %ContextNode{path: "./", repo: "/tmp/test"}
   end
 
+  # The SUMMARY row (`:evogit_agent_summary`) carries no registration identity:
+  # the base commit completion reports comes from the spec's phylo node in the
+  # scheduler META row, seeded separately by `put_agent_state!/1` when a test
+  # supplies one.
   defp agent_state(overrides) do
     defaults = [
       context_node: context_node(),
-      phylo_node: %PhyloGraphNode{repo: "/tmp/test", base_commit: "abc", current_commit: "abc"},
+      current_commit: "abc",
       llm_model: "test:model",
       max_retries: 3,
       max_depth: 8
@@ -101,20 +107,37 @@ defmodule EvoGit.Agent.CancelGraceTest do
   # Seeds an agent row under a UNIQUE id (this file's own range) and schedules
   # its deletion, so no concurrently running module can observe or clobber it.
   # Used ONLY by the plain-text completion integration case, whose completion
-  # side effects (git-note/archive metadata) still read the scheduler row.
+  # side effects (git-note/archive metadata) still read the scheduler rows.
   #
-  # The state ROW carries only the agent's own fields: `cancel_requested` and
-  # `pending_user_messages` live in the control plane, so those two seed
-  # through the public Store control API after the row is in place (exactly what
-  # the scheduler's graceful cancel does). Reads go through
-  # `Store.get_agent_state/1`, which projects them back onto the struct.
+  # The SUMMARY row carries only the agent's own fields: the graceful-cancel
+  # flag and the injected message queue live in the CONTROL PLANE, so those two
+  # seed through the public Store control API after the row is in place (exactly
+  # what the scheduler's graceful cancel does). The `:phylo_node` override is
+  # REGISTRATION identity, so it seeds the scheduler META row's spec — that is
+  # where completion reads the `base_commit` it reports.
   defp put_agent_state!(overrides) do
     agent_id = 9_900_000 + :erlang.unique_integer([:positive])
 
-    {control, row_overrides} =
+    {control, overrides} =
       Keyword.split(overrides, [:cancel_requested, :pending_user_messages])
 
+    {phylo_node, row_overrides} = Keyword.pop(overrides, :phylo_node)
+
     :ok = Store.put_agent_state(agent_id, agent_state(row_overrides))
+
+    if phylo_node do
+      :ok =
+        Store.put_sched_meta(agent_id, %SchedMeta{
+          id: agent_id,
+          depth: 0,
+          spec: %AgentSpec{
+            context_node: context_node(),
+            phylo_node: phylo_node,
+            agent_module: __MODULE__,
+            objective: "Wrap up"
+          }
+        })
+    end
 
     case Keyword.fetch(control, :cancel_requested) do
       {:ok, value} -> :ok = Store.set_cancel_requested(agent_id, value)
@@ -127,7 +150,11 @@ defmodule EvoGit.Agent.CancelGraceTest do
       :ok = Store.append_pending_user_message(agent_id, message)
     end)
 
-    on_exit(fn -> Store.delete_agent_state(agent_id) end)
+    on_exit(fn ->
+      Store.delete_agent_state(agent_id)
+      Store.delete_sched_meta(agent_id)
+    end)
+
     agent_id
   end
 

@@ -17,7 +17,7 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
   use EvoGit.TaskRegistryCase, async: false
 
   alias EvoGit.Agent.ToolDispatch
-  alias EvoGit.AgentScheduler.{AgentState, SchedMeta}
+  alias EvoGit.AgentScheduler.{AgentState, ControlPlane, SchedMeta}
   alias EvoGit.{CommandApproval, Store}
 
   @deadline 10_000
@@ -226,8 +226,10 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
     code = "File.write!(#{inspect(path)}, \"unexpected\")"
     owner = start_batch(ctx, [eval(code, "sudo"), eval("42")])
     request = approval!(ctx, code, :sudo)
-    [{id, state}] = :ets.lookup(:evogit_agent_summary, owner.agent_id)
-    :ets.insert(:evogit_agent_summary, {id, %{state | cancel_requested: true}})
+    # The graceful-cancel flag lives in the CONTROL PLANE (its single writer is
+    # the scheduler's `Store.set_cancel_requested/1`); the summary row does not
+    # carry it at all, so it is set there rather than on the agent's own row.
+    assert :ok = ControlPlane.set_cancel(owner.agent_id, true)
     assert :ok = CommandApproval.respond(request.request_id, :approve)
     results = finish(owner)
     assert output(results, 0) =~ @denied
