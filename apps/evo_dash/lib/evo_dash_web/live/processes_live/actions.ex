@@ -2,10 +2,13 @@ defmodule EvoDashWeb.ProcessesLive.Actions do
   @moduledoc """
   Control-action execution and error mapping for the Processes page.
 
-  Every control call is a cross-node RPC (`EvoDash.NodeContext.process_control/4`
-  by default) and therefore runs inside `EvoDash.SafeCall.run/1`: a
-  `GenServer.call` timeout / dead target EXITS its caller, so the boundary is
-  what turns "the remote daemon is gone" into a flashable value instead of a
+  Every control call goes through `EvoDash.NodeContext.process_control/4` (by
+  default), which is LOCAL-FIRST: it applies the action directly on the in-BEAM
+  `EvoGit.ProcessManager` when the viewed node IS this BEAM and uses the
+  cross-node RPC only for a genuinely remote viewed node.
+  The call therefore runs inside `EvoDash.SafeCall.run/1`: a `GenServer.call`
+  timeout / dead target EXITS its caller, so the boundary is what turns "the
+  manager or the remote daemon is gone" into a flashable value instead of a
   crashed LiveView. Control answers are values — `:ok` or `{:error, reason}` —
   and this module maps them to a `{flash_kind, message}` pair.
 

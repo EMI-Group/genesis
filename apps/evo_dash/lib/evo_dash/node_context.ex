@@ -27,6 +27,23 @@ defmodule EvoDash.NodeContext do
   however that `connect/1` can still block for a while behind a long-running
   bootstrap and must be invoked from an `EvoDash.TaskSupervisor` task — never
   inline in a LiveView process (see its docstring).
+
+  ## Managed processes are LOCAL-FIRST
+
+  `list_processes/2`, `get_process/2`, `process_stats/2` and
+  `process_control/4` do NOT route through the cross-node helpers above when
+  the viewed node IS this BEAM: managed processes are an in-memory,
+  node-LOCAL subsystem, so the local path calls `EvoGit.ProcessManager`
+  directly (no `EvoGit.RemoteNode`, no `:erpc`) and degrades to its documented
+  values when the manager is dead or absent. Only a genuinely REMOTE viewed
+  node uses `EvoGit.RemoteNode.call_remote/4` with
+  `EvoGit.AgentScheduler.RemoteAPI`.
+
+  Test seam for that remote transport (resolved at CALL time, on every call):
+  `Process.get(:node_context_process_rpc)` first, then the app env
+  `:node_context_process_rpc` (default `&EvoGit.RemoteNode.call_remote/4`).
+  A `Task`-spawned caller must carry `$callers` for a process-dictionary value
+  to be inherited.
   """
 
   require Logger
@@ -1173,70 +1190,100 @@ defmodule EvoDash.NodeContext do
 
   # ── Managed processes (node-local OS executions) ─────────────────
   #
-  # Every function delegates to `EvoGit.RemoteNode.call_remote/4` with the
-  # core's `EvoGit.AgentScheduler.RemoteAPI` managed-process functions, so the
-  # work happens on the TARGET node (local → direct call, remote → `:erpc`).
-  # The list read is the only degrading one; the id-keyed reads and the control
-  # call unwrap the RPC envelope and return the core's own answer verbatim.
+  # Managed processes are a per-BEAM, in-memory, node-LOCAL subsystem, so this
+  # data path is LOCAL-FIRST: when the viewed node IS this BEAM, every function
+  # calls `EvoGit.ProcessManager` DIRECTLY, in-process, with no
+  # `EvoGit.RemoteNode` and no `:erpc`. Only a genuinely REMOTE viewed node
+  # routes through `EvoGit.RemoteNode.call_remote/4` with the core's
+  # `EvoGit.AgentScheduler.RemoteAPI` managed-process functions.
+  #
+  # The local path is TOTAL: the manager may be dead or absent, so each call
+  # degrades to its documented value (`[]` for the list,
+  # `{:error, :process_manager_unavailable}` for the id-keyed reads/control).
+  # The list read is the only degrading one on the remote path; the remote
+  # id-keyed reads and control call unwrap the RPC envelope and return the
+  # core's own answer verbatim.
+  #
+  # ## Test seam
+  #
+  # The REMOTE transport is resolved at CALL time, on every call, from
+  # `Process.get(:node_context_process_rpc)` first and then the app env
+  # `:node_context_process_rpc` (default `&EvoGit.RemoteNode.call_remote/4`),
+  # so a suite can prove the remote machinery is never touched for the local
+  # node with a PROCESS-LOCAL override (no module-level capture, no global
+  # mocking, async-safe). A `Task`-spawned caller must carry `$callers` for the
+  # process-dictionary value to be inherited.
 
   @doc """
   Lists the OS executions `EvoGit.ProcessManager` tracks on the given node,
-  newest first.
-
-  Delegates to `EvoGit.RemoteNode.call_remote/4` (function
-  `EvoGit.AgentScheduler.RemoteAPI.list_processes/1`). `opts` are the
-  manager's filters (`:agent_id`, `:task_id`, `:kind` =
-  `:tool_call | :background_job`, `:status`, `:backend`) and pass through
-  verbatim. Returns native `%EvoGit.ProcessManager.Execution{}` structs.
-  Total: a failed remote call, `{:ok, other}` for a non-list payload, or
+  newest first (`EvoGit.ProcessManager.list/1` directly for the LOCAL node;
+  `EvoGit.AgentScheduler.RemoteAPI.list_processes/1` over RPC only for a
+  remote node). `opts` are the manager's filters (`:agent_id`, `:task_id`,
+  `:kind` = `:tool_call | :background_job`, `:status`, `:backend`) and pass
+  through verbatim. Returns native `%EvoGit.ProcessManager.Execution{}`
+  structs.
+  Total: an unavailable manager, a failed remote call, a non-list payload or
   `{:error, reason}` all degrade to `[]`.
   """
   @spec list_processes(node(), keyword()) :: [EvoGit.ProcessManager.Execution.t()]
   def list_processes(node, opts \\ []) do
-    case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_processes, [opts]) do
-      {:ok, list} when is_list(list) -> list
-      _other -> []
+    if local_node?(node) do
+      case with_process_manager(fn -> EvoGit.ProcessManager.list(opts) end, []) do
+        list when is_list(list) -> list
+        _other -> []
+      end
+    else
+      case process_rpc().(node, EvoGit.AgentScheduler.RemoteAPI, :list_processes, [opts]) do
+        {:ok, list} when is_list(list) -> list
+        _other -> []
+      end
     end
   end
 
   @doc """
-  Fetches ONE tracked execution by id (`"proc-<n>"`) on the given node.
-
-  Delegates to `EvoGit.RemoteNode.call_remote/4` (function
-  `EvoGit.AgentScheduler.RemoteAPI.get_process/1`). Returns
-  `{:ok, %EvoGit.ProcessManager.Execution{}}`, `{:error, :not_found}` or
-  `{:error, :process_manager_unavailable}` — the RPC envelope is unwrapped so
-  the core's own answer is returned verbatim (local and remote alike); only a
-  transport failure surfaces as `{:error, reason}`. A non-binary `id` answers
-  `{:error, :not_found}` without an RPC.
+  Fetches ONE tracked execution by id (`"proc-<n>"`) on the given node
+  (`EvoGit.ProcessManager.get/1` directly for the LOCAL node;
+  `EvoGit.AgentScheduler.RemoteAPI.get_process/1` over RPC only for a remote
+  node). Returns `{:ok, %EvoGit.ProcessManager.Execution{}}`,
+  `{:error, :not_found}` or `{:error, :process_manager_unavailable}`.
+  A non-binary `id` answers `{:error, :not_found}` without any call.
   """
   @spec get_process(node(), String.t()) ::
           {:ok, EvoGit.ProcessManager.Execution.t()} | {:error, term()}
   def get_process(node, id) when is_binary(id) do
-    node
-    |> call_remote(EvoGit.AgentScheduler.RemoteAPI, :get_process, [id])
-    |> unwrap_rpc()
+    if local_node?(node) do
+      with_process_manager(
+        fn -> EvoGit.ProcessManager.get(id) end,
+        {:error, :process_manager_unavailable}
+      )
+    else
+      process_rpc().(node, EvoGit.AgentScheduler.RemoteAPI, :get_process, [id])
+      |> unwrap_rpc()
+    end
   end
 
   def get_process(_node, _id), do: {:error, :not_found}
 
   @doc """
-  Probes ONE execution's live resource usage on the given node.
-
-  Delegates to `EvoGit.RemoteNode.call_remote/4` (function
-  `EvoGit.AgentScheduler.RemoteAPI.process_stats/1`), which samples in the
-  remote caller's process. Returns `{:ok, stats}` with the frozen stats map
-  (`cpu_time_ms`, `cpu_percent`, `memory_bytes`, `rss_bytes`, `pids`,
-  `sampled_at`) or the manager's own error — the RPC envelope is unwrapped so
-  the core's own answer is returned verbatim; only a transport failure
-  surfaces as `{:error, reason}`. A non-binary `id` answers `{:error,
-  :not_found}` without an RPC.
+  Probes ONE execution's live resource usage on the given node
+  (`EvoGit.ProcessManager.sample/1` directly for the LOCAL node;
+  `EvoGit.AgentScheduler.RemoteAPI.process_stats/1` over RPC only for a remote
+  node, which samples in the remote caller's process). Returns `{:ok, stats}`
+  with the frozen stats map (`cpu_time_ms`, `cpu_percent`, `memory_bytes`,
+  `rss_bytes`, `pids`, `sampled_at`) or the manager's own error. A non-binary
+  `id` answers `{:error, :not_found}` without any call.
   """
   @spec process_stats(node(), String.t()) :: {:ok, map()} | {:error, term()}
   def process_stats(node, id) when is_binary(id) do
-    node
-    |> call_remote(EvoGit.AgentScheduler.RemoteAPI, :process_stats, [id])
-    |> unwrap_rpc()
+    if local_node?(node) do
+      with_process_manager(
+        fn -> EvoGit.ProcessManager.sample(id) end,
+        {:error, :process_manager_unavailable}
+      )
+    else
+      process_rpc().(node, EvoGit.AgentScheduler.RemoteAPI, :process_stats, [id])
+      |> unwrap_rpc()
+    end
   end
 
   def process_stats(_node, _id), do: {:error, :not_found}
@@ -1244,30 +1291,115 @@ defmodule EvoDash.NodeContext do
   @doc """
   Applies one control action to a tracked execution on the given node.
 
-  Delegates to `EvoGit.RemoteNode.call_remote/4` (function
-  `EvoGit.AgentScheduler.RemoteAPI.process_control/3`). `action` passes through
-  verbatim (`:pause | :resume | :kill | {:signal, signal}`) and `reason` is any
-  term — typically a human-entered reason string — recorded on the execution's
-  control log. Returns `:ok` or the manager's own error — the RPC envelope is
-  unwrapped so the core's own answer is returned verbatim; only a transport
-  failure surfaces as `{:error, reason}`. A non-binary `id` answers `{:error,
-  :not_found}` without an RPC.
+  `action` is `:pause | :resume | :kill | {:signal, signal}`, resolved exactly
+  like the core does: for the LOCAL node it calls
+  `EvoGit.ProcessManager.pause/2`, `.resume/2`, `.kill/2` or `.signal/3` with
+  `reason: reason, actor: :remote` (so the control-log contract and the
+  dashboard's `Format.actor_label(:remote)` rendering are unchanged); a remote
+  node routes `EvoGit.AgentScheduler.RemoteAPI.process_control/3` over RPC.
+  An unrecognized `action` answers `{:error, {:unknown_action, action}}` and is
+  NEVER forwarded to the manager. `reason` is any term — typically a
+  human-entered reason string — recorded on the execution's control log.
+  Returns `:ok` or the manager's own error. A non-binary `id` answers
+  `{:error, :not_found}` without any call.
   """
   @spec process_control(node(), String.t(), atom() | {:signal, term()}, term()) ::
           :ok | {:error, term()}
   def process_control(node, id, action, reason) when is_binary(id) do
-    node
-    |> call_remote(EvoGit.AgentScheduler.RemoteAPI, :process_control, [id, action, reason])
-    |> unwrap_rpc()
+    if local_node?(node) do
+      case normalize_process_action(action) do
+        :error ->
+          {:error, {:unknown_action, action}}
+
+        {:ok, valid_action} ->
+          with_process_manager(
+            fn -> apply_process_control(id, valid_action, reason) end,
+            {:error, :process_manager_unavailable}
+          )
+      end
+    else
+      process_rpc().(node, EvoGit.AgentScheduler.RemoteAPI, :process_control, [id, action, reason])
+      |> unwrap_rpc()
+    end
   end
 
   def process_control(_node, _id, _action, _reason), do: {:error, :not_found}
 
-  # Unwraps the `EvoGit.RemoteNode.call_remote/4` envelope so the core's OWN
-  # answer (`{:ok, _} | {:error, _}` / `:ok | {:error, _}`) reaches the caller
-  # unchanged on both the local and the remote path — without this, a local
-  # `{:error, :not_found}` would arrive as `{:ok, {:error, :not_found}}`. A
-  # transport failure (`{:error, reason}`) is passed through as-is.
+  # The MANAGER call-time server resolution wins over anything cached here, so
+  # an isolated named instance (`Process.put(:evogit_process_manager_server,
+  # name)`) is honoured.
+  defp apply_process_control(id, :pause, reason) do
+    EvoGit.ProcessManager.pause(id, reason: reason, actor: :remote)
+  end
+
+  defp apply_process_control(id, :resume, reason) do
+    EvoGit.ProcessManager.resume(id, reason: reason, actor: :remote)
+  end
+
+  defp apply_process_control(id, :kill, reason) do
+    EvoGit.ProcessManager.kill(id, reason: reason, actor: :remote)
+  end
+
+  defp apply_process_control(id, {:signal, signal}, reason) do
+    EvoGit.ProcessManager.signal(id, signal, reason: reason, actor: :remote)
+  end
+
+  defp normalize_process_action(action) when action in [:pause, :resume, :kill],
+    do: {:ok, action}
+
+  defp normalize_process_action({:signal, signal}), do: {:ok, {:signal, signal}}
+  defp normalize_process_action(_action), do: :error
+
+  # The ONE local degradation pattern (mirrors `RemoteAPI.with_manager/2`): a
+  # liveness check on the call-time-resolved server name, plus a `catch :exit`
+  # for the restart race between the check and the call.
+  #
+  # Expected error? YES — the manager is a supervised singleton that can be
+  # restarting or absent (a fresh node, a suite that never started it), and a
+  # `GenServer.call` to a dead process raises an exit, not a rescue-able
+  # exception. Cleanest approach? This is the core's own documented degradation
+  # shape for exactly this call, so mirroring it keeps one contract instead of
+  # inventing a second.
+  defp with_process_manager(fun, degraded) do
+    if process_manager_alive?() do
+      try do
+        fun.()
+      catch
+        :exit, _reason -> degraded
+      end
+    else
+      degraded
+    end
+  end
+
+  # `EvoGit.ProcessManager.server/0` answers a registered atom, a pid or
+  # `{name, node}`. An unknown shape is treated as alive and left to the
+  # manager's own guarded call.
+  defp process_manager_alive? do
+    case EvoGit.ProcessManager.server() do
+      pid when is_pid(pid) -> Process.alive?(pid)
+      {name, _node} when is_atom(name) -> Process.whereis(name) != nil
+      name when is_atom(name) -> Process.whereis(name) != nil
+      _other -> true
+    end
+  end
+
+  # Resolved on EVERY call so a process-local test seam can prove the REMOTE
+  # transport is untouched for the local node.
+  defp process_rpc do
+    Process.get(:node_context_process_rpc) ||
+      Application.get_env(:evo_dash, :node_context_process_rpc, &EvoGit.RemoteNode.call_remote/4)
+  end
+
+  # Compares the viewed node with THIS BEAM. The parameter is named `target`
+  # so it can never shadow the `node/0` call.
+  defp local_node?(target), do: target == node()
+
+  # Unwraps the remote `call_remote/4` envelope so the core's OWN answer
+  # (`{:ok, _} | {:error, _}` / `:ok | {:error, _}`) reaches the caller
+  # unchanged — without this, a remote `{:error, :not_found}` would arrive as
+  # `{:ok, {:error, :not_found}}`. A transport failure (`{:error, reason}`) is
+  # passed through as-is.
   defp unwrap_rpc({:ok, result}), do: result
   defp unwrap_rpc({:error, reason}), do: {:error, reason}
 
