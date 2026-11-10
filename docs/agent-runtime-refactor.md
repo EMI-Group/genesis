@@ -16,7 +16,7 @@
 | **Scalable** — hundreds of agents, low resources | 1 idle session ≈ 1 process + its context, holding **no** LLM/tool slots; 1 extra short-lived worker process only per *in-flight* exchange; idle TTL for repo-backed sessions. |
 | **Easy customization** | The `use EvoGit.Agent` macro keeps its zero-arity, data-only callbacks (they stay callable from any process). A new role is still "one module + `system_prompt/0`". Custom agents/tools keep their existing contracts. |
 | **Two copies of the context (heap + ETS)** | Deleted. `%EvoGit.Agent.State{}` lives in exactly one place: the session process. `:evogit_agent_state` becomes `:evogit_agent_summary` — a bounded *read model* (no `context`, no pending input) with exactly one writer. |
-| **GenServer / GenStatem per agent?** | **Yes** — a `gen_statem` per agent session, plus a plain `Task` per exchange. Rationale and the rejected alternatives are in §3 and §7. |
+| **GenServer / GenStatem per agent?** | **Yes** — a `gen_statem` per agent session, plus a plain `Task` per exchange. Rationale is in §3; rejected alternatives are in §6. |
 
 ---
 
@@ -143,7 +143,7 @@ One struct, four groups, all owned by the session:
 
 Why `gen_statem` and not `GenServer`: the lifecycle *is* a state machine, and the states have different legal commands (a `:yield` is illegal in `:oneshot`; `input` is illegal in `:finalizing`). `gen_statem` gives explicit `state_enter` hooks — the natural place for "commit + publish + set `:awaiting_input`" and for the idle timer — and turns illegal transitions into loud `{:error, {:bad_state, phase}}` instead of `if` ladders inside `handle_info`. The cost (one more OTP behaviour to know) is paid once, in one module, and the worker remains a plain `Task`.
 
-Crash semantics: the session is supervised `:temporary`. A crash is handled by the scheduler exactly as today (`handle_agent_crash/3`): retry from scratch for `:oneshot`; for `:interactive`, mark the task failed with a clear message until D10/P5 lands a durable checkpoint.
+Crash semantics: the session is supervised `:temporary`. A crash is handled by the scheduler exactly as today (`handle_agent_crash/3`): retry from scratch for `:oneshot`; for `:interactive`, mark the task failed with a clear message until P5 (§4.10) lands a durable checkpoint.
 
 ### 4.5 The two modes
 
@@ -318,7 +318,7 @@ Ordered: session RPC passthroughs in `EvoDash.NodeContext` → session identity 
 
 ## 8. Open decisions
 
-1. **Task-status vs separate entity** — recommended: keep sessions as tasks with `mode` + `:awaiting_input` (§3 D6, §6.8).
+1. **Task-status vs separate entity** — recommended: keep sessions as tasks with `mode` + `:awaiting_input` (§3 D6, §4.9).
 2. **Do one-shot agents also move onto the session process** — recommended yes (one lifecycle implementation). If you prefer minimum blast radius, P2 can be interactive-only, at the cost of two lifecycle implementations indefinitely.
 3. **Idle policy for repo-backed sessions** — recommended: keep the worktree, TTL-suspend (default 1 h); repo-less sessions idle indefinitely.
 4. **Remote-node token streaming in v1** — recommended: no (cursor pull only).
