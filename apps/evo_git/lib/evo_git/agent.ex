@@ -40,6 +40,15 @@ defmodule EvoGit.Agent do
   `trigger_recovery/2` sets `in_grace_period: true` and re-enters `loop/1`,
   where the same condition re-fires — an infinite loop with no termination.
 
+  ## The budget a mode is measured against
+
+  - `:oneshot` (every agent today) — `turn >= max_turns`, unchanged.
+  - `:interactive` — the per-exchange BURST budget measured from the start of
+    the current exchange (`turn - exchange_turn_base >= exchange_turn_budget/1`)
+    OR the cumulative `session_turn_budget/1` cap
+    (`turn >= session_turn_budget/1`), so a yield resets the burst but never the
+    whole session.
+
   ## The bug
 
   Previously this only checked `turn >= max_turns`. When recovery set
@@ -48,7 +57,52 @@ defmodule EvoGit.Agent do
   """
   @spec trigger_turn_limit_recovery?(State.t()) :: boolean()
   def trigger_turn_limit_recovery?(%State{in_grace_period: true}), do: false
+
+  def trigger_turn_limit_recovery?(%State{mode: :interactive} = state) do
+    state.turn - state.exchange_turn_base >= exchange_turn_budget(state) or
+      state.turn >= session_turn_budget(state)
+  end
+
   def trigger_turn_limit_recovery?(%State{turn: turn, max_turns: max}), do: turn >= max
+
+  @doc """
+  The turn budget of ONE exchange (the `:interactive` burst budget).
+
+  An explicit `State.max_exchange_turns` wins; otherwise the configured
+  `State.max_turns` is the budget — exactly what a one-shot agent uses.
+  """
+  @spec exchange_turn_budget(State.t()) :: pos_integer()
+  def exchange_turn_budget(%State{max_exchange_turns: budget})
+      when is_integer(budget) and budget > 0,
+      do: budget
+
+  def exchange_turn_budget(%State{max_turns: max}), do: max
+
+  @doc """
+  The cumulative turn cap of an `:interactive` session, across every exchange.
+
+  Resolution order: an explicit `State.max_session_turns`, then the
+  default-inert seam
+  `Application.get_env(:evo_git, :interactive_session_turns, …)` read AT CALL
+  TIME, then `exchange_turn_budget(state) * 10`. A value that is not a positive
+  integer is IGNORED (the next source is consulted), so a mistyped seam can
+  never wedge an interactive session at zero turns.
+  """
+  @spec session_turn_budget(State.t()) :: pos_integer()
+  def session_turn_budget(%State{} = state) do
+    default = exchange_turn_budget(state) * 10
+
+    case state.max_session_turns do
+      explicit when is_integer(explicit) and explicit > 0 ->
+        explicit
+
+      _unset ->
+        case Application.get_env(:evo_git, :interactive_session_turns, default) do
+          configured when is_integer(configured) and configured > 0 -> configured
+          _invalid -> default
+        end
+    end
+  end
 
   @doc """
   Determines whether a `{:continue, _}` outcome during the grace period should
@@ -171,13 +225,39 @@ defmodule EvoGit.Agent do
       """
       def system_prompt, do: ""
 
+      @doc """
+      Returns how a tool-free reply from this role is interpreted.
+
+      `:oneshot` (default) — the reply FINISHES the run: completion side effects
+      are written and the session stops.
+
+      `:interactive` — the reply YIELDS: pending work is committed, the reply
+      text is handed back, and the session waits for its next input. Interactive
+      mode is opt-in and root-only (a subagent is always `:oneshot`).
+
+      Override this in your agent module to opt into interactive semantics.
+      """
+      def session_mode, do: :oneshot
+
+      @doc """
+      Called when an `:interactive` session yields and becomes idle.
+
+      Receives the agent's `%EvoGit.Agent.State{}`. It must be callable from any
+      process and cheap: it runs inline on the session's own path, so it is for
+      light notification/bookkeeping — never a blocking call, a sleep or heavy
+      I/O. The default is a no-op.
+      """
+      def on_yield(_state), do: :ok
+
       defoverridable available_tools: 0,
                      system_prompt: 0,
                      subagent_tool_name: 0,
                      subagent_tool_description: 0,
                      subagent_modules: 0,
                      agent_type: 0,
-                     delegation_level: 0
+                     delegation_level: 0,
+                     session_mode: 0,
+                     on_yield: 1
     end
   end
 end

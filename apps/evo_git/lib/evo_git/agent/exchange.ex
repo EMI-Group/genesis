@@ -11,15 +11,19 @@ defmodule EvoGit.Agent.Exchange do
 
   An exchange ends with exactly one of:
 
-    * `{:finish, %State{}, %EvoGit.Agent.Result{}}` — the run is complete; the
-      caller performs the completion side effects (`EvoGit.Agent.Completion`)
-      exactly once;
+    * `{:yield, %State{}, String.t()}` — an `:interactive` agent replied with no
+      tool calls: its pending work is committed, the reply text is the message
+      the session hands back, and the SESSION decides what happens next (wait for
+      input, or close). No `%EvoGit.Agent.Result{}` is built and no completion
+      side effect is written;
+    * `{:finish, %State{}, %EvoGit.Agent.Result{}}` — the run is complete (every
+      `:oneshot` agent); the completion side effects were written exactly once by
+      `EvoGit.Agent.Completion.Builder.finalize/2`;
     * `{:error, reason}` — the run failed (for example `:recovery_failed` or a
       terminal `{:llm_request_rejected, message}`).
 
-  There is deliberately NO `:yield` outcome and no interactive mode in P1: the
-  yield/finish split and the `:awaiting_input` task status land with the
-  per-agent session process.
+  The mode decides ONLY what a tool-free reply means; everything else in the
+  loop is identical for both modes.
 
   ## Runnable in a bare process
 
@@ -55,10 +59,11 @@ defmodule EvoGit.Agent.Exchange do
   alias EvoGit.Agent.Turn
 
   @typedoc """
-  The terminal outcome of one exchange: a finished run (with its result) or an
-  error that ends the run.
+  The terminal outcome of one exchange: a yielded interactive turn, a finished
+  run (with its result), or an error that ends the run.
   """
-  @type outcome :: {:finish, State.t(), Result.t()} | {:error, term()}
+  @type outcome ::
+          {:yield, State.t(), String.t()} | {:finish, State.t(), Result.t()} | {:error, term()}
 
   @doc """
   Runs ONE exchange over `state` until it yields a terminal outcome.
@@ -77,11 +82,17 @@ defmodule EvoGit.Agent.Exchange do
     seams = Seams.from_opts(opts)
 
     case loop(state, opts, seams) do
-      # The FINISHING turn never reaches the recursive loop, so its state is
+      # A TERMINAL turn never reaches the recursive loop, so its state is
       # checkpointed here — the single place the terminal state is observable.
       # Invariant: exactly ONE checkpoint per turn (a continuing turn fired
-      # inside `continuations/2`), and the return value is discarded.
+      # inside `continuations/2`), and the return value is discarded. A `:yield`
+      # is terminal for THIS exchange and is checkpointed the same way, then
+      # returned verbatim.
       {:finish, %State{} = final_state, _result} = outcome ->
+        checkpoint(final_state, seams)
+        outcome
+
+      {:yield, %State{} = final_state, _text} = outcome ->
         checkpoint(final_state, seams)
         outcome
 
@@ -177,13 +188,22 @@ defmodule EvoGit.Agent.Exchange do
       :no_cancel ->
         cond do
           EvoGit.Agent.trigger_turn_limit_recovery?(state) ->
-            trigger_recovery(state, "max turns (#{state.max_turns}) exceeded", opts, seams)
+            trigger_recovery(state, turn_limit_reason(state), opts, seams)
 
           true ->
             Turn.run(state, continuations(opts, seams), opts)
         end
     end
   end
+
+  # The recovery message names the budget that was actually exhausted:
+  # `max_turns` for a one-shot agent (BYTE-IDENTICAL to the historical text) and
+  # the effective per-exchange burst budget for an interactive one.
+  defp turn_limit_reason(%State{mode: :interactive} = state) do
+    "max turns (#{EvoGit.Agent.exchange_turn_budget(state)}) exceeded"
+  end
+
+  defp turn_limit_reason(%State{max_turns: max}), do: "max turns (#{max}) exceeded"
 
   defp trigger_recovery(%State{} = state, reason, opts) do
     trigger_recovery(state, reason, opts, Seams.from_opts(opts))

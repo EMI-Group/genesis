@@ -12,17 +12,21 @@ defmodule EvoGit.Agent.Session.Worker do
 
     * `{:checkpoint, %EvoGit.Agent.State{}}` — one per turn, so the session can
       publish a coalesced summary;
-    * `{:exchange_finished, self(), outcome}` — the terminal
-      `{:finish, %State{}, %Result{}} | {:error, reason}` value, verbatim.
+    * `{:exchange_finished, self(), outcome}` — the terminal outcome value,
+      verbatim: `{:yield, %State{}, text}` (an interactive agent's tool-free
+      reply, already refreshed against the post-fallback worktree HEAD),
+      `{:finish, %State{}, %Result{}}` or `{:error, reason}`.
 
   An EXCEPTION is deliberately NOT caught here: it propagates out of the task,
   becomes an abnormal `:DOWN` at the session, and the session maps it to its
   crash path — the same shape the scheduler's crash/retry handling expects.
 
   The completion side effects (git note, archive refs, `%Result{}`) are written
-  INSIDE the exchange by `EvoGit.Agent.ToolDispatch.build_completion/2,3`, so
-  this module only adds the post-run worktree bookkeeping (the same
-  `refresh_commit_sha/1` refresh the retired one-shot driver performed).
+  INSIDE the exchange by `EvoGit.Agent.Completion.Builder.finalize/2` for a
+  `:oneshot` agent, so this module only adds the post-run worktree bookkeeping
+  (the same `refresh_commit_sha/1` refresh the retired one-shot driver
+  performed). A `:yield` is NOT a completion: the session owns it and reaches
+  the same builder once, when the session terminates.
   """
 
   alias EvoGit.Agent.Exchange
@@ -86,7 +90,25 @@ defmodule EvoGit.Agent.Session.Worker do
     {:finish, state, Runner.refresh_commit_sha(result)}
   end
 
+  # A YIELD is not a completion: the exchange committed the pending work, and the
+  # session decides what happens next. The `after` fallback above may still have
+  # created the only commit of this exchange, so the state's recorded
+  # `current_commit` is re-read here — AFTER that fallback, in this process (the
+  # one that owns `:repo_path`/`:repo_less`). A repo-less agent, a blank
+  # `:repo_path`, a non-git directory or a git error leaves the state unchanged;
+  # a yield is never turned into a failure.
+  defp refresh({:yield, %State{} = state, text}) do
+    {:yield, refresh_current_commit(state), text}
+  end
+
   # A failed exchange is delivered verbatim — never converted into a raise or a
   # success.
   defp refresh({:error, reason}), do: {:error, reason}
+
+  defp refresh_current_commit(%State{} = state) do
+    case Runner.current_commit_sha() do
+      {:ok, sha} -> %{state | current_commit: sha}
+      :error -> state
+    end
+  end
 end

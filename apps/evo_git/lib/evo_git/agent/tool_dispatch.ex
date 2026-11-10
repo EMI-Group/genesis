@@ -27,11 +27,19 @@ defmodule EvoGit.Agent.ToolDispatch do
   (`ToolOutput.to_content_parts/1`) while passing a plain binary through
   BYTE-IDENTICALLY to `ReqLLM.Context.tool_result/3`.
 
-  A text reply with ZERO tool calls is an IMPLICIT COMPLETION: pending work is
-  committed and the reply text IS the report. That is the ONE terminal outcome of
-  a turn: `{:finish, state, %EvoGit.Agent.Result{}}` — the result is built and
-  its completion side effects written HERE, so the engine only finalizes. ZERO
-  tool calls and no usable text is the only error path (one nudge, then the
+  A text reply with ZERO tool calls is an IMPLICIT COMPLETION and the ONLY
+  terminal outcome of a turn — and its meaning is the ONE mode-dependent
+  decision in the engine:
+
+    * `:oneshot` → `{:finish, state, %EvoGit.Agent.Result{}}`, produced by the
+      ONE completion entry point `EvoGit.Agent.Completion.Builder.finalize/2`
+      (it commits pending work first and writes the completion side effects
+      exactly once);
+    * `:interactive` → `{:yield, state, text}`: the pending work is committed and
+      the reply text is handed back, with NO result and NO completion side
+      effect. The SESSION decides what happens next.
+
+  ZERO tool calls and no usable text is the only error path (one nudge, then the
   bounded protocol-violation route); there is NO completion tool.
 
   The turn runs on `%EvoGit.Agent.State{}`. Its outside-world dependencies are
@@ -42,8 +50,6 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   require Logger
 
-  alias EvoGit.Agent.Completion
-  alias EvoGit.Agent.Compression.Threshold
   alias EvoGit.Agent.ConflictState
   alias EvoGit.Agent.Exchange.Seams
   alias EvoGit.Agent.State
@@ -147,19 +153,14 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
   end
 
-  # Reads the current commit for the completion payload (no ETS write).
-  defp sync_and_get_current_commit(%State{} = _state) do
-    # Repo-less agents have no worktree and no commit; completion receives a
-    # nil commit_sha.
-    if Process.get(:repo_less) do
-      nil
-    else
-      repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
-
-      case Git.rev_parse(repo_path) do
-        {:ok, sha} -> sha
-        {:error, reason} -> raise_rev_parse_error(reason)
-      end
+  # Records the worktree HEAD on the state at a YIELD (an interactive agent's
+  # tool-free reply). Never raises: a repo-less agent, a blank `:repo_path`, a
+  # non-git directory or a git error leaves `current_commit` unchanged — a yield
+  # must never be turned into a failure by a diagnostic re-read.
+  defp record_current_commit(%State{} = state) do
+    case EvoGit.Agent.Runner.current_commit_sha() do
+      {:ok, sha} -> %{state | current_commit: sha}
+      :error -> state
     end
   end
 
@@ -415,7 +416,8 @@ defmodule EvoGit.Agent.ToolDispatch do
   # calls) or normal tool-call processing.
   #
   # `completion_text` (optional, default `nil`) is the model's own report text
-  # from `EvoGit.Agent.CompletionProtocol`; it becomes the agent result verbatim.
+  # from `EvoGit.Agent.CompletionProtocol`; it becomes the yielded message
+  # (`:interactive`) or the agent result (`:oneshot`) verbatim.
   def process_llm_response(
         response,
         state,
@@ -447,10 +449,24 @@ defmodule EvoGit.Agent.ToolDispatch do
     Process.put(:read_delegation_hints, state.read_delegation_hints)
 
     if completion_text do
-      # Implicit completion: the bookkeeping above already recorded the turn
-      # (including the final assistant message in the context), so all that is
-      # left is the completion side effects in `EvoGit.Agent.Completion`.
-      {:finish, state, build_completion(state, completion_text)}
+      # A tool-free reply: the bookkeeping above already recorded the turn
+      # (including the final assistant message in the context). What happens next
+      # is the ONLY mode-dependent decision in the whole engine.
+      if state.mode == :interactive do
+        # YIELD: commit the pending work (so the session's next exchange starts
+        # from a reviewable HEAD), record the live commit on the state, and hand
+        # the reply text back. NO `%Result{}`, NO completion side effects and no
+        # terminal status — the session decides what happens next.
+        AgentScheduler.Dispatch.commit_pending_in_worktree()
+        {:yield, record_current_commit(state), completion_text}
+      else
+        # FINISH: the ONE completion entry point builds the `%Result{}` and
+        # writes its side effects exactly once (committing pending work first).
+        case EvoGit.Agent.Completion.Builder.finalize(state, completion_text) do
+          {:ok, result} -> {:finish, state, result}
+          {:error, reason} -> {:error, reason}
+        end
+      end
     else
       case process_tool_calls(tool_calls, state, subagent_modules, opts) do
         {:continue, tool_responses, subagent_usage} ->
@@ -746,71 +762,13 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
   end
 
-  # The completion route (a text reply with no tool calls).
-  #
-  # Any pending work is committed FIRST so the sha reported to the runtime is
-  # reviewable: without this the commit would only happen in the post-run
-  # auto-commit fallback (`Session.Worker`'s `after` block), i.e. AFTER
-  # `commit_sha` was captured, and
-  # `Runtime.Helpers.merge_and_report/3,4` would take the no-changes path and
-  # drop the work with the worktree. `commit_pending_in_worktree/0` is a no-op
-  # for a clean workspace and for repo-less agents, and it never raises (git
-  # errors are logged, not propagated), so it cannot turn a legitimate finish
-  # into a failure.
-  defp build_completion(%State{} = state, result) do
-    AgentScheduler.Dispatch.commit_pending_in_worktree()
-    build_completion(state, result, sync_and_get_current_commit(state))
-  end
-
-  # Builds the `%Result{}` and writes its completion side effects (git note when
-  # `base_commit` is set, archive refs/row when archiving), so every downstream
-  # consumer is oblivious to how the agent finished.
-  defp build_completion(%State{} = state, result, commit_sha) do
-    # REGISTRATION METADATA ONLY: `base_commit` comes from the spec's phylo node
-    # captured at registration, and the archive/model registration metadata from
-    # the summary row; the completion side effects (git note, archive refs/row)
-    # must stay byte-identical. No conversation/loop value is read from ETS here
-    # — notably `compression_count` and `current_commit` come from the owned state.
-    {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
-    {:ok, meta} = EvoGit.AgentScheduler.Store.get_sched_meta(state.agent_id)
-
-    # Repo-less agents have no spec phylo node — passing nil base_commit is safe:
-    # Completion.complete/4 guards git-note/archive writes on base_commit
-    # being truthy, so both are skipped for repo-less agents.
-    base_commit =
-      if Process.get(:repo_less),
-        do: nil,
-        else: meta.spec.phylo_node && meta.spec.phylo_node.base_commit
-
-    Completion.complete(
-      state.agent_id,
-      result,
-      commit_sha,
-      base_commit: base_commit,
-      parent_id: agent_state.parent_id,
-      depth: state.depth,
-      objective: state.objective,
-      usage: state.usage,
-      archive: agent_state.archive,
-      compression_count: state.compression_count,
-      repo_id: agent_state.repo_id,
-      repo_root: agent_state.repo_root,
-      llm_model: agent_state.llm_model,
-      model_id: agent_state.model_id,
-      model_spec: Map.get(agent_state, :model_spec),
-      llm_generation_params: agent_state.llm_generation_params,
-      max_turns: agent_state.max_turns,
-      max_retries: agent_state.max_retries,
-      max_agent_depth: agent_state.max_depth,
-      foreign_repos: agent_state.foreign_repos,
-      compression_threshold:
-        Threshold.for_model(agent_state.llm_model,
-          context_window: Map.get(agent_state, :llm_context_window)
-        ).threshold,
-      agent_type: agent_type_from_module(state.agent_module),
-      context_node_path: state.node_path
-    )
-  end
+  # The completion route (a text reply with no tool calls) lives in the ONE
+  # completion entry point, `EvoGit.Agent.Completion.Builder.finalize/2`: it
+  # commits pending work FIRST (so the sha reported to the runtime is
+  # reviewable), re-reads the post-commit worktree HEAD, and writes the
+  # completion side effects exactly once. `:interactive` agents take the yield
+  # path above instead and reach that same function once, when the SESSION
+  # terminates.
 
   @doc false
   def process_regular_tool_calls(tool_calls, state, subagent_modules),
@@ -1054,11 +1012,5 @@ defmodule EvoGit.Agent.ToolDispatch do
       binary ->
         tool_result(tool_call_id, name, binary)
     end
-  end
-
-  # --- Shared Helpers ---
-
-  defp agent_type_from_module(module) when is_atom(module) do
-    module |> Module.split() |> List.last() |> Macro.underscore()
   end
 end

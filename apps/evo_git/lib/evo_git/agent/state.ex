@@ -72,7 +72,8 @@ defmodule EvoGit.Agent.State do
 
   ### budget (per-run terminal budgets)
 
-  `max_turns`, `max_depth`, `max_retries`, `grace_turns_remaining`,
+  `max_turns`, `exchange_turn_base`, `max_exchange_turns`, `max_session_turns`,
+  `max_depth`, `max_retries`, `grace_turns_remaining`,
   `in_grace_period`, `delegation_hints`, `read_delegation_hints`,
   `delegation_level`, `last_warned_level`, `turns_since_subagent`,
   `quality_level`.
@@ -126,6 +127,9 @@ defmodule EvoGit.Agent.State do
   - `watchers` — the streaming consumers (consumer pid → monitor ref); empty means unwatched, which is the zero-cost default. Carried (always `%{}`).
   - `last_checkpoint_at` — when the state was last checkpointed, or `nil`. Carried (always `nil`) — durability is deliberately deferred.
   - `max_turns` — maximum turns allowed for this agent (from config)
+  - `exchange_turn_base` — the `turn` value at the START of the current exchange; the interactive per-exchange burst budget is measured from it (`turn - exchange_turn_base`), so a yield resets the burst without resetting the conversation.
+  - `max_exchange_turns` — the per-exchange burst budget of an `:interactive` session; `nil` resolves at call time to `max_turns` (`EvoGit.Agent.exchange_turn_budget/1`).
+  - `max_session_turns` — the cumulative turn cap of an `:interactive` session across every exchange; `nil` resolves at call time from the default-inert `:interactive_session_turns` seam, else `exchange_turn_budget × 10` (`EvoGit.Agent.session_turn_budget/1`).
   - `max_depth` — maximum agent recursion depth; `nil` means NO LIMIT CONFIGURED and must read that way at every comparison site. The scheduler row is always authoritative and populates it.
   - `max_retries` — maximum LLM call retries for this agent; `nil` means NO LIMIT CONFIGURED (same rule as `max_depth`). The scheduler row is always authoritative and populates it.
   - `in_grace_period` — whether the agent is in a grace period after a warning
@@ -191,6 +195,9 @@ defmodule EvoGit.Agent.State do
     last_checkpoint_at: nil,
     # budget
     max_turns: 128,
+    exchange_turn_base: 0,
+    max_exchange_turns: nil,
+    max_session_turns: nil,
     max_depth: nil,
     max_retries: nil,
     grace_turns_remaining: 0,
@@ -254,6 +261,9 @@ defmodule EvoGit.Agent.State do
           last_checkpoint_at: DateTime.t() | nil,
           # budget
           max_turns: pos_integer(),
+          exchange_turn_base: non_neg_integer(),
+          max_exchange_turns: pos_integer() | nil,
+          max_session_turns: pos_integer() | nil,
           max_depth: pos_integer() | nil,
           max_retries: pos_integer() | nil,
           grace_turns_remaining: non_neg_integer(),
