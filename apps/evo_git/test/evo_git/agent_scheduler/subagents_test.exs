@@ -1,9 +1,30 @@
 defmodule EvoGit.AgentScheduler.SubagentsTest do
-  use ExUnit.Case, async: true
+  @moduledoc """
+  Pins the `EvoGit.AgentScheduler.Subagents` contracts: the spatial contract
+  gates, the writable-foreign-repo delegation gates, `store_sub_result/3,4`
+  roll-up and the parent resume paths.
+
+  ## Why `async: false`
+
+  One forcing GLOBAL: the app-env seam `:worktree_create_fun`, read at create
+  admission by the app-global `EvoGit.AgentScheduler.WorktreeManager`. Every
+  `spawn_validated_subagents/5` case that ACCEPTS a spec now dispatches a REAL
+  `EvoGit.Agent.Session`, and each session's `:internal, :start` event asks
+  WorktreeManager for a worktree (`EvoGit.Agent.Session.Setup.bind_worktree/2`).
+  The module installs a refusing create safety net and the gating describe
+  overrides it with a PARKED probe, so no create pipeline, worktree copy or LLM
+  call ever runs here — and a concurrently running module would observe that
+  seam. Every ETS row is written under this module's fixed ids (9000-9002,
+  9100-9101) and deleted in `on_exit`; no test wipes a table or asserts on its
+  size.
+  """
+  use ExUnit.Case, async: false
 
   @moduletag :tmp_dir
 
   alias EvoGit.Adapters.Git
+  alias EvoGit.Agent.Session
+  alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Subagents
@@ -12,6 +33,21 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Core.PhyloGraphNode
+
+  # The agent ids this module dispatches (`%State{next_agent_id: 9100}` plus at
+  # most one more spec). The parent fixture ids (9000-9002) are never sessions.
+  @dispatched_agent_ids [9100, 9101]
+
+  # Safety net for the WHOLE module: unless a describe installs its own probe,
+  # ANY accidental session start fails the create immediately (the session
+  # raises on that error and dies) instead of copying a worktree into a fixture
+  # repo or reaching a real LLM call.
+  setup do
+    old_create = Application.get_env(:evo_git, :worktree_create_fun)
+    Application.put_env(:evo_git, :worktree_create_fun, &refusing_create/5)
+    on_exit(fn -> restore_app_env(:worktree_create_fun, old_create) end)
+    :ok
+  end
 
   # Dummy agent modules for testing agent_type dispatch
 
@@ -90,6 +126,95 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
     {:ok, _} = Git.commit(root, "initial commit")
     root
   end
+
+  # --- Session seams (see `@moduledoc`) ---
+
+  # The module-level default: refuse every create, so an accidental session
+  # start dies immediately (the session raises on the create error) instead of
+  # running real worktree I/O.
+  defp refusing_create(_agent_id, _repo_root, _worktree_path, _spec, _meta) do
+    {:error, {:worktree_create_failed, "no create expected in this test"}}
+  end
+
+  # A PARKED create probe: it reports the request it was handed (so "the
+  # session, not the scheduler, asked for this worktree" is a handshake rather
+  # than a race), materializes NOTHING, and then blocks until its OWN session
+  # dies. The session is registered in `EvoGit.Agent.Session.Registry` before
+  # its `:start` event runs, so the probe can always find it.
+  defp parked_create_probe(test_pid) do
+    fn agent_id, _repo_root, worktree_path, _spec, _meta ->
+      [{session_pid, _value}] = Registry.lookup(Session.Registry, agent_id)
+      ref = Process.monitor(session_pid)
+      send(test_pid, {:create_parked, agent_id, worktree_path})
+
+      receive do
+        {:DOWN, ^ref, :process, ^session_pid, _reason} ->
+          {:error, {:worktree_create_failed, "session stopped before the create ran"}}
+      after
+        30_000 -> {:error, {:worktree_create_failed, "parked create probe timed out"}}
+      end
+    end
+  end
+
+  # Deterministic session teardown: kill every session this test dispatched and
+  # WAIT for it, because a live session keeps touching the fixture dir (its
+  # worktree request, its retries) and would race the `File.rm_rf!/1` below.
+  # Killing the session also unblocks its parked create probe.
+  defp stop_sessions(agent_ids) do
+    for agent_id <- agent_ids,
+        [{session_pid, _value}] <- [Registry.lookup(Session.Registry, agent_id)],
+        Process.alive?(session_pid) do
+      ref = Process.monitor(session_pid)
+      Process.exit(session_pid, :kill)
+
+      receive do
+        {:DOWN, ^ref, :process, ^session_pid, _reason} -> :ok
+      after
+        10_000 -> flunk("session for agent #{agent_id} did not stop")
+      end
+    end
+
+    :ok
+  end
+
+  # The killed session's WorktreeManager cleanup is deferred until its parked
+  # create task finishes (the create task replies to the dead caller and fires
+  # `{:create_finished, agent_id}`); wait for that registration to be released
+  # so no manager cleanup touches the fixture repos after they are removed.
+  defp await_manager_release(agent_ids) do
+    wait_until(
+      fn ->
+        manager_state = :sys.get_state(EvoGit.AgentScheduler.WorktreeManager)
+
+        Enum.all?(agent_ids, fn agent_id ->
+          not Map.has_key?(manager_state.agents, agent_id)
+        end)
+      end,
+      10_000
+    )
+  end
+
+  defp wait_until(fun, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_until(fun, deadline, timeout)
+  end
+
+  defp do_wait_until(fun, deadline, original_timeout) do
+    cond do
+      fun.() ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("condition not met within #{original_timeout}ms")
+
+      true ->
+        Process.sleep(10)
+        do_wait_until(fun, deadline, original_timeout)
+    end
+  end
+
+  defp restore_app_env(key, nil), do: Application.delete_env(:evo_git, key)
+  defp restore_app_env(key, value), do: Application.put_env(:evo_git, key, value)
 
   # --- Cross-repo delegation ---
 
@@ -395,15 +520,34 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       ensure_ets_table(:evogit_sched_meta)
       ensure_ets_table(:evogit_agent_summary)
 
-      on_exit(fn ->
-        File.rm_rf!(primary)
-        File.rm_rf!(original)
-        File.rm_rf!(reference)
+      # Hermetic dispatch (overrides the module's refusing net): every accepted
+      # spec becomes a real session whose `:start` event requests a worktree, so
+      # the probe PARKS that request. No create pipeline runs, nothing is copied
+      # into a fixture repo, and no exchange (hence no LLM call) ever starts.
+      old_create = Application.get_env(:evo_git, :worktree_create_fun)
+      Application.put_env(:evo_git, :worktree_create_fun, parked_create_probe(self()))
 
-        for id <- [9000, 9100, 9101] do
+      on_exit(fn ->
+        # Teardown order is load-bearing: stop every session this test
+        # dispatched (and wait for it), then wait for WorktreeManager to release
+        # those agent registrations, and only THEN remove the fixture dirs and
+        # the ETS rows — so nothing races the removal and a removal failure can
+        # never skip the ETS cleanup.
+        ExUnit.CaptureLog.capture_log(fn ->
+          stop_sessions(@dispatched_agent_ids)
+          await_manager_release(@dispatched_agent_ids)
+        end)
+
+        for id <- [9000 | @dispatched_agent_ids] do
           :ets.delete(:evogit_sched_meta, id)
           :ets.delete(:evogit_agent_summary, id)
         end
+
+        restore_app_env(:worktree_create_fun, old_create)
+
+        File.rm_rf!(primary)
+        File.rm_rf!(original)
+        File.rm_rf!(reference)
       end)
 
       %{
@@ -435,6 +579,12 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
       assert {:noreply, _} =
                Subagents.spawn_validated_subagents(9000, parent_meta, specs, from, state)
+
+      # The accepted spec became a real session whose OWN start event requested
+      # the worktree — and the request is PARKED, so nothing was materialized.
+      assert_receive {:create_parked, 9100, worktree_path}, 5_000
+      assert String.starts_with?(worktree_path, original)
+      refute File.exists?(worktree_path)
 
       updated = :ets.lookup_element(:evogit_sched_meta, 9000, 2)
       assert updated.status == :waiting
@@ -477,6 +627,11 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
         end)
 
       assert log =~ "foreign_repo_write_serialized"
+
+      # Only the FIRST spec became a session, and its parked worktree request
+      # proves no real create ever ran.
+      assert_receive {:create_parked, 9100, worktree_path}, 5_000
+      refute File.exists?(worktree_path)
 
       updated = :ets.lookup_element(:evogit_sched_meta, 9000, 2)
       assert updated.status == :waiting
@@ -532,6 +687,15 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
       assert {:noreply, _} =
                Subagents.spawn_validated_subagents(9000, parent_meta, specs, from, state)
+
+      # BOTH same-repo specs were accepted and dispatched as real sessions, each
+      # of which requested (and parked) its own worktree — no copy was made.
+      assert_receive {:create_parked, 9100, worktree_path}, 5_000
+      assert_receive {:create_parked, 9101, other_worktree_path}, 5_000
+      assert String.starts_with?(worktree_path, original)
+      assert String.starts_with?(other_worktree_path, original)
+      refute File.exists?(worktree_path)
+      refute File.exists?(other_worktree_path)
 
       updated = :ets.lookup_element(:evogit_sched_meta, 9000, 2)
       assert updated.total_sub_specs == 2
@@ -938,6 +1102,64 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       assert_receive {^ref, [{:ok, %Result{result: "done"}}]}
 
       # The sched_meta entry is reset for the resumed run
+      updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
+      assert updated.status == :running
+      assert updated.sub_agent_from == nil
+      assert updated.sub_agent_results == %{}
+      assert updated.pending_sub_agents == MapSet.new()
+      assert updated.sub_agent_indices == %{}
+      assert updated.total_sub_specs == 0
+    end
+
+    test "dispatch_ready_parent/3 resumes with a repo-less parent state (phylo_node nil)" do
+      parent_id = 9000
+      ref = make_ref()
+
+      meta = %{
+        base_sched_meta(parent_id, %{})
+        | worktree: "/tmp/wt",
+          sub_agent_from: {self(), ref},
+          total_sub_specs: 1,
+          sub_agent_results: %{0 => {:ok, %Result{result: "done", commit_sha: "abc"}}}
+      }
+
+      :ets.insert(:evogit_sched_meta, {parent_id, meta})
+
+      # The PRODUCTION row shape with no temporal identity: the merged
+      # `dispatch_ready_parent/3` has a `%AgentState{phylo_node: nil}` arm
+      # (repo-less parents), so the commit used for its log is "unknown".
+      :ets.insert(:evogit_agent_summary, {
+        parent_id,
+        %AgentState{
+          parent_id: nil,
+          phylo_node: nil,
+          mode: :oneshot,
+          context_node: %ContextNode{path: "./", repo: "/test", repo_id: "primary"},
+          llm_model: nil,
+          max_retries: 15,
+          max_depth: 8
+        }
+      })
+
+      state = %State{}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert ^state = Subagents.dispatch_ready_parent(state, parent_id, meta)
+        end)
+
+      # The row WAS found and the repo-less arm handled the nil temporal
+      # identity: no "state missing" warning, and no struct-field crash (the
+      # defect this case pins). The "commit unknown" label itself is an
+      # `info` line, filtered out by the suite's `:warning` log level.
+      refute log =~ "state missing on resume"
+      refute log =~ "KeyError"
+
+      # The blocked caller still receives the ordered results.
+      assert_receive {^ref, [{:ok, %Result{result: "done"}}]}
+
+      # The sched_meta entry is reset for the resumed run, exactly as on the
+      # missing-state path.
       updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
       assert updated.status == :running
       assert updated.sub_agent_from == nil
