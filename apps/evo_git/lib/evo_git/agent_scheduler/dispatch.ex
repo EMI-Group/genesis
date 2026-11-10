@@ -127,6 +127,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       parent_id: parent_id,
       task_id: task_id,
       task_number: task_number,
+      mode: session_mode(spec, depth),
       spec: spec
     })
 
@@ -259,9 +260,14 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         retries: retries,
         spec: spec,
         meta: meta,
+        # The session's mode (`:oneshot | :interactive`), resolved at
+        # registration and mirrored on SchedMeta. An interactive session yields
+        # to `:awaiting_input` on a tool-free reply instead of finishing.
+        session_mode: meta.mode,
         scheduler: self()
       ]
       |> append_repo_less_ctx(spec, agent_repo_root)
+      |> append_notify_ctx(spec)
 
     case start_session(dispatch_ctx) do
       {:ok, pid} ->
@@ -342,6 +348,17 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       ctx ++ [repo_less: true, repo_less_repo_path: agent_repo_root]
     else
       ctx
+    end
+  end
+
+  # An optional `:notify` sink for the session's non-terminal control messages
+  # (`{:agent_session_closed, tag, result}`): carried ONLY when the spec opt is
+  # a `{pid, tag}` tuple with a live pid shape, because the session
+  # pattern-matches the key. The key is never present with a `nil` value.
+  defp append_notify_ctx(ctx, spec) do
+    case Keyword.get(spec.opts, :notify) do
+      {pid, _tag} when is_pid(pid) -> ctx ++ [notify: Keyword.get(spec.opts, :notify)]
+      _other -> ctx
     end
   end
 
@@ -645,6 +662,36 @@ defmodule EvoGit.AgentScheduler.Dispatch do
           fallback
       end
     end
+  end
+
+  # Resolves the agent's SESSION MODE from the spec's `:session_mode` opt.
+  #
+  # `:interactive` (or its string form) is accepted for a ROOT agent only —
+  # a subagent's completion barrier is an exact-count barrier
+  # (`Subagents.maybe_resume_parent`), which a child session living across
+  # exchanges could never satisfy, so a nested agent is ALWAYS `:oneshot`.
+  # Anything else (absent, `:oneshot`, `"oneshot"`) is the default; an unknown
+  # value is warned about and falls back to `:oneshot` rather than failing the
+  # registration.
+  @spec session_mode(AgentSpec.t(), non_neg_integer()) :: :oneshot | :interactive
+  defp session_mode(%AgentSpec{} = spec, depth) do
+    mode =
+      case Keyword.get(spec.opts, :session_mode) do
+        :interactive -> :interactive
+        "interactive" -> :interactive
+        value when value in [:oneshot, "oneshot", nil] -> :oneshot
+        other -> warn_unknown_session_mode(other)
+      end
+
+    if depth == 0, do: mode, else: :oneshot
+  end
+
+  defp warn_unknown_session_mode(other) do
+    Logger.warning(
+      "AgentScheduler: unknown session_mode #{inspect(other)}; defaulting to :oneshot"
+    )
+
+    :oneshot
   end
 
   # Resolves the max-turns cap for a newly-registered agent.

@@ -49,6 +49,9 @@ defmodule EvoGit.AgentScheduler.State do
   - `task_agent_counts` — map of `task_id (string) => total agents spawned` (for stats reporting)
   - `ref_to_agent` — maps `Task` monitor references to agent IDs
   - `queue` — FIFO queue of agent IDs waiting for a worktree
+  - `close_waiters` — callers blocked in `EvoGit.AgentScheduler.await_close/2`, keyed by
+    agent id and flushed exactly once by `EvoGit.AgentScheduler.Lifecycle` on the
+    session's terminal outcome (`%{agent_id => [{caller_pid, GenServer.from()}]}`)
 
   ### LLM Slot Management (per-model pools)
   - `llm_holders` — `%{model_id => MapSet}` of agent IDs currently holding an LLM slot
@@ -85,6 +88,7 @@ defmodule EvoGit.AgentScheduler.State do
             next_agent_id: 1,
             ref_to_agent: %{},
             queue: :queue.new(),
+            close_waiters: %{},
             llm_holders: %{},
             llm_waiting: %{},
             llm_backoff_until: %{},
@@ -115,6 +119,7 @@ defmodule EvoGit.AgentScheduler.State do
           next_agent_id: pos_integer(),
           ref_to_agent: %{reference() => pos_integer()},
           queue: :queue.queue(pos_integer()),
+          close_waiters: %{optional(pos_integer()) => [{pid(), GenServer.from()}]},
           llm_holders: %{String.t() => MapSet.t(pos_integer())},
           llm_waiting: %{String.t() => :queue.queue(term())},
           llm_backoff_until: %{String.t() => integer() | nil},
@@ -461,6 +466,7 @@ defmodule EvoGit.AgentScheduler.State do
             next_agent_id: state.next_agent_id,
             ref_to_agent: state.ref_to_agent,
             queue: state.queue,
+            close_waiters: state.close_waiters,
             task_local_counters: state.task_local_counters,
             task_agent_counts: state.task_agent_counts,
             paused: state.paused,

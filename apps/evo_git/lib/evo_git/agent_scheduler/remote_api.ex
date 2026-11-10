@@ -35,6 +35,15 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   cached or copied manager state), and mutations are BEST-EFFORT: an execution
   can exit between the read and the action, and a dead/restarting manager
   degrades to an empty read or the documented error instead of raising.
+
+  ## Interactive-session verbs are LOCAL-node scheduler calls
+
+  `start_session/1`, `send_session_message/3`, `close_session/2`,
+  `await_close/2` and `list_awaiting_input/0` drive an interactive
+  `EvoGit.Agent.Session`. An interactive session lives INSIDE the scheduler VM
+  of the node that owns it (its transcript is in-memory only), so these are
+  local scheduler calls: a caller on another node reaches them through that
+  node's RPC wrapper, never by handing these functions a remote target.
   """
 
   alias EvoGit.Agent.Compression.Threshold
@@ -291,9 +300,124 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     end
   end
 
+  # ── Interactive agent sessions ─────────────────────────────────────
+  #
+  # The interactive-session verbs. They are LOCAL-node scheduler calls: an
+  # interactive session lives in the scheduler's own VM and its agent state (and
+  # the transcript) is in-memory only, so there is nothing to reach across
+  # nodes — a caller on another node must go through the RPC wrapper for that
+  # node (`EvoGit.RemoteNode`) rather than these functions.
+
+  @doc """
+  Starts an INTERACTIVE agent session on this node.
+
+  Delegates to `EvoGit.AgentScheduler.start_session/1`, which registers the
+  agent with NO caller to reply to (`from = nil`) and starts its
+  `EvoGit.Agent.Session` in `:interactive` mode: a tool-free reply YIELDS to
+  `:awaiting_input` (a non-terminal task status) instead of finishing, and the
+  session lives until it is explicitly closed, cancelled or force-killed (there
+  is no idle timeout).
+
+  Returns `{:ok, agent_id}` — the handle for `send_session_message/3`,
+  `await_close/2` and `list_awaiting_input/0` — or
+  `{:error, {:start_session_failed, reason}}` with the scheduler's own reason
+  (e.g. `:llm_not_configured`, `:cancelled`, `:scheduler_paused` or an invalid
+  model selection) passed through.
+  """
+  @spec start_session(EvoGit.AgentSpec.t() | keyword()) ::
+          {:ok, pos_integer()} | {:error, {:start_session_failed, term()}}
+  def start_session(spec_or_opts) do
+    case EvoGit.AgentScheduler.start_session(spec_or_opts) do
+      {:ok, agent_id} -> {:ok, agent_id}
+      {:error, reason} -> {:error, {:start_session_failed, reason}}
+    end
+  end
+
+  @doc """
+  Sends a user message to an interactive session on this node.
+
+  `target` is an agent id (or a session pid). `policy` is `:queue` (default —
+  delivered at the next turn boundary, or starting a new exchange immediately
+  when the session is parked at `:awaiting_input`) or `:interrupt` (stop the
+  in-flight generation and answer now).
+
+  Returns `:ok`, or `{:error, {:session, reason}}` with the session's own reason
+  passed through (`:not_found` for an unknown/stopped session, `:finished` for
+  a message arriving after the session ended, `{:bad_state, phase}` when the
+  phase refuses input — e.g. `:finalizing`).
+  """
+  @spec send_session_message(
+          pos_integer() | pid(),
+          String.t() | EvoGit.Attachments.message(),
+          :queue | :interrupt
+        ) :: :ok | {:error, {:session, term()}}
+  def send_session_message(target, message, policy \\ :queue) do
+    case EvoGit.Agent.Session.start_input(target, message, policy) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:session, reason}}
+      other -> {:error, {:session, other}}
+    end
+  end
+
+  @doc """
+  Closes an interactive session on this node.
+
+  Delegates to `EvoGit.Agent.Session.close/2` (`reason` defaults to `:normal`).
+  Closing is the ONLY non-cancellation way out of `:awaiting_input`: the session
+  runs its completion bookkeeping once and stops, releasing its worktree.
+  Closing an already-stopped session is not an error in itself — the session
+  answers the documented fallback.
+
+  Returns `:ok`, or `{:error, {:session, reason}}` with the session's reason
+  passed through (e.g. `:not_found` for an unknown/stopped session).
+  """
+  @spec close_session(pos_integer() | pid(), term()) :: :ok | {:error, {:session, term()}}
+  def close_session(target, reason \\ :normal) do
+    case EvoGit.Agent.Session.close(target, reason) do
+      :ok -> :ok
+      {:error, err} -> {:error, {:session, err}}
+      other -> {:error, {:session, other}}
+    end
+  end
+
+  @doc """
+  Blocks until the interactive session for `agent_id` reaches its terminal
+  outcome, returning that outcome VERBATIM.
+
+  Delegates to `EvoGit.AgentScheduler.await_close/2`: the scheduler answers when
+  the session delivers its result (`{:ok, %EvoGit.Agent.Result{}}` or the
+  session's own `{:error, reason}` term), when the session crashes
+  (`{:error, {:session_crashed, reason}}` — an interactive session is never
+  retried), when it is cancelled (`{:error, :cancelled}`), or when it ended
+  without delivering a result (`{:error, :not_found}`).
+
+  `timeout` (milliseconds, default 30 000) bounds the WAIT only: an expired
+  budget answers `{:error, :timeout}` and the session keeps running.
+  """
+  @spec await_close(pos_integer(), timeout()) ::
+          {:ok, EvoGit.Agent.Result.t()} | {:error, term()}
+  def await_close(agent_id, timeout \\ 30_000) do
+    EvoGit.AgentScheduler.await_close(agent_id, timeout)
+  end
+
+  @doc """
+  Lists the agents on this node currently parked at `:awaiting_input`.
+
+  Delegates to `EvoGit.AgentScheduler.list_awaiting_input/0` and returns its
+  list verbatim (the scheduler owns the entry shape). Degrades to `[]` when the
+  `:evogit_sched_meta` table is absent — a scheduler that has not started yet
+  has no awaiting sessions.
+  """
+  @spec list_awaiting_input() :: list()
+  def list_awaiting_input do
+    case :ets.whereis(:evogit_sched_meta) do
+      :undefined -> []
+      _ -> EvoGit.AgentScheduler.list_awaiting_input()
+    end
+  end
+
   @doc """
   Approves or denies a pending command-approval request on this node via RPC.
-
   Delegates to `EvoGit.CommandApproval.respond/2` (the human-in-the-loop gate
   for the self-reflective agent's command shell). `decision` is `:approve` or
   `:deny`. Returns `:ok` when a pending request was resolved, `{:error,
