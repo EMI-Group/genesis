@@ -342,6 +342,7 @@ defmodule EvoGit.Agent.Session.Setup do
         end
 
       max_turns = fetch_field!(ctx, :max_turns)
+      depth = fetch_field!(ctx, :depth)
 
       # `llm_model` / `llm_generation_params` / `llm_context_window` are
       # LOAD-BEARING: the engine's compression step reads them from this struct
@@ -350,7 +351,7 @@ defmodule EvoGit.Agent.Session.Setup do
       state = %State{
         agent_id: agent_id,
         agent_module: agent_module,
-        depth: fetch_field!(ctx, :depth),
+        depth: depth,
         node_path: node_path,
         repo_path: repo_path,
         current_commit: get_field(ctx, :current_commit),
@@ -371,7 +372,7 @@ defmodule EvoGit.Agent.Session.Setup do
         repo_id: fetch_field!(ctx, :repo_id),
         repo_root: repo_root,
         custom_agent_id: get_field(ctx, :custom_agent_id),
-        mode: :oneshot,
+        mode: resolve_session_mode(agent_module, ctx, depth),
         archive: fetch_field!(ctx, :archive),
         worktree: repo_path,
         # conversation fields the old ETS reads supplied (same scheduler row)
@@ -393,6 +394,35 @@ defmodule EvoGit.Agent.Session.Setup do
 
       {:ok, state}
     end
+  end
+
+  # --- mode resolution ---
+
+  # The ONE mode-resolution rule (v1):
+  #
+  #   1. the role's own `session_mode/0` callback is the DEFAULT (`:oneshot` for
+  #      every existing agent, since the macro's default is `:oneshot`);
+  #   2. the ctx `:session_mode` option OVERRIDES it — an atom `:oneshot` /
+  #      `:interactive`, or the string `"oneshot"` / `"interactive"`; any other
+  #      value is IGNORED (the callback's answer stands), so a typo can never
+  #      silently flip a role's semantics;
+  #   3. DEPTH wins over both: a subagent is ALWAYS `:oneshot` in v1, because the
+  #      subagent barrier is an exact-count barrier that a child living across
+  #      exchanges could never satisfy.
+  #
+  # Nothing is rescued: `session_mode/0` is a plain callback, callable from any
+  # process.
+  defp resolve_session_mode(agent_module, ctx, depth) do
+    requested =
+      case get_field(ctx, :session_mode) do
+        :interactive -> :interactive
+        "interactive" -> :interactive
+        :oneshot -> :oneshot
+        "oneshot" -> :oneshot
+        _other -> agent_module.session_mode()
+      end
+
+    if depth != 0, do: :oneshot, else: requested
   end
 
   # --- derived per-process projection ---

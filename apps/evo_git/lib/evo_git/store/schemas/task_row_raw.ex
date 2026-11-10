@@ -52,6 +52,7 @@ defmodule EvoGit.Store.Schemas.TaskRowRaw do
   | `project_path`     | `:string`    | `:string`                       |
   | `branch_name`      | `:string`    | `:string`                       |
   | `error`            | `:string`    | `ErrorJson` (JSON TEXT)         |
+  | `session_mode`     | `:string`    | `SessionMode` (mode TEXT)       |
   | `updated_at`       | `:string`    | `TaskTimestampRaw` (ISO TEXT)   |
   """
 
@@ -81,13 +82,16 @@ defmodule EvoGit.Store.Schemas.TaskRowRaw do
     field(:project_path, :string)
     field(:branch_name, :string)
     field(:error, :string)
+    field(:session_mode, :string)
     field(:updated_at, :string)
   end
 
   @doc """
-  The 19 task-table column names (strings) in schema-declaration order —
-  identical to `EvoGit.Store.Schemas.TaskRow.columns/0` (the physical table
-  column order). Returns strings to mirror `Codec.task_columns/0` exactly.
+  The 20 task-table column names (strings) in schema-declaration order —
+  identical to `EvoGit.Store.Schemas.TaskRow.columns/0` (the canonical column
+  order; a database upgraded from a pre-`session_mode` release carries that
+  column after `updated_at` instead, which is functionally irrelevant — every
+  query is name-based). Returns strings to mirror `Codec.task_columns/0` exactly.
   """
   def columns, do: Enum.map(__schema__(:fields), &Atom.to_string/1)
 end

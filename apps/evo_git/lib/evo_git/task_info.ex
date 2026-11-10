@@ -21,14 +21,22 @@ defmodule EvoGit.TaskInfo do
     lease_expires_at: nil,
     model_id: nil,
     project_path: nil,
-    branch_name: nil
+    branch_name: nil,
+    session_mode: "oneshot"
   ]
 
   @type t :: %__MODULE__{
           id: String.t() | nil,
           type: atom() | nil,
           status:
-            :pending | :running | :finalizing | :completed | :failed | :cancelled | :cancelling,
+            :pending
+            | :running
+            | :awaiting_input
+            | :finalizing
+            | :completed
+            | :failed
+            | :cancelled
+            | :cancelling,
           opts: keyword() | nil,
           ref: Task.t() | nil,
           started_at: DateTime.t() | nil,
@@ -44,6 +52,7 @@ defmodule EvoGit.TaskInfo do
           lease_expires_at: integer() | nil,
           model_id: String.t() | nil,
           project_path: String.t() | nil,
-          branch_name: String.t() | nil
+          branch_name: String.t() | nil,
+          session_mode: String.t()
         }
 end

@@ -14,6 +14,9 @@ defmodule EvoGit.Agent.Runner do
     * `refresh_commit_sha/1` — re-reads the worktree HEAD after the auto-commit
       fallback so `Result.commit_sha` never points at the pre-fallback commit;
       the session worker calls it exactly like the retired one-shot driver did.
+    * `current_commit_sha/0` — the never-raising worktree-HEAD read behind that
+      refresh; the yielded state's `current_commit` and the completion builder
+      reuse it.
     * pure delegations to the engine helpers (`check_limit_warnings/1`,
       `drain_and_inject_user_messages/1,2`, `inject_background_job_notices/1,2`,
       `enter_grace/2,3`, `maybe_enter_cancel_grace/1`), kept so tests can reach
@@ -46,7 +49,7 @@ defmodule EvoGit.Agent.Runner do
   defp refresh_success_shape({:ok, inner}), do: {:ok, refresh_success_shape(inner)}
 
   defp refresh_success_shape(%EvoGit.Agent.Result{} = result) do
-    case current_worktree_sha() do
+    case current_commit_sha() do
       {:ok, sha} -> %{result | commit_sha: sha}
       :error -> result
     end
@@ -56,7 +59,7 @@ defmodule EvoGit.Agent.Runner do
   # the struct type for `%Result{}` — this clause covers plain maps that carry
   # a `:commit_sha` key.
   defp refresh_success_shape(%{commit_sha: _} = map) do
-    case current_worktree_sha() do
+    case current_commit_sha() do
       {:ok, sha} -> Map.put(map, :commit_sha, sha)
       :error -> map
     end
@@ -64,19 +67,27 @@ defmodule EvoGit.Agent.Runner do
 
   defp refresh_success_shape(other), do: other
 
-  # Reads the worktree HEAD. Never raises: `Git.rev_parse/2` pre-checks the
-  # path and returns `{:error, {:enoent, _}}` for a missing directory and
-  # `{:error, {code, output}}` for a non-git directory.
-  defp current_worktree_sha do
-    case Process.get(:repo_path) do
-      path when is_binary(path) and path != "" ->
-        case Git.rev_parse(path) do
-          {:ok, sha} when is_binary(sha) and sha != "" -> {:ok, sha}
-          _ -> :error
-        end
+  @doc false
+  # Reads the worktree HEAD of THIS process's agent. Never raises:
+  # `Git.rev_parse/2` pre-checks the path and returns `{:error, {:enoent, _}}`
+  # for a missing directory and `{:error, {code, output}}` for a non-git
+  # directory. A repo-less agent, a blank/unset `:repo_path`, a non-git
+  # directory or a git error is `:error`, so a caller can leave its own value
+  # untouched instead of failing.
+  def current_commit_sha do
+    if Process.get(:repo_less) == true do
+      :error
+    else
+      case Process.get(:repo_path) do
+        path when is_binary(path) and path != "" ->
+          case Git.rev_parse(path) do
+            {:ok, sha} when is_binary(sha) and sha != "" -> {:ok, sha}
+            _ -> :error
+          end
 
-      _ ->
-        :error
+        _ ->
+          :error
+      end
     end
   end
 

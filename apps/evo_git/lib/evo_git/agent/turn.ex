@@ -21,9 +21,11 @@ defmodule EvoGit.Agent.Turn do
 
       %{loop: (state -> outcome), trigger_recovery: (state, reason -> outcome)}
 
-  `Turn.run/3` only forwards them to `EvoGit.Agent.ToolDispatch.do_turn/6`; the
-  outcome of a turn is therefore the engine's own vocabulary — `{:continue, …}`,
-  `{:finish, state, %EvoGit.Agent.Result{}}` or a terminal `{:error, reason}`.
+  `Turn.run/3` only forwards them to `EvoGit.Agent.ToolDispatch.do_turn/6`; a
+  turn always ends in the engine's TERMINAL vocabulary — a continuing turn
+  re-enters the loop through the `:loop` continuation, so it returns
+  `{:yield, state, text}` (an interactive agent's tool-free reply),
+  `{:finish, state, %EvoGit.Agent.Result{}}` or `{:error, reason}`.
 
   ## Seams
 
@@ -51,7 +53,9 @@ defmodule EvoGit.Agent.Turn do
           %{loop: (State.t() -> term()), trigger_recovery: (State.t(), term() -> term())},
           keyword()
         ) ::
-          term()
+          {:yield, State.t(), String.t()}
+          | {:finish, State.t(), EvoGit.Agent.Result.t()}
+          | {:error, term()}
   def run(%State{} = state, cont, opts \\ []) do
     ToolDispatch.do_turn(
       state,

@@ -85,8 +85,27 @@ defmodule EvoGit.TaskRegistry.Lease do
   ## ONE classification instead of re-deriving `in [...]` lists.
 
   # Statuses whose lease the heartbeat RENEWS. `:cancelling` is included so a
-  # long graceful cancel keeps its lease while the wrapper is still alive.
-  @renewed_statuses [:running, :pending, :cancelling]
+  # long graceful cancel keeps its lease while the wrapper is still alive;
+  # `:awaiting_input` is included because an idle interactive session's wrapper
+  # is still alive on this node and keeps owning its lease for as long as it
+  # idles (an idle session is not a dead one).
+  @renewed_statuses [:running, :pending, :cancelling, :awaiting_input]
+
+  # Statuses the one-shot `:lease_sweep` may classify as LEAKED. `:awaiting_input`
+  # is swept exactly like `:running`: once the owning wrapper is gone (no live
+  # sched_meta agents AND the lease stopped being renewed) the session cannot
+  # come back, so the row must not sit in a live status forever.
+  @leaked_statuses [:running, :awaiting_input]
+
+  @doc false
+  # The complete renewable-status list (heartbeat). Exposed for the
+  # table-driven totality test that asserts every status enumeration containing
+  # `:running` also contains `:awaiting_input`.
+  def renewed_statuses, do: @renewed_statuses
+
+  @doc false
+  # The complete leaked-status list (sweep), exposed for the same totality test.
+  def leaked_statuses, do: @leaked_statuses
 
   @doc """
   `true` when the task's lease should be RENEWED: a live status, or a row that
@@ -98,16 +117,17 @@ defmodule EvoGit.TaskRegistry.Lease do
   def lease_renewable?(status), do: status in @renewed_statuses
 
   @doc """
-  `true` when the task is PROVABLY a leaked `:running` row: a known `:running`
-  status, an expired (or missing) lease, and not owned by this registry — the
-  verdict the one-shot `:lease_sweep` acts on.
+  `true` when the task is PROVABLY a leaked live row: a known live status
+  (`:running`, or `:awaiting_input` — an idle interactive session whose wrapper
+  is still supposed to be alive), an expired (or missing) lease, and not owned
+  by this registry — the verdict the one-shot `:lease_sweep` acts on.
 
   `{:unknown, _}` is NEVER leaked: the row exists, its status is just
   unreadable, so the sweep leaves it alone (conservative — a live task must
   never be failed because of a status spelling).
   """
   @spec leaked?(atom() | {:unknown, term()} | nil, boolean(), integer() | nil) :: boolean()
-  def leaked?(:running, owned?, lease_expires_at) do
+  def leaked?(status, owned?, lease_expires_at) when status in @leaked_statuses do
     not owned? and not lease_valid?(lease_expires_at)
   end
 

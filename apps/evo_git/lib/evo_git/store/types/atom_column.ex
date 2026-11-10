@@ -69,8 +69,13 @@ defmodule EvoGit.Store.Types.Status do
 
   Documented value set (`%TaskInfo{}` status), declared ONCE in `statuses/0`:
 
-    `:pending` · `:running` · `:finalizing` · `:completed` · `:failed` ·
-    `:cancelled` · `:cancelling`
+    `:pending` · `:running` · `:awaiting_input` · `:finalizing` ·
+    `:completed` · `:failed` · `:cancelled` · `:cancelling`
+
+  `:awaiting_input` is the NON-TERMINAL status of an idle interactive session:
+  it is not finished (cleanup must never delete it) and its lease is still
+  renewable (the wrapper is alive), so both liveness lists in
+  `EvoGit.Store.Operations.Lightweight` include it.
 
   `statuses/0` is the single source of truth for "every status the registry
   can persist"; `Codec.known_statuses/0` must remain a superset (pinned by
@@ -86,7 +91,16 @@ defmodule EvoGit.Store.Types.Status do
 
   alias EvoGit.Store.Types.AtomColumn
 
-  @statuses [:pending, :running, :finalizing, :completed, :failed, :cancelled, :cancelling]
+  @statuses [
+    :pending,
+    :running,
+    :awaiting_input,
+    :finalizing,
+    :completed,
+    :failed,
+    :cancelled,
+    :cancelling
+  ]
 
   @doc "Every `tasks.status` value the registry persists."
   @spec statuses() :: [atom()]

@@ -9,9 +9,10 @@ defmodule EvoGit.Repo.Migrations.BaselineAdoption do
   the Ecto migrator (seeing version 0) runs THIS migration against them. It is
   therefore idempotent by construction:
 
-    * the `tasks` table via `CREATE TABLE IF NOT EXISTS` — the FINAL shape (19
-      columns; the `archive_metadata` column the pre-release builds carried is
-      GONE for good, see `20260815000005_task_agent_archives`). No other table
+    * the `tasks` table via `CREATE TABLE IF NOT EXISTS` — the FINAL shape (20
+      columns, including `session_mode`; the `archive_metadata` column the
+      pre-release builds carried is GONE for good, see
+      `20260815000005_task_agent_archives`). No other table
       is created here: a legacy `projects` table is exclusively
       `20260815000007_vct_mounts` business (it migrates the rows into
       `vct_mounts` and drops it), so a fresh database never has one
@@ -20,7 +21,7 @@ defmodule EvoGit.Repo.Migrations.BaselineAdoption do
       because SQLite refuses NOT NULL adds without a default on populated
       tables. Matches `EvoGit.Store.Schema.migrate_schema/1` exactly
       (lease_expires_at, model_id, project_path, branch_name, error,
-      updated_at) — the six columns any pre-Ecto DB may lack.
+      updated_at) plus `session_mode` — the columns any pre-Ecto DB may lack.
     * the FINAL six `tasks` indexes via `CREATE INDEX IF NOT EXISTS`, AFTER the
       columns: `idx_tasks_updated_at`/`idx_tasks_status_updated_at_id`/
       `idx_tasks_project_path_started_at` reference columns the ALTERs above may
@@ -28,16 +29,15 @@ defmodule EvoGit.Repo.Migrations.BaselineAdoption do
       composites) and `20260815000004` (the two covering indexes) re-state two
       of them each, deliberately idempotently, because they are SHIPPED and must
       keep working on their own.
-    * post-condition: the `tasks` table carries EXACTLY the 19 canonical
+    * post-condition: the `tasks` table carries EXACTLY the 20 canonical
       columns — names, types, notnull/pk flags. Physical order may be the
-      canonical one (fresh creates; 15/17-column prefix adoptions) OR the
-      adopted tail swap (`…, branch_name, updated_at, error`): SQLite
-      `ALTER TABLE … ADD COLUMN` can only APPEND, and the real
-      v0.9.0–v0.12.5 DDL already ended in `updated_at`, so the appended
-      `error` lands after it — exactly the shape the old raw pipeline
-      (`Schema.migrate_schema/1`) left behind. Column order is functionally
-      irrelevant in SQLite (every query in this system is name-based: Ecto
-      schemas, named selects).
+      canonical one (fresh creates; 15/17-column prefix adoptions) OR an
+      appended tail: SQLite `ALTER TABLE … ADD COLUMN` can only APPEND, and
+      the real v0.9.0–v0.12.5 DDL already ended in `updated_at`, so the
+      appended `error` lands after it and `session_mode` after that — exactly
+      the shape the old raw pipeline (`Schema.migrate_schema/1`) left behind.
+      Column order is functionally irrelevant in SQLite (every query in this
+      system is name-based: Ecto schemas, named selects).
     * a pre-Ecto legacy DB may ALSO still carry the legacy `archive_metadata`
       column (both the 19-column v0.9.0–v0.12.5 shape and the 20-column
       v0.13.8 shape have it), so after the ALTERs such a table legitimately has
@@ -73,7 +73,8 @@ defmodule EvoGit.Repo.Migrations.BaselineAdoption do
     {"project_path", "TEXT"},
     {"branch_name", "TEXT"},
     {"error", "TEXT"},
-    {"updated_at", "TEXT"}
+    {"updated_at", "TEXT"},
+    {"session_mode", "TEXT"}
   ]
 
   # The FINAL `tasks` index set (six). Every one leads with a column a real
@@ -89,7 +90,7 @@ defmodule EvoGit.Repo.Migrations.BaselineAdoption do
     "CREATE INDEX IF NOT EXISTS idx_tasks_finished_at_id ON tasks(finished_at, id)"
   ]
 
-  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error updated_at)
+  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error session_mode updated_at)
 
   # The ONE non-canonical physical order a legacy ADOPTION may legally end up
   # in: the real v0.9.0–v0.12.5 table already had `updated_at` (19th) and
@@ -97,7 +98,19 @@ defmodule EvoGit.Repo.Migrations.BaselineAdoption do
   # only append). This is exactly the tail the old raw pipeline left behind —
   # `Schema.migrate_schema/1` upgraded this shape in place, so adopting it is
   # a hard requirement. Any OTHER order is a genuine invariant violation.
-  @adopted_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name updated_at error)
+  @adopted_tail ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name updated_at error)
+
+  # Every physical order this adoption may legitimately end up in: the fresh
+  # canonical one, and the two APPENDED shapes a legacy table produces (the
+  # v0.9.0–v0.12.5 `…, updated_at, error` tail, with `session_mode` appended
+  # last; and a legacy table that already carried all 19 canonical columns in
+  # canonical order, where `session_mode` is still appended last). Any OTHER
+  # order is a genuine invariant violation.
+  @accepted_orders [
+    @task_columns,
+    @adopted_tail ++ ~w(session_mode),
+    (@task_columns -- ~w(session_mode)) ++ ~w(session_mode)
+  ]
 
   # The legacy column a pre-Ecto / pre-release database may still carry. Not
   # created here and not required here: it is tolerated (nullable TEXT, non-key)
@@ -129,6 +142,7 @@ defmodule EvoGit.Repo.Migrations.BaselineAdoption do
     {"project_path", "TEXT", 0, 0},
     {"branch_name", "TEXT", 0, 0},
     {"error", "TEXT", 0, 0},
+    {"session_mode", "TEXT", 0, 0},
     {"updated_at", "TEXT", 0, 0}
   ]
 
@@ -154,12 +168,13 @@ defmodule EvoGit.Repo.Migrations.BaselineAdoption do
       project_path TEXT,
       branch_name TEXT,
       error TEXT,
+      session_mode TEXT,
       updated_at TEXT
     )
     """)
 
     # 2. Adopt a legacy `tasks` table: probe existing columns (post-CREATE,
-    #    so a fresh DB sees all 19 and adds nothing), add the missing ones
+    #    so a fresh DB sees all 20 and adds nothing), add the missing ones
     #    as NULLABLE — SQLite refuses NOT NULL adds without a default on
     #    populated tables.
     columns = Enum.map(task_column_specs(), &elem(&1, 0))
@@ -179,12 +194,12 @@ defmodule EvoGit.Repo.Migrations.BaselineAdoption do
 
   defp sql(statement), do: repo().query!(statement, [], log: false)
 
-  # Invariant: after this migration the tasks table carries exactly the 19
+  # Invariant: after this migration the tasks table carries exactly the 20
   # canonical columns with their declared types/flags — plus, at most, the
   # tolerated legacy `archive_metadata` column. Physical order is canonical on
   # fresh (and prefix-adopted) databases, but a legacy adoption necessarily
-  # appends `error` after the pre-existing `updated_at` — both tails are legal,
-  # anything else is a failure.
+  # APPENDS its new columns — every accepted tail is listed in
+  # `@accepted_orders`, anything else is a failure.
   defp assert_tasks_shape! do
     case task_column_specs() do
       [] ->
@@ -233,10 +248,10 @@ defmodule EvoGit.Repo.Migrations.BaselineAdoption do
   defp assert_column_order!(specs) do
     columns = Enum.map(specs, &elem(&1, 0))
 
-    unless columns == @task_columns or columns == @adopted_columns do
+    unless columns in @accepted_orders do
       raise_invariant(
-        "expected the 19 canonical tasks columns #{inspect(@task_columns)} " <>
-          "(or the adopted tail #{inspect(@adopted_columns)})",
+        "expected one of the accepted tasks column orders " <>
+          "#{inspect(@accepted_orders)}",
         columns
       )
     end
@@ -245,14 +260,14 @@ defmodule EvoGit.Repo.Migrations.BaselineAdoption do
   end
 
   # Order-insensitive: the column ORDER is pinned above, but an adopted table
-  # legitimately carries `error` after `updated_at`, so the comparison sorts
-  # both sides before checking type/notnull/pk.
+  # legitimately appends its new columns, so the comparison sorts both sides
+  # before checking type/notnull/pk.
   defp assert_column_specs!(specs) do
     if Enum.sort(specs) == Enum.sort(@column_specs) do
       :ok
     else
       raise Ecto.MigrationError,
-            "baseline adoption failed: expected the 19 tasks columns " <>
+            "baseline adoption failed: expected the 20 tasks columns " <>
               "#{inspect(@column_specs)} (types/nullability/pk), got #{inspect(specs)}"
     end
   end
