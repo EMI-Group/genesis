@@ -23,6 +23,12 @@ defmodule EvoGit.AgentScheduler.SessionOpts do
     `%EvoGit.Core.PhyloGraphNode{}` at the repo's current HEAD. `nil`/`""`/
     absent means REPO-LESS: the node keeps a `"[system]"` repo placeholder,
     `phylo_node` is `nil` and the spec opts carry `repo_less: true`.
+  - `:repo_less` — no worktree; with `:path` the context tree is loaded from
+    that directory, without it the node keeps the `[system]` placeholder. A
+    truthy value wins over `:path` being set, so "repo-less but context-tree
+    backed" (the `EvoGit.Runtime.SelfReflective.build_spec/2` shape) is
+    expressible: no `%PhyloGraphNode{}`, no worktree, `repo_less: true` in the
+    spec opts.
   - `:node_path` — in-repo relative path inside the context tree (default `"./"`)
   - `:task_id`, `:model_id`, `:model_spec`, `:archive`, `:attachments`,
     `:quality_level`, `:foreign_repos`, `:repo_notes`, `:notify`,
@@ -165,20 +171,42 @@ defmodule EvoGit.AgentScheduler.SessionOpts do
   # --- spec assembly ---
 
   defp build_spec(agent_module, objective, node_path, mode, opts) do
-    case Keyword.get(opts, :path) do
-      path when is_binary(path) and path != "" ->
+    path = repo_path(opts)
+
+    cond do
+      # `:repo_less` wins over a set `:path`: no worktree and no phylo node,
+      # while the context tree is still loaded from that directory.
+      Keyword.get(opts, :repo_less) ->
+        build_repo_less_spec(agent_module, objective, node_path, mode, opts, path)
+
+      is_binary(path) ->
         build_repo_spec(agent_module, objective, node_path, mode, opts, path)
 
-      _blank ->
+      true ->
         # Repo-less (Assistant) shape — no phylo node, no worktree.
-        context_node = ContextNode.load(node_path, "[system]")
+        build_repo_less_spec(agent_module, objective, node_path, mode, opts, nil)
+    end
+  end
 
-        spec_opts =
-          opts
-          |> spec_opts(mode)
-          |> Keyword.put(:repo_less, true)
+  # The blank/absent `:path` keeps the `"[system]"` repo placeholder; with a
+  # path the context tree loads from that directory (repo-less, still backed by
+  # a real context tree).
+  defp build_repo_less_spec(agent_module, objective, node_path, mode, opts, path) do
+    context_node = ContextNode.load(node_path, path || "[system]")
 
-        AgentSpec.new(context_node, nil, agent_module, objective, spec_opts)
+    spec_opts =
+      opts
+      |> spec_opts(mode)
+      |> Keyword.delete(:repo_less)
+      |> Keyword.put(:repo_less, true)
+
+    AgentSpec.new(context_node, nil, agent_module, objective, spec_opts)
+  end
+
+  defp repo_path(opts) do
+    case Keyword.get(opts, :path) do
+      path when is_binary(path) and path != "" -> path
+      _blank -> nil
     end
   end
 
