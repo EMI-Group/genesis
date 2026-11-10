@@ -332,6 +332,107 @@ defmodule EvoGit.RemoteNode do
     end
   end
 
+  # ── Interactive agent sessions ──────────────────────────────────────
+  #
+  # The interactive-session RPC surface. An interactive session lives inside the
+  # scheduler's own VM (in-memory state, in-memory transcript), so a caller on
+  # another node reaches it through these wrappers around the node's
+  # `EvoGit.AgentScheduler.RemoteAPI`. Each one is the usual `call_remote/4`
+  # identity unwrap: the local node calls `RemoteAPI` directly (no error
+  # catching — local bugs surface truthfully) and a remote node routes through
+  # `:erpc.call/5` with the call-time `:remote_rpc_timeout`.
+
+  @doc """
+  Starts an INTERACTIVE agent session on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.start_session/1`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`.
+
+  Returns `{:ok, agent_id}` — the handle for `send_session_message/4`,
+  `await_close/3` and `list_awaiting_input/1` — the node's own
+  `{:error, {:start_session_failed, reason}}`, or the RPC failure reason
+  (`{:error, {kind, reason}}`) when the transport fails.
+  """
+  @spec start_session(node(), EvoGit.AgentSpec.t() | keyword()) ::
+          {:ok, pos_integer()} | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.start_session(spec_or_opts))
+
+  @doc """
+  Sends a user message to an interactive session on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.send_session_message/3` directly. On a remote
+  node, routes the call through `:erpc` via `call_remote/4`. `policy` is
+  `:queue` (default) or `:interrupt`.
+
+  Returns `:ok`, the session's own `{:error, {:session, reason}}` term, or the
+  RPC failure reason (`{:error, {kind, reason}}`).
+  """
+  @spec send_session_message(
+          node(),
+          pos_integer() | pid(),
+          String.t() | EvoGit.Attachments.message(),
+          :queue | :interrupt
+        ) :: :ok | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.send_session_message(target, message, policy \\ :queue))
+
+  @doc """
+  Closes an interactive session on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.close_session/2`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`. `reason` defaults to `:normal`.
+
+  Returns `:ok`, the session's own `{:error, {:session, reason}}` term, or the
+  RPC failure reason (`{:error, {kind, reason}}`).
+  """
+  @spec close_session(node(), pos_integer() | pid(), term()) :: :ok | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.close_session(target, reason \\ :normal))
+
+  @doc """
+  Blocks until the interactive session for `agent_id` reaches its terminal
+  outcome on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.await_close/2`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`. Returns the terminal outcome verbatim
+  (`{:ok, %EvoGit.Agent.Result{}}` or the session's own `{:error, reason}` term).
+
+  `timeout` (milliseconds, default 30 000) bounds the WAIT only: an expired
+  budget answers `{:error, :timeout}` and the session keeps running. Across
+  nodes the erpc transport ALSO imposes the call-time `:remote_rpc_timeout`
+  (30 s by default) on the whole call, so the effective wait is bounded by the
+  node RPC timeout: awaiting a HUMAN-driven session for minutes is only
+  supported through the LOCAL API (`EvoGit.AgentScheduler` /
+  `EvoGit.AgentScheduler.RemoteAPI`), while the cross-node form is for short
+  waits and observation.
+  """
+  @spec await_close(node(), pos_integer(), timeout()) ::
+          {:ok, EvoGit.Agent.Result.t()} | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.await_close(agent_id, timeout \\ 30_000))
+
+  @doc """
+  Lists the agents on the given node currently parked at `:awaiting_input`.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_awaiting_input/0`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`. Returns `[]` when the remote call fails or answers something
+  other than a list, mirroring the other list wrappers here.
+  """
+  @spec list_awaiting_input(node()) :: [map()]
+  def list_awaiting_input(node) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_awaiting_input()
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_awaiting_input, []) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
   @doc """
   Approves or denies a pending command-approval request on the given node.
 
