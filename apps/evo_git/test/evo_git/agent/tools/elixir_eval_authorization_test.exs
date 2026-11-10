@@ -262,7 +262,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
           {"cancelled agent", %{status: :cancelled}},
           {"completed result", %{result_sent: true}},
           {"wrong task identity", %{task_id: "another_task"}},
-          {"missing Task", %{task_ref: nil}}
+          {"missing session pid", %{session_pid: nil}}
         ] do
       test "rejects #{label}", %{fixture: fixture} do
         Fixture.update_meta(fixture, &struct!(&1, unquote(Macro.escape(changes))))
@@ -288,7 +288,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
         if Process.alive?(replacement.pid), do: Process.exit(replacement.pid, :kill)
       end)
 
-      Fixture.update_meta(fixture, &%{&1 | task_ref: replacement})
+      Fixture.update_meta(fixture, &%{&1 | session_pid: replacement.pid})
       assert authorize(fixture) == @denied
       send(replacement.pid, :release)
       assert Task.await(replacement) == :ok
@@ -447,7 +447,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
       assert Authorization.revalidate(%{context | owner_pid: other.owner_pid}) == @denied
       assert Authorization.revalidate(%{context | tool_pid: self()}) == @denied
 
-      Fixture.update_meta(fixture, &%{&1 | task_ref: other.owner})
+      Fixture.update_meta(fixture, &%{&1 | session_pid: other.owner_pid})
       assert Authorization.revalidate(context) == @denied
       release(handle)
     end

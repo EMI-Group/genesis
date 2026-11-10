@@ -161,7 +161,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WrapperTest do
       {code, effect} = effect_code(ctx, :sudo)
       handle = start_eval(ctx.fixture, %{"code" => code, "tier" => "sudo"})
       request = await_request(ctx.fixture, :sudo, code)
-      Fixture.update_meta(ctx.fixture, &%{&1 | task_ref: replacement.owner})
+      Fixture.update_meta(ctx.fixture, &%{&1 | session_pid: replacement.owner_pid})
 
       assert :ok = CommandApproval.respond(request.request_id, :approve)
       assert Fixture.await(handle) == @denied

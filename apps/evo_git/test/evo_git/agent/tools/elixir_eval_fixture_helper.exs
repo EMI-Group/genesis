@@ -116,7 +116,7 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
       depth: 0,
       spec: spec,
       task_id: task_id,
-      task_ref: owner,
+      session_pid: owner.pid,
       status: :running
     }
 

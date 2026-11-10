@@ -98,7 +98,7 @@ WorkerTree and Engine cleanup suites still assert actual descendant exits indepe
 Authorization tests cover repeated cleanup of live descendants and cleanup after asynchronous private-supervisor death, including another cleanup from `on_exit`.
 Capture the isolated registry identity explicitly when entering independently spawned processes, because TaskRegistryCase's test-process dictionary is not inherited by raw spawn or ExUnit on_exit.
 The tool process must set `:evogit_agent_id`, `:evogit_task_id`, `:evogit_agent_pid` and `:evogit_task_registry_server`; Authorization captures that registry and the original tool pid at entry.
-SchedMeta must carry the actual live owner `%Task{}` in `task_ref`, status running or blocked, depth zero, nil parent, result_sent false and a SelfReflective AgentSpec with matching task_id and repo_less true.
+SchedMeta must carry the actual live owner pid in `session_pid` (with its `mode`/`phase` mirror), status running or blocked, depth zero, nil parent, result_sent false and a SelfReflective AgentSpec with matching task_id and repo_less true.
 A held owner Task that starts a descendant tool Task supplies genuine runtime-maintained ancestry without running an LLM; install its unique ETS rows and isolated running reflect task before releasing the descendant to authorize.
 Exact-code approval broadcasts normalize integer agent ids to strings and preserve code bytes in both args and code, so responder matching must compare the normalized id plus task id, tier and exact code.
 Real-Dune tests must exercise fully qualified facade names through Dune's own nested helper ancestry, rather than mocking authorization or relying on interpreted alias declarations.
