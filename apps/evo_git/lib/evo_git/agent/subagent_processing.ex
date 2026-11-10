@@ -75,8 +75,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
       {all_results, nil, Usage.zero()}
     else
-      {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
-      parent_repo_id = agent_state.repo_id
+      # The parent's repo identity is owned by `%State{}` (P2) — no ETS read.
+      parent_repo_id = state.repo_id
 
       # Separate same-repo and cross-repo results.
       # "Same repo" means the child's repo id equals the parent's repo id — a
@@ -127,10 +127,13 @@ defmodule EvoGit.Agent.SubagentProcessing do
         ) :: [AgentSpec.t() | {:error, {map(), non_neg_integer(), String.t()}}]
   def build_subagent_specs(indexed_calls, state, foreign_repo_commits \\ %{})
       when is_list(indexed_calls) and is_map(foreign_repo_commits) do
+    # REGISTRATION METADATA ONLY: `phylo_node` (and its `current_commit`) is not
+    # a `%State{}` field yet, so the parent's phylo node still comes from the
+    # scheduler row. Every LOOP value below (repo identity, selection identity,
+    # archive flag) is read from the owned `state`.
     {:ok, parent_state} = AgentScheduler.get_agent_state(state.agent_id)
     repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
-    parent_repo_id = parent_state.repo_id
-
+    parent_repo_id = state.repo_id
     # Get foreign repos from the agent's inherited state (per-task, not global)
     foreign_repos = state.foreign_repos
 
@@ -147,7 +150,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
     # threaded value is identical at every level. `nil` (e.g. direct/test
     # callers) leaves the child to compute it.
     task_tmpdir = EvoGit.TaskTmpdir.current()
-    model_opts = inherited_model_opts(state.agent_id, parent_state)
+    model_opts = inherited_model_opts(state.agent_id, state)
 
     Enum.map(indexed_calls, fn {call, index} ->
       name = ReqLLM.ToolCall.name(call)
@@ -215,7 +218,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
                   repo_id: target_repo_id,
                   foreign_repos: foreign_repos,
                   repo_notes: repo_notes,
-                  archive: parent_state.archive,
+                  archive: state.archive,
                   task_tmpdir: task_tmpdir
                 )
               )
@@ -232,10 +235,12 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   # Inherit the full effective selection, but only a locked choice is explicit:
   # unlocked inheritance is a fallback so each spawn still consults the script.
-  # Original spawn opts retain the lock/selection for older AgentState shapes.
+  # The parent's selection/lock identity is read from the OWNED `%State{}`; the
+  # `:evogit_sched_meta` spec is registration metadata that only supplies the
+  # original spawn opts for older shapes.
   # Omit an absent canonical selection: model_spec: nil is an explicit invalid
   # choice to the scheduler, not a request to inherit the legacy model id.
-  defp inherited_model_opts(agent_id, parent_state) do
+  defp inherited_model_opts(agent_id, %State{} = parent) do
     parent_spec =
       case AgentScheduler.Store.get_sched_meta(agent_id) do
         {:ok, meta} -> Map.get(meta, :spec) || %{}
@@ -245,14 +250,14 @@ defmodule EvoGit.Agent.SubagentProcessing do
     parent_opts = Map.get(parent_spec, :opts, [])
 
     selection =
-      Map.get(parent_state, :model_spec) || Map.get(parent_spec, :model_spec) ||
+      Map.get(parent, :model_spec) || Map.get(parent_spec, :model_spec) ||
         Keyword.get(parent_opts, :model_spec) || Keyword.get(parent_opts, :default_model_spec)
 
     locked? =
-      Map.get(parent_state, :model_id_locked) == true or
+      Map.get(parent, :model_id_locked) == true or
         Keyword.get(parent_opts, :model_id_locked, false) == true
 
-    opts = [model_id: Map.get(parent_state, :model_id), model_id_locked: locked?]
+    opts = [model_id: Map.get(parent, :model_id), model_id_locked: locked?]
 
     if is_nil(selection) do
       opts
@@ -683,9 +688,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
            "Error: The specified commit ID '#{commit_id}' does not exist in the repository. Please verify the commit SHA is correct and exists in the current repository's git history. Git error: #{msg}"}
       end
     else
-      # `phylo_node` is not on `%EvoGit.Agent.State{}` yet in P1: read the
-      # parent's live scheduler row instead (the parent is the agent currently
-      # spawning this subagent, so its row was already loaded into
+      # REGISTRATION METADATA ONLY — `phylo_node` is not a `%State{}` field yet in
+      # P1: read the parent's live scheduler row instead (the parent is the agent
+      # currently spawning this subagent, so its row was already loaded into
       # `parent_state` at the top of `build_subagent_specs/3`).
       base = parent_state.phylo_node.current_commit
 

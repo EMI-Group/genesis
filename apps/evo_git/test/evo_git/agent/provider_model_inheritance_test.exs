@@ -520,7 +520,9 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
              )
            end)
 
-    assert agent!(grandchild).compression_count == 1
+    # `compression_count` is state-owned (P2): the compression event advanced the
+    # RETURNED state by exactly one (the scheduler row no longer receives it).
+    assert after_state.compression_count == 1
     request = assert_request(ctx.work, "work", "fixture-work-key", "wide", "high", 0.6, 4_096)
     assert Enum.any?(request["messages"], &String.contains?(&1["content"], "old work 1"))
     backup_ref = ctx.backup.ref
@@ -657,7 +659,15 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
       # ReqLLM's own defaults and a nil `max_retries` would make a transient
       # failure retry unboundedly.
       llm_generation_params: agent.llm_generation_params,
-      max_retries: agent.max_retries
+      max_retries: agent.max_retries,
+      # The parent's effective selection identity is OWNED by the state (P2), so
+      # subagent inheritance reads it here instead of the scheduler row — exactly
+      # what `InitialState`/`Session.Setup` seed from the row at registration.
+      model_spec: agent.model_spec,
+      model_id: agent.model_id,
+      model_id_locked: agent.model_id_locked,
+      repo_id: agent.repo_id,
+      archive: agent.archive
     }
   end
 

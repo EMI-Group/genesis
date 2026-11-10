@@ -82,6 +82,7 @@ defmodule EvoGit.Agent.Cost do
 
   require Logger
 
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler
   alias EvoGit.PeakHours
@@ -157,7 +158,8 @@ defmodule EvoGit.Agent.Cost do
   end
 
   @doc """
-  Recomputes the token cost of ONE LLM request for a scheduled agent.
+  Recomputes the token cost of ONE LLM request for a scheduled agent, resolving
+  the pricing identity from the scheduler row.
 
   Prices the agent's effective `llm_model` from
   `EvoGit.AgentScheduler.get_agent_state/1`, NOT the account/slot identity in
@@ -165,6 +167,10 @@ defmodule EvoGit.Agent.Cost do
   `provider_profile_id` (legacy fallback: `model_id`) through
   `period_for_provider_profile_id/1`. `nil` (never raising) whenever the agent
   state is gone or `recompute/3` cannot produce a cost.
+
+  Kept for EXTERNAL callers/tests: the turn loop's own cost sites pass the
+  OWNED `%EvoGit.Agent.State{}` to `recompute_for_state/2` instead, so no ETS
+  read happens per turn.
   """
   @spec recompute_for_agent(map() | nil, term()) :: costs() | nil
   def recompute_for_agent(usage_map, agent_id) do
@@ -186,29 +192,59 @@ defmodule EvoGit.Agent.Cost do
   end
 
   @doc """
+  Recomputes the token cost of ONE LLM request from the agent's OWNED state.
+
+  This is the turn loop's path, so it performs NO scheduler/ETS read. Prices
+  `state.llm_model` (the EFFECTIVE model, never the account/slot identity) and
+  derives the pricing period from the selection's `provider_profile_id` — read
+  from `state.model_spec` (atom- or string-keyed) with the legacy
+  `state.model_id` fallback — through `period_for_provider_profile_id/1`, then
+  calls the SAME pure `recompute/3` as `recompute_for_agent/2`, so both paths
+  produce identical numbers for the same identity. `nil` (never raising)
+  whenever the model cannot be priced.
+  """
+  @spec recompute_for_state(map() | nil, State.t()) :: costs() | nil
+  def recompute_for_state(usage_map, %State{} = state) do
+    safe("recompute_for_state/2", nil, fn ->
+      llm_model = Map.get(state, :llm_model)
+
+      provider_profile_id =
+        field(Map.get(state, :model_spec), :provider_profile_id) || Map.get(state, :model_id)
+
+      period = period_for_provider_profile_id(provider_profile_id)
+      recompute(usage_map, llm_model, period)
+    end)
+  end
+
+  @doc """
   Overrides ONLY the cost fields of an already-built `%Usage{}`.
 
-  This is the single shared wiring helper for both cost-producing call sites
+  The single shared wiring helper for both cost-producing call sites
   (`EvoGit.Agent.ToolDispatch.update_turn_usage/2` and
   `EvoGit.Agent.ContextCompression.compress_if_needed/2`): the token counts
   stay whatever `Usage.from_response_usage/1` read (they are accurate), and
-  when `recompute_for_agent/2` returns `nil` the ReqLLM-reported cost is kept
+  when the recomputation returns `nil` the ReqLLM-reported cost is kept
   verbatim.
-  """
-  @spec apply_to_usage(Usage.t(), map() | nil, term()) :: Usage.t()
-  def apply_to_usage(%Usage{} = usage, raw_usage_map, agent_id) do
-    case recompute_for_agent(raw_usage_map, agent_id) do
-      nil ->
-        usage
 
-      %{input_cost: input_cost, output_cost: output_cost, total_cost: total_cost} ->
-        %{
-          usage
-          | input_cost: input_cost,
-            output_cost: output_cost,
-            total_cost: total_cost
-        }
-    end
+  Two identity sources, dispatched on the third argument:
+    * `%EvoGit.Agent.State{}` — the OWNED state (the loop's path): no ETS read,
+      see `recompute_for_state/2`;
+    * anything else — an agent id, resolved through the scheduler row, see
+      `recompute_for_agent/2` (kept for external callers/tests).
+  """
+  @spec apply_to_usage(Usage.t(), map() | nil, State.t() | term()) :: Usage.t()
+  def apply_to_usage(%Usage{} = usage, raw_usage_map, %State{} = state) do
+    apply_costs(usage, recompute_for_state(raw_usage_map, state))
+  end
+
+  def apply_to_usage(%Usage{} = usage, raw_usage_map, agent_id) do
+    apply_costs(usage, recompute_for_agent(raw_usage_map, agent_id))
+  end
+
+  defp apply_costs(%Usage{} = usage, nil), do: usage
+
+  defp apply_costs(%Usage{} = usage, %{input_cost: i, output_cost: o, total_cost: t}) do
+    %{usage | input_cost: i, output_cost: o, total_cost: t}
   end
 
   @doc """

@@ -323,6 +323,9 @@ defmodule EvoGit.Agent.Session do
 
   # --- start up ---
 
+  # REGISTRATION SEEDING ONLY: the scheduler row is read ONCE at session start to
+  # build the owned `%EvoGit.Agent.State{}`; the loop never reads it for a
+  # conversation/loop value.
   defp scheduler_row(ctx) do
     agent_id = Keyword.fetch!(ctx, :agent_id)
 

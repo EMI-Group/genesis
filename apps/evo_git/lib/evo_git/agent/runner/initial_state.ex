@@ -26,6 +26,9 @@ defmodule EvoGit.Agent.Runner.InitialState do
   def build(agent_module, objective) do
     agent_id = EvoGit.AgentScheduler.current_agent_id()
 
+    # REGISTRATION SEEDING ONLY: this is the ONE-TIME read the owned
+    # `%EvoGit.Agent.State{}` is built FROM; the exchange loop never reads the
+    # row for a conversation/loop value.
     {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
 
     ctx = [

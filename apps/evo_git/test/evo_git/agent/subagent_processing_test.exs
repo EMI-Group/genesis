@@ -475,13 +475,16 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "child spec inherits parent's model_id", %{agent_id: agent_id} do
+      # The parent's model identity is OWNED by `%State{}` (P2); the registered
+      # row is only registration/phylo metadata now.
       state = %State{
         agent_id: agent_id,
         agent_module: DummyAgentModule,
         depth: 0,
         node_path: "./",
         context: nil,
-        foreign_repos: []
+        foreign_repos: [],
+        model_id: "claude-sonnet"
       }
 
       call =
@@ -520,7 +523,8 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         depth: 0,
         node_path: "./",
         context: nil,
-        foreign_repos: []
+        foreign_repos: [],
+        model_id: "default"
       }
 
       call =
@@ -874,7 +878,10 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         node_path: "./",
         context: nil,
         foreign_repos: [ForeignRepo.new("orig", foreign_root, writable: true)],
-        repo_notes: nil
+        repo_notes: nil,
+        # The parent's OWN repo id is state-owned (P2): `%State{}` is the
+        # authoritative source the spawn gate and `resolve_subagent_path/4` read.
+        repo_id: "orig"
       }
 
       assert [spec] =
@@ -903,7 +910,10 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         node_path: "./",
         context: nil,
         foreign_repos: [ForeignRepo.new("orig", foreign_root, writable: true)],
-        repo_notes: nil
+        repo_notes: nil,
+        # The parent's OWN repo id is state-owned (P2): `%State{}` is the
+        # authoritative source the spawn gate and `resolve_subagent_path/4` read.
+        repo_id: "orig"
       }
 
       assert [spec] =

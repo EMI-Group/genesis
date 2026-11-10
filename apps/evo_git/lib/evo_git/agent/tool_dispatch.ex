@@ -93,7 +93,9 @@ defmodule EvoGit.Agent.ToolDispatch do
   def normalize_context_window(_window),
     do: EvoGit.Config.Schema.LLM.default_context_window()
 
-  # Shared lookup for current_model/0 + current_generation_params/0. Raises a
+  # Shared lookup for current_model/0 + current_generation_params/0.
+  # DISPLAY / IMMUTABLE-IDENTITY METADATA ONLY — neither is a conversation or
+  # loop value (both are fixed at registration). Raises a
   # descriptive ArgumentError instead of a context-free MatchError when the
   # calling process is not a scheduled agent (no :evogit_agent_id) or the
   # scheduler has no ETS state for it — the latter typically means the agent
@@ -525,9 +527,11 @@ defmodule EvoGit.Agent.ToolDispatch do
     # reported cost double-charges multi-period models and applies no cache
     # discount); when there is nothing to recompute from, ReqLLM's reported
     # cost is kept verbatim.
+    # The pricing identity (effective `llm_model` + the selection's provider
+    # profile) is owned by `%State{}`, so no ETS read happens per turn.
     turn_usage =
       Usage.from_response_usage(usage)
-      |> Cost.apply_to_usage(usage, state.agent_id)
+      |> Cost.apply_to_usage(usage, state)
 
     %{state | total_tokens: current_tokens, usage: Usage.add(state.usage, turn_usage)}
   end
@@ -794,12 +798,11 @@ defmodule EvoGit.Agent.ToolDispatch do
   # `base_commit` is set, archive refs/row when archiving), so every downstream
   # consumer is oblivious to how the agent finished.
   defp build_completion(%State{} = state, result, commit_sha) do
-    # The ETS read STAYS in P1: `phylo_node.base_commit` and the archive/model
-    # metadata are not all on `%State{}` yet, and the completion side effects
-    # (git note, archive refs/row) must stay byte-identical. The two values that
-    # ARE guaranteed identical come from the struct: `state.depth` is populated
-    # from the same `:evogit_agent_depth` the old `current_depth/0` read, and
-    # `state.objective` is the same `spec.objective` the scheduler row carries.
+    # REGISTRATION METADATA ONLY: `phylo_node.base_commit` and the archive /
+    # model registration metadata are not all on `%State{}` yet, and the
+    # completion side effects (git note, archive refs/row) must stay
+    # byte-identical. No conversation/loop value is read from the row here —
+    # notably `compression_count` comes from the owned state.
     {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
 
     # Repo-less agents have a nil phylo_node — passing nil base_commit is safe:
@@ -817,7 +820,7 @@ defmodule EvoGit.Agent.ToolDispatch do
       objective: state.objective,
       usage: state.usage,
       archive: agent_state.archive,
-      compression_count: agent_state.compression_count,
+      compression_count: state.compression_count,
       repo_id: agent_state.repo_id,
       repo_root: agent_state.repo_root,
       llm_model: agent_state.llm_model,
@@ -938,6 +941,8 @@ defmodule EvoGit.Agent.ToolDispatch do
     agent_id = AgentScheduler.current_agent_id()
     repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
+    # DISPLAY / SPATIAL-AUTHORIZATION METADATA ONLY: the node path (plus the
+    # per-batch identity below) is registration data, never a loop value.
     {:ok, %{context_node: %{path: node_path}}} =
       AgentScheduler.get_agent_state(agent_id)
 

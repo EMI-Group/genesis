@@ -25,6 +25,7 @@ defmodule EvoGit.Agent.CostTest do
   use ExUnit.Case, async: false
 
   alias EvoGit.Agent.Cost
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.AgentState
@@ -295,6 +296,99 @@ defmodule EvoGit.Agent.CostTest do
   end
 
   # ==========================================================================
+  # recompute_for_state/2 — the state-owned (loop) path, no ETS read
+  # ==========================================================================
+  describe "recompute_for_state/2" do
+    test "prices the state's llm_model EXACTLY like the agent-id path" do
+      agent_id = register_agent!(987_658, %{llm_model: @model, model_id: "cost-test-model"})
+
+      state =
+        agent_state(llm_model: @model, model_id: "cost-test-model", model_spec: nil)
+
+      assert Cost.recompute_for_state(@usage, state) ==
+               Cost.recompute_for_agent(@usage, agent_id)
+
+      assert Cost.recompute_for_state(@usage, state) ==
+               Cost.recompute(@usage, @model, "off_peak")
+    end
+
+    test "needs no scheduler row: an unregistered agent id still prices" do
+      state = agent_state(llm_model: @model, model_id: "cost-test-model")
+      # The agent-id path (rows are the only source) answers nil ...
+      assert Cost.recompute_for_agent(@usage, 999_999_999) == nil
+      # ... the state path prices from the struct alone.
+      assert Cost.recompute_for_state(@usage, state) ==
+               Cost.recompute(@usage, @model, "off_peak")
+    end
+
+    test "returns nil for an unresolvable model or an unusable usage map" do
+      assert Cost.recompute_for_state(@usage, agent_state(llm_model: "no-such-provider:m")) ==
+               nil
+
+      assert Cost.recompute_for_state(nil, agent_state(llm_model: @model)) == nil
+    end
+
+    test "derives the period from model_spec's provider_profile_id, with the legacy model_id fallback" do
+      with_peak_profiles!(@peak_profiles)
+      set_peak_clock(~N[2024-01-01 12:00:00])
+
+      canonical =
+        agent_state(
+          llm_model: @model,
+          model_spec: %{"provider_profile_id" => "cost-test-peak"}
+        )
+
+      assert Cost.recompute_for_state(@usage, canonical) ==
+               Cost.recompute(@usage, @model, "peak")
+
+      # A legacy-shaped state (no model_spec) falls back to model_id.
+      legacy = agent_state(llm_model: @model, model_spec: nil, model_id: "cost-test-peak")
+      assert Cost.recompute_for_state(@usage, legacy) == Cost.recompute(@usage, @model, "peak")
+      # Out of the window the very same identity is off-peak.
+      set_peak_clock(~N[2024-01-01 08:00:00])
+
+      assert Cost.recompute_for_state(@usage, canonical) ==
+               Cost.recompute(@usage, @model, "off_peak")
+    end
+  end
+
+  # ==========================================================================
+  # apply_to_usage/3 — the state clause
+  # ==========================================================================
+  describe "apply_to_usage/3 with an owned state" do
+    test "overrides ONLY the three cost fields, with the agent-id path's numbers" do
+      state = agent_state(llm_model: @model, model_id: "cost-test-model")
+      applied = Cost.apply_to_usage(reported_usage(), @usage, state)
+      assert_in_delta applied.input_cost, @off_peak_input, @delta
+      assert_in_delta applied.output_cost, @off_peak_output, @delta
+      assert_in_delta applied.total_cost, @off_peak_total, @delta
+      # Token counts / cache fields keep exactly what the caller read.
+      assert %Usage{
+               input_tokens: 14_434_811,
+               output_tokens: 263_800,
+               total_tokens: 14_698_611,
+               cached_tokens: 14_164_224,
+               cache_creation_tokens: 0
+             } = applied
+
+      # Byte-identical to the agent-id path for the same identity.
+      agent_id = register_agent!(987_659, %{llm_model: @model, model_id: "cost-test-model"})
+      assert applied == Cost.apply_to_usage(reported_usage(), @usage, agent_id)
+    end
+
+    test "leaves the struct byte-identical when nothing can be recomputed" do
+      state = agent_state(llm_model: @model)
+      assert Cost.apply_to_usage(reported_usage(), nil, state) == reported_usage()
+
+      assert Cost.apply_to_usage(
+               reported_usage(),
+               @usage,
+               agent_state(llm_model: "no-such-provider:no-such-model")
+             ) == reported_usage()
+    end
+  end
+
+  # ==========================================================================
   # period_for_model_id/1
   # ==========================================================================
 
@@ -463,6 +557,24 @@ defmodule EvoGit.Agent.CostTest do
     end)
 
     :ok = AgentScheduler.update_config(model_profiles: profiles)
+  end
+
+  # Builds an OWNED `%EvoGit.Agent.State{}` (the loop's identity source) with the
+  # required struct keys defaulted, so a state-based cost test needs NO ETS row.
+  defp agent_state(attrs) do
+    struct!(
+      State,
+      Map.merge(
+        %{
+          agent_id: 1,
+          agent_module: __MODULE__,
+          depth: 0,
+          node_path: "./",
+          context: ReqLLM.Context.new([])
+        },
+        Map.new(attrs)
+      )
+    )
   end
 
   # Registers an agent in the app-global `:evogit_agent_summary` ETS table (the

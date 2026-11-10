@@ -71,11 +71,15 @@ defmodule EvoGit.Agent.ContextCompression do
   being replaced, never part of the retained tail, and compression can therefore
   never wedge itself into "nothing to replace".
 
-  ## Token reset
+  ## Token reset and the compression counter
 
   After every compression event `total_tokens` is reset to 0. This prevents the
   stale high token count from triggering redundant compressions before the next
   LLM call updates the count.
+  `compression_count` is OWNED by the returned `%State{}` (never written to a
+  scheduler/ETS row from this path): one compression event increments it by
+  exactly one, on whichever of the two mutually exclusive rebuild branches
+  produced the new context.
 
   ## Usage
 
@@ -108,7 +112,6 @@ defmodule EvoGit.Agent.ContextCompression do
   alias EvoGit.Agent.Cost
   alias EvoGit.Agent.State
   alias EvoGit.Agent.Usage
-  alias EvoGit.AgentScheduler
 
   @doc """
   Attempts to compress the agent's chat context if it exceeds the token
@@ -219,7 +222,7 @@ defmodule EvoGit.Agent.ContextCompression do
           "Keeping the pruned context; no LLM call."
       )
 
-      keep_context(state, agent_id, pruned.messages, nil, false)
+      keep_context(state, pruned.messages, nil, false)
     else
       Logger.info(
         "Agent #{agent_id}: stage 1 rejected — pruned #{pruned.pruned} old tool result(s): " <>
@@ -252,7 +255,7 @@ defmodule EvoGit.Agent.ContextCompression do
           "#{length(split.recent)} message(s) to replace — stage 2 (summarising) skipped."
       )
 
-      finish_without_checkpoint(state, agent_id, messages)
+      finish_without_checkpoint(state, messages)
     else
       summarise_old_span(agent_id, llm_model, llm_gen_opts, info, state, messages)
     end
@@ -276,15 +279,17 @@ defmodule EvoGit.Agent.ContextCompression do
         usage_map = ReqLLM.Response.usage(response)
         built = Checkpoint.build(messages, summary, context_window: Map.get(info, :window))
 
+        # Cost is priced from the OWNED state (effective `llm_model` + the
+        # selection's provider profile) — no scheduler/ETS read.
         compression_usage =
           Usage.from_response_usage(usage_map)
-          |> Cost.apply_to_usage(usage_map, agent_id)
+          |> Cost.apply_to_usage(usage_map, state)
 
         if built.replaced == 0 do
           # A blank summary must never fabricate a checkpoint that silently
           # drops the transcript, so the ORIGINAL context is what we keep — but
           # the request WAS billed, so its usage is still accounted for.
-          keep_context(state, agent_id, messages, compression_usage, true)
+          keep_context(state, messages, compression_usage, true)
         else
           log_compression_decision(agent_id, built)
 
@@ -292,12 +297,11 @@ defmodule EvoGit.Agent.ContextCompression do
             drop_stale_refreshes(built.messages) ++
               refresh_messages(state, true)
 
-          AgentScheduler.increment_compression_count(agent_id)
-
           %{
             state
             | context: ReqLLM.Context.new(rebuilt),
               total_tokens: 0,
+              compression_count: state.compression_count + 1,
               usage: Usage.add(state.usage, compression_usage)
           }
         end
@@ -318,8 +322,8 @@ defmodule EvoGit.Agent.ContextCompression do
   # ORIGINAL list, so the context is only rebuilt with the runtime-context
   # refresh appended — on this summarising path that refresh carries the CURRENT
   # background-job snapshot, and any earlier snapshot is dropped first.
-  defp finish_without_checkpoint(state, agent_id, messages) do
-    keep_context(state, agent_id, messages, nil, true)
+  defp finish_without_checkpoint(state, messages) do
+    keep_context(state, messages, nil, true)
   end
 
   # Rebuilds the context with exactly ONE runtime-context refresh appended as the
@@ -329,9 +333,7 @@ defmodule EvoGit.Agent.ContextCompression do
   # span (which may hold the job's only other trace) is being replaced, so the
   # CURRENT snapshot must be re-injected; the prune-only path appends the same
   # plain refresh with NO jobs section.
-  defp keep_context(state, agent_id, messages, compression_usage, include_background_jobs?) do
-    AgentScheduler.increment_compression_count(agent_id)
-
+  defp keep_context(state, messages, compression_usage, include_background_jobs?) do
     usage =
       case compression_usage do
         nil -> state.usage
@@ -342,10 +344,14 @@ defmodule EvoGit.Agent.ContextCompression do
       drop_stale_refreshes(messages) ++
         refresh_messages(state, include_background_jobs?)
 
+    # `compression_count` is OWNED by the state (P2): this event increments it
+    # exactly once, here or in the Stage-2 checkpoint branch — the two sites are
+    # mutually exclusive per compression event.
     %{
       state
       | context: ReqLLM.Context.new(rebuilt),
         total_tokens: 0,
+        compression_count: state.compression_count + 1,
         usage: usage
     }
   end
