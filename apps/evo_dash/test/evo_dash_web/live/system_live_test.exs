@@ -326,7 +326,8 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
 
   # A full Genesis Source status map as emitted by the
   # `EvoGit.SelfReflectiveSource.status/0` backend contract (see SourceCard).
-  # Overrides let tests vary individual keys.
+  # Overrides let tests vary individual keys. `point`/`mounted` are the
+  # OPTIONAL reserved-VCT-mount additions (an older backend omits them).
   def source_status, do: source_status(%{})
 
   def source_status(overrides) do
@@ -341,15 +342,36 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
         version: "9.9.9",
         remote_url: "https://example.com/genesis.git",
         reference: nil,
-        is_reference: false
+        is_reference: false,
+        point: "vct:///genesis-source",
+        mounted: true
       },
       Map.new(overrides)
     )
   end
 
-  # The status of a checkout that has never been cloned (no commit/branch/etc.).
+  # The status of a checkout that has never been cloned (no commit/branch/etc.) —
+  # and therefore not mounted in the VCT either.
   def not_cloned_status do
-    source_status(%{exists: false, commit: nil, branch: nil, version: nil, remote_url: nil})
+    source_status(%{
+      exists: false,
+      commit: nil,
+      branch: nil,
+      version: nil,
+      remote_url: nil,
+      mounted: false
+    })
+  end
+
+  # Floki-scopes the Genesis Source card element (text/markup assertions).
+  def source_card(html) do
+    [card] =
+      Floki.find(
+        Floki.parse_document!(html),
+        ~s(div[id="genesis-source-card"])
+      )
+
+    card
   end
 
   # Mounts the System page in a connected remote-node context (same pattern as
@@ -1187,6 +1209,10 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute html =~ ~s(id="clone-source")
       refute html =~ "in use"
       refute html =~ "An explicit override is in effect"
+      # The reserved VCT mount point row (backend-supplied `point`)
+      card = source_card(html)
+      assert Floki.text(card) =~ "VCT"
+      assert Floki.text(card) =~ "vct:///genesis-source"
       assert html =~ ~s(id="system-self-check")
       # The source card is a real cell of the self-check grid
       assert Floki.find(check_grid(html), ~s(div[id="genesis-source-card"])) != []
@@ -1196,6 +1222,73 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert html =~ "System Dashboard"
       assert html =~ ~s(id="runtime-controls")
       assert html =~ "System Control"
+    end
+
+    test "a status map without `point` (older backend) renders no VCT row and still works",
+         %{conn: conn} do
+      status = Map.delete(source_status(), :point)
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
+      await_view_assign(view, :source_status, status)
+
+      html = render(view)
+      card = source_card(html)
+      text = Floki.text(card)
+
+      # Defensive read: no crash, no placeholder, no stray label.
+      refute text =~ "VCT"
+      refute text =~ "vct:///"
+      # The rest of the card is unchanged.
+      assert text =~ "Directory"
+      assert text =~ "/tmp/genesis-source"
+      assert Floki.find(card, ~s(button[id="update-source"])) != []
+      assert Floki.find(card, ~s(button[id="clone-source"])) == []
+    end
+
+    test "a string-keyed `point` also renders the VCT row", %{conn: conn} do
+      status = Map.put(source_status(), "point", "vct:///genesis-source")
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
+      await_view_assign(view, :source_status, status)
+
+      assert Floki.text(source_card(render(view))) =~ "vct:///genesis-source"
+    end
+
+    test "`mounted` never gates clone/update button visibility (`exists` does)", %{conn: conn} do
+      status = source_status(%{mounted: true})
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
+      await_view_assign(view, :source_status, status)
+
+      # Cloned + mounted → Update only.
+      card = source_card(render(view))
+      assert Floki.find(card, ~s(button[id="update-source"])) != []
+      assert Floki.find(card, ~s(button[id="clone-source"])) == []
+
+      # Existing but NOT mounted → Update is unchanged (mount state is
+      # informational, never a gate).
+      unmounted = source_status(%{mounted: false})
+      send(view.pid, {:source_status_loaded, 10_000, node(), unmounted})
+      await_view_assign(view, :source_status, unmounted)
+
+      card = source_card(render(view))
+      assert Floki.find(card, ~s(button[id="update-source"])) != []
+      assert Floki.find(card, ~s(button[id="clone-source"])) == []
+
+      # Mounted but NOT cloned → Clone only.
+      mounted_absent = source_status(%{exists: false, commit: nil, version: nil, mounted: true})
+      send(view.pid, {:source_status_loaded, 10_001, node(), mounted_absent})
+      await_view_assign(view, :source_status, mounted_absent)
+
+      card = source_card(render(view))
+      assert Floki.find(card, ~s(button[id="clone-source"])) != []
+      assert Floki.find(card, ~s(button[id="update-source"])) == []
     end
 
     test "an explicit reference override shows the muted note (carrying the path) and the in-use badge",
