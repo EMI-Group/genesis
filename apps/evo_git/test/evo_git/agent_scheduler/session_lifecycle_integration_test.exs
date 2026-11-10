@@ -133,7 +133,15 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
       registered? =
         match?([{^session_pid, _}], Registry.lookup(Session.Registry, agent_id))
 
-      send(test_pid, {:attempt, n, session_pid, registered?})
+      # Observe the retry counter HERE: a successful run recycles the agent's
+      # sched-meta row, so a later read races the cleanup.
+      retries =
+        case Store.get_sched_meta(agent_id) do
+          {:ok, %{retries: r}} -> r
+          :error -> :gone
+        end
+
+      send(test_pid, {:attempt, n, session_pid, registered?, retries})
 
       if n == 1 do
         raise "boom"
@@ -146,18 +154,23 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
     caller =
       Task.async(fn -> EvoGit.AgentScheduler.run_agent(spec_for(repo_root, sha), 60_000) end)
 
-    assert_receive {:attempt, 1, pid1, true}, 30_000
+    assert_receive {:attempt, 1, pid1, true, 0}, 30_000
+
+    # Discover the agent id now: the row is guaranteed to exist here (it
+    # survives the crash and the retry and is only deleted on a successful
+    # completion, which is still ahead).
+    agent_id = new_agent_id(before_ids)
+
+    # The crash-retry advanced `SchedMeta.retries` to exactly ONE, observed in
+    # the seam before the run could finish and recycle the row.
     # The retry's session start pays the production crash-retry settle sleep
     # (`Session.Setup.bind_worktree/2` sleeps 30_000 × retries), so this budget
     # covers a real, slow-but-correct retry rather than shrinking it.
-    assert_receive {:attempt, 2, pid2, true}, 60_000
+    assert_receive {:attempt, 2, pid2, true, 1}, 60_000
 
     # A NEW session process — never a reused one — serves the retry.
     assert is_pid(pid1) and is_pid(pid2)
     assert pid1 != pid2
-
-    agent_id = new_agent_id(before_ids)
-    assert {:ok, %{retries: 1}} = Store.get_sched_meta(agent_id)
 
     assert {:ok, %EvoGit.Agent.Result{result: "retry report"}} = Task.await(caller, 60_000)
 
