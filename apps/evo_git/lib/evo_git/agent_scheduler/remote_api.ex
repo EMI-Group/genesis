@@ -1256,7 +1256,9 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
 
       _ ->
         :evogit_agent_summary
-        |> :ets.select([{{:"$1", :"$2"}, [], [:"$1", :"$2"]}])
+        # The match-spec body is a LIST of ONE action term; the pair must be
+        # built as a single tuple term or `:ets.select/2` returns a flat list.
+        |> :ets.select([{{:"$1", :"$2"}, [], [{{:"$1", :"$2"}}]}])
         |> Map.new()
     end
   end
