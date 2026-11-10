@@ -124,11 +124,10 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
     ToolDispatch
   }
 
-  # `State` is already taken by `EvoGit.AgentScheduler.State` below, so the agent
-  # state struct keeps its historical local alias.
-  alias EvoGit.Agent.State, as: LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.AgentScheduler
-  alias EvoGit.AgentScheduler.{Dispatch, ModelSelection, State}
+  alias EvoGit.AgentScheduler.{Dispatch, ModelSelection}
+  alias EvoGit.AgentScheduler.State, as: SchedulerState
   alias EvoGit.AgentScheduler.Store, as: SchedulerStore
   alias EvoGit.AgentSpec
   alias EvoGit.Config.Schema
@@ -381,7 +380,7 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
   end
 
   test "legacy-only parent ids remain usable after real builder delegation", ctx do
-    legacy = %State{
+    legacy = %SchedulerState{
       model_profiles: [%{id: "legacy", model: "openai:legacy-model", temperature: 0.3}],
       next_agent_id: unique_id()
     }
@@ -507,7 +506,7 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
         llm_context_window: ToolDispatch.current_context_window()
       )
 
-    assert %LoopState{} = after_state
+    assert %State{} = after_state
     assert after_state.total_tokens == 0
     assert after_state.usage.input_tokens == 11
     assert after_state.usage.output_tokens == 7
@@ -579,7 +578,10 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
 
   defp snapshot(config),
     do:
-      struct!(State, Keyword.put(ModelSelection.config_opts(config), :next_agent_id, unique_id()))
+      struct!(
+        SchedulerState,
+        Keyword.put(ModelSelection.config_opts(config), :next_agent_id, unique_id())
+      )
 
   defp unique_id, do: 150_000_000 + System.unique_integer([:positive])
 
@@ -607,7 +609,7 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
       SchedulerStore.delete_sched_meta(id)
     end)
 
-    assert {^id, %State{} = next} =
+    assert {^id, %SchedulerState{} = next} =
              Dispatch.register_agent(state, spec, nil, parent, depth, nil, 1)
 
     # The Runner normally installs the live phylo node after registration. Same-
@@ -637,7 +639,7 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
   defp loop_state(id, repo) do
     meta = meta!(id)
 
-    %LoopState{
+    %State{
       agent_id: id,
       agent_module: meta.spec.agent_module,
       depth: meta.depth,
