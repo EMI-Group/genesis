@@ -1138,11 +1138,14 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert fetched.finished_at == nil
 
       # Agent received the cancel message + cancel_requested flag. Both live in
-      # the CONTROL PLANE; `Store.get_agent_state/1` projects them back onto the
-      # state struct.
-      {:ok, st} = EvoGit.AgentScheduler.Store.get_agent_state(agent_id)
-      assert st.cancel_requested == true
-      assert Enum.any?(st.pending_user_messages, &String.contains?(&1, "being cancelled"))
+      # the CONTROL PLANE, which now owns a live agent's inbox and cancel flag
+      # (the summary row carries neither field).
+      assert EvoGit.AgentScheduler.Store.cancel_requested?(agent_id) == true
+
+      assert Enum.any?(
+               EvoGit.AgentScheduler.ControlPlane.pending_messages(agent_id),
+               &String.contains?(&1, "being cancelled")
+             )
 
       # Task registered in the graceful-cancel marker.
       assert :ets.member(:evogit_cancelling_tasks, task_id)
@@ -1237,11 +1240,12 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert :ok = TaskRegistry.cancel_task(task_id)
       assert :ok = TaskRegistry.cancel_task(task_id)
 
-      {:ok, st} = EvoGit.AgentScheduler.Store.get_agent_state(agent_id)
-      assert st.cancel_requested == true
+      assert EvoGit.AgentScheduler.Store.cancel_requested?(agent_id) == true
 
-      assert length(st.pending_user_messages) == 0,
-             "idempotent cancel must NOT append the cancel message again, got #{inspect(st.pending_user_messages)}"
+      pending = EvoGit.AgentScheduler.ControlPlane.pending_messages(agent_id)
+
+      assert pending == [],
+             "idempotent cancel must NOT append the cancel message again, got #{inspect(pending)}"
 
       fetched = TaskRegistry.get_task(task_id)
       assert fetched.status == :cancelling

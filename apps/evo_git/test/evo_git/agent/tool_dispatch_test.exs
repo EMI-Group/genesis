@@ -942,6 +942,55 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   end
 
   # ---------------------------------------------------------------------------
+  # sync_current_commit_after_tools/1 records a PER-PROCESS current_commit
+  # ---------------------------------------------------------------------------
+
+  describe "sync_current_commit_after_tools/1 for a worktree agent" do
+    test "records the worktree HEAD as a per-process value and writes no ETS row" do
+      repo =
+        Path.join(System.tmp_dir!(), "tool_dispatch_sync_#{:erlang.unique_integer([:positive])}")
+
+      File.mkdir_p!(repo)
+      {:ok, _} = EvoGit.Adapters.Git.init(repo)
+      File.write!(Path.join(repo, "a.txt"), "a\n")
+      {:ok, _} = EvoGit.Adapters.Git.add(repo, "a.txt")
+      {:ok, _} = EvoGit.Adapters.Git.commit(repo, "Initial commit")
+      {:ok, head} = EvoGit.Adapters.Git.rev_parse(repo)
+
+      agent_id = :erlang.unique_integer([:positive])
+
+      Process.delete(:repo_less)
+      Process.delete(:evogit_current_commit)
+      Process.put(:repo_path, repo)
+
+      state = %State{
+        agent_id: agent_id,
+        agent_module: EvoGit.Agents.SelfReflective,
+        depth: 0,
+        node_path: "./",
+        context: ReqLLM.Context.new()
+      }
+
+      try do
+        assert ToolDispatch.sync_current_commit_after_tools(state) == :ok
+
+        # The replacement mechanism for the old ETS write: a PER-PROCESS derived
+        # value, which the turn checkpoint (`continue_after_tools/7`) moves onto
+        # the owned `%State{current_commit: sha}` (delete-on-read).
+        assert Process.get(:evogit_current_commit) == head
+
+        # …and the scheduler's summary row is untouched (no write-through).
+        assert EvoGit.AgentScheduler.Store.get_agent_state(agent_id) == :error
+      after
+        Process.delete(:evogit_current_commit)
+        Process.delete(:repo_path)
+        Process.delete(:repo_less)
+        File.rm_rf!(repo)
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # sync_current_commit_after_tools/1 error hardening
   # ---------------------------------------------------------------------------
 
