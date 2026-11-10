@@ -98,6 +98,20 @@ Text extraction uses `EvoDashWeb.ContentText.text_of/1` so explicit thinking/med
 `AgentStream` provides root-agent lookup, message-count gating, task-id extraction from a bare map or `{:ok, map}`, final-result extraction, and total structured failure-message extraction.
 `extract_failed_message/1` accepts atom/string message keys and returns only a nonblank binary, preserving its original whitespace.
 
+### Send path — one fresh `:reflect` task per message (no structured history)
+
+`HomeLive.handle_event("send_message", ...)`, the `chat_keydown` Enter path and the empty-state suggestion chips all delegate to `send_chat/2` → `do_send_chat/2` → `start_chat/3`.
+`do_send_chat/2` builds the objective from `Transcript.build_preamble(socket.assigns[:transcript])` (last 8 blocks, 600 graphemes/entry, 4000-grapheme cap) plus `"New message: " <> text`, then validates `ModelSelect.task_opts(snapshot, assigns, selection_scope, mode: "reflect", objective: objective)`.
+`start_chat/3` calls `EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.start_task(current_node || node(), :reflect, task_opts) end)`; the emitted opts are exactly `mode: "reflect"`, `objective:` and, only for an explicit selection, `model_spec` + `model_id_locked: true`.
+There is NO `:path`, `:history`, `:messages`, `:conversation`, `:session`, `:resume_from`, `:parent_task_id` or `:attachments` opt on the send path.
+Every send creates a brand-new task and root agent; prior turns reach the backend ONLY as plain text inside the objective preamble, never as structured history or an agent/task link.
+Core `EvoGit.Runtime.SelfReflective.run/2` reads continuity from `opts[:objective]` alone (it drops `:objective`/`:source_root`/`:node_path` from the agent opts).
+`persist_state/1` stores the transcript per chat via `EvoDash.ChatHistory.put_state/2` — an in-memory ETS table (`:evo_dash_chat_history`, no heir, no disk) that survives LiveView remounts, not BEAM restarts; nothing goes to SQLite, a file or localStorage.
+That restored transcript is what feeds the next `build_preamble/1`, so replay is textual and lossy (error entries dropped, entries truncated, oldest blocks dropped).
+`chat_task_id` lives in `ChatState` only while a turn is live and `clear_task_refs/1` nils it on every terminal status, so a later send never reuses or attaches to it.
+Mid-run sends are impossible: the composer and New chat are disabled while `chat_status != :idle`, `do_send_chat/2` silently ignores the submit, and HomeLive never calls `send_agent_message`/`NodeContext.send_user_message` (only AgentsLive does); the sole mid-run action is Stop → graceful `NodeContext.cancel_task/2`.
+Once the task finalizes (`:completed`/`:cancelled`/`:failed` → `clear_task_refs/1` sets `chat_status: :idle`), the next message starts a NEW reflect task and a NEW root-agent lookup (`async_lookup_agent/2`).
+
 ### Persisted chat and model choice
 
 `ChatState.build/1` and `restore/1` own the map stored in the local in-memory `EvoDash.ChatHistory`, preserving transcript, statuses, refs, message count, thought process and chat node.
