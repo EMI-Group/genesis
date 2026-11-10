@@ -1,8 +1,11 @@
 defmodule EvoDashWeb.ProcessesLive do
   @moduledoc """
-  Managed-process inspector: every OS execution `EvoGit.ProcessManager` tracks
-  on the viewed node — agent tool calls and background jobs — with its live
-  resource usage and the operator controls (pause / resume / terminate / kill).
+  Managed-process inspector: every execution `EvoGit.ProcessManager` tracks on
+  the viewed node — built-in tool calls that run in-process (no OS process),
+  external commands and background jobs — with its live resource usage.
+  External OS processes additionally carry the operator controls
+  (pause / resume / terminate / kill); a built-in in-BEAM execution has no OS
+  process handle, so it renders no controls.
 
   Node-aware like every other dashboard page: the initial snapshot is fetched
   from `@current_node` and liveness is PUSH-based. `EvoGit.ProcessManager`
@@ -336,8 +339,11 @@ defmodule EvoDashWeb.ProcessesLive do
         <div class="mb-4">
           <h1 class="text-xl font-semibold text-base-content">{gettext("Processes")}</h1>
           <p class="text-sm text-base-content/60 mt-0.5">
+            <%!--
+              zh_CN: 内置工具调用在 BEAM 内部执行，没有操作系统进程；外部命令与后台任务才有 PID/CPU/内存与终止操作。
+            --%>
             {gettext(
-              "Operating-system processes Genesis tracks on this node — tool calls and background jobs — with their resource usage and operator controls."
+              "Executions Genesis tracks on this node — built-in tool calls that run in-process, external commands and background jobs — with their resource usage and operator controls."
             )}
           </p>
         </div>
