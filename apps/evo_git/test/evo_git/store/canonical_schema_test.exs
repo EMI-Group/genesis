@@ -302,16 +302,16 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
     end
   end
 
-  # ── tasks: the final 19-column shape ─────────────────────────────────────
+  # ── tasks: the final 20-column shape ─────────────────────────────────────
 
   describe "tasks table" do
-    test "PRAGMA table_info is exactly the 19 canonical columns, cids 0..18" do
+    test "PRAGMA table_info is exactly the 20 canonical columns, cids 0..19" do
       pid = boot_fresh!(:tasks_shape)
 
       rows = query_rows(pid, "PRAGMA table_info(tasks)")
 
       assert rows == @task_table_info_rows
-      assert Enum.map(rows, fn [cid | _rest] -> cid end) == Enum.to_list(0..18)
+      assert Enum.map(rows, fn [cid | _rest] -> cid end) == Enum.to_list(0..19)
       assert Enum.map(rows, fn [_cid, name | _rest] -> name end) == TaskRow.columns()
     end
 

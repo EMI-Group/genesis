@@ -260,7 +260,9 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     } do
       path = Path.join(root, "fresh_path.sqlite")
 
-      create_db!(path, [@archive_version], tasks_ddl: @live_tasks_ddl)
+      # Version 8 is left pending too, so the tail column this test asserts is
+      # actually appended by the chain (6/7 stay stamped — see the moduledoc).
+      create_db!(path, [@archive_version, @session_mode_version], tasks_ddl: @live_tasks_ddl)
       insert_rows!(path, [[id: "task-fresh", result: ~S({"__result_tag__":"ok","data":{}})]])
       before = data_snapshot!(path)
 
@@ -421,7 +423,9 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
 
     test "nulls archive_metadata and physically drops the column", %{root: root} do
       path = Path.join(root, "drop_column.sqlite")
-      create_db!(path, [@archive_version])
+      # Version 8 is left pending too, so `session_mode` arrives as SQLite's
+      # appended tail column on the way through.
+      create_db!(path, [@archive_version, @session_mode_version])
       seed_archives!(path)
 
       assert "archive_metadata" in column_names!(path)

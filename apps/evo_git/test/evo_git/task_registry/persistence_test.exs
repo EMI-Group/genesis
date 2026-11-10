@@ -802,7 +802,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
              |> Enum.map(& &1.id) == [a1]
     end
 
-    test "list_tasks_changed_since/1 returns only newer rows with the 16-key projection",
+    test "list_tasks_changed_since/1 returns only newer rows with the 17-key projection",
          %{sqlite_path: sqlite_path} do
       unique = System.unique_integer([:positive])
       t1 = "changed_a_#{unique}"
@@ -834,7 +834,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # Future since → nothing.
       assert TaskRegistry.list_tasks_changed_since("2099-01-01T00:00:00.000Z") == []
 
-      # 16-key projection; updated_at passed through as the raw ISO string.
+      # 17-key projection; updated_at passed through as the raw ISO string.
       [row] = TaskRegistry.list_tasks_changed_since("2024-01-02T00:00:00.000Z")
 
       expected_keys =
@@ -854,7 +854,8 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
           :commit_sha,
           :lease_expires_at,
           :updated_at,
-          :error
+          :error,
+          :session_mode
         ]
         |> Enum.sort()
 
