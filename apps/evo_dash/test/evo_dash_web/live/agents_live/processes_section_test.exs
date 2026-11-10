@@ -209,7 +209,7 @@ defmodule EvoDashWeb.AgentsLive.ProcessesSectionTest do
               cwd: "/tmp/repo",
               repo_root: "/tmp/repo",
               backend: :bwrap,
-              runtime: :detached,
+              runtime: :background,
               status: :completed,
               os_pid: 4242,
               exit_code: 0,
