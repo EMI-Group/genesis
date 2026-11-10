@@ -436,6 +436,28 @@ defmodule EvoGit.CLITest do
     end
   end
 
+  describe "task-status waiting classification" do
+    test "terminal statuses end the wait" do
+      assert EvoGit.CLI.terminal_statuses() == [:completed, :failed, :cancelled]
+
+      for status <- [:completed, :failed, :cancelled] do
+        assert EvoGit.CLI.wait_classification(status) == :terminal
+      end
+    end
+
+    test ":awaiting_input is non-terminal but halts the wait (never an infinite wait)" do
+      assert :awaiting_input in EvoGit.CLI.halted_wait_statuses()
+      refute :awaiting_input in EvoGit.CLI.terminal_statuses()
+      assert EvoGit.CLI.wait_classification(:awaiting_input) == :halted
+    end
+
+    test "progressing and nil statuses keep the waiter waiting" do
+      for status <- [:pending, :running, :finalizing, :cancelling, nil] do
+        assert EvoGit.CLI.wait_classification(status) == :waiting
+      end
+    end
+  end
+
   # Compatibility helper still accepts legacy model-profile lists; live CLI
   # selections above use canonical provider accounts instead.
   describe "resolve_model_id/2 legacy helper" do
