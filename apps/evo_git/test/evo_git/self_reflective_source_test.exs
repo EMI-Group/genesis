@@ -8,11 +8,19 @@ defmodule EvoGit.SelfReflectiveSourceTest do
   alias EvoGit.Core.ContextNode
   alias EvoGit.Runtime.SelfReflective
   alias EvoGit.SelfReflectiveSource
+  alias EvoGit.VCT
+  alias EvoGit.VCT.Path, as: VctPath
+  alias EvoGit.VCT.Table
 
-  # The four env knobs (:self_reflective_source_root / :self_reflective_source_dir /
-  # :self_reflective_source_url app env + GENESIS_SOURCE_ROOT OS env) are global
-  # state; the setup hook restores them after every test so nothing leaks into
-  # the real data dir or other tests.
+  import EvoGit.VCTTest.Helpers
+
+  # The BEAM-global knobs this module writes are the `:self_reflective_source_root`
+  # / `:self_reflective_source_dir` / `:self_reflective_source_url` app env, the
+  # `GENESIS_SOURCE_ROOT` OS env, and the `:evogit_vct_server` process-dictionary
+  # VCT seam (each test points at its OWN isolated VCT stack, so the app-global
+  # singleton is never relied on). The setup hook restores the env knobs after
+  # every test so nothing leaks into the real data dir or other tests; the
+  # process dictionary dies with each test process.
   setup do
     original = %{
       source_root: Application.get_env(:evo_git, :self_reflective_source_root),
@@ -277,9 +285,234 @@ defmodule EvoGit.SelfReflectiveSourceTest do
     end
   end
 
+  describe "VCT integration" do
+    test "point/0 is the canonical reserved point" do
+      assert SelfReflectiveSource.point() == "vct:///genesis-source"
+
+      assert {:ok, %VctPath{segments: ["genesis-source"]}} =
+               VctPath.parse(SelfReflectiveSource.point())
+
+      assert VctPath.format(VctPath.parse!(SelfReflectiveSource.point())) ==
+               "vct:///genesis-source"
+    end
+
+    test "system_mounts/0 declares the reserved mount for source_dir/0" do
+      dir = tmp_path!("system-mount")
+      set_app_env(:self_reflective_source_dir, dir)
+
+      assert SelfReflectiveSource.system_mounts() == [
+               %{point: "vct:///genesis-source", path: dir, name: "genesis-source"}
+             ]
+    end
+
+    test "ensure_mount/0 registers the reserved mount on a fresh isolated VCT" do
+      dir = tmp_path!("ensure-mount")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      set_app_env(:self_reflective_source_dir, dir)
+      stack = start_vct_stack!("ensure-mount")
+
+      assert {:ok, mount} = SelfReflectiveSource.ensure_mount()
+      assert mount.point == "vct:///genesis-source"
+      assert mount.name == "genesis-source"
+      assert Table.comparison_form(mount.path) == Table.comparison_form(dir)
+      assert_test_mount(stack, dir)
+    end
+
+    test "ensure_mount/0 is idempotent (one mount row, same point)" do
+      dir = tmp_path!("ensure-idempotent")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      set_app_env(:self_reflective_source_dir, dir)
+      stack = start_vct_stack!("ensure-idempotent")
+
+      assert {:ok, first} = SelfReflectiveSource.ensure_mount()
+      assert {:ok, second} = SelfReflectiveSource.ensure_mount()
+
+      assert second.point == first.point
+      assert Table.comparison_form(second.path) == Table.comparison_form(dir)
+      assert_test_mount(stack, dir)
+    end
+
+    test "ensure_mount/0 returns an error (never raises) when no VCT is reachable" do
+      set_app_env(:self_reflective_source_dir, tmp_path!("ensure-no-vct"))
+      # The app-global VCT may be running in this suite: deleting the seam then
+      # falls back to it, so only totality is required here.
+      Process.delete(:evogit_vct_server)
+
+      result = SelfReflectiveSource.ensure_mount()
+
+      if Process.whereis(EvoGit.VCT) do
+        assert match?({:ok, _}, result) or match?({:error, _}, result)
+      else
+        assert {:error, :vct_unavailable} = result
+      end
+
+      # A deterministic unreachable server: the PDA seam wins over the
+      # registered singleton, so the VCT call must degrade, not raise.
+      Process.put(:evogit_vct_server, :evogit_vct_absent_server)
+      assert {:error, :vct_unavailable} = SelfReflectiveSource.ensure_mount()
+      refute SelfReflectiveSource.status().mounted
+    end
+
+    test "clone/0 ensures the VCT mount after a successful clone" do
+      fixture = genesis_fixture!("mount-clone")
+      clone_dir = tmp_path!("mount-clone-dir")
+      set_app_env(:self_reflective_source_dir, clone_dir)
+      set_app_env(:self_reflective_source_url, fixture.origin)
+      on_exit(fn -> File.rm_rf!(clone_dir) end)
+      stack = start_vct_stack!("mount-clone")
+
+      assert {:ok, _status} = SelfReflectiveSource.clone()
+
+      assert_test_mount(stack, clone_dir)
+      assert SelfReflectiveSource.status().mounted
+    end
+
+    test "update/0 ensures the VCT mount after a successful update" do
+      fixture = genesis_fixture!("mount-update")
+      clone_dir = tmp_path!("mount-update-dir")
+      set_app_env(:self_reflective_source_dir, clone_dir)
+      set_app_env(:self_reflective_source_url, fixture.origin)
+      on_exit(fn -> File.rm_rf!(clone_dir) end)
+      stack = start_vct_stack!("mount-update")
+
+      assert {:ok, _} = SelfReflectiveSource.clone()
+
+      File.write!(Path.join(fixture.work, "VERSION"), "0.2.0\n")
+      {:ok, _} = Git.add(fixture.work, "VERSION")
+      {:ok, _} = Git.commit(fixture.work, "Second commit")
+      {:ok, _} = Git.push_branch(fixture.work, fixture.branch)
+
+      assert {:ok, status} = SelfReflectiveSource.update()
+      assert status.version == "0.2.0"
+
+      assert_test_mount(stack, clone_dir)
+    end
+
+    test "status/0 exposes point/0 and the mounted flag" do
+      dir = tmp_path!("status-mounted")
+      File.mkdir_p!(dir)
+      other = tmp_path!("status-other")
+      File.mkdir_p!(other)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      on_exit(fn -> File.rm_rf!(other) end)
+      set_app_env(:self_reflective_source_dir, dir)
+      start_vct_stack!("status-mounted")
+
+      status = SelfReflectiveSource.status()
+      assert status.point == "vct:///genesis-source"
+      refute status.mounted
+
+      assert {:ok, _} = SelfReflectiveSource.ensure_mount()
+      assert SelfReflectiveSource.status().mounted
+
+      # Re-pointing the mount elsewhere makes it no longer the managed dir.
+      assert {:ok, _} = VCT.ensure_mount(SelfReflectiveSource.point(), other)
+      refute SelfReflectiveSource.status().mounted
+    end
+
+    test "status/0 reports mounted: false and never raises without a VCT" do
+      set_app_env(:self_reflective_source_dir, tmp_path!("status-no-vct"))
+      Process.put(:evogit_vct_server, :evogit_vct_absent_server)
+
+      status = SelfReflectiveSource.status()
+      assert status.point == "vct:///genesis-source"
+      refute status.mounted
+    end
+
+    test "a VCT mount pointing at a valid checkout wins over the managed dir" do
+      # No `:self_reflective_source_dir` seam: `source_dir/0` is the default
+      # managed dir, so the VCT step of the chain is active.
+      managed = default_managed_dir_fixture!()
+      checkout = valid_checkout_fixture!("vct-wins-checkout")
+      start_vct_stack!("vct-wins")
+
+      # No mount yet: the managed dir is the reference.
+      assert SelfReflectiveSource.reference_path() == managed
+      assert SelfReflectiveSource.status().is_reference
+
+      assert {:ok, _} = VCT.ensure_mount(SelfReflectiveSource.point(), checkout)
+      assert SelfReflectiveSource.reference_path() == checkout
+      refute SelfReflectiveSource.status().is_reference
+
+      # Re-pointing the mount back at the managed dir restores the reference.
+      assert {:ok, _} = VCT.ensure_mount(SelfReflectiveSource.point(), managed)
+      assert SelfReflectiveSource.reference_path() == managed
+      assert SelfReflectiveSource.status().is_reference
+    end
+
+    test "the :self_reflective_source_dir seam bypasses the VCT step" do
+      checkout = valid_checkout_fixture!("vct-bypass-checkout")
+      start_vct_stack!("vct-bypass")
+      assert {:ok, _} = VCT.ensure_mount(SelfReflectiveSource.point(), checkout)
+
+      # Seam set to an INVALID managed dir: the VCT mount is ignored, so the
+      # chain falls through to the managed dir and resolves to nil.
+      invalid = tmp_path!("vct-bypass-invalid")
+      File.mkdir_p!(invalid)
+      on_exit(fn -> File.rm_rf!(invalid) end)
+      set_app_env(:self_reflective_source_dir, invalid)
+      assert SelfReflectiveSource.reference_path() == nil
+
+      # Seam set to a VALID managed dir: it wins over the VCT mount.
+      managed = managed_dir_fixture!("vct-bypass-managed")
+      set_app_env(:self_reflective_source_dir, managed)
+      assert SelfReflectiveSource.reference_path() == managed
+    end
+  end
+
   # --- Helpers -------------------------------------------------------------
   defp tmp_path!(label) do
     Path.join(System.tmp_dir!(), "selfref-src-#{label}-#{System.unique_integer([:positive])}")
+  end
+
+  # Boots an isolated Store + VCT pair (the shared `EvoGit.VCTTest.Helpers`
+  # fixture) and removes its temp root on exit. `start_stack/2` points this
+  # process at that VCT via the `:evogit_vct_server` seam.
+  defp start_vct_stack!(label) do
+    root = tmp_path!(label)
+    stack = start_stack(root)
+    on_exit(fn -> File.rm_rf!(root) end)
+    stack
+  end
+
+  # Asserts the isolated stack holds EXACTLY ONE mount at the reserved point and
+  # that it binds `dir` (both through the VCT and through the persisted table).
+  defp assert_test_mount(stack, dir) do
+    assert {:ok, resolved} = VCT.resolve(SelfReflectiveSource.point())
+    assert resolved.point == "vct:///genesis-source"
+    assert Table.comparison_form(resolved.path) == Table.comparison_form(dir)
+
+    rows = EvoGit.Store.list_vct_mounts(stack.store)
+    assert [row] = Enum.filter(rows, &(&1["point"] == "vct:///genesis-source"))
+    assert Table.comparison_form(row["path"]) == Table.comparison_form(dir)
+  end
+
+  # The default managed dir (`Platform.data_dir()/genesis-source`) as a valid
+  # checkout. Used by the VCT-precedence test, which must NOT set the
+  # `:self_reflective_source_dir` seam (the seam skips the VCT step).
+  defp default_managed_dir_fixture! do
+    dir = Path.join(EvoGit.Platform.data_dir(), "genesis-source")
+    File.rm_rf!(dir)
+    File.mkdir_p!(Path.join(dir, ".git"))
+    File.write!(Path.join(dir, "CONTEXT.md"), "# Fixture Genesis\n")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    dir
+  end
+
+  # A real git checkout (git init + CONTEXT.md + one commit) — the validity rule
+  # the VCT step applies is `.git` directory + root CONTEXT.md.
+  defp valid_checkout_fixture!(label) do
+    dir = tmp_path!(label)
+    File.rm_rf!(dir)
+    File.mkdir_p!(dir)
+    {:ok, _} = Git.init(dir)
+    File.write!(Path.join(dir, "CONTEXT.md"), "# Fixture Genesis\n")
+    {:ok, _} = Git.add(dir, ".")
+    {:ok, _} = Git.commit(dir, "Initial fixture commit")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    dir
   end
 
   # Builds the MINIMUM "valid managed dir" the production resolution chain

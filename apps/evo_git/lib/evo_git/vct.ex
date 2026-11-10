@@ -20,12 +20,32 @@ defmodule EvoGit.VCT do
       history, so a global context edit is a committed, auditable change; a
       NON-BLANK file that already exists at boot is synced then, too.
 
+  ## Project mounts vs reserved (system) mounts
+
+  A point under `vct:///projects/<name>` is a PROJECT mount: it is what
+  `projects/1` and `search/2` list, what the dashboard palette and the task
+  flows see, and what the cap evicts. Every other point — `vct:///`,
+  `vct:///projects` and any other top-level namespace such as
+  `vct:///genesis-source` — is a RESERVED (system) mount (see
+  `EvoGit.VCT.Table.reserved?/1`).
+
+  Reserved mounts are real mounts for resolution: `resolve/1`,
+  `mount_for_path/1`, `vct_path_for/2` and `put_global_context/1` see them
+  exactly like project mounts. They differ in three ways: they are invisible to
+  `projects/1`/`search/2`, `forget/1` refuses them with
+  `{:error, :reserved_point}`, and the capacity cap never evicts them.
+
+  System mounts are declared by the HOST (e.g. a runtime-provided source
+  checkout) and ensured at boot through the `:system_mounts` init option, and
+  can be ensured at runtime with `ensure_mount/3`.
+
   ## Capacity
 
   `max_projects/0` (100 by default, overridable through the app env
-  `:vct_max_projects`) caps the mount table. Registering a path beyond the cap
-  EVICTS the oldest mounts, so the table never grows unbounded while staying
-  newest-first.
+  `:vct_max_projects`) caps the PROJECT mounts only. Registering a path beyond
+  the cap EVICTS the oldest project mounts, so the table never grows unbounded
+  while staying newest-first; reserved mounts are always retained and do not
+  count against the cap.
 
   ## Client reads are TOTAL
 
@@ -104,6 +124,17 @@ defmodule EvoGit.VCT do
       `Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir())`)
     * `:store` — the task store owning the `vct_mounts` table (default
       `EvoGit.Store`)
+    * `:system_mounts` — host-declared RESERVED mounts to ensure at boot: a list
+      of maps or keyword lists with `:point`, `:path` and an optional `:name`
+      (default `[]`)
+
+  Each `:system_mounts` entry is merged with `EvoGit.VCT.Table.ensure_mount/4`
+  IN ORDER, so boot is idempotent: an already-mounted point/path is a no-op, a
+  changed path re-points, a path moved between points is moved. A malformed
+  entry is skipped with a `Logger.warning` (boot never fails), the merged table
+  is persisted ONLY when it actually changed, and a successful change broadcasts
+  exactly ONE `{:vct_updated, node()}`. A persist failure is logged and leaves
+  the LOADED table in state, so memory and the database never disagree.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -112,10 +143,11 @@ defmodule EvoGit.VCT do
   end
 
   @doc """
-  Returns the maximum number of mounts the table may hold.
+  Returns the maximum number of PROJECT mounts the table may hold.
 
   `100` by default, overridable through the app env `:vct_max_projects` (a
-  non-positive or non-integer value falls back to the default).
+  non-positive or non-integer value falls back to the default). RESERVED
+  (system) mounts are always retained and do not count against this cap.
   """
   @spec max_projects() :: pos_integer()
   def max_projects do
@@ -151,22 +183,62 @@ defmodule EvoGit.VCT do
     do: call({:mount, path, opts}, {:error, :vct_unavailable})
 
   @doc """
-  Returns every mount, newest first (`last_opened_at` descending, `nil` LAST).
+  Ensures `path` is mounted at exactly `point` — the POINT-first rule used for
+  reserved (system) mounts.
+
+  `point` must be a valid VCT point (`"vct:..."` binary or `%EvoGit.VCT.Path{}`,
+  `{:error, :invalid_point}` otherwise) and is canonicalized; `path` follows the
+  rules of `mount/2` (`{:error, :relative_path}` / `{:error, :invalid_path}`)
+  and is NEVER required to exist on disk — a reserved mount may point at a path
+  that is absent (e.g. before a runtime checkout is provisioned).
+
+  ## Options
+
+    * `:name` — display name; a non-blank name always wins, an absent/blank one
+      keeps the existing name (or the OS-path basename when inserting)
+
+  The mount is deterministic and idempotent (`EvoGit.VCT.Table.ensure_mount/4`):
+
+    * the same point already holding the same OS path is a NO-OP — the existing
+      mount is returned and nothing is persisted, broadcast or re-timestamped;
+    * the point holding a DIFFERENT path is re-pointed to `path` (point and
+      `last_opened_at` kept, a row mounting that path elsewhere removed);
+    * the path mounted at ANOTHER point is MOVED to `point` (path, name and
+      `last_opened_at` preserved) so one OS path never has two rows;
+    * otherwise a new mount is inserted at `point`.
+
+  Only a real change persists the whole table and broadcasts
+  `{:vct_updated, node()}`. Returns `{:ok, mount}` or `{:error, reason}` (the
+  validation errors above, a store error, or `:vct_unavailable`); a failed
+  persist leaves the table untouched.
+  """
+  @spec ensure_mount(String.t() | VctPath.t(), String.t(), keyword()) ::
+          {:ok, Mount.t()} | {:error, term()}
+  def ensure_mount(point, path, opts \\ []) when is_list(opts),
+    do: call({:ensure_mount, point, path, opts}, {:error, :vct_unavailable})
+
+  @doc """
+  Returns every PROJECT mount, newest first (`last_opened_at` descending, `nil`
+  LAST).
+
+  RESERVED (system) mounts are never listed — they are not part of the user's
+  project list (use `resolve/1` or `mount_for_path/1` to reach them).
 
   ## Options
 
     * `:limit` — positive integer cap on the returned list (the table itself
-      keeps up to `max_projects/0` entries)
+      keeps up to `max_projects/0` project mounts)
   """
   @spec projects(keyword()) :: [Mount.t()]
   def projects(opts \\ []) when is_list(opts), do: call({:projects, opts}, [])
 
   @doc """
-  Returns the mounts matching `query`, newest first.
+  Returns the PROJECT mounts matching `query`, newest first.
 
   The match is a CASE-INSENSITIVE SUBSTRING search over the display name, the
   OS path and the VCT point — the autocomplete interface. A blank query matches
-  every mount; a non-binary query matches none.
+  every project mount; a non-binary query matches none. RESERVED (system) mounts
+  never appear, not even for a blank query.
 
   ## Options
 
@@ -176,11 +248,13 @@ defmodule EvoGit.VCT do
   def search(query, opts \\ []) when is_list(opts), do: call({:search, query, opts}, [])
 
   @doc """
-  Forgets a mount by VCT point (`"vct:..."` binary or `%EvoGit.VCT.Path{}`) or
-  by OS path (any other binary).
+  Forgets a PROJECT mount by VCT point (`"vct:..."` binary or
+  `%EvoGit.VCT.Path{}`) or by OS path (any other binary).
 
   Returns `:ok`, `{:error, :not_found}`, `{:error, :invalid_point}` for an
-  unparseable point, or another `{:error, reason}`.
+  unparseable point, `{:error, :reserved_point}` when the key resolves to a
+  RESERVED (system) mount — whether the key is a reserved point (with or without
+  a row) or the OS path of a reserved mount — or another `{:error, reason}`.
   """
   @spec forget(String.t() | VctPath.t()) :: :ok | {:error, term()}
   def forget(key), do: call({:forget, key}, {:error, :vct_unavailable})
@@ -188,6 +262,9 @@ defmodule EvoGit.VCT do
   @doc """
   Resolves a VCT point (`"vct:..."` binary or `%EvoGit.VCT.Path{}`) — or an
   exact OS path — to its mount.
+
+  Operates over EVERY mount, so RESERVED (system) mounts resolve exactly like
+  project mounts.
   """
   @spec resolve(String.t() | VctPath.t()) ::
           {:ok, Mount.t()} | {:error, :not_found} | {:error, term()}
@@ -196,6 +273,9 @@ defmodule EvoGit.VCT do
   @doc """
   Returns the mount containing `os_path` (longest OS-path prefix, path-boundary
   aware), or `nil`.
+
+  Operates over EVERY mount, so a reserved (system) mount answers for the paths
+  underneath it.
   """
   @spec mount_for_path(String.t()) :: Mount.t() | nil
   def mount_for_path(os_path), do: call({:mount_for_path, os_path}, nil)
@@ -203,6 +283,9 @@ defmodule EvoGit.VCT do
   @doc """
   Returns the canonical VCT URL for `relative_path` inside `repo_root`'s mount,
   or `nil` when no mount contains `repo_root` (or the relative path is invalid).
+
+  Operates over EVERY mount, so a path under a reserved (system) mount yields a
+  URL under that reserved point (e.g. `vct:///genesis-source/src`).
   """
   @spec vct_path_for(String.t(), String.t()) :: String.t() | nil
   def vct_path_for(repo_root, relative_path),
@@ -260,13 +343,35 @@ defmodule EvoGit.VCT do
 
     store = Keyword.get(opts, :store, EvoGit.Store)
 
+    loaded = load_mounts(store)
+    {mounts, merged?} = merge_system_mounts(loaded, Keyword.get(opts, :system_mounts, []))
+
     state = %{
       name: name,
       data_dir: data_dir,
       vct_dir: vct_dir,
       store: store,
-      mounts: load_mounts(store)
+      mounts: mounts
     }
+
+    # Host-declared system mounts are persisted ONLY when the merge changed
+    # something, so a boot over an already-correct table writes (and announces)
+    # nothing. A failed persist reverts the cache to the LOADED table: memory
+    # and the database must never disagree, and boot must never fail.
+    state =
+      if merged? do
+        case persist(state, mounts) do
+          :ok ->
+            broadcast_mount_change()
+            state
+
+          {:error, reason} ->
+            Logger.warning("VCT: could not persist system mounts: #{inspect(reason)}")
+            %{state | mounts: loaded}
+        end
+      else
+        state
+      end
 
     # A global context restored from a state backup is already on disk but its
     # lazy git repository may not be: sync it now instead of waiting for the
@@ -296,9 +401,36 @@ defmodule EvoGit.VCT do
     end
   end
 
+  def handle_call({:ensure_mount, point, path, opts}, _from, state) do
+    with {:ok, canonical} <- canonical_point(point),
+         {:ok, os_path} <- validate_os_path(path),
+         {:ok, name} <- extract_name(opts),
+         {:ok, ensured, mount, changed?} <-
+           Table.ensure_mount(state.mounts, canonical, os_path, name) do
+      mounts = Table.enforce_cap(ensured, max_projects())
+
+      if changed? do
+        case persist(state, mounts) do
+          :ok ->
+            broadcast_mount_change()
+            {:reply, {:ok, mount}, %{state | mounts: mounts}}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
+      else
+        # Nothing to write: no persist, no broadcast, no timestamp churn.
+        {:reply, {:ok, mount}, state}
+      end
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
   def handle_call({:projects, opts}, _from, state) do
     mounts =
       state.mounts
+      |> Table.project_mounts()
       |> Table.sort_by_recency()
       |> apply_limit(Keyword.get(opts, :limit))
 
@@ -308,6 +440,7 @@ defmodule EvoGit.VCT do
   def handle_call({:search, query, opts}, _from, state) do
     mounts =
       state.mounts
+      |> Table.project_mounts()
       |> matching_mounts(query)
       |> Table.sort_by_recency()
       |> apply_limit(Keyword.get(opts, :limit))
@@ -417,6 +550,60 @@ defmodule EvoGit.VCT do
       []
   end
 
+  ## Boot: host-declared system mounts
+
+  # Folds the `:system_mounts` entries through `Table.ensure_mount/4` IN ORDER,
+  # so booting over an already-correct table changes nothing (no write, no
+  # broadcast). A malformed entry is skipped with a warning: boot never fails on
+  # host-provided metadata.
+  defp merge_system_mounts(mounts, entries) when is_list(entries) do
+    Enum.reduce(entries, {mounts, false}, fn entry, {acc, changed?} ->
+      case system_mount(entry) do
+        {:ok, point, path, name} ->
+          case Table.ensure_mount(acc, point, path, name) do
+            {:ok, ensured, _mount, entry_changed?} ->
+              {ensured, changed? or entry_changed?}
+
+            {:error, reason} ->
+              warn_skipped_system_mount(entry, reason)
+              {acc, changed?}
+          end
+
+        :error ->
+          warn_skipped_system_mount(entry, :invalid_entry)
+          {acc, changed?}
+      end
+    end)
+  end
+
+  defp merge_system_mounts(mounts, _entries), do: {mounts, false}
+
+  defp warn_skipped_system_mount(entry, reason) do
+    Logger.warning("VCT: skipping a malformed system mount: #{inspect({entry, reason})}")
+  end
+
+  defp system_mount(entry) when is_list(entry) or is_map(entry) do
+    with point when is_binary(point) <- fetch_entry(entry, :point),
+         {:ok, canonical} <- canonical_point(point),
+         path when is_binary(path) <- fetch_entry(entry, :path),
+         {:ok, name} <- system_mount_name(fetch_entry(entry, :name)) do
+      {:ok, canonical, path, name}
+    else
+      _reason -> :error
+    end
+  end
+
+  defp system_mount(_entry), do: :error
+
+  defp system_mount_name(nil), do: {:ok, nil}
+  defp system_mount_name(name) when is_binary(name), do: {:ok, Table.normalize_name(name)}
+  defp system_mount_name(_name), do: :error
+
+  defp fetch_entry(entry, key) when is_map(entry),
+    do: Map.get(entry, key) || Map.get(entry, Atom.to_string(key))
+
+  defp fetch_entry(entry, key) when is_list(entry), do: Keyword.get(entry, key)
+
   ## Persistence + broadcasts
 
   # The WHOLE table is replaced atomically by the store, so the in-memory list
@@ -468,6 +655,21 @@ defmodule EvoGit.VCT do
 
   defp extract_name(other), do: {:error, {:invalid_name, other}}
 
+  defp canonical_point(%VctPath{segments: segments}) do
+    if Enum.all?(segments, &is_binary/1),
+      do: {:ok, VctPath.format(segments)},
+      else: {:error, :invalid_point}
+  end
+
+  defp canonical_point(point) when is_binary(point) do
+    case VctPath.parse(point) do
+      {:ok, parsed} -> {:ok, VctPath.format(parsed)}
+      {:error, _reason} -> {:error, :invalid_point}
+    end
+  end
+
+  defp canonical_point(_point), do: {:error, :invalid_point}
+
   defp apply_limit(mounts, limit) when is_integer(limit) and limit > 0,
     do: Enum.take(mounts, limit)
 
@@ -493,21 +695,41 @@ defmodule EvoGit.VCT do
 
   defp contains?(_value, _needle), do: false
 
+  # A RESERVED (system) mount can never be forgotten — neither by its point
+  # (whether or not a row exists) nor by its OS path.
   defp remove_from(mounts, %VctPath{} = point),
-    do: Table.remove_by_point(mounts, VctPath.format(point))
+    do: refuse_reserved_or_remove_by_point(mounts, VctPath.format(point))
 
   defp remove_from(mounts, key) when is_binary(key) do
     if point_string?(key) do
       case VctPath.parse(key) do
-        {:ok, point} -> Table.remove_by_point(mounts, VctPath.format(point))
+        {:ok, point} -> refuse_reserved_or_remove_by_point(mounts, VctPath.format(point))
         {:error, _reason} -> {:error, :invalid_point}
       end
     else
-      Table.remove_by_path(mounts, key)
+      refuse_reserved_or_remove_by_path(mounts, key)
     end
   end
 
   defp remove_from(_mounts, _key), do: {:error, :not_found}
+
+  defp refuse_reserved_or_remove_by_point(mounts, point) do
+    if Table.reserved?(point),
+      do: {:error, :reserved_point},
+      else: Table.remove_by_point(mounts, point)
+  end
+
+  defp refuse_reserved_or_remove_by_path(mounts, os_path) do
+    case Table.find_by_os_path(mounts, os_path) do
+      nil ->
+        {:error, :not_found}
+
+      mount ->
+        if Table.reserved?(mount.point),
+          do: {:error, :reserved_point},
+          else: Table.remove_by_path(mounts, os_path)
+    end
+  end
 
   defp resolve_point(mounts, point) do
     case Table.find_by_point(mounts, point) do

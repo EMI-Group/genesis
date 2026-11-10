@@ -86,7 +86,7 @@ Thin client for the dashboard's SSH remote-development feature. Wraps three `:ev
 
 #### Projects & the VCT registry (no project CRUD in this layer)
 
-A project is a VCT mount: `%EvoGit.VCT.Mount{}` carrying `point` (e.g. `vct:///projects/<basename>[-N]`), an absolute OS `path`, `name`, `kind` and `last_opened_at`; there is no project entity/module here and no project CRUD.
+A project is a VCT PROJECT mount: `%EvoGit.VCT.Mount{}` carrying `point` (e.g. `vct:///projects/<basename>[-N]`), an absolute OS `path`, `name`, `kind` and `last_opened_at`; there is no project entity/module here and no project CRUD, and reserved mounts (e.g. `vct:///genesis-source`) are not project mounts — the dashboard's project APIs never return them.
 NodeContext has NO `list_projects`/`get_project`/`create_project`/`update_project`/`delete_project` — a project is a mount over an OS path, and the only project-shaped calls are:
 - `projects/1` (:567) → `[%EvoGit.VCT.Mount{}]` from the viewed node's core registry, newest-opened first; `[]` on RPC failure or a non-list payload.
 - `mount_project/3` (:583) `(node, path, name)` → `{:ok, %EvoGit.VCT.Mount{}} | {:error, term()}`; a failed RPC returns `{:error, {kind, reason}}` so the caller can report it.

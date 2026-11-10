@@ -692,8 +692,11 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
   # Repo-less root resolution — single source of truth:
   # `EvoGit.SelfReflectiveSource.reference_path/0` (`:self_reflective_source_root`
-  # app env → `GENESIS_SOURCE_ROOT` env var → the managed clone at
-  # `SelfReflectiveSource.source_dir/0` when valid) with the terminal
+  # app env → `GENESIS_SOURCE_ROOT` env var → the reserved VCT mount at
+  # `vct:///genesis-source` when it points at a valid Genesis checkout (the
+  # supported "override" is re-pointing that mount; the step is skipped while
+  # the `:self_reflective_source_dir` app env seam is set) → the managed clone
+  # at `SelfReflectiveSource.source_dir/0` when valid) with the terminal
   # `File.cwd!()` (dev = the genesis repo itself) → "[system]" fallback.
   # `EvoGit.Runtime.SelfReflective.source_root/0` delegates to the same
   # reference_path/0 so both agree.

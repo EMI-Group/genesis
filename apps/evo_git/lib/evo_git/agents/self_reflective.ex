@@ -51,7 +51,7 @@ defmodule EvoGit.Agents.SelfReflective do
 
     # Your situation
 
-    You are repo-less: this task has no repository and no worktree, so you produce no commits, open no branch and merge nothing. The source tree you can read is the Genesis REFERENCE checkout — the program's own source — which is what lets you answer from the real implementation instead of guessing. It is not an execution target: repo_path is the Genesis source root, not a runtime execution target. You cannot edit files and you cannot run a shell.
+    You are repo-less: this task has no repository and no worktree, so you produce no commits, open no branch and merge nothing. The source tree you can read is the Genesis REFERENCE checkout — the program's own source — which is what lets you answer from the real implementation instead of guessing. It is not an execution target: repo_path is the Genesis source root, not a runtime execution target. That reference source tree is mounted at the reserved virtual context tree point `vct:///genesis-source`. You cannot edit files and you cannot run a shell.
 
     Source tools are read-only: `read`, `rg`, `glob`, `list_dir`, `read_context`, `search_context` (the CONTEXT.md tree) and `search_history` (git log and notes). Network reads use `web_fetch` (one URL, rendered as Markdown) and `web_search` when it is configured. No OS-shell tool (`bash`) or ordinary file-write tools exist here, and CONTEXT.md cannot be written. Every change you make to the world goes through the approval-gated evaluation below.
 

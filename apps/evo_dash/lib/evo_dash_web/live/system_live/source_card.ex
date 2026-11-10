@@ -25,7 +25,12 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
 
   - `:source_status_runner` — returns the raw status map (backend `status/0`
     shape: `%{dir:, exists:, is_git_repo:, valid:, commit:, branch:, version:,
-    remote_url:, reference:, is_reference:}`) or `{:unavailable, reason}`.
+    remote_url:, reference:, is_reference:, point:, mounted:}`) or
+    `{:unavailable, reason}`.
+    `point` is the reserved VCT mount point (`"vct:///genesis-source"`) and
+    `mounted` says whether that point currently binds the checkout dir. Both
+    are OPTIONAL: an older backend (or a test stub) may omit them, so the card
+    reads `point` defensively and simply renders no VCT row then.
   - `:source_clone_runner` / `:source_update_runner` — return
     `{:ok, status_map} | {:error, reason} | {:unavailable, reason}`.
 
@@ -41,13 +46,16 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
   Tools / Sandbox / Nix / LLM Connection cards, with the same
   `rounded-lg border border-base-300 bg-base-100` container, tinted icon box,
   and `font-semibold text-sm` title. It shows only the minimal useful info:
-  the checkout directory (`dir`), the checked-out commit + version when
+  the checkout directory (`dir`), the reserved VCT mount point (`point`, when
+  the backend supplies it), the checked-out commit + version when
   cloned, and the clone/update buttons. The branch and remote-URL displays
   were dropped (they were always the constants `main` / the repo path), and
   there is no separate reference line — the Directory row already shows the
   checkout path, so the only reference info kept is the "in use" badge and,
   when an explicit override is in effect, a muted note carrying the override
   path.
+  An explicit override can come from the `GENESIS_SOURCE_ROOT` env var, app
+  config, or a re-pointed VCT mount at `vct:///genesis-source`.
   """
 
   use Phoenix.Component
@@ -65,7 +73,8 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
 
   @doc """
   The Genesis Source card of the System Self-Check check grid: minimal checkout
-  info (directory, commit + version when cloned) and the clone/update buttons.
+  info (directory, reserved VCT mount point, commit + version when cloned) and
+  the clone/update buttons.
   The always-constant branch (`main`) and remote-URL displays were deliberately
   dropped when this was merged into the self-check section.
 
@@ -118,6 +127,16 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
                     {status.dir || ""}
                   </span>
                 </div>
+                <%= if point = mount_point(status) do %>
+                  <!-- Reserved VCT mount point — rendered only when the backend
+                       supplies it (an older status map has no `point` key) -->
+                  <div class="flex items-baseline gap-2 min-w-0">
+                    <span class="text-base-content/70 shrink-0 font-medium w-24">{gettext("VCT")} <% # zh_CN: "VCT" / "虚拟上下文树挂载点" %></span>
+                    <span class="font-mono text-xs text-base-content/80 break-all min-w-0">
+                      {point}
+                    </span>
+                  </div>
+                <% end %>
                 <%= if status.exists do %>
                   <%= if status.commit do %>
                     <div class="flex items-baseline gap-2 min-w-0">
@@ -143,7 +162,7 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
                      explicit override is in effect the self-reflective agent
                      actually reads `reference`, so carry it here -->
                 <p class="text-xs text-base-content/70 mt-2 flex items-baseline gap-1 flex-wrap">
-                  <span>{gettext("An explicit override is in effect")} <% # zh_CN: "已设置显式覆盖（GENESIS_SOURCE_ROOT 环境变量或应用配置）" %></span>
+                  <span>{gettext("An explicit override is in effect")} <% # zh_CN: "已设置显式覆盖（GENESIS_SOURCE_ROOT 环境变量、应用配置或改指向的 vct:///genesis-source 挂载）" %></span>
                   <span class="font-mono break-all">{status.reference}</span>
                 </p>
               <% end %>
@@ -197,9 +216,20 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
   @doc """
   An explicit reference override (reference != the managed dir) is in effect —
   the card must not imply that clone/update act on what the agent reads.
+  Override sources include the `GENESIS_SOURCE_ROOT` env var, app config, and a
+  re-pointed VCT mount at `vct:///genesis-source`.
   """
   def override_in_effect?(status) do
     status.reference != nil and status.reference != status.dir
+  end
+
+  # Reads the reserved VCT mount point DEFENSIVELY: the status map may be
+  # atom- or string-keyed, and an older backend (or a test stub) carries no
+  # `point` key at all — HEEx `map.field` would raise on the missing key, so
+  # the VCT row is gated on this helper returning a non-empty binary.
+  defp mount_point(status) do
+    value = Map.get(status, :point) || Map.get(status, "point")
+    if is_binary(value) and value != "", do: value, else: nil
   end
 
   @doc """
