@@ -541,11 +541,13 @@ defmodule EvoGit.Sandbox.MacOS do
   this function redirects stdout/stderr to a temp file. If the timeout fires, the
   partial output written so far can still be read from the temp file.
 
-  `opts` is the observability option list (only `:execution_id` is defined): both
-  paths spawn the child through a directly owned port (the enabled one via
-  `sandbox-exec`) and attach a `:posix` handle carrying its real OS pid, so
-  foreground executions are observable and controllable (macOS has no systemd,
-  so there is no unit to address instead).
+  `opts` is the observability option list: `:execution_id` addresses the tracked
+  record and `:record_exit_status` (default true) suppresses the terminal-fact
+  recording for a command that will be re-run (the process-limit retry uses it
+  internally). Both paths spawn the child through a directly owned port (the
+  enabled one via `sandbox-exec`) and attach a `:posix` handle carrying its real
+  OS pid, so foreground executions are observable and controllable (macOS has
+  no systemd, so there is no unit to address instead).
 
   Returns:
     * `{:ok, output, exit_code}` — command completed within timeout
@@ -598,28 +600,31 @@ defmodule EvoGit.Sandbox.MacOS do
       env = [{"TMPDIR", resolved_tmpdir} | git_env]
       deadline = System.monotonic_time(:millisecond) + timeout
 
-      case run_sandbox_exec(profile, exec, exec_args, cwd, env, opts, timeout) do
-        {:ok, 0} = _success ->
-          {:ok, Helpers.read_tempfile(tmpfile, max_bytes), 0}
+      result =
+        case run_sandbox_exec(profile, exec, exec_args, cwd, env, opts, timeout) do
+          {:ok, 0} = _success ->
+            {:ok, Helpers.read_tempfile(tmpfile, max_bytes), 0}
 
-        {:ok, _non_zero_exit_code} = result ->
-          retry_without_process_limit(
-            result,
-            profile,
-            exec,
-            exec_args,
-            cwd,
-            env,
-            opts,
-            deadline,
-            tmpfile,
-            max_bytes
-          )
+          {:ok, _non_zero_exit_code} = result ->
+            retry_without_process_limit(
+              result,
+              profile,
+              exec,
+              exec_args,
+              cwd,
+              env,
+              opts,
+              deadline,
+              tmpfile,
+              max_bytes
+            )
 
-        {:timeout, :killed} ->
-          partial = Helpers.read_tempfile(tmpfile, max_bytes)
-          {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
-      end
+          {:timeout, :killed} ->
+            partial = Helpers.read_tempfile(tmpfile, max_bytes)
+            {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
+        end
+
+      record_result(opts, result)
     else
       # Non-sandbox path: no nix wrapping (consistent with run/4 disabled path).
       # The managed per-task tmpdir (when installed) rides along via
@@ -643,6 +648,8 @@ defmodule EvoGit.Sandbox.MacOS do
 
   # One `sandbox-exec -p <profile> -- <exec> <args>` attempt through the shared
   # port-based runner: real OS pid, tracked attach, tree kill on timeout.
+  # `record_exit_status: false` because the process-limit RETRY re-runs the
+  # command — only the attempt reported by `run_with_partial/7` is recorded.
   defp run_sandbox_exec(profile, exec, exec_args, cwd, env, opts, timeout) do
     Helpers.run_tracked_command(
       "sandbox-exec",
@@ -650,9 +657,22 @@ defmodule EvoGit.Sandbox.MacOS do
       cwd,
       env,
       timeout,
-      opts,
+      Keyword.put(opts, :record_exit_status, false),
       __MODULE__
     )
+  end
+
+  # Records the FINAL attempt's terminal fact on the tracked execution (the
+  # process-limit retry means earlier attempts are not the execution's
+  # outcome). Best-effort via the shared helpers; returns `result` untouched.
+  defp record_result(opts, result) do
+    case result do
+      {:ok, _output, exit_code} -> Helpers.record_exit(opts, exit_code)
+      {:timeout, _partial} -> Helpers.record_timeout(opts)
+      _other -> :ok
+    end
+
+    result
   end
 
   # Fail-safe process-limit retry for the `run_with_partial` path: the first

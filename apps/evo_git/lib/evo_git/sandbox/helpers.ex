@@ -429,9 +429,9 @@ defmodule EvoGit.Sandbox.Helpers do
   (created beforehand via `partial_output_tmpfile/0`) when the timeout fires.
 
   Shared tail of every backend's `run_with_partial/7` non-sandbox / Unix path
-  (linux/bwrap/macos disabled paths, the `None` backend's Unix path — which
-  passes nix-wrapped `exec`/`exec_args` — and the macOS `sandbox-exec` enabled
-  path).
+  (linux/bwrap/macos disabled paths and the `None` backend's Unix path — which
+  passes nix-wrapped `exec`/`exec_args`). `run_tracked_command/7` is the same
+  primitive reused by the macOS `sandbox-exec` enabled path.
 
   **Why a port instead of `System.cmd/3`**: the child is spawned directly
   (`Port.open({:spawn_executable, …})` with `System.cmd`'s option set), so its
@@ -445,7 +445,9 @@ defmodule EvoGit.Sandbox.Helpers do
   `build_redirected_command/3` wrapping, so port data messages are drained and
   deliberately discarded; only the exit status is awaited.
 
-  `opts` is the observability option list (only `:execution_id` is defined);
+  `opts` is the observability option list (`:execution_id` addresses the
+  tracked record; `:record_exit_status`, default `true`, suppresses the
+  terminal-fact recording for a command that will be re-run);
   `backend` names the sandbox backend module for the handle's diagnostics.
 
   Returns:
@@ -504,6 +506,11 @@ defmodule EvoGit.Sandbox.Helpers do
   whole process TREE is killed (`kill_process_tree/1` on the OS pid) and the
   port is closed/drained, so a wedged child cannot outlive the call.
 
+  The observed status is recorded as the tracked execution's terminal fact —
+  `record_exit/2` on completion, `record_timeout/1` on the timeout (AFTER the
+  tree kill, so the recorded status is truthful); `:record_exit_status: false`
+  in `opts` suppresses it for a command that will be re-run.
+
   Returns `{:ok, exit_code}` or `{:timeout, :killed}`.
   """
   @spec run_tracked_command(
@@ -519,18 +526,21 @@ defmodule EvoGit.Sandbox.Helpers do
     {port, os_pid} = spawn_tracked_port(exec, exec_args, cwd, env, opts, backend)
     deadline = System.monotonic_time(:millisecond) + timeout
 
-    case await_exit_status(port, deadline) do
-      {:ok, exit_code} ->
-        {:ok, exit_code}
+    result =
+      case await_exit_status(port, deadline) do
+        {:ok, exit_code} ->
+          {:ok, exit_code}
 
-      :timeout ->
-        # The child may hold a whole tree (bash -c → command). Kill the tree
-        # first (a no-op when the pid never materialized), then close the port.
-        kill_process_tree(os_pid)
-        close_port(port)
-        drain_port_messages(port)
-        {:timeout, :killed}
-    end
+        :timeout ->
+          # The child may hold a whole tree (bash -c → command). Kill the tree
+          # first (a no-op when the pid never materialized), then close the port.
+          kill_process_tree(os_pid)
+          close_port(port)
+          drain_port_messages(port)
+          {:timeout, :killed}
+      end
+
+    record_result(opts, result)
   end
 
   # Spawns the executable through a directly owned port and publishes its OS pid
@@ -619,6 +629,71 @@ defmodule EvoGit.Sandbox.Helpers do
   catch
     _kind, _reason -> :ok
   end
+
+  @doc """
+  Best-effort terminal fact for a command that RAN to completion: the tracked
+  execution is finished `:completed` with `reason: :exited` and the real OS
+  `exit_code` — a non-zero code still means the tool call itself succeeded.
+
+  `exit_code` degrades to `nil` when the backend could not observe one. No-op
+  without an `:execution_id`; total by construction, so observability can never
+  change a command result.
+  """
+  @spec record_exit(keyword() | nil, integer() | nil) :: :ok
+  def record_exit(opts, exit_code) do
+    finish_execution(opts, :completed,
+      exit_code: normalize_exit_code(exit_code),
+      reason: :exited
+    )
+  end
+
+  @doc """
+  Best-effort terminal fact for a command that exhausted its timeout budget: the
+  tracked execution is finished `:killed` with `reason: :timeout` and no exit
+  code. No-op without an `:execution_id`; total by construction.
+  """
+  @spec record_timeout(keyword() | nil) :: :ok
+  def record_timeout(opts) do
+    finish_execution(opts, :killed, exit_code: nil, reason: :timeout)
+  end
+
+  # The ONE settlement call in the sandbox layer: every backend records its
+  # terminal fact through this funnel, so the finish option shape lives here.
+  defp finish_execution(opts, status, finish_opts) do
+    case execution_id(opts) do
+      id when is_binary(id) -> EvoGit.ProcessManager.finish(id, status, finish_opts)
+      _ -> :ok
+    end
+  rescue
+    _ -> :ok
+  catch
+    _kind, _reason -> :ok
+  end
+
+  defp normalize_exit_code(code) when is_integer(code), do: code
+  defp normalize_exit_code(_code), do: nil
+
+  # Records a command RESULT so call sites stay one-liners; returns the result
+  # untouched. `:record_exit_status` (default true) suppresses the recording for
+  # a command a caller will RE-RUN (the macOS process-limit retry), so only the
+  # FINAL attempt's status becomes the execution's outcome.
+  defp record_result(opts, result) do
+    if record_exit_status?(opts) do
+      case result do
+        {:ok, {_output, exit_code}} -> record_exit(opts, exit_code)
+        {:ok, exit_code} -> record_exit(opts, exit_code)
+        {:timeout, _partial} -> record_timeout(opts)
+        _other -> :ok
+      end
+    end
+
+    result
+  end
+
+  defp record_exit_status?(opts) when is_list(opts),
+    do: Keyword.get(opts, :record_exit_status, true) != false
+
+  defp record_exit_status?(_opts), do: true
 
   defp execution_id(opts) when is_list(opts), do: Keyword.get(opts, :execution_id)
   defp execution_id(_opts), do: nil

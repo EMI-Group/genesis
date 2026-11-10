@@ -522,6 +522,9 @@ defmodule EvoGit.Sandbox.Linux do
       case Task.yield(task, timeout) || Task.shutdown(task) do
         {:ok, {_output, exit_code}} ->
           EvoGit.SandboxProcessRegistry.unregister(unit)
+          # Recorded AFTER the unit is unregistered, so the terminal fact is the
+          # real systemd-run exit status.
+          Helpers.record_exit(opts, exit_code)
           content = Helpers.read_tempfile(tmpfile, max_bytes)
           {:ok, content, exit_code}
 
@@ -529,6 +532,9 @@ defmodule EvoGit.Sandbox.Linux do
           # CRITICAL: Task.shutdown killed the systemd-run CLIENT, but the
           # .service unit keeps running. Release spawns an async Task to stop it.
           EvoGit.SandboxProcessRegistry.release(unit)
+          # Recorded AFTER the release (which kills the unit), so the timeout
+          # fact is written against a command that is actually being stopped.
+          Helpers.record_timeout(opts)
           partial = Helpers.read_tempfile(tmpfile, max_bytes)
           {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
       end
