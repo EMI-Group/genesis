@@ -233,7 +233,7 @@ defmodule EvoGit.Agent.Session.InteractiveCloseTest do
   # ---------------------------------------------------------------------------
   # Harness — a repo-backed session with real ETS registration rows
   # ---------------------------------------------------------------------------
-  defp agent_state(agent_id, repo_root, _task_id) do
+  defp agent_state(_agent_id, repo_root, _task_id) do
     %AgentState{
       context_node: context_node(repo_root),
       objective: "interactive close objective sentinel",
@@ -356,7 +356,9 @@ defmodule EvoGit.Agent.Session.InteractiveCloseTest do
   end
 
   defp wait_until(fun, timeout) do
-    unless appears_within?(fun, timeout) do
+    if appears_within?(fun, timeout) do
+      true
+    else
       flunk("condition not met within #{timeout}ms")
     end
   end
