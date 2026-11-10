@@ -31,7 +31,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   stderr: named-device capture goes through ONE shared `StringIO` per device,
   handed to every capturer with per-capturer offsets, so bytes written by a
   CONCURRENT test (another async module compiling a module, for example) can
-  appear inside this window. The refutes below are therefore SCOPED to the seven
+  appear inside this window. The refutes below are therefore SCOPED to the eight
   migration module NAMES — the only redefinitions that can be a regression of
   the property this suite owns — instead of a bare `"redefining module"`.
   `Boot` compiles in the calling process, so this test's own compiles are always
@@ -46,9 +46,9 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   alias EvoGit.Store.Boot
   alias EvoGit.Store.RepoScope
 
-  # The shipped migration versions — the leading integers of the seven
+  # The shipped migration versions — the leading integers of the eight
   # `priv/repo/migrations/` files (`20260815000001_baseline_adoption.exs` …
-  # `20260815000007_vct_mounts.exs`), as the sibling boot suites pin them;
+  # `20260815000008_session_mode.exs`), as the sibling boot suites pin them;
   # `migration_file_versions/0` re-derives them from disk.
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
@@ -57,6 +57,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   @archive_version 20_260_815_000_005
   @prune_indexes_version 20_260_815_000_006
   @vct_mounts_version 20_260_815_000_007
+  @session_mode_version 20_260_815_000_008
 
   @baseline_module EvoGit.Repo.Migrations.BaselineAdoption
   @normalization_module EvoGit.Repo.Migrations.DataNormalization
@@ -65,6 +66,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   @archive_module EvoGit.Repo.Migrations.TaskAgentArchives
   @prune_indexes_module EvoGit.Repo.Migrations.PruneRedundantIndexes
   @vct_mounts_module EvoGit.Repo.Migrations.VctMounts
+  @session_mode_module EvoGit.Repo.Migrations.SessionMode
 
   # Every shipped migration version, ascending — the list the seam must return
   # and the list a fresh boot stamps.
@@ -75,7 +77,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
     @covering_index_version,
     @archive_version,
     @prune_indexes_version,
-    @vct_mounts_version
+    @vct_mounts_version,
+    @session_mode_version
   ]
 
   # The `:persistent_term` memo slot `EvoGit.Store.Boot` fills with the
@@ -114,7 +117,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                {@covering_index_version, @covering_index_module},
                {@archive_version, @archive_module},
                {@prune_indexes_version, @prune_indexes_module},
-               {@vct_mounts_version, @vct_mounts_module}
+               {@vct_mounts_version, @vct_mounts_module},
+               {@session_mode_version, @session_mode_module}
              ]
 
       versions = Enum.map(source, &elem(&1, 0))
@@ -174,7 +178,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                {@covering_index_version, @covering_index_module},
                {@archive_version, @archive_module},
                {@prune_indexes_version, @prune_indexes_module},
-               {@vct_mounts_version, @vct_mounts_module}
+               {@vct_mounts_version, @vct_mounts_module},
+               {@session_mode_version, @session_mode_module}
              ]
 
       assert Code.ensure_loaded?(@baseline_module)
@@ -184,6 +189,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
       assert Code.ensure_loaded?(@archive_module)
       assert Code.ensure_loaded?(@prune_indexes_module)
       assert Code.ensure_loaded?(@vct_mounts_module)
+      assert Code.ensure_loaded?(@session_mode_module)
 
       output =
         capture_io(:stderr, fn ->
@@ -205,7 +211,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   # emitted by a concurrent async test shares the named-device stderr capture,
   # so a bare `"redefining module"` match would be flaky. Every migration module
   # is still checked individually, so a regression to a directory source (which
-  # recompiles all seven on every boot) is caught.
+  # recompiles all eight on every boot) is caught.
   defp refute_migration_redefinition(output) do
     for module <- [
           @baseline_module,
@@ -214,7 +220,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
           @covering_index_module,
           @archive_module,
           @prune_indexes_module,
-          @vct_mounts_module
+          @vct_mounts_module,
+          @session_mode_module
         ] do
       refute output =~ "redefining module #{inspect(module)}"
     end

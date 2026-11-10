@@ -7,7 +7,7 @@ defmodule EvoGit.Store.Operations.PagesTest do
   Pinned contracts:
 
     * `select_tasks_page/2` returns EXACTLY `%{rows: [summary], total: n}`; each
-      row is the canonical 16-key summary projection (no `result`, `logs` or
+      row is the canonical 17-key summary projection (no `result`, `logs` or
       `usage` key) — a multi-megabyte `result` row costs the same as an empty
       one;
     * filter parity with `Operations.Tasks.safe_select_paginated_tasks/2`: the
@@ -61,7 +61,8 @@ defmodule EvoGit.Store.Operations.PagesTest do
     :commit_sha,
     :lease_expires_at,
     :updated_at,
-    :error
+    :error,
+    :session_mode
   ]
 
   @base_started ~U[2026-01-01 00:00:00.000Z]
@@ -144,7 +145,7 @@ defmodule EvoGit.Store.Operations.PagesTest do
   # ── Projection + totals ─────────────────────────────────────────────────
 
   describe "select_tasks_page/2 — return shape" do
-    test "returns exactly %{rows, total} with 16-key summary rows" do
+    test "returns exactly %{rows, total} with 17-key summary rows" do
       repo = start_repo!(:shape)
 
       for i <- 0..2, do: put_timed!(repo, "page-#{i}", i)
