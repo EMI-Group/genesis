@@ -431,11 +431,11 @@ defmodule EvoDash.NodeContextTest do
     end
   end
 
-  describe "managed-process RPC delegates (isolated ProcessManager instance)" do
-    # These four helpers reach `EvoGit.ProcessManager` through
-    # `EvoGit.RemoteNode.call_remote/4` → `RemoteAPI`: the LOCAL path runs
-    # `apply/3` IN THIS PROCESS, and every manager call resolves its registry
-    # name at CALL time via `EvoGit.ProcessManager.server/0`
+  describe "managed processes — local-first (isolated ProcessManager instance)" do
+    # The viewed node IS this BEAM, so these four helpers call
+    # `EvoGit.ProcessManager` DIRECTLY — no `EvoGit.RemoteNode`, no `:erpc`,
+    # no RPC seam. Every manager call resolves its registry name at CALL time
+    # via `EvoGit.ProcessManager.server/0`
     # (`Process.get(:evogit_process_manager_server) || EvoGit.ProcessManager`).
     #
     # So each test starts its OWN named instance and points this process at it:
@@ -505,9 +505,9 @@ defmodule EvoDash.NodeContextTest do
     test "an unreachable manager degrades: list is [] and the id read unwraps its answer" do
       track_execution!("echo x", %{agent_id: 4242, task_id: "task-x"})
 
-      # A NAME with no registered process: `RemoteAPI.with_manager/2` liveness
-      # check fails, so the documented degraded values come back instead of an
-      # exit (and `list_processes/2` never leaks the `{:ok, []}` envelope).
+      # A NAME with no registered process: the local liveness guard fails, so
+      # the documented degraded values come back instead of an exit (and
+      # `list_processes/2` never leaks an envelope).
       Process.put(
         :evogit_process_manager_server,
         :"no_such_manager_#{System.unique_integer([:positive])}"
@@ -530,8 +530,8 @@ defmodule EvoDash.NodeContextTest do
       assert EvoDash.NodeContext.get_process(node(), "proc-999999") == {:error, :not_found}
       assert EvoDash.NodeContext.get_process(node(), 123) == {:error, :not_found}
 
-      # A non-binary id answers without an RPC: an unreachable manager would
-      # report `:process_manager_unavailable`, so `:not_found` proves the local
+      # A non-binary id answers without any call: an unreachable manager would
+      # report `:process_manager_unavailable`, so `:not_found` proves the
       # short-circuit.
       Process.put(
         :evogit_process_manager_server,
@@ -573,7 +573,7 @@ defmodule EvoDash.NodeContextTest do
       assert EvoDash.NodeContext.process_control(node(), id, :pause, "no handle yet") ==
                {:error, :no_handle}
 
-      # An unrecognized action is answered by `RemoteAPI` itself (never
+      # An unrecognized action is answered by NodeContext itself (never
       # forwarded to the manager, so the isolated registry cannot crash).
       assert EvoDash.NodeContext.process_control(node(), id, :bogus, "bad action") ==
                {:error, {:unknown_action, :bogus}}
@@ -584,6 +584,240 @@ defmodule EvoDash.NodeContextTest do
       # The manager survived the invalid action and still answers a valid read.
       assert {:ok, %Execution{id: ^id, status: :starting, control_log: []}} =
                EvoDash.NodeContext.get_process(node(), id)
+    end
+  end
+
+  describe "managed processes — local node never touches the remote machinery" do
+    # `Process.get(:node_context_process_rpc)` is the forcing mechanism: the
+    # remote transport is resolved at CALL time inside the remote branch, so a
+    # PROCESS-LOCAL override proves the local path never reaches it. This keeps
+    # the module `async: true` (a `Task`-spawned caller would need `$callers`
+    # to inherit the value).
+    setup do
+      name = :"proc_mgr_local_#{System.unique_integer([:positive])}"
+      start_supervised!({EvoGit.ProcessManager, [name: name]})
+      Process.put(:evogit_process_manager_server, name)
+      test_pid = self()
+
+      Process.put(:node_context_process_rpc, fn node, mod, fun, args ->
+        send(test_pid, {:rpc_called, node, mod, fun, args})
+        {:ok, :should_not_happen}
+      end)
+
+      on_exit(fn ->
+        Process.delete(:evogit_process_manager_server)
+        Process.delete(:node_context_process_rpc)
+      end)
+
+      :ok
+    end
+
+    test "list/get/stats/control all answer from the in-BEAM manager, with no RPC" do
+      assert {:ok, id} =
+               EvoGit.ProcessManager.track(:tool_call, %{
+                 command: "echo local",
+                 tool: "bash",
+                 agent_id: 4242,
+                 runtime: :foreground
+               })
+
+      assert [%Execution{id: ^id}] = EvoDash.NodeContext.list_processes(node())
+      refute_received {:rpc_called, _, _, _, _}
+
+      assert {:ok, %Execution{id: ^id}} = EvoDash.NodeContext.get_process(node(), id)
+      refute_received {:rpc_called, _, _, _, _}
+
+      # A tracked record with no OS handle: the manager's own `:no_handle`.
+      assert EvoDash.NodeContext.process_stats(node(), id) == {:error, :not_running}
+      refute_received {:rpc_called, _, _, _, _}
+
+      assert EvoDash.NodeContext.process_control(node(), id, :pause, "operator pause") ==
+               {:error, :no_handle}
+
+      refute_received {:rpc_called, _, _, _, _}
+    end
+
+    test "control reaches the manager's real control layer (invalid signal, no OS work)" do
+      assert {:ok, id} =
+               EvoGit.ProcessManager.track(:tool_call, %{
+                 command: "echo local",
+                 tool: "bash",
+                 runtime: :foreground
+               })
+
+      # A `:posix` handle with a pid that is never signalled: an unnormalizable
+      # signal is rejected by `EvoGit.ProcessManager.Control` BEFORE any OS
+      # call, so this proves the manager resolved the record + handle without
+      # touching a live process.
+      :ok = EvoGit.ProcessManager.attach(id, EvoGit.ProcessManager.Handle.posix(999_999_999))
+
+      assert EvoDash.NodeContext.process_control(node(), id, {:signal, :bogus}, "bad signal") ==
+               {:error, :invalid_signal}
+
+      refute_received {:rpc_called, _, _, _, _}
+
+      # Unchanged record: nothing was signalled and the log stays empty.
+      assert {:ok, %Execution{status: :running, control_log: []}} =
+               EvoDash.NodeContext.get_process(node(), id)
+
+      # A terminal record is the idempotent `:ok` path — no signal either.
+      :ok = EvoGit.ProcessManager.finish(id, :completed)
+      assert EvoDash.NodeContext.process_control(node(), id, :kill, "operator kill") == :ok
+      refute_received {:rpc_called, _, _, _, _}
+    end
+
+    test "an unknown action is answered locally and never forwarded" do
+      assert {:ok, id} =
+               EvoGit.ProcessManager.track(:tool_call, %{command: "echo local", tool: "bash"})
+
+      assert EvoDash.NodeContext.process_control(node(), id, :bogus, "bad action") ==
+               {:error, {:unknown_action, :bogus}}
+
+      assert EvoDash.NodeContext.process_control(node(), id, "pause", "bad action") ==
+               {:error, {:unknown_action, "pause"}}
+
+      refute_received {:rpc_called, _, _, _, _}
+
+      # Still answerable, so no control action was applied.
+      assert {:ok, %Execution{control_log: []}} = EvoDash.NodeContext.get_process(node(), id)
+    end
+
+    test "a dead/absent manager degrades without raising" do
+      Process.put(
+        :evogit_process_manager_server,
+        :"no_such_manager_#{System.unique_integer([:positive])}"
+      )
+
+      assert EvoDash.NodeContext.list_processes(node()) == []
+
+      assert EvoDash.NodeContext.get_process(node(), "proc-1") ==
+               {:error, :process_manager_unavailable}
+
+      assert EvoDash.NodeContext.process_stats(node(), "proc-1") ==
+               {:error, :process_manager_unavailable}
+
+      assert EvoDash.NodeContext.process_control(node(), "proc-1", :kill, "operator kill") ==
+               {:error, :process_manager_unavailable}
+
+      # The action whitelist runs BEFORE the manager is consulted, so an
+      # unknown action keeps its own answer even with no manager.
+      assert EvoDash.NodeContext.process_control(node(), "proc-1", :bogus, "bad action") ==
+               {:error, {:unknown_action, :bogus}}
+
+      refute_received {:rpc_called, _, _, _, _}
+    end
+  end
+
+  describe "managed processes — a remote viewed node routes through the RPC" do
+    @remote_node :"remote@127.0.0.1"
+
+    setup do
+      test_pid = self()
+      Process.put(:node_context_process_rpc, &send(test_pid, {:rpc_called, &1, &2, &3, &4}))
+      on_exit(fn -> Process.delete(:node_context_process_rpc) end)
+      :ok
+    end
+
+    test "list_processes/2 delegates and unwraps the envelope" do
+      Process.put(:node_context_process_rpc, fn node, mod, fun, args ->
+        send(self(), {:rpc_called, node, mod, fun, args})
+        {:ok, [:remote_marker]}
+      end)
+
+      assert EvoDash.NodeContext.list_processes(@remote_node, agent_id: 4242) ==
+               [:remote_marker]
+
+      assert_received {:rpc_called, @remote_node, EvoGit.AgentScheduler.RemoteAPI,
+                       :list_processes, [[agent_id: 4242]]}
+
+      # `{:error, reason}` and a non-list payload both degrade to `[]`.
+      Process.put(:node_context_process_rpc, fn _n, _m, _f, _a -> {:error, :nodedown} end)
+      assert EvoDash.NodeContext.list_processes(@remote_node) == []
+
+      Process.put(:node_context_process_rpc, fn _n, _m, _f, _a -> {:ok, %{not: :a_list}} end)
+      assert EvoDash.NodeContext.list_processes(@remote_node) == []
+    end
+
+    test "get_process/2 and process_stats/2 delegate and unwrap" do
+      parent = self()
+
+      Process.put(:node_context_process_rpc, fn node, mod, fun, args ->
+        send(parent, {:rpc_called, node, mod, fun, args})
+
+        case fun do
+          :get_process -> {:ok, {:ok, :remote_execution}}
+          :process_stats -> {:ok, {:error, :not_running}}
+        end
+      end)
+
+      assert EvoDash.NodeContext.get_process(@remote_node, "proc-7") == {:ok, :remote_execution}
+
+      assert_received {:rpc_called, @remote_node, EvoGit.AgentScheduler.RemoteAPI, :get_process,
+                       ["proc-7"]}
+
+      assert EvoDash.NodeContext.process_stats(@remote_node, "proc-7") ==
+               {:error, :not_running}
+
+      assert_received {:rpc_called, @remote_node, EvoGit.AgentScheduler.RemoteAPI, :process_stats,
+                       ["proc-7"]}
+
+      # The core's own error unwraps bare; a transport failure passes through.
+      Process.put(:node_context_process_rpc, fn _n, _m, _f, _a -> {:ok, {:error, :not_found}} end)
+
+      assert EvoDash.NodeContext.get_process(@remote_node, "proc-7") == {:error, :not_found}
+
+      Process.put(:node_context_process_rpc, fn _n, _m, _f, _a -> {:error, :timeout} end)
+
+      assert EvoDash.NodeContext.process_stats(@remote_node, "proc-7") == {:error, :timeout}
+
+      # Non-binary ids never reach the transport.
+      Process.put(:node_context_process_rpc, fn _n, _m, _f, _a ->
+        send(parent, :rpc_called)
+        {:ok, :should_not_happen}
+      end)
+
+      assert EvoDash.NodeContext.get_process(@remote_node, 7) == {:error, :not_found}
+      assert EvoDash.NodeContext.process_stats(@remote_node, 7) == {:error, :not_found}
+      refute_received :rpc_called
+    end
+
+    test "process_control/4 delegates the action verbatim and unwraps" do
+      parent = self()
+
+      Process.put(:node_context_process_rpc, fn node, mod, fun, args ->
+        send(parent, {:rpc_called, node, mod, fun, args})
+        {:ok, :ok}
+      end)
+
+      assert EvoDash.NodeContext.process_control(
+               @remote_node,
+               "proc-7",
+               {:signal, "TERM"},
+               "operator reason"
+             ) == :ok
+
+      assert_received {:rpc_called, @remote_node, EvoGit.AgentScheduler.RemoteAPI,
+                       :process_control, ["proc-7", {:signal, "TERM"}, "operator reason"]}
+
+      Process.put(:node_context_process_rpc, fn _n, _m, _f, _a -> {:ok, {:error, :terminal}} end)
+
+      assert EvoDash.NodeContext.process_control(@remote_node, "proc-7", :kill, "reason") ==
+               {:error, :terminal}
+
+      Process.put(:node_context_process_rpc, fn _n, _m, _f, _a -> {:error, :nodedown} end)
+
+      assert EvoDash.NodeContext.process_control(@remote_node, "proc-7", :pause, "reason") ==
+               {:error, :nodedown}
+
+      Process.put(:node_context_process_rpc, fn _n, _m, _f, _a ->
+        send(parent, :rpc_called)
+        {:ok, :should_not_happen}
+      end)
+
+      assert EvoDash.NodeContext.process_control(@remote_node, 7, :pause, "reason") ==
+               {:error, :not_found}
+
+      refute_received :rpc_called
     end
   end
 end
