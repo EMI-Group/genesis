@@ -139,9 +139,13 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   """
   @spec get_agent_state(agent_id :: pos_integer()) :: AgentState.t() | nil
   def get_agent_state(agent_id) do
-    case lookup_agent_state(agent_id) do
-      nil -> nil
-      %AgentState{} = state -> %{state | context: nil}
+    # Read through the Store so the CONTROL-PLANE values (pending queue, cancel
+    # flag, compression count) are projected onto the struct — the raw row never
+    # carries them (see `EvoGit.AgentScheduler.ControlPlane`).
+    case EvoGit.AgentScheduler.Store.get_agent_state(agent_id) do
+      {:ok, %AgentState{} = state} -> %{state | context: nil}
+      {:ok, other} -> other
+      :error -> nil
     end
   end
 
