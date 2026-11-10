@@ -73,7 +73,7 @@ The `checkpoint:` opt handed to `Exchange.run/2` is inert in this checkpoint (`E
 - `Summary.select_all/0` uses `:ets.select/2` (never `:tab2list`), returning `[]` when the table is absent.
 - The session owns the worktree and the tmpdir; the worker owns nothing durable and installs the SESSION pid as `:evogit_agent_pid` (D7), so a worker death never orphans owner-bound state.
 - An exception inside the worker is deliberately NOT caught: it becomes an abnormal `:DOWN`, which the session maps onto its existing crash path.
-- `EvoGit.Agent.Session.Registry` and `EvoGit.Agent.Session.Supervisor` exist as child specs but are NOT yet in `EvoGit.Agent.Supervisor`'s tree; the scheduler-wiring checkpoint adds them.
+- `EvoGit.Agent.Session.Registry` and `EvoGit.Agent.Session.Supervisor` are started by `EvoGit.Application` before `EvoGit.AgentScheduler`; no production code starts a session yet, and the scheduler's log-and-ignore tolerance clause is a placeholder for the wiring checkpoint.
 
 ## Routing Table
 

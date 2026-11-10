@@ -82,33 +82,32 @@ defmodule EvoGit.Agent.SessionTest do
   modules), `refute_terminal/4` is the bounded negative, and the trace is
   disabled as soon as the assertion completes.
 
-  ## KNOWN PRODUCTION DEFECT — the SUCCESS path cannot deliver today
+  ## Seven pinned scenarios
 
-  `EvoGit.Agent.Session.Worker.refresh/1`
-  (`apps/evo_git/lib/evo_git/agent/session/worker.ex:85-87`) pipes the exchange
-  outcome's third element into `EvoGit.Agent.Runner.refresh_commit_sha/1` and
-  then calls `elem(1)` on the result:
+  1. lifecycle terminal delivery — the one-shot `:starting` → `:running` →
+     `:done` run with exactly ONE `{:agent_session_result, …}`, delivered
+     before the `:normal` stop;
+  2. responsiveness while the worker blocks — `inspect/2` + `history/2` answer
+     while the exchange is parked in its LLM call;
+  3. graceful cancel — the scheduler cancel flag is set and the session enters
+     `:cancelling` WITHOUT killing the worker, so the save-work grace runs to
+     its terminal result;
+  4. force cancel — the worker is killed and the session stops `:shutdown`
+     with NO result delivered;
+  5. abnormal exit on a crashing worker — the crash reason propagates and no
+     result is delivered;
+  6. the `:running` summary plus history — `Summary.publish/3` reports the run
+     (`turn`, `message_count`, `status`) and never writes `context`, and
+     `history/2` returns the checkpointed messages;
+  7. `input/2` control-plane transport — the message lands on the scheduler's
+     pending-message queue, and every public read/command degrades to its
+     documented fallback once the session is gone.
 
-      defp refresh({:finish, %State{} = state, result}) do
-        {:finish, state, result |> Runner.refresh_commit_sha() |> elem(1)}
-      end
-
-  `EvoGit.Agent.Exchange.outcome/0` is `{:finish, State.t(), Result.t()}` — the
-  third element is a BARE `%Result{}`, NOT an `{:ok, result}` tuple — and
-  `refresh_commit_sha/1` returns that same shape for a repo-less run, so
-  `elem/2` raises `ArgumentError` (`:erlang.element(2, %EvoGit.Agent.Result{…})`)
-  on EVERY successful exchange. The worker task then dies, the session exits
-  with that `:badarg` crash reason, and NO `{:agent_session_result, …}` is
-  delivered at all.
-  An `{:error, reason}` outcome IS delivered correctly, and the force-cancel and
-  crash paths are unaffected, so exactly the five SUCCESS scenarios below fail
-  (each for this one reason) while force-cancel and the crashing-worker case
-  pass.
-  The fix belongs to production (`refresh/1` must deliver the refreshed
-  `%Result{}` itself — unwrap `{:ok, inner}` → `inner`, otherwise pass through);
-  these assertions are deliberately NOT weakened or skipped, per this suite's
-  policy ("a production defect is never hidden to make a suite green"), so they
-  are the regression pin for that fix.
+  Engine seams reach the exchange only through the scheduler's
+  `dispatch_ctx[:exchange_opts]` list, which is DEFAULT INERT: production never
+  sets the key, so the tests add `:llm_call` (and its siblings) without a
+  production-engine branch, and an absent key keeps the production path
+  byte-identical.
   """
 
   use ExUnit.Case, async: true

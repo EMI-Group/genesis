@@ -83,7 +83,7 @@ defmodule EvoGit.Agent.Session.Worker do
   # `:repo_less`), so it MUST run here in the worker — never in the session.
   # It refreshes success shapes only and returns everything else untouched.
   defp refresh({:finish, %State{} = state, result}) do
-    {:finish, state, result |> Runner.refresh_commit_sha() |> elem(1)}
+    {:finish, state, Runner.refresh_commit_sha(result)}
   end
 
   # A failed exchange is delivered verbatim — never converted into a raise or a

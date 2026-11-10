@@ -44,10 +44,15 @@ defmodule EvoGit.Agent.Session do
 
   ## Wiring status
 
-  Nothing starts a session from production code yet: `EvoGit.Agent.Session.Registry` and
-  `EvoGit.Agent.Session.Supervisor` are available as child specs but are NOT in
-  `EvoGit.Agent.Supervisor`'s supervision tree, and `EvoGit.AgentScheduler` currently only
-  log-and-ignores `{:agent_session_result, ...}`.
+  The infrastructure is STARTED: `EvoGit.Application` begins
+  `EvoGit.Agent.Session.Registry` (a unique-name `Registry`) and
+  `EvoGit.Agent.Session.Supervisor` (a `DynamicSupervisor`) before
+  `EvoGit.AgentScheduler`, so a session always has a registry entry and an owner
+  supervisor.
+  No production code starts a session yet: dispatch still runs one-shot agent
+  `Task`s, and `EvoGit.AgentScheduler` log-and-ignores `{:agent_session_result,
+  ...}` — that tolerance clause is a placeholder for the wiring checkpoint, which
+  replaces it with the real admission/result handling.
   """
 
   @behaviour :gen_statem
