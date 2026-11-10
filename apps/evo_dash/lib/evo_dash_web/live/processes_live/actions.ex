@@ -108,6 +108,9 @@ defmodule EvoDashWeb.ProcessesLive.Actions do
   def error_message(_action, :no_handle),
     do: gettext("This process has no OS handle yet — nothing to signal.")
 
+  def error_message(_action, :no_os_process),
+    do: gettext("This execution has no OS process to signal.")
+
   def error_message(_action, :invalid_signal),
     do: gettext("The requested signal is not valid for this process.")
 

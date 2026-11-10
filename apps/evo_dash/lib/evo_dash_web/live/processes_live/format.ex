@@ -14,6 +14,13 @@ defmodule EvoDashWeb.ProcessesLive.Format do
   `:starting | :running | :paused | :completed | :failed | :killed | :unknown`.
   The page's three tabs are LIVE (`:starting`, `:running`, `:paused`),
   FINISHED (everything else, including `:unknown` and `nil`) and ALL.
+
+  Execution vocabulary: `:runtime` is `:foreground | :background`, and
+  `:backend` is `:builtin | :systemd | :bwrap | :sandbox_exec | :none` —
+  `:builtin` ran INSIDE the BEAM (no OS process, hence no pid/unit/uptime/CPU/
+  memory and nothing to signal), while every other backend is an external OS
+  process. `builtin?/1`, `external?/1` and `sampleable?/1` classify a record;
+  every label here is gettext-free English (the render layer wraps it).
   """
 
   @live_statuses [:starting, :running, :paused]
@@ -89,29 +96,86 @@ defmodule EvoDashWeb.ProcessesLive.Format do
   def kind_label(:background_job), do: "Background job"
   def kind_label(_kind), do: "Process"
 
-  @doc "Label for an execution backend atom."
+  @doc """
+  Label for an execution backend atom.
+
+  `:builtin` means the call ran INSIDE the BEAM (a built-in tool such as
+  `read`/`write`/`edit`/`rg`), so there is no OS process behind it; `:none` is
+  an EXTERNAL process that simply runs unsandboxed. Backend product names
+  (`systemd`, `bwrap`, `sandbox-exec`) are technical identifiers, never
+  translated.
+  """
+  def backend_label(:builtin), do: "In-process"
   def backend_label(:systemd), do: "systemd"
   def backend_label(:bwrap), do: "bwrap"
   def backend_label(:sandbox_exec), do: "sandbox-exec"
   def backend_label(:posix), do: "posix"
   def backend_label(:windows), do: "windows"
-  def backend_label(:none), do: "—"
+  def backend_label(:none), do: "Unsandboxed"
   def backend_label(nil), do: "—"
   def backend_label(other) when is_atom(other), do: Atom.to_string(other)
   def backend_label(_other), do: "—"
 
-  @doc "Label for the runtime dimension (`:foreground` / `:detached`)."
+  @doc "Label for the runtime dimension (`:foreground` / `:background`)."
   def runtime_label(:foreground), do: "Foreground"
-  def runtime_label(:detached), do: "Detached"
+  def runtime_label(:background), do: "Background"
   def runtime_label(other) when is_atom(other) and not is_nil(other), do: Atom.to_string(other)
   def runtime_label(_other), do: "—"
 
+  # ---------------------------------------------------------------------------
+  # Classification (built-in vs external OS process)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Whether an execution ran INSIDE the BEAM (backend `:builtin`, or the string
+  form `"builtin"`): such a record has no OS process, so it has no pid/unit,
+  no uptime, no CPU and no memory, and cannot be signalled.
+  """
+  def builtin?(execution), do: backend_value(execution) == :builtin
+
+  @doc """
+  Whether an execution is an EXTERNAL OS process — a map that is not
+  `builtin?/1`. Non-map garbage is not an execution at all and yields `false`.
+  """
+  def external?(execution) when is_map(execution), do: not builtin?(execution)
+  def external?(_execution), do: false
+
+  @doc """
+  Whether an execution's OS state can be sampled: it is `external?/1` AND
+  carries an OS identity (an integer `os_pid`, or a present `unit`/`job_id`).
+  """
+  def sampleable?(execution) when is_map(execution) do
+    external?(execution) and os_identity?(execution)
+  end
+
+  def sampleable?(_execution), do: false
+
+  # Reads the backend tolerantly: atom OR string form, else nil.
+  defp backend_value(execution) when is_map(execution) do
+    case field(execution, :backend) do
+      "builtin" -> :builtin
+      "none" -> :none
+      other -> other
+    end
+  end
+
+  defp backend_value(_execution), do: nil
+
+  defp os_identity?(execution) do
+    is_integer(field(execution, :os_pid)) or present?(field(execution, :unit)) or
+      present?(field(execution, :job_id))
+  end
+
   @doc """
   The OS target of an execution: the systemd unit when there is one, else the
-  main pid, else the background-job id, else `"—"`.
+  main pid, else the background-job id, else `"—"`. A built-in (in-BEAM)
+  execution has no OS identity at all, so it always renders `"—"`.
   """
   def target_label(%{} = execution) do
     cond do
+      builtin?(execution) ->
+        "—"
+
       present?(Map.get(execution, :unit)) ->
         "unit " <> to_text(Map.get(execution, :unit))
 
@@ -151,10 +215,10 @@ defmodule EvoDashWeb.ProcessesLive.Format do
 
   @doc """
   Process exit code label: the integer code, or `"—"` when the execution has
-  not reported one.
+  not reported one. The detail panel shows the raw code through this helper.
   """
   def exit_code_label(%{} = execution) do
-    case Map.get(execution, :exit_code) do
+    case field(execution, :exit_code) do
       code when is_integer(code) -> Integer.to_string(code)
       _other -> "—"
     end
@@ -162,8 +226,45 @@ defmodule EvoDashWeb.ProcessesLive.Format do
 
   def exit_code_label(_other), do: "—"
 
-  @doc "Human reason label of an execution (a term — formatted totally)."
-  def reason_label(%{} = execution), do: term_text(Map.get(execution, :reason))
+  @doc """
+  The table's Exit cell: the integer `:exit_code` when an external OS process
+  really exited, otherwise the terminal `:reason` when it is something other
+  than a plain `:exited` (a crash, a kill, an argument rejection, …), else
+  `"—"`. A live row and a plain exit without a code therefore both stay `"—"`.
+  """
+  def exit_label(%{} = execution) do
+    case field(execution, :exit_code) do
+      code when is_integer(code) ->
+        Integer.to_string(code)
+
+      _other ->
+        case field(execution, :reason) do
+          nil -> "—"
+          :exited -> "—"
+          reason -> reason_text(reason)
+        end
+    end
+  end
+
+  def exit_label(_other), do: "—"
+
+  @doc """
+  Canonical English text for a terminal `:reason` (gettext-free: the render
+  layer wraps it). Total: every reason value has a label, and an unrecognized
+  term still renders as text.
+  """
+  def reason_text(:exited), do: "Exited"
+  def reason_text(:timeout), do: "Timeout"
+  def reason_text(:invalid_arguments), do: "Invalid arguments"
+  def reason_text(:owner_died), do: "Owner died"
+  def reason_text(:no_os_process), do: "No OS process"
+  def reason_text({:killed_by, actor}), do: "Killed by " <> term_text(actor)
+  def reason_text({:crashed, detail}), do: "Crashed: " <> term_text(detail)
+  def reason_text(nil), do: "—"
+  def reason_text(other), do: term_text(other)
+
+  @doc "Human reason label of an execution (routed through `reason_text/1`)."
+  def reason_label(%{} = execution), do: reason_text(field(execution, :reason))
   def reason_label(_other), do: "—"
 
   @doc "Formats an arbitrary term as display text (never raises, never a raw `%{}`)."
@@ -180,20 +281,25 @@ defmodule EvoDashWeb.ProcessesLive.Format do
 
   @doc """
   Elapsed time of an execution: `started_at` (or `inserted_at`) until
-  `ended_at` (or `now`). `"—"` when no start time is known.
+  `ended_at` (or `now`). `"—"` when no start time is known, and always `"—"`
+  for a built-in (in-BEAM) execution, which has no OS process to time.
   """
   def uptime(execution, now \\ DateTime.utc_now())
 
   def uptime(%{} = execution, now) do
-    start = Map.get(execution, :started_at) || Map.get(execution, :inserted_at)
-    stop = Map.get(execution, :ended_at) || now
+    if builtin?(execution) do
+      "—"
+    else
+      start = Map.get(execution, :started_at) || Map.get(execution, :inserted_at)
+      stop = Map.get(execution, :ended_at) || now
 
-    case {start, stop} do
-      {%DateTime{} = started, %DateTime{} = ended} ->
-        duration_label(DateTime.diff(ended, started))
+      case {start, stop} do
+        {%DateTime{} = started, %DateTime{} = ended} ->
+          duration_label(DateTime.diff(ended, started))
 
-      _other ->
-        "—"
+        _other ->
+          "—"
+      end
     end
   end
 
@@ -250,15 +356,33 @@ defmodule EvoDashWeb.ProcessesLive.Format do
 
   def memory_bytes(_stats), do: nil
 
-  @doc "Human-readable memory of an execution's stats (`rss_bytes` first, then `memory_bytes`)."
-  def memory_label(%{} = execution), do: human_bytes(memory_bytes(Map.get(execution, :stats)))
+  @doc """
+  Human-readable memory of an execution's stats (`rss_bytes` first, then
+  `memory_bytes`). A built-in (in-BEAM) execution has no OS process, so it
+  always renders `"—"` even when a stale stats map is present.
+  """
+  def memory_label(%{} = execution) do
+    if builtin?(execution) do
+      "—"
+    else
+      human_bytes(memory_bytes(Map.get(execution, :stats)))
+    end
+  end
+
   def memory_label(_execution), do: "—"
 
-  @doc "CPU percentage of an execution's stats, one decimal (`12.3%`)."
+  @doc """
+  CPU percentage of an execution's stats, one decimal (`12.3%`). A built-in
+  (in-BEAM) execution has no OS process, so it always renders `"—"`.
+  """
   def cpu_label(%{} = execution) do
-    case stat(Map.get(execution, :stats), :cpu_percent) do
-      value when is_number(value) -> float_text(value) <> "%"
-      _other -> "—"
+    if builtin?(execution) do
+      "—"
+    else
+      case stat(Map.get(execution, :stats), :cpu_percent) do
+        value when is_number(value) -> float_text(value) <> "%"
+        _other -> "—"
+      end
     end
   end
 
@@ -273,6 +397,20 @@ defmodule EvoDashWeb.ProcessesLive.Format do
 
   defp pad2(value) when value < 10, do: "0" <> Integer.to_string(value)
   defp pad2(value), do: Integer.to_string(value)
+
+  # Reads an execution key tolerantly (atom key first, then its string form).
+  # Records reach this module BOTH as `%EvoGit.ProcessManager.Execution{}`
+  # structs/plain atom-keyed maps AND as string-keyed payloads; structs do NOT
+  # implement Access, so `record[:key]` raises and `Map.get/2` is the only
+  # safe read. Total: a non-map yields nil.
+  defp field(record, key) when is_map(record) do
+    case Map.fetch(record, key) do
+      {:ok, value} -> value
+      :error -> Map.get(record, Atom.to_string(key))
+    end
+  end
+
+  defp field(_record, _key), do: nil
 
   # Reads a stats key tolerantly (atom key first, then its string form).
   defp stat(%{} = stats, key) do
