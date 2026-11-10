@@ -84,9 +84,11 @@ defmodule EvoGit.Agent.Session do
   results.
   A force cancel delivers NO result at all.
 
-  The dispatch context may additionally carry a `:notify` pid: on terminal delivery the session
-  sends it `{:agent_session_closed, agent_id, result}` BEFORE it stops, so a caller can await the
-  close race-free (the result itself still goes to the scheduler).
+  The dispatch context may additionally carry a `:notify` sink: either a `{pid, tag}` tuple or a
+  bare `pid` (normalized to `{pid, nil}` in `init/1`).
+  On terminal delivery the session sends that pid `{:agent_session_closed, tag || agent_id, result}`
+  BEFORE it stops, so a caller can await the close race-free (the result itself still goes to the
+  scheduler).
 
   ## Non-terminal messages
 
@@ -308,7 +310,9 @@ defmodule EvoGit.Agent.Session do
       worker: nil,
       finalizer: nil,
       last_yield_text: nil,
-      notify_pid: Keyword.get(dispatch_ctx, :notify),
+      # `{pid, tag}`: the dispatch ctx may carry a pid-tagged tuple (production) or a bare
+      # pid (hand-built contexts), and `notify_closed/1` always reads the normalized shape.
+      notify_pid: normalize_notify(Keyword.get(dispatch_ctx, :notify)),
       dispatch_ctx: dispatch_ctx,
       tmpdir: nil,
       result: nil,
@@ -567,6 +571,7 @@ defmodule EvoGit.Agent.Session do
       model_id: row.model_id,
       model_id_locked: row.model_id_locked,
       prompt_cache_key: prompt_cache_key(row),
+      session_mode: session_mode(ctx, row),
       quality_level: Keyword.get(spec.opts, :quality_level),
       custom_agent_id: Keyword.get(spec.opts, :custom_agent_id),
       attachments: Keyword.get(spec.opts, :attachments)
@@ -574,6 +579,26 @@ defmodule EvoGit.Agent.Session do
 
     Setup.build_initial_state(spec.agent_module, spec.objective, state_ctx)
   end
+
+  # The mode this session runs in. `Dispatch.do_try_dispatch/4` resolves it ONCE at
+  # registration (`Dispatch.session_mode/2`) and puts it in the dispatch context, so that value is
+  # normally PRESENT and wins; the scheduler row's mirrored `mode` is only a fallback for a
+  # context built by hand. `nil`/an unrecognized value is forwarded as-is (a nil value is, and a
+  # typo must be, IGNORED) so `Setup.resolve_session_mode/3` keeps the final say: it falls back to
+  # the role's `session_mode/0` callback and always forces `:oneshot` for a nested agent.
+  #
+  # Only a genuinely INTERACTIVE row value is forwarded: `%AgentState{}` defaults `mode` to
+  # `:oneshot`, so treating that default as an explicit answer would let a missing ctx key flip an
+  # interactive ROLE to one-shot — the opposite of the documented precedence.
+  defp session_mode(ctx, row) do
+    case Keyword.get(ctx, :session_mode) do
+      nil -> row_session_mode(row)
+      mode -> mode
+    end
+  end
+
+  defp row_session_mode(%{mode: :interactive}), do: :interactive
+  defp row_session_mode(_row), do: nil
 
   # The provider cache/routing identity of this agent run.
   #
@@ -774,17 +799,23 @@ defmodule EvoGit.Agent.Session do
     send_scheduler(data, {:agent_session_result, agent_id(data), self(), data.result})
   end
 
-  # Lets a caller AWAIT the close race-free: sent to the dispatch context's `:notify` pid just
+  # Lets a caller AWAIT the close race-free: sent to the dispatch context's `:notify` sink just
   # before the stop, AFTER the terminal result, so a monitor `:DOWN` can never overtake it.
-  defp notify_closed(%{notify_pid: pid} = data) when is_pid(pid) do
+  defp notify_closed(%{notify_pid: {pid, tag}} = data) do
     if Process.alive?(pid) do
-      send(pid, {:agent_session_closed, agent_id(data), data.result})
+      send(pid, {:agent_session_closed, tag || agent_id(data), data.result})
     end
 
     :ok
   end
 
   defp notify_closed(_data), do: :ok
+
+  # The ctx `:notify` opt is a `{pid, tag}` tuple in the documented production shape; a bare pid
+  # is accepted too (it loses the tag, so the agent id is the payload). Anything else is no sink.
+  defp normalize_notify({pid, tag}) when is_pid(pid), do: {pid, tag}
+  defp normalize_notify(pid) when is_pid(pid), do: {pid, nil}
+  defp normalize_notify(_other), do: nil
 
   defp send_scheduler(data, message) do
     case Keyword.get(data.dispatch_ctx, :scheduler) || Process.whereis(EvoGit.AgentScheduler) do
