@@ -102,7 +102,7 @@ defmodule EvoGit.Agent.Session.InteractiveTest do
   describe "(h) yield is NOT a finish" do
     test "a yielded exchange delivers no terminal fact and keeps the whole conversation",
          %{agent_id: agent_id, tmp_dir: tmp_dir} do
-      {:ok, pid, ref} =
+      {:ok, pid, _ref} =
         start_session(dispatch_ctx(agent_id, tmp_dir, llm_call: yielding_llm_call("first yield")))
 
       assert await_phase(pid, :awaiting_input) == true
@@ -646,7 +646,7 @@ defmodule EvoGit.Agent.Session.InteractiveTest do
                    "expected NO terminal result, got #{inspect(result)}"
   end
 
-  defp refute_closed(agent_id, session_pid, timeout) do
+  defp refute_closed(agent_id, _session_pid, timeout) do
     refute_receive {:agent_session_closed, ^agent_id, result},
                    timeout,
                    "expected NO {:agent_session_closed, ...}, got #{inspect(result)}"
