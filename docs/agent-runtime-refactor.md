@@ -10,10 +10,10 @@
 
 | Goal | Design answer |
 |---|---|
-| Use both a user-facing **interactive** agent and today's **one-shot** agents | ONE engine, ONE process model; a `mode` field (`:oneshot` \| `:interactive`) decides only what happens on a tool-free reply: finish, or yield to idle and wait for the next message. |
-| **More control / inspection** (stream thinking + response when wanted) | `Agent.Stream.watch/1` returns a snapshot + a monotonic `seq`; the exchange emits `:text` / `:thinking` / `:tool_call` / `:tool_result` / `:turn` deltas on a per-agent topic. History is a snapshot call, not a 3 Hz full-copy poll. |
-| **Efficient by default** — streaming must not cost anything when nobody watches | Chunk callbacks are installed *only when a watcher is attached* (`Registry.count/1` at call time); zero watchers ⇒ the LLM call path is byte-identical to today. Deltas are coalesced (~60–80 ms). The ETS mirror no longer carries the context, so the dominant per-turn copy disappears. |
-| **Scalable** — hundreds of agents, low resources | 1 idle session ≈ 1 process + its context, holding **no** LLM/tool slots; 1 extra short-lived worker process only per *in-flight* exchange; idle TTL for repo-backed sessions. |
+| Use both a user-facing **interactive** agent and today's **one-shot** agents | ONE engine, ONE process model; a `mode` field (`:oneshot` \| `:interactive`) decides only what happens on a tool-free reply: finish, or yield to `:awaiting_input` and wait for the next message. |
+| **More control / inspection** (stream thinking + response when wanted) | `Agent.Stream.watch/1` returns a snapshot + a monotonic `seq` and registers the consumer for **push** deltas; the exchange emits `:text` / `:thinking` / `:tool_call` / `:tool_result` / `:turn` deltas over the per-agent `EvoGit.PubSub` topic `"agent:<id>"`, coalesced (~60–80 ms). History is a snapshot call, not a 3 Hz full-copy poll. |
+| **Efficient by default** — streaming must not cost anything when nobody watches | Chunk callbacks are installed *only when the session has a registered watcher* (`map_size(state.watchers) > 0` at call time); zero watchers ⇒ no callbacks and no broadcast, i.e. the LLM call path is byte-identical to today. The ETS mirror no longer carries the context, so the dominant per-turn copy disappears. |
+| **Scalable** — hundreds of agents, low resources | 1 idle session ≈ 1 process + its context + its on-disk worktree, holding **no** LLM/tool slots and **no** worker process; 1 extra short-lived worker process only per *in-flight* exchange; no idle timer, and the worktree is kept for the session's whole life. |
 | **Easy customization** | The `use EvoGit.Agent` macro keeps its zero-arity, data-only callbacks (they stay callable from any process). A new role is still "one module + `system_prompt/0`". Custom agents/tools keep their existing contracts. |
 | **Two copies of the context (heap + ETS)** | Deleted. `%EvoGit.Agent.State{}` lives in exactly one place: the session process. `:evogit_agent_state` becomes `:evogit_agent_summary` — a bounded *read model* (no `context`, no pending input) with exactly one writer. |
 | **GenServer / GenStatem per agent?** | **Yes** — a `gen_statem` per agent session, plus a plain `Task` per exchange. Rationale is in §3; rejected alternatives are in §6. |
@@ -30,6 +30,11 @@
 
 **Streaming.** `ReqLLM.stream_text` + `StreamResponse.process_stream/2` are already used (`llm_prompting.ex:286`), with **no callbacks**, so chunks are decoded and thrown away. `process_stream/2` supports `:on_chunk | :on_meta | :on_result | :on_thinking | :on_tool_call` (vendored `deps/req_llm/lib/req_llm/stream_response.ex:400-514`). Nothing text-shaped reaches observers; only counters do. `list_agents/0` is `:ets.tab2list/1` over full agent states (`remote_api.ex:84-91`), copying **every live agent's whole context** to render a roster.
 
+**Platform facts the streaming design rests on.**
+`Process.monitor/1` accepts a remote pid (`{pid, node}`), so a monitor is a cross-node signal for any node in the connected cluster — no proxy process is needed to learn that a remote observer died.
+`EvoGit.PubSub` is a plain `Phoenix.PubSub` started at `apps/evo_git/lib/evo_git/application.ex:87` with the default (PG2/`:pg`) adapter, i.e. cluster-aware for connected nodes that run `:evo_git`; the dashboard starts its own `EvoDash.PubSub` (`apps/evo_dash/lib/evo_dash/application.ex:72`), and a LiveView always runs on the node hosting the agent, so dashboard delivery is local.
+The introspection gaps force the gate into the session: `Registry.register/2` can only register the *calling* process, and `Phoenix.PubSub` exposes no subscriber count, so neither can answer "is anyone watching this agent?".
+
 **Customization.** `agent.ex` has no `@callback` at all — it is a macro injecting 8 zero-arity functions (`run/2`, `available_tools/0`, `agent_type/0`, `delegation_level/0`, `subagent_modules/0`, `subagent_tool_name/0`, `subagent_tool_description/0`, `system_prompt/0`), 7 of them `defoverridable`. Role modules are pure data; there is **no role-conditioned code in the loop**. Custom agents are one fixed module (`Agents.Custom`) whose definition is resolved per call from the process dictionary.
 
 **Task model.** 7 statuses (`:pending | :running | :finalizing | :cancelling | :completed | :failed | :cancelled`), status is free `TEXT` (no migration needed for a new one), and the store's SQL whitelists are load-bearing: anything outside `@live_statuses` is classified *finished* (`store/operations/lightweight.ex:60,98`), so a wrongly-unlisted idle status would be deleted by cleanup. Every runtime phase is exactly `run_agent → notify_finalizing → merge_and_report` (`runtime/{genesis,evolution,self_reflective,skill_extraction}.ex`), and `merge_and_report` mints a fresh `genesis/agent_*` branch per invocation (`runtime/helpers.ex:50-57`) — so it must run exactly once, at final finish.
@@ -40,9 +45,11 @@
 
 ## 3. Decisions
 
+These decisions are settled; no open alternatives remain. The shapes that were considered and dropped are in §6.
+
 **D1 — One supervised process per agent, in both modes.**
 `EvoGit.Agent.Session`, a `gen_statem`, under a `DynamicSupervisor` (`EvoGit.Agent.SessionSupervisor`), registered by `agent_id` in a `Registry` (`keys: :unique`, the pattern already used for `EvoGit.RemoteConnection.Registry`).
-One-shot agents get a session too, so there is exactly one lifecycle implementation. The public contract does not change: `AgentScheduler.run_agent/2` still blocks and still returns `{:ok, %Result{}}`; it now waits on the session instead of on a Task.
+One-shot agents get a session too, so there is exactly one lifecycle implementation — there is no interactive-only variant of the session process. The public contract does not change: `AgentScheduler.run_agent/2` still blocks and still returns `{:ok, %Result{}}`; it now waits on the session instead of on a Task.
 
 **D2 — Single owner of state.**
 `%EvoGit.Agent.State{}` is the merge of `LoopState` and the authoritative half of `AgentState`. It exists only in the session process. `:evogit_agent_state` becomes `:evogit_agent_summary` — a *read model* with one writer (the session), no `context`, no `pending_user_messages`, no `cancel_requested`. Anything that needs the transcript asks the session.
@@ -56,23 +63,39 @@ A tool-free reply currently *is* completion: commit, git note, archive, `%Result
 - `{:yield, state, text}` — interactive only: commit, publish, status `:awaiting_input`, wait for the next input;
 - `{:finish, state, result}` — run `Agent.Completion` exactly once and stop;
 - `{:error, reason}`.
-Only `:finish` ends the session; only the runtime phase runs `merge_and_report`, exactly once.
+Only a terminal outcome ends the session; the runtime phase runs `merge_and_report` exactly once, after it, so a session has no reviewable branch until it closes.
 
-**D5 — Streaming is demand-gated.**
-`Agent.Stream.watch(agent_id)` → `{:ok, snapshot, seq}` + subscription to topic `"agent:<id>"`. Deltas are batched (`{:agent_delta, id, seq, batch}`) at ~60–80 ms. The gate is `Registry.count/1` evaluated at each LLM call: zero watchers ⇒ no callbacks are installed at all. No full `%ReqLLM.Context{}` is ever broadcast. Watchers are monitored by `Registry` itself (no bookkeeping process, no leaked interest on watcher death).
-Remote nodes (a dashboard on another node): **cursor pull** (`messages_since/2`) in v1, not cross-node token streaming — a remote watcher would otherwise need a proxy process on the agent's node.
+**D5 — Streaming is push-only, and the consumer gate lives in the session.**
+One call does registration and snapshot: `EvoGit.Agent.Stream.watch(agent_id)` → `{:ok, snapshot, seq}`. It subscribes the consumer to topic `"agent:<id>"` on `EvoGit.PubSub` **and** registers the consumer pid in the session's own watcher set, where the session `Process.monitor/1`s it — so a dead watcher is reaped by its `:DOWN`, local or remote, with no bookkeeping process.
+The gate is `map_size(state.watchers) > 0`, evaluated when an LLM call or a turn starts: zero registered watchers ⇒ no `process_stream/2` callbacks are installed at all and nothing is broadcast.
+That is why the gate cannot live in a `Registry` or be derived from the topic — `Registry.register/2` only registers the calling process, and `Phoenix.PubSub` exposes no subscriber count.
+Deltas are pushed: `Phoenix.PubSub.broadcast(EvoGit.PubSub, "agent:<id>", {:agent_delta, agent_id, seq, batch})`, batched at ~60–80 ms. No full `%ReqLLM.Context{}` is ever broadcast.
+There is **no polling or cursor-pull path**: gap repair after a lagging or reconnecting consumer is a fresh snapshot (idempotent, bounded by the transcript), never a poll loop and never a replay ring buffer.
+Remote consumers use the same contract through the existing `RemoteAPI`/`RemoteNode` chain — the watch call returns the same `{:ok, snapshot, seq}`, and a consumer on another `:evo_git` node of the same connected cluster receives the same broadcast (monitors work across nodes, so it is registered and reaped exactly like a local one). Streaming therefore requires a connected cluster.
 
 **D6 — `:awaiting_input` is a task status, and `mode` is task metadata.**
-Sessions stay tasks (they already own the repo path, model selection, usage, approvals, archives, branch, review status). A new non-terminal status is admitted everywhere `:running` is (checklist in §9), and `mode` (`"oneshot" | "interactive"`) is persisted so the UI can filter.
+Sessions stay tasks (they already own the repo path, model selection, usage, approvals, archives, branch, review status); there is no separate session entity. A new non-terminal status is admitted everywhere `:running` is (checklist in §8), and `mode` (`"oneshot" | "interactive"`) is persisted so the UI can filter.
 
 **D7 — Lifecycle invariants are re-keyed onto the session pid, not removed.**
 The stable identity for worktree lease, background-job ownership, `ProcessManager` ownership and task-tmpdir is the **session** pid (it outlives exchanges). The exchange worker is an implementation detail that must never own anything durable.
 
-**D8 — Idle sessions cost nothing but memory, and memory is bounded.**
-Idle = 0 LLM slots, 0 tool slots, 0 worker process. Context size is already capped by compression. Repo-backed idle sessions keep their worktree for a configurable TTL (`[agent.session] idle_ttl_ms`, default 1 h) then suspend; repo-less sessions (Assistant) may idle indefinitely.
+**D8 — Idle sessions hold no resources, and their worktree is never thrown away.**
+Idle = 0 LLM slots, 0 tool slots, 0 worker process, 0 timers. Context size is already capped by compression.
+A session keeps its worktree for its whole life: created when the session starts, reclaimed exactly once when the session ends (finish, explicit close, graceful cancel, force-kill, or boot reconciliation). A yield never releases, reclaims or re-materializes the worktree.
+The worktree is the session's identity anchor — it holds uncommitted work and incremental progress, and it is the cwd containment for background jobs — and re-creating a checkout is the most expensive operation in the lifecycle (`mix bench.io` exists to measure exactly that), so it is never discarded to save disk.
+Idle cost is therefore 1 process + its context + the on-disk worktree.
+Session lifetime is an explicit operator decision (`close_session/1`, dashboard close, cancel, force-kill), never an automatic timer; an abandoned idle session keeps its worktree until it is closed or until boot reconciliation fails it as orphaned (accepted tradeoff).
 
 **D9 — The engine stays role-agnostic.**
 No role name appears in the session or the exchange. New optional callbacks may be added (`session_mode/0` default `:oneshot`), but the existing 8 zero-arity callbacks keep their exact shape and their "callable from any process" property.
+
+**D10 — Durability is deferred, and the seams that keep it additive are pinned.**
+Sessions are in-memory only: a BEAM restart loses open sessions, which reconcile to `:failed` with the worktree reclaimed and the archived results preserved. The documented consequence is that sessions do not survive a restart.
+So that a later persistence phase is purely additive, P0–P4 respect four constraints:
+- `%State{}` stays snapshot-able at every exchange boundary (the archive path already proves the payload is JSON-clean).
+- The transcript has exactly one writer (the session).
+- The worktree path and the per-session `prompt_cache_key` are carried in `%State{}`.
+- No durable record is ever keyed on a pid — only `task_id`/`agent_id`.
 
 ---
 
@@ -91,16 +114,17 @@ EvoGit.Agent.SessionSupervisor (DynamicSupervisor, :temporary)
   └─ EvoGit.Agent.Session (gen_statem) —— owns %Agent.State{}
        │  · registered in EvoGit.Agent.Registry (agent_id -> pid)
        │  · writes :evogit_agent_summary (read model, coalesced)
+       │  · owns the watcher set (consumer pid -> monitor ref, local or remote)
        │  · forwards/authorises input, cancel, close, inspect
        │
        └─ (per exchange) EvoGit.Agent.Exchange worker Task
             · installs the per-run process context (repo_path, repo_less, custom id…)
             · runs Turn -> LLM (streamed) -> ToolRuntime batch -> Turn …
-            · emits deltas on "agent:<id>" only when watched
+            · emits deltas on "agent:<id>" only when the session has a watcher
             · checkpoints %State{} to the session after each turn
             · commits at exchange end; runs Agent.Completion on :finish
 
-EvoGit.Agent.Watchers (Registry, keys: :duplicate)   —— assistant_id -> watcher pids
+EvoGit.PubSub topic "agent:<id>"                     —— coalesced push deltas to watchers
 EvoGit.AgentSummary (ETS, app-owned)                 —— the read model
 ```
 
@@ -112,9 +136,9 @@ One struct, four groups, all owned by the session:
 
 | Group | Fields | Notes |
 |---|---|---|
-| **identity** (immutable after start) | `agent_id`, `agent_module`, `task_id`, `depth`, `parent_id`, `node_path`, `context_node`, `repo_id`, `repo_root`, `repo_less`, `custom_agent_id`, `mode`, `archive` | replaces the `Process.put` block in `runner.ex:299-343`; installed into the worker's process dictionary at exchange start (it is *derived*, not authoritative there). |
+| **identity** (immutable after start) | `agent_id`, `agent_module`, `task_id`, `depth`, `parent_id`, `node_path`, `context_node`, `repo_id`, `repo_root`, `repo_less`, `custom_agent_id`, `mode`, `archive`, `worktree` (path + lease) | replaces the `Process.put` block in `runner.ex:299-343`; installed into the worker's process dictionary at exchange start (it is *derived*, not authoritative there). `worktree` belongs here because its lifetime is the session's lifetime (§3 D8). |
 | **conversation** | `context` (`%ReqLLM.Context{}`), `turn`, `total_tokens`, `usage`, `compression_count`, `llm_context_window`, `llm_model`, `llm_generation_params`, `model_spec`, `provider_profile_id`, `model_id_locked`, `prompt_cache_key` | the only copy in the system. |
-| **control** (written only via commands) | `pending_inputs`, `cancel`, `phase` (`:starting \| :running \| :awaiting_input \| :cancelling \| :finalizing \| :done`), `exchange_ref`, `event_seq`, `last_checkpoint_at` | replaces the race-prone cross-process ETS writes. |
+| **control** (written only via commands) | `pending_inputs`, `cancel`, `phase` (`:starting \| :running \| :awaiting_input \| :cancelling \| :finalizing \| :done`), `exchange_ref`, `event_seq`, `watchers` (consumer pid → monitor ref), `last_checkpoint_at` | replaces the race-prone cross-process ETS writes; `watchers` is the streaming gate (§3 D5). |
 | **budget** | `max_turns`, `max_depth`, `max_retries`, `retries`, `grace_turns_remaining`, `delegation_hints`, `read_delegation_hints`, `delegation_level` | per-run terminal budgets, unchanged semantics. |
 
 `%AgentState{}` keeps a *row shape* but only for the summary table: `agent_id, task_id, status, mode, depth, parent_id, node_path, objective_preview, model_spec, turn, message_count, usage, total_tokens, context_window, compression_count, current_commit, last_activity_at`.
@@ -136,14 +160,16 @@ One struct, four groups, all owned by the session:
 |---|---|---|---|
 | `:starting` | `init/1` | bind worktree (skip if `repo_less`), snapshot skills, build the first user message | `{:run_exchange, …}` → `:running` |
 | `:running` | worker started | `{:checkpoint, state}`, `{:event, …}`, `{:input, msg}` (queue), `{:cancel, :graceful \| :force}`, `inspect`, `{:DOWN, worker}` | checkpoint with `:yield` → `:awaiting_input`; `:finish` → `:finalizing` |
-| `:awaiting_input` | a yield | `{:input, msg}` (starts a new exchange immediately), `inspect`, `{:cancel, …}`, idle-TTL timeout | `:running` or `:cancelling` |
+| `:awaiting_input` | a yield | `{:input, msg}` (starts a new exchange immediately), `inspect`, `{:cancel, …}`, `{:close, reason}` | `:running`, `:cancelling` or `:finalizing` (on `close`) |
 | `:cancelling` | graceful cancel | input is rejected with a documented reason; the running exchange sees the flag at its next turn boundary and gets the 3-turn save-work grace | `:finalizing` |
-| `:finalizing` | finish / cancel terminal | runs completion bookkeeping (or the worker did), replies to `meta.from`, publishes `:done` | `:done` (then `:stop, :normal`) |
+| `:finalizing` | finish / cancel terminal / close | runs completion bookkeeping (or the worker did), releases the worktree lease, replies to `meta.from`, publishes `:done` | `:done` (then `:stop, :normal`) |
 | `:done` | terminal | nothing (transient) | — |
 
-Why `gen_statem` and not `GenServer`: the lifecycle *is* a state machine, and the states have different legal commands (a `:yield` is illegal in `:oneshot`; `input` is illegal in `:finalizing`). `gen_statem` gives explicit `state_enter` hooks — the natural place for "commit + publish + set `:awaiting_input`" and for the idle timer — and turns illegal transitions into loud `{:error, {:bad_state, phase}}` instead of `if` ladders inside `handle_info`. The cost (one more OTP behaviour to know) is paid once, in one module, and the worker remains a plain `Task`.
+There is deliberately **no idle-TTL timeout**: `:awaiting_input` has no timer, and a session lives until it is explicitly closed (`{:close, reason}`, a graceful cancel or a force-kill) or its task is reconciled on boot.
 
-Crash semantics: the session is supervised `:temporary`. A crash is handled by the scheduler exactly as today (`handle_agent_crash/3`): retry from scratch for `:oneshot`; for `:interactive`, mark the task failed with a clear message until P5 (§4.10) lands a durable checkpoint.
+Why `gen_statem` and not `GenServer`: the lifecycle *is* a state machine, and the states have different legal commands (a `:yield` is illegal in `:oneshot`; `input` is illegal in `:finalizing`). `gen_statem` gives explicit `state_enter` hooks — the natural place for "commit + publish + set `:awaiting_input`" and for the completion bookkeeping — and turns illegal transitions into loud `{:error, {:bad_state, phase}}` instead of `if` ladders inside `handle_info`. The cost (one more OTP behaviour to know) is paid once, in one module, and the worker remains a plain `Task`.
+
+Crash semantics: the session is supervised `:temporary`. A crash is handled by the scheduler exactly as today (`handle_agent_crash/3`): retry from scratch for `:oneshot`; for `:interactive`, mark the task failed with a clear message — sessions are in-memory only, so there is no checkpoint to resume from (§4.10).
 
 ### 4.5 The two modes
 
@@ -153,9 +179,9 @@ Crash semantics: the session is supervised `:temporary`. A crash is handled by t
 | Turn budget | `max_turns` terminal, as today | per-exchange burst budget; reset on yield, cumulative cap configurable |
 | Context built | once from the tree + objective | once; later inputs are `append` only (no rebuild, no cache reset) |
 | `prompt_cache_key` | per agent run | per **session** (stable across exchanges — the main latency/cost win) |
-| Worktree | dies with the session | kept while idle, TTL/TTL-suspend |
+| Worktree | dies with the session (bound in `:starting`) | kept for the session's whole life, never released on yield |
 | Subagents | as today | may spawn one-shot children; children are never interactive (v1) |
-| Termination | always by finishing | explicit `close` / cancel / idle TTL / task force-kill |
+| Termination | always by finishing | explicit `close` / cancel / force-kill — no automatic idle timeout |
 
 Interactive mode is **root-only in v1**: the subagent barrier is an exact-count barrier (`maybe_resume_parent` waits for `map_size(results) == total_sub_specs`, `subagents.ex:484`) and a child that lives across exchanges never satisfies it. Making children interactive is a separate, later decision (and would need a "child yielded" result shape).
 
@@ -167,11 +193,13 @@ Read paths after the refactor:
 |---|---|---|
 | `/agents` roster | `:ets.tab2list` of full states, every ~300 ms while open | `:ets.select` over summary rows (no context) |
 | agent detail counters | summary fields | same, from the summary |
-| transcript | `get_agent_history/1` copies the whole context per `message_count` change | `Agent.Stream.watch/1` → snapshot once, then deltas; `messages_since(id, seq)` for cursors/remote |
+| transcript | `get_agent_history/1` copies the whole context per `message_count` change | `Agent.Stream.watch/1` → snapshot once, then pushed deltas (no cursor read) |
 | live text/thinking | nothing | `:text`, `:thinking`, `:tool_call`, `:tool_result`, `:turn` deltas, coalesced |
 | live cost/timing | nothing (per-attempt duration discarded at `llm_prompting.ex:284-293`) | `:turn` delta carries usage + duration; optional `:telemetry` |
 
-Delta contract: `{:agent_delta, agent_id, seq, batch}` where `batch` is `{:text, binary} | {:thinking, binary} | {:tool_call, id, name} | {:tool_result, id, status} | {:turn, %{usage, duration_ms}} | {:yield, text} | {:finished, status}`; `seq` is monotonic per session (carried in `State.event_seq`, checkpointed with the state). A watcher drops deltas with `seq <= snapshot.seq` — that is the whole reconciliation rule. There is deliberately **no replay ring buffer in v1**: a watcher attaching mid-message sees the message from the next batch on, and gets the complete text at the next snapshot. If a partial prefix is ever required, add a bounded per-agent ring as an additive change.
+Delta contract: `{:agent_delta, agent_id, seq, batch}` where `batch` is `{:text, binary} | {:thinking, binary} | {:tool_call, id, name} | {:tool_result, id, status} | {:turn, %{usage, duration_ms}} | {:yield, text} | {:finished, status}`; `seq` is monotonic per session (carried in `State.event_seq`, checkpointed with the state). A watcher drops deltas with `seq <= snapshot.seq` — that is the whole reconciliation rule.
+
+Delivery is a single registration call and then pushes. `Agent.Stream.watch(agent_id)` subscribes the consumer to `"agent:<id>"` on `EvoGit.PubSub` and registers its pid in the session's watcher set, which the session monitors; the session broadcasts each coalesced batch only while `map_size(state.watchers) > 0`, a gate re-evaluated when an LLM call starts, so an unwatched turn installs no `process_stream/2` callbacks at all. A remote consumer goes through `RemoteAPI`/`RemoteNode` for the same `{:ok, snapshot, seq}` and receives the same broadcast, because a monitor on a remote pid is a cross-node signal and a connected node's `EvoGit.PubSub` fans out over PG2. There is deliberately **no replay ring buffer and no cursor/poll path**: a watcher attaching mid-message sees the message from the next batch on, and both it and a consumer that fell behind or reconnected catch up with a fresh snapshot — the snapshot is the only resync.
 
 ### 4.7 Input and cancellation
 
@@ -181,6 +209,8 @@ Delta contract: `{:agent_delta, agent_id, seq, batch}` where `batch` is `{:text,
   - `:queue` (default) — appended to `state.pending_inputs`, drained at the next turn boundary (today's semantics, but race-free and never "lost between reply and `:DOWN`": a message arriving after `:done` is answered `{:error, :finished}` rather than silently dropped).
   - `:interrupt` — the worker checks the mailbox between stream chunks (`receive … after 0`) and halts the enumerator; ReqLLM's `process_stream/2` stops on halt, so the in-flight turn ends early and the message is injected. This is the "stop generating and answer me" affordance.
 - `{:cancel, :graceful}` → state `:cancelling`; the exchange reads the flag at the next turn boundary and gets the existing 3-turn save-work grace. `{:cancel, :force}` → kill the worker; terminal.
+- `{:close, reason}` → the only non-cancellation way out of `:awaiting_input`: finalize the session (completion bookkeeping once, worktree lease released) and stop it. This is what `close_session/1` and the dashboard's close action send; no timer ever does.
+- A `{:input, msg}` arriving while `:awaiting_input` starts a new exchange immediately (same session pid, same worktree, same `prompt_cache_key`), not at some later boundary.
 - Cancelling while `:awaiting_input` is immediate (nothing to save but the transcript, which is kept).
 - Approvals keep working unchanged: `CommandApproval` already keys on task/agent ids.
 
@@ -188,12 +218,12 @@ Delta contract: `{:agent_delta, agent_id, seq, batch}` where `batch` is `{:text,
 
 | Anchor | Today | After |
 |---|---|---|
-| Worktree lease | monitor on the agent Task pid (`worktree_manager.ex:511`) | monitor on the **session** pid (same code, new pid) |
+| Worktree lease | monitor on the agent Task pid (`worktree_manager.ex:511`) | monitor on the **session** pid (same code, new pid); released only when the session dies, never at exchange end |
 | Background jobs | `Process.monitor` of `self()` inside the tool (`tool_dispatch.ex:852`) | explicit `owner_pid: session_pid` in `%ToolRuntime.Request{}` |
 | `ProcessManager` executions | agent pid | `owner_pid: session_pid` |
 | Task tmpdir | `Process.put` per run | derived per exchange, but reclaimed by terminal task status (unchanged) |
 | Slot release | `:DOWN` of the agent Task | session per-turn release already exists; the session releases on every exchange end; `:DOWN` is the safety net |
-| Completion | `try/after` in `run/3` + scheduler fallback (`dispatch.ex:313`) | worker commits at exchange end; `Agent.Completion` once on `:finish`; scheduler fallback kept |
+| Completion | `try/after` in `run/3` + scheduler fallback (`dispatch.ex:313`) | worker commits at exchange end; `Agent.Completion` once, at the session's terminal outcome (`:finish`, `close`, cancel); scheduler fallback kept |
 | Force kill | `Task.shutdown(meta.task_ref, :brutal_kill)` | `GenServer.stop(session_pid, :shutdown)` + kill worker; `SchedMeta.task_ref` becomes `session_pid` |
 | Result delivery | `GenServer.reply(meta.from, result)` from the `:DOWN` handler | session replies once in `:finalizing`; `run_agent/2` contract unchanged |
 
@@ -201,21 +231,21 @@ Delta contract: `{:agent_delta, agent_id, seq, batch}` where `batch` is `{:text,
 
 ### 4.9 Task status, and the policy that goes with it
 
-New status `:awaiting_input` (non-terminal). It is admitted in the core enumerations listed in §9, and it carries policy:
+New status `:awaiting_input` (non-terminal). It is admitted in the core enumerations listed in §8, and it carries policy:
 
+- **Lifetime is explicit** — a session ends by finishing, by `{:close, reason}` (`close_session/1`, the dashboard close action), by a graceful cancel or by a force-kill. No idle timeout, no TTL suspend; an idle session may stay idle arbitrarily long and holds nothing but its process, its context and its worktree.
 - **`/server/status` must not count it as busy** — otherwise `genesis update`'s idle gate is permanently blocked by an idle chat. Idle sessions are safe to wind down: the update path asks them to close (graceful) rather than force-killing them.
 - **`/tasks` hides sessions by default**, server-side (not the current client-side `visible_tasks/2` filter, which still counts them in pagination and `total_count`).
 - **Sidebar**: sessions appear in their own group, not in "Other".
 - **Review**: a session has no reviewable branch until it closes; `merge_and_report` runs at close only.
-- **Lease**: `:awaiting_input` is lease-renewable (the wrapper is alive), but a session whose wrapper is gone reconciles to `:failed` on boot (P3; P5 may resume instead).
+- **Lease**: `:awaiting_input` is lease-renewable (the wrapper is alive), but a session whose wrapper is gone reconciles to `:failed` on boot (P3).
 - **CLI**: `wait_for_terminal/1` must not block forever on it — it treats non-terminal-but-waiting as "still running" only when the caller asked for it.
 
-### 4.10 Persistence (P5, deferred)
+### 4.10 Durability (deferred; not designed now)
 
-Nothing durable stores a transcript today (`task_agent_archives` has 23 columns and no messages). P3 keeps sessions in memory only, with an explicit, documented consequence: a BEAM restart loses open sessions (they reconcile to `:failed`). P5 adds:
-- a `task_agent_transcripts` table (or a `session_state` JSON column) written at each exchange boundary by the session (the payload is already JSON-clean by construction: the archive path proves the shape),
-- `suspend` (persist + stop, releasing the worktree) and `resume` (rehydrate the context, re-create/re-attach the worktree, reuse the stored `prompt_cache_key`),
-- boot reconciliation for `:awaiting_input` rows.
+Sessions are in-memory only. A BEAM restart loses every open session: boot reconciliation marks them `:failed`, reclaims their worktrees and keeps their archived results intact. The documented consequence is that **sessions do not survive a restart**.
+P0–P4 keep a later persistence phase additive by honouring the seams in §3 D10: `%State{}` snapshot-able at every exchange boundary, one writer for the transcript, the worktree path and per-session `prompt_cache_key` inside `%State{}`, and no durable record keyed on a pid.
+A durability phase would then add a table written at each exchange boundary, rehydrate the context and re-attach the worktree on resume, and reuse the stored `prompt_cache_key` — nothing in P0–P4 blocks any of it.
 
 ### 4.11 Customization surface after the refactor
 
@@ -239,8 +269,8 @@ New, optional, and defaulted:
 | Roster render | copy every live context (`tab2list`) | `:ets.select` over summaries |
 | Transcript read | full context per message-count change | snapshot once + coalesced deltas |
 | LLM call when unwatched | no callbacks | no callbacks (identical) |
-| Idle interactive agent | — | 1 process, 0 slots, 0 workers, 0 timers (one idle TTL timer) |
-| Deltas | — | ≤ ~15 batches/s per watched agent, fan-out 1 message per watcher per batch |
+| Idle interactive agent | — | 1 process + its context + its on-disk worktree, 0 slots, 0 workers, 0 timers |
+| Deltas | — | 0 messages with no registered watcher; ≤ ~15 batches/s per watched agent, fan-out 1 message per watcher per batch |
 
 ---
 
@@ -269,20 +299,18 @@ Each phase is independently shippable and keeps `mix test` green. Sizes are rela
 
 ### P3 — Interactive mode (L)
 **Intent:** a session that yields and waits.
-**Changes:** `:yield` path + `Agent.Completion` on `:finish` only; task status `:awaiting_input` + the §9 checklist; `AgentScheduler` API (`start_session/1`, `send_session_message/3`, `close_session/1`, `await_close/1`); `runtime/assistant.ex` (new phase: start → await → merge) and `self_reflective` reused as its engine; CLI/NodeContext/RemoteNode verbs; `prompt_cache_key` per session; idle TTL + config keys; `/server/status` + update wind-down policy; `/tasks` server-side filter.
-**Tests:** multi-message session keeps one agent id, one cache key, one worktree, zero context-tree rebuilds; idle session holds no slots; cancel while idle; force-kill while idle; TTL suspend; `:awaiting_input` admitted by every enumeration (a table-driven test over the status lists).
+**Changes:** `:yield` path + `Agent.Completion` once, at the session's terminal outcome; task status `:awaiting_input` + the §8 checklist; `AgentScheduler` API (`start_session/1`, `send_session_message/3`, `close_session/1`, `await_close/1`); `runtime/assistant.ex` (new phase: start → await → merge) and `self_reflective` reused as its engine; CLI/NodeContext/RemoteNode verbs; `prompt_cache_key` per session; explicit close (no idle timer, no config keys) and the `:awaiting_input` boot reconciliation; `/server/status` + update wind-down policy; `/tasks` server-side filter.
+**Tests:** multi-message session keeps one agent id, one cache key, one worktree, zero context-tree rebuilds; an idle session survives arbitrarily long holding no slot, no worker and no timer; close while idle reclaims the worktree exactly once; cancel while idle; force-kill while idle; `:awaiting_input` admitted by every enumeration (a table-driven test over the status lists).
 **Acceptance:** `/help` runs on a single long-lived agent; opening/closing a session is clean; no reflect-task spam in `/tasks`.
 
-### P4 — Demand-gated streaming + inspection (M)
+### P4 — Push-only streaming + inspection (M)
 **Intent:** live text/thinking/tool deltas that cost nothing when unwatched, and cheap reads.
-**Changes:** `agent/stream/` (`watchers.ex` Registry, `delta.ex` batcher), `LLMPrompting` callback injection, `Exchange` event emission, `messages_since/2`, `RemoteAPI`/`RemoteNode` watch verbs, dashboard consumption (see P6).
-**Tests:** zero broadcasts with no watcher (assert on `ReqLLM` callback installation); one watcher ⇒ coalesced rate; seq ordering and snapshot reconciliation; watcher death cleans up; N-agent broadcast budget.
+**Changes:** `agent/stream/` (`watch/1` registration + snapshot + the session-owned watcher set, `delta.ex` batcher over `EvoGit.PubSub`), `LLMPrompting` callback injection, `Exchange` event emission behind the watcher gate, `RemoteAPI`/`RemoteNode` watch verbs, dashboard consumption (see P6).
+**Tests:** zero broadcasts and zero callback installs with no watcher; one watcher ⇒ coalesced rate; seq ordering and snapshot reconciliation; watcher death (`:DOWN`) clears the gate and removes the entry; a remote watcher on a connected node receives pushes and its `:DOWN` closes the gate; N-agent broadcast budget.
 **Acceptance:** measured per-turn overhead delta < ~2% on a 200-agent soak; a watched turn shows text within ~100 ms.
 
-### P5 — Durability: suspend/resume + transcripts (M/L, optional)
-**Intent:** survive a BEAM restart; bound idle memory for many sessions.
-**Changes:** migration `20260815000008_*`, `Agent.Session.Persistence`, boot reconciliation, worktree re-attach, resume reuse of `prompt_cache_key`.
-**Acceptance:** kill -9 a node with 3 idle sessions → restart restores them (or fails them with a clear message + preserved transcript); resume continues the conversation.
+### P5 — Durability — deliberately not scheduled
+No phase plans a durable transcript. Sessions are in-memory only, so a BEAM restart fails them (§3 D10, §4.10); a later phase may add a per-exchange-boundary table plus resume, and the seams P0–P4 pin keep that additive.
 
 ### P6 — Dashboard session UX (M, `apps/evo_dash`, parallel with P3/P4)
 Ordered: session RPC passthroughs in `EvoDash.NodeContext` → session identity in the URL + list panel (`ChatHistory.current_chat_id` is a single BEAM-global pointer today) → send path switch to `send_session_message/3` with the existing `:reflect` fallback → delta rendering (reuse `Messages.to_entries/1`, `ContentText`, the thought-process component) → `:awaiting_input` badge/label in `Helpers` + sidebar/session group → composer-while-running + queue echo → "interrupt turn" → approval scoping to the session → reattach-after-navigate → chat attachments (port `AttachedFile`) → per-message reasoning retention + transcript cap.
@@ -299,35 +327,28 @@ Ordered: session RPC passthroughs in `EvoDash.NodeContext` → session identity 
 6. **Per-token ETS writes / per-token PubSub to everyone.** Amplification at hundreds of agents, and it optimises the case nobody is watching.
 7. **Interactive subagents in v1.** The parent barrier is an exact count; a child that never exits deadlocks the parent while holding a worktree and a tool slot.
 8. **A separate "session" entity, disconnected from tasks.** Attractive naming, but it would re-implement model selection, approvals, usage/cost, archives, review status and cancellation. `mode` + `:awaiting_input` gets 90% of the benefit for a fraction of the surface.
+9. **An idle TTL that suspends or destroys a repo-backed session's worktree.** The worktree is the session's identity anchor — uncommitted work, background-job cwd containment, incremental progress — and re-creating a checkout is the most expensive operation in the lifecycle, so it is never thrown away to save disk; the session's lifetime is an explicit operator decision, not a timer.
+10. **Cursor-pull / polling as the streaming path.** A poll loop is load that scales with the number of viewers and reads the whole transcript to find what changed, which is exactly what consumer-gated push avoids; a consumer that falls behind catches up from a snapshot.
 
 ---
 
 ## 7. Invariants to pin with tests
 
 1. **One writer, one copy.** No ETS row (or any other process) holds the conversation; `get_agent_history` is the only full read. (Grep-able + a runtime assertion in tests.)
-2. **No watcher ⇒ no callbacks.** A turn with zero watchers installs no `process_stream/2` callback.
-3. **Idle holds nothing.** An `:awaiting_input` session holds no LLM slot, no tool slot, no worker task (assert on `Slots` holder sets and `Process.info(:links)`).
-4. **One cache identity per session.** `prompt_cache_key`/`session_id` are identical across exchanges and differ across sessions.
-5. **Completion once, merge once.** A session with 20 exchanges writes exactly one git note, one archive row, one `%Result{}`, one `genesis/agent_*` branch.
-6. **Yield ≠ finish.** A yield never deletes the transcript, never tears down the worktree, never emits a terminal task status.
-7. **Every status enumeration is total.** A table-driven test asserts each whitelist/list constant contains `:awaiting_input` where it contains `:running`.
-8. **Signal always wins.** A message sent to a session is either queued, applied, or answered with an error — never silently dropped.
-9. **Old suite unchanged.** The complete existing behavioural suite passes without weakening an assertion (the refactor is internal).
+2. **Push-only and consumer-gated.** A turn with zero registered watchers installs no `process_stream/2` callback and broadcasts nothing; there is no polling path, and a gap is repaired by a fresh snapshot.
+3. **Idle holds nothing.** An `:awaiting_input` session holds no LLM slot, no tool slot, no worker task, no timer (assert on `Slots` holder sets and `Process.info(:links)`), no matter how long it idles.
+4. **Worktree outlives exchanges.** A yield never reclaims, releases or re-materializes the worktree; it is released exactly once, when the session ends.
+5. **One cache identity per session.** `prompt_cache_key`/`session_id` are identical across exchanges and differ across sessions.
+6. **Completion once, merge once.** A session with 20 exchanges writes exactly one git note, one archive row, one `%Result{}`, one `genesis/agent_*` branch.
+7. **Yield ≠ finish.** A yield never deletes the transcript and never emits a terminal task status.
+8. **Every status enumeration is total.** A table-driven test asserts each whitelist/list constant contains `:awaiting_input` where it contains `:running`.
+9. **Signal always wins.** A message sent to a session is either queued, applied, or answered with an error — never silently dropped.
+10. **Pid-free durable keys.** Nothing persisted or reconciled is keyed on a process — only `task_id`/`agent_id` — so a future durability phase can rehydrate a session under a new pid.
+11. **Old suite unchanged.** The complete existing behavioural suite passes without weakening an assertion (the refactor is internal).
 
 ---
 
-## 8. Open decisions
-
-1. **Task-status vs separate entity** — recommended: keep sessions as tasks with `mode` + `:awaiting_input` (§3 D6, §4.9).
-2. **Do one-shot agents also move onto the session process** — recommended yes (one lifecycle implementation). If you prefer minimum blast radius, P2 can be interactive-only, at the cost of two lifecycle implementations indefinitely.
-3. **Idle policy for repo-backed sessions** — recommended: keep the worktree, TTL-suspend (default 1 h); repo-less sessions idle indefinitely.
-4. **Remote-node token streaming in v1** — recommended: no (cursor pull only).
-5. **Durability in scope now or later** — recommended later (P5), with "sessions do not survive a BEAM restart" documented in the meantime.
-6. **`gen_statem` vs `GenServer`** — recommended `gen_statem` (§4.4); if the team prefers a smaller OTP surface, a `GenServer` with an explicit `phase` field and a guard function per command is an acceptable fallback, at the cost of less obvious illegal-transition errors.
-
----
-
-## 9. Appendix — `:awaiting_input` admission checklist
+## 8. Appendix — `:awaiting_input` admission checklist
 
 Core (`apps/evo_git`):
 - `store/types/atom_column.ex:89`, `store/codec.ex:234` (else a decode masks it to `:pending`), `store/schemas/task_info.ex:30-31`
