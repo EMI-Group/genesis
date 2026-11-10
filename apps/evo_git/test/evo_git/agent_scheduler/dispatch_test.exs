@@ -1,7 +1,6 @@
 defmodule EvoGit.AgentScheduler.DispatchTest do
   use ExUnit.Case, async: true
 
-  alias EvoGit.Adapters.Git
   alias EvoGit.AgentSpec
   alias EvoGit.AgentScheduler.Dispatch
   alias EvoGit.AgentScheduler.State
@@ -10,8 +9,14 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Core.PhyloGraphNode
 
+  # A valid `EvoGit.Agent` role. Nothing in THIS module runs it: the tests below
+  # exercise registration/model resolution and dispatch's own guard, while the
+  # session-start contract lives in `session_dispatch_test.exs` (the session, not
+  # the scheduler, runs the agent — `run/2` is no longer called at all).
   defmodule DummyAgent do
-    def run(_objective, _ctx), do: {:ok, :done}
+    use EvoGit.Agent
+
+    def available_tools, do: []
   end
 
   describe "resolve_agent_repo_root/2 with primary repo" do
@@ -571,56 +576,24 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
     end
   end
 
-  # --- try_dispatch: no worktree I/O ---
-
-  describe "try_dispatch/2 performs no worktree I/O" do
-    test "computes the worktree path, spawns the agent task, and never creates the workers dir" do
-      repo_root =
-        Path.join(System.tmp_dir!(), "dispatch_io_#{:erlang.unique_integer([:positive])}")
-
-      File.mkdir_p!(repo_root)
-      {:ok, _} = Git.init(repo_root)
-      File.write!(Path.join(repo_root, "README.md"), "initial")
-      {:ok, _} = Git.add(repo_root)
-      {:ok, _} = Git.commit(repo_root, "initial")
-      {:ok, sha} = Git.rev_parse(repo_root)
-      on_exit(fn -> File.rm_rf!(repo_root) end)
-
-      spec = %AgentSpec{
-        context_node: %ContextNode{path: "./", repo: repo_root},
-        phylo_node: %PhyloGraphNode{repo: repo_root, base_commit: sha, current_commit: sha},
-        agent_module: DummyAgent,
-        objective: "test",
-        repo_id: "primary"
-      }
-
-      # Unique next_agent_id so the ETS key cannot collide with other async test files.
+  # --- try_dispatch guard ---
+  # The SESSION-START contract of `try_dispatch/2` (registry registration,
+  # sched-meta `session_pid`/`phase: :starting`, the ref-keyed `ref_to_agent`
+  # entry, the delivery of ONE terminal result, and the bounded crash-retry
+  # path when the session supervisor is unavailable) is covered by
+  # `session_dispatch_test.exs`, which can park the worktree-creation seam to
+  # observe the session before it runs anything.
+  # What belongs here is dispatch's own guard, which never reaches a session.
+  describe "try_dispatch/2 guards" do
+    test "returns the state untouched when the sched-meta entry is missing" do
       state = %State{next_agent_id: :erlang.unique_integer([:positive])}
-      task_id = "task-io-#{:erlang.unique_integer([:positive])}"
-
-      {agent_id, state} = Dispatch.register_agent(state, spec, nil, nil, 0, task_id, 1)
-      new_state = Dispatch.try_dispatch(state, agent_id)
-
-      on_exit(fn ->
-        Store.delete_agent_state(agent_id)
-        Store.delete_sched_meta(agent_id)
-      end)
-
-      # The strongest observable: try_dispatch performs NO filesystem I/O —
-      # no .genesis/workers directory is ever created.
-      refute File.dir?(Path.join(repo_root, ".genesis/workers"))
-
-      # The computed worktree path is stored in sched_meta so cancel_agent can
-      # find the worktree even before the agent's Runner creates it.
-      {:ok, meta} = Store.get_sched_meta(agent_id)
-      assert meta.worktree == Path.join([repo_root, ".genesis/workers", "worker_T1_A1"])
-
-      # The agent task was spawned and tracked in ref_to_agent; its result
-      # message is delivered to the caller (this test process).
-      assert map_size(new_state.ref_to_agent) == 1
-      [ref] = Map.keys(new_state.ref_to_agent)
-      assert Map.get(new_state.ref_to_agent, ref) == agent_id
-      assert_receive {^ref, {:ok, :done}}
+      missing_id = 9_900_000 + :erlang.unique_integer([:positive])
+      # An id with no `:evogit_sched_meta` row (and no agent state row) must bail
+      # BEFORE spawning anything: no session, no monitor, no ref_to_agent entry.
+      new_state = Dispatch.try_dispatch(state, missing_id)
+      assert new_state.ref_to_agent == %{}
+      assert new_state.next_agent_id == state.next_agent_id
+      assert Registry.lookup(EvoGit.Agent.Session.Registry, missing_id) == []
     end
   end
 

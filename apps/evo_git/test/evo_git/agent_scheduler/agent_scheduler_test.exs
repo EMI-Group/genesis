@@ -20,33 +20,20 @@ defmodule EvoGit.AgentSchedulerTest do
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
 
+  # A minimal `EvoGit.Agent` role. The SESSION builds the agent state from these
+  # callbacks and drives ONE exchange; the old `run/2` entry point is never
+  # called any more, so the role is a system prompt plus an EMPTY tool list (the
+  # scripted model never asks for a tool). The "agent is running" handshake is
+  # the scripted exchange seam below, which runs in the session's worker AFTER
+  # the agent is registered.
   defmodule DummyAgent do
-    # Reports that it is RUNNING (which can only happen after the scheduler
-    # registered the agent) to the test process, then parks until the test
-    # releases it. That makes "the agent is registered while the call is still in
-    # flight" a HAND SHAKE instead of a race against a fixed sleep: registration
-    # precedes `run/2` by construction, so no poll/sleep budget can be missed.
-    # The 5s fallback keeps a crashed test from wedging the scheduled task.
-    # MUST NOT call the Runner or request a worktree — this test pins the
-    # scheduler contract.
-    def run(_objective, _ctx) do
-      case Application.get_env(:evo_git, :agent_scheduler_test_observer) do
-        observer when is_pid(observer) ->
-          ref = make_ref()
-          send(observer, {ref, :dummy_started, self()})
+    use EvoGit.Agent
 
-          receive do
-            {^ref, :release} -> :ok
-          after
-            5_000 -> :ok
-          end
+    @doc "The role's fixed system prompt."
+    def system_prompt, do: "You are the scheduler test role."
 
-        _ ->
-          :ok
-      end
-
-      {:ok, :done}
-    end
+    @doc "No tools: the scripted model always answers in plain text."
+    def available_tools, do: []
   end
 
   defp wait_until(fun, timeout) do
@@ -98,6 +85,48 @@ defmodule EvoGit.AgentSchedulerTest do
   # sandbox_slice_test.exs a missing instance is started here and stopped
   # afterwards. The stop is resume-guarded: a slice still suspended by the fun
   # (assertion-failure path) would wedge the synchronous GenServer.stop forever.
+  # The app-env engine seam every session's exchange worker reads. It reports
+  # the WORKER's own worktree identity and HEAD (the only place where both are
+  # guaranteed to still exist) and then PARKS until the test releases it: a
+  # plain-text reply with no tool calls ENDS the run and its text is the report.
+  defp install_parked_llm_seam(test_pid) do
+    fun = fn context, _tools, _params, _agent_id, _retries ->
+      ref = make_ref()
+      repo_path = Process.get(:repo_path)
+      head = EvoGit.Adapters.Git.rev_parse(repo_path)
+      send(test_pid, {ref, :agent_running, self(), repo_path, head})
+
+      receive do
+        {^ref, :release} -> :ok
+      after
+        10_000 -> :ok
+      end
+
+      text = "scheduled run report"
+      {:implicit_completion, llm_response(context, text), text}
+    end
+
+    Application.put_env(:evo_git, :agent_exchange_llm_call, fun)
+    on_exit(fn -> Application.delete_env(:evo_git, :agent_exchange_llm_call) end)
+    fun
+  end
+
+  defp llm_response(context, text) do
+    message = %ReqLLM.Message{
+      role: :assistant,
+      content: [ReqLLM.Message.ContentPart.text(text)],
+      tool_calls: nil
+    }
+
+    %ReqLLM.Response{
+      id: "scheduler-test-response",
+      model: "test:model",
+      context: ReqLLM.Context.append(context, message),
+      message: message,
+      usage: %{input_tokens: 10, output_tokens: 2, total_tokens: 12}
+    }
+  end
+
   defp with_live_sandbox_slice(fun) do
     case Process.whereis(EvoGit.SandboxSlice) do
       nil ->
@@ -167,37 +196,57 @@ defmodule EvoGit.AgentSchedulerTest do
 
     before_ids = MapSet.new(Store.list_sched_meta(), fn {id, _} -> id end)
 
-    # `DummyAgent.run/2` reports in and then parks; the observer key is
-    # test-scoped and removed on exit.
-    Application.put_env(:evo_git, :agent_scheduler_test_observer, self())
-    on_exit(fn -> Application.delete_env(:evo_git, :agent_scheduler_test_observer) end)
+    # The scripted exchange seam PARKS once the session's exchange worker is
+    # live, so "the agent is registered and running while the call is still in
+    # flight" is a HAND SHAKE instead of a race against a fixed sleep.
+    install_parked_llm_seam(self())
 
     caller = Task.async(fn -> EvoGit.AgentScheduler.run_agent(spec, 30_000) end)
 
-    # The agent reports it is RUNNING — the scheduler registers the agent (ETS)
-    # before it invokes the agent module, so this proves the registration landed
-    # while the call is still in flight. Old code would block inside handle_call
-    # doing worktree I/O instead of replying asynchronously once the agent task
-    # completes.
-    assert_receive {ref, :dummy_started, agent_pid}, 30_000
+    assert_receive {ref, :agent_running, worker_pid, worktree_path, head}, 30_000
 
-    assert MapSet.new(Store.list_sched_meta(), fn {id, _} -> id end) != before_ids
+    # The SESSION created the worktree (the scheduler's dispatch phase only
+    # computes the path) at the dispatched base commit — and the scheduler's
+    # `run_agent` call has NOT returned yet.
+    assert worktree_path == Path.join([repo_root, ".genesis/workers", "worker_T1_A1"])
+    assert File.dir?(worktree_path)
+    assert {:ok, ^sha} = Git.rev_parse(worktree_path)
+    assert head == {:ok, sha}
 
-    # Release the agent so the call RETURNS — it does not block on worktree
-    # creation.
-    send(agent_pid, {ref, :release})
-    assert {:ok, :done} = Task.await(caller, 30_000)
+    new_ids =
+      Store.list_sched_meta()
+      |> MapSet.new(fn {id, _} -> id end)
+      |> MapSet.difference(before_ids)
+      |> MapSet.to_list()
 
-    # The strongest observable: no synchronous worktree initialization —
-    # the .genesis/workers dir is never created by the scheduler itself.
-    refute File.dir?(Path.join(repo_root, ".genesis/workers"))
+    assert [agent_id] = new_ids
+    assert {:ok, meta} = Store.get_sched_meta(agent_id)
+    assert meta.status == :running
+    assert meta.worktree == worktree_path
+    assert is_pid(meta.session_pid)
+    # The ROW keeps the dispatch-time `:starting`; the authoritative live phase
+    # is the session's own — `:running` while its exchange is parked.
+    assert meta.phase == :starting
+    assert [{session_pid, _}] = Registry.lookup(EvoGit.Agent.Session.Registry, agent_id)
+    assert session_pid == meta.session_pid
+    assert {:ok, %{phase: :running}} = EvoGit.Agent.Session.inspect(meta.session_pid)
+    # Still in flight: dispatch replied `:noreply` and only the session's ONE
+    # terminal result unblocks the caller.
+    refute Task.yield(caller, 0)
 
-    # After the agent task completes normally, the scheduler recycles the
-    # agent's ETS entries (worktree reclamation is monitor-driven elsewhere).
+    send(worker_pid, {ref, :release})
+
+    assert {:ok, %EvoGit.Agent.Result{} = result} = Task.await(caller, 30_000)
+    assert result.result == "scheduled run report"
+
+    # After the session completes normally, the scheduler recycles the agent's
+    # ETS entries (worktree reclamation is monitor-driven elsewhere).
     wait_until(
       fn -> MapSet.new(Store.list_sched_meta(), fn {id, _} -> id end) == before_ids end,
-      2000
+      5_000
     )
+
+    assert Registry.lookup(EvoGit.Agent.Session.Registry, agent_id) == []
   end
 
   test "update_config reconciles the LLM pool without crashing" do
