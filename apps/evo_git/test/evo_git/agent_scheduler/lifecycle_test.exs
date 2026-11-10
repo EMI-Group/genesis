@@ -1,7 +1,41 @@
+defmodule EvoGit.AgentScheduler.LifecycleTest.StubAgent do
+  @moduledoc """
+  The role a session-test run executes AS.
+
+  A real `EvoGit.Agent.Session` needs a module implementing the `EvoGit.Agent`
+  behaviour (`system_prompt/0`, `available_tools/0`, `delegation_level/0`). The
+  tool list is deliberately EMPTY: every exchange is driven end-to-end by the
+  `:llm_call` engine seam, so no tool schema is ever dispatched.
+
+  Defined ABOVE the `async: true` test module on purpose: `mix test` starts the
+  ExUnit async runner BEFORE requiring the test files, so a helper defined after
+  the test module can still be unloaded when the first test runs.
+  """
+
+  use EvoGit.Agent
+
+  @doc "The fixed system prompt of the stub role."
+  def system_prompt, do: "You are the lifecycle-test stub agent."
+
+  @doc "No tools: the scripted model never asks for one."
+  def available_tools, do: []
+end
+
 defmodule EvoGit.AgentScheduler.LifecycleTest do
   @moduledoc """
   Tests for the crash-retry logic in `EvoGit.AgentScheduler.Lifecycle.handle_agent_crash/3`,
-  the cancellation logic in `cancel_agent/2`, and the defensive handling for missing ETS entries.
+  the cancellation logic in `cancel_agent/2`, the routing in
+  `handle_session_result/3`, and the defensive handling for missing ETS entries.
+
+  ## Sessions, not `%Task{}`
+
+  An agent runs inside ONE `EvoGit.Agent.Session` process, so `SchedMeta` carries
+  `session_pid` (never a `%Task{}`) and `Lifecycle.cancel_agent/2` force-stops
+  that session through `EvoGit.Agent.Session.cancel(pid, :force)`. The two
+  cancellation tests therefore start a REAL session (repo-less, with an
+  `:exchange_opts` `:llm_call` seam that parks the worker) and assert the session
+  dies with the `:shutdown` reason the session's own force-cancel path produces —
+  the `Process.exit/2` fallback would show up as `:killed` instead.
 
   Uses `async: true`: every row the module seeds lives in the app-global named
   ETS tables (`:evogit_agent_summary`, `:evogit_sched_meta` and
@@ -111,21 +145,123 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     end
   end
 
-  # --- Process-death observation ---
+  # --- Real sessions (the ONE agent lifecycle) ---
 
-  # Deterministic replacement for a blind `Process.sleep/1` after a cancellation:
-  # waits for the observable consequence (the stand-in agent process is actually
-  # gone) and fails loudly instead of racing it.
-  defp await_process_death(pid, timeout \\ 5_000) do
+  # Starts a REAL `EvoGit.Agent.Session` for `agent_id` whose exchange worker
+  # parks inside its `:llm_call` seam, so the session stays `:running` until the
+  # test force-cancels it. Repo-less: no worktree is ever requested, so the
+  # session touches no repository and needs no `WorktreeManager`.
+  #
+  # Returns the session pid and its monitor ref (the ref is created BEFORE the
+  # cancel, so the test can assert WHICH exit reason the session produced).
+  defp start_blocked_session(agent_id, row_overrides \\ []) do
+    put_agent_state(agent_id, struct!(session_agent_state(), row_overrides))
+
+    dispatch_ctx = [
+      agent_id: agent_id,
+      depth: 0,
+      repo_root: "/tmp/test",
+      repo_id: "primary",
+      worktree_path: Path.join(System.tmp_dir!(), "lifecycle_session_#{agent_id}"),
+      retries: 0,
+      spec: session_spec(),
+      meta: %SchedMeta{id: agent_id, depth: 0, spec: session_spec()},
+      repo_less: true,
+      repo_less_repo_path: "/tmp/test",
+      scheduler: self(),
+      exchange_opts: [llm_call: blocking_llm_call(self())]
+    ]
+
+    {:ok, pid} = EvoGit.Agent.Session.start_link(dispatch_ctx)
+    # An abnormal exit must not take the test process down with the session.
+    Process.unlink(pid)
     ref = Process.monitor(pid)
 
-    receive do
-      {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
-    after
-      timeout ->
-        Process.demonitor(ref, [:flush])
-        flunk("expected the agent process #{inspect(pid)} to be dead within #{timeout}ms")
+    on_exit(fn ->
+      if Process.alive?(pid), do: Process.exit(pid, :kill)
+    end)
+
+    # The session is only cancellable from `:running`: wait for the worker to be
+    # parked in its LLM call, which is the state every assertion below assumes.
+    # The worker is deliberately NOT released — the force cancel kills it.
+    assert_receive {:llm_blocked, _worker}, 5_000
+    assert {:ok, %{phase: :running}} = EvoGit.Agent.Session.inspect(pid, 1_000)
+
+    %{session: pid, ref: ref}
+  end
+
+  defp session_spec do
+    %AgentSpec{
+      context_node: context_node(),
+      phylo_node: phylo_node(),
+      agent_module: EvoGit.AgentScheduler.LifecycleTest.StubAgent,
+      objective: "lifecycle session test",
+      opts: [
+        repo_less: true,
+        task_tmpdir: Path.join(System.tmp_dir!(), "lifecycle_session_tmp")
+      ]
+    }
+  end
+
+  # The scheduler row a session builds its state from (the identity/model fields
+  # come from this row, never from the dispatch context).
+  defp session_agent_state do
+    %AgentState{
+      context_node: context_node(),
+      llm_model: "test:model",
+      model_id: "lifecycle-test",
+      max_retries: 15,
+      max_depth: 8,
+      max_turns: 128,
+      repo_id: "primary",
+      llm_context_window: 200_000
+    }
+  end
+
+  # The scripted model: the FIRST call parks the worker until released, and any
+  # later call (a grace turn, a retry) completes immediately — so a released run
+  # always terminates promptly.
+  defp blocking_llm_call(test_pid) do
+    fn context, _tools, _params, _agent_id, _retries ->
+      unless Process.get(:lifecycle_session_released) do
+        send(test_pid, {:llm_blocked, self()})
+
+        receive do
+          :release -> Process.put(:lifecycle_session_released, true)
+        after
+          5_000 -> Process.put(:lifecycle_session_released, true)
+        end
+      end
+
+      message = %ReqLLM.Message{
+        role: :assistant,
+        content: [ReqLLM.Message.ContentPart.text("lifecycle session report")],
+        tool_calls: nil
+      }
+
+      response = %ReqLLM.Response{
+        id: "lifecycle-session-response",
+        model: "test:model",
+        context: ReqLLM.Context.append(context, message),
+        message: message,
+        usage: %{input_tokens: 10, output_tokens: 2, total_tokens: 12}
+      }
+
+      {:implicit_completion, response, "lifecycle session report"}
     end
+  end
+
+  # A stand-in for a running session in the bookkeeping tests: it answers the ONE
+  # `EvoGit.Agent.Session.cancel(pid, :force)` call `Lifecycle.cancel_agent/2`
+  # makes (a real session replies `:ok` there) and then stops. Without the reply
+  # `cancel_agent/2` would wait out the session call timeout and take its
+  # `Process.exit/2` fallback, which is not what these tests are about.
+  defp session_process do
+    spawn(fn ->
+      receive do
+        {:"$gen_call", from, {:cancel, :force}} -> GenServer.reply(from, :ok)
+      end
+    end)
   end
 
   # --- Setup ---
@@ -164,7 +300,10 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       {:ok, updated_meta} = get_sched_meta(agent_id)
       assert updated_meta.retries == 1
       assert updated_meta.status == :pending
-      assert updated_meta.task_ref == nil
+      # The retry drops the dead session's pid and its phase mirror, so the
+      # re-dispatch starts a FRESH session.
+      assert updated_meta.session_pid == nil
+      assert updated_meta.phase == nil
 
       # Agent queued for re-dispatch (paused → queued, not dispatched)
       assert :queue.to_list(new_state.queue) == [agent_id]
@@ -263,18 +402,23 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
   end
 
   describe "cancel_agent/2" do
-    test "kills the agent's Task process and cleans up ETS entries" do
+    test "force-stops the agent's Session, replies {:error, :cancelled} and cleans up ETS entries" do
       agent_id = unique_agent_id()
+      from_ref = make_ref()
 
-      # Spawn a real long-running task
-      task = Task.async(fn -> Process.sleep(10_000) end)
+      # A REAL session, parked in its LLM call: `Session.cancel(pid, :force)` is
+      # the ONE force-stop path, and it stops the session with `:shutdown`
+      # (the `Process.exit/2` fallback would show up as `:killed` instead).
+      %{session: session, ref: ref} = start_blocked_session(agent_id)
 
       meta = %SchedMeta{
         id: agent_id,
         depth: 0,
         spec: agent_spec(),
         retries: 0,
-        task_ref: task,
+        session_pid: session,
+        from: {self(), from_ref},
+        sub_agent_from: {self(), make_ref()},
         worktree: nil
       }
 
@@ -284,12 +428,17 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
 
       assert Lifecycle.cancel_agent(state, agent_id) == state
 
-      # Task process should be dead
-      await_process_death(task.pid)
-      refute Process.alive?(task.pid)
+      # The session process is dead, and it died through the session's own
+      # force-cancel path (a `:kill` fallback would report `:killed`).
+      assert_receive {:DOWN, ^ref, :process, ^session, :shutdown}, 5_000
+      refute Process.alive?(session)
 
-      # ETS entry deleted
+      # Both blocked callers get the documented cancellation reply.
+      assert_received {^from_ref, {:error, :cancelled}}
+
+      # ETS entries deleted
       assert get_sched_meta(agent_id) == :missing
+      assert get_agent_state(agent_id) == :missing
     end
   end
 
@@ -347,36 +496,31 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       assert Git.branch_exists?(repo_root, branch)
     end
 
-    test "cancel_agent kills the task but leaves the worktree dir and branch intact", %{
+    test "cancel_agent stops the session but leaves the worktree dir and branch intact", %{
       repo_root: repo_root,
       base_sha: base_sha
     } do
-      agent_id = :erlang.unique_integer([:positive])
+      agent_id = unique_agent_id()
       %{branch: branch, wt_path: wt_path} = make_worktree(repo_root, base_sha)
 
-      task = Task.async(fn -> Process.sleep(10_000) end)
+      %{session: session, ref: ref} =
+        start_blocked_session(agent_id, repo_root: repo_root, task_local_id: 1)
 
       put_sched_meta(agent_id, %SchedMeta{
         id: agent_id,
         depth: 0,
         spec: agent_spec(),
         retries: 0,
-        task_ref: task,
+        session_pid: session,
         from: nil,
         worktree: wt_path
-      })
-
-      put_agent_state(agent_id, %AgentState{
-        agent_state()
-        | repo_root: repo_root,
-          task_local_id: 1
       })
 
       state = base_state([])
       assert Lifecycle.cancel_agent(state, agent_id) == state
 
-      await_process_death(task.pid)
-      refute Process.alive?(task.pid)
+      assert_receive {:DOWN, ^ref, :process, ^session, :shutdown}, 5_000
+      refute Process.alive?(session)
 
       assert get_sched_meta(agent_id) == :missing
       assert get_agent_state(agent_id) == :missing
@@ -426,10 +570,10 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       caller_ref = make_ref()
       task_id = "42"
 
-      # Spawn real long-running tasks for each agent that will be cancelled.
-      # Lifecycle.cancel_agent/2 calls Task.shutdown/2 on the stored task_ref.
-      tasks =
-        Enum.map(1..3, fn _ -> Task.async(fn -> Process.sleep(:infinity) end) end)
+      # One stand-in session per agent that will be cancelled:
+      # Lifecycle.cancel_agent/2 force-stops the stored `session_pid` through
+      # `EvoGit.Agent.Session.cancel/2`.
+      sessions = Enum.map(1..3, fn _ -> session_process() end)
 
       # A separate process whose pid is distinct from self() so that the
       # caller_pid scan in the handler does NOT match this agent.
@@ -443,7 +587,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       a4 = unique_agent_id()
 
       try do
-        [task1, task2, task3] = tasks
+        [session1, session2, session3] = sessions
 
         # Agent a1: top-level (depth: 0) whose `from` contains caller_pid.
         # This is the entry point the handler keys off of.
@@ -454,7 +598,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           retries: 0,
           task_id: task_id,
           from: {caller_pid, caller_ref},
-          task_ref: task1
+          session_pid: session1
         }
 
         # Agent a2: subagent (depth: 1) sharing the same task_id.
@@ -465,7 +609,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           retries: 0,
           task_id: task_id,
           parent_id: a1,
-          task_ref: task2
+          session_pid: session2
         }
 
         # Agent a3: another subagent (depth: 2) sharing the same task_id.
@@ -476,7 +620,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           retries: 0,
           task_id: task_id,
           parent_id: a2,
-          task_ref: task3
+          session_pid: session3
         }
 
         # Agent a4: belongs to a DIFFERENT task_id — must NOT be cancelled.
@@ -489,7 +633,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           retries: 0,
           task_id: "99",
           from: {dummy_caller, make_ref()},
-          task_ref: nil
+          session_pid: nil
         }
 
         put_sched_meta(a1, meta1)
@@ -520,9 +664,9 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
         # The unrelated agent's metadata is untouched.
         assert {:ok, ^meta4} = get_sched_meta(a4)
       after
-        # Clean up spawned tasks (Task.shutdown is idempotent if already killed).
-        Enum.each(tasks, fn task ->
-          Task.shutdown(task, :brutal_kill)
+        # Clean up any stand-in session left alive (cancel_agent kills its own).
+        Enum.each(sessions, fn pid ->
+          if Process.alive?(pid), do: Process.exit(pid, :kill)
         end)
 
         # Clean up the dummy caller process used for the unrelated agent.
@@ -535,16 +679,17 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       caller_ref = make_ref()
       task_id = "42"
 
-      # Spawn real long-running tasks for each agent that will be cancelled.
-      tasks =
-        Enum.map(1..2, fn _ -> Task.async(fn -> Process.sleep(:infinity) end) end)
+      # One stand-in session per agent that will be cancelled (see
+      # `session_process/0`): `Lifecycle.cancel_agent/2` force-stops the stored
+      # `session_pid`.
+      sessions = Enum.map(1..2, fn _ -> session_process() end)
 
       # Per-test-unique agent ids (see the moduledoc).
       a1 = unique_agent_id()
       a2 = unique_agent_id()
 
       try do
-        [task1, task2] = tasks
+        [session1, session2] = sessions
 
         # Agent a1: top-level (depth: 0) whose `from` contains caller_pid.
         meta1 = %SchedMeta{
@@ -554,7 +699,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           retries: 0,
           task_id: task_id,
           from: {caller_pid, caller_ref},
-          task_ref: task1
+          session_pid: session1
         }
 
         # Agent a2: subagent (depth: 1) sharing the same task_id.
@@ -565,7 +710,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           retries: 0,
           task_id: task_id,
           parent_id: a1,
-          task_ref: task2
+          session_pid: session2
         }
 
         put_sched_meta(a1, meta1)
@@ -601,8 +746,8 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
         assert default_holders == MapSet.new()
         assert new_state.tool_holders == MapSet.new()
       after
-        Enum.each(tasks, fn task ->
-          Task.shutdown(task, :brutal_kill)
+        Enum.each(sessions, fn pid ->
+          if Process.alive?(pid), do: Process.exit(pid, :kill)
         end)
       end
     end
@@ -817,6 +962,99 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       assert_raise MatchError, fn ->
         AgentScheduler.update_total_tokens(999_999, 100)
       end
+    end
+  end
+
+  describe "handle_session_result/3 — session result routing" do
+    test "a root session result replies to the blocked caller with the agent count injected" do
+      # The session delivers its ONE result to the scheduler, which routes it to
+      # the caller blocked in `run_agent/2`; the session itself never replies.
+      task_id = "lifecycle-session-root-#{System.unique_integer([:positive])}"
+      agent_id = unique_agent_id()
+      from = {self(), make_ref()}
+      {_caller, caller_ref} = from
+
+      put_sched_meta(agent_id, %SchedMeta{
+        id: agent_id,
+        depth: 0,
+        spec: agent_spec(),
+        task_id: task_id,
+        from: from,
+        session_pid: self(),
+        foreign_repo_commits: %{"foreign1" => "sha-1"}
+      })
+
+      state = base_state(task_agent_counts: %{task_id => 3})
+      result = {:ok, %Result{result: "done", commit_sha: "abc123"}}
+
+      assert {:noreply, new_state} = Lifecycle.handle_session_result(agent_id, result, state)
+
+      assert_received {^caller_ref, {:ok, %Result{} = replied}}
+      assert replied.result == "done"
+      # Whole-run accounting: the root's result carries the full agent count.
+      assert replied.agent_count == 3
+      # The subtree's foreign-repo commits ride along on the root reply too.
+      assert replied.foreign_repo_commits == %{"foreign1" => "sha-1"}
+      # The per-task counter is consumed, and the row is marked as replied so a
+      # later `:DOWN` recycles instead of treating it as a crash.
+      assert new_state.task_agent_counts == %{}
+      assert {:ok, stored} = get_sched_meta(agent_id)
+      assert stored.result_sent
+    end
+
+    test "a subagent session result lands in the parent's results and leaves the parent with the scheduler" do
+      parent_id = unique_agent_id()
+      child_id = unique_agent_id()
+      sibling_id = unique_agent_id()
+      task_id = "lifecycle-session-sub-#{System.unique_integer([:positive])}"
+
+      put_sched_meta(parent_id, %SchedMeta{
+        id: parent_id,
+        depth: 0,
+        spec: agent_spec(),
+        task_id: task_id,
+        status: :waiting,
+        total_sub_specs: 2,
+        pending_sub_agents: MapSet.new([child_id, sibling_id]),
+        sub_agent_indices: %{child_id => 0, sibling_id => 1}
+      })
+
+      put_sched_meta(child_id, %SchedMeta{
+        id: child_id,
+        depth: 1,
+        spec: agent_spec(),
+        task_id: task_id,
+        parent_id: parent_id,
+        status: :running,
+        session_pid: self()
+      })
+
+      state = base_state([])
+      result = {:ok, %Result{result: "child report", commit_sha: "def456"}}
+
+      assert {:noreply, new_state} = Lifecycle.handle_session_result(child_id, result, state)
+
+      # The child's result is stored at its ORIGINAL spec index on the parent...
+      assert {:ok, parent} = get_sched_meta(parent_id)
+      assert parent.sub_agent_results == %{0 => result}
+      # ...the child's own row is marked replied...
+      assert {:ok, child} = get_sched_meta(child_id)
+      assert child.result_sent
+      # ...and the parent is NOT resumed yet (its second subagent is still
+      # running), so nobody is replied to and the scheduler state is unchanged.
+      assert parent.status == :waiting
+      assert new_state.queue == state.queue
+      refute_receive {_ref, _result}
+    end
+
+    test "a result for an agent with no sched_meta is ignored without touching state" do
+      # Defensive: a session result can arrive after the row was reaped (cancel).
+      state = base_state([])
+      missing_id = unique_agent_id()
+      result = {:ok, %Result{result: "late", commit_sha: "abc"}}
+
+      assert {:noreply, ^state} =
+               Lifecycle.handle_session_result(missing_id, result, state)
     end
   end
 
