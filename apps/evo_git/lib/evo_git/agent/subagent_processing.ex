@@ -683,11 +683,11 @@ defmodule EvoGit.Agent.SubagentProcessing do
            "Error: The specified commit ID '#{commit_id}' does not exist in the repository. Please verify the commit SHA is correct and exists in the current repository's git history. Git error: #{msg}"}
       end
     else
-      # `phylo_node` is not on `%State{}` yet in P1: read the parent's live
-      # scheduler row instead (the parent is the agent currently spawning this
-      # subagent, so its row exists).
-      {:ok, parent_agent_state} = AgentScheduler.get_agent_state(parent_state.agent_id)
-      base = parent_agent_state.phylo_node.current_commit
+      # `phylo_node` is not on `%EvoGit.Agent.State{}` yet in P1: read the
+      # parent's live scheduler row instead (the parent is the agent currently
+      # spawning this subagent, so its row was already loaded into
+      # `parent_state` at the top of `build_subagent_specs/3`).
+      base = parent_state.phylo_node.current_commit
 
       {:ok,
        %PhyloGraphNode{
