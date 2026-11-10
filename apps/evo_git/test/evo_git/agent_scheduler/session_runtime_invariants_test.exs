@@ -65,8 +65,12 @@ defmodule EvoGit.AgentScheduler.SessionRuntimeInvariantsTest do
   key (`.agents/skills` seams included), changes the global `Logger` level, or
   touches `:persistent_term` / the scheduler's configuration: every engine seam
   travels through `dispatch_ctx[:exchange_opts]` (`:llm_call`), which production
-  never sets. The `WorktreeManager` lease test uses its own temp git repository,
-  so the app-global manager's per-repo markers are keyed to a unique path.
+  never sets. Every session is also given `scheduler: self()` in its dispatch
+  context, so a run's ONE terminal result is delivered to the TEST instead of the
+  app-global scheduler — whose reply target on these hand-written, parent-less
+  rows (`from: nil`) would be `nil` and would crash it. The `WorktreeManager`
+  lease test uses its own temp git repository, so the app-global manager's
+  per-repo markers are keyed to a unique path.
   No assertion is weakened for parallelism: every wait is event-driven (the
   blocked-LLM notification, the monitor `:DOWN`, the caller reply) or a bounded
   poll that only absorbs scheduling latency — never a fixed sleep as the
@@ -100,6 +104,20 @@ defmodule EvoGit.AgentScheduler.SessionRuntimeInvariantsTest do
   # A range of its own: `:evogit_agent_summary` is shared with every
   # concurrently running module, so the only safe key is a unique one.
   @agent_id_base 9_970_000
+
+  # EVERY wait budget in this module, in one place. The shared host's scheduling
+  # swings 10-30x under parallel load (see `test/CONTEXT.md` → "Cost Profile"),
+  # so a fixed 5 s / 15 s `assert_receive` budget exits on a loaded machine even
+  # though the awaited event is a plain monitor `:DOWN`, a heartbeat message or a
+  # real git/worktree reclaim. The budget only absorbs that scheduling latency —
+  # each awaited event is reachable by construction (and every wait still fails,
+  # never silently passes, when it is not).
+  @async_wait_budget_ms 30_000
+
+  # A "was an outcome delivered?" window. The session is already dead and its
+  # `:DOWN` has been observed above, so this stays a bounded mailbox window
+  # proving ABSENCE — never a sleep, and never a budget that grows with load.
+  @no_delivery_window_ms 500
 
   # The fields that MUST NOT exist on the summary row (or in its defstruct):
   # the conversation, the P2 injected-message queue, the graceful-cancel flag
@@ -149,10 +167,18 @@ defmodule EvoGit.AgentScheduler.SessionRuntimeInvariantsTest do
   describe "the summary row is a read model with no conversation" do
     test "carries no conversation or control state, at runtime AND at the source level",
          %{agent_id: agent_id, tmp_dir: tmp_dir} do
+      # The ONE terminal result goes to THIS test (`:scheduler`), as in test 4:
+      # the registration row carries no `from`, so the production default (the
+      # APP-GLOBAL scheduler) would reply to `nil` and crash it — a global
+      # side effect this `async: true` module must never have.
       {:ok, pid, ref} =
-        start_session(repo_less_ctx(agent_id, tmp_dir, llm_call: blocking_llm_call(self())))
+        start_session(
+          repo_less_ctx(agent_id, tmp_dir, [llm_call: blocking_llm_call(self())],
+            scheduler: self()
+          )
+        )
 
-      assert_receive {:llm_blocked, worker}, 5_000
+      assert_receive {:llm_blocked, worker}, @async_wait_budget_ms
 
       # --- runtime: the row the dashboard/RPC reads ---
       assert [{^agent_id, %AgentState{} = row}] =
@@ -217,7 +243,7 @@ defmodule EvoGit.AgentScheduler.SessionRuntimeInvariantsTest do
       send(worker, :release)
       # The stop is asynchronous with the release: the budget only absorbs the
       # completion path's own work plus suite-wide scheduling latency.
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 15_000
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, @async_wait_budget_ms
     end
   end
 
@@ -228,10 +254,17 @@ defmodule EvoGit.AgentScheduler.SessionRuntimeInvariantsTest do
   describe "read paths while a session is mid-exchange" do
     test "list_agents/0 answers promptly and get_agent_history/1 still serves the conversation",
          %{agent_id: agent_id, tmp_dir: tmp_dir} do
+      # Same isolation as test 1: the session's terminal result is delivered to
+      # this test, never to the app-global scheduler (whose reply target on this
+      # row would be `nil`).
       {:ok, pid, ref} =
-        start_session(repo_less_ctx(agent_id, tmp_dir, llm_call: blocking_llm_call(self())))
+        start_session(
+          repo_less_ctx(agent_id, tmp_dir, [llm_call: blocking_llm_call(self())],
+            scheduler: self()
+          )
+        )
 
-      assert_receive {:llm_blocked, worker}, 5_000
+      assert_receive {:llm_blocked, worker}, @async_wait_budget_ms
       assert worker != pid
 
       # The DISPATCH-TIME bookkeeping shape: `Dispatch.do_try_dispatch/4` records
@@ -277,7 +310,7 @@ defmodule EvoGit.AgentScheduler.SessionRuntimeInvariantsTest do
       assert Process.alive?(pid)
 
       send(worker, :release)
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 15_000
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, @async_wait_budget_ms
     end
   end
 
@@ -340,23 +373,23 @@ defmodule EvoGit.AgentScheduler.SessionRuntimeInvariantsTest do
         )
 
       # The create pipeline runs before the first exchange worker starts.
-      assert_receive {:llm_blocked, worker}, 30_000
+      assert_receive {:llm_blocked, worker}, @async_wait_budget_ms
 
       # The session OWNS a real, checked-out worktree at the dispatched commit
       # while it runs.
       assert File.dir?(worktree_path)
       assert Git.rev_parse(worktree_path) == {:ok, sha}
       assert Git.branch_exists?(repo_root, branch)
-      assert {:ok, %{phase: :running}} = Session.inspect(pid, 1_000)
+      assert {:ok, %{phase: :running}} = Session.inspect(pid, @async_wait_budget_ms)
 
       send(worker, :release)
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 30_000
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, @async_wait_budget_ms
 
       # Monitor-driven reclamation: the lease is released when its owner (the
       # session) dies. Event-driven bounded waits — the destroy is the manager's
       # reaction to the `:DOWN`, not a synchronous part of the session's stop.
-      wait_until(fn -> not File.exists?(worktree_path) end, 10_000)
-      wait_until(fn -> not Git.branch_exists?(repo_root, branch) end, 10_000)
+      wait_until(fn -> not File.exists?(worktree_path) end, @async_wait_budget_ms)
+      wait_until(fn -> not Git.branch_exists?(repo_root, branch) end, @async_wait_budget_ms)
 
       refute File.exists?(worktree_path)
       refute Git.branch_exists?(repo_root, branch)
@@ -399,7 +432,7 @@ defmodule EvoGit.AgentScheduler.SessionRuntimeInvariantsTest do
           )
         )
 
-      assert_receive {:llm_blocked, worker}, 5_000
+      assert_receive {:llm_blocked, worker}, @async_wait_budget_ms
       assert worker != pid
       assert [{^pid, _value}] = Registry.lookup(Session.Registry, agent_id)
 
@@ -423,11 +456,11 @@ defmodule EvoGit.AgentScheduler.SessionRuntimeInvariantsTest do
       assert Lifecycle.cancel_agent(state, agent_id) == state
 
       # The top-level caller is answered with the documented cancellation reply.
-      assert_receive {^from_ref, {:error, :cancelled}}, 1_000
+      assert_receive {^from_ref, {:error, :cancelled}}, @async_wait_budget_ms
 
       # The session died through its OWN force-cancel path: `:shutdown`. A
       # `:killed` here would mean the `Process.exit/2` fallback ran instead.
-      assert_receive {:DOWN, ^ref, :process, ^pid, :shutdown}, 5_000
+      assert_receive {:DOWN, ^ref, :process, ^pid, :shutdown}, @async_wait_budget_ms
       refute Process.alive?(pid)
 
       # …and the blocked exchange worker went with it: no orphan left behind.
@@ -438,7 +471,7 @@ defmodule EvoGit.AgentScheduler.SessionRuntimeInvariantsTest do
       assert SchedStore.get_agent_state(agent_id) == :error
 
       # A force kill reports NO outcome at all.
-      refute_receive {:agent_session_result, ^agent_id, _pid, _result}, 500
+      refute_receive {:agent_session_result, ^agent_id, _pid, _result}, @no_delivery_window_ms
     end
   end
 
@@ -463,7 +496,7 @@ defmodule EvoGit.AgentScheduler.SessionRuntimeInvariantsTest do
   end
 
   # A repo-less `dispatch_ctx` (no worktree, no git, no `WorktreeManager`).
-  defp repo_less_ctx(agent_id, tmp_dir, exchange_opts, extra \\ []) do
+  defp repo_less_ctx(agent_id, tmp_dir, exchange_opts, extra) do
     spec = repo_less_spec(tmp_dir)
 
     [
@@ -541,6 +574,9 @@ defmodule EvoGit.AgentScheduler.SessionRuntimeInvariantsTest do
   # Parks THIS worker in its LLM call until the test releases it. A plain-text
   # reply with no tool calls ENDS the run, so a released worker terminates
   # promptly; any later call (a grace turn, a retry) returns immediately.
+  # The park's fallback uses the SAME host-load budget as every other wait: it
+  # must outlast the test's own assertion block, otherwise a loaded machine would
+  # let the run finish and recycle the summary row mid-assertion.
   defp blocking_llm_call(test_pid) do
     fn context, _tools, _params, _agent_id, _retries ->
       unless Process.get(:session_invariants_released) do
@@ -549,7 +585,7 @@ defmodule EvoGit.AgentScheduler.SessionRuntimeInvariantsTest do
         receive do
           :release -> Process.put(:session_invariants_released, true)
         after
-          10_000 -> Process.put(:session_invariants_released, true)
+          @async_wait_budget_ms -> Process.put(:session_invariants_released, true)
         end
       end
 

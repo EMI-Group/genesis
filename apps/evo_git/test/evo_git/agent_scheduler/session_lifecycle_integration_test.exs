@@ -67,6 +67,22 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
     def available_tools, do: []
   end
 
+  # EVERY wait budget in this module, in one place. The awaited events are real
+  # scheduling events (a scripted seam's handshake, the session's monitor
+  # `:DOWN`, the `WorktreeManager`'s reclaim of a real worktree/branch), but the
+  # shared host's scheduling swings 10-30x under parallel load (see
+  # `test/CONTEXT.md` → "Cost Profile"), so a fixed 5 s / 10 s / 15 s budget
+  # exits on a loaded machine even when the event is imminent. Only the budget
+  # absorbs that latency: the wait still fails — never passes silently — if the
+  # event is not reachable.
+  @async_wait_budget_ms 30_000
+
+  # The crash-retry's second attempt additionally pays the PRODUCTION settle
+  # sleep (`Session.Setup.bind_worktree/2` sleeps 30_000 × retries) before the
+  # retried session starts, so its budget must cover that real wait on top of
+  # host latency — it is deliberately larger than `@async_wait_budget_ms`.
+  @retry_attempt_budget_ms 60_000
+
   setup do
     # The app-global scheduler's crash-retry budget: scenario 1 sets it to ONE
     # retry so the bound is pinned instead of the production default of 3.
@@ -154,7 +170,7 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
     caller =
       Task.async(fn -> EvoGit.AgentScheduler.run_agent(spec_for(repo_root, sha), 60_000) end)
 
-    assert_receive {:attempt, 1, pid1, true, 0}, 30_000
+    assert_receive {:attempt, 1, pid1, true, 0}, @async_wait_budget_ms
 
     # Discover the agent id now: the row is guaranteed to exist here (it
     # survives the crash and the retry and is only deleted on a successful
@@ -166,7 +182,7 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
     # The retry's session start pays the production crash-retry settle sleep
     # (`Session.Setup.bind_worktree/2` sleeps 30_000 × retries), so this budget
     # covers a real, slow-but-correct retry rather than shrinking it.
-    assert_receive {:attempt, 2, pid2, true, 1}, 60_000
+    assert_receive {:attempt, 2, pid2, true, 1}, @retry_attempt_budget_ms
 
     # A NEW session process — never a reused one — serves the retry.
     assert is_pid(pid1) and is_pid(pid2)
@@ -184,7 +200,7 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
         not MapSet.member?(sched_meta_ids(), agent_id) and
           match?(:error, Store.get_agent_state(agent_id))
       end,
-      10_000
+      @async_wait_budget_ms
     )
 
     assert Registry.lookup(Session.Registry, agent_id) == []
@@ -224,7 +240,7 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
         receive do
           {^ref, :release} -> :ok
         after
-          10_000 -> :ok
+          @async_wait_budget_ms -> :ok
         end
       end
 
@@ -254,7 +270,9 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
     caller =
       Task.async(fn -> EvoGit.AgentScheduler.run_agent(spec_for(repo_root, sha), 60_000) end)
 
-    assert_receive {ref, :agent_running, worker_pid, worktree_path, head}, 30_000
+    assert_receive {ref, :agent_running, worker_pid, worktree_path, head},
+                   @async_wait_budget_ms
+
     assert File.dir?(worktree_path)
     assert head == {:ok, sha}
 
@@ -286,7 +304,7 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
 
     # The grace turn re-invoked the LLM AFTER the cancel flag was set, and the
     # cancel message had been drained into that turn's context.
-    assert_receive {:llm_call, 2, grace_context_text}, 5_000
+    assert_receive {:llm_call, 2, grace_context_text}, @async_wait_budget_ms
     assert grace_context_text =~ "being cancelled by the user"
     assert :counters.get(counter, 1) >= 2
 
@@ -407,8 +425,9 @@ defmodule EvoGit.AgentScheduler.SessionLifecycleIntegrationTest do
   end
 
   # Bounded poll on the session's own phase (`:cancelling` is set synchronously
-  # by `begin_graceful_cancel/1`, so this only absorbs scheduling latency).
-  defp await_phase(pid, phase, timeout \\ 2_000) do
+  # by `begin_graceful_cancel/1`, so this only absorbs scheduling latency — the
+  # budget is the module's host-load budget, never a fixed short window).
+  defp await_phase(pid, phase, timeout \\ @async_wait_budget_ms) do
     do_await_phase(pid, phase, System.monotonic_time(:millisecond) + timeout)
   end
 
