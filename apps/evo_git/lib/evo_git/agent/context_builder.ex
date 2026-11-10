@@ -291,7 +291,7 @@ defmodule EvoGit.Agent.ContextBuilder do
   agent's live/finished background shell jobs, rendered by
   `EvoGit.Agent.BackgroundJobNotice.section/1`; absent/`nil`/`[]` renders
   nothing, so the block stays byte-identical for an agent with no jobs). A
-  `%LoopState{}` satisfies this. Purely reads the CONTEXT.md chain from disk via
+  `%EvoGit.Agent.State{}` satisfies this. Purely reads the CONTEXT.md chain from disk via
   `build_dynamic_context/1` — so calling it
   again later re-reads the CURRENT chain — plus the static sections, drops
   blank ones, joins them with `"\\n\\n"`, and wraps them via `context_block/1`.
@@ -449,7 +449,7 @@ defmodule EvoGit.Agent.ContextBuilder do
   would keep seeing the stale chain.
 
   `msg` is the EXISTING first user message (as it sits in the conversation);
-  `state` is a plain map (a `%EvoGit.Agent.LoopState{}`) carrying
+  `state` is a plain map (a `%EvoGit.Agent.State{}`) carrying
   `:node_path, :repo_path, :parent_id, :repo_less, :foreign_repos,
   :repo_notes, :quality_level` PLUS:
 

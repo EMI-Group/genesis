@@ -23,7 +23,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   alias EvoGit.Agent.ContextMerge
   alias EvoGit.Agent.ContextMerge.Report
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.Result
   alias EvoGit.Agent.SubagentSchemas
   alias EvoGit.Agent.Usage
@@ -45,7 +45,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
   """
   @spec process_subagent_calls(
           indexed_calls :: [{map(), non_neg_integer()}],
-          state :: LoopState.t(),
+          state :: State.t(),
           opts :: keyword()
         ) :: {list(), String.t() | nil, Usage.t()}
   def process_subagent_calls([], _state, opts) when is_list(opts), do: {[], nil, Usage.zero()}
@@ -122,7 +122,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
   """
   @spec build_subagent_specs(
           indexed_calls :: [{map(), non_neg_integer()}],
-          state :: LoopState.t(),
+          state :: State.t(),
           foreign_repo_commits :: %{String.t() => String.t()}
         ) :: [AgentSpec.t() | {:error, {map(), non_neg_integer(), String.t()}}]
   def build_subagent_specs(indexed_calls, state, foreign_repo_commits \\ %{})
@@ -364,7 +364,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
           call :: map(),
           index :: non_neg_integer(),
           result :: term(),
-          state :: LoopState.t()
+          state :: State.t()
         ) :: {non_neg_integer(), String.t(), String.t(), String.t()}
   def process_subagent_result(call, index, result, _state) do
     output = format_subagent_result(result)
@@ -683,7 +683,11 @@ defmodule EvoGit.Agent.SubagentProcessing do
            "Error: The specified commit ID '#{commit_id}' does not exist in the repository. Please verify the commit SHA is correct and exists in the current repository's git history. Git error: #{msg}"}
       end
     else
-      base = parent_state.phylo_node.current_commit
+      # `phylo_node` is not on `%State{}` yet in P1: read the parent's live
+      # scheduler row instead (the parent is the agent currently spawning this
+      # subagent, so its row exists).
+      {:ok, parent_agent_state} = AgentScheduler.get_agent_state(parent_state.agent_id)
+      base = parent_agent_state.phylo_node.current_commit
 
       {:ok,
        %PhyloGraphNode{

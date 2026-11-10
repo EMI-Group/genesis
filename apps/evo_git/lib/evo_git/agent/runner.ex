@@ -14,22 +14,11 @@ defmodule EvoGit.Agent.Runner do
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.LoopState
-  import ReqLLM.Context, only: [user: 1]
 
-  # Grace-turn budget for a user-requested graceful cancellation (cancel-grace).
-  # The agent may wrap up and finish (a plain-text reply with no tool calls ends
-  # the run and its text is the report) for up to this many turns before the run
-  # hard-stops with `{:error, :recovery_failed}`.
-  @cancel_grace_turns 3
-
-  # Grace-turn budget for turn-limit recovery. A commit is a tool call and
-  # therefore does not finish the run, so the agent needs one turn for a bounded
-  # final commit PLUS at least one more to deliver its plain-text report; the
-  # budget must never be 1, which makes "commit and report" impossible.
-  # The bound stays hard: every turn that ends without completing consumes a
-  # grace turn, and at `grace_turns_remaining <= 1` the next continue hard-stops
-  # with `{:error, :recovery_failed}` (`Agent.grace_period_continue_failed?/1`).
-  @turn_limit_grace_turns 3
+  # The two grace-turn budgets (`@cancel_grace_turns` / `@turn_limit_grace_turns`),
+  # the recovery message, the auto-commit safety net and the grace-period entry
+  # points live in `EvoGit.Agent.Exchange.Grace`; the delegations below keep the
+  # old call sites working until the Runner becomes a shim.
 
   @doc """
   Runs the agent synchronously, blocking until it completes.
@@ -422,116 +411,31 @@ defmodule EvoGit.Agent.Runner do
 
   # Checks and sends turn-limit warnings via the adaptive TurnWarning module.
   # See EvoGit.Agent.TurnWarning for threshold logic and message generation.
-  defp check_limit_warnings(%LoopState{} = state) do
-    # Pure process-dictionary read (no git call): the snapshot is refreshed at the
-    # END of every turn by `EvoGit.Agent.ConflictState`.
-    in_conflict = EvoGit.Agent.ConflictState.in_conflict?()
-
-    case EvoGit.Agent.TurnWarning.check_positional(
-           state.turn,
-           state.max_turns,
-           state.last_warned_level,
-           state.delegation_level,
-           in_conflict: in_conflict
-         ) do
-      {:ok, warning} ->
-        msg = EvoGit.Agent.TurnWarning.message(warning)
-        warning_msg = EvoGit.Agent.ContextBuilder.tag_message_turn(user(msg), state.turn)
-        new_context = ReqLLM.Context.append(state.context, warning_msg)
-        %{state | context: new_context, last_warned_level: warning.level}
-
-      :none ->
-        case EvoGit.Agent.TurnWarning.check_middle(
-               state.turn,
-               state.max_turns,
-               state.turns_since_subagent,
-               state.delegation_level,
-               in_conflict: in_conflict
-             ) do
-          {:ok, warning} ->
-            msg = EvoGit.Agent.TurnWarning.message(warning)
-            warning_msg = EvoGit.Agent.ContextBuilder.tag_message_turn(user(msg), state.turn)
-            new_context = ReqLLM.Context.append(state.context, warning_msg)
-            %{state | context: new_context, turns_since_subagent: 0}
-
-          :none ->
-            state
-        end
-    end
-  end
+  defdelegate check_limit_warnings(state),
+    to: EvoGit.Agent.Exchange.Warnings,
+    as: :check_limit_warnings
 
   # Drains the agent's pending user-message queue and appends each message to
-  # the context as a turn-tagged user-role message.
-  #
-  # Each drained message may be a legacy plain `String.t()` or a
-  # `%{text:, attachments:}` map (`Store.drain_pending_user_messages/1` yields
-  # whatever was queued) — materialization is delegated to the pure
-  # `EvoGit.Agent.ContextBuilder.build_injected_message/2`, which yields a plain
-  # `user(text)` for a legacy binary / no media and a
-  # `user([ContentPart.text(text) | media…])` content-part message when the
-  # message carries attachments. There is NO root gate on injected messages:
-  # any agent at any depth may receive media here (the root-only gate covers the
-  # `:attachments` TASK OPT only — the first user message).
+  # the context as a turn-tagged user-role message. The implementation (and its
+  # full rationale, including attachment materialization and the NO-root-gate
+  # rule for injected media) lives in `EvoGit.Agent.Exchange.Pending`.
   #
   # Public (@doc false) solely so it can be tested directly — same convention as
-  # `refresh_commit_sha/1` / `maybe_enter_cancel_grace/1`. Called only from
-  # `loop/1` in production.
+  # `refresh_commit_sha/1` / `maybe_enter_cancel_grace/1`.
   @doc false
-  def drain_and_inject_user_messages(%LoopState{agent_id: agent_id, context: context} = state) do
-    messages = EvoGit.AgentScheduler.Store.drain_pending_user_messages(agent_id)
-
-    case messages do
-      [] ->
-        state
-
-      _ ->
-        new_context =
-          Enum.reduce(messages, context, fn msg, ctx ->
-            tagged = EvoGit.Agent.ContextBuilder.build_injected_message(msg, state.turn)
-            ReqLLM.Context.append(ctx, tagged)
-          end)
-
-        # Sync updated context to ETS for dashboard visibility (returns :ok).
-        # The in-memory new_context is already stamped at creation
-        # (tag_message_turn above) — no rebind needed.
-        EvoGit.Agent.ContextBuilder.sync_context_to_ets(agent_id, new_context)
-
-        %{state | context: new_context}
-    end
-  end
+  defdelegate drain_and_inject_user_messages(state),
+    to: EvoGit.Agent.Exchange.Pending,
+    as: :drain_and_inject_user_messages
 
   # Claims this agent's finished-but-unannounced background shell jobs and, when
-  # there are any, appends ONE combined `[NOTICE]` user message so the LLM learns
-  # a detached command finished. The claim is exactly-once (the registry marks the
-  # jobs `announced`), so a poll via `job_output`/`job_list` can never produce a
-  # duplicate notice. Skipped entirely during a grace period: the grace budget is
-  # for wrapping up, and claiming there would consume the notice without the
-  # agent ever acting on it. A missing registry already yields `{:ok, []}`.
+  # there are any, appends ONE combined `[NOTICE]` user message. Moved verbatim
+  # (exactly-once claim, grace-period skip) to `EvoGit.Agent.Exchange.Pending`.
   #
-  # Public (@doc false) solely so it can be tested directly — same convention as
-  # `drain_and_inject_user_messages/1`. Called only from `continue_loop/2` in
-  # production.
+  # Public (@doc false) solely so it can be tested directly.
   @doc false
-  def inject_background_job_notices(%LoopState{in_grace_period: true} = state), do: state
-
-  def inject_background_job_notices(%LoopState{} = state) do
-    # `notice/1` answers `nil` for an empty list; the guard already excludes it,
-    # but the explicit `is_binary` match keeps the append total.
-    with {:ok, jobs} when is_list(jobs) and jobs != [] <-
-           EvoGit.BackgroundJobs.claim_finished_notices(owner_pid: self()),
-         text when is_binary(text) <- EvoGit.Agent.BackgroundJobNotice.notice(jobs) do
-      message = EvoGit.Agent.ContextBuilder.build_injected_message(text, state.turn)
-      new_context = ReqLLM.Context.append(state.context, message)
-
-      # Sync to ETS for dashboard/history visibility (same side effect as the
-      # pending-message drain).
-      EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, new_context)
-
-      %{state | context: new_context}
-    else
-      _ -> state
-    end
-  end
+  defdelegate inject_background_job_notices(state),
+    to: EvoGit.Agent.Exchange.Pending,
+    as: :inject_background_job_notices
 
   defp loop(%LoopState{} = state) do
     context_before = state.context
@@ -585,7 +489,7 @@ defmodule EvoGit.Agent.Runner do
     # Immediately after the drain: check whether a graceful cancellation was
     # requested for this agent (ETS `cancel_requested` flag, set by the
     # scheduler when the task is cancelled). If set, the flag is cleared and
-    # the agent enters cancel-grace (budget @cancel_grace_turns, NO extra
+    # the agent enters cancel-grace (the cancel-grace turn budget, NO extra
     # recovery message — the cancel message was already injected via the
     # pending_user_messages drain above).
     case maybe_enter_cancel_grace(state) do
@@ -611,182 +515,24 @@ defmodule EvoGit.Agent.Runner do
     loop(enter_grace(state, reason, opts))
   end
 
-  @doc false
   # Transitions an agent into a grace period WITHOUT re-entering the loop.
-  #
-  # Runs the best-effort recovery auto-commit FIRST (safety net so uncommitted
-  # work is preserved — fires for BOTH grace kinds; for cancel-grace this is
-  # exactly "save the changes"), then optionally appends a recovery message to
-  # the context, then sets `in_grace_period: true` with the given grace-turn
-  # budget. Returns the updated `%LoopState{}`.
-  #
-  # `opts`:
-  #   - `:message` — `:default` (or omitted) appends the standard hardcoded
-  #     recovery message built from `reason`, the agent's objective and the
-  #     current turn-limit budget (`recovery_warning_message/2`); `nil` skips
-  #     the append (cancel-grace — the cancel message
-  #     was already injected via the `pending_user_messages` drain in
-  #     `loop/1`, so a second message would be redundant); a binary appends
-  #     that custom message instead.
-  #   - `:grace_turns` — the grace-turn budget (default `@turn_limit_grace_turns`).
-  def enter_grace(%LoopState{} = state, reason, opts \\ []) do
-    message = Keyword.get(opts, :message, :default)
-    grace_turns = Keyword.get(opts, :grace_turns, @turn_limit_grace_turns)
-
-    # Safety net: auto-commit any uncommitted work before entering the grace
-    # period, so it is preserved even if the agent fails to commit during its
-    # recovery turns. We only commit when there are actually changes
-    # (non-empty porcelain status); a clean workspace is a no-op. Git errors
-    # are allowed to propagate (crash) — this is best-effort salvage, not
-    # error-masking.
-    maybe_recovery_auto_commit(state)
-
-    new_context =
-      case message do
-        :default ->
-          objective =
-            case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
-              {:ok, agent_state}
-              when is_binary(agent_state.objective) and
-                     agent_state.objective != "" ->
-                agent_state.objective
-
-              _ ->
-                nil
-            end
-
-          warning_msg = recovery_warning_message(reason, objective)
-
-          recovery_msg =
-            EvoGit.Agent.ContextBuilder.tag_message_turn(user(warning_msg), state.turn)
-
-          ReqLLM.Context.append(state.context, recovery_msg)
-
-        nil ->
-          # Cancel-grace: the cancel message was already injected via the
-          # pending_user_messages drain in `loop/1` — do not append a second
-          # recovery message.
-          state.context
-
-        custom when is_binary(custom) ->
-          recovery_msg = EvoGit.Agent.ContextBuilder.tag_message_turn(user(custom), state.turn)
-          ReqLLM.Context.append(state.context, recovery_msg)
-      end
-
-    %{
-      state
-      | context: new_context,
-        in_grace_period: true,
-        grace_turns_remaining: grace_turns
-    }
-  end
-
+  # Moved verbatim (recovery auto-commit FIRST, `:message` / `:grace_turns`
+  # semantics, recovery-message construction from the agent's objective) to
+  # `EvoGit.Agent.Exchange.Grace`.
   @doc false
-  # Checks whether a graceful cancellation was requested for this agent via the
-  # ETS `cancel_requested` flag (set by the scheduler when the task is
-  # cancelled).
-  #
-  # If set: clears the flag in ETS and returns `{:cancel_grace, grace_state}`
-  # where `grace_state` has `in_grace_period: true` and
-  # `grace_turns_remaining: @cancel_grace_turns`. No recovery message is
-  # appended — the cancel message was already injected into the context by the
-  # `pending_user_messages` drain at the top of `loop/1`.
-  #
-  # If not set: returns `:no_cancel`.
-  def maybe_enter_cancel_grace(%LoopState{} = state) do
-    if EvoGit.AgentScheduler.Store.cancel_requested?(state.agent_id) do
-      EvoGit.AgentScheduler.Store.clear_cancel_requested(state.agent_id)
+  defdelegate enter_grace(state, reason), to: EvoGit.Agent.Exchange.Grace, as: :enter_grace
 
-      {:cancel_grace,
-       enter_grace(state, "task cancelled", message: nil, grace_turns: @cancel_grace_turns)}
-    else
-      :no_cancel
-    end
-  end
+  defdelegate enter_grace(state, reason, opts),
+    to: EvoGit.Agent.Exchange.Grace,
+    as: :enter_grace
 
-  # The hardcoded turn-budget recovery message appended when entering a grace
-  # period with `message: :default` (turn-limit recovery).
-  #
-  # Every claim here must hold for the CURRENT budget, so the number of final
-  # turns is interpolated from `@turn_limit_grace_turns` instead of being
-  # hardcoded, and the text spells out the three things an agent gets wrong:
-  #   * the ONE completion rule — a reply with NO tool calls ends the run and its
-  #     text IS the report, while a turn ending in a tool call merely continues;
-  #   * the terminal consequence — using the window up without such a reply stops
-  #     the run immediately with NO report at all;
-  #   * the acceptable outcome — an honest partial report beats "just one more fix".
-  defp recovery_warning_message(reason, objective) do
-    budget = @turn_limit_grace_turns
-
-    if objective do
-      """
-      You have exceeded your turn budget (#{reason}). You have #{budget} final #{turn_word(budget)} left before this run stops immediately.
-
-      How this run ends — the ONE completion rule: a reply with NO tool calls ends the run, and its text IS the report. A turn that ends with a tool call does NOT finish the run — it only uses up one of your final turns.
-
-      If you use up all #{budget} final #{turn_word(budget)} without such a reply, this run stops immediately and there will be NO report at all.
-
-      What to do now:
-      1. First turn: make at most ONE final commit, and only if you have genuinely uncommitted work. Your already-committed work is safe, and no commit is needed when the workspace is clean.
-      2. Then STOP working and reply with your final report as plain text. Do not start another change, and do not delegate.
-
-      If you cannot complete the entire objective, that is acceptable: stop and report what you did (with the commit), what remains, and what a follow-up must pick up. Never keep working toward "just one more fix".
-
-      Your original objective was:
-      #{objective}
-
-      Your report MUST summarize the status of this ENTIRE objective, not just your most recent sub-task.
-      """
-    else
-      """
-      You have exceeded your turn budget (#{reason}). You have #{budget} final #{turn_word(budget)} left before this run stops immediately.
-
-      How this run ends — the ONE completion rule: a reply with NO tool calls ends the run, and its text IS the report. A turn that ends with a tool call does NOT finish the run — it only uses up one of your final turns.
-
-      If you use up all #{budget} final #{turn_word(budget)} without such a reply, this run stops immediately and there will be NO report at all.
-
-      What to do now:
-      1. First turn: make at most ONE final commit, and only if you have genuinely uncommitted work. Your already-committed work is safe, and no commit is needed when the workspace is clean.
-      2. Then STOP working and reply with your final report as plain text explaining the situation — what was done (with the commit), what remains, and what a follow-up must pick up.
-
-      If you cannot complete the entire objective, that is acceptable: an honest partial report is exactly what is needed here. Never keep working toward "just one more fix".
-      """
-    end
-  end
-
-  defp turn_word(1), do: "turn"
-  defp turn_word(_), do: "turns"
-
-  # Best-effort auto-commit of any uncommitted work just before the grace
-  # period, as a safety net so work is not lost if the agent fails to commit
-  # during its grace turns. Only commits when the workspace is dirty
-  # (non-empty porcelain status); a clean workspace is a silent no-op. Git
-  # errors propagate (crash) rather than being swallowed — this is salvage,
-  # not error-masking. No try/rescue per repo conventions.
-  defp maybe_recovery_auto_commit(%LoopState{}) do
-    # Repo-less agents never touch git (cardinal rule) — their repo_path is a
-    # placeholder or the real source root, neither of which should be
-    # status'd/committed.
-    if Process.get(:repo_less) do
-      :ok
-    else
-      repo_path = Process.get(:repo_path)
-
-      if repo_path do
-        case Git.status(repo_path) do
-          {:ok, ""} ->
-            :ok
-
-          {:ok, _status_output} ->
-            {:ok, _} = Git.add(repo_path, ".")
-            {:ok, _} = Git.commit(repo_path, "auto-commit: turn-limit recovery")
-            :ok
-        end
-      else
-        :ok
-      end
-    end
-  end
+  # Checks whether a graceful cancellation was requested for this agent and, if
+  # so, clears the flag and enters the cancel grace period (`:no_cancel`
+  # otherwise). Moved verbatim to `EvoGit.Agent.Exchange.Grace`.
+  @doc false
+  defdelegate maybe_enter_cancel_grace(state),
+    to: EvoGit.Agent.Exchange.Grace,
+    as: :maybe_enter_cancel_grace
 
   defp do_turn(%LoopState{} = state) do
     EvoGit.Agent.ToolDispatch.do_turn(

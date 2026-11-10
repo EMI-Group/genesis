@@ -87,7 +87,7 @@ defmodule EvoGit.Agent.ContextCompression do
              llm_model: EvoGit.Agent.ToolDispatch.current_model(),
              llm_context_window: EvoGit.Agent.ToolDispatch.current_context_window()
            ) do
-        %EvoGit.Agent.LoopState{} = state ->
+        %EvoGit.Agent.State{} = state ->
           # continue the turn with the compressed (or unchanged) state
 
         {:error, {:llm_request_rejected, _message} = terminal} ->
@@ -106,7 +106,7 @@ defmodule EvoGit.Agent.ContextCompression do
   alias EvoGit.Agent.Compression.ToolResultPruner
   alias EvoGit.Agent.ContextBuilder
   alias EvoGit.Agent.Cost
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler
 
@@ -130,7 +130,7 @@ defmodule EvoGit.Agent.ContextCompression do
 
   ## Returns
 
-    * `%LoopState{}` — the state with the compressed context (or the unchanged
+    * `%State{}` — the state with the compressed context (or the unchanged
       state when the threshold is not exceeded, when the message shape is not
       compressible, or when there was nothing to compact);
     * `{:error, {:llm_request_rejected, message}}` — the stage-2 LLM call was
@@ -148,9 +148,9 @@ defmodule EvoGit.Agent.ContextCompression do
   window, so a silent fallback would just defer the overflow to the very next
   LLM request (a hard provider error) with no operator-visible signal.
   """
-  @spec compress_if_needed(LoopState.t(), keyword()) ::
-          LoopState.t() | {:error, {:llm_request_rejected, String.t()}}
-  def compress_if_needed(%LoopState{} = state, opts \\ []) do
+  @spec compress_if_needed(State.t(), keyword()) ::
+          State.t() | {:error, {:llm_request_rejected, String.t()}}
+  def compress_if_needed(%State{} = state, opts \\ []) do
     agent_id = Keyword.fetch!(opts, :agent_id)
     llm_model = Keyword.fetch!(opts, :llm_model)
     llm_gen_opts = Keyword.get(opts, :llm_generation_params, [])

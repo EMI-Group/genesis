@@ -9,7 +9,7 @@ defmodule EvoGit.Agent do
 
   The agent's worktree path is fixed for the agent's entire lifetime. It is set
   once by the scheduler via `Process.put(:repo_path, ...)` before the agent task
-  starts, read at startup, and stored in `LoopState.repo_path`. It never changes.
+  starts, read at startup, and stored in `State.repo_path`. It never changes.
 
   Scheduling metadata (status, worktree assignment, parent tracking) lives in
   a separate `:evogit_sched_meta` table owned by the scheduler — agents never
@@ -22,10 +22,9 @@ defmodule EvoGit.Agent do
     the user's objective (the query) as user prompts.
   """
 
-  alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.State
 
-  @type state :: LoopState.t()
+  @type state :: State.t()
 
   @doc """
   Extracts the tool name from a tool schema struct.
@@ -47,16 +46,16 @@ defmodule EvoGit.Agent do
   `in_grace_period: true` and looped back, the condition re-fired immediately.
   The `in_grace_period` guard breaks the cycle.
   """
-  @spec trigger_turn_limit_recovery?(LoopState.t()) :: boolean()
-  def trigger_turn_limit_recovery?(%LoopState{in_grace_period: true}), do: false
-  def trigger_turn_limit_recovery?(%LoopState{turn: turn, max_turns: max}), do: turn >= max
+  @spec trigger_turn_limit_recovery?(State.t()) :: boolean()
+  def trigger_turn_limit_recovery?(%State{in_grace_period: true}), do: false
+  def trigger_turn_limit_recovery?(%State{turn: turn, max_turns: max}), do: turn >= max
 
   @doc """
   Determines whether a `{:continue, _}` outcome during the grace period should
   fail recovery.
 
   Budget-aware: during the grace period the agent gets a bounded number of
-  grace turns (`LoopState.grace_turns_remaining`) to finish (a plain-text reply
+  grace turns (`State.grace_turns_remaining`) to finish (a plain-text reply
   with no tool calls completes the run, and its text IS the report).
   If it instead calls other tools (a `{:continue, _}` outcome), the turn ends
   without completing — the call sites in `EvoGit.Agent.ToolDispatch` check this
@@ -78,12 +77,12 @@ defmodule EvoGit.Agent do
   struct default, e.g. a state constructed without a budget) also hard-stops —
   preserving the historical default of "in grace means no more continues".
   """
-  @spec grace_period_continue_failed?(LoopState.t() | State.t()) :: boolean()
-  def grace_period_continue_failed?(%{in_grace_period: true, grace_turns_remaining: n}) do
+  @spec grace_period_continue_failed?(State.t()) :: boolean()
+  def grace_period_continue_failed?(%State{in_grace_period: true, grace_turns_remaining: n}) do
     n <= 1
   end
 
-  def grace_period_continue_failed?(%{in_grace_period: false}), do: false
+  def grace_period_continue_failed?(%State{in_grace_period: false}), do: false
 
   defmacro __using__(_opts) do
     quote do
