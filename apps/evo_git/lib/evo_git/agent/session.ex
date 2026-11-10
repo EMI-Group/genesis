@@ -236,8 +236,9 @@ defmodule EvoGit.Agent.Session do
 
   This is the settled transport in both cases — the message is appended to the agent's
   pending-message queue, which the engine drains at the next turn boundary.
-  `{:error, :finished}` means the session can no longer accept input (cancelling / finalizing /
-  done, or the scheduler row is gone); `{:error, :not_found}` means there is no such session.
+  `{:error, :finished}` means the session exists but can no longer accept input — the phase is
+  `:cancelling`, `:finalizing` or `:done`; `{:error, :not_found}` means there is no such session
+  (no session registry entry, or the process is already gone).
   """
   @spec input(dispatch_target(), String.t() | map()) :: :ok | {:error, :not_found | :finished}
   def input(target, message) do

@@ -48,8 +48,14 @@ defmodule EvoGit.AgentScheduler do
   release, no slot change, no terminal task status. A session ends only by
   finishing, by `close_session/1`, by a graceful cancel or by a force kill —
   there is deliberately NO idle timeout. Messages arrive through
-  `send_session_message/3` (`:queue` at the next turn boundary, `:interrupt` to
-  stop the in-flight generation).
+  `send_session_message/3`: both `:queue` (the default) and `:interrupt` are
+  accepted and validated, but they are applied IDENTICALLY — the message is
+  appended and delivered at the next turn boundary, because chunk-level
+  interruption of the in-flight generation is later work
+  (`docs/agent-runtime-refactor.md` §5, P4). A mid-exchange message is therefore
+  never dropped, and a message sent while `:awaiting_input` starts a new
+  exchange immediately on the SAME session, worktree, context and cache
+  identity.
 
   `await_close/2` is the interactive counterpart of `run_agent/2`: `run_agent/2`
   blocks one caller until the one-shot agent terminates (the scheduler owns the
@@ -163,9 +169,14 @@ defmodule EvoGit.AgentScheduler do
   @doc """
   Delivers one message to a session (by session pid or agent id).
 
-  `:queue` (default) appends it for the next turn boundary; `:interrupt` stops
-  the in-flight generation and injects it. The session owns the queue and the
-  transcript. Total: `:ok`, or `{:error, {:session, reason}}` — the session's own
+  Both `:queue` (default) and `:interrupt` are accepted and validated but applied
+  IDENTICALLY: the message is appended and delivered at the next turn boundary,
+  because chunk-level interruption of the in-flight generation is later work
+  (`docs/agent-runtime-refactor.md` §5, P4). A mid-exchange message is never
+  dropped, and one sent while `:awaiting_input` starts a new exchange
+  immediately on the same session, worktree, context and cache identity.
+  The session owns the queue and the transcript.
+  Total: `:ok`, or `{:error, {:session, reason}}` — the session's own
   `:not_found`/`:finished`/`{:bad_state, phase}`, or a caller error
   (`{:bad_policy, _}`/`{:bad_target, _}`/`{:bad_message, _}`).
   """
