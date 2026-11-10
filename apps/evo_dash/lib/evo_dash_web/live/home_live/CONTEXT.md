@@ -148,6 +148,9 @@ Keep agent-history `chat_fetch_seq`, terminal-task `chat_task_fetch_seq`, source
 Real agent changed_fields payloads are keyword lists and history refetches require `is_list(changed_fields) and Keyword.has_key?(changed_fields, :message_count)`.
 Terminal completed/cancelled/failed tasks finalize from the lite task read; live or unknown statuses must retain task refs rather than finalize.
 Chat persistence is local-node-only and in-memory; remount reconciliation is one-shot, New chat retains old chats with a cap of ten, and tests touching it reset the shared ChatHistory store.
+The chat is ONE conversation per `EvoDash.ChatHistory.current_chat_id/0`, a BEAM-global pointer with no session/user key, so two tabs or two users on one server attach to and overwrite the same chat state (last `put_state/2` wins).
+The composer has NO attachment/image affordance (only a textarea + `chat_input`), and the core `:reflect` path forces `attachments: nil`, so multi-modal task-start input is unreachable from the Assistant chat.
+`start_chat/3` does not reset `thought_process`, so the new streaming bubble renders the PREVIOUS message's thought entries until the first history refetch lands.
 
 ## Verification
 
