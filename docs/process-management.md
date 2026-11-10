@@ -1,8 +1,8 @@
 # Managed Process & Tool-Execution Platform
 
-Design record. Scope: how Genesis executes and then *owns* the OS work an agent holds — foreground tool
-calls, detached background jobs and the sandbox trees behind them — and how operators inspect and control
-that work. This describes the current implementation; it is not a change log.
+Design record. Scope: how Genesis executes and then *owns* the work an agent holds — foreground tool
+calls (built-in and shell), detached background jobs and the sandbox trees behind them — and how operators
+inspect and control that work. This describes the current implementation; it is not a change log.
 
 | Concern | Owner |
 |---|---|
@@ -61,6 +61,11 @@ single point where that identity is known:
 The attach itself is `Helpers.attach_execution/3`, which is best-effort and never raises: a missing or
 restarting registry cannot fail, slow or alter a command. Callers that pass no `:execution_id` (internal
 `rg`/git/skill invocations) get no tracking at all.
+The same option drives the terminal fact: `Helpers.record_exit/2` settles the record `:completed` with
+`reason: :exited` and the run's REAL exit code, `Helpers.record_timeout/1` settles it `:killed` with
+`reason: :timeout` AFTER the tree kill, and `:record_exit_status: false` suppresses the record for a command
+the caller will re-run (the macOS process-limit retry), so only the final attempt's status becomes the
+execution's outcome.
 
 ### ToolRuntime — one batch
 
@@ -72,9 +77,10 @@ task and its process-dictionary installation, failure containment, tracking and 
 ### ProcessManager — registry, observability, control
 
 `EvoGit.ProcessManager` (a `GenServer` behind a facade, started unconditionally by `EvoGit.Application`
-after `Phoenix.PubSub` and *before* `EvoGit.BackgroundJobs`) keeps ONE `%Execution{}` per live OS execution,
-ONE `%Handle{}` per execution, one sampling timer and one PubSub topic. It records and observes; it does not
-start processes. Two rules follow from that:
+after `Phoenix.PubSub` and *before* `EvoGit.BackgroundJobs`) keeps ONE `%Execution{}` per live execution — a
+built-in call that ran in the BEAM as well as an external OS process — at most ONE `%Handle{}` per external
+execution, one sampling timer and one PubSub topic. It records and observes; it does not start processes.
+Two rules follow from that:
 
 - **No OS call ever runs inside the registry.** `sample/2`, `sample_all/1`, `signal/3`, `pause/2`,
   `resume/2` and `kill/2` resolve the record in the registry and do the OS work in the **caller**; the
@@ -85,12 +91,16 @@ start processes. Two rules follow from that:
 
 ### BackgroundJobs — job bookkeeping stays authoritative
 
-Every detached job is *also* registered as a `:background_job` execution: the start path tracks it with the
-agent-visible identity, attaches the normalized handle (`EvoGit.Sandbox.Background.normalize_handle/1`) and
-stores the returned `execution_id` on the job record; ONE terminal funnel in `put_job/2` finishes that
-execution when the job reaches `:completed`/`:failed`/`:killed`. Killing a job through either door stops the
-process and settles both records, because `ProcessManager.kill/2` routes a `:background_job` with a `job_id`
-back to `EvoGit.BackgroundJobs.kill/2` and only falls back to raw handle control when that job is unknown.
+Every detached job is *also* registered as a `:background_job` execution with `runtime: :background`: the
+start path tracks it with the agent-visible identity — `agent_id` and `task_id` in their NATIVE terms (agent
+ids are integers; an earlier normalization nil'ed them, which broke `list(agent_id: …)` and the dashboard's
+agent filter) — attaches the normalized handle (`EvoGit.Sandbox.Background.normalize_handle/1`) and stores
+the returned `execution_id` on the job record. ONE terminal funnel in `put_job/2` finishes that execution
+when the job reaches `:completed`/`:failed`/`:killed`, carrying the job's own `exit_code` and reason, so a
+background job records the same terminal facts as a foreground shell call. Killing a job through either door
+stops the process and settles both records, because `ProcessManager.kill/2` routes a `:background_job` with a
+`job_id` back to `EvoGit.BackgroundJobs.kill/2` and only falls back to raw handle control when that job is
+unknown.
 
 ### Agent boundary
 
@@ -110,13 +120,61 @@ the batch in the parent process.
 |---|---|
 | Identity | `id` (`"proc-<n>"`), `kind` (`:tool_call \| :background_job`), `tool`, `command`, `label` |
 | Ownership | `agent_id`, `task_id`, `owner_pid` |
-| Context | `cwd`, `repo_root`, `backend` (`:systemd \| :bwrap \| :sandbox_exec \| :none`), `runtime` (`:foreground \| :detached`) |
-| OS addressing | `os_pid`, `unit`, `job_id` |
+| Context | `cwd`, `repo_root`, `backend` (`:builtin \| :systemd \| :bwrap \| :sandbox_exec \| :none`), `runtime` (`:foreground \| :background`) |
+| OS addressing | `os_pid`, `unit`, `job_id` (all nil for a built-in call) |
 | Outcome | `status`, `exit_code`, `reason`, `inserted_at`, `started_at`, `ended_at` |
 | Observation | `stats` (always a map — see §5), `control_log` (oldest first) |
 
 `pgid` deliberately lives on the `%Handle{}`, not on the execution: the record models identity, the handle
 models OS addressing.
+
+### Origin (`runtime`) vs backend
+
+The two questions are separate, and the record answers both without conflating them:
+
+- **`runtime` is the call's ORIGIN, never what runs it.** `:foreground` means the agent is blocked on the
+  call; `:background` means the call outlives the agent's turn — an `EvoGit.BackgroundJobs` job (the OS spawn
+  mode behind it is still `EvoGit.Sandbox.spawn_detached/…`). There is no `:detached` runtime value.
+- **`backend` is what runs the call.** `:builtin` means the call ran **inside the BEAM** — a built-in tool
+  such as `read`/`write`/`edit`/`rg`/`search_*`/`elixir_eval`/`job_output`, anything that is not the platform
+  shell. It therefore has no OS process: no `os_pid`, no `unit`, no uptime and no CPU/memory stats (`stats`
+  stays `Stats.empty/0`), it is never sampled, and every control call answers `{:error, :no_os_process}`.
+  `:systemd | :bwrap | :sandbox_exec | :none` describe an **external** OS process anchored by that sandbox
+  backend, `:none` being external but unsandboxed.
+
+`Execution.builtin?/1`, `external?/1` and `sampleable?/1` are the total predicates the rest of the platform
+keys on: `builtin?/1` is true only for a `%Execution{backend: :builtin}` (any other term, including `nil`, is
+false), `external?/1` is its negation, and `sampleable?/1` is `live?/1 and external?/1` — so a live built-in
+record never arms the sampling timer, is never probed by `sample_all/1` and never contributes a stats row.
+`attach/3` never downgrades a `:builtin` backend to a handle-derived one.
+
+### Terminal facts
+
+Both foreground tool calls and background jobs settle through the same vocabulary:
+
+- **`exit_code`** is an integer `0..255` only when an external OS process genuinely exited; it is `nil` for
+  timeouts, kills, built-in calls and never-started calls.
+- **`reason`** is the ONE terminal cause, `nil` while the execution is live: `:exited` (the process ended on
+  its own — consult `exit_code`), `:timeout`, `:invalid_arguments` (never started: unparseable/malformed tool
+  arguments), `:owner_died`, `{:killed_by, actor}`, `{:crashed, detail}`, `:no_os_process` (a built-in call
+  finished; nothing ran) or the additive `{:tool_error, reason}` (a tool answered `{:error, reason}`, which is
+  not a raise or an exit).
+
+`Execution.status_for_reason/1` is the uniform status mapping: `:exited` and `:no_os_process` → `:completed`,
+`:timeout` and `{:killed_by, _}` → `:killed`, and `:invalid_arguments`, `{:crashed, _}`, `:owner_died`,
+`{:tool_error, _}` or any other term → `:failed`. `:completed` deliberately ALSO covers a NON-ZERO
+`exit_code`: the tool call itself succeeded and the model receives a normal result (the dashboard colors the
+code). The SANDBOX layer records a foreground shell's exit status at the one place that observes it
+(`Helpers.record_exit/2`, `Helpers.record_timeout/1`), while the tool runtime settles the built-in, malformed-
+argument, crash, timeout and tool-error outcomes.
+
+**An operator kill outranks a racing natural exit.** `kill/2` stops the OS process BEFORE it finishes the
+record, and the sandbox layer observes that same exit and tries to settle the record itself; the registry
+therefore holds a per-id kill INTENT (the requesting actor) while the stop is in flight. The FIRST non-killed
+terminal finish then lands as `:killed` with `reason: {:killed_by, actor}` and `exit_code: nil`, because the
+observed exit is the kill's consequence rather than a terminal fact of its own — one exit broadcast, never
+two. An incoming `:killed` or `:owner_died` finish is never translated, a failed stop clears the intent so a
+later natural exit keeps its own facts, and the human-supplied kill reason text lives in `control_log` only.
 
 ### Statuses
 
@@ -130,38 +188,48 @@ models OS addressing.
 ```
 
 `:completed`, `:failed` and `:killed` are terminal (`Execution.terminal?/1`) — a record in one of them never
-changes again. `:running` and `:paused` are the live statuses the sampler probes
-(`Execution.live?/1`). `:unknown` exists for the degraded case where the OS state can no longer be
-observed; a successful probe never produces it.
+changes again, and which one a finish lands on follows `Execution.status_for_reason/1` (§ Terminal facts).
+`:running` and `:paused` are the live statuses (`Execution.live?/1`); only a live AND external record
+(`Execution.sampleable?/1`) is probed, so a live built-in call is listed but never sampled. `:unknown` exists
+for the degraded case where the OS state can no longer be observed; a successful probe never produces it.
 
 ### The three calls
 
 - `track(kind, meta, opts) :: {:ok, id}` — records a new execution. Meta keys are `:tool`, `:command`,
   `:label`, `:agent_id`, `:task_id`, `:owner_pid`, `:cwd`, `:repo_root`, `:backend`, `:runtime`, `:job_id`;
-  documented string keys are accepted and unknown keys ignored (no atom is ever created from input). A pid
-  `:owner_pid` is monitored.
+  documented string keys are accepted and unknown keys ignored (no atom is ever created from input), and
+  identities are kept as the caller supplied them (agent ids stay integers). A pid `:owner_pid` is monitored.
 - `attach(id, handle, opts) :: :ok` — records the OS handle, promotes `:starting → :running`, stamps
   `started_at` only if still nil (a re-attach does not move it) and broadcasts `:process_started` exactly on
   that transition. An unknown/terminal execution or an unrecognized handle is a silent `:ok` — never a ghost
-  `:running` record.
+  `:running` record. Built-in calls never attach, so they are finished straight from `:starting`.
 - `finish(id, status, opts) :: :ok` — records a TERMINAL status with `:exit_code` and `:reason`, stamps
-  `ended_at`, broadcasts `:process_exited` once. A second `finish` is a no-op.
+  `ended_at`, broadcasts `:process_exited` once. A second `finish` is a no-op: the FIRST terminal fact wins,
+  which is why the tool runtime's unconditional `:completed` + `:no_os_process` never overwrites a shell
+  call's `:exited` verdict.
 
-### A foreground `bash` call, end to end
+### A foreground call, end to end
 
 1. The agent loop hands the batch to `ToolDispatch.batch_execute_tools/5`, which builds the `%Request{}` and
    calls `EvoGit.ToolRuntime.execute_batch/2`.
 2. The runtime partitions the batch (§7), acquires a tool slot, and spawns one linked task per parallel call.
-3. `Tracking.track/4` records a `:tool_call` execution — `owner_pid` is the AGENT pid, never the tool task's
-   (the tool task is shut down the instant the call returns; anything monitoring it would see an immediate
-   exit).
-4. The task's process dictionary is seeded with `:evogit_execution_id`; the shell tool reads it and passes
-   it as `execution_id:` through `EvoGit.Sandbox.run_with_partial/7`.
+3. `Tracking.track/4` records a `:tool_call` execution with `runtime: :foreground` and the PER-CALL backend —
+   the resolved sandbox backend for the platform shell tool, `:builtin` for every other tool. `owner_pid` is
+   the AGENT pid, never the tool task's (the tool task is shut down the instant the call returns; anything
+   monitoring it would see an immediate exit).
+4. For a shell call the task's process dictionary is seeded with `:evogit_execution_id`; the shell tool reads
+   it and passes it as `execution_id:` through `EvoGit.Sandbox.run_with_partial/7`.
 5. The backend attaches its real OS identity (`Helpers.attach_execution/3`), so the record becomes
-   `:running` with an `os_pid` or a `unit` and is immediately samplable and controllable.
-6. On return, the runtime finishes the record `:completed`; on `{:tool_crashed, _}`/`{:error, _}` it finishes
-   `:failed`; on a `Task.yield` timeout it calls `Tracking.kill(id, :timeout)` (which kills the OS handle via
-   `ProcessManager.kill/2` with actor `:tool_runtime`) and then finishes `:killed`.
+   `:running` with an `os_pid` or a `unit` and is immediately samplable and controllable. It later records
+   the run's terminal fact there too (`Helpers.record_exit/2` with the real status, or
+   `Helpers.record_timeout/1` after the tree kill).
+6. A built-in call never reaches step 4 or 5: it has no pid, no unit, no uptime and no CPU/memory figures,
+   is never sampled, and finishes `:completed` with `reason: :no_os_process` when the tool returns.
+7. Per-call settlement lives in the RUNTIME process: malformed arguments finish `:failed` +
+   `:invalid_arguments`; `{:tool_crashed, _}`/`{:exit, _}` finish `:failed` + `{:crashed, …}`; a tool that
+   answers `{:error, reason}` finishes `:failed` + `{:tool_error, reason}`; on a `Task.yield` timeout the
+   runtime calls `Tracking.kill(id, :timeout)` (which kills the OS handle via `ProcessManager.kill/2` with
+   actor `:tool_runtime`) and the record ends `:killed` with `reason: :timeout`.
 
 ### Retention and pruning
 
@@ -184,6 +252,9 @@ This covers agent completion, crash, graceful cancel and force-kill, since all f
 backend-shaped sandbox maps. `Handle.normalize/1` accepts a `%Handle{}` as-is or converts the legacy
 `%{kind: :unit, unit: …}` / `%{kind: :port, port: …}` shapes `EvoGit.Sandbox.Background.spawn/1` returns
 (`:port` becomes `:windows` on Windows, `:posix` elsewhere); anything else is `{:error, :invalid_handle}`.
+Only EXTERNAL executions ever hold a handle — a `:builtin` record has none, so `sample/2`, `signal/3`
+(hence `pause/2` and `resume/2`) and `kill/2` answer `{:error, :no_os_process}` instead of reaching this
+layer, and a built-in record is never finished by control.
 
 | `kind` | Backend module | Stats | Signal | Kill |
 |---|---|---|---|---|
@@ -245,8 +316,9 @@ A figure the backend cannot observe stays `nil` — never a fake `0`.
 Two read paths:
 
 - `sample(id, opts)` — on demand, ONE execution, OS work in the caller. Answers `{:ok, stats}`,
-  `{:error, :not_found}`, `{:error, :not_running}` (terminal, or no handle) or a backend error. It stores the
-  observation on the record but does NOT broadcast (a read must not churn the topic).
+  `{:error, :not_found}`, `{:error, :not_running}` (terminal, or no handle), `{:error, :no_os_process}` (a
+  built-in call) or a backend error. It stores the observation on the record but does NOT broadcast (a read
+  must not churn the topic).
 - `sample_all(opts)` — every `:running`/`:paused` execution, bounded concurrency (4 at a time, one
   `:process_stats_probe_timeout_ms` budget per probe, timed-out probes killed). Failed probes are OMITTED
   from the returned map rather than reported — one dead handle must not hide the other executions.
@@ -254,6 +326,8 @@ Two read paths:
 The **sampling timer** is the third path: while at least one live execution exists and
 `:process_stats_enabled` is true, ONE self-timer fires every `:process_manager_sample_interval_ms` (default
 `3_000`), spawns a monitored probe worker, stores each result and then broadcasts ONE `:process_sample`.
+Sampling keys on `Execution.sampleable?/1` (live AND external), so a live built-in call never arms the timer,
+never appears in a `sample_all/1` result and never yields a stats figure.
 Ticks that arrive while a worker is in flight are dropped (sampling is incremental, never queued) and the
 timer is disarmed when nothing live remains, so an idle Genesis burns no OS calls. A
 `{:process_updated, id, %{stats: …}, node}` is broadcast only when `Stats.changed?/2` says the numbers moved
@@ -277,10 +351,12 @@ filter:
 | `:process_sample` | `{:process_sample, node, seq, entries}` | once per sampling tick; `entries` is `[%{id:, status:, stats:}]`, `seq` monotonic |
 | `:process_control` | `{:process_control, id, entry, node}` | per accepted signal/pause/resume/kill, carrying the control-log entry |
 
-Lifecycle changes only: a second `finish/3`, an unchanged status or a no-op attach never broadcasts. The
-dashboard consumes the topic with no polling at all — `ProcessesLive` merges each event into its in-memory
-row list (find-or-nil; an event for an unknown id is a no-op), while the `/agents` detail panel ignores
-payload shapes and simply refetches for the selected agent on any node-matching process event.
+Lifecycle changes only: a second `finish/3`, an unchanged status or a no-op attach never broadcasts. A
+built-in execution never attaches, so it announces itself through its ONE `:process_exited` (the dashboard
+prepends an unknown-id exit row). The dashboard consumes the topic with no polling at all — `ProcessesLive`
+merges each event into its in-memory row list (find-or-nil; an event for an unknown id is a no-op), while the
+`/agents` detail panel ignores payload shapes and simply refetches for the selected agent on any
+node-matching process event.
 
 ## 7. Tool runtime responsibilities
 
@@ -339,21 +415,39 @@ rows: a summary row (status badge, agent link, task link, tool badge + command, 
 uptime, CPU%, memory, exit code) and a detail row with the full command, cwd, repo root, reason, timestamps
 and the complete control log (`ProcessComponents.execution_row/1`).
 
+- **Built-in executions** (`backend: :builtin`) render as first-class rows but show `—` in Target, Uptime,
+  CPU and Memory — there is no OS process to measure — and render NO pause/resume/terminate/kill cluster at
+  all (the whole actions cell is gated on `Format.external?/1`), so the page never offers a control that
+  would answer `{:error, :no_os_process}`. The Exit column uses the shared exit/reason label (the code, else
+  a reason label, else `—`), and the expanded detail block adds Target, Exit Code, Reason, Runtime and
+  Backend. The Backend column reads "In-process" for `:builtin` and "Unsandboxed" for an external `:none`
+  process. External rows keep the status-gated controls, and the `/agents` compact panel inherits the same
+  `—` figures.
 - **Loading** is asynchronous and exit-safe: `ProcessesLive.Load.start/1` bumps a monotonic sequence, paints
   the loading state and runs the fetch on `EvoDash.TaskSupervisor` inside `EvoDash.SafeCall.run/1`, so a dead
   RPC target becomes an error value and the loading flag can never stick. The self-message tag is
   `{:processes_loaded, seq, node, result}` and is dropped unless BOTH `seq` and `node` still match — a
   superseded load, or one for a node the operator already left, is discarded. Failures keep the page usable
   and offer Retry.
-- **Live updates** come from the topic only (§6); there is no polling.
+- **Live updates** come from the topic only (§6); there is no polling. The list is newest-first, and a
+  genuinely NEW row animates in on join: `upsert_execution/3` checks the id is absent BEFORE inserting (the
+  same guard that suppresses a duplicate prepend), marks it in an `:entering` set, and clears that mark after
+  `:processes_entering_ttl_ms` (default `1_500`) through ONE scheduled self-message, so a later sample or
+  update of an already-cleared row never restarts the animation. Both a `:process_started` prepend and an
+  unknown-id `:process_exited` prepend qualify; the initial load, a Retry and a node/filter switch never
+  animate. The class is `process-row-enter` (fade in + slight downward slide + fading tint, disabled under
+  `prefers-reduced-motion: reduce`), and row DOM identity stays `id={"process-row-<id>"}` so LiveView
+  patching never restarts it.
 - **Filters**: `?status=live|finished|all` (default `live`), `?kind=tool_call|background_job`, `?q=<text>`,
   `?agent_id=`, `?task_id=`, plus the node param. Status tabs and the text query are applied at render time
-  over the already-loaded rows; `agent_id`/`task_id` are passed to the core as list filters. Tab badges count
-  exactly what the tab would show.
+  over the already-loaded rows; `agent_id`/`task_id` are passed to the core as list filters (which works
+  because a background job carries its agent id natively). Tab badges count exactly what the tab would show.
 - **Controls**: pause/resume run immediately with a canned reason. Terminate (`TERM`) and kill (`TERM` →
   KILL, labelled "Danger zone") open a confirmation modal and REQUIRE a NON-EMPTY reason — a blank reason
   performs no call at all. `:ok` closes the modal; an error keeps it open so the operator can retry. Control
-  actions are attributed to actor `:remote`, rendered as "Dashboard".
+  actions are attributed to actor `:remote`, rendered as "Dashboard". Precise core answers get their own
+  message, including `:no_os_process` for a built-in execution — the UI hides its controls, so that is only
+  the race/remote fallback.
 - **`/agents`** shows a compact per-agent `Processes` section (`ProcessComponents.compact_rows/1`) loaded
   through the same RPC with the same sequence/node/agent stale guards, plus a "View in Processes" link
   carrying `agent_id` and the node.
@@ -373,9 +467,12 @@ The point of the layering is that each kind of extension touches a small, known 
 **A new tool-call kind** (something an agent holds that is not a foreground tool call or a background job):
 1. add it to `Execution.kind` / `ProcessManager.normalize_kind/1` and to `Format.kind_label/1` + the `/processes`
    kind filter;
-2. `track/3` it where it starts, `attach/3` the handle as soon as the OS identity exists;
-3. `finish/3` it in ONE terminal funnel (mirror `BackgroundJobs.put_job/2`), so the record cannot stay
-   `:running`;
+2. `track/3` it where it starts, choosing its `backend` honestly — `:builtin` when the call runs inside the
+   BEAM (it must then never attach, never be sampled and answer `{:error, :no_os_process}` to control), a
+   sandbox backend when an external process is involved — and `attach/3` the handle as soon as the OS
+   identity exists;
+3. `finish/3` it in ONE terminal funnel (mirror `BackgroundJobs.put_job/2`) with a `:reason` from the shared
+   vocabulary, so the status comes from `Execution.status_for_reason/1` and the record cannot stay `:running`;
 4. if it can be killed through an owning registry, add that branch to `ProcessManager.stop_execution/3`.
 
 **A new control backend** (another OS or supervisor):
@@ -410,9 +507,15 @@ button and its confirm flow in `ProcessesLive`/`ProcessComponents`.
 - **Windows cannot pause, resume or signal.** There is no `SIGSTOP`/`SIGCONT`/`SIGTERM`; a suspended process
   would need `NtSuspendProcess`/`DebugActiveProcess` through a native call, which is out of scope (no new
   dependencies, OS probes via `System.cmd` only). Kill and stats are supported.
-- **A record can briefly be pid-less.** A child that exits before `Helpers.wait_for_os_pid/2` observes it
-  yields an `:undefined` pid, so the handle has no address and stats degrade to `nil` fields until the record
-  is finished. The record is still listed and finishable.
+- **An EXTERNAL record can briefly be pid-less.** A child that exits before `Helpers.wait_for_os_pid/2`
+  observes it yields an `:undefined` pid, so the handle has no address and stats degrade to `nil` fields until
+  the record is finished. The record is still listed and finishable. A `:builtin` record is pid-less BY
+  DESIGN: it has no `os_pid`/`unit`, no uptime, no CPU/memory stats and no controls, and it is never sampled
+  — the dashboard renders `—` for those columns rather than a fake figure.
+- **`exit_code` is only as good as the backend's observation.** A run whose exit status the backend cannot
+  read settles `:completed` with `reason: :exited` and `exit_code: nil`; a non-zero code never means failure
+  (the tool call succeeded), so the status stays `:completed` and only the dashboard's Exit column shows the
+  colour difference.
 - **Stats are best-effort samples, not accounting.** Each figure is whatever the last probe could read; a
   probe that fails leaves the previous values in place, and `cpu_percent` is a two-sample delta rather than a
   kernel-accounted average. `pids` is empty on the systemd path (the unit's cgroup is not enumerated) and on
