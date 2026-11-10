@@ -356,15 +356,25 @@ defmodule EvoGit.Agent.ContextCompression do
   # context block) appends nothing.
   #
   # When `include_background_jobs?` is true the live background-job snapshot is
-  # injected into the state map here (the agent process IS the job owner pid),
-  # because a background shell job outlives the tool call that started it and its
-  # only other trace is the transcript span that compression just summarised
-  # away. `snapshot/1` is a non-reconciling state read that answers `[]` when the
-  # registry is down, so a registry hiccup can never fail a compression.
+  # injected into the state map here, because a background shell job outlives the
+  # tool call that started it and its only other trace is the transcript span
+  # that compression just summarised away. The OWNER is the AGENT/session pid —
+  # NOT this exchange worker's `self()` (the worker is short-lived and owns
+  # nothing durable, D7), so it comes from `:evogit_agent_pid`; that helper is
+  # also the ONE resolution site, falling back to nil when no owner is
+  # installed. `snapshot/1` is a non-reconciling state read that answers `[]`
+  # when the registry is down, so a registry hiccup can never fail a
+  # compression.
   defp refresh_messages(state, include_background_jobs?) do
     refreshed_state =
       if include_background_jobs? do
-        Map.put(state, :background_jobs, EvoGit.BackgroundJobs.snapshot(owner_pid: self()))
+        Map.put(
+          state,
+          :background_jobs,
+          EvoGit.BackgroundJobs.snapshot(
+            owner_pid: EvoGit.BackgroundJobs.current_owner_pid() || self()
+          )
+        )
       else
         state
       end

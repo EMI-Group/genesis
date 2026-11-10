@@ -73,8 +73,15 @@ defmodule EvoGit.Agent.Exchange.Pending do
 
     # `notice/1` answers `nil` for an empty list; the guard already excludes it,
     # but the explicit `is_binary` match keeps the append total.
+    # The owner is the AGENT/session pid, NOT this exchange worker's `self()`:
+    # the worker is short-lived and owns nothing durable (D7), while the jobs
+    # were started under the session pid installed as `:evogit_agent_pid`.
+    # `current_owner_pid/0` is the ONE resolution site and falls back to
+    # `self()` for a driver that installs no owner (where it IS the agent pid).
     with {:ok, jobs} when is_list(jobs) and jobs != [] <-
-           EvoGit.BackgroundJobs.claim_finished_notices(owner_pid: self()),
+           EvoGit.BackgroundJobs.claim_finished_notices(
+             owner_pid: EvoGit.BackgroundJobs.current_owner_pid() || self()
+           ),
          text when is_binary(text) <- EvoGit.Agent.BackgroundJobNotice.notice(jobs) do
       message = EvoGit.Agent.ContextBuilder.build_injected_message(text, state.turn)
       new_context = ReqLLM.Context.append(state.context, message)

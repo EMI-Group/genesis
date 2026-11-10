@@ -941,9 +941,8 @@ defmodule EvoGit.Agent.ToolDispatch do
     {:ok, %{context_node: %{path: node_path}}} =
       AgentScheduler.get_agent_state(agent_id)
 
-    # The AGENT-side identity, resolved ONCE per batch (this function always
-    # runs in the AGENT process, so `self()` IS the agent pid) and handed to the
-    # managed runtime in ONE request struct.
+    # The AGENT-side identity, resolved ONCE per batch and handed to the managed
+    # runtime in ONE request struct.
     #
     # The pid MUST be the AGENT's, never a tool task's: the tool task is shut
     # down IMMEDIATELY after the tool returns
@@ -952,11 +951,20 @@ defmodule EvoGit.Agent.ToolDispatch do
     # its owner — would see an exit at once and kill the job on the spot. The
     # AGENT pid is the one lifetime signal that covers agent completion, crash,
     # graceful cancel and force-kill.
+    #
+    # Nor is it this process's `self()`: this batch runs inside an exchange
+    # WORKER (one short-lived `Task` per exchange) that owns nothing durable
+    # (design decision D7), so the tracked execution / detached background job
+    # must be owned by the SESSION that outlives the worker. The session pid is
+    # installed on the process dictionary by
+    # `EvoGit.Agent.Session.Setup.install_process_context/3`; `self()` is only
+    # the fallback for a driver that installs no owner (the one-shot path
+    # installs `self()` there, so both paths agree).
     request =
       EvoGit.ToolRuntime.Request.new(%{
         agent_id: agent_id,
         task_id: AgentScheduler.task_id_for_agent(agent_id),
-        agent_pid: self(),
+        agent_pid: Process.get(:evogit_agent_pid) || self(),
         repo_path: repo_path,
         repo_root: repo_root,
         node_path: node_path,

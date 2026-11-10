@@ -131,13 +131,13 @@ Standard calls in one batch are PARTITIONED by `EvoGit.Agent.Tools.serial_tool?/
 - **Role guards are installed in the tool task** from the request's `role` map, so `Tools.execute/5`'s pd-based repo-less / read-only-foreign-repo guards DO enforce those roles on the normal serial AND parallel dispatch paths.
 - Direct `Tools.execute/5` tests with role keys installed in the calling process do not prove role enforcement through `ToolDispatch.batch_execute_tools/5`; only the runtime-installed keys (`ToolRuntime.Request.role`) do.
 - **The evaluator does not trust tool-task role pd**: `ElixirEval.Authorization` validates the explicit owner identity/ETS, ancestry and live task state, independently of the ordinary file/shell role guards.
-- `agent_pid` MUST be the AGENT pid, never the short-lived tool task pid; `EvoGit.BackgroundJobs` binds detached jobs to that owner.
+- `Request.agent_pid` MUST be the durable AGENT owner, never the short-lived tool task pid and never an exchange WORKER's `self()`: the batch resolves `Process.get(:evogit_agent_pid) || self()`, which is the SESSION pid when a session drives the exchange (D7 — the worker owns nothing durable) and the agent pid on the one-shot driver; `EvoGit.BackgroundJobs` binds detached jobs and `EvoGit.ProcessManager` its executions to that owner.
 
 | pd key | written | read / meaning |
 |---|---|---|
 | `:evogit_agent_id` | agent proc; EVERY tool task | `current_agent_id/0`, `CommandShell`, approval gate |
 | `:evogit_task_id` | EVERY tool task | `CommandShell`, approval gate |
-| `:evogit_agent_pid` | EVERY tool task (the AGENT pid) | `BackgroundJobs.current_owner_pid/0` |
+| `:evogit_agent_pid` | EVERY tool task (the durable AGENT/session pid) | `BackgroundJobs.current_owner_pid/0` |
 | `:evogit_agent_depth` | `runner.ex` | `AgentScheduler.current_depth/0` |
 | `:evogit_started_at` | `runner.ex` | `Completion` — ISO-8601 |
 | `:genesis_repo_root` | `runner.ex` (incl. repo-less override) | `ToolDispatch` — REAL repo root |
@@ -150,7 +150,7 @@ Standard calls in one batch are PARTITIONED by `EvoGit.Agent.Tools.serial_tool?/
 | `:delegation_hints`, `:read_delegation_hints`, `:redundant_cd_warned` | runner / tool_output_tracking | per-dir counters, once-per-run flag (AGENT process only) |
 | `:conflict_files` | `ConflictState.refresh/1` (tool_dispatch, turn END) | `ConflictState.files/0` / `in_conflict?/0` — the ONE per-turn conflict snapshot read by the next turn's hint suppression + `Exchange.Warnings.check_limit_warnings/1` (AGENT process only; default `[]`) |
 
-No `:parent_id`, `:model_id` or `:depth` pd keys — those live on `AgentState` (ETS); depth is `:evogit_agent_depth`. From inside a tool the agent pid is `hd($callers)` (serial) / `Enum.at($callers, 1)` (parallel), or `:ets.lookup(:evogit_sched_meta, agent_id)` → `%SchedMeta{task_ref: %Task{pid: agent_pid}}` (tables `:public`).
+No `:parent_id`, `:model_id` or `:depth` pd keys — those live on `AgentState` (ETS); depth is `:evogit_agent_depth`. From inside a tool `hd($callers)` (serial) / `Enum.at($callers, 1)` (parallel) is the process that BUILT the batch — the exchange worker under a session, the agent Task on the one-shot driver — so the durable owner pid is the `:evogit_agent_pid` pd key (or `:ets.lookup(:evogit_sched_meta, agent_id)` → `%SchedMeta{task_ref: %Task{pid: agent_pid}}`, tables `:public`), never `$callers`.
 
 ## Subagent Spawn Fan-Out — no SPAWN-COUNT cap (depth only)
 One batch of subagent calls is ONE blocking `AgentScheduler.spawn_sub_agents/2` (`GenServer.call(..., timeout: :infinity)`), registered/dispatched together (`Subagents.spawn_validated_subagents/5` → `Enum.reduce(sub_ids, state, &Dispatch.try_dispatch/2)`); **no width cap in code** (width is prompt-driven, `agents/manager.ex`; one response = one turn).
