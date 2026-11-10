@@ -135,7 +135,27 @@ defmodule EvoGit.TaskRegistry.TaskExecutor do
     # repo-less and have no :path). opts carries :objective, optional :model_id,
     # optional :source_root, optional :task_id-ish keys from the dashboard /
     # start_task tool.
-    EvoGit.Runtime.SelfReflective.run(opts ++ [task_id: task_id])
+    #
+    # `session_mode: "interactive"` (a REPO-LESS reflect task) runs the
+    # session-driving Assistant phase instead of the one-shot SelfReflective
+    # engine. Every other value — including the default `"oneshot"` — keeps the
+    # exact one-shot call below, byte-identically.
+    if interactive_session?(opts) do
+      EvoGit.Runtime.Assistant.run(
+        Keyword.get(opts, :objective, ""),
+        opts ++ [task_id: task_id]
+      )
+    else
+      EvoGit.Runtime.SelfReflective.run(opts ++ [task_id: task_id])
+    end
+  end
+
+  # The interactive-session driver selector. `:session_mode` is a STRING at the
+  # data plane and the registry admits it before enqueue, so anything other than
+  # the canonical `"interactive"` (absent / `"oneshot"` / a nil :path task) keeps
+  # the one-shot path.
+  defp interactive_session?(opts) when is_list(opts) do
+    Keyword.get(opts, :session_mode) == "interactive"
   end
 
   @doc """

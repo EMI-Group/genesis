@@ -7,8 +7,8 @@ defmodule EvoGit.Store.RepoTest do
 
   Pinned contracts:
 
-    * `start_dynamic/1` applies exactly the seven shipped migration versions
-    * the resulting `tasks` table has the exact 19-column shape (names, ORDER,
+    * `start_dynamic/1` applies exactly the eight shipped migration versions
+    * the resulting `tasks` table has the exact 20-column shape (names, ORDER,
       DDL types, notnull/pk flags) — declared in ONE step by the baseline
       migration, which never creates the retired `archive_metadata` column (only
       an adopted legacy database can still carry it, and
@@ -58,12 +58,15 @@ defmodule EvoGit.Store.RepoTest do
   @archive_table_version 20_260_815_000_005
   @prune_indexes_version 20_260_815_000_006
   @vct_mounts_version 20_260_815_000_007
+  @session_mode_version 20_260_815_000_008
   # Ascending, exactly as `schema_migrations` reports it: the ONE schema-creating
   # baseline, the data normalization, the two shipped index migrations (the
   # `(equality, started_at)` composites, then the covering pair), the merged
   # archive-table migration (legacy fan-out + `archive_metadata` drop, both
-  # skipped on a fresh database), the redundant-index prune, and finally the
-  # VCT mount table (which also retires any legacy `projects` table).
+  # skipped on a fresh database), the redundant-index prune, the VCT mount table
+  # (which also retires any legacy `projects` table), and finally the
+  # probe-guarded `tasks.session_mode` adoption (a no-op on a fresh database,
+  # whose baseline CREATE TABLE already declares the column).
   @migration_versions [
     @baseline_version,
     @normalization_version,
@@ -71,7 +74,8 @@ defmodule EvoGit.Store.RepoTest do
     @covering_index_version,
     @archive_table_version,
     @prune_indexes_version,
-    @vct_mounts_version
+    @vct_mounts_version,
+    @session_mode_version
   ]
 
   # `tasks` columns RETIRED from the live table: the per-agent archive moved to
@@ -83,8 +87,8 @@ defmodule EvoGit.Store.RepoTest do
 
   # `PRAGMA table_info(tasks)` rows — [cid, name, type, notnull, dflt, pk] —
   # the FINAL physical shape: the baseline migration's CREATE TABLE declares
-  # exactly these 19 columns in this order (a fresh database never sees the
-  # retired `archive_metadata` column, so `cid` is a contiguous 0..18). Every
+  # exactly these 20 columns in this order (a fresh database never sees the
+  # retired `archive_metadata` column, so `cid` is a contiguous 0..19). Every
   # column TEXT except `agent_count`/`lease_expires_at` (INTEGER), only `status`
   # NOT NULL, `id` the TEXT primary key.
   @task_table_info_rows [
@@ -106,7 +110,8 @@ defmodule EvoGit.Store.RepoTest do
     [15, "project_path", "TEXT", 0, nil, 0],
     [16, "branch_name", "TEXT", 0, nil, 0],
     [17, "error", "TEXT", 0, nil, 0],
-    [18, "updated_at", "TEXT", 0, nil, 0]
+    [18, "session_mode", "TEXT", 0, nil, 0],
+    [19, "updated_at", "TEXT", 0, nil, 0]
   ]
 
   # The two plain single-column indexes the baseline migration creates that
@@ -272,7 +277,7 @@ defmodule EvoGit.Store.RepoTest do
   # ── tasks table shape ────────────────────────────────────────────────────
 
   describe "tasks table shape" do
-    test "PRAGMA table_info returns the exact 19 rows: names in order, types, notnull/pk flags" do
+    test "PRAGMA table_info returns the exact 20 rows: names in order, types, notnull/pk flags" do
       pid = start_repo!(:shape)
 
       result = query!(pid, "PRAGMA table_info(tasks)")
@@ -280,7 +285,7 @@ defmodule EvoGit.Store.RepoTest do
       assert result.columns == ["cid", "name", "type", "notnull", "dflt_value", "pk"]
 
       rows = result.rows
-      assert length(rows) == 19
+      assert length(rows) == 20
 
       assert Enum.map(rows, fn [_cid | rest] -> rest end) ==
                Enum.map(@task_table_info_rows, fn [_cid | rest] -> rest end)

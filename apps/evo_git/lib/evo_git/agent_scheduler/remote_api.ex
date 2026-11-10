@@ -355,7 +355,6 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     case EvoGit.Agent.Session.start_input(target, message, policy) do
       :ok -> :ok
       {:error, reason} -> {:error, {:session, reason}}
-      other -> {:error, {:session, other}}
     end
   end
 
@@ -376,7 +375,6 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     case EvoGit.Agent.Session.close(target, reason) do
       :ok -> :ok
       {:error, err} -> {:error, {:session, err}}
-      other -> {:error, {:session, other}}
     end
   end
 

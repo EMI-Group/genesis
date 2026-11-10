@@ -50,6 +50,72 @@ defmodule EvoGit.TaskRegistry do
   # the app env :finalizing_watchdog_grace_minutes (see finalizing_watchdog_grace/0).
   @finalizing_watchdog_default_minutes 60
 
+  ## Task status sets
+  #
+  # EVERY status enumeration this GenServer owns lives here, exactly once, with
+  # a `@doc false` accessor (`terminal_statuses/0`, `killable_statuses/0`, …) so
+  # a table-driven test can assert totality: `:awaiting_input` — the
+  # NON-TERMINAL status of an idle interactive session whose wrapper is still
+  # alive on this node — must appear wherever `:running` does, except where a
+  # set says otherwise in its comment.
+
+  # Statuses after which a task never transitions again, except the still
+  # allowed terminal → `:completed` (see the stale-terminal guard in
+  # handle_update_status/6).
+  @terminal_statuses [:completed, :failed, :cancelled]
+
+  # `force_kill_task/1` acts on these: the live agents and the wrapper are
+  # brutal-killed and the row is persisted `:failed` with no result. An idle
+  # `:awaiting_input` session is killable exactly like a running task.
+  @killable_statuses [:running, :awaiting_input, :cancelling]
+
+  # Statuses `cancel_task/1` accepts. `:running` is cancelled gracefully through
+  # the `:cancelling` state; an idle `:awaiting_input` session — which has
+  # nothing to save but its transcript — is cancelled immediately.
+  @gracefully_cancellable_statuses [:running, :awaiting_input]
+
+  # `start_task/2` refuses a task id already in one of these statuses. A waiting
+  # session owns its id: restarting it would run a second session over the same
+  # row, so the id is unstartable until the session ends.
+  @unstartable_statuses [:cancelled, :cancelling, :awaiting_input]
+
+  # A `{:task_updated, id, :finalizing, node}` broadcast is ignored for these
+  # (the row is already terminal or mid-graceful-cancel). `:awaiting_input` is
+  # deliberately ABSENT: closing an idle session legitimately moves it through
+  # `:finalizing`.
+  @finalizing_ignored_statuses [:completed, :cancelled, :cancelling]
+
+  # "A live task whose wrapper exists" — the in-flight set. This is NOT the
+  # busy set: an idle `:awaiting_input` session holds no LLM slot, no tool slot
+  # and no worker, so an update/idle gate must never count it as busy.
+  @active_statuses [:running, :pending, :finalizing, :cancelling, :awaiting_input]
+
+  @doc false
+  # Terminal statuses — no further transition (except terminal → `:completed`).
+  def terminal_statuses, do: @terminal_statuses
+
+  @doc false
+  # Statuses `force_kill_task/1` accepts (`:failed`, no result).
+  def killable_statuses, do: @killable_statuses
+
+  @doc false
+  # Statuses `cancel_task/1` accepts (graceful `:cancelling`, or immediate for a
+  # waiting session).
+  def gracefully_cancellable_statuses, do: @gracefully_cancellable_statuses
+
+  @doc false
+  # Statuses whose task id `start_task/2` refuses.
+  def unstartable_statuses, do: @unstartable_statuses
+
+  @doc false
+  # Statuses for which a `:finalizing` broadcast is ignored (`:awaiting_input`
+  # is deliberately absent).
+  def finalizing_ignored_statuses, do: @finalizing_ignored_statuses
+
+  @doc false
+  # Live statuses — a wrapper exists on this node. Never the busy set.
+  def active_statuses, do: @active_statuses
+
   ## Client API
 
   @doc """
@@ -224,6 +290,12 @@ defmodule EvoGit.TaskRegistry do
     so they enter a grace period and finish cleanly. The task's final mapping
     to `:cancelled` (with result preserved) happens when the wrapper completes.
   - `:cancelling` → `:ok` (idempotent; does NOT re-send messages).
+  - `:awaiting_input` → `:cancelled` immediately: an idle interactive session
+    has nothing to save but its transcript, so the row is written `:cancelled`
+    (finished_at set, lease cleared) with NO `result` — the transcript/result is
+    preserved — the session is stopped best-effort (task-addressed) and the
+    `{:task_updated, task_id, :cancelled, node()}` broadcast fires on the
+    successful write.
 
   Returns `:ok` on success, `{:error, :not_found}` for an unknown task, or
   `{:error, :not_running}` for terminal states (`:completed`/`:failed`/
@@ -236,14 +308,16 @@ defmodule EvoGit.TaskRegistry do
   end
 
   @doc """
-  Force-kills a running or cancelling task by id — the BRUTAL cancellation path.
+  Force-kills a running, awaiting-input or cancelling task by id — the BRUTAL
+  cancellation path.
 
   Kills every agent of the task (via `AgentScheduler.force_kill_task_agents/1`,
   reverse-depth cascade with `:brutal_kill`), then brutal-kills the wrapper
   process and persists the task as `:failed` with finished_at set, the lease
-  cleared, and no result (result nil). Works from both `:running` (normal
-  force-kill) and `:cancelling` (escalation path — a graceful cancel that
-  hangs).
+  cleared, and no result (result nil). Works from `:running` (normal
+  force-kill), `:cancelling` (escalation path — a graceful cancel that hangs)
+  and `:awaiting_input` (an idle interactive session, killable exactly like a
+  running task).
 
   Returns `:ok` on success, `{:error, :not_found}` for an unknown task, or
   `{:error, :not_running}` for other states.
@@ -256,6 +330,28 @@ defmodule EvoGit.TaskRegistry do
 
   def update_task_status(task_id, status, result \\ nil, opts \\ []) do
     GenServer.cast(server(), {:update_status, task_id, status, result, opts})
+  end
+
+  @doc """
+  Status-only convenience over `update_task_status/4`: moves `task_id` to
+  `status` with no result and no extra opts (a cast through
+  `handle_update_status/6`, so the stale-terminal guard, the `:cancelling`
+  force-map, the terminal teardown and the persist-then-broadcast contract all
+  apply unchanged).
+
+  This is what the interactive-session lifecycle calls to flip
+  `:running ↔ :awaiting_input` on yield/resume: both are NON-terminal, so
+  `finished_at` and the lease are untouched and the `task_refs` entry stays.
+  A call that repeats the row's CURRENT status is a no-op — the write is
+  harmless and no broadcast fires (`status != task_status`).
+
+  It carries `result: nil`, so only use it for non-terminal transitions (no
+  result exists yet); terminal transitions go through
+  `update_task_status/4` with their result.
+  """
+  @spec update_status(String.t(), atom()) :: :ok
+  def update_status(task_id, status) do
+    update_task_status(task_id, status, nil, [])
   end
 
   defp update_task_status_with_caller(task_id, status, result, opts) do
@@ -378,16 +474,19 @@ defmodule EvoGit.TaskRegistry do
       server_name: server_name
     }
 
-    # Startup reconciliation for orphaned :finalizing and :cancelling tasks. A
-    # task that was mid-finalization when the runtime died (e.g. slow git calls
-    # in merge_and_report/3 hanging while the app is killed) can never reach a
-    # terminal status in-process: the {ref, result} and {:DOWN, ...} handlers
-    # key off task_refs, which is empty after restart. Likewise a task that was
-    # mid-graceful-cancel when the runtime died must resolve to :cancelled, not
-    # stay :cancelling forever. Mark such tasks synchronously here (NOT via the
-    # async update_task_status/4 cast, which would race callers). :running
-    # tasks are deliberately left alone — the one-shot :lease_sweep handles
-    # orphaned owners after the lease duration.
+    # Startup reconciliation for orphaned :finalizing, :cancelling and
+    # :awaiting_input tasks. A task that was mid-finalization when the runtime
+    # died (e.g. slow git calls in merge_and_report/3 hanging while the app is
+    # killed) can never reach a terminal status in-process: the {ref, result}
+    # and {:DOWN, ...} handlers key off task_refs, which is empty after restart.
+    # Likewise a task that was mid-graceful-cancel when the runtime died must
+    # resolve to :cancelled, not stay :cancelling forever, and an idle
+    # interactive session (:awaiting_input) is in-memory only — its wrapper died
+    # with the previous BEAM, so it can never resume and resolves to :failed.
+    # Mark such tasks synchronously here (NOT via the async update_task_status/4
+    # cast, which would race callers). :running tasks are deliberately left
+    # alone — the one-shot :lease_sweep handles orphaned owners after the lease
+    # duration.
     state =
       safe_store_read(
         "init select_running_lease_info",
@@ -418,6 +517,23 @@ defmodule EvoGit.TaskRegistry do
               {:startup_reconcile, :cancelling}
             )
 
+          :awaiting_input ->
+            # Sessions are in-memory only: their wrapper died with the previous
+            # BEAM, so an idle session can never resume and must not sit in a
+            # live status forever. Failed (not :cancelled) — nothing was
+            # cancelled, the session was lost. The archived/result data a
+            # closed session had already written is left untouched.
+            message = "Runtime restarted during interactive session"
+
+            handle_update_status(
+              acc,
+              task_id,
+              :failed,
+              message,
+              [error: Diagnostics.failure_error(:restart, :startup_reconcile, message)],
+              {:startup_reconcile, :awaiting_input}
+            )
+
           _ ->
             acc
         end
@@ -445,10 +561,11 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_call({:start_task, task_id, task_type, opts}, _from, state) do
-    # Graceful-cancel guard: a task that was cancelled while :pending (or is
-    # currently :cancelling) must never start. There is no in-runtime
-    # :pending → :running scheduled transition, so this is the only place a
-    # cancelled pending task could slip through.
+    # Graceful-cancel / waiting-session guard: a task that was cancelled while
+    # :pending (or is currently :cancelling) must never start, and neither must
+    # an id owned by a waiting interactive session (`:awaiting_input`). There is
+    # no in-runtime :pending → :running scheduled transition, so this is the
+    # only place a cancelled pending task could slip through.
     persisted_status =
       safe_store_read("start_task get_task_status", nil, fn ->
         EvoGit.Store.get_task_status(state.task_store, task_id)
@@ -462,13 +579,16 @@ defmodule EvoGit.TaskRegistry do
     log_unreadable_status("start_task", task_id, persisted_status)
 
     case persisted_status do
-      status when status in [:cancelled, :cancelling] ->
+      status when status in @unstartable_statuses ->
         {:reply, {:error, :cancelled}, state}
 
       _known_or_absent ->
         # Admit before spawning or persisting: invalid explicit selections must
         # not enqueue work, and the stored opts must match the admitted selection.
-        with {:ok, opts} <- RuntimeOpts.admit_model_selection(opts, EvoGit.Config.resolve()) do
+        # `:session_mode` is admitted the same way (non-raising — a raise here
+        # would kill the registry); an invalid value never enqueues a task.
+        with {:ok, opts} <- RuntimeOpts.admit_model_selection(opts, EvoGit.Config.resolve()),
+             {:ok, opts} <- RuntimeOpts.admit_session_mode(opts) do
           task_ref =
             Task.Supervisor.async_nolink(
               EvoGit.TaskSupervisor,
@@ -581,13 +701,14 @@ defmodule EvoGit.TaskRegistry do
   @impl true
   def handle_call({:force_kill_task, task_id}, _from, state) do
     # Narrow-column existence/status check (reads only the status column).
-    # Works from :running (normal force-kill) and :cancelling (escalation path
-    # — a graceful cancel that hangs must be force-killable).
+    # Works from :running (normal force-kill), :cancelling (escalation path —
+    # a graceful cancel that hangs must be force-killable) and :awaiting_input
+    # (an idle interactive session — killable exactly like a running task).
     {result, state} =
       case safe_store_read("force_kill_task get_task_status", nil, fn ->
              EvoGit.Store.get_task_status(state.task_store, task_id)
            end) do
-        status when status in [:running, :cancelling] ->
+        status when status in @killable_statuses ->
           case Map.get(state.task_refs, task_id) do
             %Task{pid: pid} = task_ref ->
               if Process.alive?(pid) do
@@ -695,106 +816,116 @@ defmodule EvoGit.TaskRegistry do
   @impl true
   def handle_call({:cancel_task, task_id}, _from, state) do
     # GRACEFUL cancellation. Narrow-column existence/status check.
-    result =
-      case safe_store_read("cancel_task get_task_status", nil, fn ->
-             EvoGit.Store.get_task_status(state.task_store, task_id)
-           end) do
-        :pending ->
-          # No agents exist yet — mark :cancelled immediately. The start_task
-          # guard (see {:start_task, ...} handler) then refuses to start it.
-          # On disk-full the persisted status stays :pending and
-          # {:error, :disk_full} is returned (a later cancel retry would work).
-          # Broadcast only on the successful write — the :running arm below
-          # funnels through handle_update_status/6, which broadcasts the
-          # :cancelling transition itself (no double broadcast).
-          case safe_store_write("cancel_task update_task_columns", fn ->
-                 EvoGit.Store.update_task_columns(state.task_store, task_id,
-                   status: :cancelled,
-                   finished_at: DateTime.utc_now(),
-                   lease_expires_at: nil
-                 )
-               end) do
-            :ok ->
-              # Direct terminal write (:cancelled) — bypasses
-              # handle_update_status/6, so reclaim the tmpdir here too (a
-              # :pending task never started, so this is normally a no-op).
-              reclaim_task_tmpdir(state, task_id)
+    status =
+      safe_store_read("cancel_task get_task_status", nil, fn ->
+        EvoGit.Store.get_task_status(state.task_store, task_id)
+      end)
 
-              Phoenix.PubSub.broadcast(
-                EvoGit.PubSub,
-                "tasks",
-                {:task_updated, task_id, :cancelled, node()}
-              )
+    if status == :awaiting_input do
+      # An idle interactive session is the ONE arm that also has a live session
+      # process to stop, so it threads state (task_refs) and answers the call
+      # itself instead of falling through to the status-only arms below.
+      cancel_awaiting_input_session(state, task_id)
+    else
+      result =
+        case status do
+          :pending ->
+            # No agents exist yet — mark :cancelled immediately. The start_task
+            # guard (see {:start_task, ...} handler) then refuses to start it.
+            # On disk-full the persisted status stays :pending and
+            # {:error, :disk_full} is returned (a later cancel retry would work).
+            # Broadcast only on the successful write — the :running arm below
+            # funnels through handle_update_status/6, which broadcasts the
+            # :cancelling transition itself (no double broadcast).
+            case safe_store_write("cancel_task update_task_columns", fn ->
+                   EvoGit.Store.update_task_columns(state.task_store, task_id,
+                     status: :cancelled,
+                     finished_at: DateTime.utc_now(),
+                     lease_expires_at: nil
+                   )
+                 end) do
+              :ok ->
+                # Direct terminal write (:cancelled) — bypasses
+                # handle_update_status/6, so reclaim the tmpdir here too (a
+                # :pending task never started, so this is normally a no-op).
+                reclaim_task_tmpdir(state, task_id)
 
-              :ok
+                Phoenix.PubSub.broadcast(
+                  EvoGit.PubSub,
+                  "tasks",
+                  {:task_updated, task_id, :cancelled, node()}
+                )
 
-            {:error, :disk_full} ->
-              Logger.warning(
-                "TaskRegistry: disk full — pending task #{task_id} could not " <>
-                  "be marked :cancelled"
-              )
+                :ok
 
-              {:error, :disk_full}
+              {:error, :disk_full} ->
+                Logger.warning(
+                  "TaskRegistry: disk full — pending task #{task_id} could not " <>
+                    "be marked :cancelled"
+                )
 
-            {:error, :store_unavailable} ->
-              # StoreGuard already logged it; the pending task is not persisted
-              # as :cancelled, so return the degraded error like disk-full.
-              {:error, :store_unavailable}
-          end
+                {:error, :disk_full}
 
-        :running ->
-          # 1. Transition to :cancelling via the normal status-update path so
-          #    handle_update_status broadcasts {:task_updated, task_id,
-          #    :cancelling, node()} (dashboard sees the change immediately).
-          #    :cancelling is NON-terminal, so finished_at stays
-          #    nil, the lease stays valid, and the task_refs entry stays. The
-          #    returned state is discarded (unchanged for non-terminal).
-          handle_update_status(state, task_id, :cancelling, nil, [], {:cancel_request, nil})
+              {:error, :store_unavailable} ->
+                # StoreGuard already logged it; the pending task is not persisted
+                # as :cancelled, so return the degraded error like disk-full.
+                {:error, :store_unavailable}
+            end
 
-          # 2. Notify the scheduler: append the cancel message + set
-          #    cancel_requested for every agent of the task, and register the
-          #    task in the cancelling marker (blocks new root agents and puts
-          #    late registrations into grace).
-          #
-          # Justified catch :exit — cross-GenServer boundary (TaskRegistry →
-          # AgentScheduler). If the scheduler is down, the graceful path can't
-          # proceed; the task is left :cancelling (a subsequent force_kill or
-          # restart reconciliation resolves it).
-          try do
-            EvoGit.AgentScheduler.begin_graceful_cancel(task_id)
-          catch
-            :exit, reason ->
-              Logger.warning(
-                "TaskRegistry: AgentScheduler begin_graceful_cancel failed (exit): #{inspect(reason)}"
-              )
-          end
+          :running ->
+            # 1. Transition to :cancelling via the normal status-update path so
+            #    handle_update_status broadcasts {:task_updated, task_id,
+            #    :cancelling, node()} (dashboard sees the change immediately).
+            #    :cancelling is NON-terminal, so finished_at stays
+            #    nil, the lease stays valid, and the task_refs entry stays. The
+            #    returned state is discarded (unchanged for non-terminal).
+            handle_update_status(state, task_id, :cancelling, nil, [], {:cancel_request, nil})
 
-          :ok
+            # 2. Notify the scheduler: append the cancel message + set
+            #    cancel_requested for every agent of the task, and register the
+            #    task in the cancelling marker (blocks new root agents and puts
+            #    late registrations into grace).
+            #
+            # Justified catch :exit — cross-GenServer boundary (TaskRegistry →
+            # AgentScheduler). If the scheduler is down, the graceful path can't
+            # proceed; the task is left :cancelling (a subsequent force_kill or
+            # restart reconciliation resolves it).
+            try do
+              EvoGit.AgentScheduler.begin_graceful_cancel(task_id)
+            catch
+              :exit, reason ->
+                Logger.warning(
+                  "TaskRegistry: AgentScheduler begin_graceful_cancel failed (exit): #{inspect(reason)}"
+                )
+            end
 
-        :cancelling ->
-          # Idempotent — a graceful cancel is already in flight. Do NOT re-send
-          # the cancel message (agents already have it).
-          :ok
+            :ok
 
-        nil ->
-          {:error, :not_found}
+          :cancelling ->
+            # Idempotent — a graceful cancel is already in flight. Do NOT re-send
+            # the cancel message (agents already have it).
+            :ok
 
-        {:unknown, raw} ->
-          # The row EXISTS with an unreadable status: never `{:error,
-          # :not_found}` (that would claim the row is absent), and neither
-          # cancellation path can be justified — the `:pending` arm would mark a
-          # possibly-live row `:cancelled` and the `:running` arm would push a
-          # cancel to agents that may not exist. Conservative answer: it is not
-          # running (the row keeps its status).
-          log_unreadable_status("cancel_task", task_id, {:unknown, raw})
-          {:error, :not_running}
+          nil ->
+            {:error, :not_found}
 
-        _status ->
-          # :finalizing / :completed / :failed / :cancelled
-          {:error, :not_running}
-      end
+          {:unknown, raw} ->
+            # The row EXISTS with an unreadable status: never `{:error,
+            # :not_found}` (that would claim the row is absent), and neither
+            # cancellation path can be justified — the `:pending` arm would mark a
+            # possibly-live row `:cancelled` and the `:running` arm would push a
+            # cancel to agents that may not exist. Conservative answer: it is not
+            # running (the row keeps its status).
+            log_unreadable_status("cancel_task", task_id, {:unknown, raw})
+            {:error, :not_running}
 
-    {:reply, result, state}
+          _status ->
+            # :finalizing / :completed / :failed / :cancelled
+            {:error, :not_running}
+        end
+
+      {:reply, result, state}
+    end
   end
 
   @impl true
@@ -1026,8 +1157,8 @@ defmodule EvoGit.TaskRegistry do
               do: :cancelled,
               else: status
 
-          if task_status in [:completed, :failed, :cancelled] and
-               status in [:completed, :failed, :cancelled] and
+          if task_status in @terminal_statuses and
+               status in @terminal_statuses and
                task_status != status and
                status != :completed do
             Logger.warning(
@@ -1046,12 +1177,12 @@ defmodule EvoGit.TaskRegistry do
             end
 
             finished_at =
-              if status in [:completed, :failed, :cancelled],
+              if status in @terminal_statuses,
                 do: DateTime.utc_now(),
                 else: task_finished_at
 
             lease_expires_at =
-              if status in [:completed, :failed, :cancelled],
+              if status in @terminal_statuses,
                 do: nil,
                 else: task_lease_expires_at
 
@@ -1104,7 +1235,7 @@ defmodule EvoGit.TaskRegistry do
                 # End-of-window marker: the terminal write is known to have hit
                 # the store (wrapper result, watchdog resolution, startup
                 # reconcile all flow through here).
-                if status in [:completed, :failed, :cancelled],
+                if status in @terminal_statuses,
                   do:
                     Logger.info(
                       "TaskRegistry: Task #{task_id} terminal status persisted: #{inspect(status)}"
@@ -1129,7 +1260,7 @@ defmodule EvoGit.TaskRegistry do
                 :ok
             end
 
-            if status in [:completed, :failed, :cancelled] do
+            if status in @terminal_statuses do
               # Terminal state — clean up the graceful-cancel marker (guarded:
               # the scheduler may be down during startup reconciliation).
               clear_cancelling_marker(task_id)
@@ -1197,6 +1328,95 @@ defmodule EvoGit.TaskRegistry do
   end
 
   # --- Shared Private Helpers ---
+
+  # GRACEFUL cancel of an idle interactive session (`:awaiting_input`).
+  #
+  # A waiting session has nothing to save but its transcript, so it is
+  # cancelled IMMEDIATELY (never through `:cancelling` — there is no in-flight
+  # turn that could honour a grace period): the row is written `:cancelled`
+  # with `finished_at` set, the lease cleared and NO `result` column, so the
+  # session's transcript/result is preserved. The session process is stopped
+  # best-effort; the row's terminal status is authoritative either way.
+  #
+  # Returns the GenServer reply tuple, because it also threads state (the
+  # `task_refs` entry it drops).
+  defp cancel_awaiting_input_session(state, task_id) do
+    # 1. Stop the session FIRST, while its `task_refs` entry is still present.
+    #    The stop is TASK-addressed: an interactive session need not have a
+    #    depth-0 SchedMeta `from` pid, so the pid-addressed
+    #    `AgentScheduler.force_kill_task_agents/1` cannot find it. Both calls are
+    #    best-effort — cross-GenServer (`:exit` when the scheduler is down) and
+    #    a build without the task-addressed entry point must never fail the
+    #    terminal write below.
+    try do
+      EvoGit.AgentScheduler.force_kill_task_agents_for_task(task_id)
+    rescue
+      UndefinedFunctionError ->
+        Logger.warning(
+          "TaskRegistry: AgentScheduler.force_kill_task_agents_for_task/1 is unavailable — " <>
+            "the cancelled session #{task_id} was not stopped by the scheduler"
+        )
+    catch
+      :exit, reason ->
+        Logger.warning(
+          "TaskRegistry: AgentScheduler force_kill_task_agents_for_task failed (exit): " <>
+            inspect(reason)
+        )
+    end
+
+    # The wrapper Task this instance still owns is stopped here too, BEFORE the
+    # terminal write: `Task.shutdown/2` demonitors and flushes the brutal kill's
+    # `:DOWN`, so the down handler cannot race the write below and map the task
+    # to `:failed`.
+    case Map.get(state.task_refs, task_id) do
+      %Task{} = task_ref -> Task.shutdown(task_ref, :brutal_kill)
+      _ -> :ok
+    end
+
+    # 2. Targeted terminal write — deliberately NO `result:` key, so a cancel
+    #    never clobbers a session's preserved transcript/result.
+    reply =
+      case safe_store_write("cancel_task awaiting_input update_task_columns", fn ->
+             EvoGit.Store.update_task_columns(state.task_store, task_id,
+               status: :cancelled,
+               finished_at: DateTime.utc_now(),
+               lease_expires_at: nil
+             )
+           end) do
+        :ok ->
+          :ok
+
+        {:error, :disk_full} ->
+          Logger.warning(
+            "TaskRegistry: disk full — waiting session #{task_id} could not be marked :cancelled"
+          )
+
+          {:error, :disk_full}
+
+        {:error, :store_unavailable} ->
+          # StoreGuard already logged it; the row keeps :awaiting_input, so
+          # return the degraded error like disk-full.
+          {:error, :store_unavailable}
+      end
+
+    # Direct terminal write (:cancelled) — bypasses handle_update_status/6, so
+    # the in-memory cleanup happens here: the session is gone whatever the
+    # write did, its graceful-cancel marker is cleared and its managed tmpdir is
+    # reclaimed.
+    state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
+    clear_cancelling_marker(task_id)
+    reclaim_task_tmpdir(state, task_id)
+
+    if reply == :ok do
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, task_id, :cancelled, node()}
+      )
+    end
+
+    {:reply, reply, state}
+  end
 
   # --- Managed per-task tmpdir lifecycle ---
   #
@@ -1556,7 +1776,7 @@ defmodule EvoGit.TaskRegistry do
           # that reaches phase finalization keeps :cancelling (the more
           # informative state; the final mapping to :cancelled happens at
           # result time in handle_update_status/6).
-          if task.status in [:completed, :cancelled, :cancelling] do
+          if task.status in @finalizing_ignored_statuses do
             Logger.debug(
               "TaskRegistry: Ignoring stale :task_updated finalizing update for task #{task_id}: " <>
                 "already #{task.status}, ignoring :finalizing"
@@ -1831,7 +2051,7 @@ defmodule EvoGit.TaskRegistry do
         # Task was cleaned up from the store — nothing to do.
         {:noreply, state}
 
-      %TaskInfo{status: status} when status in [:completed, :failed, :cancelled] ->
+      %TaskInfo{status: status} when status in @terminal_statuses ->
         # Task already resolved via another path (e.g. PubSub update) — stop rechecking.
         {:noreply, state}
 

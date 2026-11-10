@@ -13,12 +13,14 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   composites).
 
   Those three versions are STAMPED, so a real v0.13.8 database never re-runs
-  them: this suite proves the PENDING set only — the four migrations HEAD
+  them: this suite proves the PENDING set only — the five migrations HEAD
   ships on top of them, `…00004_covering_indexes`,
   `…00005_task_agent_archives` (table + legacy fan-out + `archive_metadata`
-  drop), `…00006_prune_redundant_indexes` and `…00007_vct_mounts` (the VCT
-  mount table, which also retires the legacy `projects` table). HEAD's seven
-  migrations are versions 1..7 with no gaps.
+  drop), `…00006_prune_redundant_indexes`, `…00007_vct_mounts` (the VCT
+  mount table, which also retires the legacy `projects` table) and
+  `…00008_session_mode` (the probe-guarded `tasks.session_mode` adoption,
+  which ALTERs the column in at the tail). HEAD's eight migrations are
+  versions 1..8 with no gaps.
 
   This suite crafts that file with RAW xqlite — never through the migration
   modules, so the fixture stays independent of HEAD's code — seeds v0.13.8-shaped
@@ -42,24 +44,26 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   # `schema_migrations` carries exactly these rows.
   @v0138_versions [20_260_815_000_001, 20_260_815_000_002, 20_260_815_000_003]
 
-  # The four migrations HEAD ships ON TOP of the v0.13.8 three: contiguous
-  # versions, so the shipped set is `1..7` with no gaps.
+  # The five migrations HEAD ships ON TOP of the v0.13.8 three: contiguous
+  # versions, so the shipped set is `1..8` with no gaps.
   @pending_versions [
     20_260_815_000_004,
     20_260_815_000_005,
     20_260_815_000_006,
-    20_260_815_000_007
+    20_260_815_000_007,
+    20_260_815_000_008
   ]
 
   @shipped_versions @v0138_versions ++ @pending_versions
 
   # The v0.13.8 `tasks` columns in physical order (pre-drop, 20 columns); the
-  # HEAD shape is the same list minus `archive_metadata`.
+  # HEAD shape is the same list minus `archive_metadata`, plus the
+  # `session_mode` column ALTERs appended at the tail.
   @v0138_task_columns ~w(id type status opts started_at finished_at logs result review_status
                          usage agent_count base_sha commit_sha archive_metadata
                          lease_expires_at model_id project_path branch_name error updated_at)a
 
-  @head_task_columns @v0138_task_columns -- [:archive_metadata]
+  @head_task_columns (@v0138_task_columns -- [:archive_metadata]) ++ [:session_mode]
 
   # The eight indexes a v0.13.8 database carries: the six single-column ones
   # `…00001` created + the two composites `…00003` created.
@@ -149,7 +153,7 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   # ── The chain ─────────────────────────────────────────────────────────────
 
   describe "released v0.13.8 database → HEAD" do
-    test "applies exactly the four pending migrations and stamps the seven shipped versions",
+    test "applies exactly the five pending migrations and stamps the eight shipped versions",
          %{path: path} do
       build_v0138_db!(path)
 
@@ -170,7 +174,7 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
       assert vct_mount_points!(path) == ["vct:///projects/demo"]
     end
 
-    test "ends at HEAD's 19-column tasks shape with the four redundant indexes pruned",
+    test "ends at HEAD's 20-column tasks shape with the four redundant indexes pruned",
          %{path: path} do
       build_v0138_db!(path)
 
@@ -191,7 +195,7 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
 
       # Contiguous `cid`s (the dropped column left no hole) and the full
       # per-column type/nullability/default/PK contract.
-      assert Enum.map(info, fn [cid | _rest] -> cid end) == Enum.to_list(0..18)
+      assert Enum.map(info, fn [cid | _rest] -> cid end) == Enum.to_list(0..19)
 
       assert column_specs(info) ==
                Map.new(@head_task_columns, &{to_string(&1), head_column_spec(&1)})

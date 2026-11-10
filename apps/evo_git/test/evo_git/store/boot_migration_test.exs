@@ -12,25 +12,26 @@ defmodule EvoGit.Store.BootMigrationTest do
 
   ## Pinned behaviors (per scenario)
 
-    * fresh (nonexistent) path → the exact 19-column `tasks` table (the final
+    * fresh (nonexistent) path → the exact 20-column `tasks` table (the final
       shape, NO `archive_metadata`), the `task_agent_archives` and `vct_mounts`
-      tables, and all seven migration versions stamped in `schema_migrations`
+      tables, and all eight migration versions stamped in `schema_migrations`
     * a current 20-column legacy table (still carrying `archive_metadata`)
       without `schema_migrations` → adopted; the seeded row's surviving values
       are preserved BYTE-IDENTICAL (pre-boot raw SELECT == post-boot
       `TaskRowRaw` load — adoption never rewrites healthy data), and
       `20260815000005_task_agent_archives` drops the archive column
     * 15/17-column historical PREFIXES of the canonical DDL → adopted: the
-      missing columns are appended as NULLABLE with their declared types, the
-      final `PRAGMA table_info(tasks)` matches the fresh-DB shape exactly
-      (names in canonical ORDER, types, notnull/pk flags), the legacy
-      `archive_metadata` column is gone, and the seeded data survives
+      missing columns are appended as NULLABLE with their declared types (so
+      `session_mode` lands at the very tail, after `updated_at`), the final
+      `PRAGMA table_info(tasks)` matches the ADOPTED shape exactly (names in
+      append order, types, notnull/pk flags), the legacy `archive_metadata`
+      column is gone, and the seeded data survives
     * the real 19-column v0.9.0–v0.12.5 shape — which already has `updated_at`
       (19th) and lacks only `error` — IS adopted: the baseline migration
       appends `error` AFTER the existing `updated_at` (SQLite ALTERs can only
       append), and its post-invariant accepts that ADOPTED tail order
-      (`…, branch_name, updated_at, error`) while still asserting all 19
-      columns with their types/nullability/pk. Same for the shape an
+      (`…, branch_name, updated_at, error, session_mode`) while still
+      asserting all 20 columns with their types/nullability/pk. Same for the shape an
       OLD-pipeline repair of that DB produced (`…, branch_name, updated_at,
       error`) — the exact v0.12.5 → v0.13.0 upgrade path the old
       `Schema.migrate_schema/1` repaired in place, carried forward as a
@@ -72,12 +73,15 @@ defmodule EvoGit.Store.BootMigrationTest do
   @archive_version 20_260_815_000_005
   @prune_indexes_version 20_260_815_000_006
   @vct_mounts_version 20_260_815_000_007
+  @session_mode_version 20_260_815_000_008
   # Ascending, exactly as `schema_migrations` reports it: the one schema-creating
   # baseline, the data normalization, the two shipped index migrations (the two
   # composite indexes and the two covering indexes), the merged
   # `task_agent_archives` table + legacy fan-out that drops
-  # `tasks.archive_metadata`, the final prune of the four redundant indexes, and
-  # the VCT mount table (`vct_mounts`) that retires the legacy `projects` table.
+  # `tasks.archive_metadata`, the final prune of the four redundant indexes, the
+  # VCT mount table (`vct_mounts`) that retires the legacy `projects` table, and
+  # the probe-guarded `tasks.session_mode` adoption (a NO-OP on a fresh
+  # database, which the baseline already creates with the column).
   @migration_versions [
     @baseline_version,
     @normalization_version,
@@ -85,7 +89,8 @@ defmodule EvoGit.Store.BootMigrationTest do
     @covering_index_version,
     @archive_version,
     @prune_indexes_version,
-    @vct_mounts_version
+    @vct_mounts_version,
+    @session_mode_version
   ]
 
   # The LEGACY 20 column names in physical order — the shape a pre-release
@@ -94,16 +99,14 @@ defmodule EvoGit.Store.BootMigrationTest do
   # drops.
   @legacy_task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id project_path branch_name error updated_at)
 
-  # The FINAL 19 column names — the post-boot shape every assertion below
-  # compares against (matches TaskRowRaw.__schema__(:fields)), and the shape a
-  # FRESH database is created with (the baseline `CREATE TABLE` already has
-  # this 19-column shape, it never creates `archive_metadata`).
-  @canonical_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error updated_at)
+  # The FINAL 20 column names in CANONICAL order — the shape a FRESH database
+  # is created with (the baseline `CREATE TABLE` already has this 20-column
+  # shape, it never creates `archive_metadata`).
+  @canonical_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error session_mode updated_at)
 
   # `PRAGMA table_info(tasks)` rows — [cid, name, type, notnull, dflt, pk] —
-  # for a fresh AND for an adopted-prefix database (the appended columns land
-  # at exactly these positions with these flags). 19 rows: the archive
-  # migration drops `archive_metadata`, so the `cid`s are contiguous again.
+  # for a FRESH database: the baseline `CREATE TABLE` puts `session_mode`
+  # BEFORE `updated_at`. 20 contiguous rows (nothing to drop).
   @canonical_table_info_rows [
     [0, "id", "TEXT", 0, nil, 1],
     [1, "type", "TEXT", 0, nil, 0],
@@ -123,13 +126,14 @@ defmodule EvoGit.Store.BootMigrationTest do
     [15, "project_path", "TEXT", 0, nil, 0],
     [16, "branch_name", "TEXT", 0, nil, 0],
     [17, "error", "TEXT", 0, nil, 0],
-    [18, "updated_at", "TEXT", 0, nil, 0]
+    [18, "session_mode", "TEXT", 0, nil, 0],
+    [19, "updated_at", "TEXT", 0, nil, 0]
   ]
 
   # The ADOPTED tail: the real v0.9.0–v0.12.5 DDL already ended in `updated_at`,
-  # so the appended `error` lands AFTER it (SQLite ALTERs can only append).
-  # Same rows (types/notnull/pk), the last two swapped; `archive_metadata` is
-  # gone from both.
+  # so the appended `error` lands AFTER it (SQLite ALTERs can only append), and
+  # `session_mode` is appended after THAT. Same rows (types/notnull/pk), the
+  # last three in append order; `archive_metadata` is gone from both.
   @adopted_19_col_table_info_rows [
     [0, "id", "TEXT", 0, nil, 1],
     [1, "type", "TEXT", 0, nil, 0],
@@ -149,7 +153,35 @@ defmodule EvoGit.Store.BootMigrationTest do
     [15, "project_path", "TEXT", 0, nil, 0],
     [16, "branch_name", "TEXT", 0, nil, 0],
     [17, "updated_at", "TEXT", 0, nil, 0],
-    [18, "error", "TEXT", 0, nil, 0]
+    [18, "error", "TEXT", 0, nil, 0],
+    [19, "session_mode", "TEXT", 0, nil, 0]
+  ]
+
+  # The ADOPTED shape for a legacy table whose canonical columns were already in
+  # order: the baseline ALTER appends `session_mode` AFTER the existing
+  # `updated_at` and the archive migration drops `archive_metadata`, leaving 20
+  # contiguous rows with `updated_at` before `session_mode`.
+  @adopted_20_col_table_info_rows [
+    [0, "id", "TEXT", 0, nil, 1],
+    [1, "type", "TEXT", 0, nil, 0],
+    [2, "status", "TEXT", 1, nil, 0],
+    [3, "opts", "TEXT", 0, nil, 0],
+    [4, "started_at", "TEXT", 0, nil, 0],
+    [5, "finished_at", "TEXT", 0, nil, 0],
+    [6, "logs", "TEXT", 0, nil, 0],
+    [7, "result", "TEXT", 0, nil, 0],
+    [8, "review_status", "TEXT", 0, nil, 0],
+    [9, "usage", "TEXT", 0, nil, 0],
+    [10, "agent_count", "INTEGER", 0, nil, 0],
+    [11, "base_sha", "TEXT", 0, nil, 0],
+    [12, "commit_sha", "TEXT", 0, nil, 0],
+    [13, "lease_expires_at", "INTEGER", 0, nil, 0],
+    [14, "model_id", "TEXT", 0, nil, 0],
+    [15, "project_path", "TEXT", 0, nil, 0],
+    [16, "branch_name", "TEXT", 0, nil, 0],
+    [17, "error", "TEXT", 0, nil, 0],
+    [18, "updated_at", "TEXT", 0, nil, 0],
+    [19, "session_mode", "TEXT", 0, nil, 0]
   ]
 
   # The FINAL `tasks` index set (six) — the only `idx_tasks_*` indexes that
@@ -516,7 +548,7 @@ defmodule EvoGit.Store.BootMigrationTest do
   # ── Scenario 1: fresh database ────────────────────────────────────────────
 
   describe "fresh database (nonexistent path)" do
-    test "creates the 19-column tasks table and stamps exactly the shipped migration versions", %{
+    test "creates the 20-column tasks table and stamps exactly the shipped migration versions", %{
       root: root
     } do
       path = db_path(%{root: root}, :fresh)
@@ -526,12 +558,12 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       assert File.exists?(path)
 
-      # The FINAL 19-column shape — the parity-pinned PRAGMA rows (names,
+      # The FINAL 20-column shape — the parity-pinned PRAGMA rows (names,
       # order, types, notnull/pk) plus an explicit count/absence check for the
       # archive column the relocated chain no longer creates.
       assert task_table_info(pid) == @canonical_table_info_rows
       assert column_names(pid, "tasks") == @canonical_columns
-      assert length(column_names(pid, "tasks")) == 19
+      assert length(column_names(pid, "tasks")) == 20
       refute "archive_metadata" in column_names(pid, "tasks")
 
       # The table the archive migration creates is present (its exact 23-column
@@ -558,29 +590,33 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all seven migrations (the Ecto migrator saw version 0).
+      # The boot stamped all eight migrations (the Ecto migrator saw version 0).
       assert migration_versions(pid) == @migration_versions
 
-      # The schema was adopted untouched (the fresh-DB PRAGMA shape), minus the
+      # The schema was adopted untouched, with `session_mode` APPENDED (the
+      # baseline ALTER can only add at the tail) and minus the
       # `archive_metadata` column `20260815000005_task_agent_archives` drops.
-      assert task_table_info(pid) == @canonical_table_info_rows
-      assert column_names(pid, "tasks") == @canonical_columns
+      assert task_table_info(pid) == @adopted_20_col_table_info_rows
+      assert length(column_names(pid, "tasks")) == 20
 
       # BYTE-IDENTICAL data: the raw pre-boot SELECT equals the post-boot
       # TaskRowRaw load field-for-field (field order == column order), with the
-      # DROPPED archive column excluded.
+      # DROPPED archive column excluded and the APPENDED `session_mode` read
+      # back as NULL — the adoption adds the column but backfills nothing (the
+      # codec normalizes NULL to "oneshot" on decode).
       row = get_task_row(pid, "r6b1-byte")
 
-      live_values =
-        columns
-        |> Enum.zip(values)
-        |> Enum.reject(fn {column, _value} -> column == "archive_metadata" end)
-        |> Enum.map(fn {_column, value} -> value end)
+      seeded = columns |> Enum.zip(values) |> Map.new() |> Map.delete("archive_metadata")
 
-      assert length(live_values) == length(TaskRowRaw.__schema__(:fields))
+      expected =
+        Map.new(TaskRowRaw.__schema__(:fields), fn field ->
+          name = Atom.to_string(field)
+          {field, if(name == "session_mode", do: nil, else: Map.fetch!(seeded, name))}
+        end)
 
-      assert Map.drop(Map.from_struct(row), [:__meta__]) ==
-               Map.new(Enum.zip(TaskRowRaw.__schema__(:fields), live_values))
+      assert Map.keys(expected) |> length() == 20
+
+      assert Map.drop(Map.from_struct(row), [:__meta__]) == expected
     end
   end
 
@@ -617,9 +653,9 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all seven migrations (the Ecto migrator saw version 0)...
+      # The boot stamped all eight migrations (the Ecto migrator saw version 0)...
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[7]]
+      assert schema_migrations_count(pid) == [[8]]
 
       # ...the appended `error` landed AFTER the pre-existing `updated_at`
       # (SQLite ALTERs can only append) as a NULLABLE add with its declared
@@ -655,7 +691,7 @@ defmodule EvoGit.Store.BootMigrationTest do
       assert {row.branch_name, row.updated_at} ==
                {"genesis/agent_19ab", "2024-03-03T11:00:01.333Z"}
 
-      assert row.error == nil
+      assert {row.error, row.session_mode} == {nil, nil}
     end
 
     test "the old-pipeline-repaired 20-column variant (error appended after updated_at) is adopted identically",
@@ -669,12 +705,13 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # No ALTER runs on this shape (all 20 columns already present) — the
-      # physical tail order it arrived with is preserved and accepted.
+      # `session_mode` is the only column this shape lacks, so the single
+      # ALTER appends it — the physical tail order it arrived with is
+      # preserved and accepted.
       assert task_table_info(pid) == @adopted_19_col_table_info_rows
       refute "archive_metadata" in column_names(pid, "tasks")
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[7]]
+      assert schema_migrations_count(pid) == [[8]]
 
       row = get_task_row(pid, "r6b1-oldpipe")
       assert {row.id, row.status} == {"r6b1-oldpipe", "completed"}
@@ -712,9 +749,10 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # Exact fresh-DB PRAGMA shape: the three appended columns land at the
-      # canonical positions, NULLABLE (notnull 0), with their declared types.
-      assert task_table_info(pid) == @canonical_table_info_rows
+      # The ADOPTED PRAGMA shape: the four appended columns land at the tail,
+      # NULLABLE (notnull 0), with their declared types (`session_mode` after
+      # `updated_at`), and `archive_metadata` is dropped.
+      assert task_table_info(pid) == @adopted_20_col_table_info_rows
       assert migration_versions(pid) == @migration_versions
 
       row = get_task_row(pid, "r6b1-c17")
@@ -742,8 +780,9 @@ defmodule EvoGit.Store.BootMigrationTest do
       assert row.error == nil
 
       # ...and the appended updated_at was backfilled by the SAME boot's data
-      # migration (COALESCE(finished_at, started_at, now) — pinned actual).
-      assert row.updated_at == "2024-04-04T09:00:00.222Z"
+      # migration (COALESCE(finished_at, started_at, now) — pinned actual),
+      # while the appended session_mode stays NULL.
+      assert {row.updated_at, row.session_mode} == {"2024-04-04T09:00:00.222Z", nil}
     end
   end
 
@@ -776,7 +815,7 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      assert task_table_info(pid) == @canonical_table_info_rows
+      assert task_table_info(pid) == @adopted_20_col_table_info_rows
       assert migration_versions(pid) == @migration_versions
 
       row = get_task_row(pid, "r6b1-c15")
@@ -792,8 +831,9 @@ defmodule EvoGit.Store.BootMigrationTest do
       assert {row.agent_count, row.lease_expires_at} == {1, 1_738_500_000_000}
       assert {row.base_sha, row.commit_sha} == {"base15", "commit15"}
 
-      # The five appended columns: four read NULL...
-      assert {row.model_id, row.project_path, row.branch_name, row.error} == {nil, nil, nil, nil}
+      # The six appended columns: five read NULL...
+      assert {row.model_id, row.project_path, row.branch_name, row.error, row.session_mode} ==
+               {nil, nil, nil, nil, nil}
 
       # ...and updated_at is backfilled from finished_at by the same boot.
       assert row.updated_at == "2024-05-05T07:00:00.222Z"
@@ -825,7 +865,7 @@ defmodule EvoGit.Store.BootMigrationTest do
              ]
 
       # tasks adoption still happened alongside the mount-table creation.
-      assert column_names(pid, "tasks") == @canonical_columns
+      assert length(column_names(pid, "tasks")) == 20
       assert migration_versions(pid) == @migration_versions
     end
 

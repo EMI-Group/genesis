@@ -211,10 +211,15 @@ defmodule EvoGit.AgentScheduler do
 
   Returns `{:ok, %EvoGit.Agent.Result{}}` or `{:error, :not_found | :timeout |
   term()}`.
+
+  `timeout` (milliseconds) defaults to `30_000` — a bounded wait suitable for an
+  RPC caller. Awaiting a HUMAN-driven session (one that may legitimately stay
+  `:awaiting_input` for minutes) passes `:infinity` EXPLICITLY; a caller that
+  wants to wait forever must say so.
   """
   @spec await_close(pos_integer(), timeout()) ::
           {:ok, %EvoGit.Agent.Result{}} | {:error, :not_found | :timeout | term()}
-  def await_close(agent_id, timeout \\ :infinity)
+  def await_close(agent_id, timeout \\ 30_000)
 
   def await_close(agent_id, timeout) when is_integer(agent_id) do
     GenServer.call(__MODULE__, {:await_close, agent_id}, timeout)
@@ -647,6 +652,26 @@ defmodule EvoGit.AgentScheduler do
     GenServer.call(__MODULE__, {:force_kill_task_agents, caller_pid})
   end
 
+  @doc """
+  Force-kills all agents belonging to a task identified by its TASK ID.
+
+  The task-id-addressed sibling of `force_kill_task_agents/1`: an INTERACTIVE
+  session started by `start_session/1` is registered with `from: nil`, so the
+  caller-pid lookup cannot see it. This entry point finds a depth-0 agent whose
+  `SchedMeta.task_id` matches and then cancels every agent of that task
+  (subagents included) exactly like the caller-pid path.
+
+  Same BRUTAL cancellation path (no grace period): Task processes are killed,
+  worktrees deleted, ETS entries removed, blocked callers replied with
+  `{:error, :cancelled}` and `await_close/2` waiters flushed.
+
+  Returns `:ok` if agents were found and cancelled, or `{:error, :not_found}`.
+  """
+  @spec force_kill_task_agents_for_task(String.t()) :: :ok | {:error, :not_found}
+  def force_kill_task_agents_for_task(task_id) when is_binary(task_id) do
+    GenServer.call(__MODULE__, {:force_kill_task_agents_for_task, task_id})
+  end
+
   # The cancel notification message injected into every agent of a task that
   # is being gracefully cancelled. The runner drains pending user messages at
   # the top of each turn, so the agent sees this before its next LLM call.
@@ -912,63 +937,31 @@ defmodule EvoGit.AgentScheduler do
           "AgentScheduler: Cancelling all agents for task #{task_id} (caller PID #{inspect(caller_pid)})"
         )
 
-        # 2. Find ALL agents with this task_id
-        agent_ids = agent_ids_for_task(task_id)
+        {:reply, :ok, cancel_task_agents(state, task_id)}
+    end
+  end
 
-        cancel_set = MapSet.new(agent_ids)
+  @impl true
+  def handle_call({:force_kill_task_agents_for_task, task_id}, _from, %State{} = state) do
+    # A TASK-ID-addressed lookup: an interactive `start_session/1` agent has no
+    # caller `from` (it is registered with `from: nil`), so the pid-addressed
+    # path above can never find it. Match the task id on a depth-0 row, exactly
+    # like the root lookup there.
+    top_level_agent =
+      Store.list_sched_meta()
+      |> Enum.find(fn
+        {_id, %SchedMeta{depth: 0, task_id: tid}} -> tid == task_id
+        _ -> false
+      end)
 
-        # 3. Remove refs from ref_to_agent BEFORE killing sessions (so DOWN handler is a no-op)
-        ref_to_agent =
-          state.ref_to_agent
-          |> Enum.reject(fn {_ref, aid} -> MapSet.member?(cancel_set, aid) end)
-          |> Map.new()
+    case top_level_agent do
+      nil ->
+        {:reply, {:error, :not_found}, state}
 
-        state = %{state | ref_to_agent: ref_to_agent}
+      {_id, %SchedMeta{}} ->
+        Logger.info("AgentScheduler: Cancelling all agents for task #{task_id} (by task id)")
 
-        # 4. Remove from dispatch queue
-        queue =
-          :queue.filter(
-            fn aid ->
-              not MapSet.member?(cancel_set, aid)
-            end,
-            state.queue
-          )
-
-        state = %{state | queue: queue}
-
-        # 5. Purge from slot waiting queues (replies {:error, :cancelled} to blocked callers)
-        {state, _status_updates} = Slots.purge_agents_from_queues(state, cancel_set)
-
-        # 5.5 Release LLM/tool slots held by cancelled agents.
-        #     Step 3 made the :DOWN handler a no-op for these agents, so the normal
-        #     slot release path (Slots.release_agent_slots in handle_info :DOWN) is
-        #     bypassed. We must release held slots here to avoid permanent leaks.
-        #     Waiting queues were already purged in step 5, so grant_pending only
-        #     affects non-cancelled agents.
-        state =
-          Enum.reduce(cancel_set, state, fn agent_id, acc_state ->
-            {acc_state, slot_status} = Slots.release_agent_slots(acc_state, agent_id)
-            Lifecycle.apply_status_updates(slot_status)
-            acc_state
-          end)
-
-        # 6. Cancel agents in reverse depth order (leaf subagents first, then parents)
-        #    Sort by depth descending so deepest agents are cancelled first
-        sorted_agents =
-          agent_ids_for_task(task_id)
-          |> Enum.sort_by(&Store.depth_of/1, :desc)
-
-        state =
-          Enum.reduce(sorted_agents, state, fn agent_id, acc_state ->
-            Lifecycle.cancel_agent(acc_state, agent_id)
-          end)
-
-        # 7. Process queue to dispatch any newly-eligible agents
-        state = Dispatch.process_queue(state)
-
-        Logger.info("AgentScheduler: Cancelled #{length(agent_ids)} agent(s) for task #{task_id}")
-
-        {:reply, :ok, state}
+        {:reply, :ok, cancel_task_agents(state, task_id)}
     end
   end
 
@@ -1416,6 +1409,70 @@ defmodule EvoGit.AgentScheduler do
     Store.list_sched_meta()
     |> Enum.filter(fn {_id, %SchedMeta{task_id: tid}} -> tid == task_id end)
     |> Enum.map(fn {id, _meta} -> id end)
+  end
+
+  # The BRUTAL cancellation body shared by the two force-kill entry points
+  # (caller-pid-addressed and task-id-addressed). Both resolve a task id first,
+  # so the cascade is IDENTICAL for a blocking `run_agent/2` task and for a
+  # `from = nil` interactive session.
+  defp cancel_task_agents(%State{} = state, task_id) do
+    # 1. Find ALL agents with this task_id
+    agent_ids = agent_ids_for_task(task_id)
+
+    cancel_set = MapSet.new(agent_ids)
+
+    # 2. Remove refs from ref_to_agent BEFORE killing sessions (so DOWN handler is a no-op)
+    ref_to_agent =
+      state.ref_to_agent
+      |> Enum.reject(fn {_ref, aid} -> MapSet.member?(cancel_set, aid) end)
+      |> Map.new()
+
+    state = %{state | ref_to_agent: ref_to_agent}
+
+    # 3. Remove from dispatch queue
+    queue =
+      :queue.filter(
+        fn aid ->
+          not MapSet.member?(cancel_set, aid)
+        end,
+        state.queue
+      )
+
+    state = %{state | queue: queue}
+
+    # 4. Purge from slot waiting queues (replies {:error, :cancelled} to blocked callers)
+    {state, _status_updates} = Slots.purge_agents_from_queues(state, cancel_set)
+
+    # 5. Release LLM/tool slots held by cancelled agents.
+    #    Step 2 made the :DOWN handler a no-op for these agents, so the normal
+    #    slot release path (Slots.release_agent_slots in handle_info :DOWN) is
+    #    bypassed. We must release held slots here to avoid permanent leaks.
+    #    Waiting queues were already purged in step 4, so grant_pending only
+    #    affects non-cancelled agents.
+    state =
+      Enum.reduce(cancel_set, state, fn agent_id, acc_state ->
+        {acc_state, slot_status} = Slots.release_agent_slots(acc_state, agent_id)
+        Lifecycle.apply_status_updates(slot_status)
+        acc_state
+      end)
+
+    # 6. Cancel agents in reverse depth order (leaf subagents first, then parents)
+    #    Sort by depth descending so deepest agents are cancelled first
+    sorted_agents =
+      agent_ids_for_task(task_id)
+      |> Enum.sort_by(&Store.depth_of/1, :desc)
+
+    state =
+      Enum.reduce(sorted_agents, state, fn agent_id, acc_state ->
+        Lifecycle.cancel_agent(acc_state, agent_id)
+      end)
+
+    # 7. Process queue to dispatch any newly-eligible agents
+    state = Dispatch.process_queue(state)
+
+    Logger.info("AgentScheduler: Cancelled #{length(agent_ids)} agent(s) for task #{task_id}")
+
+    state
   end
 
   # Drives one agent's SESSION into cancel-grace.

@@ -70,7 +70,8 @@ defmodule EvoGit.Store.StoreInvariantsTest do
     :completed,
     :failed,
     :cancelled,
-    :cancelling
+    :cancelling,
+    :awaiting_input
   ]
 
   # One representative VALUE per opt key the data plane persists (CLI flags,
@@ -119,7 +120,8 @@ defmodule EvoGit.Store.StoreInvariantsTest do
     agent: "code_reviewer",
     build_system: "mix",
     merge_from: "task-0",
-    merge_target: "main"
+    merge_target: "main",
+    session_mode: "interactive"
   ]
 
   @persisted_opts @atomized_opts ++ @string_opts
