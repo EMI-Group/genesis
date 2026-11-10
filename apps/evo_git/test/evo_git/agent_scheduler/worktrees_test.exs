@@ -204,16 +204,6 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
     end
   end
 
-  # Builds a well-formed %Task{} struct carrying the given pid — the shape
-  # Dispatch.try_dispatch/2 stores in SchedMeta.task_ref (production sets
-  # worktree + task_ref BEFORE the Runner requests the worktree). The
-  # crash-restart re-monitor (rebuild_monitor/3) only reads task_ref.pid, but
-  # the struct must be constructible — Elixir >= 1.18 Task enforces
-  # [:mfa, :owner, :ref].
-  defp task_ref_for(pid) do
-    %Task{pid: pid, ref: make_ref(), owner: pid, mfa: {DummyAgent, :run, []}}
-  end
-
   # Restarts the WorktreeManager so its `init/1` runs again — the crash-restart
   # code path under test (`rebuild_monitors/1` + marker-gated `maybe_init_repo`).
   # The running agent Tasks keep going in their live worktrees: that is exactly
@@ -1021,13 +1011,13 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       assert File.dir?(wt1)
       assert Git.branch_exists?(tmp_dir, branch1)
 
-      # Mirror production: Dispatch.try_dispatch/2 sets worktree + task_ref in
-      # the sched_meta row BEFORE the Runner requests the worktree — the
-      # crash-restart re-monitor (rebuild_monitor/3) needs both. The task_ref
-      # carries the stand-in agent's pid: after the restart the REBUILT
-      # monitor watches that same pid, so the exit signal below drains the
-      # rebuilt registration exactly like the original one.
-      Store.put_sched_meta(agent_id_1, %{meta | worktree: wt1, task_ref: task_ref_for(agent_1)})
+      # Mirror production: Dispatch.try_dispatch/2 records worktree +
+      # session_pid in the sched_meta row BEFORE the session requests the
+      # worktree — the crash-restart re-monitor (rebuild_monitor/3) needs both.
+      # `session_pid` is the stand-in agent's own pid: after the restart the
+      # REBUILT monitor watches that same pid, so the exit signal below drains
+      # the rebuilt registration exactly like the original one.
+      Store.put_sched_meta(agent_id_1, %{meta | worktree: wt1, session_pid: agent_1})
 
       # Restart ONLY the manager (one_for_one child of EvoGit.Supervisor;
       # the running agent Tasks keep going in their live worktrees).
@@ -1149,15 +1139,15 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       assert File.dir?(wt_path)
       assert Git.branch_exists?(tmp_dir, branch)
 
-      # Mirror production: the sched_meta row carries the live worktree +
-      # %Task{} ref so the crash-restart re-monitor can find the agent.
-      Store.put_sched_meta(agent_id, %{meta | worktree: wt_path, task_ref: task_ref_for(agent)})
+      # Mirror production: the sched_meta row carries the live worktree + the
+      # session pid so the crash-restart re-monitor can find the agent.
+      Store.put_sched_meta(agent_id, %{meta | worktree: wt_path, session_pid: agent})
 
       restart_manager()
 
       # Robustness: re-put the rows after the restart too (harmless) so the
       # re-monitor definitely sees them even if the restart raced the write.
-      Store.put_sched_meta(agent_id, %{meta | worktree: wt_path, task_ref: task_ref_for(agent)})
+      Store.put_sched_meta(agent_id, %{meta | worktree: wt_path, session_pid: agent})
 
       # Drain the registration (the REBUILT monitor watches the stand-in
       # agent) so no :DOWN cleanup fires during teardown.

@@ -1,27 +1,21 @@
-defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
-  use ExUnit.Case, async: true
-
-  alias EvoGit.AgentScheduler.{AgentState, Dispatch, ModelSelection, State, Store}
-  alias EvoGit.{AgentSpec, CustomAgents}
+defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest.Fixtures do
+  @moduledoc """
+  Shared fixtures for the model-selection suites in this file.
+  Plain helper module (NOT `ExUnit.Case`) so BOTH test modules below can use it:
+  the `async: true` regression module and the `async: false` dispatch module that
+  must own the app-env engine seam.
+  Defined ABOVE the test modules: `mix test` starts the ExUnit async runner
+  BEFORE requiring the test files, so a helper defined after an `async: true`
+  test module can still be unloaded when its first test runs.
+  """
+  import ExUnit.Assertions
+  import ExUnit.Callbacks, only: [on_exit: 1]
+  alias EvoGit.AgentScheduler.{Dispatch, State, Store}
+  alias EvoGit.AgentSpec
   alias EvoGit.Config.Schema
-  alias EvoGit.TestSupport.ConfigDir
+  alias EvoGit.CustomAgents
 
-  # Recovered from d14b4ee5e's source-local test and extended at the permanent
-  # test entry point. ConfigDir/script caches and all ETS ids are test-owned.
-  setup do
-    ConfigDir.isolate!("scheduler-selection-regression")
-    :ok
-  end
-
-  defmodule BindingObserver do
-    def run(objective, ctx) do
-      {:ok, binding} = Store.get_agent_state(ctx[:agent_id])
-      send(ctx[:spec].opts[:observer], {:dispatched_binding, objective, binding, ctx[:spec]})
-      {:ok, :observed}
-    end
-  end
-
-  defp config do
+  def config do
     %{
       llm: %{
         default_provider_profile: "account",
@@ -45,7 +39,7 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
     }
   end
 
-  defp two_accounts do
+  def two_accounts do
     first = hd(config().llm.providers)
 
     second = %{
@@ -79,7 +73,7 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
   # Canonical provider account EXACTLY as `Schema.ProviderProfiles.provider_profiles/1`
   # emits it (string-keyed, nested `models`). The configured default model is the
   # SECOND inventory entry, so resolving it can never be confused with "first".
-  defp canonical_account do
+  def canonical_account do
     [account] =
       Schema.provider_profiles(%{
         llm: %{
@@ -102,7 +96,7 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
     account
   end
 
-  defp spec(opts \\ []) do
+  def spec(opts \\ []) do
     %AgentSpec{
       context_node: nil,
       phylo_node: EvoGit.Core.PhyloGraphNode.new(File.cwd!()),
@@ -112,20 +106,20 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
     }
   end
 
-  defp script(code), do: assert(:ok = CustomAgents.save_model_selection_script(code))
+  def script(code), do: assert(:ok = CustomAgents.save_model_selection_script(code))
 
-  defp resolve(state, spec \\ spec()) do
+  def resolve(state, spec \\ spec()) do
     Dispatch.resolve_selection(state, spec, nil, 0, "selection-regression")
   end
 
-  defp fresh_state(config) do
+  def fresh_state(config) do
     %{
       State.from_config(config)
       | next_agent_id: 1_000_000_000 + System.unique_integer([:positive, :monotonic]) * 100
     }
   end
 
-  defp register(state, spec, parent_id \\ nil, depth \\ 0) do
+  def register(state, spec, parent_id \\ nil, depth \\ 0) do
     id = state.next_agent_id
 
     on_exit(fn ->
@@ -155,7 +149,7 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
   # two sides also assemble provider_options in a different keyword order, so the
   # comparison is a map comparison of every key/value plus a well-formedness check
   # on the cache identity, which is the ONE expected difference.
-  defp assert_binding(binding, config, requested) do
+  def assert_binding(binding, config, requested) do
     assert {:ok, resolved} = Schema.resolve_model_spec(config, requested)
 
     expected = %{
@@ -183,7 +177,7 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
   # non-keyword lists such as :stop) is compared exactly as-is. An EMPTY
   # provider_options list is equivalent to carrying none at all, so that
   # registration-created empty list cannot distinguish the two sides.
-  defp comparable(params) do
+  def comparable(params) do
     params
     |> Map.new()
     |> Map.new(fn
@@ -193,13 +187,13 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
     |> Map.reject(fn {key, value} -> key == :provider_options and value in [[], %{}] end)
   end
 
-  defp comparable_options(opts) when is_list(opts) do
+  def comparable_options(opts) when is_list(opts) do
     if Keyword.keyword?(opts), do: Map.new(opts), else: opts
   end
 
-  defp comparable_options(opts), do: opts
+  def comparable_options(opts), do: opts
 
-  defp drop_cache_identity(params) do
+  def drop_cache_identity(params) do
     case Keyword.fetch(params, :provider_options) do
       {:ok, opts} when is_list(opts) ->
         if Keyword.keyword?(opts) and Keyword.has_key?(opts, :prompt_cache_key) do
@@ -219,6 +213,24 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
         params
     end
   end
+end
+
+defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
+  use ExUnit.Case, async: true
+
+  alias EvoGit.AgentScheduler.{AgentState, Dispatch, ModelSelection, State, Store}
+  alias EvoGit.{AgentSpec, CustomAgents}
+  alias EvoGit.Config.Schema
+  alias EvoGit.TestSupport.ConfigDir
+
+  # Recovered from d14b4ee5e's source-local test and extended at the permanent
+  # test entry point. ConfigDir/script caches and all ETS ids are test-owned.
+  setup do
+    ConfigDir.isolate!("scheduler-selection-regression")
+    :ok
+  end
+
+  import EvoGit.AgentScheduler.ModelSelectionRegressionTest.Fixtures
 
   test "legacy populated, flat and empty configurations retain effective runtime profiles" do
     for config <- [
@@ -694,32 +706,6 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
     assert selected.model_spec["model"] == "gpt-4o-mini"
   end
 
-  test "dispatch task observes the effective binding, not the unresolved child request" do
-    config = two_accounts()
-    state = fresh_state(config)
-
-    chosen = %{
-      "provider_profile_id" => "other-account",
-      "model" => "gpt-4o-mini",
-      "reasoning_effort" => "low"
-    }
-
-    {root, state, _} = register(state, spec(model_spec: chosen, model_id_locked: true))
-    request = %{spec(observer: self()) | agent_module: BindingObserver, model_id: "account"}
-    {child, state, binding} = register(state, request, root, 1)
-    dispatched = Dispatch.try_dispatch(state, child)
-    assert {:ok, meta} = Store.get_sched_meta(child)
-    task = meta.task_ref
-    assert Map.fetch!(dispatched.ref_to_agent, task.ref) == child
-    assert meta.status == :running
-    assert_receive {:dispatched_binding, "selection regression", observed, effective_spec}, 5000
-    assert observed == binding
-    assert_binding(observed, config, chosen)
-    assert effective_spec.model_spec == chosen
-    assert effective_spec.opts[:model_id_locked]
-    assert Task.await(task, 5000) == {:ok, :observed}
-  end
-
   # A bare `provider_profiles` push carries no selection snapshot, so the
   # non-schema fallback is the ONLY default source. It must resolve the account's
   # configured default model (not nil, and not merely the first inventory model)
@@ -765,5 +751,133 @@ defmodule EvoGit.AgentScheduler.ModelSelectionRegressionTest do
     assert Keyword.fetch!(state.llm_generation_params, :temperature) == 0.3
     assert state.model_concurrency == %{"legacy" => 4}
     assert state.default_llm_max_concurrency == 4
+  end
+end
+
+defmodule EvoGit.AgentScheduler.ModelSelectionDispatchTest do
+  @moduledoc """
+  The DISPATCH half of the model-selection regression coverage: an agent's
+  `EvoGit.Agent.Session` is started by `Dispatch.try_dispatch/2`, observes the
+  RESOLVED selection of its own scheduler row, and delivers exactly ONE terminal
+  result to the scheduler that dispatched it.
+  `async: false` for ONE reason: driving a dispatched session without a real LLM
+  call requires the app-env engine seam `:agent_exchange_llm_call` (read at CALL
+  time by `EvoGit.Agent.Exchange.Seams.from_opts/1`), which is a BEAM-global App
+  env key a concurrently running module's session would also pick up. The
+  dispatch path builds `dispatch_ctx` itself and passes no `:exchange_opts`, so
+  the app env is the only seam available here.
+  """
+  use ExUnit.Case, async: false
+
+  import EvoGit.AgentScheduler.ModelSelectionRegressionTest.Fixtures
+
+  alias EvoGit.AgentScheduler.{Dispatch, Store}
+  alias EvoGit.TestSupport.ConfigDir
+
+  setup do
+    ConfigDir.isolate!("scheduler-selection-dispatch")
+
+    test_pid = self()
+    previous = Application.get_env(:evo_git, :agent_exchange_llm_call)
+
+    # Engine seam: report the row the session's exchange actually runs against,
+    # then complete the run implicitly (a reply with no tool calls ends it).
+    llm_call = fn context, _tools, _params, agent_id, _retries ->
+      {:ok, binding} = Store.get_agent_state(agent_id)
+      send(test_pid, {:dispatched_binding, binding})
+
+      message = %ReqLLM.Message{
+        role: :assistant,
+        content: [ReqLLM.Message.ContentPart.text("dispatch report")],
+        tool_calls: nil
+      }
+
+      response = %ReqLLM.Response{
+        id: "model-selection-dispatch-response",
+        model: "test:model",
+        context: ReqLLM.Context.append(context, message),
+        message: message,
+        usage: %{input_tokens: 10, output_tokens: 2, total_tokens: 12}
+      }
+
+      {:implicit_completion, response, "dispatch report"}
+    end
+
+    Application.put_env(:evo_git, :agent_exchange_llm_call, llm_call)
+
+    on_exit(fn ->
+      if previous == nil,
+        do: Application.delete_env(:evo_git, :agent_exchange_llm_call),
+        else: Application.put_env(:evo_git, :agent_exchange_llm_call, previous)
+    end)
+
+    :ok
+  end
+
+  test "a dispatched session observes the effective binding, not the unresolved child request" do
+    config = two_accounts()
+    state = fresh_state(config)
+
+    chosen = %{
+      "provider_profile_id" => "other-account",
+      "model" => "gpt-4o-mini",
+      "reasoning_effort" => "low"
+    }
+
+    {root, state, _} = register(state, spec(model_spec: chosen, model_id_locked: true))
+
+    request = %{
+      spec(
+        repo_less: true,
+        task_tmpdir:
+          Path.join(System.tmp_dir!(), "ms_dispatch_#{System.unique_integer([:positive])}")
+      )
+      | model_id: "account",
+        # A repository-less session still builds a context tree from the agent's
+        # node, so the spec must carry one (the model-selection fixture leaves it
+        # `nil`, which only the old behaviour-less observer spec could afford).
+        context_node: %EvoGit.Core.ContextNode{path: "./", repo: File.cwd!()}
+    }
+
+    {child, state, binding} = register(state, request, root, 1)
+
+    dispatched = Dispatch.try_dispatch(state, child)
+    assert {:ok, meta} = Store.get_sched_meta(child)
+    session = meta.session_pid
+
+    # The session IS the agent process: `ref_to_agent` keys on its monitor ref,
+    # never on a `%Task{}`.
+    assert is_pid(session)
+    assert [ref] = for({ref, id} <- dispatched.ref_to_agent, id == child, do: ref)
+    assert Map.fetch!(dispatched.ref_to_agent, ref) == child
+    assert meta.status == :running
+    assert meta.phase in [:starting, :running]
+
+    # The locked parent selection is inherited into the spec the session runs.
+    assert meta.spec.model_spec == chosen
+    assert meta.spec.opts[:model_id_locked]
+
+    on_exit(fn ->
+      if Process.alive?(session), do: Process.exit(session, :kill)
+    end)
+
+    # The exchange ran against the resolved row, not the raw child request.
+    assert_receive {:dispatched_binding, observed}, 10_000
+
+    # Every field the session did not itself move must be IDENTICAL: only the
+    # session's own runtime bookkeeping changes between registration and the
+    # exchange (`turn`, `usage`, `status`, `message_count`, `last_activity_at`).
+    runtime_fields = [:turn, :usage, :status, :message_count, :last_activity_at]
+    assert Map.drop(observed, runtime_fields) == Map.drop(binding, runtime_fields)
+    assert_binding(observed, config, chosen)
+
+    # ...and the session delivered its ONE terminal result to the dispatcher
+    # (this test process is `dispatch_ctx[:scheduler]`) before stopping.
+    assert_receive {:agent_session_result, ^child, ^session, result}, 10_000
+    assert {:ok, %EvoGit.Agent.Result{result: "dispatch report"}} = result
+
+    ref = Process.monitor(session)
+    assert_receive {:DOWN, ^ref, :process, ^session, reason}, 5_000
+    assert reason in [:normal, :noproc]
   end
 end
