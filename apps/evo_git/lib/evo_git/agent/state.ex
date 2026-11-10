@@ -41,10 +41,9 @@ defmodule EvoGit.Agent.State do
   `context_node`, `repo_id`, `repo_root`, `repo_less`, `custom_agent_id`,
   `mode`, `archive`, `worktree`.
 
-  Who this agent is and where it runs. It replaces the `Process.put` identity
-  block the Runner installs today: at exchange start the worker installs the
-  DERIVED process-dictionary values from these fields (the struct stays
-  authoritative, the process dictionary is only a projection). `worktree`
+  Who this agent is and where it runs. The session installs the derived
+  process-dictionary projection of these fields at exchange start (the struct
+  stays authoritative, the process dictionary is only a projection). `worktree`
   belongs here because its lifetime is the session's lifetime — it is kept for
   the session's whole life and reclaimed only when the session ends.
 
@@ -66,12 +65,12 @@ defmodule EvoGit.Agent.State do
   (default `nil`), `event_seq` (default `0`), `watchers` (default `%{}`),
   `last_checkpoint_at` (default `nil`).
 
-  Cross-process control state, changed only through explicit session commands
-  (`input` / `cancel` / `close`). `watchers` is the streaming gate: zero
+  Cross-process control state, changed only through the explicit session commands
+  (`inspect` / `history` / `input` / `cancel`). `watchers` is the streaming gate: zero
   watchers ⇒ no chunk callbacks and no broadcast, so the LLM call path carries
   no streaming overhead.
 
-  ### budget (per-run terminal budgets, unchanged semantics)
+  ### budget (per-run terminal budgets)
 
   `max_turns`, `max_depth`, `max_retries`, `grace_turns_remaining`,
   `in_grace_period`, `delegation_hints`, `read_delegation_hints`,
@@ -97,7 +96,7 @@ defmodule EvoGit.Agent.State do
   - `repo_less` — `true` when this agent runs without a git worktree (chatbot-style self-reflective agent). Gates the authority/quality sections + attachments off in the `<context>` block.
   - `custom_agent_id` — the custom agent definition's id when this agent was created from `<config_dir>/agents.toml`, else `nil`
   - `mode` — `:oneshot` (today's agents) or `:interactive` (opt-in sessions); decides only what a tool-free reply means
-  - `archive` — whether task archiving is enabled for this agent (writes git refs + ETS records on completion)
+  - `archive` — whether task archiving is enabled for this agent (writes git refs + a `task_agent_archives` row on completion)
   - `worktree` — the agent's git worktree PATH, or `nil` for a repo-less agent / before the worktree is created. The worktree lease joins this field in a later phase; the worktree's lifetime is the session's lifetime.
   - `context` — the LLM conversation context (`ReqLLM.Context.t()`)
   - `turn` — current turn number in the agent loop (starts at 0)

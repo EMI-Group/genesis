@@ -2,11 +2,11 @@
 
 ## Intent
 
-Holds the per-agent session process that owns `%EvoGit.Agent.State{}` for its whole life, plus the durable/per-process setup (the retired one-shot `Runner` driver's setup lives here now).
+Holds the per-agent session process that owns `%EvoGit.Agent.State{}` for its whole life, plus the durable/per-process setup (worktree binding, process context, initial state).
 `%EvoGit.Agent.State{}` is the ONE authoritative agent state; the process dictionary installed here is a DERIVED projection of it, never authoritative.
 The exchange engine (`EvoGit.Agent.Exchange`) stays a pure function over the struct: the session spawns a short-lived WORKER task per exchange and never runs the turn loop inside its own process, so inspection/cancel/input stay answerable mid-run.
 The session IS the one lifecycle for every agent: `EvoGit.AgentScheduler.Dispatch.do_try_dispatch/4` starts it under `EvoGit.Agent.Session.Supervisor` and `EvoGit.AgentScheduler` admits its ONE terminal `{:agent_session_result, …}`.
-This is still the ONE-SHOT subset only (no `:awaiting_input`, no yield, no close).
+The session implements the ONE-SHOT subset only (no `:awaiting_input`, no yield, no close).
 
 ## API Surface
 
@@ -27,7 +27,7 @@ This is still the ONE-SHOT subset only (no `:awaiting_input`, no yield, no close
 | `EvoGit.Agent.Session.Supervisor` | `start_link/1`, `child_spec/1` | The named `DynamicSupervisor` (`strategy: :one_for_one`) hosting sessions. |
 
 The session's start path composes them: `bind_worktree/2` (owner = the SESSION pid) → `ensure_tmpdir/1` → `install_process_context/3`, then reads the scheduler row, calls `build_initial_state/3` and publishes `status: :running`.
-There is no `Runner.Setup` / `Runner.InitialState` module any more, and no per-turn ETS write-through: the only per-turn publication is the `:checkpoint` event → `Summary.publish/3` (summary fields only, never `context`).
+The only per-turn publication is the `:checkpoint` event → `Summary.publish/3` (summary fields only, never `context`); there is no per-turn ETS write-through.
 
 ## Phases, Events and Commands (ONE-SHOT subset)
 
@@ -65,9 +65,9 @@ The `checkpoint:` opt handed to `Exchange.run/2` is LIVE: the engine calls it on
 
 ## Constraints
 
-- Setup modules must not call `AgentScheduler` state/log APIs except the durable ones the Runner path already used (`WorktreeManager`, `TaskTmpdir`); `build_initial_state/3` never reads the scheduler row or the process dictionary.
-- `build_initial_state/3` must not write ETS or the process dictionary; those side effects belong to the caller (Runner or the session) or to `install_process_context/3`.
-- The Runner install must stay behaviour-identical: same keys, same values, same logs, same retry sleep and the same repo-less cardinal rule (git is never touched, no worktree, no `.genesis/tmp` in the source root).
+- Setup modules must not call `AgentScheduler` state/log APIs except the durable ones the dispatch path already used (`WorktreeManager`, `TaskTmpdir`); `build_initial_state/3` never reads the scheduler row or the process dictionary.
+- `build_initial_state/3` must not write ETS or the process dictionary; those side effects belong to the session (`install_process_context/3`) or to the worker.
+- The installed process context must stay behaviour-identical: same keys, same values, same logs, same retry sleep and the same repo-less cardinal rule (git is never touched, no worktree, no `.genesis/tmp` in the source root).
 - Per-process keys are a projection only — never a source of truth for the exchange engine, which reads the struct.
 - `Summary.publish/3` never raises, never treats a missing row as an error (it no-ops), never builds a fresh `%AgentState{}` and never writes `context`; it guards `:ets.whereis(:evogit_agent_summary)`, skips a write when nothing but `last_activity_at` would change, and delegates persistence/broadcast to `EvoGit.AgentScheduler.Store.put_agent_state/2`.
 - `Summary.select_all/0` uses `:ets.select/2` (never `:tab2list`), returning `[]` when the table is absent.
@@ -83,4 +83,4 @@ The `checkpoint:` opt handed to `Exchange.run/2` is LIVE: the engine calls it on
 - `./summary.ex` → `EvoGit.Agent.Session.Summary`, the one `:evogit_agent_summary` merge/read helper.
 - `./registry.ex` → `EvoGit.Agent.Session.Registry`; `./supervisor.ex` → `EvoGit.Agent.Session.Supervisor`.
 - `../state.ex` → `%EvoGit.Agent.State{}`, the authoritative struct these functions build and project from.
-- `../exchange.ex` → the engine the worker runs; `../runner.ex` → the surviving thin HELPER module (`refresh_commit_sha/1` + engine delegates) whose `try/after` + `refresh_commit_sha/1` shape the worker copies.
+- `../exchange.ex` → the engine the worker runs; `../runner.ex` → the thin HELPER module (`refresh_commit_sha/1` + `@doc false` engine delegates), whose `try/after` + `refresh_commit_sha/1` shape the worker follows.
