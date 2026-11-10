@@ -588,6 +588,27 @@ button, a, input, textarea, select, summary,
   animation: float 3s ease-in-out infinite;
 }
 
+/* Newly joined /processes rows: fade in, slide down slightly and a brief
+   accent tint that fades out. Applied by ProcessesLive only to rows that
+   arrived after the initial snapshot (removed after ~1.5s). */
+@keyframes process-row-enter {
+  0%   { opacity: 0; transform: translateY(-8px);
+         background-color: color-mix(in oklab, var(--color-primary-standalone) 16%, transparent); }
+  60%  { opacity: 1; transform: translateY(0);
+         background-color: color-mix(in oklab, var(--color-primary-standalone) 10%, transparent); }
+  100% { opacity: 1; transform: translateY(0); background-color: transparent; }
+}
+
+.process-row-enter {
+  animation: process-row-enter 0.9s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .process-row-enter {
+    animation: none;
+  }
+}
+
 /* Genesis Guide overlay: temporary highlight applied to the guided element by
    the Guide JS hook (js/app.js) — a standalone-accent outline (outline role)
    offset from the element; removed by the hook after ~3s. */
