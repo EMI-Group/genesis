@@ -1274,6 +1274,14 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       assert row.message_count == length(messages)
       assert row.total_tokens == result.total_tokens
       assert row.total_tokens == 0
+      # The state-owned counter now REACHES the persisted row: `put_agent_state/2`
+      # no longer resets it, so the raw row and the projected read both carry the
+      # advanced value (no legacy control-plane counter exists for this agent).
+      assert row.compression_count == 2
+      assert [{@counter_agent, raw_row}] = :ets.lookup(:evogit_agent_summary, @counter_agent)
+      assert raw_row.compression_count == 2
+      assert {:ok, projected} = SchedStore.get_agent_state(@counter_agent)
+      assert projected.compression_count == 2
     end
   end
 

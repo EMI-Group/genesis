@@ -129,23 +129,23 @@ Standard calls in one batch are PARTITIONED by `EvoGit.Agent.Tools.serial_tool?/
 - **Role guards are installed in the tool task** from the request's `role` map, so `Tools.execute/5`'s pd-based repo-less / read-only-foreign-repo guards DO enforce those roles on the normal serial AND parallel dispatch paths.
 - Direct `Tools.execute/5` tests with role keys installed in the calling process do not prove role enforcement through `ToolDispatch.batch_execute_tools/5`; only the runtime-installed keys (`ToolRuntime.Request.role`) do.
 - **The evaluator does not trust tool-task role pd**: `ElixirEval.Authorization` validates the explicit owner identity/ETS, ancestry and live task state, independently of the ordinary file/shell role guards.
-- `Request.agent_pid` MUST be the durable AGENT owner, never the short-lived tool task pid and never an exchange WORKER's `self()`: the batch resolves `Process.get(:evogit_agent_pid) || self()`, which is the SESSION pid when a session drives the exchange (D7 — the worker owns nothing durable) and the agent pid on the one-shot driver; `EvoGit.BackgroundJobs` binds detached jobs and `EvoGit.ProcessManager` its executions to that owner.
+- `Request.agent_pid` MUST be the durable AGENT owner, never the short-lived tool task pid and never an exchange WORKER's `self()`: the batch resolves `Process.get(:evogit_agent_pid) || self()`, which is the SESSION pid when a session drives the exchange (D7 — the worker owns nothing durable), falling back to `self()` only when no owner was installed; `EvoGit.BackgroundJobs` binds detached jobs and `EvoGit.ProcessManager` its executions to that owner.
 
 | pd key | written | read / meaning |
 |---|---|---|
 | `:evogit_agent_id` | agent proc; EVERY tool task | `current_agent_id/0`, `CommandShell`, approval gate |
 | `:evogit_task_id` | EVERY tool task | `CommandShell`, approval gate |
 | `:evogit_agent_pid` | EVERY tool task (the durable AGENT/session pid) | `BackgroundJobs.current_owner_pid/0` |
-| `:evogit_agent_depth` | `runner.ex` | `AgentScheduler.current_depth/0` |
-| `:evogit_started_at` | `runner.ex` | `Completion` — ISO-8601 |
-| `:genesis_repo_root` | `runner.ex` (incl. repo-less override) | `ToolDispatch` — REAL repo root |
-| `:evogit_repo_id` | `runner.ex` | `Tools.execute/5`, `Completion` — `"primary"` or a foreign id |
-| `:foreign_repos` | `runner.ex` | `Tools`, `Tools.Shared` — `%ForeignRepo{}` list (write-role gate) |
-| `:custom_agent_id` | `runner.ex` | `EvoGit.Agents.Custom` callbacks (root only) |
-| `:attachments`, `:quality_level` | `runner.ex` | root media parts / quality level |
-| `:repo_path`, `:repo_less` | `runner.ex` | agent worktree path / repo-less marker |
+| `:evogit_agent_depth` | `session/setup.ex` | `AgentScheduler.current_depth/0` |
+| `:evogit_started_at` | `session/setup.ex` | `Completion` — ISO-8601 |
+| `:genesis_repo_root` | `session/setup.ex` (incl. repo-less override) | `ToolDispatch` — REAL repo root |
+| `:evogit_repo_id` | `session/setup.ex` | `Tools.execute/5`, `Completion` — `"primary"` or a foreign id |
+| `:foreign_repos` | `session/setup.ex` | `Tools`, `Tools.Shared` — `%ForeignRepo{}` list (write-role gate) |
+| `:custom_agent_id` | `session/setup.ex` | `EvoGit.Agents.Custom` callbacks (root only) |
+| `:attachments`, `:quality_level` | `session/setup.ex` | root media parts / quality level |
+| `:repo_path`, `:repo_less` | `session/setup.ex` | agent worktree path / repo-less marker |
 | `:evogit_task_tmpdir` | agent proc + tool task | `TaskTmpdir.current/0` |
-| `:delegation_hints`, `:read_delegation_hints`, `:redundant_cd_warned` | runner / tool_output_tracking | per-dir counters, once-per-run flag (AGENT process only) |
+| `:delegation_hints`, `:read_delegation_hints`, `:redundant_cd_warned` | exchange worker / tool_output_tracking | per-dir counters, once-per-run flag (AGENT process only) |
 | `:conflict_files` | `ConflictState.refresh/1` (tool_dispatch, turn END) | `ConflictState.files/0` / `in_conflict?/0` — the ONE per-turn conflict snapshot read by the next turn's hint suppression + `Exchange.Warnings.check_limit_warnings/1` (AGENT process only; default `[]`) |
 
 No `:parent_id`, `:model_id` or `:depth` pd keys — those live on `AgentState` (ETS); depth is `:evogit_agent_depth`. From inside a tool `hd($callers)` (serial) / `Enum.at($callers, 1)` (parallel) is the process that BUILT the batch — the exchange worker under a session, the agent Task on the one-shot driver — so the durable owner pid is the `:evogit_agent_pid` pd key (or `:ets.lookup(:evogit_sched_meta, agent_id)` → `%SchedMeta{session_pid: agent_pid}`, tables `:public`), never `$callers`.
@@ -214,7 +214,7 @@ The objective (`AgentState.objective`, a plain `String.t()`) enters the conversa
 
 ## Multimodal Content — three sites, one contract
 Images/audio ride real req_llm content parts at THREE sites: the ROOT agent's first user message (`:attachments` task opt), an injected user message, and a TOOL RESULT. `EvoGit.Attachments` (`../attachments.ex`) is the single source of truth (content shape, ≤4 attachments / ≤15 MiB raw caps, base64 at every data-plane boundary, `Attachments.message/1` the ONE normalizer): `apps/evo_git/CONTEXT.md` ("Multi-Modal Content").
-- **Node-side wiring**: `:attachments` reaches the root's first message ONLY — `RuntimeOpts` validates, `Helpers.build_root_agent_spec/7` forwards, `setup_dispatch_context/1` installs it, `build_initial_messages/4` gates on `parent_id == nil` AND a non-empty list; subagents and resume/merge follow-ups never inherit it. **Injected user messages have NO root gate**: `AgentScheduler.send_user_message/2` takes `String.t() | %{text:, attachments:}`, stored VERBATIM (binary) or canonicalized via `Attachments.message/1`, materialized by `build_injected_message/2` from `Exchange.Pending.drain_and_inject_user_messages/1`.
+- **Node-side wiring**: `:attachments` reaches the root's first message ONLY — `RuntimeOpts` validates, `Helpers.build_root_agent_spec/7` forwards, `EvoGit.Agent.Session.Setup.install_process_context/3` installs it, `build_initial_messages/4` gates on `parent_id == nil` AND a non-empty list; subagents and resume/merge follow-ups never inherit it. **Injected user messages have NO root gate**: `AgentScheduler.send_user_message/2` takes `String.t() | %{text:, attachments:}`, stored VERBATIM (binary) or canonicalized via `Attachments.message/1`, materialized by `build_injected_message/2` from `Exchange.Pending.drain_and_inject_user_messages/1`.
 - Per-step media accumulates: compression keeps recent tool media (last K turns VERBATIM) and collapses older tool media into `[... tool result media omitted ...]` per message.
 
 ### Multimodal Tool Outputs (`EvoGit.Agent.ToolOutput`)
@@ -270,7 +270,7 @@ The loop hard-assumes a real git worktree, set once by `Session.Setup.bind_workt
 - The agent process NEVER chdirs: nothing in `lib/` calls `File.cd!`/`File.cd`, `:repo_path`/`:genesis_repo_root`/`:repo_less` are only ever `Process.put` (never deleted, valid for the whole agent-process lifetime), and every git/shell call passes its directory explicitly (`Git.run(args, cd)` → `System.cmd(..., cd: path)`). The `<context>` block nevertheless asserts "The current working directory (cwd) is also set to the repository path" (`EvoGit.Core.ContextNode.build_context/2`), so that prompt line is a convention the tool layer enforces, not a VM fact.
 
 ## Repo-less Agents
-A repo-less agent runs WITHOUT a worktree (chatbot-style), marked by `Process.get(:repo_less)` (set in `setup_dispatch_context/1` from `spec.opts[:repo_less]`); `:repo_path` points at the REAL Genesis source root.
+A repo-less agent runs WITHOUT a worktree (chatbot-style), marked by `Process.get(:repo_less)` (set in `EvoGit.Agent.Session.Setup.bind_worktree/2` + `Setup.install_process_context/3` from `spec.opts[:repo_less]`); `:repo_path` points at the REAL Genesis source root.
 Ordinary file/git/shell write tools remain forbidden; the reflective assistant's reserved `elixir_eval` is a separately authorized runtime-control capability whose write/sudo tiers require exact-code approval, not a relaxation of those pd-based tool guards.
 - **Write guard intent**: `Tools.execute/5` checks write CALLS via `write_call?/2` on BOTH argument paths (`maybe_block_repo_less/5`, then `maybe_block_read_only_foreign_repo/5`), reading the role pd keys (`:repo_less`, `:foreign_repos`, `:evogit_repo_id`) that `EvoGit.ToolRuntime.Executor.execute_tool_task/4` installs in every spawned tool task from `%ToolRuntime.Request{}.role`.
 - `Shared.validate_file_scope/4` adds a path-level check for selected writers, not a universal execution authorization layer, and `read_only_schemas/0` deliberately retains `Context.write_schema`/`edit_schema` + `ShellTool`.
@@ -289,7 +289,7 @@ A `%ForeignRepo{}` carries only `root` (absolute; no worktree field); each spawn
 
 ## Per-Task Scratch Space (TMPDIR)
 `EvoGit.TaskTmpdir` (`../task_tmpdir.ex`) is the single source of truth — `[tmp] mode` `:system` / `:custom` / `:per_repo`, path math and event-driven reclaim: `apps/evo_git/CONTEXT.md`.
-- **Runner installs it** (`setup_dispatch_context/1`): prefers a parent-threaded `spec.opts[:task_tmpdir]`, else `TaskTmpdir.ensure(meta.task_id, primary_repo_path)` with `primary_repo_path = Process.get(:genesis_repo_root)` or `nil` for repo-less agents (`:per_repo` then falls back — the Genesis source root must never receive `.genesis/tmp`), then `TaskTmpdir.put_current/1` unconditionally; subagent specs inherit it and `batch_execute_tools/4` reads `TaskTmpdir.current/0` once per batch.
+- **The session's start event installs it** (`EvoGit.Agent.Session.Setup.ensure_tmpdir/1`, then `install_process_context/3` puts it): prefers a parent-threaded `spec.opts[:task_tmpdir]`, else `TaskTmpdir.ensure(meta.task_id, primary_repo_path)` with `primary_repo_path = Process.get(:genesis_repo_root)` or `nil` for repo-less agents (`:per_repo` then falls back — the Genesis source root must never receive `.genesis/tmp`), then `TaskTmpdir.put_current/1` unconditionally; subagent specs inherit it and `batch_execute_tools/4` reads `TaskTmpdir.current/0` once per batch.
 - **Tool path-scope is ASYMMETRIC**: SIX tools call `Shared.validate_file_scope/4` — the four file-creating writers (`file_write.ex`, `file_edit.ex`, `file_create.ex`, `make_dir.ex`) and the `CONTEXT.md` writers (`context.ex`) — rejecting paths outside `repo_path`, outside `node_path`, and inside read-only foreign repos; every READ/exec tool accepts arbitrary/absolute paths (`EvoGit.Platform.safe_expand/2` returns an absolute input unchanged), except `web_fetch` (no filesystem path) and `lsp`'s `path` (must resolve INSIDE the agent's repo path).
 The scope is ALLOW-ALL in two documented cases: a `"./"` node path matches every path and a non-binary (`nil`) `node_path` returns `:ok` (`Shared.is_child_or_same_node?/2`, `validate_file_scope/4`'s no-node_path clause) — and `read_context` performs NO scope check at all (only `write_context`/`edit_context` do), while an out-of-scope CONTEXT.md write answers with `Shared.format_context_scope_error/2`.
 - **`bash` runs INSIDE the sandbox** (`EvoGit.Sandbox.run_with_partial/7`) with `TMPDIR=<EvoGit.Sandbox.resolve_tmpdir()>` (POSIX `$TMPDIR`, `$env:TEMP` on Windows), which PREFERS `TaskTmpdir.current/0`; the only LLM-visible tmp instruction is the ShellTool schema text "Always use $TMPDIR for temporary files, never /tmp."

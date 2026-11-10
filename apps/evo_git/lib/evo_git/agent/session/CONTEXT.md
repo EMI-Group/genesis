@@ -61,7 +61,7 @@ Public API totality is enforced at the boundary: `:gen_statem.call/3,4` is wrapp
 
 `dispatch_ctx[:exchange_opts]` is a documented, DEFAULT-INERT seam: its keyword list is forwarded to every exchange worker (`[tmpdir: tmpdir] ++ exchange_opts`), so tests can inject engine seams.
 Production passes none, and `:exchange_opts` never appears in a shipped configuration.
-The `checkpoint:` opt handed to `Exchange.run/2` is inert in this checkpoint (`Exchange.Seams.from_opts/1` ignores unknown keys); it becomes live when the engine learns to emit checkpoints.
+The `checkpoint:` opt handed to `Exchange.run/2` is LIVE: the engine calls it once per turn after the state advances, and the worker forwards each call to the session as a `{:checkpoint, %State{}}` message.
 
 ## Constraints
 
@@ -82,6 +82,5 @@ The `checkpoint:` opt handed to `Exchange.run/2` is inert in this checkpoint (`E
 - `./worker.ex` → `EvoGit.Agent.Session.Worker`, the per-exchange task body.
 - `./summary.ex` → `EvoGit.Agent.Session.Summary`, the one `:evogit_agent_summary` merge/read helper.
 - `./registry.ex` → `EvoGit.Agent.Session.Registry`; `./supervisor.ex` → `EvoGit.Agent.Session.Supervisor`.
-- `../runner/setup.ex` + `../runner/initial_state.ex` → the thin Runner delegations that preserve today's behaviour and ETS writes.
 - `../state.ex` → `%EvoGit.Agent.State{}`, the authoritative struct these functions build and project from.
-- `../exchange.ex` → the engine the worker runs; `../runner.ex` → the one-shot driver whose `try/after` + `refresh_commit_sha/1` shape the worker copies.
+- `../exchange.ex` → the engine the worker runs; `../runner.ex` → the surviving thin HELPER module (`refresh_commit_sha/1` + engine delegates) whose `try/after` + `refresh_commit_sha/1` shape the worker copies.

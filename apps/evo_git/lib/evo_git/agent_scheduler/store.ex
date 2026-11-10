@@ -11,11 +11,15 @@ defmodule EvoGit.AgentScheduler.Store do
 
   **One writer per row.** The agent process is the ONLY writer of its
   `:evogit_agent_summary` row. Everything another process writes about a live
-  agent (`pending_user_messages`, `cancel_requested`, `compression_count`) goes
-  through `ControlPlane` with atomic ETS operations, so a cross-process write
-  never read-modify-writes the whole struct and never loses the agent's own
-  concurrent context writes. `get_agent_state/1` PROJECTS the control-plane
-  values back onto the struct, so every consumer still reads one struct.
+  agent (`pending_user_messages`, `cancel_requested`, and the legacy
+  control-plane `compression_count`) goes through `ControlPlane` with atomic ETS
+  operations, so a cross-process write never read-modify-writes the whole struct
+  and never loses the agent's own concurrent context writes. `get_agent_state/1`
+  PROJECTS the control-plane values back onto the struct, so every consumer
+  still reads one struct. The row itself carries the STATE-OWNED
+  `compression_count` (`EvoGit.Agent.Session.Summary.publish/3` copies it from
+  the agent's `%EvoGit.Agent.State{}`); a legacy control-plane counter still
+  wins on the projection while its row exists.
 
   Every write/delete on the agent-state and sched-meta tables broadcasts
   enriched PubSub delta events so the dashboard can apply incremental updates,
@@ -37,14 +41,20 @@ defmodule EvoGit.AgentScheduler.Store do
   @agent_table :evogit_agent_summary
   @sched_table :evogit_sched_meta
 
-  # The three control-plane fields whose live values live in `ControlPlane`
-  # (its inbox/control tables), NOT in this row — plus their struct defaults.
-  # They are reset to those defaults on every state write, so a projected struct
-  # can never be written back and resurrect drained messages or a stale flag.
+  # The control-plane fields whose live values live in `ControlPlane` (its
+  # inbox/control tables), NOT in this row — plus their struct defaults. They
+  # are reset to those defaults on every state write, so a projected struct can
+  # never be written back and resurrect drained messages or a stale flag.
+  #
+  # `compression_count` is deliberately ABSENT: it is state-owned on the agent's
+  # `%EvoGit.Agent.State{}` and reaches this row through
+  # `EvoGit.Agent.Session.Summary.publish/3`, so resetting it here would force
+  # every published count back to 0. The LEGACY control-plane counter
+  # (`ControlPlane.increment_compression_count/1`) still takes precedence on the
+  # read path (`ControlPlane.project/2`) while its control row exists.
   @control_field_defaults %{
     pending_user_messages: [],
-    cancel_requested: nil,
-    compression_count: 0
+    cancel_requested: nil
   }
 
   # ---------------------------------------------------------------------------
@@ -122,9 +132,10 @@ defmodule EvoGit.AgentScheduler.Store do
   Returns `{:ok, %AgentState{}}` or `:error` if not found.
 
   The returned struct carries the PROJECTED control-plane values
-  (`pending_user_messages`, `cancel_requested`, `compression_count`) — see
-  `EvoGit.AgentScheduler.ControlPlane.project/2` — while the row itself only
-  stores their struct defaults.
+  (`pending_user_messages`, `cancel_requested`) — see
+  `EvoGit.AgentScheduler.ControlPlane.project/2` — and the row's own
+  state-owned `compression_count`, which the projection overrides only while a
+  legacy control row exists.
   """
   @spec get_agent_state(pos_integer()) :: {:ok, AgentState.t() | map()} | :error
   def get_agent_state(agent_id) do
@@ -138,16 +149,21 @@ defmodule EvoGit.AgentScheduler.Store do
   Inserts/updates agent state for the given agent ID.
 
   **Invariant — the agent process is the ONLY writer of this row.** Nothing
-  else may read-modify-write it: a cross-process write of `pending_user_messages`,
-  `cancel_requested` or `compression_count` goes through
-  `EvoGit.AgentScheduler.ControlPlane` (atomic ETS operations), because a
-  whole-struct write from another process races the agent's own context writes
-  and silently loses one of them.
+  else may read-modify-write it: a cross-process write of `pending_user_messages`
+  or `cancel_requested` goes through `EvoGit.AgentScheduler.ControlPlane`
+  (atomic ETS operations), because a whole-struct write from another process
+  races the agent's own context writes and silently loses one of them.
 
-  The three control-plane fields are therefore RESET to their struct defaults
-  before the ETS write: a projected struct (the shape `get_agent_state/1`
-  returns) must never be written back, which would resurrect drained messages or
-  a stale cancel flag.
+  `pending_user_messages` and `cancel_requested` are therefore RESET to their
+  struct defaults before the ETS write: a projected struct (the shape
+  `get_agent_state/1` returns) must never be written back, which would
+  resurrect drained messages or a stale cancel flag.
+
+  `compression_count` is NOT reset — it is state-owned on the agent's
+  `%EvoGit.Agent.State{}` and this row is its read model, so the published
+  count survives an ordinary state write. The legacy control-plane counter
+  (`ControlPlane.increment_compression_count/1`) stays authoritative on the
+  projection while its row exists.
 
   Broadcasts an `:agent_updated` delta event with the changed fields plus
   the throttled `:agents_updated` fallback for backward compatibility.
@@ -447,7 +463,8 @@ defmodule EvoGit.AgentScheduler.Store do
 
     # `agent_state` is PROJECTED (see `get_agent_state/1`), so the control
     # fields are reset to their struct defaults before the write — the live
-    # values belong to `ControlPlane`, never to this row.
+    # values belong to `ControlPlane`, never to this row. `compression_count` is
+    # state-owned and is therefore carried through verbatim.
     updated_state = agent_state |> Kernel.struct!(fields) |> reset_control_fields()
 
     # Direct ETS write (no put_agent_state round-trip) plus a focused delta
@@ -515,10 +532,12 @@ defmodule EvoGit.AgentScheduler.Store do
   end
 
   @doc """
-  Increments the compression count for an agent.
+  Increments the LEGACY control-plane compression count for an agent.
 
-  Called once per successful context-compression event to track how many times
-  an agent's context has been compressed. ONE atomic
+  The context-compression path no longer calls this: the counter is state-owned
+  on `%EvoGit.Agent.State{}` and reaches the row through
+  `EvoGit.Agent.Session.Summary.publish/3`. This helper keeps the old shape for
+  callers that still want the control-plane counter: ONE atomic
   `:ets.update_counter/4` on the control row (no read-modify-write of the state
   row), and the resulting count is broadcast as the `:agent_updated` delta.
   """
@@ -542,6 +561,8 @@ defmodule EvoGit.AgentScheduler.Store do
   # Resets the control-plane fields to their struct defaults before a state-row
   # write, so a projected struct (the shape `get_agent_state/1` returns) can
   # never be written back and resurrect drained messages or a stale flag.
+  # `compression_count` is intentionally not among them: it is state-owned and
+  # this row is its read model.
   # `Map.merge/2` keeps the write safe for the tolerant `map()` rows some tests
   # seed directly.
   defp reset_control_fields(state) when is_map(state) do

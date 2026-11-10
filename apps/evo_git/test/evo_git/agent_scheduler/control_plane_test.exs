@@ -5,6 +5,9 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
   `:evogit_agent_inbox` (a `:bag` of `{agent_id, {seq, message}}`) and
   `:evogit_agent_control` (a `:set` of `{agent_id, cancel_requested,
   compression_count}`), never in the agent's own `:evogit_agent_summary` row.
+  `compression_count` is the exception on the OWNER side: it is state-owned (P2)
+  and the agent publishes it onto its own row, while a legacy control-plane
+  counter still wins the projection whenever its row exists.
 
   What these tests pin:
 
@@ -17,6 +20,8 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
       whole-struct drain lost any message appended between its read and write);
     * a cancel flag and N concurrent compression increments that both survive
       the agent's own concurrent context writes;
+    * the STATE-OWNED `compression_count` surviving an ordinary state write,
+      with a legacy control-plane counter still preferred on the projection;
     * `delete_agent_state/1` removing both control rows (no leak).
 
   `async: true`: the tables are app-global and shared with every concurrently
@@ -103,7 +108,7 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
       assert state.pending_user_messages == ["an injected message"]
     end
 
-    test "put_agent_state resets the control fields (a projected struct is never written back)" do
+    test "put_agent_state resets the message/flag fields, never the state-owned counter" do
       agent_id = put_live_agent!()
       assert :ok = Store.append_pending_user_message(agent_id, "queued")
       assert :ok = Store.set_cancel_requested(agent_id)
@@ -118,7 +123,29 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
       [{_id, raw}] = raw_row(agent_id)
       assert raw.pending_user_messages == []
       assert raw.cancel_requested == nil
+      # `compression_count` is NOT one of the reset fields — it is state-owned
+      # (P2) and this row is its read model, so it survives the write.
       assert raw.compression_count == 0
+    end
+
+    test "the state-owned compression_count persists, and a control counter still wins the projection" do
+      agent_id = put_live_agent!()
+
+      :ok = Store.put_agent_state(agent_id, %{agent_state() | compression_count: 2})
+
+      [{_id, raw}] = raw_row(agent_id)
+      assert raw.compression_count == 2
+      {:ok, projected} = Store.get_agent_state(agent_id)
+      assert projected.compression_count == 2
+
+      # A legacy control-plane counter takes precedence on the READ path while
+      # its row exists, and the raw state row stays untouched by it.
+      assert :ok = Store.increment_compression_count(agent_id)
+
+      [{_id, raw_after}] = raw_row(agent_id)
+      assert raw_after.compression_count == 2
+      {:ok, projected_after} = Store.get_agent_state(agent_id)
+      assert projected_after.compression_count == 1
     end
   end
 

@@ -188,11 +188,14 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
   @doc """
   Overlays the live control-plane values onto an agent state struct.
 
-  This is the read side of the split: `cancel_requested`, `compression_count`
-  and `pending_user_messages` are read from the control tables (never from the
-  state row, which only carries their struct defaults), so every existing
-  consumer keeps seeing live values. An agent with no control/inbox rows yet
-  reads back the values already on the struct.
+  This is the read side of the split: `cancel_requested`, the legacy
+  `compression_count` counter and `pending_user_messages` are read from the
+  control tables, so every existing consumer keeps seeing live values. The
+  state row no longer stores `pending_user_messages`/`cancel_requested` (they
+  are reset on every write), while it DOES store the state-owned
+  `compression_count` published by `EvoGit.Agent.Session.Summary.publish/3` —
+  which is what an agent with no legacy control row reads back, since the
+  control value wins whenever a counter row exists.
   """
   @spec project(pos_integer(), map()) :: map()
   def project(agent_id, state) when is_map(state) do

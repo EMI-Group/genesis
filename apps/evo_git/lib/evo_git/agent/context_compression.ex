@@ -140,8 +140,8 @@ defmodule EvoGit.Agent.ContextCompression do
       rejected with a NON-RETRYABLE provider error (see
       `EvoGit.Agent.LlmError`), so nothing was compacted and nothing was
       charged. This is the same terminal shape the main turn's fail-fast path
-      uses; the exchange engine propagates it out of
-      `Runner.run/3` unchanged.
+      uses; the exchange engine propagates it out of the session's exchange
+      worker unchanged.
 
   Every OTHER stage-2 LLM failure (transient transport errors, 5xx, 402/429
   model exhaustion) still RAISES — see `EvoGit.Agent.Compression.LlmRetry` — so
