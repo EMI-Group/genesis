@@ -8,18 +8,67 @@ defmodule EvoGit.Agent.Session do
   owner process only receives messages and replies, it never blocks on an LLM call, a tool or a
   subagent batch.
 
-  ## One-shot subset only (`:starting | :running | :cancelling | :finalizing | :done`)
+  ## Phases (`:starting | :running | :awaiting_input | :cancelling | :finalizing | :done`)
 
-  This is the process FOUNDATION of the agent-runtime refactor (`docs/agent-runtime-refactor.md`
-  P1), so the phase set is deliberately the ONE-SHOT subset.
-  There is no `:awaiting_input` phase, no `{:yield}` outcome and no `:close` command, because
-  `EvoGit.Agent.Exchange.run/2` has no yield/finish split yet: an exchange always runs to a
-  terminal outcome.
-  There is likewise no delta streaming and no watcher contract — inspection is SNAPSHOT-ONLY:
-  `inspect/2` returns the last checkpointed state, `history/2` its messages, and that is the whole
-  read surface.
-  Durability is absent too: the state lives in this process (plus the `:evogit_agent_summary`
-  row), never on disk.
+  The gen_statem state NAME is the phase, and the owned struct's `phase` field is kept in sync
+  with it, so `inspect/2` reports the live phase for both.
+
+  | Phase            | Entered by                                                       | Holds                                        |
+  |------------------|------------------------------------------------------------------|----------------------------------------------|
+  | `:starting`      | `init/1` (worktree + scheduler row + first worker)               | nothing yet (worktree bound in the start)     |
+  | `:running`       | start / `start_input/3` resume                                   | ONE exchange worker                           |
+  | `:awaiting_input`| an interactive `{:yield, state, text}` from the worker           | nothing (see "Idle contract")                 |
+  | `:cancelling`    | `cancel/2` `:graceful` while running (3-turn save-work grace)    | ONE exchange worker                           |
+  | `:finalizing`    | a terminal outcome OR a finalizer started by `close/2`/cancel     | ONE finalizer process (never a worker)        |
+  | `:done`          | the finalize path, immediately before the process stops          | nothing                                       |
+
+  ## Yield / finish split (`{@link EvoGit.Agent.Exchange}`)
+
+  `EvoGit.Agent.Exchange.run/2` has exactly three outcomes: `{:yield, %State{}, text}`,
+  `{:finish, %State{}, %Result{}}` and `{:error, reason}`.
+  A `:yield` only happens in INTERACTIVE mode: the engine committed the pending worktree work and
+  the reply text is the interim answer. A `:finish` is the terminal completion (the engine already
+  ran `EvoGit.Agent.Completion.Builder.finalize/2`, so the completion side effects are written
+  exactly ONCE, in the worker).
+  The outcome → phase mapping is the PURE, documented table in `EvoGit.Agent.Session.Outcome`.
+
+  A `:yield` in `:running` interactive mode parks the session in `:awaiting_input`, which means the
+  session KEEPS the conversation (`%State{}` incl. the whole `%ReqLLM.Context{}`), the worktree, the
+  agent id and the `prompt_cache_key`, and RELEASES the worker, every timer and every LLM/tool slot.
+
+  ## Idle contract (`:awaiting_input`)
+
+  An idle session holds NO worker task, NO timer and NO LLM or tool slot.
+  It owns only: its state struct (conversation + worktree path + agent identity), its registry
+  entry and the `:evogit_agent_summary` row (status `:awaiting_input`).
+  There is deliberately NO idle TTL: an interactive session is closed EXPLICITLY
+  (`close/2`, `cancel/2`) and never by a clock.
+  The WORKTREE is owned by this process through the `WorktreeManager` monitor on the session pid,
+  so it is reclaimed exactly once — when the session process stops — and never at a yield.
+
+  ## Resume is APPEND-ONLY
+
+  `start_input/3` in `:awaiting_input` RESUMES on the SAME session pid, worktree and conversation:
+  it appends the message through `EvoGit.AgentScheduler.Store.append_pending_user_message/2` (the
+  settled transport the engine drains at the next turn boundary), resets the exchange budget and
+  starts a NEW worker over the EXISTING `%State{}`.
+  It never rebuilds the context tree and never rotates `prompt_cache_key`, so the provider's
+  prefix cache survives the idle window.
+
+  ## Role callbacks
+
+  An interactive agent module opts in through the `EvoGit.Agent` callbacks: `session_mode/0`
+  (default `:oneshot`) selects the mode at spawn, and `on_yield/1` is called as a PLAIN call with
+  the yielded state right after the session parked in `:awaiting_input`.
+  `on_yield/1` must be cheap and side-effect-light — it runs inside the session process, so a
+  raising callback is a role BUG that takes the session down.
+
+  ## `:interrupt` input mode
+
+  `start_input/3` accepts `:interrupt` and treats it identically to `:queue` in P3: the message is
+  appended and applied at the NEXT TURN BOUNDARY.
+  There is no chunk-level stream callback to pre-empt until P4, so an "interrupt" cannot shorten
+  the turn already in flight — that is a documented limitation, not a silent downgrade.
 
   ## Terminal delivery contract
 
@@ -35,6 +84,17 @@ defmodule EvoGit.Agent.Session do
   results.
   A force cancel delivers NO result at all.
 
+  The dispatch context may additionally carry a `:notify` pid: on terminal delivery the session
+  sends it `{:agent_session_closed, agent_id, result}` BEFORE it stops, so a caller can await the
+  close race-free (the result itself still goes to the scheduler).
+
+  ## Non-terminal messages
+
+  An interactive yield emits `{:agent_session_yield, agent_id, session_pid, text}` and a resume
+  emits `{:agent_session_resumed, agent_id, session_pid}` (`EvoGit.AgentScheduler` consumes them;
+  this module only EMITS them).
+  Neither is a terminal result: no `%Result{}` is delivered and the transcript is untouched.
+
   ## `dispatch_ctx[:exchange_opts]` — a default-inert seam
 
   The scheduler's `dispatch_ctx` keyword list may carry an `:exchange_opts` list, forwarded
@@ -48,7 +108,7 @@ defmodule EvoGit.Agent.Session do
   The session IS the one lifecycle for every agent.
   `EvoGit.AgentScheduler.Dispatch.do_try_dispatch/4` starts it under
   `EvoGit.Agent.Session.Supervisor`, monitors it (`ref_to_agent` keys on the
-  session monitor ref) and admits its ONE `{:agent_session_result, ...}` in
+  session monitor ref) and admits its `{:agent_session_result, ...}` in
   `EvoGit.AgentScheduler.handle_info/2` — no agent runs as a bare
   `Task.Supervisor.async_nolink` run any more.
   `EvoGit.AgentScheduler.SchedMeta` carries `session_pid`, `mode` and `phase` as a
@@ -62,17 +122,20 @@ defmodule EvoGit.Agent.Session do
   `EvoGit.Agent.Session.Supervisor` (a `DynamicSupervisor`) are started before
   `EvoGit.AgentScheduler`, so a session always has a registry entry and an owner
   supervisor.
-  This remains the ONE-SHOT subset: no `:awaiting_input` phase, no yield/close and
-  no delta streaming yet.
+  Reading and writing is SNAPSHOT-ONLY — `inspect/2` and `history/2` — with no delta
+  streaming and no watcher contract yet (P4).
   """
 
   @behaviour :gen_statem
 
-  import Kernel, except: [inspect: 2]
+  import Kernel, except: [inspect: 1, inspect: 2]
 
   require Logger
 
   alias EvoGit.Agent.Result
+  alias EvoGit.Agent.Session.Finalize
+  alias EvoGit.Agent.Session.Input
+  alias EvoGit.Agent.Session.Outcome
   alias EvoGit.Agent.Session.Registry, as: SessionRegistry
   alias EvoGit.Agent.Session.Setup
   alias EvoGit.Agent.Session.Summary
@@ -80,7 +143,9 @@ defmodule EvoGit.Agent.Session do
   alias EvoGit.Agent.State
   alias EvoGit.AgentScheduler.Store
 
-  @type phase :: :starting | :running | :cancelling | :finalizing | :done
+  @type phase :: :starting | :running | :awaiting_input | :cancelling | :finalizing | :done
+
+  @type dispatch_target :: pid() | term()
 
   # Every public call is answerable in microseconds (the owner never runs the exchange), so one
   # short deadline covers them all; a timeout degrades to the documented fallback.
@@ -119,9 +184,11 @@ defmodule EvoGit.Agent.Session do
   @doc """
   Snapshot of the session: its last checkpointed state plus the phase it is in.
 
+  `phase: :awaiting_input` means an interactive session is parked and idle.
   `:error` when the session is gone, never started, or does not answer within `timeout`.
   """
-  @spec inspect(pid() | term(), timeout()) :: {:ok, %{state: State.t(), phase: phase()}} | :error
+  @spec inspect(dispatch_target(), timeout()) ::
+          {:ok, %{state: State.t(), phase: phase()}} | :error
   def inspect(target, timeout \\ @call_timeout) do
     case call(target, :inspect, timeout) do
       {:ok, %{state: %State{}} = snapshot} -> {:ok, snapshot}
@@ -131,8 +198,11 @@ defmodule EvoGit.Agent.Session do
 
   @doc """
   The conversation messages of the last checkpointed state (`[]` when the session is gone).
+
+  The transcript survives a yield, so an idle `:awaiting_input` session still answers with the
+  whole conversation.
   """
-  @spec history(pid() | term(), timeout()) :: [ReqLLM.Message.t()]
+  @spec history(dispatch_target(), timeout()) :: [ReqLLM.Message.t()]
   def history(target, timeout \\ @call_timeout) do
     case call(target, :history, timeout) do
       {:ok, messages} when is_list(messages) -> messages
@@ -141,12 +211,14 @@ defmodule EvoGit.Agent.Session do
   end
 
   @doc """
-  Cancels the running exchange.
+  Cancels the exchange (or the IDLE session).
 
-  `:graceful` keeps the worker alive so the engine's 3-turn save-work grace runs (`:cancelling`);
+  `:graceful` keeps a running worker alive so the engine's 3-turn save-work grace runs
+  (`:cancelling`); on an IDLE `:awaiting_input` session it is immediately terminal — nothing is
+  running, so the last yielded text is finalized as the result.
   `:force` kills the worker unconditionally and the session stops without delivering a result.
   """
-  @spec cancel(pid() | term(), :graceful | :force) :: :ok | {:error, :not_found}
+  @spec cancel(dispatch_target(), :graceful | :force) :: :ok | {:error, :not_found}
   def cancel(target, mode) when mode in [:graceful, :force] do
     case call(target, {:cancel, mode}, @call_timeout) do
       :ok -> :ok
@@ -158,16 +230,67 @@ defmodule EvoGit.Agent.Session do
   def cancel(_target, _mode), do: {:error, :not_found}
 
   @doc """
-  Injects a user message into the running exchange (a binary or the canonical multimodal map).
+  Delivers a user message: RESUMES an idle session, QUEUES onto a running one.
 
-  This is the settled P2 transport: it appends to the agent's pending-message queue, which the
-  engine drains at the next turn boundary.
+  This is the settled transport in both cases — the message is appended to the agent's
+  pending-message queue, which the engine drains at the next turn boundary.
+  `{:error, :finished}` means the session can no longer accept input (cancelling / finalizing /
+  done, or the scheduler row is gone); `{:error, :not_found}` means there is no such session.
   """
-  @spec input(pid() | term(), String.t() | map()) :: :ok | {:error, :not_found | :finished}
+  @spec input(dispatch_target(), String.t() | map()) :: :ok | {:error, :not_found | :finished}
   def input(target, message) do
-    case call(target, {:input, message}, @call_timeout) do
+    case start_input(target, message, :queue) do
       :ok -> :ok
       {:error, :finished} -> {:error, :finished}
+      _other -> {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Starts or queues input, choosing the behaviour by the session's CURRENT phase.
+
+  * `:awaiting_input` — RESUME on the same pid/worktree/context (append-only transport, new
+    worker, `prompt_cache_key` unchanged).
+  * `:running` — append; the engine drains it at the next turn boundary.
+  * `:cancelling` / `:finalizing` / `:done` — `{:error, :finished}`.
+  * `:starting` — `{:error, {:bad_state, :starting}}`.
+  * no such session — `{:error, :not_found}`.
+
+  `mode` is `:queue` or `:interrupt`; P3 applies BOTH at the next turn boundary (see the
+  moduledoc — there is no chunk-level stream callback until P4).
+  """
+  @spec start_input(dispatch_target(), String.t() | map(), :queue | :interrupt) ::
+          :ok | {:error, :not_found | :finished | {:bad_state, phase()}}
+  def start_input(target, message, mode \\ :queue)
+  def start_input(target, message, mode) when mode in [:queue, :interrupt] do
+    case call(target, {:start_input, message, mode}, @call_timeout) do
+      :ok -> :ok
+      {:error, :finished} -> {:error, :finished}
+      {:error, {:bad_state, phase}} -> {:error, {:bad_state, phase}}
+      _other -> {:error, :not_found}
+    end
+  end
+
+  # An unsupported input mode cannot be served by any session.
+  def start_input(_target, _message, _mode), do: {:error, :not_found}
+
+  @doc """
+  Closes an IDLE (`:awaiting_input`) session, finalizing its last yielded text as the result.
+
+  The second argument is the close mode; P3 has exactly one semantic (graceful close) and accepts
+  any atom so a later mode needs no API change.
+  Replies `:ok` IMMEDIATELY — the caller must not wait for the git/archive work, which runs in the
+  finalizer process and reports back as `{:session_finalized, pid, result}`.
+  `:finalizing`/`:done` → `{:error, :finished}`; a running/cancelling/starting session →
+  `{:error, {:bad_state, phase}}` (cancel it first); no such session → `{:error, :not_found}`.
+  """
+  @spec close(dispatch_target(), atom()) ::
+          :ok | {:error, :not_found | :finished | {:bad_state, phase()}}
+  def close(target, mode \\ :graceful) when is_atom(mode) do
+    case call(target, {:close, mode}, @call_timeout) do
+      :ok -> :ok
+      {:error, :finished} -> {:error, :finished}
+      {:error, {:bad_state, phase}} -> {:error, {:bad_state, phase}}
       _other -> {:error, :not_found}
     end
   end
@@ -182,6 +305,9 @@ defmodule EvoGit.Agent.Session do
     data = %{
       state: nil,
       worker: nil,
+      finalizer: nil,
+      last_yield_text: nil,
+      notify_pid: Keyword.get(dispatch_ctx, :notify),
       dispatch_ctx: dispatch_ctx,
       tmpdir: nil,
       result: nil,
@@ -227,19 +353,48 @@ defmodule EvoGit.Agent.Session do
     {:keep_state, publish_checkpoint(data, state)}
   end
 
-  def handle_event(:info, {:exchange_finished, pid, outcome}, phase, data)
-      when phase in [:running, :cancelling] do
-    if current_worker?(data, pid) do
-      finalize(apply_outcome(data, outcome))
-    else
-      # A stale worker (a pid that is no longer the current one) can never end this exchange.
-      log_ignored(phase, data, {:stale_exchange_finished, pid})
-      {:keep_state, data}
+  def handle_event(:info, {:exchange_finished, pid, outcome}, phase, data) do
+    cond do
+      current_worker?(data, pid) ->
+        handle_outcome(phase, data, outcome)
+
+      # `:awaiting_input` has NO worker by construction, so an outcome arriving while idle is
+      # never deliverable: it is classified (and reported LOUDLY) instead of being dropped.
+      phase == :awaiting_input ->
+        handle_outcome(phase, data, outcome)
+
+      true ->
+        # A stale worker (a pid that is no longer the current one) can never end this exchange.
+        log_ignored(phase, data, {:stale_exchange_finished, pid})
+        {:keep_state, data}
+    end
+  end
+
+  def handle_event(:info, {:session_finalized, pid, result}, phase, data) do
+    cond do
+      Finalize.current?(data.finalizer, pid) ->
+        # Terminal delivery happens HERE and only here: the finalizer only builds the result.
+        finalize(%{data | finalizer: nil, result: result})
+
+      true ->
+        log_ignored(phase, data, {:stale_session_finalized, pid})
+        {:keep_state, data}
     end
   end
 
   def handle_event(:info, {:DOWN, _ref, :process, pid, reason}, phase, data) do
     cond do
+      Finalize.current?(data.finalizer, pid) ->
+        # The finalizer's own contract catches every raise/exit, so reaching this arm means it was
+        # KILLED: report it as an error result and take the normal terminal path instead of
+        # parking in `:finalizing` forever.
+        Logger.warning(
+          "AgentSession #{Kernel.inspect(agent_id(data))}: finalizer died without a result " <>
+            "(#{Kernel.inspect(reason)})"
+        )
+
+        finalize(%{data | finalizer: nil, result: {:error, {:finalize_crashed, {:down, reason}}}})
+
       phase == :finalizing ->
         {:keep_state, data}
 
@@ -273,16 +428,30 @@ defmodule EvoGit.Agent.Session do
     {:keep_state, data, [{:reply, from, {:ok, messages(data.state)}}]}
   end
 
-  def handle_event({:call, from}, {:input, message}, phase, data)
-      when phase in [:running, :cancelling] and (is_binary(message) or is_map(message)) do
-    if phase == :cancelling do
-      # A cancelling run accepts ONLY the engine's own grace turns: the cancel message already
-      # arrived through the pending-message drain, so injecting new work here would contradict
-      # the save-work contract (the agent must commit and report, not start something new).
-      {:keep_state, data, [{:reply, from, {:error, :finished}}]}
-    else
-      {:keep_state, data, [{:reply, from, append_input(data, message)}]}
+  def handle_event({:call, from}, {:start_input, message, _mode}, phase, data)
+      when is_binary(message) or is_map(message) do
+    # The phase policy is the PURE, documented table in `Session.Input`.
+    case Input.policy(phase) do
+      :resume -> resume(data, message, from)
+      :queue -> {:keep_state, data, [{:reply, from, append_input(data, message)}]}
+      {:error, reason} -> {:keep_state, data, [{:reply, from, {:error, reason}}]}
     end
+  end
+
+  def handle_event({:call, from}, {:close, _mode}, :awaiting_input, data) do
+    # IMMEDIATE reply: the git/archive work happens in the finalizer, never in the owner.
+    data = start_finalizer(data, data.last_yield_text)
+
+    {:next_state, :finalizing, data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, {:close, _mode}, phase, data)
+      when phase in [:finalizing, :done] do
+    {:keep_state, data, [{:reply, from, {:error, :finished}}]}
+  end
+
+  def handle_event({:call, from}, {:close, _mode}, phase, data) do
+    {:keep_state, data, [{:reply, from, {:error, {:bad_state, phase}}}]}
   end
 
   def handle_event({:call, from}, {:cancel, :graceful}, :running, data) do
@@ -300,17 +469,40 @@ defmodule EvoGit.Agent.Session do
     {:keep_state, data, [{:reply, from, :ok}]}
   end
 
+  def handle_event({:call, from}, {:cancel, :graceful}, :awaiting_input, data) do
+    # Nothing is running, so there is no grace to run: the last yielded text IS the report.
+    Summary.publish(agent_id(data), data.state, status: :cancelling)
+    data = start_finalizer(data, data.last_yield_text)
+
+    {:next_state, :finalizing, data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, {:cancel, :graceful}, phase, data)
+      when phase in [:finalizing, :done] do
+    {:keep_state, data, [{:reply, from, {:error, :finished}}]}
+  end
+
+  def handle_event({:call, from}, {:cancel, :graceful}, phase, data) do
+    {:keep_state, data, [{:reply, from, {:error, {:bad_state, phase}}}]}
+  end
+
   def handle_event({:call, from}, {:cancel, :force}, phase, data)
-      when phase in [:running, :cancelling] do
+      when phase in [:starting, :running, :cancelling, :awaiting_input] do
     shutdown_worker(data)
+    Finalize.stop(data.finalizer)
 
     # No result delivery: a force-killed run has no outcome to report.
     {:stop_and_reply, :shutdown, [{:reply, from, :ok}], data}
   end
 
+  def handle_event({:call, from}, {:cancel, :force}, phase, data)
+      when phase in [:finalizing, :done] do
+    {:keep_state, data, [{:reply, from, {:error, :finished}}]}
+  end
+
   def handle_event({:call, from}, _request, phase, data) do
-    # An unsupported call (or one arriving in a phase that cannot serve it, e.g. a late `input`)
-    # is still ANSWERED, so no caller can hang on a session that cannot serve it.
+    # An unsupported call (or one arriving in a phase that cannot serve it) is still ANSWERED, so
+    # no caller can hang on a session that cannot serve it.
     log_ignored(phase, data, {:unsupported_call, from})
     {:keep_state, data, [{:reply, from, {:error, :not_found}}]}
   end
@@ -411,7 +603,7 @@ defmodule EvoGit.Agent.Session do
   end
 
   defp append_input(data, message) do
-    # `append_pending_user_message/2` is the settled P2 transport: it stores the message on the
+    # `append_pending_user_message/2` is the settled transport: it stores the message on the
     # agent's row and answers `:ok | {:error, :not_found}`. Anything else is reported as the same
     # documented not-found outcome, so a caller never sees an undocumented shape.
     case Store.append_pending_user_message(agent_id(data), message) do
@@ -420,30 +612,106 @@ defmodule EvoGit.Agent.Session do
     end
   end
 
-  defp apply_outcome(data, {:finish, %State{} = state, %Result{} = result}) do
-    # The worker already refreshed the commit sha against the post-fallback worktree HEAD.
-    %{data | state: state, result: {:ok, result}}
+  # RESUME: same session pid, same worktree, same conversation — append-only.
+  defp resume(data, message, from) do
+    case append_input(data, message) do
+      :ok ->
+        state = Input.resume_state(data.state)
+
+        Summary.publish(agent_id(data), state, status: :running)
+        send_scheduler(data, {:agent_session_resumed, agent_id(data), self()})
+
+        data = %{
+          data
+          | state: state,
+            worker: start_worker(state, data),
+            phase: :running,
+            last_published_turn: state.turn
+        }
+
+        {:next_state, :running, data, [{:reply, from, :ok}]}
+
+      {:error, reason} ->
+        # The scheduler row is gone: there is nothing left to resume.
+        {:keep_state, data, [{:reply, from, {:error, reason}}]}
+    end
   end
 
-  defp apply_outcome(data, {:error, reason}) do
-    # Delivered VERBATIM: an error outcome is never converted into a raise or a success.
-    %{data | result: {:error, reason}}
+  # --- outcomes ---
+
+  defp handle_outcome(phase, data, outcome) do
+    case Outcome.classify(phase, state_mode(data), outcome) do
+      {:idle, %State{} = state, text} ->
+        to_awaiting_input(data, state, text)
+
+      {:finalize_yield, %State{} = state, text} ->
+        # The CANCEL-GRACE yield: terminal, result built from the yielded text.
+        data = %{data | state: state, worker: nil, last_yield_text: text}
+        {:next_state, :finalizing, start_finalizer(data, text)}
+
+      {:finish, %State{} = state, %Result{} = result} ->
+        # The worker already refreshed the commit sha against the post-fallback worktree HEAD.
+        finalize(%{data | state: state, worker: nil, result: {:ok, result}})
+
+      {:error, reason} ->
+        # Delivered VERBATIM: an error outcome is never converted into a raise or a success.
+        finalize(%{data | worker: nil, result: {:error, reason}})
+
+      {:unexpected, other} ->
+        # LOUD, never a silent drop: an outcome this phase/mode cannot produce still ends the
+        # session with a diagnosable error result.
+        Logger.warning(
+          "AgentSession #{Kernel.inspect(agent_id(data))} (#{Kernel.inspect(phase)}): " <>
+            "unexpected exchange outcome #{Kernel.inspect(other)}"
+        )
+
+        finalize(%{data | worker: nil, result: {:error, {:unexpected_exchange_outcome, other}}})
+    end
   end
 
-  defp apply_outcome(data, other) do
-    Logger.warning("AgentSession #{Kernel.inspect(agent_id(data))}: unexpected exchange outcome")
-    %{data | result: {:error, {:unexpected_exchange_outcome, other}}}
+  # IDLE: park in `:awaiting_input` holding NOTHING — no worker, no timer, no slot.
+  defp to_awaiting_input(data, %State{} = state, text) do
+    state = %{state | phase: :awaiting_input}
+
+    Store.clear_cancel_requested(agent_id(data))
+    Summary.publish(agent_id(data), state, status: :awaiting_input)
+    send_scheduler(data, {:agent_session_yield, agent_id(data), self(), text})
+
+    # Role callback: a PLAIN call in the session process. Cheap and side-effect-light by
+    # contract; a raising callback is a role bug (see the moduledoc).
+    state.agent_module.on_yield(state)
+
+    data = %{
+      data
+      | state: state,
+        worker: nil,
+        phase: :awaiting_input,
+        last_yield_text: text
+    }
+
+    {:next_state, :awaiting_input, data}
   end
+
+  defp state_mode(%{state: %State{mode: mode}}), do: mode
+  defp state_mode(_data), do: nil
 
   # --- finalize ---
 
+  # Starts the MONITORED finalizer process for a yield text and moves the session into
+  # `:finalizing`. The owner never blocks on the finalizer's git/archive work.
+  defp start_finalizer(data, text) do
+    finalizer = Finalize.start(self(), data.state, data.tmpdir, text)
+    %{data | finalizer: finalizer, phase: :finalizing}
+  end
+
   # Terminal delivery, EXACTLY ONCE (one private function, one caller each for the success,
-  # failure and start-failure paths).
+  # failure, unexpected-outcome, close and finalizer paths).
   defp finalize(data) do
     data = %{data | phase: :finalizing}
 
     publish_final(data)
     deliver_result(data)
+    notify_closed(data)
 
     {:stop, :normal, %{data | phase: :done}}
   end
@@ -468,9 +736,25 @@ defmodule EvoGit.Agent.Session do
     # `Dispatch.do_try_dispatch/4` to the scheduler that started this session, so
     # a named/test scheduler instance is served), falling back to the registered
     # name. Sent BEFORE the stop, so the monitor `:DOWN` can never overtake it.
+    send_scheduler(data, {:agent_session_result, agent_id(data), self(), data.result})
+  end
+
+  # Lets a caller AWAIT the close race-free: sent to the dispatch context's `:notify` pid just
+  # before the stop, AFTER the terminal result, so a monitor `:DOWN` can never overtake it.
+  defp notify_closed(%{notify_pid: pid} = data) when is_pid(pid) do
+    if Process.alive?(pid) do
+      send(pid, {:agent_session_closed, agent_id(data), data.result})
+    end
+
+    :ok
+  end
+
+  defp notify_closed(_data), do: :ok
+
+  defp send_scheduler(data, message) do
     case Keyword.get(data.dispatch_ctx, :scheduler) || Process.whereis(EvoGit.AgentScheduler) do
       nil -> :ok
-      scheduler -> send(scheduler, {:agent_session_result, agent_id(data), self(), data.result})
+      scheduler -> send(scheduler, message)
     end
   end
 
