@@ -57,9 +57,10 @@ defmodule EvoGit.Agent.ExchangeCheckpointSeamTest do
   ## Isolation
 
   The checkpoint fn sends to the TEST pid (no file, no Agent, no shared
-  process). The ONE app-global ETS row the P1 completion path still reads is
-  installed under a per-test-UNIQUE agent id and deleted on exit — the module
-  never asserts on table size or emptiness.
+  process). The app-global ETS rows the completion path still reads (the agent
+  SUMMARY row and the registration `sched_meta`) are installed under a
+  per-test-UNIQUE agent id and deleted on exit — the module never asserts on
+  table size or emptiness.
   """
 
   use ExUnit.Case, async: true
@@ -69,7 +70,9 @@ defmodule EvoGit.Agent.ExchangeCheckpointSeamTest do
   alias EvoGit.Agent.Result
   alias EvoGit.Agent.State
   alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.Store, as: SchedStore
+  alias EvoGit.AgentSpec
 
   # Per-test-unique, disjoint from every other suite's id base (the golden
   # exchange test uses 9_900_000), so the ETS row can neither collide with nor
@@ -84,7 +87,11 @@ defmodule EvoGit.Agent.ExchangeCheckpointSeamTest do
   setup do
     agent_id = @agent_id_base + System.unique_integer([:positive])
     install_agent_row(agent_id)
-    on_exit(fn -> SchedStore.delete_agent_state(agent_id) end)
+
+    on_exit(fn ->
+      SchedStore.delete_agent_state(agent_id)
+      SchedStore.delete_sched_meta(agent_id)
+    end)
 
     # Repo-less identity, exactly as the Runner installs it for a `:reflect`
     # agent: no worktree, no git, no archive.
@@ -191,11 +198,13 @@ defmodule EvoGit.Agent.ExchangeCheckpointSeamTest do
       assert first_row.message_count < second_row.message_count
 
       # The finishing turn's publication is the terminal summary — and it never
-      # writes `context` (the row keeps its registration-time value).
+      # writes a conversation: the summary read model has no `context` field at
+      # all, so the messages stay owned by the session.
       assert second_row.turn == 2
       assert second_row.total_tokens == 120
       assert second_row.usage.input_tokens == 200
       assert second_row.message_count == message_count(final_state)
+      refute Map.has_key?(second_row, :context)
 
       final_row = EvoGit.Agent.Session.Summary.read(agent_id)
       assert final_row.turn == 2
@@ -331,15 +340,16 @@ defmodule EvoGit.Agent.ExchangeCheckpointSeamTest do
     }
   end
 
-  # The ONE ETS read the P1 finish path still performs
-  # (`ToolDispatch.build_completion/3` → `AgentScheduler.get_agent_state/1`).
-  # `phylo_node: nil` is the repo-less shape and `archive: false` keeps the
-  # archive writer out of the run entirely.
+  # The TWO registration reads the P1 finish path still performs
+  # (`ToolDispatch.build_completion/3` → `AgentScheduler.get_agent_state/1` for
+  # the archive/model metadata and `Store.get_sched_meta/1` for the spec's
+  # `base_commit`). `phylo_node: nil` is the repo-less shape (never dereferenced
+  # because `repo_less` short-circuits `base_commit` to nil) and `archive: false`
+  # keeps the archive writer out of the run entirely.
   defp install_agent_row(agent_id) do
     :ok =
       SchedStore.put_agent_state(agent_id, %AgentState{
         context_node: %EvoGit.Core.ContextNode{path: "./", repo: "[system]"},
-        phylo_node: nil,
         parent_id: nil,
         archive: false,
         llm_model: nil,
@@ -350,6 +360,20 @@ defmodule EvoGit.Agent.ExchangeCheckpointSeamTest do
         repo_id: "primary",
         llm_context_window: 200_000
       })
+
+    :ok =
+      SchedStore.put_sched_meta(agent_id, %SchedMeta{
+        id: agent_id,
+        depth: 0,
+        spec: %AgentSpec{
+          context_node: %EvoGit.Core.ContextNode{path: "./", repo: "[system]"},
+          phylo_node: nil,
+          agent_module: CheckpointAgent,
+          objective: @objective
+        }
+      })
+
+    :ok
   end
 
   # ---------------------------------------------------------------------------

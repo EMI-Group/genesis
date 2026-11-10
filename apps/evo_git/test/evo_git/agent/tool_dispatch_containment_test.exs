@@ -148,11 +148,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
 
     agent_state = %EvoGit.AgentScheduler.AgentState{
       context_node: %EvoGit.Core.ContextNode{path: "./", repo: repo},
-      phylo_node: %EvoGit.Core.PhyloGraphNode{
-        repo: repo,
-        base_commit: head,
-        current_commit: head
-      },
+      current_commit: head,
       llm_model: "test:model",
       max_retries: 1,
       max_depth: 1

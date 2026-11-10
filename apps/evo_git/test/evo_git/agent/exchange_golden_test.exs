@@ -88,14 +88,15 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
     state-publication path now (`EvoGit.Agent.Session.Summary.publish/3`), with
     each checkpointed context byte-identical to what the NEXT LLM call received.
 
-  ## The ONE remaining ETS touch
+  ## The remaining ETS registration reads
 
-  `ToolDispatch.build_completion/3` still reads the agent's scheduler row
-  (`EvoGit.AgentScheduler.get_agent_state/1`) for the archive/model metadata — a
-  documented P1 carry-over. So the test installs ONE real
-  `%EvoGit.AgentScheduler.AgentState{}` row under a per-test-UNIQUE agent id and
-  deletes exactly that row on exit. It never asserts on table size or emptiness,
-  which keeps the module `async: true`.
+  `ToolDispatch.build_completion/3` still reads the agent's scheduler summary row
+  (`EvoGit.AgentScheduler.get_agent_state/1`) for the archive/model metadata and
+  the registration `sched_meta` for the spec's `base_commit` — both are
+  REGISTRATION metadata, never conversation. So the test installs ONE real
+  `%EvoGit.AgentScheduler.AgentState{}` row plus its `%SchedMeta{}` under a
+  per-test-UNIQUE agent id and deletes exactly those rows on exit. It never
+  asserts on table size or emptiness, which keeps the module `async: true`.
 
   `Process.put(:repo_less, true)` makes the run truly repo-less: no worktree, no
   git call, `commit_sha: nil`, and `base_commit: nil` — so no git note and no
@@ -109,7 +110,9 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
   alias EvoGit.Agent.Result
   alias EvoGit.Agent.State
   alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.Store, as: SchedStore
+  alias EvoGit.AgentSpec
 
   # Per-test-unique, disjoint from every other suite's id base, so the ONE
   # app-global ETS row this test installs can never collide with (or be deleted
@@ -133,7 +136,11 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
   setup do
     agent_id = @agent_id_base + System.unique_integer([:positive])
     install_agent_row(agent_id)
-    on_exit(fn -> SchedStore.delete_agent_state(agent_id) end)
+
+    on_exit(fn ->
+      SchedStore.delete_agent_state(agent_id)
+      SchedStore.delete_sched_meta(agent_id)
+    end)
 
     # Repo-less identity, exactly as the Runner installs it for a `:reflect`
     # agent: no worktree, no git, no archive.
@@ -242,10 +249,12 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
       # --- 4. The ONE terminal outcome --------------------------------------
       assert %Result{result: @report_text} = result
       assert result.result == @report_text
-      # Repo-less: nothing was committed and nothing was archived.
+      # Repo-less: nothing was committed and nothing was archived. The branch
+      # name is still derived from the REGISTRATION metadata (task number +
+      # task-local agent id), exactly as `Completion.complete/4` does.
       assert result.commit_sha == nil
       assert result.repo_id == nil
-      assert result.branch == "evogit-agent-T-A0"
+      assert result.branch == "evogit-agent-T1-A1"
 
       # --- 5. The final conversation ----------------------------------------
       assert final_state.turn == 3
@@ -482,16 +491,16 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
     }
   end
 
-  # The ONE ETS read the P1 finish path still performs
-  # (`ToolDispatch.build_completion/3` → `AgentScheduler.get_agent_state/1`).
-  # `phylo_node: nil` is the repo-less shape (never dereferenced because
-  # `repo_less` short-circuits `base_commit` to nil) and `archive: false` keeps
-  # the archive writer out of the run entirely.
+  # The registration reads the completion path still performs
+  # (`ToolDispatch.build_completion/3` → `AgentScheduler.get_agent_state/1` for
+  # the archive/model metadata and `Store.get_sched_meta/1` for the spec's
+  # `base_commit`). `phylo_node: nil` is the repo-less shape (never dereferenced
+  # because `repo_less` short-circuits `base_commit` to nil) and `archive: false`
+  # keeps the archive writer out of the run entirely.
   defp install_agent_row(agent_id) do
     :ok =
       SchedStore.put_agent_state(agent_id, %AgentState{
         context_node: %EvoGit.Core.ContextNode{path: "./", repo: "[system]"},
-        phylo_node: nil,
         parent_id: nil,
         archive: false,
         llm_model: nil,
@@ -500,8 +509,24 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
         max_retries: 3,
         max_depth: nil,
         repo_id: "primary",
-        llm_context_window: 200_000
+        llm_context_window: 200_000,
+        task_local_id: 1
       })
+
+    :ok =
+      SchedStore.put_sched_meta(agent_id, %SchedMeta{
+        id: agent_id,
+        depth: 0,
+        task_number: 1,
+        spec: %AgentSpec{
+          context_node: %EvoGit.Core.ContextNode{path: "./", repo: "[system]"},
+          phylo_node: nil,
+          agent_module: GoldenAgent,
+          objective: @objective
+        }
+      })
+
+    :ok
   end
 
   # ---------------------------------------------------------------------------
