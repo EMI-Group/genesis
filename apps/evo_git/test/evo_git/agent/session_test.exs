@@ -43,7 +43,11 @@ defmodule EvoGit.Agent.SessionTest do
   * the crash path: a raising worker becomes an abnormal session exit (the crash
     reason is propagated, never swallowed) and delivers no result;
   * the `:evogit_agent_summary` read model: `Summary.publish/3` reports the run
-    (`turn`, `message_count`, `status`) and never writes `context`;
+    (`turn`, `message_count`, `status`) and writes NO conversation (the struct
+    has no `context` field at all);
+  * `RemoteAPI.get_agent_history/1` serving the session-owned
+    `[%ReqLLM.Message{}]` conversation while a session runs, and `[]` for an
+    unknown agent id or a session that is gone;
   * `input/2`'s P2 transport — the message lands on the scheduler pending-message
     queue, and every public read/command degrades to its documented fallback
     once the session is gone.
@@ -97,8 +101,9 @@ defmodule EvoGit.Agent.SessionTest do
   5. abnormal exit on a crashing worker — the crash reason propagates and no
      result is delivered;
   6. the `:running` summary plus history — `Summary.publish/3` reports the run
-     (`turn`, `message_count`, `status`) and never writes `context`, and
-     `history/2` returns the checkpointed messages;
+     (`turn`, `message_count`, `status`) and writes no conversation (the summary
+     struct has no `context` field), `history/2` returns the checkpointed
+     messages, and `RemoteAPI.get_agent_history/1` serves that same list;
   7. `input/2` control-plane transport — the message lands on the scheduler's
      pending-message queue, and every public read/command degrades to its
      documented fallback once the session is gone.
@@ -113,6 +118,8 @@ defmodule EvoGit.Agent.SessionTest do
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.Session
+  alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.RemoteAPI
   alias EvoGit.AgentScheduler.Store, as: SchedStore
 
   setup do
@@ -122,19 +129,23 @@ defmodule EvoGit.Agent.SessionTest do
     tmp_dir = Path.join(System.tmp_dir!(), "evogit_session_#{agent_id}")
     File.mkdir_p!(tmp_dir)
 
-    # A SENTINEL context: `Summary.publish/3` must NEVER write `context`, so a
-    # row seeded with a context the run could not have produced proves the merge
-    # is summary-only.
-    sentinel_context = ReqLLM.Context.new([ReqLLM.Context.user("registration sentinel message")])
-    :ok = SchedStore.put_agent_state(agent_id, agent_state(sentinel_context))
+    # A REGISTRATION sentinel: `Summary.publish/3` merges only the summary
+    # fields onto the existing row, so the registration-only values it does not
+    # own (here the full objective) must survive every publication untouched.
+    :ok = SchedStore.put_agent_state(agent_id, agent_state())
+    # The registration `sched_meta` the session's completion path reads (the
+    # spec's `phylo_node` supplies `base_commit`); production Dispatch writes it
+    # before starting a session.
+    :ok = SchedStore.put_sched_meta(agent_id, sched_meta(agent_id))
 
     on_exit(fn ->
       SchedStore.delete_agent_state(agent_id)
+      SchedStore.delete_sched_meta(agent_id)
       SchedStore.clear_cancel_requested(agent_id)
       File.rm_rf(tmp_dir)
     end)
 
-    %{agent_id: agent_id, tmp_dir: tmp_dir, sentinel_context: sentinel_context}
+    %{agent_id: agent_id, tmp_dir: tmp_dir}
   end
 
   describe "one-shot lifecycle" do
@@ -242,7 +253,7 @@ defmodule EvoGit.Agent.SessionTest do
       stop_trace(scheduler)
     end
 
-    test "the summary row reports the running turn and keeps its registration-time context",
+    test "the summary row reports the running turn and carries no conversation",
          %{agent_id: agent_id, tmp_dir: tmp_dir} do
       {:ok, pid, ref} =
         start_session(dispatch_ctx(agent_id, tmp_dir, llm_call: blocking_llm_call(self())))
@@ -256,10 +267,18 @@ defmodule EvoGit.Agent.SessionTest do
       assert row.message_count >= 2
       assert row.status == :running
 
-      # `publish/3` merges summary fields only: the sentinel context is intact,
-      # i.e. the run's conversation was never copied into the row.
-      assert %ReqLLM.Context{messages: sentinel_messages} = row.context
-      assert Enum.map(sentinel_messages, &text_of/1) == ["registration sentinel message"]
+      # The row is a SUMMARY, so `publish/3` writes summary fields only: the
+      # struct has NO conversation and NO cross-process control state at all —
+      # those stay owned by the session (messages) and the control plane.
+      refute Map.has_key?(row, :context)
+      refute Map.has_key?(row, :pending_user_messages)
+      refute Map.has_key?(row, :cancel_requested)
+      refute Map.has_key?(row, :phylo_node)
+
+      # …while a REGISTRATION-only value survives the merge untouched, proving
+      # the merge is onto the existing row (not a fresh struct).
+      assert row.objective == "registration objective sentinel"
+      assert row.objective_preview == "session test objective"
 
       messages = Session.history(pid)
       assert length(messages) >= 2
@@ -301,6 +320,58 @@ defmodule EvoGit.Agent.SessionTest do
   end
 
   # ---------------------------------------------------------------------------
+  # `RemoteAPI.get_agent_history/1` — the RPC read of the SESSION-owned messages
+  # ---------------------------------------------------------------------------
+
+  describe "RemoteAPI.get_agent_history/1" do
+    test "serves the session's %ReqLLM.Message{} conversation while it runs",
+         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+      {:ok, pid, ref} =
+        start_session(dispatch_ctx(agent_id, tmp_dir, llm_call: blocking_llm_call(self())))
+
+      assert_receive {:llm_blocked, worker}, 5_000
+
+      # The summary row carries no conversation at all; the RPC resolves the
+      # agent id to its live session and returns the session-owned messages.
+      assert {:ok, %AgentState{} = row} = SchedStore.get_agent_state(agent_id)
+      refute Map.has_key?(row, :context)
+
+      messages = RemoteAPI.get_agent_history(agent_id)
+      assert is_list(messages)
+      assert length(messages) >= 2
+      assert Enum.all?(messages, &match?(%ReqLLM.Message{}, &1))
+      assert hd(Enum.map(messages, & &1.role)) == :system
+
+      # Shape + content: the system prompt and the objective are both there, in
+      # the order the engine built them, and the RPC is reading the LIVE state
+      # (the same list `Session.history/2` serves).
+      assert Enum.map(messages, & &1.role) == [:system, :user]
+      assert text_of(hd(messages)) == "You are the session-test stub agent."
+      assert Enum.at(messages, 1) |> text_of() =~ "session test objective"
+
+      assert messages == Session.history(pid)
+
+      send(worker, :release)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5_000
+    end
+
+    test "returns [] for an unknown agent id and for a gone session",
+         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+      # Never started: no registry entry at all.
+      assert RemoteAPI.get_agent_history(9_999_999_999) == []
+
+      {:ok, pid, ref} =
+        start_session(dispatch_ctx(agent_id, tmp_dir, llm_call: completed_llm_call()))
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5_000
+
+      # The session is gone with its conversation: history is unrecoverable
+      # post-completion (the archive stores the result, never the messages).
+      assert RemoteAPI.get_agent_history(agent_id) == []
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # dispatch context / session lifecycle
   # ---------------------------------------------------------------------------
 
@@ -335,12 +406,14 @@ defmodule EvoGit.Agent.SessionTest do
     ]
   end
 
-  # The pre-installed scheduler row the session reads its identity/model fields
-  # from. A missing row makes the session finalize with `{:error, :not_registered}`.
-  defp agent_state(sentinel_context) do
+  # The pre-installed scheduler SUMMARY row the session reads its
+  # identity/model fields from. A missing row makes the session finalize with
+  # `{:error, :not_registered}`. `objective` is a registration-only sentinel the
+  # summary publication must never overwrite.
+  defp agent_state do
     %EvoGit.AgentScheduler.AgentState{
       context_node: %EvoGit.Core.ContextNode{path: "./", repo: "[system]"},
-      phylo_node: nil,
+      objective: "registration objective sentinel",
       parent_id: nil,
       archive: false,
       llm_model: nil,
@@ -349,8 +422,29 @@ defmodule EvoGit.Agent.SessionTest do
       max_retries: 3,
       max_depth: nil,
       repo_id: "primary",
-      llm_context_window: 200_000,
-      context: sentinel_context
+      llm_context_window: 200_000
+    }
+  end
+
+  # The registration metadata the completion path reads for the agent's spec
+  # (`phylo_node` = nil is the repo-less shape; `repo_less` short-circuits the
+  # derived `base_commit` to nil). `from` is a REAL `GenServer.from/0` shape
+  # whose reply lands in the test process: these sessions are started DIRECTLY
+  # (no scheduler dispatch), so the scheduler's top-level reply path has no
+  # caller to answer — and it must never be answered with `nil`.
+  defp sched_meta(agent_id) do
+    %EvoGit.AgentScheduler.SchedMeta{
+      id: agent_id,
+      depth: 0,
+      task_id: "task-#{agent_id}",
+      from: {self(), make_ref()},
+      spec: %EvoGit.AgentSpec{
+        context_node: %EvoGit.Core.ContextNode{path: "./", repo: "[system]"},
+        phylo_node: nil,
+        agent_module: EvoGit.Agent.SessionTest.StubAgent,
+        objective: "session test objective",
+        opts: [repo_less: true]
+      }
     }
   end
 

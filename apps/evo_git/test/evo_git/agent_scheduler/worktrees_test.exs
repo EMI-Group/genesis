@@ -408,9 +408,10 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       {:ok, branches} = Git.list_branches(tmp_dir)
       assert branch in branches
 
-      # assign_and_prepare_worktree/2 bound phylo_node.repo to the worktree.
+      # assign_and_prepare_worktree/3 recorded the worktree's commit on the
+      # agent's SUMMARY row (the registration write the session publishes from).
       {:ok, agent_state} = Store.get_agent_state(agent_id)
-      assert agent_state.phylo_node.repo == wt_path
+      assert agent_state.current_commit == base_sha
 
       # Drain the registration so no :DOWN cleanup fires during teardown.
       finish_agent(agent, agent_id, tmp_dir, wt_path, branch)
@@ -842,12 +843,12 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
       # Main HEAD untouched; the plain dir survives (not deleted, not
       # git-touched); the agent branch was never created; the agent state's
-      # phylo_node stays nil (never worktree-bound).
+      # current_commit stays nil (never worktree-bound).
       assert {:ok, ^base_sha} = Git.rev_parse(tmp_dir)
       assert File.dir?(wt_path)
       refute Git.branch_exists?(tmp_dir, branch)
       {:ok, agent_state} = Store.get_agent_state(agent_id)
-      assert agent_state.phylo_node == nil
+      assert agent_state.current_commit == nil
     end
 
     test "refuses the repo ROOT itself as the wt path", %{
@@ -867,7 +868,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       assert {:ok, ^base_sha} = Git.rev_parse(tmp_dir)
     end
 
-    test "accepts a real registered linked worktree and binds phylo_node to it", %{
+    test "accepts a real registered linked worktree and records its commit", %{
       tmp_dir: tmp_dir,
       base_sha: base_sha
     } do
@@ -882,10 +883,9 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       assert {:ok, ^base_sha} =
                Worktrees.assign_and_prepare_worktree(agent_id, wt_path, tmp_dir)
 
-      # The worktree-bound phylo_node (repo points at the WORKTREE, not the
-      # main copy).
+      # The worktree-bound commit is recorded on the agent's summary row.
       {:ok, agent_state} = Store.get_agent_state(agent_id)
-      assert agent_state.phylo_node.repo == wt_path
+      assert agent_state.current_commit == base_sha
     end
   end
 

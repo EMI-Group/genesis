@@ -289,7 +289,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.ConfigurationTest do
       handle = start_eval(ctx.fixture, code, "write")
       request = await_request(ctx.fixture, code)
       # No lifecycle broadcast: only post-approval revalidation can catch this.
-      Fixture.update_state(ctx.fixture, &%{&1 | cancel_requested: true})
+      Fixture.set_cancel(ctx.fixture, true)
 
       {result, requests} =
         scheduler_requests(fn ->

@@ -375,8 +375,10 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WrapperTest do
   end
 
   defp invalidate(fixture, :cancel_flag) do
-    Fixture.update_state(fixture, &%{&1 | cancel_requested: true})
-    fn -> Fixture.update_state(fixture, &%{&1 | cancel_requested: false}) end
+    # The graceful-cancel flag lives in the control plane, not the summary row.
+    Fixture.set_cancel(fixture, true)
+    assert Fixture.cancel_requested?(fixture)
+    fn -> Fixture.set_cancel(fixture, false) end
   end
 
   defp invalidate(fixture, change) do

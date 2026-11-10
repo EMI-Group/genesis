@@ -88,6 +88,24 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     }
   end
 
+  # A session-owned `%EvoGit.Agent.State{}` (the summary source the session
+  # publishes from) with the struct's required keys defaulted.
+  defp summary_state(overrides \\ []) do
+    struct!(
+      EvoGit.Agent.State,
+      Keyword.merge(
+        [
+          agent_id: unique_agent_id(),
+          agent_module: EvoGit.AgentScheduler.LifecycleTest.StubAgent,
+          depth: 0,
+          node_path: "./",
+          context: ReqLLM.Context.new([])
+        ],
+        overrides
+      )
+    )
+  end
+
   defp base_state(overrides) when is_list(overrides) do
     # Start from a per-model pool state (single default model)
     profiles = [%{id: "default", model: "test:model", concurrency: 3}]
@@ -134,11 +152,10 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     :ets.insert(:evogit_agent_summary, {agent_id, state})
   end
 
-  # Reads through the public Store API, which PROJECTS the control-plane values
-  # (`cancel_requested`, `pending_user_messages`, and the legacy
-  # `compression_count` counter) back onto the struct — the first two are written
-  # to `:evogit_agent_inbox` / `:evogit_agent_control`, never to the state row,
-  # while the state-owned `compression_count` lives on the row itself.
+  # Reads through the public Store API, which returns the RAW summary row: it
+  # carries no conversation and no control state (`cancel_requested` /
+  # pending messages live in the control plane and are read through
+  # `Store.cancel_requested?/1` / `Store.drain_pending_user_messages/1`).
   defp get_agent_state(agent_id) do
     case EvoGit.AgentScheduler.Store.get_agent_state(agent_id) do
       {:ok, state} -> {:ok, state}
@@ -331,18 +348,14 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       assert updated_meta.status == :pending
     end
 
-    test "resetting agent_state sets phylo_node and context to nil" do
+    test "resetting agent_state clears current_commit" do
       agent_id = unique_agent_id()
 
       meta = %SchedMeta{id: agent_id, depth: 0, spec: agent_spec(), retries: 0}
       put_sched_meta(agent_id, meta)
 
-      # Agent state with non-nil phylo_node and context
-      put_agent_state(agent_id, %AgentState{
-        agent_state()
-        | phylo_node: phylo_node(),
-          context: %{messages: ["fake"]}
-      })
+      # Agent state with a worktree-bound commit recorded at registration.
+      put_agent_state(agent_id, %AgentState{agent_state() | current_commit: "abc"})
 
       state = base_state([])
 
@@ -350,8 +363,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
                Lifecycle.handle_agent_crash(state, agent_id, {:error, :test})
 
       {:ok, updated_agent_state} = get_agent_state(agent_id)
-      assert updated_agent_state.phylo_node == nil
-      assert updated_agent_state.context == nil
+      assert updated_agent_state.current_commit == nil
     end
   end
 
@@ -804,17 +816,21 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       # Marker registered.
       assert :ets.member(:evogit_cancelling_tasks, task_id)
 
-      # Agents a1 & a2 got the cancel message + cancel_requested flag.
+      # Agents a1 & a2 got the cancel message + cancel_requested flag (both are
+      # CONTROL-PLANE state, never fields on the summary row).
       for id <- [a1, a2] do
-        {:ok, st} = get_agent_state(id)
-        assert st.cancel_requested == true, "agent #{id} cancel_requested not set"
-        assert Enum.any?(st.pending_user_messages, &String.contains?(&1, "being cancelled"))
+        assert EvoGit.AgentScheduler.Store.cancel_requested?(id),
+               "agent #{id} cancel_requested not set"
+
+        assert Enum.any?(
+                 EvoGit.AgentScheduler.Store.drain_pending_user_messages(id),
+                 &String.contains?(&1, "being cancelled")
+               )
       end
 
       # The other task's agent is untouched.
-      {:ok, untouched} = get_agent_state(other)
-      assert untouched.cancel_requested != true
-      assert untouched.pending_user_messages == []
+      refute EvoGit.AgentScheduler.Store.cancel_requested?(other)
+      assert EvoGit.AgentScheduler.Store.drain_pending_user_messages(other) == []
     end
 
     test "begin_graceful_cancel with no agents still registers the marker" do
@@ -882,9 +898,12 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           1
         )
 
-      {:ok, st} = get_agent_state(agent_id)
-      assert st.cancel_requested == true
-      assert Enum.any?(st.pending_user_messages, &String.contains?(&1, "being cancelled"))
+      assert EvoGit.AgentScheduler.Store.cancel_requested?(agent_id)
+
+      assert Enum.any?(
+               EvoGit.AgentScheduler.Store.drain_pending_user_messages(agent_id),
+               &String.contains?(&1, "being cancelled")
+             )
     end
 
     test "Dispatch.register_agent does not touch agents of non-cancelling tasks" do
@@ -904,65 +923,65 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           1
         )
 
-      {:ok, st} = get_agent_state(agent_id)
-      assert st.cancel_requested != true
-      assert st.pending_user_messages == []
+      refute EvoGit.AgentScheduler.Store.cancel_requested?(agent_id)
+      assert EvoGit.AgentScheduler.Store.drain_pending_user_messages(agent_id) == []
     end
   end
 
-  describe "increment_compression_count/1" do
-    test "increments compression_count in the agent state table" do
+  describe "state-owned compression_count / total_tokens (Session.Summary.publish/3)" do
+    # `compression_count` and `total_tokens` are STATE-OWNED: the session keeps
+    # them in its `%EvoGit.Agent.State{}` and publishes them onto the summary row
+    # (there is no `increment_compression_count/1` / `update_total_tokens/2`
+    # read-modify-write anymore). The assertions below are the published ROW.
+    test "publishes compression_count onto the agent state table" do
       agent_id = unique_agent_id()
       put_agent_state(agent_id, agent_state())
 
-      AgentScheduler.increment_compression_count(agent_id)
+      assert :ok =
+               EvoGit.Agent.Session.Summary.publish(agent_id, summary_state(compression_count: 1))
 
       {:ok, updated_state} = get_agent_state(agent_id)
       assert updated_state.compression_count == 1
 
-      AgentScheduler.increment_compression_count(agent_id)
+      assert :ok =
+               EvoGit.Agent.Session.Summary.publish(agent_id, summary_state(compression_count: 2))
 
       {:ok, updated_state} = get_agent_state(agent_id)
       assert updated_state.compression_count == 2
     end
 
-    test "defaults to 0 on a freshly constructed AgentState" do
+    test "compression_count defaults to 0 on a freshly constructed AgentState" do
       assert agent_state().compression_count == 0
     end
 
-    test "raises when the agent state is missing" do
-      # The agent MUST exist — a missing entry indicates a deep bug.
-      assert_raise MatchError, fn ->
-        AgentScheduler.increment_compression_count(999_999)
-      end
-    end
-  end
-
-  describe "Store.update_total_tokens/2" do
-    test "updates total_tokens in the agent state table" do
+    test "publishes total_tokens onto the agent state table" do
       agent_id = unique_agent_id()
       put_agent_state(agent_id, agent_state())
 
-      EvoGit.AgentScheduler.Store.update_total_tokens(agent_id, 5000)
+      assert :ok =
+               EvoGit.Agent.Session.Summary.publish(agent_id, summary_state(total_tokens: 5000))
 
       {:ok, updated_state} = get_agent_state(agent_id)
       assert updated_state.total_tokens == 5000
 
-      EvoGit.AgentScheduler.Store.update_total_tokens(agent_id, 12_000)
+      assert :ok =
+               EvoGit.Agent.Session.Summary.publish(agent_id, summary_state(total_tokens: 12_000))
 
       {:ok, updated_state} = get_agent_state(agent_id)
       assert updated_state.total_tokens == 12_000
     end
 
-    test "defaults to 0 on a freshly constructed AgentState" do
+    test "total_tokens defaults to 0 on a freshly constructed AgentState" do
       assert agent_state().total_tokens == 0
     end
 
-    test "raises when the agent state is missing" do
-      # The agent MUST exist — a missing entry indicates a deep bug.
-      assert_raise MatchError, fn ->
-        EvoGit.AgentScheduler.Store.update_total_tokens(999_999, 100)
-      end
+    test "a publish for a missing row is a no-op (a session never creates rows)" do
+      # Totality replaced the old "raises when the agent state is missing"
+      # contract: registration owns row creation, so a publish for a recycled
+      # agent must never write and never raise.
+      missing_id = unique_agent_id()
+      assert :ok = EvoGit.Agent.Session.Summary.publish(missing_id, summary_state())
+      assert get_agent_state(missing_id) == :missing
     end
   end
 

@@ -225,7 +225,9 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.Store, as: SchedStore
+  alias EvoGit.AgentSpec
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
 
@@ -643,13 +645,15 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
   # Registers the agent's live state (the LLM slot pool + `current_model/0` both
   # read it) with a per-test unique id, and installs the process-dictionary
   # identity the Runner would have set for it (`:repo_path` is the agent's
-  # worktree, which is what the completion path commits in). Cleaned up on exit.
+  # worktree, which is what the completion path commits in). The registration
+  # `sched_meta` carries the spec's temporal identity (`phylo_node`), which is
+  # where the completion path reads `base_commit` from. Cleaned up on exit.
   defp register_agent(agent_id, model, repo, opts) do
     {:ok, head} = Git.rev_parse(repo)
 
     state = %AgentState{
       context_node: %ContextNode{path: "./", repo: repo},
-      phylo_node: %PhyloGraphNode{repo: repo, base_commit: head, current_commit: head},
+      current_commit: head,
       llm_model: model,
       max_retries: 1,
       max_depth: 3,
@@ -661,7 +665,24 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
     }
 
     :ok = SchedStore.put_agent_state(agent_id, state)
-    on_exit(fn -> SchedStore.delete_agent_state(agent_id) end)
+
+    :ok =
+      SchedStore.put_sched_meta(agent_id, %SchedMeta{
+        id: agent_id,
+        depth: Keyword.get(opts, :depth, 0),
+        spec: %AgentSpec{
+          context_node: %ContextNode{path: "./", repo: repo},
+          phylo_node: %PhyloGraphNode{repo: repo, base_commit: head, current_commit: head},
+          agent_module: __MODULE__,
+          objective: @objective,
+          opts: [model_id: @model_id]
+        }
+      })
+
+    on_exit(fn ->
+      SchedStore.delete_agent_state(agent_id)
+      SchedStore.delete_sched_meta(agent_id)
+    end)
 
     Process.put(:evogit_agent_id, agent_id)
     Process.put(:evogit_agent_depth, Keyword.get(opts, :depth, 0))

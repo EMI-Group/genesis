@@ -1111,7 +1111,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       assert updated.total_sub_specs == 0
     end
 
-    test "dispatch_ready_parent/3 resumes with a repo-less parent state (phylo_node nil)" do
+    test "dispatch_ready_parent/3 resumes with a repo-less parent state (current_commit nil)" do
       parent_id = 9000
       ref = make_ref()
 
@@ -1126,13 +1126,13 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       :ets.insert(:evogit_sched_meta, {parent_id, meta})
 
       # The PRODUCTION row shape with no temporal identity: the merged
-      # `dispatch_ready_parent/3` has a `%AgentState{phylo_node: nil}` arm
+      # `dispatch_ready_parent/3` has a `%AgentState{current_commit: nil}` arm
       # (repo-less parents), so the commit used for its log is "unknown".
       :ets.insert(:evogit_agent_summary, {
         parent_id,
         %AgentState{
           parent_id: nil,
-          phylo_node: nil,
+          current_commit: nil,
           mode: :oneshot,
           context_node: %ContextNode{path: "./", repo: "/test", repo_id: "primary"},
           llm_model: nil,

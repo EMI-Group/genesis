@@ -1,27 +1,34 @@
 defmodule EvoGit.AgentScheduler.ControlPlaneTest do
   @moduledoc """
-  The scheduler CONTROL PLANE (P0 of the agent-runtime refactor): every value a
-  process OTHER than the agent writes about a live agent lives in
-  `:evogit_agent_inbox` (a `:bag` of `{agent_id, {seq, message}}`) and
-  `:evogit_agent_control` (a `:set` of `{agent_id, cancel_requested,
-  compression_count}`), never in the agent's own `:evogit_agent_summary` row.
-  `compression_count` is the exception on the OWNER side: it is state-owned (P2)
-  and the agent publishes it onto its own row, while a legacy control-plane
-  counter still wins the projection whenever its row exists.
+  The scheduler CONTROL PLANE: every value a process OTHER than the agent writes
+  about a live agent lives in `:evogit_agent_inbox` (a `:bag` of
+  `{agent_id, {seq, message}}`) and `:evogit_agent_control` (a `:set` of the
+  2-tuple `{agent_id, cancel_requested}`), never in the agent's own
+  `:evogit_agent_summary` row.
+
+  `%EvoGit.AgentScheduler.AgentState{}` is a SUMMARY-only read model with ONE
+  runtime writer — the owning `EvoGit.Agent.Session`, through
+  `EvoGit.AgentScheduler.Store.put_agent_state/2`. It carries no conversation
+  and no cross-process control state at all, so there is nothing to reset and no
+  control field to project.
 
   What these tests pin:
 
     * the no-read-modify-write invariant — `append_pending_user_message/2`,
-      `set_cancel_requested/1`, `clear_cancel_requested/1` and
-      `increment_compression_count/1` leave the raw state row TERM-IDENTICAL
-      (the assertion that failed on the old whole-struct implementation);
+      `set_cancel_requested/1` and `clear_cancel_requested/1` leave the raw state
+      row TERM-IDENTICAL (the assertion that failed on the old whole-struct
+      implementation);
     * a concurrent append/drain stress test where every message is delivered
       EXACTLY once and each producer's messages keep their own order (the old
       whole-struct drain lost any message appended between its read and write);
-    * a cancel flag and N concurrent compression increments that both survive
-      the agent's own concurrent context writes;
-    * the STATE-OWNED `compression_count` surviving an ordinary state write,
-      with a legacy control-plane counter still preferred on the projection;
+    * `put_agent_state/2` — the remaining writer — storing the summary row
+      VERBATIM (no reset/merge of control state, which no longer exists on the
+      struct) and never disturbing the control plane;
+    * the STATE-OWNED `compression_count` persisting across ordinary summary
+      writes;
+    * a cancel flag and N concurrent control-plane writes that both survive the
+      agent's own concurrent summary writes;
+    * the pending-message ordering contract;
     * `delete_agent_state/1` removing both control rows (no leak).
 
   `async: true`: the tables are app-global and shared with every concurrently
@@ -35,7 +42,6 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
   alias EvoGit.AgentScheduler.ControlPlane
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.Core.ContextNode
-  alias EvoGit.Core.PhyloGraphNode
 
   @id_base 9_950_000
 
@@ -44,7 +50,7 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
   defp agent_state do
     %AgentState{
       context_node: %ContextNode{path: "./", repo: "/tmp/test"},
-      phylo_node: %PhyloGraphNode{repo: "/tmp/test", base_commit: "abc", current_commit: "abc"},
+      current_commit: "abc",
       llm_model: "test:model",
       max_retries: 3,
       max_depth: 8
@@ -63,7 +69,7 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
     agent_id
   end
 
-  # The RAW row, exactly as stored — no projection.
+  # The RAW row, exactly as stored — the summary row IS the whole read model.
   defp raw_row(agent_id) do
     :ets.lookup(:evogit_agent_summary, agent_id)
   end
@@ -85,67 +91,74 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
   # --- The no-read-modify-write invariant -----------------------------------
 
   describe "the agent's state row is never rewritten by a cross-process write" do
-    test "append / set_cancel / clear_cancel / increment leave the row term-identical" do
+    test "append / set_cancel / clear_cancel leave the row term-identical" do
       agent_id = put_live_agent!()
       before_row = raw_row(agent_id)
 
       assert :ok = Store.append_pending_user_message(agent_id, "an injected message")
       assert raw_row(agent_id) == before_row
+      assert ControlPlane.pending_messages(agent_id) == ["an injected message"]
 
       assert :ok = Store.set_cancel_requested(agent_id)
       assert raw_row(agent_id) == before_row
+      assert Store.cancel_requested?(agent_id)
 
       assert :ok = Store.clear_cancel_requested(agent_id)
       assert raw_row(agent_id) == before_row
+      refute Store.cancel_requested?(agent_id)
 
-      assert :ok = Store.increment_compression_count(agent_id)
-      assert raw_row(agent_id) == before_row
-
-      # ...while the PROJECTED reads still see every live value.
-      {:ok, state} = Store.get_agent_state(agent_id)
-      assert state.cancel_requested == nil
-      assert state.compression_count == 1
-      assert state.pending_user_messages == ["an injected message"]
+      # The summary row has no control fields to project in the first place.
+      [{_id, raw}] = raw_row(agent_id)
+      refute Map.has_key?(raw, :pending_user_messages)
+      refute Map.has_key?(raw, :cancel_requested)
     end
 
-    test "put_agent_state resets the message/flag fields, never the state-owned counter" do
+    test "put_agent_state/2 stores the row verbatim and never disturbs the control plane" do
       agent_id = put_live_agent!()
       assert :ok = Store.append_pending_user_message(agent_id, "queued")
       assert :ok = Store.set_cancel_requested(agent_id)
 
-      # Writing back a PROJECTED struct (the documented hazard) must not
-      # resurrect the drained message or the stale flag.
-      {:ok, projected} = Store.get_agent_state(agent_id)
-      :ok = Store.put_agent_state(agent_id, projected)
+      # The session's own summary write: every field it supplies lands as-is
+      # (there is no reset/merge of control state — the struct has none).
+      written = %{
+        agent_state()
+        | turn: 7,
+          message_count: 3,
+          compression_count: 2,
+          status: :running
+      }
 
-      assert length(:ets.lookup(:evogit_agent_inbox, agent_id)) == 1
-      assert Store.cancel_requested?(agent_id)
+      :ok = Store.put_agent_state(agent_id, written)
+
       [{_id, raw}] = raw_row(agent_id)
-      assert raw.pending_user_messages == []
-      assert raw.cancel_requested == nil
-      # `compression_count` is NOT one of the reset fields — it is state-owned
-      # (P2) and this row is its read model, so it survives the write.
-      assert raw.compression_count == 0
+      assert raw == written
+      assert raw.turn == 7
+      assert raw.message_count == 3
+      assert raw.compression_count == 2
+      assert raw.status == :running
+
+      # …and the agent's own write never resurrects/drains the inbox or the flag.
+      assert ControlPlane.pending_messages(agent_id) == ["queued"]
+      assert Store.cancel_requested?(agent_id)
     end
 
-    test "the state-owned compression_count persists, and a control counter still wins the projection" do
+    test "the state-owned compression_count persists across ordinary summary writes" do
       agent_id = put_live_agent!()
 
       :ok = Store.put_agent_state(agent_id, %{agent_state() | compression_count: 2})
 
       [{_id, raw}] = raw_row(agent_id)
       assert raw.compression_count == 2
-      {:ok, projected} = Store.get_agent_state(agent_id)
-      assert projected.compression_count == 2
+      {:ok, row} = Store.get_agent_state(agent_id)
+      assert row.compression_count == 2
 
-      # A legacy control-plane counter takes precedence on the READ path while
-      # its row exists, and the raw state row stays untouched by it.
-      assert :ok = Store.increment_compression_count(agent_id)
+      # A later ordinary write by the same owner keeps the counter: there is no
+      # separate control-plane counter and no projection that could override it.
+      :ok = Store.put_agent_state(agent_id, %{agent_state() | compression_count: 2, turn: 5})
 
-      [{_id, raw_after}] = raw_row(agent_id)
-      assert raw_after.compression_count == 2
-      {:ok, projected_after} = Store.get_agent_state(agent_id)
-      assert projected_after.compression_count == 1
+      {:ok, row_after} = Store.get_agent_state(agent_id)
+      assert row_after.compression_count == 2
+      assert row_after.turn == 5
     end
   end
 
@@ -197,7 +210,7 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
   # --- Control flags under the agent's own writes ---------------------------
 
   describe "the control row survives the agent's concurrent state writes" do
-    test "a cancel flag set mid-stream is still set, and the context write is not lost" do
+    test "a cancel flag set mid-stream is still set, and the summary write is not lost" do
       agent_id = put_live_agent!()
       parent = self()
 
@@ -205,10 +218,7 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
         Task.async(fn ->
           Enum.each(1..200, fn turn ->
             :ok =
-              Store.batch_update_agent(agent_id,
-                context: ReqLLM.Context.new([ReqLLM.Context.user("turn #{turn}")]),
-                turn: turn
-              )
+              Store.put_agent_state(agent_id, %{agent_state() | turn: turn, message_count: turn})
 
             if turn == 1, do: send(parent, {:first_write, self()})
           end)
@@ -224,36 +234,40 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
 
       {:ok, state} = Store.get_agent_state(agent_id)
       assert state.turn == 200
-      assert %ReqLLM.Context{messages: [_ | _]} = state.context
+      assert state.message_count == 200
 
       assert :ok = Store.clear_cancel_requested(agent_id)
       refute Store.cancel_requested?(agent_id)
     end
 
-    test "50 concurrent compression increments all land while context writes continue" do
+    test "50 concurrent control-plane writes all land while summary writes continue" do
       agent_id = put_live_agent!()
 
-      context_tasks =
+      state_tasks =
         for turn <- 1..10 do
-          Task.async(fn -> Store.batch_update_agent(agent_id, turn: turn) end)
+          Task.async(fn -> Store.put_agent_state(agent_id, %{agent_state() | turn: turn}) end)
         end
 
-      increment_tasks =
-        for _ <- 1..50 do
-          Task.async(fn -> :ok = Store.increment_compression_count(agent_id) end)
+      append_tasks =
+        for i <- 1..50 do
+          Task.async(fn -> :ok = Store.append_pending_user_message(agent_id, "m#{i}") end)
         end
 
-      Enum.each(context_tasks ++ increment_tasks, &Task.await(&1, 10_000))
+      Enum.each(state_tasks ++ append_tasks, &Task.await(&1, 10_000))
+
+      # Not one of the 50 concurrent control writes was lost to a summary write.
+      pending = ControlPlane.pending_messages(agent_id)
+      assert length(pending) == 50
+      assert MapSet.new(pending) == MapSet.new(Enum.map(1..50, &"m#{&1}"))
 
       {:ok, state} = Store.get_agent_state(agent_id)
-      assert state.compression_count == 50
       assert state.turn in 1..10
     end
   end
 
-  # --- Ordering + projection ------------------------------------------------
+  # --- Ordering + summary shape ---------------------------------------------
 
-  describe "pending message ordering and projection" do
+  describe "pending message ordering" do
     test "pending_messages/1 peeks in append order and drain consumes that same order" do
       agent_id = put_live_agent!()
 
@@ -261,14 +275,13 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
 
       assert ControlPlane.pending_messages(agent_id) == ["m1", "m2", "m3", "m4", "m5"]
 
+      # The summary row never carries the queue: it is a control-plane value.
       {:ok, state} = Store.get_agent_state(agent_id)
-      assert state.pending_user_messages == ["m1", "m2", "m3", "m4", "m5"]
+      refute Map.has_key?(state, :pending_user_messages)
 
       assert Store.drain_pending_user_messages(agent_id) == ["m1", "m2", "m3", "m4", "m5"]
       assert ControlPlane.pending_messages(agent_id) == []
-
-      {:ok, drained_state} = Store.get_agent_state(agent_id)
-      assert drained_state.pending_user_messages == []
+      assert Store.drain_pending_user_messages(agent_id) == []
     end
   end
 
@@ -284,8 +297,13 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
       assert {:error, :not_found} = Store.append_pending_user_message(absent, "nobody home")
       assert {:error, :not_found} = Store.set_cancel_requested(absent)
       assert {:error, :not_found} = Store.clear_cancel_requested(absent)
-      # The long-standing contract: a missing agent still crashes this helper.
-      assert_raise MatchError, fn -> Store.increment_compression_count(absent) end
+
+      # …and the transport module itself is equally total.
+      assert ControlPlane.pending_messages(absent) == []
+      assert ControlPlane.drain_messages(absent) == []
+      assert {:error, :not_found} = ControlPlane.append_message(absent, "nobody home")
+      assert {:error, :not_found} = ControlPlane.set_cancel(absent, true)
+      refute ControlPlane.cancel_requested?(absent)
     end
   end
 
@@ -296,7 +314,6 @@ defmodule EvoGit.AgentScheduler.ControlPlaneTest do
       agent_id = put_live_agent!()
       :ok = Store.append_pending_user_message(agent_id, "pending")
       :ok = Store.set_cancel_requested(agent_id)
-      :ok = Store.increment_compression_count(agent_id)
 
       assert [_ | _] = :ets.lookup(:evogit_agent_inbox, agent_id)
       assert [_] = :ets.lookup(:evogit_agent_control, agent_id)

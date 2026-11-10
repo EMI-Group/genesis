@@ -444,11 +444,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       # Insert a parent AgentState with a specific model_id
       parent_state = %AgentState{
         context_node: %ContextNode{path: "./", repo: "/test/repo"},
-        phylo_node: %PhyloGraphNode{
-          repo: "/test/repo",
-          base_commit: "abc123",
-          current_commit: "abc123"
-        },
+        current_commit: "abc123",
         llm_model: "test-model",
         max_retries: 3,
         max_depth: 5,
@@ -504,11 +500,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       # Override the parent state to use the default model_id
       parent_state = %AgentState{
         context_node: %ContextNode{path: "./", repo: "/test/repo"},
-        phylo_node: %PhyloGraphNode{
-          repo: "/test/repo",
-          base_commit: "abc123",
-          current_commit: "abc123"
-        },
+        current_commit: "abc123",
         llm_model: "test-model",
         max_retries: 3,
         max_depth: 5,
@@ -630,11 +622,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       # Insert a parent AgentState with a specific model_id
       parent_state = %AgentState{
         context_node: %ContextNode{path: "./", repo: "/test/repo"},
-        phylo_node: %PhyloGraphNode{
-          repo: "/test/repo",
-          base_commit: "abc123",
-          current_commit: "abc123"
-        },
+        current_commit: "abc123",
         llm_model: "test-model",
         max_retries: 3,
         max_depth: 5,
@@ -881,7 +869,10 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         repo_notes: nil,
         # The parent's OWN repo id is state-owned (P2): `%State{}` is the
         # authoritative source the spawn gate and `resolve_subagent_path/4` read.
-        repo_id: "orig"
+        repo_id: "orig",
+        # …and so is the parent's LIVE commit, which the same-repo phylo clause
+        # bases the child on (never the summary row).
+        current_commit: "abc123"
       }
 
       assert [spec] =
@@ -913,7 +904,10 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         repo_notes: nil,
         # The parent's OWN repo id is state-owned (P2): `%State{}` is the
         # authoritative source the spawn gate and `resolve_subagent_path/4` read.
-        repo_id: "orig"
+        repo_id: "orig",
+        # …and so is the parent's LIVE commit, which the same-repo phylo clause
+        # bases the child on (never the summary row).
+        current_commit: "abc123"
       }
 
       assert [spec] =
