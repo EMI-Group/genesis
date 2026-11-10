@@ -165,10 +165,11 @@ observed; a successful probe never produces it.
 
 ### Retention and pruning
 
-Terminal records are retained for `:process_finished_retention_ms` (default `300_000`) and capped at the
-newest 200; live records are never pruned. Retention runs on every `finish/3` and every sampling tick, and
-`prune/1` is the explicit operator/test entry point. A record's `control_log` is capped at 50 entries so a
-pause/resume hammer cannot grow it without bound.
+Process records are node-local, in-memory operational state: nothing is written to the task store, archived or aggregated across nodes.
+Retention is a recent-actions list, not a history — terminal records are kept for `:process_finished_retention_ms` (default `300_000`) and capped at the newest `:process_finished_max_records` (default `200`); live records are never pruned.
+Retention runs on every `finish/3`, every owner-death sweep, every sampling tick, and `prune/1` is the explicit operator/test entry point.
+A record's `control_log` is capped at 50 entries so a pause/resume hammer cannot grow it without bound,
+and owner monitors are dropped once an owner has no retained record.
 
 ### Owner death
 
@@ -261,7 +262,7 @@ construction and never count as a change.
 
 All tuning is call-time app env (no TOML keys, so the suite stays async-safe):
 `:process_manager_sample_interval_ms`, `:process_stats_enabled`, `:process_finished_retention_ms`,
-`:process_stats_probe_timeout_ms`, `:process_kill_grace_ms`.
+`:process_finished_max_records`, `:process_stats_probe_timeout_ms`, `:process_kill_grace_ms`.
 
 ## 6. PubSub contract
 
@@ -416,12 +417,8 @@ button and its confirm flow in `ProcessesLive`/`ProcessComponents`.
   probe that fails leaves the previous values in place, and `cpu_percent` is a two-sample delta rather than a
   kernel-accounted average. `pids` is empty on the systemd path (the unit's cgroup is not enumerated) and on
   Windows.
-- **One node at a time is observed.** The registry is per-BEAM and in-memory: a restart loses all records
-  (they are operational state, not history), and a remote node's executions are visible only through that
-  node's RPC.
-- **The registry bounds history.** Terminal records expire after `:process_finished_retention_ms` and the
-  newest 200 are kept; `control_log` keeps at most 50 entries. A pruned id answers `{:error, :not_found}`
-  from `get/2` and is absent from `list/1` and `sample_all/1`, so older detail is gone by design.
+- **The registry is completely local.** Records live only in this BEAM's memory: they are never persisted to the task store, never archived with a task and never aggregated across nodes. A restart loses all records (they are operational state, not history), and a remote node's executions are visible only by RPC to that node's manager.
+- **The registry keeps a recent-actions list, not a history.** Terminal records expire after `:process_finished_retention_ms` and the newest `:process_finished_max_records` (default 200) are kept; `control_log` keeps at most 50 entries. A pruned id answers `{:error, :not_found}` from `get/2` and is absent from `list/1` and `sample_all/1`, so older detail is gone by design.
 - **A failed kill is never reported as a kill.** `kill/2` transitions the record to `:killed` only when the
   backend confirms the handle is gone; a failed or refused kill leaves the status untouched (the execution
   stays observable and controllable), appends the audited
