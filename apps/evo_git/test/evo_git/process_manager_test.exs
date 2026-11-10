@@ -59,7 +59,7 @@ defmodule EvoGit.ProcessManagerTest do
           cwd: "/tmp",
           repo_root: "/repo",
           backend: :systemd,
-          runtime: :detached,
+          runtime: :background,
           job_id: "job-1",
           unknown_key: :ignored
         },
@@ -76,9 +76,94 @@ defmodule EvoGit.ProcessManagerTest do
     assert execution.cwd == "/tmp"
     assert execution.repo_root == "/repo"
     assert execution.backend == :systemd
-    assert execution.runtime == :detached
+    assert execution.runtime == :background
     assert execution.job_id == "job-1"
     assert execution.owner_pid == nil
+    # Terminal facts stay UNSET while the execution never started an OS process.
+    assert execution.exit_code == nil
+    assert execution.reason == nil
+  end
+
+  test "the runtime is normalized to :foreground | :background", %{srv: srv} do
+    {:ok, background} =
+      ProcessManager.track(:tool_call, %{tool: "bash", runtime: :background}, srv)
+
+    {:ok, from_string} =
+      ProcessManager.track(:tool_call, %{tool: "bash", runtime: "background"}, srv)
+
+    {:ok, unknown} =
+      ProcessManager.track(:tool_call, %{tool: "bash", runtime: :never_heard_of}, srv)
+
+    assert {:ok, %Execution{runtime: :foreground}} = ProcessManager.get(unknown, srv)
+    assert {:ok, %Execution{runtime: :background}} = ProcessManager.get(background, srv)
+    assert {:ok, %Execution{runtime: :background}} = ProcessManager.get(from_string, srv)
+  end
+
+  ## Builtin (in-BEAM) executions
+  test "a builtin execution has no OS process and refuses every control call", %{srv: srv} do
+    {:ok, id} = ProcessManager.track(:tool_call, %{tool: "read", backend: :builtin}, srv)
+    server = Keyword.fetch!(srv, :server)
+    assert {:ok, %Execution{backend: :builtin} = builtin} = ProcessManager.get(id, srv)
+    assert Execution.builtin?(builtin)
+    refute Execution.external?(builtin)
+    # Nothing to sample: a builtin record is live but NOT sampleable.
+    refute Execution.sampleable?(builtin)
+    assert builtin.stats == Stats.empty()
+    assert builtin.os_pid == nil
+    assert builtin.unit == nil
+    flush()
+    # A (defensive) real handle never downgrades the backend: the call still ran
+    # inside the BEAM, so it has no OS process to control.
+    assert :ok =
+             ProcessManager.attach(
+               id,
+               %Handle{kind: :posix, os_pid: 424_242, backend: EvoGit.Sandbox.Linux},
+               srv
+             )
+
+    assert {:ok, %Execution{backend: :builtin} = attached} = ProcessManager.get(id, srv)
+    assert Execution.builtin?(attached)
+    refute Execution.external?(attached)
+    refute Execution.sampleable?(attached)
+    assert {:error, :no_os_process} = ProcessManager.sample(id, srv)
+    assert {:error, :no_os_process} = ProcessManager.signal(id, :term, srv)
+    assert {:error, :no_os_process} = ProcessManager.pause(id, srv)
+    assert {:error, :no_os_process} = ProcessManager.resume(id, srv)
+
+    assert {:error, :no_os_process} =
+             ProcessManager.kill(id, srv ++ [reason: :operator_kill, actor: :operator])
+
+    # `kill` leaves the record untouched — it is still observably live.
+    assert {:ok, %Execution{status: :running, reason: nil, ended_at: nil}} =
+             ProcessManager.get(id, srv)
+
+    # Sampling skips builtin records entirely.
+    assert ProcessManager.sample_all(srv) == %{}
+    assert Enum.any?(ProcessManager.list(srv), &(&1.id == id))
+    refute Enum.any?(EvoGit.ProcessManager.Registry.live(server), &(&1.id == id))
+    refute_received {:process_sample, _node, _seq, _entries}
+    refute_received {:process_control, ^id, _control, _node}
+  end
+
+  test "finish stores the terminal facts and later terminal writes are no-ops", %{srv: srv} do
+    {:ok, id} = ProcessManager.track(:tool_call, %{tool: "bash"}, srv)
+    :ok = ProcessManager.attach(id, %Handle{kind: :posix, os_pid: 424_242}, srv)
+    flush()
+    assert :ok = ProcessManager.finish(id, :completed, srv ++ [exit_code: 7, reason: :exited])
+    assert_receive {:process_exited, %Execution{id: ^id, status: :completed}, _}, 500
+
+    assert {:ok, %Execution{status: :completed, exit_code: 7, reason: :exited} = finished} =
+             ProcessManager.get(id, srv)
+
+    refute Execution.sampleable?(finished)
+    # The FIRST terminal write wins: a later settle cannot rewrite the facts.
+    assert :ok = ProcessManager.finish(id, :failed, srv ++ [reason: :timeout])
+    assert :ok = ProcessManager.finish(id, :killed, srv ++ [reason: {:killed_by, :operator}])
+
+    assert {:ok, %Execution{status: :completed, exit_code: 7, reason: :exited}} =
+             ProcessManager.get(id, srv)
+
+    refute_receive {:process_exited, %Execution{id: ^id}, _}, 100
   end
 
   ## Attach
@@ -129,14 +214,14 @@ defmodule EvoGit.ProcessManagerTest do
     :ok = ProcessManager.attach(id, %Handle{kind: :posix, os_pid: 424_242}, srv)
     flush()
 
-    assert :ok = ProcessManager.finish(id, :completed, srv ++ [exit_code: 0, reason: :ok])
+    assert :ok = ProcessManager.finish(id, :completed, srv ++ [exit_code: 0, reason: :exited])
     assert_receive {:process_exited, %Execution{id: ^id, status: :completed}, node}, 500
     assert node == node()
 
     {:ok, execution} = ProcessManager.get(id, srv)
     assert execution.status == :completed
     assert execution.exit_code == 0
-    assert execution.reason == :ok
+    assert execution.reason == :exited
     assert execution.ended_at != nil
 
     # A second terminal write and a NON-terminal status are both no-ops.
@@ -225,7 +310,7 @@ defmodule EvoGit.ProcessManagerTest do
 
         assert :ok = ProcessManager.kill(id, srv ++ [reason: :test_kill])
 
-        assert {:ok, %Execution{status: :killed, reason: :test_kill}} =
+        assert {:ok, %Execution{status: :killed, reason: {:killed_by, :operator}}} =
                  ProcessManager.get(id, srv)
 
         refute process_alive?(os_pid), "a killed process must be gone"
@@ -251,7 +336,7 @@ defmodule EvoGit.ProcessManagerTest do
     assert :ok = ProcessManager.kill(id, srv)
     assert_receive {:process_exited, %Execution{id: ^id, status: :killed}, _}, 500
 
-    assert {:ok, %Execution{status: :killed, reason: :killed_by_operator}} =
+    assert {:ok, %Execution{status: :killed, reason: {:killed_by, :operator}}} =
              ProcessManager.get(id, srv)
 
     # Idempotent: a second kill of a terminal execution is :ok and silent.
@@ -299,7 +384,8 @@ defmodule EvoGit.ProcessManagerTest do
     assert Enum.any?(ProcessManager.list(srv), &(&1.id == id))
   end
 
-  test "a SUCCEEDING kill records :killed and logs no control entry", %{srv: srv} do
+  test "a SUCCEEDING kill records :killed and keeps the human reason in control_log",
+       %{srv: srv} do
     {:ok, id} =
       ProcessManager.track(
         :background_job,
@@ -316,7 +402,13 @@ defmodule EvoGit.ProcessManagerTest do
                    500
 
     assert {:ok, execution} = ProcessManager.get(id, srv)
-    assert %Execution{status: :killed, reason: :operator_killed, control_log: []} = execution
+    # The TERMINAL FACT carries the actor identity, never free text; the
+    # human-supplied reason is audit data and lives only in `control_log`.
+    assert %Execution{status: :killed, reason: {:killed_by, :operator}} = execution
+    assert [entry] = execution.control_log
+    assert entry.action == :kill
+    assert entry.reason == :operator_killed
+    assert entry.actor == :operator
     assert execution.ended_at != nil
     refute_receive {:process_control, ^id, %{reason: {:kill_failed, _}}, _}, 100
   end
