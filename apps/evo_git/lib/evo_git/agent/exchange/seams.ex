@@ -1,0 +1,183 @@
+defmodule EvoGit.Agent.Exchange.Seams do
+  @moduledoc """
+  The seam contract that makes ONE exchange runnable in a bare process.
+
+  `EvoGit.Agent.Exchange.run/2` (the engine, landed in the next step) is a plain
+  function over `%EvoGit.Agent.State{}`: it needs no scheduler, no ETS table and
+  no live agent process. The three seams below are the ONLY places it touches
+  the outside world, so an exchange can be executed and asserted in a bare test
+  process with three stubs.
+
+  ## Default-inert by construction
+
+  Every seam defaults to `nil`, meaning "use the PRODUCTION path" — an absent
+  seam key means BYTE-IDENTICAL production behaviour. The seams exist ONLY so an
+  unwatched exchange is executable and assertable in a bare process; they must
+  NEVER be used to change production behaviour (no seam may be set in a shipped
+  configuration — only tests and the engine's own injection point set them).
+
+  ## Resolution order (`from_opts/1`)
+
+  For each seam, in order:
+
+  1. the explicit `opts` key (`:llm_call` / `:tool_batch` / `:scheduler`) when
+     present — even when its value is `nil` (an explicit `nil` means "use the
+     production path", overriding any app-env default);
+  2. the app-env default, read AT CALL TIME (`Application.get_env(:evo_git,
+     :agent_exchange_llm_call)` / `:agent_exchange_tool_batch` /
+     `:agent_exchange_scheduler`), `nil` when unset;
+  3. `nil`.
+
+  ## The three seams
+
+  ### `llm_call` — arity 5
+
+      (context, tools, llm_generation_params, agent_id, max_retries) ->
+        {:ok, response} | {:implicit_completion, response, text} | {:error, reason}
+
+  Production default: `&EvoGit.Agent.LLMPrompting.prompt_until_tools_or_limit/5`
+  (see `default_llm_call/0`). The engine calls it whenever `seam == nil`.
+
+  ### `tool_batch` — arity 2
+
+      (indexed_calls, state) -> indexed_results
+
+  `indexed_calls` is the same list todays' batch entry point receives, and
+  `indexed_results` must be in the EXACT shape
+  `EvoGit.Agent.ToolDispatch.batch_execute_tools/5` returns to its caller:
+  `[{index, tool_call_id, name, output}]`.
+
+  `nil` means the real
+  `EvoGit.Agent.ToolDispatch.process_standard_calls/2` path. When set, it
+  REPLACES the whole standard-call batch (no `EvoGit.ToolRuntime` call, no
+  delegation-hint tracking, no commit sync after tools) — but the per-call
+  result assembly, the result ordering, the subagent partitioning and the
+  `%ReqLLM.Message{}` construction all stay the engine's.
+
+  ### `scheduler` — arity 3
+
+      (kind, payload, state) -> term()
+
+  ONE adapter for every scheduler/ETS interaction the loop performs. A test seam
+  is normally `fn _kind, _payload, _state -> :ok end`. The kinds and their
+  production defaults (`default_scheduler/3`):
+
+  | `kind` | `payload` | default implementation |
+  |---|---|---|
+  | `:drain_inputs` | ignored | `EvoGit.AgentScheduler.Store.drain_pending_user_messages(state.agent_id)` → `[String.t() \\| map()]` |
+  | `:cancel_requested?` | ignored | `EvoGit.AgentScheduler.Store.cancel_requested?(state.agent_id)` → `boolean()` |
+  | `:clear_cancel` | ignored | `EvoGit.AgentScheduler.Store.clear_cancel_requested(state.agent_id)` |
+  | `:context` | `%ReqLLM.Context{}` | `EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, ctx)` |
+  | `:total_tokens` | integer | `EvoGit.Agent.ContextBuilder.sync_total_tokens_to_ets(state.agent_id, n)` |
+  | `:turn` | integer | `EvoGit.Agent.ContextBuilder.sync_turn_to_ets(state.agent_id, n)` |
+  | `{:batch, fields}` | `fields` (the same keyword) | `EvoGit.AgentScheduler.batch_update_agent(state.agent_id, fields)` |
+
+  `{:batch, fields}` carries its keyword in the KIND so the batch is visible at
+  the call site; the payload slot repeats it so every kind keeps the same
+  3-arity shape.
+  """
+
+  alias EvoGit.Agent.State
+
+  defstruct llm_call: nil, tool_batch: nil, scheduler: nil
+
+  @typedoc "See the moduledoc for the contract of each seam."
+  @type llm_call ::
+          (ReqLLM.Context.t(), [ReqLLM.Tool.t()], keyword(), pos_integer(), non_neg_integer() ->
+             {:ok, ReqLLM.Response.t()}
+             | {:implicit_completion, ReqLLM.Response.t(), String.t()}
+             | {:error, term()})
+
+  @type tool_batch ::
+          ([{ReqLLM.ToolCall.t(), non_neg_integer()}], State.t() ->
+             [{non_neg_integer(), String.t(), String.t(), term()}])
+
+  @type scheduler_kind ::
+          :drain_inputs
+          | :cancel_requested?
+          | :clear_cancel
+          | :context
+          | :total_tokens
+          | :turn
+          | {:batch, keyword()}
+
+  @type scheduler :: (scheduler_kind(), term(), State.t() -> term())
+
+  @type t :: %__MODULE__{
+          llm_call: llm_call() | nil,
+          tool_batch: tool_batch() | nil,
+          scheduler: scheduler() | nil
+        }
+
+  @llm_call_env :agent_exchange_llm_call
+  @tool_batch_env :agent_exchange_tool_batch
+  @scheduler_env :agent_exchange_scheduler
+
+  @doc """
+  Builds the seam set for one exchange from a keyword list.
+
+  See the moduledoc for the resolution order. An absent key resolves to the
+  app-env default (read at call time) and then to `nil` = production path.
+  """
+  @spec from_opts(keyword()) :: t()
+  def from_opts(opts) when is_list(opts) do
+    %__MODULE__{
+      llm_call: resolve(opts, :llm_call, @llm_call_env),
+      tool_batch: resolve(opts, :tool_batch, @tool_batch_env),
+      scheduler: resolve(opts, :scheduler, @scheduler_env)
+    }
+  end
+
+  # Explicit opts key wins (even when nil), else the call-time app-env default.
+  defp resolve(opts, key, env_key) do
+    case Keyword.fetch(opts, key) do
+      {:ok, seam} -> seam
+      :error -> Application.get_env(:evo_git, env_key)
+    end
+  end
+
+  @doc """
+  The production `llm_call` seam: `EvoGit.Agent.LLMPrompting.prompt_until_tools_or_limit/5`.
+  """
+  @spec default_llm_call() :: llm_call()
+  def default_llm_call, do: &EvoGit.Agent.LLMPrompting.prompt_until_tools_or_limit/5
+
+  @doc """
+  The production `scheduler` seam: the exact ETS/scheduler calls the turn loop
+  performs today.
+
+  See the moduledoc for the kind list. An unknown kind raises a
+  `FunctionClauseError` on purpose (a seam that silently swallowed an
+  interaction the engine relies on would hide a broken exchange).
+  """
+  @spec default_scheduler(scheduler_kind(), term(), State.t()) :: term()
+  def default_scheduler(:drain_inputs, _payload, %State{agent_id: agent_id}) do
+    EvoGit.AgentScheduler.Store.drain_pending_user_messages(agent_id)
+  end
+
+  def default_scheduler(:cancel_requested?, _payload, %State{agent_id: agent_id}) do
+    EvoGit.AgentScheduler.Store.cancel_requested?(agent_id)
+  end
+
+  def default_scheduler(:clear_cancel, _payload, %State{agent_id: agent_id}) do
+    EvoGit.AgentScheduler.Store.clear_cancel_requested(agent_id)
+  end
+
+  def default_scheduler(:context, %ReqLLM.Context{} = ctx, %State{agent_id: agent_id}) do
+    EvoGit.Agent.ContextBuilder.sync_context_to_ets(agent_id, ctx)
+  end
+
+  def default_scheduler(:total_tokens, total, %State{agent_id: agent_id})
+      when is_integer(total) do
+    EvoGit.Agent.ContextBuilder.sync_total_tokens_to_ets(agent_id, total)
+  end
+
+  def default_scheduler(:turn, turn, %State{agent_id: agent_id}) when is_integer(turn) do
+    EvoGit.Agent.ContextBuilder.sync_turn_to_ets(agent_id, turn)
+  end
+
+  def default_scheduler({:batch, fields}, _payload, %State{agent_id: agent_id})
+      when is_list(fields) do
+    EvoGit.AgentScheduler.batch_update_agent(agent_id, fields)
+  end
+end

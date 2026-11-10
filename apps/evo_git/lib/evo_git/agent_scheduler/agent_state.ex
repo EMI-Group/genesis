@@ -1,18 +1,45 @@
 defmodule EvoGit.AgentScheduler.AgentState do
   @moduledoc """
-  The live state for a running agent, stored in the `:evogit_agent_state` ETS table.
+  The ETS/summary PROJECTION of an agent — a read model, NOT the authoritative state.
 
-  Owned by agent processes — the scheduler writes initial values on dispatch,
-  then agents update their fields as needed.
+  The authoritative agent state is `%EvoGit.Agent.State{}`: exactly ONE copy of
+  it, owned by exactly one process (in P1 the agent `Task`, from P2 the
+  per-agent session process). This struct is what the scheduler publishes into
+  the `:evogit_agent_state` ETS table so that the dashboard/RPC read paths can
+  observe an agent without touching its process.
 
-  ## Fields
+  Its row shape is bounded to what a reader needs (identity, counters, model
+  selection, the summary-only fields added below) plus, for now, the fields the
+  turn loop still reads and writes directly. A subscriber must treat every row
+  here as a possibly-stale SNAPSHOT: the process owning the agent is the only
+  writer, and after the refactor it only publishes summary updates.
 
-  - `context` — the conversation context (ReqLLM.Context) - single source of truth
+  ## Transitional fields (removed from this row in a later phase)
+
+  These five fields exist only because the loop still runs on
+  `%EvoGit.Agent.LoopState{}` plus this ETS row (P1/P2). The loop reads them
+  TODAY, so they must stay until the engine reads its control plane from
+  `%EvoGit.Agent.State{}` instead:
+
+  - `context` — the conversation context (to be replaced by the authoritative
+    `State.context`; the ETS copy disappears with the summary re-keying)
+  - `pending_user_messages` — the injected-message queue (to be replaced by
+    `State.pending_inputs`)
+  - `cancel_requested` — the graceful-cancel flag (to be replaced by
+    `State.cancel`)
+  - `phylo_node` — the temporal state node (derived; not summary information)
+  - `llm_generation_params` — the generation parameters (conversation data, not
+    summary information)
+
+  ## Summary fields the projection owns
+
+  `status`, `mode`, `objective_preview`, `message_count`, `context_window`,
+  `current_commit`, `last_activity_at`.
+
+  ## Other fields
+
   - `context_node` — the spatial state (ContextNode) the agent is targeting
-  - `phylo_node` — the temporal state (PhyloGraphNode) with worktree-bound repo path;
-    `nil` before the agent is dispatched to a worktree
   - `llm_model` — the LLM model string for this agent to use
-  - `llm_generation_params` — the LLM generation parameters (temperature, max_tokens, etc.) passed to ReqLLM calls
   - `llm_context_window` — the agent's configured LLM context window in tokens (from its model profile's `context_window`), used for the compression threshold and the stage-1 pruning target; defaults to 200_000
   - `model_id` — optional legacy selection id for compatibility/display, not resource identity.
   - `provider_profile_id` — immutable provider/account resource key for shared concurrency and backoff.
@@ -28,8 +55,6 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `task_local_id` — per-task agent number (starts at 1 for each task), used for display and workspace/branch naming
   - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from CLI opts or genesis.toml)
   - `repo_notes` — the already-rendered git-submodules note block (markdown text) for this agent's repo tree, or `nil` when the repo has no submodules (or detection failed). Rendered into the agent's `<context>` block; subagents inherit it from the parent (no re-detection).
-  - `pending_user_messages` — list of injected user messages (via dashboard/RPC), drained at the top of each turn and appended to context as user-role messages. Each entry is EITHER a legacy plain `String.t()` (stored verbatim, byte-identical) OR a canonical multimodal message (`EvoGit.Attachments.message/1`): `%{text: String.t(), attachments: [map] | nil}`
-  - `cancel_requested` — set to true by the scheduler when the task is being gracefully cancelled; the runner checks/clears it at the top of each turn
   - `usage` — cumulative token and cost usage for this agent (`nil` until the first LLM call completes)
   - `turn` — the current turn number for this agent (`nil` until the loop starts; mirrors `LoopState.turn`). Used by the dashboard to display the actual turn rather than a fabricated index.
   - `archive` — whether task archiving is enabled for this agent (writes git refs + ETS records on completion)
@@ -45,8 +70,11 @@ defmodule EvoGit.AgentScheduler.AgentState do
 
   @enforce_keys [:context_node, :llm_model, :max_retries, :max_depth]
   defstruct [
+    # --- today's row shape, kept VERBATIM (name + default) ---
+    # `context` is TRANSITIONAL (the authoritative copy is `State.context`).
     :context,
     :context_node,
+    # `phylo_node` is TRANSITIONAL (derived; not summary information).
     :phylo_node,
     :llm_model,
     :max_retries,
@@ -64,14 +92,25 @@ defmodule EvoGit.AgentScheduler.AgentState do
     usage: nil,
     compression_count: 0,
     total_tokens: 0,
+    # `llm_generation_params` is TRANSITIONAL (conversation data, not summary).
     llm_generation_params: [],
     llm_context_window: 200_000,
     repo_id: "primary",
     repo_root: nil,
     foreign_repos: [],
     repo_notes: nil,
+    # `pending_user_messages` is TRANSITIONAL (replaced by `State.pending_inputs`).
     pending_user_messages: [],
-    cancel_requested: nil
+    # `cancel_requested` is TRANSITIONAL (replaced by `State.cancel`).
+    cancel_requested: nil,
+    # --- summary-row fields owned by the projection ---------------------------
+    status: nil,
+    mode: :oneshot,
+    objective_preview: nil,
+    message_count: 0,
+    context_window: nil,
+    current_commit: nil,
+    last_activity_at: nil
   ]
 
   @type t :: %__MODULE__{
@@ -101,6 +140,13 @@ defmodule EvoGit.AgentScheduler.AgentState do
           foreign_repos: [ForeignRepo.t()],
           repo_notes: String.t() | nil,
           pending_user_messages: [String.t() | Attachments.message()],
-          cancel_requested: boolean() | nil
+          cancel_requested: boolean() | nil,
+          status: atom() | nil,
+          mode: :oneshot | :interactive,
+          objective_preview: String.t() | nil,
+          message_count: non_neg_integer(),
+          context_window: pos_integer() | nil,
+          current_commit: String.t() | nil,
+          last_activity_at: DateTime.t() | nil
         }
 end
