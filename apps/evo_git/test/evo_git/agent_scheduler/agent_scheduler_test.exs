@@ -221,15 +221,15 @@ defmodule EvoGit.AgentSchedulerTest do
 
     assert [agent_id] = new_ids
     assert {:ok, meta} = Store.get_sched_meta(agent_id)
+    session_pid = meta.session_pid
     assert meta.status == :running
     assert meta.worktree == worktree_path
-    assert is_pid(meta.session_pid)
+    assert is_pid(session_pid)
     # The ROW keeps the dispatch-time `:starting`; the authoritative live phase
     # is the session's own — `:running` while its exchange is parked.
     assert meta.phase == :starting
     assert [{session_pid, _}] = Registry.lookup(EvoGit.Agent.Session.Registry, agent_id)
-    assert session_pid == meta.session_pid
-    assert {:ok, %{phase: :running}} = EvoGit.Agent.Session.inspect(meta.session_pid)
+    assert {:ok, %{phase: :running}} = EvoGit.Agent.Session.inspect(session_pid)
     # Still in flight: dispatch replied `:noreply` and only the session's ONE
     # terminal result unblocks the caller.
     refute Task.yield(caller, 0)
@@ -247,6 +247,12 @@ defmodule EvoGit.AgentSchedulerTest do
     )
 
     assert Registry.lookup(EvoGit.Agent.Session.Registry, agent_id) == []
+
+    # The session process is DEAD once its ETS rows are recycled. (The
+    # `result_sent: true` half of this invariant is pinned deterministically by
+    # lifecycle_test.exs's `handle_session_result/3` describe: the e2e row is
+    # recycled before it can be observed.)
+    refute Process.alive?(session_pid)
   end
 
   test "update_config reconciles the LLM pool without crashing" do
