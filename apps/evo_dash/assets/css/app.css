@@ -2721,6 +2721,61 @@ details.capsule-sub[open] > .capsule-list {
   pointer-events: none;
 }
 
+/* === Auto-scrolled transcripts (AgentHistoryAutoScroll hook) === */
+/* The two panels this hook drives: `/help` `#chat-messages` and the /agents
+   "Chat History / Session Memory" panel (`.agent-history-scroll`).
+   `overflow-anchor: none` disables browser scroll anchoring — the hook owns the
+   scroll position (an INSTANT stick-to-bottom while pinned), and anchoring
+   would otherwise re-adjust scrollTop after every content mutation. That fight
+   between the two is what reads as shaking while a streamed answer grows.
+   `min-height: 0` keeps the panel a properly shrinkable flex child, so a tall
+   transcript scrolls INSIDE it instead of pushing the composer/rail down and
+   making the page itself scroll (the nested-scroll bounce).
+   `overscroll-behavior: contain` stops scroll chaining at either end.
+   `scroll-behavior: auto` is load-bearing: the document sets
+   `html { scroll-behavior: smooth }` (not inherited today), and a smooth
+   behavior on THESE elements would animate every `scrollTop = scrollHeight`
+   assignment — exactly the perpetual-animation shaking the hook removes. */
+#chat-messages,
+.agent-history-scroll {
+  min-height: 0;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  scroll-behavior: auto;
+}
+/* === Modal dialogs (`<dialog class="modal">`) === */
+/* DaisyUI's `.modal` (fixed grid, `[open]` scrim, entrance transition) and
+   `.modal-box` (centered card, theme tokens) already cover the look in BOTH
+   themes; a native <dialog class="modal"> opened with showModal() (DialogModal
+   hook) is already in the browser's top layer, so DaisyUI's
+   `::backdrop { display: none }` is what applies. These rules only fill the
+   gaps an approval dialog needs — every selector is scoped to `dialog`, so the
+   older `<div class="modal modal-open">` dialogs are untouched. Do NOT grow a
+   second modal system here. */
+dialog.modal .modal-box {
+  /* Keep the action row reachable on short viewports (DaisyUI caps at 100vh);
+     the box itself scrolls when the content is taller. */
+  max-height: 100vh;
+  max-height: min(90dvh, 48rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* Code shown for approval must stay readable verbatim: `pre` scrolls
+   horizontally instead of forcing the box wider than the viewport, while
+   inline code wraps. */
+dialog.modal .modal-box pre {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+dialog.modal .modal-box :not(pre) > code {
+  overflow-wrap: anywhere;
+}
+@media (prefers-reduced-motion: reduce) {
+  dialog.modal,
+  dialog.modal .modal-box {
+    transition: none;
+  }
+}
 /* === Help Chat Page (GET /help) === */
 /* No DaisyUI control styles: keep the composer quiet beside the borderless
    reading column. Focus uses the standalone accent (outline role). */

@@ -613,18 +613,80 @@ const StatePersistence = {
   }
 };
 
-// BrowserNotifications hook: shows browser notifications when tasks complete
+// BrowserNotifications hook: native OS notifications for terminal tasks and
+// pending Assistant approvals.
+//
+// Payload contract (server → client, `push_event(socket, "task_notification", …)`):
+//   %{title: String.t(), body: String.t(), tag?: String.t()}
+// `title` and `body` are required; `tag` is OPTIONAL and only used for dedupe
+// (a repeating approval replaces its previous notification instead of stacking
+// another one). The SAME event serves the existing terminal-task notifications
+// (no tag) and the Assistant approval notifications (tag = approval identity).
+//
+// Rules:
+//   * permission is requested ONCE on mount — never throws when the API is
+//     absent (desktop WebView, headless server, plain HTTP origins);
+//   * a notification is shown ONLY while the user cannot see the page
+//     (document hidden OR window unfocused) — someone looking at the dashboard
+//     is never notified about it;
+//   * clicking a notification focuses the window and closes it;
+//   * anything unsupported/denied is a silent no-op (no console noise).
 const BrowserNotifications = {
   mounted() {
-    this._permission = Notification.permission;
-    if (this._permission === "default") {
-      Notification.requestPermission().then(perm => { this._permission = perm; });
-    }
-    this.handleEvent("task_notification", ({title, body}) => {
-      if (this._permission === "granted") {
-        new Notification(title, {body: body, icon: "/favicon.ico"});
+    this._supported = typeof Notification === "function";
+    this._permission = this._supported ? Notification.permission : "denied";
+
+    if (this._supported && this._permission === "default") {
+      // Some embedded webviews expose Notification but not requestPermission,
+      // and others reject the promise: either way notifications just stay off.
+      try {
+        const result = Notification.requestPermission();
+        if (result && typeof result.then === "function") {
+          result.then(perm => { this._permission = perm; }).catch(() => {});
+        }
+      } catch (e) {
+        this._permission = "denied";
       }
-    });
+    }
+
+    this.handleEvent("task_notification", payload => this._notify(payload));
+  },
+
+  // Only notify when the page is not being looked at.
+  _shouldNotify() {
+    if (!this._supported || this._permission !== "granted") return false;
+    const hidden = typeof document.hidden === "boolean"
+      ? document.hidden
+      : document.visibilityState === "hidden";
+    if (hidden) return true;
+    // No focus API → assume the user is looking (never spam).
+    return typeof document.hasFocus === "function" ? !document.hasFocus() : false;
+  },
+
+  _notify(payload) {
+    if (!this._shouldNotify()) return;
+    const {title, body, tag} = payload || {};
+    if (!title) return;
+
+    const options = {body: body || "", icon: "/favicon.ico"};
+    if (tag) {
+      options.tag = tag;
+      // renotify is only meaningful with a tag; browsers without support ignore it.
+      options.renotify = true;
+    }
+
+    let notification;
+    try {
+      notification = new Notification(title, options);
+    } catch (e) {
+      // Some webviews expose the constructor but refuse to instantiate it.
+      return;
+    }
+
+    notification.onclick = () => {
+      try { window.focus(); } catch (e) {}
+      try { notification.close(); } catch (e) {}
+    };
   }
 };
 
@@ -731,101 +793,194 @@ const AutoClearFlash = {
   }
 };
 
-// AgentHistoryAutoScroll hook: auto-scrolls chat history when user is at the bottom.
+// --- AgentHistoryAutoScroll: pure pinning decision (unit-tested) ------------
 //
-// Uses requestAnimationFrame to wait for browser layout before reading scrollHeight,
-// and a custom rAF-based ease-out scroll animation instead of native smooth scrolling.
-// Native smooth scroll is interrupted when scrollTo is called again mid-animation,
-// causing stutter when messages arrive rapidly. The custom animation restarts cleanly
-// from the current position to the latest target on every update.
+// "Pinned" = the user is reading the latest content, i.e. the scroller is
+// within `thresholdPx` of the bottom. The slack absorbs sub-pixel/zoom
+// rounding and a last line that is only partly visible, so a reader sitting at
+// the bottom is never wrongly unpinned. Guidance: 48-64 px — generous enough
+// that a one-line accidental scroll does not fight the hook, small enough that
+// a deliberate scroll into history stays put.
+const STICK_TO_BOTTOM_THRESHOLD_PX = 56;
+
+function shouldFollowLatest(scrollTop, scrollHeight, clientHeight, thresholdPx) {
+  const threshold = typeof thresholdPx === "number"
+    ? thresholdPx
+    : STICK_TO_BOTTOM_THRESHOLD_PX;
+
+  // Unmeasurable geometry (detached or display:none element) keeps following:
+  // a no-op scroll assignment is harmless, a lost pin is not.
+  if (!Number.isFinite(scrollTop) || !Number.isFinite(scrollHeight) ||
+      !Number.isFinite(clientHeight)) {
+    return true;
+  }
+
+  // Content that fits needs no scrolling; a negative distance (overscroll /
+  // rubber-banding) is at the bottom too.
+  return scrollHeight - clientHeight - scrollTop <= threshold;
+}
+
+// AgentHistoryAutoScroll hook: deterministic stick-to-bottom for a transcript
+// scroller (`#chat-messages` on /help, `#agent-history-<id>` on /agents).
 //
-// A `_isAnimating` flag suppresses the scroll listener while the programmatic
-// animation runs. Each frame writes `el.scrollTop`, which fires a `scroll` event;
-// mid-animation we're still partway down, so that event would otherwise flip
-// `isAtBottom` to false and make the next message skip scrolling — getting stuck.
-// Once the animation completes we re-affirm `isAtBottom = true`.
+// NO ANIMATION. The earlier implementation animated `scrollTop` with a custom
+// 200 ms ease-out curve and restarted that animation on every LiveView update.
+// Streaming deltas land roughly every 75 ms and the stream→finalized Markdown
+// swap changes the content height abruptly at the end of a turn, so the
+// scroller was perpetually cancelled and restarted mid-flight: it chased a
+// moving target, never settled, and visibly shook. This implementation owns a
+// single coalesced requestAnimationFrame that assigns `scrollTop =
+// scrollHeight` (instant) — the position is always the truth of the last
+// frame, never a trajectory.
+//
+// Pinning model:
+//   * `pinned` (initially true) is `shouldFollowLatest/4` of live geometry;
+//   * only USER input re-evaluates it (scroll, wheel, touch, keydown). A
+//     programmatic assignment also fires `scroll`, but by the time that event
+//     is dispatched the write has already landed at the bottom, so the
+//     recomputed distance is ~0 and the pin survives — no suppression flag,
+//     no timestamp window;
+//   * while pinned, content growth schedules ONE coalesced rAF stick; while
+//     unpinned the hook early-returns and both observers are disconnected, so
+//     reading history costs no observer work.
+//
+// Late layout changes (Markdown render, images, a `<details>` opening inside a
+// message) arrive after the patch, so a ResizeObserver on the scroller and its
+// direct children re-pins and follows. Child-list mutations (LiveView morphs
+// replacing children) re-sync the observed set through a MutationObserver.
+// Every listener and observer is released in destroyed().
 const AgentHistoryAutoScroll = {
   mounted() {
-    this.isAtBottom = true;
-    this._scheduleRAF = null;
-    this._animRAF = null;
-    this._isAnimating = false;
+    this.pinned = true;
+    this._frame = null;
+    this._intentFrame = null;
+    this._resizeObserver = null;
+    this._mutationObserver = null;
+    this._observed = new Set();
 
-    // Scroll to bottom after initial layout completes
-    requestAnimationFrame(() => {
-      this.el.scrollTop = this.el.scrollHeight;
-    });
+    this._onScroll = () => this._recomputePinned();
+    this._onUserIntent = () => this._schedulePinnedRecompute();
 
-    // Track whether user has scrolled away from bottom
-    this.el.addEventListener("scroll", () => {
-      if (this._isAnimating) return;  // ignore scroll events from our own animation
-      this.isAtBottom =
-        this.el.scrollTop + this.el.clientHeight >= this.el.scrollHeight - 30;
-    }, { passive: true });
+    this.el.addEventListener("scroll", this._onScroll, {passive: true});
+    this.el.addEventListener("wheel", this._onUserIntent, {passive: true});
+    this.el.addEventListener("touchmove", this._onUserIntent, {passive: true});
+    this.el.addEventListener("keydown", this._onUserIntent);
+
+    this._connectObservers();
+    this._scheduleStick();
   },
 
   updated() {
-    if (!this.isAtBottom) return;
-
-    // Coalesce rapid same-frame updates: cancel any pending rAF and schedule
-    // a fresh one. Only the last update in a burst triggers a scroll, and
-    // it reads scrollHeight AFTER all DOM mutations from that burst are laid out.
-    if (this._scheduleRAF !== null) {
-      cancelAnimationFrame(this._scheduleRAF);
-    }
-    this._scheduleRAF = requestAnimationFrame(() => {
-      this._scheduleRAF = null;
-      this._smoothScrollTo(this.el.scrollHeight);
-    });
+    this._scheduleStick();
   },
 
-  // Custom smooth scroll using requestAnimationFrame + scrollTop.
-  // Uses a short easeOutCubic curve (200ms). When called mid-animation
-  // (rapid message arrivals), it cancels the current animation and restarts
-  // from wherever we are to the new target — no jump, no stuck mid-way.
-  _smoothScrollTo(target) {
-    if (this._animRAF !== null) {
-      cancelAnimationFrame(this._animRAF);
-      this._animRAF = null;
-    }
-
-    this._isAnimating = true;
-
-    const start = this.el.scrollTop;
-    const distance = target - start;
-    if (Math.abs(distance) < 1) {
-      this._isAnimating = false;
-      return;
-    }
-
-    const duration = 200; // ms — short enough to keep up with streaming, long enough to feel smooth
-    const startTime = performance.now();
-
-    const animate = (now) => {
-      const elapsed = now - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      // easeOutCubic
-      const eased = 1 - Math.pow(1 - progress, 3);
-      this.el.scrollTop = start + distance * eased;
-
-      if (progress < 1) {
-        this._animRAF = requestAnimationFrame(animate);
-      } else {
-        this._animRAF = null;
-        this._isAnimating = false;
-        this.isAtBottom = true;
-      }
-    };
-
-    this._animRAF = requestAnimationFrame(animate);
+  reconnected() {
+    // A reconnect may have replaced DOM children mid-flight; re-derive the pin
+    // from the live position and re-attach the observations.
+    this._recomputePinned();
+    this._scheduleStick();
   },
 
   destroyed() {
-    if (this._scheduleRAF !== null) {
-      cancelAnimationFrame(this._scheduleRAF);
+    if (this._frame !== null) cancelAnimationFrame(this._frame);
+    if (this._intentFrame !== null) cancelAnimationFrame(this._intentFrame);
+    this._frame = null;
+    this._intentFrame = null;
+
+    this.el.removeEventListener("scroll", this._onScroll);
+    this.el.removeEventListener("wheel", this._onUserIntent);
+    this.el.removeEventListener("touchmove", this._onUserIntent);
+    this.el.removeEventListener("keydown", this._onUserIntent);
+
+    this._disconnectObservers();
+    this._resizeObserver = null;
+    this._mutationObserver = null;
+  },
+
+  _recomputePinned() {
+    this._setPinned(shouldFollowLatest(
+      this.el.scrollTop,
+      this.el.scrollHeight,
+      this.el.clientHeight,
+      STICK_TO_BOTTOM_THRESHOLD_PX
+    ));
+  },
+
+  // User intent events land BEFORE the scroll they cause; evaluate on the next
+  // frame (coalesced) so the geometry already reflects the movement.
+  _schedulePinnedRecompute() {
+    if (this._intentFrame !== null) return;
+    this._intentFrame = requestAnimationFrame(() => {
+      this._intentFrame = null;
+      this._recomputePinned();
+    });
+  },
+
+  _setPinned(next) {
+    if (next === this.pinned) return;
+    this.pinned = next;
+
+    if (next) {
+      this._connectObservers();
+      this._scheduleStick();
+    } else {
+      this._disconnectObservers();
+      if (this._frame !== null) {
+        cancelAnimationFrame(this._frame);
+        this._frame = null;
+      }
     }
-    if (this._animRAF !== null) {
-      cancelAnimationFrame(this._animRAF);
+  },
+
+  _scheduleStick() {
+    if (!this.pinned) return;
+    if (this._frame !== null) return;  // coalesce: at most one stick per frame
+    this._frame = requestAnimationFrame(() => {
+      this._frame = null;
+      if (!this.pinned) return;
+      // Assigning scrollHeight clamps to the real maximum, so a fractional
+      // device-pixel height cannot leave the scroller a hair short.
+      this.el.scrollTop = this.el.scrollHeight;
+    });
+  },
+
+  _connectObservers() {
+    if (typeof ResizeObserver === "undefined") return;  // no late-layout following
+    if (this._resizeObserver === null) {
+      this._resizeObserver = new ResizeObserver(() => this._scheduleStick());
+    }
+    if (this._mutationObserver === null && typeof MutationObserver !== "undefined") {
+      this._mutationObserver = new MutationObserver(() => {
+        this._syncObserved();
+        this._scheduleStick();
+      });
+    }
+    this._syncObserved();
+    // Re-observing the same node with the same options is idempotent.
+    if (this._mutationObserver !== null) {
+      this._mutationObserver.observe(this.el, {childList: true});
+    }
+  },
+
+  _syncObserved() {
+    if (this._resizeObserver === null) return;
+    const targets = new Set([this.el, ...this.el.children]);
+    for (const target of this._observed) {
+      if (!targets.has(target)) this._resizeObserver.unobserve(target);
+    }
+    for (const target of targets) {
+      if (!this._observed.has(target)) this._resizeObserver.observe(target);
+    }
+    this._observed = targets;
+  },
+
+  _disconnectObservers() {
+    if (this._resizeObserver !== null) {
+      this._resizeObserver.disconnect();
+      this._observed = new Set();
+    }
+    if (this._mutationObserver !== null) {
+      this._mutationObserver.disconnect();
     }
   }
 };
@@ -1165,20 +1320,61 @@ const Guide = {
 // browser's top layer, immune to parent CSS containing blocks (backdrop-filter,
 // transform, etc.). Pushes "dialog_closed" when the dialog is dismissed via ESC
 // or backdrop click so the server can sync state.
+//
+// Contract:
+//   * open with showModal() only when the element is not already open (a plain
+//     showModal() on an open dialog throws InvalidStateError) and only when the
+//     API exists (older/embedded engines may not implement it);
+//   * a user dismissal fires ONE "close" event — a per-instance latch keeps the
+//     push to exactly one "dialog_closed" even if the event repeats;
+//   * destroyed() removes the listener BEFORE closing, so the server unmounting
+//     an open dialog (which must release the top layer) reports nothing;
+//   * updated() re-asserts the modal state after a LiveView patch, because
+//     morphdom can strip the `open` attribute the browser set — but never after
+//     the user dismissed it (the server owns the reopen by re-mounting);
+//   * a server that KEEPS the same dialog element mounted can reopen it with
+//     `push_event(socket, "dialog_open", %{})`, which clears the dismissal latch.
 const DialogModal = {
   mounted() {
-    this.el.showModal();
-    this._onClose = () => this.pushEvent("dialog_closed", {});
+    this._closed = false;
+    this._openModal();
+
+    this._onClose = () => {
+      if (this._closed) return;
+      this._closed = true;
+      this.pushEvent("dialog_closed", {});
+    };
     this.el.addEventListener("close", this._onClose);
+
+    this.handleEvent("dialog_open", () => {
+      this._closed = false;
+      this._openModal();
+    });
   },
+
+  updated() {
+    if (!this._closed) this._openModal();
+  },
+
   destroyed() {
     if (this._onClose) {
       this.el.removeEventListener("close", this._onClose);
+      this._onClose = null;
     }
     // If the dialog is still open when destroyed (e.g., server toggle while
-    // modal is showing), close it so the top layer is released.
-    if (this.el.open) {
+    // modal is showing), close it so the top layer is released. The listener is
+    // already gone, so this teardown is never reported as a user dismissal.
+    if (this.el.open && typeof this.el.close === "function") {
       this.el.close();
+    }
+  },
+
+  _openModal() {
+    if (typeof this.el.showModal !== "function" || this.el.open) return;
+    try {
+      this.el.showModal();
+    } catch (e) {
+      // Already promoted to the top layer by another path — nothing to do.
     }
   }
 };
