@@ -375,6 +375,115 @@ defmodule EvoDash.NodeContext do
     EvoGit.RemoteNode.send_agent_message(node, agent_id, message)
   end
 
+  # ── Interactive sessions ─────────────────────────────────────────
+  #
+  # Plain forwards to `EvoGit.RemoteNode` (direct call when local, `:erpc` when
+  # remote). Results pass through VERBATIM: the session's own
+  # `{:error, {:session, reason}}` and a transport failure
+  # `{:error, {kind, reason}}` are both the node's real answer.
+
+  @doc """
+  Starts an INTERACTIVE agent session on the given node.
+
+  Delegates to `EvoGit.RemoteNode.start_session/2`. `spec_or_opts` is an
+  `%EvoGit.AgentSpec{}` or keyword opts from
+  `EvoGit.AgentScheduler.SessionOpts.build/1` (`:agent_module` and `:objective`
+  required; `:path`, `:repo_less`, `:node_path`, `:task_id`, `:model_spec`,
+  `:model_id`, `:archive`, `:attachments`, `:quality_level`, `:notify` and
+  `:session_mode` optional).
+
+  Returns `{:ok, agent_id}` with NO blocking — the handle for
+  `send_session_message/4`, `close_session/3`, `await_close/3` and
+  `list_awaiting_input/1` — or the node's own
+  `{:error, {:start_session_failed, reason}}` / the RPC failure
+  `{:error, {kind, reason}}`, unchanged.
+  """
+  @spec start_session(node(), EvoGit.AgentSpec.t() | keyword()) ::
+          {:ok, pos_integer()} | {:error, term()}
+  def start_session(node, spec_or_opts) do
+    EvoGit.RemoteNode.start_session(node, spec_or_opts)
+  end
+
+  @doc """
+  Sends a user message to an interactive session on the given node.
+
+  Delegates to `EvoGit.RemoteNode.send_session_message/4`. `message` is a
+  binary or an `EvoGit.Attachments.message/0` map
+  (`%{text: binary, attachments: [map]}`); `policy` is `:queue` (default) or
+  `:interrupt`.
+
+  Returns `:ok`, the session's own `{:error, {:session, reason}}` (e.g.
+  `:not_found`, `:finished`, `{:bad_state, phase}`), or the RPC failure
+  `{:error, {kind, reason}}` — never wrapped further.
+  """
+  @spec send_session_message(
+          node(),
+          pos_integer() | pid(),
+          String.t() | EvoGit.Attachments.message(),
+          :queue | :interrupt
+        ) :: :ok | {:error, term()}
+  def send_session_message(node, agent_id, message, policy \\ :queue) do
+    EvoGit.RemoteNode.send_session_message(node, agent_id, message, policy)
+  end
+
+  @doc """
+  Closes an interactive session on the given node.
+
+  Delegates to `EvoGit.RemoteNode.close_session/3`. Closing is the ONLY
+  non-cancellation way out of `:awaiting_input`: completion bookkeeping runs
+  once, the session stops and its worktree is released. `reason` defaults to
+  `:normal` (every mode currently means the same graceful close).
+
+  Returns `:ok`, the session's own `{:error, {:session, reason}}` (e.g.
+  `{:bad_state, phase}` for a running/cancelling session — cancel it first),
+  or the RPC failure `{:error, {kind, reason}}`.
+  """
+  @spec close_session(node(), pos_integer() | pid(), term()) :: :ok | {:error, term()}
+  def close_session(node, agent_id, reason \\ :normal) do
+    EvoGit.RemoteNode.close_session(node, agent_id, reason)
+  end
+
+  @doc """
+  Blocks until the interactive session for `agent_id` reaches its terminal
+  outcome on the given node.
+
+  Delegates to `EvoGit.RemoteNode.await_close/3` and returns the outcome
+  verbatim: `{:ok, %EvoGit.Agent.Result{}}`, or the node's own `{:error, reason}`
+  (`:not_found`, `:timeout` — budget expired, session still running —
+  `:cancelled`, `{:session_crashed, reason}`), or the RPC failure
+  `{:error, {kind, reason}}`.
+
+  `timeout` (ms, default 30 000) bounds the WAIT only; over RPC the `:erpc`
+  call-time `:remote_rpc_timeout` (30 s default) bounds the WHOLE call, so long
+  human-driven waits are a LOCAL-core-API operation.
+  """
+  @spec await_close(node(), pos_integer(), timeout()) ::
+          {:ok, EvoGit.Agent.Result.t()} | {:error, term()}
+  def await_close(node, agent_id, timeout \\ 30_000) do
+    EvoGit.RemoteNode.await_close(node, agent_id, timeout)
+  end
+
+  @doc """
+  Lists the agents on the given node currently parked at `:awaiting_input`.
+
+  Delegates to `EvoGit.RemoteNode.list_awaiting_input/1`. Each entry is
+  `%{agent_id, task_id, session_pid, task_number, mode}` (shape owned by the
+  core scheduler); idle sessions are live but NOT busy — no worker, no slot
+  until the next message.
+
+  Degrades to `[]` when the answer is not a list (the local node already answers
+  `[]` for a dead scheduler, and a remote transport failure is collapsed the
+  same way, like the other list helpers here) — so `[]` means "nothing idle" OR
+  "the node could not be asked".
+  """
+  @spec list_awaiting_input(node()) :: [map()]
+  def list_awaiting_input(node) do
+    case EvoGit.RemoteNode.list_awaiting_input(node) do
+      list when is_list(list) -> list
+      _other -> []
+    end
+  end
+
   @doc """
   Restarts the remote node's BEAM VM via RPC.
 
