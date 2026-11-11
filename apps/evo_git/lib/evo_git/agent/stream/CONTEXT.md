@@ -1,0 +1,53 @@
+# EvoGit Agent Streaming
+
+## Intent
+Push-only delta streaming for a live agent, plus bounded one-shot inspection: no replay buffer, no cursor, no polling loop.
+`EvoGit.PubSub` topic `"agent:<agent_id>"` (`EvoGit.Agent.Stream.topic/1`) carries `{:agent_delta, agent_id, seq, events}`, and `events` is ALWAYS a list.
+The gate lives in the session: `EvoGit.Agent.Session.watching?/2` is `EvoGit.Agent.Stream.Watchers.watching?(watchers)` (`map_size(watchers) > 0`), evaluated at EACH LLM attempt start via `EvoGit.Agent.Stream.Sink.stream_opts/0`, so a watcher attaching mid-exchange starts receiving from the next attempt/turn.
+Zero watchers ⇒ no stream callbacks (`process_stream/2` gets `[]`, byte-identical to the one-argument call) and no broadcast.
+A consumer that fell behind, reconnected or lost a delta resyncs with a fresh `snapshot/1` and drops stale deltas via `stale?/2`; nothing is ever replayed.
+
+## API Surface
+
+| Function | Contract |
+|---|---|
+| `topic/1` | `"agent:<agent_id>"`. |
+| `watch(agent_id_or_pid)` | Subscribes the CALLING process FIRST, then registers it as a watcher and returns `{:ok, %Snapshot{}, seq}`; unsubscribes again and returns the error if registration fails. The ordering is load-bearing: a delta in the gap is either covered by the snapshot (`seq <= snapshot.seq`) or newer and delivered normally. |
+| `register_watcher(target, consumer_pid)` | RPC-facing: registers an ARBITRARY pid (a local pid or a remote external pid, since `Process.monitor/1` delivers the `:DOWN` locally) with NO subscription. |
+| `unregister_watcher/2` | Removes a watcher; idempotent `:ok`. |
+| `unwatch/1` | Unregisters the calling pid and `Phoenix.PubSub.unsubscribe/2`s it; idempotent and total (`:ok` even when the session or the watcher entry is already gone). |
+| `snapshot/1` | `{:ok, %Stream.Snapshot{}, seq}` — the ONLY resync path, a bounded one-shot read, never a poll loop. |
+| `stale?/2` | `seq <= snapshot_seq` ⇒ drop; a non-integer pair is stale as well (fails closed). |
+| `normalize_batch/1` | `nil` → `[]`, a list → itself, a single event → `[it]`. |
+| errors | Only `{:error, {:not_found, reason}}` and `{:error, {:bad_state, phase}}`; every function is TOTAL (never raises or exits); `@call_timeout` 5_000 ms. |
+
+`%Stream.Snapshot{}` fields: `agent_id`, `phase`, `seq`, `turn`, `total_tokens`, `usage`, `messages` (the transcript), `mode`, `model_spec`, `compression_count`.
+It is plain data (JSON-clean) and never carries the `%ReqLLM.Context{}`.
+
+**`Sink`** (process-local, default-inert): pd keys `:evogit_stream_session` / `:evogit_stream_agent_id`; `install/2` + `uninstall/0` are called by `Session.Worker.run/3` (install after `Setup.install_process_context/3`, uninstall as the FIRST statement of the worker's existing `try/after`); `stream_opts/0` → `[]` when not installed OR the gate is closed, else `[on_result: …, on_thinking: …, on_tool_call: …, on_chunk: <interrupt check>]`; `emit/1` → `send(session, {:delta, events})` when installed, `:ok` no-op otherwise, never raises; `interrupt_requested?/0` (non-blocking `receive {:evogit_interrupt, _ref}` with an `after 0`, message consumed) and `clear_interrupt/0`.
+
+**Delta wire vocabulary** (exactly): `{:text, binary}` | `{:thinking, binary}` | `{:tool_call, id, name}` | `{:tool_result, id, status}` (`status` ∈ `:ok | :error | :timeout`) | `{:turn, %{usage: %Usage{}, duration_ms: integer | nil, turn: integer, total_tokens: integer}}` | `{:yield, text}` | `{:finished, :completed | :failed}`.
+
+**Emission sites**
+- `LLMPrompting.run_llm_attempt/4` wires the real `ReqLLM.StreamResponse.process_stream/2` callbacks: `on_result` → `{:text, chunk}`, `on_thinking` → `{:thinking, chunk}`, `on_tool_call` → `{:tool_call, nil, name}` (a stream chunk carries NO tool-call id; ReqLLM reconstructs ids from the accumulated response).
+- `ToolDispatch.process_llm_response/7` emits the id-bearing `{:tool_call, id, name}` list in the model's call order.
+- `ToolDispatch.process_regular_tool_calls/4` emits one `{:tool_result, id, status}` per call in the same order via the total `tool_result_status/1`: a `%ToolOutput{}` is `:ok`, a text containing `"timed out"` is `:timeout` (checked BEFORE the `"Error:"` prefix arm), an `"Error:"`-prefixed text is `:error`, else `:ok`.
+- `ToolDispatch` also emits the ONE `{:turn, …}` per turn (per-TURN usage, never the cumulative one; `duration_ms` is the LLM attempt duration written by `LLMPrompting` to pd `:evogit_llm_attempt_duration_ms` and deleted on read) and `{:yield, text}` before a yield outcome.
+- `Exchange.run/2` emits `{:finished, :completed}` on `{:finish, …}` and `{:finished, :failed}` on `{:error, …}`; a `:yield` deliberately emits NO `{:finished, _}` (it is terminal for the exchange only).
+
+## Watchers, Seq & Batching
+The SESSION owns `state.watchers` (`%{pid() => reference()}`) and `state.event_seq`.
+`{:watch, pid}` monitors the consumer and stores `watchers[pid] = ref`; a `:DOWN` removes a WATCHER ref (matched via `Watchers.watcher_ref?/3` BEFORE the worker/finalizer `:DOWN` arms).
+Re-registering demonitors the old ref; `unregister_ref/3` removes an entry only when the stored ref is the one that went down, so a stale `:DOWN` can never evict a live re-registration.
+`event_seq` increments by EXACTLY one per flush that actually broadcasts, and `Watchers.flush/4` is the ONLY broadcast site; a flush with zero watchers drops the accumulated events with NO seq bump.
+`publish_checkpoint/2` re-stamps the session's `event_seq` and `watchers` onto the worker's state copy (`adopt_state/2`), so a checkpoint can never roll them back; `watchers` is SESSION-LOCAL transport bookkeeping, never part of a durable snapshot.
+Worker `{:delta, events}` info messages accumulate in a session-owned `%Stream.Batcher{}` (`stream/batcher.ex`, pure data) and flush coalesced after `Stream.Batcher.flush_interval_ms/0` = 75 ms.
+An immediate flush happens on `{:exchange_finished, …}`, before any transition out of `:running`/`:cancelling`, in `finalize/1`, before a force-cancel stop, and in `terminate/3` (best-effort, must never raise).
+`:awaiting_input`/`:finalizing`/`:done` hold NO flush timer (idle contract: an idle session has no timers).
+
+## Constraints
+Gap repair is always a fresh `snapshot/1` + `stale?/2`, never a replay.
+`:interrupt` requires an installed stream callback to pre-empt the in-flight turn: with zero watchers there are no callbacks, so it degrades to next-turn-boundary semantics — the message is still delivered exactly once through the pending-message transport and is never lost.
+The streaming gate is the session's own watcher count, which no `Registry` or `Phoenix.PubSub` can answer.
+The watcher set is session DATA monitored per consumer, never ETS, never a bookkeeping process.
+Broadcasts are total: an unavailable or restarted `EvoGit.PubSub` degrades to a dropped batch that a fresh snapshot repairs, never a crashed session.
