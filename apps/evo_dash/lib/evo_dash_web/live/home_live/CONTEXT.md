@@ -107,16 +107,17 @@ The `/help` textarea is NOT `phx-update="ignore"`, so staging a text file simply
 ## Caps
 
 - transcript: at most 200 entries (newest kept), at most 8 000 graphemes of rendered text per entry
-- reasoning: at most 40 reasoning entries per assistant message (per-message, not one global last-turn buffer)
+- reasoning: at most 40 entries per transcript entry (`Transcript` cap on the dormant `:reasoning` field) and the `@thought_process` list is rendered in full (no cap) for the last assistant entry
 - queued echoes: at most 20
 - attachments: 4 files, 15 MiB each raw
 - preamble (one-shot fallback only): last 8 exchanges, 600 chars per entry, 4 000-char total
 
 ## Reasoning retention
 
-Reasoning is attached PER assistant transcript entry (an optional `:reasoning` field on the entry) instead of one global last-turn buffer, so scrolling back shows each turn's own reasoning.
-It is derived from the same `get_agent_history/2` read through the `Messages` funnel and stays total (unreadable shapes yield no reasoning, never a crash).
-`Transcript.put_reasoning/3` updates one entry by id; `ChatState` persists the bounded shape.
+Reasoning is NOT attached per transcript entry today: `Transcript.put_reasoning/3` exists and is unit-tested but has NO production call site, and `AssistantMessage.assistant_message/1` never reads an entry's `:reasoning`.
+The rendered thought process is ONE global `@thought_process` assign — the full `Messages.to_entries/1` list of the last `get_agent_history/2` read, rewritten wholesale by `apply_history/3` and cleared only by `reset_chat/1` — passed ONLY to the LAST assistant entry (`ChatMessages.message_list/1`), so earlier assistant entries render no thought section.
+Entries built by `Transcript.entry/3` do always carry `reasoning: []`, and `Transcript.normalize/1` preserves an existing `:reasoning` key, so the field is dormant scaffolding for a future per-message migration, not a live path.
+`ChatState` persists `thought_process` verbatim and rebuilds it through `normalize_thought_process/1` on restore (`%{turn, timestamp, type, data}`, with `data` kept verbatim).
 
 ## Async contract (message tags + stale guards)
 
@@ -152,6 +153,9 @@ Each is `Application.get_env(:evo_dash, key, default)` read inside the spawned f
 ## Live delta streaming — DEFERRED (documented contract, not consumed)
 
 Live per-chunk deltas are NOT consumed yet: the whole-history read `get_agent_history/2` triggered by the `:agent_updated` `:message_count` event remains the ONLY live transcript path, and `Messages.to_entries/1` → transcript entries → `AssistantMessage` (+ thought process) is the single funnel.
+The funnel has TWO surfaces, not one: the bubble text is a transcript entry (`text` + `streaming`) rendered by `AssistantMessage.assistant_message/1`, while reasoning and tool calls are THOUGHT-PROCESS entries (`%{turn, timestamp, type, data}` with `data` = `%{content, tool_calls, reasoning_details, tool_name, metadata}`) rendered by the private `AssistantMessage.thought_entry/1`; no transcript entry carries tool data.
+Transcript entries are `%{id, role, text, streaming}` plus optional `:reasoning`; `role` is whitelisted to `:user | :assistant | :error` (`Transcript.normalize_role/1` coerces every other value to `:assistant`) and `ChatMessages.message_list/1`'s role `case` has exactly those three clauses, so a new role raises `CaseClauseError` there.
+`Transcript.normalize_entry/1` rebuilds every entry from the known keys only, so a NEW entry field does not survive a `ChatState.restore/1` round-trip unless it is added there.
 Future contract when deltas are wired in:
 - `EvoGit.Agent.Stream.watch/1` → `{:ok, snapshot, seq}` — the snapshot is the ONLY resync.
 - delivery on `EvoGit.PubSub` topic `"agent:<id>"` as message `{:agent_delta, agent_id, seq, batch}`.
