@@ -99,6 +99,9 @@ defmodule EvoGit.Runtime.EvolutionTest do
         end)
 
       assert quiet_error_result(result)
+
+      # `Evolution.run` ensures a fresh path is an initialized repo before failing.
+      assert File.dir?(Path.join(repo_path, ".git"))
     end
   end
 
