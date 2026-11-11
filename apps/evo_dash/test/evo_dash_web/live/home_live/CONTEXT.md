@@ -2,7 +2,7 @@
 
 ## Intent
 
-This directory tests the support modules and assistant component used by the `/help` reading-first chat page.
+This directory tests the support modules and assistant component used by the `GET /assistant` chat page.
 All suites use `async: true` and avoid mounting HomeLive; only the approval runner suite owns the app-env seams documented below.
 ModelSelect config-loading tests use the existing per-process ConfigDir seam and unique files, never process-global environment changes.
 Fixtures resolve the concrete paths through `EvoGit.Config.config_dir/0` and `config_path/0`, because the isolation helper returns the override root rather than the final application directory.
@@ -42,7 +42,7 @@ These tests exercise the public `EvoGit.Config.Schema.provider_profiles/1`, `mod
 ## ApprovalWorkflow Coverage
 
 `approval_workflow_test.exs` contains a shared fixture helper, 21 pure async workflow tests and five async runner tests against `apps/evo_dash/lib/evo_dash_web/live/home_live/approval_workflow.ex`.
-Both suites drive hand-built `%Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, ...}}` sockets without mounting `/help`, touching ChatHistory, invoking a live approval service or evaluating code.
+Both suites drive hand-built `%Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, ...}}` sockets without mounting `/assistant`, touching ChatHistory, invoking a live approval service or evaluating code.
 Ownership is source-node plus task OR string/integer-normalized agent identity; the source is `chat_node || current_node`, never evaluator `target_node`, and only legacy requests may omit the source node stamp.
 Malformed requests, blank ids, unusable refs and pending remote contexts are rejected, including recovery and response attempts that must not fall back to the local service.
 Pure tests pin every captured scope field (chat id, viewed node id/node, chat node, task and agent ids), stale tokens, resets, snapshot replacement and filtering, newer live-arrival precedence, and resolution tombstones for seen and unseen cards.
@@ -63,30 +63,30 @@ Approval recovery counters, pending cards, response tokens and errors are runtim
 
 This node has no child directories.
 ## Mounted Page Suite (owned by `../home_live_test.exs`)
-The mounted `/help` suite is `async: false` and owns the process-global `EvoDash.ChatHistory`, `EvoDash.ActiveTasks`, the isolated `EvoGit.Store`/`TaskRegistry` pair and the per-test `:home_session_*` / `:approval_*` / `:source_*` app-env seams; a new mounted `/help` test belongs there, never in an async module.
+The mounted `/assistant` suite is `async: false` and owns the process-global `EvoDash.ChatHistory`, `EvoDash.ActiveTasks`, the isolated `EvoGit.Store`/`TaskRegistry` pair and the per-test `:home_session_*` / `:approval_responder` / `:approval_pending_runner` / `:source_*` app-env seams, plus the mounted approval strip + modal-dialog flow; a new mounted `/assistant` test belongs there, never in an async module.
 Page-alive/name assertions use `page_heading/1` to pin the `h1` to "Genesis Assistant", not a loose name match that an assistant entry or composer label could satisfy.
 Chat state is SEEDED (`seed_chat_state/2`, `seed_running_chat/1`, synthetic `{:task_updated, …}` events) and terminal paths are driven with `finalize_failed/2` / `insert_task_fixture!` — NOT by submitting `send_message` to start a real `:reflect` task.
 Exactly ONE real-send canonical pin ("starts a reflect task with the right opts") remains: it asserts synchronous `chat_task_id` tracking (non-nil, matching the persisted reflect row) and NO "Failed to start the task" bubble, and it is network-free by construction because the suite setup pushes `model_profiles: []` into the AgentScheduler (`update_config`, restored in `on_exit`), so `run_agent` rejects every spawn synchronously with `{:error, :llm_not_configured}` before registration or HTTP.
 Counterintuitive, verified: a BOGUS `model_id` does NOT fail fast — `Dispatch.resolve_model_for_agent/2` warns and falls back to the FIRST real profile, which would hit the ambient (expired-key) LLM.
 The canonical Assistant launch fixture exposes its config directory to the singleton TaskRegistry through the existing config-dir seam and restores that seam after each test; process-local dictionary fixtures alone cannot reach the singleton.
 `Store.Codec` atomizes the outer canonical `:model_spec` option key while preserving its string-keyed selection map; explicit locks, no legacy override and no repository path remain pinned.
-Also covered are user-bubble classes on both send routes, canonical provider/model/reasoning controls, explicit Auto, ChatHistory remount/new-chat persistence, node-scope isolation, finalized markdown versus mid-stream text, per-message raw toggles and legacy/evaluator approval cards.
+Also covered are user-bubble classes on both send routes, canonical provider/model/reasoning controls, explicit Auto, ChatHistory remount/new-chat persistence, node-scope isolation, finalized markdown versus mid-stream text, per-message raw toggles and the legacy/evaluator approval strip and modal dialog.
 The fused-capsule page contract targets the model capsule's drill-down panel, never the retired provider `<select>`: both capsule roots carry `phx-hook="CapsulePanel"` (`#chat-llm-selection` in the Assistant composer), only the model capsule declares `data-capsule-view="model"`, and its provider rows emit `phx-click="select_provider_profile"` with `phx-value-provider_profile_id` (no `name="provider_profile_id"` field or `phx-change` binding).
 `home_live_render_test.exs` pins the same structure attributes, the provider click contract inside `#chat-form`, `approval_error: nil` for the page's approval-state branch, and the assistant name in the heading, composer accessible label/placeholder and empty-chat disclaimer.
 
 ### Approvals
-Approval page contracts preserve legacy command/args/level cards while distinguishing evaluator write grants from sudo authority, including exact escaped code, the target runtime, one-use permission, and sudo's live-runtime/files/configuration/no-rollback/not-OS-root warnings.
+Approval page contracts render the always-present status strip plus the one-request modal dialog for legacy command/args/level requests and evaluator write grants alike, distinguishing write from sudo authority, including exact escaped code, the target runtime, one-use permission, and sudo's live-runtime/files/configuration/no-rollback/not-OS-root warnings.
 The approval block snapshot-restores `:approval_pending_runner` and `:approval_responder`; restored-chat pending recovery uses an actual list-returning supervised runner and responses stay visible with both controls disabled until asynchronous success.
-Responder failures retain a visible error and retryable card, and absent/resolved/no-longer-owned request ids cannot reach the responder.
+Responder failures retain a visible error and the pending request with retry guidance, and absent/resolved/no-longer-owned request ids cannot reach the responder.
 The source/chat node owns request filtering, pending reads and decisions independently of evaluator `target_node`; source-stamped resolutions from foreign nodes are ignored, while legacy three-element resolution events remain supported.
 Page tests exercise nested Workflow result routing, live-arrival overlays and resolution tombstones during pending recovery, obsolete generations/scopes, and New-chat invalidation of late responses.
-Pure helper and card tests are async without `/help` mounts, whereas these mounted-page approval tests remain in the existing sync suite because they share ChatHistory, the isolated global Store/TaskRegistry pair, scheduler configuration, and approval app-env seams.
+Pure `ApprovalDialog` render tests are async without `/assistant` mounts and live in `test/evo_dash_web/live/approval_dialog_render_test.exs`, whereas these mounted approval strip/dialog flow tests stay in the sync `home_live_test.exs` because they share ChatHistory, the isolated global Store/TaskRegistry pair, scheduler configuration, and the `:approval_responder` / `:approval_pending_runner` app-env seams.
 
 ### Genesis-source gate
 The two `:source_clone_runner` stubs carry NO artificial delay — "Cloning…" is assigned synchronously by `download_source`, so `render_click/1`'s reply already carries the busy markup; completion is polled via `wait_until(source_busy == nil)` / `await_source_available/3`.
 The remote-node negative `refute_receive :availability_runner_called, 50` is backed by construction (`maybe_check_source/1` is the only spawn site, gated on `SourceGate.visible?(current_node)`) plus `assert assigns(view).source_available == nil`.
 
-### Interactive session reattach (`/help?session=<agent_id>`)
+### Interactive session reattach (`/assistant?session=<agent_id>`)
 A reattached session is driven through the call-time `:home_session_attach_runner` (`counting_attach_runner/4` with `:counters` as the drain-proof "exactly one attach" witness) and `:home_session_start_runner` (absent ⇒ no task started).
 The cached chat is seeded with `seed_cached_chat/3` (transcript plus optional `thought_process`); `parked_attach/2` maps `:awaiting_input` to a writable `:idle` page, `running_attach_state/2` keeps `:running`, and `gone_attach/0` is the core's "session no longer known" answer (`summary: nil`, empty history).
 A vanished session with a NON-EMPTY cached conversation keeps that transcript AND its `thought_process` (an empty fetched history never wipes the cache), settles at `chat_status: :ended` and renders read-only: no assistant streaming bubble (`.help-caret` absent), composer disabled, no ended-session empty state, New chat enabled, exactly one attach and no task row.
@@ -94,6 +94,6 @@ A vanished session with an EMPTY cache renders `#chat-session-ended` ("This sess
 A NON-EMPTY fetched history always wins: the cached transcript and reasoning are replaced by the fetched entries.
 
 ### Streaming-delta coverage (current gap)
-No suite in `apps/evo_dash/test` subscribes to `"agent:<id>"` or asserts a `{:agent_delta, agent_id, seq, batch}` message; the mounted `/help` page subscribes only to `"tasks"`, `"agents"` and `"approvals"`, and its live transcript path is the whole-history refetch (`{:chat_history_loaded, node, seq, agent_id, result}`, injected directly by tests or produced by a REAL parked session in the "real live session flows through the real get_agent_history path" and "production-mimicking crash repro" tests).
+No suite in `apps/evo_dash/test` subscribes to `"agent:<id>"` or asserts a `{:agent_delta, agent_id, seq, batch}` message; the mounted `/assistant` page subscribes only to `"tasks"`, `"agents"` and `"approvals"`, and its live transcript path is the whole-history refetch (`{:chat_history_loaded, node, seq, agent_id, result}`, injected directly by tests or produced by a REAL parked session in the "real live session flows through the real get_agent_history path" and "production-mimicking crash repro" tests).
 The core-side push API already exists and is covered elsewhere (`EvoGit.RemoteNode.watch_agent/2`, `unwatch_agent/2`, `watch_snapshot/2`, `EvoGit.Agent.Stream.topic/1`/`stale?/2`, tests under `apps/evo_git/test/evo_git/agent/stream/`), but `EvoDash.NodeContext` exposes no watch verb yet, so a delta test needs that boundary first.
 The mounted history guards currently pinned are only the foreign-node drop and the live `seq`/`agent_id` reads taken at injection time; no test drops a stale-seq or wrong-agent `{:chat_history_loaded, ...}`, and no test exercises the `{:chat_agent_lookup, ...}` stale/node/task_id/non-map branches.

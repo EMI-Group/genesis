@@ -8,10 +8,10 @@ The app-wide Async-Safety Policy, the module census, the mount funnels, the glob
 
 ## Routing Table
 
-- `./live/` → LiveView page suites and the pure unit suites for their support modules (`home_live_test.exs`, `home_live_render_test.exs`, `tasks_live_test.exs`, `system_live_test.exs`, `settings_live*`, `review_live_test.exs`, `projects_live_test.exs`, `agents_live*`, `processes_live_test.exs`, `welcome_*`, `approval_card_render_test.exs`, `platform_info_test.exs`) — `live/CONTEXT.md` (cross-suite mechanics), with per-suite detail pushed down to `live/projects_live/CONTEXT.md`, `live/settings_live/CONTEXT.md`, `live/agents_live/CONTEXT.md` and `live/home_live/CONTEXT.md`
-- `./live/home_live/` → Genesis Assistant support-module unit suites AND the mounted `/help` page-suite contracts (chat seeding, approvals, genesis-source gate, interactive session reattach), including the interactive-session boundary (`session_actions_test.exs`, `session_list_test.exs`, `chat_state_test.exs`, `chat_state_session_fields_test.exs`, `transcript_test.exs`, `messages_test.exs`, `model_select_test.exs`, `approval_workflow_test.exs`, `assistant_message_test.exs`) — `live/home_live/CONTEXT.md`
+- `./live/` → LiveView page suites and the pure unit suites for their support modules (`home_live_test.exs`, `home_live_render_test.exs`, `tasks_live_test.exs`, `system_live_test.exs`, `settings_live*`, `review_live_test.exs`, `projects_live_test.exs`, `agents_live*`, `processes_live_test.exs`, `welcome_*`, `approval_dialog_render_test.exs`, `platform_info_test.exs`) — `live/CONTEXT.md` (cross-suite mechanics), with per-suite detail pushed down to `live/projects_live/CONTEXT.md`, `live/settings_live/CONTEXT.md`, `live/agents_live/CONTEXT.md` and `live/home_live/CONTEXT.md`
+- `./live/home_live/` → Genesis Assistant support-module unit suites AND the mounted `GET /assistant` page-suite contracts (chat seeding, the approval strip + modal dialog, genesis-source gate, interactive session reattach, push-only delta streaming), including the interactive-session boundary (`session_actions_test.exs`, `session_list_test.exs`, `chat_state_test.exs`, `chat_state_session_fields_test.exs`, `transcript_test.exs`, `messages_test.exs`, `model_select_test.exs`, `approval_workflow_test.exs`, `assistant_message_test.exs`) — `live/home_live/CONTEXT.md`
 - `./components/` → function-component render/contract suites (`task_card_components_test.exs` incl. the `:awaiting_input` session panel and the Cancel/Force-kill ranges, `layouts_test.exs` incl. the sidebar "Sessions" group, profile-editor/task-form/LLM-selection suites) — `components/CONTEXT.md`
-- `./controllers/` → error templates, the streamed task-archive export, and the `GET /server/status` operational probe (busy set excludes `:awaiting_input`) — `controllers/CONTEXT.md`
+- `./controllers/` → error templates, the streamed task-archive export, the legacy `GET /help` → `/assistant` 302 alias (raw query string preserved), and the `GET /server/status` operational probe (busy set excludes `:awaiting_input`) — `controllers/CONTEXT.md`
 - `./live_hooks/` → on-mount hook suites (NodeAware sidebar load, Guide, Appearance, DesktopQuit, UpdateStatus) — `live_hooks/CONTEXT.md`
 - `./helpers_test.exs` → status badge/dot/tint, datetime, icons, modals, `truncate_string/2`, `with_node_param/2`
 - `./helpers_blob_preview_test.exs` → `blob_preview/2` and `list_preview/2` render caps
@@ -21,7 +21,7 @@ The app-wide Async-Safety Policy, the module census, the mount funnels, the glob
 
 ## API Surface — interactive-session coverage map
 
-The `/help` page runs ONE long-lived interactive session per conversation (`/help?session=<agent_id>`); `:awaiting_input` is a non-terminal, idle status surfaced across the dashboard.
+The `/assistant` page runs ONE long-lived interactive session per conversation (`/assistant?session=<agent_id>`); `:awaiting_input` is a non-terminal, idle status surfaced across the dashboard.
 Coverage is deliberately split so no suite duplicates another:
 
 | Contract | Where it is pinned |
@@ -47,7 +47,7 @@ Coverage is deliberately split so no suite duplicates another:
 
 - `live/home_live_test.exs` is one large `async: false` module: it owns the process-global `EvoDash.ChatHistory`, `EvoDash.ActiveTasks`, the isolated Store/TaskRegistry pair and the per-test `:home_session_*` / `:approval_*` / `:source_*` app-env seams.
   Its `install_session_seam/2` helper snapshots and restores every seam in `on_exit` — use it instead of writing `Application.put_env/3` ad hoc.
-  A new mounted `/help` test belongs here (never in an async module); the page suite's seeded-state, approval and interactive-session contracts are documented in `live/home_live/CONTEXT.md`.
+  A new mounted `/assistant` test belongs here (never in an async module); the page suite's seeded-state, approval and interactive-session contracts are documented in `live/home_live/CONTEXT.md`.
 - The interactive-session send path is exercised through the call-time seams (`:home_session_start_runner`, `:home_session_send_runner`, `:home_session_close_runner`, `:home_session_attach_runner`, `:home_session_list_runner`), never by stubbing module internals; each is resolved inside the spawned function, so a test must restore it.
 - The page's attach/list results use NESTED self-message tags (`{{:session_attached, seq, node, session_id}, result}`, `{{:session_list_loaded, seq, node}, result}`); the chat history/task reads use FLAT tags (`{:chat_history_loaded, node, seq, agent_id, result}`).
 - `EvoDashWeb.HomeLive.Composer` reads every assign defensively, so the render fixture in `home_live_render_test.exs` must carry only presentation assigns — adding a page-level assign there is not needed.
