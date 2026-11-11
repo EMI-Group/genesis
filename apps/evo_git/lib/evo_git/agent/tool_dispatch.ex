@@ -53,6 +53,7 @@ defmodule EvoGit.Agent.ToolDispatch do
   alias EvoGit.Agent.ConflictState
   alias EvoGit.Agent.Exchange.Seams
   alias EvoGit.Agent.State
+  alias EvoGit.Agent.Stream.Sink
   alias EvoGit.Agent.ToolOutput
   alias EvoGit.Agent.SubagentSchemas
   alias EvoGit.Adapters.Git
@@ -251,6 +252,21 @@ defmodule EvoGit.Agent.ToolDispatch do
       {:error, :protocol_violation} ->
         handle_protocol_violation(state, loop_fn, trigger_recovery_fn)
 
+      {:interrupted, _reason} ->
+        # A requested halt (`:interrupt`) ended this TURN early: no assistant
+        # message is appended, no protocol violation is recorded and no grace
+        # turn is consumed — nothing went wrong. Re-enter the loop so its TOP
+        # drains the queued/injected message and starts the next turn
+        # immediately.
+        #
+        # WHY this lives at the loop boundary: `:interrupt` pre-empts the
+        # in-flight stream only through an INSTALLED stream callback
+        # (`EvoGit.Agent.Stream.Sink`'s per-chunk check). With zero watchers
+        # `Sink.stream_opts/0` is `[]`, no callback runs and no interrupt can be
+        # seen mid-stream — the same message is then drained at the next turn
+        # boundary, which is where the loop re-enters here.
+        loop_fn.(state)
+
       {:error, {:llm_request_rejected, _} = terminal} ->
         # Non-retryable provider rejection (the fail-fast path of
         # `handle_llm_failure/7`): the turn ends with a GRACEFUL terminal error
@@ -437,9 +453,28 @@ defmodule EvoGit.Agent.ToolDispatch do
         completion_text,
         opts
       ) do
-    state = update_turn_usage(state, response)
+    {state, turn_usage} = update_turn_usage(state, response)
     {tool_calls, response} = prepare_tool_calls(response, state.agent_id)
+
+    # Id-bearing `{:tool_call, id, name}` deltas: the stream's own chunk callback
+    # can only report the name (ReqLLM reconstructs call ids from the fully
+    # accumulated response — `EvoGit.Agent.Stream.Sink` moduledoc), so the ids
+    # are emitted here, in the model's call order. One `Sink.emit/1` call with a
+    # list keeps the batch in emission order; it is a no-op when unwatched.
+    Sink.emit(
+      Enum.map(tool_calls, fn call ->
+        {:tool_call, Map.get(call, :id), ReqLLM.ToolCall.name(call)}
+      end)
+    )
+
     state = advance_turn_context(state, response)
+
+    # The ONE per-turn delta site: the turn boundary is reached exactly once per
+    # turn — for a tool-calling turn AND for the completion/yield turn — so the
+    # event is emitted here and NOT from `EvoGit.Agent.Exchange`. It carries THIS
+    # turn's usage (never the cumulative usage the state holds), the turn's
+    # wall-clock LLM duration and the running totals a live view renders.
+    emit_turn_event(turn_usage, state)
 
     # No ETS write-through here: this turn's state is published by the engine's
     # ONE `:checkpoint` seam at the turn boundary.
@@ -458,6 +493,12 @@ defmodule EvoGit.Agent.ToolDispatch do
         # the reply text back. NO `%Result{}`, NO completion side effects and no
         # terminal status — the session decides what happens next.
         AgentScheduler.Dispatch.commit_pending_in_worktree()
+
+        # A yield is NOT terminal for the agent (only for this exchange), so it
+        # emits its own `{:yield, text}` event and NEVER a `{:finished, _}` one
+        # (those come from `EvoGit.Agent.Exchange.run/2`'s terminal outcomes).
+        Sink.emit({:yield, completion_text})
+
         {:yield, record_current_commit(state), completion_text}
       else
         # FINISH: the ONE completion entry point builds the `%Result{}` and
@@ -489,6 +530,10 @@ defmodule EvoGit.Agent.ToolDispatch do
   # Tracks the current context length (replace, don't accumulate) and
   # accumulates cumulative usage (separate from total_tokens used for
   # compression).
+  #
+  # Returns `{state, turn_usage}`: the per-TURN usage is returned alongside the
+  # state so the `{:turn, …}` delta can report what THIS turn spent instead of
+  # the cumulative total (`usage` on the state keeps accumulating as before).
   defp update_turn_usage(%State{} = state, response) do
     usage = ReqLLM.Response.usage(response)
 
@@ -514,7 +559,8 @@ defmodule EvoGit.Agent.ToolDispatch do
       Usage.from_response_usage(usage)
       |> Cost.apply_to_usage(usage, state)
 
-    %{state | total_tokens: current_tokens, usage: Usage.add(state.usage, turn_usage)}
+    {%{state | total_tokens: current_tokens, usage: Usage.add(state.usage, turn_usage)},
+     turn_usage}
   end
 
   # Extracts tool calls from the response, deduplicates them (handles buggy
@@ -554,6 +600,24 @@ defmodule EvoGit.Agent.ToolDispatch do
       EvoGit.Agent.ContextBuilder.tag_context_tail_with_turn(compacted_context, new_turn)
 
     %{state | context: compacted_context, turn: new_turn}
+  end
+
+  # Emits the ONE `{:turn, map}` delta of a turn. `duration_ms` is read AND
+  # deleted from the process dictionary here (delete-on-read, like
+  # `:evogit_current_commit`): the key is written by
+  # `EvoGit.Agent.LLMPrompting.run_llm_attempt/4` in this SAME exchange-worker
+  # process, and deleting it means a turn that never reached an LLM attempt (or
+  # the next turn) can never report a stale duration.
+  defp emit_turn_event(turn_usage, %State{} = state) do
+    Sink.emit(
+      {:turn,
+       %{
+         usage: turn_usage,
+         duration_ms: Process.delete(:evogit_llm_attempt_duration_ms),
+         turn: state.turn,
+         total_tokens: state.total_tokens
+       }}
+    )
   end
 
   # Handles the {:continue, ...} outcome of tool-call processing: picks up the
@@ -807,6 +871,17 @@ defmodule EvoGit.Agent.ToolDispatch do
       )
     end
 
+    # Emit ONE `{:tool_result, id, status}` per call, in the MODEL's call order
+    # (the results were just re-sorted by the index attached to each call, so
+    # sorted order IS the model's order — subagent calls included). Emitted
+    # before the messages are assembled because the status is a property of the
+    # raw output, and one `Sink.emit/1` call per batch keeps emission order.
+    Sink.emit(
+      Enum.map(sorted_results, fn {_index, tool_call_id, _name, output} ->
+        {:tool_result, tool_call_id, tool_result_status(output)}
+      end)
+    )
+
     all_results =
       Enum.map(sorted_results, fn {_index, tool_call_id, name, output} ->
         assemble_tool_result(tool_call_id, name, output)
@@ -821,6 +896,26 @@ defmodule EvoGit.Agent.ToolDispatch do
 
     {:continue, all_results, subagent_usage}
   end
+
+  # Classifies a tool's RAW output for the `{:tool_result, id, status}` delta.
+  # Total by construction: an unrecognized shape (a future output type) is a
+  # success rather than a crash, and a `%ToolOutput{}` is always `:ok` because
+  # its media-carrying text is not an error report.
+  #
+  # Status order matters: the timeout message is BOTH a timeout and an "Error:"
+  # line (`"Error: Tool execution timed out after …ms"`, see
+  # `EvoGit.ToolRuntime.Executor`), so `timed out` is checked FIRST.
+  defp tool_result_status(%ToolOutput{}), do: :ok
+
+  defp tool_result_status(text) when is_binary(text) do
+    cond do
+      String.contains?(text, "timed out") -> :timeout
+      String.starts_with?(text, "Error:") -> :error
+      true -> :ok
+    end
+  end
+
+  defp tool_result_status(_other), do: :ok
 
   @doc false
   def process_standard_calls(indexed_calls, state),

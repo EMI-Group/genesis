@@ -55,6 +55,7 @@ defmodule EvoGit.Agent.Exchange do
   alias EvoGit.Agent.Exchange.Warnings
   alias EvoGit.Agent.Result
   alias EvoGit.Agent.State
+  alias EvoGit.Agent.Stream.Sink
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.Agent.Turn
 
@@ -90,6 +91,7 @@ defmodule EvoGit.Agent.Exchange do
       # returned verbatim.
       {:finish, %State{} = final_state, _result} = outcome ->
         checkpoint(final_state, seams)
+        emit_finished(:completed)
         outcome
 
       {:yield, %State{} = final_state, _text} = outcome ->
@@ -97,9 +99,24 @@ defmodule EvoGit.Agent.Exchange do
         outcome
 
       {:error, _reason} = error ->
+        emit_finished(:failed)
         error
     end
   end
+
+  # Emits the ONE terminal `{:finished, status}` delta of an exchange, right
+  # before the outcome is returned.
+  #
+  # WHY here and not in the turn: a terminal outcome is decided HERE, and the
+  # sink is installed in the exchange WORKER process, so `Sink.emit/1` reaches
+  # the session as a `{:delta, …}` message that arrives BEFORE the worker's
+  # `{:exchange_finished, …}` (same sender, message order preserved). A `:yield`
+  # is NOT terminal — it emits its own `{:yield, text}` and is parked by the
+  # session — so it deliberately emits no `{:finished, _}`.
+  #
+  # `Sink.emit/1` is a no-op when nothing is installed, so an unwatched exchange
+  # stays behaviourally identical.
+  defp emit_finished(status), do: Sink.emit({:finished, status})
 
   # The ONE `:checkpoint` call site shared by both turn paths: called once per
   # turn AFTER that turn's state update, with the seam's return value DISCARDED
