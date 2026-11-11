@@ -71,6 +71,21 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   results never write. The list stays push-based end to end: task PubSub events
   → 300ms trailing-edge debounce → fetch → apply (→ hub write).
 
+  ## Sidebar "Conversations" list (also owned here)
+
+  The shared layout's Conversations section — the Genesis Assistant's session
+  list, rendered on EVERY page under "Active Tasks" and built by
+  `EvoDashWeb.HomeLive.SessionList` — is loaded by this same hook, with the same
+  async / stale-guarded / exit-safe pattern and the same local-vs-remote rule as
+  the Active Tasks lists: one `request_session_list_load/1` on the connected
+  LOCAL mount, one on `assign_node/2`'s node-context change (so a remote page
+  loads the REMOTE node's sessions), and one on every `:node_aware_reload_tasks`
+  debounce — always through `EvoDashWeb.HomeLive.SessionList.spawn_load/2`, whose
+  `{{:session_list_loaded, seq, node}, result}` report is intercepted by the
+  attached `:handle_info` hook and applied through `SessionList.applied/4`.
+  That single spawn site is the only one in the sidebar path; a page may still
+  ask for a page-local refresh after it adopts or closes a session. No polling.
+
   ## Exit safety — the hook NEVER blocks a LiveView on a store/RPC call
 
   Every store / cross-node (`EvoDash.NodeContext`) call this module makes goes
@@ -114,6 +129,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   import Phoenix.LiveView, only: [attach_hook: 4]
 
   alias EvoGit.TaskRegistry
+  alias EvoDashWeb.HomeLive.SessionList
 
   @remote_connections_topic "remote_connections"
   @tasks_topic "tasks"
@@ -184,6 +200,15 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       |> assign_new(:pending_tasks, fn -> seed_pending end)
       |> assign_new(:tasks_reload_pending, fn -> false end)
       |> assign_new(:tasks_load_seq, fn -> 0 end)
+      # Layout sidebar "Conversations" list — the same async/stale-guarded/
+      # exit-safe pattern as the Active Tasks lists, owned here so EVERY page
+      # shows the Genesis Assistant's conversations (not only `/assistant`).
+      # `EvoDashWeb.HomeLive.SessionList` owns the loading contract and the row
+      # building; the hook owns the single spawn site and the result clause.
+      |> assign_new(:session_list, fn -> [] end)
+      |> assign_new(:session_list_loading, fn -> false end)
+      |> assign_new(:session_list_error, fn -> nil end)
+      |> assign_new(:session_list_seq, fn -> 0 end)
       # Attached `:handle_info` hook — intercepts the two async loader results
       # (`{:node_aware_active_tasks, ...}` and `{:node_aware_remote_context,
       # ...}`) before the LiveView's own handle_info; every other message passes
@@ -222,7 +247,9 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
         # returned unchanged and the result arrives via the attached
         # `:handle_info` hook.
         if seed_node_id == nil do
-          load_running_and_pending_tasks(socket)
+          socket
+          |> load_running_and_pending_tasks()
+          |> request_session_list_load()
         else
           socket
         end
@@ -256,6 +283,23 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   their docs for the node-aware fetch semantics).
   """
   def load_running_and_pending_tasks(socket), do: request_tasks_load(socket)
+
+  # ONE conversation-list fetch for the layout sidebar. Delegates the whole
+  # async contract to `EvoDashWeb.HomeLive.SessionList.spawn_load/2` (seq bump,
+  # loading/error assigns, supervised + `EvoDash.SafeCall`-guarded load, NESTED
+  # `{{:session_list_loaded, seq, node}, result}` report) — this hook is the
+  # single spawn site and `applied/4` owns the stale guards. EXIT-SAFE and
+  # non-blocking, exactly like the Active Tasks loader.
+  #
+  # A no-op on the DEAD render: nothing would consume the result there and
+  # `spawn_load/2` assigns only to a throwaway socket.
+  defp request_session_list_load(socket) do
+    if Phoenix.LiveView.connected?(socket) do
+      SessionList.spawn_load(socket, socket.assigns[:current_node] || node())
+    else
+      socket
+    end
+  end
 
   @doc """
   Fetches the active-task summaries from the given node context as
@@ -601,6 +645,22 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     {:halt, refresh_remote_assigns(socket, target_id)}
   end
 
+  # Conversation-list result for the layout sidebar. The tag is NESTED inside
+  # the message's first element (`{{:session_list_loaded, seq, node}, result}`);
+  # `EvoDashWeb.HomeLive.SessionList.applied/4` owns the seq + node stale
+  # guards and the loading/error bookkeeping, so the hook only routes it.
+  def handle_info({{:session_list_loaded, seq, node}, result}, socket) do
+    {:halt, SessionList.applied(socket, seq, node, result)}
+  end
+
+  # Every page refreshes its sidebar conversations whenever the 300 ms task
+  # broadcast debounce fires. `{:cont, ...}` (NOT halt) is deliberate: the
+  # LiveView's own `handle_info(:node_aware_reload_tasks, ...)` clause must
+  # still run its task reload.
+  def handle_info(:node_aware_reload_tasks, socket) do
+    {:cont, request_session_list_load(socket)}
+  end
+
   def handle_info(_message, socket) do
     {:cont, socket}
   end
@@ -755,6 +815,10 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     else
       socket
       |> load_running_and_pending_tasks()
+      # Same context-change reload for the layout sidebar conversations: a
+      # remote page must show the REMOTE node's sessions (the mount fetch only
+      # runs for the pure-local context).
+      |> request_session_list_load()
       |> Phoenix.Component.assign(:tasks_node_loaded, context)
     end
   end

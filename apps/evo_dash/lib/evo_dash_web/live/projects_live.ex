@@ -67,6 +67,10 @@ defmodule EvoDashWeb.ProjectsLive do
         current_node_id={@current_node_id}
         current_node_name={@current_node_name}
         running_tasks={@running_tasks}
+        session_list={assigns[:session_list] || []}
+        session_list_loading={assigns[:session_list_loading] == true}
+        session_list_error={assigns[:session_list_error]}
+        current_session_id={assigns[:current_session_id]}
         pending_tasks={@pending_tasks}
         desktop_quit_confirm={@desktop_quit_confirm}
         update_status={@update_status}
@@ -95,6 +99,10 @@ defmodule EvoDashWeb.ProjectsLive do
         current_node_id={@current_node_id}
         current_node_name={@current_node_name}
         running_tasks={@running_tasks}
+        session_list={assigns[:session_list] || []}
+        session_list_loading={assigns[:session_list_loading] == true}
+        session_list_error={assigns[:session_list_error]}
+        current_session_id={assigns[:current_session_id]}
         pending_tasks={@pending_tasks}
         desktop_quit_confirm={@desktop_quit_confirm}
         update_status={@update_status}

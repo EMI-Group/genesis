@@ -1,9 +1,16 @@
 defmodule EvoDashWeb.HomeLive.SessionList do
   @moduledoc """
-  Conversation-list panel for the Genesis Assistant interactive-session UX
-  (`EvoDashWeb.HomeLive` at `/assistant`).
+  Conversation-list SECTION BODY for the shared app-layout sidebar
+  (`EvoDashWeb.Layouts.app/1`) — the Genesis Assistant's conversation list
+  (`EvoDashWeb.HomeLive` at `/assistant`), rendered below "Active Tasks" on
+  EVERY dashboard page.
 
-  The panel is the UNION of two sources:
+  The section HEADER ("Conversations") belongs to the layout; this module
+  renders the section body only (rows, loading/error/empty states) and owns the
+  data loading it feeds (`load/1`, `spawn_load/2`, `applied/4`), driven by
+  `EvoDashWeb.LiveHooks.NodeAware` on every page.
+
+  The list is the UNION of two sources:
 
     * LIVE interactive sessions — this node's root self-reflective agents that
       are parked at `:awaiting_input` or currently `:running`, read through
@@ -30,9 +37,13 @@ defmodule EvoDashWeb.HomeLive.SessionList do
   `spawn_load/2` runs the (possibly remote) load on `EvoDash.TaskSupervisor`
   through `EvoDash.SafeCall.start/4` and ALWAYS reports
   `{{:session_list_loaded, seq, node}, result}` — the tag is NESTED inside the
-  message's first element, so the LiveView clause must match
+  message's first element, so the consumer's clause must match
   `{{:session_list_loaded, seq, node}, result}`. `applied/4` applies only a
   result whose seq and node still match the socket.
+
+  The OWNER of that load is `EvoDashWeb.LiveHooks.NodeAware` (it intercepts the
+  result in its attached `:handle_info` hook); the Assistant page only asks for
+  a page-local refresh after it adopts or closes a session.
 
   Everything in this module is TOTAL and defensive (no dot access on optional
   maps, no atom conversion from untrusted input, no `try/rescue`); a raising
@@ -348,16 +359,26 @@ defmodule EvoDashWeb.HomeLive.SessionList do
   ## Panel
 
   @doc """
-  The conversation-list panel.
+  The conversation-list SECTION BODY (rendered inside the layout sidebar, under
+  the layout-owned "Conversations" header).
 
   Declares NO attributes and reads every value defensively from `assigns`, so a
-  fixture missing the session assigns still renders (empty, no error). Rows
-  link with `patch` (never `navigate`) to
-  `EvoDashWeb.HomeLive.SessionActions.url/2`, so the page can swap sessions
-  without tearing down the LiveView.
+  fixture missing the session assigns still renders (empty, no error). It is a
+  plain column of rows — no card chrome, no background, no heading of its own —
+  styled like the neighbouring Active Tasks rows.
+
+  ## Page-dependent link destination
+
+  On the Assistant page itself (`assigns[:current_page] == :assistant`) a row
+  PATCHES to `EvoDashWeb.HomeLive.SessionActions.url/2`: the LiveView, its
+  transcript and its stream stay mounted while only `?session=` changes. On
+  EVERY other page a row NAVIGATES instead, because patching to a DIFFERENT
+  LiveView is illegal in Phoenix LiveView. `destination/2` returns exactly one
+  of `{navigate_url, patch_url}` — the unused attribute is `nil`, so the
+  rendered link carries one destination.
 
   Assigns read: `:session_list`, `:session_list_loading`, `:session_list_error`,
-  `:current_node_id` and `:current_session_id`.
+  `:current_node_id`, `:current_session_id` and `:current_page`.
   """
   def session_list(assigns) do
     rows = row_list(assigns[:session_list])
@@ -373,53 +394,65 @@ defmodule EvoDashWeb.HomeLive.SessionList do
       )
 
     ~H"""
-    <nav
-      id="chat-session-list"
-      class="flex flex-col gap-1 rounded-lg border border-base-300/60 bg-base-100/60 p-2"
-    >
-      <div class="flex items-center justify-between px-1 pb-1">
-        <h2 class="text-xs font-semibold uppercase tracking-wide text-base-content/60">
-          {gettext("Conversations")}
-        </h2>
-        <span :if={@session_list_loading?} class="text-[11px] text-base-content/50">
-          <%!-- zh_CN: 加载中… --%>{gettext("Loading…")}
-        </span>
-      </div>
+    <div id="chat-session-list" class="space-y-1">
+      <p :if={@session_list_loading?} class="px-3 py-1 text-xs text-base-content/50">
+        <%!-- zh_CN: 加载中… --%>{gettext("Loading…")}
+      </p>
 
       <p
         :if={@session_list_error?}
         role="alert"
-        class="rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-xs text-base-content/80"
+        class="mx-3 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-xs text-base-content/80"
       >
         {gettext("Could not load conversations.")}
       </p>
 
-      <p :if={@session_list_empty?} class="px-1 py-2 text-xs text-base-content/50">
+      <p :if={@session_list_empty?} class="px-3 py-2 text-xs text-base-content/50">
         {gettext("No conversations yet.")}
       </p>
 
-      <.link
-        :for={row <- @session_rows}
-        id={"chat-session-#{row.id}"}
-        patch={SessionActions.url(assigns[:current_node_id], row.id)}
-        aria-current={if row.id == assigns[:current_session_id], do: "page", else: nil}
-        class={[
-          "flex items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-sm transition",
-          if(row.id == assigns[:current_session_id],
-            do: "bg-primary/10 text-primary-standalone",
-            else: "text-base-content/80 hover:bg-base-200/60"
-          )
-        ]}
-      >
-        <span
-          class={["size-1.5 shrink-0 rounded-full", marker_dot_class(row.marker)]}
-          aria-hidden="true"
-        ></span>
-        <span class="min-w-0 flex-1 truncate">{row.title}</span>
-        <span class="shrink-0 text-[11px] text-base-content/50">{marker_label(row.marker)}</span>
-      </.link>
-    </nav>
+      <%= for row <- @session_rows do %>
+        <% {nav, patch} = destination(assigns, row.id) %>
+        <.link
+          id={"chat-session-#{row.id}"}
+          navigate={nav}
+          patch={patch}
+          aria-current={if row.id == assigns[:current_session_id], do: "page", else: nil}
+          title={row.title}
+          class={[
+            "flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-colors group",
+            if(row.id == assigns[:current_session_id],
+              do: "bg-primary/10 text-primary-standalone",
+              else: "text-base-content/80 hover:bg-base-300/70 hover:text-base-content"
+            )
+          ]}
+        >
+          <span
+            class={["w-2.5 h-2.5 rounded-full shrink-0", marker_dot_class(row.marker)]}
+            aria-hidden="true"
+          ></span>
+          <span class="min-w-0 flex-1 truncate group-hover:text-base-content transition-colors">
+            {row.title}
+          </span>
+          <span class="shrink-0 text-xs text-base-content/60">{marker_label(row.marker)}</span>
+        </.link>
+      <% end %>
+    </div>
     """
+  end
+
+  # The row's destination attribute pair `{navigate, patch}`: a PATCH on the
+  # Assistant page (same LiveView, only the query state changes) and a NAVIGATE
+  # anywhere else (a patch to a different LiveView is illegal). Exactly one of
+  # the two is a URL; the other is nil, so exactly one destination renders.
+  defp destination(assigns, id) do
+    url = SessionActions.url(assigns[:current_node_id], id)
+
+    if assigns[:current_page] == :assistant do
+      {nil, url}
+    else
+      {url, nil}
+    end
   end
 
   defp row_list(rows) when is_list(rows) do

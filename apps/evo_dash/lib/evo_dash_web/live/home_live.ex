@@ -84,18 +84,16 @@ defmodule EvoDashWeb.HomeLive do
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
       pending_tasks={@pending_tasks}
+      session_list={@session_list}
+      session_list_loading={@session_list_loading}
+      session_list_error={@session_list_error}
+      current_session_id={@current_session_id}
       desktop_quit_confirm={@desktop_quit_confirm}
       update_status={@update_status}
       guide={@guide}
       accent_color={assigns[:accent_color] || "blue"}
     >
       <div class="flex h-full min-h-0 w-full min-w-0">
-        <!-- Conversation rail: cached local chats plus this node's live
-             interactive sessions (a session's agent id IS its chat id). Below
-             `lg` the rail collapses so the reading column keeps the width. -->
-        <div class="hidden w-64 shrink-0 overflow-y-auto overscroll-contain scrollbar-thin border-r border-base-300/60 px-2 py-3 lg:block">
-          {EvoDashWeb.HomeLive.SessionList.session_list(assigns)}
-        </div>
         <div class="flex h-full min-h-0 w-full min-w-0 max-w-3xl flex-col mx-auto">
           <!-- The header, answers and composer share one reading column. -->
           <div
@@ -276,10 +274,10 @@ defmodule EvoDashWeb.HomeLive do
       chat_stream: nil,
       chat_stream_meta: nil,
       stream_attach_seq: 0,
-      session_list: [],
-      session_list_loading: false,
-      session_list_error: nil,
-      session_list_seq: 0,
+      # `:session_list` / `:session_list_loading` / `:session_list_error` /
+      # `:session_list_seq` are seeded (and loaded) by
+      # `EvoDashWeb.LiveHooks.NodeAware` — the layout sidebar owns the
+      # Conversations section on every page, including this one.
       pending_attachments: Attachments.new(),
       attach_unavailable: false,
       chat_fetch_seq: 0,
@@ -548,7 +546,6 @@ defmodule EvoDashWeb.HomeLive do
       |> assign(current_path: ~p"/assistant")
       |> maybe_check_source()
       |> maybe_recover_approvals()
-      |> maybe_load_sessions()
 
     {:noreply, socket}
   end
@@ -1098,10 +1095,6 @@ defmodule EvoDashWeb.HomeLive do
     else
       {:noreply, socket}
     end
-  end
-
-  def handle_info({{:session_list_loaded, seq, node}, result}, socket) do
-    {:noreply, SessionList.applied(socket, seq, node, result)}
   end
 
   def handle_info({:node_selected, node_id}, socket) do

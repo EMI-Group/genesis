@@ -40,6 +40,31 @@ defmodule EvoDashWeb.Layouts do
   attr(:running_tasks, :list, default: [])
   attr(:pending_tasks, :list, default: [])
 
+  attr(:current_session_id, :any,
+    default: nil,
+    doc:
+      "the session id of the Assistant conversation the page is showing (nil on every other page); " <>
+        "renders that row as current in the sidebar Conversations list"
+  )
+
+  attr(:session_list, :any,
+    default: [],
+    doc:
+      "the sidebar Conversations rows (seeded by EvoDashWeb.LiveHooks.NodeAware and rendered by " <>
+        "EvoDashWeb.HomeLive.SessionList.session_list/1)"
+  )
+
+  attr(:session_list_loading, :boolean,
+    default: false,
+    doc: "whether a Conversations load is in flight (renders the sidebar loading line)"
+  )
+
+  attr(:session_list_error, :any,
+    default: nil,
+    doc:
+      "the last Conversations load error (renders the sidebar alert); nil when the last load succeeded"
+  )
+
   attr(:desktop_quit_confirm, :boolean,
     default: false,
     doc:
@@ -278,6 +303,23 @@ defmodule EvoDashWeb.Layouts do
                   <% end %>
                 <% end %>
               </div>
+            </div>
+
+            <!-- Conversations Section — the Genesis Assistant's conversation
+                 list, rendered on EVERY page (the Assistant page no longer
+                 owns a rail of its own). Always rendered, never gated on the
+                 Active Tasks list being non-empty. The rows are loaded and
+                 stale-guarded by EvoDashWeb.LiveHooks.NodeAware, which owns the
+                 `{{:session_list_loaded, seq, node}, result}` message. -->
+            <div class="pt-5 mt-4">
+              <div class="px-3 pt-2 pb-1">
+                <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
+                  <%!-- zh_CN: "对话" — 指 Genesis 助手的会话列表 --%>
+                  <.icon name="hero-chat-bubble-left-right" class="w-3 h-3 shrink-0" />
+                  {gettext("Conversations")}
+                </span>
+              </div>
+              {EvoDashWeb.HomeLive.SessionList.session_list(assigns)}
             </div>
           </nav>
 
