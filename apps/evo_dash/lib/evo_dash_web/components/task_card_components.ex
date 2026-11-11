@@ -26,11 +26,11 @@ defmodule EvoDashWeb.TaskCardComponents do
 
   ## Card inputs — summary map + lazily-fetched detail
 
-  `task_card/1` is fed the lightweight 16-key task SUMMARY map
+  `task_card/1` is fed the lightweight 17-key task SUMMARY map
   (`id, status, review_status, started_at, finished_at, type, project_path,
   opts, branch_name, model_id, agent_count, base_sha, commit_sha,
-  lease_expires_at, updated_at, error`). Newer summary maps also carry
-  `session_mode` (`"oneshot"` | `"interactive"`); older/hand-built maps may
+  lease_expires_at, updated_at, error, session_mode`). `session_mode` is the
+  root agent's driver mode (`"oneshot"` | `"interactive"`); hand-built maps may
   lack it, so read it defensively (default `"oneshot"`). The summary
   deliberately carries NO `result` / `usage` / `logs` / `archive_metadata` —
   those heavy payloads arrive through the `detail` attr (see below), so a big

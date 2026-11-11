@@ -14,7 +14,7 @@ defmodule EvoDashWeb.TaskCardComponents.Errors do
   # Failed tasks persist a structured error record on the decoded TaskInfo
   # `error` field: `%{kind:, source:, message:, stacktrace:}` — ATOM keys after
   # the lenient Store Codec decode (`Codec.decode_error/1`, applied to BOTH the
-  # full `%TaskInfo{}` path and the 16-key summary projection); nil unless
+  # full `%TaskInfo{}` path and the 17-key summary projection); nil unless
   # `status == :failed`. This is a NEW record SEPARATE from the legacy
   # `{:error, _}` task RESULT rendered by render_result/2 — a failed task may
   # carry either, both, or neither. Every read below is guarded and
