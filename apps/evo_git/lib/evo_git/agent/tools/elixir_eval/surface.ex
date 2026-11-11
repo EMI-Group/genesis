@@ -18,12 +18,20 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Surface do
   #
   # A module here contributes BOTH its own atom and its alias-segment atoms; the list
   # is COMPILE-TIME literals only, so materializing it never creates an atom from
-  # evaluated input. It covers this tool's namespace, the refused terminal command
-  # shell and the EvoGit root module; a module added to this namespace must be listed
-  # here.
+  # evaluated input.
+  #
+  # COMPLETENESS INVARIANT: every module compiled in the
+  # `EvoGit.Agent.Tools.ElixirEval` namespace must be listed here, alongside the
+  # `EvoGit` root module and the refused `EvoGit.CommandShell`. Dune's parser needs
+  # the full module atom AND every dotted segment atom to already exist before it
+  # parses a fully qualified name; a name whose atoms are absent degrades to an
+  # opaque placeholder, i.e. `:undefined_module` instead of the descriptive
+  # `:restricted` classification. A new module in this namespace must be added here,
+  # and the cold-BEAM probe pins the invariant.
   @resolvable_modules [
     EvoGit,
     EvoGit.CommandShell,
+    EvoGit.Agent.Tools.ElixirEval,
     EvoGit.Agent.Tools.ElixirEval.Read,
     EvoGit.Agent.Tools.ElixirEval.Write,
     EvoGit.Agent.Tools.ElixirEval.Broker,
