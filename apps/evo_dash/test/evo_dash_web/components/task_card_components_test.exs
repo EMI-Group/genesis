@@ -698,6 +698,155 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
     end
   end
 
+  describe "task_card/1 — :awaiting_input session panel" do
+    # Interactive agent SESSIONS — `:awaiting_input` is a NON-terminal status:
+    # the task's root agent is a live session, idle and waiting for the user,
+    # so the card offers a reply box (`phx-submit="session_send_message"`) and
+    # a Close session control (`phx-click="open_close_session_modal"`). The
+    # panel is gated on BOTH the status and a non-nil `session_agent_id` attr.
+    test "renders the reply form and the Close session control for an idle session" do
+      html =
+        render_session_card(
+          %{id: "t_session", status: :awaiting_input, session_mode: "interactive"},
+          "agent-root"
+        )
+
+      tree = parse(html)
+
+      # Panel wrapper + heading copy.
+      assert html =~ ~s(id="task-t_session-session")
+      assert html =~ "rounded-lg border border-violet-500/30 bg-violet-500/5 p-3"
+      assert html =~ "Interactive session"
+      assert html =~ "Waiting for your next message."
+
+      # Reply form — the task id rides as a `phx-value-task_id` on the form, so
+      # the submitted params are `%{"task_id" => id, "message" => text}`.
+      assert [form] = Floki.find(tree, "form[phx-submit='session_send_message']")
+      assert Floki.attribute(form, "phx-value-task_id") == ["t_session"]
+      assert html =~ ~s(phx-value-task_id="t_session")
+
+      assert [textarea] = Floki.find(form, "textarea[name='message']")
+      assert Floki.attribute(textarea, "id") == ["task-t_session-session-message"]
+      assert Floki.attribute(textarea, "rows") == ["3"]
+
+      assert [label] = Floki.find(form, "label[for='task-t_session-session-message']")
+      assert Floki.text(label) |> String.trim() == "Message"
+
+      assert [send] = Floki.find(form, "button[type='submit']")
+      assert Floki.text(send) |> String.trim() =~ "Send"
+
+      # Close session — only the modal trigger; the modal itself belongs to the
+      # owning LiveView.
+      assert [close] = Floki.find(tree, "button[phx-click='open_close_session_modal']")
+      assert Floki.attribute(close, "phx-value-task_id") == ["t_session"]
+      assert Floki.text(close) |> String.trim() =~ "Close session"
+
+      # User-facing status label — never the raw `awaiting_input` atom.
+      badge = tree |> Floki.find(".badge") |> Floki.text()
+      assert badge =~ "Awaiting input"
+      assert badge =~ "(waiting for you)"
+      refute html =~ "awaiting_input"
+    end
+
+    test "renders no reply panel without a session id while keeping the awaiting marker" do
+      html = render_session_card(%{id: "t_session", status: :awaiting_input})
+      tree = parse(html)
+
+      refute html =~ ~s(id="task-t_session-session")
+      refute html =~ "session_send_message"
+      refute html =~ "open_close_session_modal"
+      refute html =~ "Close session"
+      refute html =~ "Interactive session"
+      # The legacy card stays form-free — no wrapper element, no hidden form.
+      assert Floki.find(tree, "form") == []
+
+      # …the awaiting marker itself is unchanged.
+      assert html =~ "Awaiting input"
+      assert html =~ "bg-violet-500/10 text-violet-600 dark:text-violet-400"
+    end
+
+    test "the panel is status-gated — a non-:awaiting_input card with a session id renders no panel" do
+      for status <- [:pending, :running, :finalizing, :cancelling, :completed, :failed] do
+        html =
+          render_session_card(
+            %{id: "t_session", status: status, session_mode: "interactive"},
+            "agent-root"
+          )
+
+        refute html =~ ~s(id="task-t_session-session")
+        refute html =~ "session_send_message"
+        refute html =~ "open_close_session_modal"
+        refute html =~ "Close session"
+        assert Floki.find(parse(html), "form") == []
+      end
+    end
+
+    test "Cancel covers :awaiting_input and Force kill covers :awaiting_input and :cancelling only" do
+      awaiting =
+        render_session_card(
+          %{id: "t_session", status: :awaiting_input, session_mode: "interactive"},
+          "agent-root"
+        )
+        |> parse()
+
+      assert [cancel] = Floki.find(awaiting, "button[phx-click='open_cancel_modal']")
+      assert Floki.attribute(cancel, "phx-value-task_id") == ["t_session"]
+      assert Floki.text(cancel) |> String.trim() =~ "Cancel"
+
+      for class <-
+            ~w(btn btn-sm btn-outline border-base-300 rounded-md px-4) do
+        assert class in class_list(cancel)
+      end
+
+      assert [force] = Floki.find(awaiting, "ul.menu button[phx-click='open_force_kill_modal']")
+      assert Floki.text(force) |> String.trim() =~ "Force kill"
+
+      for class <- ~w(text-error rounded-md) do
+        assert class in class_list(force)
+      end
+
+      assert awaiting |> Floki.find("li.menu-title") |> Floki.text() |> String.trim() ==
+               "Danger zone"
+
+      # Terminal task: neither action is offered.
+      completed = render_session_card(%{id: "t_session", status: :completed}) |> parse()
+      assert Floki.find(completed, "button[phx-click='open_cancel_modal']") == []
+
+      assert Floki.find(completed, "button[phx-click='open_force_kill_modal']") == []
+      refute Floki.text(completed) =~ "Danger zone"
+
+      # Graceful cancel in flight: Cancel is gone, force kill (escalation) stays.
+      cancelling = render_session_card(%{id: "t_session", status: :cancelling}) |> parse()
+      assert Floki.find(cancelling, "button[phx-click='open_cancel_modal']") == []
+      assert [_] = Floki.find(cancelling, "button[phx-click='open_force_kill_modal']")
+    end
+
+    test ":awaiting_input styling is violet, pulsing and distinct from :running/:cancelling" do
+      html = render_session_card(%{id: "t_session", status: :awaiting_input})
+      tree = parse(html)
+
+      # Accent bar + card tint belong to the violet idle-session family.
+      assert html =~ "h-1 opacity-80 bg-violet-500"
+      assert html =~ "bg-violet-500/5 shadow-violet-500/10 border-violet-500/30"
+      assert html =~ "bg-violet-500/10 text-violet-600 dark:text-violet-400 rounded-full"
+      refute html =~ "bg-warning"
+
+      # It pulses like a running task, but in violet.
+      assert [ping] = Floki.find(tree, "span.animate-ping")
+      assert "bg-violet-500" in class_list(ping)
+      assert [dot] = Floki.find(tree, "span.relative.inline-flex.rounded-full")
+      assert "bg-violet-500" in class_list(dot)
+
+      # The busy family pulses too — with the amber color, never violet.
+      for status <- [:running, :cancelling] do
+        other = render_session_card(%{id: "t_other", status: status})
+        assert other =~ "animate-ping"
+        assert other =~ "h-1 opacity-80 bg-warning"
+        refute other =~ "bg-violet-500"
+      end
+    end
+  end
+
   # Test-data builders — a minimal failed TaskInfo-shaped map (ATOM keys, the
   # post-Codec-decoded shape) and an error record map.
   defp failed_task(overrides \\ %{}) do
@@ -754,6 +903,22 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       },
       Map.new(overrides)
     )
+  end
+
+  # Renders the COLLAPSED card from the summary-map shape, handing it an
+  # interactive session id through the `session_agent_id` attr (nil = no panel).
+  defp render_session_card(overrides, session_agent_id \\ nil) do
+    render_component(&TaskCardComponents.task_card/1,
+      task: summary_map(overrides),
+      session_agent_id: session_agent_id
+    )
+  end
+
+  # Floki's find/2 + attribute/2 require a parsed tree, not a raw binary.
+  defp parse(html), do: Floki.parse_document!(html)
+
+  defp class_list(node) do
+    node |> Floki.attribute("class") |> Enum.join(" ") |> String.split()
   end
 
   # The 16-key summary projection shape (Store summary decode): no `result`
