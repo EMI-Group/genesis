@@ -15,7 +15,9 @@ When interactive sessions are unavailable on the node, the page falls back to th
 - `send_path.ex` → `EvoDashWeb.HomeLive.SendPath` — the send path and the finalize block moved out of the page module: `send_chat/2`, `send_draft/3`, `do_send_chat/3`, `sendable_status?/1`, `reflect_objective/2`, `dispatch_send/5`, `queue_session_message/4`, `normalize_send/1`, `push_queued_echo/2`, `message_count_grew?/2`, `send_failure/2`, `start_session_chat/4`, `start_failure/4`, `adopt_session/3`, `start_chat/3` plus `finalize_streaming/2`, `finalize_terminal/2`, `finalize_completed/2`, `finalize_cancelled/2`, `finalize_failed/2`, `clear_task_refs/1`; `home_live.ex` keeps thin `defp` delegations and the page-level handlers
 - `composer.ex` → `EvoDashWeb.HomeLive.Composer` — the composer card (textarea, attachment chips + attach menu, model capsule, Send/Stop, Interrupt turn, queued echoes)
 - `attachments.ex` → `EvoDashWeb.HomeLive.Attachments` — the `/help` attachment pipeline (picker ids, staging, caps, submit conversion)
-- `transcript.ex` → `EvoDashWeb.HomeLive.Transcript` — transcript model, normalization/caps, per-message reasoning, bounded preamble
+- `transcript.ex` → `EvoDashWeb.HomeLive.Transcript` — transcript model, normalization/caps, per-message reasoning, streaming bubbles (`append_streaming_text/2`, `finalize_streaming/1`), `:tool` entries (`tool_entry/4`, `put_tool_status/3`), bounded preamble
+- `delta.ex` → `EvoDashWeb.HomeLive.Delta` — the PURE, TOTAL delta reducer (`new/3`, `seed/3`, `meta/0`, `apply_batch/5`); no processes, no side effects
+- `watch.ex` → `EvoDashWeb.HomeLive.Watch` — the `/help` watch lifecycle: `attach/1` (LiveView-process subscription + supervised watcher registration whose snapshot seeds the delta), `detach/1`, `snapshot_result/3`, `stream_active?/1`
 - `chat_state.ex` → `EvoDashWeb.HomeLive.ChatState` — persisted per-chat shape (`build/1`, `persist/1`, `restore/1`) over `EvoDash.ChatHistory`
 - `messages.ex` → `EvoDashWeb.HomeLive.Messages` — ReqLLM history → bubble text / thought-process entries (total)
 - `agent_stream.ex` → `EvoDashWeb.HomeLive.AgentStream` — root-agent lookup, `message_count` gating, final-result extraction
@@ -150,17 +152,19 @@ A loading flag always settles: every spawned loader sends its result term, inclu
 
 Each is `Application.get_env(:evo_dash, key, default)` read inside the spawned function, so injecting an exiting runner proves the page survives with its loading flag cleared.
 
-## Live delta streaming — DEFERRED (documented contract, not consumed)
+## Live delta streaming (push-only, shipped)
 
-Live per-chunk deltas are NOT consumed yet: the whole-history read `get_agent_history/2` triggered by the `:agent_updated` `:message_count` event remains the ONLY live transcript path, and `Messages.to_entries/1` → transcript entries → `AssistantMessage` (+ thought process) is the single funnel.
-The funnel has TWO surfaces, not one: the bubble text is a transcript entry (`text` + `streaming`) rendered by `AssistantMessage.assistant_message/1`, while reasoning and tool calls are THOUGHT-PROCESS entries (`%{turn, timestamp, type, data}` with `data` = `%{content, tool_calls, reasoning_details, tool_name, metadata}`) rendered by the private `AssistantMessage.thought_entry/1`; no transcript entry carries tool data.
-Transcript entries are `%{id, role, text, streaming}` plus optional `:reasoning`; `role` is whitelisted to `:user | :assistant | :error` (`Transcript.normalize_role/1` coerces every other value to `:assistant`) and `ChatMessages.message_list/1`'s role `case` has exactly those three clauses, so a new role raises `CaseClauseError` there.
+Live per-chunk deltas ARE consumed: a mounted `/help?session=<id>` page holds one `%Delta{}` per watched agent and applies `{:agent_delta, agent_id, seq, batch}` broadcasts through `EvoDashWeb.HomeLive.Delta.apply_batch/5`.
+`EvoDashWeb.HomeLive.Watch.attach/1` owns both halves of the attach in the processes that must run them: the consumer-local PubSub subscription is made INLINE by the LiveView, while the watcher registration + snapshot runs in an `EvoDash.TaskSupervisor` child with the LiveVIEW pid as the consumer (the session monitors that pid).
+A delta arriving before the snapshot lands is dropped — `chat_stream.delta` is `nil` until then — and a delta covered by the snapshot (`seq <= snapshot.seq`, `EvoGit.Agent.Stream.stale?/2`) is dropped too; the snapshot is the ONLY resync (no replay buffer, no poll loop, never a full-context broadcast).
+`EvoDash.NodeContext` is the boundary: `subscribe_agent_deltas/1`, `unsubscribe_agent_deltas/1`, `register_agent_watcher/3`, `unregister_agent_watcher/3`, `watch_agent_snapshot/2`.
+Batch events are `{:text, chunk}`, `{:thinking, chunk}`, `{:tool_call, id, name}`, `{:tool_result, id, status}`, `{:turn, info}`, `{:yield, text}`, `{:finished, status}`; the reducer reports `outcome` and the page folds it (`:yield` → idle + `:awaiting_input`, `{:finished, _}` → ended + the terminal status, anything else → failed).
+A WATCHED session never refetches its whole history on an `:agent_updated` message-count change (`Watch.stream_active?/1`), which is the polling that feature removes; the delta path persists chat state instead.
+Detach (`new_chat`, `leave_session`, node switch, terminal status, a successful close, `terminate/2`) unsubscribes inline and fires the watcher unregister in a supervised child; the session's own monitor is the real reaper.
+The funnel has TWO surfaces, not one: the bubble text is a transcript entry (`text` + `streaming`) rendered by `AssistantMessage.assistant_message/1`, while reasoning and tool calls are THOUGHT-PROCESS entries (`%{turn, timestamp, type, data}` with `data` = `%{content, tool_calls, reasoning_details, tool_name, metadata}`) rendered by the private `AssistantMessage.thought_entry/1`; a `:tool` transcript entry renders as a quiet status row (`AssistantMessage.tool_entry/1`).
+Transcript entries are `%{id, role, text, streaming}` plus optional `:reasoning` and, for tool entries, `:tool_name`/`:tool_call_id`/`:tool_status`/`:turn`; `role` is whitelisted to `:user | :assistant | :error | :tool` and `ChatMessages.message_list/1` renders all four plus a total fallback for anything else.
 `Transcript.normalize_entry/1` rebuilds every entry from the known keys only, so a NEW entry field does not survive a `ChatState.restore/1` round-trip unless it is added there.
-Future contract when deltas are wired in:
-- `EvoGit.Agent.Stream.watch/1` → `{:ok, snapshot, seq}` — the snapshot is the ONLY resync.
-- delivery on `EvoGit.PubSub` topic `"agent:<id>"` as message `{:agent_delta, agent_id, seq, batch}`.
-- batch variants: `{:text, binary}`, `{:thinking, binary}`, `{:tool_call, id, name}`, `{:tool_result, id, status}`, `{:turn, %{usage, duration_ms}}`, `{:yield, text}`, `{:finished, status}`.
-- reconciliation drops any batch with `seq <= snapshot.seq`; there is NO replay buffer and NO polling — watcher registration + monitor is the consumer gate (zero watchers ⇒ no callbacks and no broadcast).
+The turn meta line under the last assistant bubble (`Delta.meta/0`: `turn`/`total_tokens`/`duration_ms`/`usage`) is assigned as `chat_stream_meta` and passed to `ChatMessages.message_list/1` as `stream_meta`.
 
 ## Constraints
 
