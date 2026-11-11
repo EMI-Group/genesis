@@ -45,7 +45,7 @@ defmodule EvoGit.Agent.Session.StartStallTest do
     per-process seam can express.
 
   Every row is written under a per-test unique agent id
-  (`9_970_000 + unique_integer`) and a unique task id in its OWN temp git repo,
+  (`9_980_000 + unique_integer`) and a unique task id in its OWN temp git repo,
   and deleted in `on_exit`; no test wipes a table or asserts on table size.
   """
   use ExUnit.Case, async: false
@@ -60,9 +60,10 @@ defmodule EvoGit.Agent.Session.StartStallTest do
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
 
-  # A range of its own: the summary/sched tables are shared with every
-  # concurrently running module, so the only safe key is a unique one.
-  @agent_id_base 9_970_000
+  # A range of its own (the async `session_runtime_invariants_test` owns
+  # 9_970_000+): the summary/sched tables are shared with every concurrently
+  # running module, so the only safe key is a unique one.
+  @agent_id_base 9_980_000
   # Every awaited event is reachable by construction on an idle machine; this
   # budget only absorbs the shared host's scheduling latency.
   @wait_budget_ms 10_000
