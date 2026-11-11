@@ -73,35 +73,42 @@ defmodule EvoGit.Agent.Exchange do
   `:checkpoint`; see `EvoGit.Agent.Exchange.Seams`). The SAME `opts` is threaded
   down to every turn, so an explicit seam is honoured consistently for the whole
   exchange.
+
+  An OPTIONAL `:now` entry pins the clock for the whole exchange (see
+  `EvoGit.Agent.Clock`): every per-message `metadata[:timestamp]` this exchange
+  stamps then carries that value. It defaults to `nil` — the real clock — and is
+  process-scoped, so it never affects a concurrent exchange.
   """
   @spec run(State.t(), keyword()) :: outcome()
   def run(%State{} = state, opts \\ []) do
-    # Resolve the seam set ONCE per exchange. `Seams.from_opts/1` is pure and
-    # cheap, so resolving the same `opts` again inside `Turn.run/3`, `Pending`
-    # and `Grace` yields the identical seam set (the explicit-key-wins rule is
-    # order-independent and the app-env default is read at call time).
-    seams = Seams.from_opts(opts)
+    EvoGit.Agent.Clock.with_opts(opts, fn ->
+      # Resolve the seam set ONCE per exchange. `Seams.from_opts/1` is pure and
+      # cheap, so resolving the same `opts` again inside `Turn.run/3`, `Pending`
+      # and `Grace` yields the identical seam set (the explicit-key-wins rule is
+      # order-independent and the app-env default is read at call time).
+      seams = Seams.from_opts(opts)
 
-    case loop(state, opts, seams) do
-      # A TERMINAL turn never reaches the recursive loop, so its state is
-      # checkpointed here — the single place the terminal state is observable.
-      # Invariant: exactly ONE checkpoint per turn (a continuing turn fired
-      # inside `continuations/2`), and the return value is discarded. A `:yield`
-      # is terminal for THIS exchange and is checkpointed the same way, then
-      # returned verbatim.
-      {:finish, %State{} = final_state, _result} = outcome ->
-        checkpoint(final_state, seams)
-        emit_finished(:completed)
-        outcome
+      case loop(state, opts, seams) do
+        # A TERMINAL turn never reaches the recursive loop, so its state is
+        # checkpointed here — the single place the terminal state is observable.
+        # Invariant: exactly ONE checkpoint per turn (a continuing turn fired
+        # inside `continuations/2`), and the return value is discarded. A `:yield`
+        # is terminal for THIS exchange and is checkpointed the same way, then
+        # returned verbatim.
+        {:finish, %State{} = final_state, _result} = outcome ->
+          checkpoint(final_state, seams)
+          emit_finished(:completed)
+          outcome
 
-      {:yield, %State{} = final_state, _text} = outcome ->
-        checkpoint(final_state, seams)
-        outcome
+        {:yield, %State{} = final_state, _text} = outcome ->
+          checkpoint(final_state, seams)
+          outcome
 
-      {:error, _reason} = error ->
-        emit_finished(:failed)
-        error
-    end
+        {:error, _reason} = error ->
+          emit_finished(:failed)
+          error
+      end
+    end)
   end
 
   # Emits the ONE terminal `{:finished, status}` delta of an exchange, right
