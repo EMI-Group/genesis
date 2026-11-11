@@ -423,10 +423,24 @@ defmodule EvoGit.Agent.Tools.ElixirEval.ValidationTest do
     end
 
     test "accepts only known local pages, not URLs, traversal or query/fragment extensions" do
-      for page <- [nil, "/", "/help", "/projects", "/tasks", "/agents", "/settings", "/system"] do
+      for page <- [
+            nil,
+            "/",
+            "/assistant",
+            "/help",
+            "/projects",
+            "/tasks",
+            "/agents",
+            "/settings",
+            "/system"
+          ] do
         assert {:ok, payload} = Validation.guide("Look", %{page: page})
         assert payload.page == page
       end
+
+      # /assistant is canonical and /help stays accepted as the legacy redirect path.
+      assert {:ok, %{page: "/assistant"}} = Validation.guide("Look", %{page: "/assistant"})
+      assert {:ok, %{page: "/help"}} = Validation.guide("Look", %{page: "/help"})
 
       for page <- [
             "https://example.org",

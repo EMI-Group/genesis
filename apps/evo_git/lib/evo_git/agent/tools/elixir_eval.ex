@@ -134,8 +134,10 @@ defmodule EvoGit.Agent.Tools.ElixirEval do
 
     guide/2: message is nonblank UTF-8 without NUL, <=2000 bytes.
     Only page/selector/dismissible atom or string keys, no duplicate spellings.
-    Page defaults to nil; allowed: nil, "/", "/help", "/projects", "/tasks", "/agents",
-    "/settings", "/system". Selector defaults to nil, otherwise a simple #id <=80 bytes:
+    Page defaults to nil; allowed: nil, "/", "/assistant", "/help", "/projects", "/tasks",
+    "/agents", "/settings", "/system". "/assistant" is the canonical Assistant chat page;
+    the legacy "/help" path redirects to it.
+    Selector defaults to nil, otherwise a simple #id <=80 bytes:
     # followed by an ASCII letter, then ASCII letters/digits/underscore/hyphen only.
     Dismissible is boolean, default true. guide/1 uses these defaults.
     Fixed per-evaluation facade quotas: 128 broker requests (including IO), 32 reads,

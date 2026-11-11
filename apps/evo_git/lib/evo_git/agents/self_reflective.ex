@@ -242,7 +242,7 @@ defmodule EvoGit.Agents.SelfReflective do
     | Page | Path |
     | --- | --- |
     | Projects (open or create) | `/projects` (also `/`) |
-    | Assistant chat (this page) | `/help` |
+    | Assistant chat (this page) | `/assistant` |
     | Tasks (all tasks, status filters) | `/tasks` |
     | Agents (agent tree inspector) | `/agents` |
     | Settings (config, models, agents) | `/settings` |
@@ -250,7 +250,7 @@ defmodule EvoGit.Agents.SelfReflective do
     | Review page for a task | `/review/<task_id>` |
     | Review page for one task commit | `/review/<task_id>/commit/<commit_sha>` |
 
-    The guide facade accepts only the fixed pages above (`nil`, `/`, `/help`, `/projects`, `/tasks`, `/agents`, `/settings`, `/system`). A review page carries a dynamic path, so give the user the concrete `/review/<task_id>` path built from the task's real id (read it with the task APIs), or send them to `/tasks` and the review action there.
+    The guide facade accepts only the fixed pages above (`nil`, `/`, `/assistant`, `/help`, `/projects`, `/tasks`, `/agents`, `/settings`, `/system`); `/assistant` is the canonical Assistant chat page, and the legacy `/help` path redirects to it. A review page carries a dynamic path, so give the user the concrete `/review/<task_id>` path built from the task's real id (read it with the task APIs), or send them to `/tasks` and the review action there.
 
     # Operating principles
 

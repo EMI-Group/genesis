@@ -297,7 +297,7 @@ defmodule EvoGit.SelfReflectiveToolsTest do
     prompt = SelfReflective.system_prompt()
 
     assert prompt =~ "| Projects (open or create) | `/projects` (also `/`) |"
-    assert prompt =~ "| Assistant chat (this page) | `/help` |"
+    assert prompt =~ "| Assistant chat (this page) | `/assistant` |"
     assert prompt =~ "| Tasks (all tasks, status filters) | `/tasks` |"
     assert prompt =~ "| Agents (agent tree inspector) | `/agents` |"
     assert prompt =~ "| Settings (config, models, agents) | `/settings` |"
@@ -308,7 +308,10 @@ defmodule EvoGit.SelfReflectiveToolsTest do
              "| Review page for one task commit | `/review/<task_id>/commit/<commit_sha>` |"
 
     assert prompt =~
-             "The guide facade accepts only the fixed pages above (`nil`, `/`, `/help`, `/projects`, `/tasks`, `/agents`, `/settings`, `/system`)"
+             "The guide facade accepts only the fixed pages above (`nil`, `/`, `/assistant`, `/help`, `/projects`, `/tasks`, `/agents`, `/settings`, `/system`)"
+
+    assert prompt =~
+             "`/assistant` is the canonical Assistant chat page, and the legacy `/help` path redirects to it"
   end
 
   test "public guidance distinguishes runtime config updates from whole-file persistence and reload" do

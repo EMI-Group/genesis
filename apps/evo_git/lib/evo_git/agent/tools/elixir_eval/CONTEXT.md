@@ -149,6 +149,7 @@ Self-targeting mutations are refused; cancel permits pending/running/awaiting_in
 Those two accessors delegate to `TaskRegistry.gracefully_cancellable_statuses/0` and `killable_statuses/0` rather than restating them, so the facade gates cannot drift from the task-registry truth.
 Deletion returns an explicit queued-cast acknowledgement, never a persisted-deletion guarantee, and submission failures instruct inspection before retrying because timeout does not prove absence of side effects.
 Guides require a message of at most 2,000 bytes, an allowlisted local page, optional simple `#id` selector of at most 80 bytes and boolean dismissible flag.
+The page allowlist is `nil`, `/`, `/assistant`, `/help`, `/projects`, `/tasks`, `/agents`, `/settings`, `/system`, where `/assistant` is the canonical Assistant chat page and `/help` is the legacy path that redirects to it.
 
 ## Projection and Output Contracts
 Facade task reads retain only id, type, status, review_status, timestamps and agent_count.

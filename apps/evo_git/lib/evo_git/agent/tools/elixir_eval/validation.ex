@@ -12,7 +12,19 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Validation do
     "reflect" => :reflect,
     "extract_skills" => :extract_skills
   }
-  @pages [nil, "/", "/help", "/projects", "/tasks", "/agents", "/settings", "/system"]
+  # /assistant is the canonical Assistant chat page; /help is the legacy path
+  # that redirects there, kept accepted so older guide calls still validate.
+  @pages [
+    nil,
+    "/",
+    "/assistant",
+    "/help",
+    "/projects",
+    "/tasks",
+    "/agents",
+    "/settings",
+    "/system"
+  ]
 
   @scheduler_keys [
     :default_llm_max_concurrency,
