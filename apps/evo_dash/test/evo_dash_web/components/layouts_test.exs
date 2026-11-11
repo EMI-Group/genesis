@@ -85,6 +85,105 @@ defmodule EvoDashWeb.LayoutsTest do
     end
   end
 
+  describe "app/1 — sidebar interactive sessions group" do
+    # Interactive agent sessions get their OWN sidebar group ("Sessions", chat
+    # icon, violet dot) above the per-project one-shot groups — a session must
+    # never fall into "Other". A summary map without a `:session_mode` key is a
+    # one-shot task (the defensive default is "oneshot").
+    test "an interactive session renders in the Sessions group and never under Other" do
+      html =
+        render_app(
+          running_tasks: [
+            session_task(id: "s1", status: :awaiting_input, objective: "Session one")
+          ]
+        )
+
+      assert sidebar_session_headers(html) == ["Sessions"]
+      # No project/Other group for a path-less session.
+      assert sidebar_group_names(html) == []
+      assert sidebar_task_labels(html) == ["Session one"]
+
+      # Sessions link to the task list and carry the violet idle-session dot,
+      # pulsing like a running task.
+      [link] = html |> parse() |> Floki.find("[data-sidebar-task-link]")
+      assert Floki.attribute(link, "href") == ["/tasks"]
+      assert [dot] = Floki.find(link, "span.rounded-full")
+      assert_classes(dot, ~w(bg-violet-500 animate-pulse))
+      assert Floki.text(link) =~ "Waiting for you"
+    end
+
+    test "one-shot tasks with no path still group under Other (with or without a session_mode key)" do
+      without_key =
+        task(id: "o1", status: :running, project_path: nil, objective: "No session_mode key")
+
+      with_key =
+        task(
+          id: "o2",
+          status: :running,
+          project_path: nil,
+          objective: "Explicit one-shot",
+          session_mode: "oneshot"
+        )
+
+      refute Map.has_key?(without_key, :session_mode)
+
+      html = render_app(running_tasks: [without_key, with_key])
+
+      assert sidebar_session_headers(html) == []
+      assert sidebar_group_names(html) == ["Other"]
+      assert sidebar_task_labels(html) == ["No session_mode key", "Explicit one-shot"]
+    end
+
+    test "sessions keep feed order (running then pending) while project grouping is unchanged" do
+      html =
+        render_app(
+          running_tasks: [
+            session_task(id: "s-running", status: :running, objective: "Session running"),
+            task(
+              id: "b1",
+              status: :running,
+              project_path: "/home/user/Beta",
+              objective: "Beta running"
+            )
+          ],
+          pending_tasks: [
+            session_task(id: "s-pending", status: :pending, objective: "Session pending"),
+            task(
+              id: "a1",
+              status: :pending,
+              project_path: "/home/user/alpha",
+              objective: "Alpha pending"
+            )
+          ]
+        )
+
+      assert sidebar_session_headers(html) == ["Sessions"]
+      assert sidebar_group_names(html) == ["alpha", "Beta"]
+
+      assert sidebar_task_labels(html) == [
+               "Session running",
+               "Session pending",
+               "Alpha pending",
+               "Beta running"
+             ]
+    end
+
+    test "non-map entries in either list are skipped without crashing" do
+      html =
+        render_app(
+          running_tasks: [
+            :junk_atom,
+            session_task(id: "s1", status: :awaiting_input, objective: "Valid session")
+          ],
+          pending_tasks: ["not a task map", 42]
+        )
+
+      assert sidebar_session_headers(html) == ["Sessions"]
+      assert sidebar_group_names(html) == []
+      assert sidebar_task_labels(html) == ["Valid session"]
+    end
+  end
+
   describe "app/1 — shell navigation" do
     test "Assistant is a chat link and preserves the selected remote node" do
       for {node_id, href} <- [{nil, "/help"}, {"remote-test", "/help?node=remote-test"}] do
@@ -207,6 +306,17 @@ defmodule EvoDashWeb.LayoutsTest do
     |> Enum.map(&String.trim/1)
   end
 
+  # Session group headers, in sidebar order. The "Sessions" header is the only
+  # `span.sidebar-label` carrying the chat icon (the Assistant nav link's icon
+  # is its SIBLING, not a descendant of its label span).
+  defp sidebar_session_headers(html) do
+    html
+    |> parse()
+    |> Floki.find("span.sidebar-label:has(.hero-chat-bubble-left-right)")
+    |> Enum.map(&Floki.text/1)
+    |> Enum.map(&String.trim/1)
+  end
+
   defp sidebar_task_links(html) do
     html |> parse() |> Floki.find("[data-sidebar-task-link]") |> length()
   end
@@ -221,8 +331,11 @@ defmodule EvoDashWeb.LayoutsTest do
     end)
   end
 
+  # A task summary entry as the Active Tasks hub hands it to the sidebar. The
+  # `:session_mode` key is only added when a test supplies it, so the "missing
+  # key = one-shot" defensive default stays exercised.
   defp task(attrs) do
-    %{
+    entry = %{
       id: Keyword.fetch!(attrs, :id),
       status: Keyword.fetch!(attrs, :status),
       project_path: Keyword.get(attrs, :project_path),
@@ -230,6 +343,16 @@ defmodule EvoDashWeb.LayoutsTest do
       finished_at: nil,
       opts: [objective: Keyword.fetch!(attrs, :objective)]
     }
+
+    case Keyword.fetch(attrs, :session_mode) do
+      {:ok, session_mode} -> Map.put(entry, :session_mode, session_mode)
+      :error -> entry
+    end
+  end
+
+  # An interactive agent session (the summary `session_mode` string).
+  defp session_task(attrs) do
+    task(Keyword.put(attrs, :session_mode, "interactive"))
   end
 
   # Floki's find/2 + attribute/2 require a parsed tree, not a raw binary.
