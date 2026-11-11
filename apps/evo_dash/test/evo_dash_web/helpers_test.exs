@@ -127,6 +127,24 @@ defmodule EvoDashWeb.HelpersTest do
       # Every badge variant (known statuses above) carries the shared shape.
       assert badge =~ "rounded-full"
     end
+
+    test "awaiting_input is its own violet family" do
+      badge = task_status_badge(:awaiting_input)
+
+      assert badge ==
+               "bg-violet-500/10 text-violet-600 dark:text-violet-400 rounded-full flex items-center justify-center"
+
+      # Violet utility classes — neither the amber busy family nor the muted
+      # terminal-neutral family, so the colour itself says "a human is needed".
+      assert badge =~ "bg-violet-500/10"
+      assert badge =~ "text-violet-600"
+      # Shares the shape that every badge slot relies on.
+      assert badge =~ "rounded-full"
+
+      refute badge == task_status_badge(:running)
+      refute badge == task_status_badge(:cancelling)
+      refute badge == task_status_badge(:unknown)
+    end
   end
 
   describe "task_status_dot_class/1" do
@@ -145,6 +163,23 @@ defmodule EvoDashWeb.HelpersTest do
       assert task_status_dot_class(nil) == "bg-base-content/30"
       assert task_status_dot_class("running") == "bg-base-content/30"
     end
+
+    test "awaiting_input dot is violet and distinct from every other status" do
+      assert task_status_dot_class(:awaiting_input) == "bg-violet-500"
+
+      for status <- [
+            :running,
+            :finalizing,
+            :cancelling,
+            :completed,
+            :failed,
+            :pending,
+            :cancelled,
+            :unknown
+          ] do
+        refute task_status_dot_class(:awaiting_input) == task_status_dot_class(status)
+      end
+    end
   end
 
   describe "task_status_tint/1" do
@@ -162,6 +197,59 @@ defmodule EvoDashWeb.HelpersTest do
       assert task_status_tint(:cancelled) == neutral
       assert task_status_tint(:unknown) == neutral
       assert task_status_tint(nil) == neutral
+    end
+
+    test "awaiting_input tint is its own violet family" do
+      tint = task_status_tint(:awaiting_input)
+
+      assert tint == "bg-violet-500/5 shadow-violet-500/10 border-violet-500/30"
+      assert tint =~ "bg-violet-500/5"
+      assert tint =~ "border-violet-500/30"
+
+      for status <- [
+            :running,
+            :finalizing,
+            :cancelling,
+            :completed,
+            :failed,
+            :pending,
+            :cancelled,
+            :unknown
+          ] do
+        refute tint == task_status_tint(status)
+      end
+    end
+  end
+
+  describe "task status colour families" do
+    test "shared families share one (badge, dot, tint) triple; families never collide" do
+      triple = fn status ->
+        {task_status_badge(status), task_status_dot_class(status), task_status_tint(status)}
+      end
+
+      # Exactly the grouping the source documents: the amber busy family
+      # (:running/:finalizing/:cancelling) and the muted terminal-neutral pair
+      # (:pending/:cancelled) intentionally share a triple; :awaiting_input is
+      # its own violet family and every other documented status is a
+      # singleton. Anything else colliding would hide a real state from the UI.
+      families = [
+        [:running, :finalizing, :cancelling],
+        [:awaiting_input],
+        [:completed],
+        [:failed],
+        [:pending, :cancelled],
+        [:unknown]
+      ]
+
+      for statuses <- families, status <- statuses, member <- statuses do
+        assert triple.(status) == triple.(member),
+               "expected #{inspect(status)} and #{inspect(member)} to share one triple"
+      end
+
+      family_triples = Enum.map(families, fn [head | _rest] -> triple.(head) end)
+
+      assert family_triples == Enum.uniq(family_triples),
+             "families must be pairwise distinct, got: #{inspect(family_triples)}"
     end
   end
 
