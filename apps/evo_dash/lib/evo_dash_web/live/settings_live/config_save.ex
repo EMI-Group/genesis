@@ -7,7 +7,9 @@ defmodule EvoDashWeb.SettingsLive.ConfigSave do
   SafeCall message to `complete/2`; it returns `{:saved, receipt, socket}`,
   `{:failed, receipt, socket}` or `{:stale, original_socket}`. A receipt contains
   `scope`, `success_msg` and `runtime?`, plus `file_config`/`warnings` on success
-  or `reason` on failure. Only a confirmed write produces a saved receipt.
+  or `reason` on failure. Only a confirmed write — acknowledged by the writer OR
+  proven by the authoritative read returning the written candidate — produces a
+  saved receipt.
 
   This module owns `config_save_request`, `config_save_owner` and the shared
   `config_saving` indicator. It never assigns `file_config`, test configuration,
@@ -15,6 +17,16 @@ defmodule EvoDashWeb.SettingsLive.ConfigSave do
   through its authoritative config/test-selection boundary, performs status and
   OAuth refreshes, and presents success or failure. Warnings are tagged
   `{:config_reload, reason}`; the saved candidate is the fallback on read failure.
+
+  A writer error is NOT proof of a failed save. The shared write path persists
+  the file BEFORE its best-effort scheduler reload, so a reload timeout/exit can
+  fail the acknowledgement of a completed write. The authoritative read decides:
+  a config matching the written candidate is a saved receipt (no warning — the
+  file is exactly what was requested), while the previous config keeps the
+  writer's reason as the failure. The runtime push is deliberately NOT duplicated
+  here: a saved receipt still carries `runtime?`, and the parent performs the one
+  best-effort push after the receipt lands, so a save converges even when the
+  writer's own reload timed out.
 
   Pass `editor_token: token` EXPLICITLY only from provider editor Save/Delete.
   Do not infer it from the socket in a generic persistence wrapper: category,
@@ -46,6 +58,8 @@ defmodule EvoDashWeb.SettingsLive.ConfigSave do
   """
 
   import Phoenix.Component, only: [assign: 2]
+
+  require Logger
 
   alias EvoDash.{NodeContext, SafeCall}
   alias EvoDashWeb.SettingsLive.{ConfigIO, ModelProfileEvents}
@@ -158,21 +172,63 @@ defmodule EvoDashWeb.SettingsLive.ConfigSave do
 
     case SafeCall.run(fn -> writer.(target_node, request.candidate) end) do
       {:ok, :ok} ->
-        case SafeCall.run(fn -> reader.(target_node) end) do
-          {:ok, {:ok, %{} = config}} -> {:saved, config, []}
-          {:ok, {:error, reason}} -> saved_fallback(request, reason)
-          {:error, reason} -> saved_fallback(request, reason)
-          other -> saved_fallback(request, {:unexpected_config_result, other})
-        end
+        confirmed_save(request, reader, target_node)
 
       {:ok, {:error, reason}} ->
-        {:failed, reason}
+        unacknowledged_save(request, reader, target_node, reason)
 
       {:error, reason} ->
-        {:failed, reason}
+        unacknowledged_save(request, reader, target_node, reason)
 
       other ->
         {:failed, {:unexpected_write_result, other}}
+    end
+  end
+
+  # The writer acknowledged the write, so the authoritative read only refines
+  # the receipt: a failed read keeps the confirmed candidate with a warning.
+  defp confirmed_save(request, reader, target_node) do
+    case read(reader, target_node) do
+      {:ok, %{} = config} -> {:saved, config, []}
+      {:error, reason} -> saved_fallback(request, reason)
+    end
+  end
+
+  # An unacknowledged write is NOT proof of a failed save: the shared write path
+  # persists the file BEFORE its best-effort scheduler reload, so a reload
+  # timeout/exit (e.g. the process-global scheduler saturated under load) fails
+  # the acknowledgement of a write that already landed. The authoritative read
+  # decides — the written candidate on disk means the save SUCCEEDED (no warning:
+  # the persisted file is exactly what was requested), while the previous config
+  # (a genuine validation/write failure) or an unreadable config keeps the
+  # writer's reason as the failure. Nothing pushes runtime configuration here:
+  # the receipt still carries `runtime?`, and the parent's single best-effort
+  # push after the receipt lands is what converges the running scheduler.
+  defp unacknowledged_save(request, reader, target_node, reason) do
+    case read(reader, target_node) do
+      {:ok, %{} = config} ->
+        if candidate_written?(request.candidate, config) do
+          Logger.warning(
+            "Settings save was not acknowledged (#{inspect(reason)}), but the " <>
+              "authoritative read matches the written configuration; treating it as saved."
+          )
+
+          {:saved, config, []}
+        else
+          {:failed, reason}
+        end
+
+      _unverifiable ->
+        {:failed, reason}
+    end
+  end
+
+  defp read(reader, target_node) do
+    case SafeCall.run(fn -> reader.(target_node) end) do
+      {:ok, {:ok, %{} = config}} -> {:ok, config}
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:error, reason} -> {:error, reason}
+      other -> {:error, {:unexpected_config_result, other}}
     end
   end
 
@@ -183,6 +239,53 @@ defmodule EvoDashWeb.SettingsLive.ConfigSave do
 
   defp saved_fallback(request, reason),
     do: {:saved, request.candidate, [{:config_reload, reason}]}
+
+  # The legacy flat `[llm]` mirrors/`models` inventory: `EvoGit.Config.save_user_config/1`
+  # never persists them once canonical provider profiles exist, and TOML has no
+  # null, so a resolved read can never deep-equal the in-memory candidate on
+  # those keys even though the persisted configuration IS that candidate.
+  @llm_persistence_mirror_keys ~w(model temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty models auth_mode oauth_file provider_options)
+
+  # Does the authoritative read prove the candidate was persisted? Compare what
+  # a TOML round trip can actually preserve, normalized the same way on both
+  # sides (a canonical read of a legacy fixture differs from its migrated
+  # in-memory candidate only on the persistence mirrors and null values).
+  defp candidate_written?(candidate, read_config),
+    do: persisted_projection(candidate) == persisted_projection(read_config)
+
+  defp persisted_projection(config) do
+    config
+    |> ConfigIO.canonicalize_file_config()
+    |> drop_llm_persistence_mirrors()
+    |> drop_nils()
+  end
+
+  defp drop_llm_persistence_mirrors(%{llm: llm} = config) when is_map(llm),
+    do: %{config | llm: drop_persistence_mirror_keys(llm)}
+
+  defp drop_llm_persistence_mirrors(%{"llm" => llm} = config) when is_map(llm),
+    do: %{config | "llm" => drop_persistence_mirror_keys(llm)}
+
+  defp drop_llm_persistence_mirrors(config), do: config
+
+  defp drop_persistence_mirror_keys(llm) do
+    Enum.reject(llm, fn
+      {key, _value} when is_atom(key) -> Atom.to_string(key) in @llm_persistence_mirror_keys
+      {key, _value} when is_binary(key) -> key in @llm_persistence_mirror_keys
+      _other -> false
+    end)
+    |> Map.new()
+  end
+
+  # TOML has no null: the writer drops nil-valued keys, so a persisted read can
+  # never carry them back.
+  defp drop_nils(%{} = map) when not is_struct(map) do
+    for {key, value} <- map, not is_nil(value), into: %{}, do: {key, drop_nils(value)}
+  end
+
+  defp drop_nils(list) when is_list(list), do: Enum.map(list, &drop_nils/1)
+
+  defp drop_nils(other), do: other
 
   defp settle(socket, request, result) do
     socket =
