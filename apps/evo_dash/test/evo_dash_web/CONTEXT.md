@@ -27,8 +27,8 @@ Coverage is deliberately split so no suite duplicates another:
 | Contract | Where it is pinned |
 |----------|--------------------|
 | Send-path branches: no session → `start_session` + adopt + `push_patch`; existing session → `send_session_message` (`:queue`) with no new task; reflect fallback on `:llm_not_configured` / `{:interactive_root_only, _}`; `{:session, :finished \| :not_found}` → `:ended` | `live/home_live_test.exs` (`describe "interactive session send path"`) |
-| Queue echo + interrupt policy, echo reconciliation on message-count growth / Stop / new chat | `live/home_live_test.exs` |
-| Attachments reach the send call (bare binary for text, `%{text:, attachments: [...]}` for media) plus the 4-file / 15 MiB caps | `live/home_live_test.exs` |
+| Queue echo + interrupt policy, echo reconciliation on message-count growth / Stop / new chat | `live/home_live_test.exs` (`describe "interactive session queue echo and interrupt"`) |
+| Attachments reach the send call (bare binary for text, `%{text:, attachments: [...]}` for media) plus the 4-file / 15 MiB caps | `live/home_live_test.exs` (`describe "interactive session attachments"`) |
 | Reattach: one attach per `?session=`, no task started, status mapping, vanished session (read-only / ended) | `live/home_live_test.exs` (`describe "interactive session reattach (?session=)"`) |
 | Mounted conversation rail: row order, markers, `?session=` links preserving `?node=`, stale-seq/foreign-node rejection | `live/home_live_test.exs` (`describe "interactive session list (mounted)"`) |
 | Pure URL/param/session-option/status helpers and every call-time `:home_session_*` seam normalization | `live/home_live/session_actions_test.exs` |
@@ -45,7 +45,7 @@ Coverage is deliberately split so no suite duplicates another:
 
 ## Notes for Agents
 
-- `live/home_live_test.exs` is a ~4 760-line, `async: false` module: it owns the process-global `EvoDash.ChatHistory`, `EvoDash.ActiveTasks`, the isolated Store/TaskRegistry pair and the per-test `:home_session_*` / `:approval_*` / `:source_*` app-env seams.
+- `live/home_live_test.exs` is a 4 759-line, `async: false` module: it owns the process-global `EvoDash.ChatHistory`, `EvoDash.ActiveTasks`, the isolated Store/TaskRegistry pair and the per-test `:home_session_*` / `:approval_*` / `:source_*` app-env seams.
   Its `install_session_seam/2` helper snapshots and restores every seam in `on_exit` — use it instead of writing `Application.put_env/3` ad hoc.
   A new mounted `/help` test belongs here (never in an async module).
 - The interactive-session send path is exercised through the call-time seams (`:home_session_start_runner`, `:home_session_send_runner`, `:home_session_close_runner`, `:home_session_attach_runner`, `:home_session_list_runner`), never by stubbing module internals; each is resolved inside the spawned function, so a test must restore it.
@@ -56,9 +56,6 @@ Coverage is deliberately split so no suite duplicates another:
 
 ## Known Issues
 
-- `apps/evo_dash/lib/evo_dash_web/live/home_live/composer.ex:389` — `compose_disabled?/1` still includes `model_select_loading == true`, so the textarea is disabled while the model snapshot loads.
-  The pinned contract (and a parallel source fix) is: the draft stays editable in every model-load/selection-error state, and only the Send control is unusable.
-  Until that clause is removed, `home_live_render_test.exs`'s "loading, missing snapshots and invalid selections cannot enable sending" fails on its `[model_select_loading: true, model_snapshot: nil]` row.
 - `apps/evo_dash/lib/evo_dash_web/live/home_live.ex` (`apply_attach/2` → `apply_history(history, true)`) always rebuilds the transcript from the attach history, so a vanished session whose history is `[]` CLEARS the cached transcript.
   `live/home_live/CONTEXT.md` promises the cache is kept and rendered read-only instead; the mounted reattach test pins only what the source does (`chat_status: :ended`, disabled composer, New chat enabled).
 - `apps/evo_dash/lib/evo_dash_web/live/home_live/chat_messages.ex` has no session-ended empty state, so the documented "This session has ended." state (with a New-chat affordance) does not render; an ended chat with an empty cache shows the generic greeting and suggestion chips.

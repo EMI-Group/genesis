@@ -124,15 +124,22 @@ defmodule EvoDashWeb.HomeLive do
             phx-hook="AgentHistoryAutoScroll"
             class="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain scrollbar-thin"
           >
-            <%= if @transcript == [] do %>
-              <.empty_state source_gate?={SourceGate.blocked?(assigns)} />
-            <% else %>
-              <.message_list
-                transcript={@transcript}
-                chat_task_status={@chat_task_status}
-                thought_process={@thought_process}
-                raw_entry_ids={@raw_entry_ids}
-              />
+            <!-- An EMPTY transcript shows one of two empty states: the ended
+               session (the session is gone AND nothing was cached, so the
+               greeting's suggestion chips could only start a doomed send) or
+               the normal greeting. -->
+            <%= cond do %>
+              <% @transcript == [] and @chat_status == :ended -> %>
+                <.session_ended_state />
+              <% @transcript == [] -> %>
+                <.empty_state source_gate?={SourceGate.blocked?(assigns)} />
+              <% true -> %>
+                <.message_list
+                  transcript={@transcript}
+                  chat_task_status={@chat_task_status}
+                  thought_process={@thought_process}
+                  raw_entry_ids={@raw_entry_ids}
+                />
             <% end %>
             <!-- Transient queued-message echoes are NOT transcript entries: they
                render AFTER the last entry, inside the scroller. -->
@@ -426,8 +433,16 @@ defmodule EvoDashWeb.HomeLive do
     entries = Messages.to_entries(messages)
     text = Messages.assistant_text(messages)
 
+    # A REBUILD from an EMPTY fetched history means the session is gone with
+    # nothing to replay, so a non-empty locally cached transcript (and its
+    # reasoning) is KEPT and rendered read-only instead of being wiped by `[]`.
+    # A non-empty history always wins, and a first-ever attach with no cache
+    # stays empty (the ended state).
+    keep_cache? = rebuild? and messages == [] and socket.assigns[:transcript] not in [nil, []]
+
     transcript =
       cond do
+        keep_cache? -> socket.assigns[:transcript]
         rebuild? -> history_transcript(entries, text)
         text == "" -> socket.assigns[:transcript]
         true -> Transcript.put_streaming_text(socket.assigns[:transcript], text)
@@ -436,7 +451,7 @@ defmodule EvoDashWeb.HomeLive do
     assign(socket,
       transcript: transcript,
       agent_message_count: length(messages),
-      thought_process: entries
+      thought_process: if(keep_cache?, do: socket.assigns[:thought_process] || [], else: entries)
     )
   end
 
