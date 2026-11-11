@@ -213,6 +213,66 @@ defmodule EvoGit.Agent.Session do
   end
 
   @doc """
+  The session pid registered for `agent_id`, or `:error` when there is none.
+
+  This is THE id → pid lookup of the runtime: every resolution in this module and in
+  `EvoGit.Agent.Stream` goes through it, so an unstarted registry (a runtime without the
+  application tree) degrades to the same `:error` a missing key produces instead of raising.
+  """
+  @spec whereis(term()) :: {:ok, pid()} | :error
+  def whereis(agent_id) do
+    # An UNSTARTED registry (a runtime without the application tree) must degrade to the same
+    # fallback as a missing key rather than raising.
+    if Process.whereis(SessionRegistry) do
+      case Registry.lookup(SessionRegistry, agent_id) do
+        [{pid, _value}] when is_pid(pid) -> {:ok, pid}
+        _other -> :error
+      end
+    else
+      :error
+    end
+  end
+
+  @doc """
+  The agent id a session pid is registered under, asked of the session itself.
+
+  A bare pid cannot supply it, and the streaming topic (`"agent:<id>"`) is keyed by the agent id,
+  so `EvoGit.Agent.Stream` needs this lookup to subscribe. `:error` when the session is gone or
+  does not answer within `timeout` — TOTAL, never raises and never exits.
+  """
+  @spec identity(pid(), timeout()) :: {:ok, term()} | :error
+  def identity(pid, timeout \\ @call_timeout)
+
+  def identity(pid, timeout) when is_pid(pid) do
+    try do
+      case :gen_statem.call(pid, :identity, timeout) do
+        {:ok, agent_id} -> {:ok, agent_id}
+        _other -> :error
+      end
+    catch
+      # `:gen_statem.call/3` EXITS on a dead, stopping or unresponsive session, and this helper is
+      # TOTAL, so the exit becomes the documented `:error` fallback instead of leaking out of the
+      # API (the same boundary `call/3` keeps below).
+      :exit, _reason -> :error
+    end
+  end
+
+  # A non-pid can never be a session.
+  def identity(_other, _timeout), do: :error
+
+  @doc """
+  Whether any consumer is watching this session — the streaming gate — FAIL-CLOSED.
+
+  `false` when the session is gone, did not answer within `timeout`, or answered with anything
+  other than `true`. An emitter that reads `false` installs NO streaming callbacks at all, so the
+  unwatched LLM path carries no streaming overhead; guessing `true` here would re-introduce it.
+  """
+  @spec watching?(dispatch_target(), timeout()) :: boolean()
+  def watching?(target, timeout \\ @call_timeout) do
+    call(target, :watching?, timeout) == true
+  end
+
+  @doc """
   Cancels the exchange (or the IDLE session).
 
   `:graceful` keeps a running worker alive so the engine's 3-turn save-work grace runs
@@ -843,19 +903,7 @@ defmodule EvoGit.Agent.Session do
   end
 
   defp resolve(pid) when is_pid(pid), do: {:ok, pid}
-
-  defp resolve(agent_id) do
-    # An UNSTARTED registry (a runtime without the application tree) must degrade to the same
-    # fallback as a missing key rather than raising.
-    if Process.whereis(SessionRegistry) do
-      case Registry.lookup(SessionRegistry, agent_id) do
-        [{pid, _value}] when is_pid(pid) -> {:ok, pid}
-        _other -> :error
-      end
-    else
-      :error
-    end
-  end
+  defp resolve(agent_id), do: whereis(agent_id)
 
   defp current_worker?(%{worker: %Task{pid: pid}}, pid) when is_pid(pid), do: true
   defp current_worker?(_data, _pid), do: false
