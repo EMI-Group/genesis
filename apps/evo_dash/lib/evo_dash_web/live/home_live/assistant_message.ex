@@ -115,32 +115,33 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
               </span>
             </div>
           <% else %>
-            <%= if streaming?(@entry) do %>
-              <!-- In-progress stream: raw partial text + blinking caret.
-                   Streaming text is NEVER markdown-rendered (a half-rendered
-                   stream would flicker) — the render switches to markdown only
-                   when the entry is finalized (streaming: false). -->
-              <div class="py-2 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content">
-                {entry_text(@entry)}
+            <!-- Layout stability: ONE text container for every state. The outer
+                 div keeps identical classes while streaming, in raw view and
+                 after finalization, so only the inner node is replaced when a
+                 turn ends — the block's own line-box metrics never change, so
+                 the transcript column cannot resize mid-stream or at turn end. -->
+            <div class="py-2 text-[15px] leading-relaxed break-words text-base-content">
+              <%= if streaming?(@entry) do %>
+                <!-- In-progress stream: raw partial text + blinking caret.
+                     Streaming text is NEVER markdown-rendered (a half-rendered
+                     stream would flicker) — the render switches to markdown only
+                     when the entry is finalized (streaming: false). -->
+                <span class="whitespace-pre-wrap">{entry_text(@entry)}</span>
                 <span class="help-caret ml-0.5 inline-block h-4 w-[3px] rounded-full bg-primary align-[-3px]"></span>
-              </div>
-            <% else %>
-              <%= if @raw do %>
-                <!-- Per-message raw view: the plain (HTML-escaped) source text. -->
-                <div class="py-2 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content">
-                  {entry_text(@entry)}
-                </div>
               <% else %>
-                <!-- Finalized assistant text renders as Markdown — same helper
-                     + call pattern as the tasks/review pages. Always-safe
-                     HTML: MDEx render with an HTML-escaped fallback. -->
-                <div class="py-2">
+                <%= if @raw do %>
+                  <!-- Per-message raw view: the plain (HTML-escaped) source text. -->
+                  <span class="whitespace-pre-wrap">{entry_text(@entry)}</span>
+                <% else %>
+                  <!-- Finalized assistant text renders as Markdown — same helper
+                       + call pattern as the tasks/review pages. Always-safe
+                       HTML: MDEx render with an HTML-escaped fallback. -->
                   <div class="md-content min-w-0 break-words text-[15px] leading-relaxed text-base-content">
                     {raw(EvoDash.MarkdownRender.render(entry_text(@entry)))}
                   </div>
-                </div>
+                <% end %>
               <% end %>
-            <% end %>
+            </div>
           <% end %>
           <%= if @thought_process != [] do %>
             <details class="group mt-3 min-w-0">
@@ -159,10 +160,21 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
               </div>
             </details>
           <% end %>
-          <%= if not streaming?(@entry) do %>
-            <!-- Normal-flow footer reserves its own space; touch users always
-                 see the actions, and keyboard focus reveals them on desktop. -->
-            <div class="mt-2 flex items-center gap-1 py-1 opacity-100 transition-opacity duration-150 sm:opacity-0 group-hover/assistant:opacity-100 group-focus-within/assistant:opacity-100 [@media(hover:none)]:opacity-100">
+          <!-- Layout stability: the action footer ALWAYS renders so its height is
+               reserved while a reply streams (the buttons only appear once the
+               entry is finalized). Before this, the footer was inserted at turn
+               end and the message grew under a bottom-pinned scroll container.
+               Touch users always see the actions, and keyboard focus reveals
+               them on desktop. -->
+          <div class={[
+            "mt-2 flex items-center gap-1 py-1",
+            if(streaming?(@entry),
+              do: "h-11 sm:h-8",
+              else:
+                "opacity-100 transition-opacity duration-150 sm:opacity-0 group-hover/assistant:opacity-100 group-focus-within/assistant:opacity-100 [@media(hover:none)]:opacity-100"
+            )
+          ]}>
+            <%= if not streaming?(@entry) do %>
               <%!-- zh_CN: 原始视图：显示本条消息的纯文本（未渲染的 Markdown 源文） --%>
               <button
                 type="button"
@@ -191,8 +203,8 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
               >
                 <.icon name="hero-clipboard" class="size-3.5" />
               </button>
-            </div>
-          <% end %>
+            <% end %>
+          </div>
           <%= if stream_meta?(@stream_meta) do %>
             <%!-- zh_CN: 这两个是气泡下方的短数字标签（第 N 轮 / N 个 token），供翻译者参考 --%>
             <div class="mt-1 flex items-center gap-2 font-mono text-[11px] text-base-content/50">
