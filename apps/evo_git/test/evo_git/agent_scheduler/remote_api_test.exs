@@ -871,6 +871,81 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     end
   end
 
+  # ── save_user_config/1 ─────────────────────────────────────────────
+  describe "save_user_config/1" do
+    # Per-process config directory (empty → a controlled config.toml) plus the
+    # per-process `RemoteAPI.with_reload_fun/2` seam: the REAL app-global
+    # scheduler is never reloaded and no sleep is needed.
+    setup do
+      ConfigDir.isolate!("evogit-remote-api-save")
+      :ok
+    end
+
+    test "persists the file and answers :ok when the reload call times out" do
+      config = put_in(EvoGit.Config.defaults(), [:appearance, :accent_color], "teal")
+      # The observed defect shape: a caller-side GenServer.call timeout AFTER
+      # the file already landed.
+      timeout =
+        {:timeout, {GenServer, :call, [EvoGit.AgentScheduler, {:update_config, []}, 5_000]}}
+
+      result =
+        RemoteAPI.with_reload_fun(fn -> exit(timeout) end, fn ->
+          RemoteAPI.save_user_config(config)
+        end)
+
+      assert result == :ok
+      # Persistence actually happened — the receipt is not a lie.
+      assert File.read!(EvoGit.Config.config_path()) =~ ~s(accent_color = "teal")
+    end
+
+    test "a genuine persistence failure still returns an error and skips the reload" do
+      invalid =
+        put_in(EvoGit.Config.defaults(), [:scheduler, :default_llm_max_concurrency], -1)
+
+      parent = self()
+
+      result =
+        RemoteAPI.with_reload_fun(
+          fn ->
+            send(parent, :reload_attempted)
+            :ok
+          end,
+          fn -> RemoteAPI.save_user_config(invalid) end
+        )
+
+      assert {:error, errors} = result
+      assert is_list(errors) and errors != []
+      refute_received :reload_attempted
+      refute File.exists?(EvoGit.Config.config_path())
+    end
+
+    test "still reloads the scheduler after a successful persist" do
+      parent = self()
+
+      result =
+        RemoteAPI.with_reload_fun(
+          fn ->
+            send(parent, :reload_attempted)
+            :ok
+          end,
+          fn -> RemoteAPI.save_user_config(EvoGit.Config.defaults()) end
+        )
+
+      assert result == :ok
+      assert_received :reload_attempted
+    end
+
+    test "a scheduler-side reload error keeps the :ok receipt (persistence succeeded)" do
+      result =
+        RemoteAPI.with_reload_fun(
+          fn -> {:error, "scheduler rejected the update"} end,
+          fn -> RemoteAPI.save_user_config(EvoGit.Config.defaults()) end
+        )
+
+      assert result == :ok
+    end
+  end
+
   # ── list_task_ids/1 ────────────────────────────────────────────────
 
   describe "list_task_ids/1" do
