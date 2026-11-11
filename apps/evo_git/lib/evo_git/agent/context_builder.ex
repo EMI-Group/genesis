@@ -33,7 +33,6 @@ defmodule EvoGit.Agent.ContextBuilder do
   alias EvoGit.Agent.BackgroundJobNotice
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.ForeignRepo
-  alias EvoGit.AgentScheduler
 
   # The zone the clock section falls back to when no local zone name can be
   # resolved — `NaiveDateTime.local_now/1`'s own default (Elixir's "local now").
@@ -279,8 +278,9 @@ defmodule EvoGit.Agent.ContextBuilder do
   @doc """
   Builds the FULL `<context>...</context>` block of the first user prompt.
 
-  The single shared assembly path used BOTH at run start (`Runner.do_run/2`)
-  and by the mid-run compression refresh
+  The single shared assembly path used BOTH at run start
+  (`EvoGit.Agent.Session.Setup.build_initial_state/3`) and by the mid-run
+  compression refresh
   (`refresh_first_user_message/2`), so the two can never drift.
 
   Input: a plain map with keys `:node_path, :repo_path, :parent_id,
@@ -291,7 +291,7 @@ defmodule EvoGit.Agent.ContextBuilder do
   agent's live/finished background shell jobs, rendered by
   `EvoGit.Agent.BackgroundJobNotice.section/1`; absent/`nil`/`[]` renders
   nothing, so the block stays byte-identical for an agent with no jobs). A
-  `%LoopState{}` satisfies this. Purely reads the CONTEXT.md chain from disk via
+  `%EvoGit.Agent.State{}` satisfies this. Purely reads the CONTEXT.md chain from disk via
   `build_dynamic_context/1` — so calling it
   again later re-reads the CURRENT chain — plus the static sections, drops
   blank ones, joins them with `"\\n\\n"`, and wraps them via `context_block/1`.
@@ -449,7 +449,7 @@ defmodule EvoGit.Agent.ContextBuilder do
   would keep seeing the stale chain.
 
   `msg` is the EXISTING first user message (as it sits in the conversation);
-  `state` is a plain map (a `%EvoGit.Agent.LoopState{}`) carrying
+  `state` is a plain map (a `%EvoGit.Agent.State{}`) carrying
   `:node_path, :repo_path, :parent_id, :repo_less, :foreign_repos,
   :repo_notes, :quality_level` PLUS:
 
@@ -628,20 +628,6 @@ defmodule EvoGit.Agent.ContextBuilder do
       turn when is_integer(turn) -> tag_message_turn(user_message, turn)
       _ -> user_message
     end
-  end
-
-  # --- ETS Sync Helpers ---
-
-  def sync_context_to_ets(agent_id, context) do
-    AgentScheduler.update_agent_context(agent_id, context)
-  end
-
-  def sync_turn_to_ets(agent_id, turn) do
-    AgentScheduler.update_agent_turn(agent_id, turn)
-  end
-
-  def sync_total_tokens_to_ets(agent_id, total_tokens) do
-    AgentScheduler.update_total_tokens(agent_id, total_tokens)
   end
 
   # --- Turn Tagging ---

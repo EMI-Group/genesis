@@ -808,7 +808,7 @@ defmodule EvoGit.Store.TypesTest do
   describe "TaskRow schema end-to-end" do
     test "columns/0 matches Codec.task_columns/0 ++ updated_at (physical order)" do
       assert TaskRow.columns() == Codec.task_columns() ++ ["updated_at"]
-      assert length(TaskRow.columns()) == 19
+      assert length(TaskRow.columns()) == 20
     end
 
     test "schema dump of a full task row equals Codec.encode_task/1 + updated_at" do

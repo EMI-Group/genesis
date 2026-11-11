@@ -3,12 +3,12 @@
 ## Intent
 
 Context compression relieves a conversation that outgrew its CONFIGURED context window, cheapest stage first: a model-free tool-result pruner runs first but is adopted only when it recovers a LOT (down to a fraction of the window), otherwise a summarising LLM checkpoint runs over the ORIGINAL transcript.
-The single entry point is `EvoGit.Agent.ContextCompression.compress_if_needed/2` (called at the top of every `EvoGit.Agent.Runner.loop/1` iteration), which orchestrates both stages; this directory holds the pure sub-modules it composes.
+The single entry point is `EvoGit.Agent.ContextCompression.compress_if_needed/2` (called at the top of every exchange turn, `EvoGit.Agent.Exchange`), which orchestrates both stages; this directory holds the pure sub-modules it composes.
 No module here owns a process, writes configuration or uses `try`/`rescue` — the one LLM call lives in `LlmRetry`, and its only scheduler interaction is the LLM slot request.
 
 ## Pipeline
 
-`compress_if_needed/2` takes `agent_id:`, `llm_model:`, `llm_context_window:` (default `EvoGit.Config.Schema.LLM.default_context_window/0` = 200_000) and `llm_generation_params:` and returns the `%LoopState{}` (compressed or untouched) or the terminal `{:error, {:llm_request_rejected, message}}`.
+`compress_if_needed/2` takes and returns a `%EvoGit.Agent.State{}` — it reads that struct's `agent_id`, `llm_model`, `llm_context_window` (default `EvoGit.Config.Schema.LLM.default_context_window/0` = 200_000) and `llm_generation_params` fields, and returns the struct (compressed or untouched) or the terminal `{:error, {:llm_request_rejected, message}}`.
 Its work only starts for a conversation shaped `[_system, _first_user | _rest]`; any other shape is returned unchanged.
 
 1. **Gate** — `Threshold.for_model(llm_model, context_window: llm_context_window)` resolves the trigger and `Threshold.exceeded?/2` compares it with `state.total_tokens` (the LAST turn's provider-reported `input + output + reasoning`).
@@ -43,7 +43,7 @@ Usage is charged wherever the request was billed: the adopted-prune path leaves 
 
 ## Prompt-Cache Stability (which bytes change, and when)
 
-- **Nothing in this directory runs on a turn that does not cross the threshold** — `compress_if_needed/2` returns the caller's own `%LoopState{}` untouched (`context_compression.ex:180`), and `ToolResultPruner.prune/1`, `Checkpoint.split|build/2,3` and `Recency.shrink_to_budget/2` have NO caller outside `context_compression.ex`, so the request bytes are append-only between compression events.
+- **Nothing in this directory runs on a turn that does not cross the threshold** — `compress_if_needed/2` returns the caller's own `%EvoGit.Agent.State{}` untouched, and `ToolResultPruner.prune/1`, `Checkpoint.split|build/2,3` and `Recency.shrink_to_budget/2` have NO caller outside `context_compression.ex`, so the request bytes are append-only between compression events.
 - **The trigger reads the LATEST provider-reported count, replaced each turn** (`ToolDispatch.update_turn_usage/2`, not a running sum), and both rebuild paths reset `state.total_tokens` to 0 — so compression re-fires only after the transcript regrows by roughly `threshold − post-compression size`.
 - **A compaction storm is the one shape that changes bytes EVERY turn**: a rebuilt transcript still above the threshold crosses again on the very next turn, and each event writes a fresh LLM summary, rewrites the MIDDLE and swaps the refresh.
 - **Every event — including the "nothing older to replace" and blank-summary paths — deletes the previous refresh message from the MIDDLE** (`keep_context/5` → `drop_stale_refreshes/1`), so even a no-op compaction shifts every position after that message.

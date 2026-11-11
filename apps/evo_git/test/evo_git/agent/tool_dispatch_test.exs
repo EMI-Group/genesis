@@ -10,7 +10,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   1.6-7.4s, which exceeds that budget and truncates the marker file. With
   exclusive access the tool calls stay three orders of magnitude under budget.
   Its shared state is benign: agent state rows go into the app-global
-  `:evogit_agent_state` table under per-test unique ids, the global
+  `:evogit_agent_summary` table under per-test unique ids, the global
   `EvoGit.AgentScheduler` only supplies tool slots, and everything else is
   process-local (`Process.put/2` for `:evogit_agent_id` / `:repo_path` /
   `:genesis_repo_root`) or a per-test temp dir.
@@ -23,7 +23,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
 
   use ExUnit.Case, async: false
 
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolDispatch
 
   import ExUnit.CaptureLog
@@ -784,7 +784,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   # ---------------------------------------------------------------------------
 
   # Registers a live agent-state row for `agent_id` (the app-global
-  # `:evogit_agent_state` ETS table, cleaned up by the caller) so the
+  # `:evogit_agent_summary` ETS table, cleaned up by the caller) so the
   # current-agent lookups resolve.
   defp put_agent_state!(agent_id, overrides) do
     state =
@@ -807,8 +807,8 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   describe "current_context_window/0" do
     setup do
       # Unique id so this row can never collide with a sibling test's; the
-      # process dictionary entry mirrors what Runner.setup_dispatch_context/1
-      # installs for a scheduled agent.
+      # process dictionary entry mirrors what the session setup
+      # (`EvoGit.Agent.Session.Setup.install_process_context/3`) installs.
       agent_id = 9_980_000 + :erlang.unique_integer([:positive])
       Process.put(:evogit_agent_id, agent_id)
 
@@ -922,7 +922,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       Process.put(:repo_less, true)
       Process.put(:repo_path, "/nonexistent")
 
-      state = %LoopState{
+      state = %State{
         agent_id: 1,
         agent_module: EvoGit.Agents.SelfReflective,
         depth: 0,
@@ -942,6 +942,55 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   end
 
   # ---------------------------------------------------------------------------
+  # sync_current_commit_after_tools/1 records a PER-PROCESS current_commit
+  # ---------------------------------------------------------------------------
+
+  describe "sync_current_commit_after_tools/1 for a worktree agent" do
+    test "records the worktree HEAD as a per-process value and writes no ETS row" do
+      repo =
+        Path.join(System.tmp_dir!(), "tool_dispatch_sync_#{:erlang.unique_integer([:positive])}")
+
+      File.mkdir_p!(repo)
+      {:ok, _} = EvoGit.Adapters.Git.init(repo)
+      File.write!(Path.join(repo, "a.txt"), "a\n")
+      {:ok, _} = EvoGit.Adapters.Git.add(repo, "a.txt")
+      {:ok, _} = EvoGit.Adapters.Git.commit(repo, "Initial commit")
+      {:ok, head} = EvoGit.Adapters.Git.rev_parse(repo)
+
+      agent_id = :erlang.unique_integer([:positive])
+
+      Process.delete(:repo_less)
+      Process.delete(:evogit_current_commit)
+      Process.put(:repo_path, repo)
+
+      state = %State{
+        agent_id: agent_id,
+        agent_module: EvoGit.Agents.SelfReflective,
+        depth: 0,
+        node_path: "./",
+        context: ReqLLM.Context.new()
+      }
+
+      try do
+        assert ToolDispatch.sync_current_commit_after_tools(state) == :ok
+
+        # The replacement mechanism for the old ETS write: a PER-PROCESS derived
+        # value, which the turn checkpoint (`continue_after_tools/7`) moves onto
+        # the owned `%State{current_commit: sha}` (delete-on-read).
+        assert Process.get(:evogit_current_commit) == head
+
+        # …and the scheduler's summary row is untouched (no write-through).
+        assert EvoGit.AgentScheduler.Store.get_agent_state(agent_id) == :error
+      after
+        Process.delete(:evogit_current_commit)
+        Process.delete(:repo_path)
+        Process.delete(:repo_less)
+        File.rm_rf!(repo)
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # sync_current_commit_after_tools/1 error hardening
   # ---------------------------------------------------------------------------
 
@@ -951,7 +1000,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       Process.delete(:repo_less)
       Process.put(:repo_path, "/nonexistent/tool_dispatch_worktree")
 
-      state = %LoopState{
+      state = %State{
         agent_id: 1,
         agent_module: EvoGit.Agents.SelfReflective,
         depth: 0,
@@ -992,7 +1041,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       Process.delete(:repo_less)
       Process.put(:repo_path, repo_root)
 
-      state = %LoopState{
+      state = %State{
         agent_id: 1,
         agent_module: EvoGit.Agents.SelfReflective,
         depth: 0,

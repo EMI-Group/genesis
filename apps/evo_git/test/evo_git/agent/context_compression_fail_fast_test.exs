@@ -51,10 +51,10 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
   import ExUnit.CaptureLog
 
   alias EvoGit.Agent.ContextCompression
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler
-  alias EvoGit.AgentScheduler.State
+  alias EvoGit.AgentScheduler.State, as: SchedulerState
 
   # The only profile the setup installs. Its id is what the scheduler resolves a
   # slot request to when the agent has NO ETS state row (`Slots.resolve_model_id/2`
@@ -160,11 +160,11 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
 
   defp tag(message, turn), do: EvoGit.Agent.ContextBuilder.tag_message_turn(message, turn)
 
-  # The minimal compressible `LoopState`: one token past the model's trigger and
+  # The minimal compressible `State`: one token past the model's trigger and
   # shaped `[system, user | rest]`, the ONLY shape `compress_if_needed/2`
   # compresses (any other shape returns the state unchanged).
   defp state(agent_id, llm_model) do
-    %LoopState{
+    %State{
       agent_id: agent_id,
       agent_module: __MODULE__,
       depth: 0,
@@ -217,7 +217,7 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
   defp model_backoff_remaining do
     state = :sys.get_state(EvoGit.AgentScheduler)
 
-    case State.backoff_for(state, @model_id) do
+    case SchedulerState.backoff_for(state, @model_id) do
       nil -> nil
       until -> until - System.monotonic_time(:millisecond)
     end

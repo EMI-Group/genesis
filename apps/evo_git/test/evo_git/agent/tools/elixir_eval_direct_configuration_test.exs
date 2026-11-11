@@ -153,7 +153,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.DirectConfigurationTest do
 
   test "exact approved runtime update, pause and resume return real acknowledgements without saving",
        ctx do
-    [{_, agent_before}] = :ets.lookup(:evogit_agent_state, ctx.fixture.agent_id)
+    [{_, agent_before}] = :ets.lookup(:evogit_agent_summary, ctx.fixture.agent_id)
 
     code =
       "  # exact runtime settings: 中文\nEvoGit.AgentScheduler.update_config(max_turns: 421)\n  "
@@ -163,7 +163,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.DirectConfigurationTest do
     assert Config.resolve([:scheduler, :max_turns]) == 73
     assert File.read!(ctx.path) === ctx.bytes
 
-    assert :ets.lookup(:evogit_agent_state, ctx.fixture.agent_id) ==
+    assert :ets.lookup(:evogit_agent_summary, ctx.fixture.agent_id) ==
              [{ctx.fixture.agent_id, agent_before}]
 
     assert approved(ctx, "EvoGit.AgentScheduler.pause()") == "Result: :ok"

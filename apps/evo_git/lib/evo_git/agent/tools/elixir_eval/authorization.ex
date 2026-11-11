@@ -15,6 +15,27 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
   @denied "Elixir evaluation requires a live root reflective assistant on the local node."
   @timeout 1_000
 
+  # SchedMeta statuses of a live assistant agent: `:running` (an exchange is in
+  # flight), `:blocked` (parked in a slot queue) and `:awaiting_input` (an idle
+  # INTERACTIVE session between exchanges — no worker, no slot, no timer, but
+  # its session process, worktree and transcript are alive, so inspecting and
+  # driving it is legitimate). Defined once and exposed for the table-driven
+  # status-admission test.
+  @accepted_agent_statuses [:running, :blocked, :awaiting_input]
+
+  # Statuses of the OWNING task row: `:blocked` is agent-side only, so the task
+  # is `:running` while the assistant works and `:awaiting_input` while its
+  # interactive session idles between exchanges.
+  @accepted_agent_task_statuses [:running, :awaiting_input]
+
+  @doc false
+  # SchedMeta statuses accepted for the assistant agent (see the comment above).
+  def accepted_agent_statuses, do: @accepted_agent_statuses
+
+  @doc false
+  # Statuses accepted for the assistant's owning `:reflect` task row.
+  def accepted_agent_task_statuses, do: @accepted_agent_task_statuses
+
   def authorize(target_node \\ nil) do
     context = %{
       agent_id: Process.get(:evogit_agent_id),
@@ -56,8 +77,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
            [{^id, %SchedMeta{id: ^id} = meta}] <- :ets.lookup(:evogit_sched_meta, id),
            true <- valid_state?(id),
            true <- valid_agent?(meta, owner, task_id),
-           %{id: ^task_id, type: :reflect, status: :running} <-
+           %{id: ^task_id, type: :reflect, status: task_status} <-
              GenServer.call(registry, {:get_task_lite, task_id}, @timeout),
+           true <- task_status in @accepted_agent_task_statuses,
            true <- Process.alive?(owner) and Process.alive?(tool),
            [{^id, ^meta}] <- :ets.lookup(:evogit_sched_meta, id),
            true <- valid_state?(id) do
@@ -80,7 +102,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
            depth: 0,
            parent_id: nil,
            task_id: task_id,
-           task_ref: %Task{pid: owner},
+           session_pid: owner,
            status: status,
            result_sent: false,
            spec: %AgentSpec{
@@ -94,7 +116,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
          owner,
          task_id
        )
-       when is_integer(id) and status in [:running, :blocked] and is_list(opts) do
+       when is_integer(id) and status in @accepted_agent_statuses and is_list(opts) do
     Keyword.keyword?(opts) and Keyword.get(opts, :repo_less) == true and
       Keyword.get(opts, :task_id) == task_id and
       Keyword.get(opts, :foreign_repos, []) == [] and
@@ -103,8 +125,12 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
 
   defp valid_agent?(_, _, _), do: false
 
-  # Project inside ETS: do not copy the agent's conversation or generation
-  # parameters just to check its role. A missing row/field never grants access.
+  # Project inside ETS: copy only the role/ownership fields of the summary row.
+  # A missing row/field never grants access.
+  #
+  # The cancellation flag is read from the CONTROL PLANE (its single writer is
+  # the scheduler's `Store.set_cancel_requested/1`); the summary row does not
+  # carry the flag at all.
   defp valid_state?(id) do
     pattern =
       {id,
@@ -112,13 +138,11 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
          __struct__: AgentState,
          parent_id: nil,
          repo_id: "primary",
-         foreign_repos: [],
-         cancel_requested: :"$1"
+         foreign_repos: []
        }}
 
-    # The scheduler represents an unset/cleared cancellation flag as nil.
-    guards = [{:orelse, {:"=:=", :"$1", false}, {:"=:=", :"$1", nil}}]
-    match?({[true], _}, :ets.select(:evogit_agent_state, [{pattern, guards, [true]}], 1))
+    match?({[true], _}, :ets.select(:evogit_agent_summary, [{pattern, [], [true]}], 1)) and
+      not EvoGit.AgentScheduler.ControlPlane.cancel_requested?(id)
   end
 
   defp local_target?(target) when target in [nil, :current, :local, "current", "local"], do: true

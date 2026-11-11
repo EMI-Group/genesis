@@ -1,16 +1,29 @@
 defmodule EvoGit.AgentScheduler.StoreTest do
   @moduledoc """
-  Tests for `EvoGit.AgentScheduler.Store` — the shared ETS helpers, focused on
-  the dumb pass-through semantics of `update_agent_context/2`. Per-message
-  `metadata[:timestamp]` stamping happens at message-creation time in the agent
-  code (`EvoGit.Agent.ContextBuilder`), never in the store.
+  Tests for `EvoGit.AgentScheduler.Store` — the ETS helper layer over the
+  `:evogit_agent_summary` SUMMARY row (`%AgentState{}`) and `:evogit_sched_meta`.
+
+  The summary row is a READ MODEL with exactly ONE runtime writer (the agent's
+  `EvoGit.Agent.Session`, through `EvoGit.Agent.Session.Summary.publish/3`): it
+  carries no conversation (`:context` is gone — the session serves it through
+  `EvoGit.Agent.Session.history/2`) and no cross-process control state (the
+  injected inbox and the graceful-cancel flag live in
+  `EvoGit.AgentScheduler.ControlPlane`). So these tests pin:
+
+    * the RAW row read/write (`get_agent_state/1` applies no projection and
+      `put_agent_state/2` neither strips fields nor resets control state);
+    * `message_count`, `current_commit` and `last_activity_at` are ORDINARY
+      tracked summary fields, so they reach the row and the delta broadcast;
+    * the control-plane wrappers (`set_cancel_requested/…`,
+      `append_pending_user_message/2`, `drain_pending_user_messages/1`) that
+      replaced the old on-row control fields.
 
   Uses `async: true`: the rows it seeds live in the app-global named ETS tables
-  (`:evogit_agent_state` and `:evogit_sched_meta`), so every test uses its own
-  `unique_agent_id/0` (its 9_950_000+ range) and never wipes a table. The
-  `"agents"` PubSub topic (`PubSub.agent_topic`) of the global `EvoGit.PubSub`
-  is shared, but every assertion matches on the agent id, so a sibling module's
-  broadcast is benign.
+  (`:evogit_agent_summary`, `:evogit_sched_meta`, `:evogit_agent_inbox`,
+  `:evogit_agent_control`), so every test uses its own `unique_agent_id/0` (its
+  9_950_000+ range) and never wipes a table. The `"agents"` PubSub topic
+  (`PubSub.agent_topic`) of the global `EvoGit.PubSub` is shared, but every
+  assertion matches on the agent id, so a sibling module's broadcast is benign.
   """
 
   use ExUnit.Case, async: true
@@ -19,11 +32,6 @@ defmodule EvoGit.AgentScheduler.StoreTest do
   alias EvoGit.AgentScheduler.PubSub
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.Core.ContextNode
-  alias EvoGit.Core.PhyloGraphNode
-
-  # Distinctive past Unix-seconds value for deterministic pre-stamped
-  # timestamps — far from any real `now`, so assertions can never collide.
-  @old_ts 1_600_000_000
 
   # --- Shared test fixtures ---
 
@@ -31,25 +39,15 @@ defmodule EvoGit.AgentScheduler.StoreTest do
     %ContextNode{path: "./", repo: "/tmp/test"}
   end
 
-  defp phylo_node do
-    %PhyloGraphNode{repo: "/tmp/test", base_commit: "abc", current_commit: "abc"}
-  end
-
   defp agent_state(overrides \\ []) do
     defaults = [
       context_node: context_node(),
-      phylo_node: phylo_node(),
       llm_model: "test:model",
       max_retries: 3,
       max_depth: 8
     ]
 
     struct!(AgentState, Keyword.merge(defaults, overrides))
-  end
-
-  defp message(role, overrides) do
-    defaults = [role: role, content: [ReqLLM.Message.ContentPart.text("hello")]]
-    struct!(ReqLLM.Message, Keyword.merge(defaults, overrides))
   end
 
   # --- ETS helpers (reuse pattern from lifecycle_test.exs) ---
@@ -76,144 +74,163 @@ defmodule EvoGit.AgentScheduler.StoreTest do
   # --- Setup ---
 
   setup do
-    create_ets_if_missing(:evogit_agent_state)
+    create_ets_if_missing(:evogit_agent_summary)
     create_ets_if_missing(:evogit_sched_meta)
+    create_ets_if_missing(:evogit_agent_inbox)
+    create_ets_if_missing(:evogit_agent_control)
     :ok
-  end
-
-  defp stored_context(agent_id) do
-    {:ok, state} = Store.get_agent_state(agent_id)
-    state.context
   end
 
   # --- Tests ---
 
-  describe "update_agent_context/2 — dumb pass-through write" do
-    test "returns :ok and stores a pre-stamped context exactly as given" do
-      agent_id = unique_agent_id()
-      Store.put_agent_state(agent_id, agent_state())
-
-      context = %ReqLLM.Context{
-        messages: [
-          message(:user, metadata: %{timestamp: @old_ts, turn: 1}),
-          message(:assistant, metadata: %{timestamp: @old_ts + 1, turn: 2})
-        ]
-      }
-
-      assert :ok = Store.update_agent_context(agent_id, context)
-
-      # No re-stamping, no modification — the exact value written is the exact
-      # value read back through the store's context-read path.
-      assert stored_context(agent_id) == context
+  describe "get_agent_state/1 — the RAW summary row" do
+    test "returns :error for an unknown agent" do
+      assert Store.get_agent_state(unique_agent_id()) == :error
     end
 
-    test "does not re-stamp or modify any pre-existing metadata" do
+    test "returns the row EXACTLY as written, with no control-plane projection" do
       agent_id = unique_agent_id()
-      Store.put_agent_state(agent_id, agent_state())
 
-      context = %ReqLLM.Context{
-        messages: [message(:user, metadata: %{timestamp: @old_ts, turn: 3})]
-      }
+      state =
+        agent_state(
+          status: :running,
+          message_count: 7,
+          current_commit: "abc123",
+          objective_preview: "preview",
+          llm_generation_params: [temperature: 0.2]
+        )
 
-      assert :ok = Store.update_agent_context(agent_id, context)
+      assert :ok = Store.put_agent_state(agent_id, state)
 
-      [msg] = stored_context(agent_id).messages
-      assert msg.metadata[:timestamp] == @old_ts
-      assert msg.metadata[:turn] == 3
-    end
-
-    test "is a pass-through across repeated syncs of an already-stamped context" do
-      agent_id = unique_agent_id()
-      Store.put_agent_state(agent_id, agent_state())
-
-      context = %ReqLLM.Context{
-        messages: [message(:user, metadata: %{timestamp: @old_ts, turn: 1})]
-      }
-
-      # Re-sync the same pre-stamped context — stored unchanged every time.
-      assert :ok = Store.update_agent_context(agent_id, context)
-      assert :ok = Store.update_agent_context(agent_id, stored_context(agent_id))
-
-      [msg] = stored_context(agent_id).messages
-      assert msg.metadata[:timestamp] == @old_ts
-      assert msg.metadata[:turn] == 1
-    end
-
-    test "passes through messages with nil metadata untouched" do
-      agent_id = unique_agent_id()
-      Store.put_agent_state(agent_id, agent_state())
-
-      context = %ReqLLM.Context{messages: [message(:user, metadata: nil)]}
-
-      assert :ok = Store.update_agent_context(agent_id, context)
-
-      assert stored_context(agent_id) == context
-    end
-
-    test "leaves non-Message entries untouched" do
-      agent_id = unique_agent_id()
-      Store.put_agent_state(agent_id, agent_state())
-
-      loose = %{role: :user, content: "not a struct"}
-      context = %ReqLLM.Context{messages: [loose]}
-
-      assert :ok = Store.update_agent_context(agent_id, context)
-
-      assert stored_context(agent_id).messages == [loose]
-    end
-
-    test "handles an empty messages list" do
-      agent_id = unique_agent_id()
-      Store.put_agent_state(agent_id, agent_state())
-
-      context = %ReqLLM.Context{messages: []}
-
-      assert :ok = Store.update_agent_context(agent_id, context)
-
-      assert stored_context(agent_id).messages == []
+      # The whole struct round-trips: a summary row carries no conversation, so
+      # there is nothing for a read to project (and nothing to drop).
+      assert {:ok, stored} = Store.get_agent_state(agent_id)
+      assert stored == state
+      refute Map.has_key?(stored, :context)
+      refute Map.has_key?(stored, :pending_user_messages)
+      refute Map.has_key?(stored, :cancel_requested)
+      refute Map.has_key?(stored, :phylo_node)
     end
   end
 
-  describe "update_agent_context/2 + batch_update_agent/2 — one-way write sequence" do
-    test "repeated writes of pre-stamped contexts store them unchanged every time" do
+  describe "put_agent_state/2 — ordinary tracked summary fields" do
+    test "tracks message_count, current_commit and last_activity_at on an existing row" do
       agent_id = unique_agent_id()
-      Store.put_agent_state(agent_id, agent_state())
+      assert :ok = Store.put_agent_state(agent_id, agent_state())
 
-      # Turn 1: post-LLM-response write via batch_update_agent (tool_dispatch.ex).
-      ctx1 = %ReqLLM.Context{
-        messages: [
-          message(:user, metadata: %{timestamp: @old_ts, turn: 1}),
-          message(:assistant, metadata: %{timestamp: @old_ts + 1, turn: 1})
-        ]
+      {:ok, %AgentState{} = initial} = Store.get_agent_state(agent_id)
+      assert initial.message_count == 0
+      assert initial.current_commit == nil
+      assert initial.last_activity_at == nil
+
+      now = DateTime.utc_now()
+
+      assert :ok =
+               Store.put_agent_state(
+                 agent_id,
+                 %AgentState{
+                   initial
+                   | message_count: 4,
+                     current_commit: "deadbeef",
+                     last_activity_at: now
+                 }
+               )
+
+      assert {:ok, stored} = Store.get_agent_state(agent_id)
+      assert stored.message_count == 4
+      assert stored.current_commit == "deadbeef"
+      assert stored.last_activity_at == now
+    end
+
+    test "writes every summary field verbatim (no stripping of heavy fields)" do
+      agent_id = unique_agent_id()
+
+      heavy = %{
+        "provider_profile_id" => "account",
+        "model" => "gpt-4o-mini",
+        "reasoning_effort" => "low"
       }
 
-      :ok = Store.batch_update_agent(agent_id, context: ctx1)
-      assert stored_context(agent_id) == ctx1
+      state =
+        agent_state(
+          model_spec: heavy,
+          provider_profile_id: "account",
+          llm_generation_params: [temperature: 0.2, max_tokens: 1000],
+          foreign_repos: [],
+          archive: true,
+          objective: String.duplicate("x", 5_000),
+          objective_preview: String.duplicate("x", 4_096)
+        )
 
-      # End-of-turn sync — dumb pass-through: returns :ok, stores unchanged.
-      assert :ok = Store.update_agent_context(agent_id, ctx1)
-      assert stored_context(agent_id) == ctx1
+      assert :ok = Store.put_agent_state(agent_id, state)
 
-      # Turn 2: append a new pre-stamped assistant message to the in-memory
-      # context (the agent code stamps it at creation — not the store).
-      ctx2 = %ReqLLM.Context{
-        messages: [
-          message(:user, metadata: %{timestamp: @old_ts, turn: 1}),
-          message(:assistant, metadata: %{timestamp: @old_ts + 1, turn: 1}),
-          message(:assistant, metadata: %{timestamp: @old_ts + 2, turn: 2})
-        ]
-      }
-
-      :ok = Store.batch_update_agent(agent_id, context: ctx2)
-      assert stored_context(agent_id) == ctx2
-
-      # Final sync — pass-through again; exact timestamps survive every write.
-      assert :ok = Store.update_agent_context(agent_id, ctx2)
-      assert stored_context(agent_id) == ctx2
+      assert {:ok, stored} = Store.get_agent_state(agent_id)
+      assert stored == state
+      assert stored.llm_generation_params == [temperature: 0.2, max_tokens: 1000]
+      assert stored.model_spec == heavy
     end
   end
 
-  describe "cancel_requested — graceful-cancel flag" do
+  describe "broadcast payload hygiene" do
+    setup do
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, PubSub.agent_topic())
+      # Flush any broadcasts that arrived before this test subscribed
+      drain_mailbox()
+
+      on_exit(fn ->
+        Phoenix.PubSub.unsubscribe(EvoGit.PubSub, PubSub.agent_topic())
+      end)
+
+      :ok
+    end
+
+    test "a first insert broadcasts the initial tracked fields (never :context)" do
+      agent_id = unique_agent_id()
+      Store.put_agent_state(agent_id, agent_state(message_count: 2))
+
+      assert_receive {:agent_updated, ^agent_id, fields, bcast_node}
+      assert Keyword.keyword?(fields)
+      refute Keyword.has_key?(fields, :context)
+      refute Keyword.has_key?(fields, :cancel_requested)
+      assert Keyword.fetch!(fields, :message_count) == 2
+      assert Keyword.fetch!(fields, :llm_model) == "test:model"
+      assert bcast_node == node()
+    end
+
+    test "an update broadcasts a delta carrying message_count and current_commit" do
+      agent_id = unique_agent_id()
+      Store.put_agent_state(agent_id, agent_state())
+      assert_receive {:agent_updated, ^agent_id, _insert_fields, _node}
+
+      {:ok, %AgentState{} = current} = Store.get_agent_state(agent_id)
+
+      assert :ok =
+               Store.put_agent_state(
+                 agent_id,
+                 %AgentState{current | message_count: 5, current_commit: "cafe"}
+               )
+
+      assert_receive {:agent_updated, ^agent_id, fields, bcast_node}
+      assert Keyword.fetch!(fields, :message_count) == 5
+      assert Keyword.fetch!(fields, :current_commit) == "cafe"
+      # Only the changed fields ride the delta — an unchanged field is absent.
+      refute Keyword.has_key?(fields, :turn)
+      assert bcast_node == node()
+    end
+
+    test "a rewrite that changes nothing tracked broadcast no delta at all" do
+      agent_id = unique_agent_id()
+      state = agent_state(message_count: 1)
+      Store.put_agent_state(agent_id, state)
+      assert_receive {:agent_updated, ^agent_id, _insert_fields, _node}
+
+      # Same values again — the row is identical, so there is no delta.
+      assert :ok = Store.put_agent_state(agent_id, state)
+      refute_receive {:agent_updated, ^agent_id, _fields, _node}, 100
+    end
+  end
+
+  describe "control-plane wrappers — graceful-cancel flag" do
     test "set_cancel_requested/1 returns :ok and sets the flag for a live agent" do
       agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
@@ -247,85 +264,57 @@ defmodule EvoGit.AgentScheduler.StoreTest do
       assert {:error, :not_found} = Store.clear_cancel_requested(unique_agent_id())
     end
 
-    test "the flag survives a put_agent_state/2 round-trip" do
+    test "the flag is control-plane state: it survives a whole-row put_agent_state/2" do
       agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
       assert :ok = Store.set_cancel_requested(agent_id)
 
-      # Whole-struct write of a state that still carries the flag keeps it.
-      {:ok, state} = Store.get_agent_state(agent_id)
-      assert state.cancel_requested == true
-
-      Store.put_agent_state(agent_id, state)
-
-      {:ok, state2} = Store.get_agent_state(agent_id)
-      assert state2.cancel_requested == true
+      # A whole-struct write of an unrelated row never resets control state —
+      # the flag does not live on the summary row at all.
+      assert :ok = Store.put_agent_state(agent_id, agent_state(turn: 7))
+      assert {:ok, state} = Store.get_agent_state(agent_id)
+      assert state.turn == 7
+      assert Store.cancel_requested?(agent_id)
     end
 
-    test "the flag survives a batch_update_agent/2 update of an unrelated field" do
+    test "delete_agent_state/1 drops the control-plane rows too" do
       agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
       assert :ok = Store.set_cancel_requested(agent_id)
+      assert :ok = Store.append_pending_user_message(agent_id, "hi")
 
-      assert :ok = Store.batch_update_agent(agent_id, turn: 7)
+      assert :ok = Store.delete_agent_state(agent_id)
 
-      {:ok, state} = Store.get_agent_state(agent_id)
-      assert state.turn == 7
-      assert state.cancel_requested == true
+      assert Store.get_agent_state(agent_id) == :error
+      refute Store.cancel_requested?(agent_id)
+      assert Store.drain_pending_user_messages(agent_id) == []
     end
   end
 
-  describe "broadcast payload hygiene" do
-    setup do
-      Phoenix.PubSub.subscribe(EvoGit.PubSub, PubSub.agent_topic())
-      # Flush any broadcasts that arrived before this test subscribed
-      drain_mailbox()
-
-      on_exit(fn ->
-        Phoenix.PubSub.unsubscribe(EvoGit.PubSub, PubSub.agent_topic())
-      end)
-
-      :ok
-    end
-
-    test "batch_update_agent with a :context broadcasts a stripped delta with message_count" do
+  describe "control-plane wrappers — pending user messages" do
+    test "append_pending_user_message/2 queues in order and drain returns exactly-once" do
       agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
-      # The insert path broadcasts the initial tracked fields (no context).
-      assert_receive {:agent_updated, ^agent_id, _insert_fields, _node}
+      assert :ok = Store.append_pending_user_message(agent_id, "first")
+      assert :ok = Store.append_pending_user_message(agent_id, "second")
 
-      ctx = %ReqLLM.Context{
-        messages: [
-          message(:user, metadata: %{timestamp: @old_ts, turn: 1}),
-          message(:assistant, metadata: %{timestamp: @old_ts + 1, turn: 1})
-        ]
-      }
-
-      assert :ok = Store.batch_update_agent(agent_id, context: ctx, turn: 5)
-
-      assert_receive {:agent_updated, ^agent_id, fields, bcast_node}
-      refute Keyword.has_key?(fields, :context)
-      assert Keyword.get(fields, :message_count) == 2
-      assert Keyword.fetch!(fields, :turn) == 5
-      assert bcast_node == node()
+      assert Store.drain_pending_user_messages(agent_id) == ["first", "second"]
+      # The drain consumed them: a second drain is empty.
+      assert Store.drain_pending_user_messages(agent_id) == []
     end
 
-    test "update_agent_context/2 broadcasts message_count matching the new context" do
+    test "append_pending_user_message/2 returns {:error, :not_found} for a recycled agent" do
+      assert {:error, :not_found} = Store.append_pending_user_message(unique_agent_id(), "late")
+    end
+
+    test "a queued message never reaches the summary row" do
       agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
+      assert :ok = Store.append_pending_user_message(agent_id, "queued")
 
-      assert_receive {:agent_updated, ^agent_id, _insert_fields, _node}
-
-      ctx = %ReqLLM.Context{
-        messages: [message(:user, metadata: %{timestamp: @old_ts, turn: 1})]
-      }
-
-      assert :ok = Store.update_agent_context(agent_id, ctx)
-
-      assert_receive {:agent_updated, ^agent_id, fields, _node}
-      refute Keyword.has_key?(fields, :context)
-      assert Keyword.get(fields, :message_count) == 1
+      assert {:ok, state} = Store.get_agent_state(agent_id)
+      refute Map.has_key?(state, :pending_user_messages)
     end
   end
 end

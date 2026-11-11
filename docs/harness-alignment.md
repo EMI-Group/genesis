@@ -265,7 +265,7 @@ reflect the window the operator actually wants to use, not the largest one the p
 
 | Concern | `dsh` | Ours |
 |---|---|---|
-| Unit | **turn** = one user intent; **step** = one model call + its tools; a turn ends only when `step()` returns null **and** the inbox is empty | one flat `turn` counter (`LoopState.turn`, `max_turns` 128 / `max_turns_root` 1000); no step concept |
+| Unit | **turn** = one user intent; **step** = one model call + its tools; a turn ends only when `step()` returns null **and** the inbox is empty | one flat `turn` counter (`%EvoGit.Agent.State{}.turn`, `max_turns` 128 / `max_turns_root` 1000); no step concept |
 | Request derivation | `buildRequest` is a **pure function of the session log** (`session.deriveMessages()`); no in-memory message array; byte-equality pinned by a test | the live `ReqLLM.Context` *is* the state; every turn appends |
 | Streaming | streaming only (no non-streaming path); live frames published **after** the durable append | streaming via `ReqLLM.stream_text` + `process_stream`; deltas consumed inside ReqLLM, the loop sees only the assembled response |
 | Reasoning | `thinking: {type}`, `output_config: {effort: off\|low\|high\|max}` (default high), **no `budget_tokens`**; thinking blocks replayed with provider signature | `reasoning_details` merged to one entry with `index: 0`; content may also carry a `:thinking` part; dashboard renders `:thinking` **separately** from response (`ContentText.text_part?/1` guards the join, "Thought process" panel) ✅ |

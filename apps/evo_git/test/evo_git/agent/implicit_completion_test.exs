@@ -177,7 +177,8 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
     **no nudge and no extra request** (the stub server's `request_count/1` stays
     at 1), and the text is returned verbatim.
   * The implicit route through `process_llm_response/6` (6th arg = the report
-    text) returns `{:ok, %EvoGit.Agent.Result{}}` whose `result` is exactly that
+    text) returns the one terminal outcome
+    `{:finish, state, %EvoGit.Agent.Result{}}` whose `result` is exactly that
     text, and `build_completion/2` commits pending work BEFORE capturing
     `commit_sha` — the reported sha therefore CONTAINS the agent's still
     uncommitted file change (the reviewable-commit guarantee) and the worktree
@@ -203,7 +204,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
     api_key: ...}` makes the real ReqLLM stack produce a genuine
     `%ReqLLM.Response{}`. Its one-off `LLMDB.load/1` catalog decode is paid once
     in `setup_all/1`, never per test.
-  * Agents are registered in the app-global `:evogit_agent_state` ETS table via
+  * Agents are registered in the app-global `:evogit_agent_summary` ETS table via
     `EvoGit.AgentScheduler.Store.put_agent_state/2` (unique ids, deleted in
     `on_exit`), and the per-agent model is bound by that row — so the LLM slot
     request resolves to the pinned single-profile pool.
@@ -212,19 +213,21 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
 
   Serialized (`async: false`): the suite drives the global
   `EvoGit.AgentScheduler` (config update for a deterministic slot pool), the
-  app-global `:evogit_agent_state` ETS table, and the scheduler's LLM slot pool.
+  app-global `:evogit_agent_summary` ETS table, and the scheduler's LLM slot pool.
   """
   use ExUnit.Case, async: false
 
   alias EvoGit.Agent.ImplicitCompletionTest.StubLlmServer
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.Result
   alias EvoGit.Agent.SubagentProcessing
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.Store, as: SchedStore
+  alias EvoGit.AgentSpec
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
 
@@ -340,7 +343,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
       assert ReqLLM.Response.text(response) == @report_text
       assert StubLlmServer.request_count(server) == 1
 
-      assert {:ok, %Result{} = result} =
+      assert {:finish, finished_state, %Result{} = result} =
                ToolDispatch.process_llm_response(
                  response,
                  state,
@@ -349,6 +352,11 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
                  recovery_fn,
                  text
                )
+
+      # The finish hands back the agent's post-turn state, and the turn's
+      # bookkeeping really ran (the turn advanced by exactly one).
+      assert %EvoGit.Agent.State{} = finished_state
+      assert finished_state.turn == state.turn + 1
 
       assert result.result == @report_text
       assert is_binary(result.commit_sha)
@@ -377,8 +385,11 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
       # No refusal / workspace-state tool result appears anywhere in the agent's
       # context: the finish was a Result, not a {:continue, ...}.
       # (The positive half keeps the negative assertion non-vacuous: the context
-      # really was synced and really does carry the model's final message.)
-      live_context = context_text(agent_id)
+      # really does carry the model's final message.)
+      # NOTE: P2 removed the per-turn ETS `:context` write, so the owned state
+      # returned by the finish is the authority for the conversation, not the
+      # scheduler's summary row.
+      live_context = context_text(finished_state.context)
       assert live_context =~ @report_text
       refute live_context =~ ~r/\bdirty\b|workspace|uncommitted changes/i
     end
@@ -406,7 +417,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
       assert {:implicit_completion, response, text} = prompt_once(agent_id, context)
       assert StubLlmServer.request_count(server) == 1
 
-      assert {:ok, %Result{} = result} =
+      assert {:finish, finished_state, %Result{} = result} =
                ToolDispatch.process_llm_response(
                  response,
                  state,
@@ -415,6 +426,11 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
                  recovery_fn,
                  text
                )
+
+      # The finish hands back the agent's post-turn state, and the turn's
+      # bookkeeping really ran (the turn advanced by exactly one).
+      assert %EvoGit.Agent.State{} = finished_state
+      assert finished_state.turn == state.turn + 1
 
       assert result.result == @report_text
       refute_received :loop_fn_called
@@ -431,7 +447,8 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
 
       # The finish was a Result, never a refusal tool result: the live context
       # carries the report (positive half) and no workspace-state wording.
-      live_context = context_text(agent_id)
+      # (P2: the returned state's context is the authority, not the ETS row.)
+      live_context = context_text(finished_state.context)
       assert live_context =~ @report_text
       refute live_context =~ ~r/\bdirty\b|workspace|uncommitted changes/i
     end
@@ -451,7 +468,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
       File.write!(Path.join(repo, @uncommitted_file), @uncommitted_content)
 
       # The child's `%Result{}` is produced by driving the SAME production
-      # `ToolDispatch` path with a child-shaped `LoopState`/`AgentState` (depth 1,
+      # `ToolDispatch` path with a child-shaped `State`/`AgentState` (depth 1,
       # non-nil parent_id) rather than spawning a full heavyweight agent run —
       # the protocol classification under test is identical either way.
       context = initial_context()
@@ -462,7 +479,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
       assert text == @child_report_text
       assert StubLlmServer.request_count(server) == 1
 
-      assert {:ok, %Result{} = result} =
+      assert {:finish, finished_state, %Result{} = result} =
                ToolDispatch.process_llm_response(
                  response,
                  state,
@@ -471,6 +488,11 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
                  recovery_fn,
                  text
                )
+
+      # The finish hands back the agent's post-turn state, and the turn's
+      # bookkeeping really ran (the turn advanced by exactly one).
+      assert %EvoGit.Agent.State{} = finished_state
+      assert finished_state.turn == state.turn + 1
 
       assert result.result == @child_report_text
       assert StubLlmServer.request_count(server) == 1
@@ -583,7 +605,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
   end
 
   defp loop_state(agent_id, context, repo, opts) do
-    %LoopState{
+    %State{
       agent_id: agent_id,
       agent_module: __MODULE__,
       depth: Keyword.get(opts, :depth, 0),
@@ -623,13 +645,15 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
   # Registers the agent's live state (the LLM slot pool + `current_model/0` both
   # read it) with a per-test unique id, and installs the process-dictionary
   # identity the Runner would have set for it (`:repo_path` is the agent's
-  # worktree, which is what the completion path commits in). Cleaned up on exit.
+  # worktree, which is what the completion path commits in). The registration
+  # `sched_meta` carries the spec's temporal identity (`phylo_node`), which is
+  # where the completion path reads `base_commit` from. Cleaned up on exit.
   defp register_agent(agent_id, model, repo, opts) do
     {:ok, head} = Git.rev_parse(repo)
 
     state = %AgentState{
       context_node: %ContextNode{path: "./", repo: repo},
-      phylo_node: %PhyloGraphNode{repo: repo, base_commit: head, current_commit: head},
+      current_commit: head,
       llm_model: model,
       max_retries: 1,
       max_depth: 3,
@@ -641,7 +665,24 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
     }
 
     :ok = SchedStore.put_agent_state(agent_id, state)
-    on_exit(fn -> SchedStore.delete_agent_state(agent_id) end)
+
+    :ok =
+      SchedStore.put_sched_meta(agent_id, %SchedMeta{
+        id: agent_id,
+        depth: Keyword.get(opts, :depth, 0),
+        spec: %AgentSpec{
+          context_node: %ContextNode{path: "./", repo: repo},
+          phylo_node: %PhyloGraphNode{repo: repo, base_commit: head, current_commit: head},
+          agent_module: __MODULE__,
+          objective: @objective,
+          opts: [model_id: @model_id]
+        }
+      })
+
+    on_exit(fn ->
+      SchedStore.delete_agent_state(agent_id)
+      SchedStore.delete_sched_meta(agent_id)
+    end)
 
     Process.put(:evogit_agent_id, agent_id)
     Process.put(:evogit_agent_depth, Keyword.get(opts, :depth, 0))
@@ -650,13 +691,12 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
     agent_id
   end
 
-  # The agent's LIVE context as text, read back from the app-global ETS table
-  # (`process_llm_response/6` syncs it there) — used to prove the finish ended
-  # the run instead of entering a tool-result/refusal conversation.
-  defp context_text(agent_id) do
-    {:ok, agent_state} = SchedStore.get_agent_state(agent_id)
-
-    agent_state.context
+  # A conversation as text — used to prove the finish ended the run instead of
+  # entering a tool-result/refusal conversation. P2 removed the per-turn ETS
+  # `:context` publication seam, so the conversation lives in the state the
+  # engine hands back, never in the scheduler's summary row.
+  defp context_text(%ReqLLM.Context{} = context) do
+    context
     |> ReqLLM.Context.to_list()
     |> Enum.map_join("\n", &context_text_of/1)
   end

@@ -108,18 +108,27 @@ defmodule EvoDashWeb.Helpers do
 
   @doc """
   Returns badge class string for task status (`:running`, `:finalizing`,
-  `:completed`, `:failed`, `:cancelled`, `:cancelling`, `:pending`).
+  `:completed`, `:failed`, `:cancelled`, `:cancelling`, `:pending`,
+  `:awaiting_input`).
 
   Token-driven scheme: transitional/busy states (`:running`, `:finalizing`,
   `:cancelling`) share the warning amber family, `:completed` is success,
   `:failed` is error, and terminal-neutral states (`:pending`, `:cancelled`)
   are muted base-content — the distinct label + pulse carry the state.
+  `:awaiting_input` — an idle interactive agent session waiting for the next
+  user message — is its OWN violet family: neither busy work (amber) nor a
+  terminal outcome (base-content), so the colour itself says "a human is
+  needed here".
   """
   def task_status_badge(:running),
     do: "bg-warning/10 text-warning rounded-full flex items-center justify-center"
 
   def task_status_badge(:finalizing),
     do: "bg-warning/10 text-warning rounded-full flex items-center justify-center"
+
+  def task_status_badge(:awaiting_input),
+    do:
+      "bg-violet-500/10 text-violet-600 dark:text-violet-400 rounded-full flex items-center justify-center"
 
   def task_status_badge(:completed),
     do: "bg-success/10 text-success rounded-full flex items-center justify-center"
@@ -142,13 +151,16 @@ defmodule EvoDashWeb.Helpers do
   @doc """
   Returns the dot background class for a task status (`:running`,
   `:finalizing`, `:cancelling`, `:completed`, `:failed`, `:pending`,
-  `:cancelled`). Callers compose shape classes (size/rounded) and any
-  pulse/ping animation around the returned color. Statuses arrive as atoms;
-  unknown/non-atom input falls back to a dim neutral gray.
+  `:cancelled`, `:awaiting_input`). Callers compose shape classes
+  (size/rounded) and any pulse/ping animation around the returned color.
+  Statuses arrive as atoms; unknown/non-atom input falls back to a dim neutral
+  gray. `:awaiting_input` is violet (the idle-session family), deliberately
+  distinct from both the amber busy family and the neutral terminal family.
   """
   def task_status_dot_class(:running), do: "bg-warning"
   def task_status_dot_class(:finalizing), do: "bg-warning"
   def task_status_dot_class(:cancelling), do: "bg-warning"
+  def task_status_dot_class(:awaiting_input), do: "bg-violet-500"
   def task_status_dot_class(:completed), do: "bg-success"
   def task_status_dot_class(:failed), do: "bg-error"
   def task_status_dot_class(:pending), do: "bg-base-content/40"
@@ -159,11 +171,16 @@ defmodule EvoDashWeb.Helpers do
   Returns the full card-tint class string (border/bg/shadow tint) for a task
   status, mirroring the collapsed task-card tint shape (bg, shadow, border —
   e.g. `"bg-warning/5 shadow-warning/10 border-warning/20"`). Neutral tint for
-  `:pending`/`:cancelled` and unknown statuses.
+  `:pending`/`:cancelled` and unknown statuses; violet for `:awaiting_input`
+  (the idle interactive-session family).
   """
   def task_status_tint(:running), do: "bg-warning/5 shadow-warning/10 border-warning/20"
   def task_status_tint(:finalizing), do: "bg-warning/5 shadow-warning/10 border-warning/20"
   def task_status_tint(:cancelling), do: "bg-warning/5 shadow-warning/10 border-warning/20"
+
+  def task_status_tint(:awaiting_input),
+    do: "bg-violet-500/5 shadow-violet-500/10 border-violet-500/30"
+
   def task_status_tint(:completed), do: "bg-success/5 shadow-success/10 border-success/20"
   def task_status_tint(:failed), do: "bg-error/5 shadow-error/10 border-error/20"
   def task_status_tint(:pending), do: "bg-base-200/40 border-base-300/20"

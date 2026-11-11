@@ -17,7 +17,7 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
   use EvoGit.TaskRegistryCase, async: false
 
   alias EvoGit.Agent.ToolDispatch
-  alias EvoGit.AgentScheduler.{AgentState, SchedMeta}
+  alias EvoGit.AgentScheduler.{AgentState, ControlPlane, SchedMeta}
   alias EvoGit.{CommandApproval, Store}
 
   @deadline 10_000
@@ -91,8 +91,8 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
 
   test "authorization checks actual caller PID, root built-in spec and live task state", ctx do
     changes = [
-      fn %SchedMeta{task_ref: %Task{} = task} = meta ->
-        %{meta | task_ref: %{task | pid: self()}}
+      fn %SchedMeta{session_pid: pid} = meta when is_pid(pid) ->
+        %{meta | session_pid: self()}
       end,
       fn meta -> %{meta | depth: 1, parent_id: 123} end,
       fn meta -> %{meta | status: :waiting} end,
@@ -226,8 +226,10 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
     code = "File.write!(#{inspect(path)}, \"unexpected\")"
     owner = start_batch(ctx, [eval(code, "sudo"), eval("42")])
     request = approval!(ctx, code, :sudo)
-    [{id, state}] = :ets.lookup(:evogit_agent_state, owner.agent_id)
-    :ets.insert(:evogit_agent_state, {id, %{state | cancel_requested: true}})
+    # The graceful-cancel flag lives in the CONTROL PLANE (its single writer is
+    # the scheduler's `Store.set_cancel_requested/1`); the summary row does not
+    # carry it at all, so it is set there rather than on the agent's own row.
+    assert :ok = ControlPlane.set_cancel(owner.agent_id, true)
     assert :ok = CommandApproval.respond(request.request_id, :approve)
     results = finish(owner)
     assert output(results, 0) =~ @denied
@@ -322,17 +324,18 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
 
   defp start_batch(ctx, calls, opts \\ []) do
     id = 9_900_000 + System.unique_integer([:positive])
-    parent = self()
 
     task =
       Task.async(fn ->
         receive do
           :run ->
             Process.put(:evogit_agent_id, id)
-            # These are deliberately wrong: dispatch must derive task/PID from
-            # the registered owner rather than reuse stale caller dictionary keys.
+            # The task id is deliberately wrong: dispatch derives it from the
+            # registered owner. The owner pid is the batch's own durable session
+            # identity (`SchedMeta.session_pid`), which the managed runtime
+            # installs unchanged in every tool task.
             Process.put(:evogit_task_id, "stale-task")
-            Process.put(:evogit_agent_pid, parent)
+            Process.put(:evogit_agent_pid, self())
             Process.put(:evogit_task_registry_server, ctx.registry)
             Process.put(:repo_path, ctx.repo_root)
             Process.put(:genesis_repo_root, ctx.repo_root)
@@ -366,16 +369,16 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
       spec: spec,
       status: :running,
       task_id: ctx.owner_task.id,
-      task_ref: task
+      session_pid: task.pid
     }
 
     meta = Keyword.get(opts, :meta, &Function.identity/1).(meta)
-    :ets.insert(:evogit_agent_state, {id, state})
+    :ets.insert(:evogit_agent_summary, {id, state})
     :ets.insert(:evogit_sched_meta, {id, meta})
 
     on_exit(fn ->
       if Process.alive?(task.pid), do: Process.exit(task.pid, :kill)
-      :ets.delete(:evogit_agent_state, id)
+      :ets.delete(:evogit_agent_summary, id)
       :ets.delete(:evogit_sched_meta, id)
     end)
 
@@ -409,7 +412,7 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
     assert dictionary[:evogit_agent_pid] == owner.pid
     assert hd(dictionary[:"$callers"]) == owner.pid
 
-    assert [{_, %SchedMeta{task_ref: %Task{pid: pid}}}] =
+    assert [{_, %SchedMeta{session_pid: pid}}] =
              :ets.lookup(:evogit_sched_meta, owner.agent_id)
 
     assert pid == owner.pid

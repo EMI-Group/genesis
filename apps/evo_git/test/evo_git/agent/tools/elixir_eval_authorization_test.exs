@@ -96,7 +96,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
           assert_receive {:DOWN, ^child_monitor, :process, ^child, :normal}, 15_000
           assert_receive {:DOWN, ^owner_monitor, :process, _, _}, 15_000
           assert_receive {:DOWN, ^supervisor_monitor, :process, _, ^shutdown_reason}, 15_000
-          assert :ets.lookup(:evogit_agent_state, fixture.agent_id) == []
+          assert :ets.lookup(:evogit_agent_summary, fixture.agent_id) == []
           assert :ets.lookup(:evogit_sched_meta, fixture.agent_id) == []
           assert Store.get_task(fixture.store, fixture.task_id) == nil
         after
@@ -119,7 +119,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
       assert_receive {:DOWN, ^tool_monitor, :process, _, _}, 15_000
       assert_receive {:DOWN, ^owner_monitor, :process, _, _}, 15_000
       assert_receive {:DOWN, ^supervisor_monitor, :process, _, :normal}, 15_000
-      assert :ets.lookup(:evogit_agent_state, fixture.agent_id) == []
+      assert :ets.lookup(:evogit_agent_summary, fixture.agent_id) == []
       assert :ets.lookup(:evogit_sched_meta, fixture.agent_id) == []
       assert Store.get_task(fixture.store, fixture.task_id) == nil
     end
@@ -135,7 +135,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
 
       assert :ok = Fixture.stop(fixture)
       assert :ok = Fixture.stop(fixture)
-      assert :ets.lookup(:evogit_agent_state, fixture.agent_id) == []
+      assert :ets.lookup(:evogit_agent_summary, fixture.agent_id) == []
       assert :ets.lookup(:evogit_sched_meta, fixture.agent_id) == []
       assert Store.get_task(fixture.store, fixture.task_id) == nil
     end
@@ -262,7 +262,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
           {"cancelled agent", %{status: :cancelled}},
           {"completed result", %{result_sent: true}},
           {"wrong task identity", %{task_id: "another_task"}},
-          {"missing Task", %{task_ref: nil}}
+          {"missing session pid", %{session_pid: nil}}
         ] do
       test "rejects #{label}", %{fixture: fixture} do
         Fixture.update_meta(fixture, &struct!(&1, unquote(Macro.escape(changes))))
@@ -288,7 +288,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
         if Process.alive?(replacement.pid), do: Process.exit(replacement.pid, :kill)
       end)
 
-      Fixture.update_meta(fixture, &%{&1 | task_ref: replacement})
+      Fixture.update_meta(fixture, &%{&1 | session_pid: replacement.pid})
       assert authorize(fixture) == @denied
       send(replacement.pid, :release)
       assert Task.await(replacement) == :ok
@@ -371,8 +371,6 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
 
   describe "projected live agent state" do
     for {label, changes} <- [
-          {"cancellation requested", %{cancel_requested: true}},
-          {"malformed cancellation flag", %{cancel_requested: "false"}},
           {"nested agent", %{parent_id: 123}},
           {"foreign agent", %{repo_id: "foreign"}}
         ] do
@@ -382,8 +380,23 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
       end
     end
 
+    test "a cancellation request in the control plane rejects the agent", %{fixture: fixture} do
+      # The summary row carries no cancel flag any more; the control plane is its
+      # only home, and its writer only admits true/false/nil.
+      assert :ok = Fixture.set_cancel(fixture, true)
+      assert Fixture.cancel_requested?(fixture)
+      assert authorize(fixture) == @denied
+    end
+
+    test "an explicitly cleared cancellation flag is valid", %{fixture: fixture} do
+      Fixture.set_cancel(fixture, false)
+      refute Fixture.cancel_requested?(fixture)
+      assert {:ok, _} = authorize(fixture)
+    end
+
     test "an unset cancellation flag is valid", %{fixture: fixture} do
-      Fixture.update_state(fixture, &%{&1 | cancel_requested: nil})
+      Fixture.set_cancel(fixture, nil)
+      refute Fixture.cancel_requested?(fixture)
       assert {:ok, _} = authorize(fixture)
     end
 
@@ -394,7 +407,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
     end
 
     test "missing live state fails closed", %{fixture: fixture} do
-      :ets.delete(:evogit_agent_state, fixture.agent_id)
+      :ets.delete(:evogit_agent_summary, fixture.agent_id)
       assert authorize(fixture) == @denied
     end
   end
@@ -447,7 +460,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
       assert Authorization.revalidate(%{context | owner_pid: other.owner_pid}) == @denied
       assert Authorization.revalidate(%{context | tool_pid: self()}) == @denied
 
-      Fixture.update_meta(fixture, &%{&1 | task_ref: other.owner})
+      Fixture.update_meta(fixture, &%{&1 | session_pid: other.owner_pid})
       assert Authorization.revalidate(context) == @denied
       release(handle)
     end
@@ -456,9 +469,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
       fixture: fixture
     } do
       {handle, context} = held_context(fixture)
-      Fixture.update_state(fixture, &%{&1 | cancel_requested: true})
+      Fixture.set_cancel(fixture, true)
       assert Authorization.revalidate(context) == @denied
-      Fixture.update_state(fixture, &%{&1 | cancel_requested: false})
+      Fixture.set_cancel(fixture, false)
       assert Authorization.revalidate(context) == :ok
       Fixture.update_task(fixture, &%{&1 | status: :cancelled})
       assert Authorization.revalidate(context) == @denied
@@ -514,7 +527,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
 
         case unquote(invalidation) do
           :metadata_changed -> Fixture.update_meta(fixture, &%{&1 | depth: 1})
-          :state_cancelled -> Fixture.update_state(fixture, &%{&1 | cancel_requested: true})
+          :state_cancelled -> Fixture.set_cancel(fixture, true)
         end
 
         send(proxy, :reply)
@@ -619,7 +632,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
              {GenServer, :stop, [^supervisor, :normal, :infinity]}}} = result
 
     # A failed stop must not pretend teardown succeeded or erase evidence.
-    assert :ets.lookup(:evogit_agent_state, fixture.agent_id) != []
+    assert :ets.lookup(:evogit_agent_summary, fixture.agent_id) != []
     assert :ets.lookup(:evogit_sched_meta, fixture.agent_id) != []
     assert Store.get_task(fixture.store, fixture.task_id) != nil
     assert Fixture.stop(fixture) == :ok

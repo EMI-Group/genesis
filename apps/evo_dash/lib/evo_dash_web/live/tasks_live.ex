@@ -23,6 +23,17 @@ defmodule EvoDashWeb.TasksLive do
   on demand, by `EvoDashWeb.TasksLive.TaskDetail` (lite detail + archive),
   which owns the bounded `:task_details` cache and its `:task_detail_seq`
   stale-guard.
+
+  ## Interactive sessions
+
+  A task can be an INTERACTIVE agent session parked at the non-terminal
+  `:awaiting_input` status (violet family): the agent is idle, waiting for the
+  user's next message. The page load reports
+  `awaiting_sessions: %{task_id => agent_id}`; an idle session's card posts a
+  message (`NodeContext.send_session_message/4`) or closes the session
+  (`NodeContext.close_session/3`, the only non-cancellation way out) through
+  this page. `:session_mode_filter` (`all`/`oneshot`/`interactive`) is applied
+  by the page loader — the core SQL WHERE builder has no `session_mode`.
   """
   use EvoDashWeb, :live_view
   use Gettext, backend: EvoDashWeb.Gettext
@@ -76,6 +87,10 @@ defmodule EvoDashWeb.TasksLive do
                   <option value="cancelling" selected={@status_filter == "cancelling"}>
                     {gettext("Cancelling")}
                   </option>
+                  <option value="awaiting_input" selected={@status_filter == "awaiting_input"}>
+                    <%!-- zh_CN: 等待输入（交互式会话空闲） --%>
+                    {gettext("Awaiting Input")}
+                  </option>
                   <option value="completed" selected={@status_filter == "completed"}>
                     {gettext("Completed")}
                   </option>
@@ -84,6 +99,27 @@ defmodule EvoDashWeb.TasksLive do
                   </option>
                   <option value="cancelled" selected={@status_filter == "cancelled"}>
                     {gettext("Cancelled")}
+                  </option>
+                </select>
+              </div>
+
+              <!-- Session Kind Filter (applied server-side by the page loader) -->
+              <div class="form-control">
+                <select
+                  name="session_mode_filter"
+                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48"
+                  phx-change="filter_session_mode"
+                >
+                  <option value="all" selected={@session_mode_filter == "all"}>
+                    {gettext("All task kinds")}
+                  </option>
+                  <option value="oneshot" selected={@session_mode_filter == "oneshot"}>
+                    <%!-- zh_CN: 一次性任务 --%>
+                    {gettext("One-shot tasks")}
+                  </option>
+                  <option value="interactive" selected={@session_mode_filter == "interactive"}>
+                    <%!-- zh_CN: 交互式会话 --%>
+                    {gettext("Interactive sessions")}
                   </option>
                 </select>
               </div>
@@ -178,7 +214,7 @@ defmodule EvoDashWeb.TasksLive do
           </form>
 
           <!-- Active filters indicator -->
-          <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
+          <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or @session_mode_filter != "all" do %>
             <div class="flex items-center gap-2 mt-3 pt-3 border-t border-base-300">
               <span class="text-xs text-base-content/70">{gettext("Active filters:")}</span>
               <%= if @status_filter != "all" do %>
@@ -229,6 +265,16 @@ defmodule EvoDashWeb.TasksLive do
                   <button
                     phx-click="clear_filter"
                     phx-value-filter="review"
+                    class="cursor-pointer hover:opacity-70"
+                  >×</button>
+                </span>
+              <% end %>
+              <%= if @session_mode_filter != "all" do %>
+                <span class="badge badge-primary gap-1 rounded-md">
+                  {session_mode_label(@session_mode_filter)}
+                  <button
+                    phx-click="clear_filter"
+                    phx-value-filter="session_mode"
                     class="cursor-pointer hover:opacity-70"
                   >×</button>
                 </span>
@@ -304,7 +350,7 @@ defmodule EvoDashWeb.TasksLive do
                   <.icon name="hero-inbox" class="size-10 mx-auto mb-4 text-base-content/40" />
                   <p class="text-lg font-medium">{gettext("No tasks found")}</p>
                   <p class="text-sm mt-1">
-                    <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or (@total_count > 0 and not @show_reflect_tasks) do %>
+                    <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or @session_mode_filter != "all" or (@total_count > 0 and not @show_reflect_tasks) do %>
                       {gettext("Try adjusting your filters or search query.")}
                     <% else %>
                       {gettext("Tasks will appear here once you start them from the dashboard.")}
@@ -323,6 +369,7 @@ defmodule EvoDashWeb.TasksLive do
                     show_details={MapSet.member?(@expanded_task_ids, task.id)}
                     detail={Map.get(@task_details, task.id)}
                     current_node_id={@current_node_id}
+                    session_agent_id={session_agent_id(@awaiting_sessions, task.id)}
                   />
                 </div>
               <% end %>
@@ -539,6 +586,14 @@ defmodule EvoDashWeb.TasksLive do
             </div>
           </div>
         <% end %>
+
+        <!-- Close interactive-session confirmation modal -->
+        <%= if @confirm_close_session_task_id do %>
+          <EvoDashWeb.TasksLive.Session.confirm_close_session_modal
+            task_id={@confirm_close_session_task_id}
+            session_agent_id={session_agent_id(@awaiting_sessions, @confirm_close_session_task_id)}
+          />
+        <% end %>
       <% end %>
     </EvoDashWeb.Layouts.app>
     """
@@ -593,6 +648,13 @@ defmodule EvoDashWeb.TasksLive do
         selected_options: nil,
         confirm_cancel_task_id: nil,
         confirm_force_kill_task_id: nil,
+        # `task_id => agent_id` of the sessions parked at `:awaiting_input`
+        # (their cards render a reply box + close control), and the
+        # close-session modal's task id (nil = closed). `session_mode_filter`
+        # is applied server-side by the page loader.
+        awaiting_sessions: %{},
+        confirm_close_session_task_id: nil,
+        session_mode_filter: "all",
         config_status: config_status,
         current_page: 1,
         page_size: @default_page_size,
@@ -652,6 +714,10 @@ defmodule EvoDashWeb.TasksLive do
         socket
         |> assign(:confirm_cancel_task_id, nil)
         |> assign(:confirm_force_kill_task_id, nil)
+        # An idle-session modal and the map it confirms against belong to the
+        # OLD node — clear both so a close can never hit another node's session.
+        |> assign(:confirm_close_session_task_id, nil)
+        |> assign(:awaiting_sessions, %{})
         # Cached per-card details belong to the OLD node: drop them so the
         # expanded cards of the new node fetch their own rows (and stale
         # in-flight results are rejected by TaskDetail's node + entry guards).
@@ -757,6 +823,9 @@ defmodule EvoDashWeb.TasksLive do
             |> assign(:total_pages, m.total_pages)
             |> assign(:project_paths, m.project_paths)
             |> assign(:filtered_tasks, visible)
+            # DEFENSIVE: an injected/older page-load result may predate this
+            # key — a missing entry means "no idle sessions", never a crash.
+            |> assign(:awaiting_sessions, Map.get(m, :awaiting_sessions, %{}))
             |> assign(:tasks_error, nil)
             # Rows are summary maps now (no result/usage/logs/archive): bound
             # the per-card detail cache to THIS page, then refetch the detail
@@ -776,6 +845,18 @@ defmodule EvoDashWeb.TasksLive do
       end
     end
   end
+
+  # Async `session_send_message` result. `SafeCall.start/4` sends its tag
+  # VERBATIM, so `{:session_message_sent, task_id}` arrives NESTED; the flat
+  # clause is a tolerant alias for a directly sent message. Defined BEFORE the
+  # `handle_info(_msg, socket)` catch-all so this result is never dropped.
+  @impl true
+  def handle_info({{:session_message_sent, task_id}, result}, socket),
+    do: {:noreply, session_message_result(socket, task_id, result)}
+
+  @impl true
+  def handle_info({:session_message_sent, task_id, result}, socket),
+    do: {:noreply, session_message_result(socket, task_id, result)}
 
   # Per-card lazy detail result (EvoDashWeb.TasksLive.TaskDetail). The module
   # applies the node + entry + seq guards; a stale/foreign result is dropped.
@@ -850,6 +931,18 @@ defmodule EvoDashWeb.TasksLive do
      |> PageLoad.start(1, true)}
   end
 
+  # Session-kind filter — whitelist match only (never an atom conversion); an
+  # unknown value keeps the current filter. The page loader applies it
+  # server-side (the core SQL WHERE builder has no `session_mode` predicate).
+  @impl true
+  def handle_event("filter_session_mode", %{"session_mode_filter" => mode}, socket)
+      when mode in ["all", "oneshot", "interactive"] do
+    {:noreply, socket |> assign(:session_mode_filter, mode) |> PageLoad.start(1, true)}
+  end
+
+  @impl true
+  def handle_event("filter_session_mode", _params, socket), do: {:noreply, socket}
+
   # Prevents page reload when pressing Enter in the filter/search form
   @impl true
   def handle_event("noop", _params, socket), do: {:noreply, socket}
@@ -904,7 +997,8 @@ defmodule EvoDashWeb.TasksLive do
        status_filter: "all",
        project_filter: "all",
        search_query: "",
-       review_status_filter: "all"
+       review_status_filter: "all",
+       session_mode_filter: "all"
      )
      |> PageLoad.start(1, true)}
   end
@@ -938,6 +1032,14 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:review_status_filter, "all")
+     |> PageLoad.start(1, true)}
+  end
+
+  @impl true
+  def handle_event("clear_filter", %{"filter" => "session_mode"}, socket) do
+    {:noreply,
+     socket
+     |> assign(:session_mode_filter, "all")
      |> PageLoad.start(1, true)}
   end
 
@@ -1147,6 +1249,90 @@ defmodule EvoDashWeb.TasksLive do
     end
   end
 
+  # An idle (`:awaiting_input`) session's card posts its reply box here. The
+  # agent id is resolved from the page load's `:awaiting_sessions` map, so a
+  # session that stopped waiting (or a stale card) flashes instead of sending.
+  @impl true
+  def handle_event("session_send_message", %{"task_id" => task_id, "message" => message}, socket) do
+    agent_id = session_agent_id(socket.assigns.awaiting_sessions, task_id)
+    node = socket.assigns.current_node
+    text = String.trim(message || "")
+
+    cond do
+      is_nil(agent_id) or is_nil(node) ->
+        {:noreply,
+         put_flash(socket, :error, gettext("This session is no longer waiting for input."))}
+
+      text == "" ->
+        {:noreply, put_flash(socket, :error, gettext("Type a message before sending."))}
+
+      true ->
+        # ASYNC under SafeCall (an exit becomes a value). The result lands as
+        # {{:session_message_sent, task_id}, result}.
+        EvoDash.SafeCall.start(self(), {:session_message_sent, task_id}, fn ->
+          EvoDash.NodeContext.send_session_message(node, agent_id, text, :queue)
+        end)
+
+        {:noreply, socket}
+    end
+  end
+
+  # Only one confirmation modal is open at a time (mirrors open_cancel_modal).
+  @impl true
+  def handle_event("open_close_session_modal", %{"task_id" => task_id}, socket) do
+    {:noreply,
+     socket
+     |> assign(:confirm_close_session_task_id, task_id)
+     |> assign(:confirm_cancel_task_id, nil)
+     |> assign(:confirm_force_kill_task_id, nil)}
+  end
+
+  @impl true
+  def handle_event("close_close_session_modal", _params, socket) do
+    {:noreply, assign(socket, :confirm_close_session_task_id, nil)}
+  end
+
+  @impl true
+  def handle_event("confirm_close_session", _params, socket) do
+    task_id = socket.assigns[:confirm_close_session_task_id]
+    agent_id = session_agent_id(socket.assigns.awaiting_sessions, task_id)
+
+    cond do
+      is_nil(task_id) ->
+        # Modal was never opened (or already closed) — no-op.
+        {:noreply, socket}
+
+      is_nil(agent_id) ->
+        {:noreply,
+         socket
+         |> assign(:confirm_close_session_task_id, nil)
+         |> put_flash(:error, gettext("This session is no longer waiting for input."))}
+
+      true ->
+        # Sync mutation like confirm_cancel_task; SafeCall turns an exit into a
+        # flash and the modal is ALWAYS cleared, so it can never wedge.
+        result =
+          EvoDash.SafeCall.run(fn ->
+            EvoDash.NodeContext.close_session(socket.assigns.current_node, agent_id, :normal)
+          end)
+
+        socket = assign(socket, :confirm_close_session_task_id, nil)
+
+        case mutation_result(result) do
+          :ok ->
+            {:noreply, PageLoad.start(socket, socket.assigns.current_page, false)}
+
+          {:error, reason} ->
+            {:noreply,
+             put_flash(
+               socket,
+               :error,
+               gettext("Failed to close session: %{reason}", reason: inspect(reason))
+             )}
+        end
+    end
+  end
+
   @impl true
   def handle_event("delete_task", %{"task_id" => task_id}, socket) do
     result =
@@ -1211,6 +1397,51 @@ defmodule EvoDashWeb.TasksLive do
     end_page = min(total_pages, current_page + window)
     Enum.to_list(start_page..end_page)
   end
+
+  # Human label for the active session-kind filter chip (whitelist match, so no
+  # atom conversion; gettext-wrapped).
+  defp session_mode_label("oneshot"), do: gettext("One-shot tasks")
+  defp session_mode_label("interactive"), do: gettext("Interactive sessions")
+  defp session_mode_label(_), do: gettext("All task kinds")
+
+  # Resolves an idle session's agent id from the page load's
+  # `%{task_id => agent_id}` map. Tolerant of the KEY TYPE: a card posts its
+  # `phx-value-task_id` as a STRING while the loader may key the map by the
+  # task's integer id, so both shapes are tried. Unknown → nil.
+  defp session_agent_id(sessions, task_id) when is_map(sessions) do
+    Map.get(sessions, task_id) ||
+      Map.get(sessions, to_string(task_id)) ||
+      integer_session_key(sessions, task_id)
+  end
+
+  defp session_agent_id(_sessions, _task_id), do: nil
+
+  defp integer_session_key(sessions, task_id) when is_binary(task_id) do
+    case Integer.parse(task_id) do
+      {id, ""} -> Map.get(sessions, id)
+      _ -> nil
+    end
+  end
+
+  defp integer_session_key(_sessions, _task_id), do: nil
+
+  # Applies an async session-send outcome: success flashes + reloads (the
+  # session may have already resumed); every failure shape flashes its reason.
+  # All documented shapes are terminal, so a reply box can never wedge.
+  defp session_message_result(socket, _task_id, {:ok, :ok}) do
+    socket
+    |> put_flash(:info, gettext("Message sent"))
+    |> PageLoad.start(socket.assigns.current_page, false)
+  end
+
+  defp session_message_result(socket, _task_id, {:ok, {:error, reason}}),
+    do: put_flash(socket, :error, session_send_error(reason))
+
+  defp session_message_result(socket, _task_id, {:error, reason}),
+    do: put_flash(socket, :error, session_send_error(reason))
+
+  defp session_send_error(reason),
+    do: gettext("Failed to send message: %{reason}", reason: inspect(reason))
 
   # Normalizes a SafeCall-wrapped mutating store call to `:ok | {:error, reason}`.
   # The `EvoDash.NodeContext` mutating functions return `:ok | {:error, reason}`,

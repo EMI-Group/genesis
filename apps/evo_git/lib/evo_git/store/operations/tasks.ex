@@ -425,7 +425,7 @@ defmodule EvoGit.Store.Operations.Tasks do
   end
 
   # %TaskRowRaw{} → %TaskInfo{} via the Codec's positional-list decoder — the
-  # same 18-element `Codec.task_columns/0` order (deliberately WITHOUT
+  # same 19-element `Codec.task_columns/0` order (deliberately WITHOUT
   # `updated_at`, which the old SELECT over those columns never fetched
   # either). Identical to the existing get_task/to_task_info result: decode_task
   # itself applies the `status || :pending` and `ref: nil` fallbacks.
@@ -448,7 +448,8 @@ defmodule EvoGit.Store.Operations.Tasks do
       row.model_id,
       row.project_path,
       row.branch_name,
-      row.error
+      row.error,
+      row.session_mode
     ])
   end
 
@@ -498,6 +499,7 @@ defmodule EvoGit.Store.Operations.Tasks do
   defp encode_column_value(:error, value), do: Codec.encode_error(value)
   defp encode_column_value(:usage, value), do: Codec.encode_usage(value)
   defp encode_column_value(:opts, value), do: Codec.encode_opts(value)
+  defp encode_column_value(:session_mode, value), do: Codec.encode_session_mode(value)
   defp encode_column_value(_col, value), do: value
 
   ## Private — row building (TaskInfo → insert map)
@@ -527,6 +529,7 @@ defmodule EvoGit.Store.Operations.Tasks do
       project_path: task.project_path || project_path_from_opts(task.opts),
       branch_name: task.branch_name || branch_name_from_result(task.result),
       error: task.error,
+      session_mode: Codec.task_session_mode(task),
       updated_at: DateTime.utc_now()
     }
   end
@@ -572,7 +575,8 @@ defmodule EvoGit.Store.Operations.Tasks do
       lease_expires_at: row.lease_expires_at,
       model_id: row.model_id,
       project_path: row.project_path,
-      branch_name: row.branch_name
+      branch_name: row.branch_name,
+      session_mode: row.session_mode || Codec.default_session_mode()
     }
   end
 

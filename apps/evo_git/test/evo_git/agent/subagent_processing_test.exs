@@ -2,7 +2,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   @moduledoc """
   `async: true` — the two `build_subagent_specs/3` describes insert/delete ONE
   parent `AgentState` row apiece in the app-owned BEAM-global
-  `:evogit_agent_state` ETS table, under a per-test unique agent id from this
+  `:evogit_agent_summary` ETS table, under a per-test unique agent id from this
   file's own id range (deleted on exit). Nothing is asserted about either table
   as a whole, so the writes are concurrent-safe; the remaining tests use
   per-test `:tmp_dir` git repos.
@@ -420,7 +420,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   end
 
   describe "build_subagent_specs/3 — model_id inheritance" do
-    alias EvoGit.Agent.LoopState
+    alias EvoGit.Agent.State
     alias EvoGit.AgentSpec
     alias EvoGit.AgentScheduler.AgentState
     alias EvoGit.Agents.Investigator
@@ -435,8 +435,8 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     setup do
       # Ensure the ETS table exists (app may already create it)
-      if :ets.whereis(:evogit_agent_state) == :undefined do
-        :ets.new(:evogit_agent_state, [:set, :public, :named_table])
+      if :ets.whereis(:evogit_agent_summary) == :undefined do
+        :ets.new(:evogit_agent_summary, [:set, :public, :named_table])
       end
 
       agent_id = 9_900_000 + :erlang.unique_integer([:positive])
@@ -444,25 +444,21 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       # Insert a parent AgentState with a specific model_id
       parent_state = %AgentState{
         context_node: %ContextNode{path: "./", repo: "/test/repo"},
-        phylo_node: %PhyloGraphNode{
-          repo: "/test/repo",
-          base_commit: "abc123",
-          current_commit: "abc123"
-        },
+        current_commit: "abc123",
         llm_model: "test-model",
         max_retries: 3,
         max_depth: 5,
         model_id: "claude-sonnet"
       }
 
-      :ets.insert(:evogit_agent_state, {agent_id, parent_state})
+      :ets.insert(:evogit_agent_summary, {agent_id, parent_state})
 
       # Set the repo_path in the process dictionary
       previous_repo_path = Process.get(:repo_path)
       Process.put(:repo_path, "/test/repo")
 
       on_exit(fn ->
-        :ets.delete(:evogit_agent_state, agent_id)
+        :ets.delete(:evogit_agent_summary, agent_id)
         # Restore previous repo_path
         if previous_repo_path do
           Process.put(:repo_path, previous_repo_path)
@@ -475,13 +471,16 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "child spec inherits parent's model_id", %{agent_id: agent_id} do
-      state = %LoopState{
+      # The parent's model identity is OWNED by `%State{}` (P2); the registered
+      # row is only registration/phylo metadata now.
+      state = %State{
         agent_id: agent_id,
         agent_module: DummyAgentModule,
         depth: 0,
         node_path: "./",
         context: nil,
-        foreign_repos: []
+        foreign_repos: [],
+        model_id: "claude-sonnet"
       }
 
       call =
@@ -501,26 +500,23 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       # Override the parent state to use the default model_id
       parent_state = %AgentState{
         context_node: %ContextNode{path: "./", repo: "/test/repo"},
-        phylo_node: %PhyloGraphNode{
-          repo: "/test/repo",
-          base_commit: "abc123",
-          current_commit: "abc123"
-        },
+        current_commit: "abc123",
         llm_model: "test-model",
         max_retries: 3,
         max_depth: 5,
         model_id: "default"
       }
 
-      :ets.insert(:evogit_agent_state, {agent_id, parent_state})
+      :ets.insert(:evogit_agent_summary, {agent_id, parent_state})
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: DummyAgentModule,
         depth: 0,
         node_path: "./",
         context: nil,
-        foreign_repos: []
+        foreign_repos: [],
+        model_id: "default"
       }
 
       call =
@@ -537,7 +533,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "child spec inherits the parent's repo_notes", %{agent_id: agent_id} do
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: DummyAgentModule,
         depth: 0,
@@ -561,7 +557,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "child spec repo_notes is nil when the parent has none", %{agent_id: agent_id} do
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: DummyAgentModule,
         depth: 0,
@@ -585,7 +581,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   end
 
   describe "build_subagent_specs/3 — foreign repo phylo nodes" do
-    alias EvoGit.Agent.LoopState
+    alias EvoGit.Agent.State
     alias EvoGit.AgentSpec
     alias EvoGit.Adapters.Git
     alias EvoGit.AgentScheduler.AgentState
@@ -613,8 +609,8 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     setup do
       # Ensure the ETS tables exist (app may already create them)
-      if :ets.whereis(:evogit_agent_state) == :undefined do
-        :ets.new(:evogit_agent_state, [:set, :public, :named_table])
+      if :ets.whereis(:evogit_agent_summary) == :undefined do
+        :ets.new(:evogit_agent_summary, [:set, :public, :named_table])
       end
 
       if :ets.whereis(:evogit_sched_meta) == :undefined do
@@ -626,25 +622,21 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       # Insert a parent AgentState with a specific model_id
       parent_state = %AgentState{
         context_node: %ContextNode{path: "./", repo: "/test/repo"},
-        phylo_node: %PhyloGraphNode{
-          repo: "/test/repo",
-          base_commit: "abc123",
-          current_commit: "abc123"
-        },
+        current_commit: "abc123",
         llm_model: "test-model",
         max_retries: 3,
         max_depth: 5,
         model_id: "claude-sonnet"
       }
 
-      :ets.insert(:evogit_agent_state, {agent_id, parent_state})
+      :ets.insert(:evogit_agent_summary, {agent_id, parent_state})
 
       # Set the repo_path in the process dictionary
       previous_repo_path = Process.get(:repo_path)
       Process.put(:repo_path, "/test/repo")
 
       on_exit(fn ->
-        :ets.delete(:evogit_agent_state, agent_id)
+        :ets.delete(:evogit_agent_summary, agent_id)
         # Restore previous repo_path
         if previous_repo_path do
           Process.put(:repo_path, previous_repo_path)
@@ -710,7 +702,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
          %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: _template} do
       missing_root = Path.join(tmp_dir, "does_not_exist")
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignDummyAgentModule,
         depth: 0,
@@ -734,7 +726,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       foreign_root = Path.join(tmp_dir, "foreign")
       [sha1] = copy_fixture!(fixture, foreign_root)
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignDummyAgentModule,
         depth: 0,
@@ -766,7 +758,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
       refute sha1 == sha2
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignDummyAgentModule,
         depth: 0,
@@ -798,7 +790,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       foreign_root = Path.join(tmp_dir, "foreign")
       copy_fixture!(fixture, foreign_root)
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignDummyAgentModule,
         depth: 0,
@@ -830,7 +822,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       foreign_root = Path.join(tmp_dir, "foreign")
       copy_fixture!(fixture, foreign_root)
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignWriteDummyAgentModule,
         depth: 0,
@@ -865,16 +857,22 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       # resolve_subagent_path/4 both read.
       Process.put(:repo_path, foreign_root)
       {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
-      :ets.insert(:evogit_agent_state, {agent_id, %{agent_state | repo_id: "orig"}})
+      :ets.insert(:evogit_agent_summary, {agent_id, %{agent_state | repo_id: "orig"}})
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignWriteDummyAgentModule,
         depth: 1,
         node_path: "./",
         context: nil,
         foreign_repos: [ForeignRepo.new("orig", foreign_root, writable: true)],
-        repo_notes: nil
+        repo_notes: nil,
+        # The parent's OWN repo id is state-owned (P2): `%State{}` is the
+        # authoritative source the spawn gate and `resolve_subagent_path/4` read.
+        repo_id: "orig",
+        # …and so is the parent's LIVE commit, which the same-repo phylo clause
+        # bases the child on (never the summary row).
+        current_commit: "abc123"
       }
 
       assert [spec] =
@@ -894,16 +892,22 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
       Process.put(:repo_path, foreign_root)
       {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
-      :ets.insert(:evogit_agent_state, {agent_id, %{agent_state | repo_id: "orig"}})
+      :ets.insert(:evogit_agent_summary, {agent_id, %{agent_state | repo_id: "orig"}})
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignWriteDummyAgentModule,
         depth: 1,
         node_path: "./",
         context: nil,
         foreign_repos: [ForeignRepo.new("orig", foreign_root, writable: true)],
-        repo_notes: nil
+        repo_notes: nil,
+        # The parent's OWN repo id is state-owned (P2): `%State{}` is the
+        # authoritative source the spawn gate and `resolve_subagent_path/4` read.
+        repo_id: "orig",
+        # …and so is the parent's LIVE commit, which the same-repo phylo clause
+        # bases the child on (never the summary row).
+        current_commit: "abc123"
       }
 
       assert [spec] =
@@ -953,7 +957,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         :ets.delete(:evogit_sched_meta, primary_parent)
       end)
 
-      state = %LoopState{
+      state = %State{
         agent_id: agent_id,
         agent_module: ForeignWriteDummyAgentModule,
         depth: 0,

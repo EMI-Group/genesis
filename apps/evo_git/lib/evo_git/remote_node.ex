@@ -332,6 +332,268 @@ defmodule EvoGit.RemoteNode do
     end
   end
 
+  # ── Interactive agent sessions ──────────────────────────────────────
+  #
+  # The interactive-session RPC surface. An interactive session lives inside the
+  # scheduler's own VM (in-memory state, in-memory transcript), so a caller on
+  # another node reaches it through these wrappers around the node's
+  # `EvoGit.AgentScheduler.RemoteAPI`. Each one is the usual `call_remote/4`
+  # identity unwrap: the local node calls `RemoteAPI` directly (no error
+  # catching — local bugs surface truthfully) and a remote node routes through
+  # `:erpc.call/5` with the call-time `:remote_rpc_timeout`.
+
+  @doc """
+  Starts an INTERACTIVE agent session on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.start_session/1`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`.
+
+  Returns `{:ok, agent_id}` — the handle for `send_session_message/4`,
+  `await_close/3` and `list_awaiting_input/1` — the node's own
+  `{:error, {:start_session_failed, reason}}`, or the RPC failure reason
+  (`{:error, {kind, reason}}`) when the transport fails.
+  """
+  @spec start_session(node(), EvoGit.AgentSpec.t() | keyword()) ::
+          {:ok, pos_integer()} | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.start_session(spec_or_opts))
+
+  @doc """
+  Sends a user message to an interactive session on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.send_session_message/3` directly. On a remote
+  node, routes the call through `:erpc` via `call_remote/4`. `policy` is
+  `:queue` (default) or `:interrupt`.
+
+  Returns `:ok`, the session's own `{:error, {:session, reason}}` term, or the
+  RPC failure reason (`{:error, {kind, reason}}`).
+  """
+  @spec send_session_message(
+          node(),
+          pos_integer() | pid(),
+          String.t() | EvoGit.Attachments.message(),
+          :queue | :interrupt
+        ) :: :ok | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.send_session_message(target, message, policy \\ :queue))
+
+  @doc """
+  Closes an interactive session on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.close_session/2`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`. `reason` defaults to `:normal`.
+
+  Returns `:ok`, the session's own `{:error, {:session, reason}}` term, or the
+  RPC failure reason (`{:error, {kind, reason}}`).
+  """
+  @spec close_session(node(), pos_integer() | pid(), term()) :: :ok | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.close_session(target, reason \\ :normal))
+
+  @doc """
+  Blocks until the interactive session for `agent_id` reaches its terminal
+  outcome on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.await_close/2`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`. Returns the terminal outcome verbatim
+  (`{:ok, %EvoGit.Agent.Result{}}` or the session's own `{:error, reason}` term).
+
+  `timeout` (milliseconds, default 30 000) bounds the WAIT only: an expired
+  budget answers `{:error, :timeout}` and the session keeps running. Across
+  nodes the erpc transport ALSO imposes the call-time `:remote_rpc_timeout`
+  (30 s by default) on the whole call, so the effective wait is bounded by the
+  node RPC timeout: awaiting a HUMAN-driven session for minutes is only
+  supported through the LOCAL API (`EvoGit.AgentScheduler` /
+  `EvoGit.AgentScheduler.RemoteAPI`), while the cross-node form is for short
+  waits and observation.
+  """
+  @spec await_close(node(), pos_integer(), timeout()) ::
+          {:ok, EvoGit.Agent.Result.t()} | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.await_close(agent_id, timeout \\ 30_000))
+
+  @doc """
+  Lists the agents on the given node currently parked at `:awaiting_input`.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_awaiting_input/0`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`. Returns `[]` when the remote call fails or answers something
+  other than a list, mirroring the other list wrappers here.
+  """
+  @spec list_awaiting_input(node()) :: [map()]
+  def list_awaiting_input(node) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_awaiting_input()
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_awaiting_input, []) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
+  Watches a live agent on the given node: subscribes the CALLING process to the
+  agent's delta topic, registers it as a watcher on the OWNING node and returns
+  the current snapshot plus its `seq`.
+
+  This is the push-only attach. Once it answers, `{:agent_delta, agent_id, seq,
+  batch}` messages are PUSHED to the calling process until `unwatch_agent/2` or
+  until it dies (the session `Process.monitor/1`s the caller, across nodes too) —
+  there is no poll loop and no replay buffer.
+
+  ## The CALLER subscribes, never the RPC target
+
+  `:erpc.call/5` runs its target in a NEW remote worker process, so a subscription
+  made inside `EvoGit.AgentScheduler.RemoteAPI` would attach that throwaway worker
+  and the caller would never receive a delta. The subscription is therefore made
+  HERE, on the caller's OWN node, with `EvoGit.Agent.Stream.subscribe/1` — BEFORE
+  the watcher registration, so no delta can fall between the two.
+  `EvoGit.PubSub` is a cluster-aware PG2 bus, so a broadcast published on the
+  owning node reaches a subscriber anywhere in the cluster; the cluster must be
+  CONNECTED (and PubSub running on both nodes) for deltas to arrive.
+
+  ## Reconciliation
+
+  Every delta carries a monotonic `seq`. A delta whose `seq` is `<=` the returned
+  snapshot's `seq` is stale and must be DROPPED (`EvoGit.Agent.Stream.stale?/2`).
+  The snapshot is the ONLY resync: after a gap, a reconnect or a lost delta call
+  `watch_snapshot/2` again and continue from the returned `seq` — nothing is ever
+  replayed.
+
+  Returns the FLAT `{:ok, %EvoGit.Agent.Stream.Snapshot{}, seq}` (the snapshot
+  carries the session's FULL transcript, so this is a heavy read like
+  `get_agent_history/1`) or `{:error, {kind, reason}}` — `{:not_found, _}` /
+  `{:bad_state, _}` from the owning node, the subscribe refusal, or the RPC
+  failure. Any failure undoes the local subscription, so a refused watch leaves no
+  residue.
+  """
+  @spec watch_agent(node(), pos_integer() | String.t()) ::
+          {:ok, EvoGit.Agent.Stream.Snapshot.t(), non_neg_integer()}
+          | {:error, {atom(), term()}}
+  def watch_agent(node, agent_id) do
+    case EvoGit.Agent.Stream.subscribe(agent_id) do
+      :ok ->
+        case register_watcher_on(node, agent_id) do
+          {:ok, _snapshot, _seq} = ok ->
+            ok
+
+          {:error, _reason} = error ->
+            EvoGit.Agent.Stream.unsubscribe(agent_id)
+            error
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Stops watching an agent on the given node: unregisters the calling process on
+  the OWNING node and unsubscribes it from the delta topic HERE.
+
+  Idempotent on a live session (a duplicate unwatch is `:ok`, because unregistering a missing
+  watcher is not an error), and the local subscription is ALWAYS undone — even when the owning
+  session is already gone (a local subscription dies with its process anyway).
+
+  Returns `:ok`, or `{:error, {kind, reason}}` when the owning node refuses the unregistration
+  (an unknown/gone session or an RPC failure); that error is informational, since the caller has
+  already stopped receiving deltas.
+  """
+  @spec unwatch_agent(node(), pos_integer() | String.t()) :: :ok | {:error, {atom(), term()}}
+  def unwatch_agent(node, agent_id) do
+    result = unregister_watcher_on(node, agent_id)
+    EvoGit.Agent.Stream.unsubscribe(agent_id)
+    result
+  end
+
+  @doc """
+  Reads one bounded snapshot of an agent on the given node, registering and
+  subscribing NOTHING.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.watch_snapshot/1` directly; on a remote node,
+  routes the call through `:erpc` via `call_remote/4`. This is the ONLY resync path
+  of the push contract — a consumer that fell behind or reconnected asks once here
+  and drops `seq <= snapshot.seq` deltas afterwards.
+
+  Returns the FLAT `{:ok, %EvoGit.Agent.Stream.Snapshot{}, seq}` (a heavy read: the
+  snapshot carries the FULL transcript) or `{:error, {kind, reason}}`.
+  """
+  @spec watch_snapshot(node(), pos_integer() | String.t()) ::
+          {:ok, EvoGit.Agent.Stream.Snapshot.t(), non_neg_integer()}
+          | {:error, {atom(), term()}}
+  def watch_snapshot(node, agent_id) do
+    reply =
+      if node == node() do
+        EvoGit.AgentScheduler.RemoteAPI.watch_snapshot(agent_id)
+      else
+        case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :watch_snapshot, [agent_id]) do
+          {:ok, result} -> result
+          {:error, reason} -> {:error, reason}
+        end
+      end
+
+    normalize_watch_reply(reply)
+  end
+
+  # --- watch verbs: internals ---
+
+  # Registers the CALLING process on the OWNING node. `self()` is deliberately the
+  # caller's pid: across nodes that is an EXTERNAL pid, which the session accepts and
+  # monitors like a local one (a remote monitor is a cross-node signal).
+  defp register_watcher_on(node, agent_id) do
+    reply =
+      if node == node() do
+        EvoGit.AgentScheduler.RemoteAPI.register_watcher(agent_id, self())
+      else
+        case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :register_watcher, [
+               agent_id,
+               self()
+             ]) do
+          {:ok, result} -> result
+          {:error, reason} -> {:error, reason}
+        end
+      end
+
+    normalize_watch_reply(reply)
+  end
+
+  defp unregister_watcher_on(node, agent_id) do
+    reply =
+      if node == node() do
+        EvoGit.AgentScheduler.RemoteAPI.unregister_watcher(agent_id, self())
+      else
+        case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :unregister_watcher, [
+               agent_id,
+               self()
+             ]) do
+          {:ok, result} -> result
+          {:error, reason} -> {:error, reason}
+        end
+      end
+
+    case reply do
+      :ok -> :ok
+      # An unregistration is idempotent: any non-error reply means there is no watcher left.
+      {:error, {kind, reason}} when is_atom(kind) -> {:error, {kind, reason}}
+      _other -> :ok
+    end
+  end
+
+  # The flat watch shape. A nested `{:ok, {:ok, snapshot, seq}}` (an RPC unwrap accident)
+  # and any shape this phase does not answer yet are refusals, never successes.
+  defp normalize_watch_reply({:ok, %EvoGit.Agent.Stream.Snapshot{} = snapshot, seq})
+       when is_integer(seq),
+       do: {:ok, snapshot, seq}
+
+  defp normalize_watch_reply({:error, {kind, reason}}) when is_atom(kind),
+    do: {:error, {kind, reason}}
+
+  defp normalize_watch_reply({:error, reason}), do: {:error, {:not_found, reason}}
+  defp normalize_watch_reply(_other), do: {:error, {:not_found, :watch_not_supported}}
+
   @doc """
   Approves or denies a pending command-approval request on the given node.
 

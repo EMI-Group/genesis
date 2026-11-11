@@ -17,16 +17,16 @@ Related integration suites include `reflect_tools_test.exs` and the parent tool-
 ## API Surface
 | File / modules | Contract |
 |---|---|
-| `authorization.ex` / `Authorization` | `authorize/0,1`, `assistant_owner?/0`, `revalidate/1` bind permission to the original assistant owner and tool process. |
+| `authorization.ex` / `Authorization` | `authorize/0,1`, `assistant_owner?/0`, `revalidate/1` bind permission to the original assistant owner and tool process; `accepted_agent_statuses/0` and `accepted_agent_task_statuses/0` are the single definitions of the admitted status sets. |
 | `ancestry.ex` / `Ancestry` | `includes?/2` and `broker/1` inspect bounded local Task/proc_lib ancestry. |
 | `engine.ex` / `Engine` | `run(code, tier, context, limits)` returns `{:ok, binary}` or `{:error, binary}`; `max_code_bytes/0` exposes the engine ceiling. |
 | `worker_tree.ex` / `WorkerTree` | `run(context, tier, limits, fun)` creates a guardian, authorized broker and independently owned traced evaluation subtree, with bounded execution, cleanup and caller waits. |
 | `custodian.ex` / `Custodian` | Internal independent trace owner; `start/4`, `finish/2` and `cleanup_ms/0` support bounded reaping even after abrupt guardian/tool death. |
-| `broker.ex` / `Broker` | `start/2,3,4`, `attach/2,3`, `call/2`, `output/1,2`, `stop/1,2` implement one unregistered capability broker per evaluation, with optional lifecycle-call timeout overrides. |
+| `broker.ex` / `Broker` | `start/2,3,4`, `attach/2,3`, `call/2`, `output/1,2`, `stop/1,2` implement one unregistered capability broker per evaluation, with optional lifecycle-call timeout overrides; `cancel_statuses/0` and `force_kill_statuses/0` are the single definitions of the task statuses its `cancel_task`/`force_kill_task` facades admit. |
 | `allowlist.ex` | Read/write wrappers enforce exact EvoGit MFA/tier admission before Dune default fallback, with explicit IO shims and dbg rejection; `ensure_initialized/0` loads the generated Base allowlists at the parse chokepoint, while `AllowlistAliases.atoms/1` supplies the compile-time alias atoms for the boot-safe `@on_load`. |
 | `direct_api.ex` / `DirectAPI` | Literal exact-MFA/tier registry, generated fixed real-function invocations and shared direct-API help. |
 | `read.ex` / `Read`, `Write` | Fixed broker-backed runtime inspection and mutation APIs, not direct access to runtime structs or configuration. |
-| `projection.ex` / `Projection` | Scalar runtime projections, paginated task options, task-id validation and scalar normalization. |
+| `projection.ex` / `Projection` | Scalar runtime projections, paginated task options, task-id validation, scalar normalization and the `@doc false` `statuses/0`/`agent_statuses/0` whitelist accessors. |
 | `validation.ex` / `Validation` | `start_options/2`, `guide/2` and `scheduler_options/1` validate mutation arguments using literal keys and enums. |
 | `render.ex` / `Render`, `IOShim` | UTF-8-safe byte-capped rendering and Dune stdout shims. |
 | `bounded_io.ex` / `BoundedIO` | `start/1`, `output/1`, `stop/1` supply a bounded monitored group leader for native character output. |
@@ -35,9 +35,11 @@ Related integration suites include `reflect_tools_test.exs` and the parent tool-
 Authorization ignores tool-task role flags and captures `agent_id`, `task_id`, `owner_pid`, original `tool_pid`, current `target_node` and the call-time TaskRegistry server.
 `authorize/1` requires the original tool to descend from the owner, and `revalidate/1` preserves those original identities even when called by trusted guardian/broker processes.
 Internal target selection accepts nil/current/local spellings or the exact current node name; no remote target or input-derived node atom is created.
-Both original processes must be alive and local, the scheduler registered, and the captured task must be a running `:reflect` task fetched with `{:get_task_lite, id}` under a one-second deadline.
-SchedMeta must describe a depth-zero, nil-parent, unsent-result SelfReflective agent in `:running` or `:blocked`, with its Task pid equal to the owner.
+Both original processes must be alive and local, the scheduler registered, and the captured task must be a live `:reflect` task (`:running`, or `:awaiting_input` for an idle interactive session) fetched with `{:get_task_lite, id}` under a one-second deadline.
+SchedMeta must describe a depth-zero, nil-parent, unsent-result SelfReflective agent in `:running`, `:blocked` or `:awaiting_input`, with its Task pid equal to the owner.
 Its spec must be primary, repo-less, without foreign repos, phylo node or custom-agent identity, and its task-id option must match.
+`accepted_agent_statuses/0` (`[:running, :blocked, :awaiting_input]`) and `accepted_agent_task_statuses/0` (`[:running, :awaiting_input]`) are the only status sets this gate consults; `:blocked` is agent-side only and never a task status.
+An idle `:awaiting_input` interactive session admits evaluation exactly like a running one, because its session process, worktree and transcript are alive and its task row is non-terminal.
 A projected ETS AgentState check requires primary/nil-parent/no-foreign-repos state and cancellation false or nil, without copying conversation or generation parameters.
 Revalidation checks owner/tool liveness and unchanged SchedMeta again after the task lookup, but is not an atomic transaction with a subsequent mutation.
 Missing tables, stale state, registry timeout/exit and exceptions return the same generic authorization refusal.
@@ -96,6 +98,11 @@ Generated Dune shims send literal MFA tokens to the authenticated broker, which 
 The trusted runtime task installs the captured TaskRegistry routing seam so actual TaskRegistry clients use the authenticated registry, not an evaluator-supplied destination.
 No direct call uses facade projection, option validators, scalar normalization, self-target/status policies or substituted GenServer messages.
 Direct get_task/get_task_lite return actual TaskInfo structs or nil, task pages retain real rows/totals, list_agents returns the actual full summary list and slot/configuration reads retain actual nested values without redaction.
+`list_agents/0` is an UNORDERED, unpaged bare list of 28-key atom-keyed summaries (`id, task_local_id, repo_id, status, depth, parent_id, usage, total_tokens, compression_count, message_count, objective, result, agent_module, started_at, model_id, provider_profile_id, model_spec, llm_model, repo_root, context_path, worktree, current_commit, base_commit, task_id, task_number, retries, compression_threshold, context_window`) built from the sched table plus ONE `:ets.select/2` of `{id, state}` pairs: `result`/`started_at` are always nil, `usage` is a native `%Usage{}`, missing sched-meta yields `[]`, absent agent-state rows get zero counters plus nil model/repo/task-local identifiers, and the two reads are NOT an atomic snapshot.
+EvoGit wrappers install no deadlines or exit containment of their own, and ETS `whereis`→lookup checks have a table-deletion race (`get_agent_history/1` is the exception: TOTAL `[]` within 5 s for a gone/unresponsive session).
+The control wrappers (`start_task/2`, `cancel_task/1`, `force_kill_task/1`, `send_agent_message/2`, config/custom-agent saves, review mutations, `respond_approval/2`) ask for no approval themselves, so exposing `respond_approval/2` would let an assistant answer the human approval gate.
+`Lifecycle.cancel_agent/2` is an internal destructive state-transformer (the scheduler must remove refs first), not a cancellation API; killing an agent process externally can trigger crash RETRY instead of cancelling its task.
+`State.from_model_profiles/1,2` retains incoming profile maps and a raw `:llm_generation_params` override VERBATIM, so an admitted `get_config/1` read of those fields is not a redacted inspection surface.
 Direct start returns the actual `{:ok, TaskInfo}` or API error, while enqueue is not execution success and delete's `:ok` still acknowledges only a queued cast, not persistence.
 `get_config/1` preserves all actual key semantics, including nonscalar values and nil for unknown keys; `Config.resolve/1` accepts the real atom key or key-path list without a direct-specific key restriction.
 `Config.resolve/0` returns normalized defaults plus user configuration, not live scheduler runtime overrides, and resolve/1 reads that same resolved configuration.
@@ -135,12 +142,17 @@ The shared Schema resolver is an integration dependency owned by the configurati
 These restrictions apply only to `Write.start_task/2`; admitted direct `TaskRegistry.start_task/2` calls bypass facade validators and preserve actual arguments and API returns.
 Start strings are nonblank valid UTF-8 without NUL and at most 8,000 bytes; non-reflect tasks require an absolute path of at most 1,024 bytes, existing except for genesis-new, while reflect rejects path.
 Modes are genesis new/existing, evolve simple and reflect reflect; custom, merge/resume and foreign-repo options are not exposed, extraction rejects objective/prompt, and a valid explicit model selector adds `model_id_locked: true`.
-Self-targeting mutations are refused; cancel permits pending/running, force-kill running/cancelling and delete completed/failed/cancelled tasks.
+Self-targeting mutations are refused; cancel permits pending/running/awaiting_input, force-kill running/awaiting_input/cancelling and delete completed/failed/cancelled tasks.
+`Broker.cancel_statuses/0` is the task-registry's gracefully-cancellable set plus the facade's intentional `:pending` pre-start cancellation, and `Broker.force_kill_statuses/0` is exactly the task-registry's killable set, so an idle `:awaiting_input` interactive session is cancellable and killable like a running task.
+Those two accessors delegate to `TaskRegistry.gracefully_cancellable_statuses/0` and `killable_statuses/0` rather than restating them, so the facade gates cannot drift from the task-registry truth.
 Deletion returns an explicit queued-cast acknowledgement, never a persisted-deletion guarantee, and submission failures instruct inspection before retrying because timeout does not prove absence of side effects.
 Guides require a message of at most 2,000 bytes, an allowlisted local page, optional simple `#id` selector of at most 80 bytes and boolean dismissible flag.
 
 ## Projection and Output Contracts
 Facade task reads retain only id, type, status, review_status, timestamps and agent_count.
+The projected task-status whitelist (`Projection.statuses/0`) admits `:awaiting_input`, so an idle interactive session's status survives the facade (and the cancel/force-kill gates) instead of normalizing to nil.
+The projected agent-status whitelist (`Projection.agent_statuses/0`, used by the `list_agents` facade) admits `:awaiting_input` too, so an idle interactive root is visible as alive-but-idle instead of projecting `status: nil`.
+Both whitelists are exposed as `@doc false` accessors so the status-admission totality test asserts the `:running ⇒ :awaiting_input` implication instead of restating the lists.
 The following projection rules apply to convenience facades, not admitted direct APIs, which retain actual return values as described above.
 Facade task reads omit objective, opts, result, attachments, errors, usage, histories and credential fields.
 Task pages default to limit 25/offset 0/status all, accept limit 1..50 and offset 0..10,000, and validate status against literal enums; task ids are 1..128 bytes of ASCII letters, digits, underscore or hyphen.

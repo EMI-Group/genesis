@@ -25,10 +25,10 @@ All `schema/0` use `ReqLLM.tool/2` with a no-op `callback`. Read/validate args v
 
 ## Tool Repo-Path Contract (repo_path vs repo_root)
 
-Tool dispatch passes TWO roots (`tool_dispatch.ex:959-980`, call at `:1169-1175`):
-- `repo_path` = `Process.get(:repo_path)` (`tool_dispatch.ex:961`, set at `runner.ex:256`) = the agent's transient **WORKTREE** `<repo_root>/.genesis/workers/worker_T<n>_A<m>` (`dispatch.ex:198-203`).
-- `repo_root` = `Process.get(:genesis_repo_root)` (`tool_dispatch.ex:941-942`, set at `runner.ex:212`) = the agent's **REAL repo root** — the main working copy (`resolve_agent_repo_root/2`, `dispatch.ex:522-558`; worktree suffix stripped for subagents).
-- For repo-less agents both are the Genesis source root / placeholder (`runner.ex:243-247`) and write tools are blocked entirely.
+Tool dispatch passes TWO roots (`tool_dispatch.ex:942-965`, call at `:997`):
+- `repo_path` = `Process.get(:repo_path)` (`tool_dispatch.ex:916`, installed by `EvoGit.Agent.Session.Setup.install_process_context/3` in `agent/session/setup.ex`) = the agent's transient **WORKTREE** `<repo_root>/.genesis/workers/worker_T<n>_A<m>` (`dispatch.ex:234-239`).
+- `repo_root` = `Process.get(:genesis_repo_root)` (`tool_dispatch.ex:878`, installed by `Session.Setup.bind_worktree/2` + `install_process_context/3`) = the agent's **REAL repo root** — the main working copy (`resolve_agent_repo_root/2`, `dispatch.ex:708-744`; worktree suffix stripped for subagents).
+- For repo-less agents both are the Genesis source root / placeholder (`Session.Setup.bind_worktree/2` + `install_process_context/3`, reading `dispatch.ex` `resolve_agent_repo_root/2`'s repo-less root) and write tools are blocked entirely.
 
 **All eight skill tools pass `repo_path` (the WORKTREE) to every `EvoGit.Skills` call** — skill files therefore live in the same tree the agent commits from, and are reviewable on the agent's `evogit-agent-*` branch. `repo_root` is only forwarded to `Shared.commit_files/4` (the sandbox repo root).
 `skill_enable`'s `.agents/skills/<name>.md` existence pre-check also resolves against `repo_path`.

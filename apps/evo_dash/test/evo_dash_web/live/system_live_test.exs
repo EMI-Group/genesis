@@ -322,6 +322,71 @@ defmodule EvoDashWeb.SystemLiveTest.Helpers do
     Application.put_env(:evo_dash, :desktop_release, true)
   end
 
+  # A `:public` ETS call counter (the file's established pattern for counting
+  # calls made from inside a process-global seam closure) with `keys` seeded to
+  # 0, so a seam/another process can `:ets.update_counter(table, key, 1)` — the
+  # bare-integer update needs a pre-existing key on this OTP.
+  def new_call_counter(keys) do
+    table = :ets.new(:call_counter, [:public, :set])
+    :ets.insert(table, Enum.map(keys, fn key -> {key, 0} end))
+    table
+  end
+
+  # --- Idle interactive session test fakes ----------------------------------
+  # The update wind-down asks an idle `:awaiting_input` session to CLOSE through
+  # `EvoDash.NodeContext.close_session/3`, and
+  # `EvoDashWeb.SystemLive.UpdateCard.close_session/1` exposes NO seam for that
+  # call (the only seam is `:update_awaiting_session_ids` for the LISTING), so
+  # the call is observed where production resolves it: a fake process registered
+  # in the core's per-agent session registry
+  # (`EvoGit.Agent.Session.Registry`, a unique-key `Registry` started by
+  # `EvoGit.Application`; `EvoGit.Agent.Session.close/2` looks an agent id up
+  # there) that answers the `:gen_statem` close call.
+  #
+  # `counter` (see `new_call_counter/1`) gets one increment per close call under
+  # `key`, and every call is also announced to the test as
+  # `{:fake_session_close, agent_id, mode}`.
+  #
+  # The fake is NOT linked: a test process exits `:normal`, which a linked
+  # process ignores, so it is stopped explicitly in `on_exit` (the Registry drops
+  # its entry when it dies).
+  def start_fake_idle_session(agent_id, counter, key) do
+    assert Process.whereis(EvoGit.Agent.Session.Registry),
+           "the core per-agent session registry must be running to observe a close"
+
+    test = self()
+    pid = spawn(fn -> register_fake_idle_session(agent_id, test, counter, key) end)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
+    # `Registry.register/3` registers the CALLING process, so wait for the
+    # fake's own signal before the wind-down can resolve the id.
+    assert_receive {:fake_session_registered, ^agent_id}, @async_wait_budget_ms
+    pid
+  end
+
+  defp register_fake_idle_session(agent_id, test, counter, key) do
+    {:ok, _} = Registry.register(EvoGit.Agent.Session.Registry, agent_id, :fake_idle_session)
+    send(test, {:fake_session_registered, agent_id})
+    fake_idle_session_loop(agent_id, test, counter, key)
+  end
+
+  defp fake_idle_session_loop(agent_id, test, counter, key) do
+    receive do
+      {:"$gen_call", from, {:close, mode}} ->
+        :ets.update_counter(counter, key, 1)
+        send(test, {:fake_session_close, agent_id, mode})
+        GenServer.reply(from, :ok)
+        fake_idle_session_loop(agent_id, test, counter, key)
+
+      _other ->
+        fake_idle_session_loop(agent_id, test, counter, key)
+    end
+  end
+
+  # A unique agent id for a fake idle session: real ids are small integers
+  # allocated by the scheduler, so the offset keeps the fake from ever
+  # colliding with (or closing) a real session.
+  def fake_session_id, do: 1_000_000_000 + System.unique_integer([:positive])
+
   # --- Genesis Source card test helpers -------------------------------------
 
   # A full Genesis Source status map as emitted by the
@@ -1481,6 +1546,11 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
   import Phoenix.LiveViewTest
   import EvoDashWeb.SystemLiveTest.Helpers
 
+  # Bounded `assert_receive` budget for this module's own asserts (the helper
+  # module's 30 s attributes are not visible from a case module): generous for
+  # this shared host, still bounded so real breakage fails loudly.
+  @receive_timeout_ms 30_000
+
   setup do
     # Software Update card tests share the global `EvoDash.UpdateStatus` hub —
     # reset it so tests are independent, and pin the notify-only seam to false
@@ -1496,6 +1566,7 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       :update_check_runner,
       :update_check_timeout,
       :update_active_task_ids,
+      :update_awaiting_session_ids,
       :update_winddown_timeout,
       :update_winddown_poll_ms,
       :system_checks_runner,
@@ -2648,6 +2719,207 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       render_click(view, "close_changelog")
 
       refute assigns(view)[:changelog_open]
+    end
+
+    # --- Idle interactive sessions vs the update gate / wind-down ------------
+    #
+    # An `:awaiting_input` interactive session is NON-TERMINAL but IDLE: it holds
+    # no exchange worker, no LLM/tool slot and no timer, so it can never make
+    # progress on its own. It therefore must NOT block the apply gate, and the
+    # wind-down ASKS it to close (`EvoDash.NodeContext.close_session/3` — the
+    # only non-cancellation way out) instead of force-killing it. A session that
+    # never closes stops blocking after `@session_close_grace_polls` polls.
+    #
+    # The close path has no seam of its own, so these tests register a FAKE
+    # session process in the core registry and answer its close call
+    # (`start_fake_idle_session/3` above): that is the exact call production
+    # makes for an idle session.
+    test "awaiting_session_ids/1 is total: list seam, fun seam and the seam-free default" do
+      update_card = EvoDashWeb.SystemLive.UpdateCard
+      # (a) A plain list is returned VERBATIM for both contexts (and for the
+      # `:winddown_poll` default argument).
+      Application.put_env(:evo_dash, :update_awaiting_session_ids, [11, "12"])
+      assert update_card.awaiting_session_ids(:gate) == [11, "12"]
+      assert update_card.awaiting_session_ids(:winddown_poll) == [11, "12"]
+      assert update_card.awaiting_session_ids() == [11, "12"]
+      # (b) A one-arg fun seam RECEIVES the context (and its result is wrapped as
+      # a list, so a bare id is honoured too).
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :update_awaiting_session_ids, fn ctx ->
+        send(test_pid, {:awaiting_session_ctx, ctx})
+        if ctx == :gate, do: 42, else: [7]
+      end)
+
+      assert update_card.awaiting_session_ids(:gate) == [42]
+      assert_receive {:awaiting_session_ctx, :gate}, @receive_timeout_ms
+      assert update_card.awaiting_session_ids(:winddown_poll) == [7]
+      assert_receive {:awaiting_session_ctx, :winddown_poll}, @receive_timeout_ms
+      # (c) No seam: the default branch runs under `EvoDash.SafeCall.run/2` and
+      # maps `EvoDash.NodeContext.list_awaiting_input/1` rows to their agent ids.
+      # This file owns no seam for that read and the suite never starts an
+      # interactive session, so the branch's documented answer is the safe `[]`
+      # (it is TOTAL either way: a read failure also degrades to `[]`).
+      Application.delete_env(:evo_dash, :update_awaiting_session_ids)
+      assert update_card.awaiting_session_ids(:gate) == []
+      assert update_card.awaiting_session_ids(:winddown_poll) == []
+    end
+
+    test "an idle interactive session never blocks the apply gate", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+      drive_hub_to_ready()
+      session_id = fake_session_id()
+      counter = new_call_counter([:closes])
+      # No BUSY task at all — only an idle session exists.
+      Application.put_env(:evo_dash, :update_active_task_ids, [])
+      Application.put_env(:evo_dash, :update_awaiting_session_ids, [session_id])
+      start_fake_idle_session(session_id, counter, :closes)
+      {:ok, view, _html} = live(conn, ~p"/system")
+      view |> element("#update-restart") |> render_click()
+      # The gate sees no active task, so the update applies IMMEDIATELY: no busy
+      # modal, no wind-down, and the session is never even asked to close.
+      await_update_phase(view, :applying)
+      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      assert assigns(view)[:update_apply_busy_count] == nil
+      refute render(view) =~ "Tasks still running"
+      assert :ets.lookup_element(counter, :closes, 2) == 0
+      refute_received {:fake_session_close, ^session_id, _mode}
+    end
+
+    test "the wind-down closes an idle session gracefully, completes and never force-kills it", %{
+      conn: conn
+    } do
+      reset_hub_to_idle()
+      set_desktop()
+      drive_hub_to_ready()
+      session_id = fake_session_id()
+      counter = new_call_counter([:closes, {:polls, :gate}, {:polls, :winddown_poll}])
+      # :gate sees one busy task (the busy modal opens); :winddown_poll sees
+      # none, so the wind-down cancels nothing itself.
+      Application.put_env(:evo_dash, :update_active_task_ids, fn
+        :gate -> ["task-1"]
+        :winddown_poll -> []
+      end)
+
+      # The FIRST wind-down poll still lists the session; afterwards the close was
+      # honoured and it is gone — exactly like a real session that closed.
+      Application.put_env(:evo_dash, :update_awaiting_session_ids, fn ctx ->
+        polls = :ets.update_counter(counter, {:polls, ctx}, 1)
+        if polls == 1, do: [session_id], else: []
+      end)
+
+      Application.put_env(:evo_dash, :update_winddown_poll_ms, 10)
+      Application.put_env(:evo_dash, :update_winddown_timeout, 2_000)
+      start_fake_idle_session(session_id, counter, :closes)
+      {:ok, view, _html} = live(conn, ~p"/system")
+      view |> element("#update-restart") |> render_click()
+      assert await_view_assign(view, :update_apply_busy_count, 1) == :ok
+      render_click(view, "confirm_apply_graceful")
+      # Completion is reported (the update applies), never the timeout fallback.
+      await_update_phase(view, :applying)
+      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      assert assigns(view)[:update_winddown] == false
+      assert assigns(view)[:update_force_kill_count] == nil
+      refute render(view) =~ "Force Kill"
+      # The session was ASKED TO CLOSE exactly once, with the `:normal` mode
+      # production sends, and the wind-down completed on its SECOND poll (the
+      # first poll that no longer lists it).
+      assert_receive {:fake_session_close, ^session_id, :normal}, @receive_timeout_ms
+      assert :ets.lookup_element(counter, :closes, 2) == 1
+      assert :ets.lookup_element(counter, {:polls, :winddown_poll}, 2) == 2
+      refute_received {:fake_session_close, ^session_id, _mode}
+    end
+
+    test "a session that never closes stops blocking after the grace polls and is never killed",
+         %{
+           conn: conn
+         } do
+      reset_hub_to_idle()
+      set_desktop()
+      drive_hub_to_ready()
+      session_id = fake_session_id()
+      counter = new_call_counter([:closes, {:polls, :gate}, {:polls, :winddown_poll}])
+
+      Application.put_env(:evo_dash, :update_active_task_ids, fn
+        :gate -> ["task-1"]
+        :winddown_poll -> []
+      end)
+
+      # A STUCK session: every poll lists the SAME id forever (a close that is
+      # silently refused). It must not wedge the modal.
+      Application.put_env(:evo_dash, :update_awaiting_session_ids, fn ctx ->
+        :ets.update_counter(counter, {:polls, ctx}, 1)
+        [session_id]
+      end)
+
+      Application.put_env(:evo_dash, :update_winddown_poll_ms, 5)
+      Application.put_env(:evo_dash, :update_winddown_timeout, 2_000)
+      start_fake_idle_session(session_id, counter, :closes)
+      {:ok, view, _html} = live(conn, ~p"/system")
+      view |> element("#update-restart") |> render_click()
+      assert await_view_assign(view, :update_apply_busy_count, 1) == :ok
+      render_click(view, "confirm_apply_graceful")
+      # The wind-down still COMPLETES (it does not wait out the 2 s deadline and
+      # never opens the force-kill fallback): the grace expires, the session
+      # stops counting and is left alive for the user.
+      await_update_phase(view, :applying)
+      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      assert assigns(view)[:update_winddown] == false
+      assert assigns(view)[:update_force_kill_count] == nil
+      refute render(view) =~ "Force Kill"
+      # `@session_close_grace_polls` (3) blocking polls + the 4th poll that
+      # observes the expired grace -> 4 polls, and a close attempt on EACH poll
+      # (closing is asked every time, never a kill).
+      assert :ets.lookup_element(counter, {:polls, :winddown_poll}, 2) == 4
+      assert :ets.lookup_element(counter, :closes, 2) == 4
+      assert_receive {:fake_session_close, ^session_id, :normal}, @receive_timeout_ms
+    end
+
+    test "a busy task and an idle session wind down together with no force kill", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+      drive_hub_to_ready()
+      task_id = "winddown_task_#{System.unique_integer([:positive])}"
+      session_id = fake_session_id()
+      counter = new_call_counter([:closes, {:polls, :gate}, {:polls, :winddown_poll}])
+      # A real `:pending` row: graceful cancellation marks it `:cancelled`
+      # immediately (the :pending arm of `TaskRegistry.cancel_task/1`).
+      EvoGit.Store.put_task(EvoGit.Store, %EvoGit.TaskInfo{
+        id: task_id,
+        type: :evolve,
+        status: :pending,
+        opts: [path: "/tmp/winddown-fixture"],
+        started_at: DateTime.utc_now()
+      })
+
+      on_exit(fn -> EvoGit.Store.delete_task(EvoGit.Store, task_id) end)
+
+      Application.put_env(:evo_dash, :update_active_task_ids, fn
+        :gate -> [task_id]
+        :winddown_poll -> []
+      end)
+
+      Application.put_env(:evo_dash, :update_awaiting_session_ids, fn ctx ->
+        polls = :ets.update_counter(counter, {:polls, ctx}, 1)
+        if polls == 1, do: [session_id], else: []
+      end)
+
+      Application.put_env(:evo_dash, :update_winddown_poll_ms, 10)
+      Application.put_env(:evo_dash, :update_winddown_timeout, 2_000)
+      start_fake_idle_session(session_id, counter, :closes)
+      {:ok, view, _html} = live(conn, ~p"/system")
+      view |> element("#update-restart") |> render_click()
+      assert await_view_assign(view, :update_apply_busy_count, 1) == :ok
+      render_click(view, "confirm_apply_graceful")
+      await_update_phase(view, :applying)
+      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+      # The busy task went through the GRACEFUL path (persisted `:cancelled`) and
+      # the idle session was closed — neither needed the kill fallback.
+      assert %EvoGit.TaskInfo{status: :cancelled} = EvoGit.TaskRegistry.get_task(task_id)
+      assert :ets.lookup_element(counter, :closes, 2) == 1
+      assert assigns(view)[:update_force_kill_count] == nil
+      refute render(view) =~ "Force Kill"
     end
   end
 

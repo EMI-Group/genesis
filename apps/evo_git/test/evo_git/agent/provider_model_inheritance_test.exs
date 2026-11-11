@@ -120,13 +120,14 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
   alias EvoGit.Agent.{
     ContextBuilder,
     ContextCompression,
-    LoopState,
     SubagentProcessing,
     ToolDispatch
   }
 
+  alias EvoGit.Agent.State
   alias EvoGit.AgentScheduler
-  alias EvoGit.AgentScheduler.{Dispatch, ModelSelection, State}
+  alias EvoGit.AgentScheduler.{Dispatch, ModelSelection}
+  alias EvoGit.AgentScheduler.State, as: SchedulerState
   alias EvoGit.AgentScheduler.Store, as: SchedulerStore
   alias EvoGit.AgentSpec
   alias EvoGit.Config.Schema
@@ -379,7 +380,7 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
   end
 
   test "legacy-only parent ids remain usable after real builder delegation", ctx do
-    legacy = %State{
+    legacy = %SchedulerState{
       model_profiles: [%{id: "legacy", model: "openai:legacy-model", temperature: 0.3}],
       next_agent_id: unique_id()
     }
@@ -432,7 +433,7 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
       assert Keyword.fetch!(ToolDispatch.current_generation_params(), :reasoning_effort) == :high
       never = fn _ -> flunk("a successful text reply must not retry or enter recovery") end
 
-      assert {:ok, result} =
+      assert {:finish, _state, result} =
                ToolDispatch.do_turn(loop_state(id, ctx.repo), fn _ -> [] end, [], never, never)
 
       assert result.result == "Selected account reply"
@@ -457,7 +458,7 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
     assert ToolDispatch.current_context_window() == 64_000
     never = fn _ -> flunk("successful completion must not re-enter the loop") end
 
-    assert {:ok, result} =
+    assert {:finish, _state, result} =
              ToolDispatch.do_turn(loop_state(child, ctx.repo), fn _ -> [] end, [], never, never)
 
     assert result.result == "Selected account reply"
@@ -505,7 +506,7 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
         llm_context_window: ToolDispatch.current_context_window()
       )
 
-    assert %LoopState{} = after_state
+    assert %State{} = after_state
     assert after_state.total_tokens == 0
     assert after_state.usage.input_tokens == 11
     assert after_state.usage.output_tokens == 7
@@ -519,7 +520,9 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
              )
            end)
 
-    assert agent!(grandchild).compression_count == 1
+    # `compression_count` is state-owned (P2): the compression event advanced the
+    # RETURNED state by exactly one (the scheduler row no longer receives it).
+    assert after_state.compression_count == 1
     request = assert_request(ctx.work, "work", "fixture-work-key", "wide", "high", 0.6, 4_096)
     assert Enum.any?(request["messages"], &String.contains?(&1["content"], "old work 1"))
     backup_ref = ctx.backup.ref
@@ -577,7 +580,10 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
 
   defp snapshot(config),
     do:
-      struct!(State, Keyword.put(ModelSelection.config_opts(config), :next_agent_id, unique_id()))
+      struct!(
+        SchedulerState,
+        Keyword.put(ModelSelection.config_opts(config), :next_agent_id, unique_id())
+      )
 
   defp unique_id, do: 150_000_000 + System.unique_integer([:positive])
 
@@ -605,19 +611,15 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
       SchedulerStore.delete_sched_meta(id)
     end)
 
-    assert {^id, %State{} = next} =
+    assert {^id, %SchedulerState{} = next} =
              Dispatch.register_agent(state, spec, nil, parent, depth, nil, 1)
 
-    # The Runner normally installs the live phylo node after registration. Same-
-    # repo building reads only that current commit and needs no git subprocess.
-    SchedulerStore.put_agent_state(id, %{
-      agent!(id)
-      | phylo_node: %PhyloGraphNode{
-          repo: Process.get(:repo_path),
-          base_commit: "fixture-base",
-          current_commit: "fixture-head"
-        }
-    })
+    # The Runner normally publishes the worktree HEAD it last observed on the
+    # SUMMARY row; the phylo identity itself is registration metadata that stays
+    # on the scheduler-meta spec (seeded from the spec above, `fixture-base`).
+    # Same-repo building reads only that observed current commit and needs no git
+    # subprocess.
+    SchedulerStore.put_agent_state(id, %{agent!(id) | current_commit: "fixture-head"})
 
     {id, next}
   end
@@ -634,8 +636,9 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
 
   defp loop_state(id, repo) do
     meta = meta!(id)
+    agent = agent!(id)
 
-    %LoopState{
+    %State{
       agent_id: id,
       agent_module: meta.spec.agent_module,
       depth: meta.depth,
@@ -645,7 +648,26 @@ defmodule EvoGit.Agent.ProviderModelInheritanceTest do
       context:
         ReqLLM.Context.new([ReqLLM.Context.system("SYSTEM"), ReqLLM.Context.user("OBJECTIVE")]),
       objective: "Test canonical inheritance",
-      repo_less: Process.get(:repo_less, false)
+      repo_less: Process.get(:repo_less, false),
+      # The parent's worktree HEAD is OWNED by the state (P2): same-repo subagent
+      # building reads `state.current_commit`, exactly the value the session
+      # publishes onto the summary row it seeds this state from.
+      current_commit: agent.current_commit,
+      # The engine reads these from the STRUCT now (the old `do_turn/5` read them
+      # from this same scheduler row). The session's initial-state builder copies
+      # them from that row; a missing generation-params value would silently send
+      # ReqLLM's own defaults and a nil `max_retries` would make a transient
+      # failure retry unboundedly.
+      llm_generation_params: agent.llm_generation_params,
+      max_retries: agent.max_retries,
+      # The parent's effective selection identity is OWNED by the state (P2), so
+      # subagent inheritance reads it here instead of the scheduler row — exactly
+      # what `InitialState`/`Session.Setup` seed from the row at registration.
+      model_spec: agent.model_spec,
+      model_id: agent.model_id,
+      model_id_locked: agent.model_id_locked,
+      repo_id: agent.repo_id,
+      archive: agent.archive
     }
   end
 

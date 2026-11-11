@@ -18,14 +18,37 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
     chat_task_status: nil,
     chat_node: nil,
     selected_model_id: nil,
-    thought_process: []
+    thought_process: [],
+    session_id: nil,
+    session_mode: nil,
+    queued_echoes: []
   }
+
+  # Every field `build/1` emits for a draft. The three selection keys are
+  # opt-in: the parent seeds `model_spec` / `model_selection_scope` to persist
+  # them, so a bare build must never invent them.
+  @state_keys [
+    :transcript,
+    :chat_draft,
+    :chat_status,
+    :chat_task_id,
+    :chat_agent_id,
+    :agent_message_count,
+    :chat_task_status,
+    :chat_node,
+    :selected_model_id,
+    :thought_process,
+    :session_id,
+    :session_mode,
+    :queued_echoes
+  ]
 
   @thought_entry %{turn: 1, timestamp: 1_700_000_000, type: "tool", data: %{content: "r"}}
 
   describe "build/1" do
     test "extracts every persisted field from assigns" do
       entry = Transcript.entry(:user, "hi")
+      echo = %{id: "echo-1", text: "queued message", at: 1_700_000_001}
 
       assigns = %{
         transcript: [entry],
@@ -37,20 +60,35 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
         chat_task_status: :running,
         chat_node: :node@host,
         selected_model_id: "profile-a",
-        thought_process: [@thought_entry]
+        thought_process: [@thought_entry],
+        session_id: 42,
+        session_mode: :interactive,
+        queued_echoes: [echo]
       }
 
-      assert ChatState.build(assigns) == assigns
+      built = ChatState.build(assigns)
+      assert built == assigns
+
+      # Total extractor: every documented field is emitted, and no unknown
+      # assign (a credential-bearing snapshot, a loading flag) can leak in.
+      assert built |> Map.keys() |> Enum.sort() == Enum.sort(@state_keys)
+
+      assert ChatState.build(Map.put(assigns, :model_snapshot, %{config: %{api_key: "secret"}})) ==
+               assigns
     end
 
     test "missing keys and nil values degrade to the safe defaults" do
       assert ChatState.build(%{}) == @default_state
+      assert @default_state |> Map.keys() |> Enum.sort() == Enum.sort(@state_keys)
 
       assert ChatState.build(%{
                transcript: nil,
                chat_draft: nil,
                chat_status: nil,
-               thought_process: nil
+               thought_process: nil,
+               session_id: nil,
+               session_mode: nil,
+               queued_echoes: nil
              }) == @default_state
     end
   end
@@ -58,6 +96,7 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
   describe "restore/1" do
     test "restores a fully-populated state map unchanged" do
       entry = Transcript.entry(:assistant, "text")
+      echo = %{id: "echo-2", text: "queued", at: {:monotonic, 5}}
 
       state = %{
         transcript: [entry],
@@ -69,10 +108,17 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
         chat_task_status: :cancelling,
         chat_node: :node@host,
         selected_model_id: "profile-a",
-        thought_process: [@thought_entry]
+        thought_process: [@thought_entry],
+        session_id: 42,
+        session_mode: :interactive,
+        queued_echoes: [echo]
       }
 
-      assert ChatState.restore(state) == state
+      restored = ChatState.restore(state)
+      assert restored == state
+      assert restored.session_id == 42
+      assert restored.session_mode == :interactive
+      assert restored.queued_echoes == [echo]
     end
 
     test "non-map state and malformed fields degrade to the empty default per key" do
@@ -91,7 +137,10 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
                agent_message_count: -1,
                chat_task_status: :weird,
                chat_node: "not-an-atom",
-               thought_process: "nope"
+               thought_process: "nope",
+               session_id: 0,
+               session_mode: :oneshot,
+               queued_echoes: "not-a-list"
              }) == %{@default_state | chat_agent_id: "kept-as-is"}
     end
 
@@ -169,6 +218,8 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
         })
 
       assert state == expected
+      # Picker persistence never touches the interactive-session fields.
+      assert {state.session_id, state.session_mode, state.queued_echoes} == {nil, nil, []}
       assert ChatState.restore(state) == expected
       assert ChatState.restore_selection(state, scope) == Map.take(expected, selection_keys())
     end

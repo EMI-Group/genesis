@@ -30,7 +30,7 @@ defmodule EvoGit.Agent.ToolOutputIntegrationTest do
   `:evo_git, :tool_dispatch_test_tools` — a single key `Tools.execute/5` reads,
   also installed by the sibling `tool_dispatch_containment_test.exs`, so the two
   modules must never overlap. Everything else here is concurrent-safe: agent
-  state rows go into the app-global `:evogit_agent_state` table under per-test
+  state rows go into the app-global `:evogit_agent_summary` table under per-test
   unique ids (deleted on exit) and the global `EvoGit.AgentScheduler` only
   supplies tool slots (a serialized GenServer call, not a global mutation).
   """
@@ -38,7 +38,7 @@ defmodule EvoGit.Agent.ToolOutputIntegrationTest do
   use ExUnit.Case, async: false
 
   alias EvoGit.Agent.DelegationHints
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.Agent.ToolOutput
   alias EvoGit.Adapters.Git
@@ -63,11 +63,7 @@ defmodule EvoGit.Agent.ToolOutputIntegrationTest do
 
     agent_state = %EvoGit.AgentScheduler.AgentState{
       context_node: %EvoGit.Core.ContextNode{path: "./", repo: repo},
-      phylo_node: %EvoGit.Core.PhyloGraphNode{
-        repo: repo,
-        base_commit: head,
-        current_commit: head
-      },
+      current_commit: head,
       llm_model: "test:model",
       max_retries: 1,
       max_depth: 1
@@ -277,7 +273,7 @@ defmodule EvoGit.Agent.ToolOutputIntegrationTest do
   # sanitize/truncate + hint appenders per output, and materializes every output
   # at the `assemble_tool_result/3` message-construction site.
   defp run_pipeline(calls, repo) do
-    state = %LoopState{
+    state = %State{
       agent_id: Process.get(:evogit_agent_id),
       agent_module: EvoGit.Agents.Executor,
       depth: 0,

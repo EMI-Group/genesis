@@ -9,7 +9,7 @@ defmodule EvoGit.WorktreeMainHeadSafetyTest do
   reads.
   """
   # async: true — every test uses its OWN temp repos and a per-test-unique agent
-  # id, so its rows in the shared named ETS tables (:evogit_agent_state,
+  # id, so its rows in the shared named ETS tables (:evogit_agent_summary,
   # :evogit_sched_meta) collide with nothing and are never wiped (a whole-table
   # delete would destroy a concurrently running module's rows).
   use ExUnit.Case, async: true
@@ -37,7 +37,7 @@ defmodule EvoGit.WorktreeMainHeadSafetyTest do
   # --------------------------------------------------------------------------
 
   setup do
-    create_ets_if_missing(:evogit_agent_state)
+    create_ets_if_missing(:evogit_agent_summary)
     create_ets_if_missing(:evogit_sched_meta)
 
     :ok
@@ -88,7 +88,7 @@ defmodule EvoGit.WorktreeMainHeadSafetyTest do
   end
 
   # Registers a minimal agent (ETS rows) so Worktrees.assign_and_prepare_worktree/3
-  # can derive the branch name and update the phylo_node — mirrors the
+  # can derive the branch name and record the prepared commit — mirrors the
   # register_agent pattern in worktrees_test.exs.
   defp register_agent(agent_id, repo_dir, base_sha) do
     spec = %AgentSpec{
@@ -144,11 +144,13 @@ defmodule EvoGit.WorktreeMainHeadSafetyTest do
       assert {:ok, ^base_sha} =
                Worktrees.assign_and_prepare_worktree(agent_id, wt_path, foreign_dir)
 
-      # The agent's phylo_node is now bound to the WORKTREE, never the main copy.
-      assert {:ok, %AgentState{phylo_node: %PhyloGraphNode{repo: wt_repo}}} =
-               Store.get_agent_state(agent_id)
-
-      assert wt_repo == wt_path
+      # The agent's prepared commit is recorded on its (summary-only) state row,
+      # and the WORKTREE — never the main copy — is the checkout that commit
+      # lives in. Preparation no longer rewrites a phylo node onto the worktree:
+      # the session owns `%EvoGit.Agent.State{repo_path: wt_path, current_commit: sha}`.
+      assert {:ok, %AgentState{current_commit: ^base_sha}} = Store.get_agent_state(agent_id)
+      assert {:ok, ^branch} = Git.current_branch(wt_path)
+      assert {:ok, ^base_sha} = Git.rev_parse(wt_path)
       assert_main_untouched(foreign_dir, main_head_before)
 
       # ---- (b) an agent commit INSIDE the worktree leaves it untouched ----

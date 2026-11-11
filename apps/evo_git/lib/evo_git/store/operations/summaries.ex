@@ -4,7 +4,7 @@ defmodule EvoGit.Store.Operations.Summaries do
   `EvoGit.Store.select_tasks_summary/3`, `select_tasks_summary_by_path/4`, and
   `select_tasks_changed_since/2` (unit R3b of the Store→Ecto migration).
 
-  ## The 16-key projection contract (SACRED — zero consumer changes)
+  ## The 17-key projection contract
 
   Consumers are `EvoGit.TaskRegistry` (`list_tasks_summary/2`,
   `list_tasks_summary_by_path/3`, `list_tasks_changed_since/1`) and, through
@@ -13,7 +13,7 @@ defmodule EvoGit.Store.Operations.Summaries do
 
       id, status, review_status, started_at, finished_at, type, project_path,
       opts, branch_name, model_id, agent_count, base_sha, commit_sha,
-      lease_expires_at, updated_at, error
+      lease_expires_at, updated_at, error, session_mode
 
   * `result` is DELIBERATELY NEVER selected — no summary consumer reads it (the
     dashboard's review button uses the denormalized `branch_name` column) and
@@ -28,6 +28,10 @@ defmodule EvoGit.Store.Operations.Summaries do
   * `error` (16th key) is a cheap LENIENT decode (`Codec.decode_error/1`):
     `nil` for non-`:failed` rows, an atom-keyed map for `:failed` rows, and
     `nil` (never a crash) for undecodable text.
+  * `session_mode` (17th key) is the task's driver mode — `"oneshot"` or
+    `"interactive"`, normalized through `Codec.decode_session_mode/1` so a
+    pre-migration NULL reads as `"oneshot"`. It is one short string, which is
+    what lets the task list filter sessions without reading the full row.
 
   ## Filters (exact raw-SQL semantics)
 
@@ -68,7 +72,7 @@ defmodule EvoGit.Store.Operations.Summaries do
 
   require Logger
 
-  @typedoc "One task row in the 16-key summary projection."
+  @typedoc "One task row in the 17-key summary projection."
   @type summary :: %{
           required(:id) => String.t(),
           required(:status) => atom() | nil,
@@ -85,11 +89,12 @@ defmodule EvoGit.Store.Operations.Summaries do
           required(:commit_sha) => String.t() | nil,
           required(:lease_expires_at) => integer() | nil,
           required(:updated_at) => String.t() | nil,
-          required(:error) => map() | nil
+          required(:error) => map() | nil,
+          required(:session_mode) => String.t()
         }
 
   @doc """
-  Returns the 16-key summary projection for task rows, optionally filtered by
+  Returns the 17-key summary projection for task rows, optionally filtered by
   `statuses` (atoms; `[]` = all) and `since` (strict raw-string
   `updated_at >` compare; `nil` = no filter).
 
@@ -128,7 +133,7 @@ defmodule EvoGit.Store.Operations.Summaries do
   end
 
   @doc """
-  Returns the 16-key summary projection for all tasks whose raw `updated_at`
+  Returns the 17-key summary projection for all tasks whose raw `updated_at`
   string is strictly newer than `since_iso` (lexicographic string comparison;
   the fixed-precision 24-char ISO format sorts chronologically).
   """
@@ -144,7 +149,7 @@ defmodule EvoGit.Store.Operations.Summaries do
 
   ## Query building
 
-  # The 16-column summary projection, selected through the RAW wire-value twin
+  # The 17-column summary projection, selected through the RAW wire-value twin
   # so every value comes back as the exact bytes SQLite stored (the raw store's
   # @summary_columns SELECT). `result`, `logs` and `usage` are deliberately not
   # selected.
@@ -172,7 +177,8 @@ defmodule EvoGit.Store.Operations.Summaries do
         commit_sha: t.commit_sha,
         lease_expires_at: t.lease_expires_at,
         updated_at: t.updated_at,
-        error: t.error
+        error: t.error,
+        session_mode: t.session_mode
       }
     )
   end
@@ -217,7 +223,7 @@ defmodule EvoGit.Store.Operations.Summaries do
 
   ## Decode
 
-  # Decodes one row of the 16-column RAW projection — a field-for-field port
+  # Decodes one row of the 17-column RAW projection — a field-for-field port
   # of the raw store's decode_summary_row/1: atoms/datetimes/opts/error through
   # the Codec (the decode oracle), scalars and the RAW `updated_at` string
   # passed through untouched.
@@ -238,7 +244,8 @@ defmodule EvoGit.Store.Operations.Summaries do
       commit_sha: row.commit_sha,
       lease_expires_at: row.lease_expires_at,
       updated_at: row.updated_at,
-      error: Codec.decode_error(row.error)
+      error: Codec.decode_error(row.error),
+      session_mode: Codec.decode_session_mode(row.session_mode)
     }
   end
 

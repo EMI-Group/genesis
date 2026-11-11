@@ -413,6 +413,18 @@ defmodule EvoGit.Runtime.HelpersTest do
   end
 
   # ==========================================================================
+  # merge_and_report repo-less (nil repo path)
+  # ==========================================================================
+  describe "merge_and_report repo-less (nil repo path)" do
+    test "returns the repo-less report shape and performs no git call" do
+      # A `nil` repo path is the repo-less finalization used by the Assistant
+      # phase: no HEAD resolution, no branch creation, no git subprocess.
+      assert {:ok, %{result: "x", commit_sha: nil, branch_name: nil, tag: nil}} =
+               Helpers.merge_and_report(nil, %Result{result: "x", commit_sha: nil}, "assistant")
+    end
+  end
+
+  # ==========================================================================
   # merge_and_report/4
   # ==========================================================================
   describe "merge_and_report/4" do

@@ -161,7 +161,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WrapperTest do
       {code, effect} = effect_code(ctx, :sudo)
       handle = start_eval(ctx.fixture, %{"code" => code, "tier" => "sudo"})
       request = await_request(ctx.fixture, :sudo, code)
-      Fixture.update_meta(ctx.fixture, &%{&1 | task_ref: replacement.owner})
+      Fixture.update_meta(ctx.fixture, &%{&1 | session_pid: replacement.owner_pid})
 
       assert :ok = CommandApproval.respond(request.request_id, :approve)
       assert Fixture.await(handle) == @denied
@@ -375,8 +375,10 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WrapperTest do
   end
 
   defp invalidate(fixture, :cancel_flag) do
-    Fixture.update_state(fixture, &%{&1 | cancel_requested: true})
-    fn -> Fixture.update_state(fixture, &%{&1 | cancel_requested: false}) end
+    # The graceful-cancel flag lives in the control plane, not the summary row.
+    Fixture.set_cancel(fixture, true)
+    assert Fixture.cancel_requested?(fixture)
+    fn -> Fixture.set_cancel(fixture, false) end
   end
 
   defp invalidate(fixture, change) do

@@ -1,78 +1,29 @@
 defmodule EvoGit.Agent.Runner do
   @moduledoc """
-  Shared agent loop runner — extracted from `EvoGit.Agent.__using__/1`.
+  The remaining thin helpers of the agent run, plus the `commit_sha` refresh.
 
-  Contains the agent turn loop logic ONCE, instead of macro-injecting it into
-  every agent module. Agent-specific behavior is accessed via callbacks on
-  `state.agent_module` (system_prompt, available_tools, subagent_modules, etc.).
+  The agent lifecycle itself now lives in `EvoGit.Agent.Session` (the supervised
+  per-agent `gen_statem`) and its per-exchange worker
+  (`EvoGit.Agent.Session.Worker`), which drives `EvoGit.Agent.Exchange.run/2`
+  and publishes every turn's state through the `:checkpoint` seam. Set-up lives
+  in `EvoGit.Agent.Session.Setup` (worktree binding, process context and the
+  initial `%EvoGit.Agent.State{}`).
 
-  The agent module's `run/2` delegates here: `Runner.run(__MODULE__, objective, dispatch_ctx)`.
+  What is left here is callable without a session:
+
+    * `refresh_commit_sha/1` — re-reads the worktree HEAD after the auto-commit
+      fallback so `Result.commit_sha` never points at the pre-fallback commit;
+      the session worker calls it exactly like the retired one-shot driver did.
+    * `current_commit_sha/0` — the never-raising worktree-HEAD read behind that
+      refresh; the yielded state's `current_commit` and the completion builder
+      reuse it.
+    * pure delegations to the engine helpers (`check_limit_warnings/1`,
+      `drain_and_inject_user_messages/1,2`, `inject_background_job_notices/1,2`,
+      `enter_grace/2,3`, `maybe_enter_cancel_grace/1`), kept so tests can reach
+      the same behaviour through one shim.
   """
-
-  require Logger
-  use Retry
 
   alias EvoGit.Adapters.Git
-  alias EvoGit.Agent.LoopState
-  import ReqLLM.Context, only: [user: 1]
-
-  # Grace-turn budget for a user-requested graceful cancellation (cancel-grace).
-  # The agent may wrap up and finish (a plain-text reply with no tool calls ends
-  # the run and its text is the report) for up to this many turns before the run
-  # hard-stops with `{:error, :recovery_failed}`.
-  @cancel_grace_turns 3
-
-  # Grace-turn budget for turn-limit recovery. A commit is a tool call and
-  # therefore does not finish the run, so the agent needs one turn for a bounded
-  # final commit PLUS at least one more to deliver its plain-text report; the
-  # budget must never be 1, which makes "commit and report" impossible.
-  # The bound stays hard: every turn that ends without completing consumes a
-  # grace turn, and at `grace_turns_remaining <= 1` the next continue hard-stops
-  # with `{:error, :recovery_failed}` (`Agent.grace_period_continue_failed?/1`).
-  @turn_limit_grace_turns 3
-
-  @doc """
-  Runs the agent synchronously, blocking until it completes.
-
-  The agent's worktree path is set once at startup via
-  `Process.get(:repo_path)` and stored in `LoopState.repo_path`.
-  Agent state is synced to ETS every turn for dashboard visibility.
-  The dashboard reads the `context` field from `evogit_agent_state` table.
-
-  The `dispatch_ctx` keyword list is required: it drives worktree setup,
-  retry handling, and process-dict initialization before the agent loop.
-  """
-  def run(agent_module, objective, dispatch_ctx) do
-    setup_dispatch_context(dispatch_ctx)
-
-    # The agent process owns git operations. After the agent finishes
-    # (any exit path), commit any pending changes as a best-effort
-    # fallback so the worktree is clean before the scheduler processes
-    # the result. The scheduler never touches git directly.
-    result =
-      try do
-        do_run(agent_module, objective)
-      after
-        EvoGit.AgentScheduler.Dispatch.commit_pending_in_worktree()
-
-        # After the fallback committed, advance the agent's foreign repo's
-        # PERSISTENT worktree to the agent's final HEAD — so the worktree other
-        # agents read reflects the newest committed state (last-writer-wins).
-        # Best-effort and a no-op for primary-repo / repo-less agents.
-        EvoGit.AgentScheduler.ForeignWorktree.sync_from_agent()
-      end
-
-    # The `after` fallback above may have created the ONLY commit of this run,
-    # while `Result.commit_sha` was captured earlier (on the completion path,
-    # before the fallback committed) — i.e. it may still point at the
-    # pre-fallback worktree HEAD. `Runtime.Helpers.merge_and_report/3,4`
-    # compares that sha against the live HEAD of the repo root and treats a
-    # match (or nil) as "no changes", so a stale pre-fallback sha would leave
-    # the fallback-only commit unreviewable (no `genesis/agent_*` branch, and
-    # the commit dies with the worktree on reclaim). Re-read the worktree HEAD
-    # AFTER the fallback ran and refresh the returned result.
-    refresh_commit_sha(result)
-  end
 
   # Refreshes the `commit_sha` of a successful agent result with the current
   # worktree HEAD. Public (@doc false) solely so it can be tested directly
@@ -98,7 +49,7 @@ defmodule EvoGit.Agent.Runner do
   defp refresh_success_shape({:ok, inner}), do: {:ok, refresh_success_shape(inner)}
 
   defp refresh_success_shape(%EvoGit.Agent.Result{} = result) do
-    case current_worktree_sha() do
+    case current_commit_sha() do
       {:ok, sha} -> %{result | commit_sha: sha}
       :error -> result
     end
@@ -108,7 +59,7 @@ defmodule EvoGit.Agent.Runner do
   # the struct type for `%Result{}` — this clause covers plain maps that carry
   # a `:commit_sha` key.
   defp refresh_success_shape(%{commit_sha: _} = map) do
-    case current_worktree_sha() do
+    case current_commit_sha() do
       {:ok, sha} -> Map.put(map, :commit_sha, sha)
       :error -> map
     end
@@ -116,707 +67,54 @@ defmodule EvoGit.Agent.Runner do
 
   defp refresh_success_shape(other), do: other
 
-  # Reads the worktree HEAD. Never raises: `Git.rev_parse/2` pre-checks the
-  # path and returns `{:error, {:enoent, _}}` for a missing directory and
-  # `{:error, {code, output}}` for a non-git directory.
-  defp current_worktree_sha do
-    case Process.get(:repo_path) do
-      path when is_binary(path) and path != "" ->
-        case Git.rev_parse(path) do
-          {:ok, sha} when is_binary(sha) and sha != "" -> {:ok, sha}
-          _ -> :error
-        end
-
-      _ ->
-        :error
-    end
-  end
-
-  defp do_run(agent_module, objective) do
-    agent_id = EvoGit.AgentScheduler.current_agent_id()
-
-    {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
-
-    # Validate that the assigned node path exists
-    node_path = agent_state.context_node.path
-    repo_path = Process.get(:repo_path)
-    full_path = Path.join(repo_path, node_path)
-
-    # Repo-less agents run without a git worktree (chatbot-style) — their
-    # repo_path points at the real Genesis source root or a placeholder binary
-    # (e.g. "[system]"), which is not a node directory, so the existence check
-    # is skipped entirely (the placeholder dir would kill the agent before it
-    # starts).
-    unless Process.get(:repo_less) == true or File.exists?(full_path) do
-      Logger.error(
-        "Agent #{agent_id}: Assigned node path does not exist: #{full_path} (node_path=#{node_path})"
-      )
-
-      {:error, :path_not_exist}
+  @doc false
+  # Reads the worktree HEAD of THIS process's agent. Never raises:
+  # `Git.rev_parse/2` pre-checks the path and returns `{:error, {:enoent, _}}`
+  # for a missing directory and `{:error, {code, output}}` for a non-git
+  # directory. A repo-less agent, a blank/unset `:repo_path`, a non-git
+  # directory or a git error is `:error`, so a caller can leave its own value
+  # untouched instead of failing.
+  def current_commit_sha do
+    if Process.get(:repo_less) == true do
+      :error
     else
-      # Build context tree and merge into first user prompt.
-      # Use :repo_path (set by scheduler to worktree path).
-      #
-      # The first user prompt is framed as two distinct blocks so the LLM
-      # can unambiguously tell where the descriptive context/environment
-      # ends and the actionable objective begins:
-      #
-      #   <context>...</context>
-      #   ---
-      #   <objective>...</objective>
-      #
-      # Empty/blank sections are dropped so we never emit dangling rules,
-      # empty blocks, or doubled delimiters.
-      #
-      # The `<context>` block is assembled by the ONE shared helper
-      # `ContextBuilder.build_context_block/1` — the same helper the mid-run
-      # compression refresh uses (`ContextBuilder.refresh_first_user_message/2`
-      # via `ContextCompression.compress_if_needed/2`), so the two can never
-      # drift. The helper reads the current CONTEXT.md chain from disk plus:
-      #
-      #   * the delegation-authority statement — authoritatively tells THIS
-      #     agent whether it is the ROOT agent (parent_id nil == depth 0) or a
-      #     NESTED agent and which foreign-repo spawn authority that role
-      #     carries (never the process-dict depth, which may not be populated
-      #     at assembly time; skipped for repo-less agents and single-repo
-      #     tasks);
-      #   * the foreign-repos markdown section ("" when no non-primary repos);
-      #   * the rendered repo-notes block (git-submodules awareness — "" when
-      #     the repo has no gitlinks / detection failed);
-      #   * the quality-level guidance (a SPEED ↔ QUALITY block for the ROOT
-      #     agent ONLY — "" for subagents and repo-less agents).
-      #
-      # All of the above are the fields the LoopState carries so the refresh can
-      # reproduce them verbatim.
-      repo_less = Process.get(:repo_less) == true
-
-      context_block =
-        EvoGit.Agent.ContextBuilder.build_context_block(%{
-          node_path: node_path,
-          repo_path: repo_path,
-          parent_id: agent_state.parent_id,
-          repo_less: repo_less,
-          foreign_repos: agent_state.foreign_repos,
-          repo_notes: agent_state.repo_notes,
-          quality_level: Process.get(:quality_level)
-        })
-
-      objective_body =
-        if EvoGit.Agent.ContextBuilder.blank?(objective), do: "", else: to_string(objective)
-
-      combined_prompt =
-        [
-          context_block,
-          EvoGit.Agent.ContextBuilder.objective_block(objective_body)
-        ]
-        |> Enum.reject(&EvoGit.Agent.ContextBuilder.blank?/1)
-        |> Enum.join("\n\n---\n\n")
-
-      # Media attachments (images/audio) ride on the ROOT agent's first user
-      # message ONLY — the helper gates on `parent_id == nil`; repo-less agents
-      # (self-reflective chat) never get them even with a stray spec opt, so
-      # the plain-text path is preserved (no reflect entry point sends the key).
-      # This exact value is retained on the LoopState so a mid-run compression
-      # can reproduce the same media content parts.
-      attachments =
-        if repo_less, do: nil, else: Process.get(:attachments)
-
-      messages =
-        EvoGit.Agent.ContextBuilder.build_initial_messages(
-          agent_module.system_prompt(),
-          combined_prompt,
-          agent_state.parent_id,
-          attachments
-        )
-
-      context = ReqLLM.Context.new(messages)
-      # Tag initial messages (system + user prompt) with turn 0
-      context = EvoGit.Agent.ContextBuilder.tag_context_messages_with_turn(context, 0)
-
-      # Load skill schemas hierarchically — only skills enabled in the
-      # Context Tree (from root to this agent's node) are available.
-      # Skills are read from the agent's WORKTREE (`:repo_path`), not the real
-      # repo root, so a skill an agent adds/edits is visible to it immediately
-      # and gets committed on its `evogit-agent-*` branch.
-      repo_root = Process.get(:genesis_repo_root)
-
-      skill_schemas =
-        if repo_root && is_binary(repo_root) do
-          all_skills = EvoGit.Skills.load_skills(repo_path)
-          skill_names = EvoGit.Skills.hierarchical_skill_names(node_path, repo_path)
-
-          all_skills
-          |> EvoGit.Skills.filter_skills(skill_names)
-          |> EvoGit.Skills.to_tool_schemas()
-        else
-          []
-        end
-
-      max_turns = agent_state.max_turns
-
-      # Sync initial context to ETS for dashboard. The in-memory context is
-      # already stamped at creation (tag_context_messages_with_turn above);
-      # update_agent_context returns :ok, so it is called for the side effect.
-      EvoGit.AgentScheduler.update_agent_context(agent_id, context)
-
-      state = %LoopState{
-        agent_id: agent_id,
-        agent_module: agent_module,
-        depth: EvoGit.AgentScheduler.current_depth(),
-        node_path: node_path,
-        repo_path: repo_path,
-        context: context,
-        max_turns: max_turns,
-        skill_schemas: skill_schemas,
-        foreign_repos: agent_state.foreign_repos,
-        repo_notes: agent_state.repo_notes,
-        parent_id: agent_state.parent_id,
-        repo_less: repo_less,
-        quality_level: Process.get(:quality_level),
-        objective: objective,
-        attachments: attachments,
-        delegation_level: agent_module.delegation_level()
-      }
-
-      EvoGit.Agent.ContextBuilder.sync_turn_to_ets(agent_id, 0)
-
-      Process.put(:delegation_hints, %{})
-      Process.put(:read_delegation_hints, %{})
-      loop(state)
-    end
-  end
-
-  defp setup_dispatch_context(ctx) do
-    agent_id = Keyword.fetch!(ctx, :agent_id)
-    depth = Keyword.fetch!(ctx, :depth)
-    repo_root = Keyword.fetch!(ctx, :repo_root)
-    repo_id = Keyword.fetch!(ctx, :repo_id)
-    worktree_path = Keyword.fetch!(ctx, :worktree_path)
-    retries = Keyword.fetch!(ctx, :retries)
-    spec = Keyword.fetch!(ctx, :spec)
-    meta = Keyword.fetch!(ctx, :meta)
-
-    Process.put(:evogit_agent_id, agent_id)
-    Process.put(:evogit_agent_depth, depth)
-    Process.put(:evogit_started_at, DateTime.utc_now() |> DateTime.to_iso8601())
-    Process.put(:genesis_repo_root, repo_root)
-    Process.put(:evogit_repo_id, repo_id)
-
-    # Expose the agent's foreign repos to the tool layer: the dispatch-level
-    # write gate (`EvoGit.Agent.Tools.maybe_block_read_only_foreign_repo/5`)
-    # and the path-level scope check
-    # (`EvoGit.Agent.Tools.Shared.validate_file_scope/3`) read this key to
-    # determine whether the agent operates inside a read-only foreign repo.
-    Process.put(:foreign_repos, spec.foreign_repos || [])
-
-    # Custom agents (EvoGit.Agents.Custom) resolve their definition at runtime
-    # from this process-dict key, set from the spec before the agent loop starts
-    # (their callbacks are zero-arity, so the spec cannot be passed directly).
-    Process.put(:custom_agent_id, Keyword.get(spec.opts, :custom_agent_id))
-
-    # Media attachments (images/audio) for the initial objective — surfaced
-    # from the spec opts exactly like :custom_agent_id. The Runner's do_run/2
-    # materializes them into the ROOT agent's first user message (root-only
-    # gate); subagent specs never carry the key, so this is nil for them.
-    Process.put(:attachments, Keyword.get(spec.opts, :attachments))
-
-    # Quality-level (`:quality_level`) — a SPEED ↔ QUALITY trade-off surfaced
-    # from the spec opts exactly like :attachments. Only the ROOT agent's
-    # prompt gains the guidance block (the do_run/2 root gate); subagent specs
-    # never carry the key, so their prompts stay unchanged.
-    Process.put(:quality_level, Keyword.get(spec.opts, :quality_level))
-
-    repo_less = Keyword.get(ctx, :repo_less)
-
-    if repo_less do
-      # Repo-less ("system") mode: the agent runs WITHOUT a git worktree
-      # (chatbot-style). WorktreeManager is never involved — it does not
-      # monitor this agent, so there is no worktree to reclaim/prune on exit.
-      # The repo path is the real Genesis source root or a placeholder binary
-      # (e.g. "[system]"); git is never touched and files are never written
-      # (cardinal rule). Skills loading is gated on `is_binary`, so the
-      # placeholder is fine.
-      repo_less_path = Keyword.get(ctx, :repo_less_repo_path) || repo_root
-
-      Process.put(:repo_path, repo_less_path)
-      Process.put(:genesis_repo_root, repo_less_path)
-      Process.put(:repo_less, true)
-
-      Logger.info("AgentScheduler: Agent #{agent_id} starting in repo-less (system) mode")
-
-      if retries > 0 do
-        Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
-        Process.sleep(30_000 * retries)
-      end
-    else
-      Process.put(:repo_path, worktree_path)
-
-      # Request a FRESH worktree from WorktreeManager (indefinite wait — the
-      # create call never times out, so a slow copy is waited for; a genuine
-      # failure inside the create pipeline replies {:error, reason} promptly
-      # instead. Creation I/O runs offloaded in WorktreeManager, which monitors
-      # THIS process: if we die for any reason, the worktree is reclaimed). If
-      # this fails, the task crashes (caught by the :DOWN handler / crash
-      # recovery) rather than the GenServer — which is the desired behaviour:
-      # setup failure triggers scheduler crash-retry, and the retry's Runner
-      # requests another fresh worktree.
-      case EvoGit.AgentScheduler.WorktreeManager.create_worktree_for_agent(
-             agent_id,
-             repo_root,
-             worktree_path,
-             spec,
-             meta,
-             self()
-           ) do
-        {:ok, ^worktree_path} ->
-          :ok
-
-        {:error, reason} ->
-          raise "Failed to create worktree for agent #{agent_id}: #{inspect(reason)}"
-      end
-
-      if retries > 0 do
-        Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
-        Process.sleep(30_000 * retries)
-      else
-        Logger.info(
-          "AgentScheduler: Agent #{agent_id} starting execution in worktree #{worktree_path}"
-        )
-      end
-    end
-
-    # Resolve the managed per-task scratch directory (EvoGit.TaskTmpdir) once
-    # and install it on THIS agent process, so `EvoGit.Sandbox.resolve_tmpdir/0`
-    # — and therefore every backend's `TMPDIR` injection plus the framework's own
-    # temp files (commit-message files, skill scripts, partial outputs) — targets
-    # the per-task dir instead of a host-wide `/tmp`.
-    #
-    # Sharing across the task's agents:
-    #   * `:system`/`:custom` modes depend ONLY on `task_id`, so every agent of
-    #     the task computes the identical dir regardless of which repo it runs in.
-    #   * `:per_repo` depends on the TASK's PRIMARY repo. The root agent computes
-    #     it rooted at the primary repo and threads it down via
-    #     `spec.opts[:task_tmpdir]` (see `SubagentProcessing.build_subagent_specs/3`),
-    #     so foreign-repo subagents inherit the SAME dir instead of rooting it at
-    #     their own repo.
-    #
-    # `:genesis_repo_root` is the agent's ORIGINAL repo root (for the root agent
-    # it is the task's primary repo) — NOT `:repo_path`, which is the transient
-    # worktree. It is passed as `nil` for repo-less agents so `:per_repo` falls
-    # back to `:system`: the Genesis source root must NEVER receive a
-    # `.genesis/tmp` dir.
-    task_tmpdir =
-      case Keyword.get(spec.opts, :task_tmpdir) do
-        path when is_binary(path) ->
-          path
+      case Process.get(:repo_path) do
+        path when is_binary(path) and path != "" ->
+          case Git.rev_parse(path) do
+            {:ok, sha} when is_binary(sha) and sha != "" -> {:ok, sha}
+            _ -> :error
+          end
 
         _ ->
-          primary_repo_path = if repo_less, do: nil, else: Process.get(:genesis_repo_root)
-          EvoGit.TaskTmpdir.ensure(meta.task_id, primary_repo_path)
-      end
-
-    EvoGit.TaskTmpdir.put_current(task_tmpdir)
-  end
-
-  # --- Internal Execution Logic ---
-
-  # Checks and sends turn-limit warnings via the adaptive TurnWarning module.
-  # See EvoGit.Agent.TurnWarning for threshold logic and message generation.
-  defp check_limit_warnings(%LoopState{} = state) do
-    # Pure process-dictionary read (no git call): the snapshot is refreshed at the
-    # END of every turn by `EvoGit.Agent.ConflictState`.
-    in_conflict = EvoGit.Agent.ConflictState.in_conflict?()
-
-    case EvoGit.Agent.TurnWarning.check_positional(
-           state.turn,
-           state.max_turns,
-           state.last_warned_level,
-           state.delegation_level,
-           in_conflict: in_conflict
-         ) do
-      {:ok, warning} ->
-        msg = EvoGit.Agent.TurnWarning.message(warning)
-        warning_msg = EvoGit.Agent.ContextBuilder.tag_message_turn(user(msg), state.turn)
-        new_context = ReqLLM.Context.append(state.context, warning_msg)
-        %{state | context: new_context, last_warned_level: warning.level}
-
-      :none ->
-        case EvoGit.Agent.TurnWarning.check_middle(
-               state.turn,
-               state.max_turns,
-               state.turns_since_subagent,
-               state.delegation_level,
-               in_conflict: in_conflict
-             ) do
-          {:ok, warning} ->
-            msg = EvoGit.Agent.TurnWarning.message(warning)
-            warning_msg = EvoGit.Agent.ContextBuilder.tag_message_turn(user(msg), state.turn)
-            new_context = ReqLLM.Context.append(state.context, warning_msg)
-            %{state | context: new_context, turns_since_subagent: 0}
-
-          :none ->
-            state
-        end
-    end
-  end
-
-  # Drains the agent's pending user-message queue and appends each message to
-  # the context as a turn-tagged user-role message.
-  #
-  # Each drained message may be a legacy plain `String.t()` or a
-  # `%{text:, attachments:}` map (`Store.drain_pending_user_messages/1` yields
-  # whatever was queued) — materialization is delegated to the pure
-  # `EvoGit.Agent.ContextBuilder.build_injected_message/2`, which yields a plain
-  # `user(text)` for a legacy binary / no media and a
-  # `user([ContentPart.text(text) | media…])` content-part message when the
-  # message carries attachments. There is NO root gate on injected messages:
-  # any agent at any depth may receive media here (the root-only gate covers the
-  # `:attachments` TASK OPT only — the first user message).
-  #
-  # Public (@doc false) solely so it can be tested directly — same convention as
-  # `refresh_commit_sha/1` / `maybe_enter_cancel_grace/1`. Called only from
-  # `loop/1` in production.
-  @doc false
-  def drain_and_inject_user_messages(%LoopState{agent_id: agent_id, context: context} = state) do
-    messages = EvoGit.AgentScheduler.Store.drain_pending_user_messages(agent_id)
-
-    case messages do
-      [] ->
-        state
-
-      _ ->
-        new_context =
-          Enum.reduce(messages, context, fn msg, ctx ->
-            tagged = EvoGit.Agent.ContextBuilder.build_injected_message(msg, state.turn)
-            ReqLLM.Context.append(ctx, tagged)
-          end)
-
-        # Sync updated context to ETS for dashboard visibility (returns :ok).
-        # The in-memory new_context is already stamped at creation
-        # (tag_message_turn above) — no rebind needed.
-        EvoGit.Agent.ContextBuilder.sync_context_to_ets(agent_id, new_context)
-
-        %{state | context: new_context}
-    end
-  end
-
-  # Claims this agent's finished-but-unannounced background shell jobs and, when
-  # there are any, appends ONE combined `[NOTICE]` user message so the LLM learns
-  # a detached command finished. The claim is exactly-once (the registry marks the
-  # jobs `announced`), so a poll via `job_output`/`job_list` can never produce a
-  # duplicate notice. Skipped entirely during a grace period: the grace budget is
-  # for wrapping up, and claiming there would consume the notice without the
-  # agent ever acting on it. A missing registry already yields `{:ok, []}`.
-  #
-  # Public (@doc false) solely so it can be tested directly — same convention as
-  # `drain_and_inject_user_messages/1`. Called only from `continue_loop/2` in
-  # production.
-  @doc false
-  def inject_background_job_notices(%LoopState{in_grace_period: true} = state), do: state
-
-  def inject_background_job_notices(%LoopState{} = state) do
-    # `notice/1` answers `nil` for an empty list; the guard already excludes it,
-    # but the explicit `is_binary` match keeps the append total.
-    with {:ok, jobs} when is_list(jobs) and jobs != [] <-
-           EvoGit.BackgroundJobs.claim_finished_notices(owner_pid: self()),
-         text when is_binary(text) <- EvoGit.Agent.BackgroundJobNotice.notice(jobs) do
-      message = EvoGit.Agent.ContextBuilder.build_injected_message(text, state.turn)
-      new_context = ReqLLM.Context.append(state.context, message)
-
-      # Sync to ETS for dashboard/history visibility (same side effect as the
-      # pending-message drain).
-      EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, new_context)
-
-      %{state | context: new_context}
-    else
-      _ -> state
-    end
-  end
-
-  defp loop(%LoopState{} = state) do
-    context_before = state.context
-
-    case EvoGit.Agent.ContextCompression.compress_if_needed(state,
-           agent_id: state.agent_id,
-           llm_model: EvoGit.Agent.ToolDispatch.current_model(),
-           llm_context_window: EvoGit.Agent.ToolDispatch.current_context_window(),
-           llm_generation_params: EvoGit.Agent.ToolDispatch.current_generation_params()
-         ) do
-      %LoopState{} = state ->
-        continue_loop(state, context_before)
-
-      {:error, {:llm_request_rejected, _message} = terminal} ->
-        # The compression call hit a NON-RETRYABLE provider rejection (the
-        # fail-fast exception in `ContextCompression.compress_if_needed/2`).
-        # Propagate the terminal error out of `loop/1` UNCHANGED so it reaches
-        # `Runner.run/3`'s return value — `refresh_commit_sha/1` passes
-        # `{:error, _}` through untouched — and the task is persisted `:failed`
-        # with the actionable message instead of being crash-retried through the
-        # same doomed request.
-        {:error, terminal}
-    end
-  end
-
-  # The remainder of the turn, after compression returned a `%LoopState{}`
-  # (compressed or unchanged — byte-identical to the pre-existing flow).
-  defp continue_loop(%LoopState{} = state, context_before) do
-    state = check_limit_warnings(state)
-
-    # Sync context to ETS after any updates (compression, warnings). The
-    # in-memory context is already stamped at creation; sync_context_to_ets
-    # returns :ok, so it is called for the side effect only.
-    if context_before != state.context do
-      EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, state.context)
-      EvoGit.Agent.ContextBuilder.sync_total_tokens_to_ets(state.agent_id, state.total_tokens)
-    end
-
-    # Drain any pending user messages (injected externally via dashboard/RPC)
-    # and append them to the context as user-role messages before the next LLM call.
-    state = drain_and_inject_user_messages(state)
-
-    # Turn top, right after the drain: a background shell job that finished
-    # since the previous turn is announced with ONE `[NOTICE]` user message.
-    # Placed HERE (not earlier) because compression has already run for this
-    # turn, so a fresh notice can never be compressed away immediately; and not
-    # later because it must precede the LLM call and never interrupt an
-    # in-flight tool batch.
-    state = inject_background_job_notices(state)
-
-    # Immediately after the drain: check whether a graceful cancellation was
-    # requested for this agent (ETS `cancel_requested` flag, set by the
-    # scheduler when the task is cancelled). If set, the flag is cleared and
-    # the agent enters cancel-grace (budget @cancel_grace_turns, NO extra
-    # recovery message — the cancel message was already injected via the
-    # pending_user_messages drain above).
-    case maybe_enter_cancel_grace(state) do
-      {:cancel_grace, grace_state} ->
-        loop(grace_state)
-
-      :no_cancel ->
-        cond do
-          EvoGit.Agent.trigger_turn_limit_recovery?(state) ->
-            trigger_recovery(state, "max turns (#{state.max_turns}) exceeded")
-
-          true ->
-            do_turn(state)
-        end
-    end
-  end
-
-  defp trigger_recovery(%LoopState{} = state, reason) do
-    trigger_recovery(state, reason, [])
-  end
-
-  defp trigger_recovery(%LoopState{} = state, reason, opts) do
-    loop(enter_grace(state, reason, opts))
-  end
-
-  @doc false
-  # Transitions an agent into a grace period WITHOUT re-entering the loop.
-  #
-  # Runs the best-effort recovery auto-commit FIRST (safety net so uncommitted
-  # work is preserved — fires for BOTH grace kinds; for cancel-grace this is
-  # exactly "save the changes"), then optionally appends a recovery message to
-  # the context, then sets `in_grace_period: true` with the given grace-turn
-  # budget. Returns the updated `%LoopState{}`.
-  #
-  # `opts`:
-  #   - `:message` — `:default` (or omitted) appends the standard hardcoded
-  #     recovery message built from `reason`, the agent's objective and the
-  #     current turn-limit budget (`recovery_warning_message/2`); `nil` skips
-  #     the append (cancel-grace — the cancel message
-  #     was already injected via the `pending_user_messages` drain in
-  #     `loop/1`, so a second message would be redundant); a binary appends
-  #     that custom message instead.
-  #   - `:grace_turns` — the grace-turn budget (default `@turn_limit_grace_turns`).
-  def enter_grace(%LoopState{} = state, reason, opts \\ []) do
-    message = Keyword.get(opts, :message, :default)
-    grace_turns = Keyword.get(opts, :grace_turns, @turn_limit_grace_turns)
-
-    # Safety net: auto-commit any uncommitted work before entering the grace
-    # period, so it is preserved even if the agent fails to commit during its
-    # recovery turns. We only commit when there are actually changes
-    # (non-empty porcelain status); a clean workspace is a no-op. Git errors
-    # are allowed to propagate (crash) — this is best-effort salvage, not
-    # error-masking.
-    maybe_recovery_auto_commit(state)
-
-    new_context =
-      case message do
-        :default ->
-          objective =
-            case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
-              {:ok, agent_state}
-              when is_binary(agent_state.objective) and
-                     agent_state.objective != "" ->
-                agent_state.objective
-
-              _ ->
-                nil
-            end
-
-          warning_msg = recovery_warning_message(reason, objective)
-
-          recovery_msg =
-            EvoGit.Agent.ContextBuilder.tag_message_turn(user(warning_msg), state.turn)
-
-          ReqLLM.Context.append(state.context, recovery_msg)
-
-        nil ->
-          # Cancel-grace: the cancel message was already injected via the
-          # pending_user_messages drain in `loop/1` — do not append a second
-          # recovery message.
-          state.context
-
-        custom when is_binary(custom) ->
-          recovery_msg = EvoGit.Agent.ContextBuilder.tag_message_turn(user(custom), state.turn)
-          ReqLLM.Context.append(state.context, recovery_msg)
-      end
-
-    %{
-      state
-      | context: new_context,
-        in_grace_period: true,
-        grace_turns_remaining: grace_turns
-    }
-  end
-
-  @doc false
-  # Checks whether a graceful cancellation was requested for this agent via the
-  # ETS `cancel_requested` flag (set by the scheduler when the task is
-  # cancelled).
-  #
-  # If set: clears the flag in ETS and returns `{:cancel_grace, grace_state}`
-  # where `grace_state` has `in_grace_period: true` and
-  # `grace_turns_remaining: @cancel_grace_turns`. No recovery message is
-  # appended — the cancel message was already injected into the context by the
-  # `pending_user_messages` drain at the top of `loop/1`.
-  #
-  # If not set: returns `:no_cancel`.
-  def maybe_enter_cancel_grace(%LoopState{} = state) do
-    if EvoGit.AgentScheduler.Store.cancel_requested?(state.agent_id) do
-      EvoGit.AgentScheduler.Store.clear_cancel_requested(state.agent_id)
-
-      {:cancel_grace,
-       enter_grace(state, "task cancelled", message: nil, grace_turns: @cancel_grace_turns)}
-    else
-      :no_cancel
-    end
-  end
-
-  # The hardcoded turn-budget recovery message appended when entering a grace
-  # period with `message: :default` (turn-limit recovery).
-  #
-  # Every claim here must hold for the CURRENT budget, so the number of final
-  # turns is interpolated from `@turn_limit_grace_turns` instead of being
-  # hardcoded, and the text spells out the three things an agent gets wrong:
-  #   * the ONE completion rule — a reply with NO tool calls ends the run and its
-  #     text IS the report, while a turn ending in a tool call merely continues;
-  #   * the terminal consequence — using the window up without such a reply stops
-  #     the run immediately with NO report at all;
-  #   * the acceptable outcome — an honest partial report beats "just one more fix".
-  defp recovery_warning_message(reason, objective) do
-    budget = @turn_limit_grace_turns
-
-    if objective do
-      """
-      You have exceeded your turn budget (#{reason}). You have #{budget} final #{turn_word(budget)} left before this run stops immediately.
-
-      How this run ends — the ONE completion rule: a reply with NO tool calls ends the run, and its text IS the report. A turn that ends with a tool call does NOT finish the run — it only uses up one of your final turns.
-
-      If you use up all #{budget} final #{turn_word(budget)} without such a reply, this run stops immediately and there will be NO report at all.
-
-      What to do now:
-      1. First turn: make at most ONE final commit, and only if you have genuinely uncommitted work. Your already-committed work is safe, and no commit is needed when the workspace is clean.
-      2. Then STOP working and reply with your final report as plain text. Do not start another change, and do not delegate.
-
-      If you cannot complete the entire objective, that is acceptable: stop and report what you did (with the commit), what remains, and what a follow-up must pick up. Never keep working toward "just one more fix".
-
-      Your original objective was:
-      #{objective}
-
-      Your report MUST summarize the status of this ENTIRE objective, not just your most recent sub-task.
-      """
-    else
-      """
-      You have exceeded your turn budget (#{reason}). You have #{budget} final #{turn_word(budget)} left before this run stops immediately.
-
-      How this run ends — the ONE completion rule: a reply with NO tool calls ends the run, and its text IS the report. A turn that ends with a tool call does NOT finish the run — it only uses up one of your final turns.
-
-      If you use up all #{budget} final #{turn_word(budget)} without such a reply, this run stops immediately and there will be NO report at all.
-
-      What to do now:
-      1. First turn: make at most ONE final commit, and only if you have genuinely uncommitted work. Your already-committed work is safe, and no commit is needed when the workspace is clean.
-      2. Then STOP working and reply with your final report as plain text explaining the situation — what was done (with the commit), what remains, and what a follow-up must pick up.
-
-      If you cannot complete the entire objective, that is acceptable: an honest partial report is exactly what is needed here. Never keep working toward "just one more fix".
-      """
-    end
-  end
-
-  defp turn_word(1), do: "turn"
-  defp turn_word(_), do: "turns"
-
-  # Best-effort auto-commit of any uncommitted work just before the grace
-  # period, as a safety net so work is not lost if the agent fails to commit
-  # during its grace turns. Only commits when the workspace is dirty
-  # (non-empty porcelain status); a clean workspace is a silent no-op. Git
-  # errors propagate (crash) rather than being swallowed — this is salvage,
-  # not error-masking. No try/rescue per repo conventions.
-  defp maybe_recovery_auto_commit(%LoopState{}) do
-    # Repo-less agents never touch git (cardinal rule) — their repo_path is a
-    # placeholder or the real source root, neither of which should be
-    # status'd/committed.
-    if Process.get(:repo_less) do
-      :ok
-    else
-      repo_path = Process.get(:repo_path)
-
-      if repo_path do
-        case Git.status(repo_path) do
-          {:ok, ""} ->
-            :ok
-
-          {:ok, _status_output} ->
-            {:ok, _} = Git.add(repo_path, ".")
-            {:ok, _} = Git.commit(repo_path, "auto-commit: turn-limit recovery")
-            :ok
-        end
-      else
-        :ok
+          :error
       end
     end
   end
 
-  defp do_turn(%LoopState{} = state) do
-    EvoGit.Agent.ToolDispatch.do_turn(
-      state,
-      &effective_tools/1,
-      state.agent_module.subagent_modules(),
-      &loop/1,
-      &trigger_recovery/2
-    )
-  end
+  # --- Compatibility delegations (bodies in `Exchange.{Warnings,Pending,Grace}`) ---
 
-  defp effective_tools(%LoopState{} = state) do
-    skill_schemas = Map.get(state, :skill_schemas, [])
-    all_tools = state.agent_module.available_tools() ++ skill_schemas
+  defdelegate check_limit_warnings(state),
+    to: EvoGit.Agent.Exchange.Warnings,
+    as: :check_limit_warnings
 
-    if at_max_depth?(state) do
-      excluded = MapSet.new(EvoGit.Agent.SubagentSchemas.tools(state.agent_module))
+  # Public (@doc false) solely so they can be tested directly.
+  @doc false
+  defdelegate drain_and_inject_user_messages(state, opts \\ []),
+    to: EvoGit.Agent.Exchange.Pending,
+    as: :drain_and_inject_user_messages
 
-      all_tools
-      |> Enum.reject(fn tool ->
-        name = EvoGit.Agent.tool_name(tool)
-        name && MapSet.member?(excluded, name)
-      end)
-    else
-      all_tools
-    end
-  end
+  @doc false
+  defdelegate inject_background_job_notices(state, opts \\ []),
+    to: EvoGit.Agent.Exchange.Pending,
+    as: :inject_background_job_notices
 
-  defp at_max_depth?(%LoopState{} = state) do
-    {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(state.agent_id)
-    state.depth >= agent_state.max_depth
-  end
+  @doc false
+  defdelegate enter_grace(state, reason, opts \\ []),
+    to: EvoGit.Agent.Exchange.Grace,
+    as: :enter_grace
+
+  @doc false
+  defdelegate maybe_enter_cancel_grace(state, opts \\ []),
+    to: EvoGit.Agent.Exchange.Grace,
+    as: :maybe_enter_cancel_grace
 end

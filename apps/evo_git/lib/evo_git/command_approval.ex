@@ -45,9 +45,10 @@ defmodule EvoGit.CommandApproval do
     caller is replied `:timeout` and the request is resolved `:timed_out`.
   - **Owning-task lifecycle** — this GenServer subscribes to the `"tasks"`
     PubSub topic; when a task that owns pending requests (matched by the
-    `task_id` each request carries) transitions to `:cancelling` or a terminal
-    state, its pending requests are auto-resolved as `:denied`, so a graceful
-    Stop/cancel never stalls on an approval wait.
+    `task_id` each request carries) transitions to `:cancelling`, to the
+    interactive-session yield `:awaiting_input` (alive, but no exchange is
+    running) or to a terminal state, its pending requests are auto-resolved as
+    `:denied`, so a graceful Stop/cancel never stalls on an approval wait.
   - **Caller death** — waiting callers are monitored; if one dies (e.g. its
     tool-task timeout fired first), its pending request is cleaned up and
     resolved `:timed_out` (never a crash).
@@ -84,8 +85,15 @@ defmodule EvoGit.CommandApproval do
 
   # Task statuses that make a task's pending approvals moot (auto-deny).
   # `:cancelling` is included so a graceful cancel never stalls on approvals;
-  # terminal states mean the owning reflect agent is gone.
-  @denying_task_statuses [:cancelling, :completed, :failed, :cancelled]
+  # terminal states mean the owning reflect agent is gone. `:awaiting_input` is
+  # the interactive-session yield: the task is alive but no exchange is running,
+  # so it is not actively running for approval purposes either.
+  @denying_task_statuses [:awaiting_input, :cancelling, :completed, :failed, :cancelled]
+
+  # Task statuses whose evaluation requests are admitted at registration: a
+  # live, non-terminal task. `:awaiting_input` counts — a session between
+  # exchanges is still alive, exactly like `:running`.
+  @eval_active_task_statuses [:pending, :running, :awaiting_input, :finalizing]
 
   # --- Public API ------------------------------------------------------------
 
@@ -135,9 +143,11 @@ defmodule EvoGit.CommandApproval do
   unrestricted live-BEAM privilege warning (not OS root, no rollback).
 
   When `task_id` is known, a bounded task read runs in the CALLER before
-  registration, denying cancelling/terminal or unavailable tasks. Lifecycle
-  broadcasts still deny pending requests, but checking and registration are
-  not atomic: the evaluator MUST recheck lifecycle before executing code.
+  registration, denying cancelling/terminal or unavailable tasks. A task in
+  `:awaiting_input` (an interactive session between exchanges) is alive and
+  therefore admitted, exactly like `:running`. Lifecycle broadcasts still deny
+  pending requests, but checking and registration are not atomic: the
+  evaluator MUST recheck lifecycle before executing code.
   Approval is authorization only, not execution isolation or rollback.
   """
   @spec request_eval(binary(), :write | :sudo, node(), String.t() | nil, String.t() | nil) ::
@@ -197,6 +207,18 @@ defmodule EvoGit.CommandApproval do
   """
   @spec topic() :: String.t()
   def topic, do: @topic
+
+  @doc false
+  # Task statuses that auto-deny a task's pending approvals. Exposed for the
+  # table-driven status-admission tests, which assert `:awaiting_input` is
+  # admitted wherever `:running` is.
+  @spec denying_task_statuses() :: [atom()]
+  def denying_task_statuses, do: @denying_task_statuses
+
+  @doc false
+  # Task statuses whose `request_eval/5` registration is admitted.
+  @spec eval_active_task_statuses() :: [atom()]
+  def eval_active_task_statuses, do: @eval_active_task_statuses
 
   @doc false
   # The configured approval window in ms (used by the shell gate and by
@@ -388,7 +410,7 @@ defmodule EvoGit.CommandApproval do
     # responses, lifecycle handling or timers. Registry races fail closed too.
     try do
       case EvoGit.TaskRegistry.get_task_lite(task_id) do
-        %{status: status} when status in [:pending, :running, :finalizing] -> true
+        %{status: status} when status in @eval_active_task_statuses -> true
         _missing_terminal_or_unavailable -> false
       end
     catch

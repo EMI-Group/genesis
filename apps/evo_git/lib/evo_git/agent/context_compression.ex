@@ -71,15 +71,19 @@ defmodule EvoGit.Agent.ContextCompression do
   being replaced, never part of the retained tail, and compression can therefore
   never wedge itself into "nothing to replace".
 
-  ## Token reset
+  ## Token reset and the compression counter
 
   After every compression event `total_tokens` is reset to 0. This prevents the
   stale high token count from triggering redundant compressions before the next
   LLM call updates the count.
+  `compression_count` is OWNED by the returned `%State{}` (never written to a
+  scheduler/ETS row from this path): one compression event increments it by
+  exactly one, on whichever of the two mutually exclusive rebuild branches
+  produced the new context.
 
   ## Usage
 
-  Called at the top of every `EvoGit.Agent.Runner.loop/1` iteration to check if
+  Called at the top of every exchange turn (`EvoGit.Agent.Exchange`) to check if
   compression is needed:
 
       case EvoGit.Agent.ContextCompression.compress_if_needed(state,
@@ -87,7 +91,7 @@ defmodule EvoGit.Agent.ContextCompression do
              llm_model: EvoGit.Agent.ToolDispatch.current_model(),
              llm_context_window: EvoGit.Agent.ToolDispatch.current_context_window()
            ) do
-        %EvoGit.Agent.LoopState{} = state ->
+        %EvoGit.Agent.State{} = state ->
           # continue the turn with the compressed (or unchanged) state
 
         {:error, {:llm_request_rejected, _message} = terminal} ->
@@ -106,9 +110,8 @@ defmodule EvoGit.Agent.ContextCompression do
   alias EvoGit.Agent.Compression.ToolResultPruner
   alias EvoGit.Agent.ContextBuilder
   alias EvoGit.Agent.Cost
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.Usage
-  alias EvoGit.AgentScheduler
 
   @doc """
   Attempts to compress the agent's chat context if it exceeds the token
@@ -130,15 +133,15 @@ defmodule EvoGit.Agent.ContextCompression do
 
   ## Returns
 
-    * `%LoopState{}` — the state with the compressed context (or the unchanged
+    * `%State{}` — the state with the compressed context (or the unchanged
       state when the threshold is not exceeded, when the message shape is not
       compressible, or when there was nothing to compact);
     * `{:error, {:llm_request_rejected, message}}` — the stage-2 LLM call was
       rejected with a NON-RETRYABLE provider error (see
       `EvoGit.Agent.LlmError`), so nothing was compacted and nothing was
       charged. This is the same terminal shape the main turn's fail-fast path
-      uses; the caller (`EvoGit.Agent.Runner.loop/1`) propagates it out of
-      `Runner.run/3` unchanged.
+      uses; the exchange engine propagates it out of the session's exchange
+      worker unchanged.
 
   Every OTHER stage-2 LLM failure (transient transport errors, 5xx, 402/429
   model exhaustion) still RAISES — see `EvoGit.Agent.Compression.LlmRetry` — so
@@ -148,9 +151,9 @@ defmodule EvoGit.Agent.ContextCompression do
   window, so a silent fallback would just defer the overflow to the very next
   LLM request (a hard provider error) with no operator-visible signal.
   """
-  @spec compress_if_needed(LoopState.t(), keyword()) ::
-          LoopState.t() | {:error, {:llm_request_rejected, String.t()}}
-  def compress_if_needed(%LoopState{} = state, opts \\ []) do
+  @spec compress_if_needed(State.t(), keyword()) ::
+          State.t() | {:error, {:llm_request_rejected, String.t()}}
+  def compress_if_needed(%State{} = state, opts \\ []) do
     agent_id = Keyword.fetch!(opts, :agent_id)
     llm_model = Keyword.fetch!(opts, :llm_model)
     llm_gen_opts = Keyword.get(opts, :llm_generation_params, [])
@@ -219,7 +222,7 @@ defmodule EvoGit.Agent.ContextCompression do
           "Keeping the pruned context; no LLM call."
       )
 
-      keep_context(state, agent_id, pruned.messages, nil, false)
+      keep_context(state, pruned.messages, nil, false)
     else
       Logger.info(
         "Agent #{agent_id}: stage 1 rejected — pruned #{pruned.pruned} old tool result(s): " <>
@@ -252,7 +255,7 @@ defmodule EvoGit.Agent.ContextCompression do
           "#{length(split.recent)} message(s) to replace — stage 2 (summarising) skipped."
       )
 
-      finish_without_checkpoint(state, agent_id, messages)
+      finish_without_checkpoint(state, messages)
     else
       summarise_old_span(agent_id, llm_model, llm_gen_opts, info, state, messages)
     end
@@ -276,15 +279,17 @@ defmodule EvoGit.Agent.ContextCompression do
         usage_map = ReqLLM.Response.usage(response)
         built = Checkpoint.build(messages, summary, context_window: Map.get(info, :window))
 
+        # Cost is priced from the OWNED state (effective `llm_model` + the
+        # selection's provider profile) — no scheduler/ETS read.
         compression_usage =
           Usage.from_response_usage(usage_map)
-          |> Cost.apply_to_usage(usage_map, agent_id)
+          |> Cost.apply_to_usage(usage_map, state)
 
         if built.replaced == 0 do
           # A blank summary must never fabricate a checkpoint that silently
           # drops the transcript, so the ORIGINAL context is what we keep — but
           # the request WAS billed, so its usage is still accounted for.
-          keep_context(state, agent_id, messages, compression_usage, true)
+          keep_context(state, messages, compression_usage, true)
         else
           log_compression_decision(agent_id, built)
 
@@ -292,12 +297,11 @@ defmodule EvoGit.Agent.ContextCompression do
             drop_stale_refreshes(built.messages) ++
               refresh_messages(state, true)
 
-          AgentScheduler.increment_compression_count(agent_id)
-
           %{
             state
             | context: ReqLLM.Context.new(rebuilt),
               total_tokens: 0,
+              compression_count: state.compression_count + 1,
               usage: Usage.add(state.usage, compression_usage)
           }
         end
@@ -306,7 +310,7 @@ defmodule EvoGit.Agent.ContextCompression do
         # Fail fast EXACTLY like `EvoGit.Agent.LLMPrompting.handle_llm_failure/7`'s fail-fast
         # branch: ONE `Logger.error` line naming the agent, NO scheduler
         # backoff report, NO sleep. The terminal tuple is returned unchanged for
-        # `Runner.loop/1` to propagate.
+        # the exchange engine to propagate.
         Logger.error("Agent #{agent_id}: #{message}")
 
         terminal
@@ -318,8 +322,8 @@ defmodule EvoGit.Agent.ContextCompression do
   # ORIGINAL list, so the context is only rebuilt with the runtime-context
   # refresh appended — on this summarising path that refresh carries the CURRENT
   # background-job snapshot, and any earlier snapshot is dropped first.
-  defp finish_without_checkpoint(state, agent_id, messages) do
-    keep_context(state, agent_id, messages, nil, true)
+  defp finish_without_checkpoint(state, messages) do
+    keep_context(state, messages, nil, true)
   end
 
   # Rebuilds the context with exactly ONE runtime-context refresh appended as the
@@ -329,9 +333,7 @@ defmodule EvoGit.Agent.ContextCompression do
   # span (which may hold the job's only other trace) is being replaced, so the
   # CURRENT snapshot must be re-injected; the prune-only path appends the same
   # plain refresh with NO jobs section.
-  defp keep_context(state, agent_id, messages, compression_usage, include_background_jobs?) do
-    AgentScheduler.increment_compression_count(agent_id)
-
+  defp keep_context(state, messages, compression_usage, include_background_jobs?) do
     usage =
       case compression_usage do
         nil -> state.usage
@@ -342,10 +344,14 @@ defmodule EvoGit.Agent.ContextCompression do
       drop_stale_refreshes(messages) ++
         refresh_messages(state, include_background_jobs?)
 
+    # `compression_count` is OWNED by the state (P2): this event increments it
+    # exactly once, here or in the Stage-2 checkpoint branch — the two sites are
+    # mutually exclusive per compression event.
     %{
       state
       | context: ReqLLM.Context.new(rebuilt),
         total_tokens: 0,
+        compression_count: state.compression_count + 1,
         usage: usage
     }
   end
@@ -356,15 +362,25 @@ defmodule EvoGit.Agent.ContextCompression do
   # context block) appends nothing.
   #
   # When `include_background_jobs?` is true the live background-job snapshot is
-  # injected into the state map here (the agent process IS the job owner pid),
-  # because a background shell job outlives the tool call that started it and its
-  # only other trace is the transcript span that compression just summarised
-  # away. `snapshot/1` is a non-reconciling state read that answers `[]` when the
-  # registry is down, so a registry hiccup can never fail a compression.
+  # injected into the state map here, because a background shell job outlives the
+  # tool call that started it and its only other trace is the transcript span
+  # that compression just summarised away. The OWNER is the AGENT/session pid —
+  # NOT this exchange worker's `self()` (the worker is short-lived and owns
+  # nothing durable, D7), so it comes from `:evogit_agent_pid`; that helper is
+  # also the ONE resolution site, falling back to nil when no owner is
+  # installed. `snapshot/1` is a non-reconciling state read that answers `[]`
+  # when the registry is down, so a registry hiccup can never fail a
+  # compression.
   defp refresh_messages(state, include_background_jobs?) do
     refreshed_state =
       if include_background_jobs? do
-        Map.put(state, :background_jobs, EvoGit.BackgroundJobs.snapshot(owner_pid: self()))
+        Map.put(
+          state,
+          :background_jobs,
+          EvoGit.BackgroundJobs.snapshot(
+            owner_pid: EvoGit.BackgroundJobs.current_owner_pid() || self()
+          )
+        )
       else
         state
       end

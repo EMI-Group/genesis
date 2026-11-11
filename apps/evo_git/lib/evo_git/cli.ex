@@ -1,11 +1,23 @@
 defmodule EvoGit.CLI do
   @moduledoc """
   Entry point for the EvoGit CLI.
+
+  `genesis`, `evolve` and `reflect` submit one-shot tasks and then block until
+  a TERMINAL status. A task that yields to `:awaiting_input` (an interactive
+  agent session waiting for its next user message) is alive but not
+  progressing, and the CLI has no way to send that message, so the waiter stops
+  there and reports the status as NON-terminal instead of blocking forever.
   """
 
   # Terminal task statuses the CLI waits for after enqueueing a task through
   # the shared task data plane (EvoGit.TaskRegistry.start_task/2).
   @terminal_statuses [:completed, :failed, :cancelled]
+
+  # Non-terminal statuses that STOP the wait instead of continuing it. An
+  # interactive agent session that yielded is waiting for a user message the
+  # CLI cannot supply, so continuing to wait would hang forever; the one-shot
+  # `genesis`/`evolve`/`reflect` tasks never produce it.
+  @halted_wait_statuses [:awaiting_input]
 
   # Task type labels (literal — the dispatch arms below match the command
   # strings at compile time; nothing here is derived from user input).
@@ -195,12 +207,18 @@ defmodule EvoGit.CLI do
   # Blocks until the task reaches a terminal status. Subscribes to the "tasks"
   # PubSub topic FIRST, then does one get_task read to cover a terminal
   # broadcast that fired between the enqueue reply and the subscribe.
+  # `:awaiting_input` is non-terminal but NOT progress: report it and return
+  # instead of waiting for a user message the CLI can never send.
   defp wait_for_terminal(task_id) do
     Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
 
     case EvoGit.TaskRegistry.get_task(task_id) do
-      %EvoGit.TaskInfo{status: status} when status in @terminal_statuses ->
-        report_terminal(task_id, status)
+      %EvoGit.TaskInfo{status: status} ->
+        case wait_classification(status) do
+          :terminal -> report_terminal(task_id, status)
+          :halted -> report_awaiting_input(task_id)
+          :waiting -> wait_for_terminal_loop(task_id)
+        end
 
       _ ->
         wait_for_terminal_loop(task_id)
@@ -209,13 +227,45 @@ defmodule EvoGit.CLI do
 
   defp wait_for_terminal_loop(task_id) do
     receive do
-      {:task_updated, ^task_id, status, node}
-      when node == node() and status in @terminal_statuses ->
-        report_terminal(task_id, status)
+      {:task_updated, ^task_id, status, node} when node == node() ->
+        case wait_classification(status) do
+          :terminal -> report_terminal(task_id, status)
+          :halted -> report_awaiting_input(task_id)
+          :waiting -> wait_for_terminal_loop(task_id)
+        end
 
       _other ->
         wait_for_terminal_loop(task_id)
     end
+  end
+
+  @doc false
+  # Classifies a task status for the CLI waiter: `:terminal` (report and exit),
+  # `:halted` (alive but not progressing — stop waiting, still NON-terminal) or
+  # `:waiting` (keep waiting for a terminal status). Exposed for the
+  # status-admission tests.
+  @spec wait_classification(atom() | nil) :: :terminal | :halted | :waiting
+  def wait_classification(status) when status in @terminal_statuses, do: :terminal
+  def wait_classification(status) when status in @halted_wait_statuses, do: :halted
+  def wait_classification(_status), do: :waiting
+
+  @doc false
+  # The non-terminal statuses that stop the wait (`[:awaiting_input]`).
+  @spec halted_wait_statuses() :: [atom()]
+  def halted_wait_statuses, do: @halted_wait_statuses
+
+  @doc false
+  # The statuses that end the CLI's wait (`[:completed, :failed, :cancelled]`).
+  @spec terminal_statuses() :: [atom()]
+  def terminal_statuses, do: @terminal_statuses
+
+  # NOT a terminal outcome: the task is still alive, so it is reported with the
+  # `awaiting_input` wording and returned as an error (the one-shot CLI never
+  # treats a yielded session as success).
+  defp report_awaiting_input(task_id) do
+    line = "Task #{task_id} awaiting_input (waiting for user input; not terminal)."
+    IO.puts(line)
+    {:error, line}
   end
 
   defp report_terminal(task_id, :completed) do

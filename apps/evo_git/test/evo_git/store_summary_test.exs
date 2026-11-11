@@ -8,7 +8,7 @@ defmodule EvoGit.StoreSummaryTest do
   alias EvoGit.TaskInfo
   alias EvoGit.TestSupport.StoreTemplate
 
-  # The exact 16 keys returned by the summary API (select_tasks_summary/0,1,2,
+  # The exact 17 keys returned by the summary API (select_tasks_summary/0,1,2,
   # select_tasks_summary_by_path/2,3,4 and select_tasks_changed_since/1,2).
   # `result` is deliberately NOT in the projection — no summary consumer reads
   # it (the dashboard's review button uses the denormalized `branch_name`
@@ -16,6 +16,8 @@ defmodule EvoGit.StoreSummaryTest do
   # `updated_at` is store-internal bookkeeping — returned as the raw
   # fixed-precision ISO string, NOT a DateTime.
   # `error` IS included (nil except on :failed rows) — a cheap lenient decode.
+  # `session_mode` (17th key) is the task's driver mode, normalized by the codec
+  # so a legacy NULL row reads back as "oneshot".
   @summary_keys [
     :id,
     :status,
@@ -32,15 +34,18 @@ defmodule EvoGit.StoreSummaryTest do
     :commit_sha,
     :lease_expires_at,
     :updated_at,
-    :error
+    :error,
+    :session_mode
   ]
 
+  # `Codec.encode_task/1` emits the 19 `tasks` columns in `Codec.task_columns/0`
+  # order (… branch_name, error, session_mode) — one placeholder per value.
   @insert_task_sql """
   INSERT OR REPLACE INTO tasks
   (id, type, status, opts, started_at, finished_at, logs,
    result, review_status, usage, agent_count, base_sha, commit_sha,
-   lease_expires_at, model_id, project_path, branch_name, error)
-  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+   lease_expires_at, model_id, project_path, branch_name, error, session_mode)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
   """
 
   # Same isolation pattern as store_test.exs: the production Store/TaskRegistry
@@ -129,7 +134,7 @@ defmodule EvoGit.StoreSummaryTest do
   end
 
   describe "select_tasks_summary/1" do
-    test "returns maps with exactly the 16 contract keys and decoded values" do
+    test "returns maps with exactly the 17 contract keys and decoded values" do
       put_task!(
         make_task("sum-1",
           status: :completed,
@@ -326,7 +331,7 @@ defmodule EvoGit.StoreSummaryTest do
       assert Enum.map(summaries, & &1.id) |> Enum.sort() == ["nil-since-a", "nil-since-b"]
     end
 
-    test "select_tasks_changed_since/2 returns only newer rows with the 16-key projection", %{
+    test "select_tasks_changed_since/2 returns only newer rows with the 17-key projection", %{
       sqlite_path: sqlite_path
     } do
       put_task!(make_task("cs-old", status: :completed))

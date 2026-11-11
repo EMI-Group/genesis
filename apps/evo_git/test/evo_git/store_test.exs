@@ -587,7 +587,7 @@ defmodule EvoGit.StoreTest do
       assert Codec.decode_error("\"just a string\"") == nil
     end
 
-    test "encode_task/decode_task round-trip includes error" do
+    test "encode_task/decode_task round-trip includes error and session_mode" do
       with_error = %TaskInfo{
         id: "codec-err",
         type: :genesis,
@@ -599,8 +599,11 @@ defmodule EvoGit.StoreTest do
       }
 
       row = Codec.encode_task(with_error)
-      assert length(row) == 18
+      # One value per LIVE column (`Codec.task_columns/0`, `updated_at` excluded).
+      assert length(row) == 19
       assert Codec.decode_task(row).error == canonical_error()
+      # `session_mode` rides last and round-trips, defaulting to "oneshot".
+      assert Codec.decode_task(row).session_mode == "oneshot"
 
       without_error = %TaskInfo{
         id: "codec-no-err",
@@ -612,7 +615,7 @@ defmodule EvoGit.StoreTest do
       }
 
       row2 = Codec.encode_task(without_error)
-      assert length(row2) == 18
+      assert length(row2) == 19
       decoded2 = Codec.decode_task(row2)
       assert decoded2.error == nil
       assert decoded2.id == "codec-no-err"

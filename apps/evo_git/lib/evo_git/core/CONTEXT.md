@@ -28,11 +28,11 @@ Struct: `path`, `repo`, `vct_path` (`nil` by default), `repo_id` (defaults to `"
 | `hierarchy_nodes/2,3` | Full chain of ContextNodes from repo root to given path (`{:ok, nodes} \| {:error, :invalid_path}`); every node is built by `load/2,3`, so each carries its own `vct_path` |
 | `build_context/2` | Assembles full AI-ready context string by traversing hierarchy (directories only; YAML frontmatter stripped via `EvoGit.Skills.strip_front_matter/1`) |
 
-> The agent loop calls `build_context/2` and `EvoGit.Skills.hierarchical_skill_names/2` separately — there is no combined context+skills load function. `hierarchical_skill_names/2` has live callers in `agent/runner.ex` (skill loading at agent startup) and `agent/tools/skill/skill_list.ex`.
+> The agent loop calls `build_context/2` and `EvoGit.Skills.hierarchical_skill_names/2` separately — there is no combined context+skills load function. `hierarchical_skill_names/2` has live callers in the session setup path — `EvoGit.Agent.Session.Setup.build_initial_state/3` (`agent/session/setup.ex`, skill loading at agent startup) — and `agent/tools/skill/skill_list.ex`.
 
 ### Context-Tree Render Format (what reaches the agent prompt)
 `build_context/2` (`context_node.ex:181-209`) is the ONLY function that turns the context tree into prompt text.
-Its caller is `EvoGit.Agent.ContextBuilder.build_dynamic_context/1` (`agent/context_builder.ex:21-26`, invoked from `Runner.do_run/2` at `agent/runner.ex:90-94`) which injects the string into the agent's first-user `<context>` block.
+Its caller is `EvoGit.Agent.ContextBuilder.build_dynamic_context/1` (`agent/context_builder.ex:45`, reached from `build_context_block/1`), which `EvoGit.Agent.Session.Setup.build_initial_state/3` invokes from the session's `:start` event via `ContextBuilder.build_initial_messages/4` — injecting the string into the agent's first-user `<context>` block.
 Output = `"# Context Tree\n" <> <rendered stages joined by "\n\n"> <> "\n\n" <> <location_info>`, or just `location_info` when NO stage renders (`context_node.ex:198-204`).
 Stages are, in order, the VCT GLOBAL context first (`global_stage/1`) and then the in-repo directory chain (`in_repo_stage/2`).
 The global stage is read from `EvoGit.VCT.global_context()` (`<data_dir>/vct/CONTEXT.md`, `""` when absent or when the VCT server is unreachable) and is ALWAYS labelled with the literal `File: global/CONTEXT.md` — never an OS path, never `"/"`, never the file's `vct:///` URL.
@@ -41,7 +41,7 @@ A stage whose CONTEXT.md is absent, blank after `EvoGit.Skills.strip_front_matte
 `build_context/2` calls `hierarchy_nodes/2` (`context_node.ex:182`), never `/3`, so every node it builds carries `repo_id: "primary"` — the multi-repo repo_id plays no part in prompt rendering.
 `location_info` (`context_node.ex:189-196`) is where the ABSOLUTE path appears: `Current Repository (worktree): '#{repo_path}'` interpolates the raw 2nd argument, plus `Current Assigned Node: '#{relative_path}'` (relative, raw 1st argument).
 So the agent's first prompt ALWAYS carries the absolute repo/worktree path; the assigned node is rendered as the caller's relative `./...` path in the success path, and a contextless tree still yields that location block (no `# Context Tree` header).
-`repo_path` at this call site = `Process.get(:repo_path)` = the agent's WORKTREE path (`agent/runner.ex:62` + `:256`), NOT the repo root.
+`repo_path` at this call site = `Process.get(:repo_path)` = the agent's WORKTREE path (installed by `EvoGit.Agent.Session.Setup.bind_worktree/2` + `install_process_context/3` in `agent/session/setup.ex`, read at `agent/tool_dispatch.ex:916`), NOT the repo root.
 On the `{:error, _}` path `build_dynamic_context/1` returns `"Current Path: '#{state.node_path}'."` (no repo path at all).
 `ContextNode.load/2,3` (`context_node.ex:103-120`) sets `path: normalize_relpath(relative_path)` (canonical relative `./...`), `repo: repo_path` VERBATIM (absolute when the caller passes an absolute root — all runtime callers do: `runtime/genesis.ex:219`, `runtime/evolution.ex:97`, `runtime/skill_extraction.ex:21`, `runtime/self_reflective.ex:78`) and `vct_path: EvoGit.VCT.vct_path_for(repo_path, normalized_path)` — but `build_context/2` receives `repo_path` as a SEPARATE argument, not via `node.repo`.
 
@@ -71,7 +71,7 @@ Struct: `repo`, `base_commit`, `current_commit`.
 | `current_head/1` | Resolves HEAD SHA for a repo path — used by `Runtime.Helpers`, `Runtime.Genesis`, `Runtime.SkillExtraction` |
 | `list_immediate_children/2` | Lists direct children of a path at the node's commit — used by `phylo_graph_node_test.exs` |
 
-`base_commit`/`current_commit`/`repo` NEVER reach prompt text: the SHAs live only in scheduler ETS (`AgentState.phylo_node`, updated by `AgentScheduler.update_phylo_node/2`) and are consumed by git operations + the worktree checkout (`Worktrees.create_worktree` uses `spec.phylo_node.current_commit`); `PhyloGraphNode.new/2` (`phylo_graph_node.ex:23-24`) is the only constructor and `repo` is a repo/worktree path used solely for git calls (`Git.merge_base`/`status`/`rev_parse`/`run`). No SHA is ever interpolated into prompt text.
+`base_commit`/`current_commit`/`repo` NEVER reach prompt text: the SHAs live only in registration metadata (`spec.phylo_node`) and the summary row's `current_commit` (published by the agent's session), and are consumed by git operations + the worktree checkout (`Worktrees.create_worktree` uses `spec.phylo_node.current_commit`); `PhyloGraphNode.new/2` (`phylo_graph_node.ex:23-24`) is the only constructor and `repo` is a repo/worktree path used solely for git calls (`Git.merge_base`/`status`/`rev_parse`/`run`). No SHA is ever interpolated into prompt text.
 
 ### `EvoGit.Core.ForeignRepo` (`foreign_repo.ex`)
 

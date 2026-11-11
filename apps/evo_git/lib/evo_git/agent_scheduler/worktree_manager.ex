@@ -7,7 +7,8 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
   - Lazy per-repo initialization of the `.genesis/workers` directory (once per
     repo, on first request for that repo).
-  - Fresh worktree creation on request from the agent Runner. The Runner's
+  - Fresh worktree creation on request from the agent's SESSION
+    (`EvoGit.Agent.Session.Setup.bind_worktree/2`). The caller's
     `GenServer.call` waits INDEFINITELY (`@worktree_call_timeout` is
     `:infinity`): a legitimately slow copy (Windows has no CoW and pays a full
     `Copy-Item -Recurse` of a large `node_modules` per worktree) must never be
@@ -28,21 +29,22 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     always drains. This bounds CREATE concurrency only — never the number of
     live worktrees/agents — and is deadlock-free: a parent parked in
     `spawn_sub_agents/2` holds its created worktree but no create permit.
-  - Process monitoring: every agent process is monitored; when it exits (for
-    ANY reason — `:normal` completion or crash), its worktree is destroyed.
+  - Process monitoring: every agent's SESSION process is the monitored owner;
+    when it exits (for ANY reason — `:normal` completion or crash), its worktree
+    is destroyed.
     Cleanup is identical for normal and abnormal exits — there is no reuse
     semantics; every run gets a fresh worktree.
   - Deferred cleanup for agents that die while their create task is still in
     flight (the cleanup runs when the create finishes); an agent that dies
     while its create request is still QUEUED is dropped from the admission
     queue instead (no create is started for it).
-  - Per-agent serialization of re-create requests: a retry Runner arriving
+  - Per-agent serialization of re-create requests: a retry session arriving
     while the previous request is still `:creating` or still `:queued` has its
     request queued in `pending_requests` and re-enters the same admission path
     when the previous request finishes.
   - Crash-restart safety (this GenServer is a one_for_one child of
     `EvoGit.Supervisor` — a crash restarts IT without killing the running
-    agent Tasks, which keep running in their live worktrees):
+    agent sessions, which keep running in their live worktrees):
     * The destructive per-repo init (rm_rf workers dir + orphaned branch
       cleanup + prune) is gated on a PERSISTENT marker in the app-owned ETS
       table `:evogit_worktree_repos` (created in `EvoGit.Application.start/2`,
@@ -58,7 +60,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
       `evogit-agent-*` task branches — get only the non-destructive prune +
       workers-dir ensure + init marker.
     * On restart, live agents are re-monitored from their scheduler ETS rows
-      (`:evogit_sched_meta` worktree + task_ref, `:evogit_agent_state`
+      (`:evogit_sched_meta` worktree + `session_pid`, `:evogit_agent_summary`
       repo_root + task_local_id), so `:DOWN`-driven cleanup keeps working for
       agents whose worktrees predate the crash.
 
@@ -73,10 +75,10 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.BackgroundJobs
 
-  # The Runner's create request must NEVER be aborted by a timeout, so the
+  # The session's create request must NEVER be aborted by a timeout, so the
   # caller waits forever and the create pipeline is responsible for always
   # replying exactly once (see `run_create/6`): a success, or `{:error, reason}`
-  # for a genuine failure — which the Runner raises on, so its normal
+  # for a genuine failure — which the caller raises on, so its normal
   # crash-retry logic engages immediately instead of after a wasted hour.
   # A finite timeout would be actively harmful here: it raises in the CALLER
   # only, while the offloaded create keeps grinding and the crash-retry re-runs
@@ -102,12 +104,13 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   @doc """
   Creates (or recreates) a fresh worktree for an agent and prepares it.
 
-  Called by the agent's Runner from inside the agent (Task) process. The call
-  waits indefinitely (creation must never be aborted by a timeout); the
-  WorktreeManager offloads the I/O to a spawned task and monitors the caller
-  process — if the caller dies for any reason, the worktree is reclaimed. The
-  offloaded task always replies exactly once, so the caller cannot be left
-  blocked on a create that already failed or died.
+  Called by `EvoGit.Agent.Session.Setup.bind_worktree/2` from inside the agent's
+  SESSION process (the session passes its own pid as `agent_pid`, so the session
+  is the monitored owner). The call waits indefinitely (creation must never be
+  aborted by a timeout); the WorktreeManager offloads the I/O to a spawned task
+  and monitors the caller process — if the caller dies for any reason, the
+  worktree is reclaimed. The offloaded task always replies exactly once, so the
+  caller cannot be left blocked on a create that already failed or died.
 
   Returns `{:ok, worktree_path}` on success or `{:error, reason}`.
   """
@@ -157,7 +160,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     }
 
     # Crash-restart path: this GenServer restarts WITHOUT killing the running
-    # agent Tasks. Re-monitor the live agents (worktree already created before
+    # agent sessions. Re-monitor the live agents (worktree already created before
     # the crash) from their scheduler ETS rows so :DOWN-driven cleanup keeps
     # working. Tolerant — missing/stale rows are skipped, never crashes init.
     {:ok, rebuild_monitors(state)}
@@ -610,9 +613,9 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   # the blocked caller EXACTLY once. The caller's `GenServer.call` waits
   # `:infinity`, so a raise/throw/exit escaping the create fun must never skip
   # the reply (that would wedge the caller forever) — it is caught here and
-  # reported as `{:error, reason}`, which the Runner raises on so its normal
-  # crash-retry logic engages right away. Errors are NOT swallowed: the reason
-  # is logged AND handed to the caller.
+  # reported as `{:error, reason}`, which the calling session raises on so its
+  # normal crash-retry logic engages right away. Errors are NOT swallowed: the
+  # reason is logged AND handed to the caller.
   # `Worktrees.prepare_new_worktree/5` never raises itself, but it calls
   # `Worktrees.run_init_script/3` inside its `with` body with no try/rescue, so
   # an init-script raise reaches this boundary.
@@ -779,19 +782,19 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   # Rebuilds the agents/monitors registrations from scheduler ETS after a
   # WorktreeManager-only restart. The manager's in-memory maps were lost with
   # the crash, but running agents' `:evogit_sched_meta` rows still carry their
-  # live worktree path + `%Task{}` ref (Dispatch.try_dispatch/2 sets both
-  # BEFORE the agent's Runner requests the worktree) and their
-  # `:evogit_agent_state` row carries `repo_root`/`task_local_id`. Re-monitor
-  # them so `:DOWN`-driven cleanup keeps working for agents whose worktrees
-  # predate the crash — otherwise their worktree dirs + branches leak until
-  # the next full BEAM restart.
+  # live worktree path + session pid (Dispatch.try_dispatch/2 sets both
+  # BEFORE the session's `Setup.bind_worktree/2` requests the worktree) and
+  # their `:evogit_agent_summary` row carries `repo_root`/`task_local_id`.
+  # Re-monitor them so `:DOWN`-driven cleanup keeps working for agents whose
+  # worktrees predate the crash — otherwise their worktree dirs + branches leak
+  # until the next full BEAM restart.
   #
   # Tolerant by construction: agents that died while the manager was down have
   # their rows reaped by the scheduler (or are skipped here); a monitor on an
   # already-dead pid delivers an immediate `:DOWN`, which flows through the
   # normal cleanup path. Queued/not-yet-created agents (worktree nil, or no
-  # task_ref) are skipped — they register when they make their create request.
-  # Never crashes init.
+  # session_pid) are skipped — they register when they make their create
+  # request. Never crashes init.
   defp rebuild_monitors(state) do
     case :ets.whereis(:evogit_sched_meta) do
       :undefined ->
@@ -812,13 +815,13 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   # monitor_ref}` plus the reverse `monitors` map entry — so cleanup after the
   # restart is identical to the normal path.
   defp rebuild_monitor(state, agent_id, meta) do
-    with %{worktree: worktree, task_ref: %Task{} = task_ref, task_number: task_number}
-         when is_binary(worktree) and is_integer(task_number) <- meta,
+    with %{worktree: worktree, session_pid: session_pid, task_number: task_number}
+         when is_binary(worktree) and is_pid(session_pid) and is_integer(task_number) <- meta,
          {:ok, agent_state} <- Store.get_agent_state(agent_id),
          %{task_local_id: task_local_id, repo_root: repo_root} <- agent_state,
          true <- is_integer(task_local_id),
          false <- Map.has_key?(state.agents, agent_id) do
-      ref = Process.monitor(task_ref.pid)
+      ref = Process.monitor(session_pid)
 
       %{
         state

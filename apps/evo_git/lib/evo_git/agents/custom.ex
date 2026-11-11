@@ -14,9 +14,9 @@ defmodule EvoGit.Agents.Custom do
   argument. Instead, the definition id travels in the **process dictionary** under
   `:custom_agent_id`:
 
-  - `EvoGit.Agent.Runner.setup_dispatch_context/1` puts
-    `spec.opts[:custom_agent_id]` into the process dictionary before the agent loop
-    starts, so the callbacks observe the value in the SAME process that runs the
+  - `EvoGit.Agent.Session.Setup.install_process_context/3` puts
+    `spec.opts[:custom_agent_id]` into the process dictionary before the exchange
+    runs, so the callbacks observe the value in the SAME process that runs the
     agent.
   - `definition!/0` reads `Process.get(:custom_agent_id)` and resolves the
     definition via `EvoGit.CustomAgents.get/1`.
@@ -182,7 +182,7 @@ defmodule EvoGit.Agents.Custom do
 
   # Resolves the custom agent definition for the CURRENT process. The definition id
   # is read from the process dictionary (`:custom_agent_id`), which
-  # `EvoGit.Agent.Runner.setup_dispatch_context/1` populates from
+  # `EvoGit.Agent.Session.Setup.install_process_context/3` populates from
   # `spec.opts[:custom_agent_id]`. Missing id / unknown definition raise loudly:
   # this code runs in the agent process, and a broken spec must not run silently
   # with a wrong (or absent) definition.
@@ -195,7 +195,7 @@ defmodule EvoGit.Agents.Custom do
       (process dictionary key #{inspect(@custom_agent_id_key)}): the custom agent \
       definition id was not set by the runner. This module must only be run as a \
       root agent with a custom_agent_id in the spec — \
-      EvoGit.Agent.Runner.setup_dispatch_context/1 propagates \
+      EvoGit.Agent.Session.Setup.install_process_context/3 propagates \
       spec.opts[:custom_agent_id] into the process dictionary. \
       Check the task/agent configuration (custom agent definitions live in agents.toml).
       """

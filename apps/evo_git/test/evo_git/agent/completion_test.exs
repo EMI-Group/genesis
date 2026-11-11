@@ -2,7 +2,7 @@ defmodule EvoGit.Agent.CompletionTest do
   @moduledoc """
   `async: true` — the `complete/4` + archive tests seed ONE row per agent in the
   shared, app-owned named ETS tables (`:evogit_sched_meta` /
-  `:evogit_agent_state`) under a per-test UNIQUE agent id (deleted on exit, and
+  `:evogit_agent_summary`) under a per-test UNIQUE agent id (deleted on exit, and
   nothing here asserts anything about the tables as a whole), so the writes are
   concurrent-safe.
 
@@ -680,7 +680,7 @@ defmodule EvoGit.Agent.CompletionTest do
       )
 
       :ets.insert(
-        :evogit_agent_state,
+        :evogit_agent_summary,
         {agent_id,
          %AgentState{
            context_node: context_node,
@@ -693,7 +693,7 @@ defmodule EvoGit.Agent.CompletionTest do
 
       on_exit(fn ->
         :ets.delete(:evogit_sched_meta, agent_id)
-        :ets.delete(:evogit_agent_state, agent_id)
+        :ets.delete(:evogit_agent_summary, agent_id)
       end)
     end
   end
@@ -796,8 +796,8 @@ defmodule EvoGit.Agent.CompletionTest do
       :ets.new(:evogit_sched_meta, [:set, :public, :named_table])
     end
 
-    unless :ets.whereis(:evogit_agent_state) != :undefined do
-      :ets.new(:evogit_agent_state, [:set, :public, :named_table])
+    unless :ets.whereis(:evogit_agent_summary) != :undefined do
+      :ets.new(:evogit_agent_summary, [:set, :public, :named_table])
     end
   end
 end

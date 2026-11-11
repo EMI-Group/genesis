@@ -44,7 +44,7 @@ defmodule EvoGit.Store.Operations.Safety do
   row through `EvoGit.Store.Schemas.TaskRowRaw` (plain `:string`/`:integer`
   fields = the exact bytes SQLite stored) and decodes each row through the
   Codec individually. The Codec stays the single decode oracle: task rows are
-  handed to `Codec.decode_task/1` as the same 18-element positional list
+  handed to `Codec.decode_task/1` as the same 19-element positional list
   (`Codec.task_columns/0` order — deliberately WITHOUT `updated_at`, which the
   old `SELECT` over those columns never fetched either).
 
@@ -101,7 +101,7 @@ defmodule EvoGit.Store.Operations.Safety do
 
   ## Private — decode
 
-  # %TaskRowRaw{} → the 18-element positional list `Codec.decode_task/1`
+  # %TaskRowRaw{} → the 19-element positional list `Codec.decode_task/1`
   # expects (`Codec.task_columns/0` order — without `updated_at`, mirroring the
   # old `SELECT #{Enum.join(Codec.task_columns(), ", ")} FROM tasks`). The raw
   # twin guarantees the values are the exact stored wire bytes.
@@ -124,7 +124,8 @@ defmodule EvoGit.Store.Operations.Safety do
       row.model_id,
       row.project_path,
       row.branch_name,
-      row.error
+      row.error,
+      row.session_mode
     ])
   end
 

@@ -9,7 +9,7 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
   "one schema-creating migration" property observable instead of merely
   intended:
 
-    * SCHEMA — `tasks` has exactly the 19 canonical columns in canonical order
+    * SCHEMA — `tasks` has exactly the 20 canonical columns in canonical order
       and NEVER `archive_metadata`; `task_agent_archives` has exactly its 23
       declared columns (`repo_id` TEXT) plus its roster index;
       `vct_mounts` has exactly its five columns (and the retired `projects`
@@ -53,7 +53,7 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
   alias EvoGit.Store.Schemas.TaskAgentArchiveRow
   alias EvoGit.Store.Schemas.TaskRow
 
-  # The seven shipped migrations, contiguous versions 1..7.
+  # The eight shipped migrations, contiguous versions 1..8.
   @migration_versions [
     20_260_815_000_001,
     20_260_815_000_002,
@@ -61,12 +61,14 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
     20_260_815_000_004,
     20_260_815_000_005,
     20_260_815_000_006,
-    20_260_815_000_007
+    20_260_815_000_007,
+    20_260_815_000_008
   ]
 
   # `PRAGMA table_info(tasks)` — [cid, name, type, notnull, dflt_value, pk] —
   # EXACTLY as the baseline migration's CREATE TABLE declares it (cid is a
-  # contiguous 0..18: no column is ever added or dropped on this path).
+  # contiguous 0..19: no column is ever added or dropped on this path, and
+  # `20260815000008_session_mode` is a probe-guarded no-op here).
   @task_table_info_rows [
     [0, "id", "TEXT", 0, nil, 1],
     [1, "type", "TEXT", 0, nil, 0],
@@ -86,7 +88,8 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
     [15, "project_path", "TEXT", 0, nil, 0],
     [16, "branch_name", "TEXT", 0, nil, 0],
     [17, "error", "TEXT", 0, nil, 0],
-    [18, "updated_at", "TEXT", 0, nil, 0]
+    [18, "session_mode", "TEXT", 0, nil, 0],
+    [19, "updated_at", "TEXT", 0, nil, 0]
   ]
 
   # `PRAGMA table_info(task_agent_archives)` — the 23 columns in DECLARED order.
@@ -263,7 +266,7 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
   # ── Migration bookkeeping ────────────────────────────────────────────────
 
   describe "migration set" do
-    test "a fresh boot stamps exactly the seven shipped, contiguous versions" do
+    test "a fresh boot stamps exactly the eight shipped, contiguous versions" do
       pid = boot_fresh!(:versions)
 
       assert pid
@@ -299,16 +302,16 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
     end
   end
 
-  # ── tasks: the final 19-column shape ─────────────────────────────────────
+  # ── tasks: the final 20-column shape ─────────────────────────────────────
 
   describe "tasks table" do
-    test "PRAGMA table_info is exactly the 19 canonical columns, cids 0..18" do
+    test "PRAGMA table_info is exactly the 20 canonical columns, cids 0..19" do
       pid = boot_fresh!(:tasks_shape)
 
       rows = query_rows(pid, "PRAGMA table_info(tasks)")
 
       assert rows == @task_table_info_rows
-      assert Enum.map(rows, fn [cid | _rest] -> cid end) == Enum.to_list(0..18)
+      assert Enum.map(rows, fn [cid | _rest] -> cid end) == Enum.to_list(0..19)
       assert Enum.map(rows, fn [_cid, name | _rest] -> name end) == TaskRow.columns()
     end
 

@@ -8,7 +8,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
   to `self()`, which we assert with `assert_received`.
 
   Uses `async: false` because the tests create and mutate the global named
-  `:evogit_sched_meta` and `:evogit_agent_state` ETS tables — the former backs the
+  `:evogit_sched_meta` and `:evogit_agent_summary` ETS tables — the former backs the
   depth lookups used by priority-based LLM slot selection, the latter the per-agent
   `model_id` read by `resolve_model_id/2`. Concurrent test processes would otherwise
   see each other's rows (and the tables are normally owned by the running application).
@@ -80,8 +80,8 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       max_depth: 8
     }
 
-    :ets.insert(:evogit_agent_state, {agent_id, state})
-    on_exit(fn -> delete_ets_row(:evogit_agent_state, agent_id) end)
+    :ets.insert(:evogit_agent_summary, {agent_id, state})
+    on_exit(fn -> delete_ets_row(:evogit_agent_summary, agent_id) end)
     :ok
   end
 
@@ -117,15 +117,15 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
   end
 
   setup do
-    # `:evogit_sched_meta` / `:evogit_agent_state` are VM-GLOBAL named tables normally
+    # `:evogit_sched_meta` / `:evogit_agent_summary` are VM-GLOBAL named tables normally
     # owned by the running `EvoGit.AgentScheduler`; this start-of-test wipe is the
     # module's defensive precondition. Teardown is deliberately TARGETED (an `on_exit`
     # per row, registered in `put_meta/2` / `put_agent_state/2`) rather than a wholesale
     # `:ets.delete_all_objects/1`, which could nuke rows another module owns.
     create_ets_if_missing(:evogit_sched_meta)
-    create_ets_if_missing(:evogit_agent_state)
+    create_ets_if_missing(:evogit_agent_summary)
     :ets.delete_all_objects(:evogit_sched_meta)
-    :ets.delete_all_objects(:evogit_agent_state)
+    :ets.delete_all_objects(:evogit_agent_summary)
     :ok
   end
 
@@ -919,7 +919,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
   describe "ghost-model pool release (Fix C)" do
     test "handle_release_llm_slot removes a ghost-model holder" do
       # Agent 9 holds a slot in pool "ghost" — a key in llm_holders that is
-      # NOT in model_concurrency. There is NO :evogit_agent_state entry for 9,
+      # NOT in model_concurrency. There is NO :evogit_agent_summary entry for 9,
       # so the old ETS-based resolve_model_id would resolve to the default
       # model and delete from the WRONG pool, leaking the "ghost" holder.
       state =

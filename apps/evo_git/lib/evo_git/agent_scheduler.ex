@@ -11,24 +11,72 @@ defmodule EvoGit.AgentScheduler do
   - LLM and tool execution slot management with concurrency control and backoff
 
   The scheduler NEVER touches worktree I/O. Worktree lifecycle is owned by
-  `EvoGit.AgentScheduler.WorktreeManager`: the agent Runner requests a fresh
+  `EvoGit.AgentScheduler.WorktreeManager`: the agent's session requests a fresh
   worktree (the call waits indefinitely — no call timeout, so a slow create is
   never aborted, while a genuine failure inside the create pipeline still
   errors promptly; WorktreeManager offloads the I/O to a spawned task),
-  WorktreeManager monitors the agent process and destroys the worktree on exit.
+  WorktreeManager monitors the session process and destroys the worktree on exit.
+
+  ## Agent lifecycle
+
+  Every agent is ONE `EvoGit.Agent.Session` process, started here by
+  `EvoGit.AgentScheduler.Dispatch.do_try_dispatch/4` under
+  `EvoGit.Agent.Session.Supervisor`. The session owns the authoritative agent
+  state and sends exactly ONE terminal
+  `{:agent_session_result, agent_id, session_pid, result}` before it stops; the
+  scheduler admits it (`Lifecycle.handle_session_result/3`) and keeps only a
+  best-effort `SchedMeta` mirror (`session_pid`, `mode`, `phase`).
+
+  ## Interactive sessions
+
+  `start_session/1` starts the SAME per-agent session in INTERACTIVE mode
+  (root-only this version): one session process serves MANY exchanges, so the
+  agent keeps its worktree, its context and its provider `prompt_cache_key`
+  across messages instead of paying a cold start per message.
+
+  A session YIELDS when it has nothing more to do for the current message: it
+  sends `{:agent_session_yield, agent_id, session_pid, text}` and goes idle. The
+  scheduler mirrors that as `SchedMeta.status: :awaiting_input` (+ `phase`), plus
+  a best-effort task-row flip and a roster re-broadcast; the transcript and its
+  text stay owned by the session. An idle session is LIVE but NOT BUSY — no
+  worker, no LLM/tool slot, no timer — and `list_awaiting_input/0` is the fact an
+  idle gate needs. A new input on the same pid sends
+  `{:agent_session_resumed, agent_id, session_pid}`, flipping the mirror and the
+  task row back to `:running`.
+
+  A yield is NEVER a finish: no caller reply, no row deletion, no worktree
+  release, no slot change, no terminal task status. A session ends only by
+  finishing, by `close_session/1`, by a graceful cancel or by a force kill —
+  there is deliberately NO idle timeout. Messages arrive through
+  `send_session_message/3`: both `:queue` (the default) and `:interrupt` are
+  accepted and validated, but they are applied IDENTICALLY — the message is
+  appended and delivered at the next turn boundary, because chunk-level
+  interruption of the in-flight generation is later work
+  (`docs/agent-runtime-refactor.md` §5, P4). A mid-exchange message is therefore
+  never dropped, and a message sent while `:awaiting_input` starts a new
+  exchange immediately on the SAME session, worktree, context and cache
+  identity.
+
+  `await_close/2` is the interactive counterpart of `run_agent/2`: `run_agent/2`
+  blocks one caller until the one-shot agent terminates (the scheduler owns the
+  `from` reply), while `start_session/1` + `await_close/2` start a session and
+  await its explicit close, after any number of exchanges. `:blocked` keeps its
+  own meaning (parked in a slot queue) — an idle session is `:awaiting_input`.
 
   ## ETS Tables
 
   Agent data is split across two ETS tables with clear ownership:
 
-  - **`:evogit_agent_state`** — Owned by agent processes. Contains the agent's
-    live spatial/temporal state (`context_node`, `phylo_node`).
-    The scheduler writes initial values on dispatch; agents update `phylo_node`
-    after each commit via `update_phylo_node/2`.
+  - **`:evogit_agent_summary`** — Owned by agent processes. The agent SUMMARY row
+    (the read model of the agent's state): identity, model selection, counters
+    and the session-published status/commit fields.
+    The scheduler writes the registration values on dispatch; from then on the
+    owning `EvoGit.Agent.Session` is the only runtime writer (at most one
+    summary publish per turn).
 
   - **`:evogit_sched_meta`** — Owned by the scheduler process. Contains all
-    scheduling bookkeeping: status, worktree assignment, task refs, parent/child
-    tracking, retry counts, etc. Agents do not write to this table.
+    scheduling bookkeeping: status, worktree assignment, session refs,
+    parent/child tracking, retry counts, etc. Agents do not write to this table.
 
   ## Slot Management
 
@@ -52,14 +100,14 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentScheduler.Dispatch
   alias EvoGit.AgentScheduler.Lifecycle
   alias EvoGit.AgentScheduler.SchedMeta
+  alias EvoGit.AgentScheduler.SessionOpts
   alias EvoGit.AgentScheduler.Slots
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.Subagents
   alias EvoGit.AgentSpec
-  alias EvoGit.Core.PhyloGraphNode
 
-  @agent_table :evogit_agent_state
+  @agent_table :evogit_agent_summary
   @sched_table :evogit_sched_meta
 
   # --- Client API ---
@@ -80,6 +128,154 @@ defmodule EvoGit.AgentScheduler do
   @spec run_agent(AgentSpec.t(), timeout()) :: term()
   def run_agent(%AgentSpec{} = spec, timeout \\ :infinity) do
     GenServer.call(__MODULE__, {:run_agent, spec}, timeout)
+  end
+
+  @doc """
+  Starts an agent SESSION and returns its agent id WITHOUT waiting for it.
+
+  The INTERACTIVE entry point (root-only this version): the session serves many
+  exchanges — later messages go through `send_session_message/3` on the same
+  agent — until it finishes or is closed with `close_session/1`. One session means
+  one worktree, one context and one provider `prompt_cache_key` across messages.
+
+  Same bookkeeping as `run_agent/2` (task id, graceful-cancel guard, archive
+  reset, repo-root/task-number resolution, `Dispatch.register_agent/7`) but NO
+  blocking and no caller `from`: the answer is the new agent id and the terminal
+  outcome is collected with `await_close/2`. `session_mode` is always forced to
+  `:interactive` and mirrored onto `SchedMeta.mode`.
+
+  Accepts a ready `%AgentSpec{}` or a keyword list built by
+  `EvoGit.AgentScheduler.SessionOpts.build/1` (`:agent_module` and `:objective`
+  required). Returns `{:ok, agent_id}` or `{:error, reason}` —
+  `:llm_not_configured`, `:cancelled`, a dispatch error,
+  `{:invalid_session_opts, detail}`, `{:interactive_root_only, message}` or
+  `{:unsupported_session_mode, value}`.
+  """
+  @spec start_session(AgentSpec.t() | keyword()) :: {:ok, pos_integer()} | {:error, term()}
+  def start_session(%AgentSpec{} = spec) do
+    with {:ok, spec} <- SessionOpts.force_interactive(spec) do
+      GenServer.call(__MODULE__, {:start_session, spec})
+    end
+  end
+
+  def start_session(opts) when is_list(opts) do
+    with {:ok, spec} <- SessionOpts.build(opts) do
+      start_session(spec)
+    end
+  end
+
+  def start_session(other), do: {:error, {:invalid_session_opts, {:not_a_session_spec, other}}}
+
+  @doc """
+  Delivers one message to a session (by session pid or agent id).
+
+  Both `:queue` (default) and `:interrupt` are accepted and validated but applied
+  IDENTICALLY: the message is appended and delivered at the next turn boundary,
+  because chunk-level interruption of the in-flight generation is later work
+  (`docs/agent-runtime-refactor.md` §5, P4). A mid-exchange message is never
+  dropped, and one sent while `:awaiting_input` starts a new exchange
+  immediately on the same session, worktree, context and cache identity.
+  The session owns the queue and the transcript.
+  Total: `:ok`, or `{:error, {:session, reason}}` — the session's own
+  `:not_found`/`:finished`/`{:bad_state, phase}`, or a caller error
+  (`{:bad_policy, _}`/`{:bad_target, _}`/`{:bad_message, _}`).
+  """
+  @spec send_session_message(pid() | pos_integer(), String.t() | map(), :queue | :interrupt) ::
+          :ok | {:error, {:session, term()}}
+  def send_session_message(target, message, policy \\ :queue) do
+    cond do
+      policy not in [:queue, :interrupt] ->
+        {:error, {:session, {:bad_policy, policy}}}
+
+      not (is_pid(target) or is_integer(target)) ->
+        {:error, {:session, {:bad_target, target}}}
+
+      not (is_binary(message) or is_map(message)) ->
+        {:error, {:session, {:bad_message, message}}}
+
+      true ->
+        session_call(fn -> EvoGit.Agent.Session.start_input(target, message, policy) end)
+    end
+  end
+
+  @doc """
+  Closes a session — the ONLY non-cancellation way out of `:awaiting_input`.
+
+  Completion bookkeeping runs once at that terminal outcome and the worktree is
+  released when the session stops; no timer ever does this.
+  """
+  @spec close_session(pid() | pos_integer()) :: :ok | {:error, {:session, term()}}
+  def close_session(target) when is_pid(target) or is_integer(target) do
+    session_call(fn -> EvoGit.Agent.Session.close(target) end)
+  end
+
+  def close_session(other), do: {:error, {:session, {:bad_target, other}}}
+
+  @doc """
+  Waits until the session of `agent_id` is CLOSED (or terminated) and returns
+  its terminal outcome.
+
+  The interactive counterpart of `run_agent/2` (which blocks the one-shot caller
+  until the agent finishes): `start_session/1` + `await_close/2` await an
+  explicit close, after any number of exchanges. An `:awaiting_input` session is
+  AWAITED, not busy — no worker, no slot, no timer while it idles.
+
+  Returns `{:ok, %EvoGit.Agent.Result{}}` or `{:error, :not_found | :timeout |
+  term()}`.
+
+  `timeout` (milliseconds) defaults to `30_000` — a bounded wait suitable for an
+  RPC caller. Awaiting a HUMAN-driven session (one that may legitimately stay
+  `:awaiting_input` for minutes) passes `:infinity` EXPLICITLY; a caller that
+  wants to wait forever must say so.
+  """
+  @spec await_close(pos_integer(), timeout()) ::
+          {:ok, %EvoGit.Agent.Result{}} | {:error, :not_found | :timeout | term()}
+  def await_close(agent_id, timeout \\ 30_000)
+
+  def await_close(agent_id, timeout) when is_integer(agent_id) do
+    GenServer.call(__MODULE__, {:await_close, agent_id}, timeout)
+  catch
+    # A `GenServer.call` to a dead/restarting scheduler or an expired timeout
+    # EXITS the caller; the public waiter answers its documented error instead.
+    :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, {:noproc, _} -> {:error, :not_found}
+    :exit, {:normal, _} -> {:error, :not_found}
+    :exit, reason -> {:error, reason}
+  end
+
+  def await_close(_agent_id, _timeout), do: {:error, :not_found}
+
+  @doc """
+  Lists every `:awaiting_input` agent — the core "idle session" fact.
+
+  Each entry is `%{agent_id, task_id, session_pid, task_number, mode}`. Idle
+  sessions are LIVE but NOT BUSY, so an idle gate (e.g. `/server/status` before an
+  update) can wind them down gracefully instead of force-killing them. `[]` when
+  nothing is idle or the table is absent (a cheap ETS read, no scheduler call).
+  """
+  @spec list_awaiting_input() :: [
+          %{
+            agent_id: pos_integer(),
+            task_id: String.t() | nil,
+            session_pid: pid() | nil,
+            task_number: pos_integer() | nil,
+            mode: SchedMeta.mode()
+          }
+        ]
+  def list_awaiting_input, do: SessionOpts.idle_sessions()
+
+  # Every session command crosses a process boundary: an exit (target or
+  # registry gone, call timeout) must become the documented error tuple instead
+  # of crashing the caller, and a session's `{:error, reason}` is wrapped so a
+  # caller can tell session refusals from scheduler refusals.
+  defp session_call(fun) do
+    case fun.() do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:session, reason}}
+      other -> {:error, {:session, other}}
+    end
+  catch
+    :exit, reason -> {:error, {:session, {:exit, reason}}}
   end
 
   @doc """
@@ -267,22 +463,13 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
-  Reads the agent's live state from the agent state table.
-  Called by agent processes every turn.
+  Reads the agent summary row from the agent summary table.
+
+  The row is a SUMMARY snapshot published by the agent's session; a reader must
+  never treat it as the authoritative agent state.
   """
   @spec get_agent_state(pos_integer()) :: {:ok, AgentState.t()} | :error
   def get_agent_state(agent_id), do: Store.get_agent_state(agent_id)
-
-  @doc """
-  Updates the phylo_node for the given agent in the agent state table.
-  Called by agents after they commit changes to keep state in sync.
-  """
-  @spec update_phylo_node(pos_integer(), PhyloGraphNode.t()) :: :ok | :error
-  def update_phylo_node(agent_id, %PhyloGraphNode{} = phylo_node) do
-    {:ok, agent_state} = Store.get_agent_state(agent_id)
-    updated = %{agent_state | phylo_node: phylo_node}
-    Store.put_agent_state(agent_id, updated)
-  end
 
   @doc """
   Sends a user message to a running agent.
@@ -476,6 +663,26 @@ defmodule EvoGit.AgentScheduler do
     GenServer.call(__MODULE__, {:force_kill_task_agents, caller_pid})
   end
 
+  @doc """
+  Force-kills all agents belonging to a task identified by its TASK ID.
+
+  The task-id-addressed sibling of `force_kill_task_agents/1`: an INTERACTIVE
+  session started by `start_session/1` is registered with `from: nil`, so the
+  caller-pid lookup cannot see it. This entry point finds a depth-0 agent whose
+  `SchedMeta.task_id` matches and then cancels every agent of that task
+  (subagents included) exactly like the caller-pid path.
+
+  Same BRUTAL cancellation path (no grace period): Task processes are killed,
+  worktrees deleted, ETS entries removed, blocked callers replied with
+  `{:error, :cancelled}` and `await_close/2` waiters flushed.
+
+  Returns `:ok` if agents were found and cancelled, or `{:error, :not_found}`.
+  """
+  @spec force_kill_task_agents_for_task(String.t()) :: :ok | {:error, :not_found}
+  def force_kill_task_agents_for_task(task_id) when is_binary(task_id) do
+    GenServer.call(__MODULE__, {:force_kill_task_agents_for_task, task_id})
+  end
+
   # The cancel notification message injected into every agent of a task that
   # is being gracefully cancelled. The runner drains pending user messages at
   # the top of each turn, so the agent sees this before its next LLM call.
@@ -525,7 +732,7 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def init(opts) do
-    # ETS tables (:evogit_agent_state, :evogit_sched_meta)
+    # ETS tables (:evogit_agent_summary, :evogit_sched_meta)
     # are created by EvoGit.Application before the scheduler starts so they survive
     # scheduler crashes. Defensive check: warn if any table is unexpectedly missing.
     for table <- [@agent_table, @sched_table] do
@@ -701,6 +908,27 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
+  def handle_call({:start_session, spec}, _from, %State{} = state) do
+    if llm_configured?(state) do
+      do_start_session(spec, state)
+    else
+      Logger.warning("AgentScheduler: Rejecting interactive session — LLM not configured")
+      {:reply, {:error, :llm_not_configured}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:await_close, agent_id}, from, %State{} = state) do
+    # The waiter is answered with the session's terminal term (or a cancel /
+    # crash terminal) by Lifecycle's close-waiter flush. An unknown agent is
+    # answered immediately — there is nothing to wait for.
+    case Store.get_sched_meta(agent_id) do
+      {:ok, _meta} -> {:noreply, Lifecycle.register_close_waiter(state, agent_id, from)}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  @impl true
   def handle_call({:force_kill_task_agents, caller_pid}, _from, %State{} = state) do
     # 1. Scan :evogit_sched_meta ETS to find top-level agent whose meta.from contains caller_pid
     #    The meta.from is a GenServer.from() tuple: {pid, ref} where pid is the calling process
@@ -720,63 +948,31 @@ defmodule EvoGit.AgentScheduler do
           "AgentScheduler: Cancelling all agents for task #{task_id} (caller PID #{inspect(caller_pid)})"
         )
 
-        # 2. Find ALL agents with this task_id
-        agent_ids = agent_ids_for_task(task_id)
+        {:reply, :ok, cancel_task_agents(state, task_id)}
+    end
+  end
 
-        cancel_set = MapSet.new(agent_ids)
+  @impl true
+  def handle_call({:force_kill_task_agents_for_task, task_id}, _from, %State{} = state) do
+    # A TASK-ID-addressed lookup: an interactive `start_session/1` agent has no
+    # caller `from` (it is registered with `from: nil`), so the pid-addressed
+    # path above can never find it. Match the task id on a depth-0 row, exactly
+    # like the root lookup there.
+    top_level_agent =
+      Store.list_sched_meta()
+      |> Enum.find(fn
+        {_id, %SchedMeta{depth: 0, task_id: tid}} -> tid == task_id
+        _ -> false
+      end)
 
-        # 3. Remove refs from ref_to_agent BEFORE killing Tasks (so DOWN handler is a no-op)
-        ref_to_agent =
-          state.ref_to_agent
-          |> Enum.reject(fn {_ref, aid} -> MapSet.member?(cancel_set, aid) end)
-          |> Map.new()
+    case top_level_agent do
+      nil ->
+        {:reply, {:error, :not_found}, state}
 
-        state = %{state | ref_to_agent: ref_to_agent}
+      {_id, %SchedMeta{}} ->
+        Logger.info("AgentScheduler: Cancelling all agents for task #{task_id} (by task id)")
 
-        # 4. Remove from dispatch queue
-        queue =
-          :queue.filter(
-            fn aid ->
-              not MapSet.member?(cancel_set, aid)
-            end,
-            state.queue
-          )
-
-        state = %{state | queue: queue}
-
-        # 5. Purge from slot waiting queues (replies {:error, :cancelled} to blocked callers)
-        {state, _status_updates} = Slots.purge_agents_from_queues(state, cancel_set)
-
-        # 5.5 Release LLM/tool slots held by cancelled agents.
-        #     Step 3 made the :DOWN handler a no-op for these agents, so the normal
-        #     slot release path (Slots.release_agent_slots in handle_info :DOWN) is
-        #     bypassed. We must release held slots here to avoid permanent leaks.
-        #     Waiting queues were already purged in step 5, so grant_pending only
-        #     affects non-cancelled agents.
-        state =
-          Enum.reduce(cancel_set, state, fn agent_id, acc_state ->
-            {acc_state, slot_status} = Slots.release_agent_slots(acc_state, agent_id)
-            Lifecycle.apply_status_updates(slot_status)
-            acc_state
-          end)
-
-        # 6. Cancel agents in reverse depth order (leaf subagents first, then parents)
-        #    Sort by depth descending so deepest agents are cancelled first
-        sorted_agents =
-          agent_ids_for_task(task_id)
-          |> Enum.sort_by(&Store.depth_of/1, :desc)
-
-        state =
-          Enum.reduce(sorted_agents, state, fn agent_id, acc_state ->
-            Lifecycle.cancel_agent(acc_state, agent_id)
-          end)
-
-        # 7. Process queue to dispatch any newly-eligible agents
-        state = Dispatch.process_queue(state)
-
-        Logger.info("AgentScheduler: Cancelled #{length(agent_ids)} agent(s) for task #{task_id}")
-
-        {:reply, :ok, state}
+        {:reply, :ok, cancel_task_agents(state, task_id)}
     end
   end
 
@@ -791,6 +987,8 @@ defmodule EvoGit.AgentScheduler do
     # 2. Find all agents of this task (SchedMeta.task_id scan — same pattern
     #    as force_kill_task_agents) and put each live agent into cancel-grace:
     #    append the cancel notification message and set cancel_requested=true.
+    #    Then drive the agent's SESSION into `:cancelling` as well, so the
+    #    session's own summary row follows and its phase mirror is accurate.
     agent_ids = agent_ids_for_task(task_id)
 
     Enum.each(agent_ids, fn agent_id ->
@@ -798,6 +996,7 @@ defmodule EvoGit.AgentScheduler do
         {:ok, _agent_state} ->
           Store.append_pending_user_message(agent_id, cancel_message())
           Store.set_cancel_requested(agent_id)
+          drive_session_graceful_cancel(agent_id)
 
         :error ->
           :ok
@@ -1060,51 +1259,79 @@ defmodule EvoGit.AgentScheduler do
     {:noreply, state}
   end
 
-  # Task returned a result
-  @impl true
-  def handle_info({ref, result}, %State{} = state) when is_reference(ref) do
-    Lifecycle.handle_task_result(ref, result, state)
-  end
-
-  # Task process exited (monitor :DOWN).
+  # Session process exited (monitor :DOWN).
   @impl true
   def handle_info({:DOWN, ref, :process, pid, reason}, %State{} = state) do
     Lifecycle.handle_agent_down(ref, pid, reason, state)
   end
 
+  # A session's ONE terminal result, delivered BEFORE it stops (signal ordering
+  # guarantees it arrives before that session's :DOWN). Admitted only from the
+  # CURRENT session of a live agent: a `session_pid` of `nil` means the run is
+  # already recycled/being retried, so a late result for it is still the run's
+  # outcome; any OTHER pid is a stale session and is ignored.
+  @impl true
+  def handle_info({:agent_session_result, agent_id, session_pid, result}, %State{} = state) do
+    case Store.get_sched_meta(agent_id) do
+      {:ok, %SchedMeta{session_pid: nil}} ->
+        Lifecycle.handle_session_result(agent_id, result, state)
+
+      {:ok, %SchedMeta{session_pid: ^session_pid}} ->
+        Lifecycle.handle_session_result(agent_id, result, state)
+
+      {:ok, %SchedMeta{session_pid: other}} ->
+        Logger.debug(
+          "AgentScheduler: ignoring result from stale session #{inspect(session_pid)} " <>
+            "for agent #{agent_id} (current: #{inspect(other)})"
+        )
+
+        {:noreply, state}
+
+      :error ->
+        Logger.debug(
+          "AgentScheduler: ignoring session result for unknown agent " <>
+            "#{inspect(agent_id)} from #{inspect(session_pid)}"
+        )
+
+        {:noreply, state}
+    end
+  end
+
+  # A session went IDLE (`:awaiting_input`, a yield) or started a NEW exchange on
+  # the same pid (`:running`, a resume): mirror status/phase, best-effort flip the
+  # TASK row, re-broadcast the roster. Neither signal replies to `meta.from`,
+  # deletes rows, releases the worktree, touches slots or emits a TERMINAL task
+  # status — a yield is idle, not finished — and the text stays owned by the
+  # session (the scheduler stores no transcript).
+  @impl true
+  def handle_info({:agent_session_yield, agent_id, session_pid, _text}, %State{} = state) do
+    handle_session_status_signal(state, agent_id, session_pid, :awaiting_input)
+  end
+
+  @impl true
+  def handle_info({:agent_session_resumed, agent_id, session_pid}, %State{} = state) do
+    handle_session_status_signal(state, agent_id, session_pid, :running)
+  end
+
+  defp handle_session_status_signal(%State{} = state, agent_id, session_pid, status) do
+    case SessionOpts.admit_signal(agent_id, session_pid) do
+      {:ok, meta} ->
+        Store.put_sched_meta(agent_id, %{meta | status: status, phase: status})
+        SessionOpts.update_task_status(meta.task_id, status)
+        EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
+        {:noreply, state}
+
+      {:stale, other} ->
+        SessionOpts.log_stale_signal(status, agent_id, session_pid, other)
+        {:noreply, state}
+
+      :unknown ->
+        SessionOpts.log_unknown_signal(status, agent_id, session_pid)
+        {:noreply, state}
+    end
+  end
+
   # --- ETS Helpers (Agent History Table) ---
-
-  @doc """
-  Gets the conversation context for an agent from the agent state table.
-  Returns the context or nil if not set.
-  """
-  @spec get_agent_context(pos_integer()) :: ReqLLM.Context.t() | nil
-  def get_agent_context(agent_id), do: Store.get_agent_context(agent_id)
-
-  @doc "Updates multiple fields for an agent in a single ETS get+put cycle."
-  @spec batch_update_agent(pos_integer(), keyword()) :: :ok
-  def batch_update_agent(agent_id, fields), do: Store.batch_update_agent(agent_id, fields)
-
-  @doc "Updates the conversation context for an agent in the agent state table."
-  @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: :ok
-  def update_agent_context(agent_id, context), do: Store.update_agent_context(agent_id, context)
-
-  @doc "Updates the cumulative usage for an agent in the agent state table."
-  @spec update_agent_usage(pos_integer(), EvoGit.Agent.Usage.t()) :: :ok
-  def update_agent_usage(agent_id, usage), do: Store.update_agent_usage(agent_id, usage)
-
-  @doc "Updates the current turn for an agent in the agent state table."
-  @spec update_agent_turn(pos_integer(), non_neg_integer()) :: :ok
-  def update_agent_turn(agent_id, turn), do: Store.update_agent_turn(agent_id, turn)
-
-  @doc "Updates the cumulative token count for an agent in the agent state table."
-  @spec update_total_tokens(pos_integer(), non_neg_integer()) :: :ok
-  def update_total_tokens(agent_id, total_tokens),
-    do: Store.update_total_tokens(agent_id, total_tokens)
-
-  @doc "Increments the compression count for an agent in the agent state table."
-  @spec increment_compression_count(pos_integer()) :: :ok
-  def increment_compression_count(agent_id), do: Store.increment_compression_count(agent_id)
 
   # --- Task archive reset ---
 
@@ -1113,6 +1340,58 @@ defmodule EvoGit.AgentScheduler do
   # so a task start clears any leftover rows for that id. A store failure
   # (crash/timeout/exit) is logged and swallowed — it must never kill the
   # scheduler.
+  # The same admission `run_agent/2` applies: a legacy configuration with no
+  # profiles (or no profiles AND no model) cannot run an agent at all.
+  defp llm_configured?(%State{model_profiles: []}), do: false
+  defp llm_configured?(%State{model_profiles: nil, llm_model: nil}), do: false
+  defp llm_configured?(%State{}), do: true
+
+  defp do_start_session(spec, %State{} = state) do
+    task_id =
+      Keyword.get(spec.opts || [], :task_id) ||
+        Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+
+    # Same graceful-cancel guard as `run_agent/2`: never start a session for a
+    # task that is already being cancelled.
+    if cancelling_task?(task_id) do
+      Logger.info(
+        "AgentScheduler: Refusing to start an interactive session for task #{task_id} — " <>
+          "task is being cancelled"
+      )
+
+      {:reply, {:error, :cancelled}, state}
+    else
+      reset_task_archives(task_id)
+
+      repo_root = Dispatch.resolve_agent_repo_root(spec, state)
+      task_number = Dispatch.next_task_number(repo_root)
+
+      # `from = nil`: nothing blocks on this session's terminal outcome — it is
+      # collected through `await_close/2`'s registered close waiter instead.
+      case Dispatch.register_agent(state, spec, nil, nil, 0, task_id, task_number) do
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+
+        {agent_id, state} ->
+          state = SessionOpts.mark_mode(state, agent_id, spec)
+
+          Logger.info(
+            "AgentScheduler: Starting interactive session #{agent_id} " <>
+              "(task #{task_id}, number #{task_number})"
+          )
+
+          state =
+            if state.paused do
+              %{state | queue: :queue.in(agent_id, state.queue)}
+            else
+              Dispatch.try_dispatch(state, agent_id)
+            end
+
+          {:reply, {:ok, agent_id}, state}
+      end
+    end
+  end
+
   defp reset_task_archives(task_id) do
     EvoGit.Store.delete_task_archives(task_id)
     :ok
@@ -1141,6 +1420,88 @@ defmodule EvoGit.AgentScheduler do
     Store.list_sched_meta()
     |> Enum.filter(fn {_id, %SchedMeta{task_id: tid}} -> tid == task_id end)
     |> Enum.map(fn {id, _meta} -> id end)
+  end
+
+  # The BRUTAL cancellation body shared by the two force-kill entry points
+  # (caller-pid-addressed and task-id-addressed). Both resolve a task id first,
+  # so the cascade is IDENTICAL for a blocking `run_agent/2` task and for a
+  # `from = nil` interactive session.
+  defp cancel_task_agents(%State{} = state, task_id) do
+    # 1. Find ALL agents with this task_id
+    agent_ids = agent_ids_for_task(task_id)
+
+    cancel_set = MapSet.new(agent_ids)
+
+    # 2. Remove refs from ref_to_agent BEFORE killing sessions (so DOWN handler is a no-op)
+    ref_to_agent =
+      state.ref_to_agent
+      |> Enum.reject(fn {_ref, aid} -> MapSet.member?(cancel_set, aid) end)
+      |> Map.new()
+
+    state = %{state | ref_to_agent: ref_to_agent}
+
+    # 3. Remove from dispatch queue
+    queue =
+      :queue.filter(
+        fn aid ->
+          not MapSet.member?(cancel_set, aid)
+        end,
+        state.queue
+      )
+
+    state = %{state | queue: queue}
+
+    # 4. Purge from slot waiting queues (replies {:error, :cancelled} to blocked callers)
+    {state, _status_updates} = Slots.purge_agents_from_queues(state, cancel_set)
+
+    # 5. Release LLM/tool slots held by cancelled agents.
+    #    Step 2 made the :DOWN handler a no-op for these agents, so the normal
+    #    slot release path (Slots.release_agent_slots in handle_info :DOWN) is
+    #    bypassed. We must release held slots here to avoid permanent leaks.
+    #    Waiting queues were already purged in step 4, so grant_pending only
+    #    affects non-cancelled agents.
+    state =
+      Enum.reduce(cancel_set, state, fn agent_id, acc_state ->
+        {acc_state, slot_status} = Slots.release_agent_slots(acc_state, agent_id)
+        Lifecycle.apply_status_updates(slot_status)
+        acc_state
+      end)
+
+    # 6. Cancel agents in reverse depth order (leaf subagents first, then parents)
+    #    Sort by depth descending so deepest agents are cancelled first
+    sorted_agents =
+      agent_ids_for_task(task_id)
+      |> Enum.sort_by(&Store.depth_of/1, :desc)
+
+    state =
+      Enum.reduce(sorted_agents, state, fn agent_id, acc_state ->
+        Lifecycle.cancel_agent(acc_state, agent_id)
+      end)
+
+    # 7. Process queue to dispatch any newly-eligible agents
+    state = Dispatch.process_queue(state)
+
+    Logger.info("AgentScheduler: Cancelled #{length(agent_ids)} agent(s) for task #{task_id}")
+
+    state
+  end
+
+  # Drives one agent's SESSION into cancel-grace.
+  # (pending message + cancel_requested flag) is what makes the RUNNING exchange
+  # save work; this call makes the session itself enter `:cancelling` (so its
+  # summary row follows) and mirrors the phase onto sched_meta. Best-effort: a
+  # session that cannot serve the call (still `:starting`, already finished, or
+  # gone) is left to the pending-message drain, and a `nil` pid (registered but
+  # never dispatched) is a no-op.
+  defp drive_session_graceful_cancel(agent_id) do
+    case Store.get_sched_meta(agent_id) do
+      {:ok, %SchedMeta{session_pid: pid} = meta} when is_pid(pid) ->
+        EvoGit.Agent.Session.cancel(pid, :graceful)
+        Store.put_sched_meta(agent_id, %{meta | phase: :cancelling})
+
+      _other ->
+        :ok
+    end
   end
 
   @doc false

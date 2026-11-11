@@ -46,6 +46,11 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   # markdown render. Streaming entries are always raw and ignore this flag.
   attr(:raw, :boolean, default: false)
 
+  # Push-delta turn meta (`EvoDashWeb.HomeLive.Delta.meta/0`): passed ONLY for
+  # the transcript's last assistant entry. Rendered as a quiet footer line when
+  # it carries an integer turn/token count.
+  attr(:stream_meta, :any, default: nil)
+
   def assistant_message(assigns) do
     ~H"""
     <div class="flex justify-start gap-2 sm:gap-3 w-full">
@@ -188,8 +193,57 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
               </button>
             </div>
           <% end %>
+          <%= if stream_meta?(@stream_meta) do %>
+            <%!-- zh_CN: 这两个是气泡下方的短数字标签（第 N 轮 / N 个 token），供翻译者参考 --%>
+            <div class="mt-1 flex items-center gap-2 font-mono text-[11px] text-base-content/50">
+              <%= if is_integer(Map.get(@stream_meta, :turn)) do %>
+                <span>{gettext("Turn %{turn}", turn: Map.get(@stream_meta, :turn))}</span>
+              <% end %>
+              <%= if is_integer(Map.get(@stream_meta, :total_tokens)) do %>
+                <span>{gettext("%{count} tokens", count: Map.get(@stream_meta, :total_tokens))}</span>
+              <% end %>
+              <%= if is_integer(Map.get(@stream_meta, :duration_ms)) do %>
+                <span>{format_duration(Map.get(@stream_meta, :duration_ms))}</span>
+              <% end %>
+            </div>
+          <% end %>
         </div>
       </div>
+    </div>
+    """
+  end
+
+  attr(:entry, :map, required: true)
+
+  # One tool invocation of the in-progress turn as a compact, quiet row: the
+  # tool name plus a status chip. Purely informational — no controls, no
+  # expandable payload (the collapsible thought process carries the details).
+  # Total: a non-map/nil entry renders the fallback label with no chip.
+  def tool_entry(assigns) do
+    entry = if is_map(assigns.entry), do: assigns.entry, else: %{}
+
+    assigns =
+      assigns
+      |> assign(:entry, entry)
+      |> assign(:tool_label, tool_label(entry))
+      |> assign(:tool_status, Map.get(entry, :tool_status))
+
+    ~H"""
+    <div class="my-1 flex items-center gap-2 text-xs text-base-content/60">
+      <.icon name="hero-wrench-screwdriver" class="size-3.5" />
+      <span class="font-mono font-semibold">{@tool_label}</span>
+      <%= case @tool_status do %>
+        <% :running -> %>
+          <span class="loading loading-spinner loading-xs"></span>
+          <span>{gettext("Running")}</span>
+        <% :ok -> %>
+          <span class="badge badge-ghost badge-sm">{gettext("Done")}</span>
+        <% :error -> %>
+          <span class="text-error">{gettext("Failed")}</span>
+        <% :timeout -> %>
+          <span class="text-warning">{gettext("Timed out")}</span>
+        <% _ -> %>
+      <% end %>
     </div>
     """
   end
@@ -294,6 +348,26 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   defp streaming?(entry), do: Map.get(entry, :streaming) == true
   defp entry_text(entry), do: Map.get(entry, :text) || ""
 
+  # The meta line only makes sense with a turn or a token count to show.
+  defp stream_meta?(meta) when is_map(meta) do
+    is_integer(Map.get(meta, :turn)) or is_integer(Map.get(meta, :total_tokens))
+  end
+
+  defp stream_meta?(_meta), do: false
+
+  defp format_duration(ms) when is_integer(ms), do: "#{Float.round(ms / 1000, 1)}s"
+  defp format_duration(_ms), do: ""
+
+  defp tool_label(entry) do
+    case Map.get(entry, :tool_name) do
+      name when is_binary(name) ->
+        if String.trim(name) == "", do: gettext("Tool"), else: name
+
+      _name ->
+        gettext("Tool")
+    end
+  end
+
   # Total id accessor: real entries always carry a normalized binary id;
   # malformed entries (direct component tests, stray data) fall back to "" so
   # the id interpolation never raises. In practice entries always pass through
@@ -314,6 +388,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   defp status_label(:failed), do: gettext("Failed")
   defp status_label(:cancelled), do: gettext("Cancelled")
   defp status_label(:cancelling), do: gettext("Cancelling…")
+  defp status_label(:awaiting_input), do: gettext("Awaiting input")
   defp status_label(status) when is_atom(status), do: Atom.to_string(status)
   defp status_label(_status), do: ""
 

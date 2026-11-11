@@ -1,7 +1,7 @@
 defmodule EvoGit.Store.ArchiveMigrationTest do
   @moduledoc """
   Coverage for `20260815000005_task_agent_archives` — the ONE step of the
-  seven-migration chain that both CREATES the relational per-agent archive and
+  eight-migration chain that both CREATES the relational per-agent archive and
   moves a legacy `tasks.archive_metadata` JSON array into it.
 
   ## What the migration does
@@ -20,7 +20,8 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
   Each test crafts a REAL pre-migration database with RAW xqlite (never the
   repo): the pre-drop 20-column `tasks` table (the shape a pre-release build
   left behind, i.e. WITH `archive_metadata`) — or, for the fresh path, the LIVE
-  19-column one — plus the `projects` table and a `schema_migrations` table
+  19-column pre-`session_mode` one — plus the `projects` table and a
+  `schema_migrations` table
   stamped with every version of the chain EXCEPT `20260815000005`, so exactly
   that migration is pending and its effects are observable in isolation.
 
@@ -90,6 +91,7 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
   @archive_version 20_260_815_000_005
   @prune_index_version 20_260_815_000_006
   @vct_mounts_version 20_260_815_000_007
+  @session_mode_version 20_260_815_000_008
 
   # The whole shipped chain, ascending exactly as `schema_migrations` reports it.
   @migration_versions [
@@ -99,7 +101,8 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     @covering_index_version,
     @archive_version,
     @prune_index_version,
-    @vct_mounts_version
+    @vct_mounts_version,
+    @session_mode_version
   ]
 
   # The pre-release 20-column `tasks` DDL — the state a database upgraded from a
@@ -129,8 +132,10 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
   )
   """
 
-  # The LIVE 19-column `tasks` DDL: a fresh install, or a database whose archive
-  # was already moved (the legacy column is gone) — the fan-out's skip path.
+  # The LIVE 19-column pre-`session_mode` `tasks` DDL: a released build, or a
+  # database whose archive was already moved (the legacy column is gone) — the
+  # fan-out's skip path. `20260815000008_session_mode` appends `session_mode` at
+  # the tail on the way through.
   @live_tasks_ddl """
   CREATE TABLE tasks (
     id TEXT PRIMARY KEY,
@@ -213,11 +218,13 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     [22, "completed_at", "TEXT", 0, nil, 0]
   ]
 
-  # The 19 LIVE `tasks` columns — the shape after the archive migration drops
-  # `archive_metadata` (or never had it).
+  # The LIVE 20 `tasks` columns — the shape after the archive migration drops
+  # `archive_metadata` (or never had it) AND `20260815000008_session_mode`
+  # appends `session_mode`: SQLite ALTERs only append, so it lands after
+  # `updated_at` on these fixture shapes.
   @live_task_columns ~w(id type status opts started_at finished_at logs result review_status
                         usage agent_count base_sha commit_sha lease_expires_at model_id
-                        project_path branch_name error updated_at)
+                        project_path branch_name error updated_at session_mode)
 
   setup do
     # pid + wall-clock ms on top of the per-BEAM unique integer: a counter
@@ -253,7 +260,9 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     } do
       path = Path.join(root, "fresh_path.sqlite")
 
-      create_db!(path, [@archive_version], tasks_ddl: @live_tasks_ddl)
+      # Version 8 is left pending too, so the tail column this test asserts is
+      # actually appended by the chain (6/7 stay stamped — see the moduledoc).
+      create_db!(path, [@archive_version, @session_mode_version], tasks_ddl: @live_tasks_ddl)
       insert_rows!(path, [[id: "task-fresh", result: ~S({"__result_tag__":"ok","data":{}})]])
       before = data_snapshot!(path)
 
@@ -414,7 +423,9 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
 
     test "nulls archive_metadata and physically drops the column", %{root: root} do
       path = Path.join(root, "drop_column.sqlite")
-      create_db!(path, [@archive_version])
+      # Version 8 is left pending too, so `session_mode` arrives as SQLite's
+      # appended tail column on the way through.
+      create_db!(path, [@archive_version, @session_mode_version])
       seed_archives!(path)
 
       assert "archive_metadata" in column_names!(path)

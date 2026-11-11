@@ -189,6 +189,50 @@ defmodule EvoDashWeb.Layouts do
                 </span>
               </div>
               <div class="space-y-1">
+                <%!-- Interactive agent sessions live in their OWN group, above
+                     the per-project one-shot task groups (design record
+                     docs/agent-runtime-refactor.md §4.9 — sessions never fall
+                     into "Other"). `session_tasks/2` is fed by the same Active
+                     Tasks feed as the project rows. --%>
+                <% sessions = session_tasks(@running_tasks, @pending_tasks) %>
+                <%= if sessions != [] do %>
+                  <!-- Sessions group header -->
+                  <div class="px-3 pt-2 pb-1 first:pt-0">
+                    <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
+                      <%!-- zh_CN: 会话 — 指可交互的智能体会话（等待用户输入），不是一次性任务 --%>
+                      <.icon name="hero-chat-bubble-left-right" class="w-3 h-3 shrink-0" />
+                      {gettext("Sessions")}
+                    </span>
+                  </div>
+                  <!-- Interactive sessions in this group -->
+                  <%= for task <- sessions do %>
+                    <% awaiting = Map.get(task, :status) == :awaiting_input %>
+                    <% session_sub_line =
+                      if awaiting,
+                        do: gettext("Waiting for you"),
+                        else: format_elapsed(Map.get(task, :started_at)) %>
+                    <.link
+                      navigate={with_node_param(~p"/tasks", @current_node_id)}
+                      data-sidebar-task-link
+                      title={task_label(task) <> " — " <> session_sub_line}
+                      class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-base-content/80 hover:bg-base-300/70 hover:text-base-content transition-colors group"
+                    >
+                      <span class={[
+                        "w-2.5 h-2.5 rounded-full shrink-0",
+                        task_status_dot_class(Map.get(task, :status)),
+                        "animate-pulse"
+                      ]}></span>
+                      <div class="min-w-0 flex-1 sidebar-label">
+                        <span class="block truncate group-hover:text-base-content transition-colors">
+                          {task_label(task)}
+                        </span>
+                        <span class="block text-xs text-base-content/60 mt-0.5">
+                          {session_sub_line}
+                        </span>
+                      </div>
+                    </.link>
+                  <% end %>
+                <% end %>
                 <%= for {project_name, tasks} <- group_tasks_by_project(@running_tasks, @pending_tasks) do %>
                   <!-- Project group header -->
                   <div class="px-3 pt-2 pb-1 first:pt-0">
@@ -454,13 +498,27 @@ defmodule EvoDashWeb.Layouts do
     end
   end
 
+  # Interactive agent sessions from the Active Tasks feed, in feed order
+  # (running then pending). A summary map without a `:session_mode` key is a
+  # one-shot task, so only an explicit "interactive" entry is a session.
+  # Defense-in-depth: skip non-map entries instead of crashing the layout.
+  defp session_tasks(running_tasks, pending_tasks) do
+    (running_tasks ++ pending_tasks)
+    |> Enum.filter(&is_map/1)
+    |> Enum.filter(&(Map.get(&1, :session_mode, "oneshot") == "interactive"))
+  end
+
   # Groups running and pending tasks by project name for sidebar display.
   # Returns a list of {project_name, tasks} tuples sorted alphabetically by
-  # project name, with unpathed tasks at the top as "Other".
+  # project name, with unpathed tasks at the top as "Other". Interactive
+  # sessions are excluded: they render in their own "Sessions" group.
   defp group_tasks_by_project(running_tasks, pending_tasks) do
     # Defense-in-depth: the sidebar lists are seeded from the shape-agnostic
     # ActiveTasks hub, so skip any non-map entry instead of crashing the page.
-    all = (running_tasks ++ pending_tasks) |> Enum.filter(&is_map/1)
+    all =
+      (running_tasks ++ pending_tasks)
+      |> Enum.filter(&is_map/1)
+      |> Enum.reject(&(Map.get(&1, :session_mode, "oneshot") == "interactive"))
 
     grouped =
       Enum.group_by(all, fn task ->

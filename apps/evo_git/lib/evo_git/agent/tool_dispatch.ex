@@ -4,7 +4,7 @@ defmodule EvoGit.Agent.ToolDispatch do
   tool calls it carries.
 
   This module owns the turn loop only — the current model/generation-param
-  accessors, commit syncing, `do_turn/5`, post-LLM response processing (usage
+  accessors, commit syncing, `do_turn/5,6`, post-LLM response processing (usage
   accounting, tool-call dedupe, turn/context advance, reasoning compaction),
   tool-call processing and the completion route.
 
@@ -27,18 +27,33 @@ defmodule EvoGit.Agent.ToolDispatch do
   (`ToolOutput.to_content_parts/1`) while passing a plain binary through
   BYTE-IDENTICALLY to `ReqLLM.Context.tool_result/3`.
 
-  A text reply with ZERO tool calls is an IMPLICIT COMPLETION: pending work is
-  committed and the reply text IS the report. ZERO tool calls and no usable text
-  is the only error path (one nudge, then the bounded protocol-violation route);
-  there is NO completion tool.
+  A text reply with ZERO tool calls is an IMPLICIT COMPLETION and the ONLY
+  terminal outcome of a turn — and its meaning is the ONE mode-dependent
+  decision in the engine:
+
+    * `:oneshot` → `{:finish, state, %EvoGit.Agent.Result{}}`, produced by the
+      ONE completion entry point `EvoGit.Agent.Completion.Builder.finalize/2`
+      (it commits pending work first and writes the completion side effects
+      exactly once);
+    * `:interactive` → `{:yield, state, text}`: the pending work is committed and
+      the reply text is handed back, with NO result and NO completion side
+      effect. The SESSION decides what happens next.
+
+  ZERO tool calls and no usable text is the only error path (one nudge, then the
+  bounded protocol-violation route); there is NO completion tool.
+
+  The turn runs on `%EvoGit.Agent.State{}`. Its outside-world dependencies are
+  injectable through `EvoGit.Agent.Exchange.Seams` (the `:llm_call`,
+  `:tool_batch` and `:scheduler` seams, resolved from ONE `opts` keyword list and
+  DEFAULT-INERT: an absent seam is the production path, byte-identical).
   """
 
   require Logger
 
-  alias EvoGit.Agent.Completion
-  alias EvoGit.Agent.Compression.Threshold
   alias EvoGit.Agent.ConflictState
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.Exchange.Seams
+  alias EvoGit.Agent.State
+  alias EvoGit.Agent.Stream.Sink
   alias EvoGit.Agent.ToolOutput
   alias EvoGit.Agent.SubagentSchemas
   alias EvoGit.Adapters.Git
@@ -48,6 +63,11 @@ defmodule EvoGit.Agent.ToolDispatch do
   import ReqLLM.Context, only: [user: 1, tool_result: 3]
 
   # --- Model & Generation Params ---
+
+  # These three accessors stay exported (`@doc false`) for compatibility: the
+  # runner, the compression trigger and `LLMPrompting` still resolve the caller
+  # from the process dictionary + ETS. The ENGINE no longer calls them — it reads
+  # the same values off `%EvoGit.Agent.State{}`.
 
   @doc false
   def current_model do
@@ -71,12 +91,18 @@ defmodule EvoGit.Agent.ToolDispatch do
     normalize_context_window(Map.get(agent_state, :llm_context_window))
   end
 
-  defp normalize_context_window(window) when is_integer(window) and window > 0, do: window
+  @doc false
+  # The ONE context-window normalization: a positive configured integer, else
+  # the platform default. Public so the engine reuses this EXACT rule (from
+  # `%State{}.llm_context_window`) instead of re-implementing it.
+  def normalize_context_window(window) when is_integer(window) and window > 0, do: window
 
-  defp normalize_context_window(_window),
+  def normalize_context_window(_window),
     do: EvoGit.Config.Schema.LLM.default_context_window()
 
-  # Shared lookup for current_model/0 + current_generation_params/0. Raises a
+  # Shared lookup for current_model/0 + current_generation_params/0.
+  # DISPLAY / IMMUTABLE-IDENTITY METADATA ONLY — neither is a conversation or
+  # loop value (both are fixed at registration). Raises a
   # descriptive ArgumentError instead of a context-free MatchError when the
   # calling process is not a scheduled agent (no :evogit_agent_id) or the
   # scheduler has no ETS state for it — the latter typically means the agent
@@ -107,8 +133,11 @@ defmodule EvoGit.Agent.ToolDispatch do
   # --- Commit Syncing ---
 
   @doc false
-  def sync_current_commit_after_tools(%LoopState{} = state) do
-    # Repo-less agents have no worktree and no phylo_node — skip git entirely.
+  # Records the post-tool worktree HEAD as a PER-PROCESS derived value
+  # (`:evogit_current_commit`), which `continue_after_tools/7` moves onto the
+  # owned `%State{}` at the turn checkpoint — no ETS write happens here.
+  def sync_current_commit_after_tools(%State{}) do
+    # Repo-less agents have no worktree and no commit — skip git entirely.
     if Process.get(:repo_less) do
       :ok
     else
@@ -116,12 +145,8 @@ defmodule EvoGit.Agent.ToolDispatch do
 
       case Git.rev_parse(repo_path) do
         {:ok, current_sha} ->
-          {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
-
-          if agent_state.phylo_node.current_commit != current_sha do
-            updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
-            AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
-          end
+          Process.put(:evogit_current_commit, current_sha)
+          :ok
 
         {:error, reason} ->
           raise_rev_parse_error(reason)
@@ -129,29 +154,14 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
   end
 
-  # Syncs current commit and returns the SHA (for use in completion)
-  defp sync_and_get_current_commit(%LoopState{} = state) do
-    # Repo-less agents have no worktree and no phylo_node — no commit to sync;
-    # completion receives a nil commit_sha.
-    if Process.get(:repo_less) do
-      nil
-    else
-      repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
-
-      current_sha =
-        case Git.rev_parse(repo_path) do
-          {:ok, sha} -> sha
-          {:error, reason} -> raise_rev_parse_error(reason)
-        end
-
-      {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
-
-      if agent_state.phylo_node.current_commit != current_sha do
-        updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
-        AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
-      end
-
-      current_sha
+  # Records the worktree HEAD on the state at a YIELD (an interactive agent's
+  # tool-free reply). Never raises: a repo-less agent, a blank `:repo_path`, a
+  # non-git directory or a git error leaves `current_commit` unchanged — a yield
+  # must never be turned into a failure by a diagnostic re-read.
+  defp record_current_commit(%State{} = state) do
+    case EvoGit.Agent.Runner.current_commit_sha() do
+      {:ok, sha} -> %{state | current_commit: sha}
+      :error -> state
     end
   end
 
@@ -177,20 +187,36 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   @doc false
   def do_turn(
-        %LoopState{} = state,
+        state,
         effective_tools_fn,
         subagent_modules,
         loop_fn,
-        trigger_recovery_fn
+        trigger_recovery_fn,
+        opts \\ []
+      )
+
+  def do_turn(
+        %State{} = state,
+        effective_tools_fn,
+        subagent_modules,
+        loop_fn,
+        trigger_recovery_fn,
+        opts
       ) do
     context = state.context
     tools = effective_tools_fn.(state)
 
-    {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
-    max_retries = agent_state.max_retries
-    llm_gen_opts = agent_state.llm_generation_params
+    seams = Seams.from_opts(opts)
+    llm_call = seams.llm_call || Seams.default_llm_call()
 
-    case prompt_until_tools_or_limit(
+    # `max_retries` and the generation parameters used to be read from the
+    # scheduler's ETS row here (`AgentScheduler.get_agent_state/1`); they are
+    # carried on the struct itself now. Identical values: the runner populates
+    # both fields from that same row when it builds the state.
+    max_retries = state.max_retries
+    llm_gen_opts = state.llm_generation_params
+
+    case llm_call.(
            context,
            tools,
            llm_gen_opts,
@@ -198,7 +224,15 @@ defmodule EvoGit.Agent.ToolDispatch do
            max_retries
          ) do
       {:ok, response} ->
-        process_llm_response(response, state, subagent_modules, loop_fn, trigger_recovery_fn)
+        process_llm_response(
+          response,
+          state,
+          subagent_modules,
+          loop_fn,
+          trigger_recovery_fn,
+          nil,
+          opts
+        )
 
       {:implicit_completion, response, text} ->
         # The model stopped calling tools and wrote text: that is the harness's
@@ -211,16 +245,33 @@ defmodule EvoGit.Agent.ToolDispatch do
           subagent_modules,
           loop_fn,
           trigger_recovery_fn,
-          text
+          text,
+          opts
         )
 
       {:error, :protocol_violation} ->
         handle_protocol_violation(state, loop_fn, trigger_recovery_fn)
 
+      {:interrupted, _reason} ->
+        # A requested halt (`:interrupt`) ended this TURN early: no assistant
+        # message is appended, no protocol violation is recorded and no grace
+        # turn is consumed — nothing went wrong. Re-enter the loop so its TOP
+        # drains the queued/injected message and starts the next turn
+        # immediately.
+        #
+        # WHY this lives at the loop boundary: `:interrupt` pre-empts the
+        # in-flight stream only through an INSTALLED stream callback
+        # (`EvoGit.Agent.Stream.Sink`'s per-chunk check). With zero watchers
+        # `Sink.stream_opts/0` is `[]`, no callback runs and no interrupt can be
+        # seen mid-stream — the same message is then drained at the next turn
+        # boundary, which is where the loop re-enters here.
+        loop_fn.(state)
+
       {:error, {:llm_request_rejected, _} = terminal} ->
         # Non-retryable provider rejection (the fail-fast path of
         # `handle_llm_failure/7`): the turn ends with a GRACEFUL terminal error
-        # that propagates out of `Runner.run/3` unchanged. Deliberately NOT
+        # that propagates out of `Exchange.run/2` (and the session worker)
+        # unchanged. Deliberately NOT
         # routed through `handle_protocol_violation/3` — that would burn the
         # grace budget / trigger recovery against a request that can never
         # succeed, when the only real fix is a model-profile / request-parameter
@@ -253,7 +304,7 @@ defmodule EvoGit.Agent.ToolDispatch do
   #
   # A response with non-empty text never reaches here: it is an implicit
   # completion (see `EvoGit.Agent.CompletionProtocol`).
-  defp handle_protocol_violation(%LoopState{} = state, loop_fn, trigger_recovery_fn) do
+  defp handle_protocol_violation(%State{} = state, loop_fn, trigger_recovery_fn) do
     cond do
       EvoGit.Agent.grace_period_continue_failed?(state) ->
         {:error, :recovery_failed}
@@ -381,37 +432,84 @@ defmodule EvoGit.Agent.ToolDispatch do
   # calls) or normal tool-call processing.
   #
   # `completion_text` (optional, default `nil`) is the model's own report text
-  # from `EvoGit.Agent.CompletionProtocol`; it becomes the agent result verbatim.
+  # from `EvoGit.Agent.CompletionProtocol`; it becomes the yielded message
+  # (`:interactive`) or the agent result (`:oneshot`) verbatim.
   def process_llm_response(
         response,
-        %LoopState{} = state,
+        state,
         subagent_modules,
         loop_fn,
         trigger_recovery_fn,
-        completion_text \\ nil
+        completion_text \\ nil,
+        opts \\ []
+      )
+
+  def process_llm_response(
+        response,
+        %State{} = state,
+        subagent_modules,
+        loop_fn,
+        trigger_recovery_fn,
+        completion_text,
+        opts
       ) do
-    state = update_turn_usage(state, response)
+    {state, turn_usage} = update_turn_usage(state, response)
     {tool_calls, response} = prepare_tool_calls(response, state.agent_id)
+
+    # Id-bearing `{:tool_call, id, name}` deltas: the stream's own chunk callback
+    # can only report the name (ReqLLM reconstructs call ids from the fully
+    # accumulated response — `EvoGit.Agent.Stream.Sink` moduledoc), so the ids
+    # are emitted here, in the model's call order. One `Sink.emit/1` call with a
+    # list keeps the batch in emission order; it is a no-op when unwatched.
+    Sink.emit(
+      Enum.map(tool_calls, fn call ->
+        {:tool_call, Map.get(call, :id), ReqLLM.ToolCall.name(call)}
+      end)
+    )
+
     state = advance_turn_context(state, response)
 
-    AgentScheduler.batch_update_agent(state.agent_id,
-      context: state.context,
-      turn: state.turn,
-      usage: state.usage,
-      total_tokens: state.total_tokens
-    )
+    # The ONE per-turn delta site: the turn boundary is reached exactly once per
+    # turn — for a tool-calling turn AND for the completion/yield turn — so the
+    # event is emitted here and NOT from `EvoGit.Agent.Exchange`. It carries THIS
+    # turn's usage (never the cumulative usage the state holds), the turn's
+    # wall-clock LLM duration and the running totals a live view renders.
+    emit_turn_event(turn_usage, state)
+
+    # No ETS write-through here: this turn's state is published by the engine's
+    # ONE `:checkpoint` seam at the turn boundary.
 
     # Initialize delegation hints in process dictionary for this turn
     Process.put(:delegation_hints, state.delegation_hints)
     Process.put(:read_delegation_hints, state.read_delegation_hints)
 
     if completion_text do
-      # Implicit completion: the bookkeeping above already recorded the turn
-      # (including the final assistant message in the context), so all that is
-      # left is the completion side effects in `EvoGit.Agent.Completion`.
-      {:ok, build_completion(state, completion_text)}
+      # A tool-free reply: the bookkeeping above already recorded the turn
+      # (including the final assistant message in the context). What happens next
+      # is the ONLY mode-dependent decision in the whole engine.
+      if state.mode == :interactive do
+        # YIELD: commit the pending work (so the session's next exchange starts
+        # from a reviewable HEAD), record the live commit on the state, and hand
+        # the reply text back. NO `%Result{}`, NO completion side effects and no
+        # terminal status — the session decides what happens next.
+        AgentScheduler.Dispatch.commit_pending_in_worktree()
+
+        # A yield is NOT terminal for the agent (only for this exchange), so it
+        # emits its own `{:yield, text}` event and NEVER a `{:finished, _}` one
+        # (those come from `EvoGit.Agent.Exchange.run/2`'s terminal outcomes).
+        Sink.emit({:yield, completion_text})
+
+        {:yield, record_current_commit(state), completion_text}
+      else
+        # FINISH: the ONE completion entry point builds the `%Result{}` and
+        # writes its side effects exactly once (committing pending work first).
+        case EvoGit.Agent.Completion.Builder.finalize(state, completion_text) do
+          {:ok, result} -> {:finish, state, result}
+          {:error, reason} -> {:error, reason}
+        end
+      end
     else
-      case process_tool_calls(tool_calls, state, subagent_modules) do
+      case process_tool_calls(tool_calls, state, subagent_modules, opts) do
         {:continue, tool_responses, subagent_usage} ->
           continue_after_tools(
             tool_responses,
@@ -419,7 +517,8 @@ defmodule EvoGit.Agent.ToolDispatch do
             tool_calls,
             state,
             subagent_modules,
-            loop_fn
+            loop_fn,
+            opts
           )
 
         {:error, :protocol_violation} ->
@@ -431,7 +530,11 @@ defmodule EvoGit.Agent.ToolDispatch do
   # Tracks the current context length (replace, don't accumulate) and
   # accumulates cumulative usage (separate from total_tokens used for
   # compression).
-  defp update_turn_usage(%LoopState{} = state, response) do
+  #
+  # Returns `{state, turn_usage}`: the per-TURN usage is returned alongside the
+  # state so the `{:turn, …}` delta can report what THIS turn spent instead of
+  # the cumulative total (`usage` on the state keeps accumulating as before).
+  defp update_turn_usage(%State{} = state, response) do
     usage = ReqLLM.Response.usage(response)
 
     current_tokens =
@@ -450,11 +553,14 @@ defmodule EvoGit.Agent.ToolDispatch do
     # reported cost double-charges multi-period models and applies no cache
     # discount); when there is nothing to recompute from, ReqLLM's reported
     # cost is kept verbatim.
+    # The pricing identity (effective `llm_model` + the selection's provider
+    # profile) is owned by `%State{}`, so no ETS read happens per turn.
     turn_usage =
       Usage.from_response_usage(usage)
-      |> Cost.apply_to_usage(usage, state.agent_id)
+      |> Cost.apply_to_usage(usage, state)
 
-    %{state | total_tokens: current_tokens, usage: Usage.add(state.usage, turn_usage)}
+    {%{state | total_tokens: current_tokens, usage: Usage.add(state.usage, turn_usage)},
+     turn_usage}
   end
 
   # Extracts tool calls from the response, deduplicates them (handles buggy
@@ -486,7 +592,7 @@ defmodule EvoGit.Agent.ToolDispatch do
   # Uses the updated context from response (already has assistant message
   # appended): compacts reasoning_details to avoid N small fragments from
   # streaming and tags the context tail with the new turn number.
-  defp advance_turn_context(%LoopState{} = state, response) do
+  defp advance_turn_context(%State{} = state, response) do
     compacted_context = compact_reasoning_details(response.context)
     new_turn = state.turn + 1
 
@@ -496,17 +602,36 @@ defmodule EvoGit.Agent.ToolDispatch do
     %{state | context: compacted_context, turn: new_turn}
   end
 
+  # Emits the ONE `{:turn, map}` delta of a turn. `duration_ms` is read AND
+  # deleted from the process dictionary here (delete-on-read, like
+  # `:evogit_current_commit`): the key is written by
+  # `EvoGit.Agent.LLMPrompting.run_llm_attempt/4` in this SAME exchange-worker
+  # process, and deleting it means a turn that never reached an LLM attempt (or
+  # the next turn) can never report a stale duration.
+  defp emit_turn_event(turn_usage, %State{} = state) do
+    Sink.emit(
+      {:turn,
+       %{
+         usage: turn_usage,
+         duration_ms: Process.delete(:evogit_llm_attempt_duration_ms),
+         turn: state.turn,
+         total_tokens: state.total_tokens
+       }}
+    )
+  end
+
   # Handles the {:continue, ...} outcome of tool-call processing: picks up the
   # updated delegation hints from the process dictionary, tags and appends the
-  # tool responses to the context, accumulates subagent usage, syncs state to
-  # ETS, and re-enters the loop.
+  # tool responses to the context, accumulates subagent usage, and re-enters the
+  # loop. The turn's state is the authority; no ETS write happens here.
   defp continue_after_tools(
          tool_responses,
          subagent_usage,
          tool_calls,
-         %LoopState{} = state,
+         %State{} = state,
          subagent_modules,
-         loop_fn
+         loop_fn,
+         _opts
        ) do
     if EvoGit.Agent.grace_period_continue_failed?(state) do
       {:error, :recovery_failed}
@@ -562,13 +687,17 @@ defmodule EvoGit.Agent.ToolDispatch do
           usage: usage
       }
 
-      # Sync updated context to ETS for dashboard visibility (returns :ok).
-      # The in-memory context is already stamped at creation — no rebind.
-      EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, state.context)
+      # Carry the commit recorded after tool execution (if any) onto the
+      # checkpointed state. Delete-on-read, so a stale sha can never leak into a
+      # later turn.
+      state =
+        case Process.delete(:evogit_current_commit) do
+          sha when is_binary(sha) -> %{state | current_commit: sha}
+          _ -> state
+        end
 
-      # Sync accumulated subagent usage to ETS
-      AgentScheduler.batch_update_agent(state.agent_id, usage: state.usage)
-
+      # No ETS write-through: the updated context and accumulated usage ride the
+      # returned state, and the engine publishes it at the turn boundary.
       loop_fn.(state)
     end
   end
@@ -578,11 +707,11 @@ defmodule EvoGit.Agent.ToolDispatch do
   # grace period the counter stays at its default 0. Only reached when
   # `grace_period_continue_failed?/1` returned `false` (i.e. remaining > 1), so
   # the decremented value is always >= 1.
-  defp consume_grace_turn(%LoopState{in_grace_period: true, grace_turns_remaining: n} = state) do
+  defp consume_grace_turn(%State{in_grace_period: true, grace_turns_remaining: n} = state) do
     %{state | grace_turns_remaining: n - 1}
   end
 
-  defp consume_grace_turn(%LoopState{} = state), do: state
+  defp consume_grace_turn(%State{} = state), do: state
 
   # Computes the next `turns_since_subagent` counter after a completed turn.
   # Three cases:
@@ -667,12 +796,17 @@ defmodule EvoGit.Agent.ToolDispatch do
   # extracted, and a text-only reply is turned into an implicit completion
   # there, so an empty list should never reach here in normal operation. Kept as
   # a guard so any unexpected empty-list input degrades to a protocol violation
-  # rather than a crash in process_regular_tool_calls/3.
-  def process_tool_calls([], _state, _subagent_modules), do: {:error, :protocol_violation}
+  # rather than a crash in process_regular_tool_calls/4.
+  def process_tool_calls(tool_calls, state, subagent_modules),
+    do: process_tool_calls(tool_calls, state, subagent_modules, [])
 
-  def process_tool_calls(tool_calls, %LoopState{} = state, subagent_modules)
+  @doc false
+  def process_tool_calls([], _state, _subagent_modules, _opts), do: {:error, :protocol_violation}
+
+  @doc false
+  def process_tool_calls(tool_calls, %State{} = state, subagent_modules, opts)
       when is_list(tool_calls) and tool_calls != [] do
-    process_regular_tool_calls(tool_calls, state, subagent_modules)
+    process_regular_tool_calls(tool_calls, state, subagent_modules, opts)
   end
 
   @doc false
@@ -692,66 +826,20 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
   end
 
-  # The completion route (a text reply with no tool calls).
-  #
-  # Any pending work is committed FIRST so the sha reported to the runtime is
-  # reviewable: without this the commit would only happen in `Runner.run/3`'s
-  # post-run auto-commit fallback, i.e. AFTER `commit_sha` was captured, and
-  # `Runtime.Helpers.merge_and_report/3,4` would take the no-changes path and
-  # drop the work with the worktree. `commit_pending_in_worktree/0` is a no-op
-  # for a clean workspace and for repo-less agents, and it never raises (git
-  # errors are logged, not propagated), so it cannot turn a legitimate finish
-  # into a failure.
-  defp build_completion(%LoopState{} = state, result) do
-    AgentScheduler.Dispatch.commit_pending_in_worktree()
-    build_completion(state, result, sync_and_get_current_commit(state))
-  end
-
-  # Builds the `%Result{}` and writes its completion side effects (git note when
-  # `base_commit` is set, archive refs/row when archiving), so every downstream
-  # consumer is oblivious to how the agent finished.
-  defp build_completion(%LoopState{} = state, result, commit_sha) do
-    # Get metadata from agent state
-    {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
-    depth = AgentScheduler.current_depth()
-
-    # Repo-less agents have a nil phylo_node — passing nil base_commit is safe:
-    # Completion.complete/4 guards git-note/archive writes on base_commit
-    # being truthy, so both are skipped for repo-less agents.
-    base_commit = if Process.get(:repo_less), do: nil, else: agent_state.phylo_node.base_commit
-
-    Completion.complete(
-      state.agent_id,
-      result,
-      commit_sha,
-      base_commit: base_commit,
-      parent_id: agent_state.parent_id,
-      depth: depth,
-      objective: agent_state.objective,
-      usage: state.usage,
-      archive: agent_state.archive,
-      compression_count: agent_state.compression_count,
-      repo_id: agent_state.repo_id,
-      repo_root: agent_state.repo_root,
-      llm_model: agent_state.llm_model,
-      model_id: agent_state.model_id,
-      model_spec: Map.get(agent_state, :model_spec),
-      llm_generation_params: agent_state.llm_generation_params,
-      max_turns: agent_state.max_turns,
-      max_retries: agent_state.max_retries,
-      max_agent_depth: agent_state.max_depth,
-      foreign_repos: agent_state.foreign_repos,
-      compression_threshold:
-        Threshold.for_model(agent_state.llm_model,
-          context_window: Map.get(agent_state, :llm_context_window)
-        ).threshold,
-      agent_type: agent_type_from_module(state.agent_module),
-      context_node_path: state.node_path
-    )
-  end
+  # The completion route (a text reply with no tool calls) lives in the ONE
+  # completion entry point, `EvoGit.Agent.Completion.Builder.finalize/2`: it
+  # commits pending work FIRST (so the sha reported to the runtime is
+  # reviewable), re-reads the post-commit worktree HEAD, and writes the
+  # completion side effects exactly once. `:interactive` agents take the yield
+  # path above instead and reach that same function once, when the SESSION
+  # terminates.
 
   @doc false
-  def process_regular_tool_calls(tool_calls, %LoopState{} = state, subagent_modules) do
+  def process_regular_tool_calls(tool_calls, state, subagent_modules),
+    do: process_regular_tool_calls(tool_calls, state, subagent_modules, [])
+
+  @doc false
+  def process_regular_tool_calls(tool_calls, %State{} = state, subagent_modules, opts) do
     # 1. Index: Attach index to each call
     indexed_calls = Enum.with_index(tool_calls)
 
@@ -762,7 +850,7 @@ defmodule EvoGit.Agent.ToolDispatch do
       end)
 
     # 4. Batch: Process each batch
-    indexed_standard_results = process_standard_calls(indexed_standard_calls, state)
+    indexed_standard_results = process_standard_calls(indexed_standard_calls, state, opts)
 
     {indexed_subagent_results, merge_message, subagent_usage} =
       EvoGit.Agent.SubagentProcessing.process_subagent_calls(
@@ -783,6 +871,17 @@ defmodule EvoGit.Agent.ToolDispatch do
       )
     end
 
+    # Emit ONE `{:tool_result, id, status}` per call, in the MODEL's call order
+    # (the results were just re-sorted by the index attached to each call, so
+    # sorted order IS the model's order — subagent calls included). Emitted
+    # before the messages are assembled because the status is a property of the
+    # raw output, and one `Sink.emit/1` call per batch keeps emission order.
+    Sink.emit(
+      Enum.map(sorted_results, fn {_index, tool_call_id, _name, output} ->
+        {:tool_result, tool_call_id, tool_result_status(output)}
+      end)
+    )
+
     all_results =
       Enum.map(sorted_results, fn {_index, tool_call_id, name, output} ->
         assemble_tool_result(tool_call_id, name, output)
@@ -798,26 +897,62 @@ defmodule EvoGit.Agent.ToolDispatch do
     {:continue, all_results, subagent_usage}
   end
 
+  # Classifies a tool's RAW output for the `{:tool_result, id, status}` delta.
+  # Total by construction: an unrecognized shape (a future output type) is a
+  # success rather than a crash, and a `%ToolOutput{}` is always `:ok` because
+  # its media-carrying text is not an error report.
+  #
+  # Status order matters: the timeout message is BOTH a timeout and an "Error:"
+  # line (`"Error: Tool execution timed out after …ms"`, see
+  # `EvoGit.ToolRuntime.Executor`), so `timed out` is checked FIRST.
+  defp tool_result_status(%ToolOutput{}), do: :ok
+
+  defp tool_result_status(text) when is_binary(text) do
+    cond do
+      String.contains?(text, "timed out") -> :timeout
+      String.starts_with?(text, "Error:") -> :error
+      true -> :ok
+    end
+  end
+
+  defp tool_result_status(_other), do: :ok
+
   @doc false
-  def process_standard_calls(indexed_calls, %LoopState{} = state) do
-    repo_root =
-      Process.get(:genesis_repo_root) || raise "genesis_repo_root not in process dictionary"
+  def process_standard_calls(indexed_calls, state),
+    do: process_standard_calls(indexed_calls, state, [])
 
-    indexed_results =
-      batch_execute_tools(
-        indexed_calls,
-        EvoGit.Agent.DelegationHints.max_tool_timeout(),
-        repo_root,
-        state.delegation_level,
-        # The RECEIVING role: the read-delegation nudge names only the subagent
-        # tools this role can actually spawn (its `subagent_modules/0`).
-        state.agent_module
-      )
+  @doc false
+  def process_standard_calls(indexed_calls, %State{} = state, opts) do
+    case Seams.from_opts(opts) do
+      %Seams{tool_batch: nil} ->
+        repo_root =
+          Process.get(:genesis_repo_root) || raise "genesis_repo_root not in process dictionary"
 
-    # Sync current_commit after tool execution for dashboard visibility
-    sync_current_commit_after_tools(state)
+        indexed_results =
+          batch_execute_tools(
+            indexed_calls,
+            EvoGit.Agent.DelegationHints.max_tool_timeout(),
+            repo_root,
+            state.delegation_level,
+            # The RECEIVING role: the read-delegation nudge names only the
+            # subagent tools this role can actually spawn (its
+            # `subagent_modules/0`).
+            state.agent_module
+          )
 
-    indexed_results
+        # Sync current_commit after tool execution for dashboard visibility
+        sync_current_commit_after_tools(state)
+
+        indexed_results
+
+      %Seams{tool_batch: tool_batch} ->
+        # The documented `:tool_batch` seam REPLACES the whole standard-call
+        # batch: no `EvoGit.ToolRuntime` call and no commit sync after tools
+        # (the batch is expected to be a stub). Everything else — result
+        # ordering, the subagent partition and the `%ReqLLM.Message{}`
+        # construction — stays here.
+        tool_batch.(indexed_calls, state)
+    end
   end
 
   @doc false
@@ -831,12 +966,13 @@ defmodule EvoGit.Agent.ToolDispatch do
     agent_id = AgentScheduler.current_agent_id()
     repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
+    # DISPLAY / SPATIAL-AUTHORIZATION METADATA ONLY: the node path (plus the
+    # per-batch identity below) is registration data, never a loop value.
     {:ok, %{context_node: %{path: node_path}}} =
       AgentScheduler.get_agent_state(agent_id)
 
-    # The AGENT-side identity, resolved ONCE per batch (this function always
-    # runs in the AGENT process, so `self()` IS the agent pid) and handed to the
-    # managed runtime in ONE request struct.
+    # The AGENT-side identity, resolved ONCE per batch and handed to the managed
+    # runtime in ONE request struct.
     #
     # The pid MUST be the AGENT's, never a tool task's: the tool task is shut
     # down IMMEDIATELY after the tool returns
@@ -845,11 +981,20 @@ defmodule EvoGit.Agent.ToolDispatch do
     # its owner — would see an exit at once and kill the job on the spot. The
     # AGENT pid is the one lifetime signal that covers agent completion, crash,
     # graceful cancel and force-kill.
+    #
+    # Nor is it this process's `self()`: this batch runs inside an exchange
+    # WORKER (one short-lived `Task` per exchange) that owns nothing durable
+    # (design decision D7), so the tracked execution / detached background job
+    # must be owned by the SESSION that outlives the worker. The session pid is
+    # installed on the process dictionary by
+    # `EvoGit.Agent.Session.Setup.install_process_context/3`; `self()` is only
+    # the fallback for a driver that installs no owner (the one-shot path
+    # installs `self()` there, so both paths agree).
     request =
       EvoGit.ToolRuntime.Request.new(%{
         agent_id: agent_id,
         task_id: AgentScheduler.task_id_for_agent(agent_id),
-        agent_pid: self(),
+        agent_pid: Process.get(:evogit_agent_pid) || self(),
         repo_path: repo_path,
         repo_root: repo_root,
         node_path: node_path,
@@ -962,11 +1107,5 @@ defmodule EvoGit.Agent.ToolDispatch do
       binary ->
         tool_result(tool_call_id, name, binary)
     end
-  end
-
-  # --- Shared Helpers ---
-
-  defp agent_type_from_module(module) when is_atom(module) do
-    module |> Module.split() |> List.last() |> Macro.underscore()
   end
 end

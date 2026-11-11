@@ -17,8 +17,32 @@ defmodule EvoGit.Application do
     # Create ETS tables owned by the application process so they survive
     # AgentScheduler crashes/restarts. If a table already exists (e.g., on
     # application restart after a soft crash), creation is a no-op.
-    ensure_ets_table(:evogit_agent_state, [:named_table, :public, :set, read_concurrency: true])
+    ensure_ets_table(:evogit_agent_summary, [:named_table, :public, :set, read_concurrency: true])
     ensure_ets_table(:evogit_sched_meta, [:named_table, :public, :set, read_concurrency: true])
+    # CONTROL PLANE (see `EvoGit.AgentScheduler.ControlPlane`): everything a
+    # process OTHER than the agent writes about a live agent, so no cross-process
+    # write ever read-modify-writes the agent's own `:evogit_agent_summary` row.
+    #   * `:evogit_agent_inbox` — a BAG of `{agent_id, {seq, message}}`: appends
+    #     are one atomic insert, and `:ets.take/2` drains a key atomically, so a
+    #     concurrent append is never lost or delivered twice. `seq` (a
+    #     BEAM-monotonic integer) restores append order on drain.
+    #   * `:evogit_agent_control` — a SET of `{agent_id, cancel_requested}`, the
+    #     flag updated with ONE atomic op (`:ets.update_element/3`).
+    # App-owned so they survive AgentScheduler crashes/restarts.
+    ensure_ets_table(:evogit_agent_inbox, [
+      :bag,
+      :named_table,
+      :public,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
+
+    ensure_ets_table(:evogit_agent_control, [
+      :set,
+      :named_table,
+      :public,
+      read_concurrency: true
+    ])
 
     # Graceful-cancel marker: task_ids currently in a graceful cancel. The
     # scheduler registers task_ids here via begin_graceful_cancel/1; run_agent
@@ -94,6 +118,17 @@ defmodule EvoGit.Application do
       {EvoGit.CommandApproval, []},
       {Registry, keys: :unique, name: EvoGit.RemoteConnection.Registry},
       {DynamicSupervisor, name: EvoGit.RemoteConnection.Supervisor, strategy: :one_for_one},
+      # Agent-session infrastructure: the unique-name registry a session
+      # registers under, and the DynamicSupervisor sessions run under.
+      # `EvoGit.AgentScheduler.Dispatch.do_try_dispatch/4` starts one session per
+      # dispatched agent. Explicit ids are required — both child specs default
+      # to a fixed id, so a second Registry/DynamicSupervisor would be a
+      # duplicate-id boot failure.
+      {Registry, keys: :unique, name: EvoGit.Agent.Session.Registry, id: :agent_session_registry},
+      {DynamicSupervisor,
+       name: EvoGit.Agent.Session.Supervisor,
+       strategy: :one_for_one,
+       id: :agent_session_supervisor},
       {EvoGit.Store,
        data_dir:
          Path.join(

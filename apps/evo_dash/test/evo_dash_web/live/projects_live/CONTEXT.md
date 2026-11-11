@@ -50,3 +50,30 @@ Browser restore node validation, actual event routing into helpers, sessionStora
 ## Routing Table
 
 This directory has no child subdirectories.
+## Mounted Page Contracts (owned by `../projects_live_test.exs`)
+Normal submissions and GitHub issue fixes share canonical `model_spec` selection plus `model_id_locked: true`, and explicit Auto omits all three override keys rather than locking the configured default.
+`assert_task_model_selection/2` pins the exact canonical task opts, the explicit lock and the absence of legacy option keys, without assuming the derived persisted `task.model_id` is nil for an explicit selection.
+Mounted selection tests pin picker events, reasoning inventories, canonical session-state restore, pending remote contexts and node/path/target/generation stale-result rejection.
+The model-only browser persistence event is `persist_model_selection`, separate from prompt/form state persistence.
+Unavailable remote bundles retain nil or a saved canonical choice instead of selecting Auto; recovery requires an owned-ready canonical bundle.
+The three positive remote URL/resume fixtures use distinct fake BEAM identities with target-owned connection status and canonical batch bundles, never a local fallback.
+`install_remote_activation_fixture!/2` installs the arity-2 `:remote_project_load_runner` (`node, path`) and `:remote_resume_task_runner` (`node, task_id`) and proves the real supervised children receive the exact remote identity.
+The tilde fixture stays in `ProjectsLiveSyncTest` because `:remote_path_expand_runner` is shared with the async `project_flow_test.exs`.
+Focused remote validation targets the three named positive URL/resume tests and establishes focused coverage only, never full-suite validation; never bypass the pending-remote guard to make them pass.
+Mounted project fixtures are VCT mounts: `Helpers.seed_project/2` asserts `{:ok, %EvoGit.VCT.Mount{}} = EvoGit.VCT.mount(path, name: name)` and forgets that mount in `on_exit`, `clear_projects/0` forgets every row, and page assertions read `%Mount{}` rows (`point`/`path`/`name`) off the `projects` assign.
+The async module mounts per-test-unique basenames and asserts only its own rows; whole-registry and global-quiet assertions live in `ProjectsLiveSyncTest`.
+
+### Async mount batch
+`:projects_async_load_runner` is a 0-arity fun returning the results map the batch applies: `projects` (the node's VCT mounts), `terminal_ids` (`MapSet` seed or `nil`), `auto_activate?`, `model_selection` + `model_selection_enabled` and `custom_agents`, plus the remote-only extras; every key the apply step does not consume is assigned verbatim.
+A LEGACY payload carrying `model_profiles` must also carry `default_selected_model_id`; canonical batches carry `model_selection` instead.
+Success message: `{:async_project_load, node, prev_node_id, path, results}`; a runner that exits/raises sends NOTHING, so the page keeps the mount defaults `projects: []` / `notified_task_ids_ready?: false`.
+Helpers: `install_projects_async_load_runner/1`, `restore_registry_on_exit/0` (frozen-registry safety net), `wait_for_projects/2`, `wait_notified_ids_ready/1` (both via `wait_assigns/2`) and `await_async_loads/1` (synchronous `assigns/1` drain FIRST, then monitor this view's `EvoDash.TaskSupervisor` children via `$callers`).
+A test that seeds projects and then asserts palette contents / path suggestions / auto-activation must settle the mount batch right after `live/3`; notification tests must call `wait_notified_ids_ready/1` BEFORE `send(view.pid, :node_aware_reload_tasks)` and `await_async_loads/1` before `assert_push_event` / `refute_push_event`.
+Off-process proof: `:sys.suspend(EvoGit.TaskRegistry)` (+ `restore_registry_on_exit/0`), send `:node_aware_reload_tasks`, and show the synchronous `assigns/1` round-trip returns while the store is frozen (`mount_async_task_pids(view.pid) != []`), then resume; a zero-store mount proof freezes the registry around BOTH the dead render and `live/3`.
+A blocked-batch test makes "the project list not present yet" deterministic: the injected fun sends `{:batch_started, self()}`, blocks on `receive`, then returns; assert the mount defaults, send `:proceed`, then wait for the batch.
+
+### Resume restore and repo fixtures
+The `?resume_from=` foreign-repo restore is ASYNC: `start_foreign_repos_restore/2` spawns a child that replies `{:foreign_repos_restored, task_id, node, result}`, so reading `assigns(view)[:foreign_repos]` straight after `live/3` is a race — wait on `active_project_path` (or `await_async_loads/1`) first.
+An empty assign has two other load-dependent sources: `TaskRegistry.get_task_lite/1`'s offloaded read degrading to `nil` at its 28 s `ReadOffload` deadline, and a `GenServer.call` timeout arriving as `{:error, _}` from `SafeCall`; both leave `[]` untouched (the error arm only adds a flash).
+The page suite builds ONE `git init` + empty-commit template in `setup_all` and gives every repo-needing test a `File.cp_r!` copy (~3.5 ms per copy against ~13 ms for a fresh `git init` + commit) — always a plain recursive byte copy, never hard links or `git clone --shared`, with `.git/hooks` sample scripts dropped from the template.
+`ProjectFlowTest` snapshot-restores the global `:evo_dash, :remote_path_expand_runner` seam for tilde expansion.

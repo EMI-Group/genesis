@@ -101,6 +101,51 @@ defmodule EvoGit.CommandApprovalTest do
     end
   end
 
+  describe "status admission (:awaiting_input)" do
+    test "the auto-deny list admits :awaiting_input alongside :cancelling and terminal statuses" do
+      denying = EvoGit.CommandApproval.denying_task_statuses()
+      assert :awaiting_input in denying
+
+      for status <- [:cancelling, :completed, :failed, :cancelled] do
+        assert status in denying
+      end
+    end
+
+    test "eval registration is admitted for :running and :awaiting_input only" do
+      active = EvoGit.CommandApproval.eval_active_task_statuses()
+      assert :running in active
+      assert :awaiting_input in active
+
+      for status <- [:cancelling, :completed, :failed, :cancelled] do
+        refute status in active
+      end
+    end
+
+    test "a local :awaiting_input task update auto-denies the task's pending approval" do
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "approvals")
+      parent = self()
+
+      spawn(fn ->
+        result =
+          EvoGit.CommandApproval.request("StartTask.start_task", "(no arguments)", 3, nil, "T124")
+
+        send(parent, {:call_result, result})
+      end)
+
+      assert_receive {:approval_requested, request}
+      request_id = request.request_id
+
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, "T124", :awaiting_input, node()}
+      )
+
+      assert_receive {:call_result, :denied}
+      assert_receive {:approval_resolved, ^request_id, :deny}
+    end
+  end
+
   # --- Helpers -------------------------------------------------------------
 
   # Runs CommandShell.execute/1 while a background responder approves every

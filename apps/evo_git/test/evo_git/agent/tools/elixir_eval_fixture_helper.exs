@@ -32,9 +32,14 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
   monitored or killed directly; no tool failure takes the owner down.
 
   `update_state/2`, `update_meta/2` and `update_task/2` accept a unary transform
-  and return the stored struct, for cancellation/staleness/role regressions.
+  and return the stored struct, for staleness/role regressions.
   IDs are also exposed for tests requiring deletion or deliberately bad rows.
   Transforms must preserve their struct type and own row ID.
+
+  The agent summary row carries no cancellation flag: the graceful-cancel state
+  lives in `EvoGit.AgentScheduler.ControlPlane`, so `set_cancel/2` writes the
+  flag through that control plane (the fixture seeds a ready row) and
+  `cancel_requested?/1` reads it back. `stop/1` deletes the control row.
 
   Always call `stop/1` from `on_exit` (capture the fixture explicitly). The private
   supervisor is a temporary child of ExUnit's test supervisor, not linked to the
@@ -45,7 +50,7 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
   tests; suites changing approval/scheduler globals need their own sync policy.
   """
 
-  alias EvoGit.AgentScheduler.{AgentState, SchedMeta}
+  alias EvoGit.AgentScheduler.{AgentState, ControlPlane, SchedMeta}
   alias EvoGit.Core.ContextNode
   alias EvoGit.{AgentSpec, Store, TaskInfo}
 
@@ -108,7 +113,7 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
       max_depth: 0,
       objective: spec.objective,
       task_local_id: 1,
-      cancel_requested: false
+      status: :running
     }
 
     meta = %SchedMeta{
@@ -116,12 +121,14 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
       depth: 0,
       spec: spec,
       task_id: task_id,
-      task_ref: owner,
+      session_pid: owner.pid,
       status: :running
     }
 
-    true = :ets.insert(:evogit_agent_state, {agent_id, state})
+    true = :ets.insert(:evogit_agent_summary, {agent_id, state})
     true = :ets.insert(:evogit_sched_meta, {agent_id, meta})
+    # A live agent owns a control row; the cancel flag itself starts unset.
+    :ok = ControlPlane.ensure_row(agent_id)
     fixture
   end
 
@@ -169,9 +176,9 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
   end
 
   def update_state(fixture, fun) when is_function(fun, 1) do
-    [{id, current}] = :ets.lookup(:evogit_agent_state, fixture.agent_id)
+    [{id, current}] = :ets.lookup(:evogit_agent_summary, fixture.agent_id)
     %AgentState{} = updated = fun.(current)
-    true = :ets.insert(:evogit_agent_state, {id, updated})
+    true = :ets.insert(:evogit_agent_summary, {id, updated})
     updated
   end
 
@@ -181,6 +188,20 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
     true = :ets.insert(:evogit_sched_meta, {id, updated})
     updated
   end
+
+  @doc """
+  Writes the agent's graceful-cancel flag through the control plane.
+
+  The summary row no longer carries it, so this is the ONLY way a fixture can
+  make a live agent look cancelled to `Authorization` (`true`), restored
+  (`false`) or untouched (`nil`).
+  """
+  def set_cancel(fixture, value) when value in [true, false, nil] do
+    :ok = ControlPlane.set_cancel(fixture.agent_id, value)
+  end
+
+  @doc "Reads the agent's graceful-cancel flag back from the control plane."
+  def cancel_requested?(fixture), do: ControlPlane.cancel_requested?(fixture.agent_id)
 
   def update_task(fixture, fun) when is_function(fun, 1) do
     id = fixture.task_id
@@ -192,8 +213,9 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
   def stop(fixture) do
     stop_supervisor(fixture.supervisor)
     Process.demonitor(fixture.owner.ref, [:flush])
-    delete_row(:evogit_agent_state, fixture.agent_id)
+    delete_row(:evogit_agent_summary, fixture.agent_id)
     delete_row(:evogit_sched_meta, fixture.agent_id)
+    ControlPlane.delete(fixture.agent_id)
 
     if GenServer.whereis(fixture.store) do
       :ok = Store.delete_task(fixture.store, fixture.task_id)

@@ -3,7 +3,7 @@
 ## Intent
 
 The task card's data contract plus the helper families extracted from `task_card_components.ex`.
-`EvoDashWeb.TaskCardComponents.task_card/1` renders from a 16-key task SUMMARY map and an optional lazily-fetched `detail`, and delegates the result/option/repo/archive/error rendering to the modules here, re-exported through `defdelegate`s on the parent module — call sites always use `EvoDashWeb.TaskCardComponents.<fun>`.
+`EvoDashWeb.TaskCardComponents.task_card/1` renders from a 17-key task SUMMARY map and an optional lazily-fetched `detail`, and delegates the result/option/repo/archive/error rendering to the modules here, re-exported through `defdelegate`s on the parent module — call sites always use `EvoDashWeb.TaskCardComponents.<fun>`.
 
 ## Routing Table
 
@@ -15,12 +15,21 @@ The task card's data contract plus the helper families extracted from `task_card
 
 ## Task Cards & the Summary-Map Contract
 
-The sidebar "Active Tasks" section in `Layouts.app` is fed by `@running_tasks` / `@pending_tasks` — lightweight **summary maps** from the statuses-filtered `EvoGit.TaskRegistry.list_tasks_summary([:running, :pending, :finalizing, :completed])`. `layouts.ex` declares only those two attrs (there is NO `@tasks` attr; the dashboard renders no main task list).
+The sidebar "Active Tasks" section in `Layouts.app` is fed by `@running_tasks` / `@pending_tasks` — lightweight **summary maps** from the statuses-filtered `EvoGit.TaskRegistry.list_tasks_summary([:running, :pending, :finalizing, :cancelling, :awaiting_input, :completed])`. `layouts.ex` declares only those two attrs (there is NO `@tasks` attr; the dashboard renders no main task list).
 The Tasks page renders `task_card/1` from the same summary maps and fetches the heavy payload per expanded card into a separate `detail` entry; Review is the only page that still loads full `%TaskInfo{}` structs directly.
 
 ### The summary-map contract
 
-Plain maps with `EvoGit.Store.Operations.Summaries`' 16 keys: `id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error`. `opts` is a decoded keyword list; `error` is the lenient atom-keyed failure record (nil unless `:failed`); `updated_at` is a raw ISO string. EXCLUDED: `result`, `logs`, `usage`, `archive_metadata` (and other TaskInfo fields such as `ref`).
+Plain maps with `EvoGit.Store.Operations.Summaries`' 17 keys: `id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error, session_mode`. `session_mode` is the persisted string `"oneshot" | "interactive"` (NULL decodes to `"oneshot"`); older or hand-built summary maps may omit it, so every read is `Map.get(task, :session_mode, "oneshot")`. `opts` is a decoded keyword list; `error` is the lenient atom-keyed failure record (nil unless `:failed`); `updated_at` is a raw ISO string. EXCLUDED: `result`, `logs`, `usage`, `archive_metadata` (and other TaskInfo fields such as `ref`).
+
+### Interactive sessions (`:awaiting_input`) — reply box + close action
+
+`:awaiting_input` is a NON-terminal status: the task's root agent is a live interactive session, idle and waiting for the user.
+`task_card/1` declares `attr(:session_agent_id, :any, default: nil)`; when it is non-nil AND the task status is `:awaiting_input` the card renders `TaskCardComponents.Session.session_panel/1` directly under the objective block — a `name="message"` textarea in a `<form phx-submit="session_send_message" phx-value-task_id={@task.id}>` plus a **Close session** button (`phx-click="open_close_session_modal"`). Every other card renders byte-identically (no wrapper element, no hidden form).
+`session_panel/1` lives in `./session.ex`, is imported (never also `defdelegate`d — a same name/arity clash), and implements no dialog itself: the owning LiveView owns the close confirmation modal.
+The reply is NOT optimistically echoed — a sent message shows only once the server re-renders session state (the task status leaves `:awaiting_input` while the next turn runs).
+Status styling: the badge/label use the violet family (`Helpers.task_status_badge/1`), the collapsed card's badge pulses like the running one but stays visually distinct, and the label reads `gettext("Awaiting input")` with a `gettext("(waiting for you)")` suffix — the raw atom is never rendered.
+Action gates: graceful **Cancel** is visible for `[:pending, :running, :awaiting_input]`; **Force kill** (three-dot dropdown, Danger zone) for `[:running, :awaiting_input, :cancelling]`. EXCLUDED: `result`, `logs`, `usage`, `archive_metadata` (and other TaskInfo fields such as `ref`).
 
 ### The `detail` attr — lazily-fetched heavy payload
 

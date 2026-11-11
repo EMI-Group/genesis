@@ -1,13 +1,14 @@
 defmodule EvoGit.Agent.RunnerInjectedMessageTest do
   @moduledoc """
-  Runner-side coverage of multimodal INJECTED (mid-run) user messages.
+  Exchange-engine coverage of multimodal INJECTED (mid-run) user messages.
 
   A message queued for a running agent (dashboard/RPC → `pending_user_messages`)
   may be a legacy plain `String.t()` or a `%{text:, attachments:}` map carrying
   images/audio (see `EvoGit.Attachments.message/1`). The drain at the top of
-  `Runner.loop/1` (`Runner.drain_and_inject_user_messages/1`, public `@doc false`
-  so it can be driven directly) materializes EACH drained message through the
-  pure `EvoGit.Agent.ContextBuilder.build_injected_message/2` and appends it as a
+  `EvoGit.Agent.Exchange.run/2`
+  (`EvoGit.Agent.Exchange.Pending.drain_and_inject_user_messages/2`) materializes
+  EACH drained message through the pure
+  `EvoGit.Agent.ContextBuilder.build_injected_message/2` and appends it as a
   turn-tagged user message:
 
     * legacy binary / no media → plain `user(text)`;
@@ -17,32 +18,25 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
   media this way (the root-only gate covers the `:attachments` TASK OPT only —
   the initial user message, see `ContextBuilder.build_initial_messages/4`).
 
-  `async: true` — the cases seed ONE row in the app-global named
-  `:evogit_agent_state` ETS table, keyed by a per-test unique agent id from this
-  file's own id range, and delete exactly that row on exit. Nothing is asserted
-  about the table as a whole, so the writes are concurrent-safe.
+  `async: true` — every case is a pure function of `%EvoGit.Agent.State{}` plus
+  its OWN in-memory `:scheduler` seam (`EvoGit.Agent.Exchange.Seams`), so the
+  engine runs in this plain ExUnit process with no scheduler and no ETS row.
+  The returned state — not an ETS write — is the authority: these tests assert
+  on the state the helper hands back.
   """
 
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.ContextBuilder
-  alias EvoGit.Agent.LoopState
-  alias EvoGit.Agent.Runner
-  alias EvoGit.AgentScheduler.AgentState
-  alias EvoGit.AgentScheduler.Store
-  alias EvoGit.Core.ContextNode
-  alias EvoGit.Core.PhyloGraphNode
+  alias EvoGit.Agent.Exchange.Pending
+  alias EvoGit.Agent.State
 
   @turn 5
 
   setup do
-    create_ets_if_missing(:evogit_agent_state)
-    create_ets_if_missing(:evogit_sched_meta)
-
-    # This file's own id range keeps the row unshared with every other module
-    # that seeds the same app-global tables concurrently.
+    # This file's own id range keeps the agent identity unshared with every
+    # other module. No ETS row is written: the scheduler seam is in-memory.
     agent_id = 9_960_000 + :erlang.unique_integer([:positive])
-    on_exit(fn -> delete_agent_rows(agent_id) end)
 
     %{agent_id: agent_id}
   end
@@ -51,37 +45,38 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
   # Harness
   # ---------------------------------------------------------------------------
 
-  defp create_ets_if_missing(name) do
-    if :ets.whereis(name) == :undefined do
-      :ets.new(name, [:set, :named_table, :public])
-    end
+  # Builds the pure `:scheduler` seam (`EvoGit.Agent.Exchange.Seams`) for one
+  # test: an IN-MEMORY stand-in for the scheduler's per-agent control plane, so
+  # the engine runs with no scheduler and no ETS row.
+  #
+  #   * `queue` — the pending user-message queue; `:drain_inputs` POPS it, so a
+  #     second drain is a no-op exactly as the real queue behaves;
+  #   * `calls` — every `{kind, payload}` interaction, in order.
+  #
+  # Assertions observe this record for the control-plane interactions (the
+  # emptied queue) and the RETURNED state for the conversation itself.
+  defp scheduler_stub(opts \\ []) do
+    {:ok, pid} = Agent.start_link(fn -> %{queue: Keyword.get(opts, :queue, []), calls: []} end)
+
+    {fn kind, payload, _state -> interact(pid, kind, payload) end, pid}
   end
 
-  # Deletes ONLY this test's rows — never another module's.
-  defp delete_agent_rows(agent_id) do
-    if :ets.whereis(:evogit_agent_state) != :undefined,
-      do: :ets.delete(:evogit_agent_state, agent_id)
+  defp interact(pid, kind, payload) do
+    Agent.get_and_update(pid, fn stub ->
+      stub = %{stub | calls: stub.calls ++ [{kind, payload}]}
 
-    if :ets.whereis(:evogit_sched_meta) != :undefined,
-      do: :ets.delete(:evogit_sched_meta, agent_id)
+      case kind do
+        :drain_inputs -> {stub.queue, %{stub | queue: []}}
+      end
+    end)
   end
 
-  # Seeds the agent's pending-message queue EXACTLY as the scheduler's queue
-  # append would (a direct state write, so the test does not depend on the
-  # queue's own normalization/validation).
-  defp seed_pending_queue(agent_id, pending) do
-    Store.put_agent_state(agent_id, %AgentState{
-      context_node: %ContextNode{path: "./", repo: "/tmp/test"},
-      phylo_node: %PhyloGraphNode{repo: "/tmp/test", base_commit: "abc", current_commit: "abc"},
-      llm_model: "test:model",
-      max_retries: 3,
-      max_depth: 8,
-      pending_user_messages: pending
-    })
-  end
+  defp calls(pid), do: Agent.get(pid, & &1.calls)
+  defp kinds(pid), do: for({kind, _payload} <- calls(pid), do: kind)
+  defp queue(pid), do: Agent.get(pid, & &1.queue)
 
   defp loop_state(agent_id) do
-    %LoopState{
+    %State{
       agent_id: agent_id,
       agent_module: __MODULE__,
       depth: 0,
@@ -92,10 +87,10 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
   end
 
   defp drain(agent_id, pending) do
-    seed_pending_queue(agent_id, pending)
+    {seam, _stub} = scheduler_stub(queue: pending)
 
     loop_state(agent_id)
-    |> Runner.drain_and_inject_user_messages()
+    |> Pending.drain_and_inject_user_messages(scheduler: seam)
     |> Map.fetch!(:context)
     |> Map.fetch!(:messages)
   end
@@ -204,34 +199,48 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
   test "messages are appended AFTER the existing context (nothing is replaced)", %{
     agent_id: agent_id
   } do
-    seed_pending_queue(agent_id, ["injected"])
+    {seam, stub} = scheduler_stub(queue: ["injected"])
 
     state = loop_state(agent_id)
     existing = ReqLLM.Context.user("already here")
     state = %{state | context: ReqLLM.Context.append(state.context, existing)}
 
-    new_state = Runner.drain_and_inject_user_messages(state)
+    new_state = Pending.drain_and_inject_user_messages(state, scheduler: seam)
 
     assert [first, injected] = new_state.context.messages
     assert first.content == existing.content
     assert injected.content == [ReqLLM.Message.ContentPart.text("injected")]
+
+    # The returned state IS the updated conversation (the engine publishes it at
+    # the next turn boundary through `:checkpoint`) — nothing else was touched.
+    assert new_state.context == ReqLLM.Context.append(state.context, injected)
+
+    assert kinds(stub) == [:drain_inputs]
   end
 
   test "the queue is emptied by the drain (a second drain is a no-op)", %{agent_id: agent_id} do
-    seed_pending_queue(agent_id, ["once"])
+    {seam, stub} = scheduler_stub(queue: ["once"])
 
     state = loop_state(agent_id)
-    drained = Runner.drain_and_inject_user_messages(state)
+    drained = Pending.drain_and_inject_user_messages(state, scheduler: seam)
 
     assert [%ReqLLM.Message{}] = drained.context.messages
-    assert Store.drain_pending_user_messages(agent_id) == []
+    # The queue itself is empty now: the drain POPPED it.
+    assert queue(stub) == []
+
+    # A second drain therefore adds nothing (and touches nothing).
+    assert Pending.drain_and_inject_user_messages(drained, scheduler: seam) == drained
+    assert kinds(stub) == [:drain_inputs, :drain_inputs]
   end
 
   test "an empty queue leaves the state untouched", %{agent_id: agent_id} do
-    seed_pending_queue(agent_id, [])
+    {seam, stub} = scheduler_stub()
 
     state = loop_state(agent_id)
-    assert Runner.drain_and_inject_user_messages(state) == state
+    assert Pending.drain_and_inject_user_messages(state, scheduler: seam) == state
+
+    # A drain that found nothing touched no context at all.
+    assert kinds(stub) == [:drain_inputs]
   end
 
   test "no root gate — media is materialized for an injected message via build_injected_message/2 (arity 2, no parent input)",

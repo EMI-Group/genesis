@@ -75,7 +75,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
   sibling `tool_output_integration_test.exs`, so the two must never overlap) and
   the process-wide `XDG_CONFIG_HOME` redirect the timeout describe uses to pin
   `[:scheduler, :default_tool_timeout]`. Concurrent-safe on its own: agent state
-  rows go into the app-global `:evogit_agent_state` table under per-test unique
+  rows go into the app-global `:evogit_agent_summary` table under per-test unique
   ids (deleted on exit) and the global `EvoGit.AgentScheduler` only supplies
   tool slots.
   """
@@ -83,7 +83,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
   use ExUnit.Case, async: false
 
   alias EvoGit.Adapters.Git
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.Agent.ToolNames
 
@@ -148,11 +148,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
 
     agent_state = %EvoGit.AgentScheduler.AgentState{
       context_node: %EvoGit.Core.ContextNode{path: "./", repo: repo},
-      phylo_node: %EvoGit.Core.PhyloGraphNode{
-        repo: repo,
-        base_commit: head,
-        current_commit: head
-      },
+      current_commit: head,
       llm_model: "test:model",
       max_retries: 1,
       max_depth: 1
@@ -344,7 +340,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
                  fn _state -> flunk("recovery must not run for a soft tool failure") end
                )
 
-      assert_receive {:next_turn, %LoopState{} = state}
+      assert_receive {:next_turn, %State{} = state}
 
       assert [tool_message] = Enum.filter(state.context.messages, &(&1.role == :tool))
 
@@ -378,7 +374,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
                  fn _state -> flunk("recovery must not run for a contained tool raise") end
                )
 
-      assert_receive {:next_turn, %LoopState{} = state}
+      assert_receive {:next_turn, %State{} = state}
       assert [tool_message] = Enum.filter(state.context.messages, &(&1.role == :tool))
 
       # Exactly the exception banner (`Exception.format_banner/2`), not an
@@ -572,7 +568,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
   end
 
   defp loop_state do
-    %LoopState{
+    %State{
       agent_id: Process.get(:evogit_agent_id),
       agent_module: EvoGit.Agents.Executor,
       depth: 0,

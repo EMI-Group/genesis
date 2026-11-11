@@ -3,7 +3,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   RPC-accessible API over scheduler ETS state (read-only state queries + config write).
 
   This module exposes pure functions that read the scheduler's global ETS
-  tables (`:evogit_sched_meta` and `:evogit_agent_state`) and return
+  tables (`:evogit_sched_meta` and `:evogit_agent_summary`) and return
   **native Elixir terms** (atoms, structs, maps, lists, tuples). It is
   designed to be invoked from a local dashboard process via
   `:erpc.call(remote_node, EvoGit.AgentScheduler.RemoteAPI, function, args)`.
@@ -35,9 +35,28 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   cached or copied manager state), and mutations are BEST-EFFORT: an execution
   can exit between the read and the action, and a dead/restarting manager
   degrades to an empty read or the documented error instead of raising.
+
+  ## Interactive-session verbs are LOCAL-node scheduler calls
+
+  `start_session/1`, `send_session_message/3`, `close_session/2`,
+  `await_close/2` and `list_awaiting_input/0` drive an interactive
+  `EvoGit.Agent.Session`. An interactive session lives INSIDE the scheduler VM
+  of the node that owns it (its transcript is in-memory only), so these are
+  local scheduler calls: a caller on another node reaches them through that
+  node's RPC wrapper, never by handing these functions a remote target.
+
+  ## Watch verbs are LOCAL-node session calls too
+
+  `register_watcher/2`, `unregister_watcher/2` and `watch_snapshot/1` are thin
+  passthroughs to `EvoGit.Agent.Stream`: the watcher set and the transcript live
+  in the session, i.e. on the node that owns the agent. They never subscribe
+  anything — a consumer's topic subscription is made by the CALLER on its OWN
+  node, because `:erpc` runs the remote function in a fresh worker process and a
+  subscription made here would attach that throwaway process.
   """
 
   alias EvoGit.Agent.Compression.Threshold
+  alias EvoGit.Agent.Stream.Snapshot
   alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
@@ -47,7 +66,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @doc """
   Returns a list of agent summary maps.
 
-  Joins `:evogit_sched_meta` (master list) with `:evogit_agent_state` on
+  Joins `:evogit_sched_meta` (master list) with `:evogit_agent_summary` on
   `agent_id`. Each map contains native Elixir terms:
 
     * `:id` — agent ID (integer)
@@ -67,8 +86,8 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     * `:repo_root` — absolute path to the repo root (string | nil)
     * `:context_path` — the spatial node path the agent is targeting (string)
     * `:worktree` — path to the assigned worktree (string | nil)
-    * `:current_commit` — current git commit SHA (string)
-    * `:base_commit` — base git commit SHA (string)
+    * `:current_commit` — the commit the agent's session last observed (string | nil)
+    * `:base_commit` — the spec's base commit captured at registration (string | nil)
     * `:task_id` — task group ID string (string | nil)
     * `:task_number` — short task number for naming (integer | nil)
     * `:retries` — crash-retry count (integer)
@@ -82,12 +101,10 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @spec list_agents() :: [map()]
   def list_agents do
     sched_metas = read_table(:evogit_sched_meta)
-    agent_states = read_table(:evogit_agent_state)
-
-    states_by_id = Map.new(agent_states, fn {id, state} -> {id, state} end)
+    states = agent_states_by_id()
 
     Enum.map(sched_metas, fn {id, meta} ->
-      build_agent_summary(id, meta, Map.get(states_by_id, id))
+      build_agent_summary(id, meta, Map.get(states, id))
     end)
   end
 
@@ -119,32 +136,25 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   """
   @spec get_agent_history(agent_id :: pos_integer()) :: [ReqLLM.Message.t()]
   def get_agent_history(agent_id) do
-    case lookup_agent_state(agent_id) do
-      nil ->
-        []
-
-      %AgentState{context: nil} ->
-        []
-
-      %AgentState{context: %ReqLLM.Context{messages: messages}} ->
-        messages
-    end
+    # The conversation lives ONLY in the session (the summary row carries no
+    # context); a gone/unresponsive session answers `[]` after its 5 s deadline.
+    EvoGit.Agent.Session.history(agent_id)
   end
 
   @doc """
-  Returns the native `%AgentState{}` struct for the given id.
+  Returns the native `%AgentState{}` summary struct for the given id.
 
-  The `:context` field is dropped (it can be large — use
-  `get_agent_history/1` for conversation access). All other fields are kept
-  as native structs.
+  The row is the summary read model: it carries no conversation (use
+  `get_agent_history/1` for that). All fields are kept as native structs.
 
   Returns `nil` if the agent doesn't exist.
   """
   @spec get_agent_state(agent_id :: pos_integer()) :: AgentState.t() | nil
   def get_agent_state(agent_id) do
-    case lookup_agent_state(agent_id) do
-      nil -> nil
-      %AgentState{} = state -> %{state | context: nil}
+    case EvoGit.AgentScheduler.Store.get_agent_state(agent_id) do
+      {:ok, %AgentState{} = state} -> state
+      {:ok, other} -> other
+      :error -> nil
     end
   end
 
@@ -294,15 +304,232 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @spec send_agent_message(pos_integer(), String.t() | EvoGit.Attachments.message()) ::
           :ok | {:error, term()}
   def send_agent_message(agent_id, message) when is_binary(message) or is_map(message) do
-    case :ets.whereis(:evogit_agent_state) do
+    case :ets.whereis(:evogit_agent_summary) do
       :undefined -> {:error, :scheduler_not_started}
       _ -> EvoGit.AgentScheduler.send_user_message(agent_id, message)
     end
   end
 
+  # ── Push-only streaming watches ────────────────────────────────────
+  #
+  # The watch verbs. A session owns its watcher set and its transcript INSIDE the
+  # scheduler VM that runs the agent, so these are LOCAL-node session calls like
+  # the interactive-session verbs below: there is nothing to reach across nodes
+  # here, and a caller on another node goes through `EvoGit.RemoteNode`.
+  # `EvoGit.Agent.Stream` is the ONE implementation of the watch/unwatch/snapshot
+  # path — every verb below is a thin passthrough over it (whose own 5 s session
+  # deadline is the call budget), so there is no second session-call path.
+
+  @typedoc """
+  The watch verbs' shared return shape: the snapshot plus its monotonic `seq`, or
+  a refusal (`{:not_found, reason}` / `{:bad_state, phase}`).
+  """
+  @type watch_reply :: {:ok, Snapshot.t(), non_neg_integer()} | {:error, {atom(), term()}}
+
+  @doc """
+  Registers `consumer_pid` in the agent session's watcher set and returns
+  `{:ok, snapshot, seq}`.
+
+  Thin passthrough to `EvoGit.Agent.Stream.register_watcher/2`. It deliberately
+  does NOT subscribe anything: the topic subscription belongs to the CALLER's own
+  node, because `:erpc.call/5` runs its target in a fresh worker process, so a
+  subscription made here would attach that throwaway process instead of the
+  caller. `consumer_pid` may be an EXTERNAL pid (a cross-node caller's `self()`),
+  which the session accepts and `Process.monitor/1`s — across nodes too.
+
+  Registration is what opens the streaming gate: a session with zero watchers
+  emits no deltas at all (`EvoGit.Agent.Session.watching?/2`).
+
+  Returns `{:ok, %EvoGit.Agent.Stream.Snapshot{}, non_neg_integer()}`,
+  `{:error, {:not_found, reason}}` for an unknown/gone/unresponsive session
+  (`:session_not_found`, `:session_unavailable`, `:timeout`) or a non-pid
+  consumer (`:invalid_consumer`), and `{:error, {:bad_state, phase}}` when the
+  session refuses a watch (no checkpointed state yet, or finalizing/done).
+  """
+  @spec register_watcher(term(), term()) :: watch_reply()
+  def register_watcher(agent_id, consumer_pid) when is_pid(consumer_pid) do
+    EvoGit.Agent.Stream.register_watcher(agent_id, consumer_pid)
+  end
+
+  # `EvoGit.Agent.Stream.register_watcher/2` guards on `is_pid/1`, so a non-pid
+  # consumer would raise a FunctionClauseError; this verb is TOTAL and answers
+  # the documented refusal instead.
+  def register_watcher(_agent_id, _consumer_pid), do: {:error, {:not_found, :invalid_consumer}}
+
+  @doc """
+  Removes `consumer_pid` from the agent session's watcher set.
+
+  Thin passthrough to `EvoGit.Agent.Stream.unregister_watcher/2`. Idempotent:
+  `:ok` when the watcher is gone or was never registered (the session's own
+  `{:unwatch, pid}` handler and its `:DOWN` reaper both tolerate a missing
+  entry), so a duplicate or stale unwatch is never an error.
+
+  Returns `:ok` or `{:error, {kind, reason}}` for an unknown/gone/unresponsive
+  session (`{:not_found, _}`) or a refused state (`{:bad_state, phase}`).
+  """
+  @spec unregister_watcher(term(), term()) :: :ok | {:error, {atom(), term()}}
+  def unregister_watcher(agent_id, consumer_pid) when is_pid(consumer_pid) do
+    EvoGit.Agent.Stream.unregister_watcher(agent_id, consumer_pid)
+  end
+
+  # Same totality reason as `register_watcher/2`; a non-pid consumer has no
+  # watcher entry to remove, which is already the `:ok` case.
+  def unregister_watcher(_agent_id, _consumer_pid), do: :ok
+
+  @doc """
+  Reads the session's current snapshot WITHOUT registering anything.
+
+  Thin passthrough to `EvoGit.Agent.Stream.snapshot/1`: the one bounded one-shot
+  read of the push-only delta contract, and the ONLY resync path for a consumer
+  that fell behind or reconnected (there is no replay buffer and no poll loop).
+  It subscribes nothing and adds no watcher, so it never opens the streaming
+  gate.
+
+  Returns `{:ok, %EvoGit.Agent.Stream.Snapshot{}, non_neg_integer()}` — the
+  snapshot carries the FULL transcript of the state the session owns, so this is
+  a heavy read like `get_agent_history/1` — or `{:error, {:not_found, reason}}`
+  for an unknown/gone/unresponsive session, `{:error, {:bad_state, phase}}` when
+  the session is not in a snapshot-able phase, or
+  `{:error, {:not_found, :invalid_target}}` for a non-id/non-pid target.
+  """
+  @spec watch_snapshot(term()) :: watch_reply()
+  def watch_snapshot(agent_id) do
+    EvoGit.Agent.Stream.snapshot(agent_id)
+  end
+
+  # ── Interactive agent sessions ─────────────────────────────────────
+  #
+  # The interactive-session verbs. They are LOCAL-node scheduler calls: an
+  # interactive session lives in the scheduler's own VM and its agent state (and
+  # the transcript) is in-memory only, so there is nothing to reach across
+  # nodes — a caller on another node must go through the RPC wrapper for that
+  # node (`EvoGit.RemoteNode`) rather than these functions.
+
+  @doc """
+  Starts an INTERACTIVE agent session on this node.
+
+  Delegates to `EvoGit.AgentScheduler.start_session/1`, which registers the
+  agent with NO caller to reply to (`from = nil`) and starts its
+  `EvoGit.Agent.Session` in `:interactive` mode: a tool-free reply YIELDS to
+  `:awaiting_input` (a non-terminal task status) instead of finishing, and the
+  session lives until it is explicitly closed, cancelled or force-killed (there
+  is no idle timeout).
+
+  Returns `{:ok, agent_id}` — the handle for `send_session_message/3`,
+  `await_close/2` and `list_awaiting_input/0` — or
+  `{:error, {:start_session_failed, reason}}` with the scheduler's own reason
+  (e.g. `:llm_not_configured`, `:cancelled`, or a registration/model-selection
+  error) passed through. A paused scheduler is NOT a failure: the session is
+  registered and QUEUED, and the call still returns `{:ok, agent_id}`.
+  """
+  @spec start_session(EvoGit.AgentSpec.t() | keyword()) ::
+          {:ok, pos_integer()} | {:error, {:start_session_failed, term()}}
+  def start_session(spec_or_opts) do
+    case EvoGit.AgentScheduler.start_session(spec_or_opts) do
+      {:ok, agent_id} -> {:ok, agent_id}
+      {:error, reason} -> {:error, {:start_session_failed, reason}}
+    end
+  end
+
+  @doc """
+  Sends a user message to an interactive session on this node.
+
+  `target` is an agent id (or a session pid). Both `:queue` (default) and
+  `:interrupt` are accepted policy values, and in the shipped implementation
+  they deliver IDENTICALLY: the message is appended and applied at the next turn
+  boundary (queue semantics). `:interrupt` is reserved for the future
+  chunk-level halt of the in-flight generation (`docs/agent-runtime-refactor.md`
+  §5, P4), so it cannot shorten the turn already running. A message sent while
+  the agent is mid-exchange is therefore never dropped, and one sent while the
+  session is parked at `:awaiting_input` starts a new exchange immediately on
+  the same session pid, worktree and context.
+
+  Unlike `EvoGit.AgentScheduler.send_session_message/3`, this wrapper does not
+  pre-validate the arguments, so a bad policy/target/message surfaces as the
+  session's own `:not_found` rather than `{:bad_policy, _}`/`{:bad_target, _}`/
+  `{:bad_message, _}`.
+
+  Returns `:ok`, or `{:error, {:session, reason}}` with the session's own reason
+  passed through (`{:bad_state, phase}` when the phase refuses input — e.g.
+  `:finalizing` or `:cancelling`; `:finished` for a message arriving after the
+  session ended; `:not_found` for an unknown/stopped session or an unsupported
+  policy value).
+  """
+  @spec send_session_message(
+          pos_integer() | pid(),
+          String.t() | EvoGit.Attachments.message(),
+          :queue | :interrupt
+        ) :: :ok | {:error, {:session, term()}}
+  def send_session_message(target, message, policy \\ :queue) do
+    case EvoGit.Agent.Session.start_input(target, message, policy) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:session, reason}}
+    end
+  end
+
+  @doc """
+  Closes an interactive session on this node.
+
+  Delegates to `EvoGit.Agent.Session.close/2`. The second argument is the close
+  MODE (it defaults to `:normal` here); any atom is accepted so a later mode needs
+  no API change, but P3 has exactly ONE semantic (graceful close) and no mode
+  value selects different behavior.
+  Closing is the ONLY non-cancellation way out of `:awaiting_input`: the session
+  runs its completion bookkeeping once and stops, releasing its worktree.
+  Closing an already-stopped session is not an error in itself — the session
+  answers the documented fallback.
+
+  Returns `:ok`, or `{:error, {:session, reason}}` with the session's reason
+  passed through (`:not_found` for an unknown/stopped session, `:finished` when
+  it is already finalizing/done, `{:bad_state, phase}` for a running/cancelling/
+  starting session — cancel it first).
+  """
+  @spec close_session(pos_integer() | pid(), term()) :: :ok | {:error, {:session, term()}}
+  def close_session(target, reason \\ :normal) do
+    case EvoGit.Agent.Session.close(target, reason) do
+      :ok -> :ok
+      {:error, err} -> {:error, {:session, err}}
+    end
+  end
+
+  @doc """
+  Blocks until the interactive session for `agent_id` reaches its terminal
+  outcome, returning that outcome VERBATIM.
+
+  Delegates to `EvoGit.AgentScheduler.await_close/2`: the scheduler answers when
+  the session delivers its result (`{:ok, %EvoGit.Agent.Result{}}` or the
+  session's own `{:error, reason}` term), when the session crashes
+  (`{:error, {:session_crashed, reason}}` — an interactive session is never
+  retried), when it is cancelled (`{:error, :cancelled}`), or when it ended
+  without delivering a result (`{:error, :not_found}`).
+
+  `timeout` (milliseconds, default 30 000) bounds the WAIT only: an expired
+  budget answers `{:error, :timeout}` and the session keeps running.
+  """
+  @spec await_close(pos_integer(), timeout()) ::
+          {:ok, EvoGit.Agent.Result.t()} | {:error, term()}
+  def await_close(agent_id, timeout \\ 30_000) do
+    EvoGit.AgentScheduler.await_close(agent_id, timeout)
+  end
+
+  @doc """
+  Lists the agents on this node currently parked at `:awaiting_input`.
+
+  Delegates to `EvoGit.AgentScheduler.list_awaiting_input/0` and returns its
+  list verbatim (the scheduler owns the entry shape). Degrades to `[]` when the
+  `:evogit_sched_meta` table is absent — a scheduler that has not started yet
+  has no awaiting sessions.
+  """
+  @spec list_awaiting_input() :: list()
+  def list_awaiting_input do
+    case :ets.whereis(:evogit_sched_meta) do
+      :undefined -> []
+      _ -> EvoGit.AgentScheduler.list_awaiting_input()
+    end
+  end
+
   @doc """
   Approves or denies a pending command-approval request on this node via RPC.
-
   Delegates to `EvoGit.CommandApproval.respond/2` (the human-in-the-loop gate
   for the self-reflective agent's command shell). `decision` is `:approve` or
   `:deny`. Returns `:ok` when a pending request was resolved, `{:error,
@@ -1256,18 +1483,19 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     end
   end
 
-  # Looks up a single agent state by id.
-  # Returns `%AgentState{}` or `nil` (table missing or key not found).
-  defp lookup_agent_state(agent_id) do
-    case :ets.whereis(:evogit_agent_state) do
+  # The roster's agent states, read with ONE value-returning `:ets.select/2`
+  # (never a `:tab2list/1` of the agent table) as `%{id => %AgentState{}}`.
+  defp agent_states_by_id do
+    case :ets.whereis(:evogit_agent_summary) do
       :undefined ->
-        nil
+        %{}
 
       _ ->
-        case :ets.lookup(:evogit_agent_state, agent_id) do
-          [{^agent_id, state}] -> state
-          [] -> nil
-        end
+        :evogit_agent_summary
+        # The match-spec body is a LIST of ONE action term; the pair must be
+        # built as a single tuple term or `:ets.select/2` returns a flat list.
+        |> :ets.select([{{:"$1", :"$2"}, [], [{{:"$1", :"$2"}}]}])
+        |> Map.new()
     end
   end
 
@@ -1316,11 +1544,6 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     usage = state.usage || Usage.zero()
     objective = state.objective || meta.spec.objective
 
-    # Prefer the live phylo_node (worktree-bound, advancing commit); fall back
-    # to the spec's phylo_node. For repo-less agents BOTH are nil (no worktree,
-    # no commits) — emit nil commits rather than crashing.
-    phylo = state.phylo_node || meta.spec.phylo_node
-
     # Normalized once so the dashboard tick (compression_threshold /
     # context_window) and the threshold itself can never disagree.
     context_window = normalize_context_window(state.llm_context_window)
@@ -1335,11 +1558,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       usage: usage,
       total_tokens: state.total_tokens,
       compression_count: state.compression_count,
-      message_count:
-        case state.context do
-          %ReqLLM.Context{messages: messages} -> length(messages)
-          _ -> 0
-        end,
+      message_count: state.message_count,
       objective: objective,
       result: nil,
       agent_module: meta.spec.agent_module,
@@ -1351,8 +1570,8 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       repo_root: state.repo_root,
       context_path: safe_context_path(state.context_node),
       worktree: meta.worktree,
-      current_commit: safe_phylo_commit(phylo, :current_commit),
-      base_commit: safe_phylo_commit(phylo, :base_commit),
+      current_commit: state.current_commit,
+      base_commit: safe_phylo_commit(meta.spec.phylo_node, :base_commit),
       task_id: meta.task_id,
       task_number: meta.task_number,
       retries: meta.retries,

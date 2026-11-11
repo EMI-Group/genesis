@@ -2,6 +2,7 @@ defmodule EvoDashWeb.HomeLive.MessagesTest do
   use ExUnit.Case, async: true
 
   alias EvoDashWeb.HomeLive.Messages
+  alias EvoDashWeb.HomeLive.Transcript
 
   # Unit tests for the total message-conversion helpers behind the assistant
   # bubble. The history payload's shape is owned by the :evo_git core — every
@@ -138,6 +139,54 @@ defmodule EvoDashWeb.HomeLive.MessagesTest do
       assert [%{type: "user"}] = Messages.to_entries([nil, 42, %{role: :user, content: "x"}])
       assert Messages.to_entries(nil) == []
       assert Messages.to_entries(%{}) == []
+    end
+  end
+
+  describe "transcript/1" do
+    test "builds the transcript alongside the entries from the same payload" do
+      messages = [
+        %{role: :system, content: [%{text: "system prompt"}]},
+        %{role: :user, content: "Fix the bug"},
+        %{role: :assistant, content: [%{text: "Looking"}]},
+        %{role: :assistant, content: [%{text: "into it"}]}
+      ]
+
+      assert %{transcript: transcript, entries: entries} = Messages.transcript(messages)
+
+      # One user entry per NON-EMPTY data.content of ANY entry (the history's
+      # content entries are the conversation as the user saw it), then ONE
+      # assistant entry carrying the joined assistant text.
+      assert Enum.map(transcript, &{&1.role, &1.text}) == [
+               {:user, "system prompt"},
+               {:user, "Fix the bug"},
+               {:user, "Looking"},
+               {:user, "into it"},
+               {:assistant, "Looking\ninto it"}
+             ]
+
+      refute Enum.any?(transcript, & &1.streaming)
+      assert length(entries) == 4
+    end
+
+    test "omits the assistant entry when there is no assistant text" do
+      assert %{transcript: [%{role: :user, text: "only me"}]} =
+               Messages.transcript([%{role: :user, content: "only me"}])
+
+      assert %{transcript: []} = Messages.transcript([%{role: :assistant, content: []}])
+    end
+
+    test "an empty/non-list payload yields empty halves" do
+      for messages <- [nil, [], %{}, "x", 42] do
+        assert Messages.transcript(messages) == %{transcript: [], entries: []},
+               "expected empty halves for #{inspect(messages)}"
+      end
+    end
+
+    test "the built transcript feeds the shared entry helpers" do
+      %{transcript: transcript} = Messages.transcript([%{role: :user, content: "hi"}])
+
+      assert [%{role: :user}] = transcript
+      assert Transcript.finalize_streaming(transcript) == transcript
     end
   end
 end

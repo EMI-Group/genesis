@@ -10,7 +10,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
     `:evogit_sched_meta` id `1` — an id the already-`async: true` sibling
     `agent_scheduler/subagents_test.exs` deletes in its own setup.
   - the `describe "graceful cancel_task / force_kill_task"` tests seed the
-    app-global `:evogit_sched_meta` / `:evogit_agent_state` /
+    app-global `:evogit_sched_meta` / `:evogit_agent_summary` /
     `:evogit_cancelling_tasks` tables and drive the GLOBAL
     `EvoGit.AgentScheduler` (`begin_graceful_cancel/1`,
     `force_kill_task_agents/1`, the `:evogit_cancelling_tasks` marker) through
@@ -802,7 +802,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
              |> Enum.map(& &1.id) == [a1]
     end
 
-    test "list_tasks_changed_since/1 returns only newer rows with the 16-key projection",
+    test "list_tasks_changed_since/1 returns only newer rows with the 17-key projection",
          %{sqlite_path: sqlite_path} do
       unique = System.unique_integer([:positive])
       t1 = "changed_a_#{unique}"
@@ -834,7 +834,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # Future since → nothing.
       assert TaskRegistry.list_tasks_changed_since("2099-01-01T00:00:00.000Z") == []
 
-      # 16-key projection; updated_at passed through as the raw ISO string.
+      # 17-key projection; updated_at passed through as the raw ISO string.
       [row] = TaskRegistry.list_tasks_changed_since("2024-01-02T00:00:00.000Z")
 
       expected_keys =
@@ -854,7 +854,8 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
           :commit_sha,
           :lease_expires_at,
           :updated_at,
-          :error
+          :error,
+          :session_mode
         ]
         |> Enum.sort()
 
@@ -1121,11 +1122,12 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # Register one live agent for the task (scheduler ETS) so we can verify
       # the cancel notification + cancel_requested flag injection.
       :ets.insert(:evogit_sched_meta, {agent_id, cancel_test_sched_meta(agent_id, task_id)})
-      :ets.insert(:evogit_agent_state, {agent_id, cancel_test_agent_state()})
+      :ets.insert(:evogit_agent_summary, {agent_id, cancel_test_agent_state()})
 
       on_exit(fn ->
         :ets.delete(:evogit_sched_meta, agent_id)
-        :ets.delete(:evogit_agent_state, agent_id)
+        :ets.delete(:evogit_agent_summary, agent_id)
+        EvoGit.AgentScheduler.ControlPlane.delete(agent_id)
         :ets.delete(:evogit_cancelling_tasks, task_id)
       end)
 
@@ -1136,10 +1138,15 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert fetched.status == :cancelling
       assert fetched.finished_at == nil
 
-      # Agent received the cancel message + cancel_requested flag.
-      [{^agent_id, st}] = :ets.lookup(:evogit_agent_state, agent_id)
-      assert st.cancel_requested == true
-      assert Enum.any?(st.pending_user_messages, &String.contains?(&1, "being cancelled"))
+      # Agent received the cancel message + cancel_requested flag. Both live in
+      # the CONTROL PLANE, which now owns a live agent's inbox and cancel flag
+      # (the summary row carries neither field).
+      assert EvoGit.AgentScheduler.Store.cancel_requested?(agent_id) == true
+
+      assert Enum.any?(
+               EvoGit.AgentScheduler.ControlPlane.pending_messages(agent_id),
+               &String.contains?(&1, "being cancelled")
+             )
 
       # Task registered in the graceful-cancel marker.
       assert :ets.member(:evogit_cancelling_tasks, task_id)
@@ -1213,17 +1220,18 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         })
 
       :ets.insert(:evogit_sched_meta, {agent_id, cancel_test_sched_meta(agent_id, task_id)})
+      :ets.insert(:evogit_agent_summary, {agent_id, cancel_test_agent_state()})
       # Simulate the ORIGINAL graceful cancel (performed while the task was
       # :running): the agent already holds the cancel_requested flag. The
-      # idempotent path must preserve it without re-sending any messages.
-      :ets.insert(
-        :evogit_agent_state,
-        {agent_id, %{cancel_test_agent_state() | cancel_requested: true}}
-      )
+      # idempotent path must preserve it without re-sending any messages. The
+      # flag lives in the CONTROL PLANE (the state row only carries its default),
+      # so it is seeded through the public Store control API.
+      assert :ok = EvoGit.AgentScheduler.Store.set_cancel_requested(agent_id)
 
       on_exit(fn ->
         :ets.delete(:evogit_sched_meta, agent_id)
-        :ets.delete(:evogit_agent_state, agent_id)
+        :ets.delete(:evogit_agent_summary, agent_id)
+        EvoGit.AgentScheduler.ControlPlane.delete(agent_id)
         :ets.delete(:evogit_cancelling_tasks, task_id)
       end)
 
@@ -1233,11 +1241,12 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert :ok = TaskRegistry.cancel_task(task_id)
       assert :ok = TaskRegistry.cancel_task(task_id)
 
-      [{^agent_id, st}] = :ets.lookup(:evogit_agent_state, agent_id)
-      assert st.cancel_requested == true
+      assert EvoGit.AgentScheduler.Store.cancel_requested?(agent_id) == true
 
-      assert length(st.pending_user_messages) == 0,
-             "idempotent cancel must NOT append the cancel message again, got #{inspect(st.pending_user_messages)}"
+      pending = EvoGit.AgentScheduler.ControlPlane.pending_messages(agent_id)
+
+      assert pending == [],
+             "idempotent cancel must NOT append the cancel message again, got #{inspect(pending)}"
 
       fetched = TaskRegistry.get_task(task_id)
       assert fetched.status == :cancelling

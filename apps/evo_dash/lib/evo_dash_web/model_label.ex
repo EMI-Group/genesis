@@ -57,7 +57,7 @@ defmodule EvoDashWeb.ModelLabel do
   def label(_source), do: nil
 
   @doc """
-  Returns the model label for a TASK map — the 16-key summary row or a
+  Returns the model label for a TASK map — the 17-key summary row or a
   `%EvoGit.TaskInfo{}` — or `nil` when the task carries no model information.
 
   A canonical task selection is persisted in `opts` (`:model_spec`; the

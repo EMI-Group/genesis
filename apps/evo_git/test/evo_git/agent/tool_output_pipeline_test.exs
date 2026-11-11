@@ -14,7 +14,7 @@ defmodule EvoGit.Agent.ToolOutputPipelineTest do
   BINARY-ONLY and never see a `%ToolOutput{}`.
 
   `async: true` — the batch-assembly describe below registers ONE row in the
-  app-global `:evogit_agent_state` ETS table under a per-test unique agent id
+  app-global `:evogit_agent_summary` ETS table under a per-test unique agent id
   (deleted on exit, nothing asserted about the table as a whole) and takes tool
   slots from the global `EvoGit.AgentScheduler` (a serialized GenServer, not a
   global mutation). Everything else is process-local or per-test temp dirs.
@@ -22,7 +22,7 @@ defmodule EvoGit.Agent.ToolOutputPipelineTest do
 
   use ExUnit.Case, async: true
 
-  alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.Agent.ToolOutput
   alias EvoGit.Adapters.Git
@@ -255,11 +255,7 @@ defmodule EvoGit.Agent.ToolOutputPipelineTest do
 
       agent_state = %EvoGit.AgentScheduler.AgentState{
         context_node: %EvoGit.Core.ContextNode{path: "./", repo: repo},
-        phylo_node: %EvoGit.Core.PhyloGraphNode{
-          repo: repo,
-          base_commit: head,
-          current_commit: head
-        },
+        current_commit: head,
         llm_model: "test:model",
         max_retries: 1,
         max_depth: 1
@@ -312,7 +308,7 @@ defmodule EvoGit.Agent.ToolOutputPipelineTest do
       assert is_binary(raw)
       assert ToolDispatch.sanitize_tool_result(raw, "write_file", args) == raw
 
-      state = %LoopState{
+      state = %State{
         agent_id: Process.get(:evogit_agent_id),
         agent_module: EvoGit.Agents.Executor,
         depth: 0,

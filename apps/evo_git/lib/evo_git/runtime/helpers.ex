@@ -12,7 +12,16 @@ defmodule EvoGit.Runtime.Helpers do
 
   The 3-arity variant is a delegating clause: it reports the primary repo only
   (equivalent to `merge_and_report/4` with an empty `foreign_repos` list).
+
+  A `nil` repo path means the phase ran WITHOUT a repository (the interactive
+  `EvoGit.Runtime.Assistant` session): there is no HEAD to compare and no branch
+  to create, so nothing is merged and the report keeps the repo-less shape
+  `EvoGit.Runtime.SelfReflective.run/2` returns.
   """
+  def merge_and_report(nil, agent_output, phase) when is_binary(phase) do
+    merge_and_report(nil, agent_output, phase, [])
+  end
+
   def merge_and_report(repo_path, %Result{} = agent_output, phase) when is_binary(phase) do
     merge_and_report(repo_path, agent_output, phase, [])
   end
@@ -34,7 +43,21 @@ defmodule EvoGit.Runtime.Helpers do
   failure is tolerated (logged, `branch_name: nil`, entry kept) — same tolerance
   as the primary path. The returned report map carries a `repos` key (see
   `report_map/5`).
+
+  A `nil` repo path is the repo-less finalization (see `merge_and_report/3`):
+  no HEAD resolution, no branch creation, no git call of any kind.
   """
+  def merge_and_report(nil, agent_output, _phase, foreign_repos)
+      when is_list(foreign_repos) and is_map(agent_output) do
+    {:ok,
+     %{
+       result: Map.get(agent_output, :result),
+       commit_sha: nil,
+       branch_name: nil,
+       tag: nil
+     }}
+  end
+
   def merge_and_report(repo_path, agent_output, phase, foreign_repos)
       when is_binary(phase) and is_list(foreign_repos) and is_map(agent_output) do
     final_sha = agent_output.commit_sha
