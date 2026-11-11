@@ -1026,8 +1026,6 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, "/help")
 
-      seq = assigns(view)[:chat_fetch_seq]
-
       seed_chat_state(view, %{
         chat_status: :running,
         chat_task_id: "t1",
@@ -1038,16 +1036,30 @@ defmodule EvoDashWeb.HomeLiveTest do
         ]
       })
 
+      # Read the CURRENT seq AFTER the seeded state SETTLES (a synchronous
+      # `assigns/1` round-trip drains every message already delivered to the
+      # view). Reading it before the seed made this test order-dependent: the
+      # connected mount reconciles a RESTORED running chat (`reconcile_chat/1`
+      # → `async_fetch_history/2`) and a live session seeded by
+      # `seed_scripted_session!/3` can also publish an out-of-band
+      # `:agent_updated` with a `:message_count`, so an extra refetch landing
+      # between the read and the assertion bumped the counter by two
+      # (`seq + 2`) in some full-suite orders while the REAL contract under
+      # test — the keyword-list changed_fields triggers a refetch — held.
+      seq = assigns(view)[:chat_fetch_seq]
+
       # Real keyword-list changed_fields: the guard (is_list +
       # Keyword.has_key?) matches → a REAL refetch is spawned (seq bumped).
       send(view.pid, {:agent_updated, agent_id, [message_count: 2], node()})
-      render(view)
-      assert assigns(view)[:chat_fetch_seq] == seq + 1
+
+      # The refetch is ASYNCHRONOUS, so await its RESULT (the exact production
+      # data path, no injected result) instead of assuming one spawn, and pin
+      # that the injected event did advance the counter.
+      wait_until(fn -> assigns(view)[:agent_message_count] == 4 end)
+      assert assigns(view)[:chat_fetch_seq] >= seq + 1
 
       # The real refetch lands against the LIVE session's transcript → the
-      # streamed text appears (the exact production data path, no injected
-      # result).
-      wait_until(fn -> assigns(view)[:agent_message_count] == 4 end)
+      # streamed text appears.
       html = render(view)
       assert html =~ "kwlist response"
     end
@@ -3703,6 +3715,581 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute disabled?(html, ~s(textarea[name="message"]))
       assert disabled?(html, ~s(#chat-form button[type="submit"]))
       assert html =~ "Show my running tasks"
+    end
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Interactive session send path (ONE long-lived session per conversation)
+  #
+  # `/help` no longer starts a one-shot `:reflect` task per message: the first
+  # send starts ONE interactive Assistant session (`:home_session_start_runner`)
+  # and every later send queues a message on it (`:home_session_send_runner`).
+  # One-shot `:reflect` survives ONLY as the documented fallback when sessions
+  # are unavailable. The seams below are call-time (resolved inside the spawned
+  # SafeCall function), so installing them AFTER `live/3` is honoured.
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # Installs a call-time app-env seam and restores the exact previous value
+  # (or deletes the key, when it was unset) in `on_exit` — a seam must never
+  # leak into the rest of this sync suite.
+  defp install_session_seam(key, fun) do
+    original = Application.fetch_env(:evo_dash, key)
+
+    Application.put_env(:evo_dash, key, fun)
+
+    on_exit(fn ->
+      case original do
+        {:ok, value} -> Application.put_env(:evo_dash, key, value)
+        :error -> Application.delete_env(:evo_dash, key)
+      end
+    end)
+
+    :ok
+  end
+
+  # One user message in the shape the real attach loader returns (what
+  # `HomeLive.apply_attach/2` feeds to `Messages.to_entries/1`).
+  defp attach_history(text) do
+    [
+      %ReqLLM.Message{
+        role: :user,
+        content: [%ReqLLM.Message.ContentPart{type: :text, text: text}]
+      }
+    ]
+  end
+
+  # The attach state of a session that is MID-RUN: a `:running` summary keeps
+  # `chat_status: :running` (a missing summary would settle the page at
+  # `:ended`), and the history is the transcript the reattach renders.
+  defp running_attach(session_id, history) do
+    fn _node, _agent_id ->
+      %{
+        summary: %{id: session_id, status: :running, message_count: 4, task_id: nil},
+        awaiting?: false,
+        history: history
+      }
+    end
+  end
+
+  defp write_tmp_attachment!(name, content) do
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_home_live_attach_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf(dir) end)
+    path = Path.join(dir, name)
+    File.write!(path, content)
+    path
+  end
+
+  # Seeds the "this conversation is a live interactive session" slice of the
+  # chat state (the seeded assigns are authoritative for `assigns/1`; rendered
+  # assertions need a real event afterwards — see seed_chat_state/2).
+  defp seed_session_state(view, session_id, overrides \\ %{}) do
+    seed_chat_state(
+      view,
+      Map.merge(
+        %{
+          session_id: session_id,
+          current_session_id: session_id,
+          chat_id: session_id,
+          session_mode: :interactive,
+          chat_agent_id: session_id,
+          chat_status: :idle,
+          chat_task_id: nil,
+          agent_message_count: 0,
+          transcript: [],
+          queued_echoes: []
+        },
+        overrides
+      )
+    )
+  end
+
+  describe "interactive session send path" do
+    test "no session starts ONE repo-less interactive Assistant session and adopts it", %{
+      conn: conn
+    } do
+      text = "hello session"
+      test_pid = self()
+      local_node = node()
+
+      install_session_seam(:home_session_start_runner, fn node, opts ->
+        send(test_pid, {:session_start_called, node, opts})
+        {:ok, 4242}
+      end)
+
+      install_session_seam(
+        :home_session_attach_runner,
+        running_attach(4242, attach_history(text))
+      )
+
+      {:ok, view, _html} = live(conn, "/help")
+      html = render_submit(view, "send_message", %{"message" => text})
+
+      assert_receive {:session_start_called, start_node, opts}
+      assert start_node == node()
+      # The Assistant session spec: repo-less, interactive, and the RAW typed
+      # text as the objective (the one-shot transcript preamble is NOT built
+      # for a session — it owns the whole conversation).
+      assert opts[:agent_module] == EvoGit.Agents.SelfReflective
+      assert opts[:repo_less] == true
+      assert opts[:session_mode] == :interactive
+      assert opts[:objective] == text
+      # Auto selection: no canonical model spec, no legacy override and no
+      # attachment list (nothing was staged).
+      refute Keyword.has_key?(opts, :model_spec)
+      refute Keyword.has_key?(opts, :model_id)
+      refute Keyword.has_key?(opts, :attachments)
+
+      # Adoption: the returned id becomes the chat/session identity AND the URL.
+      assert_patch(view, "/help?session=4242")
+      assigns = assigns(view)
+      assert assigns.session_id == 4242
+      assert assigns.current_session_id == 4242
+      assert assigns.chat_id == 4242
+      assert assigns.chat_agent_id == 4242
+      assert assigns.session_mode == :interactive
+      assert assigns.chat_status == :running
+      assert assigns.chat_draft == ""
+      assert html =~ text
+      assert Enum.any?(assigns.transcript, &(&1.role == :user and &1.text == text))
+
+      # The reattach loader lands too (bounded poll, no sleep) and keeps the
+      # same session, transcript and running status.
+      wait_until(fn -> assigns(view)[:agent_message_count] == 4 end)
+      settled = assigns(view)
+      assert settled.session_id == 4242
+      assert settled.chat_status == :running
+      assert Enum.any?(settled.transcript, &(&1.role == :user and &1.text == text))
+
+      # A SECOND send rides the adopted session: no second start, one queued
+      # message on the SAME agent id.
+      install_session_seam(:home_session_send_runner, fn node, agent_id, message, policy ->
+        send(test_pid, {:session_send_called, node, agent_id, message, policy})
+        :ok
+      end)
+
+      html2 = render_submit(view, "send_message", %{"message" => "second message"})
+      assert_receive {:session_send_called, ^local_node, 4242, "second message", :queue}
+      refute_receive {:session_start_called, _node, _opts}, 0
+      assert html2 =~ "second message"
+      # Mid-run sends are QUEUED, so the echo line renders (the message is not
+      # lost, just deferred to the next turn boundary).
+      assert html2 =~ "Queued — sent at the next turn boundary"
+    end
+
+    test "an existing session queues the message without starting any task", %{conn: conn} do
+      test_pid = self()
+      local_node = node()
+
+      install_session_seam(:home_session_start_runner, fn node, opts ->
+        send(test_pid, {:session_start_called, node, opts})
+        {:ok, 5252}
+      end)
+
+      install_session_seam(:home_session_send_runner, fn node, agent_id, message, policy ->
+        send(test_pid, {:session_send_called, node, agent_id, message, policy})
+        :ok
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+
+      seed_session_state(view, 5252, %{
+        transcript: [%{id: "1", role: :user, text: "first", streaming: false}]
+      })
+
+      html = render_submit(view, "send_message", %{"message" => "another one"})
+
+      # The bare BINARY message (no attachments staged) and the queue policy.
+      assert_receive {:session_send_called, ^local_node, 5252, "another one", :queue}
+      # Neither a new session nor a one-shot reflect task is created.
+      refute_receive {:session_start_called, _node, _opts}, 0
+      assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
+
+      assigns = assigns(view)
+      assert assigns.chat_status == :running
+      assert assigns.chat_draft == ""
+      assert Enum.any?(assigns.transcript, &(&1.role == :user and &1.text == "another one"))
+      assert html =~ "another one"
+    end
+
+    test "an unavailable interactive session falls back to one-shot reflect mode", %{conn: conn} do
+      text = "fallback question"
+
+      install_session_seam(:home_session_start_runner, fn _node, _opts ->
+        {:error, :llm_not_configured}
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+
+      {html, log} =
+        send_and_await_terminal(fn ->
+          render_submit(view, "send_message", %{"message" => text})
+        end)
+
+      # The real (fail-fast) reflect wrapper's asynchronous error log, captured
+      # inside the same window (see send_and_await_terminal/1).
+      assert log =~ "SelfReflective failed"
+
+      assigns = assigns(view)
+      assert assigns.session_mode == :one_shot
+      assert assigns.session_id == nil
+
+      assert assigns.flash["info"] ==
+               "Interactive sessions are unavailable here. This conversation runs in one-shot mode."
+
+      assert html =~ text
+
+      reflect =
+        Enum.filter(EvoGit.Store.safe_select_all_tasks(EvoGit.Store), &(&1.type == :reflect))
+
+      assert [task] = reflect
+      assert opt(task, :mode) == "reflect"
+      assert opt(task, :objective) == text
+      refute has_opt?(task, :path)
+      cleanup_task_on_exit(task.id)
+    end
+
+    test "a wrapped interactive_root_only refusal also falls back to one-shot mode", %{
+      conn: conn
+    } do
+      text = "root only here"
+
+      install_session_seam(:home_session_start_runner, fn _node, _opts ->
+        {:error, {:start_session_failed, {:interactive_root_only, "subagent"}}}
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+
+      {_html, log} =
+        send_and_await_terminal(fn ->
+          render_submit(view, "send_message", %{"message" => text})
+        end)
+
+      assert log =~ "SelfReflective failed"
+
+      assigns = assigns(view)
+      assert assigns.session_mode == :one_shot
+      assert assigns.session_id == nil
+
+      assert assigns.flash["info"] ==
+               "Interactive sessions are unavailable here. This conversation runs in one-shot mode."
+
+      reflect =
+        Enum.filter(EvoGit.Store.safe_select_all_tasks(EvoGit.Store), &(&1.type == :reflect))
+
+      assert [task] = reflect
+      assert opt(task, :mode) == "reflect"
+      assert opt(task, :objective) == text
+      cleanup_task_on_exit(task.id)
+    end
+
+    test "a finished session ends the chat, keeps the transcript and disables the composer", %{
+      conn: conn
+    } do
+      assert_session_ended(conn, {:session, :finished})
+    end
+
+    test "a not_found session ends the chat the same way", %{conn: conn} do
+      assert_session_ended(conn, {:session, :not_found})
+    end
+
+    test "an unrecoverable send failure does NOT end the chat", %{conn: conn} do
+      test_pid = self()
+
+      install_session_seam(:home_session_send_runner, fn _node, _agent_id, message, _policy ->
+        send(test_pid, {:session_send_called, message})
+        {:error, :timeout}
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+      seed_session_state(view, 6161)
+
+      render_submit(view, "send_message", %{"message" => "hello"})
+      assert_receive {:session_send_called, "hello"}
+
+      assigns = assigns(view)
+      # NOT an ended conversation: the session may still be alive, so the send
+      # is retryable and the status stays running (no `:ended` dead end).
+      assert assigns.chat_status == :running
+      assert assigns.flash["error"] =~ "Failed to send the message"
+    end
+  end
+
+  # Drives the documented "session is GONE" contract on a seeded session: a
+  # first successful send renders an exchange, then a send failing with
+  # `reason` must end the chat WITHOUT dropping what is already on screen.
+  defp assert_session_ended(conn, reason) do
+    test_pid = self()
+    local_node = node()
+
+    install_session_seam(:home_session_send_runner, fn _node, _agent_id, message, _policy ->
+      send(test_pid, {:session_send_called, message})
+
+      if message == "old question" do
+        :ok
+      else
+        {:error, reason}
+      end
+    end)
+
+    {:ok, view, _html} = live(conn, "/help")
+    seed_session_state(view, 6363)
+
+    html = render_submit(view, "send_message", %{"message" => "old question"})
+    assert_receive {:session_send_called, "old question"}
+    assert html =~ "old question"
+
+    html2 = render_submit(view, "send_message", %{"message" => "after end"})
+    assert_receive {:session_send_called, "after end"}
+
+    assigns = assigns(view)
+    assert assigns.chat_status == :ended
+    # The transcript is KEPT — the earlier exchange still renders and is still
+    # in the state (the ended session is read-only, not cleared).
+    assert Enum.any?(assigns.transcript, &(&1.role == :user and &1.text == "old question"))
+    assert html2 =~ "old question"
+
+    assert assigns.flash["error"] ==
+             "This conversation has ended. Start a new chat to continue."
+
+    # The composer is closed: no message can be typed into a dead session.
+    assert disabled?(html2, ~s(textarea[name="message"]))
+    assert html2 =~ "This conversation has ended. Start a new chat to continue."
+  end
+
+  describe "interactive session queue echo and interrupt" do
+    test "a mid-run send is queued, echoed, and the echo is dropped on message-count growth", %{
+      conn: conn
+    } do
+      test_pid = self()
+      local_node = node()
+
+      install_session_seam(:home_session_send_runner, fn node, agent_id, message, policy ->
+        send(test_pid, {:session_send_called, node, agent_id, message, policy})
+        :ok
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+
+      seed_session_state(view, 7001, %{
+        chat_status: :running,
+        agent_message_count: 2,
+        transcript: [%{id: "1", role: :user, text: "first", streaming: false}]
+      })
+
+      text = "queued message"
+      html = render_submit(view, "send_message", %{"message" => text})
+
+      assert_receive {:session_send_called, ^local_node, 7001, ^text, :queue}
+
+      # The user entry is appended immediately AND the queued echo is persisted
+      # (`%{id: binary, text:, at: integer}`) and rendered under the documented
+      # container/line.
+      assigns = assigns(view)
+      assert [echo] = assigns.queued_echoes
+      assert is_binary(echo.id)
+      assert echo.text == text
+      assert is_integer(echo.at)
+      assert Enum.any?(assigns.transcript, &(&1.role == :user and &1.text == text))
+      assert html =~ ~s(id="chat-queued-echoes")
+      assert html =~ ~s(id="chat-queued-echo-#{echo.id}")
+      assert html =~ "Queued — sent at the next turn boundary"
+
+      # RECONCILIATION (a): the session's message count grew, so the agent has
+      # consumed the queue — the echo is dropped (assigns/1 is a synchronous
+      # round-trip, so the handler has already run).
+      send(view.pid, {:agent_updated, 7001, [message_count: 3], node()})
+      assert assigns(view).queued_echoes == []
+    end
+
+    test "a successful Stop clears the queued echo", %{conn: conn} do
+      test_pid = self()
+      local_node = node()
+      echo = %{id: "echo-1", text: "queued message", at: System.system_time(:millisecond)}
+
+      install_session_seam(:home_session_close_runner, fn node, agent_id, reason ->
+        send(test_pid, {:session_close_called, node, agent_id, reason})
+        :ok
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+
+      seed_session_state(view, 7002, %{chat_status: :running, queued_echoes: [echo]})
+
+      render_click(view, "stop")
+
+      # The close runs synchronously through the seam (the page is interactive
+      # with a session and no task id, so Stop closes the session).
+      assert_receive {:session_close_called, ^local_node, 7002, :normal}
+      assert assigns(view).queued_echoes == []
+    end
+
+    test "New chat clears the queued echo", %{conn: conn} do
+      echo = %{id: "echo-2", text: "queued message", at: System.system_time(:millisecond)}
+
+      {:ok, view, _html} = live(conn, "/help")
+
+      # New chat is idle-only, so the session is parked at `:idle`.
+      seed_session_state(view, 7003, %{chat_status: :idle, queued_echoes: [echo]})
+
+      render_click(view, "new_chat")
+
+      assigns = assigns(view)
+      assert assigns.queued_echoes == []
+      assert assigns.session_id == nil
+      assert assigns.session_mode == nil
+    end
+
+    test "interrupt_turn sends the DRAFT with the :interrupt policy and echoes it", %{
+      conn: conn
+    } do
+      test_pid = self()
+      local_node = node()
+
+      install_session_seam(:home_session_send_runner, fn node, agent_id, message, policy ->
+        send(test_pid, {:session_send_called, node, agent_id, message, policy})
+        :ok
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+
+      seed_session_state(view, 7004, %{
+        chat_status: :running,
+        chat_draft: "do it now",
+        agent_message_count: 1
+      })
+
+      html = render_click(view, "interrupt_turn")
+
+      # The interrupt is NOT a queue: the running turn is pre-empted so the
+      # draft reaches the agent at the next boundary, phrased as `:interrupt`.
+      assert_receive {:session_send_called, ^local_node, 7004, "do it now", :interrupt}
+
+      assigns = assigns(view)
+      assert assigns.chat_draft == ""
+      assert [echo] = assigns.queued_echoes
+      assert echo.text == "do it now"
+      assert is_binary(echo.id)
+      assert is_integer(echo.at)
+      assert html =~ "Queued — sent at the next turn boundary"
+    end
+  end
+
+  describe "interactive session attachments" do
+    test "a staged TEXT attachment rides the send as appended message text", %{conn: conn} do
+      test_pid = self()
+      local_node = node()
+      path = write_tmp_attachment!("notes.md", "attached body text")
+
+      install_session_seam(:home_session_send_runner, fn node, agent_id, message, policy ->
+        send(test_pid, {:session_send_called, node, agent_id, message, policy})
+        :ok
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+
+      # The REAL staging path: the native picker is disabled in tests, so the
+      # pick click reports unavailable and reveals the manual-path fallback,
+      # which is then submitted with a real local text file.
+      render_click(view, "chat_attach", %{"kind" => "text"})
+      assert assigns(view).attach_unavailable == true
+
+      html = render_submit(view, "chat_attach_manual", %{"path" => path})
+      assert EvoDashWeb.HomeLive.Attachments.count(assigns(view).pending_attachments) == 1
+      # The chip renders the attached file's name.
+      assert html =~ "notes.md"
+
+      seed_session_state(view, 7070)
+
+      render_submit(view, "send_message", %{"message" => "here it is"})
+      assert_receive {:session_send_called, ^local_node, 7070, message, :queue}
+
+      # A TEXT attachment stays OUT of the binary list: it is appended to the
+      # outgoing body (so the message is still a bare binary).
+      assert is_binary(message)
+      assert message =~ "here it is"
+      assert message =~ "## Attached file: notes.md"
+      assert message =~ "attached body text"
+
+      # Success clears the staging state.
+      assert EvoDashWeb.HomeLive.Attachments.count(assigns(view).pending_attachments) == 0
+    end
+
+    test "a staged IMAGE rides the send as a message map with an attachment part", %{
+      conn: conn
+    } do
+      test_pid = self()
+      local_node = node()
+      bytes = <<137, 80, 78, 71, 13, 10, 26, 10>> <> "fake png payload"
+      path = write_tmp_attachment!("diagram.png", bytes)
+
+      install_session_seam(:home_session_send_runner, fn node, agent_id, message, policy ->
+        send(test_pid, {:session_send_called, node, agent_id, message, policy})
+        :ok
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+
+      # The picker result message is the page's real staging entry point for a
+      # binary pick (`handle_attach_result/3` → `stage_binary_attachment/3`).
+      send(
+        view.pid,
+        {:directory_picker_result, EvoDashWeb.HomeLive.Attachments.picker_id_image(), {:ok, path}}
+      )
+
+      assert assigns(view)
+             |> Map.get(:pending_attachments)
+             |> then(&(EvoDashWeb.HomeLive.Attachments.count(&1) == 1))
+
+      seed_session_state(view, 7071)
+
+      render_submit(view, "send_message", %{"message" => "look at this"})
+      assert_receive {:session_send_called, ^local_node, 7071, message, :queue}
+
+      # A binary attachment upgrades the message to the session's map shape.
+      assert %{text: "look at this", attachments: [attachment]} = message
+      assert attachment["type"] == "image"
+      assert attachment["name"] == "diagram.png"
+      assert attachment["media_type"] == "image/png"
+      assert Base.decode64!(attachment["data"]) == bytes
+
+      assert EvoDashWeb.HomeLive.Attachments.count(assigns(view).pending_attachments) == 0
+    end
+
+    test "the attachment caps refuse a 5th entry and an over-15-MiB file", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/help")
+      attachments = EvoDashWeb.HomeLive.Attachments
+
+      # Size cap: an image read enforces the 15 MiB per-file limit (a TEXT
+      # attachment has no size cap by design, so the pin needs a binary read).
+      too_big = write_tmp_attachment!("huge.png", :binary.copy(<<0>>, 15 * 1024 * 1024 + 1))
+
+      send(view.pid, {:directory_picker_result, attachments.picker_id_image(), {:ok, too_big}})
+
+      assert assigns(view).flash["error"] =~ "File is too large (max 15 MiB)"
+      assert attachments.count(assigns(view).pending_attachments) == 0
+
+      # Count cap: four staged files are accepted, the FIFTH is refused.
+      paths =
+        for index <- 1..5 do
+          write_tmp_attachment!("note-#{index}.md", "body #{index}")
+        end
+
+      for path <- Enum.take(paths, 4) do
+        render_submit(view, "chat_attach_manual", %{"path" => path})
+      end
+
+      assert attachments.count(assigns(view).pending_attachments) == 4
+
+      render_submit(view, "chat_attach_manual", %{"path" => Enum.at(paths, 4)})
+
+      assert assigns(view).flash["error"] == "Maximum of 4 attachments per message"
+      assert attachments.count(assigns(view).pending_attachments) == 4
     end
   end
 end
