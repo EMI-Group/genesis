@@ -22,6 +22,15 @@ defmodule EvoDashWeb.ServerStatusController do
   repo paths. When the task read fails (raises, exits/times out, or returns a
   non-list) the value degrades to `-1`, which the CLI reads as "unknown" and
   handles with a warning rather than treating the server as idle.
+
+  The BUSY set is exactly those four statuses, and `:awaiting_input` is
+  deliberately EXCLUDED from it. `:awaiting_input` marks an idle interactive
+  session waiting for the user, which holds no worker, no LLM slot, no tool slot
+  and no timer, so winding such a session down during an upgrade is safe and
+  expected rather than a loss of work. An idle session is therefore not busy,
+  and it is never reported as an error or an unknown either: it simply does not
+  contribute to `active_tasks`. `:finalizing` stays included because a task in
+  that phase still owns its worktree and its merge-back work.
   """
 
   use EvoDashWeb, :controller
@@ -30,6 +39,12 @@ defmodule EvoDashWeb.ServerStatusController do
 
   # The live-state ids are counted. `:finalizing` is included on purpose: a task
   # in that phase still owns its worktree and its merge-back work.
+  #
+  # `:awaiting_input` is deliberately EXCLUDED: it marks an idle interactive
+  # session waiting for the user, which holds no worker, no LLM slot, no tool
+  # slot and no timer, so winding it down during an upgrade is safe and
+  # expected. An idle session is not busy, and it is never an error or an
+  # unknown either — it simply does not contribute to the count.
   @active_statuses [:running, :pending, :cancelling, :finalizing]
 
   @doc """
