@@ -1,7 +1,8 @@
 defmodule EvoDashWeb.HomeLive.ChatMessages do
   @moduledoc """
   Renders the Home chat page's message surface (`EvoDashWeb.HomeLive`): the
-  empty state (brand logo mark, greeting, suggestion chips) and the transcript
+  empty states (the greeting with its suggestion chips, and the ended-session
+  state with its New-chat affordance) and the transcript
   message list (user bubbles via `EvoDashWeb.HomeLive.UserMessage`, assistant
   answer columns via `EvoDashWeb.HomeLive.AssistantMessage`, error rows).
 
@@ -86,6 +87,39 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
           </.suggestion_chip>
         </div>
       <% end %>
+    </div>
+    """
+  end
+
+  # Renders the ended-session empty state: the chat's agent session is gone and
+  # nothing was cached locally, so there is no conversation to show and the
+  # greeting's suggestion chips would only attempt a doomed send. The composer
+  # is already disabled for `chat_status: :ended`; this state adds the message
+  # and the explicit New-chat affordance.
+  def session_ended_state(assigns) do
+    ~H"""
+    <div
+      id="chat-session-ended"
+      class="min-h-full flex flex-col items-center justify-center gap-3 text-center px-4 py-8 sm:px-6"
+    >
+      <div class="flex size-12 items-center justify-center rounded-full bg-base-200">
+        <.icon name="hero-check-circle" class="size-6 text-base-content/60" />
+      </div>
+      <%!-- zh_CN: 指对话（聊天）会话已结束，不是会议 --%>
+      <h2 class="text-xl sm:text-2xl font-semibold tracking-tight text-base-content">
+        {gettext("This session has ended.")}
+      </h2>
+      <p class="max-w-md text-sm leading-relaxed text-base-content/70">
+        {gettext("Start a new chat to continue.")}
+      </p>
+      <button
+        type="button"
+        phx-click="new_chat"
+        class="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-base-300 px-3.5 py-2 text-sm font-medium text-base-content/80 hover:bg-base-200 hover:text-base-content transition-colors focus-visible:outline-2 focus-visible:outline-primary-standalone"
+      >
+        <.icon name="hero-plus" class="size-4" />
+        {gettext("New chat")}
+      </button>
     </div>
     """
   end

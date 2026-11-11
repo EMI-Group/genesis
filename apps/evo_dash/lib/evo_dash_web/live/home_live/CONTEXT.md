@@ -21,7 +21,7 @@ When interactive sessions are unavailable on the node, the page falls back to th
 - `agent_stream.ex` → `EvoDashWeb.HomeLive.AgentStream` — root-agent lookup, `message_count` gating, final-result extraction
 - `model_select.ex` / `model_selection.ex` → model snapshot loading and canonical provider/model/reasoning selection state
 - `approval_workflow.ex` / `approval_card.ex` → ephemeral approval cards, scoping, remount recovery
-- `assistant_message.ex` / `user_message.ex` / `chat_messages.ex` → chat bubble rendering
+- `assistant_message.ex` / `user_message.ex` / `chat_messages.ex` → chat surface rendering: message bubbles plus the two EMPTY states (`empty_state/1` greeting with the four suggestion chips, `session_ended_state/1` ended session)
 - `source_gate.ex` → the "Genesis source not downloaded yet" gate
 
 ## Session model
@@ -68,12 +68,22 @@ Stop is separate and stays distinct: `NodeContext.cancel_task/2` (graceful cance
 ## Reattach
 
 `handle_params/3` with `?session=<id>`: sets `session_id`, `current_session_id`, `chat_id = session_id`, `session_mode: :interactive`, clears per-chat refs (`chat_task_id`, `chat_task_status`, `agent_message_count`, queued echoes), and restores the cached transcript from `ChatHistory.get_state(session_id)` through `ChatState.restore/1` (total — garbage degrades to defaults).
-ONE supervised attach task per (seq, node, session) gathers `list_agents/1` + `list_awaiting_input/1` + `get_agent_history/2` and returns `SessionActions.load_attach/2`'s `{:ok, %{summary:, awaiting?:, history:}}`.
+ONE supervised attach task per (seq, node, session) gathers `list_agents/1` + `list_awaiting_input/1` + `get_agent_history/2` and returns `SessionActions.load_attach/2`'s bare map `%{summary:, awaiting?:, history:}` (no `{:ok, _}` tag — `EvoDash.SafeCall.run/1` wraps it, which is why `apply_attach/2` matches `{:ok, %{…}}`).
 Apply only when the `session_attach_seq` is current, the node matches and the `session_id` matches.
 A non-empty history REPLACES the cached transcript (`Messages.to_entries/1`); the phase comes from the summary / awaiting list.
-Session gone (no summary, not awaiting) with an empty cache → "This session has ended." empty state, composer disabled, New chat affordance.
+An EMPTY history never wipes a non-empty cached transcript: `apply_history/3` keeps the cached transcript and its thought process (rendered read-only) instead of assigning `[]`.
+A first-ever attach with no cache keeps the empty transcript.
+Session gone (no summary, not awaiting) with an empty cache → the ended-session empty state (`HomeLive.ChatMessages.session_ended_state/1`, `#chat-session-ended`), composer disabled, New chat affordance.
 Session gone with a cached transcript → render it read-only (composer disabled) plus New chat.
 Reattach NEVER starts a task on read.
+
+## Empty states (inside `#chat-messages`)
+
+An EMPTY transcript renders exactly one of two states, both inside the existing `#chat-messages` scroller.
+`ChatMessages.empty_state/1` is the greeting ("What would you like Genesis to do?", "Start a conversation" and four suggestion chips, or the Genesis-source note when the gate blocks chatting) for a live/idle chat.
+`ChatMessages.session_ended_state/1` (`#chat-session-ended`) is the ended-session state for `chat_status == :ended` with an empty transcript: the gettext message "This session has ended.", "Start a new chat to continue." and a `phx-click="new_chat"` affordance.
+It deliberately replaces the greeting's suggestion chips, because an ended session cannot send anything (the composer is already disabled for `:ended`).
+A non-empty transcript always renders `message_list/1` regardless of status.
 
 ## Approvals
 
