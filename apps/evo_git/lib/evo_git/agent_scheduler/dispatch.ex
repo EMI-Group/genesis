@@ -200,12 +200,12 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   The GenServer phase (this function) is fast: it computes the worktree path,
   stores it in sched_meta (so cancel_agent can find the worktree), and starts
   the agent's `EvoGit.Agent.Session` under `EvoGit.Agent.Session.Supervisor`.
-  Worktree creation is requested by the SESSION from
+  Worktree creation is requested by the SESSION's start task from
   `EvoGit.AgentScheduler.WorktreeManager.create_worktree_for_agent/6` (via
   `EvoGit.Agent.Session.Setup.bind_worktree/2`, with the session's own pid as
   the monitored owner; the call waits indefinitely — creation is never aborted
   by a timeout; WorktreeManager offloads the I/O to a spawned task and monitors
-  the session process).
+  the session process, so the SESSION stays answerable while the create runs).
   """
   @spec try_dispatch(State.t(), pos_integer()) :: State.t()
   def try_dispatch(%State{} = state, agent_id) do
@@ -242,10 +242,10 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     Store.put_sched_meta(agent_id, %{meta | worktree: worktree_path})
 
     # Phase 2 — Session phase (slow, concurrent):
-    # Worktree creation does NOT run here. The session requests a fresh worktree
-    # from WorktreeManager (`Setup.bind_worktree/2`, call waits indefinitely)
-    # during its own start event; WorktreeManager offloads the I/O to a spawned
-    # task, so multiple agents create worktrees in parallel.
+    # Worktree creation does NOT run here. The session's START TASK requests a
+    # fresh worktree from WorktreeManager (`Setup.bind_worktree/2`, call waits
+    # indefinitely) once its `:starting` phase begins; WorktreeManager offloads
+    # the I/O to a spawned task, so multiple agents create worktrees in parallel.
     #
     # `scheduler: self()` is explicit rather than relying on the registered
     # name: the session sends its ONE terminal `{:agent_session_result, ...}`
