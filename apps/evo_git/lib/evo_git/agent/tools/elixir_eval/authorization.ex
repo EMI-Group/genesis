@@ -6,6 +6,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
   The context always names the ORIGINAL tool and assistant owner. Trusted broker
   and guardian processes may revalidate that context, but must never replace its
   identities with their own; Broker.start requires the original tool as caller.
+  The owning reflective task row is required only when the session carries a
+  task id; a task-less interactive root session is admitted by its scheduler
+  identity shape alone.
   """
 
   alias EvoGit.Agent.Tools.ElixirEval.Ancestry
@@ -94,6 +97,48 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
     end
   end
 
+  # Dashboard `/assistant` conversations are started as INTERACTIVE ROOT
+  # SESSIONS with no `:task_id` (`EvoDashWeb.HomeLive` → `start_session/1`), so
+  # they own no `:reflect` task row and there is nothing to look up in the task
+  # registry. Admit exactly that shape, and no looser one: the checks below stay
+  # as strict as the task-backed clause (same process ancestry/liveness, same
+  # single SchedMeta row, same primary/nil-parent/no-foreign-repos summary state
+  # with no cancellation flag), while `valid_task_less_agent?/2` pins the spec
+  # to a depth-zero, parent-less, repo-less SelfReflective root in `:interactive`
+  # mode with no task, foreign-repo or custom-agent identity in its opts. Any
+  # other shape still falls through to the catch-all refusal below.
+  def revalidate(%{
+        agent_id: id,
+        task_id: nil,
+        owner_pid: owner,
+        tool_pid: tool,
+        target_node: target
+      })
+      when is_integer(id) and id > 0 and is_pid(owner) and is_pid(tool) do
+    # Central security boundary: ETS can disappear during scheduler restart and
+    # GenServer.call exits on timeout/down. Never expose exception terms here.
+    try do
+      with true <- target == node() and node(owner) == node() and node(tool) == node(),
+           true <- Process.alive?(owner) and Process.alive?(tool),
+           true <- Ancestry.includes?(tool, owner),
+           true <- is_pid(Process.whereis(EvoGit.AgentScheduler)),
+           [{^id, %SchedMeta{id: ^id} = meta}] <- :ets.lookup(:evogit_sched_meta, id),
+           true <- valid_state?(id),
+           true <- valid_task_less_agent?(meta, owner),
+           true <- Process.alive?(owner) and Process.alive?(tool),
+           [{^id, ^meta}] <- :ets.lookup(:evogit_sched_meta, id),
+           true <- valid_state?(id) do
+        :ok
+      else
+        _ -> {:error, @denied}
+      end
+    rescue
+      _ -> {:error, @denied}
+    catch
+      :exit, _ -> {:error, @denied}
+    end
+  end
+
   def revalidate(_), do: {:error, @denied}
 
   defp valid_agent?(
@@ -124,6 +169,44 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
   end
 
   defp valid_agent?(_, _, _), do: false
+
+  # Task-less admission, for the dashboard `/assistant` interactive root session
+  # described above: an owning `:reflect` task row is required only when the
+  # session HAS a task id, so this predicate carries the whole identity check.
+  # Everything is required — a depth-zero, parent-less root whose result was not
+  # sent, in `:interactive` mode with no task id, owned by this session pid, in
+  # an admitted status, running the repo-less SelfReflective agent on the primary
+  # repo with no foreign repo, phylo node or custom-agent identity — and the
+  # forwarded opts must agree (repo-less, interactive, no task/foreign/custom
+  # identity), so a forged or half-migrated row cannot borrow this branch.
+  defp valid_task_less_agent?(
+         %SchedMeta{
+           depth: 0,
+           parent_id: nil,
+           result_sent: false,
+           mode: :interactive,
+           task_id: nil,
+           session_pid: owner,
+           status: status,
+           spec: %AgentSpec{
+             agent_module: EvoGit.Agents.SelfReflective,
+             repo_id: "primary",
+             foreign_repos: [],
+             phylo_node: nil,
+             opts: opts
+           }
+         },
+         owner
+       )
+       when status in @accepted_agent_statuses and is_list(opts) do
+    Keyword.keyword?(opts) and Keyword.get(opts, :repo_less) == true and
+      Keyword.get(opts, :session_mode) == :interactive and
+      Keyword.get(opts, :task_id) == nil and
+      Keyword.get(opts, :foreign_repos, []) == [] and
+      Keyword.get(opts, :custom_agent_id) == nil and Keyword.get(opts, :agent) == nil
+  end
+
+  defp valid_task_less_agent?(_, _), do: false
 
   # Project inside ETS: copy only the role/ownership fields of the summary row.
   # A missing row/field never grants access.

@@ -17,7 +17,7 @@ Related integration suites include `reflect_tools_test.exs` and the parent tool-
 ## API Surface
 | File / modules | Contract |
 |---|---|
-| `authorization.ex` / `Authorization` | `authorize/0,1`, `assistant_owner?/0`, `revalidate/1` bind permission to the original assistant owner and tool process; `accepted_agent_statuses/0` and `accepted_agent_task_statuses/0` are the single definitions of the admitted status sets. |
+| `authorization.ex` / `Authorization` | `authorize/0,1`, `assistant_owner?/0`, `revalidate/1` bind permission to the original assistant owner and tool process, admitting both the task-backed `:reflect` shape and the task-less interactive `/assistant` root shape; `accepted_agent_statuses/0` and `accepted_agent_task_statuses/0` are the single definitions of the admitted status sets. |
 | `ancestry.ex` / `Ancestry` | `includes?/2` and `broker/1` inspect bounded local Task/proc_lib ancestry. |
 | `engine.ex` / `Engine` | `run(code, tier, context, limits)` returns `{:ok, binary}` or `{:error, binary}`; `max_code_bytes/0` exposes the engine ceiling. |
 | `worker_tree.ex` / `WorkerTree` | `run(context, tier, limits, fun)` creates a guardian, authorized broker and independently owned traced evaluation subtree, with bounded execution, cleanup and caller waits. |
@@ -36,13 +36,14 @@ Related integration suites include `reflect_tools_test.exs` and the parent tool-
 Authorization ignores tool-task role flags and captures `agent_id`, `task_id`, `owner_pid`, original `tool_pid`, current `target_node` and the call-time TaskRegistry server.
 `authorize/1` requires the original tool to descend from the owner, and `revalidate/1` preserves those original identities even when called by trusted guardian/broker processes.
 Internal target selection accepts nil/current/local spellings or the exact current node name; no remote target or input-derived node atom is created.
-Both original processes must be alive and local, the scheduler registered, and the captured task must be a live `:reflect` task (`:running`, or `:awaiting_input` for an idle interactive session) fetched with `{:get_task_lite, id}` under a one-second deadline.
-SchedMeta must describe a depth-zero, nil-parent, unsent-result SelfReflective agent in `:running`, `:blocked` or `:awaiting_input`, with its Task pid equal to the owner.
-Its spec must be primary, repo-less, without foreign repos, phylo node or custom-agent identity, and its task-id option must match.
+The owning `:reflect` task row and its `{:get_task_lite, id}` lookup are required ONLY when the session carries a task id; that row must be a live `:reflect` task (`:running`, or `:awaiting_input` for an idle interactive session) fetched under a one-second deadline.
+A task-less `/assistant` dashboard conversation is admitted as an interactive root session instead, with no task lookup at all: both original processes must be alive and local, the scheduler registered, and the SchedMeta/spec/summary shape below must hold exactly.
+SchedMeta must describe a depth-zero, nil-parent, unsent-result SelfReflective agent (session pid equal to the owner) in `:running`, `:blocked` or `:awaiting_input`, whose spec is on `"primary"`, repo-less, `session_mode: :interactive` and free of foreign repos, phylo node and custom-agent identity.
+A task-backed session's task-id option must equal the captured task id, while a task-less session requires a nil SchedMeta task id and `task_id: nil` in its opts.
 `accepted_agent_statuses/0` (`[:running, :blocked, :awaiting_input]`) and `accepted_agent_task_statuses/0` (`[:running, :awaiting_input]`) are the only status sets this gate consults; `:blocked` is agent-side only and never a task status.
-An idle `:awaiting_input` interactive session admits evaluation exactly like a running one, because its session process, worktree and transcript are alive and its task row is non-terminal.
+An idle `:awaiting_input` interactive session admits evaluation exactly like a running one, because its session process, worktree and transcript are alive and its agent status is non-terminal.
 A projected ETS AgentState check requires primary/nil-parent/no-foreign-repos state and cancellation false or nil, without copying conversation or generation parameters.
-Revalidation checks owner/tool liveness and unchanged SchedMeta again after the task lookup, but is not an atomic transaction with a subsequent mutation.
+Revalidation checks owner/tool liveness and the unchanged SchedMeta row again after the admission checks, but is not an atomic transaction with a subsequent mutation.
 Missing tables, stale state, registry timeout/exit and exceptions return the same generic authorization refusal.
 `Ancestry` follows at most 32 queued process entries, reading at most eight pid entries from each `$callers` and `$ancestors` list, with local-only cycle-safe traversal.
 These dictionaries are runtime-maintained authority assumptions, not cryptographic credentials; Dune must not expose Process dictionary APIs.
