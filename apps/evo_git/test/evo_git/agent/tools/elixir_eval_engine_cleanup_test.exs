@@ -33,7 +33,14 @@ defmodule EvoGit.Agent.Tools.ElixirEval.EngineCleanupTest do
     {result, events} = run_engine(fixture, code)
 
     assert result == {:ok, "Result: " <> inspect(fixture.task_id)},
-           "real Dune results: #{inspect(events.dune_results)}"
+           # Self-diagnosing on failure: a cold-Dune facade-discovery miss shows
+           # up as the Engine's own error tuple, NOT as a Dune result, so report
+           # the returned `result` alongside the traced Dune results, the broker
+           # operations and the process exits.
+           "engine result: #{inspect(result)}; real Dune results: " <>
+             "#{inspect(events.dune_results)}; operations: " <>
+             "#{inspect(events.operations, limit: 20)}; exits: " <>
+             "#{inspect(events.exits, limit: 40)}"
 
     # This is a real broker request from a nested Dune helper, not a direct
     # facade call from the fixture's tool process or the root worker.
