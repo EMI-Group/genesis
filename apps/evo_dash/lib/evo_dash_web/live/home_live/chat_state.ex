@@ -14,7 +14,7 @@ defmodule EvoDashWeb.HomeLive.ChatState do
         chat_agent_id: term() | nil,
         agent_message_count: non_neg_integer() | nil,
         chat_task_status: nil | :pending | :running | :finalizing | :cancelling
-                          | :completed | :failed | :cancelled,
+                          | :awaiting_input | :completed | :failed | :cancelled,
         chat_node: node() | nil,
         model_spec: map() | nil,
         selected_model_id: String.t() | nil, # migration input only
@@ -42,7 +42,19 @@ defmodule EvoDashWeb.HomeLive.ChatState do
 
   alias EvoDashWeb.HomeLive.Transcript
 
-  @task_statuses [:pending, :running, :finalizing, :cancelling, :completed, :failed, :cancelled]
+  # `:awaiting_input` is included because the page assigns `chat_task_status`
+  # straight from an idle interactive session's summary — dropping it here
+  # would erase an idle session's badge on every remount.
+  @task_statuses [
+    :pending,
+    :running,
+    :finalizing,
+    :cancelling,
+    :awaiting_input,
+    :completed,
+    :failed,
+    :cancelled
+  ]
   @chat_statuses [:idle, :running, :cancelling, :awaiting_input, :ended]
   @session_modes [:interactive, :one_shot]
   @max_queued_echoes 20

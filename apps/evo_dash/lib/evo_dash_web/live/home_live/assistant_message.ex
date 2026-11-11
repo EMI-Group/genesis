@@ -314,6 +314,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   defp status_label(:failed), do: gettext("Failed")
   defp status_label(:cancelled), do: gettext("Cancelled")
   defp status_label(:cancelling), do: gettext("Cancelling…")
+  defp status_label(:awaiting_input), do: gettext("Awaiting input")
   defp status_label(status) when is_atom(status), do: Atom.to_string(status)
   defp status_label(_status), do: ""
 

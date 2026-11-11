@@ -35,6 +35,7 @@ An agent id is a positive integer, so it doubles as the `EvoDash.ChatHistory` ch
 
 Session phases (`:starting | :running | :awaiting_input | :cancelling | :finalizing | :done`) map to the page's `chat_status`:
 - `:awaiting_input` → `:idle` (the composer is enabled; the session is waiting for the user)
+- `chat_task_status` (the DISPLAYED badge status) accepts `:awaiting_input` alongside `:pending`/`:running`/`:finalizing`/`:cancelling`/`:completed`/`:failed`/`:cancelled`, so a restored idle session keeps its badge; any unknown status restores as `nil`
 - `:running` / `:starting` → `:running`
 - `:cancelling` → `:cancelling`
 - session gone / `:finished` → `:ended`
@@ -168,6 +169,6 @@ Future contract when deltas are wired in:
 
 ## Known Issues
 
-- The page's own `status_label/1` (`assistant_message.ex`) predates the shared `:awaiting_input` clause: the badge and dot colours come from `EvoDashWeb.Helpers.task_status_badge/1` / `task_status_dot_class/1` (the violet idle-session family), while an idle session's label text falls through to `Atom.to_string/1`.
+- The assistant message's `status_label/1` (`assistant_message.ex`) renders `:awaiting_input` as the gettext label "Awaiting input"; the badge and dot colours come from `EvoDashWeb.Helpers.task_status_badge/1` / `task_status_dot_class/1` (the violet idle-session family).
 - A genuinely new row in the conversation list animates nowhere — the panel has no enter animation by design (it is re-rendered from a plain list on every reload).
 - `home_live_test.exs`'s `:reflect` assertions exercise the fallback path only, because its fixture configures `model_profiles: []` (so `start_session` answers `:llm_not_configured`).
