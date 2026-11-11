@@ -16,7 +16,9 @@ defmodule EvoDashWeb.TaskCardComponents do
     * `TaskCardComponents.Repos` — `result_repos/1`, `task_repos/2`,
       `result_repos_badges/1`;
     * `TaskCardComponents.Archive` — the lazy archive-envelope readers;
-    * `TaskCardComponents.Errors` — the structured failure-record readers.
+    * `TaskCardComponents.Errors` — the structured failure-record readers;
+    * `TaskCardComponents.Session` — the interactive-session reply panel
+      (`:awaiting_input` cards).
 
   Every public function of those submodules is re-exported here through
   `defdelegate`, so call sites keep using `EvoDashWeb.TaskCardComponents.<fun>`;
@@ -27,10 +29,12 @@ defmodule EvoDashWeb.TaskCardComponents do
   `task_card/1` is fed the lightweight 16-key task SUMMARY map
   (`id, status, review_status, started_at, finished_at, type, project_path,
   opts, branch_name, model_id, agent_count, base_sha, commit_sha,
-  lease_expires_at, updated_at, error`). It deliberately carries NO
-  `result` / `usage` / `logs` / `archive_metadata` — those heavy payloads
-  arrive separately through the `detail` attr (see below), so a big task blob
-  never rides a task-list render.
+  lease_expires_at, updated_at, error`). Newer summary maps also carry
+  `session_mode` (`"oneshot"` | `"interactive"`); older/hand-built maps may
+  lack it, so read it defensively (default `"oneshot"`). The summary
+  deliberately carries NO `result` / `usage` / `logs` / `archive_metadata` —
+  those heavy payloads arrive through the `detail` attr (see below), so a big
+  task blob never rides a task-list render.
 
   `detail` is `nil` (not requested yet) or:
 
@@ -60,6 +64,20 @@ defmodule EvoDashWeb.TaskCardComponents do
   renders `"<provider_profile_id> - <model>[ - <reasoning_effort>]"`, falls
   back to the legacy `model_id`, and returns nil — so the whole line is
   omitted — when the task genuinely carries no model information.
+
+  ## Interactive sessions (`:awaiting_input`)
+
+  `:awaiting_input` is a NON-terminal status: the root agent is a live
+  interactive session, idle and waiting for the user. When the card is handed a
+  `session_agent_id` attr (nil = no session panel) it renders
+  `TaskCardComponents.Session.session_panel/1` directly under the objective
+  block — a reply box plus a **Close session** button; every other card renders
+  byte-identically to before. The panel posts `"session_send_message"` (a form
+  submit carrying `%{"task_id" => id, "message" => text}`) and
+  `"open_close_session_modal"` (`phx-value-task_id`); the owning LiveView
+  implements both. The card does NOT implement the close confirmation modal
+  (the LiveView owns it) and does NOT do optimistic echo: a sent message shows
+  only once the server re-renders the session state.
 
   ## Why the preview helpers stay HERE
 
@@ -102,6 +120,11 @@ defmodule EvoDashWeb.TaskCardComponents do
       collapsed_error_text: 1
     ]
 
+  # The `:awaiting_input` reply panel (kept as an import — never ALSO
+  # `defdelegate`/define `session_panel/1` here, that would be a same
+  # name+arity clash).
+  import EvoDashWeb.TaskCardComponents.Session, only: [session_panel: 1]
+
   # ---------------------------------------------------------------------------
   # task_card/1 — Compact card with accent bar, relative timestamps
   # ---------------------------------------------------------------------------
@@ -112,6 +135,10 @@ defmodule EvoDashWeb.TaskCardComponents do
   # nil | %{state: :loading | :ok | :error, task:, error:, seq:, archive:} —
   # the lazily-fetched heavy payload (see the moduledoc). nil = not loaded.
   attr(:detail, :map, default: nil)
+  # Interactive session id; nil = no session panel. When set (and the task
+  # status is `:awaiting_input`) the card renders the reply panel — see the
+  # moduledoc's "Interactive sessions" section.
+  attr(:session_agent_id, :any, default: nil)
 
   def task_card(assigns) do
     ~H"""
@@ -177,7 +204,8 @@ defmodule EvoDashWeb.TaskCardComponents do
               task_status_badge(@task.status),
               "font-medium border-0 px-2.5 py-2 rounded-md"
             ]}>
-              <%= if @task.status in [:running, :cancelling] do %>
+              <%!-- `:awaiting_input` (an idle live session) pulses too, in violet. --%>
+              <%= if @task.status in [:running, :cancelling, :awaiting_input] do %>
                 <span class="relative flex h-2.5 w-2.5 mr-2">
                   <span
                     class={[
@@ -200,6 +228,12 @@ defmodule EvoDashWeb.TaskCardComponents do
                   Finalizing
                 <% @task.status == :cancelling -> %>
                   {gettext("Cancelling…")}
+                <% @task.status == :awaiting_input -> %>
+                  <%!-- Never render the raw `awaiting_input` atom. --%>
+                  {gettext("Awaiting input")}
+                  <span class="ml-1 text-xs font-normal text-base-content/60">
+                    <%!-- zh_CN: 等待你的输入 --%>{gettext("(waiting for you)")}
+                  </span>
                 <% true -> %>
                   {@task.status}
               <% end %>
@@ -230,6 +264,12 @@ defmodule EvoDashWeb.TaskCardComponents do
             </p>
           <% end %>
         </div>
+
+        <%!-- Session reply panel — ONLY for an `:awaiting_input` task that was
+             handed a `session_agent_id`; no always-on wrapper element. --%>
+        <%= if Map.get(@task, :status) == :awaiting_input and @session_agent_id != nil do %>
+          <.session_panel task={@task} />
+        <% end %>
 
         <!-- Multi-repo indicator — compact per-repo badges on the COLLAPSED
              card only (the expanded detail view shows the full per-repo
@@ -291,7 +331,8 @@ defmodule EvoDashWeb.TaskCardComponents do
           </div>
 
           <div class="flex items-center gap-2 sm:gap-3">
-            <%= if @task.status in [:pending, :running] do %>
+            <%!-- Graceful Cancel also covers an idle `:awaiting_input` session. --%>
+            <%= if @task.status in [:pending, :running, :awaiting_input] do %>
               <button
                 class="btn btn-sm btn-outline border-base-300 hover:border-info hover:bg-info/10 hover:text-info rounded-md px-4"
                 phx-click="open_cancel_modal"
@@ -334,7 +375,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                 <.icon name="hero-ellipsis-vertical" class="size-4" />
               </summary>
               <ul class="menu menu-sm dropdown-content mt-1 z-50 p-2 shadow-lg bg-base-100 rounded-lg w-44 border border-base-200">
-                <%= if @task.status in [:running, :cancelling] do %>
+                <%= if @task.status in [:running, :awaiting_input, :cancelling] do %>
                   <li>
                     <button
                       class="text-error hover:bg-error/10 hover:text-error rounded-md"
