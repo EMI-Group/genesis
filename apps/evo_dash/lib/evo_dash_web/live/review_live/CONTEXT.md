@@ -198,3 +198,9 @@ The page's base/end commits come from `EvoGit.TaskInfo` fields `base_sha`/`commi
 - Merge/reject act on ONE repo per event (the `repo_id` named by the clicked form/button), each repo carrying its own `resolution`; completion is the aggregate `completion_status/2` (all change-bearing repos TERMINAL). PRIMARY-scoped operations (`resume`, `create_pr`, `confirm_extract_skills`, `auto_resolve`, `set_review_metadata`, the `:commit` route, the `page_header` repo fields) must resolve the `"primary"` entry explicitly, never the active-repo-projected flat assigns.
 - Repo-keyed state on SHOW (`selected_file`/`expanded_files`/`file_context_levels`/`tree_expanded_dirs`); flat on `:commit` (including `tree_expanded_dirs` — no `"commit"` key convention; the flat map is read directly).
 - `?node=` preserved on every navigation (`with_node_param/2`; manual `&node=` when the URL already carries a query string — resume/ignore).
+
+## `:awaiting_input` sessions
+
+The review page carries NO cancel / force-kill gates, so the non-terminal `:awaiting_input` status needs no extra admission here: its violet badge and label come from the shared `Helpers.task_status_badge/1` like every other status.
+An idle interactive session holds no reviewable `genesis/agent_*` branch until it closes (it is still waiting for the user's next message), so it never satisfies the `:completed` review candidacy and no review action is offered while it waits.
+Closing a session from its task card (TasksLive) finalizes the task into its normal terminal status, after which the ordinary review flow applies.
