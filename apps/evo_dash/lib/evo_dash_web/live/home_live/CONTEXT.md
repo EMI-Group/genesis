@@ -117,6 +117,7 @@ The `/help` textarea is NOT `phx-update="ignore"`, so staging a text file simply
 Reasoning is attached PER assistant transcript entry (an optional `:reasoning` field on the entry) instead of one global last-turn buffer, so scrolling back shows each turn's own reasoning.
 It is derived from the same `get_agent_history/2` read through the `Messages` funnel and stays total (unreadable shapes yield no reasoning, never a crash).
 `Transcript.put_reasoning/3` updates one entry by id; `ChatState` persists the bounded shape.
+No production call site populates the per-entry `:reasoning` field today: `apply_history/3` assigns the fetched entries to the single global `thought_process` assign, which `ChatMessages.message_list/1` passes only to the LAST entry (`chat_messages.ex:150`), and `put_reasoning/3` is exercised only by `transcript_test.exs`.
 
 ## Async contract (message tags + stale guards)
 
@@ -157,6 +158,11 @@ Future contract when deltas are wired in:
 - delivery on `EvoGit.PubSub` topic `"agent:<id>"` as message `{:agent_delta, agent_id, seq, batch}`.
 - batch variants: `{:text, binary}`, `{:thinking, binary}`, `{:tool_call, id, name}`, `{:tool_result, id, status}`, `{:turn, %{usage, duration_ms}}`, `{:yield, text}`, `{:finished, status}`.
 - reconciliation drops any batch with `seq <= snapshot.seq`; there is NO replay buffer and NO polling — watcher registration + monitor is the consumer gate (zero watchers ⇒ no callbacks and no broadcast).
+Verified current-state facts a delta consumer has to work with:
+- `home_live.ex` has NO `terminate/2` (the module ends at `stale?/3`), and the page subscribes only to `"tasks"`, `"agents"`, `"approvals"` (`home_live.ex:238-240`) — no per-agent topic, no `{:agent_delta, …}` clause (the `handle_info(_msg, socket)` catch-all at `:1106` swallows it today).
+- Both history reads funnel through the private `apply_history/4`-arity-3 (`home_live.ex:440-466`): the attach rebuild path (`rebuild? = true`) and the incremental `{:chat_history_loaded, …}` path (`rebuild? = false`, which only calls `Transcript.put_streaming_text/2`). A delta consumer therefore has one funnel to feed.
+- `chat_fetch_seq` is SHARED by `async_lookup_agent/2` and `async_fetch_history/2` (`home_live.ex:1128`, `:1143`), so a lookup bump invalidates an in-flight history fetch and vice versa; `stale?/3` (`:1362`) is node + that one seq.
+- `agent_message_count` never GATES the refetch: `{:agent_updated, …}` fires one full-history read per `:message_count` broadcast (no debounce, no offset, whole history), and `message_count_grew?/2` is used only to drop queued echoes. `AgentStream.changed?/2` has no production call site.
 
 ## Constraints
 
