@@ -8,12 +8,23 @@ Classic Phoenix HTTP controllers and error handlers for the EvoDash web interfac
 
 ## API Surface
 
+### Routes Served Here
+| Route | Handler | Purpose |
+|-------|---------|---------|
+| `GET /help` | `RedirectController :assistant` | 302 alias to the canonical `/assistant` page, raw query string preserved; a classic HTTP GET inside the `:browser` pipeline, not a LiveView. |
+| `GET /tasks/:task_id/export` | `TaskExportController :export` | Streamed JSON download of a task's paged agent archive (`:browser` pipeline). |
+| `GET /health` | `HealthController :index` | Unauthenticated liveness/readiness probe, mounted outside every pipeline. |
+| `GET /server/status` | `ServerStatusController :index` | Unauthenticated operational probe, mounted outside every pipeline. |
+
+The canonical Genesis Assistant page is the LiveView route `live("/assistant", HomeLive, :index)`; the controller layer owns only its legacy alias.
+
 ### Modules
-- **`EvoDashWeb.PageController`** — Standard Phoenix controller with a single `home/2` action that renders the home page.
+- **`EvoDashWeb.PageController`** — Standard Phoenix controller with a single `home/2` action that renders the home page; it is NOT mounted (`router.ex` defines no route for it), so `page_html/home.html.heex` is unrouted scaffold markup.
 - **`EvoDashWeb.ErrorHTML`** — HTML error handler invoked by the endpoint. Defaults to returning plain-text status messages derived from template names (e.g., `"404.html"` → `"Not Found"`). Custom error page templates can be enabled by uncommenting `embed_templates "error_html/*"` and adding `.heex` files to an `error_html/` subdirectory.
 - **`EvoDashWeb.ErrorJSON`** — JSON error handler returning `%{errors: %{detail: message}}`. Individual status codes can be customized by adding pattern-matched `render/2` clauses.
 - **`EvoDashWeb.PageHTML`** — HTML template module that embeds all templates from `page_html/*` via `use EvoDashWeb, :html`.
 - **`EvoDashWeb.TaskExportController`** — JSON download endpoint for a task's agent archive (`GET /tasks/:task_id/export`); its read/stream/cleanup path is described in "Task Export Path" below.
+- **`EvoDashWeb.RedirectController`** — legacy route aliases: its single `assistant/2` action 302-redirects `GET /help` to the canonical `/assistant` page while preserving the raw `conn.query_string`; described in "Legacy Alias Redirect Path" below.
 - **`EvoDashWeb.HealthController`** — the unauthenticated `GET /health` liveness/readiness probe (mounted in the router OUTSIDE every pipeline: no session, no CSRF, no auth) answered by the headless server CLI (`genesis status`) and the desktop/remote shell; `index/2` renders `200` `application/json` `{"status":"ok","version":"<evo_dash vsn>","uptime_ms":<integer>}`. `uptime_ms` is the real elapsed VM time measured on the Erlang monotonic clock: `:erlang.system_info(:start_time)` is an INTEGER in the runtime's NATIVE time unit (not an epoch value, tuple or millisecond count), so it is subtracted from `:erlang.monotonic_time/0` and converted with `:erlang.convert_time_unit/3` — never mixed with a millisecond reading. Every value is read totally — an unreadable app version degrades to `"unknown"` and an unusable VM `start_time` to `0` — so the probe never raises.
 - **`EvoDashWeb.ServerStatusController`** — the unauthenticated `GET /server/status` operational probe, mounted OUTSIDE every pipeline (no session, no CSRF, no auth) like `/health`; `index/2` renders `200` `application/json` `{"status":"ok","version":"<evo_git vsn>","active_tasks":<integer>}` where `active_tasks` is the number of `:running`/`:pending`/`:cancelling`/`:finalizing` task ids, and it exposes ONLY that COUNT (never task ids, titles or repo paths).
 The BUSY set is exactly those four statuses, read from `@active_statuses = [:running, :pending, :cancelling, :finalizing]`: an idle `:awaiting_input` session holds no worker, no LLM/tool slot and no timer, so it is deliberately NOT busy (it is wind-down-able and the update gate may stop→swap→start over it), and its presence never turns the probe into an error.
@@ -32,6 +43,11 @@ The BUSY set is exactly those four statuses, read from `@active_statuses = [:run
 - **Status codes** — missing task → 404 `"Task not found"`; empty archive (first page empty) → 404 `"No archive data available for this task"`; temp-file/encode failure → 500 `"Archive export failed"`.
 - **Degradation** — every core read runs inside `EvoDash.SafeCall.run/1`, so a dead store/RPC cannot kill the controller: a failed task read becomes the 404 not-found path, and a failed PAGE stops the paging loop while keeping the records already written (a valid, truncated document); with nothing accumulated that becomes the empty-archive 404.
 - **Test seams** — both reads resolve at call time from the `:evo_dash` app env: `:task_export_task_runner` (2-arity `fn node, task_id -> … end`, default `&EvoDash.NodeContext.get_task_lite/2`) and `:task_export_archive_runner` (3-arity `fn node, task_id, opts -> … end`, default `&EvoDash.NodeContext.list_task_archives/3`).
+
+### Legacy Alias Redirect Path (`EvoDashWeb.RedirectController`)
+- **Route** — `get("/help", RedirectController, :assistant)` lives in the `:browser`-piped scope of `router.ex`, immediately after `live("/assistant", HomeLive, :index)`: it is an ordinary HTTP GET (session/flash/CSRF plugs, no LiveView mount, no socket).
+- **Raw query preservation** — `assistant/2` reads `conn.query_string` verbatim (never decoded or re-encoded params), so `assistant_path("")` returns `"/assistant"` and any other value returns `"/assistant?" <> query_string`: `/help?session=7` → `/assistant?session=7` and `/help?node=abc` → `/assistant?node=abc`, keeping `?node=` targeting and `?session=` reattach working across the alias.
+- **Status** — `redirect(conn, to: path)` answers `302` with a `location` header; no body is rendered, no flash is set and no page state is touched.
 
 ### Templates
 - **`page_html/home.html.heex`** — The default Phoenix welcome/home page template with links to docs, source, changelog, and community resources.
