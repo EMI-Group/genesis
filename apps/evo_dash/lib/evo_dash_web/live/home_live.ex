@@ -48,10 +48,17 @@ defmodule EvoDashWeb.HomeLive do
     Transcript
   }
 
-  alias EvoDash.{ChatHistory, NodeContext, SafeCall, TaskSupervisor}
+  alias EvoDash.{
+    AttachedFile,
+    ChatHistory,
+    DirectoryPicker,
+    NodeContext,
+    SafeCall,
+    TaskSupervisor
+  }
+
   alias EvoDashWeb.LiveHooks.NodeAware
   alias EvoDashWeb.LLMSelection
-  import EvoDashWeb.LLMSelectionComponents, only: [llm_selection: 1]
   import EvoDashWeb.HomeLive.ChatMessages
   import EvoDashWeb.HomeLive.ApprovalCard
   import EvoDashWeb.HomeLive.SourceGate
@@ -72,188 +79,127 @@ defmodule EvoDashWeb.HomeLive do
       guide={@guide}
       accent_color={assigns[:accent_color] || "blue"}
     >
-      <div class="flex h-full min-h-0 w-full min-w-0 max-w-3xl flex-col mx-auto">
-        <!-- The header, answers and composer share one reading column. -->
-        <div
-          id="chat-header"
-          class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-base-300 px-3 pt-3 pb-3 sm:px-4 sm:pt-4"
-        >
-          <div class="min-w-0 basis-full sm:basis-auto sm:flex-1">
-            <h1 class="text-base font-semibold truncate">
-              <%!-- zh_CN: Genesis Assistant 是此对话助手的名称 --%>{gettext(
-                "Genesis Assistant"
-              )}
-            </h1>
-          </div>
-          <button
-            type="button"
-            phx-click="new_chat"
-            disabled={@chat_status != :idle}
-            class="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-base-content/70 hover:bg-base-200 hover:text-base-content transition-colors focus-visible:outline-2 focus-visible:outline-primary-standalone disabled:opacity-40 disabled:pointer-events-none shrink-0"
-          >
-            <.icon name="hero-plus" class="size-4" />
-            <%!-- zh_CN: "新对话" --%>{gettext("New chat")}
-          </button>
+      <div class="flex h-full min-h-0 w-full min-w-0">
+        <!-- Conversation rail: cached local chats plus this node's live
+             interactive sessions (a session's agent id IS its chat id). Below
+             `lg` the rail collapses so the reading column keeps the width. -->
+        <div class="hidden w-64 shrink-0 overflow-y-auto overscroll-contain scrollbar-thin border-r border-base-300/60 px-2 py-3 lg:block">
+          {EvoDashWeb.HomeLive.SessionList.session_list(assigns)}
         </div>
-        <!-- Genesis-source gate: the /help chat runs a repo-less `:reflect`
+        <div class="flex h-full min-h-0 w-full min-w-0 max-w-3xl flex-col mx-auto">
+          <!-- The header, answers and composer share one reading column. -->
+          <div
+            id="chat-header"
+            class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-base-300 px-3 pt-3 pb-3 sm:px-4 sm:pt-4"
+          >
+            <div class="min-w-0 basis-full sm:basis-auto sm:flex-1">
+              <h1 class="text-base font-semibold truncate">
+                <%!-- zh_CN: Genesis Assistant 是此对话助手的名称 --%>{gettext(
+                  "Genesis Assistant"
+                )}
+              </h1>
+            </div>
+            <button
+              type="button"
+              phx-click="new_chat"
+              disabled={@chat_status not in [:idle, :ended]}
+              class="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-base-content/70 hover:bg-base-200 hover:text-base-content transition-colors focus-visible:outline-2 focus-visible:outline-primary-standalone disabled:opacity-40 disabled:pointer-events-none shrink-0"
+            >
+              <.icon name="hero-plus" class="size-4" />
+              <%!-- zh_CN: "新对话" --%>{gettext("New chat")}
+            </button>
+          </div>
+          <!-- Genesis-source gate: the /help chat runs a repo-less `:reflect`
              agent whose reference is the managed Genesis source checkout. On a
              fresh install it is usually not downloaded yet, so a send would only
              start a doomed task. Pinned BETWEEN the header and the message
              scroller so it shows for the empty state AND a restored transcript.
              Local-node only (EvoDashWeb.HomeLive.SourceGate.blocked?/1). -->
-        <%= if SourceGate.blocked?(assigns) do %>
-          <.source_gate source_busy={@source_busy} current_node_id={@current_node_id} />
-        <% end %>
-        <!-- Messages container (the AgentHistoryAutoScroll hook scrolls this element) -->
-        <div
-          id="chat-messages"
-          phx-hook="AgentHistoryAutoScroll"
-          class="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain scrollbar-thin"
-        >
-          <%= if @transcript == [] do %>
-            <.empty_state source_gate?={SourceGate.blocked?(assigns)} />
-          <% else %>
-            <.message_list
-              transcript={@transcript}
-              chat_task_status={@chat_task_status}
-              thought_process={@thought_process}
-              raw_entry_ids={@raw_entry_ids}
-            />
+          <%= if SourceGate.blocked?(assigns) do %>
+            <.source_gate source_busy={@source_busy} current_node_id={@current_node_id} />
           <% end %>
-        </div>
-        <!-- Pending evaluator and legacy command approvals block the reflect
-             agent until the user decides. Cards stay visible while a response
-             is in flight and on failure, between transcript and composer. -->
-        <%= if @pending_approvals != [] do %>
-          <div class="shrink-0 max-h-[min(11rem,25dvh)] overflow-y-auto overscroll-contain scrollbar-thin">
-            <%= for request <- @pending_approvals do %>
-              <.approval_card
-                request={request}
-                busy={ApprovalWorkflow.busy?(assigns, request.request_id)}
+          <!-- Messages container (the AgentHistoryAutoScroll hook scrolls this element) -->
+          <div
+            id="chat-messages"
+            phx-hook="AgentHistoryAutoScroll"
+            class="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain scrollbar-thin"
+          >
+            <%= if @transcript == [] do %>
+              <.empty_state source_gate?={SourceGate.blocked?(assigns)} />
+            <% else %>
+              <.message_list
+                transcript={@transcript}
+                chat_task_status={@chat_task_status}
+                thought_process={@thought_process}
+                raw_entry_ids={@raw_entry_ids}
               />
             <% end %>
+            <!-- Transient queued-message echoes are NOT transcript entries: they
+               render AFTER the last entry, inside the scroller. -->
+            {EvoDashWeb.HomeLive.Composer.queued_echoes(assigns)}
           </div>
-        <% end %>
-        <%= case @approval_error do %>
-          <% {:recovery, reason} -> %>
-            <div
-              id="approval-recovery-error"
-              role="alert"
-              class="shrink-0 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-base-content"
-            >
-              <p>
-                {gettext("Could not load pending approvals: %{reason}", reason: inspect(reason))}
-              </p>
-              <p class="mt-1 text-base-content/70">
-                {gettext("Existing requests are kept. Retry to check for pending approvals.")}
-              </p>
-              <button
-                type="button"
-                phx-click="retry_approvals"
-                disabled={@approval_recovering}
-                class="btn btn-sm btn-outline mt-2"
-              >
-                {gettext("Retry approvals")}
-              </button>
+          <!-- Pending evaluator and legacy command approvals block the reflect
+             agent until the user decides. Cards stay visible while a response
+             is in flight and on failure, between transcript and composer. -->
+          <%= if @pending_approvals != [] do %>
+            <div class="shrink-0 max-h-[min(11rem,25dvh)] overflow-y-auto overscroll-contain scrollbar-thin">
+              <%= for request <- @pending_approvals do %>
+                <.approval_card
+                  request={request}
+                  busy={ApprovalWorkflow.busy?(assigns, request.request_id)}
+                />
+              <% end %>
             </div>
-          <% {:response, request_id, reason} -> %>
-            <%= if Enum.any?(@pending_approvals, &(&1.request_id == request_id)) do %>
+          <% end %>
+          <%= case @approval_error do %>
+            <% {:recovery, reason} -> %>
               <div
-                id="approval-response-error"
+                id="approval-recovery-error"
                 role="alert"
                 class="shrink-0 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-base-content"
               >
-                <p>{gettext("Failed to respond: %{reason}", reason: inspect(reason))}</p>
-                <p class="mt-1 text-base-content/70">
-                  {gettext("The request is still pending. Use its decision buttons to try again.")}
+                <p>
+                  {gettext("Could not load pending approvals: %{reason}", reason: inspect(reason))}
                 </p>
-              </div>
-            <% end %>
-          <% _ -> %>
-        <% end %>
-        <!-- Composer: pinned bottom, outside the messages scroller. ONE form:
-             the textarea row, then a control bar holding the shared
-             provider/model/reasoning capsule on the left and Send/Stop on the
-             right (the /projects toolbar shape). `#chat-form` owns the
-             textarea's `chat_input` draft handler; the capsule needs NO form
-             owner (every control emits `phx-click` + `phx-value-*`, so its
-             selections never reach `chat_input`) and NO form may ever be
-             nested here. -->
-        <div class="shrink-0 px-3 pt-2 pb-3 sm:px-4 bg-base-100">
-          <p
-            :if={@model_select_load_error || @model_selection_error}
-            role="alert"
-            class="mb-1.5 text-xs text-error"
-          >
-            {gettext("Model selection is unavailable. Choose a valid model or reconnect to the node.")}
-          </p>
-          <form
-            id="chat-form"
-            phx-submit="send_message"
-            phx-change="chat_input"
-            class="help-composer flex flex-col gap-1 rounded-2xl p-1"
-          >
-            <textarea
-              name="message"
-              value={@chat_draft}
-              phx-keydown="chat_keydown"
-              phx-keyup="chat_keyup"
-              disabled={@chat_status != :idle or SourceGate.blocked?(assigns)}
-              placeholder={gettext("Message Genesis Assistant…")}
-              rows="1"
-              aria-label={gettext("Message Genesis Assistant…")}
-              class="w-full min-w-0 min-h-[46px] max-h-[min(10rem,25dvh)] resize-y bg-transparent px-4 py-3 text-base leading-relaxed placeholder:text-base-content/50 focus:outline-none disabled:opacity-50"
-            ></textarea>
-            <!-- Composer control bar: picker left, send/stop right. -->
-            <div id="chat-composer-controls" class="help-composer-controls">
-              <.llm_selection
-                id="chat-llm-selection"
-                provider_profiles={@provider_profiles}
-                model_selections={@model_selections}
-                model_spec={@model_spec || %{}}
-                show_auto_option={@model_selection_enabled}
-                disabled={@model_select_loading or is_nil(@model_snapshot)}
-                compact
-                class="min-w-0"
-              />
-              <div class="ml-auto flex shrink-0 items-center gap-2">
-                <!-- Send → Stop morph: exactly one button is visible at a time; both
-                     stay in the DOM (the hidden one disabled) so the Stop button's
-                     presence/disabled state remains assertable on idle. -->
-                <button
-                  type="submit"
-                  disabled={
-                    @chat_status != :idle or SourceGate.blocked?(assigns) or
-                      is_nil(@model_snapshot) or not is_nil(@model_selection_error)
-                  }
-                  class={"help-send-btn flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-content transition hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:pointer-events-none " <> if(@chat_status == :running, do: "hidden", else: "")}
-                >
-                  <.icon name="hero-paper-airplane" class="size-4" />
-                  <span class="sr-only"><%!-- zh_CN: "发送" --%>{gettext("Send")}</span>
-                </button>
+                <p class="mt-1 text-base-content/70">
+                  {gettext("Existing requests are kept. Retry to check for pending approvals.")}
+                </p>
                 <button
                   type="button"
-                  phx-click="stop"
-                  disabled={@chat_status != :running}
-                  class={"flex size-9 shrink-0 items-center justify-center rounded-full bg-base-content text-base-100 transition hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:pointer-events-none " <> if(@chat_status != :running, do: "hidden", else: "")}
+                  phx-click="retry_approvals"
+                  disabled={@approval_recovering}
+                  class="btn btn-sm btn-outline mt-2"
                 >
-                  <.icon name="hero-stop" class="size-4" />
-                  <span class="sr-only"><%!-- zh_CN: "停止" --%>{gettext("Stop")}</span>
+                  {gettext("Retry approvals")}
                 </button>
               </div>
-            </div>
-          </form>
-          <div class="mt-1.5 text-center text-xs text-base-content/60">
-            <%!-- zh_CN: "回车发送 · Shift+回车换行" --%>{gettext(
-              "Enter to send · Shift+Enter for a new line"
-            )}
-            <%= if @chat_status == :idle and @transcript == [] do %>
-              <br />
-              <%!-- zh_CN: Genesis Assistant 可能会出错，请核实重要信息。 --%>{gettext(
-                "Genesis Assistant can make mistakes. Verify important information."
-              )}
-            <% end %>
+            <% {:response, request_id, reason} -> %>
+              <%= if Enum.any?(@pending_approvals, &(&1.request_id == request_id)) do %>
+                <div
+                  id="approval-response-error"
+                  role="alert"
+                  class="shrink-0 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-base-content"
+                >
+                  <p>{gettext("Failed to respond: %{reason}", reason: inspect(reason))}</p>
+                  <p class="mt-1 text-base-content/70">
+                    {gettext("The request is still pending. Use its decision buttons to try again.")}
+                  </p>
+                </div>
+              <% end %>
+            <% _ -> %>
+          <% end %>
+          <!-- Interrupt affordance: sits with the composer while a turn runs.
+             It NEVER halts a chunk — the draft is delivered at the next turn
+             boundary (gettext("Send now (interrupt turn)")). -->
+          <div class="shrink-0 flex justify-end px-3 sm:px-4">
+            {EvoDashWeb.HomeLive.Composer.interrupt_button(assigns)}
           </div>
+          <!-- Composer: pinned bottom, outside the messages scroller. ONE form
+             owns the textarea's `chat_input` draft handler, the pending
+             attachment chips, the shared provider/model/reasoning capsule and
+             the Send/Stop controls; the attach affordance and its manual-path
+             fallback sit outside it because no form may ever be nested. -->
+          {EvoDashWeb.HomeLive.Composer.composer(assigns)}
         </div>
       </div>
     </EvoDashWeb.Layouts.app>
@@ -783,7 +729,7 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   def handle_event("new_chat", _params, socket) do
-    if socket.assigns[:chat_status] == :idle do
+    if socket.assigns[:chat_status] in [:idle, :ended] do
       had_session? = not is_nil(socket.assigns[:session_id])
 
       socket =
@@ -820,6 +766,42 @@ defmodule EvoDashWeb.HomeLive do
       {:noreply, socket}
     end
   end
+
+  # ── Composer attachments ──
+  # The attach affordance dispatches ONE whitelisted kind (pattern match, never
+  # an atom conversion). The native picker runs on the LOCAL node only and
+  # reports asynchronously ({:directory_picker_result, picker_id, result});
+  # when it is unavailable the composer reveals its manual-path fallback.
+  def handle_event("chat_attach", %{"kind" => kind}, socket) do
+    {:noreply, begin_attach(socket, kind)}
+  end
+
+  def handle_event("chat_attach", _params, socket), do: {:noreply, socket}
+
+  def handle_event("chat_attach_manual", %{"path" => path}, socket) do
+    {:noreply, attach_manual(socket, path)}
+  end
+
+  def handle_event("chat_attach_manual", _params, socket), do: {:noreply, socket}
+
+  def handle_event("chat_attachment_remove", %{"index" => index}, socket) do
+    socket =
+      case parse_attachment_index(index) do
+        nil ->
+          socket
+
+        idx ->
+          socket
+          |> assign(
+            pending_attachments: Attachments.remove(socket.assigns[:pending_attachments], idx)
+          )
+          |> ChatState.persist()
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("chat_attachment_remove", _params, socket), do: {:noreply, socket}
 
   def handle_event(
         "approval_response",
@@ -876,6 +858,134 @@ defmodule EvoDashWeb.HomeLive do
   defp stop_flash(socket, reason) do
     put_flash(socket, :error, gettext("Failed to stop: %{reason}", reason: inspect(reason)))
   end
+
+  ## Composer attachments
+
+  # Picker id → attachment kind (the ONE place the mapping lives). Both the
+  # picker ids and the 4-attachment / 15 MiB caps belong to
+  # `EvoDashWeb.HomeLive.Attachments`, so they are read at call time.
+  defp attach_kind(picker_id) do
+    cond do
+      picker_id == Attachments.picker_id() -> "text"
+      picker_id == Attachments.picker_id_image() -> "image"
+      picker_id == Attachments.picker_id_audio() -> "audio"
+      true -> nil
+    end
+  end
+
+  defp picker_id_for("text"), do: Attachments.picker_id()
+  defp picker_id_for("image"), do: Attachments.picker_id_image()
+  defp picker_id_for("audio"), do: Attachments.picker_id_audio()
+
+  # Attachments are read from THIS node's filesystem, so the picker is local
+  # only; a remote/pending target reveals the manual-path fallback instead of
+  # attaching a file the agent could never see.
+  defp begin_attach(socket, kind) when kind in ["text", "image", "audio"] do
+    cond do
+      not local_attach_node?(socket) ->
+        assign(socket, attach_unavailable: true)
+
+      at_attachment_cap?(socket) ->
+        attachment_flash(socket, :too_many, nil)
+
+      true ->
+        case DirectoryPicker.pick(self(), picker_id_for(kind), :file) do
+          :ok -> socket
+          # No native picker here (headless server, OTP without wx, a dialog
+          # already open): reveal the manual-path fallback.
+          {:error, _reason} -> assign(socket, attach_unavailable: true)
+        end
+    end
+  end
+
+  defp begin_attach(socket, _kind), do: socket
+
+  defp local_attach_node?(socket), do: socket.assigns[:current_node] == node()
+
+  defp at_attachment_cap?(socket) do
+    Attachments.count(socket.assigns[:pending_attachments]) >= Attachments.max_attachments()
+  end
+
+  # Manual fallback: a TEXT file read from this node's filesystem (the native
+  # picker is unavailable, but the read itself is a plain local file read).
+  defp attach_manual(socket, path) do
+    path = path |> to_string() |> String.trim()
+
+    cond do
+      not local_attach_node?(socket) ->
+        assign(socket, attach_unavailable: true)
+
+      path == "" ->
+        put_flash(socket, :error, gettext("Enter a file path to attach."))
+
+      not File.regular?(path) ->
+        attachment_flash(socket, :enoent, path)
+
+      true ->
+        stage_text_attachment(socket, path)
+    end
+  end
+
+  defp handle_attach_result(socket, "text", {:ok, path}), do: stage_text_attachment(socket, path)
+
+  defp handle_attach_result(socket, kind, {:ok, path}) when kind in ["image", "audio"],
+    do: stage_binary_attachment(socket, kind, path)
+
+  defp handle_attach_result(socket, _kind, :cancelled), do: socket
+
+  defp handle_attach_result(socket, _kind, :unavailable),
+    do: assign(socket, attach_unavailable: true)
+
+  defp handle_attach_result(socket, _kind, {:unavailable, _reason}),
+    do: assign(socket, attach_unavailable: true)
+
+  defp handle_attach_result(socket, _kind, _other), do: socket
+
+  # A TEXT attachment stays OUT of the composer draft: `Attachments.to_message/2`
+  # appends its Markdown block to the outgoing body exactly once at send time.
+  defp stage_text_attachment(socket, path) do
+    case AttachedFile.read(path) do
+      {:ok, content} ->
+        case Attachments.stage_text(socket.assigns[:pending_attachments], path, content) do
+          {:ok, pending} -> store_pending_attachments(socket, pending)
+          {:error, :too_many} -> attachment_flash(socket, :too_many, path)
+        end
+
+      {:error, reason} ->
+        attachment_flash(socket, reason, path)
+    end
+  end
+
+  # Image/audio files are staged as RAW bytes (base64 happens once, inside
+  # `Attachments.to_message/2`); the extension allowlist and the 15 MiB
+  # per-file cap live in `EvoDash.AttachedFile.read_kind/2`.
+  defp stage_binary_attachment(socket, kind, path) do
+    case Attachments.stage_binary(socket.assigns[:pending_attachments], path, kind) do
+      {:ok, pending} -> store_pending_attachments(socket, pending)
+      {:error, reason} -> attachment_flash(socket, reason, path)
+    end
+  end
+
+  defp attachment_flash(socket, reason, path) do
+    put_flash(socket, :error, Attachments.describe_error(reason, path))
+  end
+
+  defp store_pending_attachments(socket, pending) do
+    socket
+    |> assign(pending_attachments: pending)
+    |> ChatState.persist()
+  end
+
+  defp parse_attachment_index(index) when is_integer(index), do: if(index >= 0, do: index)
+
+  defp parse_attachment_index(index) when is_binary(index) do
+    case Integer.parse(index) do
+      {idx, ""} when idx >= 0 -> idx
+      _other -> nil
+    end
+  end
+
+  defp parse_attachment_index(_index), do: nil
 
   @impl true
   def handle_info({:task_updated, task_id, status, node} = msg, socket) do
@@ -1079,6 +1189,16 @@ defmodule EvoDashWeb.HomeLive do
       NodeAware.handle_connection_status(socket, {:remote_connection_status, target_id, status})
 
     {:noreply, maybe_load_sessions(socket)}
+  end
+
+  # Async native-picker results for the composer's three attach ids; any other
+  # picker id keeps the page's existing ignore behaviour (the catch-all below).
+  def handle_info({:directory_picker_result, picker_id, result}, socket)
+      when is_binary(picker_id) do
+    case attach_kind(picker_id) do
+      nil -> {:noreply, socket}
+      kind -> {:noreply, handle_attach_result(socket, kind, result)}
+    end
   end
 
   def handle_info(_msg, socket) do

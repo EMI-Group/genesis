@@ -131,7 +131,8 @@ defmodule EvoDashWeb.HomeLive.Composer do
             class="min-w-0"
           />
           <div class="ml-auto flex shrink-0 items-center gap-2">
-            <.interrupt_button {assigns} />
+            <%!-- The interrupt affordance is rendered by the PAGE, directly
+                 above this card (exactly one `#chat-interrupt-button`). --%>
             <%!-- Send and Stop coexist while running: a send during a run is
                  QUEUED for the next turn boundary. Send is hidden only once
                  the chat can no longer accept input. --%>
