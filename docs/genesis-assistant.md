@@ -1,6 +1,6 @@
 # Genesis Assistant
 
-Genesis Assistant is the dashboard's operator chat, opened from the sidebar entry **Assistant** (route `/help` unchanged).
+Genesis Assistant is the dashboard's operator chat, opened from the sidebar entry **Assistant** (route `/assistant`; the legacy `/help` link 302-redirects there with the query string preserved).
 It is not just a help page: it understands Genesis itself — the context tree, task lifecycle, agents and scheduler, models and configuration, the dashboard — and it operates the running system on your behalf while it explains it.
 It answers as Genesis in the first person (“I can …”), in your language, and its final chat reply is the answer you read.
 
@@ -9,6 +9,14 @@ That checkout is registered as the VCT system mount `vct:///genesis-source`, whi
 To make it read a different local source tree, re-point `vct:///genesis-source` at that checkout (setting `GENESIS_SOURCE_ROOT` also works and takes precedence).
 The gate is local-only: on a remote node it stays hidden instead of blocking the chat.
 
+## Conversations
+
+Each conversation is ONE long-lived interactive agent session addressed `/assistant?session=<agent_id>`, so it keeps one agent id, one worktree and one prompt-cache identity across messages.
+The conversation list is not on the Assistant page: the shared app-layout sidebar renders a **Conversations** section directly below **Active Tasks**, on every dashboard page.
+It lists this node's live sessions (waiting for you, or running) together with locally cached chats, and marks each row **Waiting for you**, **Running** or **Ended**.
+On the Assistant page a row switches the current view to that conversation; from any other page it navigates to `/assistant?session=<agent_id>`.
+**New chat** in the page header starts a fresh conversation and leaves the previous one in the list, because a session ends explicitly rather than on an idle timer.
+
 ## What it can do
 
 - Read the Genesis source and documentation: `read`, `read_context`, `list_dir`, `rg`, `glob`, `search_context`, and git history via `search_history`.
@@ -16,7 +24,8 @@ The gate is local-only: on a remote node it stays hidden instead of blocking the
 - Evaluate Elixir against the live runtime through one tiered `elixir_eval` tool: **read**, **write**, **sudo**.
 - Inspect and drive tasks: list pages, inspect one task, start `genesis`/`evolve`/`reflect`/`extract_skills` work, resume an earlier task, gracefully cancel, force-kill, or delete.
 - Read live scheduler state and resolved configuration, change runtime settings, or persist configuration.
-- Drive the guide overlay to a standard dashboard page (`/projects`, `/tasks`, `/agents`, `/settings`, `/system`, `/help`), optionally highlighting one element, with a **Go** button that opens it.
+- Drive the guide overlay to a standard dashboard page (`/projects`, `/tasks`, `/agents`, `/settings`, `/system`, `/assistant`), optionally highlighting one element, with a **Go** button that opens it.
+  The guide facade's fixed page list still names the legacy `/help` path, which redirects to `/assistant`, so a guide opened there lands on the canonical page.
 
 `elixir_eval` always runs on the node you are currently viewing, never on an arbitrary node.
 
@@ -52,7 +61,7 @@ The Assistant uses one `elixir_eval` tool with three tiers:
 | --- | --- | --- |
 | **read** | Dune interpreter with an explicit module/function/arity whitelist for inspection. | None. |
 | **write** | The same interpreter, adding known write APIs. | **Allow once** for the exact code on every call. |
-| **sudo** | Ordinary, unrestricted native Elixir—not the Dune interpreter. | A separate, prominent **red sudo approval card**. |
+| **sudo** | Ordinary, unrestricted native Elixir—not the Dune interpreter. | Its own prominent **red warning inside the approval dialog**. |
 
 A public API found in source is **not automatically available** in read/write: its module, function, and arity must be whitelisted.
 Ask the Assistant to read source/API help first rather than guess a name or escalate after a rejection.
@@ -68,12 +77,23 @@ A timeout does not undo effects or prove that an operation failed: inspect curre
 
 ### Reviewing a request
 
-- Check the **exact original code and execution target** on the approval card, not only the Assistant's explanation.
-- Choose **Allow once** to run that call, or **Deny** to reject it; sudo has its own red card so it cannot be mistaken for a normal write.
+Approvals never push the chat around: ONE fixed-height status strip sits between the transcript and the composer, and its height is reserved whether or not anything is pending.
+With a request waiting, the strip shows “Genesis is waiting for your approval”, a count badge and a **Review** button; the decision itself happens in ONE modal dialog that shows a single request at a time, with “1 of N” stepping when several are queued.
+A genuinely new live request opens that dialog automatically and raises a browser/OS notification—only while the window is hidden or unfocused, replacing its previous notification instead of stacking another one, and clicking it focuses the window.
+If the pending list cannot be loaded, the same strip carries the error and a **Retry approvals** action instead of anything appearing inline in the transcript.
+
+- Check the **exact original code and execution target** in the dialog, not only the Assistant's explanation.
+- Choose **Allow once** to run that call, or **Deny** to reject it; a sudo request carries its own red warning so it cannot be mistaken for a normal write.
 - The Assistant submits code through the tool instead of asking you to confirm in prose: a reply with no tool calls ends its run and its text is your answer.
-- Pending cards are restored while the request is still pending; this is not a promise of durable storage across server restarts.
-- If approval submission fails, the card stays visible with guidance; do not assume the code ran or submit a replacement write blindly.
+- Pending requests are restored while the request is still pending; this is not a promise of durable storage across server restarts.
+- If approval submission fails, the dialog stays open with guidance; do not assume the code ran or submit a replacement write blindly.
 - Failed-task responses are retained when available; inspect the response and current state rather than treating a failed task as proof that nothing happened.
+
+### Layout stability
+
+The chat keeps a fixed geometry while it streams: the approval strip, the interrupt slot above the composer and the composer itself have reserved heights, so a request arriving, a turn ending or the interrupt affordance disappearing never reflows the transcript column.
+The transcript sticks to the bottom with no animated scroll—an instant coalesced jump while you are reading the latest content—and stops following as soon as you scroll up into history.
+Both are deliberate: streaming deltas and the stream-to-Markdown swap arrive faster than any ease-out curve can settle, so the scroller tracks position rather than a trajectory.
 
 ## Read: tasks, failures and live capacity
 

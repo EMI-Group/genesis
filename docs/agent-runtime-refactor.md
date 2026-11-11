@@ -2,7 +2,7 @@
 
 **Status:** design record + phased implementation plan — **implemented**: P0–P4 (core session runtime, control plane, streaming, interactive mode) and P6 (dashboard) landed; P5 (durability) is deliberately deferred. See `## Implementation status` for what shipped per phase and the known leftovers. The design sections below remain the rationale and contract record.
 **Scope:** the agent runtime (`apps/evo_git/lib/evo_git/agent/`, `agent_scheduler/`, `runtime/`, `task_registry/`) and the dashboard surfaces that read it (`apps/evo_dash`).
-**Companion records:** [harness-alignment.md](harness-alignment.md) (tool/loop contracts), [genesis-assistant.md](genesis-assistant.md) (the `/help` product surface), [process-management.md](process-management.md) (tool execution), [virtual-tree.md](virtual-tree.md).
+**Companion records:** [harness-alignment.md](harness-alignment.md) (tool/loop contracts), [genesis-assistant.md](genesis-assistant.md) (the `/assistant` product surface), [process-management.md](process-management.md) (tool execution), [virtual-tree.md](virtual-tree.md).
 
 ---
 
@@ -14,8 +14,13 @@
 | P2 | yes | Session process, one-shot — ONE `EvoGit.Agent.Session` (`gen_statem`, `:handle_event_function`, one per `agent_id`, `:temporary` under `EvoGit.Agent.Session.Supervisor`, registered in `EvoGit.Agent.Session.Registry`) owning the single copy of state, with ONE short-lived `Agent.Session.Worker` Task per exchange checkpointing `%State{}` back after each turn; `:evogit_agent_summary` is the single-writer summary-only read model (no context, pending messages or cancel flag); lifecycle anchors re-keyed on the session pid (`SchedMeta.session_pid/mode/phase`, worktree lease, background jobs / `ProcessManager` `owner_pid`); `AgentScheduler.run_agent/2` stays blocking `{:ok, %Result{}}`. |
 | P3 | yes | Interactive mode — the `{:yield}`/`{:finish}` split, the non-terminal `:awaiting_input` status (persisted `session_mode`, root-only in v1), `start_session/1` / `send_session_message/3` / `close_session/1` / `await_close/1` (+ `RemoteAPI`/`RemoteNode` verbs), `Agent.Completion` once at the outcome, `Agent.Completion.Builder`, `Runtime.Assistant`, and a `prompt_cache_key` minted once at registration. |
 | P4 | yes | Push-only streaming — `EvoGit.Agent.Stream` (`watch/1`, snapshot, `seq`, `topic/1`, `stale?/2`) with a session-owned monitored watcher set gating callbacks per LLM attempt, ~75 ms coalesced `{:agent_delta, agent_id, seq, events}` broadcasts, `:interrupt` halting the in-flight stream between chunks, and remote watch verbs. |
-| P6 | yes | Dashboard: `/help` as ONE long-lived interactive session per conversation (`/help?session=<agent_id>`), a session rail, `HomeLive.Watch` + `HomeLive.Delta`, the `:awaiting_input` badge/sidebar group/filter/reply box/close action, `/server/status` keeping its busy set `[:running, :pending, :finalizing, :cancelling]` (an idle session is not busy), and idle sessions closed gracefully on update. |
+| P6 | yes | Dashboard: `/help` as ONE long-lived interactive session per conversation (`/help?session=<agent_id>`), a session rail (since removed — see the current UI state note below), `HomeLive.Watch` + `HomeLive.Delta`, the `:awaiting_input` badge/sidebar group/filter/reply box/close action, `/server/status` keeping its busy set `[:running, :pending, :finalizing, :cancelling]` (an idle session is not busy), and idle sessions closed gracefully on update. |
 | P5 | **deferred** | Durability: sessions are in-memory only, so a BEAM restart fails `:awaiting_input` sessions (reconciled to `:failed`) and reclaims their worktree. |
+
+**Current UI state (correction to the P6 row above, not a rewrite of it).** The Assistant page is `GET /assistant` and the legacy `/help` route only 302-redirects there with the query string preserved, so every `/help` reference in this record's history means today's `/assistant` page.
+The per-page conversation rail is gone: the conversation list is the shared app-layout sidebar's **Conversations** section, rendered below **Active Tasks** on every dashboard page and loaded asynchronously by the layout, not by the Assistant page.
+Approvals are presented as a fixed-height status strip above the composer plus ONE single-request modal dialog (not inline cards), with a browser/OS notification raised only while the window is hidden or unfocused.
+Transcript geometry is fixed while streaming: reserved heights for the strip, the interrupt slot and the composer, and a stick-to-bottom scroller with no animated scroll.
 
 **Known leftovers / deviations**
 - Durability (P5) is not implemented, as above.
