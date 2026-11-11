@@ -11,6 +11,7 @@ Fixtures resolve the concrete paths through `EvoGit.Config.config_dir/0` and `co
 
 `assistant_message_test.exs` renders `AssistantMessage.assistant_message/1` and tests `AgentStream.extract_failed_message/1` directly.
 `chat_state_test.exs`, `messages_test.exs`, and `transcript_test.exs` cover chat-state normalization, message extraction, and transcript normalization.
+`delta_test.exs` covers the pure `EvoDashWeb.HomeLive.Delta` reducer of the push-only agent-delta stream.
 
 ## Constraints
 
@@ -93,7 +94,8 @@ A vanished session with a NON-EMPTY cached conversation keeps that transcript AN
 A vanished session with an EMPTY cache renders `#chat-session-ended` ("This session has ended." plus a `phx-click="new_chat"` affordance) instead of the greeting, so no suggestion chip is rendered, and the header's New chat stays enabled.
 A NON-EMPTY fetched history always wins: the cached transcript and reasoning are replaced by the fetched entries.
 
-### Streaming-delta coverage (current gap)
-No suite in `apps/evo_dash/test` subscribes to `"agent:<id>"` or asserts a `{:agent_delta, agent_id, seq, batch}` message; the mounted `/assistant` page subscribes only to `"tasks"`, `"agents"` and `"approvals"`, and its live transcript path is the whole-history refetch (`{:chat_history_loaded, node, seq, agent_id, result}`, injected directly by tests or produced by a REAL parked session in the "real live session flows through the real get_agent_history path" and "production-mimicking crash repro" tests).
-The core-side push API already exists and is covered elsewhere (`EvoGit.RemoteNode.watch_agent/2`, `unwatch_agent/2`, `watch_snapshot/2`, `EvoGit.Agent.Stream.topic/1`/`stale?/2`, tests under `apps/evo_git/test/evo_git/agent/stream/`), but `EvoDash.NodeContext` exposes no watch verb yet, so a delta test needs that boundary first.
-The mounted history guards currently pinned are only the foreign-node drop and the live `seq`/`agent_id` reads taken at injection time; no test drops a stale-seq or wrong-agent `{:chat_history_loaded, ...}`, and no test exercises the `{:chat_agent_lookup, ...}` stale/node/task_id/non-map branches.
+### Push-only delta streaming coverage
+`delta_test.exs` pins the pure reducer `EvoDashWeb.HomeLive.Delta` (`new/3`, `seed/3`, `apply_batch/5`), including text/thinking/tool/turn/yield/finished folding, the 8 000-grapheme and 40-thought caps, and malformed-batch totality.
+The `describe "push-only delta streaming"` block of `../home_live_test.exs` mounts `/assistant?session=<id>`, drives the call-time `:home_agent_watch_runner` / `:home_agent_unwatch_runner` seams and broadcasts `{:agent_delta, agent_id, seq, batch}` on `"agent:<id>"`, pinning that the LiveView process itself subscribes and applies a published batch, that `seq <= snapshot.seq` batches are dropped through `EvoGit.Agent.Stream.stale?/2` while a newer seq applies, that another agent's delta is dropped, that the attach snapshot seeds the transcript and thought process, that thinking/tool/turn deltas reach both surfaces, that `:yield` parks the session and `:finished` ends it, that a watched session keeps `chat_fetch_seq` unchanged on a `{:agent_updated, …}` message-count change, and that New chat detaches through the unwatch runner.
+The page boundary is `EvoDashWeb.HomeLive.Watch` over `EvoDash.NodeContext.subscribe_agent_deltas/1`, `unsubscribe_agent_deltas/1`, `register_agent_watcher/3` and `unregister_agent_watcher/3`.
+The remaining `{:chat_history_loaded, ...}` gap is narrower: the mounted suite pins only the foreign-node drop, so no test drops a stale-seq or wrong-agent `{:chat_history_loaded, ...}`, and the `{:chat_agent_lookup, ...}` stale/node/task_id/non-map branches are not asserted.
