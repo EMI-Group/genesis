@@ -53,6 +53,10 @@ defmodule EvoGit.CommandApproval do
     tool-task timeout fired first), its pending request is cleaned up and
     resolved `:timed_out` (never a crash).
 
+  A request that carries NO task id (a task-less `/assistant` interactive
+  session) has no task lifecycle to match: it resolves only by a user decision,
+  the approval window, or caller death — never auto-approved.
+
   Fails closed: `request/5` returns `:timeout` (and the command is NOT
   executed) whenever the approval service is unavailable.
 
