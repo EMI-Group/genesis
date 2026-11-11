@@ -1,3 +1,10 @@
+# Deliberately ONE module (just over the ~1000-line concern threshold): this is ONE `gen_statem`
+# (handle_event_function) per agent. The phase machine, the watcher set / `event_seq` / delta
+# batcher, the exchange-worker lifecycle and the completion finalization all mutate the SAME state
+# and must be serialized by this single process — splitting them into separate modules would move
+# that state across process boundaries and re-introduce exactly the cross-process
+# read-modify-write this refactor removed. The batching/broadcast mechanics it delegates to live in
+# `EvoGit.Agent.Stream.Watchers`.
 defmodule EvoGit.Agent.Session do
   @moduledoc """
   ONE supervised process per agent: the owner of the authoritative `%EvoGit.Agent.State{}`.

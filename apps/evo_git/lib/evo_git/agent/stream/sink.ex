@@ -8,7 +8,8 @@ defmodule EvoGit.Agent.Stream.Sink do
 
     * `stream_opts/0` returns `[]` unless the sink is installed AND the session reports a live
       watcher — so an unwatched turn passes no callbacks at all and ReqLLM does no extra work;
-    * `emit/1` is a no-op when nothing is installed, so a stray call can never send a message.
+    * `emit/1` is a no-op when nothing is installed (or when the normalized batch is empty), so a
+      stray call can never send a message.
 
   ## The session gate
 
@@ -49,13 +50,20 @@ defmodule EvoGit.Agent.Stream.Sink do
   @doc """
   Installs the sink in the CALLING process: deltas go to `session_pid` for `agent_id`.
 
-  Purely a process-dictionary write (no message, no registration), so an installed-but-unwatched
-  run still costs nothing.
+  Two process-dictionary writes (no message, no registration) plus a mailbox sweep of any stale
+  interrupt, so an installed-but-unwatched run still costs nothing.
   """
   @spec install(pid(), term()) :: :ok
   def install(session_pid, agent_id) when is_pid(session_pid) do
     Process.put(@session_key, session_pid)
     Process.put(@agent_id_key, agent_id)
+
+    # WHY: the interrupt is delivered to the per-exchange worker process, so one received after
+    # that worker's last stream (or sent around install time) would still be sitting in the
+    # mailbox and pre-empt the FIRST stream of the next exchange. Starting an exchange is the one
+    # moment where any pending interrupt is by definition stale.
+    clear_interrupt()
+
     :ok
   end
 
@@ -95,17 +103,18 @@ defmodule EvoGit.Agent.Stream.Sink do
   @doc """
   Sends a delta (or a list of deltas) to the session.
 
-  A no-op when the sink is not installed. Never raises: the argument is normalized first, so the
-  session always receives a list of events.
+  A no-op when the sink is not installed, and a no-op when the normalized batch is EMPTY — a
+  tool-free turn emits nothing, so the session's mailbox never receives a pointless `{:delta, []}`.
+  Never raises: the argument is normalized first, so the session always receives a non-empty list of
+  events.
   """
   @spec emit(term()) :: :ok
   def emit(event_or_list) do
-    case Process.get(@session_key) do
-      session_pid when is_pid(session_pid) ->
-        send(session_pid, {:delta, Stream.normalize_batch(event_or_list)})
+    events = Stream.normalize_batch(event_or_list)
 
-      _other ->
-        :ok
+    with session_pid when is_pid(session_pid) <- Process.get(@session_key),
+         [_ | _] <- events do
+      send(session_pid, {:delta, events})
     end
 
     :ok
