@@ -168,7 +168,7 @@ The `checkpoint:` opt handed to `Exchange.run/2` is LIVE: the engine calls it on
 - `./input.ex` → `EvoGit.Agent.Session.Input` (the pure input policy + resume transformation).
 - `./finalize.ex` → `EvoGit.Agent.Session.Finalize` (the monitored finalizer: process context, `Completion.Builder.finalize/2` containment, `{:session_finalized, …}`).
 - `./outcome.ex` → `EvoGit.Agent.Session.Outcome` (the pure phase/mode/outcome verdict table).
-- `./session.ex` (parent `../session.ex`) → `EvoGit.Agent.Session`, the `:gen_statem` owning the phase machine, the watcher set/`event_seq` authority, the public API and the terminal delivery.
+- `../session.ex` (parent of this node) → `EvoGit.Agent.Session`, the `:gen_statem` owning the phase machine, the watcher set/`event_seq` authority, the public API and the terminal delivery.
 - `../stream.ex` + `../stream/` → `EvoGit.Agent.Stream` (consumer API: `watch/1`, `register_watcher/2`, `unwatch/1`, `unregister_watcher/2`, `snapshot/1`, `stale?/2`, `topic/1`), `Stream.Watchers` (the session watcher set + the ONE `flush/4` broadcast), `Stream.Batcher` (the ONE coalescing buffer, `flush_interval_ms/0`), `Stream.Sink` (the worker-process-local, default-inert emitter + `{:evogit_interrupt, _ref}` consumption), `Stream.Snapshot` (the plain-data point-in-time view) and `Stream.Interrupted` (the halt exception) — wire contract: `../stream/CONTEXT.md`.
 - `./worker.ex` → `EvoGit.Agent.Session.Worker`, the per-exchange task body.
 - `./summary.ex` → `EvoGit.Agent.Session.Summary`, the one `:evogit_agent_summary` merge/read helper.
