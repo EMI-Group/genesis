@@ -41,8 +41,8 @@ defmodule EvoDashWeb.HomeLive do
     Attachments,
     ChatState,
     Messages,
-    ModelSelect,
     ModelSelection,
+    SendPath,
     SessionActions,
     SessionList,
     SourceGate,
@@ -357,7 +357,7 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  defp spawn_attach(socket, session_id) do
+  def spawn_attach(socket, session_id) do
     if connected?(socket) do
       seq = (socket.assigns[:session_attach_seq] || 0) + 1
       node = socket.assigns[:current_node]
@@ -465,7 +465,7 @@ defmodule EvoDashWeb.HomeLive do
 
   defp entry_text(_entry), do: ""
 
-  defp maybe_load_sessions(socket) do
+  def maybe_load_sessions(socket) do
     if connected?(socket) do
       SessionList.spawn_load(socket, socket.assigns[:current_node])
     else
@@ -1084,328 +1084,22 @@ defmodule EvoDashWeb.HomeLive do
     {:noreply, socket}
   end
 
-  defp send_chat(socket, text), do: send_draft(socket, text, :queue)
-  # button are disabled in the same state, so this is the defensive backstop for
-  defp send_draft(socket, text, policy) do
-    cond do
-      ModelSelection.pending_remote?(socket) ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Connect to the remote node before sending a message.")
-         )}
+  # The composer send path and the one-shot finalize block live in
+  # `EvoDashWeb.HomeLive.SendPath`; these thin delegations keep every call site
+  # (handle_event / handle_info / task-event handlers) unchanged.
+  defp send_chat(socket, text), do: SendPath.send_chat(socket, text)
+  defp send_draft(socket, text, policy), do: SendPath.send_draft(socket, text, policy)
 
-      SourceGate.blocked?(socket.assigns) ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Download the Genesis source before sending a message.")
-         )}
-
-      true ->
-        do_send_chat(socket, text, policy)
-    end
-  end
-
-  defp do_send_chat(socket, text, policy) do
-    text = String.trim(text || "")
-
-    cond do
-      not sendable_status?(socket) ->
-        # Defensive — the composer disables Send in these states anyway.
-        {:noreply, socket}
-
-      text == "" ->
-        {:noreply, socket}
-
-      true ->
-        {message, attachments} =
-          Attachments.to_message(text, socket.assigns[:pending_attachments])
-
-        opts =
-          if is_nil(socket.assigns[:session_id]) do
-            [mode: "reflect", objective: reflect_objective(socket, message)]
-          else
-            []
-          end
-
-        case ModelSelect.task_opts(
-               socket.assigns.model_snapshot,
-               socket.assigns,
-               ModelSelection.selection_scope(socket),
-               opts
-             ) do
-          {:ok, task_opts} ->
-            dispatch_send(socket, message, attachments, task_opts, policy)
-
-          {:error, _reason} ->
-            {:noreply,
-             put_flash(socket, :error, gettext("Choose a valid model before sending a message."))}
-        end
-    end
-  end
-
-  defp sendable_status?(socket) do
-    if is_nil(socket.assigns[:session_id]) do
-      socket.assigns[:chat_status] == :idle
-    else
-      socket.assigns[:chat_status] in [:idle, :running, :awaiting_input]
-    end
-  end
-
-  defp reflect_objective(socket, text) do
-    case Transcript.build_preamble(socket.assigns[:transcript]) do
-      {:ok, preamble} -> preamble <> "New message: " <> text
-      :empty -> text
-    end
-  end
-
-  defp dispatch_send(socket, text, attachments, task_opts, policy) do
-    if is_nil(socket.assigns[:session_id]) do
-      start_session_chat(socket, text, attachments, task_opts)
-    else
-      queue_session_message(socket, text, attachments, policy)
-    end
-  end
-
-  # is shown as a transient echo (never as a second answer bubble).
-  defp queue_session_message(socket, text, attachments, policy) do
-    node = socket.assigns[:current_node] || node()
-    agent_id = socket.assigns[:session_id]
-    queued? = socket.assigns[:chat_status] == :running
-
-    result =
-      SafeCall.run(fn ->
-        SessionActions.send_message(node, agent_id, text, attachments, policy)
-      end)
-
-    case normalize_send(result) do
-      :ok ->
-        transcript =
-          Transcript.append(socket.assigns[:transcript], Transcript.entry(:user, text))
-
-        transcript =
-          if queued?, do: transcript, else: Transcript.put_streaming_text(transcript, "")
-
-        socket =
-          socket
-          |> assign(
-            transcript: transcript,
-            chat_draft: "",
-            pending_attachments: Attachments.clear(),
-            chat_status: :running
-          )
-          |> ChatState.persist()
-
-        {:noreply, if(queued?, do: push_queued_echo(socket, text), else: socket)}
-
-      {:error, reason} ->
-        {:noreply, send_failure(socket, reason)}
-    end
-  end
-
-  defp normalize_send({:ok, :ok}), do: :ok
-  defp normalize_send({:ok, {:error, reason}}), do: {:error, reason}
-  defp normalize_send({:error, reason}), do: {:error, reason}
-  defp normalize_send({:ok, other}), do: {:error, {:unexpected_send_result, other}}
-
-  defp push_queued_echo(socket, text) do
-    echo = %{
-      id: System.unique_integer([:positive]) |> Integer.to_string(),
-      text: text,
-      at: System.system_time(:millisecond)
-    }
-
-    echoes = (socket.assigns[:queued_echoes] || []) ++ [echo]
-
-    socket
-    |> assign(queued_echoes: Enum.take(echoes, -20))
-    |> ChatState.persist()
-  end
-
-  defp message_count_grew?(socket, changed_fields) do
-    case Keyword.get(changed_fields, :message_count) do
-      count when is_integer(count) ->
-        case socket.assigns[:agent_message_count] do
-          nil -> true
-          previous when is_integer(previous) -> count > previous
-          _other -> true
-        end
-
-      _other ->
-        false
-    end
-  end
+  defp message_count_grew?(socket, changed_fields),
+    do: SendPath.message_count_grew?(socket, changed_fields)
 
   defp drop_echoes(socket), do: assign(socket, queued_echoes: [])
 
-  defp send_failure(socket, reason) do
-    if SessionActions.session_ended?(reason) do
-      socket
-      |> assign(chat_status: :ended, queued_echoes: [])
-      |> ChatState.persist()
-      |> put_flash(
-        :error,
-        gettext("This conversation has ended. Start a new chat to continue.")
-      )
-    else
-      put_flash(
-        socket,
-        :error,
-        gettext("Failed to send the message: %{reason}", reason: inspect(reason))
-      )
-    end
-  end
+  defp finalize_streaming(socket, text), do: SendPath.finalize_streaming(socket, text)
+  defp finalize_terminal(socket, task), do: SendPath.finalize_terminal(socket, task)
+  defp clear_task_refs(socket), do: SendPath.clear_task_refs(socket)
 
-  # error — never a silent Auto, never a fallback on a transport error.
-  defp start_session_chat(socket, text, attachments, task_opts) do
-    node = socket.assigns[:current_node] || node()
-
-    opts =
-      SessionActions.session_opts(text,
-        model_spec: Keyword.get(task_opts, :model_spec),
-        attachments: attachments
-      )
-
-    case SafeCall.run(fn -> SessionActions.start(node, opts) end) do
-      {:ok, {:ok, agent_id}} ->
-        adopt_session(socket, agent_id, text)
-
-      {:ok, {:error, reason}} ->
-        start_failure(socket, reason, text, task_opts)
-
-      {:error, reason} ->
-        start_failure(socket, {:transport, reason}, text, task_opts)
-
-      {:ok, other} ->
-        start_failure(socket, {:unexpected_start_result, other}, text, task_opts)
-    end
-  end
-
-  defp start_failure(socket, reason, text, task_opts) do
-    if SessionActions.session_unavailable?(reason) do
-      {:noreply, fallback_socket} =
-        start_chat(assign(socket, session_mode: :one_shot), text, task_opts)
-
-      {:noreply,
-       put_flash(
-         fallback_socket,
-         :info,
-         gettext(
-           "Interactive sessions are unavailable here. This conversation runs in one-shot mode."
-         )
-       )}
-    else
-      {:noreply,
-       put_flash(
-         socket,
-         :error,
-         gettext("Failed to start the conversation: %{reason}", reason: inspect(reason))
-       )}
-    end
-  end
-
-  defp adopt_session(socket, agent_id, text) do
-    node = socket.assigns[:current_node] || node()
-
-    transcript =
-      socket.assigns[:transcript]
-      |> Transcript.append(Transcript.entry(:user, text))
-      |> Transcript.put_streaming_text("")
-
-    socket =
-      socket
-      |> assign(
-        session_id: agent_id,
-        current_session_id: agent_id,
-        chat_id: agent_id,
-        session_mode: :interactive,
-        chat_agent_id: agent_id,
-        chat_node: node,
-        chat_task_id: nil,
-        chat_task_status: :running,
-        agent_message_count: nil,
-        chat_status: :running,
-        chat_draft: "",
-        queued_echoes: [],
-        pending_attachments: Attachments.clear(),
-        transcript: transcript
-      )
-      |> ChatState.persist()
-      |> ApprovalWorkflow.init()
-      |> maybe_recover_approvals()
-      |> spawn_attach(agent_id)
-      |> maybe_load_sessions()
-
-    {:noreply,
-     push_patch(socket, to: SessionActions.url(socket.assigns[:current_node_id], agent_id))}
-  end
-
-  defp start_chat(socket, text, task_opts) do
-    transcript =
-      socket.assigns[:transcript]
-      |> Transcript.append(Transcript.entry(:user, text))
-      |> Transcript.put_streaming_text("")
-
-    socket =
-      assign(socket,
-        transcript: transcript,
-        chat_draft: "",
-        chat_status: :running,
-        chat_node: socket.assigns[:current_node] || node()
-      )
-
-    result =
-      case SafeCall.run(fn ->
-             NodeContext.start_task(
-               socket.assigns[:current_node] || node(),
-               :reflect,
-               task_opts
-             )
-           end) do
-        {:ok, start_result} -> start_result
-        {:error, reason} -> {:error, reason}
-      end
-
-    case result do
-      {:ok, _task} ->
-        case AgentStream.task_id_from_start(result) do
-          {:ok, id} ->
-            socket =
-              socket
-              |> assign(chat_task_id: id, chat_task_status: :pending)
-              |> ChatState.persist()
-              |> async_lookup_agent()
-              |> maybe_recover_approvals()
-
-            {:noreply, socket}
-
-          {:error, :no_task_id} ->
-            socket =
-              socket
-              |> finalize_streaming(gettext("Failed to start the task: no task id returned"))
-              |> assign(:chat_status, :idle)
-              |> ChatState.persist()
-
-            {:noreply, socket}
-        end
-
-      {:error, reason} ->
-        socket =
-          socket
-          |> finalize_streaming(
-            gettext("Failed to start the task: %{reason}", reason: inspect(reason))
-          )
-          |> assign(:chat_status, :idle)
-          |> ChatState.persist()
-
-        {:noreply, socket}
-    end
-  end
-
-  defp async_lookup_agent(socket, node_override \\ nil) do
+  def async_lookup_agent(socket, node_override \\ nil) do
     task_id = socket.assigns[:chat_task_id]
     node = node_override || socket.assigns[:current_node] || node()
     seq = socket.assigns[:chat_fetch_seq] + 1
@@ -1547,86 +1241,6 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  defp finalize_streaming(socket, text) do
-    assign(socket, transcript: Transcript.finalize_assistant(socket.assigns[:transcript], text))
-  end
-
-  defp finalize_terminal(socket, task) do
-    cond do
-      task == nil ->
-        socket
-        |> finalize_streaming(gettext("The conversation was deleted."))
-        |> clear_task_refs()
-        |> ChatState.persist()
-
-      is_map(task) ->
-        case Map.get(task, :status) do
-          status when status in @terminal_statuses ->
-            socket = assign(socket, chat_task_status: status)
-
-            socket =
-              case status do
-                :completed -> finalize_completed(socket, Map.get(task, :result))
-                :cancelled -> finalize_cancelled(socket, Map.get(task, :result))
-                :failed -> finalize_failed(socket, Map.get(task, :error))
-              end
-
-            socket
-            |> clear_task_refs()
-            |> ChatState.persist()
-
-          :cancelling ->
-            socket
-            |> assign(chat_task_status: :cancelling, chat_status: :cancelling)
-            |> ChatState.persist()
-
-          status when status in [:running, :pending, :finalizing] ->
-            socket
-            |> assign(chat_task_status: status)
-            |> ChatState.persist()
-
-          _ ->
-            socket
-        end
-
-      true ->
-        socket
-    end
-  end
-
-  defp finalize_completed(socket, result) do
-    case AgentStream.extract_final_text(result) do
-      {:ok, text} -> finalize_streaming(socket, text)
-      :empty -> finalize_streaming(socket, gettext("No response."))
-      :error -> finalize_streaming(socket, gettext("The task failed."))
-    end
-  end
-
-  defp finalize_cancelled(socket, result) do
-    case AgentStream.extract_final_text(result) do
-      {:ok, text} -> finalize_streaming(socket, text)
-      _ -> finalize_streaming(socket, gettext("Stopped."))
-    end
-  end
-
-  defp finalize_failed(socket, error) do
-    case AgentStream.extract_failed_message(error) do
-      nil -> finalize_streaming(socket, gettext("The task failed."))
-      message -> finalize_streaming(socket, message)
-    end
-  end
-
-  defp clear_task_refs(socket) do
-    socket
-    |> assign(
-      chat_task_id: nil,
-      chat_agent_id: nil,
-      agent_message_count: nil,
-      chat_status: :idle
-    )
-    |> ApprovalWorkflow.init()
-  end
-
   defp reset_chat(socket) do
     socket
     |> assign(
@@ -1652,7 +1266,7 @@ defmodule EvoDashWeb.HomeLive do
     |> ApprovalWorkflow.init()
   end
 
-  defp maybe_recover_approvals(socket) do
+  def maybe_recover_approvals(socket) do
     context =
       Map.take(socket.assigns, [
         :chat_id,
