@@ -26,6 +26,23 @@ defmodule EvoGit.Agent.Stream do
   to a documented value. The only error shapes are
   `{:error, {:not_found, reason}}` and `{:error, {:bad_state, phase}}`.
 
+  ## Subscribing is idempotent, and the memo is CONSUMER-LOCAL
+
+  `subscribe/1` / `unsubscribe/1` are the ONE subscription primitive (both `watch/1` and the
+  cross-node `EvoGit.RemoteNode.watch_agent/2` route through them). `Phoenix.PubSub`'s own
+  subscription registry is `keys: :duplicate`, so a second `subscribe/2` from the SAME process
+  makes every broadcast arrive TWICE; `subscribe/1` therefore keeps a per-process memo of the
+  agent topics this process already subscribed to, which makes a re-watch (a dashboard re-mount,
+  a retried attach) a no-op instead of a duplicate delta stream.
+
+  That memo lives in the process dictionary of the CONSUMER that subscribed, so a consumer must
+  subscribe and `unsubscribe/1` from the SAME process — which is the documented contract anyway
+  (deltas are delivered to the process that subscribed). A registered watcher pid on another node
+  is unaffected: the memo is transport bookkeeping, not part of the watcher set. It is not
+  durable either: a restarted `EvoGit.PubSub` drops every subscription, so a consumer that
+  suspects it missed deltas resyncs with a fresh `snapshot/1` (and, to be sure, `unsubscribe/1`
+  then `subscribe/1`).
+
   ## Watch ordering is load-bearing
 
   `watch/1` subscribes to the topic BEFORE it registers the watcher and takes the snapshot. A
@@ -260,7 +277,59 @@ defmodule EvoGit.Agent.Stream do
 
   # --- PubSub (guarded: subscribing to a dead PubSub EXITS) ---
 
-  defp subscribe(agent_id) do
+  # The per-process memo of agent topics THIS process is already subscribed to. It lives in the
+  # consumer's own process dictionary — never ETS, never a global — because the subscription itself
+  # is consumer-local. Keyed by the topic (not the raw id), which is the actual subscription
+  # identity, so `1` and `"1"` cannot each buy their own duplicate subscription.
+  @subscriptions_key :evogit_stream_subscriptions
+
+  @doc """
+  Subscribes the CALLING process to `topic(agent_id)`, at most once per agent.
+
+  This is the ONE subscription primitive: `watch/1` and `EvoGit.RemoteNode.watch_agent/2` both
+  route through it. A process that is already subscribed to that agent's topic gets `:ok` without a
+  second `Phoenix.PubSub.subscribe/2` — the subscription registry is `keys: :duplicate`, so a
+  duplicate subscribe would deliver every `{:agent_delta, …}` TWICE.
+
+  The memo of subscribed topics is CONSUMER-LOCAL (the calling process's dictionary), so subscribe
+  and `unsubscribe/1` must be called from the same process — the same process deltas are delivered
+  to.
+
+  TOTAL: an unavailable `EvoGit.PubSub` answers `{:error, {:not_found, :pubsub_unavailable}}`
+  instead of exiting.
+  """
+  @spec subscribe(term()) :: :ok | {:error, {atom(), term()}}
+  def subscribe(agent_id) do
+    if subscribed?(agent_id) do
+      :ok
+    else
+      case do_subscribe(agent_id) do
+        :ok -> remember(agent_id)
+        {:error, _reason} = error -> error
+      end
+    end
+  end
+
+  @doc """
+  Unsubscribes the CALLING process from `topic(agent_id)` and clears its memo entry.
+
+  Idempotent and TOTAL: `:ok` when the process was not subscribed, when PubSub is already gone and
+  when the agent id was never watched. Always clears the memo, so a later `subscribe/1` subscribes
+  for real again.
+  """
+  @spec unsubscribe(term()) :: :ok
+  def unsubscribe(agent_id) do
+    if Process.whereis(EvoGit.PubSub) do
+      _ = Phoenix.PubSub.unsubscribe(EvoGit.PubSub, topic(agent_id))
+      :ok
+    else
+      :ok
+    end
+
+    forget(agent_id)
+  end
+
+  defp do_subscribe(agent_id) do
     if Process.whereis(EvoGit.PubSub) do
       case Phoenix.PubSub.subscribe(EvoGit.PubSub, topic(agent_id)) do
         :ok -> :ok
@@ -271,12 +340,24 @@ defmodule EvoGit.Agent.Stream do
     end
   end
 
-  defp unsubscribe(agent_id) do
-    if Process.whereis(EvoGit.PubSub) do
-      _ = Phoenix.PubSub.unsubscribe(EvoGit.PubSub, topic(agent_id))
-      :ok
-    else
-      :ok
-    end
+  defp subscribed?(agent_id), do: MapSet.member?(subscriptions(), topic(agent_id))
+
+  defp remember(agent_id) do
+    Process.put(@subscriptions_key, MapSet.put(subscriptions(), topic(agent_id)))
+    :ok
   end
+
+  defp forget(agent_id) do
+    remaining = MapSet.delete(subscriptions(), topic(agent_id))
+
+    if MapSet.size(remaining) == 0 do
+      Process.delete(@subscriptions_key)
+    else
+      Process.put(@subscriptions_key, remaining)
+    end
+
+    :ok
+  end
+
+  defp subscriptions, do: Process.get(@subscriptions_key, MapSet.new())
 end

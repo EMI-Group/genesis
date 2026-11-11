@@ -12,7 +12,9 @@ A consumer that fell behind, reconnected or lost a delta resyncs with a fresh `s
 | Function | Contract |
 |---|---|
 | `topic/1` | `"agent:<agent_id>"`. |
-| `watch(agent_id_or_pid)` | Subscribes the CALLING process FIRST, then registers it as a watcher and returns `{:ok, %Snapshot{}, seq}`; unsubscribes again and returns the error if registration fails. The ordering is load-bearing: a delta in the gap is either covered by the snapshot (`seq <= snapshot.seq`) or newer and delivered normally. |
+| `subscribe(agent_id)` | Subscribes the CALLING process at most once per agent: a CONSUMER-LOCAL `Process` memo of subscribed topics (`:evogit_stream_subscriptions`, a `MapSet`) makes a repeat subscribe a no-op, because `Phoenix.PubSub`'s registry is `keys: :duplicate` and a duplicate subscribe would deliver every batch TWICE. PubSub unavailable → `{:error, {:not_found, :pubsub_unavailable}}`, never an exit. |
+| `unsubscribe(agent_id)` | `Phoenix.PubSub.unsubscribe/2` + clears the memo entry; idempotent `:ok` (also when PubSub is gone), so a later `subscribe/1` subscribes for real again. |
+| `watch(agent_id_or_pid)` | Subscribes the CALLING process FIRST (through `subscribe/1`, so a re-watch is idempotent), then registers it as a watcher and returns `{:ok, %Snapshot{}, seq}`; unsubscribes again and returns the error if registration fails. The ordering is load-bearing: a delta in the gap is either covered by the snapshot (`seq <= snapshot.seq`) or newer and delivered normally. |
 | `register_watcher(target, consumer_pid)` | RPC-facing: registers an ARBITRARY pid (a local pid or a remote external pid, since `Process.monitor/1` delivers the `:DOWN` locally) with NO subscription. |
 | `unregister_watcher/2` | Removes a watcher; idempotent `:ok`. |
 | `unwatch/1` | Unregisters the calling pid and `Phoenix.PubSub.unsubscribe/2`s it; idempotent and total (`:ok` even when the session or the watcher entry is already gone). |
@@ -51,3 +53,5 @@ Gap repair is always a fresh `snapshot/1` + `stale?/2`, never a replay.
 The streaming gate is the session's own watcher count, which no `Registry` or `Phoenix.PubSub` can answer.
 The watcher set is session DATA monitored per consumer, never ETS, never a bookkeeping process.
 Broadcasts are total: an unavailable or restarted `EvoGit.PubSub` degrades to a dropped batch that a fresh snapshot repairs, never a crashed session.
+Subscribing is IDEMPOTENT per consumer: `Stream.subscribe/1` is the ONE subscription primitive (`watch/1` and `EvoGit.RemoteNode.watch_agent/2` both route through it) and its memo is CONSUMER-LOCAL `Process` state, so a consumer must subscribe and `unsubscribe/1` from the same process.
+`EvoGit.RemoteNode.watch_agent/2` subscribes the CALLER on its own node BEFORE registering on the owning node, because an `:erpc.call/5` target runs in a throwaway worker that is not the caller.
