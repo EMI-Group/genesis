@@ -1,12 +1,20 @@
 defmodule EvoDashWeb.HomeLive do
   @moduledoc """
-  ChatGPT-style chat page wired to the repo-less `:reflect` self-reflective
-  agent.
-  The user talks to Genesis itself: the page starts a `:reflect` task on the
-  current node (`NodeContext.start_task/3` with `mode: "reflect"` and
-  NO `:path`), tracks the task's root agent (`EvoGit.Agents.SelfReflective`)
-  and streams its assistant turns into chat bubbles, and lets the user stop
-  the conversation gracefully (which preserves the final result).
+  ChatGPT-style chat page for the Genesis Assistant, driven by ONE long-lived
+  interactive agent session per conversation.
+  The user talks to Genesis itself: the first message starts a repo-less
+  `EvoGit.Agents.SelfReflective` session on the current node through
+  `NodeContext.start_session/2`, every later message goes to that same agent
+  id through `NodeContext.send_session_message/4`, and the conversation is
+  addressed in the URL as `?session=<agent_id>`
+  (`EvoDashWeb.HomeLive.SessionActions`).
+  When interactive sessions are unavailable on the node, the page falls back
+  to the legacy one-shot `:reflect` task path (`NodeContext.start_task/3` with
+  `mode: "reflect"` and NO `:path`) — one task per message.
+  Either path tracks the chat task's root agent
+  (`EvoGit.Agents.SelfReflective`) and streams its assistant turns into chat
+  bubbles, and the user can stop the conversation gracefully (which preserves
+  the final result).
   Everything is push-based: `"tasks"` and `"agents"` PubSub broadcasts drive
   the transcript (task lifecycle events + agent message-count changes), and
   the LiveView process NEVER blocks on a store / cross-node call: every

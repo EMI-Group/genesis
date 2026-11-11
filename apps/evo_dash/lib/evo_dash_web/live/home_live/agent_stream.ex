@@ -1,7 +1,8 @@
 defmodule EvoDashWeb.HomeLive.AgentStream do
   @moduledoc """
-  Pure helpers for tracking the reflect task's root agent stream and extracting
-  the final result.
+  Pure helpers for tracking a chat task's root agent stream — an interactive
+  session's task or the one-shot `:reflect` fallback — and extracting the final
+  result.
   """
 
   @doc """

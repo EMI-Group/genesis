@@ -168,6 +168,6 @@ Future contract when deltas are wired in:
 
 ## Known Issues
 
-- `EvoDashWeb.Helpers.task_status_badge/1` has no `:awaiting_input` clause, so the page renders that status through its own local total helper rather than editing Helpers.
+- The page's own `status_label/1` (`assistant_message.ex`) predates the shared `:awaiting_input` clause: the badge and dot colours come from `EvoDashWeb.Helpers.task_status_badge/1` / `task_status_dot_class/1` (the violet idle-session family), while an idle session's label text falls through to `Atom.to_string/1`.
 - A genuinely new row in the conversation list animates nowhere — the panel has no enter animation by design (it is re-rendered from a plain list on every reload).
 - `home_live_test.exs`'s `:reflect` assertions exercise the fallback path only, because its fixture configures `model_profiles: []` (so `start_session` answers `:llm_not_configured`).
