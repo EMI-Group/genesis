@@ -287,7 +287,7 @@ defmodule EvoGit.Agent.Tools do
   # read plus registry latency: each poll of a `:unit`-handled job runs a
   # synchronous `systemctl --user show` in the single GLOBAL registry.
   # Never let stale assistants or hallucinated calls bypass exact-code approval.
-  # CLI compatibility is independent: it calls CommandShell directly.
+  # `run_command` is independent: it calls `CommandShell` directly.
   def execute("run_command", _args, _repo_path, _repo_root, _node_path) do
     "Error: use elixir_eval exact-code approval path"
   end

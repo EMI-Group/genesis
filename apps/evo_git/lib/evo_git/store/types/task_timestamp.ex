@@ -176,7 +176,7 @@ defmodule EvoGit.Store.Types.UnixMs do
 
   def cast(value) when is_integer(value), do: {:ok, value}
 
-  # Lenient string→integer casting for CLI/JSON-shaped input.
+  # Lenient string→integer casting for string/JSON-shaped input.
   def cast(value) when is_binary(value) do
     case Integer.parse(value) do
       {int, ""} -> {:ok, int}
