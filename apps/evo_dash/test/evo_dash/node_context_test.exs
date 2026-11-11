@@ -1456,6 +1456,115 @@ defmodule EvoDash.NodeContextSessionTest do
     end
   end
 
+  describe "push-only agent-delta streaming (subscription + watcher registration)" do
+    test "subscribe_agent_deltas/1 delivers to the caller and unsubscribe stops it" do
+      # A provably non-live id: no session can broadcast on this topic, so every
+      # message the test receives is the one it published itself.
+      agent_id = 9_000_000_000 + System.unique_integer([:positive])
+      topic = "agent:#{agent_id}"
+
+      on_exit(fn -> EvoDash.NodeContext.unsubscribe_agent_deltas(agent_id) end)
+
+      assert :ok = EvoDash.NodeContext.subscribe_agent_deltas(agent_id)
+
+      # Idempotent per process: the core memoizes the topic, so a re-attach must
+      # not buy a SECOND subscription (which would deliver every delta twice).
+      assert :ok = EvoDash.NodeContext.subscribe_agent_deltas(agent_id)
+
+      first = {:agent_delta, agent_id, 1, [{:text, "hi"}]}
+      assert :ok = Phoenix.PubSub.broadcast(EvoGit.PubSub, topic, first)
+      assert_receive ^first, @wait_budget_ms
+
+      assert :ok = EvoDash.NodeContext.unsubscribe_agent_deltas(agent_id)
+
+      second = {:agent_delta, agent_id, 2, [{:text, "after unsubscribe"}]}
+      assert :ok = Phoenix.PubSub.broadcast(EvoGit.PubSub, topic, second)
+      refute_receive ^second, 50
+
+      # Total: unsubscribing again (or for an id never watched) is still `:ok`.
+      assert :ok = EvoDash.NodeContext.unsubscribe_agent_deltas(agent_id)
+    end
+
+    test "register_agent_watcher/3 refuses an unknown agent without raising" do
+      agent_id = 9_000_000_000 + System.unique_integer([:positive])
+      watcher = self()
+
+      assert {:error, {:not_found, _reason}} =
+               EvoDash.NodeContext.register_agent_watcher(node(), agent_id, watcher)
+
+      # A refusal leaves NO watcher residue: nothing was registered anywhere, and
+      # the unregistration reports the same `{:not_found, :session_not_found}`
+      # refusal (the core's idempotent `:ok` covers a LIVE session with a missing
+      # watcher entry, which the parked-session test below pins).
+      assert {:error, {:not_found, :session_not_found}} =
+               EvoDash.NodeContext.unregister_agent_watcher(node(), agent_id, watcher)
+    end
+
+    test "register_agent_watcher/3 attaches to a parked session, unregister is idempotent" do
+      script_yields(["watched"])
+      agent_id = start_session!(unique_task_id())
+      on_exit(fn -> EvoDash.NodeContext.unsubscribe_agent_deltas(agent_id) end)
+
+      # The caller subscribes on ITS node first, then registers — the core's
+      # documented ordering, so no delta can fall between the two.
+      assert :ok = EvoDash.NodeContext.subscribe_agent_deltas(agent_id)
+      assert %{agent_id: ^agent_id} = await_idle(agent_id)
+
+      assert {:ok, %EvoGit.Agent.Stream.Snapshot{} = snapshot, seq} =
+               EvoDash.NodeContext.register_agent_watcher(node(), agent_id, self())
+
+      assert snapshot.agent_id == agent_id
+      assert is_integer(seq)
+      assert seq >= 0
+      assert snapshot.seq == seq
+      assert is_list(snapshot.messages)
+      assert snapshot.messages != []
+      assert snapshot.phase == :awaiting_input
+
+      assert :ok = EvoDash.NodeContext.unregister_agent_watcher(node(), agent_id, self())
+      # Idempotent: the watcher entry is already gone, which is not a failure.
+      assert :ok = EvoDash.NodeContext.unregister_agent_watcher(node(), agent_id, self())
+
+      assert :ok = EvoDash.NodeContext.close_session(node(), agent_id)
+
+      assert {:ok, %Result{result: "watched"}} =
+               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+    end
+
+    test "watch_agent_snapshot/2 reads a parked session and refuses an unknown id" do
+      script_yields(["snapshotted"])
+      agent_id = start_session!(unique_task_id())
+      on_exit(fn -> EvoDash.NodeContext.unsubscribe_agent_deltas(agent_id) end)
+      assert %{agent_id: ^agent_id} = await_idle(agent_id)
+
+      assert {:ok, %EvoGit.Agent.Stream.Snapshot{} = snapshot, seq} =
+               EvoDash.NodeContext.watch_agent_snapshot(node(), agent_id)
+
+      assert snapshot.agent_id == agent_id
+      assert snapshot.phase == :awaiting_input
+      assert is_integer(seq)
+      assert seq >= 0
+      assert is_list(snapshot.messages)
+
+      # The resync path registers/subscribes NOTHING: a delta published on the
+      # topic is not delivered to this test process.
+      delta = {:agent_delta, agent_id, seq + 1, [{:text, "not a subscription"}]}
+      assert :ok = Phoenix.PubSub.broadcast(EvoGit.PubSub, "agent:#{agent_id}", delta)
+      refute_receive ^delta, 50
+
+      assert :ok = EvoDash.NodeContext.close_session(node(), agent_id)
+
+      assert {:ok, %Result{}} =
+               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+
+      # An id with no session answers the core's documented refusal.
+      unknown = 9_000_000_000 + System.unique_integer([:positive])
+
+      assert {:error, {:not_found, _reason}} =
+               EvoDash.NodeContext.watch_agent_snapshot(node(), unknown)
+    end
+  end
+
   # --- fixtures -------------------------------------------------------------
 
   defp unique_task_id do

@@ -484,6 +484,156 @@ defmodule EvoDash.NodeContext do
     end
   end
 
+  # ── Push-only agent-delta streaming ──────────────────────────────
+  #
+  # The core contract (`EvoGit.Agent.Stream`) is PUSH-ONLY: a consumer attaches
+  # once, deltas arrive as `{:agent_delta, agent_id, seq, batch}` messages, and a
+  # fresh snapshot is the ONLY resync (no replay buffer, no poll loop).
+  #
+  # An attach has TWO halves, and they must run in DIFFERENT processes:
+  #
+  #   * the SUBSCRIPTION is CONSUMER-LOCAL — the topic lives on the CALLING node's
+  #     `EvoGit.PubSub` and deltas are delivered to the process that subscribed,
+  #     so the delta-consuming process (normally the LiveView) must call
+  #     `subscribe_agent_deltas/1` itself;
+  #   * the WATCHER REGISTRATION is PID-EXPLICIT — the session `Process.monitor/1`s
+  #     whatever pid it is handed (a remote pid included), so a supervised task may
+  #     register the LiveView's pid with `register_agent_watcher/3` and the deltas
+  #     still reach the LiveView. Registration is what opens the streaming gate: a
+  #     session with zero watchers emits nothing.
+
+  @doc """
+  Subscribes the CALLING process to an agent's delta topic on THIS node.
+
+  Delegates to `EvoGit.Agent.Stream.subscribe/1`, which is what the delivery is
+  local to: deltas broadcast on the OWNING node reach this subscriber only while
+  the cluster is connected and `EvoGit.PubSub` runs on both sides. There is no
+  node argument because a subscription is never a remote operation — the caller
+  subscribes where it wants the messages.
+
+  Idempotent per process (the core memoizes subscribed topics in the consumer's
+  process dictionary, so a re-mount or a retried attach never doubles every
+  delta), and total: an unavailable PubSub answers
+  `{:error, {:not_found, :pubsub_unavailable}}` instead of exiting. Subscribe and
+  `unsubscribe_agent_deltas/1` from the SAME process — that is the process deltas
+  are delivered to.
+  """
+  @spec subscribe_agent_deltas(pos_integer() | String.t()) :: :ok | {:error, term()}
+  def subscribe_agent_deltas(agent_id) do
+    EvoGit.Agent.Stream.subscribe(agent_id)
+  end
+
+  @doc """
+  Unsubscribes the CALLING process from an agent's delta topic and clears the
+  core's per-process memo entry.
+
+  Delegates to `EvoGit.Agent.Stream.unsubscribe/1`. Idempotent and TOTAL: `:ok`
+  when the process was not subscribed, when `EvoGit.PubSub` is already gone, and
+  when the agent id was never watched — so a teardown path needs no bookkeeping.
+
+  This is only the LOCAL half of a detach; the watcher registration on the owning
+  node is `unregister_agent_watcher/3`.
+  """
+  @spec unsubscribe_agent_deltas(pos_integer() | String.t()) :: :ok
+  def unsubscribe_agent_deltas(agent_id) do
+    EvoGit.Agent.Stream.unsubscribe(agent_id)
+  end
+
+  @doc """
+  Registers `watcher_pid` in the agent session's watcher set on the given node.
+
+  On the LOCAL node this calls `EvoGit.Agent.Stream.register_watcher/2`
+  directly; on a REMOTE node it routes
+  `EvoGit.AgentScheduler.RemoteAPI.register_watcher/2` through `call_remote/4`
+  and unwraps the `{:ok, result}` envelope, so the core's own answer arrives
+  unchanged (a transport failure is `{:error, reason}`, the same convention as
+  `EvoGit.RemoteNode.watch_snapshot/2`).
+
+  `watcher_pid` is the process that will RECEIVE the deltas — pass the
+  LiveView's pid, not the pid of a short-lived task, because the session
+  `Process.monitor/1`s it and reaps it on `:DOWN`. This call does NOT subscribe
+  anything: the subscriber subscribes on its own node with
+  `subscribe_agent_deltas/1` (BEFORE registering, so no delta falls in the gap).
+
+  Returns the FLAT `{:ok, %EvoGit.Agent.Stream.Snapshot{}, seq}` — a heavy read,
+  since the snapshot carries the session's full transcript — or
+  `{:error, {:not_found, reason}}` for an unknown/gone/unresponsive session,
+  `{:error, {:bad_state, phase}}` when the session refuses a watch, or
+  `{:error, reason}` for a transport failure. Never raises and never exits.
+  """
+  @spec register_agent_watcher(node(), pos_integer() | String.t(), pid()) ::
+          {:ok, EvoGit.Agent.Stream.Snapshot.t(), non_neg_integer()} | {:error, term()}
+  def register_agent_watcher(node, agent_id, watcher_pid) when is_pid(watcher_pid) do
+    if local_node?(node) do
+      EvoGit.Agent.Stream.register_watcher(agent_id, watcher_pid)
+    else
+      unwrap_rpc(
+        call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :register_watcher, [
+          agent_id,
+          watcher_pid
+        ])
+      )
+    end
+  end
+
+  # `EvoGit.Agent.Stream.register_watcher/2` guards on `is_pid/1`, so a non-pid
+  # consumer would raise a FunctionClauseError; mirror `RemoteAPI`'s documented
+  # refusal instead (this boundary never raises).
+  def register_agent_watcher(_node, _agent_id, _watcher_pid),
+    do: {:error, {:not_found, :invalid_consumer}}
+
+  @doc """
+  Removes `watcher_pid` from the agent session's watcher set on the given node.
+
+  The counterpart of `register_agent_watcher/3`: `EvoGit.Agent.Stream.unregister_watcher/2`
+  on the LOCAL node, `call_remote/4` + envelope unwrapping on a REMOTE one.
+  Idempotent — a watcher that was already reaped by its own `:DOWN`, or was never
+  registered, answers `:ok` — so a teardown may run it twice and needs no state.
+
+  Returns `:ok` or `{:error, {kind, reason}}` for an unknown/gone session, a
+  refused state, or a transport failure. It does not touch the caller's local
+  subscription; that is `unsubscribe_agent_deltas/1`.
+  """
+  @spec unregister_agent_watcher(node(), pos_integer() | String.t(), pid()) ::
+          :ok | {:error, term()}
+  def unregister_agent_watcher(node, agent_id, watcher_pid) when is_pid(watcher_pid) do
+    if local_node?(node) do
+      EvoGit.Agent.Stream.unregister_watcher(agent_id, watcher_pid)
+    else
+      unwrap_rpc(
+        call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :unregister_watcher, [
+          agent_id,
+          watcher_pid
+        ])
+      )
+    end
+  end
+
+  # Same totality reason as `register_agent_watcher/3`: a non-pid consumer has no
+  # watcher entry to remove, which is already the `:ok` case.
+  def unregister_agent_watcher(_node, _agent_id, _watcher_pid), do: :ok
+
+  @doc """
+  Reads ONE bounded snapshot of an agent on the given node, registering and
+  subscribing nothing.
+
+  Delegates to `EvoGit.RemoteNode.watch_snapshot/2` (which already branches
+  local/remote). This is the ONLY resync path of the push contract: a consumer
+  that fell behind or reconnected asks once here and then drops every delta whose
+  `seq` is `<=` the returned one (`EvoGit.Agent.Stream.stale?/2`) — never a poll
+  loop and never a replayed buffer.
+
+  Returns the FLAT `{:ok, %EvoGit.Agent.Stream.Snapshot{}, seq}` (a heavy read:
+  the snapshot carries the full transcript) or `{:error, {kind, reason}}` —
+  `{:not_found, _}` for an unknown/gone session or a transport failure,
+  `{:bad_state, phase}` when the session is not snapshot-able.
+  """
+  @spec watch_agent_snapshot(node(), pos_integer() | String.t()) ::
+          {:ok, EvoGit.Agent.Stream.Snapshot.t(), non_neg_integer()} | {:error, term()}
+  def watch_agent_snapshot(node, agent_id) do
+    EvoGit.RemoteNode.watch_snapshot(node, agent_id)
+  end
+
   @doc """
   Restarts the remote node's BEAM VM via RPC.
 
