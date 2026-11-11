@@ -2937,6 +2937,258 @@ defmodule EvoDashWeb.TasksLiveTest do
     end
   end
 
+  # Seeds one task whose persisted `tasks.session_mode` column carries `mode`
+  # ("oneshot" | "interactive"). `insert_fixture!/1` merges the override onto the
+  # %TaskInfo{} struct and `EvoGit.Store.Codec.task_session_mode/1` lets an
+  # explicit non-default struct value win, so this is the REAL persisted column —
+  # not an opts-only convention.
+  defp insert_session_fixture!(mode, prompt) do
+    insert_fixture!(session_mode: mode, opts: [prompt: prompt])
+  end
+
+  # Forces the persisted `tasks.session_mode` cell to a LEGACY blank value. The
+  # public writer always normalizes to `"oneshot"`, and the filter must treat a
+  # blank/absent cell exactly like a one-shot task
+  # (`EvoGit.Store.Codec.decode_session_mode("")` normalizes it), so the legacy
+  # row shape needs one raw UPDATE inside the store's own repo scope.
+  defp blank_session_mode!(id) do
+    repo = EvoGit.Store.__repo_pid__(EvoGit.Store)
+
+    EvoGit.Store.RepoScope.with_repo(repo, fn ->
+      EvoGit.Repo.query!("UPDATE tasks SET session_mode = '' WHERE id = ?1", [id])
+    end)
+
+    id
+  end
+
+  # The value of the ONE selected option of the session-kind select (nil when no
+  # option is selected). `selected` renders as a bare attribute, so presence of
+  # the attribute — not its value — is what marks the choice.
+  defp selected_session_mode(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find("select[name=session_mode_filter] option")
+    |> Enum.find_value(fn el ->
+      if Floki.attribute(el, "selected") != [] do
+        Floki.attribute(el, "value") |> List.first()
+      end
+    end)
+  end
+
+  # Puts `%{task_id => agent_id}` into `@awaiting_sessions` the way the page does
+  # it — the async page load's own result message, injected at the CURRENT
+  # `page_load_seq`/node with the already-applied rows, so the stale guards keep
+  # it and nothing else changes. (`PageLoad.awaiting_sessions/1` reads the live
+  # idle-session registry; a seeded store row has no live session, so the real
+  # load would report none.)
+  defp inject_awaiting_sessions(view, sessions) do
+    socket = :sys.get_state(view.pid, @assigns_timeout_ms).socket
+    assigns = socket.assigns
+
+    result = %{
+      tasks: assigns.tasks,
+      current_page: assigns.current_page,
+      total_count: assigns.total_count,
+      total_pages: assigns.total_pages,
+      project_paths: assigns.project_paths,
+      awaiting_sessions: sessions
+    }
+
+    send(view.pid, {:tasks_page_loaded, assigns.page_load_seq, node(), {:ok, result}})
+    render(view)
+  end
+
+  # The server-side session-kind filter is applied by `TasksLive.PageLoad` (the
+  # core SQL WHERE builder has no `session_mode` predicate, so the loader scans
+  # pages and paginates the MATCHING rows), which means BOTH the rendered rows
+  # AND the reported total must move with the filter — the total is observable
+  # only through the pagination line.
+  describe "session_mode filter (server-side)" do
+    test "interactive / oneshot / all move the rows AND the total", %{conn: conn} do
+      insert_session_fixture!("oneshot", "one-shot alpha")
+      insert_session_fixture!("oneshot", "one-shot beta")
+      insert_session_fixture!("interactive", "interactive gamma")
+      insert_session_fixture!("interactive", "interactive delta")
+      # A legacy row whose persisted cell is blank must be admitted as one-shot.
+      legacy = insert_session_fixture!("oneshot", "legacy blank mode")
+      blank_session_mode!(legacy)
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      # Interactive only: exactly the two interactive rows, and an exact total.
+      _html = render_hook(view, "filter_session_mode", %{"session_mode_filter" => "interactive"})
+      html = flush_tasks_load(view)
+      list = render_tasks_list(view)
+      assert list =~ "interactive gamma"
+      assert list =~ "interactive delta"
+      refute list =~ "one-shot alpha"
+      refute list =~ "one-shot beta"
+      refute list =~ "legacy blank mode"
+      assert html =~ "of 2 tasks"
+      # One-shot only: the two one-shot rows PLUS the blank legacy row.
+      _html = render_hook(view, "filter_session_mode", %{"session_mode_filter" => "oneshot"})
+      html = flush_tasks_load(view)
+      list = render_tasks_list(view)
+      assert list =~ "one-shot alpha"
+      assert list =~ "one-shot beta"
+      assert list =~ "legacy blank mode"
+      refute list =~ "interactive gamma"
+      refute list =~ "interactive delta"
+      assert html =~ "of 3 tasks"
+      # "all" restores everything.
+      _html = render_hook(view, "filter_session_mode", %{"session_mode_filter" => "all"})
+      html = flush_tasks_load(view)
+      list = render_tasks_list(view)
+      assert list =~ "one-shot alpha"
+      assert list =~ "interactive gamma"
+      assert list =~ "legacy blank mode"
+      assert html =~ "of 5 tasks"
+      flush_tasks_load(view)
+    end
+
+    test "an unknown value is whitelisted back to 'all' without crashing", %{conn: conn} do
+      insert_session_fixture!("oneshot", "one-shot alpha")
+      insert_session_fixture!("interactive", "interactive gamma")
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      _html = render_hook(view, "filter_session_mode", %{"session_mode_filter" => "bogus"})
+      html = flush_tasks_load(view)
+      list = render_tasks_list(view)
+      assert list =~ "one-shot alpha"
+      assert list =~ "interactive gamma"
+      assert html =~ "of 2 tasks"
+      assert selected_session_mode(html) == "all"
+
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.session_mode_filter ==
+               "all"
+
+      flush_tasks_load(view)
+    end
+
+    test "the select reflects the active filter and clear_filter resets it", %{conn: conn} do
+      insert_session_fixture!("oneshot", "one-shot alpha")
+      insert_session_fixture!("interactive", "interactive gamma")
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
+      assert selected_session_mode(html) == "all"
+      # No active chip while the filter is "all".
+      refute html =~ ~s(phx-value-filter="session_mode")
+      _html = render_hook(view, "filter_session_mode", %{"session_mode_filter" => "interactive"})
+      html = flush_tasks_load(view)
+      assert selected_session_mode(html) == "interactive"
+      refute render_tasks_list(view) =~ "one-shot alpha"
+      # The active-filter chip is rendered for the non-default choice.
+      assert html =~ ~s(phx-value-filter="session_mode")
+      refute html =~ ~s(phx-value-session_mode_filter="bogus")
+      _html = render_click(view, "clear_filter", %{"filter" => "session_mode"})
+      html = flush_tasks_load(view)
+      assert selected_session_mode(html) == "all"
+      assert render_tasks_list(view) =~ "one-shot alpha"
+      assert render_tasks_list(view) =~ "interactive gamma"
+      refute html =~ ~s(phx-value-filter="session_mode")
+      flush_tasks_load(view)
+    end
+  end
+
+  # `:awaiting_input` is a NON-TERMINAL status (an idle interactive session
+  # waiting for the operator), so it must be admitted by the unfiltered list, must
+  # render a human label instead of the raw atom, and must be selectable in the
+  # status filter (the core WHERE clause matches the status TEXT exactly).
+  describe ":awaiting_input status admission" do
+    test "an idle session renders the violet waiting label and the status filter admits it", %{
+      conn: conn
+    } do
+      insert_fixture!(
+        status: :awaiting_input,
+        finished_at: nil,
+        session_mode: "interactive",
+        opts: [prompt: "idle session task"]
+      )
+
+      insert_fixture!(status: :completed, opts: [prompt: "finished task"])
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
+      list = render_tasks_list(view)
+      assert list =~ "idle session task"
+      assert list =~ "Awaiting input"
+      assert list =~ "(waiting for you)"
+      assert list =~ "bg-violet"
+      # The raw atom is never the visible label.
+      refute list =~ ">awaiting_input<"
+      # The status select carries the new value.
+      assert html =~ ~s(value="awaiting_input")
+
+      _html = render_hook(view, "filter_tasks", %{"status_filter" => "awaiting_input"})
+      html = flush_tasks_load(view)
+      list = render_tasks_list(view)
+      assert list =~ "idle session task"
+      refute list =~ "finished task"
+      assert html =~ "of 1 tasks"
+      # Clearing the status filter restores the finished task too.
+      _html = render_hook(view, "filter_tasks", %{"status_filter" => "all"})
+      html = flush_tasks_load(view)
+      assert render_tasks_list(view) =~ "finished task"
+      assert html =~ "of 2 tasks"
+      flush_tasks_load(view)
+    end
+  end
+
+  # The reply/close flows of an interactive session. `@awaiting_sessions` maps a
+  # task id to the live session's agent id; the reply form forwards BOTH through
+  # the async `session_send_message` path, and closing is confirmed in a modal
+  # that always clears (a failed close can never wedge the page).
+  describe "interactive session reply and close" do
+    test "the card carries the reply box, replies are forwarded, and close is confirmed in a modal",
+         %{conn: conn} do
+      task_id =
+        insert_fixture!(
+          status: :awaiting_input,
+          finished_at: nil,
+          session_mode: "interactive",
+          opts: [prompt: "live session task"]
+        )
+
+      insert_fixture!(status: :completed, opts: [prompt: "other task"])
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      agent_id = "session_agent_#{System.unique_integer([:positive])}"
+      html = inject_awaiting_sessions(view, %{task_id => agent_id})
+      assert html =~ "task-#{task_id}-session"
+      assert html =~ "Interactive session"
+      assert html =~ "Waiting for your next message."
+      assert html =~ "task-#{task_id}-session-message"
+      assert html =~ "Close session"
+      # Submitting the card's own reply form forwards the seeded task id (its
+      # `phx-value-task_id`) and the typed text to the session RPC. That agent id
+      # is not live, so the call fails and the page's own failure flash proves the
+      # round trip without inspecting internals.
+      view
+      |> form("#task-#{task_id}-session form")
+      |> render_submit(%{"message" => "Hello session"})
+
+      wait_until(fn -> render(view) =~ "Failed to send message:" end)
+      # Close-session confirmation: open → title + agent/task identity, dismiss,
+      # then confirm (the non-live agent fails the close, which still CLEARS the
+      # modal and flashes).
+      assert render_click(view, "open_close_session_modal", %{"task_id" => task_id}) =~
+               "Close this session?"
+
+      modal = render(view)
+      assert modal =~ "Agent: #{agent_id}"
+      assert modal =~ "Task: #{task_id}"
+      assert render_click(view, "close_close_session_modal") =~ "live session task"
+      refute render(view) =~ "Close this session?"
+      render_click(view, "open_close_session_modal", %{"task_id" => task_id})
+      assert render(view) =~ "Close this session?"
+      render_click(view, "confirm_close_session")
+      wait_until(fn -> render(view) =~ "Failed to close session:" end)
+      refute render(view) =~ "Close this session?"
+      # The success arm of the async send: info flash + a list reload.
+      send(view.pid, {{:session_message_sent, task_id}, {:ok, :ok}})
+      wait_until(fn -> render(view) =~ "Message sent" end)
+      flush_tasks_load(view)
+    end
+  end
+
   # --- task detail view helpers ---
 
   # Extracts the first matching element's attribute (Floki), mirroring the
