@@ -11,31 +11,51 @@ defmodule EvoGit.Runtime.HelpersTest do
   # Shared temp git-repo setup (mirrors test/evo_git/adapters/git_test.exs)
   # --------------------------------------------------------------------------
   setup do
-    tmp_dir =
-      Path.join(System.tmp_dir!(), "evogit_helpers_" <> to_string(System.unique_integer()))
+    tmp_dir = unique_tmp_dir!("evogit_helpers")
 
     File.mkdir_p!(tmp_dir)
     Git.init(tmp_dir)
 
-    on_exit(fn ->
-      File.rm_rf!(tmp_dir)
-    end)
+    on_exit(fn -> rm_tmp_dir(tmp_dir) end)
 
     {:ok, %{tmp_dir: tmp_dir}}
   end
 
-  # Creates a fresh temp git repo with one commit and returns its absolute
-  # path. `Path.expand/1` mirrors `ForeignRepo.new/3` normalization so equality
-  # assertions against parsed TOML entries hold on all platforms (e.g. macOS
-  # /var -> /private/var symlink). Cleaned up via on_exit.
-  defp make_git_repo!(label) do
-    dir =
-      Path.expand(
-        Path.join(
-          System.tmp_dir!(),
-          "evogit_helpers_fr_#{label}_#{System.unique_integer()}"
-        )
+  # --------------------------------------------------------------------------
+  # Scratch-directory helpers
+  #
+  # `System.unique_integer/0` is only unique WITHIN one BEAM instance: its
+  # sequence starts at a fresh-VM-dependent base, so two `mix test` BEAMs
+  # running at the same time (separate worktrees, one shared
+  # `System.tmp_dir!()`) can mint the SAME integer — and therefore the same
+  # absolute path — inside overlapping windows of a few hundred calls.
+  # `File.rm_rf!/1` then raises `:eexist` when one process recreates an entry
+  # while the other is deleting the directory (`rmdir(2)` returns ENOTEMPTY,
+  # which Erlang maps to `:eexist`), or when a `git` child orphaned by a killed
+  # run is still writing into it.
+  # Naming from the owning BEAM's OS pid plus a positive monotonic integer
+  # makes every path process-unique; `Path.expand/1` pins it absolute and
+  # mirrors `ForeignRepo.new/3` normalization, so equality assertions against
+  # parsed TOML entries hold on all platforms (e.g. macOS /var -> /private/var).
+  # --------------------------------------------------------------------------
+  defp unique_tmp_dir!(prefix) do
+    Path.expand(
+      Path.join(
+        System.tmp_dir!(),
+        "#{prefix}_#{System.pid()}_#{System.unique_integer([:positive, :monotonic])}"
       )
+    )
+  end
+
+  # Teardown must never fail a test over scratch state: `File.rm_rf/1` reports
+  # (instead of raising) a deletion a concurrent writer raced. The pid-scoped
+  # name above means such a writer can never be this test's own git children.
+  defp rm_tmp_dir(dir), do: File.rm_rf(dir)
+
+  # Creates a fresh temp git repo with one commit and returns its absolute
+  # path. Cleaned up via on_exit.
+  defp make_git_repo!(label) do
+    dir = unique_tmp_dir!("evogit_helpers_fr_#{label}")
 
     File.mkdir_p!(dir)
     Git.init(dir)
@@ -43,7 +63,7 @@ defmodule EvoGit.Runtime.HelpersTest do
     {:ok, _} = Git.add(dir, "file.txt")
     {:ok, _} = Git.commit(dir, "Initial commit")
 
-    on_exit(fn -> File.rm_rf!(dir) end)
+    on_exit(fn -> rm_tmp_dir(dir) end)
     dir
   end
 
@@ -106,25 +126,17 @@ defmodule EvoGit.Runtime.HelpersTest do
   # ==========================================================================
   describe "new_codebase?/1 edge cases" do
     test "returns false for a directory containing an unknown subdirectory" do
-      tmp_dir =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit_helpers_test_" <> to_string(System.unique_integer())
-        )
+      tmp_dir = unique_tmp_dir!("evogit_helpers_test")
 
       File.mkdir_p!(Path.join(tmp_dir, "some_pkg"))
 
       assert Helpers.new_codebase?(tmp_dir) == false
 
-      File.rm_rf!(tmp_dir)
+      rm_tmp_dir(tmp_dir)
     end
 
     test "returns true for a nonexistent directory" do
-      nonexistent =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit_helpers_test_nonexistent_" <> to_string(System.unique_integer())
-        )
+      nonexistent = unique_tmp_dir!("evogit_helpers_test_nonexistent")
 
       assert Helpers.new_codebase?(nonexistent) == true
     end
@@ -477,10 +489,7 @@ defmodule EvoGit.Runtime.HelpersTest do
       # scenario), then main reset back to the first commit so the second commit
       # is a "new" foreign commit NOT on main — the branch must point at it
       # WITHOUT checking it out or moving the main working copy.
-      foreign_dir =
-        Path.expand(
-          Path.join(System.tmp_dir!(), "evogit_helpers_fr_main_#{System.unique_integer()}")
-        )
+      foreign_dir = unique_tmp_dir!("evogit_helpers_fr_main")
 
       File.mkdir_p!(foreign_dir)
       Git.init(foreign_dir)
@@ -497,7 +506,7 @@ defmodule EvoGit.Runtime.HelpersTest do
       {:ok, original_branch} = Git.current_branch(foreign_dir)
       refute main_head == foreign_new_sha
 
-      on_exit(fn -> File.rm_rf!(foreign_dir) end)
+      on_exit(fn -> rm_tmp_dir(foreign_dir) end)
 
       agent_output = %Result{
         commit_sha: final_sha,
@@ -840,11 +849,7 @@ defmodule EvoGit.Runtime.HelpersTest do
     test "raises ArgumentError naming the id and path when the path does not exist", %{
       tmp_dir: tmp_dir
     } do
-      missing =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit_helpers_fr_missing_#{System.unique_integer()}"
-        )
+      missing = unique_tmp_dir!("evogit_helpers_fr_missing")
 
       err =
         assert_raise ArgumentError, fn ->
@@ -862,14 +867,10 @@ defmodule EvoGit.Runtime.HelpersTest do
     test "raises ArgumentError when the path is a directory but not a git repo", %{
       tmp_dir: tmp_dir
     } do
-      not_git =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit_helpers_fr_notgit_#{System.unique_integer()}"
-        )
+      not_git = unique_tmp_dir!("evogit_helpers_fr_notgit")
 
       File.mkdir_p!(not_git)
-      on_exit(fn -> File.rm_rf!(not_git) end)
+      on_exit(fn -> rm_tmp_dir(not_git) end)
 
       err =
         assert_raise ArgumentError, fn ->

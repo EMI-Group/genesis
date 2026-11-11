@@ -634,23 +634,27 @@ defmodule EvoGit.Agent.ContextBuilder do
 
   @doc """
   Tags a single message struct with the given turn number via its metadata.
-  Also stamps a creation-time timestamp (Unix seconds) on the metadata,
-  idempotently — an already-present timestamp is preserved.
+  Also stamps a creation-time timestamp (Unix seconds, read from
+  `EvoGit.Agent.Clock.now_seconds/0` — the real clock unless the exchange/turn
+  opts pin it via `:now`) on the metadata, idempotently — an already-present
+  timestamp is preserved.
   """
   def tag_message_turn(%ReqLLM.Message{} = msg, turn) when is_integer(turn) do
     metadata = Map.put(msg.metadata || %{}, :turn, turn)
-    metadata = Map.put_new(metadata, :timestamp, System.system_time(:second))
+    metadata = Map.put_new(metadata, :timestamp, EvoGit.Agent.Clock.now_seconds())
     %{msg | metadata: metadata}
   end
 
   @doc """
-  Stamps a single message struct with a creation-time timestamp (Unix seconds)
-  via its metadata, idempotently — an already-present timestamp is preserved.
-  Tolerates `metadata: nil`. For append sites that are NOT turn-tagged.
+  Stamps a single message struct with a creation-time timestamp (Unix seconds,
+  read from `EvoGit.Agent.Clock.now_seconds/0` — the real clock unless the
+  exchange/turn opts pin it via `:now`) via its metadata, idempotently — an
+  already-present timestamp is preserved. Tolerates `metadata: nil`. For append
+  sites that are NOT turn-tagged.
   """
   def tag_message_timestamp(%ReqLLM.Message{} = msg) do
     metadata = msg.metadata || %{}
-    %{msg | metadata: Map.put_new(metadata, :timestamp, System.system_time(:second))}
+    %{msg | metadata: Map.put_new(metadata, :timestamp, EvoGit.Agent.Clock.now_seconds())}
   end
 
   @doc """

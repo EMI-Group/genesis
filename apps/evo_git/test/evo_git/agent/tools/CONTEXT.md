@@ -4,6 +4,8 @@
 
 ExUnit suites for the per-tool implementations dispatched through `EvoGit.Agent.Tools.execute/5` (one file per tool / subsystem).
 Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries.
+`search_context_test.exs` is the ONE module that must NOT use `@moduletag :tmp_dir`: its fixture directory IS the `rg` child process's cwd, and ExUnit's `:tmp_dir` path is cwd-relative and deterministic (`tmp/<Module>/<test>-<md5>`) and is created with `File.rm_rf!` + `File.mkdir_p!`, so a concurrent `mix test` run of the same file in the SAME checkout recreates that directory EMPTY under the running tool and a relative `path` argument then fails with ripgrep's `<path>: No such file or directory` (the directory itself exists, which is why bash's `cd` succeeds and only the searched subpath is missing).
+Isolation rule: a tool test whose fixture is a SUBPROCESS cwd (anything passed as `repo_path` to `Tools.execute`, where a relative arg is resolved by the child, not the BEAM) uses a UNIQUE-PER-RUN dir under `System.tmp_dir!()` stamped `"<per-BEAM unique_integer>_<os pid>_<wall-clock ms>"` (same stamp shape as `EvoGit.TaskRegistryCase`/`EvoGit.StoreTemplate`), created in `setup` and removed in `on_exit`, never `:tmp_dir`.
 
 ## Routing Table
 
@@ -61,6 +63,7 @@ Every module carries an `@moduledoc` naming why it is `async: true` / `async: fa
 - `async: false` — `elixir_eval_direct_api_test.exs` uses the app-global CommandApproval service, pending roster and topic, and reads the global AgentScheduler and RemoteAPI agent roster without mutating scheduler settings, approval timeout or configuration files.
 - `async: false` — `elixir_eval_direct_configuration_test.exs` mutates the global AgentScheduler, CommandApproval timeout and `:config_dir_fun` app-env seam, suspending PeakHourEngine before snapshots and resuming it only after restoring scheduler fields, model defaults, pool state and both app-env keys.
 - `async: true` — `elixir_eval_allowlist_boot_test.exs` (nothing global: each assertion runs inside one throwaway `elixir` child process, so the probe observes and loads modules without ever touching this suite's code server; it only reads the compiled code path).
+- `async: true` — `search_context_test.exs` (nothing global: a `setup` creates a UNIQUE-PER-RUN fixture dir under `System.tmp_dir!()` and removes it in `on_exit`; `:tmp_dir` is unusable here because the fixture is the `rg` child's cwd — see the Intent note and the isolation rule).
 - `async: true` — every other file: pure helpers, per-test `:tmp_dir` fixtures, process-local state, or uniquely keyed evaluator ETS authority rows backed by isolated Store/TaskRegistry instances.
 
 ## Reflect / Command Dispatch Coverage and Gaps

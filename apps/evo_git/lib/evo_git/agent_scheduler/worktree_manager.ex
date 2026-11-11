@@ -104,9 +104,10 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   @doc """
   Creates (or recreates) a fresh worktree for an agent and prepares it.
 
-  Called by `EvoGit.Agent.Session.Setup.bind_worktree/2` from inside the agent's
-  SESSION process (the session passes its own pid as `agent_pid`, so the session
-  is the monitored owner). The call waits indefinitely (creation must never be
+  Called by `EvoGit.Agent.Session.Setup.bind_worktree/2` from the session's ONE
+  start task (the session passes its OWN pid as `agent_pid`, so the session — not
+  the short-lived task — is the monitored owner, and the task waits while the
+  session stays answerable). The call waits indefinitely (creation must never be
   aborted by a timeout); the WorktreeManager offloads the I/O to a spawned task
   and monitors the caller process — if the caller dies for any reason, the
   worktree is reclaimed. The offloaded task always replies exactly once, so the
