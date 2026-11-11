@@ -1,24 +1,16 @@
 defmodule EvoGit.TaskControl.ObservationTest do
+  # `async: false`: every test writes per-test rows into the app-owned
+  # `:evogit_sched_meta` / `:evogit_agent_summary` ETS tables owned by the
+  # app-global `EvoGit.AgentScheduler`, and one test queues an injected message
+  # in `EvoGit.AgentScheduler.ControlPlane`'s app-owned inbox table.
   use ExUnit.Case, async: false
 
-  alias EvoGit.AgentScheduler.{AgentState, SchedMeta}
+  alias EvoGit.AgentScheduler.{AgentState, ControlPlane, SchedMeta}
   alias EvoGit.{AgentSpec, TaskInfo}
   alias EvoGit.TaskControl.Observation
 
   setup do
-    for table <- [:evogit_sched_meta, :evogit_agent_state] do
-      if :ets.whereis(table) == :undefined,
-        do: :ets.new(table, [:named_table, :set, :public])
-    end
-
     task_id = "observation-#{System.unique_integer([:positive])}"
-
-    on_exit(fn ->
-      for {id, meta} <- :ets.tab2list(:evogit_sched_meta), meta.task_id == task_id do
-        :ets.delete(:evogit_sched_meta, id)
-        :ets.delete(:evogit_agent_state, id)
-      end
-    end)
 
     {:ok, task: %TaskInfo{id: task_id, status: :running, started_at: DateTime.utc_now()}}
   end
@@ -31,19 +23,17 @@ defmodule EvoGit.TaskControl.ObservationTest do
         turn: 4,
         total_tokens: 120,
         compression_count: 2,
-        context: %ReqLLM.Context{
-          messages: [%ReqLLM.Message{role: :user, content: "PRIVATE HISTORY"}]
-        },
-        pending_user_messages: ["PRIVATE MESSAGE"],
+        message_count: 1,
         repo_notes: "PRIVATE NOTES"
       )
 
-    other_id = put_agent("other-task", :running)
+    # Neither the conversation nor the injected-message queue is stored on the
+    # summary row: the conversation lives in the agent's `EvoGit.Agent.Session`
+    # and pending messages live in `ControlPlane`'s inbox. Queue one anyway, so
+    # the "no private content" assertions cover the real control-plane state.
+    assert :ok = ControlPlane.append_message(id, "PRIVATE MESSAGE")
 
-    on_exit(fn ->
-      :ets.delete(:evogit_sched_meta, other_id)
-      :ets.delete(:evogit_agent_state, other_id)
-    end)
+    put_agent("other-task", :running)
 
     snapshot =
       Observation.snapshot(%{task | opts: [prompt: "PRIVATE PROMPT"], logs: ["PRIVATE LOG"]})
@@ -105,8 +95,8 @@ defmodule EvoGit.TaskControl.ObservationTest do
     assert later.elapsed_seconds > before.elapsed_seconds
     assert later.change_token == before.change_token
 
-    [{^id, state}] = :ets.lookup(:evogit_agent_state, id)
-    :ets.insert(:evogit_agent_state, {id, %{state | turn: 2}})
+    [{^id, state}] = :ets.lookup(:evogit_agent_summary, id)
+    :ets.insert(:evogit_agent_summary, {id, %{state | turn: 2}})
     changed = Observation.snapshot(task)
     refute changed.change_token == before.change_token
 
@@ -150,7 +140,9 @@ defmodule EvoGit.TaskControl.ObservationTest do
 
   test "does not invent activity for agents still awaiting dispatch", %{task: task} do
     id = put_agent(task.id, :pending)
-    :ets.delete(:evogit_agent_state, id)
+    # Registered in the scheduler metadata but not yet dispatched: the summary
+    # row (the session-owned projection) does not exist yet.
+    :ets.delete(:evogit_agent_summary, id)
 
     assert [%{status: "pending", model_id: nil, activity: activity}] =
              Observation.snapshot(task).agents
@@ -170,16 +162,23 @@ defmodule EvoGit.TaskControl.ObservationTest do
     before = Observation.snapshot(task)
     hidden_id = Enum.max(ids)
     refute Enum.any?(before.agents, &(&1.id == hidden_id))
-    [{^hidden_id, state}] = :ets.lookup(:evogit_agent_state, hidden_id)
-    :ets.insert(:evogit_agent_state, {hidden_id, %{state | turn: 2}})
+    [{^hidden_id, state}] = :ets.lookup(:evogit_agent_summary, hidden_id)
+    :ets.insert(:evogit_agent_summary, {hidden_id, %{state | turn: 2}})
 
     after_change = Observation.snapshot(task)
     assert after_change.agents == before.agents
     refute after_change.change_token == before.change_token
   end
 
+  # A registered agent is TWO rows: the scheduler metadata in
+  # `:evogit_sched_meta` and the SUMMARY projection in `:evogit_agent_summary`.
+  # The summary row is a production-shaped `%AgentState{}` — it carries no
+  # conversation and no control state — and it is what makes the agent LIVE for
+  # `ControlPlane` and what supplies the activity fields `Observation` reports.
   defp put_agent(task_id, status, fields \\ []) do
-    id = System.unique_integer([:positive])
+    # Per-test-unique ids in a range of their own: production scans these
+    # tables wholesale, so a row must never collide with another module's.
+    id = 9_920_000 + System.unique_integer([:positive])
 
     spec = %AgentSpec{
       context_node: nil,
@@ -207,7 +206,14 @@ defmodule EvoGit.TaskControl.ObservationTest do
       )
 
     :ets.insert(:evogit_sched_meta, {id, meta})
-    :ets.insert(:evogit_agent_state, {id, state})
+    :ets.insert(:evogit_agent_summary, {id, state})
+
+    on_exit(fn ->
+      :ets.delete(:evogit_sched_meta, id)
+      :ets.delete(:evogit_agent_summary, id)
+      ControlPlane.delete(id)
+    end)
+
     id
   end
 end
