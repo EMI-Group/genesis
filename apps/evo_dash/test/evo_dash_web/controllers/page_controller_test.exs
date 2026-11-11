@@ -11,7 +11,7 @@ defmodule EvoDashWeb.PageControllerTest do
   # test/test_helper.exs), never through a BEAM-global `XDG_CONFIG_HOME` write.
   use EvoDashWeb.ConnCase, async: false
 
-  # ProjectsLive (GET /) and HomeLive (GET /help) both redirect first-time
+  # ProjectsLive (GET /) and HomeLive (GET /assistant) both redirect first-time
   # users to /welcome via server-based detection
   # (EvoGit.Config.VersionState.onboarding_needed?/0). Isolate the config dir
   # to a per-test temp directory (the override lives in the TEST process'
@@ -31,15 +31,16 @@ defmodule EvoDashWeb.PageControllerTest do
     :ok
   end
 
-  test "GET / renders the Projects page and GET /help the chat page", %{conn: conn} do
+  test "GET / renders the Projects page and GET /assistant the chat page", %{conn: conn} do
     html = html_response(get(conn, ~p"/"), 200)
     # Projects page: command palette + task form present, no chat send form
     assert html =~ "project-omnibox"
     assert html =~ "AdaptiveInput"
     refute html =~ "chat-form"
 
-    # The Home chat page is the other entry point (HomeLive at /help).
-    chat_html = html_response(get(conn, ~p"/help"), 200)
+    # The Home chat page is the other entry point (HomeLive at /assistant; the
+    # legacy /help route 302s there — see redirect_controller_test.exs).
+    chat_html = html_response(get(conn, ~p"/assistant"), 200)
     assert chat_html =~ ~s(id="chat-form")
 
     heading =
@@ -95,7 +96,7 @@ defmodule EvoDashWeb.PageControllerTest do
     # Mixed case: a non-map entry in pending_tasks.
     EvoDash.ActiveTasks.put(nil, node(), [], [:c])
 
-    assert html_response(get(conn, ~p"/help"), 200)
+    assert html_response(get(conn, ~p"/assistant"), 200)
     assert html_response(get(conn, ~p"/tasks"), 200)
   end
 end

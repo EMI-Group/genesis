@@ -5243,7 +5243,8 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
   #     concurrent `enabled: false` here (or a real pick there) is the conflict.
   #   * `:remote_path_expand_runner` — `projects_live/project_flow_test.exs` is
   #     `async: true` and stubs the same key.
-  #   * mounting `/help` — a connected `EvoDash.HomeLive` mount calls
+  #   * mounting the Assistant page (`/assistant`, reached from the legacy
+  #     `/help` alias via a 302) — a connected `EvoDash.HomeLive` mount calls
   #     `EvoDash.ChatHistory.current_chat_id() || new_chat()` + `put_state`,
   #     i.e. it WRITES the process-wide ChatHistory ETS table, while the
   #     `async: true` `EvoDash.ChatHistoryTest` asserts exact GLOBAL contents
@@ -5267,9 +5268,9 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
   # process-wide `EvoDash.ChatHistory` table, which the async
   # `EvoDash.ChatHistoryTest` asserts on by exact global contents. Sync
   # placement keeps those two from overlapping; the assertions are unchanged.
-  describe "Home chat route (/help)" do
-    test "mounts HomeLive at /help", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/help")
+  describe "Home chat route (/assistant)" do
+    test "mounts HomeLive at /assistant", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/assistant")
 
       heading =
         html
