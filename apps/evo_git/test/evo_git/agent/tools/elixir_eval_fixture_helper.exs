@@ -13,12 +13,27 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
       assert {:ok, context} = ElixirEvalFixture.await(handle)
       assert context.tool_pid == handle.tool_pid
 
-  `start!/3` takes the explicitly isolated Store and TaskRegistry from the case
+  `start!/4` takes the explicitly isolated Store and TaskRegistry from the case
   context, not their process-dictionary defaults. It returns a map with
   `owner` (the real `%Task{}`), `owner_pid`, `agent_id`, `task_id`, `spec`,
   `store`, `registry`, `test_pid` and `supervisor`. The held owner starts every
   tool as a real Task; Task itself supplies ancestry, never fixture-written
   `$callers` or `$ancestors` values. No scheduler configuration is changed.
+
+  ## Authority shapes (`:task` option, default `:reflect`)
+
+  `task: :reflect` (the default) is the TASK-BACKED reflective assistant: a
+  `:running` `%TaskInfo{type: :reflect}` row in the isolated Store,
+  `%SchedMeta{task_id: task_id}` in `:oneshot` mode, `task_id` in the fixture
+  map, the process dictionary and `spec.opts`, and a control-plane row.
+
+  `task: :none` is the TASK-LESS INTERACTIVE ROOT of a dashboard `/assistant`
+  conversation: NO task row is written, `task_id` is `nil` everywhere (fixture
+  map, `%SchedMeta{}`, `:evogit_task_id`), the scheduler metadata is
+  `mode: :interactive`, and `spec.opts` is exactly
+  `[repo_less: true, session_mode: :interactive]` (no `:task_id` key).
+  `update_task/2` applies to the task-backed shape only; `stop/1` skips the
+  store delete when there is no task id.
 
   `call_async/2` accepts a zero-arity function and returns a handle containing
   `tool_pid`, `owner_pid`, `request_ref` and `owner_monitor`. The function runs
@@ -56,17 +71,32 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
 
   @timeout 15_000
 
-  def start!(test_pid, store, registry) when is_pid(test_pid) do
+  def start!(test_pid, store, registry, opts \\ []) when is_pid(test_pid) and is_list(opts) do
+    task_shape = Keyword.get(opts, :task, :reflect)
+
+    unless task_shape in [:reflect, :none] do
+      raise ArgumentError,
+            "evaluator fixture :task must be :reflect (default) or :none, got: " <>
+              inspect(task_shape)
+    end
+
     agent_id = 90_000_000 + System.unique_integer([:positive])
-    task_id = "eval_fixture_#{agent_id}"
+
+    task_id = if task_shape == :reflect, do: "eval_fixture_#{agent_id}", else: nil
     context_node = %ContextNode{path: "./", repo: "[system]"}
+
+    spec_opts =
+      case task_shape do
+        :reflect -> [repo_less: true, task_id: task_id]
+        :none -> [repo_less: true, session_mode: :interactive]
+      end
 
     spec = %AgentSpec{
       context_node: context_node,
       phylo_node: nil,
       agent_module: EvoGit.Agents.SelfReflective,
       objective: "Evaluator test fixture",
-      opts: [repo_less: true, task_id: task_id]
+      opts: spec_opts
     }
 
     task = %TaskInfo{
@@ -78,7 +108,10 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
       agent_count: 1
     }
 
-    :ok = Store.put_task(store, task)
+    # The task-less interactive root of a `/assistant` conversation owns no task
+    # row at all; the task-backed shape persists its `:reflect` row as before.
+    if task_shape == :reflect, do: :ok = Store.put_task(store, task)
+
     # The ExUnit supervisor, not the short-lived test process, owns this tree.
     # Temporary children stay stopped after an explicit cleanup or death test.
     supervisor =
@@ -113,6 +146,7 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
       max_depth: 0,
       objective: spec.objective,
       task_local_id: 1,
+      mode: if(task_shape == :none, do: :interactive, else: :oneshot),
       status: :running
     }
 
@@ -122,7 +156,8 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
       spec: spec,
       task_id: task_id,
       session_pid: owner.pid,
-      status: :running
+      status: :running,
+      mode: if(task_shape == :none, do: :interactive, else: :oneshot)
     }
 
     true = :ets.insert(:evogit_agent_summary, {agent_id, state})
@@ -203,9 +238,9 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
   @doc "Reads the agent's graceful-cancel flag back from the control plane."
   def cancel_requested?(fixture), do: ControlPlane.cancel_requested?(fixture.agent_id)
 
-  def update_task(fixture, fun) when is_function(fun, 1) do
-    id = fixture.task_id
-    %TaskInfo{id: ^id} = updated = fixture.store |> Store.get_task(id) |> fun.()
+  def update_task(%{task_id: task_id} = fixture, fun)
+      when is_function(fun, 1) and is_binary(task_id) do
+    %TaskInfo{id: ^task_id} = updated = fixture.store |> Store.get_task(task_id) |> fun.()
     :ok = Store.put_task(fixture.store, updated)
     updated
   end
@@ -217,7 +252,9 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
     delete_row(:evogit_sched_meta, fixture.agent_id)
     ControlPlane.delete(fixture.agent_id)
 
-    if GenServer.whereis(fixture.store) do
+    # A task-less interactive fixture owns no task row, so there is nothing to
+    # delete; a live isolated Store is still required for the task-backed shape.
+    if is_binary(fixture.task_id) and GenServer.whereis(fixture.store) do
       :ok = Store.delete_task(fixture.store, fixture.task_id)
     end
 

@@ -420,14 +420,134 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
       end
     end
 
-    test "a running non-reflect task is insufficient", %{fixture: fixture} do
-      Fixture.update_task(fixture, &%{&1 | type: :evolve})
-      assert authorize(fixture) == @denied
+    for type <- [:evolve, :genesis] do
+      test "a running non-reflect (#{type}) task is insufficient", %{fixture: fixture} do
+        Fixture.update_task(fixture, &%{&1 | type: unquote(type)})
+        assert authorize(fixture) == @denied
+      end
     end
 
     test "stale agent rows cannot authorize a deleted task", %{fixture: fixture} do
       :ok = Store.delete_task(fixture.store, fixture.task_id)
       assert authorize(fixture) == @denied
+    end
+  end
+
+  describe "task-less interactive root (`/assistant` conversation)" do
+    # The module-level `setup` keeps its task-backed `:reflect` fixture alive;
+    # every test below builds its OWN task-less interactive-root fixture on top
+    # of the same isolated Store/registry.
+    test "a live task-less interactive root session is authorized", ctx do
+      baseline = ctx.fixture
+      fixture = task_less_fixture(ctx)
+      assert fixture.task_id == nil
+
+      handle = Fixture.call_async(fixture, fn -> Authorization.authorize() end)
+      assert {:ok, context} = Fixture.await(handle)
+
+      assert context.agent_id == fixture.agent_id
+      assert context.task_id == nil
+      assert context.owner_pid == fixture.owner_pid
+      assert context.tool_pid == handle.tool_pid
+      assert context.registry == fixture.registry
+      assert context.target_node == node()
+
+      assert [{id, meta}] = :ets.lookup(:evogit_sched_meta, fixture.agent_id)
+      assert id == fixture.agent_id
+      assert meta.task_id == nil
+      assert meta.mode == :interactive
+      assert meta.depth == 0
+      assert meta.parent_id == nil
+      assert meta.result_sent == false
+      assert meta.status == :running
+
+      # No task row was written for the task-less session: the isolated Store
+      # still holds exactly the baseline fixture's `:reflect` row.
+      assert Enum.map(Store.select_task_ids(fixture.store), & &1.id) == [baseline.task_id]
+
+      # The tool process itself carries no task identity.
+      assert call(fixture, fn -> Process.get(:evogit_task_id) end) == nil
+    end
+
+    test "a task-less ONESHOT session is denied", ctx do
+      fixture = task_less_fixture(ctx)
+      Fixture.update_meta(fixture, &%{&1 | mode: :oneshot})
+      assert authorize(fixture) == @denied
+    end
+
+    for {label, mutation} <- [
+          {"non-root depth", :depth},
+          {"parent agent", :parent_id},
+          {"pending agent status", :pending_status},
+          {"terminal agent status", :terminal_status},
+          {"completed result", :result_sent},
+          {"a different live session pid", :session_pid},
+          {"non-assistant module", :agent_module},
+          {"foreign repository id", :repo_id},
+          {"phylogenetic worktree node", :phylo_node},
+          {"spec foreign repositories", :spec_foreign_repos},
+          {"missing repo-less flag", :repo_less_missing},
+          {"false repo-less flag", :repo_less_false},
+          {"missing interactive session mode", :session_mode_missing},
+          {"oneshot session mode in the opts", :session_mode_oneshot},
+          {"custom agent id", :custom_agent_id},
+          {"custom root selection", :agent},
+          {"task id in the opts", :opts_task_id},
+          {"state foreign repositories", :state_foreign_repos},
+          {"state parent agent", :state_parent_id},
+          {"graceful cancel requested", :cancel}
+        ] do
+      test "rejects #{label}", ctx do
+        fixture = task_less_fixture(ctx)
+        mutate(fixture, unquote(mutation))
+        assert authorize(fixture) == @denied
+      end
+    end
+
+    test "a scheduler task id with no process task id cannot borrow the task-backed clause",
+         ctx do
+      fixture = task_less_fixture(ctx)
+      Fixture.update_meta(fixture, &%{&1 | task_id: "smuggled_task"})
+
+      assert call(fixture, fn ->
+               {Process.get(:evogit_task_id), Authorization.authorize()}
+             end) == {nil, @denied}
+    end
+
+    test "a forged process task id without a task row is denied", ctx do
+      fixture = task_less_fixture(ctx)
+
+      assert call(fixture, fn ->
+               Process.put(:evogit_task_id, "forged_task_id")
+               Authorization.authorize()
+             end) == @denied
+    end
+
+    test "a dead owning session denies even a still-live tool", ctx do
+      fixture = task_less_fixture(ctx)
+      test_pid = self()
+      tag = make_ref()
+
+      handle =
+        Fixture.call_async(fixture, fn ->
+          send(test_pid, {tag, :ready, self()})
+
+          receive do
+            :go -> send(test_pid, {tag, :result, Authorization.authorize()})
+          end
+        end)
+
+      assert_receive {^tag, :ready, tool}, 15_000
+      assert tool == handle.tool_pid
+
+      owner = fixture.owner_pid
+      monitor = Process.monitor(owner)
+      Process.exit(owner, :kill)
+      assert_receive {:DOWN, ^monitor, :process, ^owner, :killed}, 15_000
+      assert Process.alive?(tool)
+
+      send(tool, :go)
+      assert_receive {^tag, :result, @denied}, 15_000
     end
   end
 
@@ -657,6 +777,103 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
 
   defp authorize(fixture), do: call(fixture, &Authorization.authorize/0)
   defp call(fixture, fun), do: fixture |> Fixture.call_async(fun) |> Fixture.await()
+
+  # The TASK-LESS INTERACTIVE ROOT shape of a `/assistant` conversation: no task
+  # row, no task id anywhere, `mode: :interactive` and
+  # `spec.opts == [repo_less: true, session_mode: :interactive]`.
+  defp task_less_fixture(ctx) do
+    fixture = Fixture.start!(self(), ctx.store, ctx.registry, task: :none)
+    on_exit(fn -> Fixture.stop(fixture) end)
+    fixture
+  end
+
+  # ONE mutation away from the valid task-less shape, applied through the
+  # fixture's own public transforms (meta/state/cancel).
+  defp mutate(fixture, :depth), do: Fixture.update_meta(fixture, &%{&1 | depth: 1})
+  defp mutate(fixture, :parent_id), do: Fixture.update_meta(fixture, &%{&1 | parent_id: 1})
+
+  defp mutate(fixture, :pending_status),
+    do: Fixture.update_meta(fixture, &%{&1 | status: :pending})
+
+  defp mutate(fixture, :terminal_status),
+    do: Fixture.update_meta(fixture, &%{&1 | status: :completed})
+
+  defp mutate(fixture, :result_sent),
+    do: Fixture.update_meta(fixture, &%{&1 | result_sent: true})
+
+  defp mutate(fixture, :session_pid) do
+    replacement = spawn(fn -> receive do: (:release -> :ok) end)
+    on_exit(fn -> if Process.alive?(replacement), do: Process.exit(replacement, :kill) end)
+    assert Process.alive?(replacement)
+    Fixture.update_meta(fixture, &%{&1 | session_pid: replacement})
+  end
+
+  defp mutate(fixture, :agent_module),
+    do:
+      Fixture.update_meta(
+        fixture,
+        &%{&1 | spec: %{&1.spec | agent_module: EvoGit.Agents.Executor}}
+      )
+
+  defp mutate(fixture, :repo_id),
+    do: Fixture.update_meta(fixture, &%{&1 | spec: %{&1.spec | repo_id: "foreign"}})
+
+  defp mutate(fixture, :phylo_node) do
+    phylo = %PhyloGraphNode{base_commit: "base", current_commit: "tip"}
+    Fixture.update_meta(fixture, &%{&1 | spec: %{&1.spec | phylo_node: phylo}})
+  end
+
+  defp mutate(fixture, :spec_foreign_repos) do
+    Fixture.update_meta(
+      fixture,
+      &%{&1 | spec: %{&1.spec | foreign_repos: [foreign_repo()]}}
+    )
+  end
+
+  defp mutate(fixture, :repo_less_missing),
+    do: update_opts(fixture, &Keyword.delete(&1, :repo_less))
+
+  defp mutate(fixture, :repo_less_false),
+    do: update_opts(fixture, &Keyword.put(&1, :repo_less, false))
+
+  defp mutate(fixture, :session_mode_missing),
+    do: update_opts(fixture, &Keyword.delete(&1, :session_mode))
+
+  defp mutate(fixture, :session_mode_oneshot),
+    do: update_opts(fixture, &Keyword.put(&1, :session_mode, :oneshot))
+
+  defp mutate(fixture, :custom_agent_id),
+    do: update_opts(fixture, &Keyword.put(&1, :custom_agent_id, "custom"))
+
+  defp mutate(fixture, :agent),
+    do: update_opts(fixture, &Keyword.put(&1, :agent, "custom"))
+
+  defp mutate(fixture, :opts_task_id),
+    do: update_opts(fixture, &Keyword.put(&1, :task_id, "smuggled_task"))
+
+  defp mutate(fixture, :state_foreign_repos),
+    do: Fixture.update_state(fixture, &%{&1 | foreign_repos: [foreign_repo()]})
+
+  defp mutate(fixture, :state_parent_id),
+    do: Fixture.update_state(fixture, &%{&1 | parent_id: 123})
+
+  defp mutate(fixture, :cancel) do
+    assert :ok = Fixture.set_cancel(fixture, true)
+    assert Fixture.cancel_requested?(fixture)
+  end
+
+  defp mutate(_fixture, mutation) do
+    raise ArgumentError, "unknown task-less fixture mutation: #{inspect(mutation)}"
+  end
+
+  defp update_opts(fixture, transform) do
+    Fixture.update_meta(fixture, fn meta ->
+      %{meta | spec: %{meta.spec | opts: transform.(meta.spec.opts)}}
+    end)
+  end
+
+  defp foreign_repo,
+    do: %ForeignRepo{id: "foreign", root: "[foreign]", description: "Test foreign repo"}
 
   defp identity_keys do
     [:evogit_agent_id, :evogit_task_id, :evogit_agent_pid, :evogit_task_registry_server]

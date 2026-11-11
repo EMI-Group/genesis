@@ -95,6 +95,33 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WrapperTest do
       assert Store.get_task(ctx.store, target.id).status == :pending
       assert_no_approval(ctx.fixture)
     end
+
+    test "a task-less interactive session still requires exact-code approval", ctx do
+      # A dashboard `/assistant` conversation is an INTERACTIVE ROOT SESSION with
+      # no task id: authorization admits it, and the write tier keeps its
+      # exact-code approval gate (a denial leaves the code unexecuted).
+      fixture = Fixture.start!(self(), ctx.store, ctx.registry, task: :none)
+      on_exit(fn -> Fixture.stop(fixture) end)
+      assert fixture.task_id == nil
+
+      target = pending_task(ctx)
+      code = "  # exact write, task-less\n#{@write}.cancel_task(#{inspect(target.id)})\n  "
+      handle = start_eval(fixture, %{"code" => code, "tier" => "write"})
+      request = await_request(fixture, :write, code)
+      assert request.task_id == nil
+      assert_request(request, fixture, :write, code)
+      assert request in CommandApproval.pending()
+      assert Store.get_task(ctx.store, target.id).status == :pending
+
+      assert :ok = CommandApproval.respond(request.request_id, :deny)
+
+      assert Fixture.await(handle) ==
+               "Error: Elixir evaluation denied by the user; code was not executed."
+
+      assert_resolved(request, :deny)
+      assert {:error, :not_found} = CommandApproval.respond(request.request_id, :approve)
+      assert Store.get_task(ctx.store, target.id).status == :pending
+    end
   end
 
   for tier <- [:write, :sudo] do
