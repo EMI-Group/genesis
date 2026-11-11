@@ -1575,6 +1575,15 @@ defmodule EvoGit.ConfigTest do
 
       assert :ok = Config.save_user_config(config)
       contents = File.read!(Config.config_path())
+
+      # The canonical TOML table names are the persisted contract.
+      assert contents =~ "[[llm.providers]]"
+      assert contents =~ "[[llm.providers.models]]"
+      refute contents =~ "[[llm.models]]"
+
+      # Saving config must never create a credentials file.
+      refute File.exists?(Config.credentials_path())
+
       assert {:ok, decoded} = TomlElixir.decode(contents)
       llm = decoded["llm"]
       assert llm["default_provider_profile"] == "account-b"

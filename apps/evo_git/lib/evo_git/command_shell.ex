@@ -51,8 +51,9 @@ defmodule EvoGit.CommandShell do
     closed. This is what the self-reflective agent's `run_command` tool uses
     (`execute/1` delegates to `execute(command, [])`, i.e. always `:chat`).
   - `:auto` — the approval gate is bypassed entirely: level-1 AND level-2/3
-    commands all run immediately. For terminal/CLI usage where the typing
-    human IS the authorizer and no chat-approval surface exists. Level-1
+    commands all run immediately. For callers that already hold the user's
+    authorization (tests, or an operator-driven shell) where no chat-approval
+    surface exists. Level-1
     read-only commands are unaffected (they never gated in either mode).
   """
 
@@ -226,8 +227,9 @@ defmodule EvoGit.CommandShell do
     `EvoGit.CommandApproval` until the user approves them in the /help chat;
     denied or timed-out requests fail closed and the handler never runs.
   - `:auto` — the approval gate is bypassed entirely: level-1 AND level-2/3
-    commands all run immediately. For terminal/CLI callers where the typing
-    human IS the authorizer and no chat-approval surface exists.
+    commands all run immediately. For callers that already hold the user's
+    authorization (tests, or an operator-driven shell) where no chat-approval
+    surface exists.
 
   Level-1 read-only commands execute immediately in both modes.
 
@@ -380,8 +382,8 @@ defmodule EvoGit.CommandShell do
   # Security-level gate: level-1 commands (and entries without an explicit
   # level — default 1) never gate; zero behavioral change for the read-only
   # inspection commands. Levels 2 and 3 block on user approval — UNLESS the
-  # execution runs in `:auto` approval mode (terminal/CLI callers who are
-  # their own authorizers), which skips the gate for every level so the
+  # execution runs in `:auto` approval mode (callers that already hold the
+  # user's authorization), which skips the gate for every level so the
   # handler always runs.
   defp approval_gate(_path, _entry, _args_map, :auto), do: :ok
 

@@ -226,4 +226,4 @@ See [LLM provider profiles](llm-profiles.md) for account defaults, model overrid
 
 When uncertain, ask for a source-backed explanation and a read-only check first; review each write's exact code and target before allowing it.
 
-The Assistant does not volunteer CLI usage by default: you are in the dashboard, so it guides with pages and in-app capabilities instead, and answers about the command line only when you explicitly ask.
+The Assistant does not volunteer terminal commands by default: it guides with dashboard pages and in-app capabilities instead, and explains terminal usage only when you explicitly ask about your own shell or other tools.

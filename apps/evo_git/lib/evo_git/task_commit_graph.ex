@@ -213,7 +213,7 @@ defmodule EvoGit.TaskCommitGraph do
 
   defp entry_refs(_entry), do: []
 
-  # Normalizes persisted/CLI foreign-repo entries (%ForeignRepo{} structs or
+  # Normalizes persisted/task-opt foreign-repo entries (%ForeignRepo{} structs or
   # STRING-keyed Codec round-trip maps) into structs, dropping unparseable ones.
   # Reuses the shared helper in `EvoGit.TaskRegistry.PrevTaskRepos`.
   defp normalize_foreign_repos(list) do

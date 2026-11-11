@@ -47,7 +47,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `archive` — whether task archiving is enabled for this agent (writes git refs + ETS records on completion)
   - `compression_count` — number of times context compression has fired for this agent
   - `total_tokens` — cumulative token count across all LLM calls since the last compression (mirrors `EvoGit.Agent.State.total_tokens`). Used by the dashboard to display context progress. Reset to 0 on each compression.
-  - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from CLI opts or genesis.toml)
+  - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from task opts or genesis.toml)
   - `repo_notes` — the already-rendered git-submodules note block (markdown text) for this agent's repo tree, or `nil` when the repo has no submodules (or detection failed). Rendered into the agent's `<context>` block; subagents inherit it from the parent (no re-detection).
   - `status` — the summary status (`:pending`/`:running`/`:done`/`:failed`), published by the session
   - `mode` — `:oneshot` or `:interactive`

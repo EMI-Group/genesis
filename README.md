@@ -152,16 +152,11 @@ context_window = 128000
 
 Set `OPENAI_API_KEY` on the node running the task; do not put secrets in model rows. Nested model settings override generation, context-window, and reasoning defaults, not account authentication or capacity. The reasoning default is explicit—it is not inferred from the first effort in the list. OAuth uses account-level `auth_mode = "oauth"` and optional `oauth_file`; see [subscription authentication](docs/llm-oauth.md).
 
-From source, the task CLI accepts the same concrete selection:
+The same concrete selection is available outside the task form through the MCP tool's task submission. An explicit choice locks that Provider profile → Model → Reasoning effort selection for the task and its agents, while **Auto (by rules)** keeps your configured defaults.
 
-```bash
-mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "Fix the bug" \
-  --provider-profile openai-main --model gpt-5 --reasoning-effort high
-```
+Legacy `[[llm.models]]` configuration remains a compatibility input; use provider profiles for new configuration. `EvoGit.Config.Schema.resolve_model_spec/2` validates a programmatic selection before it is enqueued.
 
-Omit selection flags for Auto; explicit selections are validated before enqueueing and do not change scheduler configuration. Legacy `[[llm.models]]` configuration and lone `-m` selectors remain compatibility inputs; use provider profiles for new configuration.
-
-See [Provider profiles and concrete model selection](docs/llm-profiles.md) for defaults, migration, CLI compatibility, and scheduling details.
+See [Provider profiles and concrete model selection](docs/llm-profiles.md) for defaults, migration, and scheduling details.
 
 ### Remote development
 

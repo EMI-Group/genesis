@@ -64,11 +64,11 @@ All writable-foreign-repo coverage in this node lives in `helpers_test.exs` (`as
 `evolution_test.exs` never passes `:foreign_repos` (covers only `mode_atom/1`, custom-mode agent requirement, simple-mode error path, invalid starting commit); `genesis_test.exs` only touches the empty `foreign_repos: []` default (line 100).
 Helper `make_git_repo!/1` (lines 31–48) makes a fresh git repo with one commit at HEAD; `setup_primary_with_changes!/1` (lines 53–68) makes a primary whose HEAD is reset one commit back.
 
-- `describe "load_foreign_repos/2"` (lines 695–929, 10 tests): CLI-only (696) / TOML-only (705) / merge-no-conflict (728) / CLI-precedence (755) / string-keyed-map normalization (780) / missing-path raise (805) / non-git-dir raise (827) / UNC-root raise (852) / unresolvable-base_sha raise (868) / writable+base_sha struct round-trip (895) + TOML parse (912).
+- `describe "load_foreign_repos/2"` (lines 695–929, 10 tests): task-opt-only (696) / TOML-only (705) / merge-no-conflict (728) / task-opt precedence (755) / string-keyed-map normalization (780) / missing-path raise (805) / non-git-dir raise (827) / UNC-root raise (852) / unresolvable-base_sha raise (868) / writable+base_sha struct round-trip (895) + TOML parse (912).
 - `describe "resolve_foreign_repo_starting_commit/2"` (lines 934–965, 3 tests): base_sha set → base_sha (935); base_sha nil → foreign HEAD (944); non-resolving base_sha → `{:error, {:invalid_starting_commit, ref, root, output}}` (953).
 - `describe "merge_and_report/3"` (lines 331–413, 3 tests): nil commit_sha → `no_changes: true` + nil branch (332); commit_sha == base → `no_changes: true` (352); commit_sha != base → `genesis/agent_*` branch (374).
 - `describe "merge_and_report/4"` (lines 418–647, 6 tests): ONE shared branch across primary + ONE writable foreign repo, `repos` map asserted exactly (419); foreign branch create does not move the foreign main working-copy HEAD (459); read-only foreign repo → no entry/no branch (526); primary-no-changes-but-foreign-commit → foreign branch + primary `branch_name: nil` (554); 3-arity reports primary only (594); `repos` survives `Store.Codec` round-trip with string keys (613).
-- `describe "merge_foreign_repos/2"` (lines 970–1040, 6 tests): struct/atom-map/string-map/mixed shapes, dedupe by id with CLI precedence, unparseable-entry drop.
+- `describe "merge_foreign_repos/2"` (lines 970–1040, 6 tests): struct/atom-map/string-map/mixed shapes, dedupe by id with task-opt precedence, unparseable-entry drop.
 
 ### Known coverage gaps (writable foreign repos)
 

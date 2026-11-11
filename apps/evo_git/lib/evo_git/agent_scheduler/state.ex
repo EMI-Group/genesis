@@ -485,7 +485,7 @@ defmodule EvoGit.AgentScheduler.State do
 
     # Apply all field updates. `:model_concurrency` replaces the per-model map
     # and re-applies the active default floor (dynamic engine updates — e.g.
-    # PeakHourEngine — must never drop a CLI -c / runtime floor).
+    # PeakHourEngine — must never drop a runtime floor).
     state =
       state
       |> maybe_apply_default_llm_concurrency(opts)
@@ -605,7 +605,7 @@ defmodule EvoGit.AgentScheduler.State do
   # Replaces `model_concurrency` with the given `%{model_id => pos_integer()}`
   # map (wall-clock dynamic overrides, e.g. PeakHourEngine), then re-applies
   # the active floor: an engine update with values below an active
-  # `default_llm_max_concurrency` (CLI `-c` / runtime override) must NEVER
+  # `default_llm_max_concurrency` (runtime override) must NEVER
   # silently drop the floor. `apply_default_llm_concurrency_override/2` also
   # re-sets `default_llm_max_concurrency` to the passed value — passing the
   # current state value keeps it unchanged, which is correct.
@@ -616,7 +616,7 @@ defmodule EvoGit.AgentScheduler.State do
   # `peak_concurrency` exemptions, so the scheduler must not re-floor. Storing
   # verbatim is what preserves the engine's fixed-point invariant (the engine
   # re-check compares its own map against the stored map → no loop). ALL other
-  # update paths (CLI `-c` / runtime `default_llm_max_concurrency` override via
+  # update paths (runtime `default_llm_max_concurrency` override via
   # `maybe_apply_default_llm_concurrency/2`, and any `model_concurrency` send
   # WITHOUT the opt) keep the documented floor semantics unchanged.
   defp maybe_update_model_concurrency(%__MODULE__{} = state, opts) do

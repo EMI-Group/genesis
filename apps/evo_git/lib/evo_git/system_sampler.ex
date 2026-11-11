@@ -94,7 +94,7 @@ defmodule EvoGit.SystemSampler do
   **Config source — a direct, bounded scheduler `GenServer.call` for
   `:get_config`** (what `RemoteAPI.get_config/0` wraps, minus its implicit
   5000 ms timeout — see "Graceful degradation"). Chosen because the chart must
-  reflect the LIVE runtime config (including runtime overrides such as CLI
+  reflect the LIVE runtime config (including runtime overrides such as a
   `-c` and dashboard saves), and the scheduler's resolved config lives only in
   the GenServer state — it is not mirrored to ETS. `Config.resolve/0` would
   re-read disk and miss runtime overrides, and there is no cheaper in-process

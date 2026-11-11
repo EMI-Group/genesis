@@ -135,7 +135,7 @@ The **3-level configuration system** (resolved at runtime, not via Elixir `Confi
    - `[sandbox]` → `mode` ("auto"|"enabled"|"disabled")
    - `[evolution]` → evolutionary algorithm parameters
    - `[truncation]` → tool output and context size limits
-3. **Runtime overrides** — CLI flags and dashboard settings, stored in `AgentScheduler` GenServer state
+3. **Runtime overrides** — dashboard settings, stored in `AgentScheduler` GenServer state
 
 ### Credentials (API keys)
 - Stored in `~/.config/genesis/credentials.toml` (separate from config for security)

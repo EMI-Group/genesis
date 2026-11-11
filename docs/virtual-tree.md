@@ -136,7 +136,7 @@ The VCT therefore changes **what can appear at the top of the tree**, not how co
 
 ## 7. The VCT project registry
 
-The dashboard and CLI project list is a **persistent, capped registry of project mounts**.
+The dashboard project list is a **persistent, capped registry of project mounts**.
 
 - Opening or creating a project mounts it (`EvoGit.VCT.mount/2`), which refreshes `last_opened_at`; mounting an already-mounted normalized OS path is idempotent and keeps the existing point.
 - Registration derives a stable, deduplicated `vct:///projects/<basename>` point (a basename collision gets `-N`), updates the name only for a non-blank name, and **re-points** a same-named mount whose recorded OS path is gone instead of accumulating a second point. A new path is never required to exist.

@@ -262,7 +262,7 @@ New status `:awaiting_input` (non-terminal). It is admitted in the core enumerat
 - **Sidebar**: sessions appear in their own group, not in "Other".
 - **Review**: a session has no reviewable branch until it closes; `merge_and_report` runs at close only.
 - **Lease**: `:awaiting_input` is lease-renewable (the wrapper is alive), but a session whose wrapper is gone reconciles to `:failed` on boot (P3).
-- **CLI**: `wait_for_terminal/1` must not block forever on it — it treats non-terminal-but-waiting as "still running" only when the caller asked for it.
+- **Waiters**: the dashboard, the Assistant, `EvoDash.NodeContext`, `RemoteNode` and the MCP endpoint must not block forever on it — a non-terminal-but-waiting status counts as "still running" only when the caller asked for it, and MCP waits are bounded by `wait_seconds`.
 
 ### 4.10 Durability (deferred; not designed now)
 
@@ -322,7 +322,7 @@ Each phase is independently shippable and keeps `mix test` green. Sizes are rela
 
 ### P3 — Interactive mode (L)
 **Intent:** a session that yields and waits.
-**Changes:** `:yield` path + `Agent.Completion` once, at the session's terminal outcome; task status `:awaiting_input` + the §8 checklist; `AgentScheduler` API (`start_session/1`, `send_session_message/3`, `close_session/1`, `await_close/1`); `runtime/assistant.ex` (new phase: start → await → merge) and `self_reflective` reused as its engine; CLI/NodeContext/RemoteNode verbs; `prompt_cache_key` per session; explicit close (no idle timer, no config keys) and the `:awaiting_input` boot reconciliation; `/server/status` + update wind-down policy; `/tasks` server-side filter.
+**Changes:** `:yield` path + `Agent.Completion` once, at the session's terminal outcome; task status `:awaiting_input` + the §8 checklist; `AgentScheduler` API (`start_session/1`, `send_session_message/3`, `close_session/1`, `await_close/1`); `runtime/assistant.ex` (new phase: start → await → merge) and `self_reflective` reused as its engine; NodeContext/RemoteNode verbs; `prompt_cache_key` per session; explicit close (no idle timer, no config keys) and the `:awaiting_input` boot reconciliation; `/server/status` + update wind-down policy; `/tasks` server-side filter.
 **Tests:** multi-message session keeps one agent id, one cache key, one worktree, zero context-tree rebuilds; an idle session survives arbitrarily long holding no slot, no worker and no timer; close while idle reclaims the worktree exactly once; cancel while idle; force-kill while idle; `:awaiting_input` admitted by every enumeration (a table-driven test over the status lists).
 **Acceptance:** `/help` runs on a single long-lived agent; opening/closing a session is clean; no reflect-task spam in `/tasks`.
 
@@ -379,7 +379,6 @@ Core (`apps/evo_git`):
 - `task_registry/lease.ex:89,96-98,109-114` (`lease_renewable?/1`, `leaked?/3`)
 - `task_registry.ex`: init reconcile `:397-424`, start guard `:465`, force-kill gate `:590`, `cancel_task` arms `:702,745,774,792`, `handle_update_status` `:1025,1029,1049,1054,1107,1132`, `:finalizing` ignore-list `:1559`, recheck terminal list `:1834`, heartbeat `:1652-1698`, sweep `:1706-1757`
 - `command_approval.ex:88,318` `@denying_task_statuses`
-- `cli.ex:8,198-217` (`wait_for_terminal` must not block forever)
 - `SchedMeta.status` (`sched_meta.ex:39-58`) — a distinct idle value, never `:blocked`
 
 Dashboard (`apps/evo_dash`): `server_status_controller.ex:33,73-80` (idle gate), `system_live/update_card.ex:29`, `live_hooks/node_aware.ex:124,312,317`, `layouts.ex:202,483,490`, `helpers.ex:118-171`, `task_card_components.ex:180,195-205,294,337,947-958`, `tasks_live.ex:67-88` (+ server-side session filter), `home_live.ex:63,1230-1276,1304-1347,1492`, `chat_state.ex:34,188`, `assistant_message.ex:71,86,310-318`, `notifications.ex:29`, `review_live.ex:1816-1818`.

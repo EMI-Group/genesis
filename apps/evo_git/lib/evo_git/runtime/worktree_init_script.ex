@@ -205,7 +205,7 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
 
   Each map contains:
     - `:id` — atom identifier (`:elixir`, `:node`, `:python`, `:rust`, `:go`, `:none`)
-    - `:name` — display name for CLI menus
+    - `:name` — display name for the build-system selector
     - `:dirs` — list of directories the script copies
     - `:linux_script` — shell script for Linux (GNU
       `cp -R --preserve=timestamps --reflink=auto`)

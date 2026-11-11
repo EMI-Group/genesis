@@ -8,7 +8,7 @@ This is an **Elixir umbrella project** with two child applications:
 
 | App | Directory | Purpose |
 |-----|-----------|---------|
-| `:evo_git` | `./apps/evo_git/` | Core runtime — agent execution, Git interactions, CLI |
+| `:evo_git` | `./apps/evo_git/` | Core runtime — agent execution, Git interactions |
 | `:evo_dash` | `./apps/evo_dash/` | Phoenix LiveView dashboard — real-time visualization and task management |
 
 The full design specification is documented across the CONTEXT.md tree.
@@ -29,7 +29,7 @@ The full design specification is documented across the CONTEXT.md tree.
 - Multi-modal content parts at ANY agent step (images/audio on tool results + injected user messages; the task-start `:attachments` opt on the ROOT's first message) → `./apps/evo_git/` (`attachments.ex`, `agent/tool_output.ex`, `agent/tool_dispatch.ex` wrap boundary) — detail: `apps/evo_git/CONTEXT.md` ("Multi-Modal Content")
 - LLM request/retry policy — a non-retryable provider error (400-class, `retryable=false`, e.g. a rejected parameter) fails fast with ONE request and a self-diagnosing terminal message (no agent crash) instead of a retry storm; generation parameters are filtered per model/provider (Z.AI/GLM rejects `top_k`/penalties, `temperature > 1.0`, out-of-set `reasoning_effort`, over-limit `max_tokens`) → `./apps/evo_git/` (`agent/llm_error.ex`, `config/schema/llm_constraints.ex` via `Config.Schema.LLM.profile_generation_params/1`)
 - LLM token/cost accounting — counts come from ReqLLM, but COST is recomputed from raw tokens + the `llm_db` catalog (`LLMDB.Pricing.components_for/2`, period from `EvoGit.PeakHours`) rather than ReqLLM's reported cost, which prices a period-gated catalog only from a `pricing_context` EvoGit never passes; nil recompute → reported value → `./apps/evo_git/` (`agent/cost.ex`, `agent/usage.ex`), with a "cost is best-effort" notice at every dashboard cost display (`Helpers.cost_estimate_notice/1`)
-- OAuth / subscription LLM auth (ChatGPT Codex + Claude Pro/Max) — Genesis runs NO OAuth flow: the user logs in ONCE with the vendor CLI (`codex login`, `claude`, or `claude setup-token`), and a lazily-imported, mtime-guarded, key-wise merge into a managed ReqLLM-native file (`<config_dir>/auth.json`, 0600, atomic, tokens never logged, vendor-newer wins) feeds `provider_options: [auth_mode: :oauth, oauth_file: …]`; account-level `auth_mode` + `oauth_file` live in `[[llm.providers]]` only, `:openai_codex` is OAuth-only while `:anthropic` supports both, `profile_generation_params/1` stays the single provider-options choke point, and `genesis setup` offers API key vs Subscription → `./apps/evo_git/` (`auth.ex`, `auth/oauth_import.ex`, `config/llm_catalog.ex`, `config/schema/llm.ex`, `cli/setup.ex`) — detail: `auth/CONTEXT.md`, guide: `docs/llm-oauth.md`
+- OAuth / subscription LLM auth (ChatGPT Codex + Claude Pro/Max) — Genesis runs NO OAuth flow: the user logs in ONCE with the vendor CLI (`codex login`, `claude`, or `claude setup-token`), and a lazily-imported, mtime-guarded, key-wise merge into a managed ReqLLM-native file (`<config_dir>/auth.json`, 0600, atomic, tokens never logged, vendor-newer wins) feeds `provider_options: [auth_mode: :oauth, oauth_file: …]`; account-level `auth_mode` + `oauth_file` live in `[[llm.providers]]` only, `:openai_codex` is OAuth-only while `:anthropic` supports both, `profile_generation_params/1` stays the single provider-options choke point, and the dashboard Welcome setup and Settings → LLM provider profiles offer the API-key vs Subscription choice → `./apps/evo_git/` (`auth.ex`, `auth/oauth_import.ex`, `config/llm_catalog.ex`, `config/schema/llm.ex`) + `./apps/evo_dash/` (`live/welcome_live.ex`, `live/settings_live.ex`) — detail: `auth/CONTEXT.md`, guide: `docs/llm-oauth.md`
 - OAuth files are keyed by provider OAuth ID, not account-profile ID, so independent subscription logins require separate `oauth_file` paths; an explicit account `api_key_env_var` is used exactly and never falls back to another account's provider-wide key.
 - OpenAI/Codex prompt-cache identity — GPT families hit ~0-10% provider cache because Genesis sent NO cache/routing identity (ReqLLM invents none and `:openai_codex` forces `store: false`), so consecutive turns of one conversation landed on cache-sharded backends; Genesis attaches a STABLE per-agent-run `prompt_cache_key` — plus `session_id` for `:openai_codex` (also the `session-id` header, Codex-CLI parity) — ONCE at agent registration, so every turn, retry and compression call shares one routing key (measured: root 56.9%, subagent 65.2% aggregate) → `./apps/evo_git/` (`config/schema/llm.ex` `LLM.with_cache_identity/3`, `agent_scheduler/dispatch.ex`); provider-gated (`:openai` → key only, `:openai_codex` → key + session), and an explicit account `provider_options` value always wins.
 - Reasoning/thinking vs response text in the vendored LLM stack — `./deps/` is git-ignored vendored code (read it, never edit); ReqLLM **1.30.0** decodes `reasoning_content` to a `:thinking` `StreamChunk` (`deps/req_llm/lib/req_llm/provider/defaults.ex:1479`) and `content` to `:text` (`:1455`); thinking surfaces as "response" ONLY when a consumer joins ALL `Message.content` parts (`defaults/response_builder.ex:228-244`, which also mirrors it into `message.reasoning_details`).
@@ -63,42 +63,21 @@ The full design specification is documented across the CONTEXT.md tree.
 | `flake.nix` | Nix flake — `devShells.default` (Erlang/OTP 29, Elixir 1.20, Rust, Tauri v2 native deps), `packages.default` via `genesis.nix` (`nix build`), `apps.default` (`nix run`). |
 | `genesis.nix` | Nix derivation — builds the Genesis Mix release with `beamPackages.mixRelease`, pre-fetched Rustler NIFs and vendored ripgrep/git. |
 | `genesis-desktop.nix` | Nix derivation — builds the `genesis_desktop` Mix release, then the Tauri Rust binary via `rustPlatform.buildRustPackage`, wrapped together; `packages.desktop`. |
-| `README.md` | User-facing documentation: installation, CLI usage, architecture overview |
+| `README.md` | User-facing documentation: installation, model configuration, architecture overview |
 | `.formatter.exs` | Code format configuration (umbrella-aware; see Development Notes) |
 | `LICENSE` | Project license |
 
-### CLI Interface
+### Task data plane
 
-```bash
-# Setup — guided LLM configuration wizard (API key or, for OAuth-capable providers, "Subscription (OAuth)" reusing an existing `codex login` / `claude` login)
-mix run -e 'EvoGit.CLI.main(System.argv())' -- setup
-
-# Genesis — create a codebase from a prompt
-mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "<prompt>" [-f file] [-p path] [-R <id:>path] [-m <model>]
-
-# Evolution — modify an existing codebase
-mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path] [-R <id:>path] [-m <model>]
-
-# Reflect — repo-less Genesis Assistant (no repo, no merge)
-mix run -e 'EvoGit.CLI.main(System.argv())' -- reflect "<objective>" [-m <model>]
-
-# Concrete selection (also accepted by genesis and reflect; omit flags for Auto)
-mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" --provider-profile <account-id> --model <model> --reasoning-effort <effort>
-
-# Run — execute command-shell commands (terminal access to the shared task-control data plane)
-mix run -e 'EvoGit.CLI.main(System.argv())' -- run 'ListTasks.list_tasks'
-mix run -e 'EvoGit.CLI.main(System.argv())' -- run 'StartTask.start_task evolve "Fix the bug"'
-```
-
-**Task data plane — NO config overrides.** The CLI never mutates scheduler/config state: the session-level override flags (`-c/--concurrency`, `--tool-concurrency`, `-r/--retries`, `-t/--max-turns`, `--max-turns-root`) are removed (concurrency/retries/turn caps are set persistently in config.toml; passing a removed flag prints a pointer).
-`genesis`/`evolve`/`reflect` submit REGISTERED background tasks through the SAME data plane used by the dashboard (`NodeContext.start_task`), the Assistant's admitted task APIs and terminal compatibility commands — `EvoGit.TaskRegistry.start_task/2` → TaskExecutor → runtime phases — then wait on PubSub for the terminal status, printing `Task <id> started` / `Task <id> <status>.`; opts use the data-plane key contract (`:path` absolute pre-enqueue, `:mode` STRING; RuntimeOpts raises on atoms).
-Task-level flags: `-f/--file`, `-p/--path`, `-d/--mode`, `-b/--build-system` (genesis new), `--agent <id>` (custom root agent), `-R <id:>path` foreign repos (repeatable, read-only), `-n/--node` + `--starting-commit` (evolve), `--archive`; canonical selection is `--provider-profile <account-id> --model <bare-model-id> [--reasoning-effort <effort>]` (`-m` aliases `--model`), validated before enqueueing and passed as `model_spec` + `model_id_locked: true`, never as a scheduler override.
-A provider flag requires a model, and an effort flag requires both; no selection flags means Auto and omits selection/lock keys.
-Lone `-m/--model` remains compatibility syntax: exact account/profile ID → legacy `id:provider:model` segment → first inventory match; unresolved input errors with available IDs.
+Objectives are submitted and observed through the dashboard task form, the Genesis Assistant, and the MCP endpoint (`docs/agent-mcp.md`).
+Every path — `NodeContext.start_task` (dashboard) through `EvoGit.TaskRegistry.start_task/2` → TaskExecutor → runtime phases — uses the same data-plane key contract: `:path` is absolute before enqueue, `:mode` is a STRING, and `RuntimeOpts` raises on atoms.
+Task-level options are `path`, `mode`, `starting_commit` (evolve), `node_path`, `archive`, `foreign_repos` (read-only), and `attachments` (the root agent's first message); objectives come from the task form or MCP, not a prompt file.
+Custom-agent mode is the option pair `mode: "custom"` plus `:agent` (custom agent id).
+Canonical selection is `provider_profile_id` + `model` + optional `reasoning_effort`, validated with the schema and enqueued as `model_spec: spec, model_id_locked: true`; Auto omits both keys.
 Canonical nonempty `llm.providers` takes precedence over legacy `llm.models` / flat config; old model profiles normalize one-for-one into separate accounts.
 Configured defaults are `[llm] default_provider_profile` (else first account), account `default_model` (else first nested model), then model-over-account reasoning defaults; effort-list order never implies a default.
-`run '<command>'` remains direct terminal compatibility via `EvoGit.CommandShell.execute/2` with `approval: :auto`; CommandShell is not an Assistant tool, and Assistant evaluation has its own tiered approval contract.
-`genesis setup` remains the persistent-config wizard (file writes, not a session override).
+Config is persistent in config.toml and is never changed by task submission.
+`EvoGit.CommandShell` is only the `run_command` agent tool's literal command registry.
 Details: `apps/evo_git/CONTEXT.md` + `apps/evo_git/lib/evo_git/CONTEXT.md`.
 
 ### Custom Agents & Custom Task Mode
@@ -114,7 +93,7 @@ They load lazily + cached by file fingerprint, are opt-in via a custom agent's `
 Detail: `apps/evo_git/lib/evo_git/custom_tools/CONTEXT.md` + `apps/evo_git/lib/evo_git/custom_agents/CONTEXT.md` + `apps/evo_dash/CONTEXT.md`.
 
 **Custom task mode** (entry point for custom root agents): a 4th dashboard task mode **"Custom Agent"** (combined-mode string `"custom_agent"`) maps to `{:evolve, mode: "custom", agent: <custom_agent_id>}` — task type stays `:evolve`, mode opt value `"custom"` (a STRING from every entry point; RuntimeOpts normalizes); `EvoGit.Runtime.Evolution.run/2` routes `"custom"` to a custom-root path with evolve semantics (reviewable `merge_and_report`), and a missing/empty `:agent` raises a descriptive ArgumentError before any repo I/O.
-CLI: `evolve --mode custom --agent <id>`; genesis rejects custom mode ("evolve-only"); custom agents are root-only this version (not spawnable as subagents), `delegation_level` default `:low`; the task form has an Agent select plus provider/model/reasoning selection with an explicit "Auto (by rules)" provider option.
+Custom task mode is the dashboard's **"Custom Agent"** mode or the MCP equivalent (mode `"custom"` plus a root agent select); custom agents are root-only this version (not spawnable as subagents), `delegation_level` default `:low`; the task form has an Agent select plus provider/model/reasoning selection with an explicit "Auto (by rules)" provider option.
 Details: `apps/evo_git/CONTEXT.md` + `apps/evo_dash/CONTEXT.md`.
 ## Constraints
 
@@ -167,7 +146,7 @@ The host is shared, so absolute timings swing several-fold under load — compar
 Per-suite rules, the measured cost profile and the remaining sync inventory: `apps/evo_git/test/CONTEXT.md` and `apps/evo_dash/test/CONTEXT.md`.
 ### Internationalization (i18n) Development Policy
 
-The web dashboard (`:evo_dash`) is internationalized with Gettext — all user-facing strings in LiveViews, components, helpers and templates are wrapped with `gettext/1,2`; the CLI / `:evo_git` core is deliberately NOT internationalized (English-only).
+The web dashboard (`:evo_dash`) is internationalized with Gettext — all user-facing strings in LiveViews, components, helpers and templates are wrapped with `gettext/1,2`; the `:evo_git` core is deliberately NOT internationalized (English-only).
 **During development, agents do NOT need to care about PO files or translations.**
 - **Never** run `mix gettext.extract`, `mix gettext.merge`, or `mix translate` during feature work: POT/PO and translations are maintained centrally and updated once per release (`mix gettext.extract` → `mix gettext.merge` → `mix translate apps/evo_dash/priv/gettext/default.pot all`, AI-powered via `deepseek-v4-flash`).
 - Just write `gettext`-wrapped strings; when a meaning needs anchoring for the release-time AI translator (ambiguous short labels, domain jargon), add a **Chinese comment** next to the `gettext` call — the ONLY i18n work expected during development.
@@ -222,7 +201,7 @@ It speaks as Genesis in the first person, answers in the user's language, and it
 Source reading is a core benefit: source/context/history tools let it discover real API contracts instead of relying on fixed command facades; its source tree is the reserved VCT mount `vct:///genesis-source` (bound to the managed `<data_dir>/genesis-source` clone), and `EvoGit.SelfReflectiveSource.reference_path/0` resolves the app-env override → `GENESIS_SOURCE_ROOT` → that mount when it holds a valid checkout → the managed clone, so re-pointing the mount points it at a different tree.
 `EvoGit.Runtime.Assistant` is the interactive phase (build the repo-less spec, `start_session/1`, `await_close/2` for the session's lifetime, then `merge_and_report` once); `EvoGit.Agents.SelfReflective` + `EvoGit.Runtime.SelfReflective` remain the one-shot repo-less `:reflect` path (mode `"reflect"`, NO `:path`) with no worktree, git operations or subagent spawning.
 Its single evaluation tool is `elixir_eval`, with fresh bindings and three authority tiers: **read** (Dune, read-only MFA whitelist, no approval) and **write** (Dune, known writes only, approval of the exact code) admit real APIs with their actual contracts — projected facades are optional conveniences, unlisted MFAs or wrong arities stay unavailable; **sudo** is unrestricted ordinary Elixir in the live VM, not a sandbox or OS root, and needs its own warning and explicit approval because it can affect processes, files and configuration without rollback.
-Read/write refusals never imply escalation to sudo, and `CommandShell` remains terminal compatibility only, not an Assistant tool.
+Read/write refusals never imply escalation to sudo, and `CommandShell` is only the `run_command` tool's literal command registry, not an Assistant tool.
 Chat replies retain task status, streaming and collapsible thought process; chat state restores through `EvoDash.ChatHistory`, guides stay transient UI pushes, and the chat keeps a layout-stable column: approvals surface as a fixed-height strip above the composer plus a single-request modal dialog (exact-code write grants vs prominently warned sudo), a new request also raises a browser notification while the window is hidden or unfocused, and the transcript is stick-to-bottom with no animated scrolling.
 Pending requests are recovered from the core on remount.
 User guide: [Genesis Assistant](docs/genesis-assistant.md); contracts: `apps/evo_git/CONTEXT.md`, `apps/evo_git/lib/evo_git/agent/tools/elixir_eval/CONTEXT.md`, `apps/evo_dash/CONTEXT.md`, `apps/evo_dash/lib/evo_dash_web/live/home_live/CONTEXT.md`.
@@ -319,6 +298,6 @@ Details: `nix/CONTEXT.md` + `desktop/CONTEXT.md`.
 ### Research Notes: PDF/DOCX → Plain Text Extraction (for LLM objective prompts)
 
 **Status: plain-text, `.docx` and `.pdf` are IMPLEMENTED** — as a FRONTEND feature in `EvoDash.AttachedFile` (`ex_pdf` a plain Hex dep of `:evo_dash`; password-protected → `{:invalid, …}`, image-only → `{:empty, …}`, no OCR).
-**The core `:evo_git` stays clean by design**: `EvoGit.PromptFile` reads plain text only and rejects non-UTF-8/PDF/DOCX with `{:error, {:not_text, ext}}`; the objective stays a `String.t()` end-to-end and conversion happens only in the dashboard's attach flow on the LOCAL node.
+**The core `:evo_git` has no prompt-file reader**: the dashboard's `EvoDash.AttachedFile` conversion is the ONLY objective-conversion path, so the objective stays a `String.t()` end-to-end and conversion happens only on the LOCAL node.
 ReqLLM-native `:file` attachments are deliberately NOT used (uneven provider matrix); the optional `pdftotext` upgrade path remains future.
 Details: `apps/evo_dash/lib/evo_dash/attached_file.ex` + `apps/evo_dash/CONTEXT.md`.

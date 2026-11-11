@@ -330,7 +330,7 @@ The Tauri shell's readiness probe measures the ENTIRE umbrella boot — the port
 
 ## Internationalization (i18n)
 
-EvoDash uses **Gettext** (`EvoDashWeb.Gettext`, `use Gettext, otp_app: :evo_dash`, imported via `html_helpers/0` in `evo_dash_web.ex`); all user-facing strings are `gettext`-wrapped, while the CLI (`:evo_git`) is deliberately English-only. The backend declares `split_module_by: [:locale, :domain]` (one small module per locale instead of one ~16k-clause module) — keep that option; detail: `lib/evo_dash_web/CONTEXT.md` → "i18n / Gettext Backend".
+EvoDash uses **Gettext** (`EvoDashWeb.Gettext`, `use Gettext, otp_app: :evo_dash`, imported via `html_helpers/0` in `evo_dash_web.ex`); all user-facing strings are `gettext`-wrapped, while the `:evo_git` core is deliberately English-only. The backend declares `split_module_by: [:locale, :domain]` (one small module per locale instead of one ~16k-clause module) — keep that option; detail: `lib/evo_dash_web/CONTEXT.md` → "i18n / Gettext Backend".
 
 **Development policy** (root `./CONTEXT.md` → "Internationalization (i18n) Development Policy"): do NOT run `mix gettext.extract`/`merge`/`translate` during feature work — POT/PO files and translations are maintained centrally and updated ONCE per release. Just write gettext-wrapped strings; when a string's meaning needs anchoring for the release-time AI translator, add a **Chinese comment** next to the `gettext` call — the ONLY i18n work expected during development. Dynamic locale: `root.html.heex` uses `Gettext.get_locale(EvoDashWeb.Gettext)` for `<html lang>`.
 
