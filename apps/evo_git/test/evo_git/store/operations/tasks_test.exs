@@ -948,7 +948,7 @@ defmodule EvoGit.Store.Operations.TasksTest do
   end
 
   describe "select_task_update_info/2" do
-    test "returns the 4-key narrow map for an existing row" do
+    test "returns the 5-key narrow map for an existing row" do
       repo = start_repo!()
 
       put!(
@@ -964,7 +964,8 @@ defmodule EvoGit.Store.Operations.TasksTest do
       )
 
       assert info = Tasks.select_task_update_info(repo, "ui-1")
-      assert map_size(info) == 4
+      assert map_size(info) == 5
+      assert info.error == nil
       assert info.status == :running
       # opts keys come back in the Codec's canonical JSON round-trip order.
       assert Enum.sort(info.opts) == Enum.sort(path: "/ui", mode: "simple")
@@ -978,6 +979,7 @@ defmodule EvoGit.Store.Operations.TasksTest do
 
       assert Tasks.select_task_update_info(repo, "ui-2") == %{
                status: :pending,
+               error: nil,
                opts: nil,
                finished_at: nil,
                lease_expires_at: nil

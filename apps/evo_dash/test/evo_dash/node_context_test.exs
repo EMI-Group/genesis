@@ -91,7 +91,7 @@ defmodule EvoDash.NodeContextTest do
     @summary_keys ~w(
       id status review_status started_at finished_at type project_path opts
       branch_name model_id agent_count base_sha commit_sha lease_expires_at
-      updated_at error
+      updated_at error progress
     )a
     test "list_tasks_page/2 returns summary rows + the filtered total (no heavy blobs)" do
       project_path = unique_project_path()

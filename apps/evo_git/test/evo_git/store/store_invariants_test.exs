@@ -83,6 +83,7 @@ defmodule EvoGit.Store.StoreInvariantsTest do
   # `Keyword.get/2` inside `evo_git`), `@string_opts` come back STRING-keyed on
   # purpose (read by the dashboard with `Map.get(Map.new(opts), "key")`).
   @atomized_opts [
+    budget: %{"max_agents" => 6},
     path: "/repo/project",
     mode: "simple",
     prompt: "build the thing",

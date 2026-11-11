@@ -51,7 +51,14 @@ config :evo_git, :data_dir, test_data_dir
 # read-only config dir made it log a spurious `{:temp_file_failed, :erofs}`
 # warning on every run). The import creates the parents itself.
 # test_helper.exs later installs the per-process seam, which overrides this.
-config :evo_git, :config_dir_fun, fn -> Path.join(test_data_dir, "config") end
+test_config_root = Path.join(test_data_dir, "config")
+config :evo_git, :test_config_root, test_config_root
+config :evo_git, :config_dir_fun, fn -> test_config_root end
+# Resolve vendor credentials only inside this test run, including runtime.exs
+# before either application's test_helper installs the per-process seam.
+config :evo_git, :auth_home_fun, fn -> Path.join(test_data_dir, "home") end
+System.put_env("CODEX_HOME", Path.join(test_data_dir, "codex"))
+System.put_env("XDG_CONFIG_HOME", test_config_root)
 
 # SystemSampler tick disabled in tests (the sampler's own test suite manages its interval)
 config :evo_git, :system_sample_interval_ms, 86_400_000

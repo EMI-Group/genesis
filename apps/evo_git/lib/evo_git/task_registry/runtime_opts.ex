@@ -108,6 +108,7 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
 
     runtime_opts =
       runtime_opts
+      |> put_if(:budget, Keyword.get(opts, :budget))
       |> put_if(:node_path, node_path)
       |> put_if(:starting_commit, starting_commit)
       |> put_if(:foreign_repos, foreign_repos)

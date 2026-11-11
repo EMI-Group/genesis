@@ -510,7 +510,11 @@ defmodule EvoGit.Agent.ToolDispatch do
     request_params = request_parameters(tools, llm_gen_opts)
     log_request_parameters(agent_id, request_params)
 
+    EvoGit.AgentScheduler.Store.activity(agent_id, "waiting_for_model")
+
     AgentScheduler.with_llm_slot(agent_id, fn ->
+      EvoGit.AgentScheduler.Store.activity(agent_id, "model_response")
+
       with llm_start <- System.monotonic_time(:millisecond),
            {:ok, stream_resp} <-
              ReqLLM.stream_text(
@@ -1123,6 +1127,12 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   @doc false
   def process_regular_tool_calls(tool_calls, %LoopState{} = state, subagent_modules) do
+    EvoGit.AgentScheduler.Store.activity(
+      state.agent_id,
+      "tools",
+      Enum.map(tool_calls, &ReqLLM.ToolCall.name/1)
+    )
+
     # 1. Index: Attach index to each call
     indexed_calls = Enum.with_index(tool_calls)
 
@@ -1135,6 +1145,9 @@ defmodule EvoGit.Agent.ToolDispatch do
     # 4. Batch: Process each batch
     indexed_standard_results = process_standard_calls(indexed_standard_calls, state)
 
+    if indexed_subagent_calls != [],
+      do: EvoGit.AgentScheduler.Store.activity(state.agent_id, "waiting_for_subagents")
+
     {indexed_subagent_results, merge_message, subagent_usage} =
       EvoGit.Agent.SubagentProcessing.process_subagent_calls(
         indexed_subagent_calls,
@@ -1142,6 +1155,7 @@ defmodule EvoGit.Agent.ToolDispatch do
         sync_commit_fn: &sync_current_commit_after_tools/1
       )
 
+    EvoGit.AgentScheduler.Store.activity(state.agent_id, "processing_results")
     # 5. Re-sort: Merge and sort by index to restore original order
     all_indexed_results = indexed_subagent_results ++ indexed_standard_results
     sorted_results = Enum.sort_by(all_indexed_results, &elem(&1, 0))

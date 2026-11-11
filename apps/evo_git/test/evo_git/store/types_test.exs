@@ -838,7 +838,7 @@ defmodule EvoGit.Store.TypesTest do
       attrs =
         task_info
         |> Map.from_struct()
-        |> Map.drop([:ref])
+        |> Map.drop([:ref, :progress])
         |> Map.put(:updated_at, updated_at)
 
       # Repo-free dump: route every field through its schema type.

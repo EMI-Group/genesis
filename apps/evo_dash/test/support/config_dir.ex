@@ -50,7 +50,7 @@ defmodule EvoDash.Test.ConfigDir do
   @doc """
   The seam function installed as `:config_dir_fun` by `test/test_helper.exs`.
 
-  Returns the override directory for the current execution context, or `nil`.
+  Returns the context override, or the safe suite directory. Never falls back to the real user directory during tests.
   Order: this process' own override, then the first override found in a
   `$callers` process dictionary (local node pids only).
   """
@@ -63,6 +63,19 @@ defmodule EvoDash.Test.ConfigDir do
       _ ->
         Process.get(:"$callers", [])
         |> Enum.find_value(fn pid -> caller_override(pid) end)
+        |> case do
+          nil -> suite_dir()
+          dir -> dir
+        end
+    end
+  end
+
+  # Legacy serial tests change XDG_CONFIG_HOME. Honor that explicit test root
+  # on every OS; absent it, retain config/test.exs's boot-time isolation.
+  defp suite_dir do
+    case System.get_env("XDG_CONFIG_HOME") do
+      dir when is_binary(dir) and dir != "" -> dir
+      _ -> Application.fetch_env!(:evo_git, :test_config_root)
     end
   end
 

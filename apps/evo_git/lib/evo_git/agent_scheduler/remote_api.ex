@@ -149,7 +149,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   Re-reads the config file from disk and applies the relevant settings to
   the running AgentScheduler.
 
-  Calls `EvoGit.Config.resolve/0` to get a fresh config from disk, extracts
+  Calls `EvoGit.Config.reload/0` to validate and read fresh files, extracts
   scheduler-relevant keys (model profiles, concurrency limits, retry/turn
   settings, sandbox configuration), and delegates to
   `EvoGit.AgentScheduler.update_config/1` to apply them.
@@ -161,9 +161,10 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   """
   @spec reload_config() :: :ok | {:error, String.t()}
   def reload_config do
-    config = EvoGit.Config.resolve()
-    opts = build_reload_opts(config)
-    EvoGit.AgentScheduler.update_config(opts)
+    with {:ok, config} <- EvoGit.Config.reload() do
+      opts = build_reload_opts(config)
+      EvoGit.AgentScheduler.update_config(opts)
+    end
   end
 
   @doc """
@@ -174,15 +175,21 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   This runs on the REMOTE node when called via `:erpc.call/5`, so the file is
   written to the remote host's filesystem.
 
-  Returns `:ok` on success, or `{:error, reason}` if validation or the file
-  write fails.
+  Returns `:ok` on success, or `{:error, reason}` if validation, the file
+  write or runtime reload fails. A reload error identifies that the file
+  was saved but not applied to the scheduler.
   """
   @spec save_user_config(map()) :: :ok | {:error, term()}
   def save_user_config(config) when is_map(config) do
     case EvoGit.Config.save_user_config(config) do
       :ok ->
-        reload_config()
-        :ok
+        case reload_config() do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            {:error, "Configuration saved, but runtime reload failed: #{reason}"}
+        end
 
       {:error, _} = error ->
         error

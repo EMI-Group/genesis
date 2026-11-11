@@ -118,6 +118,18 @@ defmodule EvoGit.Store.Operations.Pages do
         |> Repo.all()
         |> Summaries.decode_skipping_bad()
 
+      ids = Enum.map(rows, & &1.id)
+
+      reports =
+        Repo.all(
+          from(p in EvoGit.Store.Schemas.TaskProgressRow,
+            where: p.task_id in ^ids,
+            select: {p.task_id, p.summary, p.updated_at}
+          )
+        )
+        |> Map.new(fn {id, summary, at} -> {id, %{"summary" => summary, "updated_at" => at}} end)
+
+      rows = Enum.map(rows, &Map.put(&1, :progress, Map.get(reports, &1.id)))
       %{rows: rows, total: total}
     end)
   end
@@ -130,8 +142,12 @@ defmodule EvoGit.Store.Operations.Pages do
   def get_task_lite(repo, task_id) do
     RepoScope.with_repo(repo, fn ->
       case Repo.one(lite_query(task_id)) do
-        nil -> nil
-        row -> row |> lite_columns() |> Codec.decode_task()
+        nil ->
+          nil
+
+        row ->
+          task = row |> lite_columns() |> Codec.decode_task()
+          %{task | progress: EvoGit.Store.Operations.Progress.get(repo, task_id)}
       end
     end)
   end

@@ -85,7 +85,8 @@ defmodule EvoGit.Store.BootMigrationTest do
     @covering_index_version,
     @archive_version,
     @prune_indexes_version,
-    @vct_mounts_version
+    @vct_mounts_version,
+    20_261_108_000_001
   ]
 
   # The LEGACY 20 column names in physical order — the shape a pre-release
@@ -558,7 +559,7 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all seven migrations (the Ecto migrator saw version 0).
+      # The boot stamped all shipped migrations (the Ecto migrator saw version 0).
       assert migration_versions(pid) == @migration_versions
 
       # The schema was adopted untouched (the fresh-DB PRAGMA shape), minus the
@@ -617,9 +618,9 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all seven migrations (the Ecto migrator saw version 0)...
+      # The boot stamped all shipped migrations (the Ecto migrator saw version 0)...
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[7]]
+      assert schema_migrations_count(pid) == [[length(@migration_versions)]]
 
       # ...the appended `error` landed AFTER the pre-existing `updated_at`
       # (SQLite ALTERs can only append) as a NULLABLE add with its declared
@@ -674,7 +675,7 @@ defmodule EvoGit.Store.BootMigrationTest do
       assert task_table_info(pid) == @adopted_19_col_table_info_rows
       refute "archive_metadata" in column_names(pid, "tasks")
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[7]]
+      assert schema_migrations_count(pid) == [[length(@migration_versions)]]
 
       row = get_task_row(pid, "r6b1-oldpipe")
       assert {row.id, row.status} == {"r6b1-oldpipe", "completed"}

@@ -42,6 +42,49 @@ defmodule EvoGit.CatalogWarmupTest do
   end
 
   describe "warm_up/1" do
+    test "canonical account updates warm metadata outside the scheduler" do
+      Application.delete_env(:evo_git, @seam)
+      scheduler = Process.whereis(EvoGit.AgentScheduler)
+      previous = :sys.get_state(scheduler)
+      on_exit(fn -> :sys.replace_state(scheduler, fn _ -> previous end) end)
+
+      config = %{
+        llm: %{
+          default_provider_profile: "warm-account",
+          providers: [
+            %{
+              "id" => "warm-account",
+              "provider" => "openai",
+              "auth_mode" => "api_key",
+              "default_model" => "gpt-4o-mini",
+              "models" => [%{"model" => "gpt-4o-mini"}]
+            }
+          ]
+        }
+      }
+
+      session = :trace.session_create(:canonical_catalog_warmup, self(), [])
+
+      try do
+        :trace.process(session, self(), true, [:call, :set_on_spawn])
+        :trace.process(session, scheduler, true, [:call])
+        :trace.function(session, {EvoGit.Config.Schema.LLM, :model_metadata, 1}, true, [:local])
+
+        assert :ok =
+                 EvoGit.AgentScheduler.update_config(
+                   EvoGit.AgentScheduler.ModelSelection.config_opts(config)
+                 )
+
+        barrier = :trace.delivered(session, :all)
+        callers = metadata_callers(barrier, [])
+
+        assert Enum.any?(callers, &(&1 != scheduler)),
+               "canonical metadata was only loaded in the scheduler"
+      after
+        :trace.session_destroy(session)
+      end
+    end
+
     test "is inert when the metadata seam is installed" do
       test_pid = self()
 
@@ -110,4 +153,22 @@ defmodule EvoGit.CatalogWarmupTest do
   defp restore_seam(nil), do: Application.delete_env(:evo_git, @seam)
 
   defp restore_seam(value), do: Application.put_env(:evo_git, @seam, value)
+
+  defp metadata_callers(barrier, callers) do
+    receive do
+      {:trace_delivered, :all, ^barrier} ->
+        callers
+
+      {:trace, pid, :call, {EvoGit.Config.Schema.LLM, :model_metadata, _}} ->
+        metadata_callers(barrier, [pid | callers])
+
+      {:trace, _, _, _} ->
+        metadata_callers(barrier, callers)
+
+      {:trace, _, _, _, _} ->
+        metadata_callers(barrier, callers)
+    after
+      5000 -> flunk("catalog trace barrier did not complete")
+    end
+  end
 end

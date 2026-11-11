@@ -54,6 +54,15 @@ defmodule EvoGit.Agent.Completion do
     {task_id, task_number, task_local_id} = lookup_task_info(agent_id)
     branch_name = "evogit-agent-T#{task_number}-A#{task_local_id}"
 
+    if is_binary(result) do
+      EvoGit.TaskProgress.note_agent(agent_id, %{
+        summary: String.slice(result, 0, 2400),
+        current_work: [],
+        completed: [String.slice(result, 0, 400)],
+        evidence: if(is_binary(commit_sha), do: ["commit:" <> commit_sha], else: [])
+      })
+    end
+
     # Add metadata as git note (if we have the base commit)
     if base_commit do
       add_metadata_note(repo_path, commit_sha, %{

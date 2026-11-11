@@ -194,6 +194,16 @@ defmodule EvoGit.Runtime.Genesis do
         Helpers.merge_and_report(repo_path, merged_result, "genesis", foreign_repos)
 
       error ->
+        if error in [
+             {:error, :task_agent_budget_exhausted},
+             {:error, :task_depth_budget_exhausted}
+           ] do
+          EvoGit.TaskBudget.mark_task_exhausted(
+            task_id,
+            "Implementation phase could not start: #{inspect(error)}"
+          )
+        end
+
         Logger.warning(
           "Genesis Mode B implementation phase failed: #{inspect(error)}. " <>
             "Returning architecture phase result as partial success."

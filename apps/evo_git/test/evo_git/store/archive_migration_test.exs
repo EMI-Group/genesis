@@ -99,7 +99,8 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     @covering_index_version,
     @archive_version,
     @prune_index_version,
-    @vct_mounts_version
+    @vct_mounts_version,
+    20_261_108_000_001
   ]
 
   # The pre-release 20-column `tasks` DDL — the state a database upgraded from a

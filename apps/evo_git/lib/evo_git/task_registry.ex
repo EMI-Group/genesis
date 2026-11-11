@@ -160,7 +160,7 @@ defmodule EvoGit.TaskRegistry do
   """
   @spec put_task_archive(map()) :: :ok | {:error, term()}
   def put_task_archive(entry) do
-    store = archive_store()
+    store = task_store()
 
     StoreGuard.write("put_task_archive", fn ->
       EvoGit.Store.put_task_archive(store, entry)
@@ -468,7 +468,8 @@ defmodule EvoGit.TaskRegistry do
       _known_or_absent ->
         # Admit before spawning or persisting: invalid explicit selections must
         # not enqueue work, and the stored opts must match the admitted selection.
-        with {:ok, opts} <- RuntimeOpts.admit_model_selection(opts, EvoGit.Config.resolve()) do
+        with {:ok, opts} <- EvoGit.TaskBudget.admit(opts),
+             {:ok, opts} <- RuntimeOpts.admit_model_selection(opts, EvoGit.Config.resolve()) do
           task_ref =
             Task.Supervisor.async_nolink(
               EvoGit.TaskSupervisor,
@@ -512,6 +513,14 @@ defmodule EvoGit.TaskRegistry do
             {:error, :store_unavailable} ->
               # StoreGuard already logged the fault — keep the task in memory.
               :ok
+          end
+
+          if budget = Keyword.get(opts, :budget) do
+            Process.send_after(
+              self(),
+              {:task_budget_deadline, task_id},
+              budget["max_duration_seconds"] * 1000
+            )
           end
 
           # Keep the runtime ref in-memory only
@@ -580,116 +589,11 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_call({:force_kill_task, task_id}, _from, state) do
-    # Narrow-column existence/status check (reads only the status column).
-    # Works from :running (normal force-kill) and :cancelling (escalation path
-    # — a graceful cancel that hangs must be force-killable).
-    {result, state} =
-      case safe_store_read("force_kill_task get_task_status", nil, fn ->
-             EvoGit.Store.get_task_status(state.task_store, task_id)
-           end) do
-        status when status in [:running, :cancelling] ->
-          case Map.get(state.task_refs, task_id) do
-            %Task{pid: pid} = task_ref ->
-              if Process.alive?(pid) do
-                # Notify the AgentScheduler to cancel all agents for this task
-                # before killing the wrapper process. The scheduler uses the caller PID
-                # to find the matching top-level agent and cascade cleanup to subagents.
-                #
-                # Justified catch :exit — cross-app boundary. The scheduler may
-                # genuinely not be running (or the GenServer may be dead), in which
-                # case the GenServer call raises an exit (not a rescue-able
-                # exception). We always proceed to brutal_kill the wrapper
-                # regardless, so we log the exit and continue.
-                try do
-                  EvoGit.AgentScheduler.force_kill_task_agents(pid)
-                catch
-                  :exit, reason ->
-                    Logger.warning(
-                      "TaskRegistry: AgentScheduler force_kill failed (exit): #{inspect(reason)}"
-                    )
-                end
+    force_stop_task(task_id, :user, state)
+  end
 
-                Task.shutdown(task_ref, :brutal_kill)
-
-                # Clear the graceful-cancel marker (the task is now terminally
-                # :failed via this direct write, bypassing
-                # handle_update_status's cleanup hook).
-                clear_cancelling_marker(task_id)
-
-                # Targeted write — only the changed columns. A :running task's
-                # result is always nil (results are written only on terminal
-                # transitions), so writing result: nil preserves the old
-                # put_task semantics. `ref` is runtime-only and never persisted.
-                # A force-killed task is persisted as :failed (never :cancelled)
-                # — "cancelled" means ONLY graceful cancellation. On disk-full
-                # the in-memory cleanup still happens (task_refs deleted, marker
-                # cleared) and {:error, :disk_full} is returned.
-                reply =
-                  case safe_store_write("force_kill_task update_task_columns", fn ->
-                         EvoGit.Store.update_task_columns(state.task_store, task_id,
-                           status: :failed,
-                           finished_at: DateTime.utc_now(),
-                           lease_expires_at: nil,
-                           result: nil,
-                           error:
-                             Diagnostics.failure_error(
-                               :force_kill,
-                               :force_kill_task,
-                               "Task force-killed by user"
-                             )
-                         )
-                       end) do
-                    :ok ->
-                      :ok
-
-                    {:error, :disk_full} ->
-                      Logger.warning(
-                        "TaskRegistry: disk full — force-killed task #{task_id} " <>
-                          "could not be persisted as :failed"
-                      )
-
-                      {:error, :disk_full}
-
-                    {:error, :store_unavailable} ->
-                      # StoreGuard already logged it — the in-memory cleanup below
-                      # still runs; the row keeps its previous status.
-                      {:error, :store_unavailable}
-                  end
-
-                state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
-
-                # Direct terminal write (:failed) — bypasses
-                # handle_update_status/6, so reclaim the tmpdir here too. The
-                # task is gone in-memory regardless of disk-full retryability.
-                reclaim_task_tmpdir(state, task_id)
-
-                {reply, state}
-              else
-                {{:error, :not_running}, state}
-              end
-
-            nil ->
-              {{:error, :not_running}, state}
-          end
-
-        nil ->
-          {{:error, :not_found}, state}
-
-        {:unknown, raw} ->
-          # The row EXISTS but its status text is unreadable. Force kill
-          # persists `:failed` — it MARKS the row — so it is only allowed for a
-          # status we can prove is live and killable; refuse conservatively
-          # rather than overwrite a row whose liveness we cannot establish.
-          # Never `{:error, :not_found}`: the row is there.
-          log_unreadable_status("force_kill_task", task_id, {:unknown, raw})
-          {{:error, :not_running}, state}
-
-        _status ->
-          {{:error, :not_running}, state}
-      end
-
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, task_id, :failed, node()})
-    {:reply, result, state}
+  def handle_call({:force_kill_task, task_id, :task_budget}, _from, state) do
+    force_stop_task(task_id, :task_budget, state)
   end
 
   @impl true
@@ -1014,17 +918,23 @@ defmodule EvoGit.TaskRegistry do
           opts: task_opts,
           finished_at: task_finished_at,
           lease_expires_at: task_lease_expires_at
-        } ->
+        } = task_info ->
           # Final-result force-mapping for graceful cancellation: a task whose
           # CURRENT stored status is :cancelling that reaches a terminal phase
           # (the wrapper completed/failed during the grace period) must always
           # be persisted as :cancelled — never :completed/:failed. Everything
           # else (result/usage write, terminal bookkeeping) flows
           # through untouched, so intermediate result data is PRESERVED.
+          budget_error = Map.get(task_info, :error)
+
           status =
-            if task_status == :cancelling and status in [:completed, :failed],
-              do: :cancelled,
-              else: status
+            cond do
+              task_status == :cancelling and status in [:completed, :failed] -> :cancelled
+              status == :completed and match?(%{source: :task_budget}, budget_error) -> :failed
+              true -> status
+            end
+
+          error = error || budget_error
 
           if task_status in [:completed, :failed, :cancelled] and
                status in [:completed, :failed, :cancelled] and
@@ -1270,7 +1180,8 @@ defmodule EvoGit.TaskRegistry do
   # is published by `init/1` into the app-owned `@store_table`; an instance that
   # never published (registry not started yet / already gone) falls back to the
   # default store, which is what `init/1` defaults `:task_store` to.
-  defp archive_store do
+  @doc "Returns the store owned by the current registry instance without calling its mailbox."
+  def task_store do
     registry = server()
 
     case :ets.whereis(@store_table) do
@@ -1285,7 +1196,7 @@ defmodule EvoGit.TaskRegistry do
     end
   end
 
-  # Publishes `server_name => task_store` for `archive_store/0`. Never raises: a
+  # Publishes `server_name => task_store` for `task_store/0`. Never raises: a
   # missing table (a registry started outside the `:evo_git` application, e.g. a
   # bare `start_link/1` in a script) only means archive writes target the
   # default store — it must not crash a registry boot.
@@ -1703,6 +1614,42 @@ defmodule EvoGit.TaskRegistry do
   # lease duration) and does NOT reschedule itself — any new foreign instance
   # performs its own pair of checks on its own startup.
   @impl true
+  def handle_info({:task_budget_deadline, id}, state) do
+    case EvoGit.Store.get_task_status(state.task_store, id) do
+      status when status in [:running, :cancelling, :finalizing] ->
+        EvoGit.Store.update_task_columns(state.task_store, id,
+          error:
+            Diagnostics.failure_error(:timeout, :task_budget, "Task execution budget exhausted")
+        )
+
+        next =
+          if status == :running do
+            {:reply, _, updated} = handle_call({:cancel_task, id}, nil, state)
+            updated
+          else
+            state
+          end
+
+        Process.send_after(self(), {:task_budget_escalate, id}, 60_000)
+        {:noreply, next}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:task_budget_escalate, id}, state) do
+    case EvoGit.Store.get_task_status(state.task_store, id) do
+      status when status in [:running, :cancelling, :finalizing] ->
+        {:reply, _, next} = handle_call({:force_kill_task, id, :task_budget}, nil, state)
+        {:noreply, next}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  @impl true
   def handle_info(:lease_sweep, state) do
     owned_ids = MapSet.new(Map.keys(state.task_refs))
 
@@ -1992,5 +1939,125 @@ defmodule EvoGit.TaskRegistry do
     end
 
     {:noreply, state}
+  end
+
+  defp force_stop_task(task_id, cause, state) do
+    # Narrow-column existence/status check (reads only the status column).
+    # Works from :running (normal force-kill) and :cancelling (escalation path
+    # — a graceful cancel that hangs must be force-killable).
+    {result, state} =
+      case safe_store_read("force_kill_task get_task_status", nil, fn ->
+             EvoGit.Store.get_task_status(state.task_store, task_id)
+           end) do
+        status when status in [:running, :cancelling, :finalizing] ->
+          case Map.get(state.task_refs, task_id) do
+            %Task{pid: pid} = task_ref ->
+              if Process.alive?(pid) do
+                # Notify the AgentScheduler to cancel all agents for this task
+                # before killing the wrapper process. The scheduler uses the caller PID
+                # to find the matching top-level agent and cascade cleanup to subagents.
+                #
+                # Justified catch :exit — cross-app boundary. The scheduler may
+                # genuinely not be running (or the GenServer may be dead), in which
+                # case the GenServer call raises an exit (not a rescue-able
+                # exception). We always proceed to brutal_kill the wrapper
+                # regardless, so we log the exit and continue.
+                try do
+                  EvoGit.AgentScheduler.force_kill_task_agents(pid)
+                catch
+                  :exit, reason ->
+                    Logger.warning(
+                      "TaskRegistry: AgentScheduler force_kill failed (exit): #{inspect(reason)}"
+                    )
+                end
+
+                Task.shutdown(task_ref, :brutal_kill)
+
+                # Clear the graceful-cancel marker (the task is now terminally
+                # :failed via this direct write, bypassing
+                # handle_update_status's cleanup hook).
+                clear_cancelling_marker(task_id)
+
+                # Targeted write — only the changed columns. A :running task's
+                # result is always nil (results are written only on terminal
+                # transitions), so writing result: nil preserves the old
+                # put_task semantics. `ref` is runtime-only and never persisted.
+                # A force-killed task is persisted as :failed (never :cancelled)
+                # — "cancelled" means ONLY graceful cancellation. On disk-full
+                # the in-memory cleanup still happens (task_refs deleted, marker
+                # cleared) and {:error, :disk_full} is returned.
+                reply =
+                  case safe_store_write("force_kill_task update_task_columns", fn ->
+                         EvoGit.Store.update_task_columns(state.task_store, task_id,
+                           status: :failed,
+                           finished_at: DateTime.utc_now(),
+                           lease_expires_at: nil,
+                           result: nil,
+                           error: force_stop_error(cause)
+                         )
+                       end) do
+                    :ok ->
+                      :ok
+
+                    {:error, :disk_full} ->
+                      Logger.warning(
+                        "TaskRegistry: disk full — force-killed task #{task_id} " <>
+                          "could not be persisted as :failed"
+                      )
+
+                      {:error, :disk_full}
+
+                    {:error, :store_unavailable} ->
+                      # StoreGuard already logged it — the in-memory cleanup below
+                      # still runs; the row keeps its previous status.
+                      {:error, :store_unavailable}
+                  end
+
+                state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
+
+                # Direct terminal write (:failed) — bypasses
+                # handle_update_status/6, so reclaim the tmpdir here too. The
+                # task is gone in-memory regardless of disk-full retryability.
+                reclaim_task_tmpdir(state, task_id)
+
+                {reply, state}
+              else
+                {{:error, :not_running}, state}
+              end
+
+            nil ->
+              {{:error, :not_running}, state}
+          end
+
+        nil ->
+          {{:error, :not_found}, state}
+
+        {:unknown, raw} ->
+          # The row EXISTS but its status text is unreadable. Force kill
+          # persists `:failed` — it MARKS the row — so it is only allowed for a
+          # status we can prove is live and killable; refuse conservatively
+          # rather than overwrite a row whose liveness we cannot establish.
+          # Never `{:error, :not_found}`: the row is there.
+          log_unreadable_status("force_kill_task", task_id, {:unknown, raw})
+          {{:error, :not_running}, state}
+
+        _status ->
+          {{:error, :not_running}, state}
+      end
+
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, task_id, :failed, node()})
+    {:reply, result, state}
+  end
+
+  defp force_stop_error(:task_budget) do
+    Diagnostics.failure_error(
+      :timeout,
+      :task_budget,
+      "Task execution budget exhausted; forced stop after the recovery window"
+    )
+  end
+
+  defp force_stop_error(:user) do
+    Diagnostics.failure_error(:force_kill, :force_kill_task, "Task force-killed by user")
   end
 end

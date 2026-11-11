@@ -200,6 +200,8 @@ defmodule EvoGit.BackgroundJobs do
   `opts[:owner_pid]` limits the result to one owner's jobs. Returns `[]` when the registry is unreachable (a list-shaped API never raises).
   """
   @spec list(keyword()) :: [job()]
+  def active_for_task(id), do: call_registry({:active_for_task, id}, nil)
+
   def list(opts \\ []) do
     case call_registry({:list, Keyword.get(opts, :owner_pid)}, []) do
       jobs when is_list(jobs) -> jobs
@@ -530,6 +532,11 @@ defmodule EvoGit.BackgroundJobs do
             {:reply, {:error, message}, state}
         end
     end
+  end
+
+  def handle_call({:active_for_task, id}, _from, state) do
+    count = state.jobs |> Map.values() |> Enum.count(&(&1.task_id == id and not terminal?(&1)))
+    {:reply, count, state}
   end
 
   def handle_call({:list, owner_pid}, _from, state) do

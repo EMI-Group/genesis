@@ -61,7 +61,8 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
     20_260_815_000_004,
     20_260_815_000_005,
     20_260_815_000_006,
-    20_260_815_000_007
+    20_260_815_000_007,
+    20_261_108_000_001
   ]
 
   # `PRAGMA table_info(tasks)` — [cid, name, type, notnull, dflt_value, pk] —

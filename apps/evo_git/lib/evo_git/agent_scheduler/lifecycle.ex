@@ -158,8 +158,8 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
       # Reset agent state phylo_node (will be re-set on dispatch)
       case Store.get_agent_state(agent_id) do
-        {:ok, %AgentState{} = agent_state} ->
-          Store.put_agent_state(agent_id, %AgentState{agent_state | phylo_node: nil, context: nil})
+        {:ok, %AgentState{}} ->
+          Store.batch_update_agent(agent_id, phylo_node: nil, context: nil)
 
         :error ->
           Logger.warning(

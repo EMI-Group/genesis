@@ -262,3 +262,13 @@ The registry owns task state only: `EvoGit.VCT` owns the project mount list, its
 - **`select_running_lease_info`** SQL-filters `status IN ('running','finalizing','cancelling')`; callers still filter Elixir-side, as do `id not in owned_ids` and lease-expiry-vs-wall-clock (ISO-8601 fixed-precision ordering caveat: `../store/CONTEXT.md`).
 - **Project mounts are not task state**: they live in the store's `vct_mounts` table, owned by `EvoGit.VCT`, so no registry read, write, broadcast or cache involves them.
 - **Store-owned internals** (migrations, summary/`changed_since` APIs, JSON storage model, `mix store.maintenance`, disk-full classifier): `../store/CONTEXT.md`.
+
+## Codex MCP integration
+
+Structured external task access: `../task_control.ex` validates the public development-task inputs and projects JSON-safe results; `start_options.ex` holds the option builder shared with the command-shell StartTask tool. TaskRegistry remains the sole task owner; no extra table or lifecycle. Resume is evolve-only and the external boundary requires a finished task in the same project.
+
+TaskControl daily workflow: `../task_control/observation.ex` projects bounded scheduler observations and deterministic change tokens without persisting another event stream. `../task_control/messaging.ex` targets the running task’s live root and reports queue acceptance only. `TaskControl.get/1` supports since/wait_seconds (0–20) and optional result omission; list supports status/search; result/models/message back the expanded MCP tools.
+
+## Explicit task execution budgets
+
+`StartOptions` preserves normalized task budgets; MCP supplies conservative defaults while existing GUI/CLI defaults remain unchanged. Registry owns elapsed-time deadlines and bounded graceful-stop escalation, independent of MCP connectivity. Budget exhaustion persists a structured task error; later partial-result recovery preserves that error and cannot label the task completed. `task_store/0` resolves the owning registry's Store for shared progress and archives without a registry self-call.

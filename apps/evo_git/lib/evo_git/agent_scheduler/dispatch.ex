@@ -51,7 +51,20 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       ) do
     spec = inherit_model_selection(spec, parent_id)
 
-    with {:ok, selection} <- resolve_selection(state, spec, parent_id, depth, task_id) do
+    budget = EvoGit.TaskBudget.inherited(spec, parent_id)
+
+    with :ok <-
+           EvoGit.TaskBudget.check(
+             budget,
+             Map.get(
+               state.task_budget_counts,
+               task_id,
+               Map.get(state.task_agent_counts, task_id, 0)
+             ),
+             depth
+           ),
+         {:ok, selection} <- resolve_selection(state, spec, parent_id, depth, task_id) do
+      spec = %{spec | opts: Keyword.put(spec.opts, :budget, budget)}
       do_register_agent(state, spec, selection, from, parent_id, depth, task_id, task_number)
     end
   end
@@ -67,7 +80,15 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       | task_local_counters: Map.put(state.task_local_counters, task_id, task_local_id + 1)
     }
 
-    # Track total agents spawned per task (for stats reporting)
+    state =
+      if Keyword.get(spec.opts, :budget),
+        do: %{
+          state
+          | task_budget_counts: Map.update(state.task_budget_counts, task_id, 1, &(&1 + 1))
+        },
+        else: state
+
+    # Track total agents spawned per root phase (for stats reporting)
     state = %{
       state
       | task_agent_counts: Map.update(state.task_agent_counts, task_id, 1, &(&1 + 1))
@@ -106,8 +127,14 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       model_spec: selection.model_spec,
       model_id_locked: Keyword.get(spec.opts, :model_id_locked, false) == true,
       max_retries: state.max_retries,
-      max_depth: state.max_depth,
-      max_turns: resolve_max_turns(state, spec, parent_id),
+      budget: Keyword.get(spec.opts, :budget),
+      max_depth: EvoGit.TaskBudget.cap(spec.opts[:budget], "max_depth", state.max_depth),
+      max_turns:
+        EvoGit.TaskBudget.cap(
+          spec.opts[:budget],
+          if(is_nil(parent_id), do: "max_turns_root", else: "max_turns"),
+          resolve_max_turns(state, spec, parent_id)
+        ),
       parent_id: parent_id,
       objective: spec.objective,
       repo_id: spec.repo_id,

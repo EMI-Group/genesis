@@ -13,6 +13,7 @@
 |----------|-------------|
 | `resolve/0` | Merged config map (defaults + user config). Runtime overrides live in `AgentScheduler` state. |
 | `resolve/1` | Resolved value for a key path (atom or list of atoms) |
+| `reload/0` | Strictly validates disk TOML/schema, refreshes config/credential caches and loads credentials; returns `{:ok, config}` or a content-free error naming files/keys. Used by RemoteAPI runtime reload (GUI and MCP). Does not itself update the scheduler. |
 | `user_config/0` | Parsed `config.toml`, or `%{}` if not found. `:persistent_term`-cached with `File.stat` mtime+size validation (see "Config Caching"). |
 | `save_user_config/1` | Validates, then persists a config map to `config.toml` (creates the config dir); invalidates the cache on success. `:ok \| {:error, reason}` |
 | `save_credentials/1` | Merges/persists an API key map to `credentials.toml`; sets keys via `ReqLLM.put_key` for immediate in-process use; invalidates cache. `:ok \| {:error, reason}` |

@@ -175,7 +175,7 @@ defmodule EvoGit.Agent.TruncationFeedback do
   """
   def append_truncation_feedback(output, nil, _tool_name), do: output
 
-  def append_truncation_feedback(output, truncation_info, _tool_name) do
+  def append_truncation_feedback(output, truncation_info, tool_name) do
     original_size = Map.get(truncation_info, :original_size, 0)
     truncated_size = Map.get(truncation_info, :truncated_size, 0)
 
@@ -206,7 +206,12 @@ defmodule EvoGit.Agent.TruncationFeedback do
         "narrow the pattern/path or #{raise_clause}" <>
         spill_clause <> "."
 
-    output <> "\n\n" <> feedback
+    range_hint =
+      if tool_name in ["read", "read_file"],
+        do: " Read smaller offset/limit ranges to continue without rereading the whole file.",
+        else: ""
+
+    output <> "\n\n" <> feedback <> range_hint
   end
 
   # The configured ceiling, used when the truncation_info map does not carry the

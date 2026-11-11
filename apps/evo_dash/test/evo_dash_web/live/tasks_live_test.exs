@@ -58,6 +58,36 @@ defmodule EvoDashWeb.TasksLiveTest do
   # Inserts a task directly into the SQLite store (bypasses the async
   # task spawn that `start_task/2` triggers). This lets us create deterministic
   # fixture tasks for search/filter assertions.
+  test "shared progress refreshes both the summary and expanded task after publication", %{
+    conn: conn
+  } do
+    id = insert_fixture!(status: :running, finished_at: nil)
+    {:ok, view, _} = live(conn, ~p"/tasks")
+    flush_tasks_load(view)
+
+    {:ok, first} =
+      EvoGit.TaskProgress.publish(id, 1, %{
+        summary: "Backend ready",
+        completed: ["Shared catalog"]
+      })
+
+    wait_until(fn -> render(view) =~ "Backend ready" end)
+    assert expand_card(view, id) =~ "Shared catalog"
+    {:ok, current} = EvoGit.TaskControl.get(%{"task_id" => id})
+    assert current.progress.report == first
+
+    {:ok, second} =
+      EvoGit.TaskProgress.publish(id, 1, %{
+        summary: "Running verification",
+        blockers: ["Fixture missing"]
+      })
+
+    wait_until(fn -> render(view) =~ "Fixture missing" end)
+    assert render(view) =~ "Running verification"
+    assert EvoGit.Store.get_task_lite(id).progress == second
+    drain_async_loads(view, 5000)
+  end
+
   defp insert_fixture!(overrides) do
     id = "fixture_#{System.unique_integer([:positive])}"
 

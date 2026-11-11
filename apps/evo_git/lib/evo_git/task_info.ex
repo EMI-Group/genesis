@@ -10,6 +10,7 @@ defmodule EvoGit.TaskInfo do
     :started_at,
     :finished_at,
     status: :pending,
+    progress: nil,
     logs: [],
     result: nil,
     error: nil,

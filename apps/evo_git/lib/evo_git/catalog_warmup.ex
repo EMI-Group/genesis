@@ -1,6 +1,6 @@
 defmodule EvoGit.CatalogWarmup do
   @moduledoc """
-  Boot-time, throwaway warm-up of the LLM model catalog.
+  Throwaway warm-up of the LLM model catalog at boot and on profile changes.
 
   `EvoGit.AgentScheduler.init/1` is the first `ReqLLM.model/1` caller on a fresh
   BEAM, and that call makes `:llm_db` read + `Jason.decode` its packaged catalog
@@ -17,6 +17,11 @@ defmodule EvoGit.CatalogWarmup do
   started immediately afterwards only pays cheap `:persistent_term` reads of the
   now-warm catalog. It is declared in `EvoGit.AgentGroupSupervisor` immediately
   before `EvoGit.AgentScheduler`, so the ordering is explicit.
+
+  `AgentScheduler.update_config/1` also warms explicit model profiles before
+  calling the scheduler. A first model configured after an empty boot therefore
+  pays the cold load outside the scheduler, keeping its mailbox responsive and
+  avoiding the configuration call's five-second timeout.
 
   The warm-up is deliberately INERT when
   * the `:llm_model_metadata_fun` app-env seam is installed (the test suite's way

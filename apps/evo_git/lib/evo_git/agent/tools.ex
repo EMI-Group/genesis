@@ -327,6 +327,10 @@ defmodule EvoGit.Agent.Tools do
   # ElixirEval.execute/3 fully authorizes against the actual scheduler owner and
   # task lifecycle, including target_node, even if the name was hallucinated.
   # Schema membership and missing tool-task role flags NEVER grant this capability.
+  defp dispatch_tool_call("report_progress", args, _repo_path, _repo_root, _node_path) do
+    EvoGit.Agent.Tools.ReportProgress.execute(args)
+  end
+
   defp dispatch_tool_call("elixir_eval", args, repo_path, repo_root, _node_path) do
     ElixirEval.execute(args, repo_path, repo_root)
   end

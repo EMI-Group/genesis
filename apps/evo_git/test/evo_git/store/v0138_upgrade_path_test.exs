@@ -48,7 +48,8 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
     20_260_815_000_004,
     20_260_815_000_005,
     20_260_815_000_006,
-    20_260_815_000_007
+    20_260_815_000_007,
+    20_261_108_000_001
   ]
 
   @shipped_versions @v0138_versions ++ @pending_versions

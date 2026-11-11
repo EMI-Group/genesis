@@ -9,7 +9,7 @@ defmodule EvoGit.TaskRegistryCase do
 
   The store still opens a per-test SQLite FILE (`<root>/tasks.sqlite`), but that
   file starts as a byte copy of a schema-complete TEMPLATE built once per module
-  (`EvoGit.TestSupport.StoreTemplate`): the seven migrations' DDL is paid once
+  (`EvoGit.TestSupport.StoreTemplate`): the shipped migrations' DDL is paid once
   per module instead of once per test (measured ~19 ms → ~2 ms of store boot per
   test). Only connection setup and the probe-guarded no-op migration run remain
   per test.
@@ -60,7 +60,7 @@ defmodule EvoGit.TaskRegistryCase do
 
       alias EvoGit.TestSupport.StoreTemplate
 
-      # ONE schema-complete, checkpointed SQLite template per module (the seven
+      # ONE schema-complete, checkpointed SQLite template per module (the shipped
       # migrations' DDL is paid once here, not once per test). Each test still
       # gets its OWN database file — a copy of this template — so isolation is
       # unchanged.

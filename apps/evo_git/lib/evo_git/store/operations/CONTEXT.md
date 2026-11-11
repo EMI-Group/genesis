@@ -13,7 +13,7 @@ Pages accepts nested `:filters` plus top-level `status/project_path/review_statu
 `Tasks.safe_select_paginated_tasks/2` returns `{[TaskInfo], total}`, reads filters ONLY from nested `:filters`, defaults invalid/nonpositive limits to 50 but does NOT cap positive limits, and does NOT redirect out-of-range offsets.
 Legacy pagination counts undecodable rows even when its per-row decoder skips them.
 `Tasks.get_task/2` and `Pages.get_task_lite/2` both return full `%TaskInfo{}` or nil with `ref: nil`, including full `opts`, `logs`, `result`, `usage`, and `error`; lite selects 18 decode-relevant columns and omits only store-internal `updated_at`.
-`Tasks.get_task_status/2` distinguishes missing nil from existing unreadable `{:unknown, raw}`; `select_task_update_info/2` returns `%{status, opts, finished_at, lease_expires_at}` or nil using two SELECTs.
+`Tasks.get_task_status/2` distinguishes missing nil from existing unreadable `{:unknown, raw}`; `select_task_update_info/2` returns `%{status, opts, error, finished_at, lease_expires_at}` or nil using two SELECTs.
 
 ## Constraints and Audit Hazards
 Despite the introductory Pages moduledoc, `get_task_lite/2` is a full-detail read, not a blob-light or inherently bounded inspection projection.
@@ -34,3 +34,7 @@ There are no child subdirectories.
 - `archives.ex` owns relational per-agent archives.
 - `projects.ex` owns project CRUD.
 - `safety.ex` owns safe full-table reads and counts.
+
+## Shared task progress
+
+`Progress` serializes semantic reports and message receipts through the existing Store writer, persists a bounded JSON snapshot in `task_progress`, and broadcasts the existing task update event. `Tasks.get_task` and `Pages.get_task_lite` attach the same public snapshot; page summaries batch-load only summary/time for visible IDs. Deletion follows task/archive cleanup. Reads do not call a model or mutate progress.

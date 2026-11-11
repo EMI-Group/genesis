@@ -9,8 +9,8 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
       usable row is carried into `vct_mounts`, the table is DROPPED, and the
       result is capped to the 100 newest mounts; unusable rows are skipped
     * a RELEASED v0.14.1 database (`schema_migrations` stamped with versions
-      1..6, which Ecto therefore never re-runs) → version 7 is the ONLY pending
-      migration, carries the rows over the same way, and drops `projects`; an
+      1..6, which Ecto therefore never re-runs) → VCT carries the rows over
+      and drops `projects`, then task progress is created; an
       unreadable `projects` table instead ABORTS the migration, leaving both
       the table and its rows (and version 7 pending) intact
     * a FRESH database → `vct_mounts` exists with its five columns and
@@ -79,7 +79,7 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
   #
   # v0.14.1 shipped exactly the six migrations BELOW version 7, so a real
   # v0.14.1 `schema_migrations` carries these rows and Ecto never re-runs them:
-  # the ONLY pending work on such a database is `…00007_vct_mounts`.
+  # pending work starts with `…00007_vct_mounts`, followed by task progress.
   @released_versions [
     20_260_815_000_001,
     20_260_815_000_002,
@@ -90,6 +90,7 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
   ]
 
   @vct_version 20_260_815_000_007
+  @progress_version 20_261_108_000_001
 
   # The `tasks` table v0.14.1 shipped: the FINAL 19 columns in canonical order
   # (`…00001` created it that way and `…00005` had already dropped
@@ -300,7 +301,9 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
   # versions can never re-run and must not be "repaired" by this fixture.
 
   describe "a released v0.14.1 database" do
-    test "applies only version 7 and derives the mounts from its projects rows", %{root: root} do
+    test "applies VCT and progress migrations and derives the mounts from its projects rows", %{
+      root: root
+    } do
       path = Path.join(root, "released.sqlite")
       build_released_db!(path, @legacy_rows)
 
@@ -313,10 +316,10 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
 
       pid = start_repo!(path)
 
-      # EXACTLY one migration is pending, and it is the VCT one.
-      assert Boot.run_migrations(pid) == [@vct_version]
+      # VCT and task progress follow the six already released migrations.
+      assert Boot.run_migrations(pid) == [@vct_version, @progress_version]
 
-      assert migration_versions(pid) == @released_versions ++ [@vct_version]
+      assert migration_versions(pid) == @released_versions ++ [@vct_version, @progress_version]
 
       # The SAME fan-out rules the pre-Ecto fixture pins: newest first, `-N`
       # suffixes on collisions, stored display names preserved, NULL
@@ -355,12 +358,12 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
 
       # The majority of real users: nothing to carry over, so version 7 still
       # creates the table, drops the empty legacy one and stamps itself.
-      assert Boot.run_migrations(pid) == [@vct_version]
+      assert Boot.run_migrations(pid) == [@vct_version, @progress_version]
 
       assert mount_rows(pid) == []
       refute "projects" in table_names(pid)
       assert column_names(pid, "vct_mounts") == @mount_columns
-      assert migration_versions(pid) == @released_versions ++ [@vct_version]
+      assert migration_versions(pid) == @released_versions ++ [@vct_version, @progress_version]
     end
 
     test "an unreadable legacy projects table ABORTS the migration and survives", %{root: root} do

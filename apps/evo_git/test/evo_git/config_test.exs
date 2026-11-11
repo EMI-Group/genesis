@@ -1078,7 +1078,7 @@ defmodule EvoGit.ConfigTest do
       previous_home_fun = Application.get_env(:evo_git, :auth_home_fun)
       Application.put_env(:evo_git, :auth_home_fun, fn -> empty_home end)
 
-      env_names = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN"]
+      env_names = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN", "CODEX_HOME"]
       env_snapshot = Enum.map(env_names, fn name -> {name, System.get_env(name)} end)
       Enum.each(env_names, &System.delete_env/1)
 
