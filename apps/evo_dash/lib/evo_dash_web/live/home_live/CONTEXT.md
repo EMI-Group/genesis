@@ -19,7 +19,7 @@ When interactive sessions are unavailable on the node, the page falls back to th
 - `delta.ex` → `EvoDashWeb.HomeLive.Delta` — the PURE, TOTAL delta reducer (`new/3`, `seed/3`, `meta/0`, `apply_batch/5`); no processes, no side effects
 - `watch.ex` → `EvoDashWeb.HomeLive.Watch` — the `/help` watch lifecycle: `attach/1` (LiveView-process subscription + supervised watcher registration whose snapshot seeds the delta), `detach/1`, `snapshot_result/3`, `stream_active?/1`
 - `chat_state.ex` → `EvoDashWeb.HomeLive.ChatState` — persisted per-chat shape (`build/1`, `persist/1`, `restore/1`) over `EvoDash.ChatHistory`
-- `messages.ex` → `EvoDashWeb.HomeLive.Messages` — ReqLLM history → bubble text / thought-process entries (total)
+- `messages.ex` → `EvoDashWeb.HomeLive.Messages` — ReqLLM history → bubble text / thought-process entries (total), plus `transcript/1`, the ONE shared builder (`%{transcript:, entries:}`) both the history read and the watch snapshot seed through
 - `agent_stream.ex` → `EvoDashWeb.HomeLive.AgentStream` — root-agent lookup, `message_count` gating, final-result extraction
 - `model_select.ex` / `model_selection.ex` → model snapshot loading and canonical provider/model/reasoning selection state
 - `approval_workflow.ex` / `approval_card.ex` → ephemeral approval cards, scoping, remount recovery
@@ -109,7 +109,7 @@ The `/help` textarea is NOT `phx-update="ignore"`, so staging a text file simply
 ## Caps
 
 - transcript: at most 200 entries (newest kept), at most 8 000 graphemes of rendered text per entry
-- reasoning: at most 40 entries per transcript entry (`Transcript` cap on the dormant `:reasoning` field) and the `@thought_process` list is rendered in full (no cap) for the last assistant entry
+- reasoning: at most 40 entries per transcript entry (`Transcript` cap on the dormant `:reasoning` field) and the delta path caps the live `@thought_process` buffer at 40 entries (newest kept); a history-read rebuild assigns the whole `Messages.to_entries/1` list, which is uncapped
 - queued echoes: at most 20
 - attachments: 4 files, 15 MiB each raw
 - preamble (one-shot fallback only): last 8 exchanges, 600 chars per entry, 4 000-char total
@@ -120,6 +120,7 @@ Reasoning is NOT attached per transcript entry today: `Transcript.put_reasoning/
 The rendered thought process is ONE global `@thought_process` assign — the full `Messages.to_entries/1` list of the last `get_agent_history/2` read, rewritten wholesale by `apply_history/3` and cleared only by `reset_chat/1` — passed ONLY to the LAST assistant entry (`ChatMessages.message_list/1`), so earlier assistant entries render no thought section.
 Entries built by `Transcript.entry/3` do always carry `reasoning: []`, and `Transcript.normalize/1` preserves an existing `:reasoning` key, so the field is dormant scaffolding for a future per-message migration, not a live path.
 `ChatState` persists `thought_process` verbatim and rebuilds it through `normalize_thought_process/1` on restore (`%{turn, timestamp, type, data}`, with `data` kept verbatim).
+The delta path reuses that one buffer: `{:thinking, chunk}` accumulates into a SINGLE upserted entry (`type: "assistant"`, `data.metadata.thinking == true`, `data.reasoning_details: [%{text:, type: "thinking"}]`) for the current turn, so the collapsible section grows live and never shows the same text as the bubble (`Messages.message_text/1` excludes `:thinking` parts).
 
 ## Async contract (message tags + stale guards)
 
@@ -133,6 +134,7 @@ The LiveView process never blocks on a store/registry/cross-node call. Per-click
 | `async_lookup_agent/2` (`Task.Supervisor.start_child`) | `{:chat_agent_lookup, node, seq, task_id, agent}` | `chat_fetch_seq` + node + task_id |
 | `async_fetch_history/2` | `{:chat_history_loaded, node, seq, agent_id, result}` | `chat_fetch_seq` + node + agent_id |
 | `async_fetch_task/2` | `{:chat_task_loaded, node, seq, task_id, task}` | `chat_task_fetch_seq` + node + task_id |
+| `Watch.attach/1` (supervised watcher registration + snapshot) | `{:chat_stream_ready, node, seq, agent_id, result}` | `stream_attach_seq` + node + `session_id` + the current `chat_stream.agent_id` |
 | `ModelSelect.load/1` via `SafeCall.start/4` | `{{:model_select_loaded, seq, node}, result}` | `model_select_seq` + node + selection scope |
 | `SourceGate.spawn_availability_check/3` | `{:source_availability_loaded, seq, node, result}` | `source_check_seq` + node |
 | `ApprovalWorkflow` | `{{:approval_pending_loaded, seq, scope}, result}`, `{{:approval_workflow_response, seq, scope, request_id}, result}` | monotonic token + chat/node/task/agent scope |
@@ -147,6 +149,8 @@ A loading flag always settles: every spawned loader sends its result term, inclu
 - `:home_session_start_runner` (2-arity `(node, opts)`)
 - `:home_session_send_runner` (4-arity `(node, agent_id, message, policy)`)
 - `:home_session_close_runner` (3-arity `(node, agent_id, reason)`)
+- `:home_agent_watch_runner` (3-arity `(node, agent_id, watcher_pid)`, default `&EvoDash.NodeContext.register_agent_watcher/3`, read inside the spawned registration task)
+- `:home_agent_unwatch_runner` (3-arity `(node, agent_id, watcher_pid)`, default `&EvoDash.NodeContext.unregister_agent_watcher/3`, read inside the spawned unregister task)
 - `:approval_responder` (approval response route)
 - `:source_availability_runner` / `:source_clone_runner` / `:source_update_runner` (Genesis Source card)
 
