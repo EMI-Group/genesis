@@ -1,7 +1,7 @@
 defmodule EvoDashWeb.HomeLive.Attachments do
   @moduledoc """
   Attachment pipeline for the Genesis Assistant chat composer
-  (`EvoDashWeb.HomeLive` at `/help`).
+  (`EvoDashWeb.HomeLive` at `/assistant`).
 
   Mirrors the Projects page objective-editor contract
   (`EvoDashWeb.ProjectsLive.AttachFile`), split into pure helpers because the

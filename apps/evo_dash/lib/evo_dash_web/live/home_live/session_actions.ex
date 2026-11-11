@@ -1,7 +1,7 @@
 defmodule EvoDashWeb.HomeLive.SessionActions do
   @moduledoc """
   URL, URL-state and session-command helpers for the Genesis Assistant
-  interactive-session UX (`EvoDashWeb.HomeLive` at `/help`).
+  interactive-session UX (`EvoDashWeb.HomeLive` at `/assistant`).
 
   Everything here is a thin, TOTAL boundary over the core's interactive-session
   API on `EvoDash.NodeContext` — `start_session/2`,
@@ -12,7 +12,7 @@ defmodule EvoDashWeb.HomeLive.SessionActions do
 
   ## URL state
 
-  A chat is addressed by integer agent id: `/help?session=<agent_id>`
+  A chat is addressed by integer agent id: `/assistant?session=<agent_id>`
   (session FIRST, `node` appended with `&` when a remote target is viewed). An
   interactive session's agent id is positive, so it doubles as the
   `EvoDash.ChatHistory` chat id.
@@ -68,11 +68,11 @@ defmodule EvoDashWeb.HomeLive.SessionActions do
   ## URL state
 
   @doc """
-  Builds a `/help` query URL.
+  Builds a `/assistant` query URL.
 
-  No session and no node → `"/help"`; node only → `"/help?node=<node_param>"`;
-  session only → `"/help?session=<id>"`; both →
-  `"/help?session=<id>&node=<node_param>"` (session FIRST, node appended with
+  No session and no node → `"/assistant"`; node only → `"/assistant?node=<node_param>"`;
+  session only → `"/assistant?session=<id>"`; both →
+  `"/assistant?session=<id>&node=<node_param>"` (session FIRST, node appended with
   `&`). The node param is passed through verbatim as received (`nil`/blank
   omitted); a session id is emitted only when `parse_session/1` accepts it.
   """
@@ -81,8 +81,8 @@ defmodule EvoDashWeb.HomeLive.SessionActions do
     parts = Enum.reject([session_param(session_id), node_param_part(node_param)], &is_nil/1)
 
     case parts do
-      [] -> "/help"
-      parts -> "/help?" <> Enum.join(parts, "&")
+      [] -> "/assistant"
+      parts -> "/assistant?" <> Enum.join(parts, "&")
     end
   end
 
@@ -274,7 +274,7 @@ defmodule EvoDashWeb.HomeLive.SessionActions do
   ## Reattach
 
   @doc """
-  Loads the state needed to REATTACH to an existing session (a `/help?session=<id>`
+  Loads the state needed to REATTACH to an existing session (a `/assistant?session=<id>`
   load or a mount reconciliation) through `:home_session_attach_runner`.
 
   Returns `%{summary: map | nil, awaiting?: boolean, history: list}`:

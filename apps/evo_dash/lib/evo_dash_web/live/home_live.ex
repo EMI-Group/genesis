@@ -70,7 +70,6 @@ defmodule EvoDashWeb.HomeLive do
 
   alias EvoDashWeb.LiveHooks.NodeAware
   import EvoDashWeb.HomeLive.ChatMessages
-  import EvoDashWeb.HomeLive.ApprovalCard
   import EvoDashWeb.HomeLive.SourceGate
   @terminal_statuses [:completed, :cancelled, :failed]
 
@@ -79,23 +78,21 @@ defmodule EvoDashWeb.HomeLive do
     ~H"""
     <EvoDashWeb.Layouts.app
       flash={@flash}
-      current_page={:help}
+      current_page={:assistant}
       current_node_id={@current_node_id}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
       pending_tasks={@pending_tasks}
+      session_list={@session_list}
+      session_list_loading={@session_list_loading}
+      session_list_error={@session_list_error}
+      current_session_id={@current_session_id}
       desktop_quit_confirm={@desktop_quit_confirm}
       update_status={@update_status}
       guide={@guide}
       accent_color={assigns[:accent_color] || "blue"}
     >
       <div class="flex h-full min-h-0 w-full min-w-0">
-        <!-- Conversation rail: cached local chats plus this node's live
-             interactive sessions (a session's agent id IS its chat id). Below
-             `lg` the rail collapses so the reading column keeps the width. -->
-        <div class="hidden w-64 shrink-0 overflow-y-auto overscroll-contain scrollbar-thin border-r border-base-300/60 px-2 py-3 lg:block">
-          {EvoDashWeb.HomeLive.SessionList.session_list(assigns)}
-        </div>
         <div class="flex h-full min-h-0 w-full min-w-0 max-w-3xl flex-col mx-auto">
           <!-- The header, answers and composer share one reading column. -->
           <div
@@ -119,7 +116,7 @@ defmodule EvoDashWeb.HomeLive do
               <%!-- zh_CN: "新对话" --%>{gettext("New chat")}
             </button>
           </div>
-          <!-- Genesis-source gate: the /help chat runs a repo-less `:reflect`
+          <!-- Genesis-source gate: the /assistant chat runs a repo-less `:reflect`
              agent whose reference is the managed Genesis source checkout. On a
              fresh install it is usually not downloaded yet, so a send would only
              start a doomed task. Pinned BETWEEN the header and the message
@@ -156,60 +153,32 @@ defmodule EvoDashWeb.HomeLive do
                render AFTER the last entry, inside the scroller. -->
             {EvoDashWeb.HomeLive.Composer.queued_echoes(assigns)}
           </div>
-          <!-- Pending evaluator and legacy command approvals block the reflect
-             agent until the user decides. Cards stay visible while a response
-             is in flight and on failure, between transcript and composer. -->
-          <%= if @pending_approvals != [] do %>
-            <div class="shrink-0 max-h-[min(11rem,25dvh)] overflow-y-auto overscroll-contain scrollbar-thin">
-              <%= for request <- @pending_approvals do %>
-                <.approval_card
-                  request={request}
-                  busy={ApprovalWorkflow.busy?(assigns, request.request_id)}
-                />
-              <% end %>
-            </div>
+          <!-- Approval surface: ONE fixed-height status strip. Its height is
+             reserved whether or not anything is pending, so a request arriving
+             or being resolved never reflows the transcript column (the
+             historical cause of the chat "shaking" at the end of a turn).
+             Decisions happen in the single-request dialog below, opened from
+             the strip's Review button or automatically for a NEW live request. -->
+          {EvoDashWeb.HomeLive.ApprovalDialog.approval_bar(assigns)}
+          <%= if @approval_dialog_open do %>
+            {EvoDashWeb.HomeLive.ApprovalDialog.approval_dialog(assigns)}
           <% end %>
-          <%= case @approval_error do %>
-            <% {:recovery, reason} -> %>
-              <div
-                id="approval-recovery-error"
-                role="alert"
-                class="shrink-0 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-base-content"
-              >
-                <p>
-                  {gettext("Could not load pending approvals: %{reason}", reason: inspect(reason))}
-                </p>
-                <p class="mt-1 text-base-content/70">
-                  {gettext("Existing requests are kept. Retry to check for pending approvals.")}
-                </p>
-                <button
-                  type="button"
-                  phx-click="retry_approvals"
-                  disabled={@approval_recovering}
-                  class="btn btn-sm btn-outline mt-2"
-                >
-                  {gettext("Retry approvals")}
-                </button>
-              </div>
-            <% {:response, request_id, reason} -> %>
-              <%= if Enum.any?(@pending_approvals, &(&1.request_id == request_id)) do %>
-                <div
-                  id="approval-response-error"
-                  role="alert"
-                  class="shrink-0 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-base-content"
-                >
-                  <p>{gettext("Failed to respond: %{reason}", reason: inspect(reason))}</p>
-                  <p class="mt-1 text-base-content/70">
-                    {gettext("The request is still pending. Use its decision buttons to try again.")}
-                  </p>
-                </div>
-              <% end %>
-            <% _ -> %>
-          <% end %>
+          <!-- Browser-notification sink for a genuinely new approval request:
+             the BrowserNotifications hook notifies only while the window is
+             hidden/unfocused and dedupes by tag. -->
+          <div
+            id="assistant-notifications"
+            phx-hook="BrowserNotifications"
+            class="hidden"
+            aria-hidden="true"
+          >
+          </div>
           <!-- Interrupt affordance: sits with the composer while a turn runs.
              It NEVER halts a chunk — the draft is delivered at the next turn
-             boundary (gettext("Send now (interrupt turn)")). -->
-          <div class="shrink-0 flex justify-end px-3 sm:px-4">
+             boundary (gettext("Send now (interrupt turn)")). The slot keeps a
+             CONSTANT height so the affordance disappearing at the end of a turn
+             cannot reflow the column. -->
+          <div class="shrink-0 flex h-7 items-center justify-end px-3 sm:px-4">
             {EvoDashWeb.HomeLive.Composer.interrupt_button(assigns)}
           </div>
           <!-- Composer: pinned bottom, outside the messages scroller. ONE form
@@ -276,10 +245,10 @@ defmodule EvoDashWeb.HomeLive do
       chat_stream: nil,
       chat_stream_meta: nil,
       stream_attach_seq: 0,
-      session_list: [],
-      session_list_loading: false,
-      session_list_error: nil,
-      session_list_seq: 0,
+      # `:session_list` / `:session_list_loading` / `:session_list_error` /
+      # `:session_list_seq` are seeded (and loaded) by
+      # `EvoDashWeb.LiveHooks.NodeAware` — the layout sidebar owns the
+      # Conversations section on every page, including this one.
       pending_attachments: Attachments.new(),
       attach_unavailable: false,
       chat_fetch_seq: 0,
@@ -289,6 +258,10 @@ defmodule EvoDashWeb.HomeLive do
       raw_entry_ids: MapSet.new(),
       # after handle_params resolves the node, never against mount's local seed.
       approval_context: nil,
+      # Purely local view state for the approval review dialog; ApprovalWorkflow
+      # owns the requests themselves and never touches these two.
+      approval_dialog_open: false,
+      approval_dialog_index: 0,
       provider_profiles: [],
       model_selections: [],
       model_spec: nil,
@@ -306,7 +279,7 @@ defmodule EvoDashWeb.HomeLive do
       source_check_loading: false,
       source_check_seq: 0,
       source_busy: nil,
-      current_path: ~p"/help"
+      current_path: ~p"/assistant"
     }
   end
 
@@ -545,10 +518,9 @@ defmodule EvoDashWeb.HomeLive do
       socket
       |> resolve_session(params["session"])
       |> ModelSelection.assign_model_select()
-      |> assign(current_path: ~p"/help")
+      |> assign(current_path: ~p"/assistant")
       |> maybe_check_source()
       |> maybe_recover_approvals()
-      |> maybe_load_sessions()
 
     {:noreply, socket}
   end
@@ -707,11 +679,31 @@ defmodule EvoDashWeb.HomeLive do
         %{"request_id" => request_id, "decision" => decision},
         socket
       ) do
-    {:noreply, ApprovalWorkflow.respond(socket, request_id, decision)}
+    # The decision payload stays exactly the request id plus the whitelisted
+    # decision — ApprovalWorkflow re-validates both. The dialog cursor is
+    # re-derived from the (possibly shorter) request list afterwards.
+    socket = ApprovalWorkflow.respond(socket, request_id, decision)
+    {:noreply, sync_approval_dialog(socket)}
   end
 
   def handle_event("retry_approvals", _params, socket) do
     {:noreply, recover_approvals(socket)}
+  end
+
+  def handle_event("open_approval_dialog", _params, socket) do
+    {:noreply, open_approval_dialog(socket)}
+  end
+
+  def handle_event("dialog_closed", _params, socket) do
+    {:noreply, assign(socket, approval_dialog_open: false)}
+  end
+
+  def handle_event("prev_approval", _params, socket) do
+    {:noreply, step_approval_dialog(socket, -1)}
+  end
+
+  def handle_event("next_approval", _params, socket) do
+    {:noreply, step_approval_dialog(socket, 1)}
   end
 
   def handle_event("approval_response", _params, socket), do: {:noreply, socket}
@@ -966,15 +958,29 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   def handle_info({:approval_requested, request}, socket) do
-    {:noreply, ApprovalWorkflow.requested(socket, request)}
+    # A genuinely NEW live request (never a recovery snapshot) opens the review
+    # dialog when it is not already open and raises a native notification, so
+    # the user does not have to be looking at the tab to notice it.
+    socket = ApprovalWorkflow.requested(socket, request)
+
+    {:noreply,
+     socket
+     |> auto_open_approval_dialog()
+     |> push_event("task_notification", %{
+       title: gettext("Approval needed"),
+       body: gettext("Genesis is waiting for your approval."),
+       tag: "genesis-approval"
+     })}
   end
 
   def handle_info({:approval_resolved, request_id, _decision, source_node}, socket) do
-    {:noreply, ApprovalWorkflow.resolved(socket, request_id, source_node)}
+    socket = ApprovalWorkflow.resolved(socket, request_id, source_node)
+    {:noreply, sync_approval_dialog(socket)}
   end
 
   def handle_info({:approval_resolved, request_id, _decision}, socket) do
-    {:noreply, ApprovalWorkflow.resolved(socket, request_id)}
+    socket = ApprovalWorkflow.resolved(socket, request_id)
+    {:noreply, sync_approval_dialog(socket)}
   end
 
   def handle_info(:node_aware_reload_tasks, socket) do
@@ -1100,10 +1106,6 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  def handle_info({{:session_list_loaded, seq, node}, result}, socket) do
-    {:noreply, SessionList.applied(socket, seq, node, result)}
-  end
-
   def handle_info({:node_selected, node_id}, socket) do
     {:noreply, socket} = NodeAware.handle_node_selected(socket, node_id)
     {:noreply, maybe_load_sessions(socket)}
@@ -1153,14 +1155,23 @@ defmodule EvoDashWeb.HomeLive do
               batch
             )
 
+          # Layout stability: only re-assign what actually CHANGED. The reducer
+          # returns a fresh (but usually value-equal) transcript / thought
+          # process / meta map for every ~75 ms batch, and re-assigning them
+          # unconditionally re-rendered the transcript column and the meta line
+          # on every batch — the source of the visible "shaking" while
+          # streaming and at the end of a turn. The stream cursor is ALWAYS
+          # advanced because the stale check depends on it.
+          prev_transcript = socket.assigns[:transcript]
+          prev_thought_process = socket.assigns[:thought_process]
+          prev_meta = socket.assigns[:chat_stream_meta]
+
           socket =
             socket
-            |> assign(
-              chat_stream: %{stream | delta: %{delta | seq: seq}},
-              transcript: transcript,
-              thought_process: thought_process,
-              chat_stream_meta: meta
-            )
+            |> assign(chat_stream: %{stream | delta: %{delta | seq: seq}})
+            |> maybe_assign_changed(:transcript, transcript, prev_transcript)
+            |> maybe_assign_changed(:thought_process, thought_process, prev_thought_process)
+            |> maybe_assign_changed(:chat_stream_meta, meta, prev_meta)
             |> fold_stream_outcome(outcome)
             |> ChatState.persist()
 
@@ -1207,6 +1218,12 @@ defmodule EvoDashWeb.HomeLive do
   def handle_info(_msg, socket) do
     {:noreply, socket}
   end
+
+  # Assign a value only when it differs from what the socket already holds:
+  # a value-equal re-assign still re-renders that subtree, which is what made
+  # the transcript column jitter on every ~75 ms delta batch.
+  defp maybe_assign_changed(socket, _key, new_value, new_value), do: socket
+  defp maybe_assign_changed(socket, key, new_value, _previous), do: assign(socket, key, new_value)
 
   # The outcome a delta batch reported: a yield parks the session (idle, waiting
   # for input), a finish ends it, and anything else terminal-looking fails it.
@@ -1418,9 +1435,85 @@ defmodule EvoDashWeb.HomeLive do
       session_mode: nil,
       queued_echoes: [],
       pending_attachments: Attachments.clear(),
-      approval_context: nil
+      approval_context: nil,
+      approval_dialog_open: false,
+      approval_dialog_index: 0
     )
     |> ApprovalWorkflow.init()
+  end
+
+  ## Approval review dialog -------------------------------------------------
+  #
+  # `approval_dialog_open` / `approval_dialog_index` are LOCAL VIEW state: the
+  # requests themselves belong to ApprovalWorkflow, and every decision still
+  # travels through it as the request id plus a whitelisted decision. The
+  # helpers below only keep the cursor sane as the request list changes.
+
+  defp pending_approvals(socket), do: socket.assigns[:pending_approvals] || []
+
+  # A genuinely NEW live request (never a recovery snapshot) surfaces the review
+  # dialog when it is not already open, so the user is asked in place instead of
+  # having to notice a banner. When it IS open, only the cursor is re-synced.
+  defp auto_open_approval_dialog(socket) do
+    if socket.assigns[:approval_dialog_open] do
+      sync_approval_dialog(socket)
+    else
+      open_approval_dialog(socket)
+    end
+  end
+
+  defp open_approval_dialog(socket) do
+    case pending_approvals(socket) do
+      [] ->
+        assign(socket, approval_dialog_open: false, approval_dialog_index: 0)
+
+      _ ->
+        assign(socket,
+          approval_dialog_open: true,
+          approval_dialog_index:
+            clamp_dialog_index(socket.assigns[:approval_dialog_index], socket)
+        )
+    end
+  end
+
+  defp sync_approval_dialog(socket) do
+    case pending_approvals(socket) do
+      [] ->
+        assign(socket, approval_dialog_open: false, approval_dialog_index: 0)
+
+      _ ->
+        assign(socket,
+          approval_dialog_index:
+            clamp_dialog_index(socket.assigns[:approval_dialog_index], socket)
+        )
+    end
+  end
+
+  defp step_approval_dialog(socket, step) do
+    case pending_approvals(socket) do
+      [] ->
+        assign(socket, approval_dialog_open: false, approval_dialog_index: 0)
+
+      requests ->
+        count = length(requests)
+        index = clamp_dialog_index(socket.assigns[:approval_dialog_index], socket)
+        assign(socket, approval_dialog_index: integer_mod(index + step, count))
+    end
+  end
+
+  defp clamp_dialog_index(index, socket) do
+    count = length(pending_approvals(socket))
+
+    cond do
+      count == 0 -> 0
+      not is_integer(index) or index < 0 -> 0
+      index >= count -> count - 1
+      true -> index
+    end
+  end
+
+  defp integer_mod(value, count) when count > 0 do
+    rem(rem(value, count) + count, count)
   end
 
   def maybe_recover_approvals(socket) do

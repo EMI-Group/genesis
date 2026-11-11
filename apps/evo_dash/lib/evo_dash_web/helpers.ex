@@ -654,7 +654,7 @@ defmodule EvoDashWeb.Helpers do
   The `*_class` tokens are SEMANTIC accent classes meant to be composed with
   each call site's own BOX GEOMETRY (padding / rounding / max-height), which
   differs per site — the `/agents` inline panel, the `/agents` full-message
-  modal and the `/help` "Thought process". They live here so every site shares
+  modal and the `/assistant` "Thought process". They live here so every site shares
   ONE palette instead of re-deriving class strings in templates (Tailwind only
   emits statically written classes, so they must NOT be interpolated).
   """

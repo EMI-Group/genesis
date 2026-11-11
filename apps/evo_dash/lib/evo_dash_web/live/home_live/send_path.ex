@@ -1,6 +1,6 @@
 defmodule EvoDashWeb.HomeLive.SendPath do
   @moduledoc """
-  The `/help` composer SEND PATH and the one-shot FINALIZE block for
+  The `/assistant` composer SEND PATH and the one-shot FINALIZE block for
   `EvoDashWeb.HomeLive`, extracted verbatim so the LiveView module stays
   readable.
 
