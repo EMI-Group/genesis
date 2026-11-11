@@ -16,7 +16,16 @@ The mobile GIF has its own static PNG fallback for reduced-motion preferences.
 recursive-world-inline.*: compact diagram for the text/GIF layout, with transparent
 side gutters. The README floats it at 400px; narrow pages wrap the text below it.
 
-Rebuild with Node.js, sharp and Python Pillow installed:
+genesis-agent-history-light.avif / genesis-agent-history-dark.avif: theme-aware
+README recordings of the EvoX portal's original recursive-agent Git animation.
+Each is 1440 x 960, 30 FPS, 876 frames / 29.2 seconds, with an infinite loop.
+Two episodes show accepted merges and a rejected nested branch. English state
+captions are included; playback controls are omitted. Matching PNGs show the
+resolved first episode for reduced-motion and unsupported-AVIF fallbacks.
+The source renderer lives in evox-portal/src/components/art/paradigm-scenes.ts
+and recursive-agents.ts. These are conceptual illustrations, not agent logs.
+
+Rebuild the legacy SVG/GIF assets with Node.js, sharp and Python Pillow installed:
   node render.mjs sharp /path/to/temporary-frames
   python encode.py /path/to/temporary-frames
 
