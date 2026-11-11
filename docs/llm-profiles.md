@@ -1,7 +1,7 @@
 # LLM provider profiles and task model selection
 
 Configure an account once, list the models you want to use, then select a model for each task.
-This guide describes the canonical provider-profile format in `config.toml` and the current dashboard and CLI behavior.
+This guide describes the canonical provider-profile format in `config.toml` and the current dashboard behavior.
 
 ## 1. Accounts are not task selections
 
@@ -113,7 +113,7 @@ Switching provider profile or model resets dependent choices; recheck the model 
 A concrete selection locks the full provider/model/effort identity downstream, rather than just a model name.
 Choices use the selected node's configuration: remote-node selection does not silently fall back to local profiles.
 
-## 4. Configure through the UI or wizard
+## 4. Configure through the dashboard
 
 ### Settings → LLM → Provider profiles
 
@@ -131,15 +131,6 @@ Choose a provider, add multiple models, choose the default model, configure auth
 Each model has an effort dropdown; its blank **Provider default** choice inherits the provider default rather than disabling reasoning.
 Use Settings for ongoing profile management and shared schedule/default editing.
 
-### CLI setup
-
-```bash
-genesis setup
-```
-
-The wizard writes canonical provider accounts and their model inventory.
-It does not prompt for reasoning effort; configure inventories and defaults later in Settings or `config.toml`.
-
 ## 5. Keep credentials separate
 
 Store secrets in `credentials.toml` or environment variables, not in model inventories or task choices.
@@ -154,17 +145,8 @@ For subscription authentication and vendor-CLI login import, see [Subscription (
 
 ## 6. Start a task
 
-After replacing the placeholder with the same configured model ID used above:
-
-```bash
-genesis evolve "Fix the failing tests" --path ./my-project \
-  --provider-profile work --model REPLACE_WITH_MODEL_ID --reasoning-effort high
-```
-
-Canonical CLI selection requires **both** `--provider-profile` and `--model`.
-`--reasoning-effort` is optional, but cannot be used alone; `high` here belongs to the example model's advertised inventory.
-Legacy `-m` model/profile matching remains supported for compatibility.
-For Auto behavior, omit all selection flags so model-selection rules can choose.
+In the dashboard task form, choose **Provider profile** → **Model** → optional reasoning effort; an explicit choice locks the concrete selection for the task and its agents, while **Auto** leaves the choice to the configured rules and defaults.
+Pass the same selection to MCP task submission to start a task programmatically.
 
 For integrations with an already loaded config, resolve the credential-free selection through the schema API:
 

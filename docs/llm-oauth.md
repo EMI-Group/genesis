@@ -96,20 +96,6 @@ Treat these files as private secrets; do not share them with a team or hand-edit
 
 ## 4. Setup and dashboard
 
-### CLI wizard
-
-```bash
-genesis setup
-# From a source checkout:
-mix run -e 'EvoGit.CLI.main(System.argv())' -- setup
-```
-
-The wizard writes canonical provider profiles and nested model inventory.
-For Anthropic it offers **API key** or **Subscription (OAuth)**; OAuth writes `auth_mode = "oauth"` without storing an API key in `credentials.toml`.
-For OAuth-only `openai_codex`, there is no API-key choice.
-It checks for the vendor login, prints login guidance when needed, and can save the OAuth profile before login is available.
-The CLI wizard does not prompt for reasoning effort.
-
 ### Dashboard
 
 **Settings → LLM → Provider profiles** edits account authentication, the optional `oauth_file` path and model inventory on the node you are viewing.
@@ -125,7 +111,7 @@ Its blank **Provider default** effort choice leaves the override unset.
 
 | Symptom | Meaning / remedy |
 |---|---|
-| No usable subscription login found | Run `codex login` or `claude` on the node using the account, then retry setup or the run. |
+| No usable subscription login found | Run `codex login` or `claude` on the node using the account, then retry from the dashboard (Welcome or Settings) and run the task again. |
 | `OAuth file not found: <path>` | Check the provider profile's `oauth_file` and vendor login; Genesis must be able to import into the resolved managed path. |
 | Login found, but managed credential file not writable (for example `:erofs`) | The vendor login is fine; point the provider profile's `oauth_file` at a writable private location. Logging in again does not fix a read-only destination. |
 | `401` / expired credentials | Refresh is automatic when a refresh token exists; if it fails, repeat the vendor login. Environment-only tokens must be replaced manually. |
