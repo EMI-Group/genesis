@@ -8,7 +8,9 @@ defmodule EvoGit.Agent.Session.Setup do
     * `bind_worktree/2` + `ensure_tmpdir/1` are the DURABLE half — allocate the
       agent's worktree (skipped entirely for a repo-less agent), apply the
       crash-retry sleep and resolve the managed per-task scratch directory. They
-      run once per agent run/session.
+      run once per agent run/session, and a session runs the WHOLE call inside a
+      start task (with the SESSION pid as the create `owner_pid`), so a slow
+      worktree create never blocks the session process.
     * `install_process_context/3` is the PER-PROCESS half — it installs the
       identity/role/conversation-lifetime values on the process dictionary of
       whichever process is about to execute an exchange (today's agent Task, or
@@ -34,23 +36,56 @@ defmodule EvoGit.Agent.Session.Setup do
 
   `owner_pid` is the process `EvoGit.AgentScheduler.WorktreeManager` monitors —
   the process whose death reclaims the worktree. It defaults to `self()` (the
-  Runner path, where the agent IS this process); a session passes its own pid.
+  Runner path, where the agent IS this process); a session passes its own pid
+  (from inside its start task) so the SESSION owns the worktree for its whole
+  life.
+
+  Equivalent to `install_identity/1` followed by `request_worktree/2`, which are
+  the two halves a caller may run separately.
   """
   def bind_worktree(ctx, owner_pid \\ self()) do
+    install_identity(ctx)
+    request_worktree(ctx, owner_pid)
+  end
+
+  @doc """
+  Installs the agent identity prefix on the process dictionary.
+
+  No I/O: this is the cheap half of `bind_worktree/2`.
+  """
+  def install_identity(ctx) do
     agent_id = fetch_field!(ctx, :agent_id)
     depth = fetch_field!(ctx, :depth)
     repo_root = fetch_field!(ctx, :repo_root)
     repo_id = fetch_field!(ctx, :repo_id)
-    worktree_path = fetch_field!(ctx, :worktree_path)
-    retries = fetch_field!(ctx, :retries)
-    spec = fetch_field!(ctx, :spec)
-    meta = fetch_field!(ctx, :meta)
 
     Process.put(:evogit_agent_id, agent_id)
     Process.put(:evogit_agent_depth, depth)
     Process.put(:evogit_started_at, DateTime.utc_now() |> DateTime.to_iso8601())
     Process.put(:genesis_repo_root, repo_root)
     Process.put(:evogit_repo_id, repo_id)
+
+    :ok
+  end
+
+  @doc """
+  Provisions the agent's worktree (or, for a repo-less agent, only the repo-less
+  process context), applying the crash-retry sleep and logging the start.
+
+  `owner_pid` is the process `EvoGit.AgentScheduler.WorktreeManager` monitors —
+  the process whose death reclaims the worktree.
+
+  Expects `install_identity/1` to have run in this SAME process when a caller
+  later resolves the scratch dir (`ensure_tmpdir/1` reads
+  `:genesis_repo_root`).
+  """
+  def request_worktree(ctx, owner_pid) do
+    agent_id = fetch_field!(ctx, :agent_id)
+    repo_root = fetch_field!(ctx, :repo_root)
+    worktree_path = fetch_field!(ctx, :worktree_path)
+    retries = fetch_field!(ctx, :retries)
+    spec = fetch_field!(ctx, :spec)
+    meta = fetch_field!(ctx, :meta)
 
     repo_less = get_field(ctx, :repo_less)
 
@@ -118,6 +153,10 @@ defmodule EvoGit.Agent.Session.Setup do
   Resolves the managed per-task scratch directory (`EvoGit.TaskTmpdir`) and
   returns its path. Does NOT install it on the process dictionary — that is
   `install_process_context/3`'s job.
+
+  MUST run in the SAME process as `install_identity/1` (a session's start task
+  runs both), because the `:per_repo` mode roots the dir at that process's
+  `:genesis_repo_root`.
   """
   def ensure_tmpdir(ctx) do
     spec = fetch_field!(ctx, :spec)

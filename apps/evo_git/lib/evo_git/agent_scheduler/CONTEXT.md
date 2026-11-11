@@ -286,6 +286,7 @@ Its ~1520 lines exceed the ~1000-line baseline as PRE-EXISTING debt (`RemoteAPI`
 ## Known Issues
 
 - **A create pipeline that hangs FOREVER holds one admission permit, and its blocked caller is not cancellable by timeout**: `create_worktree_for_agent/6` waits `:infinity` while the create runs in an unlinked `Task.start` nothing kills, so a create stuck in a blocking syscall (wedged NFS, anti-virus holding the tree) neither fails nor returns; `creating_count` only decrements on the `{:create_finished, agent_id}` cast, so four such creates saturate the default cap of 4 and `admission_queue` starves silently (no stall detection or logging). Escapes: force-kill / graceful-cancel the task (its monitor moves the `:creating` registration to `pending_cleanup`, but the create task and its permit survive); restart `WorktreeManager` (resets `creating_count`); restart the BEAM (orphans the stuck worktrees).
+  A SESSION caller of that call is now bounded even though the manager is not: the session runs the whole setup in ONE monitored start task (`agent/session/CONTEXT.md`), warns at `:worktree_create_slow_warn_ms` (120 s default), fails the session with the terminal `{:error, {:worktree_create_stalled, ms}}` at `:worktree_create_stall_timeout_ms` (1 800 s default), and accepts `{:cancel, :force}` while `:starting` — none of which touches the stuck create or its permit. A DIRECT caller still waits `:infinity`.
 
 ## Constraints
 
