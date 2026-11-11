@@ -1,7 +1,10 @@
 defmodule EvoGit.TaskControl.MessagingTest do
+  # `async: false`: drives the app-global `EvoGit.AgentScheduler` (the
+  # `:send_user_message` GenServer call) and writes the app-owned
+  # `:evogit_sched_meta` / `:evogit_agent_summary` ETS tables.
   use EvoGit.TaskRegistryCase, async: false
 
-  alias EvoGit.AgentScheduler.{AgentState, SchedMeta, Store}
+  alias EvoGit.AgentScheduler.{AgentState, ControlPlane, SchedMeta, Store}
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ContextNode
   alias EvoGit.TaskControl.Messaging
@@ -25,11 +28,9 @@ defmodule EvoGit.TaskControl.MessagingTest do
               acknowledged: false
             }} = Messaging.send(task_id, "Please prioritize the failing test.")
 
-    assert {:ok, %{pending_user_messages: ["Please prioritize the failing test."]}} =
-             Store.get_agent_state(root)
-
-    assert {:ok, %{pending_user_messages: []}} = Store.get_agent_state(child)
-    assert {:ok, %{pending_user_messages: []}} = Store.get_agent_state(other)
+    assert ControlPlane.pending_messages(root) == ["Please prioritize the failing test."]
+    assert ControlPlane.pending_messages(child) == []
+    assert ControlPlane.pending_messages(other) == []
 
     assert {:ok, _} = Messaging.send(task_id, "Keep the current public API.")
 
@@ -47,8 +48,7 @@ defmodule EvoGit.TaskControl.MessagingTest do
 
     assert {:ok, %{recipient_agent_id: ^root}} = Messaging.send(task_id, "Revise the plan.")
 
-    assert {:ok, %{pending_user_messages: ["Revise the plan."]}} =
-             Store.get_agent_state(root)
+    assert ControlPlane.pending_messages(root) == ["Revise the plan."]
   end
 
   test "targets a task's child through the existing queue and rejects cross-task recipients" do
@@ -76,8 +76,8 @@ defmodule EvoGit.TaskControl.MessagingTest do
     root_b = put_agent(task_id)
 
     assert {:error, %{code: "ambiguous_root"}} = Messaging.send(task_id, "hello")
-    assert {:ok, %{pending_user_messages: []}} = Store.get_agent_state(root_a)
-    assert {:ok, %{pending_user_messages: []}} = Store.get_agent_state(root_b)
+    assert ControlPlane.pending_messages(root_a) == []
+    assert ControlPlane.pending_messages(root_b) == []
   end
 
   defp put_task(status) do
@@ -97,12 +97,12 @@ defmodule EvoGit.TaskControl.MessagingTest do
 
   defp put_agent(task_id, overrides \\ []) do
     id = System.unique_integer([:positive]) + 10_000_000
-    pid = spawn(fn -> receive do: (:stop -> :ok) end)
+    session_pid = spawn(fn -> receive do: (:stop -> :ok) end)
 
     if overrides[:dead] do
-      ref = Process.monitor(pid)
-      Kernel.send(pid, :stop)
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+      ref = Process.monitor(session_pid)
+      Kernel.send(session_pid, :stop)
+      assert_receive {:DOWN, ^ref, :process, ^session_pid, :normal}
     end
 
     context = %ContextNode{path: "./", repo: "/tmp/task-messaging"}
@@ -114,19 +114,15 @@ defmodule EvoGit.TaskControl.MessagingTest do
       objective: "test task messaging"
     }
 
+    # The agent is ONE `EvoGit.Agent.Session`; the scheduler metadata records it
+    # as `session_pid` (it replaced the old `%Task{}` wrapper ref).
     meta = %SchedMeta{
       id: id,
       depth: Keyword.get(overrides, :depth, 0),
       parent_id: overrides[:parent_id],
       task_id: task_id,
       status: Keyword.get(overrides, :status, :running),
-      task_ref:
-        Keyword.get(overrides, :task_ref, %Task{
-          pid: pid,
-          owner: self(),
-          ref: make_ref(),
-          mfa: {__MODULE__, :put_agent, 2}
-        }),
+      session_pid: session_pid,
       result_sent: Keyword.get(overrides, :result_sent, false),
       spec: spec
     }
@@ -134,20 +130,22 @@ defmodule EvoGit.TaskControl.MessagingTest do
     :ets.insert(:evogit_sched_meta, {id, meta})
 
     unless Keyword.has_key?(overrides, :state) do
+      # The summary row is what makes the agent LIVE for the control plane:
+      # `ControlPlane.append_message/2` refuses to queue for an agent without
+      # one, and the injected-message queue itself lives in `ControlPlane`.
       state = %AgentState{
         context_node: context,
         llm_model: "test:model",
         max_retries: 1,
-        max_depth: 1,
-        cancel_requested: overrides[:cancel_requested]
+        max_depth: 1
       }
 
-      :ets.insert(:evogit_agent_state, {id, state})
+      :ets.insert(:evogit_agent_summary, {id, state})
     end
 
     on_exit(fn ->
-      Kernel.send(pid, :stop)
-      :ets.delete(:evogit_agent_state, id)
+      Kernel.send(session_pid, :stop)
+      :ets.delete(:evogit_agent_summary, id)
       :ets.delete(:evogit_sched_meta, id)
     end)
 
