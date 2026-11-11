@@ -27,6 +27,10 @@ https://github.com/user-attachments/assets/d7f3d520-e39f-45cd-a525-77e5e8d00a75
   <a href="https://genesis.evox.group/#film">Watch the film on the website →</a>
 </p>
 
+## Use from a coding agent
+
+The [local MCP endpoint](docs/agent-mcp.md) exposes task submission, progress, messaging and cancellation to compatible coding agents. Genesis runs the development work with its own configured models; the caller supplies context and checks the returned changes. Build this revision from source and follow the guide to configure a local credential and connect your MCP host.
+
 ## See development unfold
 
 - **Set an objective.** Start a new project or bring an existing repository. Describe the outcome and constraints; Genesis decomposes the work as needed.
