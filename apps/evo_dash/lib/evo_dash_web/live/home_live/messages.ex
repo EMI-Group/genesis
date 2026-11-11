@@ -10,6 +10,8 @@ defmodule EvoDashWeb.HomeLive.Messages do
   is owned by the `:evo_git` core).
   """
 
+  alias EvoDashWeb.HomeLive.Transcript
+
   @doc """
   Returns the assistant text from a list of messages: the text parts of every
   `:assistant` message, one message per line. User/system/tool messages are
@@ -78,6 +80,52 @@ defmodule EvoDashWeb.HomeLive.Messages do
   end
 
   def to_entries(_messages), do: []
+
+  @doc """
+  Builds BOTH halves of the chat surface from one history payload: the
+  thought-process `entries` (`to_entries/1`) and the transcript
+  (`EvoDashWeb.HomeLive.Transcript`) that belongs to them.
+
+  The transcript holds one `:user` entry per non-empty `data.content` of ANY
+  entry (the reflect assistant echoes the sent objective, so the history's
+  content entries ARE the conversation as the user saw it), followed by ONE
+  `:assistant` entry carrying `assistant_text/1` when that is non-empty. This
+  is the ONE shared builder behind the mount/attach seed and the history
+  refresh path, so both produce the same transcript.
+
+  An empty/non-list payload yields `%{transcript: [], entries: []}`. Total.
+  """
+  @spec transcript([map()] | nil) :: %{transcript: [map()], entries: [map()]}
+  def transcript(messages) do
+    entries = to_entries(messages)
+
+    %{transcript: build_transcript(entries, assistant_text(messages)), entries: entries}
+  end
+
+  defp build_transcript(entries, text) do
+    transcript =
+      entries
+      |> Enum.map(&entry_text/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.reduce(Transcript.new(), fn entry_text, acc ->
+        Transcript.append(acc, Transcript.entry(:user, entry_text))
+      end)
+
+    if text == "" do
+      transcript
+    else
+      Transcript.append(transcript, Transcript.entry(:assistant, text))
+    end
+  end
+
+  defp entry_text(entry) when is_map(entry) do
+    case Map.get(entry, :data) do
+      %{content: content} when is_binary(content) -> content
+      _other -> ""
+    end
+  end
+
+  defp entry_text(_entry), do: ""
 
   defp assistant_message?(message) when is_map(message) do
     role = Map.get(message, :role)

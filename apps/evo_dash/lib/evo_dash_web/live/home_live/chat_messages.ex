@@ -4,7 +4,8 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
   empty states (the greeting with its suggestion chips, and the ended-session
   state with its New-chat affordance) and the transcript
   message list (user bubbles via `EvoDashWeb.HomeLive.UserMessage`, assistant
-  answer columns via `EvoDashWeb.HomeLive.AssistantMessage`, error rows).
+  answer columns via `EvoDashWeb.HomeLive.AssistantMessage`, quiet tool rows and
+  error rows).
 
   Pure presentation — extracted from `home_live.ex` to keep the LiveView under
   the ~1000-line concern threshold. All interactivity bubbles up to the
@@ -129,10 +130,16 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
   attr(:thought_process, :list, required: true)
   attr(:raw_entry_ids, :any, required: true)
 
+  attr(:stream_meta, :any,
+    default: nil,
+    doc: "Turn meta (`EvoDashWeb.HomeLive.Delta.meta/0`) shown under the last assistant bubble"
+  )
+
   # The transcript message list, oldest first. User entries are right-aligned
-  # content-fit bubbles; assistant entries are answer-first columns; error
-  # entries use a soft red tint. Only the LAST assistant entry receives the
-  # task badge + thought process.
+  # content-fit bubbles; assistant entries are answer-first columns; tool
+  # entries are quiet single-line rows; error entries use a soft red tint.
+  # Only the LAST assistant entry receives the task badge + thought process +
+  # stream meta.
   def message_list(assigns) do
     ~H"""
     <div class="px-3 py-6 pb-8 space-y-8 sm:px-4 sm:space-y-10">
@@ -148,11 +155,20 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
                 raw={MapSet.member?(@raw_entry_ids, Map.get(entry, :id))}
                 task_status={if is_last, do: @chat_task_status, else: nil}
                 thought_process={if is_last, do: @thought_process, else: []}
+                stream_meta={if is_last, do: @stream_meta, else: nil}
               />
             <% :error -> %>
               <div class="flex items-start gap-2 rounded-xl border border-error/25 bg-error/10 px-3.5 py-2.5 text-sm leading-relaxed text-error whitespace-pre-wrap break-words">
                 <.icon name="hero-exclamation-circle" class="mt-0.5 size-4 shrink-0" />
                 {Map.get(entry, :text, "")}
+              </div>
+            <% :tool -> %>
+              <.tool_entry entry={entry} />
+            <% _ -> %>
+              <%!-- Defensive: an unknown role degrades to its plain text so no
+                   future role can turn the whole list into a CaseClauseError. --%>
+              <div class="text-sm leading-relaxed whitespace-pre-wrap break-words text-base-content/70">
+                {plain_text(entry)}
               </div>
           <% end %>
         </div>
@@ -175,6 +191,15 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
   defp entry_id(entry) do
     case Map.get(entry, :id) do
       id when is_binary(id) -> id
+      _ -> ""
+    end
+  end
+
+  # Total text accessor for the unknown-role fallback: a non-binary text
+  # renders as nothing instead of raising inside the interpolation.
+  defp plain_text(entry) do
+    case Map.get(entry, :text) do
+      text when is_binary(text) -> text
       _ -> ""
     end
   end

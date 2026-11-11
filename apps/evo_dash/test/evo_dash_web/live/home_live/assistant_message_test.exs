@@ -4,6 +4,8 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
 
   alias EvoDashWeb.HomeLive.AgentStream
   alias EvoDashWeb.HomeLive.AssistantMessage
+  alias EvoDashWeb.HomeLive.ChatMessages
+  alias EvoDashWeb.HomeLive.Transcript
 
   # Rendered assistant entries pin the answer-first layout, status labels,
   # accessible copy/raw controls and optional thought disclosure.
@@ -26,7 +28,8 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
         Keyword.get(opts, :entry, %{id: "1", role: :assistant, text: "hi", streaming: false}),
       task_status: Keyword.get(opts, :task_status, nil),
       thought_process: Keyword.get(opts, :thought_process, []),
-      raw: Keyword.get(opts, :raw, false)
+      raw: Keyword.get(opts, :raw, false),
+      stream_meta: Keyword.get(opts, :stream_meta)
     )
   end
 
@@ -282,6 +285,139 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
       assert html =~ "Command"
       assert html =~ "ls"
       assert html =~ "message"
+    end
+  end
+
+  describe "tool_entry/1" do
+    defp render_tool(entry) do
+      render_component(&AssistantMessage.tool_entry/1, entry: entry)
+    end
+
+    test "renders the tool name with its status chip" do
+      running = render_tool(%{role: :tool, tool_name: "bash", tool_status: :running})
+      assert running =~ "bash"
+      assert running =~ "loading loading-spinner loading-xs"
+      assert running =~ "Running"
+
+      done = render_tool(%{role: :tool, tool_name: "bash", tool_status: :ok})
+      assert done =~ "badge badge-ghost badge-sm"
+      assert done =~ "Done"
+      refute done =~ "loading-spinner"
+
+      failed = render_tool(%{role: :tool, tool_name: "bash", tool_status: :error})
+      assert failed =~ "text-error"
+      assert failed =~ "Failed"
+
+      timed_out = render_tool(%{role: :tool, tool_name: "bash", tool_status: :timeout})
+      assert timed_out =~ "text-warning"
+      assert timed_out =~ "Timed out"
+    end
+
+    test "renders no chip for an unknown/nil status" do
+      for status <- [nil, :bogus, "running"] do
+        html = render_tool(%{role: :tool, tool_name: "bash", tool_status: status})
+        classes = Floki.parse_document!(html) |> Floki.attribute("div", "class") |> hd()
+
+        refute html =~ "loading-spinner"
+        refute html =~ "badge-ghost"
+        refute html =~ "text-error"
+        refute html =~ "text-warning"
+        assert classes =~ "flex items-center gap-2 text-xs text-base-content/60"
+      end
+    end
+
+    test "falls back to a generic label for a nil/blank tool name, total on garbage" do
+      for entry <- [
+            %{role: :tool},
+            %{role: :tool, tool_name: nil},
+            %{role: :tool, tool_name: "  "}
+          ] do
+        html = render_tool(entry)
+        assert html =~ "Tool"
+        # It is a quiet single-row layout with the wrench icon.
+        assert html =~ "hero-wrench-screwdriver"
+        assert html =~ "my-1"
+      end
+
+      # A non-map entry never raises.
+      assert render_tool(nil) =~ "Tool"
+    end
+  end
+
+  describe "stream meta line" do
+    test "renders the turn, token and duration labels when present" do
+      html =
+        render_card(stream_meta: %{turn: 3, total_tokens: 1_234, duration_ms: 1_500, usage: nil})
+
+      assert html =~ "Turn 3"
+      assert html =~ "1234 tokens"
+      assert html =~ "1.5s"
+      assert html =~ "font-mono text-[11px] text-base-content/50"
+    end
+
+    test "renders only the labels it has" do
+      tokens_only = render_card(stream_meta: %{turn: nil, total_tokens: 42, duration_ms: nil})
+      assert tokens_only =~ "42 tokens"
+      refute tokens_only =~ "Turn "
+      refute tokens_only =~ ~r/>\d+(\.\d+)?s</
+
+      turn_only = render_card(stream_meta: %{turn: 1, total_tokens: nil, duration_ms: nil})
+      assert turn_only =~ "Turn 1"
+      refute turn_only =~ "tokens"
+    end
+
+    test "renders nothing without a usable turn/token count" do
+      for meta <- [nil, %{}, :junk, %{turn: "2", total_tokens: "9"}, %{duration_ms: 1_000}] do
+        html = render_card(stream_meta: meta)
+        refute html =~ "font-mono text-[11px]"
+        refute html =~ "tokens"
+        refute html =~ "Turn "
+      end
+    end
+  end
+
+  describe "message_list/1 role dispatch" do
+    defp render_list(transcript, stream_meta \\ nil) do
+      render_component(&ChatMessages.message_list/1,
+        transcript: transcript,
+        chat_task_status: :running,
+        thought_process: [thought(1, "assistant", %{content: "steps"})],
+        raw_entry_ids: MapSet.new(),
+        stream_meta: stream_meta
+      )
+    end
+
+    test "renders tool rows and never raises on an unknown role" do
+      transcript = [
+        Transcript.entry(:user, "hello"),
+        Transcript.tool_entry("bash", "c1", :running, 1),
+        Transcript.entry(:assistant, "answer"),
+        Transcript.entry(:error, "boom"),
+        # An unknown role degradation path (normalize/1 would coerce this, so it
+        # is only reachable through a direct assign).
+        %{id: "x", role: :mystery, text: "odd", streaming: false}
+      ]
+
+      html = render_list(transcript)
+
+      assert html =~ "hello"
+      assert html =~ "bash"
+      assert html =~ "Running"
+      assert html =~ "answer"
+      assert html =~ "boom"
+      assert html =~ "odd"
+      # One tool row + the two wrapped bubbles, no duplicated tool row.
+      assert length(Floki.find(Floki.parse_document!(html), ".hero-wrench-screwdriver")) == 1
+    end
+
+    test "stream_meta is passed ONLY to the last assistant entry" do
+      transcript = [Transcript.entry(:assistant, "one"), Transcript.entry(:assistant, "two")]
+
+      html = render_list(transcript, %{turn: 2, total_tokens: 55})
+
+      assert length(String.split(html, "font-mono text-[11px]")) == 2
+      assert html =~ "Turn 2"
+      assert html =~ "55 tokens"
     end
   end
 

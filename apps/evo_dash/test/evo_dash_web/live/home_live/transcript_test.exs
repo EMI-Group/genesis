@@ -207,4 +207,204 @@ defmodule EvoDashWeb.HomeLive.TranscriptTest do
       assert attached.reasoning == [%{k: 1}]
     end
   end
+
+  describe "append_streaming_text/2" do
+    test "the first chunk opens a streaming assistant entry, later chunks append to it" do
+      [first] = Transcript.append_streaming_text([], "Hello")
+      assert %{role: :assistant, text: "Hello", streaming: true} = first
+
+      [entry] =
+        first
+        |> then(&Transcript.append_streaming_text([&1], " "))
+        |> then(&Transcript.append_streaming_text(&1, "world"))
+
+      assert entry.id == first.id
+      assert %{text: "Hello world", streaming: true} = entry
+    end
+
+    test "it targets the last streaming entry and never disturbs settled ones" do
+      settled = Transcript.entry(:assistant, "done")
+
+      transcript =
+        Transcript.append_streaming_text([settled], "live")
+        |> then(&Transcript.append_streaming_text(&1, " update"))
+
+      assert [%{text: "done", streaming: false}, %{text: "live update", streaming: true}] =
+               transcript
+    end
+
+    test "an empty or non-binary chunk leaves the transcript unchanged" do
+      transcript = [Transcript.entry(:assistant, "text", streaming: true)]
+
+      for chunk <- ["", nil, 42, :chunk] do
+        assert Transcript.append_streaming_text(transcript, chunk) ==
+                 Transcript.normalize(transcript)
+      end
+    end
+
+    test "the 8 000-grapheme cap applies to the accumulated text" do
+      [entry] = Transcript.append_streaming_text([], String.duplicate("a", 7_990))
+      [entry] = Transcript.append_streaming_text([entry], String.duplicate("b", 100))
+
+      assert String.length(entry.text) == 8_000
+      assert String.starts_with?(entry.text, "aaaa")
+    end
+  end
+
+  describe "finalize_streaming/1" do
+    test "clears the streaming flag of the last streaming entry, text untouched" do
+      transcript =
+        [
+          Transcript.entry(:assistant, "done"),
+          Transcript.entry(:assistant, "live", streaming: true)
+        ]
+
+      assert [%{text: "done", streaming: false}, %{text: "live", streaming: false}] =
+               Transcript.finalize_streaming(transcript)
+    end
+
+    test "a transcript with no streaming entry comes back normalized and unchanged" do
+      transcript = [%{id: "a", role: :user, text: "hi", streaming: false}]
+
+      assert Transcript.finalize_streaming(transcript) == transcript
+      assert Transcript.finalize_streaming([]) == []
+      assert Transcript.finalize_streaming(nil) == []
+    end
+  end
+
+  describe "tool entries" do
+    test "tool_entry/4 builds a non-streaming :tool entry with its call fields" do
+      entry = Transcript.tool_entry("bash", "c1", :running, 2)
+
+      assert %{
+               role: :tool,
+               text: "",
+               streaming: false,
+               reasoning: [],
+               tool_name: "bash",
+               tool_call_id: "c1",
+               tool_status: :running,
+               turn: 2
+             } = entry
+
+      assert is_binary(entry.id)
+    end
+
+    test "tool_entry/4 is total: garbage name/turn/status degrade" do
+      for name <- [nil, 42, :bash] do
+        assert Transcript.tool_entry(name, "c1", :ok, 1).tool_name == nil
+      end
+
+      for turn <- [nil, "2", 2.0] do
+        assert Transcript.tool_entry("bash", "c1", :ok, turn).turn == nil
+      end
+
+      for status <- [:bogus, "ok", nil] do
+        assert Transcript.tool_entry("bash", "c1", status, 1).tool_status == nil
+      end
+    end
+
+    test "put_tool_status/3 targets the tool entry of a call id" do
+      transcript =
+        Transcript.new()
+        |> Transcript.append(Transcript.tool_entry("bash", "c1", :running, 1))
+        |> Transcript.append(Transcript.tool_entry("read", "c2", :running, 1))
+
+      assert [%{tool_status: :ok}, %{tool_status: :running}] =
+               Transcript.put_tool_status(transcript, "c1", :ok)
+
+      # The MOST RECENT match wins when a call id repeats.
+      transcript =
+        Transcript.append(transcript, Transcript.tool_entry("bash", "c1", :running, 2))
+
+      assert [_, _, %{tool_status: :error}] = Transcript.put_tool_status(transcript, "c1", :error)
+    end
+
+    test "a nil call id targets the most recent still-running entry" do
+      transcript =
+        Transcript.new()
+        |> Transcript.append(Transcript.tool_entry("bash", nil, :running, 1))
+        |> Transcript.append(Transcript.tool_entry("read", nil, :timeout, 1))
+
+      assert [%{tool_status: :ok}, %{tool_status: :timeout}] =
+               Transcript.put_tool_status(transcript, nil, :ok)
+    end
+
+    test "an unmatched call id or a tool-free transcript is returned unchanged" do
+      transcript = [Transcript.tool_entry("bash", "c1", :running, 1)]
+
+      assert Transcript.put_tool_status(transcript, "missing", :ok) ==
+               Transcript.normalize(transcript)
+
+      chat_only = [Transcript.entry(:user, "hi")]
+
+      assert Transcript.put_tool_status(chat_only, nil, :ok) ==
+               Transcript.normalize(chat_only)
+    end
+
+    test "the :tool role and its carried fields survive normalize/1" do
+      entry = Transcript.tool_entry("bash", {:call, 1}, :ok, 3)
+
+      assert [normalized] = Transcript.normalize([entry])
+      assert normalized == entry
+
+      # String-keyed tool fields are picked up like string-keyed `:reasoning`
+      # (the base entry fields stay atom-keyed, as before).
+      [restored] =
+        Transcript.normalize([
+          %{
+            "tool_name" => "bash",
+            "tool_call_id" => "c1",
+            "tool_status" => :error,
+            "turn" => 2,
+            id: "t1",
+            role: "tool",
+            text: "",
+            streaming: false
+          }
+        ])
+
+      assert %{
+               id: "t1",
+               role: :tool,
+               tool_name: "bash",
+               tool_call_id: "c1",
+               tool_status: :error,
+               turn: 2
+             } = restored
+    end
+
+    test "legacy entries never grow tool keys for free" do
+      [plain] = Transcript.normalize([%{id: "a", role: :assistant, text: "x"}])
+
+      for key <- [:tool_name, :tool_call_id, :tool_status, :turn] do
+        refute Map.has_key?(plain, key)
+      end
+    end
+
+    test "a non-whitelisted persisted tool status degrades to nil" do
+      [entry] =
+        Transcript.normalize([
+          %{id: "t1", role: "tool", tool_name: 42, tool_status: "bogus", turn: "3"}
+        ])
+
+      assert {entry.role, entry.tool_name, entry.tool_status, entry.turn} ==
+               {:tool, nil, nil, nil}
+    end
+  end
+
+  describe "conversation-memory preamble" do
+    test "tool entries are skipped by build_preamble/2" do
+      transcript = [
+        Transcript.entry(:user, "hi"),
+        Transcript.entry(:tool, "raw tool output"),
+        Transcript.entry(:assistant, "hello")
+      ]
+
+      assert {:ok, preamble} = Transcript.build_preamble(transcript)
+      assert preamble =~ "User: hi"
+      assert preamble =~ "Assistant: hello"
+      refute preamble =~ "raw tool output"
+    end
+  end
 end
