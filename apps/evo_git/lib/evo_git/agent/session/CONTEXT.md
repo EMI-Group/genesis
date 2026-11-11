@@ -124,7 +124,7 @@ The worker's per-chunk `Sink` callback consumes that message exactly once (`Sink
 `EvoGit.Agent.ToolDispatch.do_turn/6` maps `{:interrupted, reason}` to an EARLY turn end: no assistant message is appended, no protocol violation is recorded and NO grace turn is consumed; the loop re-enters at its top, which drains the already-appended message for the next turn.
 DEGRADATION (documented, never a silent loss): the chunk-level halt needs an installed stream callback, and `Sink.stream_opts/0` is `[]` while no watcher is registered, so with ZERO watchers `:interrupt` cannot pre-empt the in-flight turn and is applied at the NEXT turn boundary instead.
 That fallback stays race-free, because the message travels exactly once through the pending-message transport — it is therefore never lost and never delivered twice.
-A `{:evogit_interrupt, _ref}` that arrives after the last chunk of a turn (or while no watcher exists) stays unread in that SHORT-LIVED worker's mailbox and dies with the process; the next exchange runs in a NEW worker, so one request can never abort two turns.
+A `{:evogit_interrupt, _ref}` that arrives after the last chunk of a turn (or while no watcher exists) stays unread in that SHORT-LIVED worker's mailbox and dies with the process; the next exchange runs in a NEW worker (and `Sink.install/2` sweeps the mailbox anyway), so one request can never abort two turns.
 
 ## Snapshot-Only Reads (no polling)
 
