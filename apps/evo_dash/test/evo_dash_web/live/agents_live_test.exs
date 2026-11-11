@@ -4,7 +4,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # cohort, so each test seeds its agent under a UNIQUE id (see `agent_id/0`)
   # instead of a fixed literal. The `:agents_*` runner app-env seams are used
   # by NO other module, and the one real core write (send_agent_message)
-  # contains its own broadcast.
+  # contains its own broadcast: its transport is stubbable through the
+  # `:agents_send_message_runner` call-time seam, and the SINGLE test that
+  # deliberately drives the real scheduler write contains and drains the bulk
+  # broadcast it emits (see `drain_agents_bulk_signal/1`).
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
 
@@ -1571,8 +1574,15 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # agent's chat history with a pending hint until the agent drains it into
     # context on its next turn (see EvoDashWeb.AgentsLive.OptimisticMessages).
     # A missing agent must surface as a failure flash, not a false success.
+    # Isolation: the send's transport is the call-time
+    # `:agents_send_message_runner` seam (default = the real node-aware
+    # delegate). Exactly ONE test below drives that real delegate end to end —
+    # the rest stub the transport because their subject is the optimistic
+    # bookkeeping, not the shared scheduler write its 5 s call budget makes
+    # non-deterministic in a full async cohort.
 
     test "successfully sent message appears optimistically in the chat history", %{conn: conn} do
+      msg = "hello optimistic world"
       seed_agent(agent_id(), [])
 
       {:ok, view, _html} = live(conn, ~p"/agents")
@@ -1583,22 +1593,41 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # Open the send-message modal for the running agent.
       view |> element("button[phx-click='open_send_message']") |> render_click()
 
+      # This test deliberately drives the REAL end-to-end path: the LiveView's
+      # `send_agent_message` event → `EvoDash.NodeContext.send_user_message/3`
+      # → `EvoGit.AgentScheduler.send_user_message/2` (a shared-GenServer call
+      # with a production 5 s budget) → the agent's persisted pending queue.
+      # On a loaded full-suite host that budget can elapse, and the page then
+      # flashes "Failed to send message" and keeps the modal + typed text — the
+      # user's retry affordance. Resubmitting is exactly that action, so the
+      # send is retried through `submit_until_pending_hint/3` instead of
+      # asserting on a single, non-deterministic round trip. Neither assertion
+      # is relaxed: a persistent failure returns the last render and fails.
+      await_scheduler_responsive()
+
       html =
-        render_submit(view, "send_agent_message", %{
+        submit_until_pending_hint(view, %{
           "agent_id" => to_string(agent_id()),
-          "message" => "hello optimistic world"
+          "message" => msg
         })
 
       # The message text renders in the chat history...
-      assert html =~ "hello optimistic world"
+      assert html =~ msg
       # ...with the pending hint (apostrophe is HTML-escaped to &#39; in HEEx).
       assert html =~ "will be added on the agent&#39;s next turn"
       # ...and the success flash is shown.
       assert html =~ "Message sent to agent"
 
+      # ...and the REAL write really landed: the message is in the agent's
+      # persisted pending queue, which the agent's next turn drains. This is the
+      # core effect the optimistic entry is only a preview of. (Membership, not
+      # equality: a timed-out first attempt may have been applied by the
+      # scheduler after all, so a retry can legitimately append a duplicate.)
+      assert msg in EvoGit.AgentScheduler.ControlPlane.pending_messages(agent_id())
+
       # ── Flake containment (leak source) ───────────────────────────────
       # This is the ONE test in the file that performs a REAL core write:
-      # `send_agent_message` → AgentScheduler → Store.put_agent_state/2,
+      # `send_agent_message` → AgentScheduler → Store.append_pending_user_message/2,
       # which emits a synchronous {:agent_updated, agent_id(), [pending_user_messages:
       # ...]} delta AND (via broadcast_agents_updated/0) a THROTTLED
       # {:agents_updated, node} bulk signal ~200ms later
@@ -1608,24 +1637,107 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # (ETS-backed) refresh would then ERASE that test's synthetic in-memory
       # merge — the historical cross-test flake on this file.
       #
-      # Sleeping past the throttle and flushing here makes both broadcasts
-      # land on THIS socket (which is torn down at the end of the test), so
-      # nothing leaks past teardown. The assertions above already ran.
-      Process.sleep(250)
-      flush_agent_events(view)
+      # `drain_agents_bulk_signal/1` PROVES (instead of sleeping past) that the
+      # throttle has already flushed the signal, then makes THIS socket handle
+      # both broadcasts plus the refresh the bulk signal spawns, all before the
+      # socket is torn down. Nothing is left to leak.
+      drain_agents_bulk_signal(view)
+    end
+
+    test "a stalled scheduler times out as a failure flash with NO optimistic entry",
+         %{conn: conn} do
+      # The documented failure state of the send path, pinned deterministically
+      # through the `:agents_send_message_runner` call-time seam: the real
+      # local path EXITS its caller when the scheduler call's 5 s budget
+      # elapses (`{:exit, {:timeout, {GenServer, :call, ...}}}`, verified
+      # against the real scheduler), `EvoDash.SafeCall` converts that EXIT into
+      # an error VALUE instead of crashing the page, and the handler must NOT
+      # append an optimistic entry — the user's retry affordance is the still
+      # open modal, not a fake "sent" row.
+      seed_agent(agent_id(), [])
+
+      stub_send_message(fn _node, agent_id, _message ->
+        exit(
+          {:timeout,
+           {GenServer, :call, [EvoGit.AgentScheduler, {:send_user_message, agent_id, "x"}, 5000]}}
+        )
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      view |> element("button[phx-click='open_send_message']") |> render_click()
+
+      html =
+        render_submit(view, "send_agent_message", %{
+          "agent_id" => to_string(agent_id()),
+          "message" => "hello optimistic world"
+        })
+
+      assert html =~ "Failed to send message"
+      assert html =~ "timeout"
+      refute html =~ "Message sent to agent"
+      refute html =~ "will be added on the agent&#39;s next turn"
+      refute Map.has_key?(assigns(view)[:optimistic_messages], agent_id())
+      # Nothing was queued either — the core rejected nothing, it never answered.
+      assert EvoGit.AgentScheduler.ControlPlane.pending_messages(agent_id()) == []
     end
 
     test "missing agent shows a failure flash instead of a false success", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/agents")
 
+      # Same shared-scheduler budget as the optimistic test above: a TIMED-OUT
+      # call is NOT the core's answer (it flashes the EXIT, not `not_found`), so
+      # the submit is retried until the core really answered. The assertions
+      # below stay pinned to the core's answer.
+      await_scheduler_responsive()
+
       html =
-        render_submit(view, "send_agent_message", %{
+        submit_send_until_core_answer(view, %{
           "agent_id" => "999",
           "message" => "hello"
         })
 
       assert html =~ "Failed to send message"
       assert html =~ "not_found"
+      refute html =~ "Message sent to agent"
+    end
+
+    test "a scheduler-call timeout is retried, never mistaken for the core's answer",
+         %{conn: conn} do
+      # Pins the retry contract `submit_send_until_core_answer/3` exists for —
+      # and, through the call-time seam, the exact two shapes the handler
+      # distinguishes: a TIMED-OUT call (an EXIT, no core answer) and the core's
+      # real `{:ok, {:error, :not_found}}` answer. The first submit behaves like
+      # the loaded-host failure; the retry must surface the core's answer.
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      stub_send_message(fn _node, agent_id, _message ->
+        case Agent.get_and_update(counter, fn n -> {n, n + 1} end) do
+          0 ->
+            exit(
+              {:timeout,
+               {GenServer, :call,
+                [EvoGit.AgentScheduler, {:send_user_message, agent_id, "x"}, 5000]}}
+            )
+
+          _answered ->
+            {:ok, {:error, :not_found}}
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+
+      html =
+        submit_send_until_core_answer(view, %{
+          "agent_id" => "999",
+          "message" => "hello"
+        })
+
+      assert html =~ "Failed to send message"
+      assert html =~ "not_found"
+      refute html =~ "{:exit, {:timeout"
       refute html =~ "Message sent to agent"
     end
   end
@@ -1646,6 +1758,15 @@ defmodule EvoDashWeb.AgentsLiveTest do
          %{conn: conn} do
       msg = "hello optimistic world"
       seed_agent(agent_id(), [])
+      # The transport is stubbed through the `:agents_send_message_runner`
+      # call-time seam: this test is about PRUNING after a fetch/queue change,
+      # so the send only needs to produce the optimistic entry. Driving the
+      # real shared-scheduler write here would add nothing to the pin while
+      # making the test hostage to its 5 s call budget (and leaving a throttled
+      # {:agents_updated, node} signal that can leak into a later test). The
+      # REAL end-to-end write path stays pinned by
+      # "successfully sent message appears optimistically..." above.
+      stub_send_message()
       # The transcript lives ONLY in the live session — the seeded summary row
       # carries just the message count — so the session's side of each turn
       # boundary is played through the :agents_history_runner seam: `history`
@@ -1722,28 +1843,16 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       # No pending ghost resurfaced.
       refute html =~ "will be added on the agent&#39;s next turn"
-
-      # ── Flake containment (leak source) ───────────────────────────────
-      # This test performs a REAL core write (send_agent_message →
-      # AgentScheduler → Store.put_agent_state/2), whose
-      # broadcast_agents_updated/0 THROTTLED {:agents_updated, node} bulk signal
-      # lands ~200ms later (EvoGit.AgentScheduler.PubSub @throttle_ms). Emitted
-      # into a LATER test's socket, the bulk signal would set that test's
-      # :pending_agents_refresh, arm a coalescing flush, and its authoritative
-      # (ETS-backed) refresh would then ERASE that test's synthetic in-memory
-      # merge — the historical cross-test flake on this file.
-      #
-      # Sleeping past the throttle and flushing here makes the broadcast land on
-      # THIS socket (which is torn down at the end of the test), so nothing
-      # leaks past teardown. The assertions above already ran.
-      Process.sleep(250)
-      flush_agent_events(view)
     end
 
     test "a genuinely queued (not-yet-drained) message STILL renders its pending hint",
          %{conn: conn} do
       msg = "hello optimistic world"
       seed_agent(agent_id(), [])
+      # Stubbed transport (see the previous test): this test's subject is the
+      # CORE QUEUE's authority over the optimistic entry, replayed through the
+      # synthetic `:agent_updated` broadcast below — not the send's transport.
+      stub_send_message()
       # The transcript lives ONLY in the live session — the seeded summary row
       # carries just the message count — so the session's side is played through
       # the :agents_history_runner seam.
@@ -1762,7 +1871,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       view |> element("button[phx-click='open_send_message']") |> render_click()
 
       html =
-        submit_until_pending_hint(view, %{
+        render_submit(view, "send_agent_message", %{
           "agent_id" => to_string(agent_id()),
           "message" => msg
         })
@@ -1785,16 +1894,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # Still pending: the hint survives and the optimistic bookkeeping is kept.
       assert html =~ "will be added on the agent&#39;s next turn"
       assert Map.has_key?(assigns(view)[:optimistic_messages], agent_id())
-
-      # ── Flake containment (leak source) ───────────────────────────────
-      # Same REAL core write as above: its THROTTLED {:agents_updated, node}
-      # bulk signal (~200ms, EvoGit.AgentScheduler.PubSub @throttle_ms) is
-      # awaited and flushed here so it lands on THIS socket (torn down at
-      # teardown) instead of into a later test, where its authoritative
-      # ETS-backed refresh would erase that test's synthetic in-memory merge —
-      # the historical cross-test flake on this file.
-      Process.sleep(250)
-      flush_agent_events(view)
     end
   end
 
@@ -1968,46 +2067,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert html =~ "Agent Tree"
     end
 
-    test "foreign-node {:task_updated, _, :finalizing, remote} is ignored (no crash, no reload)",
-         %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      # Event from a DIFFERENT BEAM node: the node filter must drop it BEFORE
-      # the debounce is scheduled.
-      Phoenix.PubSub.broadcast(
-        EvoGit.PubSub,
-        "tasks",
-        {:task_updated, "test-finalizing", :finalizing, :remote@elsewhere}
-      )
-
-      # The :sys.get_state read behind assigns/1 is a mailbox round-trip, so it
-      # returns only AFTER the LiveView processed the broadcast above — the
-      # event was definitely handled, not still in flight.
-      assert assigns(view)[:tasks_reload_pending] == false
-
-      # Then sample across the debounce window (:node_aware_reload_debounce_ms,
-      # 10ms in tests): the reload-pending flag must never become TRUE. 40ms is
-      # 4x the debounce — the whole window in which a spurious schedule could
-      # fire — where the previous 400ms window made this the slowest test in
-      # the file without strengthening the assertion.
-      deadline = System.monotonic_time(:millisecond) + 40
-
-      check_no_reload = fn check_no_reload ->
-        assert assigns(view)[:tasks_reload_pending] == false
-
-        if System.monotonic_time(:millisecond) < deadline do
-          Process.sleep(10)
-          check_no_reload.(check_no_reload)
-        end
-      end
-
-      check_no_reload.(check_no_reload)
-
-      html = render(view)
-      assert is_binary(html)
-      assert html =~ "Agent Tree"
-    end
+    # The negative half of this contract — a FOREIGN-node {:task_updated, ...}
+    # must never schedule the debounce — is a global-quiet assertion (no
+    # `"tasks"` broadcast may reach this socket), so it lives in its own
+    # `async: false` module: `agents_live_task_broadcast_test.exs`. In this async
+    # cohort any concurrent module's local-node broadcast arms the debounce and
+    # intermittently failed the 40ms sample (see that file's header).
   end
 
   describe "commit history view — switcher and lazy fetch" do
@@ -3481,6 +3546,30 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  # Load-tolerant send for the tests whose assertion is THE CORE'S ANSWER
+  # (e.g. `not_found`). The page flashes the failure reason either way, so a
+  # render alone cannot tell "the core answered" from "the shared scheduler's
+  # 5 s call budget elapsed" — the latter is `{:exit, {:timeout, {GenServer,
+  # :call, ...}}}` with no core answer at all, which is precisely the retry
+  # state the modal exists for. Resubmitting is retried only on that EXIT; a
+  # real answer (or any other failure) returns immediately, so the caller's
+  # assertions run against the core's actual answer.
+  defp submit_send_until_core_answer(view, params, attempts \\ 3) do
+    html = render_submit(view, "send_agent_message", params)
+
+    cond do
+      not (html =~ "Failed to send message") ->
+        html
+
+      html =~ "{:exit, {:timeout" and attempts > 1 ->
+        Process.sleep(20)
+        submit_send_until_core_answer(view, params, attempts - 1)
+
+      true ->
+        html
+    end
+  end
+
   # The optimistic pending hint of a sent-but-not-yet-drained user message
   # (the apostrophe is HTML-escaped to &#39; in HEEx).
   defp pending_hint?(html), do: html =~ "will be added on the agent&#39;s next turn"
@@ -3528,9 +3617,85 @@ defmodule EvoDashWeb.AgentsLiveTest do
           :agents_list_runner,
           :agents_history_runner,
           :agents_config_runner,
-          :agents_commit_graph_runner
+          :agents_commit_graph_runner,
+          :agents_send_message_runner
         ] do
       Application.delete_env(:evo_dash, key)
+    end
+  end
+
+  # Readiness gate for the ONE test that drives the REAL shared-scheduler write.
+  # That call's production budget is 5 s and is measured from the moment it is
+  # ISSUED, so under a saturated full-suite cohort the budget can be spent
+  # queueing behind another caller's long handler (e.g. worktree init inside
+  # `handle_call({:run_agent, ...})`) — the server is then busy, not slow, and
+  # the caller EXITS with `{:timeout, {GenServer, :call, ...}}`. Waiting for the
+  # server to answer a real (cheap, state-free) call first spends the retry
+  # attempts on the send itself. `paused?/0` travels the SAME `GenServer.call`
+  # path as the send (`:sys` messages are answered even by a server that normal
+  # calls cannot reach) and changes no scheduler state.
+  defp await_scheduler_responsive do
+    wait_until(fn ->
+      match?({:ok, _}, EvoDash.SafeCall.run(fn -> EvoGit.AgentScheduler.paused?() end))
+    end)
+  end
+
+  # Stubs the `:agents_send_message_runner` CALL-TIME seam (the exact transport
+  # `send_agent_message` resolves in `EvoDashWeb.AgentsLive.send_user_message_safely/3`,
+  # default `&EvoDash.NodeContext.send_user_message/3`). `{:ok, :ok}` is the
+  # value the real local path returns on success, so the page's optimistic
+  # display is exercised unchanged while NO shared-scheduler call happens and NO
+  # `"agents"` broadcast is emitted. Only this file drives that seam.
+  defp stub_send_message(responder \\ fn _node, _agent_id, _message -> {:ok, :ok} end) do
+    Application.put_env(:evo_dash, :agents_send_message_runner, responder)
+    on_exit(&clear_agents_env/0)
+    :ok
+  end
+
+  # Deterministic containment for the ONE test that performs a REAL core write
+  # (`send_agent_message` → AgentScheduler → append_pending_user_message/2).
+  # That write emits a synchronous {:agent_updated, ...} delta AND, through
+  # `EvoGit.AgentScheduler.PubSub.broadcast_agents_updated/0`, a THROTTLED
+  # {:agents_updated, node} bulk signal ~200ms later (`@throttle_ms`) — a
+  # broadcast with no identity that, if it fires after teardown, lands in a
+  # LATER test's socket, arms its coalescing flush, and its authoritative
+  # (ETS-backed) refresh can erase that test's synthetic in-memory merge.
+  #
+  # Instead of sleeping past the throttle, this PROVES the flush happened:
+  #   1. schedule the same throttle once more (it coalesces with the write's
+  #      cast, which was queued before the submit returned);
+  #   2. `:sys.get_state/1` is a reply, so when it returns every cast already in
+  #      the throttle's mailbox has been handled;
+  #   3. wait until the throttle holds NO pending timer — `handle_info(:flush)`
+  #      broadcasts BEFORE it clears the state, so a nil state means the bulk
+  #      signal is already in this socket's mailbox (nothing is left to leak).
+  # Then this socket consumes both signals plus the async refresh the bulk
+  # signal spawns, all while it is still alive.
+  defp drain_agents_bulk_signal(view) do
+    throttle = EvoGit.AgentScheduler.PubSub.Throttle
+
+    case Process.whereis(throttle) do
+      nil ->
+        # No throttle process: broadcast_agents_updated/0 broadcasts immediately,
+        # so there is no pending timer to leak. Just drain what was emitted.
+        flush_agent_events(view)
+
+      _pid ->
+        EvoGit.AgentScheduler.PubSub.broadcast_agents_updated()
+        _ = :sys.get_state(throttle)
+
+        wait_until(
+          fn -> :sys.get_state(throttle) == nil end,
+          @async_wait_budget_ms
+        )
+
+        flush_agent_events(view)
+        await_view_async_loads(view)
+
+        # Observed, not assumed: handling a bulk signal bumps the monotonic
+        # :refresh_seq (spawn_agents_refresh/1), so this proves THIS socket
+        # consumed the {:agents_updated, node} signal before teardown.
+        assert assigns(view)[:refresh_seq] >= 1
     end
   end
 

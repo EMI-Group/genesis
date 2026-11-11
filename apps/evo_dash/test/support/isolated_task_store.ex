@@ -99,11 +99,31 @@ defmodule EvoDash.Test.IsolatedTaskStore do
       in only 5 of 30 measured builds (SQLite's last-close checkpoint is not
       reliable through the xqlite NIF handle), while the explicit checkpoint
       delivered 30 of 30;
+    * the build FINISHES materialization before it returns: immediately after
+      `EvoGit.Store.Boot.stop/1` it deletes the leftover `-wal`/`-shm` sidecars.
+      `stop/1` returns as soon as the pool is down, but SQLite's last-connection
+      WAL cleanup — the step that UNLINKS those sidecars — runs asynchronously
+      afterwards, at an arbitrary later moment. Measured on this host over 120
+      builds: `-wal` (0 bytes) and `-shm` (32 KiB) were still on disk at the
+      instant `stop/1` returned in 120 of 120 builds, and they vanished
+      microseconds-to-milliseconds later (the template's main-file fd was *also*
+      still open in 22 of 120). Left in place, that asynchronous deletion
+      changes the template's on-disk fingerprint at a moment nobody controls —
+      which is exactly what made the byte-identity assertion in
+      `test/evo_dash/isolated_task_store_test.exs` flake. After the `TRUNCATE`
+      checkpoint above the WAL is empty, so the sidecars hold no data and the
+      last close can only ever UNLINK files (it never creates or writes one):
+      deleting them here makes the template ONE immutable file for the whole
+      run;
     * the build then PROVES the result by copying the template's main file alone
       and asserting the copy reports every version in
       `EvoGit.Store.Boot.migration_source/0` as applied (0.2 ms, once per run).
-      A template that fails the proof is discarded with a warning and the run
-      boots fresh databases as before — correct either way;
+      A template that fails the proof is REMOVED (with a warning) and the run
+      boots fresh databases as before — correct either way, and a rejected
+      artifact can never be mistaken for a good one;
+    * a proven template is then made READ-ONLY, so an accidental shared write
+      (a store opened on the template instead of on a copy) fails loudly instead
+      of silently corrupting every later isolation;
     * each test gets its OWN file inside its OWN temp dir; the template is only
       ever read (`File.cp!/2`), never written, and sidecars are never shared;
     * a template whose content were ever older than expected is still CORRECT:
@@ -244,16 +264,26 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   # `File.cp!/2` only READS the template, so the template itself stays
   # byte-identical for the whole run (and no sidecar is ever shared: the copy
   # lives in the test's own temp dir).
+  #
+  # `File.cp!/2` ALSO carries the source's permissions, and the template is
+  # READ-ONLY (see `make_template_read_only!/1`) — so the copy needs owner write
+  # back, or the isolated store could not write a single row. 0600 keeps the
+  # copy as private as its 0700 temp dir.
   defp seed_isolated_database!(nil, _sqlite_path), do: :ok
-  defp seed_isolated_database!(template, sqlite_path), do: File.cp!(template, sqlite_path)
+
+  defp seed_isolated_database!(template, sqlite_path) do
+    File.cp!(template, sqlite_path)
+    File.chmod!(sqlite_path, 0o600)
+  end
 
   # Build the migrated template through the SAME code path the isolated store
   # boots with (`EvoGit.Store.Boot.start_dynamic/2`, which opens a
   # single-connection boot repo, runs `Ecto.Migrator.run(…, all: true)` and
   # returns the repo), force the migrated schema out of the WAL into the main
-  # file, stop the repo, and PROVE the resulting file is a fully-migrated
-  # database. `nil` is returned when no template can be placed or the proof
-  # fails — the caller then boots fresh databases exactly as before.
+  # file, stop the repo, FINISH materialization (delete the leftover sidecars
+  # and make the file read-only), and PROVE the resulting file is a
+  # fully-migrated database. `nil` is returned when no template can be placed or
+  # the proof fails — the caller then boots fresh databases exactly as before.
   #
   # `pool_size: 1` is deliberate: the returned repo IS the boot instance (no
   # pool reopen), so the whole build runs on ONE connection.
@@ -271,8 +301,20 @@ defmodule EvoDash.Test.IsolatedTaskStore do
         {:ok, repo} = EvoGit.Store.Boot.start_dynamic(path, pool_size: 1)
         :ok = checkpoint_into_main_file!(repo)
         :ok = EvoGit.Store.Boot.stop(repo)
+        # Everything downstream (the byte-identity assertion included) relies on
+        # the template being COMPLETE and immutable from this point on.
+        :ok = finalize_template!(path)
 
-        if main_file_carries_full_schema?(path), do: path, else: nil
+        if main_file_carries_full_schema?(path) do
+          make_template_read_only!(path)
+          path
+        else
+          # Never leave a half-usable artifact behind: without one the caller
+          # boots fresh databases (correct), and a stale template can never be
+          # mistaken for a good one.
+          remove_database_files(path)
+          nil
+        end
     end
   end
 
@@ -299,6 +341,47 @@ defmodule EvoDash.Test.IsolatedTaskStore do
       EvoGit.Repo.put_dynamic_repo(previous)
     end
   end
+
+  # Finish materializing the template: delete whatever sidecars the finished
+  # build left behind, so the template is exactly ONE file from the moment
+  # `build_template!/0` returns.
+  #
+  # This is NOT cosmetic, and it is the one thing `EvoGit.Store.Boot.stop/1`
+  # cannot do for us. `stop/1` returns as soon as the pool is down, but SQLite's
+  # LAST-CONNECTION WAL cleanup — the step that UNLINKS `-wal`/`-shm` — runs
+  # afterwards, asynchronously, at a moment nobody controls. Measured on this
+  # host over 120 template builds: `-wal` (0 bytes) and `-shm` (32 KiB) were
+  # still on disk at the instant `stop/1` returned in 120 of 120 builds (and the
+  # main-file descriptor was still open in 22 of 120), and they were gone
+  # microseconds-to-milliseconds later. Left in place, that deletion changes the
+  # template's on-disk fingerprint between two snapshots taken around an
+  # unrelated `isolate!/1` call — which is precisely what made
+  # `test/evo_dash/isolated_task_store_test.exs`'s byte-identity assertion flake
+  # (once in a six-run sample of the full suite; the template is built by
+  # whichever `async: false` suite isolates first, so the deferred deletion can
+  # land inside a later suite's snapshot window).
+  #
+  # Deleting them here is safe and deterministic: the explicit
+  # `TRUNCATE` checkpoint above already folded every committed frame into the
+  # main file, so a 0-byte `-wal` and its `-shm` wal-index carry no data, and the
+  # only thing the asynchronous last close can still do is UNLINK files — it
+  # never creates or writes one. After this call the sidecars are absent for the
+  # rest of the run, and no lingering handle can change the template again.
+  defp finalize_template!(path) do
+    Enum.each(@template_sidecars, &remove_file!(path <> &1))
+    :ok
+  end
+
+  # Make the template read-only, so an accidental SHARED write — any code that
+  # opens the template with a store instead of copying it first — fails loudly
+  # (SQLite cannot open a 0444 file read-write) instead of silently corrupting
+  # every later isolation.
+  #
+  # Strict on purpose: this is part of the template contract the suite pins, and
+  # chmod on a private temp file always succeeds on the platforms this suite runs
+  # on (Windows included — it maps to the read-only attribute, which
+  # `seed_isolated_database!/2` clears again on the COPY).
+  defp make_template_read_only!(path), do: File.chmod!(path, 0o444)
 
   # Where the run-scoped template lives: inside the run's own `:evo_git,
   # :data_dir` (set by `config/test.exs` to a per-run unique temp dir that
@@ -386,10 +469,21 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   # for the template (so a stale artifact from a crashed run can never be
   # reused) and for the scratch verification copy (so the `-wal`/`-shm` the
   # verification connection may create are cleaned up too).
+  #
+  # Every removal tolerates `:enoent`: SQLite's last-close cleanup UNLINKS the
+  # sidecars of a stopped database asynchronously (see `finalize_template!/1`),
+  # so it can race this function for the very files it is deleting. Losing that
+  # race is the desired end state, not an error.
   defp remove_database_files(path) do
-    Enum.each([path | Enum.map(@template_sidecars, &(path <> &1))], fn file ->
-      if File.exists?(file), do: File.rm!(file)
-    end)
+    Enum.each([path | Enum.map(@template_sidecars, &(path <> &1))], &remove_file!/1)
+  end
+
+  defp remove_file!(path) do
+    case File.rm(path) do
+      :ok -> :ok
+      {:error, :enoent} -> :ok
+      {:error, reason} -> raise "cannot remove #{path}: #{inspect(reason)}"
+    end
   end
 
   # Killing a `EvoGit.Store` while offloaded read/write Tasks are still in
