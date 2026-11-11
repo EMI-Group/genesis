@@ -326,6 +326,25 @@ defmodule EvoDashWeb.LayoutsTest do
 
       assert conversations_section_text(html) =~ "No conversations yet."
     end
+
+    test "authoring comments never reach the client HTML" do
+      html =
+        render_app(
+          current_page: :dashboard,
+          session_list: [%{id: 3, title: "three", marker: :ended}]
+        )
+
+      # `<%!-- … --%>` comments are compile-time only; a plain `<!-- … -->`
+      # would be emitted verbatim into every rendered page.
+      refute html =~ "<!--"
+
+      # The Conversations block still renders its content after the conversion.
+      tree = parse(html)
+      assert conversations_headers(tree) == ["Conversations"]
+      assert [body] = Floki.find(tree, "#chat-session-list")
+      assert [row] = Floki.find(body, "a[id^='chat-session-']")
+      assert Floki.attribute(row, "id") == ["chat-session-3"]
+    end
   end
 
   describe "app/1 — shell navigation" do

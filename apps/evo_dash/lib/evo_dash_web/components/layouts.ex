@@ -102,7 +102,7 @@ defmodule EvoDashWeb.Layouts do
       id="app-layout"
       data-accent-color={@accent_color}
     >
-      <!-- Mobile hamburger button (visible on < lg screens) -->
+      <%!-- Mobile hamburger button (visible on < lg screens) --%>
       <div class="lg:hidden fixed top-0 left-0 z-50 p-2">
         <button
           id="sidebar-mobile-toggle"
@@ -113,14 +113,14 @@ defmodule EvoDashWeb.Layouts do
         </button>
       </div>
 
-      <!-- Mobile overlay (hidden by default, JS-controlled) -->
+      <%!-- Mobile overlay (hidden by default, JS-controlled) --%>
       <div
         id="sidebar-overlay"
         class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300 lg:hidden"
       >
       </div>
 
-      <!-- Sidebar
+      <%!-- Sidebar
         NOTE: `overflow-visible!` (important) is deliberate defense-in-depth so
         the sidebar's overflowing <details> dropdown panels (SSH node selector
         w-72 = 288px, language, theme) are never clipped at the sidebar edge
@@ -131,14 +131,14 @@ defmodule EvoDashWeb.Layouts do
         pin protects the same invariant independently of hook class changes. The sidebar is a z-50 stacking context above the main
         content (z-0), so overflowing menus paint above the main body. The
         node selector lives in the sidebar's bottom bar, leftmost, with its
-        dropdown opening upward. -->
+        dropdown opening upward. --%>
       <aside
         id="sidebar"
         data-sidebar-collapsed="false"
         phx-hook="SidebarCollapse"
         class="fixed lg:relative z-50 h-dvh flex flex-col bg-base-200 border-r border-base-300 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible!"
       >
-        <!-- Branding -->
+        <%!-- Branding --%>
         <div class="flex items-center h-14 px-4 shrink-0">
           <.link
             navigate={with_node_param(~p"/", @current_node_id)}
@@ -163,7 +163,7 @@ defmodule EvoDashWeb.Layouts do
           </.link>
         </div>
 
-        <!-- Navigation Links -->
+        <%!-- Navigation Links --%>
         <%= if !@simple_nav do %>
           <nav class="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
             <.sidebar_nav_link
@@ -206,7 +206,7 @@ defmodule EvoDashWeb.Layouts do
               icon="hero-chat-bubble-left-right"
             >{gettext("Assistant")}</.sidebar_nav_link>
 
-            <!-- Task Indicators Section -->
+            <%!-- Task Indicators Section --%>
             <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4">
               <div class="px-3 mb-3 mt-1">
                 <span class="text-sm font-semibold uppercase tracking-wider text-base-content/60 sidebar-label">
@@ -221,7 +221,7 @@ defmodule EvoDashWeb.Layouts do
                      Tasks feed as the project rows. --%>
                 <% sessions = session_tasks(@running_tasks, @pending_tasks) %>
                 <%= if sessions != [] do %>
-                  <!-- Sessions group header -->
+                  <%!-- Sessions group header --%>
                   <div class="px-3 pt-2 pb-1 first:pt-0">
                     <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
                       <%!-- zh_CN: 会话 — 指可交互的智能体会话（等待用户输入），不是一次性任务 --%>
@@ -229,7 +229,7 @@ defmodule EvoDashWeb.Layouts do
                       {gettext("Sessions")}
                     </span>
                   </div>
-                  <!-- Interactive sessions in this group -->
+                  <%!-- Interactive sessions in this group --%>
                   <%= for task <- sessions do %>
                     <% awaiting = Map.get(task, :status) == :awaiting_input %>
                     <% session_sub_line =
@@ -259,14 +259,14 @@ defmodule EvoDashWeb.Layouts do
                   <% end %>
                 <% end %>
                 <%= for {project_name, tasks} <- group_tasks_by_project(@running_tasks, @pending_tasks) do %>
-                  <!-- Project group header -->
+                  <%!-- Project group header --%>
                   <div class="px-3 pt-2 pb-1 first:pt-0">
                     <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
                       <.icon name="hero-folder" class="w-3 h-3 shrink-0" />
                       {project_name}
                     </span>
                   </div>
-                  <!-- Tasks in this group -->
+                  <%!-- Tasks in this group --%>
                   <%= for task <- tasks do %>
                     <% is_running = task.status in [:running, :pending, :finalizing, :cancelling] %>
                     <.link
@@ -305,12 +305,12 @@ defmodule EvoDashWeb.Layouts do
               </div>
             </div>
 
-            <!-- Conversations Section — the Genesis Assistant's conversation
+            <%!-- Conversations Section — the Genesis Assistant's conversation
                  list, rendered on EVERY page (the Assistant page no longer
                  owns a rail of its own). Always rendered, never gated on the
                  Active Tasks list being non-empty. The rows are loaded and
                  stale-guarded by EvoDashWeb.LiveHooks.NodeAware, which owns the
-                 `{{:session_list_loaded, seq, node}, result}` message. -->
+                 `{{:session_list_loaded, seq, node}, result}` message. --%>
             <div class="pt-5 mt-4">
               <div class="px-3 pt-2 pb-1">
                 <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
@@ -323,11 +323,11 @@ defmodule EvoDashWeb.Layouts do
             </div>
           </nav>
 
-          <!-- Bottom section: Node selector + Language + Theme + Collapse -->
+          <%!-- Bottom section: Node selector + Language + Theme + Collapse --%>
           <div class="px-3 py-3 border-t border-base-300 shrink-0">
             <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
               <div data-sidebar-bottom-group class="flex items-center gap-1">
-                <!-- Node Selector (remote server switch — dropdown opens upward) -->
+                <%!-- Node Selector (remote server switch — dropdown opens upward) --%>
                 <.live_component
                   module={EvoDashWeb.NodeSelectorComponent}
                   id="node-selector"
@@ -352,7 +352,7 @@ defmodule EvoDashWeb.Layouts do
         <% end %>
       </aside>
 
-      <!-- Main Content Area -->
+      <%!-- Main Content Area --%>
       <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0 bg-base-100">
         <%!-- The DesktopQuit hook wrapper listens for the Tauri shell's
              "quit-requested" tray event on every page: hooks only mount on
@@ -387,7 +387,7 @@ defmodule EvoDashWeb.Layouts do
         <div id="guide-hook" phx-hook="Guide" />
       </div>
 
-      <!-- Config Warning Banner -->
+      <%!-- Config Warning Banner --%>
       <%= if @config_status && not @config_status.ok? do %>
         <div class="fixed bottom-4 right-4 z-40 w-[calc(100%-2rem)] max-w-sm animate-fade-in-up">
           <div class="bg-base-100 text-warning rounded-lg shadow-sm border border-warning/30 p-4">
@@ -420,10 +420,10 @@ defmodule EvoDashWeb.Layouts do
         </div>
       <% end %>
 
-      <!-- Desktop tray quit confirm dialog — driven by the DesktopQuit
+      <%!-- Desktop tray quit confirm dialog — driven by the DesktopQuit
            on-mount hook (EvoDashWeb.LiveHooks.DesktopQuit) from the Tauri
            shell's tray "Quit Genesis" item. Rendered in the app layout so it
-           can appear on ANY page (including Welcome/WelcomeComplete). -->
+           can appear on ANY page (including Welcome/WelcomeComplete). --%>
       <%= if @desktop_quit_confirm do %>
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="desktop_quit_cancelled">
@@ -467,14 +467,14 @@ defmodule EvoDashWeb.Layouts do
         </div>
       <% end %>
 
-      <!-- Floating "Genesis Guide" panel — driven by the Guide on-mount hook
+      <%!-- Floating "Genesis Guide" panel — driven by the Guide on-mount hook
            (EvoDashWeb.LiveHooks.Guide) from the core guide_user tool
            broadcasts of a running reflect task. Rendered in the shared app
            layout so it can appear on ANY page. Top-right (fixed top-4 right-4
            z-50) so it never overlaps the config-warning banner
            (fixed bottom-4 right-4 z-40). Not auto-dismissed on navigation —
            the guide continues across pages (retention handled by the hook's
-           session + the JS highlight re-apply). -->
+           session + the JS highlight re-apply). --%>
       <%= if @guide do %>
         <div class="fixed top-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] bg-base-100 border border-base-300 rounded-xl shadow-lg p-4">
           <div class="flex items-center gap-2 mb-2">

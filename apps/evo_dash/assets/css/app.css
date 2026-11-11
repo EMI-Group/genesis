@@ -2722,7 +2722,7 @@ details.capsule-sub[open] > .capsule-list {
 }
 
 /* === Auto-scrolled transcripts (AgentHistoryAutoScroll hook) === */
-/* The two panels this hook drives: `/help` `#chat-messages` and the /agents
+/* The two panels this hook drives: `/assistant` `#chat-messages` and the /agents
    "Chat History / Session Memory" panel (`.agent-history-scroll`).
    `overflow-anchor: none` disables browser scroll anchoring — the hook owns the
    scroll position (an INSTANT stick-to-bottom while pinned), and anchoring
@@ -2776,7 +2776,7 @@ dialog.modal .modal-box :not(pre) > code {
     transition: none;
   }
 }
-/* === Help Chat Page (GET /help) === */
+/* === Help Chat Page (GET /assistant) === */
 /* No DaisyUI control styles: keep the composer quiet beside the borderless
    reading column. Focus uses the standalone accent (outline role). */
 .help-composer {
@@ -2817,7 +2817,7 @@ dialog.modal .modal-box :not(pre) > code {
   outline-offset: 3px;
 }
 
-/* /help only: no heading rules or quote panels competing with the answer.
+/* /assistant only: no heading rules or quote panels competing with the answer.
    Leave the shared markdown palette and the normal-flow action footer alone. */
 #chat-messages {
   scrollbar-gutter: stable;

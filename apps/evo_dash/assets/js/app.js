@@ -821,7 +821,7 @@ function shouldFollowLatest(scrollTop, scrollHeight, clientHeight, thresholdPx) 
 }
 
 // AgentHistoryAutoScroll hook: deterministic stick-to-bottom for a transcript
-// scroller (`#chat-messages` on /help, `#agent-history-<id>` on /agents).
+// scroller (`#chat-messages` on /assistant, `#agent-history-<id>` on /agents).
 //
 // NO ANIMATION. The earlier implementation animated `scrollTop` with a custom
 // 200 ms ease-out curve and restarted that animation on every LiveView update.

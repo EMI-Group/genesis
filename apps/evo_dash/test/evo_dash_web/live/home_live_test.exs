@@ -3249,11 +3249,11 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert html =~ "not permission for future evaluations"
       assert html =~ "Allow once"
       assert html =~ "bg-info/10"
-      # The rendered target line is NOT pinned here: ApprovalDialog.target_text/1
-      # reads the request's `:target`, while the core's public request maps carry
-      # `:target_node`, so a real evaluator request currently renders "Unknown
-      # target". That mismatch (and its rendered text) belongs to
-      # approval_dialog_render_test.exs, never to this page-level flow.
+      # The target line names the request's `target_node` (the field the core
+      # stamps), never "Unknown target".
+      assert html =~ "Target runtime: target@runtime"
+      # A write-tier request carries no warning: no request-warning block.
+      refute present?(html, "#approval-request-warning")
 
       assert html |> Floki.parse_document!() |> Floki.find("pre code") |> Floki.text() ==
                request.code
@@ -3274,8 +3274,20 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert html =~ "Allow unrestricted execution once"
       assert html =~ "border-error/40"
 
-      # The dialog renders the tier's own warning block; the request's optional
-      # `:warning` field is not part of its markup.
+      # The dialog renders the tier's own warning block AND the request's own
+      # optional `:warning` (the core's sudo text), each exactly once.
+      assert present?(html, "#approval-sudo-warning")
+      assert present?(html, "#approval-request-warning")
+
+      # The text is escaped, not interpreted as markup.
+      warning_text =
+        html
+        |> Floki.parse_document!()
+        |> Floki.find("#approval-request-warning")
+        |> Floki.text()
+
+      assert warning_text =~ "Custom warning: <no rollback>"
+
       assert html |> Floki.parse_document!() |> Floki.find("pre code") |> Floki.text() ==
                sudo.code
 
@@ -3711,6 +3723,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert approval_strip_count(html) == ""
       refute present?(html, ~s(#approval-status-bar button[phx-click="open_approval_dialog"]))
       refute dialog_open?(html)
+      # The response path syncs the dialog view state too: nothing is left to
+      # show, so the dialog is closed and its cursor reset.
+      assert assigns(view).approval_dialog_open == false
+      assert assigns(view).approval_dialog_index == 0
 
       # A core resolution that empties the list closes the dialog's own state.
       html = send_and_render(view, {:approval_requested, l2_request(request_id: "third")})
@@ -3721,10 +3737,104 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert approval_strip_count(html) == ""
     end
 
+    test "a response or recovery that empties the list closes the dialog and clamps the cursor",
+         %{
+           conn: conn
+         } do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :approval_responder, fn _source, id, decision ->
+        send(test_pid, {:approval_response_arguments, id, decision})
+        :ok
+      end)
+
+      {:ok, view, _html} = live(conn, "/assistant")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+
+      send_and_render(view, {:approval_requested, l2_request(request_id: "one")})
+      html = send_and_render(view, {:approval_requested, l2_request(request_id: "two")})
+      # Newest first: "two" is position 1, "one" is position 2.
+      assert approval_position(html) == "1 of 2"
+      assert present?(html, approval_button("two", "approve"))
+
+      # Step to the LAST request, then decide it asynchronously.
+      html = view |> element(~s(button[phx-click="next_approval"])) |> render_click()
+      assert approval_position(html) == "2 of 2"
+      assert assigns(view).approval_dialog_index == 1
+      assert present?(html, approval_button("one", "approve"))
+
+      view |> element(approval_button("one", "approve")) |> render_click()
+      assert_receive {:approval_response_arguments, "one", "approve"}, @async_wait_budget_ms
+
+      wait_until(fn -> length(assigns(view)[:pending_approvals]) == 1 end)
+      html = render(view)
+
+      # The dialog stays open on the survivor, but the cursor is CLAMPED to the
+      # shorter list (index 1 would be out of range).
+      assert assigns(view).approval_dialog_open == true
+      assert assigns(view).approval_dialog_index == 0
+      assert approval_position(html) == ""
+      assert present?(html, approval_button("two", "approve"))
+
+      view |> element(approval_button("two", "deny")) |> render_click()
+      assert_receive {:approval_response_arguments, "two", "deny"}, @async_wait_budget_ms
+
+      wait_until(fn -> assigns(view)[:pending_approvals] == [] end)
+      html = render(view)
+      assert assigns(view).approval_dialog_open == false
+      assert assigns(view).approval_dialog_index == 0
+      refute dialog_open?(html)
+
+      # The recovery-apply path syncs exactly the same view state: an empty
+      # snapshot closes an open dialog instead of leaving it "open".
+      html = send_and_render(view, {:approval_requested, l2_request(request_id: "solo")})
+      assert dialog_open?(html)
+      assert assigns(view).approval_dialog_open == true
+
+      tag = {:approval_pending_loaded, assigns(view).approval_recovery_seq, approval_scope(view)}
+      html = send_and_render(view, {tag, {:ok, []}})
+
+      assert assigns(view).pending_approvals == []
+      assert assigns(view).approval_dialog_open == false
+      assert assigns(view).approval_dialog_index == 0
+      refute dialog_open?(html)
+    end
+
     test "a new live request raises a browser notification", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/assistant")
       seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
 
+      send_and_render(view, {:approval_requested, l2_request()})
+
+      assert_push_event(
+        view,
+        "task_notification",
+        %{tag: "genesis-approval"},
+        @async_wait_budget_ms
+      )
+    end
+
+    test "requests this chat does not own never raise a browser notification", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/assistant")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+
+      # The workflow ignores all of these, so notifying would ask the user to
+      # act on an approval this page cannot even show. The notification gate is
+      # the SAME ownership predicate (ApprovalWorkflow.own_request?/2).
+      for request <- [
+            l2_request(task_id: "other-task"),
+            l2_request(task_id: nil, agent_id: "someone-else"),
+            l2_request(node: :foreign@node)
+          ] do
+        send_and_render(view, {:approval_requested, request})
+
+        refute_push_event(view, "task_notification", %{tag: "genesis-approval"}, 50)
+      end
+
+      assert assigns(view).pending_approvals == []
+      refute dialog_open?(render(view))
+
+      # The gate is per request: the next OWNED request notifies normally.
       send_and_render(view, {:approval_requested, l2_request()})
 
       assert_push_event(
