@@ -792,7 +792,7 @@ defmodule EvoGit.AgentScheduler do
       """)
     end
 
-    # Allow opts to override (for backward compat with CLI --flags)
+    # Allow opts to override (for backward compat with legacy flag-style opts)
     max_tool_concurrency = Keyword.get(opts, :max_tool_concurrency, max_tool_concurrency)
     agent_max_retries = Keyword.get(opts, :agent_max_retries, agent_max_retries)
     max_depth = Keyword.get(opts, :max_depth, max_depth)
@@ -1176,7 +1176,7 @@ defmodule EvoGit.AgentScheduler do
   end
 
   # Diagnostic log for `:model_concurrency` updates (PeakHourEngine applies,
-  # CLI -c floor, dashboard saves): old vs POST-APPLICATION map (post-floor,
+  # runtime-override floor, dashboard saves): old vs POST-APPLICATION map (post-floor,
   # verbatim for skip_floor) + the skip-floor flag. A "0 capacity stayed 0
   # after peak exit" case shows up here as an old==new no-op, and the full map
   # (model ids are the map keys) makes per-model capacity transitions visible.

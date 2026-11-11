@@ -31,7 +31,7 @@ defmodule EvoGit.Auth do
   read-only home, a Nix sandbox, a bad `oauth_file` path) is reported as
   `{:error, {:managed_file_unwritable, posix_reason}}` — never as a misleading
   "no credentials" — and `managed_file_unwritable_remedy/2` turns it into the
-  path + cause + writable-location remedy the CLI, health checks and dashboard
+  path + cause + writable-location remedy the dashboard and health checks
   render.
   """
 
@@ -201,8 +201,7 @@ defmodule EvoGit.Auth do
   def credential_status(_provider, _opts), do: {:error, :no_credentials}
 
   @doc """
-  Returns the one-time login guidance for humans (CLI wizard, dashboard health
-  messages).
+  Returns the one-time login guidance for humans (dashboard health messages).
 
   Each message is short, names the exact command and file, and never contains a
   token. For an unsupported provider a neutral message is returned.

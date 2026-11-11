@@ -69,7 +69,6 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
   alias EvoGit.Agent.Tools.ElixirEval.Broker
   alias EvoGit.Agent.Tools.ElixirEval.Projection
   alias EvoGit.AgentScheduler.SchedMeta
-  alias EvoGit.CLI
   alias EvoGit.CommandApproval
   alias EvoGit.Store.Codec
   alias EvoGit.Store.Operations.Lightweight
@@ -127,9 +126,6 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
     {"Agent.Tools.ElixirEval.Projection.statuses/0", {Projection, :statuses}, :atom, :running},
     {"Agent.Tools.ElixirEval.Projection.agent_statuses/0", {Projection, :agent_statuses}, :atom,
      :running},
-    # ── CLI foreground wait classification ──
-    {"CLI.halted_wait_statuses/0", {CLI, :halted_wait_statuses}, :atom, :not_running},
-    {"CLI.terminal_statuses/0", {CLI, :terminal_statuses}, :atom, :not_running},
     # ── scheduler agent enumerations ──
     {"AgentScheduler.SchedMeta.statuses/0", {SchedMeta, :statuses}, :atom, :running},
     {"AgentScheduler.SchedMeta.phases/0", {SchedMeta, :phases}, :atom, :running},
@@ -290,7 +286,6 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
       assert :awaiting_input in Codec.known_statuses()
       assert :awaiting_input in Status.statuses()
       refute :awaiting_input in TaskRegistry.terminal_statuses()
-      refute :awaiting_input in CLI.terminal_statuses()
     end
   end
 

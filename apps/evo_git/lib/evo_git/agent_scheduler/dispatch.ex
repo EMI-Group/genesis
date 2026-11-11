@@ -575,9 +575,10 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   #
   # Priority order (highest wins):
   #
-  # 1. **User-locked model** — `spec.opts[:model_id_locked]` is `true` (set by the
-  #    CLI `-m` flag): the user's explicit model choice wins over everything, so
-  #    `spec.model_id` is returned immediately without consulting the script.
+  # 1. **User-locked model** — `spec.opts[:model_id_locked]` is `true` (set by an
+  #    explicit locked selection: task opts / dashboard selection): the user's
+  #    explicit model choice wins over everything, so `spec.model_id` is
+  #    returned immediately without consulting the script.
   # 2. **Model-selection script** — the user Elixir script from `agents.toml`
   #    (`EvoGit.CustomAgents.ModelSelector.select_model/1`): a returned selection
   #    map goes through schema validation, never legacy id lookup or fallback.

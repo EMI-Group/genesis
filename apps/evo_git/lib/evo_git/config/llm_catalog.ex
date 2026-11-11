@@ -10,7 +10,7 @@ defmodule EvoGit.Config.LLMCatalog do
 
   Each entry's `auth_modes` / `oauth_source` describe HOW a provider can be
   authenticated, and drive the "API key" vs "Subscription (OAuth)" choice in the
-  CLI setup wizard and the dashboard. A provider with `[:api_key]` (the default
+  dashboard. A provider with `[:api_key]` (the default
   when the field is absent) authenticates with an API key only; one that also
   lists `:oauth` may instead reuse a subscription credential imported from the
   vendor CLI named by `oauth_source` (`:codex_cli` / `:claude_code`). The
