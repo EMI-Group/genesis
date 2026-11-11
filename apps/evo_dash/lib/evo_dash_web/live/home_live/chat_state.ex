@@ -9,7 +9,7 @@ defmodule EvoDashWeb.HomeLive.ChatState do
       %{
         transcript: [EvoDashWeb.HomeLive.Transcript entry],
         chat_draft: String.t(),
-        chat_status: :idle | :running | :cancelling,
+        chat_status: :idle | :running | :cancelling | :awaiting_input | :ended,
         chat_task_id: String.t() | nil,
         chat_agent_id: term() | nil,
         agent_message_count: non_neg_integer() | nil,
@@ -20,21 +20,39 @@ defmodule EvoDashWeb.HomeLive.ChatState do
         selected_model_id: String.t() | nil, # migration input only
         model_selection_scope: {String.t() | nil, node()} | nil,
         model_selection_error: nil | :invalid_model_spec,
-        thought_process: [Messages.to_entries/1 entry]
+        thought_process: [Messages.to_entries/1 entry],
+        session_id: pos_integer() | nil,
+        session_mode: :interactive | :one_shot | nil,
+        queued_echoes: [%{id: String.t(), text: String.t(), at: term()}]
       }
+
+  `session_id` is the interactive session's AGENT id, which is also the
+  conversation's chat id; `session_mode` records whether this chat is driven by
+  a live long-lived session (`:interactive`) or by the legacy per-message
+  `:reflect` task (`:one_shot`, whose older fields keep working unchanged).
+  `queued_echoes` holds the transient "queued for the next turn boundary"
+  echoes so they survive a remount.
 
   `build/1` derives the map from LiveView assigns (persist direction);
   `restore/1` normalizes a stored map back into assign values (mount
   direction). Both are total — persisted garbage degrades to safe defaults,
-  never raises.
+  never raises. `persist/1` is the persist-direction entry point that wraps
+  `build/1` + `EvoDash.ChatHistory.put_state/2`.
   """
 
   alias EvoDashWeb.HomeLive.Transcript
 
   @task_statuses [:pending, :running, :finalizing, :cancelling, :completed, :failed, :cancelled]
-  @chat_statuses [:idle, :running, :cancelling]
+  @chat_statuses [:idle, :running, :cancelling, :awaiting_input, :ended]
+  @session_modes [:interactive, :one_shot]
+  @max_queued_echoes 20
 
-  @doc "Builds the persisted state map from the LiveView's assigns."
+  @doc """
+  Builds the persisted state map from the LiveView's assigns.
+
+  A pure extractor: every key it emits is read from the same-named assign
+  (`nil`/absent → that key's default) — no validation, which `restore/1` owns.
+  """
   @spec build(map()) :: map()
   def build(assigns) do
     %{
@@ -48,14 +66,40 @@ defmodule EvoDashWeb.HomeLive.ChatState do
       chat_node: assigns[:chat_node],
       # Legacy migration input only; new submissions never emit :model_id.
       selected_model_id: assigns[:selected_model_id],
-      thought_process: assigns[:thought_process] || []
+      thought_process: assigns[:thought_process] || [],
+      session_id: assigns[:session_id],
+      session_mode: assigns[:session_mode],
+      queued_echoes: assigns[:queued_echoes] || []
     }
     |> persist_selection(assigns)
   end
 
   @doc """
+  Persists the current chat state into `EvoDash.ChatHistory` and returns the
+  socket unchanged, so it can sit in a pipeline.
+
+  Only runs on a CONNECTED socket with a known chat id — a dead render must
+  never create or overwrite persisted chat state. Never raises on the
+  `build/1` side; `EvoDash.ChatHistory.put_state/2` keeps its own contract.
+  """
+  @spec persist(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def persist(socket) do
+    if Phoenix.LiveView.connected?(socket) and Map.get(socket.assigns, :chat_id) != nil do
+      EvoDash.ChatHistory.put_state(
+        Map.get(socket.assigns, :chat_id),
+        build(socket.assigns)
+      )
+    end
+
+    socket
+  end
+
+  @doc """
   Normalizes a stored state map into assign values (mount direction). Total:
   non-maps restore as the empty default; malformed fields degrade per key.
+
+  `:awaiting_input` and `:ended` are storable chat statuses (the UI normally
+  renders `:awaiting_input` as idle); any unknown status restores as `:idle`.
   """
   @spec restore(term()) :: map()
   def restore(state) when is_map(state) do
@@ -69,7 +113,10 @@ defmodule EvoDashWeb.HomeLive.ChatState do
       chat_task_status: normalize_task_status(Map.get(state, :chat_task_status)),
       chat_node: normalize_chat_node(Map.get(state, :chat_node)),
       selected_model_id: normalize_model_id(Map.get(state, :selected_model_id)),
-      thought_process: normalize_thought_process(Map.get(state, :thought_process))
+      thought_process: normalize_thought_process(Map.get(state, :thought_process)),
+      session_id: normalize_session_id(Map.get(state, :session_id)),
+      session_mode: normalize_session_mode(Map.get(state, :session_mode)),
+      queued_echoes: normalize_queued_echoes(Map.get(state, :queued_echoes))
     }
     |> persist_selection(state)
   end
@@ -190,6 +237,34 @@ defmodule EvoDashWeb.HomeLive.ChatState do
 
   defp normalize_chat_node(node) when is_atom(node), do: node
   defp normalize_chat_node(_node), do: nil
+
+  # The interactive session's agent id doubles as the conversation's chat id.
+  defp normalize_session_id(id) when is_integer(id) and id > 0, do: id
+  defp normalize_session_id(_id), do: nil
+
+  defp normalize_session_mode(mode) when mode in @session_modes, do: mode
+  defp normalize_session_mode(_mode), do: nil
+
+  # Transient "queued for the next turn boundary" echoes: only maps with a
+  # binary id survive, text is coerced to a binary, `at` stays opaque, and the
+  # NEWEST 20 are kept.
+  defp normalize_queued_echoes(echoes) when is_list(echoes) do
+    echoes
+    |> Enum.filter(fn echo -> is_map(echo) and is_binary(Map.get(echo, :id)) end)
+    |> Enum.map(fn echo ->
+      %{
+        id: Map.get(echo, :id),
+        text: normalize_echo_text(Map.get(echo, :text)),
+        at: Map.get(echo, :at)
+      }
+    end)
+    |> Enum.take(-@max_queued_echoes)
+  end
+
+  defp normalize_queued_echoes(_echoes), do: []
+
+  defp normalize_echo_text(text) when is_binary(text), do: text
+  defp normalize_echo_text(_text), do: ""
 
   @doc """
   Preserves a legacy profile id as migration input; blank/nil becomes nil
