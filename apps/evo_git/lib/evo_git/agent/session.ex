@@ -1,3 +1,10 @@
+# Deliberately ONE module (just over the ~1000-line concern threshold): this is ONE `gen_statem`
+# (handle_event_function) per agent. The phase machine, the watcher set / `event_seq` / delta
+# batcher, the exchange-worker lifecycle and the completion finalization all mutate the SAME state
+# and must be serialized by this single process — splitting them into separate modules would move
+# that state across process boundaries and re-introduce exactly the cross-process
+# read-modify-write this refactor removed. The batching/broadcast mechanics it delegates to live in
+# `EvoGit.Agent.Stream.Watchers`.
 defmodule EvoGit.Agent.Session do
   @moduledoc """
   ONE supervised process per agent: the owner of the authoritative `%EvoGit.Agent.State{}`.
@@ -63,12 +70,35 @@ defmodule EvoGit.Agent.Session do
   `on_yield/1` must be cheap and side-effect-light — it runs inside the session process, so a
   raising callback is a role BUG that takes the session down.
 
+  ## Streaming (watchers, snapshots, deltas)
+
+  The session OWNS the push-only delta contract: the watcher set (`watchers`,
+  `%{consumer_pid => monitor_ref}`), the monotonic per-session `event_seq` and the coalescing
+  `EvoGit.Agent.Stream.Batcher`.
+  `EvoGit.Agent.Stream` drives it with `{:watch, consumer_pid}` → `{:ok, %Snapshot{}, seq}`,
+  `{:unwatch, consumer_pid}` → `:ok` (idempotent), `{:snapshot}` → `{:ok, %Snapshot{}, seq}`,
+  `:identity` → `{:ok, agent_id}` and `:watching?` → `boolean()`.
+  A watch is accepted in `:running`, `:cancelling` and `:awaiting_input` (the phases that own a
+  state); `:starting` has none to snapshot yet and `:finalizing`/`:done` are on their way out, so
+  both refuse with `{:error, {:bad_state, phase}}`.
+  The snapshot's `seq` is SESSION-authoritative, so a consumer reconciles with
+  `EvoGit.Agent.Stream.stale?/2` and resyncs with a fresh snapshot only.
+  `EvoGit.Agent.Stream.Sink.emit/1` sends `{:delta, events}` in; the session publishes ONE
+  `{:agent_delta, agent_id, seq, events}` broadcast per ~75 ms window, and with ZERO watchers the
+  events are dropped on arrival (no buffer, no timer, no broadcast).
+  The consumer monitors are the only bookkeeping: a watcher's `:DOWN` removes its entry and is
+  never mistaken for a dead worker or finalizer.
+
   ## `:interrupt` input mode
 
-  `start_input/3` accepts `:interrupt` and treats it identically to `:queue` in P3: the message is
-  appended and applied at the NEXT TURN BOUNDARY.
-  There is no chunk-level stream callback to pre-empt until P4, so an "interrupt" cannot shorten
-  the turn already in flight — that is a documented limitation, not a silent downgrade.
+  `start_input/3` accepts `:queue` (append and drain at the next turn boundary) or `:interrupt`.
+  An interrupt APPENDS the same way AND sends the running worker `{:evogit_interrupt, ref}`, whose
+  next chunk callback raises, so the in-flight stream ends and the message is injected at once.
+  That chunk-level halt REQUIRES an installed stream callback: `Sink.stream_opts/0` is non-empty
+  only while at least ONE watcher is registered.
+  With zero watchers there is nothing to pre-empt, so the interrupt degrades to the
+  next-turn-boundary semantics — the message is still delivered exactly once through the settled
+  transport and is never lost, it just cannot shorten the turn already in flight.
 
   ## Terminal delivery contract
 
@@ -124,8 +154,9 @@ defmodule EvoGit.Agent.Session do
   `EvoGit.Agent.Session.Supervisor` (a `DynamicSupervisor`) are started before
   `EvoGit.AgentScheduler`, so a session always has a registry entry and an owner
   supervisor.
-  Reading and writing is SNAPSHOT-ONLY — `inspect/2` and `history/2` — with no delta
-  streaming and no watcher contract yet (P4).
+  Reading is SNAPSHOT-ONLY — `inspect/2` and `history/2` — plus the streaming contract above
+  (`{:watch, pid}` / `{:snapshot}` → `%EvoGit.Agent.Stream.Snapshot{}` and coalesced
+  `{:agent_delta, agent_id, seq, events}` pushes).
   """
 
   @behaviour :gen_statem
@@ -143,6 +174,9 @@ defmodule EvoGit.Agent.Session do
   alias EvoGit.Agent.Session.Summary
   alias EvoGit.Agent.Session.Worker
   alias EvoGit.Agent.State
+  alias EvoGit.Agent.Stream.Batcher
+  alias EvoGit.Agent.Stream.Snapshot
+  alias EvoGit.Agent.Stream.Watchers
   alias EvoGit.AgentScheduler.Store
 
   @type phase :: :starting | :running | :awaiting_input | :cancelling | :finalizing | :done
@@ -213,6 +247,66 @@ defmodule EvoGit.Agent.Session do
   end
 
   @doc """
+  The session pid registered for `agent_id`, or `:error` when there is none.
+
+  This is THE id → pid lookup of the runtime: every resolution in this module and in
+  `EvoGit.Agent.Stream` goes through it, so an unstarted registry (a runtime without the
+  application tree) degrades to the same `:error` a missing key produces instead of raising.
+  """
+  @spec whereis(term()) :: {:ok, pid()} | :error
+  def whereis(agent_id) do
+    # An UNSTARTED registry (a runtime without the application tree) must degrade to the same
+    # fallback as a missing key rather than raising.
+    if Process.whereis(SessionRegistry) do
+      case Registry.lookup(SessionRegistry, agent_id) do
+        [{pid, _value}] when is_pid(pid) -> {:ok, pid}
+        _other -> :error
+      end
+    else
+      :error
+    end
+  end
+
+  @doc """
+  The agent id a session pid is registered under, asked of the session itself.
+
+  A bare pid cannot supply it, and the streaming topic (`"agent:<id>"`) is keyed by the agent id,
+  so `EvoGit.Agent.Stream` needs this lookup to subscribe. `:error` when the session is gone or
+  does not answer within `timeout` — TOTAL, never raises and never exits.
+  """
+  @spec identity(pid(), timeout()) :: {:ok, term()} | :error
+  def identity(pid, timeout \\ @call_timeout)
+
+  def identity(pid, timeout) when is_pid(pid) do
+    try do
+      case :gen_statem.call(pid, :identity, timeout) do
+        {:ok, agent_id} -> {:ok, agent_id}
+        _other -> :error
+      end
+    catch
+      # `:gen_statem.call/3` EXITS on a dead, stopping or unresponsive session, and this helper is
+      # TOTAL, so the exit becomes the documented `:error` fallback instead of leaking out of the
+      # API (the same boundary `call/3` keeps below).
+      :exit, _reason -> :error
+    end
+  end
+
+  # A non-pid can never be a session.
+  def identity(_other, _timeout), do: :error
+
+  @doc """
+  Whether any consumer is watching this session — the streaming gate — FAIL-CLOSED.
+
+  `false` when the session is gone, did not answer within `timeout`, or answered with anything
+  other than `true`. An emitter that reads `false` installs NO streaming callbacks at all, so the
+  unwatched LLM path carries no streaming overhead; guessing `true` here would re-introduce it.
+  """
+  @spec watching?(dispatch_target(), timeout()) :: boolean()
+  def watching?(target, timeout \\ @call_timeout) do
+    call(target, :watching?, timeout) == true
+  end
+
+  @doc """
   Cancels the exchange (or the IDLE session).
 
   `:graceful` keeps a running worker alive so the engine's 3-turn save-work grace runs
@@ -259,8 +353,9 @@ defmodule EvoGit.Agent.Session do
   * `:starting` — `{:error, {:bad_state, :starting}}`.
   * no such session — `{:error, :not_found}`.
 
-  `mode` is `:queue` or `:interrupt`; P3 applies BOTH at the next turn boundary (see the
-  moduledoc — there is no chunk-level stream callback until P4).
+  `mode` is `:queue` or `:interrupt`; `:interrupt` on a `:running` exchange also halts the stream
+  in flight so the message is injected at once (see the moduledoc — that needs a watcher, else it
+  degrades to the next turn boundary).
   """
   @spec start_input(dispatch_target(), String.t() | map(), :queue | :interrupt) ::
           :ok | {:error, :not_found | :finished | {:bad_state, phase()}}
@@ -318,7 +413,12 @@ defmodule EvoGit.Agent.Session do
       tmpdir: nil,
       result: nil,
       phase: :starting,
-      last_published_turn: nil
+      last_published_turn: nil,
+      # SESSION-authoritative streaming state (D5): watcher set, delta sequence and coalescing
+      # buffer. The engine never sets them; they are re-stamped onto every adopted `%State{}`.
+      watchers: %{},
+      event_seq: 0,
+      batcher: Batcher.new()
     }
 
     # `init/1` must return FAST: the worktree, the scheduler row and the first worker all
@@ -388,8 +488,34 @@ defmodule EvoGit.Agent.Session do
     end
   end
 
-  def handle_event(:info, {:DOWN, _ref, :process, pid, reason}, phase, data) do
+  def handle_event(:info, {:delta, events}, phase, data) when phase in [:running, :cancelling] do
+    if Watchers.watching?(data.watchers) do
+      batcher = data.batcher |> Batcher.push(events) |> schedule_flush()
+      {:keep_state, %{data | batcher: batcher}}
+    else
+      # ZERO WATCHERS: dropped on arrival — no buffer, no timer, no broadcast (the zero-cost path).
+      {:keep_state, data}
+    end
+  end
+
+  # A delta outside a running exchange has no flush point and no watcher: ignored, not buffered.
+  def handle_event(:info, {:delta, _events}, phase, data) do
+    log_ignored(phase, data, :delta)
+    {:keep_state, data}
+  end
+
+  # The coalescing window elapsed: ONE flush, total in every phase (an empty batch is a no-op).
+  def handle_event(:info, :flush_deltas, _phase, data) do
+    {:keep_state, flush_deltas(data)}
+  end
+
+  def handle_event(:info, {:DOWN, ref, :process, pid, reason}, phase, data) do
     cond do
+      # A dead WATCHER is not a dead worker/finalizer: drop its entry (only for the ref that went
+      # down, so a re-registration survives) and stay in phase.
+      Watchers.watcher_ref?(data.watchers, pid, ref) ->
+        {:keep_state, %{data | watchers: Watchers.unregister_ref(data.watchers, pid, ref)}}
+
       Finalize.current?(data.finalizer, pid) ->
         # The finalizer's own contract catches every raise/exit, so reaching this arm means it was
         # KILLED: report it as an error result and take the normal terminal path instead of
@@ -434,13 +560,59 @@ defmodule EvoGit.Agent.Session do
     {:keep_state, data, [{:reply, from, {:ok, messages(data.state)}}]}
   end
 
-  def handle_event({:call, from}, {:start_input, message, _mode}, phase, data)
-      when is_binary(message) or is_map(message) do
+  def handle_event({:call, from}, :identity, _phase, data) do
+    {:keep_state, data, [{:reply, from, {:ok, agent_id(data)}}]}
+  end
+
+  def handle_event({:call, from}, :watching?, _phase, data) do
+    {:keep_state, data, [{:reply, from, Watchers.watching?(data.watchers)}]}
+  end
+
+  def handle_event({:call, from}, {:watch, consumer_pid}, phase, %{state: %State{}} = data)
+      when is_pid(consumer_pid) and phase in [:running, :cancelling, :awaiting_input] do
+    data = %{data | watchers: Watchers.register(data.watchers, consumer_pid)}
+    {:keep_state, data, [{:reply, from, snapshot_reply(data, phase)}]}
+  end
+
+  # No state yet (`:starting`), on the way out (`:finalizing`/`:done`), or not a pid: same refusal.
+  def handle_event({:call, from}, {:watch, _consumer_pid}, phase, data) do
+    {:keep_state, data, [{:reply, from, {:error, {:bad_state, phase}}}]}
+  end
+
+  def handle_event({:call, from}, {:unwatch, consumer_pid}, _phase, data) do
+    # Idempotent in EVERY phase: the `:DOWN` path has usually removed the entry already.
+    data =
+      if is_pid(consumer_pid),
+        do: %{data | watchers: Watchers.unregister(data.watchers, consumer_pid)},
+        else: data
+
+    {:keep_state, data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, {:snapshot}, phase, %{state: %State{}} = data)
+      when phase in [:running, :cancelling, :awaiting_input] do
+    {:keep_state, data, [{:reply, from, snapshot_reply(data, phase)}]}
+  end
+
+  def handle_event({:call, from}, {:snapshot}, phase, data) do
+    {:keep_state, data, [{:reply, from, {:error, {:bad_state, phase}}}]}
+  end
+
+  def handle_event({:call, from}, {:start_input, message, mode}, phase, data)
+      when (is_binary(message) or is_map(message)) and mode in [:queue, :interrupt] do
     # The phase policy is the PURE, documented table in `Session.Input`.
     case Input.policy(phase) do
-      :resume -> resume(data, message, from)
-      :queue -> {:keep_state, data, [{:reply, from, append_input(data, message)}]}
-      {:error, reason} -> {:keep_state, data, [{:reply, from, {:error, reason}}]}
+      :resume ->
+        resume(data, message, from)
+
+      :queue ->
+        # Append FIRST: the interrupt can end the stream at once, so the next drain must find it.
+        reply = append_input(data, message)
+        data = if mode == :interrupt, do: interrupt_worker(data), else: data
+        {:keep_state, data, [{:reply, from, reply}]}
+
+      {:error, reason} ->
+        {:keep_state, data, [{:reply, from, {:error, reason}}]}
     end
   end
 
@@ -497,7 +669,9 @@ defmodule EvoGit.Agent.Session do
     shutdown_worker(data)
     Finalize.stop(data.finalizer)
 
-    # No result delivery: a force-killed run has no outcome to report.
+    # Flush BEFORE the stop; no result delivery, because a force-killed run has no outcome.
+    data = flush_deltas(data)
+
     {:stop_and_reply, :shutdown, [{:reply, from, :ok}], data}
   end
 
@@ -651,7 +825,8 @@ defmodule EvoGit.Agent.Session do
   # --- running ---
 
   defp publish_checkpoint(data, %State{} = state) do
-    data = %{data | state: state}
+    # Re-stamp the session-authoritative fields: a checkpoint can never roll streaming state back.
+    data = %{data | state: adopt_state(data, state)}
 
     # Coalesced: at most ONE summary write per turn, never one per chunk, and `context` is
     # preserved by `Summary`'s merge-onto-the-existing-row behaviour.
@@ -662,6 +837,48 @@ defmodule EvoGit.Agent.Session do
       %{data | last_published_turn: state.turn}
     end
   end
+
+  # A worker-held `%State{}` is a COPY: `event_seq`/`watchers` are SESSION-authoritative.
+  defp adopt_state(data, %State{} = state) do
+    %{state | event_seq: data.event_seq, watchers: data.watchers}
+  end
+
+  # Session-authoritative `seq` and the LIVE gen_statem phase, never the state's boundary copies.
+  defp snapshot_reply(%{state: %State{} = state} = data, phase) do
+    snapshot = %{Snapshot.from(state, phase) | seq: data.event_seq, phase: phase}
+    {:ok, snapshot, data.event_seq}
+  end
+
+  # At most ONE pending timer, on the batcher's clock; an empty buffer never schedules one.
+  defp schedule_flush(batcher) do
+    cond do
+      Batcher.timer(batcher) != nil ->
+        batcher
+
+      Batcher.empty?(batcher) ->
+        batcher
+
+      true ->
+        ref = Process.send_after(self(), :flush_deltas, Batcher.flush_interval_ms())
+        Batcher.set_timer(batcher, ref)
+    end
+  end
+
+  # ONE flush point: drop a pending timer, drain through the watcher gate, publish at most ONE
+  # broadcast. Idempotent, so every exit path calls it unconditionally.
+  defp flush_deltas(data) do
+    batcher = Watchers.cancel_timer(data.batcher)
+    {batcher, seq} = Watchers.flush(data.watchers, batcher, agent_id(data), data.event_seq)
+    %{data | batcher: batcher, event_seq: seq}
+  end
+
+  # A no-op without a worker: the message was already appended, so it is still delivered once.
+  defp interrupt_worker(%{worker: %Task{pid: pid}} = data) when is_pid(pid) do
+    send(pid, {:evogit_interrupt, make_ref()})
+    data
+  end
+
+  defp interrupt_worker(data), do: data
 
   defp append_input(data, message) do
     # `append_pending_user_message/2` is the settled transport: it stores the message on the
@@ -701,17 +918,22 @@ defmodule EvoGit.Agent.Session do
   # --- outcomes ---
 
   defp handle_outcome(phase, data, outcome) do
+    # Every exit from `:running`/`:cancelling` passes here (a yield parks via
+    # `to_awaiting_input/3`), so the pending batch is drained FIRST and idle keeps no timer.
+    data = flush_deltas(data)
+
     case Outcome.classify(phase, state_mode(data), outcome) do
       {:idle, %State{} = state, text} ->
         to_awaiting_input(data, state, text)
 
       {:finalize_yield, %State{} = state, text} ->
         # The CANCEL-GRACE yield: terminal, result built from the yielded text.
-        data = %{data | state: state, worker: nil, last_yield_text: text}
+        data = %{data | state: adopt_state(data, state), worker: nil, last_yield_text: text}
         {:next_state, :finalizing, start_finalizer(data, text)}
 
       {:finish, %State{} = state, %Result{} = result} ->
         # The worker already refreshed the commit sha against the post-fallback worktree HEAD.
+        state = adopt_state(data, state)
         finalize(%{data | state: state, worker: nil, result: {:ok, result}})
 
       {:error, reason} ->
@@ -732,7 +954,7 @@ defmodule EvoGit.Agent.Session do
 
   # IDLE: park in `:awaiting_input` holding NOTHING — no worker, no timer, no slot.
   defp to_awaiting_input(data, %State{} = state, text) do
-    state = %{state | phase: :awaiting_input}
+    state = %{adopt_state(data, state) | phase: :awaiting_input}
 
     Store.clear_cancel_requested(agent_id(data))
     Summary.publish(agent_id(data), state, status: :awaiting_input)
@@ -768,13 +990,26 @@ defmodule EvoGit.Agent.Session do
   # Terminal delivery, EXACTLY ONCE (one private function, one caller each for the success,
   # failure, unexpected-outcome, close and finalizer paths).
   defp finalize(data) do
-    data = %{data | phase: :finalizing}
+    # Exit flush: published BEFORE the terminal transition, so no tail of a turn is lost.
+    data = %{flush_deltas(data) | phase: :finalizing}
 
     publish_final(data)
     deliver_result(data)
     notify_closed(data)
 
     {:stop, :normal, %{data | phase: :done}}
+  end
+
+  # Best-effort flush on ANY stop; `terminate/3` must NEVER raise (it would mask the exit reason).
+  @impl :gen_statem
+  def terminate(_reason, _phase, data) do
+    try do
+      flush_deltas(data)
+    catch
+      _kind, _reason -> :ok
+    end
+
+    :ok
   end
 
   defp publish_final(%{state: %State{} = state} = data) do
@@ -843,19 +1078,7 @@ defmodule EvoGit.Agent.Session do
   end
 
   defp resolve(pid) when is_pid(pid), do: {:ok, pid}
-
-  defp resolve(agent_id) do
-    # An UNSTARTED registry (a runtime without the application tree) must degrade to the same
-    # fallback as a missing key rather than raising.
-    if Process.whereis(SessionRegistry) do
-      case Registry.lookup(SessionRegistry, agent_id) do
-        [{pid, _value}] when is_pid(pid) -> {:ok, pid}
-        _other -> :error
-      end
-    else
-      :error
-    end
-  end
+  defp resolve(agent_id), do: whereis(agent_id)
 
   defp current_worker?(%{worker: %Task{pid: pid}}, pid) when is_pid(pid), do: true
   defp current_worker?(_data, _pid), do: false

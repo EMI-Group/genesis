@@ -24,14 +24,14 @@ defmodule EvoGit.Agent.State do
 
   ## Plain data, no runtime handles
 
-  This struct holds no funs, no ETS handles, no ports or sockets, and no pids,
-  refs or monitors: `watchers` (`%{}`) and `exchange_ref` (`nil`) are carried
-  but unpopulated. That is what makes a whole-struct
-  copy a valid SNAPSHOT at every exchange boundary and the payload serializable
-  — the archive path already proves the result/settings payload is JSON-clean.
-  (`watchers`/`exchange_ref` are the only members a later phase fills with
-  transport bookkeeping; they are session-local and never part of a durable
-  snapshot.)
+  This struct holds no funs, no ETS handles and no ports or sockets. The ONLY
+  runtime handles it carries are the session-local transport bookkeeping —
+  `watchers` (consumer pid → monitor ref) and `exchange_ref` — which the
+  session re-stamps onto every checkpointed copy and which never enter a
+  durable snapshot, a `%EvoGit.Agent.Stream.Snapshot{}` or a JSON payload. That
+  is what makes a whole-struct copy a valid SNAPSHOT at every exchange boundary
+  and the result/settings payload serializable — the archive path already proves
+  that payload is JSON-clean.
 
   ## The four groups
 
@@ -123,8 +123,8 @@ defmodule EvoGit.Agent.State do
   - `cancel` — the pending cancel request, `nil` = none. Set by the session's `cancel` command and consumed by the exchange's cancel-grace path.
   - `phase` — the session lifecycle phase.
   - `exchange_ref` — the in-flight exchange worker reference, `nil` when none. Carried (always `nil`).
-  - `event_seq` — monotonic per-session delta sequence number; a watcher drops deltas with `seq <= snapshot.seq`. Carried (always `0`).
-  - `watchers` — the streaming consumers (consumer pid → monitor ref); empty means unwatched, which is the zero-cost default. Carried (always `%{}`).
+  - `event_seq` — monotonic per-session delta sequence number, incremented by the session once per flushed batch; a watcher drops deltas with `seq <= snapshot.seq`. Session-authoritative: a checkpointed worker copy is re-stamped with the session's value.
+  - `watchers` — the live streaming consumers (consumer pid → monitor ref); empty means unwatched, which is the zero-cost default (no chunk callbacks, no batcher timer, no broadcast). Session-authoritative, like `event_seq`.
   - `last_checkpoint_at` — when the state was last checkpointed, or `nil`. Carried (always `nil`) — durability is deliberately deferred.
   - `max_turns` — maximum turns allowed for this agent (from config)
   - `exchange_turn_base` — the `turn` value at the START of the current exchange; the interactive per-exchange burst budget is measured from it (`turn - exchange_turn_base`), so a yield resets the burst without resetting the conversation.
