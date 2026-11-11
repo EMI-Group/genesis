@@ -3771,6 +3771,115 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
   end
 
+  # The same MID-RUN attach answer, but as a VALUE (for the counting seam).
+  defp running_attach_state(session_id, history) do
+    %{
+      summary: %{
+        id: session_id,
+        status: :running,
+        message_count: 2,
+        task_id: "task-#{session_id}"
+      },
+      awaiting?: false,
+      history: history
+    }
+  end
+
+  # The attach answer of a PARKED session (`:awaiting_input` → the page maps it
+  # to `:idle`, i.e. writable) with no live history to rebuild a transcript from.
+  defp parked_attach(session_id, status \\ :awaiting_input) do
+    %{
+      summary: %{id: session_id, status: status, message_count: 0, task_id: "task-#{session_id}"},
+      awaiting?: false,
+      history: []
+    }
+  end
+
+  # The attach answer for a session the core no longer knows: no summary, not in
+  # the awaiting list, no history.
+  defp gone_attach, do: %{summary: nil, awaiting?: false, history: []}
+  # A counting attach seam. `:counters` (shared atomics) is the drain-proof
+  # witness for "the attach ran EXACTLY once": a mailbox count would need a quiet
+  # window this sync suite cannot guarantee around the spawned child.
+  # With `release?: true` that child PARKS until the test sends its answer, which
+  # is what makes "the CACHED render is visible before the live result lands" a
+  # deterministic observation instead of a race (no sleep, no timing window).
+  defp counting_attach_runner(counter, test_pid, release?, answer \\ nil) do
+    fn node, session_id ->
+      :counters.add(counter, 1, 1)
+      send(test_pid, {:attach_called, node, session_id, self()})
+
+      if release? do
+        receive do
+          {:release_attach, released} -> released
+        end
+      else
+        answer
+      end
+    end
+  end
+
+  # Seeds a CACHED conversation in `EvoDashWeb.HomeLive.ChatState`'s real shape —
+  # what `reattach_session/2` restores before the live attach result lands.
+  defp seed_cached_chat(session_id, transcript) do
+    EvoDash.ChatHistory.put_state(session_id, %{
+      transcript: transcript,
+      chat_draft: "",
+      chat_status: :idle,
+      chat_task_id: nil,
+      chat_agent_id: session_id,
+      agent_message_count: length(transcript),
+      chat_task_status: :awaiting_input,
+      session_id: session_id,
+      session_mode: :interactive,
+      thought_process: [],
+      queued_echoes: []
+    })
+
+    session_id
+  end
+
+  # ── rendered session-rail inspection (Floki) ──────────────────────────────
+  # Row ids in RENDER order, read from the rail's `#chat-session-<id>` links.
+  defp session_row_ids(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find("#chat-session-list a")
+    |> Enum.flat_map(fn element ->
+      case Floki.attribute(element, "id") do
+        ["chat-session-" <> id] ->
+          case Integer.parse(id) do
+            {value, ""} -> [value]
+            _other -> []
+          end
+
+        _other ->
+          []
+      end
+    end)
+  end
+
+  defp session_row_html(html, id) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find("#chat-session-#{id}")
+    |> List.first()
+  end
+
+  defp session_row_href(html, id) do
+    case session_row_html(html, id) do
+      nil -> nil
+      element -> element |> Floki.attribute("href") |> List.first()
+    end
+  end
+
+  defp session_row_raw(html, id) do
+    case session_row_html(html, id) do
+      nil -> ""
+      element -> Floki.raw_html(element)
+    end
+  end
+
   defp write_tmp_attachment!(name, content) do
     dir =
       Path.join(
@@ -3824,7 +3933,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       install_session_seam(
         :home_session_attach_runner,
-        running_attach(4242, attach_history(text))
+        running_attach(4242, attach_history("re-attached transcript"))
       )
 
       {:ok, view, _html} = live(conn, "/help")
@@ -3855,16 +3964,31 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns.session_mode == :interactive
       assert assigns.chat_status == :running
       assert assigns.chat_draft == ""
+      # The optimistic user bubble is in the synchronous submit render. The
+      # attach then REPLACES the transcript with the live history, so the
+      # transcript is asserted from its distinct attach marker below (the
+      # attach is asynchronous and may already have landed here).
       assert html =~ text
-      assert Enum.any?(assigns.transcript, &(&1.role == :user and &1.text == text))
 
       # The reattach loader lands too (bounded poll, no sleep) and keeps the
-      # same session, transcript and running status.
-      wait_until(fn -> assigns(view)[:agent_message_count] == 4 end)
+      # same session, transcript and running status. Poll the ATTACH TRANSCRIPT
+      # itself: `apply_attach/2` first assigns `agent_message_count` from the
+      # summary and `apply_history/3` then overwrites it with the history's
+      # length, so the count is NOT a stable attach signal.
+      wait_until(fn ->
+        Enum.any?(assigns(view)[:transcript], fn entry ->
+          entry.role == :user and entry.text == "re-attached transcript"
+        end)
+      end)
+
       settled = assigns(view)
       assert settled.session_id == 4242
       assert settled.chat_status == :running
-      assert Enum.any?(settled.transcript, &(&1.role == :user and &1.text == text))
+
+      assert Enum.any?(
+               settled.transcript,
+               &(&1.role == :user and &1.text == "re-attached transcript")
+             )
 
       # A SECOND send rides the adopted session: no second start, one queued
       # message on the SAME agent id.
@@ -4007,7 +4131,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       end)
 
       {:ok, view, _html} = live(conn, "/help")
-      seed_session_state(view, 6161)
+      # A send failure only surfaces while the turn is in flight; the idle
+      # seed would leave the page at `:idle` and never exercise the
+      # retryable-non-terminal branch.
+      seed_session_state(view, 6161, %{chat_status: :running})
 
       render_submit(view, "send_message", %{"message" => "hello"})
       assert_receive {:session_send_called, "hello"}
@@ -4025,7 +4152,6 @@ defmodule EvoDashWeb.HomeLiveTest do
   # `reason` must end the chat WITHOUT dropping what is already on screen.
   defp assert_session_ended(conn, reason) do
     test_pid = self()
-    local_node = node()
 
     install_session_seam(:home_session_send_runner, fn _node, _agent_id, message, _policy ->
       send(test_pid, {:session_send_called, message})
@@ -4060,6 +4186,321 @@ defmodule EvoDashWeb.HomeLiveTest do
     # The composer is closed: no message can be typed into a dead session.
     assert disabled?(html2, ~s(textarea[name="message"]))
     assert html2 =~ "This conversation has ended. Start a new chat to continue."
+  end
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # REATTACH (`?session=<id>`) and the mounted SESSION LIST.
+  #
+  # A reattach ADOPTS an existing interactive session: the cached conversation is
+  # restored from `EvoDash.ChatHistory`, then the core is asked for the session's
+  # summary + history (`:home_session_attach_runner`) and the phase is mapped onto
+  # the chat status. It must NEVER start a task, so every test below also pins the
+  # empty task store.
+  # ─────────────────────────────────────────────────────────────────────────────
+  describe "interactive session reattach (?session=)" do
+    test "adopts a parked session from the cache in ONE attach and starts no task", %{conn: conn} do
+      test_pid = self()
+      session_id = 6_501
+      attach_calls = :counters.new(1, [:atomics])
+      start_calls = :counters.new(1, [:atomics])
+      install_session_seam(:home_session_list_runner, fn _node -> {[], []} end)
+      install_session_seam(:source_availability_runner, fn -> true end)
+
+      install_session_seam(:home_session_start_runner, fn node, opts ->
+        :counters.add(start_calls, 1, 1)
+        send(test_pid, {:session_start_called, node, opts})
+        {:ok, 1}
+      end)
+
+      install_session_seam(
+        :home_session_attach_runner,
+        counting_attach_runner(attach_calls, test_pid, true)
+      )
+
+      seed_cached_chat(session_id, [
+        %{id: "u1", role: :user, text: "cached text", streaming: false}
+      ])
+
+      {:ok, view, html} = live(conn, "/help?session=#{session_id}")
+
+      # `handle_params` reattaches on the FIRST connected render, so the CACHED
+      # conversation is already visible (not an empty state).
+      assert html =~ "cached text"
+      refute html =~ "What would you like Genesis to do?"
+      assert assigns(view).session_id == session_id
+      assert assigns(view).session_mode == :interactive
+
+      assert_receive {:attach_called, _node, ^session_id, attach_pid}, 5_000
+
+      # Safety net: a failure before the release below must never leave the
+      # spawned attach child parked forever.
+      on_exit(fn -> send(attach_pid, {:release_attach, gone_attach()}) end)
+
+      send(attach_pid, {:release_attach, parked_attach(session_id)})
+
+      wait_until(fn ->
+        a = assigns(view)
+        a.chat_status == :idle and a.chat_task_id == "task-#{session_id}"
+      end)
+
+      a = assigns(view)
+      # Phase mapping: `:awaiting_input` is a PARKED (writable) session.
+      assert a.chat_task_status == :awaiting_input
+      refute a.model_select_loading
+
+      # EXACTLY ONE attach for this id, and NO session start / task row.
+      assert :counters.get(attach_calls, 1) == 1
+      assert :counters.get(start_calls, 1) == 0
+      refute_receive {:session_start_called, _node, _opts}, 0
+      assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
+
+      # A reattached idle session is WRITABLE: composer + New chat both enabled.
+      html = await_source_available(view, true)
+      refute disabled?(html, ~s(textarea[name="message"]))
+      refute disabled?(html, ~s(button[phx-click="new_chat"]))
+    end
+
+    test "maps a RUNNING session to :running and locks New chat, still without a task",
+         %{conn: conn} do
+      test_pid = self()
+      session_id = 6_502
+      attach_calls = :counters.new(1, [:atomics])
+      start_calls = :counters.new(1, [:atomics])
+      install_session_seam(:home_session_list_runner, fn _node -> {[], []} end)
+      install_session_seam(:source_availability_runner, fn -> true end)
+
+      install_session_seam(:home_session_start_runner, fn _node, _opts ->
+        :counters.add(start_calls, 1, 1)
+        {:ok, 1}
+      end)
+
+      install_session_seam(
+        :home_session_attach_runner,
+        counting_attach_runner(
+          attach_calls,
+          test_pid,
+          false,
+          running_attach_state(session_id, attach_history("live transcript line"))
+        )
+      )
+
+      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+
+      assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
+      wait_until(fn -> assigns(view).chat_status == :running end)
+
+      a = assigns(view)
+      assert a.chat_task_status == :running
+      # The live history REPLACES the cached transcript.
+      assert Enum.any?(a.transcript, &(&1.text == "live transcript line"))
+      assert :counters.get(attach_calls, 1) == 1
+      assert :counters.get(start_calls, 1) == 0
+      assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
+
+      html = await_source_available(view, true)
+      # Mid-run a follow-up may still be QUEUED, but a new chat may not begin.
+      refute disabled?(html, ~s(textarea[name="message"]))
+      assert disabled?(html, ~s(button[phx-click="new_chat"]))
+    end
+
+    test "a VANISHED session ends the chat but keeps New chat available", %{conn: conn} do
+      test_pid = self()
+      session_id = 6_503
+      attach_calls = :counters.new(1, [:atomics])
+      start_calls = :counters.new(1, [:atomics])
+      install_session_seam(:home_session_list_runner, fn _node -> {[], []} end)
+      install_session_seam(:source_availability_runner, fn -> true end)
+
+      install_session_seam(:home_session_start_runner, fn _node, _opts ->
+        :counters.add(start_calls, 1, 1)
+        {:ok, 1}
+      end)
+
+      install_session_seam(
+        :home_session_attach_runner,
+        counting_attach_runner(attach_calls, test_pid, false, gone_attach())
+      )
+
+      seed_cached_chat(session_id, [
+        %{id: "u1", role: :user, text: "cached before vanish", streaming: false}
+      ])
+
+      {:ok, view, html} = live(conn, "/help?session=#{session_id}")
+      assert html =~ "cached before vanish"
+
+      assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
+      wait_until(fn -> assigns(view).chat_status == :ended end)
+
+      a = assigns(view)
+      assert a.chat_task_id == nil
+      assert a.chat_task_status == nil
+      assert :counters.get(attach_calls, 1) == 1
+      assert :counters.get(start_calls, 1) == 0
+      assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
+
+      html = await_source_available(view, true)
+      # Ended is read-only, but New chat stays ENABLED so the user can move on.
+      assert disabled?(html, ~s(textarea[name="message"]))
+      refute disabled?(html, ~s(button[phx-click="new_chat"]))
+      # DOCUMENTED vs ACTUAL (source defect reported, not fixed here): the context
+      # docs promise the cached transcript is KEPT read-only, but `apply_attach/2`
+      # always REBUILDS the transcript from the attach's history, so an empty
+      # history CLEARS it. Pinned as it actually behaves.
+      assert a.transcript == []
+    end
+
+    test "a VANISHED session with no cached conversation renders an empty ended chat",
+         %{conn: conn} do
+      test_pid = self()
+      session_id = 6_504
+      attach_calls = :counters.new(1, [:atomics])
+      install_session_seam(:home_session_list_runner, fn _node -> {[], []} end)
+      install_session_seam(:source_availability_runner, fn -> true end)
+
+      install_session_seam(
+        :home_session_attach_runner,
+        counting_attach_runner(attach_calls, test_pid, false, gone_attach())
+      )
+
+      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+
+      assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
+      wait_until(fn -> assigns(view).chat_status == :ended end)
+
+      assert assigns(view).transcript == []
+      assert :counters.get(attach_calls, 1) == 1
+      assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
+
+      html = await_source_available(view, true)
+      assert disabled?(html, ~s(textarea[name="message"]))
+      refute disabled?(html, ~s(button[phx-click="new_chat"]))
+    end
+  end
+
+  describe "interactive session list (mounted)" do
+    test "orders awaiting, running and cached rows and patches into a session", %{conn: conn} do
+      test_pid = self()
+      awaiting_id = 6_601
+      running_id = 6_602
+      cached_id = 6_603
+      attach_calls = :counters.new(1, [:atomics])
+      start_calls = :counters.new(1, [:atomics])
+
+      install_session_seam(:home_session_list_runner, fn _node ->
+        {[
+           %{
+             id: awaiting_id,
+             status: :awaiting_input,
+             agent_module: EvoGit.Agents.SelfReflective,
+             parent_id: nil,
+             objective: "parked objective"
+           },
+           %{
+             id: running_id,
+             status: :running,
+             agent_module: EvoGit.Agents.SelfReflective,
+             parent_id: nil,
+             objective: "running objective"
+           }
+         ], [%{agent_id: awaiting_id}]}
+      end)
+
+      install_session_seam(:source_availability_runner, fn -> true end)
+
+      install_session_seam(:home_session_start_runner, fn _node, _opts ->
+        :counters.add(start_calls, 1, 1)
+        {:ok, 1}
+      end)
+
+      install_session_seam(
+        :home_session_attach_runner,
+        counting_attach_runner(attach_calls, test_pid, false, parked_attach(cached_id))
+      )
+
+      seed_cached_chat(cached_id, [
+        %{id: "u1", role: :user, text: "cached objective", streaming: false}
+      ])
+
+      {:ok, view, _html} = live(conn, "/help")
+      wait_until(fn -> session_row_ids(render(view)) != [] end)
+
+      html = render(view)
+      assert present?(html, "#chat-session-list")
+      ids = session_row_ids(html)
+      # Awaiting FIRST (violet dot), then running, then the ended/cached rows.
+      assert Enum.take(ids, 2) == [awaiting_id, running_id]
+      assert cached_id in ids
+      assert Enum.find_index(ids, &(&1 == running_id)) < Enum.find_index(ids, &(&1 == cached_id))
+      assert session_row_raw(html, awaiting_id) =~ "oklch(0.68_0.17_290)"
+      assert session_row_raw(html, running_id) =~ "bg-warning"
+      assert session_row_raw(html, cached_id) =~ "bg-base-content/30"
+      assert session_row_href(html, awaiting_id) == "/help?session=#{awaiting_id}"
+      assert session_row_href(html, cached_id) == "/help?session=#{cached_id}"
+
+      # Patching a row ADOPTS that session: ONE attach, never a new task.
+      render_patch(view, "/help?session=#{cached_id}")
+      assert_receive {:attach_called, _node, ^cached_id, _pid}, 5_000
+
+      wait_until(fn ->
+        assigns(view).session_id == cached_id and assigns(view).chat_status == :idle
+      end)
+
+      assert :counters.get(attach_calls, 1) == 1
+      assert :counters.get(start_calls, 1) == 0
+      assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
+    end
+
+    test "ignores a stale-seq or foreign-node list result and applies the current one",
+         %{conn: conn} do
+      install_session_seam(:home_session_list_runner, fn _node -> {[], []} end)
+
+      {:ok, view, _html} = live(conn, "/help")
+
+      wait_until(fn ->
+        a = assigns(view)
+        a.session_list_loading == false and a.session_list_seq >= 1
+      end)
+
+      current_seq = assigns(view).session_list_seq
+      assert current_seq >= 1
+      before_ids = session_row_ids(render(view))
+
+      stale_rows = [%{id: 6_701, title: "stale row", marker: :ended}]
+      foreign_rows = [%{id: 6_702, title: "foreign row", marker: :ended}]
+
+      send(
+        view.pid,
+        {{:session_list_loaded, current_seq - 1, node()}, {:ok, {:ok, stale_rows}}}
+      )
+
+      send(
+        view.pid,
+        {{:session_list_loaded, current_seq, :"genesis_remote@127.0.0.1"},
+         {:ok, {:ok, foreign_rows}}}
+      )
+
+      html = render(view)
+      assert session_row_ids(html) == before_ids
+      refute html =~ "stale row"
+      refute html =~ "foreign row"
+
+      send(
+        view.pid,
+        {{:session_list_loaded, current_seq, node()},
+         {:ok, {:ok, [%{id: 6_703, title: "applied row", marker: :running}]}}}
+      )
+
+      wait_until(fn -> session_row_ids(render(view)) == [6_703] end)
+      assert render(view) =~ "applied row"
+    end
+
+    test "session links preserve the viewed node id" do
+      url = &EvoDashWeb.HomeLive.SessionActions.url/2
+      assert url.(nil, nil) == "/help"
+      assert url.(nil, 42) == "/help?session=42"
+      assert url.("target-1", nil) == "/help?node=target-1"
+      assert url.("target-1", 42) == "/help?session=42&node=target-1"
+    end
   end
 
   describe "interactive session queue echo and interrupt" do
