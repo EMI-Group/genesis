@@ -3,7 +3,7 @@
 ## Intent
 
 The task card's data contract plus the helper families extracted from `task_card_components.ex`.
-`EvoDashWeb.TaskCardComponents.task_card/1` renders from a 16-key task SUMMARY map and an optional lazily-fetched `detail`, and delegates the result/option/repo/archive/error rendering to the modules here, re-exported through `defdelegate`s on the parent module — call sites always use `EvoDashWeb.TaskCardComponents.<fun>`.
+`EvoDashWeb.TaskCardComponents.task_card/1` renders from a 17-key task SUMMARY map and an optional lazily-fetched `detail`, and delegates the result/option/repo/archive/error rendering to the modules here, re-exported through `defdelegate`s on the parent module — call sites always use `EvoDashWeb.TaskCardComponents.<fun>`.
 
 ## Routing Table
 
