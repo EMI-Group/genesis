@@ -354,12 +354,12 @@ defmodule EvoGit.SelfReflectiveToolsTest do
   test "the persona never volunteers CLI usage and ends the run with a plain reply" do
     prompt = SelfReflective.system_prompt()
 
-    assert prompt =~ "Never suggest CLI usage by default"
-    assert prompt =~ "no `mix run ... -- evolve/genesis` invocations"
-    assert prompt =~ "no terminal commands, no CLI flags"
+    assert prompt =~ "Never suggest terminal commands or CLI flags by default"
+    assert prompt =~ "no terminal commands or CLI flags"
+    refute prompt =~ "mix run"
 
     assert prompt =~
-             "Answer CLI questions only when the user explicitly asks about the command line, and never volunteer them"
+             "Answer command-line questions only when the user explicitly asks about the command line, and never volunteer them"
 
     assert prompt =~ "A reply with no tool calls ends your run"
     assert prompt =~ "There is no completion tool to call — answering is the only way to finish"
