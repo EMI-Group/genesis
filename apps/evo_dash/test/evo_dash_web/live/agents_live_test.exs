@@ -236,6 +236,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # :message_count is unchanged (see EvoDashWeb.AgentsLive.HistoryGate).
 
     test "re-fetches history only when the message count moved", %{conn: conn} do
+      # The summary row carries only the CONVERSATION SIZE now (the transcript
+      # lives in the live agent session), and the seam below supplies the
+      # transcript — so `:message_count` alone drives the history gate.
       seed_agent(agent_id(), [
         %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
       ])
@@ -265,10 +268,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       # The conversation grows (2 messages) — the next refresh must drop the
       # carried history and re-fetch for the selected agent.
-      update_agent_context(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}},
-        %ReqLLM.Message{role: :assistant, content: [%{text: "world"}], metadata: %{turn: 2}}
-      ])
+      update_agent_message_count(agent_id(), 2)
 
       send(view.pid, {:agents_updated, node()})
       flush_agent_events(view)
@@ -309,14 +309,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       wait_until(fn -> render(view) =~ "first entry" end)
 
-      update_agent_context(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "first entry"}], metadata: %{turn: 1}},
-        %ReqLLM.Message{
-          role: :assistant,
-          content: [%{text: "second entry"}],
-          metadata: %{turn: 2}
-        }
-      ])
+      update_agent_message_count(agent_id(), 2)
 
       send(view.pid, {:agent_updated, agent_id(), [message_count: 2], node()})
       send(view.pid, {:agents_updated, node()})
@@ -380,10 +373,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       view |> element("#agent-card-#{agent_id()}") |> render_click()
       wait_until(fn -> render(view) =~ "old entry" end)
 
-      update_agent_context(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "old entry"}], metadata: %{turn: 1}},
-        %ReqLLM.Message{role: :assistant, content: [%{text: "x"}], metadata: %{turn: 2}}
-      ])
+      update_agent_message_count(agent_id(), 2)
 
       send(view.pid, {:agents_updated, node()})
       flush_agent_events(view)
@@ -1283,7 +1273,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
     test "renders the short LOCAL time next to Turn x only when the message has one", %{
       conn: conn
     } do
-      seed_agent(agent_id(), [
+      messages = [
         %ReqLLM.Message{
           role: :assistant,
           content: [%{text: "hello"}],
@@ -1316,7 +1306,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
           ],
           metadata: %{turn: 3}
         }
-      ])
+      ]
+
+      seed_agent(agent_id(), messages)
+      # The transcript itself comes from the live-session seam (the summary row
+      # only carries the message count).
+      install_history(messages)
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
@@ -1345,7 +1340,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # "…", the full-message modal renders the complete command.
       long_cmd = String.duplicate("x", 260)
 
-      seed_agent(agent_id(), [
+      messages = [
         %ReqLLM.Message{
           role: :assistant,
           content: [],
@@ -1392,7 +1387,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
           content: [%ReqLLM.Message.ContentPart{type: :text, text: "JOB_OUTPUT_BODY"}],
           metadata: %{turn: 4}
         }
-      ])
+      ]
+
+      seed_agent(agent_id(), messages)
+      # The transcript itself comes from the live-session seam (the summary row
+      # only carries the message count).
+      install_history(messages)
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
@@ -1491,7 +1491,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # a spurious leading indent — the interpolation must stay flush.
       sentinel = "THINKING_SENTINEL" <> String.duplicate("A", 300)
 
-      seed_agent(agent_id(), [
+      messages = [
         %ReqLLM.Message{
           role: :assistant,
           content: [
@@ -1501,7 +1501,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
           reasoning_details: [%{text: sentinel}],
           metadata: %{turn: 1}
         }
-      ])
+      ]
+
+      seed_agent(agent_id(), messages)
+      # The transcript itself comes from the live-session seam (the summary row
+      # only carries the message count).
+      install_history(messages)
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
@@ -1641,6 +1646,11 @@ defmodule EvoDashWeb.AgentsLiveTest do
          %{conn: conn} do
       msg = "hello optimistic world"
       seed_agent(agent_id(), [])
+      # The transcript lives ONLY in the live session — the seeded summary row
+      # carries just the message count — so the session's side of each turn
+      # boundary is played through the :agents_history_runner seam: `history`
+      # holds what the next fetch returns.
+      history = install_swappable_history([])
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
@@ -1667,9 +1677,11 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # KNOWN-drained: it is faithful to the real drain (the core broadcasts
       # the drained queue) and removes any dependence on the ordering of the
       # queue broadcast emitted by the real send above.
-      update_agent_context(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: msg}], metadata: %{turn: 1}}
-      ])
+      Agent.update(history, fn _ ->
+        [%ReqLLM.Message{role: :user, content: [%{text: msg}], metadata: %{turn: 1}}]
+      end)
+
+      update_agent_message_count(agent_id(), 1)
 
       send(
         view.pid,
@@ -1690,15 +1702,15 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # The real user entry is folded into a summary and disappears from the
       # history entirely (the exact scenario that resurrected the ghost). The
       # queue stays KNOWN-drained.
-      update_agent_context(agent_id(), [
-        %ReqLLM.Message{role: :system, content: [%{text: "sys"}], metadata: %{turn: 0}},
-        %ReqLLM.Message{role: :user, content: [%{text: "initial"}], metadata: %{turn: 0}},
-        %ReqLLM.Message{
-          role: :assistant,
-          content: [%{text: "summary"}],
-          metadata: %{turn: 1}
-        }
-      ])
+      Agent.update(history, fn _ ->
+        [
+          %ReqLLM.Message{role: :system, content: [%{text: "sys"}], metadata: %{turn: 0}},
+          %ReqLLM.Message{role: :user, content: [%{text: "initial"}], metadata: %{turn: 0}},
+          %ReqLLM.Message{role: :assistant, content: [%{text: "summary"}], metadata: %{turn: 1}}
+        ]
+      end)
+
+      update_agent_message_count(agent_id(), 3)
 
       send(
         view.pid,
@@ -1732,6 +1744,16 @@ defmodule EvoDashWeb.AgentsLiveTest do
          %{conn: conn} do
       msg = "hello optimistic world"
       seed_agent(agent_id(), [])
+      # The transcript lives ONLY in the live session — the seeded summary row
+      # carries just the message count — so the session's side is played through
+      # the :agents_history_runner seam.
+      install_history([
+        %ReqLLM.Message{
+          role: :user,
+          content: [%{text: "some other real message"}],
+          metadata: %{turn: 1}
+        }
+      ])
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
@@ -1750,13 +1772,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       # A history refetch that does NOT contain the message while the core's
       # queue STILL holds it: the queue is the authority — the entry is kept.
-      update_agent_context(agent_id(), [
-        %ReqLLM.Message{
-          role: :user,
-          content: [%{text: "some other real message"}],
-          metadata: %{turn: 1}
-        }
-      ])
+      update_agent_message_count(agent_id(), 1)
 
       send(
         view.pid,
@@ -3734,19 +3750,43 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
-  # Replaces a seeded agent's conversation context in ETS (grows its
-  # :message_count for the history gate).
-  defp update_agent_context(id, messages) do
-    case :ets.lookup(:evogit_agent_state, id) do
+  # Moves a seeded agent's conversation SIZE in ETS. The `:evogit_agent_summary`
+  # row is a summary-only read model with no conversation (the transcript lives
+  # in the live agent session), so `:message_count` is what the history gate
+  # compares — the transcript itself is injected through the
+  # `:agents_history_runner` seam (see install_history/1).
+  defp update_agent_message_count(id, count) do
+    case :ets.lookup(:evogit_agent_summary, id) do
       [{^id, state}] ->
-        :ets.insert(
-          :evogit_agent_state,
-          {id, %{state | context: %ReqLLM.Context{messages: messages}}}
-        )
+        :ets.insert(:evogit_agent_summary, {id, %{state | message_count: count}})
 
       [] ->
         :ok
     end
+  end
+
+  # Installs the `:agents_history_runner` seam with a FIXED transcript —
+  # the seeded summary row carries no conversation, so the panel's chat history
+  # comes from here instead. The seam is resolved at spawn time inside the
+  # AgentsLive fetch task, and every test owns it exclusively.
+  defp install_history(messages) do
+    Application.put_env(:evo_dash, :agents_history_runner, fn _node, _agent_id -> messages end)
+    on_exit(&clear_agents_env/0)
+    :ok
+  end
+
+  # The SWAPPABLE variant: the returned Agent holds the transcript the next
+  # fetch returns, so a test can play the session's side of a turn boundary
+  # (`Agent.update/2`) before moving the agent's `:message_count`.
+  defp install_swappable_history(messages) do
+    history = start_supervised!({Agent, fn -> messages end})
+
+    Application.put_env(:evo_dash, :agents_history_runner, fn _node, _agent_id ->
+      Agent.get(history, & &1)
+    end)
+
+    on_exit(&clear_agents_env/0)
+    history
   end
 
   # A minimal RemoteAPI-shaped agent summary (the shape
