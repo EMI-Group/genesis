@@ -14,6 +14,8 @@ defmodule EvoGit.Agent.LLMPrompting do
   require Logger
 
   alias EvoGit.Agent.CompletionProtocol
+  alias EvoGit.Agent.Stream.Interrupted
+  alias EvoGit.Agent.Stream.Sink
   alias EvoGit.AgentScheduler
 
   import ReqLLM.Context, only: [user: 1]
@@ -60,6 +62,12 @@ defmodule EvoGit.Agent.LLMPrompting do
   # other graceful terminal arm: the retry loop already failed fast, so
   # `{:error, {:llm_request_rejected, message}}` is passed through unchanged.
   # Every other `{:error, reason}` still raises exactly as before.
+  #
+  # `{:interrupted, reason}` (a requested halt, see
+  # `EvoGit.Agent.Stream.Interrupted`) is passed through UNCHANGED as well: an
+  # interrupt is a deliberate user action, not a failure, so turning it into a
+  # nudge/raise would corrupt the conversation and crash an agent nobody asked
+  # to stop.
   def prompt_until_tools_or_limit(context, tools, llm_gen_opts, agent_id, max_retries) do
     prompt_until_tools_or_limit(context, tools, llm_gen_opts, agent_id, max_retries, 0)
   end
@@ -115,6 +123,18 @@ defmodule EvoGit.Agent.LLMPrompting do
         # through the same doomed retry cycle.
         {:error, terminal}
 
+      {:interrupted, reason} ->
+        # A DELIBERATE, non-error halt (the user's `:interrupt` request was seen
+        # by the per-chunk stream callback, `EvoGit.Agent.Stream.Sink`, and the
+        # in-flight stream was aborted through
+        # `%EvoGit.Agent.Stream.Interrupted{}`). It is NOT a protocol violation
+        # and NOT a transient failure, so it passes through UNCHANGED — never
+        # raised, never nudged, never retried. The caller
+        # (`EvoGit.Agent.ToolDispatch.do_turn/6`) turns the halt into an EARLY
+        # turn end, which is what makes the interrupt visible at the NEXT turn
+        # boundary instead of after the reply the user asked to pre-empt.
+        {:interrupted, reason}
+
       {:error, reason} ->
         # Genuine transient failure (network/rate-limit/stream) exhausted all
         # retries. This is a real error — raise, preserving prior behavior.
@@ -143,7 +163,8 @@ defmodule EvoGit.Agent.LLMPrompting do
   # tuples; it does NOT retry the "no tool calls" case — that semantic problem is
   # handled by the caller via context nudging. The first attempt runs with NO
   # initial sleep; total attempts = `max_retries + 1`. Returns `{:ok, response,
-  # duration_ms}` or `{:error, reason}`.
+  # duration_ms}`, `{:interrupted, %EvoGit.Agent.Stream.Interrupted{}}` (a
+  # requested halt — never retried) or `{:error, reason}`.
   #
   # There is NO try/rescue around the loop: exceptions MUST propagate IMMEDIATELY
   # rather than being retried through backoff sleeps. The raise paths are:
@@ -168,6 +189,13 @@ defmodule EvoGit.Agent.LLMPrompting do
   defp do_call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries, attempt) do
     case run_llm_attempt(context, tools, llm_gen_opts, agent_id) do
       {:ok, _response, _llm_duration} = result ->
+        result
+
+      {:interrupted, _reason} = result ->
+        # A requested halt is NEVER retried: no backoff sleep, no scheduler
+        # backoff. Retrying it would immediately re-enter the same stream the
+        # user asked to pre-empt (the interrupt message was already consumed by
+        # `Sink.interrupt_requested?/0`), so the run would silently continue.
         result
 
       {:error, reason} ->
@@ -288,10 +316,28 @@ defmodule EvoGit.Agent.LLMPrompting do
                context,
                request_params
              ),
-           {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
+           # `Sink.stream_opts/0` is the DEFAULT-INERT streaming gate: with no
+           # watcher it returns `[]`, and `process_stream/2` with `[]` is
+           # behaviourally IDENTICAL to the one-argument call (all callbacks are
+           # optional and simply not invoked), so an unwatched turn pays nothing.
+           {:ok, response} <-
+             ReqLLM.StreamResponse.process_stream(stream_resp, Sink.stream_opts()),
            llm_end <- System.monotonic_time(:millisecond) do
+        # The attempt's wall-clock duration, recorded for the per-turn
+        # `{:turn, %{duration_ms: …}}` delta. PROCESS-LOCAL and never persisted:
+        # the key is read + deleted by `ToolDispatch.process_llm_response/7` at
+        # the turn boundary, in this SAME (exchange worker) process.
+        Process.put(:evogit_llm_attempt_duration_ms, llm_end - llm_start)
+
         {:ok, response, llm_end - llm_start}
       else
+        {:error, %Interrupted{} = interrupted} ->
+          # A requested halt (`:interrupt`): the stream callback raised and
+          # `process_stream/2`'s own rescue converted it into this error value.
+          # Handled BEFORE the generic arm so a deliberate, non-error halt never
+          # gets a failure warning or triggers `excess_queuing` pool bumping.
+          {:interrupted, interrupted}
+
         {:error, reason} ->
           Logger.warning(
             "Agent #{agent_id}: LLM request failed#{retry_intent(reason)} Reason: #{inspect(reason)}"
