@@ -7,8 +7,8 @@ defmodule EvoGit.Agent.Session.Worker do
   `Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, …)` so the session keeps
   answering inspection, input and cancel commands while the exchange runs. The
   worker owns nothing durable: it installs the process context with the SESSION
-  pid as `:evogit_agent_pid` (D7), runs the exchange, and reports back with
-  exactly two messages:
+  pid as `:evogit_agent_pid` (D7), runs the exchange, and reports the exchange
+  back with exactly two messages:
 
     * `{:checkpoint, %EvoGit.Agent.State{}}` — one per turn, so the session can
       publish a coalesced summary;
@@ -16,6 +16,24 @@ defmodule EvoGit.Agent.Session.Worker do
       verbatim: `{:yield, %State{}, text}` (an interactive agent's tool-free
       reply, already refreshed against the post-fallback worktree HEAD),
       `{:finish, %State{}, %Result{}}` or `{:error, reason}`.
+
+  ## Live streaming
+
+  The worker also INSTALLS the delta sink (`EvoGit.Agent.Stream.Sink`) for the
+  duration of the run, and uninstalls it before returning.
+  The sink is PROCESS-LOCAL: it is two `Process.put/2` entries in THIS process,
+  and the exchange engine (`EvoGit.Agent.LLMPrompting`/`ToolDispatch`) runs here
+  too, so no public arity has to change to reach every emitter.
+  It is DEFAULT-INERT: it emits nothing and installs no stream callbacks at all
+  unless the session reports a registered watcher (`EvoGit.Agent.Session.watching?/2`),
+  so an unwatched run stays byte-identical to the pre-streaming runtime —
+  installing it costs two `Process.put/2` calls and nothing else.
+  `{:evogit_interrupt, ref}` messages that arrive in THIS process are consumed by
+  the sink's per-chunk check, which raises `EvoGit.Agent.Stream.Interrupted` to
+  pre-empt the stream in flight.
+  `{:delta, events}` messages flow from the worker to the session, which batches
+  them and broadcasts them on the agent's topic; they are NOT part of the
+  exchange contract above and do not arrive while nothing watches.
 
   An EXCEPTION is deliberately NOT caught here: it propagates out of the task,
   becomes an abnormal `:DOWN` at the session, and the session maps it to its
@@ -33,6 +51,7 @@ defmodule EvoGit.Agent.Session.Worker do
   alias EvoGit.Agent.Runner
   alias EvoGit.Agent.Session.Setup
   alias EvoGit.Agent.State
+  alias EvoGit.Agent.Stream.Sink
 
   @doc """
   Runs one exchange for `state` and reports to `session_pid`.
@@ -49,6 +68,12 @@ defmodule EvoGit.Agent.Session.Worker do
     # durable, so anything bound to the owner pid must outlive this task (D7).
     Setup.install_process_context(state, tmpdir, session_pid)
 
+    # Installed AFTER the process context and BEFORE the exchange, so the very first
+    # LLM attempt already sees the sink. It is process-local on purpose: this process
+    # runs the exchange and therefore the LLM/tool path, so two `Process.put/2` writes
+    # reach every emitter without changing a single public arity.
+    Sink.install(session_pid, state.agent_id)
+
     checkpoint = fn %State{} = checkpointed -> send(session_pid, {:checkpoint, checkpointed}) end
     exchange_opts = [checkpoint: checkpoint] ++ Keyword.delete(opts, :tmpdir)
 
@@ -56,6 +81,13 @@ defmodule EvoGit.Agent.Session.Worker do
       try do
         Exchange.run(state, exchange_opts)
       after
+        # Uninstall FIRST: the terminal `{:exchange_finished, …}` is sent right after
+        # this block, and uninstalling here is what guarantees no delta can TRAIL it
+        # (the session must never be told the exchange is over and then see more of
+        # its output). Being first also means anything the fallback below triggers
+        # hits an INERT sink — `emit/1` is a no-op once uninstalled.
+        Sink.uninstall()
+
         # The agent process owns git operations. After the agent finishes
         # (any exit path), commit any pending changes as a best-effort
         # fallback so the worktree is clean before the scheduler processes
