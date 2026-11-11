@@ -1,7 +1,7 @@
 defmodule EvoDashWeb.HomeLive.SessionListTest do
   @moduledoc """
-  Pure unit tests for `EvoDashWeb.HomeLive.SessionList` — the `/help` left-rail
-  conversation list.
+  Pure unit tests for `EvoDashWeb.HomeLive.SessionList` — the conversation-list
+  SECTION BODY rendered inside the shared app-layout sidebar.
 
   Three surfaces are covered without mounting a page and without mutating
   global state:
@@ -247,7 +247,7 @@ defmodule EvoDashWeb.HomeLive.SessionListTest do
   end
 
   describe "session_list/1 panel" do
-    test "renders the heading and one patch row per conversation" do
+    test "renders one row per conversation and NO heading of its own" do
       doc =
         render_panel(%{
           session_list: [
@@ -257,13 +257,22 @@ defmodule EvoDashWeb.HomeLive.SessionListTest do
           current_session_id: 4
         })
 
-      assert text(doc, "#chat-session-list h2") == "Conversations"
+      # The "Conversations" heading is LAYOUT-owned (asserted in
+      # layouts_test.exs): this component is the section BODY only.
+      assert Floki.find(doc, "#chat-session-list h2") == []
+      assert Floki.find(doc, "h2") == []
+
+      # … and it is a plain column of rows — no card chrome, no <nav> wrapper.
+      assert [list] = Floki.find(doc, "#chat-session-list")
+      assert Floki.attribute(list, "class") == ["space-y-1"]
+      assert Floki.find(doc, "nav") == []
 
       assert Floki.find(doc, "a#chat-session-3") |> length() == 1
       assert Floki.find(doc, "a#chat-session-4") |> length() == 1
 
-      assert Floki.find(doc, "a#chat-session-3") |> Floki.attribute("href") == ["/help?session=3"]
-      assert Floki.find(doc, "a#chat-session-3") |> Floki.attribute("data-phx-link") == ["patch"]
+      assert Floki.find(doc, "a#chat-session-3") |> Floki.attribute("href") ==
+               ["/assistant?session=3"]
+
       assert Floki.find(doc, "a#chat-session-3") |> Floki.attribute("aria-current") == []
       assert Floki.find(doc, "a#chat-session-4") |> Floki.attribute("aria-current") == ["page"]
 
@@ -271,7 +280,56 @@ defmodule EvoDashWeb.HomeLive.SessionListTest do
       assert text(doc, "#chat-session-4 span.truncate") == "four"
     end
 
-    test "appends the viewed node param to every row's patch URL" do
+    test "rows PATCH on the Assistant page and NAVIGATE on every other page" do
+      rows = [%{id: 3, title: "three", marker: :ended}]
+
+      assistant = render_panel(%{session_list: rows, current_page: :assistant})
+
+      assert assistant |> Floki.find("a#chat-session-3") |> Floki.attribute("data-phx-link") ==
+               ["patch"]
+
+      assert assistant |> Floki.find("a#chat-session-3") |> Floki.attribute("href") ==
+               ["/assistant?session=3"]
+
+      # A patch to a DIFFERENT LiveView is illegal, so every other page (and a
+      # missing `current_page` assign) navigates instead — `<.link navigate>`
+      # renders `data-phx-link="redirect"`.
+      for page <- [:dashboard, :tasks, nil] do
+        doc = render_panel(%{session_list: rows, current_page: page})
+
+        assert doc |> Floki.find("a#chat-session-3") |> Floki.attribute("data-phx-link") ==
+                 ["redirect"],
+               "expected a navigate destination for current_page=#{inspect(page)}"
+
+        assert doc |> Floki.find("a#chat-session-3") |> Floki.attribute("href") ==
+                 ["/assistant?session=3"]
+      end
+    end
+
+    test "exactly one destination attribute renders and aria-current marks the current row only" do
+      rows = [
+        %{id: 3, title: "three", marker: :awaiting_input},
+        %{id: 4, title: "four", marker: :running},
+        %{id: 5, title: "five", marker: :ended}
+      ]
+
+      for page <- [:assistant, :dashboard, nil] do
+        doc = render_panel(%{session_list: rows, current_page: page, current_session_id: 4})
+
+        for id <- [3, 4, 5] do
+          assert doc
+                 |> Floki.find("a#chat-session-#{id}")
+                 |> Floki.attribute("data-phx-link")
+                 |> length() == 1
+        end
+
+        assert [current] = Floki.find(doc, "a[aria-current='page']")
+        assert Floki.attribute(current, "id") == ["chat-session-4"]
+        assert Floki.attribute(current, "aria-current") == ["page"]
+      end
+    end
+
+    test "appends the viewed node param to every row's URL" do
       doc =
         render_panel(%{
           session_list: [%{id: 3, title: "three", marker: :ended}],
@@ -279,7 +337,7 @@ defmodule EvoDashWeb.HomeLive.SessionListTest do
         })
 
       assert Floki.find(doc, "a#chat-session-3") |> Floki.attribute("href") ==
-               ["/help?session=3&node=t1"]
+               ["/assistant?session=3&node=t1"]
     end
 
     test "paints the awaiting, running and ended markers distinctly" do
