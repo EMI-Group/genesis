@@ -30,6 +30,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
       transcript: [],
       chat_status: :idle,
       chat_task_status: nil,
+      chat_stream_meta: nil,
       thought_process: [],
       raw_entry_ids: MapSet.new(),
       pending_approvals: [],

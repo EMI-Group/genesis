@@ -300,6 +300,7 @@ defmodule EvoDashWeb.HomeLive.SendPath do
       |> ApprovalWorkflow.init()
       |> HomeLive.maybe_recover_approvals()
       |> HomeLive.spawn_attach(agent_id)
+      |> HomeLive.attach_stream()
       |> HomeLive.maybe_load_sessions()
 
     {:noreply,

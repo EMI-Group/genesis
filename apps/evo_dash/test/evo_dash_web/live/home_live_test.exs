@@ -4807,6 +4807,357 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert attachments.count(assigns(view).pending_attachments) == 4
     end
   end
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PUSH-ONLY agent-delta streaming (`EvoDashWeb.HomeLive.Watch` +
+  # `EvoDashWeb.HomeLive.Delta`). A mounted /help?session=<id> page subscribes
+  # ITSELF to `"agent:<id>"` (the subscription is consumer-local) and applies
+  # `{:agent_delta, id, seq, batch}` broadcasts against the snapshot the
+  # asynchronously registered watcher returned. The watch/unwatch runners are the
+  # call-time seams `:home_agent_watch_runner` / `:home_agent_unwatch_runner`.
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  # Installs every seam a mounted delta-streaming test needs: the reattach
+  # suite's session-list / source-availability stubs, a PARKED attach answer (so
+  # the page settles writable and cannot clobber a later status assertion), and
+  # the register/unregister runners reporting into the test process.
+  # `snapshot_fun` receives the agent id and returns the runner's flat answer.
+  defp install_watch_seams(session_id, test_pid, snapshot_fun) do
+    install_session_seam(:home_session_list_runner, fn _node -> {[], []} end)
+    install_session_seam(:source_availability_runner, fn -> true end)
+
+    install_session_seam(:home_session_attach_runner, fn _node, _id ->
+      parked_attach(session_id)
+    end)
+
+    install_session_seam(:home_agent_watch_runner, fn node, agent_id, watcher ->
+      send(test_pid, {:agent_watched, node, agent_id, watcher})
+      snapshot_fun.(agent_id)
+    end)
+
+    install_session_seam(:home_agent_unwatch_runner, fn node, agent_id, watcher ->
+      send(test_pid, {:agent_unwatched, node, agent_id, watcher})
+      :ok
+    end)
+
+    :ok
+  end
+
+  # The watch runner's answer: a real `%EvoGit.Agent.Stream.Snapshot{}` at `seq`.
+  defp snapshot_answer(seq, messages \\ []) do
+    fn agent_id ->
+      {:ok, %EvoGit.Agent.Stream.Snapshot{agent_id: agent_id, messages: messages, seq: seq}, seq}
+    end
+  end
+
+  defp broadcast_delta(agent_id, seq, batch) do
+    Phoenix.PubSub.broadcast(
+      EvoGit.PubSub,
+      "agent:#{agent_id}",
+      {:agent_delta, agent_id, seq, batch}
+    )
+  end
+
+  # Polls until the page seeded its delta stream at `seq` (the snapshot landed).
+  defp await_stream_seeded(view, seq) do
+    wait_until(fn ->
+      case assigns(view)[:chat_stream] do
+        %{delta: %{seq: ^seq}} -> true
+        _other -> false
+      end
+    end)
+  end
+
+  # Polls until the parked session-attach answer landed (its summary task id is
+  # the attach's observable marker), so a later status assertion cannot be
+  # overwritten by a late attach.
+  defp await_attach_settled(view, session_id) do
+    wait_until(fn -> assigns(view)[:chat_task_id] == "task-#{session_id}" end)
+  end
+
+  describe "push-only delta streaming" do
+    test "a published delta updates a mounted page", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_101
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, watcher}, 5_000
+      await_stream_seeded(view, 7)
+
+      # Only the SUBSCRIBER receives this: the LiveView itself subscribed (the
+      # watcher registration task did not), which is what proves the
+      # consumer-local half of the attach.
+      broadcast_delta(session_id, 8, [{:text, "streamed line"}])
+
+      wait_until(fn ->
+        a = assigns(view)
+        is_map(a[:chat_stream]) and a.chat_stream.delta.seq == 8
+      end)
+
+      assert assigns(view).chat_stream.delta.seq == 8
+      assert render(view) =~ "streamed line"
+      assert is_pid(watcher)
+    end
+
+    test "stale deltas are dropped and a newer one still applies", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_102
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      await_stream_seeded(view, 7)
+      transcript_before = assigns(view).transcript
+
+      # `seq <= snapshot.seq` is stale: both are dropped. `render/1` processes
+      # them first (they were delivered synchronously into the LiveView mailbox
+      # by the broadcast), so the assertions below are not racing a mailbox.
+      broadcast_delta(session_id, 7, [{:text, "stale"}])
+      broadcast_delta(session_id, 3, [{:text, "stale"}])
+      html = render(view)
+
+      refute html =~ "stale"
+      assert assigns(view).transcript == transcript_before
+      assert assigns(view).chat_stream.delta.seq == 7
+
+      # ...while a genuinely newer seq IS applied on the SAME page.
+      broadcast_delta(session_id, 8, [{:text, "fresh"}])
+      wait_until(fn -> assigns(view).chat_stream.delta.seq == 8 end)
+
+      assert render(view) =~ "fresh"
+      refute render(view) =~ "stale"
+    end
+
+    test "a delta for another agent is dropped", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_103
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      await_stream_seeded(view, 7)
+
+      broadcast_delta(session_id + 100, 99, [{:text, "foreign"}])
+      html = render(view)
+
+      refute html =~ "foreign"
+      assert assigns(view).chat_stream.delta.seq == 7
+
+      # The page IS attached — its OWN agent's delta applies — so the drop above
+      # was the agent match, not a dead stream.
+      broadcast_delta(session_id, 8, [{:text, "own line"}])
+      wait_until(fn -> assigns(view).chat_stream.delta.seq == 8 end)
+
+      html = render(view)
+      assert html =~ "own line"
+      refute html =~ "foreign"
+    end
+
+    test "the attach snapshot seeds the transcript and the thought process", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_104
+
+      messages = [
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [%ReqLLM.Message.ContentPart{type: :text, text: "snapshot line"}]
+        }
+      ]
+
+      install_watch_seams(session_id, test_pid, snapshot_answer(7, messages))
+
+      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      await_stream_seeded(view, 7)
+      wait_until(fn -> Enum.any?(assigns(view).transcript, &(&1.text == "snapshot line")) end)
+
+      a = assigns(view)
+      assert Enum.any?(a.transcript, &(&1.role == :assistant and &1.text == "snapshot line"))
+      # `apply_history/3` is the ONE funnel: the snapshot's messages rebuild BOTH
+      # halves, so the thought process is exactly `Messages.to_entries/1`'s.
+      assert a.thought_process == EvoDashWeb.HomeLive.Messages.to_entries(messages)
+      assert render(view) =~ "snapshot line"
+    end
+
+    test "thinking and tool deltas reach the thought process and the transcript", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_105
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      await_stream_seeded(view, 7)
+
+      broadcast_delta(session_id, 8, [{:thinking, "pondering"}, {:tool_call, "call-1", "bash"}])
+
+      wait_until(fn -> Enum.any?(assigns(view).transcript, &(&1.role == :tool)) end)
+      wait_until(fn -> inspect(assigns(view).thought_process) =~ "pondering" end)
+
+      assert render(view) =~ "bash"
+
+      broadcast_delta(session_id, 9, [{:tool_result, "call-1", :ok}])
+
+      wait_until(fn ->
+        Enum.any?(assigns(view).transcript, &(&1.role == :tool and &1.tool_status == :ok))
+      end)
+
+      tool = Enum.find(assigns(view).transcript, &(&1.role == :tool))
+      assert tool.tool_name == "bash"
+      assert tool.tool_status == :ok
+      assert tool.tool_call_id == "call-1"
+    end
+
+    test "a turn delta updates the meta line under the assistant bubble", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_106
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      await_stream_seeded(view, 7)
+
+      # A streaming assistant bubble must exist for the meta line to render
+      # (it rides the transcript's LAST assistant entry).
+      broadcast_delta(session_id, 8, [{:text, "partial"}])
+      wait_until(fn -> Enum.any?(assigns(view).transcript, &(&1.role == :assistant)) end)
+
+      broadcast_delta(
+        session_id,
+        9,
+        [{:turn, %{turn: 2, total_tokens: 1234, duration_ms: 1500, usage: nil}}]
+      )
+
+      wait_until(fn -> assigns(view).chat_stream_meta.total_tokens == 1234 end)
+
+      assert assigns(view).chat_stream_meta.turn == 2
+      assert assigns(view).chat_stream_meta.duration_ms == 1500
+
+      html = render(view)
+      assert html =~ "1234"
+      assert html =~ "Turn 2"
+    end
+
+    test "a yield finalizes the bubble and parks the session", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_107
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      await_attach_settled(view, session_id)
+      await_stream_seeded(view, 7)
+
+      broadcast_delta(session_id, 8, [{:text, "partial"}])
+
+      wait_until(fn ->
+        case List.last(assigns(view).transcript) do
+          %{role: :assistant, streaming: true} -> true
+          _other -> false
+        end
+      end)
+
+      broadcast_delta(session_id, 9, [{:yield, "final answer"}])
+
+      wait_until(fn -> assigns(view).chat_status == :idle and last_bubble_final?(view) end)
+
+      a = assigns(view)
+      assert a.chat_status == :idle
+      assert a.chat_task_status == :awaiting_input
+      last = List.last(a.transcript)
+      assert last.role == :assistant
+      assert last.text == "final answer"
+      assert last.streaming == false
+      refute Enum.any?(a.transcript, &Map.get(&1, :streaming))
+
+      html = await_source_available(view, true)
+      refute disabled?(html, ~s(textarea[name="message"]))
+      assert html =~ "final answer"
+    end
+
+    test "a finished delta ends the session without a stuck streaming bubble", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_108
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      await_attach_settled(view, session_id)
+      await_stream_seeded(view, 7)
+
+      broadcast_delta(session_id, 8, [{:text, "partial"}])
+      wait_until(fn -> Enum.any?(assigns(view).transcript, &Map.get(&1, :streaming)) end)
+
+      broadcast_delta(session_id, 9, [{:finished, :failed}])
+
+      wait_until(fn -> assigns(view).chat_status == :ended end)
+
+      a = assigns(view)
+      assert a.chat_status == :ended
+      assert a.chat_task_status == :failed
+      refute Enum.any?(a.transcript, &Map.get(&1, :streaming))
+    end
+
+    test "a watched session does not refetch history on message-count changes", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_109
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      await_attach_settled(view, session_id)
+      await_stream_seeded(view, 7)
+
+      # A queued echo is the observable half of the `drop_echoes` behaviour.
+      seed_chat_state(view, %{queued_echoes: [%{id: "echo-1", text: "queued", at: 0}]})
+      fetch_seq_before = assigns(view).chat_fetch_seq
+
+      send(view.pid, {:agent_updated, session_id, [message_count: 5], node()})
+      render(view)
+
+      a = assigns(view)
+      # The stream drives the transcript: NO history refetch was spawned...
+      assert a.chat_fetch_seq == fetch_seq_before
+      # ...while the echo bookkeeping still happens.
+      assert a.queued_echoes == []
+    end
+
+    test "new chat detaches the delta stream", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_110
+      local_node = node()
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      await_stream_seeded(view, 7)
+
+      render_click(view, "new_chat")
+
+      assert_receive {:agent_unwatched, ^local_node, ^session_id, pid}, 5_000
+      assert is_pid(pid)
+      assert assigns(view).chat_stream == nil
+      assert assigns(view).session_id == nil
+    end
+  end
+
+  # The transcript's last entry is a FINALIZED assistant bubble.
+  defp last_bubble_final?(view) do
+    case List.last(assigns(view).transcript) do
+      %{role: :assistant, streaming: false} -> true
+      _other -> false
+    end
+  end
 end
 
 # A minimal GenServer that stands in for a real connection manager in

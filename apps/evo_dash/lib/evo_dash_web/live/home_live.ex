@@ -48,13 +48,15 @@ defmodule EvoDashWeb.HomeLive do
     ApprovalWorkflow,
     Attachments,
     ChatState,
+    Delta,
     Messages,
     ModelSelection,
     SendPath,
     SessionActions,
     SessionList,
     SourceGate,
-    Transcript
+    Transcript,
+    Watch
   }
 
   alias EvoDash.{
@@ -147,6 +149,7 @@ defmodule EvoDashWeb.HomeLive do
                   chat_task_status={@chat_task_status}
                   thought_process={@thought_process}
                   raw_entry_ids={@raw_entry_ids}
+                  stream_meta={@chat_stream_meta}
                 />
             <% end %>
             <!-- Transient queued-message echoes are NOT transcript entries: they
@@ -267,6 +270,12 @@ defmodule EvoDashWeb.HomeLive do
       session_mode: nil,
       queued_echoes: [],
       session_attach_seq: 0,
+      # Push-only delta stream state (`EvoDashWeb.HomeLive.Watch`): the
+      # subscribed agent + its seeded `%Delta{}` (nil until the registration
+      # snapshot lands), that snapshot's turn meta, and the monotonic attach seq.
+      chat_stream: nil,
+      chat_stream_meta: nil,
+      stream_attach_seq: 0,
       session_list: [],
       session_list_loading: false,
       session_list_error: nil,
@@ -345,7 +354,18 @@ defmodule EvoDashWeb.HomeLive do
     |> ApprovalWorkflow.init()
     |> maybe_recover_approvals()
     |> spawn_attach(id)
+    |> attach_stream()
   end
+
+  @doc """
+  Attaches the page to the current `?session=` agent's PUSH-ONLY delta stream.
+
+  The stream is seeded by a snapshot from `EvoDashWeb.HomeLive.Watch`, which
+  also owns the consumer-local PubSub subscription; `SendPath.adopt_session/3`
+  calls this for a freshly started session (whose URL push short-circuits
+  `resolve_session/2`, so `reattach_session/2` never runs for it).
+  """
+  def attach_stream(socket), do: Watch.attach(socket)
 
   # `ChatState.restore/1` already whitelists the stored status; this defensive
   defp restore_status(status)
@@ -438,7 +458,7 @@ defmodule EvoDashWeb.HomeLive do
   defp summary_value(_summary, _key), do: nil
 
   defp apply_history(socket, messages, rebuild?) when is_list(messages) do
-    entries = Messages.to_entries(messages)
+    %{transcript: built, entries: entries} = Messages.transcript(messages)
     text = Messages.assistant_text(messages)
 
     # A REBUILD from an EMPTY fetched history means the session is gone with
@@ -451,7 +471,7 @@ defmodule EvoDashWeb.HomeLive do
     transcript =
       cond do
         keep_cache? -> socket.assigns[:transcript]
-        rebuild? -> history_transcript(entries, text)
+        rebuild? -> built
         text == "" -> socket.assigns[:transcript]
         true -> Transcript.put_streaming_text(socket.assigns[:transcript], text)
       end
@@ -464,29 +484,6 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   defp apply_history(socket, _messages, _rebuild?), do: socket
-
-  defp history_transcript(entries, text) do
-    transcript =
-      entries
-      |> Enum.map(&entry_text/1)
-      |> Enum.reject(&(&1 == ""))
-      |> Enum.reduce(Transcript.new(), fn text, acc ->
-        Transcript.append(acc, Transcript.entry(:user, text))
-      end)
-
-    if text == "",
-      do: transcript,
-      else: Transcript.append(transcript, Transcript.entry(:assistant, text))
-  end
-
-  defp entry_text(entry) when is_map(entry) do
-    case Map.get(entry, :data) do
-      %{content: content} when is_binary(content) -> content
-      _other -> ""
-    end
-  end
-
-  defp entry_text(_entry), do: ""
 
   def maybe_load_sessions(socket) do
     if connected?(socket) do
@@ -734,12 +731,23 @@ defmodule EvoDashWeb.HomeLive do
     node = socket.assigns[:current_node] || node()
     agent_id = socket.assigns[:session_id]
 
-    finish_chat(
-      socket,
-      fn -> SessionActions.close(node, agent_id, :normal) end,
-      [chat_status: :cancelling, queued_echoes: []],
-      true
-    )
+    case SafeCall.run(fn -> SessionActions.close(node, agent_id, :normal) end) do
+      {:ok, {:error, reason}} ->
+        {:noreply, stop_flash(socket, reason)}
+
+      {:error, reason} ->
+        {:noreply, stop_flash(socket, reason)}
+
+      {:ok, _ok} ->
+        # A closed session emits nothing further: finalize the in-flight bubble
+        # and unwatch. The assign values stay EXACTLY what `stop_ok/3` sets.
+        {:noreply,
+         socket
+         |> stop_ok([chat_status: :cancelling, queued_echoes: []], true)
+         |> finalize_bubble()
+         |> Watch.detach()
+         |> ChatState.persist()}
+    end
   end
 
   defp finish_chat(socket, fun, assigns, reload?) do
@@ -909,8 +917,14 @@ defmodule EvoDashWeb.HomeLive do
           agent_message_count: AgentStream.message_count(summary)
         )
 
-      {:noreply,
-       socket |> ChatState.persist() |> async_fetch_history() |> maybe_recover_approvals()}
+      socket =
+        if Watch.stream_active?(socket) do
+          ChatState.persist(socket)
+        else
+          socket |> ChatState.persist() |> async_fetch_history()
+        end
+
+      {:noreply, maybe_recover_approvals(socket)}
     else
       {:noreply, socket}
     end
@@ -923,7 +937,16 @@ defmodule EvoDashWeb.HomeLive do
       socket =
         if message_count_grew?(socket, changed_fields), do: drop_echoes(socket), else: socket
 
-      {:noreply, async_fetch_history(socket)}
+      # A WATCHED session is driven by its delta stream: refetching the whole
+      # history per message-count change IS the poll this feature removes.
+      socket =
+        if Watch.stream_active?(socket) do
+          ChatState.persist(socket)
+        else
+          async_fetch_history(socket)
+        end
+
+      {:noreply, socket}
     else
       {:noreply, socket}
     end
@@ -1103,8 +1126,106 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
+  # Push-only delta stream (`EvoDashWeb.HomeLive.Watch`). A batch is applied ONLY
+  # for the currently watched + snapshot-seeded agent: a nil/foreign stream and
+  # a pre-snapshot delta are dropped silently (the snapshot's seq covers the
+  # subscribe→snapshot gap, so nothing is lost).
+  def handle_info({:agent_delta, agent_id, seq, batch}, socket) do
+    case socket.assigns[:chat_stream] do
+      %{agent_id: ^agent_id, delta: %Delta{seq: snapshot_seq}} when is_integer(snapshot_seq) ->
+        if EvoGit.Agent.Stream.stale?(seq, snapshot_seq) do
+          {:noreply, socket}
+        else
+          stream = socket.assigns[:chat_stream]
+
+          %{
+            delta: delta,
+            transcript: transcript,
+            thought_process: thought_process,
+            meta: meta,
+            outcome: outcome
+          } =
+            Delta.apply_batch(
+              stream.delta,
+              socket.assigns[:transcript],
+              socket.assigns[:thought_process] || [],
+              socket.assigns[:chat_stream_meta] || Delta.meta(),
+              batch
+            )
+
+          socket =
+            socket
+            |> assign(
+              chat_stream: %{stream | delta: %{delta | seq: seq}},
+              transcript: transcript,
+              thought_process: thought_process,
+              chat_stream_meta: meta
+            )
+            |> fold_stream_outcome(outcome)
+            |> ChatState.persist()
+
+          {:noreply, socket}
+        end
+
+      _other ->
+        {:noreply, socket}
+    end
+  end
+
+  # The watcher registration + snapshot landed. Only the CURRENT attach (seq +
+  # node + session + watched agent all agree) may apply it: the snapshot then
+  # seeds the delta (its seq is the reconciliation baseline) and rebuilds the
+  # transcript through the existing `apply_history/3` funnel.
+  def handle_info({:chat_stream_ready, node, seq, agent_id, result}, socket) do
+    stream = socket.assigns[:chat_stream]
+
+    if seq == socket.assigns[:stream_attach_seq] and
+         node == socket.assigns[:current_node] and
+         agent_id == socket.assigns[:session_id] and
+         is_map(stream) and Map.get(stream, :agent_id) == agent_id do
+      case Watch.snapshot_result(result, agent_id, node) do
+        {:ok, %{snapshot: snapshot, delta: delta, meta: meta}} ->
+          socket =
+            socket
+            |> apply_history(snapshot.messages, true)
+            |> assign(
+              chat_stream: %{agent_id: agent_id, node: node, delta: delta},
+              chat_stream_meta: meta
+            )
+            |> ChatState.persist()
+
+          {:noreply, socket}
+
+        {:error, _reason} ->
+          {:noreply, assign(socket, chat_stream: nil, chat_stream_meta: nil)}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info(_msg, socket) do
     {:noreply, socket}
+  end
+
+  # The outcome a delta batch reported: a yield parks the session (idle, waiting
+  # for input), a finish ends it, and anything else terminal-looking fails it.
+  defp fold_stream_outcome(socket, nil), do: socket
+
+  defp fold_stream_outcome(socket, :yield) do
+    assign(socket, chat_status: :idle, chat_task_status: :awaiting_input, queued_echoes: [])
+  end
+
+  defp fold_stream_outcome(socket, {:finished, :completed}) do
+    assign(socket, chat_status: :ended, chat_task_status: :completed, queued_echoes: [])
+  end
+
+  defp fold_stream_outcome(socket, {:finished, status}) when status in @terminal_statuses do
+    assign(socket, chat_status: :ended, chat_task_status: status, queued_echoes: [])
+  end
+
+  defp fold_stream_outcome(socket, _outcome) do
+    assign(socket, chat_status: :ended, chat_task_status: :failed, queued_echoes: [])
   end
 
   # The composer send path and the one-shot finalize block live in
@@ -1186,10 +1307,16 @@ defmodule EvoDashWeb.HomeLive do
         status in @terminal_statuses ->
           socket
           |> assign(chat_task_status: status, chat_status: :ended, queued_echoes: [])
+          |> finalize_bubble()
+          |> Watch.detach()
           |> async_fetch_history(socket.assigns[:chat_node])
 
         status == :cancelling ->
-          assign(socket, chat_task_status: :cancelling, chat_status: :cancelling)
+          # No more text is coming, but the session is still alive: finalize the
+          # bubble and KEEP the watcher.
+          socket
+          |> assign(chat_task_status: :cancelling, chat_status: :cancelling)
+          |> finalize_bubble()
 
         status in [:running, :pending, :finalizing] ->
           assign(socket, chat_task_status: status)
@@ -1199,6 +1326,12 @@ defmodule EvoDashWeb.HomeLive do
       end
 
     ChatState.persist(socket)
+  end
+
+  # The terminal half of an interactive session: the in-flight assistant bubble
+  # is finalized so it never stays stuck "streaming" with no writer left.
+  defp finalize_bubble(socket) do
+    assign(socket, transcript: Transcript.finalize_streaming(socket.assigns[:transcript]))
   end
 
   defp one_shot_task_event(socket, status) do
@@ -1266,6 +1399,7 @@ defmodule EvoDashWeb.HomeLive do
 
   defp reset_chat(socket) do
     socket
+    |> Watch.detach()
     |> assign(
       transcript: Transcript.new(),
       chat_draft: "",
@@ -1361,5 +1495,14 @@ defmodule EvoDashWeb.HomeLive do
 
   defp stale?(socket, node, seq) do
     node != socket.assigns[:current_node] or seq != socket.assigns[:chat_fetch_seq]
+  end
+
+  # Best-effort unwatch on page teardown. The REAL reaper is the session's own
+  # monitor on the LiveView pid (a `:DOWN` removes the watcher set entry), so a
+  # lost/failed unregister here costs nothing.
+  @impl true
+  def terminate(_reason, socket) do
+    _ = Watch.detach(socket)
+    :ok
   end
 end
