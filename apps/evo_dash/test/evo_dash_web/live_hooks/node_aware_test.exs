@@ -618,6 +618,12 @@ defmodule EvoDashWeb.NodeAwareTest do
   #     assertions depend on a store that holds NOTHING (`setup_isolated_registry`
   #     below); the pair's NAME is per BEAM, so the terminate+restart must not
   #     overlap any other suite.
+  #   * the `:home_session_list_runner` APP-ENV seam — a BEAM-global key that
+  #     `EvoDashWeb.HomeLive.SessionActions.list/1` resolves at call time and
+  #     that the `async: true` `EvoDashWeb.HomeLive.SessionListTest` also
+  #     writes; the sidebar Conversations describe at the end of this module
+  #     stubs it (restored in `on_exit`) to drive the hook's single load site
+  #     deterministically.
   #
   # The config dir is NO LONGER a reason: these describes WRITE it
   # (`save_target!`), and that write is isolated PER PROCESS through the
@@ -671,6 +677,13 @@ defmodule EvoDashWeb.NodeAwareTest do
       |> Map.merge(overrides)
 
     %Phoenix.LiveView.Socket{assigns: assigns, redirected: nil}
+  end
+
+  # The same hand-built socket, but reporting CONNECTED (`transport_pid != nil`)
+  # so the load helpers that no-op on the dead render
+  # (`request_session_list_load/1`) actually spawn their async work.
+  defp connected_socket(overrides) do
+    %{socket(overrides) | transport_pid: self()}
   end
 
   # Dead-render mount socket: transport_pid nil → connected?(socket) == false
@@ -1693,6 +1706,278 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert spawned_view_tasks(self()) == []
       refute_receive {:remote_connect_result, _, _}, 0
       assert GenServer.call(manager, :calls) == []
+    end
+  end
+
+  # Installs the CALL-TIME `:home_session_list_runner` seam (1-arity
+  # `(node) -> {agent_summaries, awaiting_entries}`) resolved by
+  # `EvoDashWeb.HomeLive.SessionActions.list/1`, restoring the previous value in
+  # `on_exit`. A GLOBAL app-env key (shared with the `async: true`
+  # `EvoDashWeb.HomeLive.SessionListTest`) — one more reason this module stays
+  # `async: false` (module comment). `nil` is a safe sentinel: only functions
+  # are ever stored under the key.
+  defp install_session_list_runner(fun) when is_function(fun, 1) do
+    previous = Application.get_env(:evo_dash, :home_session_list_runner)
+
+    Application.put_env(:evo_dash, :home_session_list_runner, fun)
+
+    on_exit(fn ->
+      case previous do
+        nil -> Application.delete_env(:evo_dash, :home_session_list_runner)
+        value -> Application.put_env(:evo_dash, :home_session_list_runner, value)
+      end
+    end)
+
+    :ok
+  end
+
+  # A row id that cannot collide with the (process-global) cached conversations
+  # another suite may have left in `EvoDash.ChatHistory` — assertions below are
+  # scoped to the ids this test injected, never to the list's global contents.
+  defp session_row_id, do: 900_000_000 + System.unique_integer([:positive, :monotonic])
+
+  # A ROOT self-reflective agent summary, the live-session half of the
+  # conversation-list runner's answer. The module/parent fields are what
+  # `EvoDashWeb.HomeLive.SessionActions.session_agent?/1` accepts as LIVE, so
+  # the row survives the builder instead of being filtered out.
+  defp session_summary(id, status, objective) do
+    %{
+      id: id,
+      status: status,
+      agent_module: EvoGit.Agents.SelfReflective,
+      parent_id: nil,
+      objective: objective
+    }
+  end
+
+  describe "sidebar Conversations load (:session_list) — owned by the hook" do
+    # EVERY dashboard page's shared-layout sidebar carries the Genesis Assistant
+    # conversation list. `EvoDashWeb.LiveHooks.NodeAware` owns its load: the
+    # `assign_new` seeds, the ONE `EvoDashWeb.HomeLive.SessionList.spawn_load/2`
+    # site (connected local mount, `assign_node/2` node-context change, every
+    # `:node_aware_reload_tasks` debounce), and the interception of the NESTED
+    # `{{:session_list_loaded, seq, node}, result}` message (seq + node stale
+    # guards live in `SessionList.applied/4`). Same async/exit-safe pattern as
+    # the Active Tasks lists, with no polling.
+    #
+    # async: false — the `:home_session_list_runner` seam installed below is a
+    # global app-env key the async `SessionListTest` also writes (module
+    # comment). The config dir is isolated per process (`isolate_config_dir/1`)
+    # for the connected mounts' node-context load.
+    setup :isolate_config_dir
+
+    test "a connected LOCAL mount seeds the empty assigns and spawns exactly ONE load" do
+      row_id = session_row_id()
+      local_node = node()
+
+      install_session_list_runner(fn _node ->
+        {[session_summary(row_id, :awaiting_input, "hello")], [%{agent_id: row_id}]}
+      end)
+
+      # Dead render: the hook's own seeds, and NOTHING is spawned.
+      assert {:cont, dead} = NodeAware.on_mount(:default, %{}, %{}, mount_socket())
+
+      assert dead.assigns.session_list == []
+      assert dead.assigns.session_list_loading == false
+      assert dead.assigns.session_list_error == nil
+      assert dead.assigns.session_list_seq == 0
+      refute_receive {{:session_list_loaded, _, _}, _}, 0
+
+      # Connected LOCAL mount: the seq bumps ONCE and the panel marks itself
+      # loading (previously shown rows stay visible until the fresh result).
+      assert {:cont, socket} = NodeAware.on_mount(:default, %{}, %{}, connected_mount_socket())
+
+      assert socket.assigns.session_list == []
+      assert socket.assigns.session_list_loading == true
+      assert socket.assigns.session_list_error == nil
+      assert socket.assigns.session_list_seq == 1
+
+      # ...and exactly one loader reports back for THIS node context. The seq
+      # value IS the deterministic "exactly one spawn" proof (a second spawn
+      # would bump it to 2); the 0-window refute only backstops a duplicate
+      # message for that single load.
+      assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
+      assert_receive {{:session_list_loaded, 1, ^local_node}, {:ok, {:ok, rows}}}, 5_000
+
+      assert Enum.any?(rows, &(&1.id == row_id and &1.marker == :awaiting_input))
+
+      refute_receive {{:session_list_loaded, _, _}, _}, 0
+
+      # The hook intercepts that NESTED result and applies it (the LiveView's
+      # own handle_info never sees it): rows land, the loading flag clears.
+      assert {:halt, applied} =
+               NodeAware.handle_info(
+                 {{:session_list_loaded, 1, local_node}, {:ok, {:ok, rows}}},
+                 socket
+               )
+
+      assert Enum.any?(applied.assigns.session_list, &(&1.id == row_id))
+      assert applied.assigns.session_list_loading == false
+      assert applied.assigns.session_list_error == nil
+    end
+
+    test "a stale seq or a foreign node is ignored; a matching result applies" do
+      kept = [%{id: session_row_id(), title: "kept", marker: :awaiting_input}]
+      fresh = [%{id: session_row_id(), title: "fresh", marker: :running}]
+
+      sock =
+        socket(%{
+          current_node: node(),
+          current_node_id: nil,
+          session_list: kept,
+          session_list_seq: 3,
+          session_list_loading: true,
+          session_list_error: nil
+        })
+
+      # An older in-flight seq → dropped, previous rows and loading flag kept.
+      assert {:halt, stale} =
+               NodeAware.handle_info(
+                 {{:session_list_loaded, 2, node()}, {:ok, {:ok, fresh}}},
+                 sock
+               )
+
+      assert stale.assigns.session_list == kept
+      assert stale.assigns.session_list_loading == true
+
+      # A result for a node this page is NOT viewing → dropped the same way.
+      assert {:halt, foreign} =
+               NodeAware.handle_info(
+                 {{:session_list_loaded, 3, :"genesis_remote_foreign@127.0.0.1"},
+                  {:ok, {:ok, fresh}}},
+                 sock
+               )
+
+      assert foreign.assigns.session_list == kept
+      assert foreign.assigns.session_list_loading == true
+
+      # Current seq AND current node → applied (rows replaced, loading cleared).
+      assert {:halt, applied} =
+               NodeAware.handle_info(
+                 {{:session_list_loaded, 3, node()}, {:ok, {:ok, fresh}}},
+                 sock
+               )
+
+      assert applied.assigns.session_list == fresh
+      assert applied.assigns.session_list_loading == false
+      assert applied.assigns.session_list_error == nil
+    end
+
+    test "assign_node/2 loads a fresh list for the new node context and the fresh rows replace the old" do
+      old_id = session_row_id()
+      new_id = session_row_id()
+      local_node = node()
+      previous = [%{id: old_id, title: "old", marker: :ended}]
+
+      install_session_list_runner(fn _node ->
+        {[session_summary(new_id, :running, "new")], []}
+      end)
+
+      sock =
+        connected_socket(%{
+          current_node: node(),
+          current_node_id: nil,
+          session_list: previous,
+          session_list_seq: 4,
+          session_list_loading: false,
+          session_list_error: nil,
+          tasks_node_loaded: {"stale-target", :"stale_remote@127.0.0.1"}
+        })
+
+      result = NodeAware.assign_node(sock, %{})
+
+      # The context change fires ONE fresh load (seq bump + loading) and the
+      # previous rows stay visible until it lands. (The Active Tasks reload
+      # fires from the same call — its own seq bump is pinned elsewhere.)
+      assert result.assigns.session_list_seq == 5
+      assert result.assigns.session_list_loading == true
+      assert result.assigns.session_list_error == nil
+      assert result.assigns.session_list == previous
+      assert result.assigns.tasks_node_loaded == {nil, local_node}
+
+      assert_receive {{:session_list_loaded, 5, ^local_node}, {:ok, {:ok, rows}}}, 5_000
+
+      assert Enum.any?(rows, &(&1.id == new_id and &1.marker == :running))
+
+      assert {:halt, applied} =
+               NodeAware.handle_info(
+                 {{:session_list_loaded, 5, local_node}, {:ok, {:ok, rows}}},
+                 result
+               )
+
+      assert Enum.any?(applied.assigns.session_list, &(&1.id == new_id))
+      refute Enum.any?(applied.assigns.session_list, &(&1.id == old_id))
+      assert applied.assigns.session_list_loading == false
+    end
+
+    test ":node_aware_reload_tasks refreshes conversations AND still lets the LiveView task reload run" do
+      local_node = node()
+
+      # Empty runner answer: this test pins the load machinery, not the rows.
+      install_session_list_runner(fn _node -> {[], []} end)
+
+      sock =
+        connected_socket(%{
+          current_node: node(),
+          current_node_id: nil,
+          session_list_seq: 2,
+          session_list_loading: false,
+          tasks_reload_pending: true
+        })
+
+      # `{:cont, ...}` (never `{:halt, ...}`) is the contract: the LiveView's
+      # OWN `handle_info(:node_aware_reload_tasks, socket)` clause must still run.
+      assert {:cont, cont} = NodeAware.handle_info(:node_aware_reload_tasks, sock)
+
+      assert cont.assigns.session_list_seq == 3
+      assert cont.assigns.session_list_loading == true
+
+      assert_receive {{:session_list_loaded, 3, ^local_node}, {:ok, {:ok, _rows}}}, 5_000
+
+      # The LiveView's own clause (what `{:cont, ...}` let through) still runs
+      # its sidebar task reload: seq bump, debounce flag cleared, fetch result.
+      reloaded = NodeAware.reload_tasks(cont)
+
+      assert reloaded.assigns.tasks_load_seq == 1
+      assert reloaded.assigns.tasks_reload_pending == false
+
+      assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, _result}, 5_000
+    end
+
+    test "an error result records :session_list_error and keeps the rows already shown" do
+      kept = [%{id: session_row_id(), title: "kept", marker: :awaiting_input}]
+      local_node = node()
+
+      install_session_list_runner(fn _node -> {:error, :boom} end)
+
+      # A page that already shows rows (a previous load) and is refreshing.
+      sock =
+        connected_mount_socket(%{
+          session_list: kept,
+          session_list_loading: false,
+          session_list_error: nil,
+          session_list_seq: 0
+        })
+
+      assert {:cont, socket} = NodeAware.on_mount(:default, %{}, %{}, sock)
+
+      assert socket.assigns.session_list == kept
+      assert socket.assigns.session_list_seq == 1
+      assert socket.assigns.session_list_loading == true
+
+      assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
+
+      assert_receive {{:session_list_loaded, 1, ^local_node}, {:ok, {:error, :boom}}}, 5_000
+
+      assert {:halt, applied} =
+               NodeAware.handle_info(
+                 {{:session_list_loaded, 1, local_node}, {:ok, {:error, :boom}}},
+                 socket
+               )
+
+      assert applied.assigns.session_list == kept
+      assert applied.assigns.session_list_loading == false
+      assert applied.assigns.session_list_error == :boom
     end
   end
 end

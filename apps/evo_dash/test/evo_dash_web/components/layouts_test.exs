@@ -184,10 +184,154 @@ defmodule EvoDashWeb.LayoutsTest do
     end
   end
 
+  describe "app/1 — sidebar Conversations section" do
+    test "renders on a non-Assistant page, header directly above the section body, below Active Tasks" do
+      html =
+        render_app(
+          current_page: :dashboard,
+          running_tasks: [
+            task(
+              id: "task-1",
+              status: :running,
+              project_path: "/home/user/my-project",
+              objective: "Active task"
+            )
+          ],
+          session_list: [%{id: 3, title: "three", marker: :ended}]
+        )
+
+      tree = parse(html)
+
+      # Below the Active Tasks block (layout order).
+      labels = sidebar_label_texts(tree)
+      assert "Active Tasks" in labels
+      assert "Conversations" in labels
+
+      assert Enum.find_index(labels, &(&1 == "Active Tasks")) <
+               Enum.find_index(labels, &(&1 == "Conversations"))
+
+      # Exactly ONE layout-owned "Conversations" header (chat icon) …
+      assert conversations_headers(tree) == ["Conversations"]
+
+      # … and it does NOT belong to the Active Tasks rows container, so the
+      # Sessions-group helper keeps its pre-move meaning.
+      assert sidebar_session_headers(html) == []
+
+      # The header block and the section body are the Conversations block's
+      # only two element children, in that order.
+      assert [section] = conversations_sections(tree)
+      assert [header, body] = element_children(section)
+
+      assert Floki.text(header) |> String.trim() == "Conversations"
+      assert [_] = Floki.find(header, ".hero-chat-bubble-left-right")
+      assert Floki.attribute(body, "id") == ["chat-session-list"]
+
+      assert [row] = Floki.find(body, "a[id^='chat-session-']")
+      assert Floki.attribute(row, "id") == ["chat-session-3"]
+    end
+
+    test "rows navigate to /assistant and keep the viewed node param off the Assistant page" do
+      for {node_id, href} <- [
+            {nil, "/assistant?session=3"},
+            {"remote-test", "/assistant?session=3&node=remote-test"}
+          ] do
+        html =
+          render_app(
+            current_page: :dashboard,
+            current_node_id: node_id,
+            session_list: [%{id: 3, title: "three", marker: :ended}]
+          )
+
+        tree = parse(html)
+        assert [link] = Floki.find(tree, "a#chat-session-3")
+
+        assert Floki.attribute(link, "href") == [href]
+        # `<.link navigate>` renders `data-phx-link="redirect"` — a NAVIGATE
+        # destination, never a patch (a patch to another LiveView is illegal).
+        assert Floki.attribute(link, "data-phx-link") == ["redirect"]
+        refute "patch" in Floki.attribute(link, "data-phx-link")
+        assert Floki.attribute(link, "aria-current") == []
+      end
+    end
+
+    test "on the Assistant page the same rows PATCH and the current session is highlighted" do
+      html =
+        render_app(
+          current_page: :assistant,
+          current_session_id: 4,
+          session_list: [
+            %{id: 3, title: "three", marker: :awaiting_input},
+            %{id: 4, title: "four", marker: :running}
+          ]
+        )
+
+      tree = parse(html)
+
+      [current] = Floki.find(tree, "a#chat-session-4")
+      assert Floki.attribute(current, "data-phx-link") == ["patch"]
+      assert Floki.attribute(current, "href") == ["/assistant?session=4"]
+      assert Floki.attribute(current, "aria-current") == ["page"]
+      assert_classes(current, ["bg-primary/10", "text-primary-standalone"])
+
+      [other] = Floki.find(tree, "a#chat-session-3")
+      assert Floki.attribute(other, "data-phx-link") == ["patch"]
+      assert Floki.attribute(other, "href") == ["/assistant?session=3"]
+      assert Floki.attribute(other, "aria-current") == []
+
+      refute other |> Floki.attribute("class") |> Enum.join(" ") =~ "bg-primary/10"
+
+      # Only the current session row is marked current (the Assistant nav link
+      # carries its own `aria-current="page"`).
+      assert [marked] = Floki.find(tree, "a[id^='chat-session-'][aria-current='page']")
+      assert Floki.attribute(marked, "id") == ["chat-session-4"]
+    end
+
+    test "empty, loading and error states all render inside the same section" do
+      empty = render_app(current_page: :dashboard)
+
+      assert conversations_section_text(empty) =~ "No conversations yet."
+      refute conversations_section_text(empty) =~ "Loading…"
+
+      loading = render_app(current_page: :dashboard, session_list_loading: true)
+
+      assert conversations_section_text(loading) =~ "Loading…"
+      refute conversations_section_text(loading) =~ "No conversations yet."
+
+      errored =
+        render_app(
+          current_page: :dashboard,
+          session_list: [%{id: 3, title: "three", marker: :ended}],
+          session_list_error: {:error, :remote_not_connected}
+        )
+
+      tree = parse(errored)
+      assert [alert] = Floki.find(tree, "#chat-session-list [role='alert']")
+      assert Floki.text(alert) =~ "Could not load conversations."
+      refute conversations_section_text(errored) =~ "No conversations yet."
+
+      # Rows already shown survive a failed load.
+      assert [link] = Floki.find(tree, "a#chat-session-3")
+      assert Floki.attribute(link, "href") == ["/assistant?session=3"]
+    end
+
+    test "renders even when Active Tasks has no running or pending rows" do
+      html = render_app(current_page: :dashboard, running_tasks: [], pending_tasks: [])
+      tree = parse(html)
+
+      refute Floki.text(tree) =~ "Active Tasks"
+      assert conversations_headers(tree) == ["Conversations"]
+
+      assert [list] = Floki.find(tree, "#chat-session-list")
+      assert Floki.attribute(list, "class") == ["space-y-1"]
+
+      assert conversations_section_text(html) =~ "No conversations yet."
+    end
+  end
+
   describe "app/1 — shell navigation" do
     test "Assistant is a chat link and preserves the selected remote node" do
-      for {node_id, href} <- [{nil, "/help"}, {"remote-test", "/help?node=remote-test"}] do
-        tree = render_app(current_node_id: node_id, current_page: :help) |> parse()
+      for {node_id, href} <- [{nil, "/assistant"}, {"remote-test", "/assistant?node=remote-test"}] do
+        tree = render_app(current_node_id: node_id, current_page: :assistant) |> parse()
         assert [assistant_link] = Floki.find(tree, "nav a[href='#{href}']")
         assert Floki.text(assistant_link) |> String.trim() == "Assistant"
         assert [_] = Floki.find(assistant_link, ".hero-chat-bubble-left-right")
@@ -197,8 +341,8 @@ defmodule EvoDashWeb.LayoutsTest do
     end
 
     test "active and inactive sidebar links retain visible keyboard focus" do
-      tree = render_app(current_page: :help) |> parse()
-      paths = ~w(/projects /agents /tasks /settings /system /help)
+      tree = render_app(current_page: :assistant) |> parse()
+      paths = ~w(/projects /agents /tasks /settings /system /assistant)
 
       for path <- paths do
         assert [link] = Floki.find(tree, "nav a[href='#{path}']")
@@ -208,7 +352,7 @@ defmodule EvoDashWeb.LayoutsTest do
           ~w(focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone)
         )
 
-        if path == "/help" do
+        if path == "/assistant" do
           assert Floki.attribute(link, "aria-current") == ["page"]
         else
           refute Floki.attribute(link, "aria-current") == ["page"]
@@ -307,12 +451,19 @@ defmodule EvoDashWeb.LayoutsTest do
   end
 
   # Session group headers, in sidebar order. The "Sessions" header is the only
-  # `span.sidebar-label` carrying the chat icon (the Assistant nav link's icon
-  # is its SIBLING, not a descendant of its label span).
+  # `span.sidebar-label` carrying the chat icon INSIDE the Active Tasks rows
+  # container (`div.space-y-1`, where the Assistant nav link's icon is a
+  # SIBLING of its label span, not a descendant). The layout-owned
+  # "Conversations" header carries the same icon but sits OUTSIDE that
+  # container — it is a sibling of its own `#chat-session-list` body — so the
+  # `:not(#chat-session-list)` scope keeps this helper meaning exactly what it
+  # meant before the conversations moved into the shared sidebar.
   defp sidebar_session_headers(html) do
     html
     |> parse()
-    |> Floki.find("span.sidebar-label:has(.hero-chat-bubble-left-right)")
+    |> Floki.find(
+      "div.space-y-1:not(#chat-session-list) span.sidebar-label:has(.hero-chat-bubble-left-right)"
+    )
     |> Enum.map(&Floki.text/1)
     |> Enum.map(&String.trim/1)
   end
@@ -320,6 +471,35 @@ defmodule EvoDashWeb.LayoutsTest do
   defp sidebar_task_links(html) do
     html |> parse() |> Floki.find("[data-sidebar-task-link]") |> length()
   end
+
+  # The layout-owned Conversations block: the one sidebar section carrying the
+  # `#chat-session-list` body (its own `pt-5 mt-4` block, a sibling of the
+  # Active Tasks block).
+  defp conversations_sections(tree), do: Floki.find(tree, "div.pt-5.mt-4:has(#chat-session-list)")
+
+  # The layout-owned "Conversations" header(s), in sidebar order.
+  defp conversations_headers(tree) do
+    tree
+    |> Floki.find(
+      "div.pt-5.mt-4:has(#chat-session-list) span.sidebar-label:has(.hero-chat-bubble-left-right)"
+    )
+    |> Enum.map(&Floki.text/1)
+    |> Enum.map(&String.trim/1)
+  end
+
+  defp conversations_section_text(html) do
+    html |> parse() |> conversations_sections() |> Floki.text()
+  end
+
+  # Sidebar label texts (`span.sidebar-label`) in document order.
+  defp sidebar_label_texts(tree) do
+    tree
+    |> Floki.find("span.sidebar-label")
+    |> Enum.map(&(&1 |> Floki.text() |> String.trim()))
+  end
+
+  # Element children of a parsed Floki node (text nodes dropped).
+  defp element_children({_tag, _attrs, children}), do: Enum.reject(children, &is_binary/1)
 
   # Task labels in sidebar order (the truncated label span inside each link).
   defp sidebar_task_labels(html) do

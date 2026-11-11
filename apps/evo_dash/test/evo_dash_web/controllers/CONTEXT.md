@@ -2,8 +2,8 @@
 
 ## Intent
 
-ExUnit suites for the classic (non-LiveView) HTTP controllers and error templates of `EvoDashWeb`: the task-archive JSON export endpoint, the `/health` and `/server/status` probes, and the router/error responses.
-Leaf node — all six suites live directly here, none of them calls `live/3` (pure HTTP requests plus `render_to_string/4`).
+ExUnit suites for the classic (non-LiveView) HTTP controllers, the legacy page redirects and error templates of `EvoDashWeb`: the task-archive JSON export endpoint, the `/health` and `/server/status` probes, the `/help` → `/assistant` redirect and the router/error responses.
+Leaf node — all seven suites live directly here, none of them calls `live/3` (pure HTTP requests plus `render_to_string/4`).
 
 ## Routing Table
 
@@ -15,12 +15,13 @@ Leaf node — all six suites live directly here, none of them calls `live/3` (pu
 
 | File | Module | Lines | Tests | async |
 |------|--------|-------|-------|-------|
-| `task_export_controller_test.exs` | `EvoDashWeb.TaskExportControllerTest` | 489 | 11 | `async: true` (per-test `setup` isolates the config dir PER PROCESS; carries `@moduletag :capture_log`) |
-| `page_controller_test.exs` | `EvoDashWeb.PageControllerTest` | 96 | 2 | `async: false` (explicit — the malformed-hub test writes junk shapes into the `{nil, node()}` `EvoDash.ActiveTasks` key) |
+| `task_export_controller_test.exs` | `EvoDashWeb.TaskExportControllerTest` | 487 | 11 | `async: true` (per-test `setup` isolates the config dir PER PROCESS; carries `@moduletag :capture_log`) |
+| `page_controller_test.exs` | `EvoDashWeb.PageControllerTest` | 102 | 2 | `async: false` (explicit — the malformed-hub test writes junk shapes into the `{nil, node()}` `EvoDash.ActiveTasks` key) |
+| `redirect_controller_test.exs` | `EvoDashWeb.RedirectControllerTest` | 54 | 5 | `async: true` (plain GETs only — no LiveView mount, so nothing process-global is written) |
 | `error_html_test.exs` | `EvoDashWeb.ErrorHTMLTest` | 14 | 2 | `async: true` |
 | `error_json_test.exs` | `EvoDashWeb.ErrorJSONTest` | 12 | 2 | `async: true` |
 | `health_controller_test.exs` | `EvoDashWeb.HealthControllerTest` | 60 | 5 | `async: true` |
-| `server_status_controller_test.exs` | `EvoDashWeb.ServerStatusControllerTest` | 123 | 9 | `async: true` (its only global is the `:server_status_task_runner` seam, restored in `on_exit`) |
+| `server_status_controller_test.exs` | `EvoDashWeb.ServerStatusControllerTest` | 305 | 9 | `async: true` (its only global is the `:server_status_task_runner` seam, restored in `on_exit`) |
 
 ## `task_export_controller_test.exs`
 
@@ -36,9 +37,16 @@ Two describes: `GET /tasks/:task_id/export` (8 tests) and `... with ?node= param
 ## `page_controller_test.exs`
 
 `async: false` because it writes junk shapes into the shared `EvoDash.ActiveTasks` hub (config isolation is NOT a reason: `setup` isolates the dir per process through the `:config_dir_fun` seam).
-- Setup isolates the config dir PER PROCESS (`EvoDash.Test.ConfigDir.isolate!/1`) and calls `EvoGit.Config.VersionState.complete_onboarding/0` so `/` and `/help` render instead of redirecting to `/welcome`.
-- Test 1: `GET /` renders ProjectsLive (palette + `AdaptiveInput`, no `chat-form`) and `GET /help` renders HomeLive (`#chat-form`, trimmed `h1` text exactly "Genesis Assistant", matching the HomeLive suite's heading-scoped convention).
+- Setup isolates the config dir PER PROCESS (`EvoDash.Test.ConfigDir.isolate!/1`) and calls `EvoGit.Config.VersionState.complete_onboarding/0` so `/` and `/assistant` render instead of redirecting to `/welcome`.
+- Test 1: `GET /` renders ProjectsLive (palette + `AdaptiveInput`, no `chat-form`) and `GET /assistant` renders HomeLive (`#chat-form`, trimmed `h1` text exactly "Genesis Assistant", matching the HomeLive suite's heading-scoped convention); `/help` is the legacy 302 alias covered by `redirect_controller_test.exs`.
 - Test 2: a whole-page render survives malformed `EvoDash.ActiveTasks` hub entries (`:junk_atom`, a bare binary) — the mount hook's `hub_snapshot/2` sanitizes them, so `Layouts.group_tasks_by_project/2` cannot `BadMapError`; the test clears the shared hub before AND after itself.
+
+## `redirect_controller_test.exs`
+
+`async: true`: every test issues a plain `GET` and never calls `live/3`, so no process-global state is written — not `EvoDash.ChatHistory` (only a connected HomeLive mount writes it), not `EvoDash.ActiveTasks`, not the task store.
+
+- `/help` is a 302 alias for the Assistant page: a bare `GET /help` redirects to `/assistant` with NO trailing `?`, and `?session=7`, `?session=7&node=t1` and a lone `?node=t1` each keep the whole RAW query string through `EvoDashWeb.RedirectController.assistant/2`.
+- `GET /assistant` answers `200` as a plain dead render (asserted on `id="chat-form"` and the "Genesis Assistant" heading text); `setup` isolates the config dir per process (`EvoDash.Test.ConfigDir.isolate!/1`) and completes onboarding so the page renders instead of redirecting to `/welcome`.
 
 ## `error_html_test.exs` / `error_json_test.exs`
 
