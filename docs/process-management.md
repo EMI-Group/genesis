@@ -12,7 +12,7 @@ inspect and control that work. This describes the current implementation; it is 
 | One batch of model tool calls | `EvoGit.ToolRuntime` |
 | The node-wide execution registry, sampling and control | `EvoGit.ProcessManager` |
 | Node RPC | `EvoGit.AgentScheduler.RemoteAPI` / `EvoGit.RemoteNode` / `EvoDash.NodeContext` |
-| The inspector | `EvoDashWeb.ProcessesLive` (`/processes`) + the `/agents` detail panel |
+| The inspector | `EvoDashWeb.ProcessesLive` (`/processes`) |
 
 ---
 
@@ -354,9 +354,8 @@ filter:
 Lifecycle changes only: a second `finish/3`, an unchanged status or a no-op attach never broadcasts. A
 built-in execution never attaches, so it announces itself through its ONE `:process_exited` (the dashboard
 prepends an unknown-id exit row). The dashboard consumes the topic with no polling at all — `ProcessesLive`
-merges each event into its in-memory row list (find-or-nil; an event for an unknown id is a no-op), while the
-`/agents` detail panel ignores payload shapes and simply refetches for the selected agent on any
-node-matching process event.
+is its only consumer and merges each node-matching event into its in-memory row list (find-or-nil; an event
+for an unknown id is a no-op).
 
 ## 7. Tool runtime responsibilities
 
@@ -421,8 +420,7 @@ and the complete control log (`ProcessComponents.execution_row/1`).
   would answer `{:error, :no_os_process}`. The Exit column uses the shared exit/reason label (the code, else
   a reason label, else `—`), and the expanded detail block adds Target, Exit Code, Reason, Runtime and
   Backend. The Backend column reads "In-process" for `:builtin` and "Unsandboxed" for an external `:none`
-  process. External rows keep the status-gated controls, and the `/agents` compact panel inherits the same
-  `—` figures.
+  process. External rows keep the status-gated controls.
 - **Loading** is asynchronous and exit-safe: `ProcessesLive.Load.start/1` bumps a monotonic sequence, paints
   the loading state and runs the fetch on `EvoDash.TaskSupervisor` inside `EvoDash.SafeCall.run/1`, so a dead
   RPC target becomes an error value and the loading flag can never stick. The self-message tag is
@@ -448,17 +446,18 @@ and the complete control log (`ProcessComponents.execution_row/1`).
   actions are attributed to actor `:remote`, rendered as "Dashboard". Precise core answers get their own
   message, including `:no_os_process` for a built-in execution — the UI hides its controls, so that is only
   the race/remote fallback.
-- **`/agents`** shows a compact per-agent `Processes` section (`ProcessComponents.compact_rows/1`) loaded
-  through the same RPC with the same sequence/node/agent stale guards, plus a "View in Processes" link
-  carrying `agent_id` and the node.
+- **Per-agent filtering**: `/processes` is the only dashboard surface for managed processes. `?agent_id=`
+  restricts the core-side list query — the initial snapshot and every reload after a filter change — through
+  `NodeContext.list_processes/2`'s `:agent_id` opt, and the active filter renders as a removable "Agent"
+  chip in the filter bar beside the optional `?task_id=` chip. Each row also links its agent id to the
+  node-aware `/agents` page, which carries no process data of its own.
 
 The RPC surface mirrors one-for-one across the three layers: `EvoGit.AgentScheduler.RemoteAPI`
 (`list_processes/1`, `get_process/1`, `process_stats/1`, `process_control/3`) ← `EvoGit.RemoteNode`
 (`node`-taking wrappers) ← `EvoDash.NodeContext` (`list_processes/2`, `process_control/4`). `process_control`
 normalizes `:pause | :resume | :kill | {:signal, sig}` and never forwards an unrecognized action; the list
 returns native `%Execution{}` structs, which `:erpc.call/5` transfers intact. Test seams:
-`:processes_page_load_runner`, `:processes_control_runner` (`:evo_dash`) and
-`:agents_processes_runner`.
+`:processes_page_load_runner` and `:processes_control_runner` (`:evo_dash`).
 
 ## 9. Extension guide
 
@@ -491,8 +490,8 @@ The point of the layering is that each kind of extension touches a small, known 
    total).
 
 **A new dashboard column**: add the label helper to `ProcessesLive.Format`, the `<th>`/`<td>` to
-`ProcessComponents.execution_row/1` (and `compact_rows/1` if it belongs on `/agents`), plus a test; no core
-change is needed — the row already carries the whole `%Execution{}`.
+`ProcessComponents.execution_row/1`, plus a test; no core change is needed — the row already carries the whole
+`%Execution{}`.
 
 **A new operator action**: add the clause to `RemoteAPI.process_control/3`'s normalization and to
 `ProcessManager` (recording a `control_log` entry with `action`, `signal`, `reason`, `actor`), then wire the
