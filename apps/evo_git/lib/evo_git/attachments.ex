@@ -96,7 +96,7 @@ defmodule EvoGit.Attachments do
   (spec-error style — NO try/rescue swallowing).
 
   Both string-keyed and atom-keyed maps are accepted (mirrors the
-  `EvoGit.Core.ForeignRepo.normalize/1` idiom for persisted/CLI shapes;
+  `EvoGit.Core.ForeignRepo.normalize/1` idiom for persisted/task-opt shapes;
   string keys are tried first). Validates per attachment: known `type`
   (`"image"`/`"audio"`), non-blank `name` and `media_type`, and `data` that is
   base64-parseable and no larger than `#{@max_bytes}` raw bytes.

@@ -252,7 +252,7 @@ defmodule EvoGit.Runtime.Helpers do
   end
 
   @doc """
-  Merges two foreign repo lists. CLI repos take precedence over TOML repos
+  Merges two foreign repo lists. Task-opt repos take precedence over TOML repos
   when there's an id conflict.
 
   Both lists are normalized via `EvoGit.Core.ForeignRepo.normalize/1` before
@@ -314,7 +314,7 @@ defmodule EvoGit.Runtime.Helpers do
 
   @doc """
   Loads foreign repos for a runtime phase: `genesis.toml` defaults merged with
-  CLI-provided repos (CLI takes precedence).
+  task-opt repos (task opts take precedence).
 
   Every merged entry is validated UP FRONT (spec-error style, no `try/rescue` —
   this runs in the task process before any agent spawns, mirroring
@@ -578,7 +578,7 @@ defmodule EvoGit.Runtime.Helpers do
     a user/dashboard explicitly chose a model, so the model-selection script must
     NOT override it; or
   - `:model_id_locked` is explicitly true — a pass-through for cases where the
-    lock exists without an id (e.g. the CLI `-m` bare-model override).
+    lock exists without an id (e.g. an explicitly locked bare-model override).
   """
   @spec model_id_locked?(keyword()) :: boolean()
   def model_id_locked?(opts) do

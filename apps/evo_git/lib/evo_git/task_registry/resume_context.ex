@@ -5,7 +5,7 @@ defmodule EvoGit.TaskRegistry.ResumeContext do
   When an evolve task resumes from a previous task, this module builds the
   context block (commits, objective, result, writable foreign repos) that gets
   prepended to the new task's objective. Caller-supplied `:foreign_repos` are
-  normalized back into `%ForeignRepo{}` structs (persisted/CLI entries may be
+  normalized back into `%ForeignRepo{}` structs (persisted/task-opt entries may be
   string-keyed maps from a Codec JSON round trip) and each repo's `base_sha`
   is overridden with the previous task's result `repos` commit when present —
   per-repo starting commits, same as the merge-conflict flow.

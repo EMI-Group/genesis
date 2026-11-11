@@ -241,9 +241,8 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
     do: raise(ArgumentError, "invalid genesis mode: #{inspect(other)}")
 
   @doc """
-  Dispatches to the correct mode resolver based on the task type, mirroring
-  the core CLI (`apps/evo_git/lib/evo_git/cli.ex`) which has separate
-  `genesis_mode_atom/1` (new/existing) and `evolution_mode_atom/1`
+  Dispatches to the correct mode resolver based on the task type, with
+  separate `genesis_mode_atom/1` (new/existing) and `evolution_mode_atom/1`
   (simple/custom) functions. Note: genesis tasks with mode "custom" raise a
   specific evolve-only error instead of the generic invalid-mode error.
   """

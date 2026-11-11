@@ -74,7 +74,7 @@ defmodule EvoGit.Core.ForeignRepo do
   end
 
   @doc """
-  Normalizes any persisted/CLI foreign-repo shape into a `%ForeignRepo{}` struct.
+  Normalizes any persisted/task-opt foreign-repo shape into a `%ForeignRepo{}` struct.
 
   Returns the struct, or `nil` when the input is unparseable (non-map input,
   missing/empty `id`, or no root under any of `"root"`/`"path"`/`:root`/`:path`).
@@ -88,7 +88,7 @@ defmodule EvoGit.Core.ForeignRepo do
   (`%{"id" => ..., "root" => ..., "description" => ..., "writable" => ...,
   "base_sha" => ...}`). Code that dot-accesses `.id`/`.root` on those raw maps
   (e.g. `EvoGit.Runtime.Helpers.merge_foreign_repos/2`)
-  crashes with a `KeyError`. This function coerces every persisted/CLI shape back
+  crashes with a `KeyError`. This function coerces every persisted/task-opt shape back
   into a struct before use. `EvoGit.TaskRegistry.MergeContext` and
   `EvoGit.Runtime.Helpers` apply it centrally.
 
@@ -147,7 +147,7 @@ defmodule EvoGit.Core.ForeignRepo do
 
   # Coerces a `writable` opt to a boolean: only the literal `true` is writable;
   # anything else (nil, non-boolean values) is coerced to `false` rather than
-  # crashing on an invalid persisted/CLI value.
+  # crashing on an invalid persisted/task-opt value.
   defp writable?(value), do: value == true
 
   # Coerces a `base_sha` opt to a non-blank string or nil. Blank/whitespace-only
