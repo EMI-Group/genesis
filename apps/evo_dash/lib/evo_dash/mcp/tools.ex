@@ -9,21 +9,12 @@ defmodule EvoDash.MCP.Tools do
      "Check Genesis version, model readiness, configuration file paths on the Genesis host and optional project path. Does not test provider connectivity or apply file edits.",
      %{path: @path}, [], true},
     {"genesis_reload_config", :reload_config,
-     "Validate and load edited Genesis configuration/credential files into the running scheduler, then return readiness. Takes no secrets or file contents. Does not restart existing agents or test provider connectivity; node distribution changes require a service restart.",
+     "Reload Genesis configuration through the existing scheduler API, then return configuration readiness. Takes no secrets or file contents. Does not restart existing agents or test provider connectivity; node distribution changes require a service restart.",
      %{}, [], false},
     {"genesis_start_task", :start,
      "Start background development; returns a task ID immediately. Existing Genesis Git behavior applies. Poll genesis_get_task for the actual result. To continue a finished task, use evolve with resume_from in the same project.",
      %{
        path: @path,
-       budget: %{
-         type: "object",
-         additionalProperties: false,
-         properties:
-           Map.new(
-             ~w(max_agents max_depth max_turns_root max_turns max_duration_seconds),
-             &{&1, %{type: "integer", minimum: 1}}
-           )
-       },
        objective: %{
          type: "string",
          description: "Development goal, context, constraints and acceptance criteria."
@@ -39,7 +30,7 @@ defmodule EvoDash.MCP.Tools do
        model_id: %{type: "string", description: "Optional configured Genesis model profile ID."}
      }, ["path", "objective"], false},
     {"genesis_get_task", :get,
-     "Read shared task progress (current work, reported outcomes, remaining work, blockers, next steps), activity and saved results. Full objectives are opt-in. Running is not completed; reports are not independent verification.",
+     "Read saved task status, bounded scheduler observations and saved results. Full objectives are opt-in. Running is not completed; reports are not independent verification.",
      %{
        task_id: @id,
        since: %{
@@ -69,15 +60,14 @@ defmodule EvoDash.MCP.Tools do
      "Read a finished task's saved report, errors and result commits. Reports not_ready for active tasks. Test claims are backend-reported, not independently verified.",
      %{task_id: @id}, ["task_id"], true},
     {"genesis_send_message", :message,
-     "Queue instructions to a running task's root or optional agent_id. Follow the message receipt: queued is not delivered, and delivered is not proof of adoption. The target must belong to this task.",
+     "Queue instructions to a running task's root or optional agent_id through the existing message API. Acceptance is not proof of delivery or adoption. The target must belong to this task.",
      %{task_id: @id, message: %{type: "string"}, agent_id: %{type: "integer", minimum: 1}},
      ["task_id", "message"], false},
     {"genesis_cancel_task", :cancel,
-     "Request stopping, optionally wait up to 20 seconds or force escalation. Inspect stopped and recoverable_work; a terminal row alone does not confirm process cleanup. Does not undo Git changes.",
+     "Request cancellation through the existing task API, optionally using its force-kill operation. Returns request acceptance and saved task state, not confirmation that all processes or cleanup have stopped. Does not undo Git changes.",
      %{
        task_id: @id,
-       force: %{type: "boolean", default: false},
-       wait_seconds: %{type: "integer", minimum: 0, maximum: 20, default: 0}
+       force: %{type: "boolean", default: false}
      }, ["task_id"], false}
   ]
 

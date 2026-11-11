@@ -223,7 +223,7 @@ defmodule EvoGit.Agent.Runner do
 
       messages =
         EvoGit.Agent.ContextBuilder.build_initial_messages(
-          agent_module.system_prompt() <> "\n\n" <> EvoGit.TaskProgress.instruction(),
+          agent_module.system_prompt(),
           combined_prompt,
           agent_state.parent_id,
           attachments
@@ -478,7 +478,7 @@ defmodule EvoGit.Agent.Runner do
   # `loop/1` in production.
   @doc false
   def drain_and_inject_user_messages(%LoopState{agent_id: agent_id, context: context} = state) do
-    messages = EvoGit.AgentScheduler.drain_user_messages(agent_id)
+    messages = EvoGit.AgentScheduler.Store.drain_pending_user_messages(agent_id)
 
     case messages do
       [] ->
@@ -495,7 +495,6 @@ defmodule EvoGit.Agent.Runner do
         # The in-memory new_context is already stamped at creation
         # (tag_message_turn above) — no rebind needed.
         EvoGit.Agent.ContextBuilder.sync_context_to_ets(agent_id, new_context)
-        EvoGit.TaskProgress.delivered(messages, agent_id)
 
         %{state | context: new_context}
     end
@@ -605,9 +604,6 @@ defmodule EvoGit.Agent.Runner do
   end
 
   defp trigger_recovery(%LoopState{} = state, reason) do
-    if String.contains?(reason, "max turns") or reason == "task turn budget exhausted",
-      do: EvoGit.TaskBudget.exhausted(state.agent_id, reason)
-
     trigger_recovery(state, reason, [])
   end
 
@@ -793,32 +789,18 @@ defmodule EvoGit.Agent.Runner do
   end
 
   defp do_turn(%LoopState{} = state) do
-    permitted =
-      if state.in_grace_period,
-        do: :ok,
-        else: EvoGit.AgentScheduler.Store.consume_budget_turn(state.agent_id)
-
-    case permitted do
-      {:error, :turn_budget_exhausted} ->
-        trigger_recovery(state, "task turn budget exhausted")
-
-      _ ->
-        EvoGit.Agent.ToolDispatch.do_turn(
-          state,
-          &effective_tools/1,
-          state.agent_module.subagent_modules(),
-          &loop/1,
-          &trigger_recovery/2
-        )
-    end
+    EvoGit.Agent.ToolDispatch.do_turn(
+      state,
+      &effective_tools/1,
+      state.agent_module.subagent_modules(),
+      &loop/1,
+      &trigger_recovery/2
+    )
   end
 
   defp effective_tools(%LoopState{} = state) do
     skill_schemas = Map.get(state, :skill_schemas, [])
-
-    all_tools =
-      state.agent_module.available_tools() ++
-        skill_schemas ++ [EvoGit.Agent.Tools.ReportProgress.schema()]
+    all_tools = state.agent_module.available_tools() ++ skill_schemas
 
     if at_max_depth?(state) do
       excluded = MapSet.new(EvoGit.Agent.SubagentSchemas.tools(state.agent_module))

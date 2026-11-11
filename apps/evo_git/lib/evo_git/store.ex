@@ -203,25 +203,6 @@ defmodule EvoGit.Store do
     )
   end
 
-  def record_task_message(store, task_id, message_id, agent_id, status),
-    do:
-      GenServer.call(
-        store,
-        {:record_task_message, task_id, message_id, agent_id, status},
-        @call_timeout
-      )
-
-  def get_task_progress(store \\ __MODULE__, task_id),
-    do: GenServer.call(store, {:get_task_progress, task_id}, @call_timeout)
-
-  def publish_task_progress(store \\ __MODULE__, task_id, agent_id, attrs, meta),
-    do:
-      GenServer.call(
-        store,
-        {:publish_task_progress, task_id, agent_id, attrs, meta},
-        @call_timeout
-      )
-
   ## Public API — Tasks
 
   @doc "Inserts or replaces a task. Validates that id (string) and status are present."
@@ -693,27 +674,6 @@ defmodule EvoGit.Store do
   end
 
   ## GenServer — Task handlers
-
-  @impl true
-  def handle_call({:record_task_message, id, message, agent, status}, from, state) do
-    offload_write(from, state, fn ->
-      Operations.Progress.message(state.repo, id, message, agent, status)
-    end)
-  end
-
-  @impl true
-  def handle_call({:get_task_progress, id}, from, state) do
-    offload(from, state, "get_task_progress", nil, fn ->
-      Operations.Progress.get(state.repo, id)
-    end)
-  end
-
-  @impl true
-  def handle_call({:publish_task_progress, id, agent, attrs, meta}, from, state) do
-    offload_write(from, state, fn ->
-      Operations.Progress.publish(state.repo, id, agent, attrs, meta)
-    end)
-  end
 
   # All write handlers below forward to the dedicated writer process and
   # return {:noreply, state} immediately — this GenServer never executes a

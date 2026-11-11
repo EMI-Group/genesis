@@ -75,8 +75,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
     @covering_index_version,
     @archive_version,
     @prune_indexes_version,
-    @vct_mounts_version,
-    20_261_108_000_001
+    @vct_mounts_version
   ]
 
   # The `:persistent_term` memo slot `EvoGit.Store.Boot` fills with the
@@ -115,8 +114,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                {@covering_index_version, @covering_index_module},
                {@archive_version, @archive_module},
                {@prune_indexes_version, @prune_indexes_module},
-               {@vct_mounts_version, @vct_mounts_module},
-               {20_261_108_000_001, EvoGit.Repo.Migrations.TaskProgress}
+               {@vct_mounts_version, @vct_mounts_module}
              ]
 
       versions = Enum.map(source, &elem(&1, 0))
@@ -176,8 +174,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                {@covering_index_version, @covering_index_module},
                {@archive_version, @archive_module},
                {@prune_indexes_version, @prune_indexes_module},
-               {@vct_mounts_version, @vct_mounts_module},
-               {20_261_108_000_001, EvoGit.Repo.Migrations.TaskProgress}
+               {@vct_mounts_version, @vct_mounts_module}
              ]
 
       assert Code.ensure_loaded?(@baseline_module)

@@ -193,9 +193,18 @@ defmodule EvoGit.AgentScheduler.Store do
   def append_pending_user_message(agent_id, message) when is_binary(message) or is_map(message) do
     stored = canonical_pending_message(message)
 
-    atomic_update(agent_id, fn state ->
-      {%{state | pending_user_messages: state.pending_user_messages ++ [stored]}, :ok}
-    end)
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        updated = %{
+          agent_state
+          | pending_user_messages: agent_state.pending_user_messages ++ [stored]
+        }
+
+        put_agent_state(agent_id, updated)
+
+      :error ->
+        {:error, :not_found}
+    end
   end
 
   @doc """
@@ -215,11 +224,18 @@ defmodule EvoGit.AgentScheduler.Store do
   """
   @spec drain_pending_user_messages(pos_integer()) :: [String.t() | Attachments.message()]
   def drain_pending_user_messages(agent_id) do
-    case atomic_update(agent_id, fn state ->
-           {%{state | pending_user_messages: []}, state.pending_user_messages}
-         end) do
-      {:error, :not_found} -> []
-      messages -> messages
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        messages = agent_state.pending_user_messages
+
+        if messages != [] do
+          put_agent_state(agent_id, %{agent_state | pending_user_messages: []})
+        end
+
+        messages
+
+      :error ->
+        []
     end
   end
 
@@ -234,15 +250,7 @@ defmodule EvoGit.AgentScheduler.Store do
   # Both the map/validate seam and this verbatim binary clause live here so the
   # queue holds exactly what its callers appended, shape-for-shape.
   defp canonical_pending_message(message) when is_binary(message), do: message
-
-  defp canonical_pending_message(message) when is_map(message) do
-    normalized = Attachments.message(message)
-
-    case Map.get(message, :progress_message_id) do
-      id when is_binary(id) -> Map.put(normalized, :progress_message_id, id)
-      _ -> normalized
-    end
-  end
+  defp canonical_pending_message(message) when is_map(message), do: Attachments.message(message)
 
   @doc """
   Sets the `cancel_requested` flag to `true` on an agent's state.
@@ -264,7 +272,13 @@ defmodule EvoGit.AgentScheduler.Store do
   """
   @spec set_cancel_requested(pos_integer(), boolean() | nil) :: :ok | {:error, :not_found}
   def set_cancel_requested(agent_id, value) do
-    atomic_update(agent_id, fn state -> {%{state | cancel_requested: value}, :ok} end)
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        put_agent_state(agent_id, %{agent_state | cancel_requested: value})
+
+      :error ->
+        {:error, :not_found}
+    end
   end
 
   @doc """
@@ -287,7 +301,13 @@ defmodule EvoGit.AgentScheduler.Store do
   """
   @spec clear_cancel_requested(pos_integer()) :: :ok | {:error, :not_found}
   def clear_cancel_requested(agent_id) do
-    atomic_update(agent_id, fn state -> {%{state | cancel_requested: nil}, :ok} end)
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        put_agent_state(agent_id, %{agent_state | cancel_requested: nil})
+
+      :error ->
+        {:error, :not_found}
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -375,7 +395,14 @@ defmodule EvoGit.AgentScheduler.Store do
   """
   @spec batch_update_agent(pos_integer(), keyword()) :: :ok
   def batch_update_agent(agent_id, fields) when is_list(fields) do
-    result = atomic_update(agent_id, fn state -> {Kernel.struct!(state, fields), :ok} end, false)
+    {:ok, agent_state} = get_agent_state(agent_id)
+    updated_state = Kernel.struct!(agent_state, fields)
+
+    # Direct ETS write (no put_agent_state round-trip) plus a focused delta
+    # broadcast — heavy fields stripped (`:context`), `message_count` added
+    # when a context is updated. Subscribers can use whichever granularity
+    # they prefer.
+    :ets.insert(@agent_table, {agent_id, updated_state})
 
     broadcast_fields =
       case fields[:context] do
@@ -392,10 +419,7 @@ defmodule EvoGit.AgentScheduler.Store do
     PubSub.broadcast_agent_updated(agent_id, broadcast_fields)
     PubSub.broadcast_agents_updated()
 
-    case result do
-      {:error, :not_found} -> raise MatchError, term: :error
-      other -> other
-    end
+    :ok
   end
 
   @doc """
@@ -409,24 +433,6 @@ defmodule EvoGit.AgentScheduler.Store do
   @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: :ok
   def update_agent_context(agent_id, %Context{} = context) do
     batch_update_agent(agent_id, context: context)
-  end
-
-  @doc "Consumes one task-budget turn without resetting on an agent retry."
-  def consume_budget_turn(id) do
-    atomic_update(id, fn state ->
-      cond do
-        is_nil(state.budget) -> {state, :ok}
-        state.budget_turns_used >= state.max_turns -> {state, {:error, :turn_budget_exhausted}}
-        true -> {%{state | budget_turns_used: state.budget_turns_used + 1}, :ok}
-      end
-    end)
-  end
-
-  def activity(id, phase, tools \\ []) do
-    atomic_update(id, fn state ->
-      value = %{phase: phase, tools: tools, updated_at: DateTime.to_iso8601(DateTime.utc_now())}
-      {Kernel.struct!(state, activity: value), :ok}
-    end)
   end
 
   @doc """
@@ -464,36 +470,16 @@ defmodule EvoGit.AgentScheduler.Store do
   """
   @spec increment_compression_count(pos_integer()) :: :ok
   def increment_compression_count(agent_id) do
-    case atomic_update(agent_id, fn state ->
-           {%{state | compression_count: state.compression_count + 1}, :ok}
-         end) do
-      {:error, :not_found} -> raise MatchError, term: :error
-      value -> value
-    end
-  end
+    {:ok, agent_state} = get_agent_state(agent_id)
 
-  # Compare-and-swap the whole ETS value so concurrent field updates cannot
-  # overwrite a message appended or drained after their initial read.
-  defp atomic_update(id, fun, broadcast \\ true) do
-    case get_agent_state(id) do
-      :error ->
-        {:error, :not_found}
+    updated_state = %{
+      agent_state
+      | compression_count: agent_state.compression_count + 1
+    }
 
-      {:ok, old} ->
-        {updated, result} = fun.(old)
-        match = [{{id, :"$1"}, [{:==, :"$1", {:const, old}}], [{:const, {id, updated}}]}]
+    put_agent_state(agent_id, updated_state)
 
-        if :ets.select_replace(@agent_table, match) == 1 do
-          fields = agent_state_changes(old, updated)
-
-          if broadcast and fields != [],
-            do: PubSub.broadcast_agent_updated(id, strip_heavy_fields(fields))
-
-          result
-        else
-          atomic_update(id, fun, broadcast)
-        end
-    end
+    :ok
   end
 
   # ---------------------------------------------------------------------------
@@ -525,7 +511,6 @@ defmodule EvoGit.AgentScheduler.Store do
   # its progress is tracked via `total_tokens` which is sufficient for the
   # dashboard.
   @agent_state_tracked_fields [
-    :activity,
     :turn,
     :usage,
     :total_tokens,

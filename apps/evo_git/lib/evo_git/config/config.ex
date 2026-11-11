@@ -179,7 +179,11 @@ defmodule EvoGit.Config do
   """
   @spec resolve() :: map()
   def resolve do
-    config = resolve_user_config(user_config())
+    config =
+      defaults()
+      |> deep_merge(atomize_keys(user_config()))
+      |> atomize_enum_values()
+      |> migrate_llm_models()
 
     case EvoGit.Config.Schema.validate(config) do
       {:ok, _validated} ->
@@ -200,13 +204,6 @@ defmodule EvoGit.Config do
     end
 
     config
-  end
-
-  defp resolve_user_config(user_config) do
-    defaults()
-    |> deep_merge(atomize_keys(user_config))
-    |> atomize_enum_values()
-    |> migrate_llm_models()
   end
 
   defp atomize_enum_values(config) when is_map(config) do
@@ -512,79 +509,6 @@ defmodule EvoGit.Config do
   def user_config do
     path = config_path()
     cached_file_read(path, fn -> read_toml_file(path, %{}, description: "config") end)
-  end
-
-  @doc """
-  Strictly re-reads configuration and credentials before a runtime reload.
-
-  Unlike the tolerant startup reader, rejects unreadable or malformed files
-  and invalid schema values. Refreshes the file caches even for same-second,
-  same-size edits. Errors name the file or invalid keys without its contents.
-  Missing files are allowed, as with startup. Does not update the scheduler.
-  """
-  @spec reload() :: {:ok, map()} | {:error, String.t()}
-  def reload do
-    with {:ok, user_config} <- read_reload_file(config_path()),
-         {:ok, creds} <- read_reload_file(credentials_path()),
-         :ok <- validate_reload_tables(atomize_keys(user_config), defaults(), []) do
-      config = resolve_user_config(user_config)
-
-      case EvoGit.Config.Schema.validate(config) do
-        {:ok, _} ->
-          invalidate_file_cache(config_path())
-          invalidate_file_cache(credentials_path())
-          _ = load_credentials(creds)
-          {:ok, config}
-
-        {:error, errors} ->
-          keys = Enum.map_join(errors, ", ", &Enum.join(&1.key_path, "."))
-          {:error, "Invalid configuration in #{config_path()}: #{keys}."}
-      end
-    end
-  end
-
-  # The tolerant merge retains default tables when given a scalar override.
-  # Strict reload must reject that shape before the original value is lost.
-  defp validate_reload_tables(config, defaults, path) do
-    Enum.reduce_while(config, :ok, fn {key, value}, :ok ->
-      default = Map.get(defaults, key)
-
-      result =
-        cond do
-          path ++ [key] == [:llm, :models] and not is_list(value) ->
-            {:error, "Expected an array of model tables at llm.models in #{config_path()}."}
-
-          is_map(default) and is_map(value) ->
-            validate_reload_tables(value, default, path ++ [key])
-
-          is_map(default) ->
-            {:error, "Expected a table at #{Enum.join(path ++ [key], ".")} in #{config_path()}."}
-
-          true ->
-            :ok
-        end
-
-      case result do
-        :ok -> {:cont, :ok}
-        error -> {:halt, error}
-      end
-    end)
-  end
-
-  defp read_reload_file(path) do
-    case File.read(path) do
-      {:ok, contents} ->
-        case TomlElixir.decode(contents) do
-          {:ok, config} -> {:ok, config}
-          {:error, _} -> {:error, "Invalid TOML in #{path}."}
-        end
-
-      {:error, :enoent} ->
-        {:ok, %{}}
-
-      {:error, reason} ->
-        {:error, "Cannot read #{path}: #{reason}."}
-    end
   end
 
   @doc false
@@ -986,12 +910,8 @@ defmodule EvoGit.Config do
   end
 
   defp read_credentials_file(path) when is_binary(path) do
-    path
-    |> read_toml_file(%{}, description: "credentials")
-    |> load_credentials()
-  end
+    creds = read_toml_file(path, %{}, description: "credentials")
 
-  defp load_credentials(creds) do
     Enum.each(creds, fn {key, value} ->
       if is_binary(value) and value != "" do
         # Set via ReqLLM for immediate in-process effect.

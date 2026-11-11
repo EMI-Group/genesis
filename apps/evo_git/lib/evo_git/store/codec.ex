@@ -94,7 +94,7 @@ defmodule EvoGit.Store.Codec do
   @error_kind_strings MapSet.new(@error_kinds, &Atom.to_string/1)
 
   # Closed set of atom values for the `source` field (atomized on decode).
-  @error_sources ~w(result_handler down_handler force_kill_task finalizing_watchdog startup_reconcile lease_sweep recheck_resolve task_budget)a
+  @error_sources ~w(result_handler down_handler force_kill_task finalizing_watchdog startup_reconcile lease_sweep recheck_resolve)a
   @error_source_strings MapSet.new(@error_sources, &Atom.to_string/1)
 
   ## Public — column lists
@@ -376,7 +376,7 @@ defmodule EvoGit.Store.Codec do
   # unregistered key cannot slip in unnoticed.
   # Only the outer :model_spec key is atomized; its canonical selection map
   # keeps string keys. Admission owns projecting identity without credentials.
-  @atomized_opt_keys ~w(path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from attachments quality_level model_spec budget)a
+  @atomized_opt_keys ~w(path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from attachments quality_level model_spec)a
   @string_opt_keys ~w(model_id model_id_locked agent build_system merge_from merge_target)a
   @known_opt_keys @atomized_opt_keys ++ @string_opt_keys
   @atomized_opt_key_strings MapSet.new(@atomized_opt_keys, &Atom.to_string/1)

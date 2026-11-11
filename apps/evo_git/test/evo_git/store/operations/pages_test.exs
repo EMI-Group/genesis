@@ -61,8 +61,7 @@ defmodule EvoGit.Store.Operations.PagesTest do
     :commit_sha,
     :lease_expires_at,
     :updated_at,
-    :error,
-    :progress
+    :error
   ]
 
   @base_started ~U[2026-01-01 00:00:00.000Z]
@@ -585,8 +584,8 @@ defmodule EvoGit.Store.Operations.PagesTest do
 
       statements = capture_statements(repo, fn -> Pages.select_tasks_page(repo, limit: 10) end)
 
-      assert length(statements) == 3,
-             "expected COUNT + page SELECT + bounded progress projection, captured: #{inspect(statements)}"
+      assert length(statements) == 2,
+             "expected the COUNT + page SELECT, captured: #{inspect(statements)}"
 
       # No statement that feeds the page references a heavy column.
       for {sql, _params} <- statements do
@@ -621,16 +620,13 @@ defmodule EvoGit.Store.Operations.PagesTest do
       put_timed!(repo, "lite-plan", 0)
 
       lite_sqls = capture_statements(repo, fn -> Pages.get_task_lite(repo, "lite-plan") end)
-      assert length(lite_sqls) == 2
+      assert length(lite_sqls) == 1
 
-      [{lite_sql, _}, {progress_sql, _}] = lite_sqls
-      assert String.contains?(progress_sql, "task_progress")
+      [{lite_sql, _}] = lite_sqls
       refute String.contains?(lite_sql, "archive")
       assert String.contains?(lite_sql, "result")
 
-      [{full_sql, _}, _progress] =
-        capture_statements(repo, fn -> Tasks.get_task(repo, "lite-plan") end)
-
+      [{full_sql, _}] = capture_statements(repo, fn -> Tasks.get_task(repo, "lite-plan") end)
       refute String.contains?(full_sql, "archive")
 
       # The per-agent archive is a separate TABLE, never a column of `tasks`.

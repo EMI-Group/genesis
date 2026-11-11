@@ -7,11 +7,10 @@ defmodule EvoGit.TaskControl do
   it does not maintain a second task lifecycle or change Git delivery behavior.
   """
   alias EvoGit.{Config, TaskRegistry}
-  alias EvoGit.TaskRegistry.StartOptions
   alias EvoGit.Store.Codec
 
   @terminal [:completed, :failed, :cancelled]
-  @start_keys ~w(path objective task_type mode resume_from model_id budget)
+  @start_keys ~w(path objective task_type mode resume_from model_id)
 
   def check(args) do
     with :ok <- keys(args, ~w(path)),
@@ -23,7 +22,6 @@ defmodule EvoGit.TaskControl do
       {:ok,
        %{
          version: to_string(Application.spec(:evo_git, :vsn)),
-         build: EvoGit.BuildInfo.get(),
          ready: model_ready and (is_nil(project) or project.ready),
          model_ready: model_ready,
          provider_connection_tested: false,
@@ -33,8 +31,6 @@ defmodule EvoGit.TaskControl do
              Enum.map(config.validation_errors, fn e ->
                "Invalid configuration key: #{Enum.join(e.key_path, ".")}."
              end),
-         recoverable_work:
-           if(path, do: EvoGit.AgentScheduler.WorktreeRetention.list(path), else: []),
          project: project
        }}
     end
@@ -65,9 +61,7 @@ defmodule EvoGit.TaskControl do
          :ok <- model_profile(args),
          {:ok, args} <- task_mode(args),
          :ok <- resume(args, path),
-         {:ok, budget} <- budget_args(Map.get(args, "budget")),
-         {:ok, type, opts} <-
-           StartOptions.build(args |> Map.put("path", path) |> Map.put("budget", budget)) do
+         {type, opts} = start_options(Map.put(args, "path", path)) do
       safe(fn ->
         case TaskRegistry.start_task(type, opts) do
           {:ok, task} -> {:ok, project(task)}
@@ -77,11 +71,20 @@ defmodule EvoGit.TaskControl do
     end
   end
 
-  defp budget_args(value) do
-    case EvoGit.TaskBudget.normalize(value) do
-      {:ok, budget} -> {:ok, budget}
-      _ -> error("invalid_arguments", "budget must contain supported positive integer limits.")
-    end
+  defp start_options(args) do
+    type = if args["task_type"] == "genesis", do: :genesis, else: :evolve
+    opts = [path: args["path"], objective: args["objective"], mode: args["mode"]]
+    opts = if type == :genesis, do: Keyword.put(opts, :prompt, args["objective"]), else: opts
+
+    opts =
+      Enum.reduce(~w(resume_from model_id)a, opts, fn key, acc ->
+        case Map.get(args, Atom.to_string(key)) do
+          nil -> acc
+          value -> Keyword.put(acc, key, value)
+        end
+      end)
+
+    {type, opts}
   end
 
   def get(args) do
@@ -221,9 +224,8 @@ defmodule EvoGit.TaskControl do
   end
 
   def cancel(args) do
-    with :ok <- keys(args, ~w(task_id force wait_seconds)),
+    with :ok <- keys(args, ~w(task_id force)),
          {:ok, id} <- required_string(args, "task_id"),
-         {:ok, wait} <- integer(args, "wait_seconds", 0, 0, 20),
          true <- is_boolean(Map.get(args, "force", false)) do
       safe(fn ->
         result =
@@ -232,8 +234,8 @@ defmodule EvoGit.TaskControl do
             else: TaskRegistry.cancel_task(id)
 
         case result do
-          :ok -> EvoGit.TaskControl.Stopping.await(id, wait)
-          {:error, :not_running} -> EvoGit.TaskControl.Stopping.await(id, wait)
+          :ok -> cancellation_state(id, true)
+          {:error, :not_running} -> cancellation_state(id, false)
           {:error, :not_found} -> error("not_found", "Task not found: #{id}")
           {:error, reason} -> error("cancel_failed", inspect(reason))
         end
@@ -241,6 +243,14 @@ defmodule EvoGit.TaskControl do
     else
       false -> error("invalid_arguments", "force must be a boolean.")
       other -> other
+    end
+  end
+
+  defp cancellation_state(id, accepted) do
+    with {:ok, data} <- get(%{"task_id" => id, "include_result" => false}) do
+      if accepted or data.status in ~w(completed failed cancelled),
+        do: {:ok, Map.put(data, :cancel_requested, accepted)},
+        else: error("cancel_failed", "The service did not accept cancellation for this task.")
     end
   end
 
@@ -303,12 +313,6 @@ defmodule EvoGit.TaskControl do
       type: to_string(task.type),
       status: to_string(task.status),
       project_path: task_path(task),
-      effective_budget: Keyword.get(task.opts || [], :budget),
-      recoverable_work:
-        if(is_binary(task_path(task)),
-          do: EvoGit.AgentScheduler.WorktreeRetention.list(task_path(task), task.id),
-          else: []
-        ),
       objective_summary: String.slice(task_objective(task) || "", 0, 200),
       objective_length: String.length(task_objective(task) || ""),
       started_at: Codec.encode_datetime(task.started_at),
@@ -426,7 +430,9 @@ defmodule EvoGit.TaskControl do
   defp safe(fun) do
     fun.()
   rescue
-    e -> error("unavailable", Exception.message(e))
+    # Transport boundary: existing service calls can raise while restarting or
+    # reading malformed records; return no internal call arguments or data.
+    _error -> error("unavailable", "Task service is unavailable.")
   catch
     :exit, {:timeout, _call} -> error("unavailable", "Task service did not respond in time.")
     :exit, _reason -> error("unavailable", "Task service is unavailable.")

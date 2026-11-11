@@ -73,7 +73,7 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
             # assertion's intent is that skip-and-log performs NO
             # data-movement DDL of its own.
             "SELECT name FROM sqlite_master WHERE type = 'table' " <>
-              "AND name NOT IN ('tasks', 'vct_mounts', 'schema_migrations', 'task_agent_archives', 'task_progress')",
+              "AND name NOT IN ('tasks', 'vct_mounts', 'schema_migrations', 'task_agent_archives')",
             []
           )
 

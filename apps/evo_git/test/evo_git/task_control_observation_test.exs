@@ -48,7 +48,6 @@ defmodule EvoGit.TaskControl.ObservationTest do
     snapshot =
       Observation.snapshot(%{task | opts: [prompt: "PRIVATE PROMPT"], logs: ["PRIVATE LOG"]})
 
-    assert snapshot.scheduler_available
     assert snapshot.registered_agent_count == 1
     assert snapshot.agent_status_counts == %{"waiting" => 1}
 
@@ -139,7 +138,7 @@ defmodule EvoGit.TaskControl.ObservationTest do
 
     code = """
     result = EvoGit.TaskControl.Observation.snapshot(%EvoGit.TaskInfo{id: "absent", status: :running})
-    unless result.scheduler_available == false and result.registered_agent_count == 0 and
+    unless result.registered_agent_count == 0 and
            result.saved_state.status == "running" and is_nil(result.elapsed_seconds), do: raise("bad snapshot")
     """
 
@@ -159,26 +158,6 @@ defmodule EvoGit.TaskControl.ObservationTest do
     assert is_nil(activity.turn)
     assert activity.message_count == 0
     assert activity.total_tokens == 0
-  end
-
-  test "degrades malformed unrelated scheduler metadata without changing saved task status", %{
-    task: task
-  } do
-    id = System.unique_integer([:positive])
-    :ets.insert(:evogit_sched_meta, {id, %{task_id: "unrelated-malformed-task"}})
-
-    try do
-      snapshot = Observation.snapshot(task)
-
-      refute snapshot.scheduler_available
-      assert snapshot.registered_agent_count == 0
-      assert snapshot.agents == []
-      assert snapshot.saved_state.status == "running"
-      refute Map.has_key?(snapshot, :stalled)
-      refute Map.has_key?(snapshot, :completion_percent)
-    after
-      :ets.delete(:evogit_sched_meta, id)
-    end
   end
 
   test "does not advance a terminal task's duration without a recorded finish", %{task: task} do

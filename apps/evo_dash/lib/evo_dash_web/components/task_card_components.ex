@@ -231,13 +231,6 @@ defmodule EvoDashWeb.TaskCardComponents do
           <% end %>
         </div>
 
-        <EvoDashWeb.TaskProgressComponents.progress
-          id={"task-progress-#{@task.id}"}
-          report={if lite, do: Map.get(lite, :progress), else: Map.get(@task, :progress)}
-          status={@task.status}
-          compact={!@show_details}
-        />
-
         <!-- Multi-repo indicator — compact per-repo badges on the COLLAPSED
              card only (the expanded detail view shows the full per-repo
              section). Derived by `task_repos/2`: primary repo from the SUMMARY

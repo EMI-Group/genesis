@@ -330,8 +330,9 @@ defmodule EvoGit.Sandbox.Helpers do
   starting with "gitdir:", strips the prefix, trims whitespace; empty or
   missing → unparseable → falls back to `literal`. The resolved target is
   expanded relative to `base` when not absolute, then reduced to the common
-  git dir only for a terminal `worktrees/<entry>` suffix. An ancestor named
-  `worktrees` is an ordinary path component, not Git metadata.
+  git dir (prefix before the last "/worktrees/" segment — `binary_part` on
+  the last match start, NOT `String.split` with parts: 2, which is wrong
+  when the repo path itself contains "/worktrees/").
   """
   @spec parse_gitdir_pointer(String.t(), String.t(), String.t()) :: String.t()
   def parse_gitdir_pointer(content, base, literal) do
@@ -354,12 +355,20 @@ defmodule EvoGit.Sandbox.Helpers do
       pointer ->
         resolved = Path.expand(pointer, base)
 
-        parent = Path.dirname(resolved)
-        common = Path.dirname(parent)
+        case :binary.matches(resolved, "/worktrees/") do
+          [] ->
+            resolved
 
-        if Path.basename(parent) == "worktrees" and common != Path.dirname(common),
-          do: common,
-          else: resolved
+          matches ->
+            {start, _len} = List.last(matches)
+
+            case :binary.part(resolved, 0, start) do
+              # Pathological: common dir at filesystem root — never emit a
+              # broken empty path; use the resolved target itself.
+              "" -> resolved
+              common -> common
+            end
+        end
     end
   end
 

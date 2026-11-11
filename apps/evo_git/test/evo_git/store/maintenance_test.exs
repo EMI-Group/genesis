@@ -39,11 +39,11 @@ defmodule EvoGit.Store.MaintenanceTest do
 
   # Every shipped store migration: baseline adoption, data normalization, the
   # two index migrations, the archive table, the redundant-index prune and the
-  # VCT mount and task progress tables — so `schema_migrations` holds 8 rows.
-  @migration_count 8
+  # VCT mount table — so `schema_migrations` holds 7 rows.
+  @migration_count 7
 
   # One schema-complete, CHECKPOINTED database built per module
-  # (`EvoGit.TestSupport.StoreTemplate`): a brand-new file plus the eight
+  # (`EvoGit.TestSupport.StoreTemplate`): a brand-new file plus the seven
   # migrations costs ~12 ms per boot, a byte copy of this template ~0.1 ms.
   # Every test still gets its own isolated file with the identical schema, so
   # the isolation semantics are unchanged. The `:template` context value is the

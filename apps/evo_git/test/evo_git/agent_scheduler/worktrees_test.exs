@@ -148,7 +148,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
     # — no `rm_rf` of the workers dir, no `git branch --list`, no
     # `git worktree prune`): two git forks (~5 ms) per test. The genuine
     # first-create init is covered by the two "per-repo init scoping" tests and
-    # by "marker-absent restart preserves unfinished work"; tag those with
+    # by "marker-absent restart re-runs the full wipe"; tag those with
     # `@tag lazy_init: true` to opt out of the pre-seed. Nothing else in this
     # file asserts on the init path, and every real create pipeline
     # (`destroy_leftovers/3` etc.) still runs unchanged.
@@ -289,7 +289,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
   # agent the test spawned: once every registration is drained, no manager
   # cleanup can fire during on_exit teardown, so no git port can race the
   # teardown's rm_rf into a deleted cwd.
-  defp finish_agent(agent, agent_id, tmp_dir, wt_path, branch, retained \\ false) do
+  defp finish_agent(agent, agent_id, tmp_dir, wt_path, branch) do
     Process.monitor(agent)
     send(agent, :exit_please)
 
@@ -300,13 +300,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
     # before.
     await_manager_dropped(agent_id)
 
-    if retained do
-      assert File.dir?(wt_path)
-      assert Git.branch_exists?(tmp_dir, branch)
-    else
-      refute File.dir?(wt_path)
-      refute Git.branch_exists?(tmp_dir, branch)
-    end
+    refute File.dir?(wt_path)
+    refute Git.branch_exists?(tmp_dir, branch)
   end
 
   defp build_spec(tmp_dir, base_sha) do
@@ -568,7 +563,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       refute Git.branch_exists?(tmp_dir, branch)
     end
 
-    test "refuses to overwrite unfinished work from a previous run", %{
+    test "destroys a stale real worktree before creating a fresh one", %{
       tmp_dir: tmp_dir,
       base_sha: base_sha
     } do
@@ -590,15 +585,14 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       # deterministically before teardown (see spawn_agent/6 doc).
       agent = spawn_agent(agent_id, tmp_dir, wt_path, spec, meta, self())
 
-      assert_receive {:agent_ready, ^agent, {:error, {:worktree_create_failed, message}}}, 30_000
-      assert message =~ "Recoverable work exists"
+      assert_receive {:agent_ready, ^agent, {:ok, ^wt_path}}, 30_000
 
       # The stale marker is gone — replaced by a fresh checkout.
-      assert File.exists?(marker)
+      refute File.exists?(marker)
       assert File.read!(Path.join(wt_path, "README.md")) == "# test"
 
       # Drain the registration so no :DOWN cleanup fires during teardown.
-      finish_agent(agent, agent_id, tmp_dir, wt_path, branch, true)
+      finish_agent(agent, agent_id, tmp_dir, wt_path, branch)
     end
 
     test "retry-after-crash gets a fresh worktree", %{tmp_dir: tmp_dir, base_sha: base_sha} do
@@ -777,10 +771,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         # deferred re-create is admitted, and it succeeds.
         File.write!(gate, "go")
 
-        assert_receive {:agent_ready, ^agent, {:error, {:worktree_create_failed, message}}},
-                       30_000
-
-        assert message =~ "Recoverable work exists"
+        assert_receive {:agent_ready, ^agent, {:ok, ^wt_path}}, 30_000
 
         assert File.dir?(wt_path)
         assert File.read!(Path.join(wt_path, "README.md")) == "# test"
@@ -790,7 +781,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         # Drain the registration (proc_a's was already reaped inline by the
         # pending-cleanup path when its create finished) so no :DOWN cleanup
         # fires during teardown.
-        finish_agent(agent, agent_id, tmp_dir, wt_path, branch, true)
+        finish_agent(agent, agent_id, tmp_dir, wt_path, branch)
       end
     end
 
@@ -821,7 +812,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         assert File.exists?(Path.join(wt_path, "init-marker.txt"))
 
         # Drain the registration so no :DOWN cleanup fires during teardown.
-        finish_agent(agent, agent_id, tmp_dir, wt_path, "evogit-agent-T1-A1", true)
+        finish_agent(agent, agent_id, tmp_dir, wt_path, "evogit-agent-T1-A1")
       end
     end
   end
@@ -963,7 +954,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
     # First-create lazy init is the code under test — no marker pre-seed.
     @tag lazy_init: true
-    test "primary repo first init preserves branches from previous runs", %{
+    test "primary repo first init wipes real task branches (orphan cleanup)", %{
       tmp_dir: tmp_dir,
       base_sha: base_sha
     } do
@@ -987,7 +978,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
       # The real task branch is GONE — cleaned up by the primary-repo orphan
       # cleanup, while the fresh worktree is created normally.
-      assert Git.branch_exists?(tmp_dir, real_branch)
+      refute Git.branch_exists?(tmp_dir, real_branch)
       assert File.dir?(wt_path)
 
       # Drain the registration so no :DOWN cleanup fires during teardown.
@@ -1070,7 +1061,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
     # No marker pre-seed: this test deletes the marker the first create
     # records and asserts the marker-ABSENT restart re-runs the full wipe.
     @tag lazy_init: true
-    test "marker-absent restart preserves unfinished work", %{
+    test "marker-absent restart re-runs the full wipe", %{
       tmp_dir: tmp_dir,
       base_sha: base_sha
     } do
@@ -1125,8 +1116,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
       assert_receive {:agent_ready, ^agent_2, {:ok, ^wt2}}, 30_000
 
-      assert File.exists?(sentinel)
-      assert File.dir?(wt1)
+      refute File.exists?(sentinel)
+      refute File.dir?(wt1)
       assert File.dir?(wt2)
 
       # Drain the registration so no :DOWN cleanup fires during teardown.
@@ -1288,10 +1279,10 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
           assert {:error, {:worktree_create_failed, msg}} =
                    Worktrees.prepare_new_worktree(agent_id, tmp_dir, wt_path, spec, meta)
 
-          assert msg =~ "Recoverable work exists"
+          assert msg =~ "could not remove leftover worktree"
         end)
 
-      assert log =~ "Recoverable work exists"
+      assert log =~ "refusing to create"
     end
 
     test "re-preparing over a leftover registered worktree destroys it (main copy untouched)", %{

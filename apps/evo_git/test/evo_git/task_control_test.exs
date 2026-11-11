@@ -1,5 +1,7 @@
 defmodule EvoGit.TaskControlTest do
-  use EvoGit.TaskRegistryCase, async: true
+  # Valid task starts publish the existing node-wide VCT events, so these
+  # adapter tests must not overlap async tests observing that shared topic.
+  use EvoGit.TaskRegistryCase, async: false
 
   alias EvoGit.TaskControl
   @moduletag :tmp_dir
@@ -29,101 +31,19 @@ defmodule EvoGit.TaskControlTest do
     assert TaskRegistry.list_tasks() == []
   end
 
-  test "cancellation distinguishes an accepted request from stopped work" do
+  test "cancellation exposes request acceptance without claiming process cleanup" do
     seed!("pending-stop", :pending, "/tmp/project", nil)
-    assert {:ok, data} = TaskControl.cancel(%{"task_id" => "pending-stop", "wait_seconds" => 1})
+    assert {:ok, data} = TaskControl.cancel(%{"task_id" => "pending-stop"})
     assert data.status == "cancelled"
-    assert data.stop_requested
-    assert data.stopped in [true, nil]
+    assert data.cancel_requested
+    refute Map.has_key?(data, :stopped)
+    refute Map.has_key?(data, :pending_cleanup)
+
+    assert {:ok, %{cancel_requested: false, status: "cancelled"}} =
+             TaskControl.cancel(%{"task_id" => "pending-stop"})
 
     assert {:error, %{code: "invalid_arguments"}} =
              TaskControl.cancel(%{"task_id" => "pending-stop", "force" => "yes"})
-  end
-
-  test "a reconnect can confirm cleanup after a previous cancellation finished" do
-    seed!("reconnected-stop", :pending, "/tmp/project", nil)
-    assert {:ok, _} = TaskControl.cancel(%{"task_id" => "reconnected-stop"})
-
-    for force <- [false, true] do
-      assert {:ok, data} =
-               TaskControl.cancel(%{"task_id" => "reconnected-stop", "force" => force})
-
-      assert data.status == "cancelled"
-      assert data.stopped
-      assert data.remaining_agents == 0
-      assert data.pending_cleanup == 0
-      assert data.active_jobs == 0
-    end
-  end
-
-  test "retained foreign work stays discoverable after the task and project configuration change",
-       %{tmp_dir: root} do
-    primary = Path.join(root, "primary")
-    foreign = Path.join(root, "foreign")
-    File.mkdir_p!(primary)
-    File.mkdir_p!(foreign)
-
-    for repo <- [primary, foreign] do
-      {_, 0} = System.cmd("git", ["init", "-q", repo])
-
-      {_, 0} =
-        System.cmd("git", [
-          "-C",
-          repo,
-          "-c",
-          "user.name=Test",
-          "-c",
-          "user.email=test@example.com",
-          "commit",
-          "-q",
-          "--allow-empty",
-          "-m",
-          "Initial fixture"
-        ])
-    end
-
-    seed!("foreign-recovery", :cancelled, primary, nil)
-
-    File.write!(
-      Path.join(primary, "genesis.toml"),
-      "[foreign_repos.other]\npath = #{Jason.encode!(foreign)}\nwritable = true\n"
-    )
-
-    repos = EvoGit.Runtime.Helpers.load_foreign_repos(primary, task_id: "foreign-recovery")
-    assert [%{root: ^foreign}] = repos
-
-    worker = Path.join(foreign, ".genesis/workers/worker_T1_A1")
-    branch = "evogit-agent-T1-A1"
-    {:ok, _} = EvoGit.Adapters.Git.add_worktree(foreign, worker, "HEAD", branch)
-    File.write!(Path.join(worker, "unfinished.txt"), "Preserve foreign work")
-
-    :ok =
-      EvoGit.AgentScheduler.WorktreeRetention.record(foreign, worker, branch, %{
-        task_id: "foreign-recovery",
-        agent_id: 123
-      })
-
-    :ok =
-      EvoGit.AgentScheduler.WorktreeRetention.retain(
-        foreign,
-        worker,
-        branch,
-        "uncommitted_changes"
-      )
-
-    # The task has no live scheduler entry and the project no longer names this repo.
-    File.write!(Path.join(primary, "genesis.toml"), "")
-    EvoGit.Runtime.Helpers.load_foreign_repos(primary, task_id: "foreign-recovery")
-
-    assert {:ok, data} = TaskControl.get(%{"task_id" => "foreign-recovery"})
-    assert [%{"path" => ^worker, "repo_root" => ^foreign}] = data.recoverable_work
-    assert {:ok, result} = TaskControl.result(%{"task_id" => "foreign-recovery"})
-    assert result.recoverable_work == data.recoverable_work
-    assert {:ok, stopped} = TaskControl.cancel(%{"task_id" => "foreign-recovery"})
-    assert stopped.recoverable_work == data.recoverable_work
-    assert {:ok, check} = TaskControl.check(%{"path" => primary})
-    assert check.recoverable_work == data.recoverable_work
-    assert File.read!(Path.join(worker, "unfinished.txt")) == "Preserve foreign work"
   end
 
   test "returns structured completed and failed results without exposing runtime opts" do

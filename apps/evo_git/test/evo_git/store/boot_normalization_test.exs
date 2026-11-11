@@ -513,7 +513,6 @@ defmodule EvoGit.Store.BootNormalizationTest do
              ) == [
                ["schema_migrations"],
                ["task_agent_archives"],
-               ["task_progress"],
                ["tasks"],
                ["vct_mounts"]
              ]

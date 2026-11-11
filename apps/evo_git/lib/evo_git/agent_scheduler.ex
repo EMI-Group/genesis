@@ -174,19 +174,6 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec update_config(keyword()) :: :ok | {:error, String.t()}
   def update_config(opts) when is_list(opts) do
-    # A fresh install has no models to warm at boot. Keep the first catalog
-    # decode (and its transient heap) outside the scheduler on profile changes.
-    profiles =
-      case Keyword.get(opts, :model_selection_config) do
-        config when is_map(config) -> EvoGit.Config.Schema.effective_model_profiles(config)
-        _ -> Keyword.get(opts, :model_profiles)
-      end
-
-    case profiles do
-      profiles when is_list(profiles) -> EvoGit.CatalogWarmup.warm_up(profiles)
-      _ -> :ok
-    end
-
     GenServer.call(__MODULE__, {:update_config, opts})
   end
 
@@ -292,7 +279,9 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec update_phylo_node(pos_integer(), PhyloGraphNode.t()) :: :ok | :error
   def update_phylo_node(agent_id, %PhyloGraphNode{} = phylo_node) do
-    Store.batch_update_agent(agent_id, phylo_node: phylo_node)
+    {:ok, agent_state} = Store.get_agent_state(agent_id)
+    updated = %{agent_state | phylo_node: phylo_node}
+    Store.put_agent_state(agent_id, updated)
   end
 
   @doc """
@@ -311,9 +300,6 @@ defmodule EvoGit.AgentScheduler do
 
   Returns `:ok` on success, or `{:error, :not_found}` if the agent doesn't exist.
   """
-  def drain_user_messages(agent_id),
-    do: GenServer.call(__MODULE__, {:drain_user_messages, agent_id})
-
   @spec send_user_message(pos_integer(), String.t() | map()) :: :ok | {:error, :not_found}
   def send_user_message(agent_id, message) when is_binary(message) or is_map(message) do
     GenServer.call(__MODULE__, {:send_user_message, agent_id, message})
@@ -844,7 +830,7 @@ defmodule EvoGit.AgentScheduler do
       _tid -> :ets.delete(:evogit_cancelling_tasks, task_id)
     end
 
-    {:reply, :ok, %{state | task_budget_counts: Map.delete(state.task_budget_counts, task_id)}}
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -917,11 +903,6 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call(:paused?, _from, %State{} = state) do
     {:reply, state.paused, state}
-  end
-
-  @impl true
-  def handle_call({:drain_user_messages, agent_id}, _from, state) do
-    {:reply, Store.drain_pending_user_messages(agent_id), state}
   end
 
   @impl true

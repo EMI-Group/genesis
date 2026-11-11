@@ -48,8 +48,7 @@ defmodule EvoGit.MigrateStoreTest do
     @covering_index_version,
     @archive_table_version,
     @prune_indexes_version,
-    @vct_mounts_version,
-    20_261_108_000_001
+    @vct_mounts_version
   ]
 
   @migration_count length(@migration_versions)
@@ -162,13 +161,7 @@ defmodule EvoGit.MigrateStoreTest do
       # The legacy `projects` table is retired (migration 7 drops it), so the
       # mount table is `vct_mounts`.
       assert Enum.sort(table_names(path)) ==
-               [
-                 "schema_migrations",
-                 "task_agent_archives",
-                 "task_progress",
-                 "tasks",
-                 "vct_mounts"
-               ]
+               ["schema_migrations", "task_agent_archives", "tasks", "vct_mounts"]
 
       assert Enum.sort(columns(path)) == Enum.sort(@live_task_columns)
       assert "error" in columns(path)

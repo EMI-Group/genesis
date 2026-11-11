@@ -5,9 +5,9 @@ defmodule EvoGit.TaskControl.Observation do
   Activity contains recorded counters, not an inferred operation or progress
   estimate. The scheduler has no reliable last-activity timestamp. An empty
   agent list does not imply completion; `saved_state.status` remains the saved
-  task status. `scheduler_available` means both scheduler ETS tables could be
-  read, not that an agent or the scheduler process has answered a health probe.
-  `registered_agent_count` counts scheduler entries, including pending agents.
+  task status. `registered_agent_count` counts scheduler entries, including
+  pending agents. An empty public scheduler snapshot does not establish that
+  all processes or cleanup have stopped.
   Up to 20 agents are displayed, with text fields limited to 240 characters.
   Counts include omitted agents. Elapsed seconds use the saved finish time;
   a terminal task without that time has an unknown (`nil`) duration.
@@ -31,11 +31,9 @@ defmodule EvoGit.TaskControl.Observation do
   @spec snapshot(TaskInfo.t()) :: map()
   def snapshot(%TaskInfo{} = task) do
     now = DateTime.utc_now()
-    {available, agents} = agents(task.id)
+    agents = agents(task.id)
 
     content = %{
-      report: message_states(task.progress, agents, available),
-      scheduler_available: available,
       registered_agent_count: length(agents),
       agent_status_counts: Enum.frequencies_by(agents, & &1.status),
       agents: Enum.take(agents, @agent_limit),
@@ -65,43 +63,10 @@ defmodule EvoGit.TaskControl.Observation do
   end
 
   defp agents(task_id) do
-    available = tables_available?()
-
-    agents =
-      RemoteAPI.list_agents()
-      |> Enum.filter(&(is_binary(task_id) and &1.task_id == task_id))
-      |> Enum.sort_by(& &1.id)
-      |> Enum.map(&agent/1)
-
-    {available and tables_available?(), agents}
-  rescue
-    # ETS can disappear between check and read, or a scheduler record can be
-    # unreadable by RemoteAPI's typed summary builder. Neither changes the
-    # independently saved task status.
-    _error in [ArgumentError, FunctionClauseError] -> {false, []}
-  end
-
-  defp tables_available? do
-    :ets.whereis(:evogit_sched_meta) != :undefined and
-      :ets.whereis(:evogit_agent_state) != :undefined
-  end
-
-  defp message_states(nil, _, _), do: nil
-
-  defp message_states(report, agents, available) do
-    ids = MapSet.new(agents, & &1.id)
-
-    if not Map.has_key?(report, "messages"),
-      do: report,
-      else:
-        Map.update!(report, "messages", fn messages ->
-          Enum.map(messages, fn receipt ->
-            if receipt["state"] == "queued" and
-                 (not available or not MapSet.member?(ids, receipt["agent_id"])),
-               do: Map.put(receipt, "state", "unknown"),
-               else: receipt
-          end)
-        end)
+    RemoteAPI.list_agents()
+    |> Enum.filter(&(is_binary(task_id) and &1.task_id == task_id))
+    |> Enum.sort_by(& &1.id)
+    |> Enum.map(&agent/1)
   end
 
   defp agent(summary) do
@@ -118,9 +83,6 @@ defmodule EvoGit.TaskControl.Observation do
       model_id: text(summary.model_id),
       objective: text(summary.objective),
       activity: %{
-        phase: if(state && state.activity, do: state.activity.phase),
-        tools: if(state && state.activity, do: state.activity.tools, else: []),
-        updated_at: if(state && state.activity, do: state.activity.updated_at),
         turn: if(state, do: number(state.turn)),
         message_count: number(summary.message_count),
         total_tokens: number(summary.total_tokens),

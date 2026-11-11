@@ -360,7 +360,3 @@ Rules for writing NEW markup in this subtree (full repo-wide catalog: parent `li
 - **No raw color literals** (`text-red-500`, `bg-white/10`, `bg-black/10`, `bg-neutral text-neutral-content`, `bg-base-50` — the last is a dead class compiling to no fill) → theme tokens (`text-error`, `bg-error/10`, `bg-base-200`, `bg-base-content/5`, …).
 - **Empty/loading states**: exactly ONE dim layer (icon and copy should not both sit at floor alpha).
 - **Locked contracts — never restyle helper OUTPUTS**: the `EvoDashWeb.Helpers.task_status_*` / `agent_status_*` / `connection_status_*` class helpers, the task-form bottom-toolbar DOM order (attach-kind dropdown | mode+speed capsule | right cluster: custom-agent select? | model capsule | send) + `data-layout`, the `phx-hook`/`phx-click` bindings, and the chart CSS-var strings. Markup class LITERALS may be polished; helper outputs are the single source of truth.
-
-## Shared task progress display
-
-`TaskProgressComponents.progress/1` renders the core snapshot already included in task summary/detail data. Collapsed cards show summary/time; expanded cards show reported outcomes, current work, remaining items, blockers and next steps. Terminal tasks label current work as last reported work. Message-only/legacy tasks have an explicit empty state. Existing tasks PubSub and detail invalidation reload the same data; this component does not fetch histories or generate summaries.

@@ -144,11 +144,6 @@ defmodule EvoGit.Store.Operations.Tasks do
   def delete_task(repo, task_id) do
     RepoScope.with_repo(repo, fn ->
       Repo.delete_all(from(t in TaskRow, where: t.id == ^task_id))
-
-      Repo.delete_all(
-        from(p in EvoGit.Store.Schemas.TaskProgressRow, where: p.task_id == ^task_id)
-      )
-
       Archives.delete_by_task(repo, task_id)
       :ok
     end)
@@ -173,10 +168,6 @@ defmodule EvoGit.Store.Operations.Tasks do
       |> Enum.chunk_every(@delete_chunk_size)
       |> Enum.each(fn chunk ->
         Repo.delete_all(from(t in TaskRow, where: t.id in ^chunk))
-
-        Repo.delete_all(
-          from(p in EvoGit.Store.Schemas.TaskProgressRow, where: p.task_id in ^chunk)
-        )
       end)
 
       Archives.delete_by_tasks(repo, task_ids)
@@ -197,7 +188,6 @@ defmodule EvoGit.Store.Operations.Tasks do
   def clear_tasks(repo) do
     RepoScope.with_repo(repo, fn ->
       Repo.delete_all(TaskRow)
-      Repo.delete_all(EvoGit.Store.Schemas.TaskProgressRow)
       Archives.delete_all(repo)
       :ok
     end)
@@ -217,11 +207,8 @@ defmodule EvoGit.Store.Operations.Tasks do
   def get_task(repo, task_id) do
     RepoScope.with_repo(repo, fn ->
       case Repo.one(from(t in TaskRow, where: t.id == ^task_id)) do
-        nil ->
-          nil
-
-        row ->
-          %{to_task_info(row) | progress: EvoGit.Store.Operations.Progress.get(repo, task_id)}
+        nil -> nil
+        row -> to_task_info(row)
       end
     end)
   end
@@ -390,19 +377,14 @@ defmodule EvoGit.Store.Operations.Tasks do
     RepoScope.with_repo(repo, fn ->
       case Repo.one(
              from(t in TaskRow,
-               select: %{
-                 status: t.status,
-                 opts: t.opts,
-                 finished_at: t.finished_at,
-                 error: t.error
-               },
+               select: %{status: t.status, opts: t.opts, finished_at: t.finished_at},
                where: t.id == ^task_id
              )
            ) do
         nil ->
           nil
 
-        %{status: status, opts: opts, finished_at: finished_at, error: error} ->
+        %{status: status, opts: opts, finished_at: finished_at} ->
           # lease_expires_at is read through the RAW twin so it comes back as
           # the bare INTEGER the old single-statement SELECT returned (it is
           # an integer under the typed schema too, but the raw read keeps the
@@ -411,13 +393,7 @@ defmodule EvoGit.Store.Operations.Tasks do
           lease =
             Repo.one(from(t in TaskRowRaw, select: t.lease_expires_at, where: t.id == ^task_id))
 
-          %{
-            status: status,
-            opts: opts,
-            finished_at: finished_at,
-            lease_expires_at: lease,
-            error: error
-          }
+          %{status: status, opts: opts, finished_at: finished_at, lease_expires_at: lease}
       end
     end)
   end

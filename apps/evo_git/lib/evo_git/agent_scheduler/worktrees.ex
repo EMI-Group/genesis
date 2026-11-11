@@ -78,12 +78,6 @@ defmodule EvoGit.AgentScheduler.Worktrees do
          :ok <-
            create_worktree(agent_id, repo_root, worktree_path, spec, branch_name, source_path),
          {:ok, _commit_sha} <- assign_and_prepare_worktree(agent_id, worktree_path, repo_root) do
-      EvoGit.AgentScheduler.WorktreeRetention.record(repo_root, worktree_path, branch_name, %{
-        task_id: meta.task_id,
-        agent_id: agent_id,
-        retained: false
-      })
-
       # Run the worktree init script only for the primary repo (foreign
       # repos are independent and should not inherit the primary repo's
       # init script).
@@ -167,29 +161,6 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   # retried via WorktreeRetry; never raises (runs inside the offloaded create
   # task).
   defp destroy_leftovers(worktree_path, repo_root, branch_name) do
-    case EvoGit.AgentScheduler.WorktreeRetention.disposition(
-           worktree_path,
-           repo_root,
-           branch_name
-         ) do
-      {:retain, reason} ->
-        EvoGit.AgentScheduler.WorktreeRetention.retain(
-          repo_root,
-          worktree_path,
-          branch_name,
-          reason
-        )
-
-        {:error,
-         {:worktree_create_failed,
-          "Recoverable work exists at #{worktree_path} (#{reason}); preserve it before retrying."}}
-
-      :discard ->
-        discard_leftovers(worktree_path, repo_root, branch_name)
-    end
-  end
-
-  defp discard_leftovers(worktree_path, repo_root, branch_name) do
     case WorktreeRetry.rm_rf_retry(worktree_path) do
       {:ok, _} ->
         # Dir is gone — safe to prune stale registrations and delete the
@@ -351,7 +322,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
         current_commit: commit_sha
       }
 
-      Store.batch_update_agent(agent_id, phylo_node: wt_phylo_node)
+      Store.put_agent_state(agent_id, %AgentState{agent_state | phylo_node: wt_phylo_node})
 
       {:ok, commit_sha}
     else

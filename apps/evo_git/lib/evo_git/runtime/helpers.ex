@@ -314,16 +314,6 @@ defmodule EvoGit.Runtime.Helpers do
     cli_repos = Keyword.get(opts, :foreign_repos, [])
     repos = merge_foreign_repos(toml_repos, cli_repos)
     validate_foreign_repos!(repos)
-
-    # Persist the actual roots before starting foreign work. Recovery queries
-    # then need neither live ETS nor the current (possibly edited) project config.
-    :ok =
-      EvoGit.AgentScheduler.WorktreeRetention.track_task_repositories(
-        repo_path,
-        Keyword.get(opts, :task_id),
-        Enum.map(repos, & &1.root)
-      )
-
     EvoGit.AgentScheduler.ForeignWorktree.ensure_all(repos)
     repos
   end
@@ -635,7 +625,6 @@ defmodule EvoGit.Runtime.Helpers do
 
     spec_opts =
       [
-        budget: Keyword.get(opts, :budget),
         foreign_repos: foreign_repos,
         repo_notes: repo_notes,
         archive: Keyword.get(opts, :archive, false),

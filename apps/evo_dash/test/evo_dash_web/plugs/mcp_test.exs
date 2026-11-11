@@ -1,5 +1,5 @@
 defmodule EvoDashWeb.MCPTest do
-  use EvoDashWeb.ConnCase, async: true
+  use EvoDashWeb.ConnCase, async: false
   @moduletag :tmp_dir
   @token String.duplicate("test-token", 5)
 
@@ -125,14 +125,17 @@ defmodule EvoDashWeb.MCPTest do
     assert is_list(models["structuredContent"]["models"])
   end
 
-  test "configuration paths and reload failures are usable without the dashboard" do
+  test "configuration paths and existing reload behavior are exposed without the dashboard" do
+    scheduler = :sys.get_state(EvoGit.AgentScheduler)
+    on_exit(fn -> :sys.replace_state(EvoGit.AgentScheduler, fn _ -> scheduler end) end)
     check = rpc("tools/call", %{"name" => "genesis_check"})["result"]["structuredContent"]
     assert check["config_files"]["config"] == EvoGit.Config.config_path()
     assert check["config_files"]["credentials"] == EvoGit.Config.credentials_path()
     File.write!(EvoGit.Config.config_path(), "invalid = [")
     reload = rpc("tools/call", %{"name" => "genesis_reload_config"})["result"]
-    assert reload["isError"]
-    assert reload["structuredContent"]["error"]["code"] == "configuration_not_applied"
+    refute reload["isError"]
+    assert reload["structuredContent"]["configuration_reloaded"]
+    refute reload["structuredContent"]["model_ready"]
   end
 
   defp rpc(method, params \\ %{}) do
