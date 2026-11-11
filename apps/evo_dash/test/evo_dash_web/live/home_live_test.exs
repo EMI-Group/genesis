@@ -3824,7 +3824,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       install_session_seam(
         :home_session_attach_runner,
-        running_attach(4242, attach_history(text))
+        running_attach(4242, attach_history("re-attached transcript"))
       )
 
       {:ok, view, _html} = live(conn, "/help")
@@ -3855,16 +3855,31 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns.session_mode == :interactive
       assert assigns.chat_status == :running
       assert assigns.chat_draft == ""
+      # The optimistic user bubble is in the synchronous submit render. The
+      # attach then REPLACES the transcript with the live history, so the
+      # transcript is asserted from its distinct attach marker below (the
+      # attach is asynchronous and may already have landed here).
       assert html =~ text
-      assert Enum.any?(assigns.transcript, &(&1.role == :user and &1.text == text))
 
       # The reattach loader lands too (bounded poll, no sleep) and keeps the
-      # same session, transcript and running status.
-      wait_until(fn -> assigns(view)[:agent_message_count] == 4 end)
+      # same session, transcript and running status. Poll the ATTACH TRANSCRIPT
+      # itself: `apply_attach/2` first assigns `agent_message_count` from the
+      # summary and `apply_history/3` then overwrites it with the history's
+      # length, so the count is NOT a stable attach signal.
+      wait_until(fn ->
+        Enum.any?(assigns(view)[:transcript], fn entry ->
+          entry.role == :user and entry.text == "re-attached transcript"
+        end)
+      end)
+
       settled = assigns(view)
       assert settled.session_id == 4242
       assert settled.chat_status == :running
-      assert Enum.any?(settled.transcript, &(&1.role == :user and &1.text == text))
+
+      assert Enum.any?(
+               settled.transcript,
+               &(&1.role == :user and &1.text == "re-attached transcript")
+             )
 
       # A SECOND send rides the adopted session: no second start, one queued
       # message on the SAME agent id.
@@ -4007,7 +4022,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       end)
 
       {:ok, view, _html} = live(conn, "/help")
-      seed_session_state(view, 6161)
+      # A send failure only surfaces while the turn is in flight; the idle
+      # seed would leave the page at `:idle` and never exercise the
+      # retryable-non-terminal branch.
+      seed_session_state(view, 6161, %{chat_status: :running})
 
       render_submit(view, "send_message", %{"message" => "hello"})
       assert_receive {:session_send_called, "hello"}
@@ -4025,7 +4043,6 @@ defmodule EvoDashWeb.HomeLiveTest do
   # `reason` must end the chat WITHOUT dropping what is already on screen.
   defp assert_session_ended(conn, reason) do
     test_pid = self()
-    local_node = node()
 
     install_session_seam(:home_session_send_runner, fn _node, _agent_id, message, _policy ->
       send(test_pid, {:session_send_called, message})
