@@ -30,11 +30,13 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialogRenderTest do
         request_id: "eval-<request>&1",
         kind: :elixir_eval,
         tier: :write,
-        # `target_text/1` reads `:target`. The core's PUBLIC request maps
-        # (`EvoGit.CommandApproval.pending/0` / `request_eval/5`) carry
-        # `:target_node`, so a real evaluator dialog currently renders
-        # "Unknown target"; the fixtures follow the helper they pin.
-        target: :"genesis_remote_fixture@127.0.0.1",
+        # `target_text/1` reads `:target_node` — the field the core's PUBLIC
+        # request maps (`EvoGit.CommandApproval.pending/0` / `request_eval/5`)
+        # actually carry — so a real evaluator dialog names the runtime the
+        # code would run on.
+        target_node: :"genesis_remote_fixture@127.0.0.1",
+        # The core's OPTIONAL request-specific warning (nil for write tier).
+        warning: nil,
         code: "Config.put(:enabled, true)",
         # A stale legacy field must not override evaluator presentation.
         level: 3
@@ -225,14 +227,17 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialogRenderTest do
         assert button in classes(dom, "button[phx-value-decision='approve']")
         assert "btn-ghost" in classes(dom, "button[phx-value-decision='deny']")
         refute absent in classes(dom, "dialog header > span")
-        # Only the sudo tier owns the extra warning block.
-        assert Floki.find(dom, "div[class*='border-error/40']") != [] == (tier == :sudo)
+        # Only the sudo tier owns the tier warning block (a request's OWN
+        # `:warning` is a separate block, absent from these fixtures).
+        assert Floki.find(dom, "#approval-sudo-warning") != [] == (tier == :sudo)
       end
     end
 
-    test "missing target is honestly unknown, empty code is preserved and absent text is omitted" do
-      for target <- [nil, "untrusted-node-string"] do
-        dom = dialog(request(%{tier: :sudo, target: target, code: ""}))
+    test "the target line names the request's target_node, or is honestly unknown" do
+      # The core stamps `:target_node` (an atom). It is rendered as its node
+      # name, and an ABSENT/non-usable value falls back to "Unknown target".
+      for target <- [nil, 42, ""] do
+        dom = dialog(request(%{tier: :sudo, target_node: target, code: ""}))
 
         assert text(dom, "p.break-all") == "Target runtime: Unknown target"
         assert length(Floki.find(dom, "pre code")) == 1
@@ -240,6 +245,69 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialogRenderTest do
         # Nothing else claims to be a target runtime line.
         assert length(Floki.find(dom, "p.break-all")) == 1
       end
+
+      # A binary node identity is rendered verbatim (defensive: a request may
+      # carry a node name rather than an atom).
+      dom = dialog(request(%{target_node: "untrusted-node-string"}))
+      assert text(dom, "p.break-all") == "Target runtime: untrusted-node-string"
+
+      # A stale legacy `:target` field is NOT the target runtime: only
+      # `:target_node` (the field the core actually stamps) is read.
+      dom = dialog(request(%{target_node: nil, target: :stale@node}))
+      assert text(dom, "p.break-all") == "Target runtime: Unknown target"
+    end
+  end
+
+  describe "request-specific warnings" do
+    test "the request's own :warning renders verbatim for evaluator and legacy tiers" do
+      warning = "Dangerous: this deletes <everything> &\n  cannot be undone."
+
+      write = dialog(request(%{warning: warning}))
+
+      assert text(write, "#approval-request-warning") == warning
+      assert "whitespace-pre-wrap" in classes(write, "#approval-request-warning p")
+      assert "break-words" in classes(write, "#approval-request-warning p")
+      # The warning is escaped text, never markup.
+      assert Floki.find(write, "#approval-request-warning script") == []
+      assert Floki.find(write, "everything") == []
+
+      legacy =
+        dialog(%{
+          request_id: "legacy-warning",
+          level: 3,
+          command: "DeleteTask.delete_task",
+          args: "all",
+          warning: warning
+        })
+
+      assert text(legacy, "#approval-request-warning") == warning
+      # It does not turn a legacy command request into an evaluator one.
+      refute Floki.text(legacy) =~ "Danger — unrestricted Elixir execution"
+      assert Floki.find(legacy, "pre") == []
+
+      # Rendered exactly once per dialog.
+      assert length(String.split(Floki.text(write), warning)) == 2
+      assert length(String.split(Floki.text(legacy), warning)) == 2
+    end
+
+    test "absent or blank warnings add no block, and identical text is never duplicated" do
+      for warning <- [nil, "", "   \n", 42] do
+        assert Floki.find(dialog(request(%{warning: warning})), "#approval-request-warning") == []
+      end
+
+      # The sudo tier's fixed copy is exactly the text a sudo request carries:
+      # it is shown ONCE, in the tier block.
+      fixed =
+        "This runs unrestricted ordinary Elixir in the target's live runtime. " <>
+          "It can change running processes, files and configuration. " <>
+          "There is no rollback. This is not OS root access. " <>
+          "Approve only if you trust this exact code."
+
+      dom = dialog(request(%{tier: :sudo, warning: fixed}))
+
+      assert Floki.find(dom, "#approval-sudo-warning") != []
+      assert Floki.find(dom, "#approval-request-warning") == []
+      assert length(String.split(Floki.text(dom), fixed)) == 2
     end
   end
 

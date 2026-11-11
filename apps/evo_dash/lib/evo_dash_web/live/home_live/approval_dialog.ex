@@ -161,7 +161,10 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
             <p class="text-sm font-medium leading-snug text-base-content">{summary_text(@request)}</p>
 
             <%= if sudo?(@request) do %>
-              <div class="mt-3 flex items-start gap-2.5 rounded-md border border-error/40 bg-error/10 p-3">
+              <div
+                id="approval-sudo-warning"
+                class="mt-3 flex items-start gap-2.5 rounded-md border border-error/40 bg-error/10 p-3"
+              >
                 <.icon name="hero-exclamation-triangle" class="mt-0.5 size-4 shrink-0 text-error" />
                 <div class="min-w-0">
                   <p class="text-sm font-semibold text-error">
@@ -172,6 +175,22 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
               </div>
             <% else %>
               <p class="mt-2 text-sm leading-relaxed text-base-content/70">{body_text(@request)}</p>
+            <% end %>
+
+            <%!-- The request's OWN warning (any tier), exactly as the core wrote it.
+                 Identical text is never rendered twice (the sudo body copy is the
+                 only fixed string a request warning can repeat). --%>
+            <% warning = request_warning(@request) %>
+            <%= if warning != "" do %>
+              <div
+                id="approval-request-warning"
+                class="mt-3 flex items-start gap-2.5 rounded-md border border-error/40 bg-error/10 p-3"
+              >
+                <.icon name="hero-exclamation-triangle" class="mt-0.5 size-4 shrink-0 text-error" />
+                <p class="min-w-0 whitespace-pre-wrap break-words text-sm font-semibold leading-normal text-error">
+                  {warning}
+                </p>
+              </div>
             <% end %>
 
             <%= if evaluator?(@request) do %>
@@ -387,10 +406,31 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
 
   @doc "Evaluator target runtime, rendered honestly when the request has none."
   def target_text(request) do
-    case field(request, :target) do
+    case field(request, :target_node) do
       target when is_atom(target) and not is_nil(target) -> Atom.to_string(target)
+      target when is_binary(target) and target != "" -> target
       _ -> gettext("Unknown target")
     end
+  end
+
+  @doc """
+  The request's own optional `:warning`, or `""` (total).
+
+  The core may stamp request-specific text here (e.g. the sudo evaluator
+  warning), so it is rendered verbatim for any tier.
+  """
+  def warning_text(request) do
+    case field(request, :warning) do
+      value when is_binary(value) -> String.trim(value)
+      _ -> ""
+    end
+  end
+
+  # The warning block to render: the request's own text, unless the fixed copy
+  # already shows exactly the same text (never duplicate it twice).
+  defp request_warning(request) do
+    warning = warning_text(request)
+    if warning != "" and warning != body_text(request), do: warning, else: ""
   end
 
   @doc "Exact original code for an evaluator request (never truncated)."

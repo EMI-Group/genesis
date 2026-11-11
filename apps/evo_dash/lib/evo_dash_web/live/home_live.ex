@@ -960,17 +960,25 @@ defmodule EvoDashWeb.HomeLive do
   def handle_info({:approval_requested, request}, socket) do
     # A genuinely NEW live request (never a recovery snapshot) opens the review
     # dialog when it is not already open and raises a native notification, so
-    # the user does not have to be looking at the tab to notice it.
+    # the user does not have to be looking at the tab to notice it. Both
+    # surfaces are gated on the SAME ownership predicate the workflow applies
+    # (ApprovalWorkflow.own_request?/2): a page that ignores a request for
+    # another task/agent/node must never notify about an approval it cannot
+    # act on.
     socket = ApprovalWorkflow.requested(socket, request)
 
-    {:noreply,
-     socket
-     |> auto_open_approval_dialog()
-     |> push_event("task_notification", %{
-       title: gettext("Approval needed"),
-       body: gettext("Genesis is waiting for your approval."),
-       tag: "genesis-approval"
-     })}
+    if ApprovalWorkflow.own_request?(socket.assigns, request) do
+      {:noreply,
+       socket
+       |> auto_open_approval_dialog()
+       |> push_event("task_notification", %{
+         title: gettext("Approval needed"),
+         body: gettext("Genesis is waiting for your approval."),
+         tag: "genesis-approval"
+       })}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:approval_resolved, request_id, _decision, source_node}, socket) do
@@ -1074,11 +1082,16 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   def handle_info({{:approval_pending_loaded, _seq, _scope} = tag, result}, socket) do
-    {:noreply, ApprovalWorkflow.recovered(socket, tag, result)}
+    # A recovery snapshot mutates `pending_approvals` too, so the dialog cursor
+    # is re-derived: an empty result closes the dialog instead of leaving it
+    # "open" with nothing to show.
+    {:noreply, socket |> ApprovalWorkflow.recovered(tag, result) |> sync_approval_dialog()}
   end
 
   def handle_info({{:approval_workflow_response, _seq, _scope, _id} = tag, result}, socket) do
-    {:noreply, ApprovalWorkflow.responded(socket, tag, result)}
+    # Success / not-found removes the request: sync closes the dialog when it
+    # was the last one and clamps the cursor to what remains.
+    {:noreply, socket |> ApprovalWorkflow.responded(tag, result) |> sync_approval_dialog()}
   end
 
   def handle_info({{:model_select_loaded, seq, target_node}, result}, socket) do
