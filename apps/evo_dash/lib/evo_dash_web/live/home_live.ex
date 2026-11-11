@@ -2,32 +2,28 @@ defmodule EvoDashWeb.HomeLive do
   @moduledoc """
   ChatGPT-style chat page wired to the repo-less `:reflect` self-reflective
   agent.
-
   The user talks to Genesis itself: the page starts a `:reflect` task on the
-  current node (`EvoDash.NodeContext.start_task/3` with `mode: "reflect"` and
+  current node (`NodeContext.start_task/3` with `mode: "reflect"` and
   NO `:path`), tracks the task's root agent (`EvoGit.Agents.SelfReflective`)
   and streams its assistant turns into chat bubbles, and lets the user stop
   the conversation gracefully (which preserves the final result).
-
   Everything is push-based: `"tasks"` and `"agents"` PubSub broadcasts drive
   the transcript (task lifecycle events + agent message-count changes), and
   the LiveView process NEVER blocks on a store / cross-node call: every
-  store/RPC call is either a guarded per-click mutation (`EvoDash.SafeCall.run/1`
-  — send / stop) or a supervised task (`EvoDash.SafeCall.start/4` or
-  `Task.Supervisor` + `EvoDash.SafeCall.run/1` inside the body — the remote
+  store/RPC call is either a guarded per-click mutation (`SafeCall.run/1`
+  — send / stop) or a supervised task (`SafeCall.start/4` or
+  `Task.Supervisor` + `SafeCall.run/1` inside the body — the remote
   model-profile load, approval responses, and every agent / history / task
-  fetch) with a monotonic seq stale-guard. `EvoDash.SafeCall` is the exit-safe
+  fetch) with a monotonic seq stale-guard. `SafeCall` is the exit-safe
   boundary (a `GenServer.call` timeout or an `:erpc` to an unreachable node
   EXITS the caller, which `rescue` cannot catch). Node-aware like every other
   page: `?node=` selects the viewed node.
-
   Chats survive remounts: the full chat state is persisted in-memory via
-  `EvoDash.ChatHistory` (local-node only, see `home_live/CONTEXT.md`) and a
+  `ChatHistory` (local-node only, see `home_live/CONTEXT.md`) and a
   connected mount restores the current chat with a ONE-SHOT reconciliation
   fetch (no polling). A node switch starts a NEW persisted chat — the old chat
   stays in memory (its task belongs to the old node; events are node-filtered
   anyway).
-
   The most recent assistant entry renders as an answer-first column (task
   status + streamed text + collapsible "Thought process" section) — see
   `EvoDashWeb.HomeLive.AssistantMessage`. Finalized (non-streaming) assistant
@@ -42,24 +38,23 @@ defmodule EvoDashWeb.HomeLive do
   alias EvoDashWeb.HomeLive.{
     AgentStream,
     ApprovalWorkflow,
+    Attachments,
     ChatState,
     Messages,
     ModelSelect,
+    SessionActions,
+    SessionList,
     SourceGate,
     Transcript
   }
 
+  alias EvoDash.{ChatHistory, NodeContext, SafeCall, TaskSupervisor}
   alias EvoDashWeb.LiveHooks.NodeAware
   alias EvoDashWeb.LLMSelection
-
   import EvoDashWeb.LLMSelectionComponents, only: [llm_selection: 1]
-
   import EvoDashWeb.HomeLive.ChatMessages
   import EvoDashWeb.HomeLive.ApprovalCard
   import EvoDashWeb.HomeLive.SourceGate
-
-  # Statuses that END a task (finalize the transcript + clear refs). All other
-  # statuses mean the task is still alive: badge-only updates, refs kept.
   @terminal_statuses [:completed, :cancelled, :failed]
 
   @impl true
@@ -100,7 +95,6 @@ defmodule EvoDashWeb.HomeLive do
             <%!-- zh_CN: "新对话" --%>{gettext("New chat")}
           </button>
         </div>
-
         <!-- Genesis-source gate: the /help chat runs a repo-less `:reflect`
              agent whose reference is the managed Genesis source checkout. On a
              fresh install it is usually not downloaded yet, so a send would only
@@ -110,7 +104,6 @@ defmodule EvoDashWeb.HomeLive do
         <%= if SourceGate.blocked?(assigns) do %>
           <.source_gate source_busy={@source_busy} current_node_id={@current_node_id} />
         <% end %>
-
         <!-- Messages container (the AgentHistoryAutoScroll hook scrolls this element) -->
         <div
           id="chat-messages"
@@ -128,7 +121,6 @@ defmodule EvoDashWeb.HomeLive do
             />
           <% end %>
         </div>
-
         <!-- Pending evaluator and legacy command approvals block the reflect
              agent until the user decides. Cards stay visible while a response
              is in flight and on failure, between transcript and composer. -->
@@ -142,7 +134,6 @@ defmodule EvoDashWeb.HomeLive do
             <% end %>
           </div>
         <% end %>
-
         <%= case @approval_error do %>
           <% {:recovery, reason} -> %>
             <div
@@ -180,7 +171,6 @@ defmodule EvoDashWeb.HomeLive do
             <% end %>
           <% _ -> %>
         <% end %>
-
         <!-- Composer: pinned bottom, outside the messages scroller. ONE form:
              the textarea row, then a control bar holding the shared
              provider/model/reasoning capsule on the left and Send/Stop on the
@@ -272,9 +262,6 @@ defmodule EvoDashWeb.HomeLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    # On the dead render (initial HTTP request), redirect first-time users to
-    # /welcome (same pattern as ProjectsLive). Runs ONLY on the dead render;
-    # connected mounts skip it to avoid redirect loops.
     onboarding_needed =
       !connected?(socket) and
         if Code.ensure_loaded?(EvoGit.Config.VersionState) do
@@ -289,8 +276,6 @@ defmodule EvoDashWeb.HomeLive do
       if connected?(socket) do
         Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
         Phoenix.PubSub.subscribe(EvoGit.PubSub, "agents")
-        # Evaluator and legacy command approvals both use this topic. Recovery
-        # starts only after this subscription, chat restoration and node resolution.
         Phoenix.PubSub.subscribe(EvoGit.PubSub, "approvals")
       end
 
@@ -304,10 +289,6 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  # Seed assigns for every mount (fresh state; `attach_chat/1` then overlays
-  # the persisted chat on connected mounts). Includes the live-chat keys added
-  # by the ChatHistory persistence + the assistant task-card (`chat_id`,
-  # `chat_node`, `chat_task_status`, `thought_process`).
   defp base_assigns do
     %{
       transcript: Transcript.new(),
@@ -320,17 +301,23 @@ defmodule EvoDashWeb.HomeLive do
       thought_process: [],
       chat_node: nil,
       chat_id: nil,
+      session_id: nil,
+      current_session_id: nil,
+      session_mode: nil,
+      queued_echoes: [],
+      session_attach_seq: 0,
+      session_list: [],
+      session_list_loading: false,
+      session_list_error: nil,
+      session_list_seq: 0,
+      pending_attachments: Attachments.new(),
+      attach_unavailable: false,
       chat_fetch_seq: 0,
       chat_task_fetch_seq: 0,
       shift_down: false,
       selected_model_id: nil,
-      # Ephemeral UI state: transcript entry ids currently shown in RAW (plain
-      # text) view instead of the markdown render. Never persisted — entries
-      # are cleared with the transcript on reset_chat.
       raw_entry_ids: MapSet.new(),
-      # The last approval scope reconciled on this connection. Recovery starts
       # after handle_params resolves the node, never against mount's local seed.
-      # ApprovalWorkflow owns all ephemeral cards, response tokens and errors.
       approval_context: nil,
       provider_profiles: [],
       model_selections: [],
@@ -340,24 +327,11 @@ defmodule EvoDashWeb.HomeLive do
       model_selection_restore: nil,
       model_selection_resolved: false,
       model_selection_enabled: false,
-      # Config snapshots/bundles are server-only and never enter ChatState.
       model_snapshot: nil,
       model_selection_bundle: nil,
       model_select_loading: false,
       model_select_load_error: nil,
-      # Monotonic stale-guard for the ASYNC remote model-profile load (a remote
-      # node resolves its profiles via an `:erpc` config fetch, so the load is
-      # NEVER run in the LiveView process — see assign_model_select/1). Monotonic
-      # and never reset (a reset could make an older in-flight result apply).
       model_select_seq: 0,
-      # Genesis-source gate (EPHEMERAL — never persisted to ChatState): the
-      # /help chat needs the managed Genesis source checkout, which is usually
-      # absent on a fresh install. `source_available` = the latest availability
-      # result (`nil` unknown | `true` | `false` | `{:unavailable, reason}`) —
-      # only a KNOWN `false` blocks sending; `source_check_loading` mirrors the
-      # in-flight check window; `source_check_seq` is the monotonic stale-guard
-      # counter (SEPARATE from chat_fetch_seq/chat_task_fetch_seq); `source_busy`
-      # is a truthy marker while a download runs. Local-node only.
       source_available: nil,
       source_check_loading: false,
       source_check_seq: 0,
@@ -366,9 +340,6 @@ defmodule EvoDashWeb.HomeLive do
     }
   end
 
-  # Only the resolved node may supply a snapshot. Pending targets must never
-  # read local config; every load invalidates earlier async results, including
-  # a switch between two pending targets that share the local node fallback.
   defp assign_model_select(socket) do
     {_target_id, target_node} = selection_scope(socket)
     seq = socket.assigns.model_select_seq + 1
@@ -393,14 +364,13 @@ defmodule EvoDashWeb.HomeLive do
         apply_model_snapshot(socket, ModelSelect.load(target_node))
 
       connected?(socket) ->
-        case EvoDash.SafeCall.start(self(), {:model_select_loaded, seq, target_node}, fn ->
+        case SafeCall.start(self(), {:model_select_loaded, seq, target_node}, fn ->
                ModelSelect.load(target_node)
              end) do
           {:ok, _pid} ->
             assign(socket, model_select_loading: true)
 
           {:error, reason} ->
-            # No result message is sent when the supervisor cannot start the task.
             apply_model_snapshot(socket, {:error, reason})
         end
 
@@ -434,8 +404,6 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   defp reconcile_model_selection(socket) do
-    # Malformed persisted specs remain visibly invalid until the user chooses
-    # again. Valid-but-stale choices are reconciled by the shared helper.
     if socket.assigns.model_selection_error do
       socket
     else
@@ -448,7 +416,7 @@ defmodule EvoDashWeb.HomeLive do
 
       socket
       |> assign(model_spec: spec, selected_model_id: nil)
-      |> persist_state()
+      |> ChatState.persist()
     end
   end
 
@@ -472,7 +440,7 @@ defmodule EvoDashWeb.HomeLive do
            model_selection_error: nil,
            model_selection_scope: selection_scope(socket)
          )
-         |> persist_state()}
+         |> ChatState.persist()}
 
       {:error, _reason} ->
         {:noreply,
@@ -493,22 +461,198 @@ defmodule EvoDashWeb.HomeLive do
     not is_nil(target_id) and target_node == node()
   end
 
-  # Genesis-source availability check (LOCAL node only, connected socket only).
-  # Bumps the monotonic `:source_check_seq` BEFORE spawning (captured into the
-  # message, so only the latest in-flight result applies), flags the loading
-  # window, and spawns the guarded runner on EvoDash.TaskSupervisor — the
-  # LiveView never blocks on the filesystem probe. Returns the socket.
-  #
-  # `node()` cannot be called from a guard, so the local-node test reuses the
-  # shared `SourceGate.visible?/1` predicate (`current_node in [nil, node()]`,
-  # mirroring EvoDashWeb.SystemLive.SourceCard.visible?/1).
+  defp interactive_session?(socket) do
+    socket.assigns[:session_mode] == :interactive and not is_nil(socket.assigns[:session_id])
+  end
+
+  defp resolve_session(socket, param) do
+    case SessionActions.parse_session(param) do
+      {:ok, id} ->
+        if id == socket.assigns[:session_id], do: socket, else: reattach_session(socket, id)
+
+      :none ->
+        leave_session(socket)
+    end
+  end
+
+  defp reattach_session(socket, id) do
+    restored =
+      if connected?(socket) do
+        ChatState.restore(ChatHistory.get_state(id))
+      else
+        ChatState.restore(nil)
+      end
+
+    socket
+    |> assign(
+      session_id: id,
+      current_session_id: id,
+      chat_id: id,
+      session_mode: :interactive,
+      chat_agent_id: id,
+      chat_node: socket.assigns[:current_node],
+      chat_task_id: nil,
+      chat_task_status: nil,
+      agent_message_count: nil,
+      queued_echoes: [],
+      thought_process: restored.thought_process,
+      raw_entry_ids: MapSet.new(),
+      pending_attachments: Attachments.clear(),
+      chat_draft: "",
+      transcript: restored.transcript,
+      chat_status: restore_status(restored.chat_status)
+    )
+    |> ApprovalWorkflow.init()
+    |> maybe_recover_approvals()
+    |> spawn_attach(id)
+  end
+
+  # `ChatState.restore/1` already whitelists the stored status; this defensive
+  defp restore_status(status)
+       when status in [:idle, :running, :cancelling, :awaiting_input, :ended],
+       do: status
+
+  defp restore_status(_status), do: :idle
+
+  defp leave_session(socket) do
+    if is_nil(socket.assigns[:session_id]) do
+      socket
+    else
+      socket
+      |> reset_chat()
+      |> attach_chat()
+      |> assign(
+        session_id: nil,
+        current_session_id: nil,
+        session_mode: nil,
+        queued_echoes: [],
+        pending_attachments: Attachments.clear()
+      )
+      |> ChatState.persist()
+    end
+  end
+
+  defp spawn_attach(socket, session_id) do
+    if connected?(socket) do
+      seq = (socket.assigns[:session_attach_seq] || 0) + 1
+      node = socket.assigns[:current_node]
+
+      case SafeCall.start(self(), {:session_attached, seq, node, session_id}, fn ->
+             SessionActions.load_attach(node, session_id)
+           end) do
+        {:ok, _pid} ->
+          assign(socket, session_attach_seq: seq)
+
+        {:error, reason} ->
+          settle_attach(socket, {:error, reason})
+      end
+    else
+      socket
+    end
+  end
+
+  defp apply_attach(socket, {:ok, %{summary: summary, awaiting?: awaiting?, history: history}}) do
+    status = SessionActions.status_from(summary, awaiting?)
+
+    socket
+    |> assign(
+      chat_task_id: summary_value(summary, :task_id),
+      chat_task_status: summary_value(summary, :status),
+      agent_message_count: summary_value(summary, :message_count)
+    )
+    |> apply_history(history, true)
+    |> assign(chat_status: attach_status(summary, awaiting?, status))
+    |> ChatState.persist()
+    |> maybe_load_sessions()
+    |> maybe_recover_approvals()
+  end
+
+  defp apply_attach(socket, {:error, reason}), do: settle_attach(socket, {:error, reason})
+
+  defp apply_attach(socket, _other),
+    do: settle_attach(socket, {:error, :unexpected_attach_result})
+
+  defp settle_attach(socket, _result) do
+    status = if socket.assigns[:transcript] == [], do: :ended, else: :idle
+
+    socket
+    |> assign(chat_status: status)
+    |> ChatState.persist()
+  end
+
+  defp attach_status(nil, false, _status), do: :ended
+
+  defp attach_status(_summary, _awaiting?, status)
+       when status in [:idle, :running, :cancelling],
+       do: status
+
+  defp attach_status(_summary, _awaiting?, _status), do: :ended
+  # tolerated defensively for a foreign/legacy row).
+  defp summary_value(summary, key) when is_map(summary) do
+    case Map.fetch(summary, key) do
+      {:ok, value} -> value
+      :error -> Map.get(summary, Atom.to_string(key))
+    end
+  end
+
+  defp summary_value(_summary, _key), do: nil
+
+  defp apply_history(socket, messages, rebuild?) when is_list(messages) do
+    entries = Messages.to_entries(messages)
+    text = Messages.assistant_text(messages)
+
+    transcript =
+      cond do
+        rebuild? -> history_transcript(entries, text)
+        text == "" -> socket.assigns[:transcript]
+        true -> Transcript.put_streaming_text(socket.assigns[:transcript], text)
+      end
+
+    assign(socket,
+      transcript: transcript,
+      agent_message_count: length(messages),
+      thought_process: entries
+    )
+  end
+
+  defp apply_history(socket, _messages, _rebuild?), do: socket
+
+  defp history_transcript(entries, text) do
+    transcript =
+      entries
+      |> Enum.map(&entry_text/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.reduce(Transcript.new(), fn text, acc ->
+        Transcript.append(acc, Transcript.entry(:user, text))
+      end)
+
+    if text == "",
+      do: transcript,
+      else: Transcript.append(transcript, Transcript.entry(:assistant, text))
+  end
+
+  defp entry_text(entry) when is_map(entry) do
+    case Map.get(entry, :data) do
+      %{content: content} when is_binary(content) -> content
+      _other -> ""
+    end
+  end
+
+  defp entry_text(_entry), do: ""
+
+  defp maybe_load_sessions(socket) do
+    if connected?(socket) do
+      SessionList.spawn_load(socket, socket.assigns[:current_node])
+    else
+      socket
+    end
+  end
+
   defp maybe_check_source(socket) do
     if connected?(socket) and SourceGate.visible?(socket.assigns[:current_node]) do
       seq = socket.assigns[:source_check_seq] + 1
       node = socket.assigns[:current_node] || node()
-
       SourceGate.spawn_availability_check(self(), seq, node)
-
       assign(socket, source_check_seq: seq, source_check_loading: true)
     else
       socket
@@ -521,18 +665,6 @@ defmodule EvoDashWeb.HomeLive do
     prev_node_id = socket.assigns[:current_node_id]
     socket = NodeAware.assign_node(socket, params)
 
-    # Node switch: the old chat's task belongs to the old node. Start a NEW
-    # persisted chat (the old one stays in memory under ChatHistory; its
-    # events are node-filtered anyway) and reset all live chat state.
-    #
-    # Two switch shapes:
-    #   * mid-session switch — `prev_node` was already resolved and changed;
-    #   * fresh load on a different node — the restored chat carries the node
-    #     it was created on (`:chat_node`); a mismatch means the chat is stale
-    #     for the viewed node.
-    # The first handle_params resolves the mount seed, not a user switch.
-    # Preserve a matching restored scope there; later target-id changes reset
-    # even if both targets currently share the same fallback BEAM node.
     node_changed =
       socket.assigns.model_selection_resolved and
         (socket.assigns[:current_node] != prev_node or
@@ -564,20 +696,14 @@ defmodule EvoDashWeb.HomeLive do
           socket
       end
 
-    # Re-load the model profiles / selection-script state for the RESOLVED
-    # node (a `?node=` switch may have landed on a different target).
     socket =
       socket
+      |> resolve_session(params["session"])
       |> assign_model_select()
       |> assign(current_path: ~p"/help")
-      # Genesis-source availability for the resolved node context: fires on the
-      # connected mount AND on every node-context change (this is the same place
-      # the page reacts to `?node=` switches). Local-node only + connected-only
-      # (a dead render must not spawn a task that sends into a dying process).
       |> maybe_check_source()
-      # Subscriptions and restoration are complete, and the viewed node is
-      # resolved. This also reconciles reconnects routed here by NodeAware.
       |> maybe_recover_approvals()
+      |> maybe_load_sessions()
 
     {:noreply, socket}
   end
@@ -585,16 +711,13 @@ defmodule EvoDashWeb.HomeLive do
   @impl true
   def handle_event("send_message", %{"message" => text}, socket), do: send_chat(socket, text)
 
-  @impl true
   def handle_event("send_message", _params, socket),
     do: send_chat(socket, socket.assigns[:chat_draft])
 
-  @impl true
   def handle_event("chat_input", %{"message" => text}, socket) do
     {:noreply, assign(socket, chat_draft: text || "")}
   end
 
-  @impl true
   def handle_event("chat_keydown", %{"key" => key}, socket) do
     case key do
       "Shift" ->
@@ -602,7 +725,6 @@ defmodule EvoDashWeb.HomeLive do
 
       "Enter" ->
         if socket.assigns[:shift_down] do
-          # Shift held — let the browser insert the newline; do not submit.
           {:noreply, socket}
         else
           send_chat(socket, socket.assigns[:chat_draft])
@@ -613,7 +735,6 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  @impl true
   def handle_event("chat_keyup", %{"key" => key}, socket) do
     case key do
       "Shift" -> {:noreply, assign(socket, shift_down: false)}
@@ -621,26 +742,18 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  @impl true
   def handle_event("select_provider_profile", %{"provider_profile_id" => id}, socket) do
     update_model_selection(socket, :select_provider, id)
   end
 
-  @impl true
   def handle_event("select_model", %{"model" => model}, socket) do
     update_model_selection(socket, :select_model, model)
   end
 
-  @impl true
   def handle_event("select_reasoning_effort", %{"reasoning_effort" => index}, socket) do
     update_model_selection(socket, :select_reasoning_effort, index)
   end
 
-  # Per-message raw/markdown toggle on an assistant entry (phx-click from the
-  # AssistantMessage hover action group). The entry id is a generated binary —
-  # used only as a MapSet key, no atom conversion. Ephemeral UI state: kept in
-  # :raw_entry_ids, never persisted.
-  @impl true
   def handle_event("toggle_assistant_raw", %{"id" => id}, socket) when is_binary(id) do
     raw = socket.assigns[:raw_entry_ids] || MapSet.new()
 
@@ -656,19 +769,10 @@ defmodule EvoDashWeb.HomeLive do
 
   def handle_event("toggle_assistant_raw", _params, socket), do: {:noreply, socket}
 
-  # Fired by the global ClipboardCopy JS hook after a successful copy (same
-  # flash pattern as tasks_live.ex / review_live.ex).
-  @impl true
   def handle_event("copied", _params, socket) do
     {:noreply, put_flash(socket, :info, gettext("Copied to clipboard"))}
   end
 
-  # Genesis-source gate: "Download source" on the gate banner. No-op while a
-  # download is already in flight; otherwise mark `source_busy` and spawn the
-  # clone on EvoDash.TaskSupervisor (the runner seam is resolved AT SPAWN TIME
-  # inside SourceGate.spawn_clone/2). The result arrives as an async message —
-  # see the {:source_clone_result, node, result} handle_info clause.
-  @impl true
   def handle_event("download_source", _params, socket) do
     if socket.assigns[:source_busy] != nil do
       {:noreply, socket}
@@ -678,71 +782,45 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  @impl true
   def handle_event("new_chat", _params, socket) do
     if socket.assigns[:chat_status] == :idle do
-      {:noreply, start_new_chat(socket)}
+      had_session? = not is_nil(socket.assigns[:session_id])
+
+      socket =
+        socket
+        |> assign(session_id: nil, current_session_id: nil, session_mode: nil)
+        |> start_new_chat()
+        |> maybe_load_sessions()
+
+      socket =
+        if had_session? do
+          push_patch(socket, to: SessionActions.url(socket.assigns[:current_node_id], nil))
+        else
+          socket
+        end
+
+      {:noreply, socket}
     else
       {:noreply, socket}
     end
   end
 
-  @impl true
   def handle_event("stop", _params, socket) do
-    case socket.assigns[:chat_task_id] do
-      nil ->
-        {:noreply, socket}
-
-      task_id ->
-        # Graceful cancel: :pending → immediate :cancelled; :running →
-        # :cancelling (agents save + exit, result preserved). The :cancelled
-        # task event completes the transition and finalizes the transcript.
-        #
-        # Guarded per-click mutation: `EvoDash.SafeCall.run/1` converts a store
-        # failure / cross-node `:erpc` exit (a call timeout to an unreachable
-        # node EXITS the caller) into an error value, so a dead node flashes
-        # instead of crashing the page.
-        result =
-          EvoDash.SafeCall.run(fn ->
-            EvoDash.NodeContext.cancel_task(socket.assigns[:current_node] || node(), task_id)
-          end)
-
-        case result do
-          {:ok, :ok} ->
-            {:noreply,
-             socket
-             |> assign(chat_status: :cancelling, chat_task_status: :cancelling)
-             |> persist_state()}
-
-          {:ok, {:error, reason}} ->
-            {:noreply,
-             put_flash(
-               socket,
-               :error,
-               gettext("Failed to stop: %{reason}", reason: inspect(reason))
-             )}
-
-          {:error, reason} ->
-            {:noreply,
-             put_flash(
-               socket,
-               :error,
-               gettext("Failed to stop: %{reason}", reason: inspect(reason))
-             )}
-
-          {:ok, _other} ->
-            # Any other non-error return is still a successful cancel request.
-            {:noreply,
-             socket
-             |> assign(chat_status: :cancelling, chat_task_status: :cancelling)
-             |> persist_state()}
-        end
+    cond do
+      not is_nil(socket.assigns[:chat_task_id]) -> cancel_chat_task(socket)
+      interactive_session?(socket) -> close_chat_session(socket)
+      true -> {:noreply, socket}
     end
   end
 
-  # Both evaluator and legacy command decisions use the same scoped async
-  # workflow. Keep the card busy until success; failures retain it for retry.
-  @impl true
+  def handle_event("interrupt_turn", _params, socket) do
+    if socket.assigns[:chat_status] == :running do
+      send_draft(socket, socket.assigns[:chat_draft], :interrupt)
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_event(
         "approval_response",
         %{"request_id" => request_id, "decision" => decision},
@@ -751,32 +829,65 @@ defmodule EvoDashWeb.HomeLive do
     {:noreply, ApprovalWorkflow.respond(socket, request_id, decision)}
   end
 
-  @impl true
   def handle_event("retry_approvals", _params, socket) do
     {:noreply, recover_approvals(socket)}
   end
 
-  # Missing params / invalid decision (or a blank request id) — no-op.
-  @impl true
   def handle_event("approval_response", _params, socket), do: {:noreply, socket}
+
+  defp cancel_chat_task(socket) do
+    node = socket.assigns[:current_node] || node()
+
+    finish_chat(
+      socket,
+      fn -> NodeContext.cancel_task(node, socket.assigns[:chat_task_id]) end,
+      [chat_status: :cancelling, chat_task_status: :cancelling, queued_echoes: []],
+      false
+    )
+  end
+
+  defp close_chat_session(socket) do
+    node = socket.assigns[:current_node] || node()
+    agent_id = socket.assigns[:session_id]
+
+    finish_chat(
+      socket,
+      fn -> SessionActions.close(node, agent_id, :normal) end,
+      [chat_status: :cancelling, queued_echoes: []],
+      true
+    )
+  end
+
+  defp finish_chat(socket, fun, assigns, reload?) do
+    case SafeCall.run(fun) do
+      {:ok, {:error, reason}} -> {:noreply, stop_flash(socket, reason)}
+      {:error, reason} -> {:noreply, stop_flash(socket, reason)}
+      {:ok, _ok} -> {:noreply, stop_ok(socket, assigns, reload?)}
+    end
+  end
+
+  defp stop_ok(socket, assigns, reload?) do
+    socket = assign(socket, assigns)
+    socket = if reload?, do: maybe_load_sessions(socket), else: socket
+    ChatState.persist(socket)
+  end
+
+  # Justification: transport/exit reasons are untrusted terms, inspected for the operator.
+  defp stop_flash(socket, reason) do
+    put_flash(socket, :error, gettext("Failed to stop: %{reason}", reason: inspect(reason)))
+  end
 
   @impl true
   def handle_info({:task_updated, task_id, status, node} = msg, socket) do
-    # NodeAware.handle_task_info/2 applies the node filter (drops foreign-node
-    # events BEFORE the debounce) and schedules the 300ms debounced
-    # :node_aware_reload_tasks; it returns {:noreply, socket}. We extract the
-    # socket and then run the chat-specific handling for our own task.
     {:noreply, socket} = NodeAware.handle_task_info(socket, msg)
     {:noreply, handle_task_event(socket, task_id, status, node)}
   end
 
-  @impl true
   def handle_info({:task_deleted, task_id, node} = msg, socket) do
     {:noreply, socket} = NodeAware.handle_task_info(socket, msg)
     {:noreply, handle_task_deleted(socket, task_id, node)}
   end
 
-  @impl true
   def handle_info({:agent_registered, id, summary, node}, socket) do
     if NodeAware.event_from_current_node?(socket.assigns, node) and
          Map.get(summary, :task_id) == socket.assigns[:chat_task_id] do
@@ -786,41 +897,31 @@ defmodule EvoDashWeb.HomeLive do
           agent_message_count: AgentStream.message_count(summary)
         )
 
-      {:noreply, socket |> persist_state() |> async_fetch_history() |> maybe_recover_approvals()}
+      {:noreply,
+       socket |> ChatState.persist() |> async_fetch_history() |> maybe_recover_approvals()}
     else
       {:noreply, socket}
     end
   end
 
-  @impl true
   def handle_info({:agent_updated, id, changed_fields, node}, socket) do
-    # `changed_fields` is a KEYWORD LIST in real core broadcasts (e.g.
-    # `[message_count: n, ...]` from `EvoGit.AgentScheduler.Store.put_agent_state`),
-    # so membership must be tested with `Keyword.has_key?/2` — the same
-    # pattern AgentsLive uses (agents_live.ex). The core guarantees
-    # `:message_count` in changed_fields whenever the agent's context changed;
-    # no other field change triggers a refetch (HistoryGate choice: refetch
-    # only when the conversation actually moved).
     if NodeAware.event_from_current_node?(socket.assigns, node) and
          id == socket.assigns[:chat_agent_id] and
          is_list(changed_fields) and Keyword.has_key?(changed_fields, :message_count) do
+      socket =
+        if message_count_grew?(socket, changed_fields), do: drop_echoes(socket), else: socket
+
       {:noreply, async_fetch_history(socket)}
     else
       {:noreply, socket}
     end
   end
 
-  @impl true
   def handle_info({:agent_removed, _id, _node}, socket) do
-    # The terminal task event (task_updated :completed/:cancelled/:failed or
-    # task_deleted) finalizes the transcript — no action needed here.
     {:noreply, socket}
   end
 
-  @impl true
   def handle_info({:agents_updated, node}, socket) do
-    # Fallback when an agent_registered broadcast was missed: if a task is
-    # running but no agent is known yet, re-look it up.
     if NodeAware.event_from_current_node?(socket.assigns, node) and
          socket.assigns[:chat_task_id] != nil and socket.assigns[:chat_agent_id] == nil do
       {:noreply, async_lookup_agent(socket)}
@@ -829,34 +930,28 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  # The workflow applies chat/source-node ownership and snapshot race guards
-  # for evaluator requests and legacy command approvals alike.
-  @impl true
   def handle_info({:approval_requested, request}, socket) do
     {:noreply, ApprovalWorkflow.requested(socket, request)}
   end
 
-  @impl true
   def handle_info({:approval_resolved, request_id, _decision, source_node}, socket) do
     {:noreply, ApprovalWorkflow.resolved(socket, request_id, source_node)}
   end
 
-  @impl true
   def handle_info({:approval_resolved, request_id, _decision}, socket) do
     {:noreply, ApprovalWorkflow.resolved(socket, request_id)}
   end
 
-  @impl true
   def handle_info(:node_aware_reload_tasks, socket) do
     socket =
       socket
       |> NodeAware.reload_tasks()
       |> NodeAware.clear_task_reload_pending()
+      |> maybe_load_sessions()
 
     {:noreply, socket}
   end
 
-  @impl true
   def handle_info({:chat_agent_lookup, node, seq, task_id, agent}, socket) do
     if stale?(socket, node, seq) or task_id != socket.assigns[:chat_task_id] do
       {:noreply, socket}
@@ -869,39 +964,20 @@ defmodule EvoDashWeb.HomeLive do
           )
 
         {:noreply,
-         socket |> persist_state() |> async_fetch_history() |> maybe_recover_approvals()}
+         socket |> ChatState.persist() |> async_fetch_history() |> maybe_recover_approvals()}
       else
-        # Agent not registered yet — wait for agent_registered / agents_updated
-        # to retrigger the lookup.
         {:noreply, socket}
       end
     end
   end
 
-  @impl true
   def handle_info({:chat_history_loaded, node, seq, agent_id, result}, socket) do
     if stale?(socket, node, seq) or agent_id != socket.assigns[:chat_agent_id] do
       {:noreply, socket}
     else
       case result do
         msgs when is_list(msgs) ->
-          text = Messages.assistant_text(msgs)
-
-          transcript =
-            if text == "" do
-              socket.assigns[:transcript]
-            else
-              Transcript.put_streaming_text(socket.assigns[:transcript], text)
-            end
-
-          {:noreply,
-           socket
-           |> assign(
-             transcript: transcript,
-             agent_message_count: length(msgs),
-             thought_process: Messages.to_entries(msgs)
-           )
-           |> persist_state()}
+          {:noreply, socket |> apply_history(msgs, false) |> ChatState.persist()}
 
         _ ->
           {:noreply, socket}
@@ -909,7 +985,6 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  @impl true
   def handle_info({:chat_task_loaded, node, seq, task_id, task}, socket) do
     if node != socket.assigns[:current_node] or
          seq != socket.assigns[:chat_task_fetch_seq] or
@@ -920,12 +995,6 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  # Genesis-source availability result (from SourceGate.spawn_availability_check/3).
-  # Stale-guarded: applies only when no newer check was spawned (source_check_seq)
-  # AND the node the check ran for is still the viewed node. `{:unavailable, _}`
-  # is treated as "unknown" by the gate (never blocks). TOTAL — any result shape
-  # is stored verbatim, so a stray message can never leak or crash the page.
-  @impl true
   def handle_info({:source_availability_loaded, seq, node, result}, socket) do
     if seq == socket.assigns[:source_check_seq] and is_atom(node) and
          NodeAware.event_from_current_node?(socket.assigns, node) do
@@ -935,13 +1004,6 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  # Genesis-source download result (from SourceGate.spawn_clone/2). Node-filtered
-  # and TOTAL: `{:ok, _}` clears the busy marker + re-runs the availability check
-  # (the gate clears on success); `{:error, reason}` clears it + surfaces the
-  # failure; `{:unavailable, _}` clears it and resets the gate to "unknown" with
-  # NO error flash (a backend the user cannot act on); any other shape is a
-  # quiet no-op that still clears the busy marker.
-  @impl true
   def handle_info({:source_clone_result, node, result}, socket) do
     if is_atom(node) and NodeAware.event_from_current_node?(socket.assigns, node) do
       case result do
@@ -970,22 +1032,14 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  # SafeCall preserves tuple tags as ONE nested element. The workflow rejects
-  # stale scopes/tokens and keeps cards on recovery or response failures.
-  @impl true
   def handle_info({{:approval_pending_loaded, _seq, _scope} = tag, result}, socket) do
     {:noreply, ApprovalWorkflow.recovered(socket, tag, result)}
   end
 
-  @impl true
   def handle_info({{:approval_workflow_response, _seq, _scope, _id} = tag, result}, socket) do
     {:noreply, ApprovalWorkflow.responded(socket, tag, result)}
   end
 
-  # SafeCall keeps the ModelSelect result nested inside its own tagged result.
-  # Sequence equality also rejects a stale result for a different target id
-  # whose resolved BEAM node happens to be the same.
-  @impl true
   def handle_info({{:model_select_loaded, seq, target_node}, result}, socket) do
     if target_node != elem(selection_scope(socket), 1) or
          seq != socket.assigns.model_select_seq or pending_remote?(socket) do
@@ -1001,32 +1055,39 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  @impl true
+  def handle_info({{:session_attached, seq, node, session_id}, result}, socket) do
+    if seq == socket.assigns[:session_attach_seq] and
+         node == socket.assigns[:current_node] and
+         session_id == socket.assigns[:session_id] do
+      {:noreply, apply_attach(socket, result)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info({{:session_list_loaded, seq, node}, result}, socket) do
+    {:noreply, SessionList.applied(socket, seq, node, result)}
+  end
+
   def handle_info({:node_selected, node_id}, socket) do
-    NodeAware.handle_node_selected(socket, node_id)
+    {:noreply, socket} = NodeAware.handle_node_selected(socket, node_id)
+    {:noreply, maybe_load_sessions(socket)}
   end
 
-  @impl true
   def handle_info({:remote_connection_status, target_id, status}, socket) do
-    NodeAware.handle_connection_status(socket, {:remote_connection_status, target_id, status})
+    {:noreply, socket} =
+      NodeAware.handle_connection_status(socket, {:remote_connection_status, target_id, status})
+
+    {:noreply, maybe_load_sessions(socket)}
   end
 
-  @impl true
   def handle_info(_msg, socket) do
-    # Catch-all — NodeAware's attached hook passes other messages through.
     {:noreply, socket}
   end
 
-  # Shared submit path for the Send button and the Enter key. Returns
-  # {:noreply, socket}.
-  #
-  # Genesis-source gate: when the GENESIS source is known to be missing on a
-  # LOCAL node, a send would only start a doomed `:reflect` task — block it
-  # (no optimistic bubbles, no start_task, no seq bump) and point the user at
-  # the Download button. Only a KNOWN `false` blocks (see
-  # SourceGate.blocked?/1); the textarea/Send button are disabled in the same
-  # state, so this is the defensive backstop for the Enter-key path.
-  defp send_chat(socket, text) do
+  defp send_chat(socket, text), do: send_draft(socket, text, :queue)
+  # button are disabled in the same state, so this is the defensive backstop for
+  defp send_draft(socket, text, policy) do
     cond do
       pending_remote?(socket) ->
         {:noreply,
@@ -1045,49 +1106,245 @@ defmodule EvoDashWeb.HomeLive do
          )}
 
       true ->
-        do_send_chat(socket, text)
+        do_send_chat(socket, text, policy)
     end
   end
 
-  defp do_send_chat(socket, text) do
-    if socket.assigns[:chat_status] != :idle do
-      # Defensive — the input is disabled while running anyway.
-      {:noreply, socket}
-    else
-      text = String.trim(text || "")
+  defp do_send_chat(socket, text, policy) do
+    text = String.trim(text || "")
 
-      if text == "" do
+    cond do
+      not sendable_status?(socket) ->
+        # Defensive — the composer disables Send in these states anyway.
         {:noreply, socket}
-      else
-        objective =
-          case Transcript.build_preamble(socket.assigns[:transcript]) do
-            {:ok, preamble} -> preamble <> "New message: " <> text
-            :empty -> text
+
+      text == "" ->
+        {:noreply, socket}
+
+      true ->
+        {message, attachments} =
+          Attachments.to_message(text, socket.assigns[:pending_attachments])
+
+        opts =
+          if is_nil(socket.assigns[:session_id]) do
+            [mode: "reflect", objective: reflect_objective(socket, message)]
+          else
+            []
           end
 
-        # Validate before touching the transcript/draft. A missing, stale or
-        # wrong-node snapshot must not create a bubble or silently submit Auto.
         case ModelSelect.task_opts(
                socket.assigns.model_snapshot,
                socket.assigns,
                selection_scope(socket),
-               mode: "reflect",
-               objective: objective
+               opts
              ) do
           {:ok, task_opts} ->
-            start_chat(socket, text, task_opts)
+            dispatch_send(socket, message, attachments, task_opts, policy)
 
           {:error, _reason} ->
             {:noreply,
              put_flash(socket, :error, gettext("Choose a valid model before sending a message."))}
         end
-      end
     end
   end
 
+  defp sendable_status?(socket) do
+    if is_nil(socket.assigns[:session_id]) do
+      socket.assigns[:chat_status] == :idle
+    else
+      socket.assigns[:chat_status] in [:idle, :running, :awaiting_input]
+    end
+  end
+
+  defp reflect_objective(socket, text) do
+    case Transcript.build_preamble(socket.assigns[:transcript]) do
+      {:ok, preamble} -> preamble <> "New message: " <> text
+      :empty -> text
+    end
+  end
+
+  defp dispatch_send(socket, text, attachments, task_opts, policy) do
+    if is_nil(socket.assigns[:session_id]) do
+      start_session_chat(socket, text, attachments, task_opts)
+    else
+      queue_session_message(socket, text, attachments, policy)
+    end
+  end
+
+  # is shown as a transient echo (never as a second answer bubble).
+  defp queue_session_message(socket, text, attachments, policy) do
+    node = socket.assigns[:current_node] || node()
+    agent_id = socket.assigns[:session_id]
+    queued? = socket.assigns[:chat_status] == :running
+
+    result =
+      SafeCall.run(fn ->
+        SessionActions.send_message(node, agent_id, text, attachments, policy)
+      end)
+
+    case normalize_send(result) do
+      :ok ->
+        transcript =
+          Transcript.append(socket.assigns[:transcript], Transcript.entry(:user, text))
+
+        transcript =
+          if queued?, do: transcript, else: Transcript.put_streaming_text(transcript, "")
+
+        socket =
+          socket
+          |> assign(
+            transcript: transcript,
+            chat_draft: "",
+            pending_attachments: Attachments.clear(),
+            chat_status: :running
+          )
+          |> ChatState.persist()
+
+        {:noreply, if(queued?, do: push_queued_echo(socket, text), else: socket)}
+
+      {:error, reason} ->
+        {:noreply, send_failure(socket, reason)}
+    end
+  end
+
+  defp normalize_send({:ok, :ok}), do: :ok
+  defp normalize_send({:ok, {:error, reason}}), do: {:error, reason}
+  defp normalize_send({:error, reason}), do: {:error, reason}
+  defp normalize_send({:ok, other}), do: {:error, {:unexpected_send_result, other}}
+
+  defp push_queued_echo(socket, text) do
+    echo = %{
+      id: System.unique_integer([:positive]) |> Integer.to_string(),
+      text: text,
+      at: System.system_time(:millisecond)
+    }
+
+    echoes = (socket.assigns[:queued_echoes] || []) ++ [echo]
+
+    socket
+    |> assign(queued_echoes: Enum.take(echoes, -20))
+    |> ChatState.persist()
+  end
+
+  defp message_count_grew?(socket, changed_fields) do
+    case Keyword.get(changed_fields, :message_count) do
+      count when is_integer(count) ->
+        case socket.assigns[:agent_message_count] do
+          nil -> true
+          previous when is_integer(previous) -> count > previous
+          _other -> true
+        end
+
+      _other ->
+        false
+    end
+  end
+
+  defp drop_echoes(socket), do: assign(socket, queued_echoes: [])
+
+  defp send_failure(socket, reason) do
+    if SessionActions.session_ended?(reason) do
+      socket
+      |> assign(chat_status: :ended, queued_echoes: [])
+      |> ChatState.persist()
+      |> put_flash(
+        :error,
+        gettext("This conversation has ended. Start a new chat to continue.")
+      )
+    else
+      put_flash(
+        socket,
+        :error,
+        gettext("Failed to send the message: %{reason}", reason: inspect(reason))
+      )
+    end
+  end
+
+  # error — never a silent Auto, never a fallback on a transport error.
+  defp start_session_chat(socket, text, attachments, task_opts) do
+    node = socket.assigns[:current_node] || node()
+
+    opts =
+      SessionActions.session_opts(text,
+        model_spec: Keyword.get(task_opts, :model_spec),
+        attachments: attachments
+      )
+
+    case SafeCall.run(fn -> SessionActions.start(node, opts) end) do
+      {:ok, {:ok, agent_id}} ->
+        adopt_session(socket, agent_id, text)
+
+      {:ok, {:error, reason}} ->
+        start_failure(socket, reason, text, task_opts)
+
+      {:error, reason} ->
+        start_failure(socket, {:transport, reason}, text, task_opts)
+
+      {:ok, other} ->
+        start_failure(socket, {:unexpected_start_result, other}, text, task_opts)
+    end
+  end
+
+  defp start_failure(socket, reason, text, task_opts) do
+    if SessionActions.session_unavailable?(reason) do
+      {:noreply, fallback_socket} =
+        start_chat(assign(socket, session_mode: :one_shot), text, task_opts)
+
+      {:noreply,
+       put_flash(
+         fallback_socket,
+         :info,
+         gettext(
+           "Interactive sessions are unavailable here. This conversation runs in one-shot mode."
+         )
+       )}
+    else
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         gettext("Failed to start the conversation: %{reason}", reason: inspect(reason))
+       )}
+    end
+  end
+
+  defp adopt_session(socket, agent_id, text) do
+    node = socket.assigns[:current_node] || node()
+
+    transcript =
+      socket.assigns[:transcript]
+      |> Transcript.append(Transcript.entry(:user, text))
+      |> Transcript.put_streaming_text("")
+
+    socket =
+      socket
+      |> assign(
+        session_id: agent_id,
+        current_session_id: agent_id,
+        chat_id: agent_id,
+        session_mode: :interactive,
+        chat_agent_id: agent_id,
+        chat_node: node,
+        chat_task_id: nil,
+        chat_task_status: :running,
+        agent_message_count: nil,
+        chat_status: :running,
+        chat_draft: "",
+        queued_echoes: [],
+        pending_attachments: Attachments.clear(),
+        transcript: transcript
+      )
+      |> ChatState.persist()
+      |> ApprovalWorkflow.init()
+      |> maybe_recover_approvals()
+      |> spawn_attach(agent_id)
+      |> maybe_load_sessions()
+
+    {:noreply,
+     push_patch(socket, to: SessionActions.url(socket.assigns[:current_node_id], agent_id))}
+  end
+
   defp start_chat(socket, text, task_opts) do
-    # Optimistic bubbles: the user message + an empty streaming assistant
-    # bubble (pulsing dots) appear immediately.
     transcript =
       socket.assigns[:transcript]
       |> Transcript.append(Transcript.entry(:user, text))
@@ -1101,16 +1358,9 @@ defmodule EvoDashWeb.HomeLive do
         chat_node: socket.assigns[:current_node] || node()
       )
 
-    # Guarded per-click mutation on the viewed node. Options were validated
-    # against its ephemeral snapshot before the optimistic transcript update.
-    # No :path or legacy :model_id is submitted.
-    # `EvoDash.SafeCall.run/1` normalizes the store/RPC outcome: an
-    # unreachable remote node EXITS its caller (an `:erpc` failure a rescue
-    # cannot catch), so it becomes `{:error, reason}` and lands on the
-    # "Failed to start the task" bubble instead of crashing the page.
     result =
-      case EvoDash.SafeCall.run(fn ->
-             EvoDash.NodeContext.start_task(
+      case SafeCall.run(fn ->
+             NodeContext.start_task(
                socket.assigns[:current_node] || node(),
                :reflect,
                task_opts
@@ -1127,7 +1377,7 @@ defmodule EvoDashWeb.HomeLive do
             socket =
               socket
               |> assign(chat_task_id: id, chat_task_status: :pending)
-              |> persist_state()
+              |> ChatState.persist()
               |> async_lookup_agent()
               |> maybe_recover_approvals()
 
@@ -1138,7 +1388,7 @@ defmodule EvoDashWeb.HomeLive do
               socket
               |> finalize_streaming(gettext("Failed to start the task: no task id returned"))
               |> assign(:chat_status, :idle)
-              |> persist_state()
+              |> ChatState.persist()
 
             {:noreply, socket}
         end
@@ -1150,30 +1400,20 @@ defmodule EvoDashWeb.HomeLive do
             gettext("Failed to start the task: %{reason}", reason: inspect(reason))
           )
           |> assign(:chat_status, :idle)
-          |> persist_state()
+          |> ChatState.persist()
 
         {:noreply, socket}
     end
   end
 
-  # Spawns a supervised lookup of the reflect task's root agent. `node_override`
-  # targets a specific node (mount reconciliation uses the chat's OWN
-  # `:chat_node`); the default is the viewed node. Bumps :chat_fetch_seq so
-  # only the latest in-flight result applies.
-  #
-  # The RPC runs through `EvoDash.SafeCall.run/2` INSIDE the task: an `:erpc`
-  # to a remote node EXITS the caller (a rescue cannot catch an exit), and a
-  # dying child would never send its result message — the lookup would be lost.
-  # Normalized to `[]` on any error, so the caller simply waits for the
-  # agent_registered / agents_updated retrigger.
   defp async_lookup_agent(socket, node_override \\ nil) do
     task_id = socket.assigns[:chat_task_id]
     node = node_override || socket.assigns[:current_node] || node()
     seq = socket.assigns[:chat_fetch_seq] + 1
     pid = self()
 
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      agents = EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.list_agents(node) end, [])
+    Task.Supervisor.start_child(TaskSupervisor, fn ->
+      agents = SafeCall.run(fn -> NodeContext.list_agents(node) end, [])
       agent = AgentStream.find_root_agent(agents, task_id)
       send(pid, {:chat_agent_lookup, node, seq, task_id, agent})
     end)
@@ -1181,20 +1421,15 @@ defmodule EvoDashWeb.HomeLive do
     assign(socket, chat_fetch_seq: seq)
   end
 
-  # Spawns a supervised history fetch for the chat agent. `node_override`
-  # targets a specific node (see async_lookup_agent/2). Bumps :chat_fetch_seq
-  # (HistoryGate-style: only refetched when the agent's message_count moved).
-  # Same guarded-task contract: any call failure degrades to `[]` (the
-  # handler's unchanged branch) and the result message is always sent.
   defp async_fetch_history(socket, node_override \\ nil) do
     agent_id = socket.assigns[:chat_agent_id]
     node = node_override || socket.assigns[:current_node] || node()
     seq = socket.assigns[:chat_fetch_seq] + 1
     pid = self()
 
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+    Task.Supervisor.start_child(TaskSupervisor, fn ->
       result =
-        EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.get_agent_history(node, agent_id) end, [])
+        SafeCall.run(fn -> NodeContext.get_agent_history(node, agent_id) end, [])
 
       send(pid, {:chat_history_loaded, node, seq, agent_id, result})
     end)
@@ -1202,112 +1437,128 @@ defmodule EvoDashWeb.HomeLive do
     assign(socket, chat_fetch_seq: seq)
   end
 
-  # Spawns a supervised task fetch used to finalize the transcript with the
-  # preserved/final result (also the ONE-SHOT mount reconciliation fetch).
-  # Bumps :chat_task_fetch_seq (its own counter, so a late history/lookup
-  # fetch can never invalidate the terminal result). Uses the lite read (no
-  # archive blob — the terminal path reads only status/result/error). A
-  # failed/timed-out fetch degrades to `nil`, which finalize_terminal/2 treats
-  # as deleted.
   defp async_fetch_task(socket, node_override \\ nil) do
     task_id = socket.assigns[:chat_task_id]
     node = node_override || socket.assigns[:current_node] || node()
     seq = socket.assigns[:chat_task_fetch_seq] + 1
     pid = self()
 
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      task = EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.get_task_lite(node, task_id) end, nil)
-
+    Task.Supervisor.start_child(TaskSupervisor, fn ->
+      task = SafeCall.run(fn -> NodeContext.get_task_lite(node, task_id) end, nil)
       send(pid, {:chat_task_loaded, node, seq, task_id, task})
     end)
 
     assign(socket, chat_task_fetch_seq: seq)
   end
 
-  # Chat-specific handling of a task lifecycle event for OUR task (node filter
-  # and task_id match already checked by the caller). Every status updates the
-  # badge assign (`:chat_task_status`); `nil` = review-only mutation → no-op.
   defp handle_task_event(socket, task_id, status, node) do
     if NodeAware.event_from_current_node?(socket.assigns, node) and
          task_id == socket.assigns[:chat_task_id] do
-      socket =
-        case status do
-          :completed ->
-            async_fetch_task(assign(socket, chat_task_status: :completed))
-
-          :cancelled ->
-            async_fetch_task(assign(socket, chat_task_status: :cancelled))
-
-          :failed ->
-            socket
-            |> assign(chat_task_status: :failed)
-            |> finalize_streaming(gettext("The task failed."))
-            |> clear_task_refs()
-
-          :running ->
-            socket = assign(socket, chat_task_status: :running)
-
-            if socket.assigns[:chat_agent_id] == nil do
-              async_lookup_agent(socket)
-            else
-              socket
-            end
-
-          :cancelling ->
-            assign(socket, chat_task_status: :cancelling, chat_status: :cancelling)
-
-          :pending ->
-            assign(socket, chat_task_status: :pending)
-
-          :finalizing ->
-            assign(socket, chat_task_status: :finalizing)
-
-          nil ->
-            socket
-
-          _ ->
-            socket
-        end
-
-      persist_state(socket)
+      if interactive_session?(socket) do
+        session_task_event(socket, status)
+      else
+        one_shot_task_event(socket, status)
+      end
     else
       socket
     end
   end
 
-  # The chat task was deleted. Finalize with a marker and clear the task refs
-  # (the transcript stays visible so the user sees the history).
+  defp session_task_event(socket, status) do
+    socket =
+      cond do
+        status in @terminal_statuses ->
+          socket
+          |> assign(chat_task_status: status, chat_status: :ended, queued_echoes: [])
+          |> async_fetch_history(socket.assigns[:chat_node])
+
+        status == :cancelling ->
+          assign(socket, chat_task_status: :cancelling, chat_status: :cancelling)
+
+        status in [:running, :pending, :finalizing] ->
+          assign(socket, chat_task_status: status)
+
+        true ->
+          socket
+      end
+
+    ChatState.persist(socket)
+  end
+
+  defp one_shot_task_event(socket, status) do
+    socket =
+      case status do
+        :completed ->
+          async_fetch_task(assign(socket, chat_task_status: :completed))
+
+        :cancelled ->
+          async_fetch_task(assign(socket, chat_task_status: :cancelled))
+
+        :failed ->
+          socket
+          |> assign(chat_task_status: :failed)
+          |> finalize_streaming(gettext("The task failed."))
+          |> clear_task_refs()
+
+        :running ->
+          socket = assign(socket, chat_task_status: :running)
+
+          if socket.assigns[:chat_agent_id] == nil do
+            async_lookup_agent(socket)
+          else
+            socket
+          end
+
+        :cancelling ->
+          assign(socket, chat_task_status: :cancelling, chat_status: :cancelling)
+
+        :pending ->
+          assign(socket, chat_task_status: :pending)
+
+        :finalizing ->
+          assign(socket, chat_task_status: :finalizing)
+
+        _ ->
+          socket
+      end
+
+    ChatState.persist(socket)
+  end
+
   defp handle_task_deleted(socket, task_id, node) do
     if NodeAware.event_from_current_node?(socket.assigns, node) and
          task_id == socket.assigns[:chat_task_id] do
-      socket
-      |> finalize_streaming(gettext("The conversation was deleted."))
-      |> clear_task_refs()
-      |> persist_state()
+      if interactive_session?(socket) do
+        socket
+        |> assign(
+          chat_task_id: nil,
+          chat_task_status: nil,
+          chat_status: :ended,
+          queued_echoes: []
+        )
+        |> ChatState.persist()
+      else
+        socket
+        |> finalize_streaming(gettext("The conversation was deleted."))
+        |> clear_task_refs()
+        |> ChatState.persist()
+      end
     else
       socket
     end
   end
 
-  # Finalizes the last streaming assistant bubble (or appends a new assistant
-  # entry) with `text`.
   defp finalize_streaming(socket, text) do
     assign(socket, transcript: Transcript.finalize_assistant(socket.assigns[:transcript], text))
   end
 
-  # Applies a fetched task to the transcript. Terminal statuses finalize the
-  # transcript and clear the task/agent refs (the transcript AND the final
-  # badge stay visible; New chat is re-enabled). Non-terminal statuses (e.g. a
-  # mount-reconciliation fetch that found a still-alive task) only refresh the
-  # badge/status assigns — the task is still alive, so the refs MUST stay for
-  # further task/agent events to match (no finalization, no clearing).
   defp finalize_terminal(socket, task) do
     cond do
       task == nil ->
         socket
         |> finalize_streaming(gettext("The conversation was deleted."))
         |> clear_task_refs()
-        |> persist_state()
+        |> ChatState.persist()
 
       is_map(task) ->
         case Map.get(task, :status) do
@@ -1323,21 +1574,19 @@ defmodule EvoDashWeb.HomeLive do
 
             socket
             |> clear_task_refs()
-            |> persist_state()
+            |> ChatState.persist()
 
           :cancelling ->
             socket
             |> assign(chat_task_status: :cancelling, chat_status: :cancelling)
-            |> persist_state()
+            |> ChatState.persist()
 
           status when status in [:running, :pending, :finalizing] ->
             socket
             |> assign(chat_task_status: status)
-            |> persist_state()
+            |> ChatState.persist()
 
           _ ->
-            # Missing/unknown status on a live task: nothing to apply — keep
-            # refs and current state (a later broadcast will finalize).
             socket
         end
 
@@ -1355,18 +1604,12 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   defp finalize_cancelled(socket, result) do
-    # Graceful cancel preserves the final result when the agent completed.
     case AgentStream.extract_final_text(result) do
       {:ok, text} -> finalize_streaming(socket, text)
       _ -> finalize_streaming(socket, gettext("Stopped."))
     end
   end
 
-  # Finalizes a :failed task (the fetched-task terminal path). When the decoded
-  # TaskInfo carries a structured error payload, its `error.message` (e.g.
-  # "Task force-killed by user") is the explanation shown to the user; a nil /
-  # non-map / blank error falls back to the generic failure placeholder.
-  # Total: AgentStream.extract_failed_message/1 never raises on malformed data.
   defp finalize_failed(socket, error) do
     case AgentStream.extract_failed_message(error) do
       nil -> finalize_streaming(socket, gettext("The task failed."))
@@ -1374,9 +1617,6 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  # Terminal state: drops the task/agent refs (no further task/agent events
-  # can match) and re-enables input, keeping the transcript AND the final
-  # `:chat_task_status` badge (and thought process) visible on the card.
   defp clear_task_refs(socket) do
     socket
     |> assign(
@@ -1388,9 +1628,6 @@ defmodule EvoDashWeb.HomeLive do
     |> ApprovalWorkflow.init()
   end
 
-  # Full live-chat reset (New chat / node switch): clears everything including
-  # the transcript. The persisted chat (if any) is untouched —
-  # `start_new_chat/1` owns creating + persisting the fresh empty chat.
   defp reset_chat(socket) do
     socket
     |> assign(
@@ -1405,19 +1642,17 @@ defmodule EvoDashWeb.HomeLive do
       chat_node: nil,
       chat_fetch_seq: 0,
       chat_task_fetch_seq: 0,
-      # Selection survives New chat only within its resolved target scope;
-      # handle_params clears cross-node/target selections before this reset.
-      # Per-entry raw-view flags are cleared with their transcript entries.
       raw_entry_ids: MapSet.new(),
+      session_id: nil,
+      current_session_id: nil,
+      session_mode: nil,
+      queued_echoes: [],
+      pending_attachments: Attachments.clear(),
       approval_context: nil
     )
     |> ApprovalWorkflow.init()
   end
 
-  # Compare only chat/node refs, not draft/history changes. A fresh connected
-  # mount reconciles once after restoration and node resolution; root lookup,
-  # task start and reconnect/node changes reconcile only when their scope moves.
-  # The workflow performs the usable-ref and pending-remote checks itself.
   defp maybe_recover_approvals(socket) do
     context =
       Map.take(socket.assigns, [
@@ -1442,16 +1677,11 @@ defmodule EvoDashWeb.HomeLive do
     if connected?(socket), do: ApprovalWorkflow.recover(socket), else: socket
   end
 
-  # Starts a NEW persisted chat (old chats stay in ChatHistory — there is no
-  # chat-switching UI yet) and resets all live chat state, persisting the
-  # fresh empty state. The store mutation is connected-only: a dead-render
-  # handle_params with `?node=` must not create a chat per HTTP request.
-  # Prune cap: keep the newest 10 chats (bounded memory).
   defp start_new_chat(socket) do
     socket =
       if connected?(socket) do
-        chat_id = EvoDash.ChatHistory.new_chat()
-        EvoDash.ChatHistory.prune(10)
+        chat_id = ChatHistory.new_chat()
+        ChatHistory.prune(10)
         assign(socket, chat_id: chat_id)
       else
         socket
@@ -1459,17 +1689,13 @@ defmodule EvoDashWeb.HomeLive do
 
     socket
     |> reset_chat()
-    |> persist_state()
+    |> ChatState.persist()
   end
 
-  # Connected mounts attach to the persisted current chat (creating one when
-  # none exists) and restore its state. The dead render deliberately SKIPS the
-  # store — the initial HTTP request must not create a chat per page load.
   defp attach_chat(socket) do
     if connected?(socket) do
-      chat_id = EvoDash.ChatHistory.current_chat_id() || EvoDash.ChatHistory.new_chat()
-
-      saved_state = EvoDash.ChatHistory.get_state(chat_id)
+      chat_id = ChatHistory.current_chat_id() || ChatHistory.new_chat()
+      saved_state = ChatHistory.get_state(chat_id)
 
       socket =
         socket
@@ -1482,12 +1708,6 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  # ONE-SHOT reconciliation (NOT polling): a chat that was mid-flight when the
-  # page was left missed its terminal task events. Re-fetch the task once — a
-  # terminal status finalizes the transcript, a live status just refreshes the
-  # badge — and re-link the agent stream (a single history refetch, or a
-  # lookup when the agent was never observed). All fetches target the chat's
-  # OWN node (`:chat_node`), not the viewed node — the chat's task lives there.
   defp reconcile_chat(socket) do
     if socket.assigns[:chat_status] in [:running, :cancelling] and
          socket.assigns[:chat_task_id] != nil do
@@ -1503,22 +1723,6 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  # Persists the full chat state into ChatHistory (in-memory, opaque per-chat
-  # map — the LiveView owns the shape via ChatState). Skipped on dead renders
-  # (no chat attached yet). Persist points: send, stop, every task/agent
-  # status event, the async lookup/history/task results, finalize paths, New
-  # chat, and node switches. The `chat_input` draft is NOT persisted per
-  # keystroke (documented choice).
-  defp persist_state(socket) do
-    if connected?(socket) and socket.assigns[:chat_id] != nil do
-      EvoDash.ChatHistory.put_state(socket.assigns[:chat_id], ChatState.build(socket.assigns))
-    end
-
-    socket
-  end
-
-  # Stale-guard for async chat fetches: the result applies only when the node
-  # context is unchanged AND no newer fetch was spawned since.
   defp stale?(socket, node, seq) do
     node != socket.assigns[:current_node] or seq != socket.assigns[:chat_fetch_seq]
   end
