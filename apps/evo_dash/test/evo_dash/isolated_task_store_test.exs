@@ -121,6 +121,43 @@ defmodule EvoDash.Test.IsolatedTaskStoreTest do
     assert File.read!(db) <> File.read!(db <> "-wal") =~ id
   end
 
+  test "the shared template is materialized completely at build time: ONE immutable file" do
+    :ok = IsolatedTaskStore.isolate!(@prefix)
+
+    template = template_path()
+    assert File.exists?(template), "isolate!/1 did not materialize the migrated template"
+
+    # ONE file — no `-wal`/`-shm`/`-journal`. This pins the race that made the
+    # byte-identity assertion below flake: `EvoGit.Store.Boot.stop/1` returns as
+    # soon as the pool is down, but SQLite's LAST-CONNECTION WAL cleanup (which
+    # UNLINKS the sidecars) runs afterwards at an uncontrolled moment — measured
+    # on this host over 120 builds, `-wal` + `-shm` were still on disk at the
+    # instant `stop/1` returned in 120 of 120 builds (the main-file descriptor
+    # was still open in 22 of 120) and vanished microseconds-to-milliseconds
+    # later. A build that fingerprinted the template at that point saw it change
+    # again later, through nothing but a delayed close. The build therefore
+    # finishes materialization itself, so the sidecars NEVER exist for the rest
+    # of the run.
+    assert Path.wildcard(template <> "*") == [template],
+           "the template must be ONE file with no sidecars, got: " <>
+             inspect(Path.wildcard(template <> "*"))
+
+    snapshot = template_snapshot()
+    assert %{main: {:present, size, _}} = snapshot
+    assert size > 0
+    assert %{"-wal" => :absent, "-shm" => :absent, "-journal" => :absent} = snapshot
+
+    # … and READ-ONLY, so an accidental SHARED write (a store opened on the
+    # template instead of on a copy) fails loudly instead of silently poisoning
+    # every later isolation.
+    assert {:ok, %File.Stat{mode: mode}} = File.stat(template)
+
+    assert Bitwise.band(mode, 0o222) == 0,
+           "the template must be read-only, got mode #{Integer.to_string(mode, 8)}"
+
+    record_isolated_path!(isolated_sqlite_path())
+  end
+
   # The sqlite FILE the isolated `EvoGit.Store` (which holds the singleton name
   # while a test isolates) is opened on; the temp dirs this module's own
   # `isolate!/1` calls created (asserted EMPTY by the post-teardown hook).
@@ -186,8 +223,43 @@ defmodule EvoDash.Test.IsolatedTaskStoreTest do
   end
 
   defp assert_template_not_mutated(before, after_snapshot) do
-    assert after_snapshot == before, "isolate!/1 mutated the shared migrated template"
+    if after_snapshot != before do
+      flunk("""
+      isolate!/1 mutated the shared migrated template
+
+      template: #{template_path()}
+
+      #{Enum.map_join(changed_keys(before, after_snapshot), "\n", &describe_change(&1, before, after_snapshot))}
+
+      before: #{inspect(before, pretty: true, limit: :infinity)}
+      after:  #{inspect(after_snapshot, pretty: true, limit: :infinity)}
+      """)
+    end
+
+    :ok
   end
+
+  # The keys whose fingerprint differs between the two snapshots, `:main` first
+  # so the primary file is always named before a sidecar.
+  defp changed_keys(before, after_snapshot) do
+    Enum.filter(
+      [:main | @template_sidecars],
+      &(Map.get(before, &1) != Map.get(after_snapshot, &1))
+    )
+  end
+
+  defp describe_change(key, before, after_snapshot) do
+    path = if key == :main, do: template_path(), else: template_path() <> to_string(key)
+
+    "  #{inspect(key)} #{path}\n" <>
+      "    before: #{describe_fingerprint(Map.get(before, key))}\n" <>
+      "    after:  #{describe_fingerprint(Map.get(after_snapshot, key))}"
+  end
+
+  defp describe_fingerprint(:absent), do: "absent"
+
+  defp describe_fingerprint({:present, size, sha256}),
+    do: "present, #{size} bytes, sha256 #{Base.encode16(sha256, case: :lower)}"
 
   # `EvoGit.Repo` resolves its target through a PROCESS-LOCAL binding that is
   # unset in a test process, so a bare `EvoGit.Repo.query!/1` would address the

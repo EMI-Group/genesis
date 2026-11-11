@@ -20,15 +20,6 @@ defmodule EvoGit.Agent.Tools.ElixirEval.EngineTest do
   @write "EvoGit.Agent.Tools.ElixirEval.Write"
   @restricted "Evaluation rejected a restricted operation. Use admitted APIs such as EvoGit.TaskRegistry.list_tasks_page/0,1 or EvoGit.AgentScheduler.get_config/1; Read/Write facade APIs remain available. Call EvoGit.Agent.Tools.ElixirEval.Read.help() for exact MFAs and limits. Writes require the write tier and exact-code approval; no automatic escalation."
 
-  setup_all do
-    # Denial must concern real native modules, not an unavailable alias. Besides
-    # loading the modules, these literal aliases intern their name segments for
-    # Dune's existing-atom parser on a cold BEAM (without changing its allowlist).
-    Code.ensure_loaded!(EvoGit.Agent.Tools.ElixirEval.Broker)
-    Code.ensure_loaded!(EvoGit.CommandShell)
-    :ok
-  end
-
   setup %{store: store, registry: registry} do
     EvoGit.TestSupport.ConfigDir.isolate!("eval_engine")
     fixture = Fixture.start!(self(), store, registry)

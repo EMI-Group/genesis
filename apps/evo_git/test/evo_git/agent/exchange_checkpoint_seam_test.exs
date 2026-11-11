@@ -84,6 +84,13 @@ defmodule EvoGit.Agent.ExchangeCheckpointSeamTest do
   @read_output "defmodule A do\n  # checkpoint read\nend\n"
   @usage %{input_tokens: 100, output_tokens: 20, total_tokens: 120}
 
+  # The clock pin the context-equality test installs via `now:` (an integer Unix
+  # second, 2023-11-14T22:13:20Z). Every per-message `metadata[:timestamp]` is
+  # stamped through `EvoGit.Agent.Clock.now_seconds/0`, so WITHOUT this pin two
+  # sequential runs of the same exchange can straddle a second boundary and
+  # differ only in that metadata.
+  @pinned_now 1_700_000_000
+
   setup do
     agent_id = @agent_id_base + System.unique_integer([:positive])
     install_agent_row(agent_id)
@@ -141,7 +148,11 @@ defmodule EvoGit.Agent.ExchangeCheckpointSeamTest do
     test "an absent seam changes nothing", %{agent_id: agent_id} do
       test_pid = self()
 
+      # SAME pinned clock for BOTH runs: the per-message `metadata[:timestamp]`
+      # is otherwise wall-clock and the comparison below would flake whenever a
+      # second boundary falls between the two runs' corresponding append sites.
       base_opts = [
+        now: @pinned_now,
         llm_call: llm_stub(),
         tool_batch: tool_batch_stub(),
         scheduler: scheduler_stub()
@@ -162,6 +173,15 @@ defmodule EvoGit.Agent.ExchangeCheckpointSeamTest do
       assert state_with.turn == state_without.turn
       assert state_with.total_tokens == state_without.total_tokens
       assert state_with.context == state_without.context
+
+      # The seam REALLY reaches every append site: every message the exchange
+      # appended (the initial system+user pair is indices 0-1) carries the
+      # pinned Unix second rather than the wall clock.
+      for state <- [state_without, state_with] do
+        appended = Enum.drop(state.context.messages, 2)
+        assert length(appended) == 3
+        assert Enum.all?(appended, &(&1.metadata[:timestamp] == @pinned_now))
+      end
 
       # The seam fired (proving the comparison is not vacuous) and is the ONLY
       # difference between the two runs.

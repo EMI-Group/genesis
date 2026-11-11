@@ -30,6 +30,19 @@ defmodule EvoGit.Agent.Exchange.Seams do
      unset;
   3. `nil`.
 
+  ## The additional opts-only clock pin (`:now`)
+
+  `Exchange.run/2` and `Turn.run/3` also read an OPTIONAL `:now` key from the
+  same `opts` (see `EvoGit.Agent.Clock`): an integer Unix second, a `DateTime`,
+  a `NaiveDateTime` (read as UTC) or a 0-arity function returning one of those,
+  pinning every per-message `metadata[:timestamp]` this exchange stamps.
+
+  It is NOT one of the four seams and has NO app-env default: a `:now` key can
+  only come from the caller's `opts`, an absent (or explicitly `nil`) value
+  means the real clock, and the pin is PROCESS-DICTIONARY scoped so a
+  concurrent exchange is never affected. The four behaviour seams above keep
+  their resolution order unchanged.
+
   ## The four seams
 
   ### `llm_call` — arity 5

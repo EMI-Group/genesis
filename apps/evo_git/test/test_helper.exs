@@ -44,6 +44,27 @@ Application.put_env(:req_llm, :openai_api_key, "test-key")
 # never sets :config_dir_fun, so production resolution is unchanged.
 Application.put_env(:evo_git, :config_dir_fun, {EvoGit.TestSupport.ConfigDir, :resolve, []})
 
+# Warm the vendored LLM model catalog ONCE, here, before any test module runs.
+# Whoever reaches the catalog first pays `:llm_db`'s packaged-snapshot load
+# (~2.5 s idle: an 11.7 MB JSON decode plus index building) INSIDE a
+# `:global.trans` load lock, so every other caller that needs the catalog
+# meanwhile retries in `:global.random_sleep/1`. On a host running the suite's
+# whole async cohort that load stretches many-fold, and the cost then lands on
+# whichever unrelated module happens to be WAITING — observed as a session
+# exchange worker parked in `LLMDB.Catalog.ensure_loaded!/0` (via
+# `LLMDB.Spec.parse_colon_format`) past a 30 s wait budget in
+# `agent_scheduler/session_runtime_invariants_test.exs`. Paying it once while
+# the BEAM is still quiet is also what production does (`EvoGit.CatalogWarmup`
+# runs immediately before `AgentScheduler`); every later call only reads the
+# warm `:persistent_term` store. Best effort: never abort a run from here.
+try do
+  LLMDB.Catalog.ensure_loaded!()
+rescue
+  error -> IO.warn("LLM catalog warm-up skipped: #{Exception.message(error)}")
+catch
+  kind, reason -> IO.warn("LLM catalog warm-up skipped: #{inspect({kind, reason})}")
+end
+
 # Load-robust default per-test timeout. The suite drives real git/subprocess work
 # from up to ~28 concurrent tests, and every `System.cmd/3` / `System.find_executable/1`
 # PATH lookup is a round trip to the BEAM's SINGLE `:file` server. Under heavy host CPU

@@ -144,6 +144,8 @@ Mounted tests must await the owned settings_config_saved result and its applied 
 ConfigSave captures the target scope, canonical candidate and explicit callbacks, not arbitrary process dictionary values; process-local test overrides depend on the downstream resolver's caller-chain support across Task.Supervisor children.
 Saved receipts contain authoritative file_config, warnings, scope, success_msg and runtime?, while failed receipts contain reason instead of file_config/warnings.
 A confirmed write followed by failed reload remains saved with the confirmed candidate and a tagged config_reload warning.
+An unacknowledged write (writer error/exit — e.g. the shared write path's scheduler reload timing out AFTER the file landed) is decided by the authoritative read: a read matching the written candidate is a saved receipt with NO warning, while the previous config or an unreadable config keeps the writer's reason as the failure.
+Verification compares a persistence projection (both sides canonicalized, legacy flat `[llm]` mirrors/`models` dropped, nil-valued keys dropped) because a TOML round trip cannot reproduce them; it never duplicates the runtime push, which stays the parent's single best-effort push after the receipt lands.
 The helper settles matching editor tokens but leaves authoritative config assignment, test-selection reconciliation, status/OAuth refreshes and flashes to the parent.
 invalidate/1 detaches presentation ownership while retaining a live-worker guard; stale completions change no assigns or loading state.
 Preserve config_save_owner across scope resets, invalidate pre-save config-load generations and refetch authoritative configuration before constructing a new scope's candidate.

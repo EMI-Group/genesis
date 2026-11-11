@@ -68,7 +68,10 @@ defmodule EvoGit.VCT do
   ## Broadcasts
 
   Every successful mount mutation publishes `{:vct_updated, node()}` on
-  `"vct"` — exactly one broadcast per mutation.
+  `"vct"` — exactly one broadcast per mutation — through the PubSub instance
+  named by the `:pubsub` init option (default `EvoGit.PubSub`). Tests inject an
+  ISOLATED instance, so a concurrently running case can never deliver its own
+  `{:vct_updated, node}` into a `refute_receive` window.
   """
 
   use GenServer
@@ -99,6 +102,7 @@ defmodule EvoGit.VCT do
           data_dir: String.t(),
           vct_dir: String.t(),
           store: term(),
+          pubsub: term(),
           mounts: [Mount.t()]
         }
 
@@ -127,6 +131,9 @@ defmodule EvoGit.VCT do
     * `:system_mounts` — host-declared RESERVED mounts to ensure at boot: a list
       of maps or keyword lists with `:point`, `:path` and an optional `:name`
       (default `[]`)
+    * `:pubsub` — the PubSub instance `"vct"` notifications are broadcast on
+      (default `EvoGit.PubSub`); tests pass an ISOLATED instance so their
+      `refute_receive` windows observe only this server's broadcasts
 
   Each `:system_mounts` entry is merged with `EvoGit.VCT.Table.ensure_mount/4`
   IN ORDER, so boot is idempotent: an already-mounted point/path is a no-op, a
@@ -342,6 +349,7 @@ defmodule EvoGit.VCT do
     File.mkdir_p!(vct_dir)
 
     store = Keyword.get(opts, :store, EvoGit.Store)
+    pubsub = Keyword.get(opts, :pubsub, EvoGit.PubSub)
 
     loaded = load_mounts(store)
     {mounts, merged?} = merge_system_mounts(loaded, Keyword.get(opts, :system_mounts, []))
@@ -351,6 +359,7 @@ defmodule EvoGit.VCT do
       data_dir: data_dir,
       vct_dir: vct_dir,
       store: store,
+      pubsub: pubsub,
       mounts: mounts
     }
 
@@ -362,7 +371,7 @@ defmodule EvoGit.VCT do
       if merged? do
         case persist(state, mounts) do
           :ok ->
-            broadcast_mount_change()
+            broadcast_mount_change(state)
             state
 
           {:error, reason} ->
@@ -390,7 +399,7 @@ defmodule EvoGit.VCT do
 
       case persist(state, mounts) do
         :ok ->
-          broadcast_mount_change()
+          broadcast_mount_change(state)
           {:reply, {:ok, mount}, %{state | mounts: mounts}}
 
         {:error, reason} ->
@@ -412,7 +421,7 @@ defmodule EvoGit.VCT do
       if changed? do
         case persist(state, mounts) do
           :ok ->
-            broadcast_mount_change()
+            broadcast_mount_change(state)
             {:reply, {:ok, mount}, %{state | mounts: mounts}}
 
           {:error, reason} ->
@@ -453,7 +462,7 @@ defmodule EvoGit.VCT do
       {:ok, mounts, _removed} ->
         case persist(state, mounts) do
           :ok ->
-            broadcast_mount_change()
+            broadcast_mount_change(state)
             {:reply, :ok, %{state | mounts: mounts}}
 
           {:error, reason} ->
@@ -508,7 +517,7 @@ defmodule EvoGit.VCT do
   def handle_call({:put_global_context, content}, _from, state) when is_binary(content) do
     case write_global_context(state, content) do
       :ok ->
-        broadcast_mount_change()
+        broadcast_mount_change(state)
         {:reply, :ok, state}
 
       {:error, reason} ->
@@ -620,11 +629,13 @@ defmodule EvoGit.VCT do
       {:error, :store_unavailable}
   end
 
-  # ONE broadcast per successful mutation: the node-aware `"vct"` notification.
-  defp broadcast_mount_change, do: safe_broadcast("vct", {:vct_updated, node()})
+  # ONE broadcast per successful mutation: the node-aware `"vct"` notification,
+  # published on the instance's own PubSub (`:pubsub` init opt).
+  defp broadcast_mount_change(state),
+    do: safe_broadcast(state.pubsub, "vct", {:vct_updated, node()})
 
-  defp safe_broadcast(topic, message) do
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, topic, message)
+  defp safe_broadcast(pubsub, topic, message) do
+    Phoenix.PubSub.broadcast(pubsub, topic, message)
   rescue
     _exception -> :ok
   catch

@@ -47,6 +47,10 @@ defmodule EvoGit.Agent.Turn do
   `:trigger_recovery` arity 2) and `opts` is the seam keyword list
   (`:llm_call`, `:tool_batch`, `:scheduler`; see
   `EvoGit.Agent.Exchange.Seams`).
+
+  An OPTIONAL `:now` entry pins the clock for this turn (see
+  `EvoGit.Agent.Clock`), so a turn driven OUTSIDE an exchange honours the same
+  opts pin the exchange installs for its whole body.
   """
   @spec run(
           State.t(),
@@ -57,14 +61,16 @@ defmodule EvoGit.Agent.Turn do
           | {:finish, State.t(), EvoGit.Agent.Result.t()}
           | {:error, term()}
   def run(%State{} = state, cont, opts \\ []) do
-    ToolDispatch.do_turn(
-      state,
-      &effective_tools/1,
-      state.agent_module.subagent_modules(),
-      cont.loop,
-      cont.trigger_recovery,
-      opts
-    )
+    EvoGit.Agent.Clock.with_opts(opts, fn ->
+      ToolDispatch.do_turn(
+        state,
+        &effective_tools/1,
+        state.agent_module.subagent_modules(),
+        cont.loop,
+        cont.trigger_recovery,
+        opts
+      )
+    end)
   end
 
   @doc false

@@ -736,8 +736,22 @@ defmodule EvoDashWeb.AgentsLive do
   # `{:ok, :ok}` (success), `{:ok, {:error, reason}}` (missing agent) or
   # `{:error, reason}` (RPC / exit failure — a `GenServer.call` timeout lands
   # here instead of killing the LiveView).
+  # The transport is the call-time seam `:agents_send_message_runner` (the same
+  # default-inert shape as `:agents_history_runner` / `:agents_list_runner`):
+  # `(node, agent_id, message) -> {:ok, :ok} | {:ok, {:error, reason}} |
+  # {:error, reason}`, resolved HERE — at the call site — so a test can drive
+  # `send_agent_message` without the shared `EvoGit.AgentScheduler` GenServer
+  # call (whose production 5 s budget EXITS on a loaded host). Production
+  # behaviour is unchanged: the default is the real node-aware delegate.
   defp send_user_message_safely(node, agent_id, message) do
-    case SafeCall.run(fn -> EvoDash.NodeContext.send_user_message(node, agent_id, message) end) do
+    runner =
+      Application.get_env(
+        :evo_dash,
+        :agents_send_message_runner,
+        &EvoDash.NodeContext.send_user_message/3
+      )
+
+    case SafeCall.run(fn -> runner.(node, agent_id, message) end) do
       {:ok, value} -> value
       {:error, reason} -> {:error, reason}
     end

@@ -87,12 +87,15 @@ defmodule EvoGit.Agent.Tools.ElixirEval.ReadAllowlist do
   @doc false
   # Called by the Engine immediately before handing code to Dune. Unlike the on_load
   # above this is an ordinary runtime call, so it MAY load the generated Base
-  # allowlist and a genuine failure is reported at the parse site instead of
-  # crashing boot or silently degrading to a restriction error.
+  # allowlists (BOTH of them) and materialize the whole deny/resolvable surface; a
+  # genuine failure is reported at the parse site instead of crashing boot or
+  # silently degrading to a restriction error. Because the surface is complete for
+  # either tier, a read-tier run can classify a write-facade call as :restricted
+  # instead of failing it as an undefined module.
   @spec ensure_initialized() :: :ok | {:error, term()}
   def ensure_initialized do
-    case Code.ensure_loaded(ReadAllowlist.Base) do
-      {:module, _module} ->
+    case EvoGit.Agent.Tools.ElixirEval.Surface.ensure_initialized() do
+      :ok ->
         ensure_alias_atoms()
         :ok
 
@@ -132,14 +135,18 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WriteAllowlist do
   end
 
   @doc false
-  # See ReadAllowlist.ensure_initialized/0. The write spec extends the read spec, so
-  # both generated Base allowlists must be available before parsing.
+  # See ReadAllowlist.ensure_initialized/0: the same runtime chokepoint loads both
+  # generated Base allowlists and materializes the deny/resolvable surface, so an
+  # alias always resolves to a real module and policy decides the outcome.
   @spec ensure_initialized() :: :ok | {:error, term()}
   def ensure_initialized do
-    with {:module, _module} <- Code.ensure_loaded(ReadAllowlist.Base),
-         {:module, _module} <- Code.ensure_loaded(WriteAllowlist.Base) do
-      ensure_alias_atoms()
-      :ok
+    case EvoGit.Agent.Tools.ElixirEval.Surface.ensure_initialized() do
+      :ok ->
+        ensure_alias_atoms()
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

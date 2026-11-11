@@ -22,12 +22,34 @@ defmodule EvoGit.Agent.Session do
 
   | Phase            | Entered by                                                       | Holds                                        |
   |------------------|------------------------------------------------------------------|----------------------------------------------|
-  | `:starting`      | `init/1` (worktree + scheduler row + first worker)               | nothing yet (worktree bound in the start)     |
+  | `:starting`      | `init/1` (ONE start task: worktree + tmpdir, owner = this pid)    | ONE start task (no `%State{}` yet)            |
   | `:running`       | start / `start_input/3` resume                                   | ONE exchange worker                           |
   | `:awaiting_input`| an interactive `{:yield, state, text}` from the worker           | nothing (see "Idle contract")                 |
   | `:cancelling`    | `cancel/2` `:graceful` while running (3-turn save-work grace)    | ONE exchange worker                           |
   | `:finalizing`    | a terminal outcome OR a finalizer started by `close/2`/cancel     | ONE finalizer process (never a worker)        |
   | `:done`          | the finalize path, immediately before the process stops          | nothing                                       |
+
+  ## Cheap `:starting` (the start task)
+
+  `init/1` answers immediately and the durable setup — the worktree request (a
+  `GenServer.call(..., :infinity)` to `WorktreeManager` for a repo-backed agent)
+  and the per-task scratch dir — runs in ONE monitored task started with the
+  SESSION pid as the worktree owner, so the session process never blocks on it.
+  `:starting` therefore stays RESPONSIVE: `identity/1`, `close/2` (refused as
+  `{:error, {:bad_state, :starting}}`), `cancel/2` (`:force` stops it at once) and
+  every other total read answer immediately.
+  `:starting` holds no `%State{}` yet, so `inspect/1`/`history/1` still answer
+  `:error`/`[]` and `watch` is refused with `{:error, {:bad_state, :starting}}`.
+
+  Two call-time seams bound a create that never returns, both validated integers
+  (`> 0`, else the default): `:worktree_create_slow_warn_ms` (default 120_000)
+  logs ONE warning while the session keeps waiting, and
+  `:worktree_create_stall_timeout_ms` (default 1_800_000) fails the session with
+  the diagnosable terminal `{:error, {:worktree_create_stalled, ms}}`.
+  A start task that RAISES or EXITS is NOT rescued: its abnormal `:DOWN` stops the
+  session with that reason, so the scheduler's crash/retry path is unchanged, and
+  a start task that dies without delivering a result (`:normal`/`:shutdown`) fails
+  the session with `{:error, {:worktree_create_failed, {:down, reason}}}`.
 
   ## Yield / finish split (`{@link EvoGit.Agent.Exchange}`)
 
@@ -186,6 +208,11 @@ defmodule EvoGit.Agent.Session do
   # Every public call is answerable in microseconds (the owner never runs the exchange), so one
   # short deadline covers them all; a timeout degrades to the documented fallback.
   @call_timeout 5_000
+
+  # `:starting` diagnostics (overridable at CALL time via the app env seams documented in the
+  # moduledoc): a warning while a slow create is still in flight, then a terminal failure.
+  @start_slow_warn_default_ms 120_000
+  @start_stall_timeout_default_ms 1_800_000
 
   # --- public API ---
 
@@ -405,6 +432,10 @@ defmodule EvoGit.Agent.Session do
       state: nil,
       worker: nil,
       finalizer: nil,
+      # The `:starting` phase's ONE durable-setup task plus its two diagnostic
+      # timers (`{slow_warn_ref, stall_ref}`), all cleared as soon as it replies.
+      start_task: nil,
+      start_timers: {nil, nil},
       last_yield_text: nil,
       # `{pid, tag}`: the dispatch ctx may carry a pid-tagged tuple (production) or a bare
       # pid (hand-built contexts), and `notify_closed/1` always reads the normalized shape.
@@ -421,37 +452,18 @@ defmodule EvoGit.Agent.Session do
       batcher: Batcher.new()
     }
 
-    # `init/1` must return FAST: the worktree, the scheduler row and the first worker all
-    # happen in the `:internal, :start` event, so a supervisor start never sits in the
-    # worktree-creation queue.
+    # `init/1` must return FAST: the durable setup (worktree, scratch dir) runs in
+    # a start TASK and the scheduler row/first worker happen once it replies, so a
+    # supervisor start never sits in the worktree-creation queue and the session
+    # stays answerable while a slow create is in flight.
     {:ok, :starting, data, [{:next_event, :internal, :start}]}
   end
 
   @impl :gen_statem
   def handle_event(:internal, :start, :starting, data) do
-    ctx = data.dispatch_ctx
-
-    # The SESSION is the worktree owner: it outlives every exchange worker (D7), and the
-    # repo-less branch is skipped internally.
-    Setup.bind_worktree(ctx, self())
-    data = %{data | tmpdir: Setup.ensure_tmpdir(ctx)}
-
-    with {:ok, row} <- scheduler_row(ctx),
-         {:ok, state} <- build_state(ctx, row) do
-      Summary.publish(agent_id(data), state, status: :running)
-
-      data = %{
-        data
-        | state: state,
-          worker: start_worker(state, data),
-          phase: :running,
-          last_published_turn: state.turn
-      }
-
-      {:next_state, :running, data}
-    else
-      {:error, reason} -> finalize(%{data | phase: :finalizing, result: {:error, reason}})
-    end
+    # NON-BLOCKING: the worktree request is a `:infinity` call to the app-global
+    # `WorktreeManager` and must never run inside this event handler.
+    {:keep_state, start_binding(data)}
   end
 
   def handle_event(:info, {:checkpoint, %State{} = state}, phase, data)
@@ -527,6 +539,18 @@ defmodule EvoGit.Agent.Session do
 
         finalize(%{data | finalizer: nil, result: {:error, {:finalize_crashed, {:down, reason}}}})
 
+      # The START task died without delivering its result. A `:normal`/`:shutdown` death is
+      # "nothing to build a state from"; anything else is the setup failure the scheduler's
+      # crash/retry path must see (an exception in the task is NEVER rescued).
+      current_start?(data, pid) and reason in [:normal, :shutdown] ->
+        data = shutdown_start(data)
+
+        finalize(%{data | result: {:error, {:worktree_create_failed, {:down, reason}}}})
+
+      current_start?(data, pid) ->
+        data = shutdown_start(data)
+        {:stop, reason, data}
+
       phase == :finalizing ->
         {:keep_state, data}
 
@@ -542,6 +566,59 @@ defmodule EvoGit.Agent.Session do
         log_ignored(phase, data, {:stale_down, pid, reason})
         {:keep_state, data}
     end
+  end
+
+  # The START TASK delivered: the durable setup is done, so the scheduler row and the first
+  # exchange worker are built exactly as they always were.
+  def handle_event(:info, {ref, {:ok, tmpdir}}, :starting, data) when is_reference(ref) do
+    if current_start_ref?(data, ref) do
+      finish_start(%{cancel_start_timers(data) | start_task: nil}, tmpdir)
+    else
+      log_ignored(:starting, data, {:stale_start_result, ref})
+      {:keep_state, data}
+    end
+  end
+
+  # The create is merely SLOW: the session keeps waiting (and stays cancellable), and the
+  # deadline below turns a genuine hang into a diagnosable terminal result.
+  def handle_event(:info, {:start_slow, ref}, :starting, data) when is_reference(ref) do
+    if current_start_ref?(data, ref) do
+      Logger.warning(
+        "AgentSession #{Kernel.inspect(agent_id(data))}: worktree create still in flight after " <>
+          "#{start_timeout_ms(:worktree_create_slow_warn_ms, @start_slow_warn_default_ms)}ms — " <>
+          "the session keeps waiting; it is cancellable/inspectable and will fail with " <>
+          "{:worktree_create_stalled, ...} at the deadline"
+      )
+
+      {:keep_state, data}
+    else
+      log_ignored(:starting, data, {:stale_start_slow, ref})
+      {:keep_state, data}
+    end
+  end
+
+  # The create exceeded the stall deadline: ONE diagnosable terminal result, then a NORMAL stop.
+  # The manager's own in-flight create is out of reach here; our helper task is not.
+  def handle_event(:info, {:start_stalled, ref, ms}, :starting, data) when is_reference(ref) do
+    if current_start_ref?(data, ref) do
+      Logger.error(
+        "AgentSession #{Kernel.inspect(agent_id(data))}: worktree create STALLED for #{ms}ms — " <>
+          "failing the session with {:worktree_create_stalled, #{ms}}"
+      )
+
+      data = shutdown_start(data)
+      finalize(%{data | phase: :finalizing, result: {:error, {:worktree_create_stalled, ms}}})
+    else
+      log_ignored(:starting, data, {:stale_start_stalled, ref})
+      {:keep_state, data}
+    end
+  end
+
+  # A stale/unknown start reply (its ref was cleared) or any other reference-keyed message is
+  # never an outcome of this session.
+  def handle_event(:info, {ref, term}, phase, data) when is_reference(ref) do
+    log_ignored(phase, data, {:unhandled_ref_message, ref, term})
+    {:keep_state, data}
   end
 
   def handle_event(:info, msg, phase, data) do
@@ -667,6 +744,10 @@ defmodule EvoGit.Agent.Session do
   def handle_event({:call, from}, {:cancel, :force}, phase, data)
       when phase in [:starting, :running, :cancelling, :awaiting_input] do
     shutdown_worker(data)
+
+    # `:starting` holds no worker: its start task (and both diagnostic timers) is killed here, so a
+    # force cancel during a slow worktree create answers at once instead of waiting for the create.
+    shutdown_start(data)
     Finalize.stop(data.finalizer)
 
     # Flush BEFORE the stop; no result delivery, because a force-killed run has no outcome.
@@ -694,6 +775,65 @@ defmodule EvoGit.Agent.Session do
   end
 
   # --- start up ---
+
+  # ONE monitored task owns the durable setup, so the session process never blocks in the
+  # `WorktreeManager` create queue. `parent` (THIS session) is the create's `owner_pid`: the
+  # manager monitors it, so the worktree is reclaimed when the session dies, never when the
+  # short-lived task does. Nothing is rescued — an exception/exit must reach the `:DOWN` handler
+  # as an abnormal task death, keeping the pre-change crash/retry semantics.
+  defp start_binding(data) do
+    ctx = data.dispatch_ctx
+    parent = self()
+
+    task =
+      Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, fn ->
+        Setup.bind_worktree(ctx, parent)
+        {:ok, Setup.ensure_tmpdir(ctx)}
+      end)
+
+    slow_ms = start_timeout_ms(:worktree_create_slow_warn_ms, @start_slow_warn_default_ms)
+
+    stall_ms =
+      start_timeout_ms(:worktree_create_stall_timeout_ms, @start_stall_timeout_default_ms)
+
+    slow_timer = Process.send_after(self(), {:start_slow, task.ref}, slow_ms)
+    stall_timer = Process.send_after(self(), {:start_stalled, task.ref, stall_ms}, stall_ms)
+
+    %{data | start_task: task, start_timers: {slow_timer, stall_timer}}
+  end
+
+  # The durable setup answered: build the owned state and start the first exchange, exactly as the
+  # old inline start did.
+  defp finish_start(data, tmpdir) do
+    ctx = data.dispatch_ctx
+    data = %{data | tmpdir: tmpdir}
+
+    with {:ok, row} <- scheduler_row(ctx),
+         {:ok, state} <- build_state(ctx, row) do
+      Summary.publish(agent_id(data), state, status: :running)
+
+      data = %{
+        data
+        | state: state,
+          worker: start_worker(state, data),
+          phase: :running,
+          last_published_turn: state.turn
+      }
+
+      {:next_state, :running, data}
+    else
+      {:error, reason} -> finalize(%{data | phase: :finalizing, result: {:error, reason}})
+    end
+  end
+
+  # Both seams are read at CALL time and validated: a non-positive/non-integer override falls back
+  # to the default instead of arming an unusable timer.
+  defp start_timeout_ms(key, default) do
+    case Application.get_env(:evo_git, key, default) do
+      ms when is_integer(ms) and ms > 0 -> ms
+      _other -> default
+    end
+  end
 
   # REGISTRATION SEEDING ONLY: the scheduler row is read ONCE at session start to
   # build the owned `%EvoGit.Agent.State{}`; the loop never reads it for a
@@ -1005,6 +1145,7 @@ defmodule EvoGit.Agent.Session do
   def terminate(_reason, _phase, data) do
     try do
       flush_deltas(data)
+      shutdown_start(data)
     catch
       _kind, _reason -> :ok
     end
@@ -1082,6 +1223,36 @@ defmodule EvoGit.Agent.Session do
 
   defp current_worker?(%{worker: %Task{pid: pid}}, pid) when is_pid(pid), do: true
   defp current_worker?(_data, _pid), do: false
+
+  defp current_start?(%{start_task: %Task{pid: pid}}, pid) when is_pid(pid), do: true
+  defp current_start?(_data, _pid), do: false
+
+  defp current_start_ref?(%{start_task: %Task{ref: ref}}, ref), do: true
+  defp current_start_ref?(_data, _ref), do: false
+
+  # Drops both `:starting` diagnostic timers. An already-delivered timer message is handled by the
+  # stale-ref clauses above, so dropping it here is always safe.
+  defp cancel_start_timers(%{start_timers: {slow, stalled}} = data) do
+    if is_reference(slow), do: Process.cancel_timer(slow)
+    if is_reference(stalled), do: Process.cancel_timer(stalled)
+
+    %{data | start_timers: {nil, nil}}
+  end
+
+  defp cancel_start_timers(data), do: %{data | start_timers: {nil, nil}}
+
+  # Kills the durable-setup task (if any) and both timers: used by a force cancel, the stall
+  # deadline and `terminate/3`, so a start task can never outlive the session.
+  defp shutdown_start(data) do
+    data = cancel_start_timers(data)
+
+    case data.start_task do
+      %Task{} = task -> Task.shutdown(task, :brutal_kill)
+      _other -> :ok
+    end
+
+    %{data | start_task: nil}
+  end
 
   defp shutdown_worker(%{worker: %Task{} = worker}) do
     Task.shutdown(worker, :brutal_kill)

@@ -6,9 +6,10 @@ defmodule EvoGit.VCTTest do
   `EvoGit.VCTTest.Helpers`), so the app-global singletons are never touched and
   the module is `async: true`.
 
-  Assertions on shared PubSub topics are EVENTUAL: sibling async tests may
-  publish on the same topics, so the cases assert only the messages they need
-  and never `refute_receive` broadly.
+  Broadcast assertions are ISOLATED, not merely eventual: each stack also starts
+  its own `Phoenix.PubSub` instance and the VCT publishes `"vct"` there, so a
+  case subscribes to `stack.pubsub` and a sibling test can never inject its own
+  `{:vct_updated, node}` message into a `refute_receive` window.
   """
 
   use ExUnit.Case, async: true
@@ -679,11 +680,12 @@ defmodule EvoGit.VCTTest do
 
   describe "broadcasts" do
     test "publishes only on \"vct\" for mount, forget and put_global_context", %{tmp_dir: tmp} do
-      start_stack(tmp)
+      # The stack's OWN PubSub instance: no sibling test can publish here.
+      stack = start_stack(tmp)
       own_node = node()
 
-      Phoenix.PubSub.subscribe(EvoGit.PubSub, "vct")
-      Phoenix.PubSub.subscribe(EvoGit.PubSub, "recent_projects")
+      Phoenix.PubSub.subscribe(stack.pubsub, "vct")
+      Phoenix.PubSub.subscribe(stack.pubsub, "recent_projects")
 
       path = Path.join(tmp, "broadcast")
 
@@ -697,20 +699,20 @@ defmodule EvoGit.VCTTest do
       assert_receive {:vct_updated, ^own_node}, 2_000
 
       # Mount mutations publish only `{:vct_updated, node}` on "vct": there is
-      # no "recent_projects" topic, so nothing is ever published there (no
-      # publisher exists, so this refute cannot observe a sibling test).
+      # no "recent_projects" topic in EvoGit at all.
       refute_receive {:recent_projects_updated}, 200
     end
 
     test "does not publish when a mutation fails", %{tmp_dir: tmp} do
-      start_stack(tmp)
+      # Subscribing to the stack's ISOLATED PubSub instance is what makes this
+      # deterministic: every other VCT case broadcasts on its own instance.
+      stack = start_stack(tmp)
       own_node = node()
 
-      Phoenix.PubSub.subscribe(EvoGit.PubSub, "vct")
+      Phoenix.PubSub.subscribe(stack.pubsub, "vct")
 
-      # Failed mutations are answered BEFORE the broadcast point; drain anything
-      # a sibling test published while this one was starting up, then assert the
-      # failures themselves add nothing.
+      # Failed mutations are answered BEFORE the broadcast point, so nothing may
+      # arrive — now or after the failures.
       refute_receive {:vct_updated, ^own_node}, 100
 
       assert {:error, :relative_path} = VCT.mount("relative/dir")

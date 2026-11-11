@@ -55,6 +55,8 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   subscription made here would attach that throwaway process.
   """
 
+  require Logger
+
   alias EvoGit.Agent.Compression.Threshold
   alias EvoGit.Agent.Stream.Snapshot
   alias EvoGit.Agent.Usage
@@ -190,6 +192,25 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     EvoGit.AgentScheduler.update_config(opts)
   end
 
+  @doc false
+  # Test seam for the post-save reload step: `body` runs with the calling
+  # process's reload fun pinned to `fun`, then the previous pin is restored
+  # (or removed). Default-inert — with no pin, the reload step calls the real
+  # `reload_config/0`, so production is byte-identical.
+  @spec with_reload_fun((-> term()), (-> term())) :: term()
+  def with_reload_fun(fun, body) when is_function(fun, 0) and is_function(body, 0) do
+    previous = Process.put(:evogit_remote_api_reload_fun, fun)
+
+    try do
+      body.()
+    after
+      case previous do
+        nil -> Process.delete(:evogit_remote_api_reload_fun)
+        fun -> Process.put(:evogit_remote_api_reload_fun, fun)
+      end
+    end
+  end
+
   @doc """
   Writes a config map to disk on this node.
 
@@ -198,14 +219,16 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   This runs on the REMOTE node when called via `:erpc.call/5`, so the file is
   written to the remote host's filesystem.
 
-  Returns `:ok` on success, or `{:error, reason}` if validation or the file
-  write fails.
+  The follow-up scheduler reload is BEST-EFFORT: the file is already persisted,
+  so a caller-side timeout (or an unresponsive/restarting scheduler) is
+  UNRESOLVED-but-saved — it is logged and this function still answers `:ok`.
+  A genuine persistence failure is returned unchanged as `{:error, reason}`.
   """
   @spec save_user_config(map()) :: :ok | {:error, term()}
   def save_user_config(config) when is_map(config) do
     case EvoGit.Config.save_user_config(config) do
       :ok ->
-        reload_config()
+        reload_after_save()
         :ok
 
       {:error, _} = error ->
@@ -1599,6 +1622,50 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   # default (never raises — no try/rescue needed).
   defp normalize_context_window(window) when is_integer(window) and window > 0, do: window
   defp normalize_context_window(_other), do: EvoGit.Config.Schema.LLM.default_context_window()
+
+  # ── Private: post-save scheduler reload ────────────────────────────
+
+  # The reload fun is read AT CALL TIME: a test pins a deterministic stall via
+  # `with_reload_fun/2`; production resolves the real `reload_config/0`.
+  defp reload_fun do
+    case Process.get(:evogit_remote_api_reload_fun) do
+      fun when is_function(fun, 0) -> fun
+      _other -> &reload_config/0
+    end
+  end
+
+  # The post-persist scheduler refresh is BEST-EFFORT: the config file already
+  # landed, so the reload outcome never turns a successful write into a failed
+  # save. A `GenServer.call` timeout (or an unresponsive/restarting scheduler)
+  # EXITS the caller, which `safe_call/1` tags as `{:error, {:exit, reason}}` —
+  # distinguishable from the reload's own `{:ok, {:error, reason}}`.
+  defp reload_after_save do
+    case safe_call(reload_fun()) do
+      {:ok, :ok} ->
+        :ok
+
+      {:ok, {:error, reason}} ->
+        Logger.warning("config persisted but scheduler reload failed: #{inspect(reason)}")
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("config persisted but scheduler reload is unresolved: #{inspect(reason)}")
+
+        :ok
+    end
+  end
+
+  # The ONE exit-safe boundary for the reload call (same shape as the
+  # process-manager `with_manager/2` degradation): exits become values, so a
+  # timeout/dead scheduler never escapes. Only exits are caught — a genuine
+  # raise inside `reload_config/0` still surfaces.
+  defp safe_call(fun) when is_function(fun, 0) do
+    try do
+      {:ok, fun.()}
+    catch
+      :exit, reason -> {:error, {:exit, reason}}
+    end
+  end
 
   # ── Private: process-manager access ────────────────────────────────
 
