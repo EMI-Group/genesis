@@ -23,6 +23,11 @@ A consumer that fell behind, reconnected or lost a delta resyncs with a fresh `s
 | `normalize_batch/1` | `nil` → `[]`, a list → itself, a single event → `[it]`. |
 | errors | Only `{:error, {:not_found, reason}}` and `{:error, {:bad_state, phase}}`; every function is TOTAL (never raises or exits); `@call_timeout` 5_000 ms. |
 
+`EvoGit.AgentScheduler.RemoteAPI.register_watcher/2`, `unregister_watcher/2` and `watch_snapshot/1` are thin passthroughs to `register_watcher/2`, `unregister_watcher/2` and `snapshot/1` — ONE implementation, no second session-call path.
+`register_watcher/2` → `{:ok, %Snapshot{}, seq} | {:error, {:not_found, reason}} | {:error, {:bad_state, phase}}`, registers an EXTERNAL cross-node pid too, and answers `{:error, {:not_found, :invalid_consumer}}` for a non-pid instead of raising; `unregister_watcher/2` is idempotent `:ok` (also for a non-pid consumer) and `watch_snapshot/1` never opens the gate.
+All three are LOCAL-node session calls, because the session, its watchers and its transcript live on the node that OWNS the agent; `EvoGit.RemoteNode.watch_agent/3`, `unwatch_agent/2` and `watch_snapshot/2` are the caller-side mirrors.
+Payload profile: the snapshot carries the FULL transcript ⇒ 🟠 heavy (same class as `get_agent_history/1`), while `unregister_watcher/2` is 🟢 and delta batches are 🟢 PUBLISHED, never RPC-pulled.
+
 `%Stream.Snapshot{}` fields: `agent_id`, `phase`, `seq`, `turn`, `total_tokens`, `usage`, `messages` (the transcript), `mode`, `model_spec`, `compression_count`.
 It is plain data (JSON-clean) and never carries the `%ReqLLM.Context{}`.
 

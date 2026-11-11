@@ -175,3 +175,26 @@ The `checkpoint:` opt handed to `Exchange.run/2` is LIVE: the engine calls it on
 - `./registry.ex` → `EvoGit.Agent.Session.Registry`; `./supervisor.ex` → `EvoGit.Agent.Session.Supervisor`.
 - `../state.ex` → `%EvoGit.Agent.State{}`, the authoritative struct these functions build and project from (`mode`, `phase`, `prompt_cache_key`, `exchange_turn_base`), whose `watchers`/`event_seq` fields are only the session's re-stamped projection (`adopt_state/2`).
 - `../exchange.ex` → the engine the worker runs (`{:yield, state, text} | {:finish, state, result} | {:error, reason}`); `../completion/builder.ex` → `Completion.Builder.finalize/2`, the ONE completion writer the finalizer calls; `../runner.ex` → the thin HELPER module (`refresh_commit_sha/1` + `@doc false` engine delegates), whose `try/after` + `refresh_commit_sha/1` shape the worker follows.
+
+## Process-dictionary keys installed by `setup.ex` (agent-side contract)
+
+`Session.Setup.bind_worktree/2` + `install_process_context/3` install these keys and seed the per-dir delegation counters; the table states who writes each key and who reads it.
+| pd key | written | read / meaning |
+|---|---|---|
+| `:evogit_agent_id` | agent proc; EVERY tool task | `current_agent_id/0`, `CommandShell`, approval gate |
+| `:evogit_task_id` | EVERY tool task | `CommandShell`, approval gate |
+| `:evogit_agent_pid` | EVERY tool task (durable AGENT/session pid) | `BackgroundJobs.current_owner_pid/0` |
+| `:evogit_agent_depth` | `session/setup.ex` | `AgentScheduler.current_depth/0` |
+| `:evogit_started_at` | `session/setup.ex` | `Completion` — ISO-8601 |
+| `:genesis_repo_root` | `session/setup.ex` (incl. repo-less override) | `ToolDispatch` — REAL repo root |
+| `:evogit_repo_id` | `session/setup.ex` | `Tools.execute/5`, `Completion` — `"primary"` or a foreign id |
+| `:foreign_repos` | `session/setup.ex` | `Tools`/`Tools.Shared` — `%ForeignRepo{}` list (write-role gate) |
+| `:custom_agent_id` | `session/setup.ex` | `EvoGit.Agents.Custom` (root only) |
+| `:attachments`, `:quality_level` | `session/setup.ex` | root media parts / quality level |
+| `:repo_path`, `:repo_less` | `session/setup.ex` | agent worktree path / repo-less marker |
+| `:evogit_task_tmpdir` | agent proc + tool task | `TaskTmpdir.current/0` |
+| `:delegation_hints`, `:read_delegation_hints`, `:redundant_cd_warned` | exchange worker / tool_output_tracking | per-dir counters, once-per-run flag |
+| `:conflict_files` | `ConflictState.refresh/1` (turn END) | `ConflictState.files/0`/`in_conflict?/0` — the ONE per-turn snapshot |
+
+There are NO `:parent_id`, `:model_id` or `:depth` pd keys (they live on `%State{}` and the summary row), and the durable owner is `:evogit_agent_pid` (or `:ets.lookup(:evogit_sched_meta, agent_id)` → `%SchedMeta{session_pid: pid}`), never `$callers`.
+Tool tasks inherit NO pd — the batch re-installs these keys per call (`../../tool_runtime/CONTEXT.md`).
