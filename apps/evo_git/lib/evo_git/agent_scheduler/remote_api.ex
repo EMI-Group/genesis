@@ -44,9 +44,19 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   of the node that owns it (its transcript is in-memory only), so these are
   local scheduler calls: a caller on another node reaches them through that
   node's RPC wrapper, never by handing these functions a remote target.
+
+  ## Watch verbs are LOCAL-node session calls too
+
+  `register_watcher/2`, `unregister_watcher/2` and `watch_snapshot/1` are thin
+  passthroughs to `EvoGit.Agent.Stream`: the watcher set and the transcript live
+  in the session, i.e. on the node that owns the agent. They never subscribe
+  anything — a consumer's topic subscription is made by the CALLER on its OWN
+  node, because `:erpc` runs the remote function in a fresh worker process and a
+  subscription made here would attach that throwaway process.
   """
 
   alias EvoGit.Agent.Compression.Threshold
+  alias EvoGit.Agent.Stream.Snapshot
   alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
@@ -298,6 +308,93 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       :undefined -> {:error, :scheduler_not_started}
       _ -> EvoGit.AgentScheduler.send_user_message(agent_id, message)
     end
+  end
+
+  # ── Push-only streaming watches ────────────────────────────────────
+  #
+  # The watch verbs. A session owns its watcher set and its transcript INSIDE the
+  # scheduler VM that runs the agent, so these are LOCAL-node session calls like
+  # the interactive-session verbs below: there is nothing to reach across nodes
+  # here, and a caller on another node goes through `EvoGit.RemoteNode`.
+  # `EvoGit.Agent.Stream` is the ONE implementation of the watch/unwatch/snapshot
+  # path — every verb below is a thin passthrough over it (whose own 5 s session
+  # deadline is the call budget), so there is no second session-call path.
+
+  @typedoc """
+  The watch verbs' shared return shape: the snapshot plus its monotonic `seq`, or
+  a refusal (`{:not_found, reason}` / `{:bad_state, phase}`).
+  """
+  @type watch_reply :: {:ok, Snapshot.t(), non_neg_integer()} | {:error, {atom(), term()}}
+
+  @doc """
+  Registers `consumer_pid` in the agent session's watcher set and returns
+  `{:ok, snapshot, seq}`.
+
+  Thin passthrough to `EvoGit.Agent.Stream.register_watcher/2`. It deliberately
+  does NOT subscribe anything: the topic subscription belongs to the CALLER's own
+  node, because `:erpc.call/5` runs its target in a fresh worker process, so a
+  subscription made here would attach that throwaway process instead of the
+  caller. `consumer_pid` may be an EXTERNAL pid (a cross-node caller's `self()`),
+  which the session accepts and `Process.monitor/1`s — across nodes too.
+
+  Registration is what opens the streaming gate: a session with zero watchers
+  emits no deltas at all (`EvoGit.Agent.Session.watching?/2`).
+
+  Returns `{:ok, %EvoGit.Agent.Stream.Snapshot{}, non_neg_integer()}`,
+  `{:error, {:not_found, reason}}` for an unknown/gone/unresponsive session
+  (`:session_not_found`, `:session_unavailable`, `:timeout`) or a non-pid
+  consumer (`:invalid_consumer`), and `{:error, {:bad_state, phase}}` when the
+  session refuses a watch (no checkpointed state yet, or finalizing/done).
+  """
+  @spec register_watcher(term(), term()) :: watch_reply()
+  def register_watcher(agent_id, consumer_pid) when is_pid(consumer_pid) do
+    EvoGit.Agent.Stream.register_watcher(agent_id, consumer_pid)
+  end
+
+  # `EvoGit.Agent.Stream.register_watcher/2` guards on `is_pid/1`, so a non-pid
+  # consumer would raise a FunctionClauseError; this verb is TOTAL and answers
+  # the documented refusal instead.
+  def register_watcher(_agent_id, _consumer_pid), do: {:error, {:not_found, :invalid_consumer}}
+
+  @doc """
+  Removes `consumer_pid` from the agent session's watcher set.
+
+  Thin passthrough to `EvoGit.Agent.Stream.unregister_watcher/2`. Idempotent:
+  `:ok` when the watcher is gone or was never registered (the session's own
+  `{:unwatch, pid}` handler and its `:DOWN` reaper both tolerate a missing
+  entry), so a duplicate or stale unwatch is never an error.
+
+  Returns `:ok` or `{:error, {kind, reason}}` for an unknown/gone/unresponsive
+  session (`{:not_found, _}`) or a refused state (`{:bad_state, phase}`).
+  """
+  @spec unregister_watcher(term(), term()) :: :ok | {:error, {atom(), term()}}
+  def unregister_watcher(agent_id, consumer_pid) when is_pid(consumer_pid) do
+    EvoGit.Agent.Stream.unregister_watcher(agent_id, consumer_pid)
+  end
+
+  # Same totality reason as `register_watcher/2`; a non-pid consumer has no
+  # watcher entry to remove, which is already the `:ok` case.
+  def unregister_watcher(_agent_id, _consumer_pid), do: :ok
+
+  @doc """
+  Reads the session's current snapshot WITHOUT registering anything.
+
+  Thin passthrough to `EvoGit.Agent.Stream.snapshot/1`: the one bounded one-shot
+  read of the push-only delta contract, and the ONLY resync path for a consumer
+  that fell behind or reconnected (there is no replay buffer and no poll loop).
+  It subscribes nothing and adds no watcher, so it never opens the streaming
+  gate.
+
+  Returns `{:ok, %EvoGit.Agent.Stream.Snapshot{}, non_neg_integer()}` — the
+  snapshot carries the FULL transcript of the state the session owns, so this is
+  a heavy read like `get_agent_history/1` — or `{:error, {:not_found, reason}}`
+  for an unknown/gone/unresponsive session, `{:error, {:bad_state, phase}}` when
+  the session is not in a snapshot-able phase, or
+  `{:error, {:not_found, :invalid_target}}` for a non-id/non-pid target.
+  """
+  @spec watch_snapshot(term()) :: watch_reply()
+  def watch_snapshot(agent_id) do
+    EvoGit.Agent.Stream.snapshot(agent_id)
   end
 
   # ── Interactive agent sessions ─────────────────────────────────────
