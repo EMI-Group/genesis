@@ -12,6 +12,30 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   `update_download_requested` / `update_apply_requested`); results arrive via
   hub broadcasts on the `"updates"` topic.
 
+  ## Busy tasks vs idle interactive sessions
+
+  The BUSY set for update gating is exactly
+  `[:running, :pending, :cancelling, :finalizing]` — tasks that can still do
+  work while the update is applied.
+
+  A NON-TERMINAL but IDLE interactive agent session (`:awaiting_input`) is
+  deliberately NOT busy: it holds no exchange worker, no LLM/tool slot and no
+  timer, so it cannot make progress on its own and must never block the update
+  gate (nor is it counted by `/server/status`). The wind-down therefore ASKS
+  such sessions to CLOSE gracefully — `EvoDash.NodeContext.close_session/3`,
+  the only non-cancellation way out of `:awaiting_input` (completion
+  bookkeeping runs once, the session stops, the worktree is released) — instead
+  of force-killing them. An idle session holds no in-flight work to lose, so a
+  force kill would be needless data loss.
+
+  A session that never closes must not wedge the busy modal, so an idle session
+  blocks completion for at most 3 wind-down polls
+  (`@session_close_grace_polls`); after that grace it simply stops counting and
+  the wind-down completes, leaving the session alive for the user.
+
+  The user-warned FORCE-KILL fallback deliberately does NOT touch idle sessions
+  (they are safe to leave running) — it only force-kills busy tasks.
+
   Every store/registry call the gate and the wind-down need goes through
   `EvoDash.SafeCall`: a `GenServer.call` to the task registry that times out
   EXITS its caller (`rescue` cannot catch that), which would either crash the
@@ -24,9 +48,21 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   alias EvoDash.SafeCall
   alias EvoDash.UpdateStatus
 
-  # Statuses that count as "active" for update gating: the update can only be
-  # applied when no task is in any of these states.
+  # Statuses that count as BUSY/active for update gating: the update can only be
+  # applied when no task is in any of these states, because only these can still
+  # do work (a worker is running, queued or finalizing).
+  #
+  # A non-terminal but IDLE interactive session (`:awaiting_input`) is
+  # deliberately NOT in this set: it holds no worker, no LLM/tool slot and no
+  # timer, so it is not busy and must never block the update gate. It is wound
+  # down by a graceful CLOSE (see `close_session/1`), never a force kill.
   @active_statuses [:running, :pending, :cancelling, :finalizing]
+
+  # How many wind-down polls an idle interactive session may hold up completion
+  # before it stops blocking. A session that never closes must not wedge the busy
+  # modal: after this grace it simply stops counting and the wind-down completes,
+  # leaving the session alive for the user.
+  @session_close_grace_polls 3
 
   @doc "Statuses considered active for update gating."
   def active_statuses, do: @active_statuses
@@ -82,6 +118,40 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   end
 
   @doc """
+  Returns the agent ids of idle interactive sessions (tasks in the NON-TERMINAL
+  but IDLE `:awaiting_input` status).
+
+  These sessions are NOT busy (no worker, no slot, no timer), so they never
+  block the update gate; the wind-down asks them to close instead. `ctx` is
+  `:gate` or `:winddown_poll`, mirroring `active_task_ids/1`.
+
+  Test seam `config :evo_dash, :update_awaiting_session_ids` mirrors
+  `:update_active_task_ids`: it may be (a) a plain list (used for both contexts)
+  or (b) a one-arg fun `(ctx) -> ids`. Without the seam, the default branch runs
+  INSIDE `EvoDash.SafeCall.run/2` (fallback `[]`) and maps
+  `EvoDash.NodeContext.list_awaiting_input/1` rows to their agent ids.
+  """
+  def awaiting_session_ids(ctx \\ :winddown_poll) do
+    case Application.get_env(:evo_dash, :update_awaiting_session_ids) do
+      nil ->
+        SafeCall.run(
+          fn ->
+            EvoDash.NodeContext.list_awaiting_input(node())
+            |> Enum.map(&session_agent_id/1)
+            |> Enum.reject(&is_nil/1)
+          end,
+          []
+        )
+
+      seam when is_function(seam, 1) ->
+        seam.(ctx) |> List.wrap()
+
+      list ->
+        List.wrap(list)
+    end
+  end
+
+  @doc """
   Spawns the never-wedge check watchdog on `EvoDash.TaskSupervisor`.
 
   The runner is a test seam (`config :evo_dash, :update_check_runner`, default
@@ -114,9 +184,15 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
 
   @doc """
   Starts the busy-apply wind-down on `EvoDash.TaskSupervisor`: gracefully
-  cancels `ids` (the tasks the gate saw), then loops cancelling whatever is
-  still active until none remain (or the deadline passes), and reports
-  completion/timeout back to the view.
+  cancels `ids` (the tasks the gate saw), then loops cancelling whatever busy
+  task is still active and asking every idle interactive session
+  (`:awaiting_input`) to close, until no busy task and no still-blocking session
+  remains (or the deadline passes), and reports completion/timeout back to the
+  view.
+
+  Idle sessions are closed, never force-killed, and they hold up completion for
+  at most `@session_close_grace_polls` polls (`:update_awaiting_session_ids`
+  seam), so a session that never closes cannot wedge the modal.
   """
   def start_graceful_winddown(view_pid, ids) do
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
@@ -146,6 +222,23 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   """
   def graceful_cancel(task_id) do
     SafeCall.run(fn -> EvoGit.TaskRegistry.cancel_task(task_id) end, :ok)
+  end
+
+  @doc """
+  Asks ONE idle interactive session to close gracefully — the graceful close
+  path used by the wind-down, NEVER a force kill: an idle session holds no
+  in-flight work to lose, and closing is the only non-cancellation way out of
+  `:awaiting_input`.
+
+  Per-call errors are ignored (a session that already closed or a racing close
+  is normal), and the call is exit-safe so one failing session cannot abort the
+  rest of the list.
+  """
+  def close_session(agent_id) do
+    SafeCall.run(
+      fn -> EvoDash.NodeContext.close_session(node(), agent_id, :normal) end,
+      :ok
+    )
   end
 
   @doc """
@@ -184,6 +277,12 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   defp task_id(%{"id" => id}), do: id
   defp task_id(_row), do: nil
 
+  # Maps one `list_awaiting_input/1` row to its agent id (atom- or string-keyed,
+  # any other shape dropped) so a single odd row can never crash the wind-down.
+  defp session_agent_id(%{agent_id: id}), do: id
+  defp session_agent_id(%{"agent_id" => id}), do: id
+  defp session_agent_id(_row), do: nil
+
   @doc """
   Transitions the hub to `:applying` and pushes the apply request to the
   client (workstream B's JS hook invokes the Rust `begin_update` command).
@@ -206,18 +305,21 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
     end
   end
 
-  # Wind-down loop: cancels whatever is active, polls until empty, then reports
+  # Wind-down loop: cancels whatever busy task is active, asks every idle
+  # interactive session to close, polls until none remain, then reports
   # completion. The deadline bounds the wait (~35min default — plan: grace is
-  # not wall-clock bounded; LLM retries ~9min, per-tool cap 30min).
+  # not wall-clock bounded; LLM retries ~9min, per-tool cap 30min). Idle
+  # sessions are bounded separately by `@session_close_grace_polls`, so one that
+  # never closes cannot wedge the modal.
   defp winddown_loop(view_pid) do
     deadline =
       System.monotonic_time(:millisecond) +
         Application.get_env(:evo_dash, :update_winddown_timeout, 2_100_000)
 
-    do_winddown_loop(view_pid, deadline)
+    do_winddown_loop(view_pid, deadline, %{})
   end
 
-  defp do_winddown_loop(view_pid, deadline) do
+  defp do_winddown_loop(view_pid, deadline, session_waits) do
     ids = active_task_ids(:winddown_poll)
 
     # Keep cancelling newly-appearing tasks so nothing starts mid-wind-down.
@@ -225,16 +327,36 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
       graceful_cancel(id)
     end
 
+    # IDLE interactive sessions are ASKED TO CLOSE, never force-killed: they
+    # hold no in-flight work to lose, and closing is the only
+    # non-cancellation way out of `:awaiting_input`.
+    session_ids = awaiting_session_ids(:winddown_poll)
+
+    # Per-call errors are ignored (already-closed / racing closes are normal).
+    for sid <- session_ids do
+      close_session(sid)
+    end
+
+    # Count polls only for sessions still present: a session that disappeared is
+    # dropped from the map, so a re-appearing one starts its grace window fresh.
+    session_waits =
+      Map.new(session_ids, fn sid -> {sid, Map.get(session_waits, sid, 0) + 1} end)
+
+    # A session blocks completion only while inside its grace window; after that
+    # it stops counting and the wind-down may complete with it still alive.
+    still_blocking =
+      for {sid, polls} <- session_waits, polls <= @session_close_grace_polls, do: sid
+
     cond do
-      ids == [] ->
+      ids == [] and still_blocking == [] ->
         send(view_pid, {:update_winddown_complete})
 
       System.monotonic_time(:millisecond) > deadline ->
-        send(view_pid, {:update_winddown_timeout, length(ids)})
+        send(view_pid, {:update_winddown_timeout, length(ids) + length(still_blocking)})
 
       true ->
         Process.sleep(Application.get_env(:evo_dash, :update_winddown_poll_ms, 5_000))
-        do_winddown_loop(view_pid, deadline)
+        do_winddown_loop(view_pid, deadline, session_waits)
     end
   end
 end
