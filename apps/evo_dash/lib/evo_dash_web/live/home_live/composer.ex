@@ -1,7 +1,7 @@
 defmodule EvoDashWeb.HomeLive.Composer do
   @moduledoc """
   Composer card for the Genesis Assistant interactive-session UX
-  (`EvoDashWeb.HomeLive` at `/help`): the message textarea, the pending
+  (`EvoDashWeb.HomeLive` at `/assistant`): the message textarea, the pending
   attachment chips, the attach affordance (with its manual-path fallback), the
   shared provider/model/reasoning capsule, the Send / Stop / interrupt controls
   and the transient "queued for the next turn boundary" echoes.

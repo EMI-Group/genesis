@@ -21,7 +21,7 @@ defmodule EvoDashWeb.Layouts do
 
   attr(:current_page, :atom,
     default: nil,
-    doc: "the current page atom (:dashboard, :agents, :help) for active nav highlighting"
+    doc: "the current page atom (:dashboard, :agents, :assistant) for active nav highlighting"
   )
 
   attr(:config_status, :map, default: nil)
@@ -176,8 +176,8 @@ defmodule EvoDashWeb.Layouts do
             >{gettext("System")}</.sidebar_nav_link>
             <%!-- zh_CN: "助手" — 指向 Genesis 助手（理解并操控 Genesis 的代理）聊天页面的侧边栏入口 --%>
             <.sidebar_nav_link
-              navigate={with_node_param(~p"/help", @current_node_id)}
-              current={@current_page == :help}
+              navigate={with_node_param(~p"/assistant", @current_node_id)}
+              current={@current_page == :assistant}
               icon="hero-chat-bubble-left-right"
             >{gettext("Assistant")}</.sidebar_nav_link>
 
@@ -672,7 +672,7 @@ defmodule EvoDashWeb.Layouts do
   def current_page(:processes), do: "/processes"
   def current_page(:settings), do: "/settings"
   def current_page(:system), do: "/system"
-  def current_page(:help), do: "/help"
+  def current_page(:assistant), do: "/assistant"
   def current_page(:review), do: "/review/:task_id"
   def current_page(:welcome), do: "/welcome"
 

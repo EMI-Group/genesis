@@ -1,7 +1,7 @@
 defmodule EvoDashWeb.HomeLive.SessionList do
   @moduledoc """
   Conversation-list panel for the Genesis Assistant interactive-session UX
-  (`EvoDashWeb.HomeLive` at `/help`).
+  (`EvoDashWeb.HomeLive` at `/assistant`).
 
   The panel is the UNION of two sources:
 

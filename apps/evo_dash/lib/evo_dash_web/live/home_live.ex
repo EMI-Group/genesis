@@ -79,7 +79,7 @@ defmodule EvoDashWeb.HomeLive do
     ~H"""
     <EvoDashWeb.Layouts.app
       flash={@flash}
-      current_page={:help}
+      current_page={:assistant}
       current_node_id={@current_node_id}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
@@ -119,7 +119,7 @@ defmodule EvoDashWeb.HomeLive do
               <%!-- zh_CN: "新对话" --%>{gettext("New chat")}
             </button>
           </div>
-          <!-- Genesis-source gate: the /help chat runs a repo-less `:reflect`
+          <!-- Genesis-source gate: the /assistant chat runs a repo-less `:reflect`
              agent whose reference is the managed Genesis source checkout. On a
              fresh install it is usually not downloaded yet, so a send would only
              start a doomed task. Pinned BETWEEN the header and the message
@@ -306,7 +306,7 @@ defmodule EvoDashWeb.HomeLive do
       source_check_loading: false,
       source_check_seq: 0,
       source_busy: nil,
-      current_path: ~p"/help"
+      current_path: ~p"/assistant"
     }
   end
 
@@ -545,7 +545,7 @@ defmodule EvoDashWeb.HomeLive do
       socket
       |> resolve_session(params["session"])
       |> ModelSelection.assign_model_select()
-      |> assign(current_path: ~p"/help")
+      |> assign(current_path: ~p"/assistant")
       |> maybe_check_source()
       |> maybe_recover_approvals()
       |> maybe_load_sessions()

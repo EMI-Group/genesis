@@ -1,6 +1,6 @@
 defmodule EvoDashWeb.HomeLive.Watch do
   @moduledoc """
-  Owns the `/help` page's PUSH-ONLY agent-delta watch lifecycle.
+  Owns the `/assistant` page's PUSH-ONLY agent-delta watch lifecycle.
 
   The core contract (`EvoGit.Agent.Stream`) has TWO halves, and they must run in
   DIFFERENT processes:

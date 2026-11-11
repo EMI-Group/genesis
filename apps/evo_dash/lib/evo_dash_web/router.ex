@@ -27,7 +27,9 @@ defmodule EvoDashWeb.Router do
     pipe_through(:browser)
 
     live("/", ProjectsLive, :index)
-    live("/help", HomeLive, :index)
+    live("/assistant", HomeLive, :index)
+    # Legacy Genesis Assistant route — 302 to `/assistant`, query string preserved.
+    get("/help", RedirectController, :assistant)
     live("/projects", ProjectsLive, :index)
     live("/welcome", WelcomeLive, :index)
     live("/welcome/complete", WelcomeCompleteLive, :index)

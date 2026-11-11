@@ -1,9 +1,9 @@
 defmodule EvoDashWeb.HomeLive.SourceGate do
   @moduledoc """
   "Genesis source not downloaded yet" gate support for `EvoDashWeb.HomeLive`
-  (the `/help` chat page).
+  (the `/assistant` chat page).
 
-  The `/help` chat runs a REPO-LESS `:reflect` task whose reference is the
+  The `/assistant` chat runs a REPO-LESS `:reflect` task whose reference is the
   managed Genesis source checkout (`EvoGit.SelfReflectiveSource`). On a fresh
   install that source is normally NOT downloaded yet, so a send silently starts
   a task that has nothing to read. This module makes that state visible and
