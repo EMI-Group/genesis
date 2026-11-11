@@ -30,7 +30,9 @@ Genuinely `async: true` (verified to mutate no BEAM-global state):
   dir is isolated PER PROCESS via `EvoGit.TestSupport.ConfigDir.isolate!/1`.
 - **`genesis_test.exs`** — pure `Helpers.new_codebase?/1` + `AgentSpec.new/5` + the UNC
   `Genesis.run/2` pre-I/O `ArgumentError` guard.
-- **`helpers_test.exs`** — pure helpers + real git ops on unique temp repos. It does NOT subscribe
+- **`helpers_test.exs`** — pure helpers + real git ops on unique temp repos.
+  Every scratch repo is an absolute `System.tmp_dir!()` path named `<prefix>_<os-pid>_<positive monotonic integer>` and removed in `on_exit` with a tolerant `File.rm_rf/1`, so concurrent `mix test` BEAMs never share a path and teardown cannot raise `:eexist` (a plain `System.unique_integer/0` suffix is unique only WITHIN one BEAM, so it can collide across the concurrently running suites of a shared host).
+  It does NOT subscribe
   to any PubSub topic; its `notify_finalizing/1` tests only BROADCAST on the shared `"tasks"`
   topic (no assertion on it). Emitting there is safe because ExUnit runs sync modules in isolation
   after all async modules finish (confirmed by the additive "X s async, Y s sync" timing), so no
