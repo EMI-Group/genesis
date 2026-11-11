@@ -1,4 +1,4 @@
-# Two modules live in this file so the bulk of the suite can run in the ASYNC
+# Three modules live in this file so the bulk of the suite can run in the ASYNC
 # phase:
 #
 #   * `EvoDash.NodeContextTest` (`async: true`) — every describe that never
@@ -12,9 +12,13 @@
 #     lives in the TEST process' dictionary and both the RPC code under test and
 #     anything it spawns reach it through the OTP `:"$callers"` chain. Nothing
 #     process-global is mutated, so both modules run in the async phase.
+#   * `EvoDash.NodeContextSessionTest` (`async: false`, at the end of the file) —
+#     the interactive-session passthroughs, which drive a REAL
+#     `EvoGit.Agent.Session` off the app-global scheduler. Its forcing globals
+#     are listed in its own header comment.
 #
 # The split itself stays: ExUnit parallelises across MODULES, never within one,
-# so two async modules run on two runners instead of one.
+# so each async module runs on its own runner instead of one.
 defmodule EvoDash.NodeContextTest do
   use EvoDashWeb.ConnCase, async: true
 
@@ -89,10 +93,13 @@ defmodule EvoDash.NodeContextTest do
     # `EvoGit.RemoteNode` → `RemoteAPI` → `EvoGit.TaskRegistry` → `EvoGit.Store`,
     # so they are served by the run-wide store with real rows. Each test pins
     # its own unique `project_path`, which keeps every count assertion exact.
+    # The exact summary projection: 17 keys, all of them scalar/lite. The 17th
+    # (`session_mode`) is the task's driver mode — `"oneshot"` / `"interactive"`
+    # — decoded by the core through `Codec.decode_session_mode/1`.
     @summary_keys ~w(
       id status review_status started_at finished_at type project_path opts
       branch_name model_id agent_count base_sha commit_sha lease_expires_at
-      updated_at error
+      updated_at error session_mode
     )a
     test "list_tasks_page/2 returns summary rows + the filtered total (no heavy blobs)" do
       project_path = unique_project_path()
@@ -104,7 +111,7 @@ defmodule EvoDash.NodeContextTest do
       assert row.id == id
       assert row.status == :completed
       assert row.project_path == project_path
-      # The 16-key projection: heavy blobs are never part of a summary row.
+      # The 17-key projection: heavy blobs are never part of a summary row.
       assert Enum.sort(Map.keys(row)) == Enum.sort(@summary_keys)
       refute Map.has_key?(row, :result)
       refute Map.has_key?(row, :usage)
@@ -1145,5 +1152,444 @@ defmodule EvoDash.NodeContextVctTest do
 
       assert {:error, {_kind, _reason}} = result
     end
+  end
+end
+
+# The tool-free role the interactive-session passthroughs start. `available_tools/0`
+# is EMPTY and `session_mode/0` is `:interactive` (the Assistant shape): the
+# scripted `:agent_exchange_llm_call` seam answers in plain text, so every
+# exchange yields and no tool schema and no real LLM is ever involved.
+# Defined at the TOP LEVEL of the file (not nested in the test module) so it is
+# loaded before the module that starts sessions with it.
+defmodule EvoDash.NodeContextSessionTest.StubAgent do
+  use EvoGit.Agent
+
+  @doc "The role's fixed system prompt."
+  def system_prompt, do: "You are the NodeContext session test role."
+
+  @doc "No tools: the scripted seam serves every model call."
+  def available_tools, do: []
+
+  @doc "Opt into interactive semantics (a tool-free reply parks the session)."
+  def session_mode, do: :interactive
+end
+
+# `async: false` — the forcing GLOBALS are the interactive-session runtime:
+#   * the app-env engine seam `:agent_exchange_llm_call`, read at CALL time by
+#     every session's exchange worker, so a concurrently running module's agent
+#     would observe this module's scripted replies;
+#   * the app-global `EvoGit.AgentScheduler` GenServer, whose `model_profiles` /
+#     `llm_model` are set for a resolvable selection and restored in `on_exit`;
+#   * its BEAM-global ETS rows (`:evogit_sched_meta` / `:evogit_agent_summary`)
+#     plus the `EvoGit.TaskRegistry` casts and `EvoGit.PubSub` broadcasts a
+#     yield → close cycle emits.
+# Every fixture is per-test unique (the task id is allocated here, the agent id
+# by the scheduler), each started session is closed in `on_exit`, and the seam
+# key is DELETED on exit when it was originally unset, so the production path
+# stays byte-identical.
+defmodule EvoDash.NodeContextSessionTest do
+  use EvoDashWeb.ConnCase, async: false
+
+  import ExUnit.CaptureLog
+
+  alias EvoGit.Agent.Result
+
+  # Every wait budget in one place. The awaited events are REAL scheduling
+  # events (a session yield, a resumed exchange, a close), and the shared host's
+  # scheduling swings several-fold under parallel load, so the budget absorbs
+  # that latency — the wait still fails (never passes silently) when the event
+  # never happens.
+  @wait_budget_ms 30_000
+
+  # The scheduler is ONE app-global GenServer shared with every other suite in
+  # the run; `get_config`/`update_config` are ordinary `GenServer.call`s whose
+  # default budget (5 s) the shared host's load can exceed. Pass the same
+  # explicit budget the waits use — a bounded call, never a silent pass.
+  @config_call_timeout 30_000
+
+  # The scheduler reconfiguration is a ONE-TIME payment for the whole module:
+  # the FIRST `update_config` that installs a model profile also initializes the
+  # lazily loaded model catalog / LLM pool state (seconds on this shared host),
+  # while every later call is sub-millisecond. It therefore lives in
+  # `setup_all` — the tests only swap the per-test engine seam.
+  #
+  # A resolvable model profile is what `start_session/1` needs: it resolves a
+  # concrete selection before an agent can be registered. This is the
+  # established no-real-LLM idiom — the seam below serves every model call.
+  setup_all do
+    original_profiles =
+      GenServer.call(
+        EvoGit.AgentScheduler,
+        {:get_config, :model_profiles},
+        @config_call_timeout
+      )
+
+    original_model =
+      GenServer.call(EvoGit.AgentScheduler, {:get_config, :llm_model}, @config_call_timeout)
+
+    assert :ok =
+             GenServer.call(
+               EvoGit.AgentScheduler,
+               {:update_config,
+                [
+                  model_profiles: [%{id: "default", model: "test:model", concurrency: 1}],
+                  llm_model: "test:model"
+                ]},
+               @config_call_timeout
+             )
+
+    on_exit(fn -> restore_scheduler_config(original_profiles, original_model) end)
+
+    :ok
+  end
+
+  setup do
+    old_llm_call = Application.get_env(:evo_git, :agent_exchange_llm_call)
+    on_exit(fn -> restore_env(:agent_exchange_llm_call, old_llm_call) end)
+    :ok
+  end
+
+  describe "start_session/2 (interactive-session passthrough, local node)" do
+    test "starts a repo-less Assistant session and close/await_close finish it" do
+      counter = script_yields(["first yield"])
+      task_id = unique_task_id()
+      agent_id = start_session!(task_id)
+      assert is_integer(agent_id) and agent_id > 0
+
+      # The scheduler reports it as idle: ONE exchange paid, then parked.
+      entry = await_idle(agent_id)
+      assert %{agent_id: ^agent_id, task_id: ^task_id, mode: :interactive} = entry
+      assert is_pid(entry.session_pid) and Process.alive?(entry.session_pid)
+      assert :counters.get(counter, 1) == 1
+
+      # The `reason \\ :normal` default form is the documented close route.
+      assert :ok = EvoDash.NodeContext.close_session(node(), agent_id)
+
+      assert {:ok, %Result{result: "first yield"}} =
+               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+
+      await_idle_gone(agent_id)
+      # Closing finalizes the last yielded text — it is NOT another exchange.
+      assert :counters.get(counter, 1) == 1
+    end
+
+    test "passes the core's start refusal through verbatim (never re-wrapped)" do
+      # (a) A caller error: no session opts at all, answered by `SessionOpts`
+      # itself (and its own wrap, which is the ONLY nesting the core adds).
+      assert EvoDash.NodeContext.start_session(node(), []) ==
+               {:error,
+                {:start_session_failed, {:invalid_session_opts, {:invalid_agent_module, nil}}}}
+
+      # (b) Interactive sessions are root-only in v1.
+      assert {:error, {:start_session_failed, {:interactive_root_only, message}}} =
+               EvoDash.NodeContext.start_session(node(),
+                 agent_module: EvoDash.NodeContextSessionTest.StubAgent,
+                 objective: "node context session objective",
+                 depth: 1
+               )
+
+      assert message =~ "root-only"
+
+      # A non-list/non-spec argument keeps the core's own reason too.
+      assert EvoDash.NodeContext.start_session(node(), :not_a_spec) ==
+               {:error,
+                {:start_session_failed,
+                 {:invalid_session_opts, {:not_a_session_spec, :not_a_spec}}}}
+
+      # (c) An empty profile list is the scheduler's `:llm_not_configured`
+      # admission refusal — the reason arrives unchanged.
+      # The module-wide profile is restored in `on_exit` so this refusal cannot
+      # disarm the other tests of this module.
+      module_profiles =
+        GenServer.call(
+          EvoGit.AgentScheduler,
+          {:get_config, :model_profiles},
+          @config_call_timeout
+        )
+
+      on_exit(fn ->
+        GenServer.call(
+          EvoGit.AgentScheduler,
+          {:update_config, [model_profiles: module_profiles]},
+          @config_call_timeout
+        )
+      end)
+
+      assert :ok =
+               GenServer.call(
+                 EvoGit.AgentScheduler,
+                 {:update_config, [model_profiles: []]},
+                 @config_call_timeout
+               )
+
+      task_id = unique_task_id()
+
+      # The scheduler logs the refusal from ITS OWN process, so capture the line
+      # with the triggering call instead of relying on the window-based
+      # `capture_log: true`.
+      {result, _log} =
+        with_log(fn ->
+          EvoDash.NodeContext.start_session(node(), session_opts(task_id))
+        end)
+
+      assert result == {:error, {:start_session_failed, :llm_not_configured}}
+
+      # Nothing was registered, so nothing can be parked at `:awaiting_input`.
+      refute idle_for_task?(task_id)
+    end
+  end
+
+  describe "send_session_message/4 (interactive-session passthrough)" do
+    test "delivers a binary and a message map to a LIVE session" do
+      counter = script_yields(["one", "two", "three"])
+      agent_id = start_session!(unique_task_id())
+      first = await_idle(agent_id)
+
+      # Binary form, 3-arity (policy defaults to `:queue`).
+      assert :ok = EvoDash.NodeContext.send_session_message(node(), agent_id, "second message")
+      wait_until(fn -> :counters.get(counter, 1) >= 2 and idle?(agent_id) end, @wait_budget_ms)
+
+      # The resumed exchange runs on the SAME session (one agent id, one
+      # worktree, one context) — only the message is appended.
+      assert %{session_pid: resumed_pid} = await_idle(agent_id)
+      assert resumed_pid == first.session_pid
+
+      # Canonical message map (`EvoGit.Attachments.message/0`), explicit policy.
+      assert :ok =
+               EvoDash.NodeContext.send_session_message(
+                 node(),
+                 agent_id,
+                 %{text: "third message", attachments: []},
+                 :queue
+               )
+
+      wait_until(fn -> :counters.get(counter, 1) >= 3 and idle?(agent_id) end, @wait_budget_ms)
+
+      assert :ok = EvoDash.NodeContext.close_session(node(), agent_id, :normal)
+
+      assert {:ok, %Result{result: "three"}} =
+               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+
+      await_idle_gone(agent_id)
+    end
+
+    test "an unknown or already-finished target answers the documented envelope" do
+      # Provably unknown agent id (no session can ever be registered for it).
+      unknown = 9_000_000_000
+
+      assert EvoDash.NodeContext.send_session_message(node(), unknown, "hello") ==
+               {:error, {:session, :not_found}}
+
+      assert EvoDash.NodeContext.close_session(node(), unknown, :normal) ==
+               {:error, {:session, :not_found}}
+
+      assert EvoDash.NodeContext.await_close(node(), unknown, 1_000) == {:error, :not_found}
+
+      # A real session that has FINISHED: once its process is gone the same
+      # documented `:not_found` envelope applies (the registry entry dies with
+      # the session, so no call can be answered).
+      script_yields(["finished"])
+      agent_id = start_session!(unique_task_id())
+      entry = await_idle(agent_id)
+      assert :ok = EvoDash.NodeContext.close_session(node(), agent_id, :normal)
+
+      assert {:ok, %Result{}} =
+               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+
+      wait_until(fn -> not Process.alive?(entry.session_pid) end, @wait_budget_ms)
+
+      assert EvoDash.NodeContext.send_session_message(node(), agent_id, "after the end") ==
+               {:error, {:session, :not_found}}
+
+      assert EvoDash.NodeContext.close_session(node(), agent_id, :normal) ==
+               {:error, {:session, :not_found}}
+    end
+  end
+
+  describe "await_close/3 and list_awaiting_input/1" do
+    test "an expired wait budget answers :timeout and the session keeps running" do
+      counter = script_yields(["only yield"])
+      agent_id = start_session!(unique_task_id())
+      entry = await_idle(agent_id)
+
+      # Nothing closes the session, so the bounded wait MUST expire.
+      assert EvoDash.NodeContext.await_close(node(), agent_id, 50) == {:error, :timeout}
+
+      # The expired wait is observation only: the session is still live, still
+      # idle, and answering.
+      assert Process.alive?(entry.session_pid)
+      assert idle?(agent_id)
+      assert :counters.get(counter, 1) == 1
+
+      assert :ok = EvoDash.NodeContext.close_session(node(), agent_id)
+
+      assert {:ok, %Result{result: "only yield"}} =
+               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+    end
+
+    test "lists the parked session, then degrades to [] when the node cannot be asked" do
+      task_id = unique_task_id()
+      script_yields(["parked"])
+      agent_id = start_session!(task_id)
+
+      # The start is asynchronous, so park on the session's OWN idle signal
+      # before reading the list. The local answer is always a list, and this
+      # session is in it while it is parked at `:awaiting_input`.
+      assert %{agent_id: ^agent_id, task_id: ^task_id} = await_idle(agent_id)
+      assert is_list(EvoDash.NodeContext.list_awaiting_input(node()))
+
+      assert :ok = EvoDash.NodeContext.close_session(node(), agent_id)
+
+      assert {:ok, %Result{}} =
+               EvoDash.NodeContext.await_close(node(), agent_id, @wait_budget_ms)
+
+      # Degraded answer: an unreachable node is collapsed to `[]` (never raises,
+      # never returns a non-list), exactly like the other list helpers here.
+      # Wrapped in `with_log/2`: the real distribution/net-kernel code path can
+      # emit Logger lines from global processes at the test boundary.
+      {result, _log} =
+        with_log(fn ->
+          EvoDash.NodeContext.list_awaiting_input(:"nonexistent-node@nowhere")
+        end)
+
+      assert result == []
+    end
+  end
+
+  # --- fixtures -------------------------------------------------------------
+
+  defp unique_task_id do
+    "node_ctx_session_#{System.unique_integer([:positive])}"
+  end
+
+  # A valid REPO-LESS Assistant spec (no `:path`): no worktree, no phylo node.
+  defp session_opts(task_id) do
+    [
+      agent_module: EvoDash.NodeContextSessionTest.StubAgent,
+      objective: "node context session objective",
+      repo_less: true,
+      session_mode: :interactive,
+      task_id: task_id
+    ]
+  end
+
+  # Starts a session through the passthrough under test and registers a
+  # best-effort teardown, so a failing assertion can never leave an idle session
+  # (or its sched-meta rows) behind for another test.
+  defp start_session!(task_id) do
+    assert {:ok, agent_id} = EvoDash.NodeContext.start_session(node(), session_opts(task_id))
+    on_exit(fn -> force_kill!(task_id) end)
+    agent_id
+  end
+
+  defp force_kill!(task_id) do
+    # Guarded because a scheduler restart mid-teardown must never mask a real
+    # test failure; the tests close their own sessions, so this only fires when
+    # an assertion failed first.
+    EvoGit.AgentScheduler.force_kill_task_agents_for_task(task_id)
+  catch
+    :exit, _reason -> :ok
+  end
+
+  # Every scripted turn answers with the next text in the list and YIELDS (an
+  # interactive `{:implicit_completion, …}` is a `{:yield, …}`). The counter is
+  # cross-process: the seam runs inside the exchange WORKER.
+  defp script_yields(texts) do
+    counter = :counters.new(1, [:atomics])
+
+    Application.put_env(
+      :evo_git,
+      :agent_exchange_llm_call,
+      fn context, _tools, _params, _agent_id, _retries ->
+        :counters.add(counter, 1, 1)
+        index = :counters.get(counter, 1) - 1
+        text = Enum.at(texts, min(index, length(texts) - 1))
+        {:implicit_completion, llm_response(context, text), text}
+      end
+    )
+
+    counter
+  end
+
+  defp llm_response(context, text) do
+    message = %ReqLLM.Message{
+      role: :assistant,
+      content: [ReqLLM.Message.ContentPart.text(text)],
+      tool_calls: nil
+    }
+
+    %ReqLLM.Response{
+      id: "node-context-session-response",
+      model: "test:model",
+      context: ReqLLM.Context.append(context, message),
+      message: message,
+      usage: %{input_tokens: 10, output_tokens: 2, total_tokens: 12}
+    }
+  end
+
+  # --- observation helpers ---------------------------------------------------
+
+  defp idle_entries, do: EvoDash.NodeContext.list_awaiting_input(node())
+
+  defp idle?(agent_id), do: Enum.any?(idle_entries(), &(&1.agent_id == agent_id))
+
+  defp idle_for_task?(task_id), do: Enum.any?(idle_entries(), &(&1.task_id == task_id))
+
+  defp await_idle(agent_id, timeout \\ @wait_budget_ms) do
+    wait_until(fn -> idle?(agent_id) end, timeout)
+
+    idle_entries()
+    |> Enum.find(&(&1.agent_id == agent_id)) ||
+      flunk("expected an :awaiting_input session entry for agent #{agent_id}, got none")
+  end
+
+  defp await_idle_gone(agent_id, timeout \\ @wait_budget_ms) do
+    wait_until(fn -> not idle?(agent_id) end, timeout)
+  end
+
+  # Bounded, event-driven wait: the predicate IS the assertion.
+  defp wait_until(fun, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_until(fun, deadline, timeout, 1)
+  end
+
+  defp do_wait_until(fun, deadline, original_timeout, interval) do
+    cond do
+      fun.() ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("condition not met within #{original_timeout}ms")
+
+      true ->
+        beat = min(interval, 5)
+        Process.sleep(beat)
+        do_wait_until(fun, deadline, original_timeout, beat * 2)
+    end
+  end
+
+  # Restore a seam nil-aware: delete the key when it was originally unset.
+  defp restore_env(key, nil), do: Application.delete_env(:evo_git, key)
+  defp restore_env(key, value), do: Application.put_env(:evo_git, key, value)
+
+  # Puts the app-global scheduler's model configuration back exactly as this
+  # module found it (`update_config` rejects a nil `llm_model`, so that key is
+  # skipped when it was nil).
+  defp restore_scheduler_config(original_profiles, original_model) do
+    GenServer.call(
+      EvoGit.AgentScheduler,
+      {:update_config, [model_profiles: original_profiles]},
+      @config_call_timeout
+    )
+
+    if original_model != nil do
+      GenServer.call(
+        EvoGit.AgentScheduler,
+        {:update_config, [llm_model: original_model]},
+        @config_call_timeout
+      )
+    end
+
+    :ok
   end
 end

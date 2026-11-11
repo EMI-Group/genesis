@@ -13,14 +13,25 @@ defmodule EvoDashWeb.HomeLive.Composer do
 
   ## Enabled / disabled contract
 
-    * the textarea is DISABLED while the chat is `:cancelling` / `:ended`,
-      while `EvoDashWeb.HomeLive.SourceGate.blocked?/1` holds, or while the
-      model snapshot is still loading — and ENABLED while `:running` (a send
-      during a run is queued, delivered at the next turn boundary) and `:idle`;
+  Two separate predicates keep the draft editable wherever the user could
+  legitimately type: `compose_disabled?/1` (no new input at all) and
+  `send_blocked?/1` (no usable model, so no send).
+
+    * `compose_disabled?/1` is true only while the chat is `:cancelling` /
+      `:ended` or while `EvoDashWeb.HomeLive.SourceGate.blocked?/1` holds.
+      It drives the textarea's `disabled` attribute and the attach affordances.
+    * the textarea is ENABLED in every other state: `:idle`, `:awaiting_input`,
+      `:running` (a send during a run is queued, delivered at the next turn
+      boundary), and every model-not-ready state (snapshot still loading,
+      snapshot missing, invalid selection, pending/unconnected remote target).
+    * `send_blocked?/1` is `compose_disabled?/1` plus a missing model snapshot
+      or a model selection/load error. It drives ONLY the actions that need a
+      resolved model: the Send button and the interrupt-turn button.
     * Send is available for `:idle` / `:running` and hidden while `:cancelling`
-      / `:ended`; it stays disabled without a usable model snapshot/selection;
-    * Stop is visible for `:running` / `:cancelling` and enabled only while
-      `:running`;
+      / `:ended`; Stop is visible for `:running` / `:cancelling` and enabled
+      only while `:running`.
+    * the model capsule is disabled while the snapshot is still loading or
+      absent (it is the control that needs one), independently of the draft.
     * `interrupt_button/1` is visible only while `:running` and delivers the
       draft at the next turn boundary — it never halts a chunk.
 
@@ -75,7 +86,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
         composer_model_error?: model_error?,
         composer_textarea_disabled?: disabled?,
         composer_send_hidden?: status in [:cancelling, :ended],
-        composer_send_disabled?: disabled? or model_missing?(assigns) or model_error?,
+        composer_send_disabled?: send_blocked?(assigns),
         composer_stop_visible?: status in [:running, :cancelling],
         composer_stop_disabled?: status != :running,
         composer_mistakes_note?: status == :idle and transcript_empty?(assigns[:transcript])
@@ -189,7 +200,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
     assigns =
       assign(assigns,
         interrupt_visible?: chat_status(assigns) == :running,
-        interrupt_disabled?: compose_disabled?(assigns)
+        interrupt_disabled?: send_blocked?(assigns)
       )
 
     ~H"""
@@ -380,13 +391,23 @@ defmodule EvoDashWeb.HomeLive.Composer do
     end
   end
 
-  # The ONE "compose surface is disabled" predicate: no new input can be
-  # accepted while cancelling/ended, while the Genesis source is missing, or
-  # while the model snapshot is still loading.
+  # "No new input at all" predicate: the chat is winding down (`:cancelling` /
+  # `:ended`) or the Genesis source gate blocks the page. It drives the
+  # textarea's `disabled` attribute and the attach affordances ONLY — every
+  # model-not-ready state (still loading, no snapshot, invalid selection, a
+  # pending/unconnected remote target) leaves the draft editable so typing is
+  # never lost while the choice is repaired.
   defp compose_disabled?(assigns) do
-    chat_status(assigns) in [:cancelling, :ended] or
-      SourceGate.blocked?(assigns) or
-      assigns[:model_select_loading] == true
+    chat_status(assigns) in [:cancelling, :ended] or SourceGate.blocked?(assigns)
+  end
+
+  # "Sending is blocked" predicate: composing is disabled PLUS the model
+  # snapshot/selection is not usable (missing, still loading, invalid, or a
+  # pending remote target whose load failed). Drives ONLY actions that need a
+  # resolved model — the Send button and the interrupt-turn button — never the
+  # textarea.
+  defp send_blocked?(assigns) do
+    compose_disabled?(assigns) or model_missing?(assigns) or model_error?(assigns)
   end
 
   defp picker_disabled?(assigns) do
