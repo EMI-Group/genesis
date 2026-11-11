@@ -8,6 +8,7 @@ This directory holds all frontend source assets (JavaScript, CSS, vendor librari
 
 - `./js/` → JavaScript source (LiveSocket setup, inline hooks, topbar; `app.js` + `highlight_setup.js`)
 - `./js/hooks/` → Standalone JS hook files (`sidebar_collapse.js`, `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js`, `diff_viewer.js`, `commit_graph.js`, `capsule_panel.js`) — registration table + behavior notes in `js/hooks/CONTEXT.md`
+- `./js/*.test.cjs` → Node-run unit tests for the PURE logic of inline hooks (`agent_history_scroll.test.cjs`, `state_persistence.test.cjs`) — `node --test apps/evo_dash/assets/js/*.test.cjs`, never part of `mix test`; detail in `js/CONTEXT.md` → "JS Unit Tests"
 - `./css/` → Stylesheets (Tailwind CSS 4 configuration, DaisyUI themes)
 - `./vendor/` → Third-party JS libraries (DaisyUI, Heroicons, Topbar, highlight.js, brand SVGs)
 
@@ -19,6 +20,8 @@ This directory holds all frontend source assets (JavaScript, CSS, vendor librari
 |---|---|
 | `js/app.js` | Main JS entry point. Imports `phoenix_html`, establishes a `LiveSocket` with a hand-written `hooks:` map (see `js/hooks/CONTEXT.md`), wires the topbar progress indicator on LiveView navigation, and enables live-reload dev features (server log streaming, click-to-editor). |
 | `js/highlight_setup.js` | Module side effect exposing the imported highlight.js instance as `window.hljs` — load-bearing for the cdnjs language packs (see "Client-side syntax highlighting" below). |
+| `js/agent_history_scroll.test.cjs` | Node unit test (`node:test` + `node:vm`) for the PURE pinning decision sliced out of `app.js` — run `node --test apps/evo_dash/assets/js/*.test.cjs`; NEVER part of `mix test` (detail: `js/CONTEXT.md` → "JS Unit Tests"). |
+| `js/state_persistence.test.cjs` | Node unit test (`node:test` + `node:vm`) for the inline `StatePersistence` hook against `sessionStorage`/timer stubs — same runner and same non-`mix test` status. |
 | `css/app.css` | Main CSS entry point. Configures Tailwind CSS 4 with source scanning across `css/`, `js/`, and `lib/evo_dash_web/`. Loads Heroicons, DaisyUI (themes disabled), and two custom DaisyUI themes registered via the daisyui-theme plugin at app.css:23-116 — GNOME/libadwaita (Adwaita) palettes: "dark" (soft dark-gray surfaces #1e1e1e, `default: false`, `prefersdark: true`) and "light" (`default: true`), both with the constant GNOME blue primary/accent `#3584e4` and per-theme-fixed base/semantic/chart tokens. The file's ONLY `@theme` block registers the accent **role-split** text/icon/outline token `--color-primary-standalone` (see "Accent role-split" below). The configurable accent retargets `--color-primary`/`--color-accent` (fill role) AND `--color-primary-standalone` (standalone role) via the `[data-accent-color]` rules below the theme blocks — a fixed ten-name GNOME palette, NOT a derived/hue-math expansion. Defines LiveView-specific custom variants (`phx-click-loading`, `phx-submit-loading`, `phx-change-loading`) and a `dark` variant based on `data-theme` attribute. |
 | `vendor/daisyui.js` | DaisyUI Tailwind plugin (core). |
 | `vendor/daisyui-theme.js` | DaisyUI theme plugin (used twice in `app.css` for dark & light themes). |
@@ -83,6 +86,23 @@ LiveView patches strip every attribute the server does not render (including `op
 There is no `phx-click` on the hook element and nothing stops propagation; all listeners plus the pending close timer are removed in `destroyed()`, and each instance only ever closes its own panel, so several capsules can share a page.
 Every step guards its own state (closed panel, missing `.capsule-panel`, already-closing) → no-op, never throws.
 The matching keyframes / view-visibility rules live in the `css/app.css` `Fused Capsule Controls` section.
+- **BrowserNotifications — visibility-gated native notifications** (inline hook in `js/app.js`): ONE hook serves both producers through the `task_notification` push event with `%{title: String.t(), body: String.t(), tag?: String.t()}` — ProjectsLive's terminal-task notifications (no tag) and the Assistant page's hidden `#assistant-notifications` host, which receives approval requests with `tag: "genesis-approval"`.
+Permission is requested ONCE on mount (a missing API, a synchronous throw or a rejected promise all leave notifications off).
+A notification is shown ONLY while the user cannot see the page: `document.hidden` (falling back to `document.visibilityState`) OR `!document.hasFocus()` — someone looking at the dashboard is never notified about it.
+An optional `tag` dedupes, so a repeating approval replaces its previous notification (`renotify: true`) instead of stacking another; clicking one focuses the window and closes it.
+Unsupported APIs, denied permission and a constructor that throws are a SILENT no-op — no console noise.
+Payload contract + call sites: `js/hooks/CONTEXT.md` (`BrowserNotifications` row).
+- **AgentHistoryAutoScroll — instant, coalesced stick-to-bottom** (inline hook in `js/app.js`; CSS in the "Auto-scrolled transcripts" section of `css/app.css`): attached to `#chat-messages` (Assistant page) and `#agent-history-<selected_agent_id>` (the /agents Chat History / Session Memory panel, which also carries `.agent-history-scroll`); the pure decision is `shouldFollowLatest(scrollTop, scrollHeight, clientHeight, threshold?)` with `STICK_TO_BOTTOM_THRESHOLD_PX = 56`.
+The hook is deterministic and instant — one coalesced `requestAnimationFrame` assigns `scrollTop = scrollHeight`; there is NO easing, tween or animated scroll.
+`pinned` is re-evaluated only on user intent (`scroll`, `wheel`, `touchmove`, `keydown`), a programmatic write lands at the bottom so the pin survives without suppression flags, and while unpinned the hook early-returns and disconnects both observers (reading history costs no observer work).
+A `ResizeObserver` on the scroller and its direct children re-follows late layout changes (Markdown render, images, a `<details>` opening inside a message) and a `MutationObserver` re-syncs the observed child set; `destroyed()` releases every listener and observer.
+CSS invariants (do NOT drop them): both panels keep `overflow-anchor: none` (the hook owns scroll anchoring), `overscroll-behavior: contain` (no scroll chaining) and `scroll-behavior: auto` — the document sets `html { scroll-behavior: smooth }`, and a smooth behavior on these panels would animate every instant assignment into exactly the shaking the hook removes — plus `min-height: 0`, which lets the scroller shrink inside its flex column instead of growing the page.
+Behavior + tests: `js/hooks/CONTEXT.md` ("AgentHistoryAutoScroll hook") and `js/CONTEXT.md` ("JS Unit Tests").
+- **DialogModal — native top-layer `<dialog>` contract** (inline hook in `js/app.js`): MUST be mounted on the `<dialog class="modal">` element itself; its only current consumer is the Assistant approval dialog (`lib/evo_dash_web/live/home_live/approval_dialog.ex` — `<dialog id="approval-dialog" class="modal" phx-hook="DialogModal">`, mounted only while `:approval_dialog_open` is true).
+`showModal()` runs only when the API exists and the dialog is not already open (a second call on an open dialog throws `InvalidStateError`).
+A user dismissal (ESC/backdrop) pushes `dialog_closed` EXACTLY ONCE via a per-instance latch; `destroyed()` removes the close listener BEFORE closing, so a server-driven unmount reports nothing, and `updated()` re-asserts the modal after a patch unless the user dismissed it.
+`push_event(socket, "dialog_open", %{})` clears the latch and re-shows the SAME mounted element (a hook capability no page uses today).
+Detail: `js/hooks/CONTEXT.md` → "DialogModal hook".
 
 ## Known Issues — Custom CSS Variables (`css/app.css`)
 

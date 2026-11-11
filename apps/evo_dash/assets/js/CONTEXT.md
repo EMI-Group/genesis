@@ -2,11 +2,12 @@
 
 ## Intent
 
-Client-side JavaScript for the EvoDash dashboard: the main entry (`app.js`, LiveSocket setup + all inline hooks), the highlight.js global-exposer (`highlight_setup.js`), and the five standalone hook modules under `./hooks/`. Bundled by esbuild via `mix assets.build`. See `../assets/CONTEXT.md` for build tooling and `./hooks/CONTEXT.md` for the hook registration table + behavior notes.
+Client-side JavaScript for the EvoDash dashboard: the main entry (`app.js`, LiveSocket setup + all inline hooks), the highlight.js global-exposer (`highlight_setup.js`, a module side effect, NOT a hook), the seven standalone hook modules under `./hooks/`, and the Node-run unit tests for inline-hook logic (`*.test.cjs`). Bundled by esbuild via `mix assets.build`. See `../assets/CONTEXT.md` for build tooling and `./hooks/CONTEXT.md` for the hook registration table + behavior notes.
 
 ## Routing Table
 
-- `./hooks/` → Standalone LiveView hook files (`sidebar_collapse.js`, `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js`, `diff_viewer.js`) + `hooks/CONTEXT.md`
+- `./hooks/` → Standalone LiveView hook files (`sidebar_collapse.js`, `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js`, `diff_viewer.js`, `commit_graph.js`, `capsule_panel.js`) + `hooks/CONTEXT.md`
+- `./*.test.cjs` → Node-run unit tests for the PURE logic of inline hooks (`agent_history_scroll.test.cjs`, `state_persistence.test.cjs`) — `node --test apps/evo_dash/assets/js/*.test.cjs`, never part of `mix test` (see "JS Unit Tests")
 - `app.js` → Main entry — LiveSocket, inline hooks (`TauriDetect`, `DesktopQuit`, `DesktopQuitConfirm`, `UpdateStatus`, `PlatformDetect`, `PathAutocomplete`, `DirectoryPicker`, `FilePicker`, `Guide`, `StatePersistence`, `BrowserNotifications`, `AutoClearFlash`, `ClipboardCopy`, `AgentHistoryAutoScroll`, `DialogModal`, `FocusInput`, `PaletteList`), topbar wiring, guide-client-id sessionStorage
 - `highlight_setup.js` → Exposes the vendored highlight.js instance as `window.hljs` (module side effect — must evaluate BEFORE the cdnjs language-pack IIFE imports in `app.js`; load-order contract + pack list in `../assets/CONTEXT.md`)
 
@@ -29,7 +30,16 @@ The handler merges only `node` and `model_spec`, leaving the saved prompt and un
 Node-less legacy state belongs to `local`, and a picker-only event must never relabel another node's pending saved state.
 The debounced form watcher reads the latest saved object when it runs, preserving canonical selection including `{}`, and writes `selected_model_id` only when a legacy `[name="model_id"]` selector actually exists.
 The full `persist_state` event still replaces the saved object while taking `task_prompt` from the DOM to protect unsent typing.
-Run focused hook regressions with `node --test apps/evo_dash/assets/js/state_persistence.test.cjs` from the repository root; they use Node's built-in test runner and VM to exercise the actual inline hook without browser-bundle dependencies.
+Focused regressions for this hook live in `state_persistence.test.cjs` (see "JS Unit Tests" below).
+
+## JS Unit Tests (Node's built-in test runner)
+
+`./agent_history_scroll.test.cjs` and `./state_persistence.test.cjs` cover the PURE logic of the inline hooks in `app.js`; they are NEVER part of `mix test`.
+Run them from the repository root with `node --test apps/evo_dash/assets/js/*.test.cjs`, or pass one file path for a focused run.
+Both use Node's built-in runner (`node:test` + `node:assert/strict`) and `node:vm` over source sliced out of `app.js`, so no browser bundle or DOM library is loaded.
+`agent_history_scroll.test.cjs` slices the block from the `// --- AgentHistoryAutoScroll: pure pinning decision` marker to the `// AgentHistoryAutoScroll hook:` marker and asserts the 56 px inclusive pin boundary, the overscroll/rubber-band answers, unmeasurable geometry, the explicit-threshold override and the default threshold's documented 48–64 px band.
+The DOM half of that hook (rAF coalescing, observers, listeners) carries no decision of its own and is deliberately not faked.
+`state_persistence.test.cjs` runs the real `StatePersistence` hook object against `sessionStorage`/timer stubs and asserts the saved-state shape, node scoping and the `persist_model_selection` merge.
 
 ## Known Issues
 
