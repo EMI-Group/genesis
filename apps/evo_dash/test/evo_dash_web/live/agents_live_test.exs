@@ -4,7 +4,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # cohort, so each test seeds its agent under a UNIQUE id (see `agent_id/0`)
   # instead of a fixed literal. The `:agents_*` runner app-env seams are used
   # by NO other module, and the one real core write (send_agent_message)
-  # contains its own broadcast.
+  # contains its own broadcast: its transport is stubbable through the
+  # `:agents_send_message_runner` call-time seam, and the SINGLE test that
+  # deliberately drives the real scheduler write contains and drains the bulk
+  # broadcast it emits (see `drain_agents_bulk_signal/1`).
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
 
@@ -1571,6 +1574,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # agent's chat history with a pending hint until the agent drains it into
     # context on its next turn (see EvoDashWeb.AgentsLive.OptimisticMessages).
     # A missing agent must surface as a failure flash, not a false success.
+    # Isolation: the send's transport is the call-time
+    # `:agents_send_message_runner` seam (default = the real node-aware
+    # delegate). Exactly ONE test below drives that real delegate end to end —
+    # the rest stub the transport because their subject is the optimistic
+    # bookkeeping, not the shared scheduler write its 5 s call budget makes
+    # non-deterministic in a full async cohort.
 
     test "successfully sent message appears optimistically in the chat history", %{conn: conn} do
       msg = "hello optimistic world"
@@ -1678,14 +1687,57 @@ defmodule EvoDashWeb.AgentsLiveTest do
     test "missing agent shows a failure flash instead of a false success", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/agents")
 
+      # Same shared-scheduler budget as the optimistic test above: a TIMED-OUT
+      # call is NOT the core's answer (it flashes the EXIT, not `not_found`), so
+      # the submit is retried until the core really answered. The assertions
+      # below stay pinned to the core's answer.
+      await_scheduler_responsive()
+
       html =
-        render_submit(view, "send_agent_message", %{
+        submit_send_until_core_answer(view, %{
           "agent_id" => "999",
           "message" => "hello"
         })
 
       assert html =~ "Failed to send message"
       assert html =~ "not_found"
+      refute html =~ "Message sent to agent"
+    end
+
+    test "a scheduler-call timeout is retried, never mistaken for the core's answer",
+         %{conn: conn} do
+      # Pins the retry contract `submit_send_until_core_answer/3` exists for —
+      # and, through the call-time seam, the exact two shapes the handler
+      # distinguishes: a TIMED-OUT call (an EXIT, no core answer) and the core's
+      # real `{:ok, {:error, :not_found}}` answer. The first submit behaves like
+      # the loaded-host failure; the retry must surface the core's answer.
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      stub_send_message(fn _node, agent_id, _message ->
+        case Agent.get_and_update(counter, fn n -> {n, n + 1} end) do
+          0 ->
+            exit(
+              {:timeout,
+               {GenServer, :call,
+                [EvoGit.AgentScheduler, {:send_user_message, agent_id, "x"}, 5000]}}
+            )
+
+          _answered ->
+            {:ok, {:error, :not_found}}
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+
+      html =
+        submit_send_until_core_answer(view, %{
+          "agent_id" => "999",
+          "message" => "hello"
+        })
+
+      assert html =~ "Failed to send message"
+      assert html =~ "not_found"
+      refute html =~ "{:exit, {:timeout"
       refute html =~ "Message sent to agent"
     end
   end
@@ -3491,6 +3543,30 @@ defmodule EvoDashWeb.AgentsLiveTest do
       true ->
         Process.sleep(20)
         render_until_loop(view, predicate, deadline)
+    end
+  end
+
+  # Load-tolerant send for the tests whose assertion is THE CORE'S ANSWER
+  # (e.g. `not_found`). The page flashes the failure reason either way, so a
+  # render alone cannot tell "the core answered" from "the shared scheduler's
+  # 5 s call budget elapsed" — the latter is `{:exit, {:timeout, {GenServer,
+  # :call, ...}}}` with no core answer at all, which is precisely the retry
+  # state the modal exists for. Resubmitting is retried only on that EXIT; a
+  # real answer (or any other failure) returns immediately, so the caller's
+  # assertions run against the core's actual answer.
+  defp submit_send_until_core_answer(view, params, attempts \\ 3) do
+    html = render_submit(view, "send_agent_message", params)
+
+    cond do
+      not (html =~ "Failed to send message") ->
+        html
+
+      html =~ "{:exit, {:timeout" and attempts > 1 ->
+        Process.sleep(20)
+        submit_send_until_core_answer(view, params, attempts - 1)
+
+      true ->
+        html
     end
   end
 
