@@ -1594,6 +1594,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # send is retried through `submit_until_pending_hint/3` instead of
       # asserting on a single, non-deterministic round trip. Neither assertion
       # is relaxed: a persistent failure returns the last render and fails.
+      await_scheduler_responsive()
+
       html =
         submit_until_pending_hint(view, %{
           "agent_id" => to_string(agent_id()),
@@ -3544,6 +3546,22 @@ defmodule EvoDashWeb.AgentsLiveTest do
         ] do
       Application.delete_env(:evo_dash, key)
     end
+  end
+
+  # Readiness gate for the ONE test that drives the REAL shared-scheduler write.
+  # That call's production budget is 5 s and is measured from the moment it is
+  # ISSUED, so under a saturated full-suite cohort the budget can be spent
+  # queueing behind another caller's long handler (e.g. worktree init inside
+  # `handle_call({:run_agent, ...})`) — the server is then busy, not slow, and
+  # the caller EXITS with `{:timeout, {GenServer, :call, ...}}`. Waiting for the
+  # server to answer a real (cheap, state-free) call first spends the retry
+  # attempts on the send itself. `paused?/0` travels the SAME `GenServer.call`
+  # path as the send (`:sys` messages are answered even by a server that normal
+  # calls cannot reach) and changes no scheduler state.
+  defp await_scheduler_responsive do
+    wait_until(fn ->
+      match?({:ok, _}, EvoDash.SafeCall.run(fn -> EvoGit.AgentScheduler.paused?() end))
+    end)
   end
 
   # Stubs the `:agents_send_message_runner` CALL-TIME seam (the exact transport
