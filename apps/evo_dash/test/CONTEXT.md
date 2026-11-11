@@ -3,14 +3,14 @@
 ## Intent
 
 ExUnit suite for the `:evo_dash` app: the runner bootstrap, shared support modules, and suites that mirror `apps/evo_dash/lib/`.
-91 test files (`*_test.exs`: 89 mirroring `lib/`, `support/config_dir_test.exs`, and `evo_dash/runtime_config_test.exs` covering the root `config/runtime.exs`) plus `test_helper.exs` and `support/`: 65 929 lines in the test files, 1 154 in `support/*.ex`.
+95 test files (`*_test.exs`: 93 mirroring `lib/`, `support/config_dir_test.exs`, and `evo_dash/runtime_config_test.exs` covering the root `config/runtime.exs`) plus `test_helper.exs` and `support/`: 70 387 lines in the test files, 1 154 in `support/*.ex`.
 `support/` holds 6 compiled `.ex` modules plus ONE test script — `support/config_dir_test.exs`, placed there because it is the proof module for that directory's seam (only `*.ex` files are compiled, so ExUnit loads the `_test.exs` like any other suite).
-111 case modules across those files: 89 `async: true` and 22 `async: false`.
-2 231 statically declared `test` blocks (several `for`-generated declarations expand them further) plus 1 doctest (`EvoDash.SettingsUtils`).
+116 case modules across those files: 93 `async: true` and 23 `async: false`.
+2 395 statically declared `test` blocks (several `for`-generated declarations expand them further: a `--seed 0` run reports 2 412 tests plus 2 doctests from `EvoDash.SettingsUtils`).
 Suite runtime and the sync inventory live below ("Async policy", "Suite runtime: what actually costs time"); absolute timings move with host load, so compare same-session runs.
-The ~3–4 s gap between ExUnit's total and the wall clock is the umbrella's app boot, paid once per `mix test` invocation.
-Stable across explicit seeds and across back-to-back runs.
-`mix test apps/evo_dash/test` from the umbrella root runs exactly this app's suite; bare root `mix test` also runs the `evo_git` suite first (~67 s).
+The gap between ExUnit's `Finished in` and the process wall clock is the umbrella's app boot, paid once per `mix test` invocation.
+Test counts are stable across explicit seeds and across back-to-back runs; pass/fail has ONE known cross-module flake (`## Known Issues`).
+`mix test apps/evo_dash/test` from the umbrella root runs exactly this app's suite; bare root `mix test` also runs the `evo_git` suite first.
 The domain singletons (`EvoGit.Store`, `EvoGit.TaskRegistry`, `EvoGit.TaskInfo`, `EvoGit.VCT`) live in `:evo_git` and are tested there; no suite here owns them.
 `EvoGit.VCT` is the project registry: each opened project is a `%EvoGit.VCT.Mount{}` (`point` = `vct:///projects/<name>`, absolute OS `path`, `name`, `kind`, `last_opened_at`) persisted in the shared task store's `vct_mounts` table, newest-opened first, capped by `EvoGit.VCT.max_projects/0` (100 by default; over-cap registration evicts the oldest).
 Web-layer tests reference those singletons directly; per-test Store/TaskRegistry isolation is `EvoDash.Test.IsolatedTaskStore` (they are children of `EvoGit.Supervisor`, NOT `EvoDash.Supervisor`).
@@ -19,14 +19,15 @@ Web-layer tests reference those singletons directly; per-test Store/TaskRegistry
 
 - `support/` → `ConnCase`, `TestHelpers` (`flush_loading/4`), the two directory-picker fakes, `EvoDash.Test.IsolatedTaskStore`, `EvoDash.Test.ConfigDir` (the per-process config-dir seam + its proof test `support/config_dir_test.exs`) — detail: `support/CONTEXT.md`.
 - `evo_dash/` → domain-layer suites (ActiveTasks, ChatHistory, AttachedFile, NodeContext, DirectoryPicker, SafeCall, DesktopLifetime, UpdateStatus, SettingsUtils, MarkdownRender, ConnectionDiagnostics) — detail: `evo_dash/CONTEXT.md`.
+  `node_context_test.exs` holds FOUR case modules (two async, two sync): `NodeContextVctTest` owns the VCT delegates and `NodeContextSessionTest` the interactive-session passthroughs, driving one REAL repo-less session per test through the top-level `StubAgent` role — per-module census and forcing globals: `evo_dash/CONTEXT.md`.
   `node_context_test.exs`'s async `EvoDash.NodeContextTest` also covers the managed-process RPC helpers `list_processes/2`, `get_process/2`, `process_stats/2` and `process_control/4` against an isolated per-test `EvoGit.ProcessManager` instance (`Process.put(:evogit_process_manager_server, name)`), so no global state is mutated.
-- `evo_dash_web/` (root) → cross-cutting web-layer suites with no child doc: `helpers_test.exs` (85 tests, status badges/datetime/icons/modals), `helpers_blob_preview_test.exs` (23, `blob_preview/2` + `list_preview/2` caps), `theme_color_test.exs` (27, color VALUES), `content_text_test.exs` (9).
-- `evo_dash_web/live/` → LiveView page suites + pure unit tests for their support modules (`settings_live/` holds `config_io_test.exs`, `model_profile_helpers_test.exs`, `auth_status_test.exs` and `model_ids_test.exs`), including the managed-process `/processes` page suite `live/processes_live_test.exs` (`EvoDashWeb.ProcessesLiveTest`, 17) and `live/agents_live/processes_section_test.exs` (`EvoDashWeb.AgentsLive.ProcessesSectionTest`, 5), both `async: false` — detail: `live/CONTEXT.md`, `live/agents_live/CONTEXT.md`.
+- `evo_dash_web/` (root) → cross-cutting web-layer suites plus the child node's per-file census and interactive-session coverage map; detail: `evo_dash_web/CONTEXT.md`: `helpers_test.exs` (81 tests, status badges/datetime/icons/modals incl. the `:awaiting_input` families), `helpers_blob_preview_test.exs` (23, `blob_preview/2` + `list_preview/2` caps), `theme_color_test.exs` (27, color VALUES), `model_label_test.exs` (the shared `EvoDashWeb.ModelLabel` model-line derivation), `content_text_test.exs` (9).
+- `evo_dash_web/live/` → LiveView page suites + pure unit tests for their support modules (`settings_live/` holds `config_io_test.exs`, `model_profile_helpers_test.exs`, `auth_status_test.exs` and `model_ids_test.exs`; `home_live/` holds `session_actions_test.exs`, `session_list_test.exs`, `chat_state_session_fields_test.exs`, `transcript_test.exs`, `messages_test.exs`, `model_select_test.exs`, `approval_workflow_test.exs` and `assistant_message_test.exs`), including the managed-process `/processes` page suite `live/processes_live_test.exs` (`EvoDashWeb.ProcessesLiveTest`, 23) and `live/agents_live/processes_section_test.exs` (`EvoDashWeb.AgentsLive.ProcessesSectionTest`, 6), both `async: false` — detail: `live/CONTEXT.md`, `live/agents_live/CONTEXT.md`, `live/home_live/CONTEXT.md`.
 - `evo_dash_web/live_hooks/` → the on-mount hook suites (NodeAware, Guide, Appearance, DesktopQuit, UpdateStatus) — detail: `live_hooks/CONTEXT.md`.
 - `evo_dash_web/components/` → function-component render/contract suites (all `async: true`, `render_component/2` + Floki), including task-form/profile-editor integration pins and the shared LLM-selection coverage boundary — detail: `components/CONTEXT.md`.
-- `evo_dash_web/controllers/` → error templates + the streamed task-archive export endpoint + the `GET /server/status` operational-probe suite (its `:server_status_task_runner` seam is the only global it touches) — detail: `controllers/CONTEXT.md`.
+- `evo_dash_web/controllers/` → error templates + the streamed task-archive export endpoint + the `GET /server/status` operational-probe suite (its `:server_status_task_runner` seam is the only global it touches; the busy set excludes `:awaiting_input`) — detail: `controllers/CONTEXT.md`.
 - Provider-profile selection contracts → `evo_dash_web/components/CONTEXT.md` and `evo_dash_web/live/CONTEXT.md`, with focused support-module contracts documented under `live/projects_live/`, `live/home_live/` and `live/settings_live/`.
-- No CONTEXT.md exists at `evo_dash_web/`; consult the nearest documented child node for page-specific coverage.
+- Interactive-session coverage map (send path, rail, `:awaiting_input` admission, TasksLive `session_mode` filter, update wind-down) → `evo_dash_web/CONTEXT.md` → "Interactive-session coverage map", summarized below.
 
 ## API Surface
 
@@ -109,7 +110,7 @@ Why it loses nothing: a local whole-page mount seeds only from `{nil, node()}`, 
 Consequence for new tests: an exact `EvoDash.ActiveTasks.get/2` assertion may stay `async: true` for any non-local key (`NodeAwareRunWideTest` keeps the remote half); never reintroduce a whole-table clear into an async module.
 **`EvoDash.ChatHistory` is written by every connected `/help` mount** (`HomeLive` calls `current_chat_id() || new_chat()` + `put_state` — `home_live.ex`), so the exact-global reader `evo_dash/chat_history_test.exs` (async) is safe only because EVERY `/help` mounter is `async: false`: `home_live_test`, `page_controller_test` (plain GET dead render), and the "mounts HomeLive at /help" case in `ProjectsLiveSyncTest`. The async `projects_live_test` module deliberately hosts no `/help` mount — a new async `/help` mount would race that module, so it belongs in a sync module.
 `EvoDash.AccentCache` has the same structural pattern but no live victim: only `appearance_test` resets it, its reads use keys written by that same module, and a concurrent miss merely re-resolves.
-Process-global `EvoGit.Store`/`EvoGit.TaskRegistry` isolation is `EvoDash.Test.IsolatedTaskStore.isolate!/1`, and only four suites still call it (6 call sites): `home_live_test` (module setup, 74 tests), `tasks_live_test` (module setup, 81 tests), `node_aware_test` (the five describes whose assertions need a store-backed registry, 16 tests) and `isolated_task_store_test` itself (3 tests) — ≈174 calls per run.
+Process-global `EvoGit.Store`/`EvoGit.TaskRegistry` isolation is `EvoDash.Test.IsolatedTaskStore.isolate!/1`, and only four suites still call it (6 call sites): `home_live_test` (module setup, 107 tests), `tasks_live_test` (module setup, 86 tests), `node_aware_test` (the five describes whose assertions need a store-backed registry, 16 tests) and `isolated_task_store_test` itself (3 tests) — ≈212 calls per run.
 `isolate!/1` costs ≈6.5 ms per call end-to-end (≈1.7 ms production-pair restart + ≈4–5 ms for the teardown's `ExUnit.CaptureLog.capture_log/2` window + sub-millisecond terminate/boot/restore), so per-test isolation is NOT the significant cost — serialisation is.
 Every other store-touching suite writes into the RUN-WIDE per-run store instead (`EvoGit.Store`, started once per run and never terminated) in a whole-store-safe way: per-test unique ids (`System.unique_integer/1`, sometimes under a unique `project_path` so a filtered paged read is an exact-count anchor), assertions scoped to exactly those ids, and an `on_exit` that deletes the row through the DIRECT Store (`EvoGit.Store.delete_task(EvoGit.Store, id)` — never a `TaskRegistry` cast, which broadcasts on `"tasks"` and would arm every mounted page's reload debounce).
 Suites using that idiom: `node_context_test`'s async module (its config module writes only config), `NodeAwareRunWideTest`, every `ReviewLive*Test` module (fixture cleanup via `delete_seeded_task!/1`), `projects_live_test`, and `agents_live_test`'s per-test agent ids.
@@ -120,13 +121,13 @@ Prefer unique task ids plus explicit cleanup over assumptions about global empti
 `XDG_CONFIG_HOME` is process-global, but no suite writes it: the config dir is resolved per process through the `:config_dir_fun` seam the helper installs (`EvoDash.Test.ConfigDir.isolate!/1` in `setup` — own process dictionary, then the `$callers` chain), proven end-to-end by `support/config_dir_test.exs` (test process, a real page render in the mounted view, `Task.Supervisor` children via `EvoDash.SafeCall.start/4`; a raw `spawn/1` and the boot-time app-global singletons are the documented escape classes).
 
 ### Async policy
-Census by MODULE (the unit ExUnit parallelises), not by file: 111 case modules across the 91 files — 89 `async: true` and 22 `async: false`.
-Ten files hold both kinds (`review_live_test.exs` 9 case modules, `node_context_test.exs` 3, `settings_live_test.exs` 3, and one async + one sync module each in `node_aware_test.exs`, `projects_live_test.exs`, `projects_live/project_flow_test.exs`, `system_live_test.exs`, `welcome_live_test.exs`, `welcome_complete_live_test.exs` and `support/config_dir_test.exs`); the other 81 files are a single case module.
-The remaining `defmodule`s in this tree are helpers with no case template: the review/settings/system/projects `Helpers` modules, the fake `ConnectionManager` GenServers, `SafeCallTest.SlowServer`, the diff-viewer `Foo`, and 6 in `support/*.ex`.
+Census by MODULE (the unit ExUnit parallelises), not by file: 116 case modules across the 95 files — 93 `async: true` and 23 `async: false`.
+Ten files hold both kinds (`review_live_test.exs` 9 case modules, `node_context_test.exs` 4, `settings_live_test.exs` 3, and one async + one sync module each in `node_aware_test.exs`, `projects_live_test.exs`, `projects_live/project_flow_test.exs`, `system_live_test.exs`, `welcome_live_test.exs`, `welcome_complete_live_test.exs` and `support/config_dir_test.exs`); `live/home_live/approval_workflow_test.exs` holds two async modules, and the other 84 files are a single case module.
+The remaining `defmodule`s in this tree are helpers with no case template: the review/settings/system/projects `Helpers` modules, the fake `ConnectionManager` GenServers, `EvoDash.NodeContextSessionTest.StubAgent`, `SafeCallTest.SlowServer`, the diff-viewer `Foo`, and 6 in `support/*.ex`.
 ExUnit drains ALL async modules before starting any sync one (`ExUnit.Runner.async_loop/4`), so a flip is unsafe only when a module shares a MUTABLE global with another ASYNC module.
 Config-directory isolation itself is not a reason for `async: false`: `EvoGit.Platform.config_dir/1` resolves through the `:config_dir_fun` seam per process (own dictionary, then the `$callers` chain — LiveViewTest sets a view's `$callers` to the test pid), so a config-writing module can isolate with `setup`-time `EvoDash.Test.ConfigDir.isolate!/1` and stay async.
 The mounted-only `support/config_dir_test.exs` proof is synchronous because async Projects tests replace the global `:projects_async_load_runner`, which can bypass its real configuration load; its other two proofs remain async.
-The 22 sync modules and the global that forces each (per-file evidence: the child docs `evo_dash/CONTEXT.md`, `live/CONTEXT.md`, `live_hooks/CONTEXT.md`, `controllers/CONTEXT.md`):
+The 23 sync modules and the global that forces each (per-file evidence: the child docs `evo_dash/CONTEXT.md`, `live/CONTEXT.md`, `live_hooks/CONTEXT.md`, `controllers/CONTEXT.md`):
 
 | File → module | Tests | Forcing global |
 |---------------|-------|----------------|
@@ -134,13 +135,14 @@ The 22 sync modules and the global that forces each (per-file evidence: the chil
 | `evo_dash/active_tasks_test.exs` | 9 | writes junk sentinel shapes into the `{nil, node()}` `EvoDash.ActiveTasks` key that async whole-page mounts seed from |
 | `evo_dash/isolated_task_store_test.exs` | 3 | terminates/restarts the process-global `EvoGit.Store`+`TaskRegistry` pair and asserts ABSOLUTE properties of the replacement |
 | `evo_dash/runtime_config_test.exs` | 9 | the OS PROCESS ENVIRONMENT (`PHX_SERVER` / `EVOGIT_DESKTOP` / `EVOGIT_SERVER` / `EVOGIT_REMOTE_DAEMON` / `RELEASE_NAME`, plus `HOME` / `XDG_DATA_HOME` / `APPDATA` redirected into a per-test temp dir), the `:evo_dash` `:desktop_release` app-env flag, and the `:evo_git` `:config_dir_fun` seam; evaluates the REAL `config/runtime.exs` with `Config.Reader.read!/2` in the `:test` and `:prod` envs, and pins `EvoDash.Application.children/0`'s mode-invariant endpoint |
-| `live/tasks_live_test.exs` | 81 | `EvoDash.Test.IsolatedTaskStore.isolate!/1` (the singleton NAME) |
-| `live/home_live_test.exs` | 74 | `isolate!/1` + `EvoDash.ChatHistory` (every test mounts `/help`) + `EvoGit.AgentScheduler` `model_profiles: []` + per-test `:approval_responder`/`:source_*_runner` seams; no mount-free test exists, so there is no async subset |
+| `live/tasks_live_test.exs` | 86 | `EvoDash.Test.IsolatedTaskStore.isolate!/1` (the singleton NAME) |
+| `live/home_live_test.exs` | 107 | `isolate!/1` + `EvoDash.ChatHistory` (every test mounts `/help`) + `EvoGit.AgentScheduler` `model_profiles: []` + per-test `:approval_responder`/`:source_*_runner`/`:home_session_*` seams; no mount-free test exists, so there is no async subset |
 | `live/projects_live_test.exs` → `ProjectsLiveSyncTest` | 23 | global-quiet `refute_push_event` after a `"tasks"` publish and whole-registry project assertions; the `clear_task_history` run-wide-store sweep; `:sys.suspend(EvoGit.TaskRegistry)`; `:directory_picker` (shared with async `directory_picker_test`) and `:remote_path_expand_runner` (shared with async `project_flow_test`); the `/help` mount (a connected `HomeLive` mount writes the process-wide `EvoDash.ChatHistory`); the THREE store-global notification tests (a zero-timeout `refute_push_event(view, "task_notification", …)` is a claim about GLOBAL quiet, and `ProjectsLive.Notifications` scans the run-wide store, so any async module's completed-task fixture would push a notification into the view) |
 | `live/projects_live/project_flow_test.exs` → `ProjectFlowVctTest` | 1 | the `EvoGit.VCT` mount table (a BEAM-global singleton on the run-wide store that every mounted page reads); it never clears the table, only forgets the row it created |
 | `evo_dash/node_context_test.exs` → `EvoDash.NodeContextVctTest` | 8 | the same `EvoGit.VCT` mount table; these tests mount only per-test-unique basenames and forget exactly their own rows |
-| `live/settings_live_test.exs` → `SettingsLiveGlobalStateTest` | 25 | `:nix_available_override` + `:platform_os_override` (also written by async `platform_info_test`) + `EvoGit.AgentScheduler.pause/resume` + the `"scheduler_config"` broadcast |
-| `live/system_live_test.exs` → `SystemLiveSyncTest` | 30 | `:platform_os_override` (async peer); the `EvoDash.UpdateStatus` hub and `:update_*`/`:desktop_release` (async `evo_dash/update_status_test`); `AgentScheduler.pause` + `"scheduler_config"`; test-owned ETS counters inside process-global `:system_samples_runner`/`:source_status_runner` closures |
+| `evo_dash/node_context_test.exs` → `EvoDash.NodeContextSessionTest` | 6 | the app-env engine seam `:agent_exchange_llm_call` (read at CALL time by every session's exchange worker), the app-global `EvoGit.AgentScheduler` `model_profiles`/`llm_model` installed in `setup_all` and restored on exit, and the BEAM-global `:evogit_sched_meta`/`:evogit_agent_summary` rows plus the `EvoGit.TaskRegistry` casts and `EvoGit.PubSub` broadcasts a yield → close cycle emits |
+| `live/settings_live_test.exs` → `SettingsLiveGlobalStateTest` | 26 | `:nix_available_override` + `:platform_os_override` (also written by async `platform_info_test`) + `EvoGit.AgentScheduler.pause/resume` + the `"scheduler_config"` broadcast |
+| `live/system_live_test.exs` → `SystemLiveSyncTest` | 35 | `:platform_os_override` (async peer); the `EvoDash.UpdateStatus` hub and `:update_*`/`:desktop_quit_stop_fun` seams (async `evo_dash/update_status_test`, `desktop_quit_test`); `AgentScheduler.pause` + `"scheduler_config"`; test-owned ETS counters inside process-global `:system_samples_runner`/`:source_status_runner` closures |
 | `live/welcome_live_test.exs` → `WelcomeLiveTest.TaskBroadcast` | 1 | publishes `{:task_updated, …}` on the global `"tasks"` topic (arms every mounted page's NodeAware debounce; `agents_live_test`'s negative `:tasks_reload_pending` poll is the canary) |
 | `live/welcome_complete_live_test.exs` → `TaskBroadcast` | 1 | same `"tasks"` broadcast |
 | `live/review_live_test.exs` → `ReviewLiveMergeTest` | 24 | task-mutating merge/reject clicks broadcasting on `"tasks"` |
@@ -150,14 +152,17 @@ The 22 sync modules and the global that forces each (per-file evidence: the chil
 | `live_hooks/update_status_test.exs` | 11 | the `EvoDash.UpdateStatus` hub + `:update_notify_only_override`/`:desktop_quit_stop_fun` seams shared with the async `evo_dash/update_status_test` and `desktop_quit_test` |
 | `controllers/page_controller_test.exs` | 2 | writes junk sentinel shapes into the `{nil, node()}` ActiveTasks key |
 | `live/agents_live/load_data_model_label_test.exs` | 4 | writes the `:agents_list_runner` app-env seam, which the ASYNC `agents_live_test.exs` drives for its page loads |
-| `live/processes_live_test.exs` → `EvoDashWeb.ProcessesLiveTest` | 17 | the app-env seams `:processes_page_load_runner` / `:processes_control_runner` and broadcasts on the global `"processes"` PubSub topic |
-| `live/agents_live/processes_section_test.exs` → `EvoDashWeb.AgentsLive.ProcessesSectionTest` | 5 | `:agents_processes_runner`, read by the ASYNC `agents_live_test.exs` on every `select_agent` |
+| `live/processes_live_test.exs` → `EvoDashWeb.ProcessesLiveTest` | 23 | the app-env seams `:processes_page_load_runner` / `:processes_control_runner` and broadcasts on the global `"processes"` PubSub topic |
+| `live/agents_live/processes_section_test.exs` → `EvoDashWeb.AgentsLive.ProcessesSectionTest` | 6 | `:agents_processes_runner`, read by the ASYNC `agents_live_test.exs` on every `select_agent` |
+
+The Tests column is statically declared `test` blocks in that module (a `for`-generated declaration expands at runtime, so a run reports more).
 
 Remaining levers, in the order they would pay off (each one is a PRODUCTION change, since every surviving sync module is blocked by a BEAM-global singleton):
 - Scoped/per-task `EvoGit.TaskRegistry` broadcasts → the three `"tasks"`-publisher review modules, the two `TaskBroadcast` tests and `ProjectsLiveSyncTest`'s broadcast half.
 - Per-process `EvoGit.Store`/`TaskRegistry` instances → `tasks_live_test`, `home_live_test`, `NodeAwareTest`'s store half and `isolated_task_store_test`.
 - A per-process `EvoDash.ChatHistory` seam → `home_live_test`.
 - Per-process seams for the `EvoDash.ActiveTasks`/`EvoDash.UpdateStatus` hubs and for `:platform_os_override`/`:nix_available_override` → `active_tasks_test`, `page_controller_test`, `update_status_test`, `SettingsLiveGlobalStateTest`, `SystemLiveSyncTest`.
+- A per-agent/per-test exchange-engine seam (or a per-test `EvoGit.AgentScheduler` instance) → `NodeContextSessionTest`.
 
 ### Async first — test runtime is part of test quality
 New tests default to `async: true`; an unnecessary `async: false` module is a defect, because the sync phase is serial and every future development cycle pays its full cost.
@@ -165,13 +170,13 @@ Prefer event-driven synchronization and bounded polls over fixed sleeps, and pre
 Remember what the executor actually parallelises: ExUnit parallelises across MODULES, never within one, so a single `async: true` module gains nothing — splitting one long file into several modules is what shortens the run (see `review_live_test.exs`).
 
 ### Suite runtime: what actually costs time
-There is NO hidden per-test tax: the slowest ten tests in the whole suite are 190–320 ms and together are 2.3 s (≈11 % of a run), while a typical LiveView test mounts and clicks in 20–100 ms.
+There is NO hidden per-test tax: a typical LiveView test mounts and clicks in 20–100 ms and the slowest individual tests are a few hundred milliseconds, so no single test dominates a run.
 `config :phoenix_live_view, enable_expensive_runtime_checks: true` (root `config/test.exs`) is a COMPILE-time flag that only enables function-environment checks on `start_async`/`assign_async` — it is not a per-render cost.
 `EvoDash.Test.IsolatedTaskStore` costs ≈6.5 ms per call, so it is not a lever either.
 The real cost structure is three terms: ~3–4 s of app boot per `mix test` invocation, a SERIAL `async: false` phase, and a PARALLEL phase whose floor is the single largest async module.
-Same-session A/B on this host: the serial phase went 14.5–15.2 s → 9.3–9.6 s, "Finished in" 18.4–19.0 s → 14.5–15.0 s, and the async phase 3.3–4.0 s → 4.9–5.4 s because it absorbed the moved work — the run is now bounded by the parallel phase plus app boot, not by a serial queue.
-Per-module A/B in the same session: `projects_live_test.exs` 108.5 s serial → 3.7–4.3 s; `settings_live_test.exs` 248.7 s serial → 3.0–3.4 s async + 0.3 s sync.
-The remaining serial floor IS the 22 sync modules listed under "Async policy", and ExUnit parallelises per MODULE (never within one), so splitting a long file into modules is the only test-side lever left — clearing that floor needs the production levers listed there.
+Same-session full-suite runs of the current tree measured 27.1 s (16.7 s async / 10.4 s sync), 31.3 s (19.8 / 11.5), 39.3 s (20.4 / 18.9) and 53.3 s (41.5 / 11.8) for the identical 2 414 tests — the spread is host load, not test count.
+Moving a suite from the serial tail into a module of its own is the one test-side transformation that shortens a run, because a sync module's wall time is ADDED to the critical path while an async module overlaps the rest; `projects_live_test` and `settings_live_test` sit in async modules for exactly that reason.
+The remaining serial floor IS the 23 sync modules listed under "Async policy", and ExUnit parallelises per MODULE (never within one), so splitting a long file into modules is the only test-side lever left — clearing that floor needs the production levers listed there.
 Measurement discipline: this host is SHARED, so absolute timings swing by 10–30× purely on load (the same unchanged file measured at 4.2 s and 124.5 s; the same suite at 17.7 s and 116.7 s). Always compare same-session A/B numbers and never trust a single run.
 
 ### Test-file `try/rescue`
@@ -191,6 +196,7 @@ Color pins: `theme_color_test.exs` is the ONLY file asserting color VALUES (exac
 Accent swatches are distinguished ONLY by the `ring-base-content/70` fragment — every chip carries `focus-visible:ring-2` in its base classes, so never match a generic `ring-2`.
 Nothing in this tree asserts theme-toggle markup, `dark:` variants, or generated CSS assets.
 `:cancelling` color/dot pins live in `helpers_test.exs`, `tasks_live_test.exs` and `system_live/charts_test.exs` (chart series are CSS vars, never hex literals).
+`:awaiting_input` color/dot pins live in `helpers_test.exs` (cross-status distinctness included), and its Cancel/Force-kill ranges are pinned in `components/task_card_components_test.exs`.
 
 ### Model-profile OAuth credential-status verdicts are pinned at COMPONENT and PAGE level
 The editor's credential-status verdicts (`Login detected` / `No subscription login found` / `Login found, managed credential file not writable` / the managed-file path and the unwritable remedy) are pinned in `components/model_profiles_editor_auth_test.exs` (component, including a four-state regression that no verdict bleeds into another) and in `live/settings_live/auth_status_test.exs` ("credential status render", page level, plus a pure "credential status classification" block pinning `AuthStatus.classify/2` / `classify_remote/2` — `{:error, {:managed_file_unwritable, _}}` → `:unwritable` atom-precisely, every other shape unchanged).
@@ -209,6 +215,17 @@ The helper test node's `CONTEXT.md` and the LiveView test context document the d
 The task form's fused-capsule speed ↔ quality control is covered at component level (`task_form_components_test.exs`, `#mode-speed-capsule` markup with `#quality-level-fast`/`-balanced`/`-high_quality` `.capsule-stop` buttons and exact `aria-pressed`/`.capsule-stop-active` active-state strings) and at page level (`projects_live_test.exs`, `select_quality_level` assign movement and `:quality_level` opt threading).
 Both capsule roots' `phx-hook="CapsulePanel"` pin, the model capsule's drill-down provider view and the absence of a provider `<select>`/`phx-change` are asserted in `task_form_provider_selection_test.exs`, `llm_selection_components_test.exs` and the page-level live suites.
 The capsule trigger/panel contract is pinned by the `fused capsule trigger and panel layout` describe (`.capsule-main` shows the short `mode_label/1` label, `mode_description/1` appears only as the trigger `title`, the subrow reads "Mode · <short label>", and `.capsule-stops` is `flex-nowrap` with the three stop ids in order), and the page-level `task_submit form contract` describe submits the REAL rendered form with no hand-built `mode` param, pinning the hidden field.
+
+## Interactive-session coverage
+
+`/help` runs ONE long-lived interactive session per conversation (`/help?session=<agent_id>`) and `:awaiting_input` is its non-terminal idle status; the coverage is split across files so no suite duplicates another, and the per-contract map lives in `evo_dash_web/CONTEXT.md`.
+Send path — a first message starts `start_session` and adopts the returned id, later messages queue into the live session with no new task, and the reflect fallback + `:ended` transitions are pinned here: `evo_dash_web/live/home_live_test.exs` (`describe "interactive session send path"`).
+Session rail — attached/cached rows, ordering, markers and `?session=` links preserving `?node=` are mounted-level in `evo_dash_web/live/home_live_test.exs` (`describe "interactive session list (mounted)"`), with the pure row builder in `evo_dash_web/live/home_live/session_list_test.exs` and the URL/param/option/status helpers in `session_actions_test.exs`.
+`:awaiting_input` status admission — the non-terminal idle status is accepted by the Tasks status filter, the task card (reply box, Close session, Cancel range `[:pending, :running, :awaiting_input]`, Force-kill range `[:running, :awaiting_input, :cancelling]`), the sidebar Sessions group and the badge/dot helpers: `evo_dash_web/live/tasks_live_test.exs` (`describe ":awaiting_input status admission"`), `evo_dash_web/components/task_card_components_test.exs`, `components/layouts_test.exs`, `helpers_test.exs`.
+TasksLive `session_mode` filter — server-side over the persisted `session_mode` column (rows AND total, whitelist, clear) because the core SQL builder has no such predicate: `evo_dash_web/live/tasks_live_test.exs` (`describe "session_mode filter (server-side)"`).
+Update wind-down close path — the updater ASKS idle `:awaiting_input` sessions to close through `NodeContext.close_session/3`, drops a stuck session after the grace polls and never force-kills one: `evo_dash_web/live/system_live_test.exs` (`SystemLiveSyncTest`).
+`/server/status` keeps its busy set at the four live statuses and excludes `:awaiting_input` atom-precisely: `evo_dash_web/controllers/server_status_controller_test.exs`.
+The core-side session runtime (start, message, close, await, awaiting list) is covered against a REAL agent session by `evo_dash/node_context_test.exs`'s `EvoDash.NodeContextSessionTest`.
 
 ## Provider-profile redesign regression coverage
 
@@ -233,6 +250,12 @@ Mounted positive remote URL/resume tests use the source-owned, default-inert ari
 The test helper `install_remote_activation_fixture!/2` supplies target-owned fixtures and verifies distinct remote BEAM identities and exact runner invocation without bypassing pending guards; a non-nil target with the local BEAM identity is intentionally pending.
 The positive mounted config-directory proof runs synchronously because async Projects tests replace the global `:projects_async_load_runner`, which can bypass its real configuration load; the two non-mounted proofs remain async.
 Standalone pure/render checks and individually green helper directories do not establish collective mounted-suite success.
+
+## Known Issues
+
+`evo_dash_web/live/agents_live_test.exs` — "foreign-node `{:task_updated, _, :finalizing, remote}` is ignored" samples its own `tasks_reload_pending` for 40 ms while running in an `async: true` module, so a concurrent module's local-node `"tasks"` broadcast arms this view's debounce and the test fails intermittently (reproduced in full-suite runs, 5/5 passes when the file runs alone).
+The pin is correct — the foreign-node event must not schedule a reload — but a global-quiet assertion needs an `async: false` module; never widen the sampling window to hide it.
+The `SettingsLive` save round-trip `update_config/1` acknowledgement timeout flake is documented under "Provider-profile redesign regression coverage".
 
 ## Constraints
 
