@@ -1,11 +1,28 @@
 # Agent Runtime Refactor — One Session Process, Two Drivers
 
-**Status:** design record + phased implementation plan. Nothing in this document is implemented yet.
+**Status:** design record + phased implementation plan — **implemented**: P0–P4 (core session runtime, control plane, streaming, interactive mode) and P6 (dashboard) landed; P5 (durability) is deliberately deferred. See `## Implementation status` for what shipped per phase and the known leftovers. The design sections below remain the rationale and contract record.
 **Scope:** the agent runtime (`apps/evo_git/lib/evo_git/agent/`, `agent_scheduler/`, `runtime/`, `task_registry/`) and the dashboard surfaces that read it (`apps/evo_dash`).
 **Companion records:** [harness-alignment.md](harness-alignment.md) (tool/loop contracts), [genesis-assistant.md](genesis-assistant.md) (the `/help` product surface), [process-management.md](process-management.md) (tool execution), [virtual-tree.md](virtual-tree.md).
 
 ---
 
+## Implementation status
+| Phase | Landed | What it provides |
+|---|---|---|
+| P0 | yes | ONE `EvoGit.Agent.Session` (`gen_statem`, `:handle_event_function`, one per `agent_id`, `:temporary` under `EvoGit.Agent.Session.Supervisor`, registered in `EvoGit.Agent.Session.Registry`) owning the single `%EvoGit.Agent.State{}`; `AgentScheduler.run_agent/2` stays blocking `{:ok, %Result{}}`. |
+| P1 | yes | The loop as a library — `EvoGit.Agent.Exchange.run/2` (+ `Exchange.Seams`/`Grace`/`Pending`/`Warnings`) and `Agent.Turn` — run in ONE short-lived `Agent.Session.Worker` Task per exchange that checkpoints `%State{}` back after each turn, so the owner stays answerable. |
+| P2 | yes | `:evogit_agent_summary` as the single-writer summary-only read model (no context, pending messages or cancel flag); `EvoGit.AgentScheduler.ControlPlane` owns the atomic `:evogit_agent_inbox` (`{agent_id, {seq, message}}` bag) and `:evogit_agent_control` (cancel flag + compression count) tables the five `Store` helpers delegate to. |
+| P3 | yes | Push-only streaming — `EvoGit.Agent.Stream` (`watch/1`, snapshot, `seq`, `topic/1`, `stale?/2`) with a session-owned monitored watcher set gating callbacks per LLM attempt, and ~75 ms coalesced `{:agent_delta, agent_id, seq, events}` broadcasts. |
+| P4 | yes | Interactive mode — the `{:yield}`/`{:finish}` split, the non-terminal `:awaiting_input` status (persisted `session_mode`, root-only in v1), `start_session/1` / `send_session_message/3` / `close_session/1` / `await_close/1`, `Agent.Completion` once at the outcome, `Agent.Completion.Builder`, and a `prompt_cache_key` minted once at registration. |
+| P6 | yes | Dashboard: `/help` as ONE long-lived interactive session per conversation (`/help?session=<agent_id>`), a session rail, `HomeLive.Watch` + `HomeLive.Delta`, the `:awaiting_input` badge/sidebar group/filter/reply box/close action, `/server/status` keeping its busy set `[:running, :pending, :finalizing, :cancelling]` (an idle session is not busy), and idle sessions closed gracefully on update. |
+| P5 | **deferred** | Durability: sessions are in-memory only, so a BEAM restart fails `:awaiting_input` sessions (reconciled to `:failed`) and reclaims their worktree. |
+
+**Known leftovers / deviations**
+- Durability (P5) is not implemented, as above.
+- The store's page/WHERE builder has no `session_mode` predicate, so the `/tasks` filter is applied in Elixir over pages (rows and total are correct; it costs an extra scan).
+- `send_session_message/3`'s `:interrupt` halts the in-flight stream between chunks only when a watcher is registered; with zero watchers it degrades to plain queue semantics (no callbacks are installed).
+- `agent/session.ex` is ~1100 lines; the rest is extracted into `agent/session/` and `agent/stream/`.
+---
 ## 1. The ask, and the answer
 
 | Goal | Design answer |

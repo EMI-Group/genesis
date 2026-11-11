@@ -129,7 +129,7 @@ Subagent phylo nodes (`build_subagent_phylo_node/6`): explicit `commit_id` valid
 
 ## Agent-facing submodule awareness (repo_notes)
 
-`AgentSpec.repo_notes` carries the ALREADY-RENDERED git-submodules note, rendered ONCE at root spec build by `Runtime.Helpers.load_repo_notes/2` (`Git.ls_tree_gitlinks/2`; nil when none/fails) → `AgentState.repo_notes` → `LoopState.repo_notes` → `ContextBuilder.build_repo_notes_section/1`. Subagents inherit the rendered TEXT (no re-detection) — a foreign-repo subagent still carries the PRIMARY's note.
+`AgentSpec.repo_notes` carries the ALREADY-RENDERED git-submodules note, rendered ONCE at root spec build by `Runtime.Helpers.load_repo_notes/2` (`Git.ls_tree_gitlinks/2`; nil when none/fails) → `%EvoGit.Agent.State{}.repo_notes` → `ContextBuilder.build_repo_notes_section/1`. Subagents inherit the rendered TEXT (no re-detection) — a foreign-repo subagent still carries the PRIMARY's note.
 
 ## Repo-Nil Tolerance & Repo-Less Agent Plumbing
 

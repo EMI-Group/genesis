@@ -133,7 +133,7 @@ defmodule EvoGit.Store.Operations.Summaries do
   end
 
   @doc """
-  Returns the 16-key summary projection for all tasks whose raw `updated_at`
+  Returns the 17-key summary projection for all tasks whose raw `updated_at`
   string is strictly newer than `since_iso` (lexicographic string comparison;
   the fixed-precision 24-char ISO format sorts chronologically).
   """
