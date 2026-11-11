@@ -35,6 +35,11 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
 
   defp thought(turn, type, data), do: %{turn: turn, timestamp: nil, type: type, data: data}
 
+  # Class list of a single rendered element (a node or a one-node tree).
+  defp classes(element) do
+    element |> Floki.attribute("class") |> List.first() |> String.split()
+  end
+
   describe "text rendering" do
     test "finalized entries render markdown, normal-flow accessible actions, and no streaming affordances" do
       html =
@@ -204,6 +209,93 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
       # data-content is an attribute → HTML-escaped so the ClipboardCopy hook
       # reads the attribute value back verbatim.
       assert raw_html =~ ~s(data-content="**bold** a &lt;b&gt; &amp; &quot;quote&quot;")
+    end
+
+    test "the action footer reserves its height while streaming and fills it only once finalized" do
+      streaming =
+        render_card(entry: %{id: "s", role: :assistant, text: "partial", streaming: true})
+        |> Floki.parse_document!()
+
+      # The footer EXISTS mid-stream so the transcript column never grows when
+      # the turn ends: same slot, same base classes, reserved height.
+      [streaming_footer] = Floki.find(streaming, "div[class~='group/assistant'] > div:last-child")
+      streaming_classes = classes(streaming_footer)
+      assert "mt-2" in streaming_classes
+      assert "flex" in streaming_classes
+      assert "items-center" in streaming_classes
+      assert "gap-1" in streaming_classes
+      assert "py-1" in streaming_classes
+      assert "h-11" in streaming_classes
+      assert "sm:h-8" in streaming_classes
+      assert length(Floki.find([streaming_footer], "button")) == 0
+
+      finalized =
+        render_card(entry: %{id: "f", role: :assistant, text: "done", streaming: false})
+        |> Floki.parse_document!()
+
+      [finalized_footer] = Floki.find(finalized, "div[class~='group/assistant'] > div:last-child")
+      finalized_classes = classes(finalized_footer)
+
+      # The shared slot keeps its base classes, drops the reserved height and
+      # gains the touch-visible / hover- and focus-revealed action styling.
+      for class <- ["mt-2", "flex", "items-center", "gap-1", "py-1"] do
+        assert class in finalized_classes
+      end
+
+      refute "h-11" in finalized_classes
+      refute "sm:h-8" in finalized_classes
+
+      for class <- [
+            "opacity-100",
+            "sm:opacity-0",
+            "group-hover/assistant:opacity-100",
+            "group-focus-within/assistant:opacity-100",
+            "[@media(hover:none)]:opacity-100"
+          ] do
+        assert class in finalized_classes
+      end
+
+      assert Floki.attribute(
+               Floki.find([finalized_footer], "button[phx-click='toggle_assistant_raw']"),
+               "phx-value-id"
+             ) == ["f"]
+
+      assert Floki.attribute(
+               Floki.find([finalized_footer], "button[phx-hook='ClipboardCopy']"),
+               "id"
+             ) == ["assistant-copy-f"]
+
+      assert length(Floki.find([finalized_footer], "button")) == 2
+    end
+
+    test "the text container keeps one identical outer structure across streaming and finalized" do
+      for {text, streaming?} <- [{"partial **md**", true}, {"**bold** text", false}] do
+        doc =
+          render_card(entry: %{id: "1", role: :assistant, text: text, streaming: streaming?})
+          |> Floki.parse_document!()
+
+        # ONE text container for every state: identical class list, so only its
+        # inner node is replaced when the turn ends (no line-box change).
+        [container] = Floki.find(doc, "div[class~='group/assistant'] > div:first-child")
+
+        assert classes(container) ==
+                 ["py-2", "text-[15px]", "leading-relaxed", "break-words", "text-base-content"]
+
+        if streaming? do
+          # While streaming the inner node is the raw partial text (+ caret);
+          # a half-rendered stream is never markdown.
+          assert length(Floki.find([container], "span.whitespace-pre-wrap")) == 1
+          assert Floki.text([container]) =~ "partial **md**"
+          assert Floki.find([container], ".md-content") == []
+          assert length(Floki.find([container], ".help-caret")) == 1
+        else
+          # Finalized text swaps the inner node to the Markdown render.
+          assert length(Floki.find([container], ".md-content strong")) == 1
+          assert Floki.text(Floki.find([container], ".md-content strong")) == "bold"
+          assert Floki.find([container], "span.whitespace-pre-wrap") == []
+          assert Floki.find([container], ".help-caret") == []
+        end
+      end
     end
   end
 

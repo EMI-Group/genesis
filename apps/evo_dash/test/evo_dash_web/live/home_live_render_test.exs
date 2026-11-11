@@ -35,6 +35,10 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
       raw_entry_ids: MapSet.new(),
       pending_approvals: [],
       approval_error: nil,
+      # Purely local view state for the approval review dialog; the dialog
+      # itself only mounts while `approval_dialog_open` is true.
+      approval_dialog_open: false,
+      approval_dialog_index: 0,
       chat_draft: "",
       queued_echoes: [],
       session_list: [],
@@ -489,8 +493,21 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
 
     dom = page(session_list: rows, current_session_id: 7, current_node_id: "remote-1")
 
+    # The section HEADER ("Conversations") belongs to the app layout, which
+    # renders it once above the section BODY; the body itself carries no
+    # heading and no card chrome of its own.
     assert Floki.find(dom, "#chat-session-list") != []
-    assert text(dom, "#chat-session-list h2") == "Conversations"
+    assert Floki.find(dom, "#chat-session-list h2") == []
+
+    section =
+      dom
+      |> Floki.find("div.pt-5.mt-4")
+      |> Enum.find(fn node -> Floki.find(node, "#chat-session-list") != [] end)
+
+    assert section
+
+    assert section |> Floki.find("span.sidebar-label") |> Floki.text() |> String.trim() ==
+             "Conversations"
 
     ids =
       dom
@@ -499,12 +516,14 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
 
     assert ids == [["chat-session-7"], ["chat-session-3"], ["chat-session-2"]]
 
-    # Rows navigate with a PATCH to `/help?session=<id>` and carry the viewed
-    # node as `&node=<id>` when one is set.
-    assert attr(dom, "#chat-session-7", "href") == ["/help?session=7&node=remote-1"]
-    assert attr(dom, "#chat-session-3", "href") == ["/help?session=3&node=remote-1"]
-    assert attr(dom, "#chat-session-2", "href") == ["/help?session=2&node=remote-1"]
+    # On the Assistant page rows PATCH the same LiveView to
+    # `/assistant?session=<id>`, carrying the viewed node as `&node=<id>` when
+    # one is set (the row renders exactly ONE destination attribute).
+    assert attr(dom, "#chat-session-7", "href") == ["/assistant?session=7&node=remote-1"]
+    assert attr(dom, "#chat-session-3", "href") == ["/assistant?session=3&node=remote-1"]
+    assert attr(dom, "#chat-session-2", "href") == ["/assistant?session=2&node=remote-1"]
     assert attr(dom, "#chat-session-7", "data-phx-link") == ["patch"]
+    assert attr(dom, "#chat-session-7", "data-phx-link-state") == ["push"]
 
     # Only the current conversation is marked as the current page.
     assert attr(dom, "#chat-session-7", "aria-current") == ["page"]
@@ -525,7 +544,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
 
     # Without a viewed node the row links carry no `node` param at all.
     dom = page(session_list: rows, current_session_id: 3)
-    assert attr(dom, "#chat-session-3", "href") == ["/help?session=3"]
+    assert attr(dom, "#chat-session-3", "href") == ["/assistant?session=3"]
     assert attr(dom, "#chat-session-3", "aria-current") == ["page"]
   end
 

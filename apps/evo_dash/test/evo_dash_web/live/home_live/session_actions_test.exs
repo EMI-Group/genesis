@@ -1,7 +1,7 @@
 defmodule EvoDashWeb.HomeLive.SessionActionsTest do
   @moduledoc """
   Pure unit tests for `EvoDashWeb.HomeLive.SessionActions` — the TOTAL boundary
-  between the `/help` page and the core's interactive-session API.
+  between the `/assistant` page and the core's interactive-session API.
 
   No page is mounted and no global state is mutated: every live call is routed
   through a CALL-TIME app-env runner seam (`:home_session_*_runner`), which this
@@ -50,37 +50,37 @@ defmodule EvoDashWeb.HomeLive.SessionActionsTest do
   end
 
   describe "url/2" do
-    test "no session and no node is the bare /help path" do
-      assert SessionActions.url(nil, nil) == "/help"
+    test "no session and no node is the bare /assistant path" do
+      assert SessionActions.url(nil, nil) == "/assistant"
     end
 
     test "a session id is emitted FIRST, then the node param" do
-      assert SessionActions.url(nil, 7) == "/help?session=7"
-      assert SessionActions.url("t1", nil) == "/help?node=t1"
-      assert SessionActions.url("t1", 7) == "/help?session=7&node=t1"
+      assert SessionActions.url(nil, 7) == "/assistant?session=7"
+      assert SessionActions.url("t1", nil) == "/assistant?node=t1"
+      assert SessionActions.url("t1", 7) == "/assistant?session=7&node=t1"
     end
 
     test "blank/non-binary node params and unusable session ids are omitted" do
-      assert SessionActions.url("", 7) == "/help?session=7"
-      assert SessionActions.url("   ", nil) == "/help"
-      assert SessionActions.url(:node1, nil) == "/help"
-      assert SessionActions.url(42, nil) == "/help"
+      assert SessionActions.url("", 7) == "/assistant?session=7"
+      assert SessionActions.url("   ", nil) == "/assistant"
+      assert SessionActions.url(:node1, nil) == "/assistant"
+      assert SessionActions.url(42, nil) == "/assistant"
 
-      assert SessionActions.url(nil, 0) == "/help"
-      assert SessionActions.url(nil, -3) == "/help"
-      assert SessionActions.url(nil, 7.0) == "/help"
-      assert SessionActions.url(nil, "0") == "/help"
-      assert SessionActions.url(nil, "-1") == "/help"
-      assert SessionActions.url(nil, "abc") == "/help"
-      assert SessionActions.url(nil, "%{}") == "/help"
+      assert SessionActions.url(nil, 0) == "/assistant"
+      assert SessionActions.url(nil, -3) == "/assistant"
+      assert SessionActions.url(nil, 7.0) == "/assistant"
+      assert SessionActions.url(nil, "0") == "/assistant"
+      assert SessionActions.url(nil, "-1") == "/assistant"
+      assert SessionActions.url(nil, "abc") == "/assistant"
+      assert SessionActions.url(nil, "%{}") == "/assistant"
     end
 
     test "a string session id is emitted only when parse_session/1 accepts it" do
-      assert SessionActions.url(nil, "7") == "/help?session=7"
-      assert SessionActions.url(nil, "007") == "/help?session=7"
-      assert SessionActions.url("t1", "7") == "/help?session=7&node=t1"
-      assert SessionActions.url(nil, "7x") == "/help"
-      assert SessionActions.url(nil, " 7") == "/help"
+      assert SessionActions.url(nil, "7") == "/assistant?session=7"
+      assert SessionActions.url(nil, "007") == "/assistant?session=7"
+      assert SessionActions.url("t1", "7") == "/assistant?session=7&node=t1"
+      assert SessionActions.url(nil, "7x") == "/assistant"
+      assert SessionActions.url(nil, " 7") == "/assistant"
     end
   end
 

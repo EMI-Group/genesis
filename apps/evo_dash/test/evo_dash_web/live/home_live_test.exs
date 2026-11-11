@@ -21,7 +21,7 @@
 # redirect produced, with zero assertion changes.
 #
 # async: false — FOUR process-global dependencies, and every test in this file
-# mounts `/help`, so no contained subset can escape them:
+# mounts `/assistant`, so no contained subset can escape them:
 #
 #   1. `EvoDash.Test.IsolatedTaskStore.isolate!/1` (module-wide setup) terminates
 #      and re-registers the process-global `EvoGit.Store` / `EvoGit.TaskRegistry`
@@ -440,7 +440,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   describe "render" do
     test "renders the idle chat page", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/help")
+      {:ok, _view, html} = live(conn, "/assistant")
 
       assert page_heading(html) == "Genesis Assistant"
       assert html =~ "Start a conversation"
@@ -461,7 +461,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "empty state renders the greeting and four operator suggestion chips", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/help")
+      {:ok, _view, html} = live(conn, "/assistant")
 
       # ChatGPT-style empty state: greeting + 4 suggestion chips, each wired to
       # the send_message event with its message text as the phx-value (so
@@ -516,7 +516,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     # terminal await run inside a CaptureLog.with_log/2 window so the wrapper's
     # asynchronous error log is captured rather than printed between tests.
     test "starts a reflect task with the right opts and tracks it synchronously", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       # The wrapper's `SelfReflective failed: ...` error log is emitted
       # ASYNCHRONOUSLY at task end, so the submit + the await of the row's
@@ -568,7 +568,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "second message carries the transcript preamble", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       # Establish the transcript deterministically via :sys.replace_state (the
       # real reflect-task lifecycle is async and out of scope — see the
@@ -616,7 +616,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # Seed an unrelated task to prove the empty submit creates NO new row.
       fixture_id = insert_task_fixture!(opts: [path: "/tmp/test", objective: "fixture"])
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       html = render_submit(view, "send_message", %{"message" => "   "})
 
@@ -636,7 +636,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     # chip ROUTE itself (send_suggestion -> do_send_chat) is covered by the
     # "model selector" chip tests below.
     test "typed send renders the right-aligned soft user bubble", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seed_chat_state(view, %{
         chat_task_id: "t1",
@@ -668,7 +668,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   describe "new chat" do
     test "resets the chat to the idle empty state", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       # Synthetic running chat (seed + terminal event) — the real reflect
       # runtime must never run in this suite (see the setup's fail-fast
@@ -690,7 +690,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "starts a fresh persisted chat and keeps the old one in the store", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       old_id = assigns(view).chat_id
       assert old_id != nil
 
@@ -723,7 +723,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "new chat prunes the store to the newest 10 chats", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       first_id = assigns(view).chat_id
 
       # Seed 11 more chats directly (the click's prune(10) will drop the 3
@@ -751,7 +751,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       dir = EvoDash.Test.ConfigDir.isolate!("evogit_home_live_onboarding")
       on_exit(fn -> File.rm_rf!(dir) end)
 
-      assert {:error, {:live_redirect, %{to: "/welcome"}}} = live(conn, "/help")
+      assert {:error, {:live_redirect, %{to: "/welcome"}}} = live(conn, "/assistant")
     end
   end
 
@@ -950,7 +950,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   describe "streaming display" do
     test "assistant text from the history fetch appears in the bubble", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seq = assigns(view)[:chat_fetch_seq]
       seed_running_chat(view)
@@ -968,7 +968,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "agent_registered sets the chat agent and triggers the history fetch", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seed_chat_state(view, %{
         chat_status: :running,
@@ -1024,7 +1024,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         }
       ])
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seed_chat_state(view, %{
         chat_status: :running,
@@ -1067,7 +1067,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "kwlist changed_fields WITHOUT :message_count does not refetch (HistoryGate)", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seq = assigns(view)[:chat_fetch_seq]
       seed_running_chat(view)
@@ -1082,7 +1082,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "atom-list changed_fields is ignored (the core sends kwlists, never atom lists)", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seq = assigns(view)[:chat_fetch_seq]
       seed_running_chat(view)
@@ -1096,7 +1096,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "real-shaped core event sequence does not crash", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seed_chat_state(view, %{
         chat_status: :running,
@@ -1181,7 +1181,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         }
       ])
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seed_chat_state(view, %{
         chat_status: :running,
@@ -1219,7 +1219,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "foreign-node events are ignored", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seq = assigns(view)[:chat_fetch_seq]
       seed_running_chat(view)
@@ -1250,7 +1250,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "streamed text stays plain (never markdown) with no action group", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_fetch_seq]
       seed_running_chat(view)
 
@@ -1286,7 +1286,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     # with the CURRENT chat_task_fetch_seq (read dynamically). The handler only
     # reads Map.get(task, :status)/:result/:error, so a plain map works.
     test "completed task with a result renders the final answer", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
 
@@ -1309,7 +1309,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "completed markdown result renders .md-content with the rendered html", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
 
@@ -1341,7 +1341,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "completed task without a result renders No response", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
 
@@ -1357,7 +1357,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "completed task with an error result renders The task failed", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
 
@@ -1373,7 +1373,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "cancelled task with a preserved result renders it", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
 
@@ -1390,7 +1390,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "cancelled task without a result renders Stopped", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
       send(view.pid, {:chat_task_loaded, node(), seq, "t1", %{status: :cancelled, result: nil}})
@@ -1401,7 +1401,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "deleted task renders the conversation-deleted marker", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
       send(view.pid, {:chat_task_loaded, node(), seq, "t1", nil})
@@ -1412,7 +1412,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "failed task event finalizes the transcript", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seed_running_chat(view)
       send(view.pid, {:task_updated, "t1", :failed, node()})
       html = render(view)
@@ -1426,7 +1426,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # the decoded TaskInfo error record (atom-keyed %{kind:, source:, message:,
       # stacktrace:}) drives the final text via
       # AgentStream.extract_failed_message/1.
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
 
@@ -1472,7 +1472,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       ]
 
       for payload <- payloads do
-        {:ok, view, _html} = live(conn, "/help")
+        {:ok, view, _html} = live(conn, "/assistant")
         seq = assigns(view)[:chat_task_fetch_seq]
         seed_running_chat(view)
         send(view.pid, {:chat_task_loaded, node(), seq, "t1", payload})
@@ -1500,7 +1500,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       ]
 
       for payload <- payloads do
-        {:ok, view, _html} = live(conn, "/help")
+        {:ok, view, _html} = live(conn, "/assistant")
         seq = assigns(view)[:chat_task_fetch_seq]
         seed_running_chat(view)
         send(view.pid, {:chat_task_loaded, node(), seq, "t1", payload})
@@ -1514,7 +1514,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "task deleted event finalizes the transcript", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seed_running_chat(view)
       send(view.pid, {:task_deleted, "t1", node()})
       html = render(view)
@@ -1524,7 +1524,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "final badge persists on the card after completion", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
 
@@ -1544,7 +1544,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "reflect task result renders as a mini task-card chat message", %{conn: conn} do
-      # Pins the reflect-task rendering path on /help: a repo-less :reflect row
+      # Pins the reflect-task rendering path on /assistant: a repo-less :reflect row
       # (the shape the Home send flow starts — mode "reflect", NO :path key, nil
       # project_path) whose terminal result must render as the final assistant
       # task-card entry on the Home page, regardless of how the Tasks page
@@ -1559,7 +1559,7 @@ defmodule EvoDashWeb.HomeLiveTest do
           project_path: nil
         )
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_task_fetch_seq]
 
       seed_chat_state(view, %{
@@ -1605,7 +1605,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "status badge attaches to the last assistant entry and tracks task events", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seed_running_chat(view)
       # Before any task event there is no badge (chat_task_status nil). Scoped
       # to .badge elements: the run-command approvals HTML comment in
@@ -1642,7 +1642,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "only the LAST assistant entry carries the badge", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_fetch_seq]
 
       seed_chat_state(view, %{
@@ -1681,7 +1681,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "thought process section lists context-history entries incl. tool calls", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_fetch_seq]
       seed_running_chat(view)
       send(view.pid, {:chat_history_loaded, node(), seq, 1001, real_history()})
@@ -1707,7 +1707,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   describe "assistant raw toggle & copy flash" do
     test "raw toggle flips exactly one message between markdown and raw view", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_fetch_seq]
 
       # Two FINALIZED assistant entries (both render .md-content) plus a
@@ -1758,7 +1758,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "copied event flashes the info confirmation", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
 
@@ -1780,7 +1780,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   describe "chat persistence / restore (ChatHistory)" do
     test "transcript and status persist across a remount", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       chat_id = assigns(view).chat_id
       assert chat_id != nil
 
@@ -1824,7 +1824,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # "Close the page" (stop the view process) and remount: attach_chat
       # restores the CURRENT chat — transcript and status.
       GenServer.stop(view.pid)
-      {:ok, view2, html} = live(conn, "/help")
+      {:ok, view2, html} = live(conn, "/assistant")
       assert assigns(view2).chat_id == chat_id
       assert html =~ "persist me please"
       assert assigns(view2).chat_status == :idle
@@ -1855,7 +1855,7 @@ defmodule EvoDashWeb.HomeLiveTest do
            }}
       )
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       chat_id = assigns(view).chat_id
 
       seed_chat_state(view, %{
@@ -1875,7 +1875,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # Leave the page and remount: the ONE-SHOT reconciliation fetch lands
       # the terminal row and finalizes the transcript from `result`.
       GenServer.stop(view.pid)
-      {:ok, view2, _html} = live(conn, "/help")
+      {:ok, view2, _html} = live(conn, "/assistant")
       assert assigns(view2).chat_id == chat_id
 
       wait_until(fn -> assigns(view2).chat_status == :idle end)
@@ -1900,7 +1900,7 @@ defmodule EvoDashWeb.HomeLiveTest do
           {:ok, %{result: "finished while away", commit_sha: nil, branch_name: nil, tag: nil}}
       )
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       chat_id = assigns(view).chat_id
 
       seed_chat_state(view, %{
@@ -1920,7 +1920,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert EvoDash.ChatHistory.get_state(chat_id).chat_status == :running
       # Leave the page and remount.
       GenServer.stop(view.pid)
-      {:ok, view2, _html} = live(conn, "/help")
+      {:ok, view2, _html} = live(conn, "/assistant")
       assert assigns(view2).chat_id == chat_id
       # attach_chat restored the running chat; reconcile_chat spawned the
       # ONE-SHOT task fetch (chat_task_fetch_seq 0→1) which lands the
@@ -1944,7 +1944,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         project_path: nil
       )
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       chat_id = assigns(view).chat_id
 
       seed_chat_state(view, %{
@@ -1961,7 +1961,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       send(view.pid, {:task_updated, "t_alive", :running, node()})
       render(view)
       GenServer.stop(view.pid)
-      {:ok, view2, _html} = live(conn, "/help")
+      {:ok, view2, _html} = live(conn, "/assistant")
       assert assigns(view2).chat_id == chat_id
       # The one-shot reconcile fetch finds a STILL-RUNNING task: badge/status
       # refreshed, refs KEPT (further task/agent events must still match).
@@ -2114,7 +2114,7 @@ defmodule EvoDashWeb.HomeLiveTest do
            conn: conn
          } do
       write_provider_profile_config()
-      {:ok, view, html} = live(conn, "/help")
+      {:ok, view, html} = live(conn, "/assistant")
 
       # The capsule root: the shared client hook owns the active panel view, and
       # the model view is the initial one.
@@ -2189,7 +2189,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "empty configuration renders disabled provider controls and setup guidance", %{
       conn: conn
     } do
-      {:ok, view, html} = live(conn, "/help")
+      {:ok, view, html} = live(conn, "/assistant")
 
       assert assigns(view).provider_profiles == []
       assert present?(html, ~s(#chat-llm-selection-provider[disabled]))
@@ -2206,7 +2206,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
     test "typed submit locks a canonical model_spec and the resolved slider effort", %{conn: conn} do
       write_provider_profile_config()
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
       assert assigns(view).model_spec == work_spec("high")
 
@@ -2226,7 +2226,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
     test "explicit Auto after a pin survives remount and submits no model override", %{conn: conn} do
       write_provider_profile_config()
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       assert assigns(view).model_spec == work_spec()
       render_change(view, "select_provider_profile", %{"provider_profile_id" => ""})
       assert assigns(view).model_spec == %{}
@@ -2234,7 +2234,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert EvoDash.ChatHistory.get_state(chat_id).model_spec == %{}
 
       GenServer.stop(view.pid)
-      {:ok, view, html} = live(conn, "/help")
+      {:ok, view, html} = live(conn, "/assistant")
       assert assigns(view).chat_id == chat_id
       assert assigns(view).model_spec == %{}
       assert selected_provider(html) == [""]
@@ -2256,7 +2256,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       conn: conn
     } do
       write_provider_profile_config()
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
       html = render_change(view, "select_model", %{"model" => "fast-model"})
 
@@ -2287,7 +2287,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
     test "composer picker events never reach the composer's chat_input handler", %{conn: conn} do
       write_provider_profile_config()
-      {:ok, view, html} = live(conn, "/help")
+      {:ok, view, html} = live(conn, "/assistant")
 
       # Placement: the capsule is a control in the composer card, not the
       # header; it renders inside the ONE `#chat-form` but owns its own
@@ -2335,7 +2335,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       conn: conn
     } do
       write_provider_profile_config()
-      {:ok, view, html} = live(conn, "/help")
+      {:ok, view, html} = live(conn, "/assistant")
 
       # The submit control lives in the same control bar row as the capsule.
       assert present?(html, "#chat-composer-controls button[type=\"submit\"]")
@@ -2366,7 +2366,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       chat_id = EvoDash.ChatHistory.new_chat()
       EvoDash.ChatHistory.put_state(chat_id, %{selected_model_id: "first-account"})
 
-      {:ok, view, html} = live(conn, "/help")
+      {:ok, view, html} = live(conn, "/assistant")
       expected = %{"provider_profile_id" => "first-account", "model" => "fast-model"}
       assert assigns(view).chat_id == chat_id
       assert assigns(view).model_spec == expected
@@ -2388,7 +2388,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         chat_draft: "keep this draft"
       })
 
-      {:ok, view, html} = live(conn, "/help")
+      {:ok, view, html} = live(conn, "/assistant")
       assert assigns(view).model_selection_error == :invalid_model_spec
       assert disabled?(html, ~s(#chat-form button[type="submit"]))
       html = render_submit(view, "send_message", %{"message" => "keep this draft"})
@@ -2409,7 +2409,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       conn: conn
     } do
       write_provider_profile_config()
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
       chat_id = assigns(view).chat_id
       saved = EvoDash.ChatHistory.get_state(chat_id)
@@ -2424,7 +2424,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute inspect(saved) =~ "server-only-test-secret"
 
       GenServer.stop(view.pid)
-      {:ok, view, html} = live(conn, "/help")
+      {:ok, view, html} = live(conn, "/assistant")
       assert assigns(view).chat_id == chat_id
       assert assigns(view).model_spec == work_spec("high")
       assert assigns(view).model_selection_scope == {nil, node()}
@@ -2436,7 +2436,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
     test "suggestion-chip send locks the same canonical selection as typed submit", %{conn: conn} do
       write_provider_profile_config()
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       send_and_await_terminal(fn ->
         view |> element(~s(button[phx-value-message="Show my running tasks"])) |> render_click()
@@ -2451,7 +2451,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
     test "suggestion-chip send on explicit Auto omits all model overrides", %{conn: conn} do
       write_provider_profile_config()
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       render_change(view, "select_provider_profile", %{"provider_profile_id" => ""})
 
       send_and_await_terminal(fn ->
@@ -2467,7 +2467,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
     test "new chat retains its same-node canonical pin and locks the next send", %{conn: conn} do
       write_provider_profile_config()
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
       old_chat_id = assigns(view).chat_id
       html = render_click(view, "new_chat", %{})
@@ -2528,7 +2528,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         project_path: nil
       )
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seed_chat_state(view, %{
         chat_status: :running,
@@ -2639,7 +2639,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # Both the dead render and the connected mount seed :running_tasks /
       # :pending_tasks synchronously from the hub, so the mount html already
       # contains the running reflect task's sidebar row.
-      {:ok, _view, html} = live(conn, "/help")
+      {:ok, _view, html} = live(conn, "/assistant")
 
       assert html =~ "Active Tasks"
       assert html =~ "New message: instant"
@@ -2655,7 +2655,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         project_path: nil
       )
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       send(view.pid, {:task_updated, "reflect_side", :pending, node()})
       send(view.pid, {:task_updated, "reflect_side", :running, node()})
 
@@ -2693,7 +2693,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         branch_name: "agent-y"
       )
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       send(view.pid, {:task_updated, "reflect_a", :completed, node()})
       send(view.pid, {:task_updated, "reflect_b", :completed, node()})
 
@@ -2709,7 +2709,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "nil-status (review-mutation) broadcast is a no-op", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       seed_running_chat(view)
       send(view.pid, {:task_updated, "t1", nil, node()})
       html = render(view)
@@ -2730,7 +2730,7 @@ defmodule EvoDashWeb.HomeLiveTest do
   describe "stop / cancel flow" do
     test "stop cancels a pending task and finalizes it", %{conn: conn} do
       fixture_id = insert_task_fixture!(status: :pending)
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seed_chat_state(view, %{
         chat_status: :running,
@@ -2773,7 +2773,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "stop with no task is a no-op", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       html = render_click(view, "stop", %{})
       assert assigns(view).chat_status == :idle
       assert assigns(view).chat_task_id == nil
@@ -3438,7 +3438,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # An unrelated pre-existing row proves a blocked send persists nothing new.
       fixture_id = insert_task_fixture!(opts: [path: "/tmp/test", objective: "fixture"])
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       html = await_source_available(view, false)
 
       # Gate container + Download button render (idle → enabled, "Download source").
@@ -3482,7 +3482,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "available source renders no gate and the send path stays open", %{conn: conn} do
       Application.put_env(:evo_dash, :source_availability_runner, fn -> true end)
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       html = await_source_available(view, true)
 
       # No gate, chips intact, composer enabled — the gate's open state is the
@@ -3499,7 +3499,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "a successful download clears the gate (busy → post-clone re-check)", %{conn: conn} do
       Application.put_env(:evo_dash, :source_availability_runner, fn -> false end)
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       html = await_source_available(view, false)
       assert present?(html, "#genesis-source-gate")
 
@@ -3533,7 +3533,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       Application.put_env(:evo_dash, :source_availability_runner, fn -> false end)
 
       Application.put_env(:evo_dash, :source_clone_runner, fn -> {:error, :boom} end)
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       html = await_source_available(view, false)
       assert present?(html, "#genesis-source-gate")
 
@@ -3572,7 +3572,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "?node= resolves the remote node", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help?node=test-remote")
+      {:ok, view, _html} = live(conn, "/assistant?node=test-remote")
       assert assigns(view).current_node == :"genesis_remote@127.0.0.1"
       assert assigns(view).current_node_id == "test-remote"
     end
@@ -3580,7 +3580,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "missing remote model snapshot rejects sends before touching the draft or transcript", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, "/help?node=test-remote")
+      {:ok, view, _html} = live(conn, "/assistant?node=test-remote")
       wait_until(fn -> not assigns(view).model_select_loading end)
       render_change(view, "chat_input", %{"message" => "hi remote"})
       html = render_submit(view, "send_message", %{"message" => "hi remote"})
@@ -3596,7 +3596,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "node switch starts a NEW persisted chat and keeps the old one", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help?node=test-remote")
+      {:ok, view, _html} = live(conn, "/assistant?node=test-remote")
       assert assigns(view).current_node == :"genesis_remote@127.0.0.1"
       old_id = assigns(view).chat_id
       assert old_id != nil
@@ -3611,8 +3611,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       send(view.pid, {:task_updated, "x", :failed, node()})
       html = render(view)
       refute html =~ "The task failed."
-      # Patching back to "/help" (no ?node=) switches to local → a NEW chat.
-      html = render_patch(view, "/help")
+      # Patching back to "/assistant" (no ?node=) switches to local → a NEW chat.
+      html = render_patch(view, "/assistant")
       assert assigns(view).current_node == node()
       assert html =~ "Start a conversation"
       assert assigns(view).chat_status == :idle
@@ -3629,14 +3629,14 @@ defmodule EvoDashWeb.HomeLiveTest do
       conn: conn
     } do
       write_provider_profile_config()
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
       assert assigns(view).model_spec == work_spec("high")
       local_chat_id = assigns(view).chat_id
       local_snapshot = assigns(view).model_snapshot
       local_seq = assigns(view).model_select_seq
 
-      render_patch(view, "/help?node=test-remote")
+      render_patch(view, "/assistant?node=test-remote")
       wait_until(fn -> not assigns(view).model_select_loading end)
       assert assigns(view).current_node == :"genesis_remote@127.0.0.1"
       assert assigns(view).chat_id != local_chat_id
@@ -3652,7 +3652,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).model_snapshot == nil
       remote_seq = assigns(view).model_select_seq
 
-      html = render_patch(view, "/help")
+      html = render_patch(view, "/assistant")
       assert assigns(view).current_node == node()
       assert assigns(view).chat_id not in [local_chat_id, remote_chat_id]
       # A different node gets its own configured default, NOT the earlier high pin.
@@ -3687,7 +3687,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         false
       end)
 
-      {:ok, view, _html} = live(conn, "/help?node=test-remote")
+      {:ok, view, _html} = live(conn, "/assistant?node=test-remote")
       html = render(view)
 
       assert assigns(view).current_node == :"genesis_remote@127.0.0.1"
@@ -3721,7 +3721,7 @@ defmodule EvoDashWeb.HomeLiveTest do
   # ───────────────────────────────────────────────────────────────────────────
   # Interactive session send path (ONE long-lived session per conversation)
   #
-  # `/help` no longer starts a one-shot `:reflect` task per message: the first
+  # `/assistant` no longer starts a one-shot `:reflect` task per message: the first
   # send starts ONE interactive Assistant session (`:home_session_start_runner`)
   # and every later send queues a message on it (`:home_session_send_runner`).
   # One-shot `:reflect` survives ONLY as the documented fallback when sessions
@@ -3839,8 +3839,12 @@ defmodule EvoDashWeb.HomeLiveTest do
     session_id
   end
 
-  # ── rendered session-rail inspection (Floki) ──────────────────────────────
-  # Row ids in RENDER order, read from the rail's `#chat-session-<id>` links.
+  # ── rendered conversation-list inspection (Floki) ─────────────────────────
+  # Row ids in RENDER order, read from the shared app-layout sidebar's
+  # "Conversations" section — `EvoDashWeb.HomeLive.SessionList` is rendered by
+  # `EvoDashWeb.Layouts.app/1` on EVERY page and its `#chat-session-<id>` rows
+  # are loaded/stale-guarded by `EvoDashWeb.LiveHooks.NodeAware`, not by the
+  # Assistant page itself.
   defp session_row_ids(html) do
     html
     |> Floki.parse_document!()
@@ -3936,7 +3940,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         running_attach(4242, attach_history("re-attached transcript"))
       )
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       html = render_submit(view, "send_message", %{"message" => text})
 
       assert_receive {:session_start_called, start_node, opts}
@@ -3955,7 +3959,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute Keyword.has_key?(opts, :attachments)
 
       # Adoption: the returned id becomes the chat/session identity AND the URL.
-      assert_patch(view, "/help?session=4242")
+      assert_patch(view, "/assistant?session=4242")
       assigns = assigns(view)
       assert assigns.session_id == 4242
       assert assigns.current_session_id == 4242
@@ -4020,7 +4024,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         :ok
       end)
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seed_session_state(view, 5252, %{
         transcript: [%{id: "1", role: :user, text: "first", streaming: false}]
@@ -4048,7 +4052,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         {:error, :llm_not_configured}
       end)
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       {html, log} =
         send_and_await_terminal(fn ->
@@ -4087,7 +4091,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         {:error, {:start_session_failed, {:interactive_root_only, "subagent"}}}
       end)
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       {_html, log} =
         send_and_await_terminal(fn ->
@@ -4130,7 +4134,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         {:error, :timeout}
       end)
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       # A send failure only surfaces while the turn is in flight; the idle
       # seed would leave the page at `:idle` and never exercise the
       # retryable-non-terminal branch.
@@ -4163,7 +4167,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       end
     end)
 
-    {:ok, view, _html} = live(conn, "/help")
+    {:ok, view, _html} = live(conn, "/assistant")
     seed_session_state(view, 6363)
 
     html = render_submit(view, "send_message", %{"message" => "old question"})
@@ -4221,7 +4225,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         %{id: "u1", role: :user, text: "cached text", streaming: false}
       ])
 
-      {:ok, view, html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, html} = live(conn, "/assistant?session=#{session_id}")
 
       # `handle_params` reattaches on the FIRST connected render, so the CACHED
       # conversation is already visible (not an empty state).
@@ -4284,7 +4288,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         )
       )
 
-      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
       assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
       wait_until(fn -> assigns(view).chat_status == :running end)
@@ -4335,7 +4339,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         cached_thoughts
       )
 
-      {:ok, view, html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, html} = live(conn, "/assistant?session=#{session_id}")
       assert html =~ "cached before vanish"
 
       assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
@@ -4378,7 +4382,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         counting_attach_runner(attach_calls, test_pid, false, gone_attach())
       )
 
-      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
       assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
       wait_until(fn -> assigns(view).chat_status == :ended end)
@@ -4430,7 +4434,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         [%{type: "user", turn: 1, data: %{content: "stale cached reasoning"}, timestamp: nil}]
       )
 
-      {:ok, view, html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, html} = live(conn, "/assistant?session=#{session_id}")
       assert html =~ "stale cached line"
 
       assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
@@ -4495,7 +4499,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         %{id: "u1", role: :user, text: "cached objective", streaming: false}
       ])
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       wait_until(fn -> session_row_ids(render(view)) != [] end)
 
       html = render(view)
@@ -4508,11 +4512,11 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert session_row_raw(html, awaiting_id) =~ "oklch(0.68_0.17_290)"
       assert session_row_raw(html, running_id) =~ "bg-warning"
       assert session_row_raw(html, cached_id) =~ "bg-base-content/30"
-      assert session_row_href(html, awaiting_id) == "/help?session=#{awaiting_id}"
-      assert session_row_href(html, cached_id) == "/help?session=#{cached_id}"
+      assert session_row_href(html, awaiting_id) == "/assistant?session=#{awaiting_id}"
+      assert session_row_href(html, cached_id) == "/assistant?session=#{cached_id}"
 
       # Patching a row ADOPTS that session: ONE attach, never a new task.
-      render_patch(view, "/help?session=#{cached_id}")
+      render_patch(view, "/assistant?session=#{cached_id}")
       assert_receive {:attach_called, _node, ^cached_id, _pid}, 5_000
 
       wait_until(fn ->
@@ -4528,7 +4532,7 @@ defmodule EvoDashWeb.HomeLiveTest do
          %{conn: conn} do
       install_session_seam(:home_session_list_runner, fn _node -> {[], []} end)
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       wait_until(fn ->
         a = assigns(view)
@@ -4542,6 +4546,12 @@ defmodule EvoDashWeb.HomeLiveTest do
       stale_rows = [%{id: 6_701, title: "stale row", marker: :ended}]
       foreign_rows = [%{id: 6_702, title: "foreign row", marker: :ended}]
 
+      # `EvoDashWeb.LiveHooks.NodeAware` OWNS this load: it spawns it on mount
+      # and intercepts the nested `{{:session_list_loaded, seq, node}, result}`
+      # message, applying it through `SessionList.applied/4` only while seq and
+      # node still match. These injections therefore exercise the HOOK's
+      # guards, not a page-local apply path (the page only asks for a
+      # page-local refresh after it adopts or closes a session).
       send(
         view.pid,
         {{:session_list_loaded, current_seq - 1, node()}, {:ok, {:ok, stale_rows}}}
@@ -4570,10 +4580,10 @@ defmodule EvoDashWeb.HomeLiveTest do
 
     test "session links preserve the viewed node id" do
       url = &EvoDashWeb.HomeLive.SessionActions.url/2
-      assert url.(nil, nil) == "/help"
-      assert url.(nil, 42) == "/help?session=42"
-      assert url.("target-1", nil) == "/help?node=target-1"
-      assert url.("target-1", 42) == "/help?session=42&node=target-1"
+      assert url.(nil, nil) == "/assistant"
+      assert url.(nil, 42) == "/assistant?session=42"
+      assert url.("target-1", nil) == "/assistant?node=target-1"
+      assert url.("target-1", 42) == "/assistant?session=42&node=target-1"
     end
   end
 
@@ -4589,7 +4599,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         :ok
       end)
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seed_session_state(view, 7001, %{
         chat_status: :running,
@@ -4632,7 +4642,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         :ok
       end)
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seed_session_state(view, 7002, %{chat_status: :running, queued_echoes: [echo]})
 
@@ -4647,7 +4657,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "New chat clears the queued echo", %{conn: conn} do
       echo = %{id: "echo-2", text: "queued message", at: System.system_time(:millisecond)}
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       # New chat is idle-only, so the session is parked at `:idle`.
       seed_session_state(view, 7003, %{chat_status: :idle, queued_echoes: [echo]})
@@ -4671,7 +4681,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         :ok
       end)
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       seed_session_state(view, 7004, %{
         chat_status: :running,
@@ -4706,7 +4716,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         :ok
       end)
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       # The REAL staging path: the native picker is disabled in tests, so the
       # pick click reports unavailable and reveals the manual-path fallback,
@@ -4748,7 +4758,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         :ok
       end)
 
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
 
       # The picker result message is the page's real staging entry point for a
       # binary pick (`handle_attach_result/3` → `stage_binary_attachment/3`).
@@ -4777,7 +4787,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "the attachment caps refuse a 5th entry and an over-15-MiB file", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
+      {:ok, view, _html} = live(conn, "/assistant")
       attachments = EvoDashWeb.HomeLive.Attachments
 
       # Size cap: an image read enforces the 15 MiB per-file limit (a TEXT
@@ -4810,7 +4820,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   # ─────────────────────────────────────────────────────────────────────────────
   # PUSH-ONLY agent-delta streaming (`EvoDashWeb.HomeLive.Watch` +
-  # `EvoDashWeb.HomeLive.Delta`). A mounted /help?session=<id> page subscribes
+  # `EvoDashWeb.HomeLive.Delta`). A mounted /assistant?session=<id> page subscribes
   # ITSELF to `"agent:<id>"` (the subscription is consumer-local) and applies
   # `{:agent_delta, id, seq, batch}` broadcasts against the snapshot the
   # asynchronously registered watcher returned. The watch/unwatch runners are the
@@ -4881,7 +4891,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       session_id = 7_101
       install_watch_seams(session_id, test_pid, snapshot_answer(7))
 
-      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
       assert_receive {:agent_watched, _node, ^session_id, watcher}, 5_000
       await_stream_seeded(view, 7)
@@ -4906,7 +4916,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       session_id = 7_102
       install_watch_seams(session_id, test_pid, snapshot_answer(7))
 
-      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
       assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
       await_stream_seeded(view, 7)
@@ -4915,11 +4925,15 @@ defmodule EvoDashWeb.HomeLiveTest do
       # `seq <= snapshot.seq` is stale: both are dropped. `render/1` processes
       # them first (they were delivered synchronously into the LiveView mailbox
       # by the broadcast), so the assertions below are not racing a mailbox.
-      broadcast_delta(session_id, 7, [{:text, "stale"}])
-      broadcast_delta(session_id, 3, [{:text, "stale"}])
+      # The marker is a PHRASE, not a bare word: the app layout renders plain
+      # HTML comments (e.g. “stale-guarded by …”) into every page's shell, so a
+      # single-word marker would match the shell instead of the transcript.
+      stale_marker = "stale delta payload"
+      broadcast_delta(session_id, 7, [{:text, stale_marker}])
+      broadcast_delta(session_id, 3, [{:text, stale_marker}])
       html = render(view)
 
-      refute html =~ "stale"
+      refute html =~ stale_marker
       assert assigns(view).transcript == transcript_before
       assert assigns(view).chat_stream.delta.seq == 7
 
@@ -4928,7 +4942,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       wait_until(fn -> assigns(view).chat_stream.delta.seq == 8 end)
 
       assert render(view) =~ "fresh"
-      refute render(view) =~ "stale"
+      refute render(view) =~ stale_marker
     end
 
     test "a delta for another agent is dropped", %{conn: conn} do
@@ -4936,7 +4950,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       session_id = 7_103
       install_watch_seams(session_id, test_pid, snapshot_answer(7))
 
-      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
       assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
       await_stream_seeded(view, 7)
@@ -4970,7 +4984,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       install_watch_seams(session_id, test_pid, snapshot_answer(7, messages))
 
-      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
       assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
       await_stream_seeded(view, 7)
@@ -4989,7 +5003,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       session_id = 7_105
       install_watch_seams(session_id, test_pid, snapshot_answer(7))
 
-      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
       assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
       await_stream_seeded(view, 7)
@@ -5018,7 +5032,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       session_id = 7_106
       install_watch_seams(session_id, test_pid, snapshot_answer(7))
 
-      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
       assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
       await_stream_seeded(view, 7)
@@ -5049,7 +5063,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       session_id = 7_107
       install_watch_seams(session_id, test_pid, snapshot_answer(7))
 
-      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
       assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
       await_attach_settled(view, session_id)
@@ -5087,7 +5101,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       session_id = 7_108
       install_watch_seams(session_id, test_pid, snapshot_answer(7))
 
-      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
       assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
       await_attach_settled(view, session_id)
@@ -5111,7 +5125,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       session_id = 7_109
       install_watch_seams(session_id, test_pid, snapshot_answer(7))
 
-      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
       assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
       await_attach_settled(view, session_id)
@@ -5137,7 +5151,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       local_node = node()
       install_watch_seams(session_id, test_pid, snapshot_answer(7))
 
-      {:ok, view, _html} = live(conn, "/help?session=#{session_id}")
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
       assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
       await_stream_seeded(view, 7)
