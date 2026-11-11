@@ -3,6 +3,23 @@ defmodule EvoGit.Sandbox.HelpersTest do
 
   alias EvoGit.Sandbox.Helpers
 
+  describe "parse_gitdir_pointer/3" do
+    test "only a terminal worktrees entry identifies linked-worktree metadata" do
+      # An ordinary ancestor named worktrees does not identify Git metadata.
+      assert Helpers.parse_gitdir_pointer(
+               "gitdir: /projects/worktrees/checkout/custom-git-dir\n",
+               "/projects/worktrees/checkout",
+               "/projects/worktrees/checkout/.git"
+             ) == "/projects/worktrees/checkout/custom-git-dir"
+
+      assert Helpers.parse_gitdir_pointer(
+               "gitdir: /projects/worktrees/checkout/.git/worktrees/agent-1\n",
+               "/projects/worktrees/checkout",
+               "/projects/worktrees/checkout/.git"
+             ) == "/projects/worktrees/checkout/.git"
+    end
+  end
+
   describe "shell_escape/1" do
     test "wraps a simple argument in single quotes" do
       assert Helpers.shell_escape("hello") == "'hello'"
