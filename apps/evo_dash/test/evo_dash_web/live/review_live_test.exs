@@ -311,6 +311,57 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
     end)
   end
 
+  # Same as `install_failing_gh_cli/0` (a `gh` that always FAILS, so the PR
+  # attempt resolves to the "not created" outcome with NO network call) but the
+  # stub first touches a `started` marker and then BLOCKS until the test writes
+  # the `release` marker — a deterministic "the request is genuinely still in
+  # flight" window with no sleeps and no timing assumptions.
+  #
+  # Why: `EvoGit.Adapters.Git.create_origin_remote/1` runs `System.cmd("gh", …)`
+  # with NO timeout, so the blocking stub keeps the spawned review action alive
+  # until released. An in-flight `assigns/1` read is then race-free — the
+  # `{:review_action_result, …}` message cannot be queued while `gh` is stopped —
+  # instead of hoping the read wins against a stub that fails within
+  # microseconds (which cleared `review_action` first and made `nil.kind` raise).
+  #
+  # Returns `%{started: started_path, release: fun}`; `release.()` unblocks the
+  # stub (LATER invocations — once the marker exists — pass straight through to
+  # `exit 1`). PATH is restored (and the dir removed) on exit.
+  #
+  # SAFETY VALVE: the wait loop also gives up after ~60 s of its own accord, and
+  # the `on_exit` writes the release marker before removing the dir, so a failing
+  # test can never leave a blocked `gh` (and the `sh` running it) looping forever.
+  def install_blocking_failing_gh_cli do
+    dir = Path.join(System.tmp_dir!(), "blocking-gh-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    started = Path.join(dir, "started")
+    release = Path.join(dir, "release")
+    stub = Path.join(dir, "gh")
+
+    File.write!(stub, """
+    #!/bin/sh
+    : > '#{started}'
+    i=0
+    while [ ! -e '#{release}' ] && [ "$i" -lt 1200 ]; do
+      sleep 0.05
+      i=$((i + 1))
+    done
+    exit 1
+    """)
+
+    File.chmod!(stub, 0o755)
+    original = System.get_env("PATH") || ""
+    System.put_env("PATH", dir <> ":" <> original)
+
+    on_exit(fn ->
+      File.write!(release, "")
+      System.put_env("PATH", original)
+      File.rm_rf(dir)
+    end)
+
+    %{started: started, release: fn -> File.write!(release, "") end}
+  end
+
   # --- Helpers for the merge-target selector tests ---
 
   # Extracts the review page's "…" overflow menu — the ONLY
@@ -6856,7 +6907,7 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
   end
 
   describe "async review actions — in-progress state (create_pr)" do
-    # MOVED out of the async sibling module: `install_failing_gh_cli/0`
+    # MOVED out of the async sibling module: `install_blocking_failing_gh_cli/0`
     # prepends a stub to PATH, which is PROCESS-GLOBAL, so this test can only
     # run in the sync module. The describe setup it needs is carried along
     # verbatim (it is the async describe's setup).
@@ -6875,8 +6926,11 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
     } do
       # Shadow the real `gh` CLI with a stub that always fails, so the PR
       # attempt resolves deterministically to the "no PR created" outcome with
-      # NO network side effect (a real `gh repo create` would hit GitHub).
-      install_failing_gh_cli()
+      # NO network side effect (a real `gh repo create` would hit GitHub). The
+      # stub also BLOCKS until `release.()` is called, which is what makes the
+      # in-flight state below deterministic: the action cannot settle (and
+      # clear `review_action`) while `gh` is stopped.
+      gh = install_blocking_failing_gh_cli()
 
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
@@ -6888,8 +6942,17 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
         # In flight: the shared task-level `loading` disables the task actions
         # and the action marker names the request.
         assert task_action_state(html, "resume").disabled?
+
+        # `assigns/1` is a `:sys.get_state` round-trip and is only served AFTER
+        # messages already queued in the LiveView mailbox — with a stub that
+        # fails within microseconds the result message is frequently queued
+        # first and `review_action` is already nil. So wait for the stub's
+        # `started` marker: while `gh` blocks, the spawned action provably
+        # cannot finish, making this read race-free.
+        wait_until(fn -> File.exists?(gh.started) end)
         assert assigns(view)[:review_action].kind == :create_pr
 
+        gh.release.()
         await_review_action_settled(view)
       end)
 
