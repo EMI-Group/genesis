@@ -3821,7 +3821,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   # Seeds a CACHED conversation in `EvoDashWeb.HomeLive.ChatState`'s real shape —
   # what `reattach_session/2` restores before the live attach result lands.
-  defp seed_cached_chat(session_id, transcript) do
+  defp seed_cached_chat(session_id, transcript, thought_process \\ []) do
     EvoDash.ChatHistory.put_state(session_id, %{
       transcript: transcript,
       chat_draft: "",
@@ -3832,7 +3832,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       chat_task_status: :awaiting_input,
       session_id: session_id,
       session_mode: :interactive,
-      thought_process: [],
+      thought_process: thought_process,
       queued_echoes: []
     })
 
@@ -4303,7 +4303,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert disabled?(html, ~s(button[phx-click="new_chat"]))
     end
 
-    test "a VANISHED session ends the chat but keeps New chat available", %{conn: conn} do
+    test "a VANISHED session keeps the cached conversation read-only and ends the chat",
+         %{conn: conn} do
       test_pid = self()
       session_id = 6_503
       attach_calls = :counters.new(1, [:atomics])
@@ -4321,9 +4322,18 @@ defmodule EvoDashWeb.HomeLiveTest do
         counting_attach_runner(attach_calls, test_pid, false, gone_attach())
       )
 
-      seed_cached_chat(session_id, [
-        %{id: "u1", role: :user, text: "cached before vanish", streaming: false}
-      ])
+      cached_thoughts = [
+        %{type: "user", turn: 1, data: %{content: "cached reasoning"}, timestamp: nil}
+      ]
+
+      seed_cached_chat(
+        session_id,
+        [
+          %{id: "u1", role: :user, text: "cached before vanish", streaming: false},
+          %{id: "a1", role: :assistant, text: "cached answer", streaming: false}
+        ],
+        cached_thoughts
+      )
 
       {:ok, view, html} = live(conn, "/help?session=#{session_id}")
       assert html =~ "cached before vanish"
@@ -4334,22 +4344,28 @@ defmodule EvoDashWeb.HomeLiveTest do
       a = assigns(view)
       assert a.chat_task_id == nil
       assert a.chat_task_status == nil
+      # An EMPTY fetched history means the session is gone: the cached
+      # transcript and its reasoning are KEPT (never wiped by `[]`).
+      assert Enum.map(a.transcript, & &1.text) == ["cached before vanish", "cached answer"]
+      assert a.thought_process == cached_thoughts
+      # Exactly ONE attach, no session start and no task row.
       assert :counters.get(attach_calls, 1) == 1
       assert :counters.get(start_calls, 1) == 0
       assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
 
       html = await_source_available(view, true)
-      # Ended is read-only, but New chat stays ENABLED so the user can move on.
+      # The retained conversation (reasoning included) is still on screen...
+      assert html =~ "cached before vanish"
+      assert html =~ "cached reasoning"
+      # ...with no streaming assistant bubble and no ended-session empty state...
+      refute present?(html, ".help-caret")
+      refute present?(html, "#chat-session-ended")
+      # ...and is READ-ONLY, while New chat stays ENABLED so the user can move on.
       assert disabled?(html, ~s(textarea[name="message"]))
       refute disabled?(html, ~s(button[phx-click="new_chat"]))
-      # DOCUMENTED vs ACTUAL (source defect reported, not fixed here): the context
-      # docs promise the cached transcript is KEPT read-only, but `apply_attach/2`
-      # always REBUILDS the transcript from the attach's history, so an empty
-      # history CLEARS it. Pinned as it actually behaves.
-      assert a.transcript == []
     end
 
-    test "a VANISHED session with no cached conversation renders an empty ended chat",
+    test "a VANISHED session with no cached conversation renders the session-ended state",
          %{conn: conn} do
       test_pid = self()
       session_id = 6_504
@@ -4372,8 +4388,66 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
 
       html = await_source_available(view, true)
+      # Nothing was cached and nothing was fetched, so the ended-session state
+      # replaces the greeting (whose suggestion chips could only send doomed
+      # messages) and offers the explicit New-chat affordance.
+      refute html =~ "What would you like Genesis to do?"
+      refute present?(html, ~s(#chat-messages button[phx-value-message]))
+      assert present?(html, "#chat-session-ended")
+      assert html =~ "This session has ended."
+      assert present?(html, ~s(#chat-session-ended button[phx-click="new_chat"]))
       assert disabled?(html, ~s(textarea[name="message"]))
       refute disabled?(html, ~s(button[phx-click="new_chat"]))
+    end
+
+    test "a NON-EMPTY fetched history replaces the cached conversation on attach",
+         %{conn: conn} do
+      test_pid = self()
+      session_id = 6_505
+      attach_calls = :counters.new(1, [:atomics])
+      start_calls = :counters.new(1, [:atomics])
+      install_session_seam(:home_session_list_runner, fn _node -> {[], []} end)
+      install_session_seam(:source_availability_runner, fn -> true end)
+
+      install_session_seam(:home_session_start_runner, fn _node, _opts ->
+        :counters.add(start_calls, 1, 1)
+        {:ok, 1}
+      end)
+
+      install_session_seam(
+        :home_session_attach_runner,
+        counting_attach_runner(
+          attach_calls,
+          test_pid,
+          false,
+          running_attach_state(session_id, attach_history("live transcript line"))
+        )
+      )
+
+      seed_cached_chat(
+        session_id,
+        [%{id: "u1", role: :user, text: "stale cached line", streaming: false}],
+        [%{type: "user", turn: 1, data: %{content: "stale cached reasoning"}, timestamp: nil}]
+      )
+
+      {:ok, view, html} = live(conn, "/help?session=#{session_id}")
+      assert html =~ "stale cached line"
+
+      assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
+      wait_until(fn -> assigns(view).chat_status == :running end)
+
+      a = assigns(view)
+      # A fetched history ALWAYS wins over the cache, reasoning included.
+      assert Enum.any?(a.transcript, &(&1.text == "live transcript line"))
+      refute Enum.any?(a.transcript, &(&1.text == "stale cached line"))
+      refute inspect(a.thought_process) =~ "stale cached reasoning"
+      assert :counters.get(attach_calls, 1) == 1
+      assert :counters.get(start_calls, 1) == 0
+      assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
+
+      html = await_source_available(view, true)
+      assert html =~ "live transcript line"
+      refute html =~ "stale cached line"
     end
   end
 

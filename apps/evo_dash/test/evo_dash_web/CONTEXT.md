@@ -8,8 +8,8 @@ The app-wide Async-Safety Policy, the module census, the mount funnels, the glob
 
 ## Routing Table
 
-- `./live/` → LiveView page suites and the pure unit suites for their support modules (`home_live_test.exs`, `home_live_render_test.exs`, `tasks_live_test.exs`, `system_live_test.exs`, `settings_live*`, `review_live_test.exs`, `projects_live_test.exs`, `agents_live*`, `processes_live_test.exs`, `welcome_*`, `approval_card_render_test.exs`, `platform_info_test.exs`) — `live/CONTEXT.md`
-- `./live/home_live/` → Genesis Assistant support-module unit suites, including the interactive-session boundary (`session_actions_test.exs`, `session_list_test.exs`, `chat_state_test.exs`, `chat_state_session_fields_test.exs`, `transcript_test.exs`, `messages_test.exs`, `model_select_test.exs`, `approval_workflow_test.exs`, `assistant_message_test.exs`) — `live/home_live/CONTEXT.md`
+- `./live/` → LiveView page suites and the pure unit suites for their support modules (`home_live_test.exs`, `home_live_render_test.exs`, `tasks_live_test.exs`, `system_live_test.exs`, `settings_live*`, `review_live_test.exs`, `projects_live_test.exs`, `agents_live*`, `processes_live_test.exs`, `welcome_*`, `approval_card_render_test.exs`, `platform_info_test.exs`) — `live/CONTEXT.md` (cross-suite mechanics), with per-suite detail pushed down to `live/projects_live/CONTEXT.md`, `live/settings_live/CONTEXT.md`, `live/agents_live/CONTEXT.md` and `live/home_live/CONTEXT.md`
+- `./live/home_live/` → Genesis Assistant support-module unit suites AND the mounted `/help` page-suite contracts (chat seeding, approvals, genesis-source gate, interactive session reattach), including the interactive-session boundary (`session_actions_test.exs`, `session_list_test.exs`, `chat_state_test.exs`, `chat_state_session_fields_test.exs`, `transcript_test.exs`, `messages_test.exs`, `model_select_test.exs`, `approval_workflow_test.exs`, `assistant_message_test.exs`) — `live/home_live/CONTEXT.md`
 - `./components/` → function-component render/contract suites (`task_card_components_test.exs` incl. the `:awaiting_input` session panel and the Cancel/Force-kill ranges, `layouts_test.exs` incl. the sidebar "Sessions" group, profile-editor/task-form/LLM-selection suites) — `components/CONTEXT.md`
 - `./controllers/` → error templates, the streamed task-archive export, and the `GET /server/status` operational probe (busy set excludes `:awaiting_input`) — `controllers/CONTEXT.md`
 - `./live_hooks/` → on-mount hook suites (NodeAware sidebar load, Guide, Appearance, DesktopQuit, UpdateStatus) — `live_hooks/CONTEXT.md`
@@ -29,7 +29,7 @@ Coverage is deliberately split so no suite duplicates another:
 | Send-path branches: no session → `start_session` + adopt + `push_patch`; existing session → `send_session_message` (`:queue`) with no new task; reflect fallback on `:llm_not_configured` / `{:interactive_root_only, _}`; `{:session, :finished \| :not_found}` → `:ended` | `live/home_live_test.exs` (`describe "interactive session send path"`) |
 | Queue echo + interrupt policy, echo reconciliation on message-count growth / Stop / new chat | `live/home_live_test.exs` (`describe "interactive session queue echo and interrupt"`) |
 | Attachments reach the send call (bare binary for text, `%{text:, attachments: [...]}` for media) plus the 4-file / 15 MiB caps | `live/home_live_test.exs` (`describe "interactive session attachments"`) |
-| Reattach: one attach per `?session=`, no task started, status mapping, vanished session (read-only / ended) | `live/home_live_test.exs` (`describe "interactive session reattach (?session=)"`) |
+| Reattach: one attach per `?session=`, no task started, status mapping, vanished session keeping a cached transcript read-only (ended, no streaming) or rendering `#chat-session-ended` for an empty cache, a NON-EMPTY fetched history replacing the cache | `live/home_live_test.exs` (`describe "interactive session reattach (?session=)"`) |
 | Mounted conversation rail: row order, markers, `?session=` links preserving `?node=`, stale-seq/foreign-node rejection | `live/home_live_test.exs` (`describe "interactive session list (mounted)"`) |
 | Pure URL/param/session-option/status helpers and every call-time `:home_session_*` seam normalization | `live/home_live/session_actions_test.exs` |
 | Pure rail row building (ordering, live-over-cached, title cap), panel render and the nested `{{:session_list_loaded, seq, node}, result}` guard | `live/home_live/session_list_test.exs` |
@@ -45,9 +45,9 @@ Coverage is deliberately split so no suite duplicates another:
 
 ## Notes for Agents
 
-- `live/home_live_test.exs` is a 4 759-line, `async: false` module: it owns the process-global `EvoDash.ChatHistory`, `EvoDash.ActiveTasks`, the isolated Store/TaskRegistry pair and the per-test `:home_session_*` / `:approval_*` / `:source_*` app-env seams.
+- `live/home_live_test.exs` is one large `async: false` module: it owns the process-global `EvoDash.ChatHistory`, `EvoDash.ActiveTasks`, the isolated Store/TaskRegistry pair and the per-test `:home_session_*` / `:approval_*` / `:source_*` app-env seams.
   Its `install_session_seam/2` helper snapshots and restores every seam in `on_exit` — use it instead of writing `Application.put_env/3` ad hoc.
-  A new mounted `/help` test belongs here (never in an async module).
+  A new mounted `/help` test belongs here (never in an async module); the page suite's seeded-state, approval and interactive-session contracts are documented in `live/home_live/CONTEXT.md`.
 - The interactive-session send path is exercised through the call-time seams (`:home_session_start_runner`, `:home_session_send_runner`, `:home_session_close_runner`, `:home_session_attach_runner`, `:home_session_list_runner`), never by stubbing module internals; each is resolved inside the spawned function, so a test must restore it.
 - The page's attach/list results use NESTED self-message tags (`{{:session_attached, seq, node, session_id}, result}`, `{{:session_list_loaded, seq, node}, result}`); the chat history/task reads use FLAT tags (`{:chat_history_loaded, node, seq, agent_id, result}`).
 - `EvoDashWeb.HomeLive.Composer` reads every assign defensively, so the render fixture in `home_live_render_test.exs` must carry only presentation assigns — adding a page-level assign there is not needed.
@@ -56,7 +56,4 @@ Coverage is deliberately split so no suite duplicates another:
 
 ## Known Issues
 
-- `apps/evo_dash/lib/evo_dash_web/live/home_live.ex` (`apply_attach/2` → `apply_history(history, true)`) always rebuilds the transcript from the attach history, so a vanished session whose history is `[]` CLEARS the cached transcript.
-  `live/home_live/CONTEXT.md` promises the cache is kept and rendered read-only instead; the mounted reattach test pins only what the source does (`chat_status: :ended`, disabled composer, New chat enabled).
-- `apps/evo_dash/lib/evo_dash_web/live/home_live/chat_messages.ex` has no session-ended empty state, so the documented "This session has ended." state (with a New-chat affordance) does not render; an ended chat with an empty cache shows the generic greeting and suggestion chips.
 - `apps/evo_dash/lib/evo_dash_web/live/home_live/CONTEXT.md:71` says the attach loader returns `{:ok, %{summary:, awaiting?:, history:}}`; the source returns the bare map (no `{:ok, _}` tag) — the unit tests pin the bare map.
