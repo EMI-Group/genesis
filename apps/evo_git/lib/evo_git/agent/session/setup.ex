@@ -362,6 +362,13 @@ defmodule EvoGit.Agent.Session.Setup do
       context = ReqLLM.Context.new(messages)
       # Tag initial messages (system + user prompt) with turn 0
       context = EvoGit.Agent.ContextBuilder.tag_context_messages_with_turn(context, 0)
+      # The FIRST user turn is the `<context>`/`<objective>` message whose
+      # objective IS the task the user submitted, so it is the session's one
+      # user-authored turn at start; the `:system` persona (and every
+      # harness-injected message appended later) is not. Stamped here, after
+      # turn tagging, so `:turn => 0` + `:timestamp` survive the merge
+      # (`EvoGit.Agent.MessageMarker`).
+      context = EvoGit.Agent.MessageMarker.mark_first_user_authored(context)
 
       # Load skill schemas hierarchically — only skills enabled in the
       # Context Tree (from root to this agent's node) are available.

@@ -33,6 +33,15 @@ defmodule EvoGit.Agent.Exchange.Pending do
   message carries attachments. There is NO root gate on injected messages:
   any agent at any depth may receive media here (the root-only gate covers the
   `:attachments` TASK OPT only — the first user message).
+
+  This transport is the ONLY mid-run channel a HUMAN writes to, so each
+  delivered message is stamped `:user_authored => true`
+  (`EvoGit.Agent.MessageMarker`) — a display layer can then tell a real user
+  turn from the harness text that shares the same `:user` role. The one
+  exception is the graceful-cancel save-work notice, which the SCHEDULER
+  appends to this same queue (`EvoGit.AgentScheduler.cancel_message/0`): it is
+  harness-generated, so it is built by the neutral
+  `build_injected_message/2` and carries no marker.
   """
   @spec drain_and_inject_user_messages(State.t(), keyword()) :: State.t()
   def drain_and_inject_user_messages(%State{} = state, opts \\ []) do
@@ -46,7 +55,13 @@ defmodule EvoGit.Agent.Exchange.Pending do
       _ ->
         new_context =
           Enum.reduce(messages, state.context, fn msg, ctx ->
-            tagged = EvoGit.Agent.ContextBuilder.build_injected_message(msg, state.turn)
+            tagged =
+              if harness_injected?(msg) do
+                EvoGit.Agent.ContextBuilder.build_injected_message(msg, state.turn)
+              else
+                EvoGit.Agent.ContextBuilder.build_user_authored_message(msg, state.turn)
+              end
+
             ReqLLM.Context.append(ctx, tagged)
           end)
 
@@ -55,6 +70,21 @@ defmodule EvoGit.Agent.Exchange.Pending do
         %{state | context: new_context}
     end
   end
+
+  # True for the ONE harness message that rides the user-send transport: the
+  # graceful-cancel save-work notice, appended by the SCHEDULER
+  # (`begin_graceful_cancel/1`) rather than by a human. ONE exact-text compare
+  # against the single pinned notice is the whole rule; every other message —
+  # legacy binary or `%{text:, attachments:}` map — is a genuine user send.
+  # TOTAL: a malformed/unknown shape yields no text and is therefore a user send
+  # (materialization raises the descriptive error later, as before).
+  defp harness_injected?(message) do
+    pending_text(message) == EvoGit.AgentScheduler.cancel_message()
+  end
+
+  defp pending_text(text) when is_binary(text), do: text
+  defp pending_text(%{text: text}) when is_binary(text), do: text
+  defp pending_text(_message), do: nil
 
   @doc """
   Claims this agent's finished-but-unannounced background shell jobs and, when
@@ -83,6 +113,8 @@ defmodule EvoGit.Agent.Exchange.Pending do
              owner_pid: EvoGit.BackgroundJobs.current_owner_pid() || self()
            ),
          text when is_binary(text) <- EvoGit.Agent.BackgroundJobNotice.notice(jobs) do
+      # Neutral builder: a job notice is harness text, so it carries NO
+      # `:user_authored` marker (`EvoGit.Agent.MessageMarker`).
       message = EvoGit.Agent.ContextBuilder.build_injected_message(text, state.turn)
       new_context = ReqLLM.Context.append(state.context, message)
 
