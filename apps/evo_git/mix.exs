@@ -48,22 +48,22 @@ defmodule EvoGit.MixProject do
       # time — no runtime updater
       {:tz, "~> 0.28"},
       {:yaml_elixir, "~> 2.11"},
-      {:xqlite, "~> 0.12"},
+      {:xqlite, "~> 0.16.0"},
       {:jason, "~> 1.2"},
       # Ecto — schema-less config validation/casting/defaults (no ecto_sql,
       # no database adapter; plain :ecto only)
       {:ecto, "~> 3.14"},
-      # Ecto 3.x adapter for xqlite (GitHub-only, pre-0.1; this revision pins
-      # xqlite ~> 0.12; brings ecto_sql + db_connection transitively).
-      # The `ref:` pin is deliberate: it is the only thing holding the adapter
-      # to the xqlite 0.12 series. Without it a bulk `mix deps.update --all`
-      # silently advances to an adapter revision that requires xqlite
-      # ~> 0.16.0, and xqlite 0.12 -> 0.16 is a breaking migration (the busy
-      # error became a map, calls now wait for locks in the calling process
-      # instead of holding a VM thread). Bump the adapter and xqlite together,
-      # with code changes, when taking that migration.
+      # Ecto 3.x adapter for xqlite (GitHub-only, pre-0.1; brings ecto_sql +
+      # db_connection transitively). The `ref:` pin is deliberate: the adapter
+      # is unversioned, so the SHA IS the version. This revision requires
+      # `xqlite ~> 0.16.0`; adapter and xqlite always move TOGETHER, because a
+      # mismatched pair resolves against the wrong xqlite API and a stale
+      # adapter pin is silently advanced by a bulk `mix deps.update --all`.
+      # On 0.16 a lock-waiting call sleeps in the CALLING process (raw
+      # `XqliteNIF` calls never wait), so a blocked write no longer parks a VM
+      # thread — see `EvoGit.Repo` and `EvoGit.Store`.
       {:xqlite_ecto3,
-       github: "dimitarvp/xqlite_ecto3", ref: "1767a5d3e3683a27555476d4edfd520082dda8ff"}
+       github: "dimitarvp/xqlite_ecto3", ref: "8f2e632d9e7581e29741d50ef33331705e7424c7"}
     ]
   end
 
