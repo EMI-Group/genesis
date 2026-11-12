@@ -114,6 +114,7 @@ Public-wrapper write and sudo tests must drive exact-code `CommandApproval.reque
 Use id-pinned approval responders and monitored, handshake-held descendants for lifecycle assertions, never unconditional approvers, artificial CPU-load generators or quiet-window timing races.
 Prefer async modules for pure/local fixtures; modules changing scheduler profiles, the global approval service or shared timeout settings must explicitly name that forcing global and remain synchronous.
 `elixir_eval_wrapper_test.exs` exercises actual `ElixirEval.execute/3` in descendant tools: reads open no approval, write and sudo preserve exact code and carry distinct level/warning metadata, denial/timeout leave effects absent, and held approvals revalidate original task/state/spec/owner/tool authority.
+`elixir_eval_wrapper_test.exs` also drives a TASK-LESS `/assistant` interactive root (minted task id, no `tasks` row) through exact-code write approval: the request registers and broadcasts, approval executes the exact code once, and denial leaves the effect absent.
 `elixir_eval_authorization_test.exs` and the wrapper suite pin refusal of a mismatched embedded `SchedMeta.id`, including revalidation after held approval.
 Dependency installation belongs to the parent app; tests require genuine Dune 0.3.18 or compatible and do not stub its parser, allowlists or execution.
 The explicitly required fixture uses the standard ignored `*_helper.exs` suffix so directory-targeted Mix runs do not treat it as an unmatched test file.
