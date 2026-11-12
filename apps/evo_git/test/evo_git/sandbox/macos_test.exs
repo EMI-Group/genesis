@@ -27,8 +27,37 @@ defmodule EvoGit.Sandbox.MacOSTest do
     "go"
   ]
 
+  # The canonical credential deny list (mirrored from
+  # lib/evo_git/sandbox/spec.ex — `Spec.credential_paths/0`), in canonical
+  # order. `Library/Keychains` is NOT part of it: it is macOS-only and the
+  # renderer appends it itself.
+  @canonical_credential_dirs [
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".kube",
+    ".config/sops",
+    ".git-credentials",
+    ".netrc",
+    ".password-store",
+    ".npmrc",
+    ".pypirc",
+    ".docker",
+    ".gem"
+  ]
+
   defp cache_rule(dir),
     do: ~s{(allow file-write* (subpath "#{Path.join(System.user_home!(), dir)}"))}
+
+  # Extracts the paths of every `(deny file-read* (subpath "<path>"))` rule in
+  # the emitted profile, in EMISSION order (home-based credential rules first,
+  # then the system-level ones) — so group membership AND ordering can be
+  # asserted on the extracted list instead of a joined blob.
+  defp deny_read_subpaths(profile) do
+    ~r/\(deny file-read\* \(subpath "([^"]+)"\)\)/
+    |> Regex.scan(profile, capture: :all_but_first)
+    |> List.flatten()
+  end
 
   # Writes a minimal `[sandbox] write_paths = ...` config.toml into the
   # XDG_CONFIG_HOME temp dir isolated by the global setup (each test gets a
@@ -210,6 +239,57 @@ defmodule EvoGit.Sandbox.MacOSTest do
         assert profile =~ ~s{(deny file-read* (subpath "#{path}"))},
                "expected a deny-read rule for #{path}"
       end
+    end
+
+    test "denies WRITES to every canonical credential dir (deny-read parity)" do
+      profile = MacOS.generate_profile("/some/cwd", nil)
+
+      for dir <- @canonical_credential_dirs do
+        path = Path.join(System.user_home!(), dir)
+
+        assert profile =~ ~s{(deny file-write* (subpath "#{path}"))},
+               "expected a deny-write rule for #{dir}"
+      end
+    end
+
+    test "emits the credential deny-read group in canonical order with Library/Keychains after .password-store" do
+      profile = MacOS.generate_profile("/some/cwd", nil)
+      home = System.user_home!()
+
+      expected_dirs =
+        Enum.flat_map(@canonical_credential_dirs, fn
+          ".password-store" -> [".password-store", "Library/Keychains"]
+          dir -> [dir]
+        end)
+
+      # Home-based deny-read rules, extracted in emission order: "deny" beats
+      # "allow" in SBPL, so this list IS the protected credential set.
+      home_deny_reads =
+        profile
+        |> deny_read_subpaths()
+        |> Enum.filter(&String.starts_with?(&1, home <> "/"))
+
+      assert home_deny_reads == Enum.map(expected_dirs, &Path.join(home, &1))
+
+      # Belt and braces on the emitted STRING: the macOS-only keychain entry
+      # sits between `.password-store` and `.npmrc`.
+      {password_store_at, _} = :binary.match(profile, "#{home}/.password-store")
+      {keychains_at, _} = :binary.match(profile, "#{home}/Library/Keychains")
+      {npmrc_at, _} = :binary.match(profile, "#{home}/.npmrc")
+
+      assert password_store_at < keychains_at
+      assert keychains_at < npmrc_at
+    end
+
+    test "denies Library/Keychains for READS only, never for writes" do
+      profile = MacOS.generate_profile("/some/cwd", nil)
+      keychains = Path.join(System.user_home!(), "Library/Keychains")
+
+      assert profile =~ ~s{(deny file-read* (subpath "#{keychains}"))}
+      refute profile =~ ~s{(deny file-write* (subpath "#{keychains}"))}
+
+      # It is a macOS-only extra, never part of the shared canonical list.
+      refute "Library/Keychains" in EvoGit.Sandbox.Spec.credential_paths()
     end
 
     test "grants read-write to the repo worktree, .git, and tmp paths" do
