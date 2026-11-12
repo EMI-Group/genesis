@@ -14,9 +14,24 @@ defmodule EvoGit.Sandbox do
   overridden via the `[sandbox] backend` config key (`:auto` (default) → platform
   detection, `:systemd` → systemd-run, `:bwrap` → bubblewrap; explicit choices are
   availability-gated with fallback to no sandbox).
+
+  The NO-SANDBOX state is reported honestly instead of silently: `backend_reason/0`
+  returns a human-readable explanation of the current isolation state (including
+  `EvoGit.Sandbox.None`, where commands run with no OS-level isolation at all), and
+  `warn_if_unisolated/0` — called from every dispatch entry point (`run/4`,
+  `run_with_partial/5,6,7`, `spawn_detached/1`) — logs a ONE-TIME warning when the
+  configuration DEMANDS isolation (`[sandbox] mode = "enabled"`, or an explicit
+  `[sandbox] backend`) while no backend is usable.
   """
 
+  require Logger
+
   alias EvoGit.Platform
+
+  # One-time (per BEAM) latch for the "demands isolation, but runs unisolated"
+  # warning. `:persistent_term` is the documented once-only home here (the app
+  # has no boot hook that could evaluate the sandbox state up front).
+  @unisolated_warning_key {__MODULE__, :unisolated_warning_emitted}
 
   @type capabilities :: %{
           filesystem_isolation: boolean(),
@@ -24,9 +39,22 @@ defmodule EvoGit.Sandbox do
           backend: :systemd_run | :bwrap | :sandbox_exec | :none
         }
 
-  @doc "Returns the active sandbox backend module based on config and platform availability."
+  @doc """
+  Returns the active sandbox backend module based on config and platform availability.
+
+  A test may pin the module through the call-time seam
+  `Application.get_env(:evo_git, :sandbox_backend_override)` (unset → the normal
+  config/platform resolution, so production behavior is byte-identical).
+  """
   @spec backend() :: module()
   def backend do
+    case Application.get_env(:evo_git, :sandbox_backend_override) do
+      module when is_atom(module) and module not in [nil, true, false] -> module
+      _ -> configured_backend()
+    end
+  end
+
+  defp configured_backend do
     case EvoGit.Config.resolve([:sandbox, :backend]) do
       :auto ->
         platform_backend()
@@ -68,10 +96,148 @@ defmodule EvoGit.Sandbox do
   end
 
   @doc """
+  Returns a short, human-readable description of the CURRENT isolation state.
+
+  Unlike the bare boolean `enabled?/0`, this string is meant for operators, logs
+  and the dashboard — it names the backend that actually isolates commands, and
+  says plainly when nothing does:
+
+    * `"systemd-run sandbox active (filesystem isolation + resource limits)"`
+    * `"bwrap sandbox active (filesystem isolation, no resource limits)"`
+    * `"sandbox-exec sandbox active (filesystem isolation)"`
+    * for `EvoGit.Sandbox.None` (the honest Windows story) a `[sandbox] mode`-aware
+      "no OS-level isolation" explanation naming the platform and the actionable
+      `[sandbox] backend` / `[sandbox] mode` fix
+
+  Derived from the resolved `[:sandbox, :mode]` / `[:sandbox, :backend]` and
+  `backend().enabled?()` — never from `:os.type/0` alone.
+  """
+  @spec backend_reason() :: String.t()
+  def backend_reason do
+    backend = backend()
+
+    if backend.enabled?() do
+      active_reason(backend)
+    else
+      unisolated_reason(resolved_mode(), backend_setting())
+    end
+  end
+
+  @doc """
+  Logs a ONE-TIME warning when the configuration DEMANDS OS-level isolation but
+  no backend is usable, so commands run unisolated.
+
+  Called from every dispatch entry point (`run/4`, `run_with_partial/5,6,7`,
+  `spawn_detached/1`). Exactly one warning is emitted per BEAM (latched in
+  `:persistent_term`), it is actionable (`[sandbox] backend` / `[sandbox] mode`),
+  and it is NEVER emitted when sandboxing is genuinely on or when it was
+  deliberately turned off (`[sandbox] mode = "disabled"`).
+
+  Total: a diagnostic must never break the command it describes — it always
+  returns `:ok`.
+  """
+  @spec warn_if_unisolated() :: :ok
+  def warn_if_unisolated do
+    if :persistent_term.get(@unisolated_warning_key, false) do
+      # Already warned in this BEAM — the fast path costs one read and never
+      # re-resolves the backend.
+      :ok
+    else
+      case warning_for(resolved_mode(), backend_setting(), backend().enabled?()) do
+        nil ->
+          :ok
+
+        message ->
+          :persistent_term.put(@unisolated_warning_key, true)
+          Logger.warning(message)
+          :ok
+      end
+    end
+  end
+
+  @doc false
+  # The pure decision mapping behind `warn_if_unisolated/0`, exposed for tests.
+  #
+  # `nil` (no warning) when sandboxing is deliberately disabled, when a backend
+  # genuinely isolates, or when `[sandbox] mode = "auto"` / `[sandbox] backend =
+  # "auto"` simply fell back to no sandbox (the documented platform behavior).
+  # A warning string when the configuration DEMANDS isolation — `mode =
+  # "enabled"`, or an explicit `[sandbox] backend` — and none is in effect.
+  @spec warning_for(atom(), atom(), boolean()) :: String.t() | nil
+  def warning_for(:disabled, _backend_setting, _backend_enabled?), do: nil
+  def warning_for(_mode, _backend_setting, true), do: nil
+  def warning_for(:auto, :auto, false), do: nil
+
+  def warning_for(mode, backend_setting, false) do
+    "Sandbox: " <> unisolated_reason(mode, backend_setting)
+  end
+
+  @doc false
+  # Clears the once-only warning latch; tests only (a latched warning must not
+  # leak across test cases).
+  @spec reset_unisolated_warning() :: :ok
+  def reset_unisolated_warning do
+    case :persistent_term.get(@unisolated_warning_key, nil) do
+      nil -> :ok
+      _ -> :persistent_term.erase(@unisolated_warning_key)
+    end
+  end
+
+  defp active_reason(EvoGit.Sandbox.Linux),
+    do: "systemd-run sandbox active (filesystem isolation + resource limits)"
+
+  defp active_reason(EvoGit.Sandbox.Bwrap),
+    do: "bwrap sandbox active (filesystem isolation, no resource limits)"
+
+  defp active_reason(EvoGit.Sandbox.MacOS),
+    do: "sandbox-exec sandbox active (filesystem isolation)"
+
+  defp active_reason(module), do: "#{inspect(module)} sandbox active"
+
+  # The resolved `[sandbox] mode`. The call-time seam
+  # `Application.get_env(:evo_git, :sandbox_mode_override)` lets a test inject a
+  # mode without mutating app-global config; unset → production resolution.
+  defp resolved_mode do
+    case Application.get_env(:evo_git, :sandbox_mode_override) do
+      mode when mode in [:auto, :enabled, :disabled] -> mode
+      _ -> EvoGit.Config.resolve([:sandbox, :mode]) || :auto
+    end
+  end
+
+  defp backend_setting do
+    EvoGit.Config.resolve([:sandbox, :backend]) || :auto
+  end
+
+  defp unisolated_reason(:disabled, _backend_setting) do
+    "sandbox disabled by configuration ([sandbox] mode = \"disabled\"): " <>
+      "agent commands run UNISOLATED"
+  end
+
+  defp unisolated_reason(:auto, :auto) do
+    "no OS-level sandbox available on #{platform_name()} " <>
+      "([sandbox] mode = \"auto\", [sandbox] backend = \"auto\"): " <>
+      "agent commands run UNISOLATED (no filesystem isolation, no resource limits)"
+  end
+
+  defp unisolated_reason(mode, backend_setting) do
+    "NO OS-LEVEL ISOLATION on #{platform_name()}: " <>
+      "[sandbox] mode = \"#{mode}\" and [sandbox] backend = \"#{backend_setting}\" " <>
+      "demand a sandbox, but no OS-level backend is usable here, so agent commands " <>
+      "run UNISOLATED (no filesystem isolation, no resource limits). " <>
+      "Fix: install/enable that backend, or set " <>
+      "[sandbox] mode = \"disabled\" to accept direct execution."
+  end
+
+  defp platform_name, do: Platform.os() |> to_string()
+
+  @doc """
   Runs a command through the sandbox backend.
 
   On Linux, uses `systemd-run` with full isolation. On macOS, uses `sandbox-exec`
   with filesystem isolation. On Windows, runs commands directly.
+
+  Emits the once-per-BEAM unisolated warning through `warn_if_unisolated/0` when
+  isolation was demanded but no backend provides any.
 
   ## Parameters
 
@@ -87,6 +253,7 @@ defmodule EvoGit.Sandbox do
   @spec run(String.t(), String.t(), [String.t()], String.t() | nil) ::
           {String.t(), non_neg_integer()}
   def run(cwd, executable, args \\ [], repo_root \\ nil) do
+    warn_if_unisolated()
     resolved = EvoGit.Executable.resolve(executable)
     backend().run(cwd, resolved, args, repo_root)
   end
@@ -141,6 +308,7 @@ defmodule EvoGit.Sandbox do
         max_bytes \\ nil,
         opts \\ []
       ) do
+    warn_if_unisolated()
     backend = backend()
     resolved = EvoGit.Executable.resolve(executable)
 
@@ -195,6 +363,7 @@ defmodule EvoGit.Sandbox do
           job_id: String.t()
         }) :: {:ok, map()} | {:error, term()}
   def spawn_detached(spec) do
+    warn_if_unisolated()
     EvoGit.Sandbox.Background.spawn(spec)
   end
 

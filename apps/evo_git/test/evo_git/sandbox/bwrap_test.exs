@@ -33,8 +33,9 @@ defmodule EvoGit.Sandbox.BwrapTest do
     "go"
   ]
 
-  # The backend's sensitive credential-store deny list (mirrored from
-  # lib/evo_git/sandbox/bwrap.ex — each dir gets an empty --tmpfs overlay).
+  # The backend's sensitive credential-store deny list, in CANONICAL order
+  # (mirrored from lib/evo_git/sandbox/spec.ex — `Spec.credential_paths/0`);
+  # each dir gets an empty --tmpfs overlay.
   @deny_list [
     ".ssh",
     ".gnupg",
@@ -44,10 +45,10 @@ defmodule EvoGit.Sandbox.BwrapTest do
     ".git-credentials",
     ".netrc",
     ".password-store",
-    ".docker",
-    ".gem",
     ".npmrc",
-    ".pypirc"
+    ".pypirc",
+    ".docker",
+    ".gem"
   ]
 
   defp build_args(cwd \\ System.tmp_dir!()) do
@@ -90,6 +91,17 @@ defmodule EvoGit.Sandbox.BwrapTest do
     |> Enum.chunk_every(3, 1, :discard)
     |> Enum.flat_map(fn
       ["--bind-try", path, path] -> [path]
+      _ -> []
+    end)
+  end
+
+  # Returns the destination paths of the `["--tmpfs", path]` pairs (the
+  # credential deny overlays), in emission order.
+  defp tmpfs_paths(args) do
+    args
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.flat_map(fn
+      ["--tmpfs", path] -> [path]
       _ -> []
     end)
   end
@@ -477,6 +489,13 @@ defmodule EvoGit.Sandbox.BwrapTest do
       tmpfs_idx = Enum.find_index(args, &(&1 == "--tmpfs"))
       assert is_integer(ro_idx) and is_integer(tmpfs_idx)
       assert tmpfs_idx > ro_idx
+    end
+
+    test "emits the deny tmpfs overlays in canonical credential order" do
+      args = build_args()
+      home = System.user_home!()
+
+      assert tmpfs_paths(args) == Enum.map(@deny_list, &Path.join(home, &1))
     end
   end
 

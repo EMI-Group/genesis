@@ -90,13 +90,14 @@ defmodule EvoGit.Sandbox.Bwrap do
      and macOS's root-wide read allow).
   2. `--dev /dev`, `--proc /proc` — fresh dev and procfs (the proc mount is allowed
      because the pid namespace is unshared).
-  3. `--bind-try` for each of `Platform.tmp_paths()` (`/tmp`, `/var/tmp`) — writable.
-  4. `--bind-try` for the writable paths: `cwd` (the worktree), the resolved
-     `[sandbox] write_paths` cache-dir list (see "Configurable Writable Paths" in
-     `sandbox/CONTEXT.md`), `/nix/store` + `/nix/var` when `Nix.enabled?()`, and the
-     git metadata dir (linked-worktree `gitdir:` pointers resolved to the COMMON git
-     dir, same logic as the macOS backend).
-  5. `--tmpfs <home>/<dir>` over each sensitive credential-store dir (the deny list)
+  3. `--bind-try` for each of `spec.tmp_paths` (`/tmp`, `/var/tmp`) — writable.
+  4. `--bind-try` for the writable paths: `spec.cwd` (the worktree), the resolved
+     `spec.cache_write_paths` (`[sandbox] write_paths`, see "Configurable Writable
+     Paths" in `sandbox/CONTEXT.md`), `spec.nix_paths` (`/nix/store` + `/nix/var`
+     when `Nix.enabled?()`), and the git metadata dir (linked-worktree `gitdir:`
+     pointers resolved to the COMMON git dir, same logic as the macOS backend).
+  5. `--tmpfs <path>` over each `spec.credential_deny_paths` entry (the canonical
+     12-entry deny list in canonical order)
      — an empty tmpfs overlay hides the real content, which is bwrap's replacement
      for systemd's `InaccessiblePaths` (bwrap has no "inaccessible" primitive). These
      come AFTER the `--ro-bind / /` so they override it.
@@ -161,73 +162,23 @@ defmodule EvoGit.Sandbox.Bwrap do
   probe (`probe_capability/0`) is the runtime substitute: it exercises the real
   argv (full, then `--unshare-pid`-less) against the actual kernel and caches the
   result.
+  This module is a pure RENDERER: the tmp paths, cache dirs, nix paths, git
+  metadata dir and the credential deny list all come from ONE
+  `EvoGit.Sandbox.Spec` built by `Spec.build(:bwrap, cwd: cwd, repo_root: repo_root)`;
+  what stays backend-specific here is bwrap itself (namespace flags, capability
+  probing, env inheritance and the `--setenv` shape).
   """
 
   @behaviour EvoGit.Sandbox.Behaviour
 
-  alias EvoGit.{Nix, Platform, Sandbox.Helpers}
+  alias EvoGit.{Nix, Platform}
+  alias EvoGit.Sandbox.{Helpers, Spec}
 
   # Compile-time Mix env — safe in releases (Mix.env/0 is evaluated at compile
   # time; in prod releases it resolves to :prod). Tests must NEVER invoke real
   # bwrap (CI/worker environments typically block mount(2) or lack user
   # namespaces), so the test gate comes first and is unconditional.
   @mix_env Mix.env()
-
-  # Built-in writable cache dirs (home-relative) for package managers and
-  # toolchains (`mix deps.get`, `npm install`, `cargo build`). Local copy per
-  # backend convention (see sandbox/CONTEXT.md): this is the DEFAULT list
-  # emitted as writable binds when the user has NOT set `[sandbox] write_paths`.
-  # When set, the user's list REPLACES this one wholesale (even an empty list) —
-  # see `Helpers.resolve_write_paths/3`.
-  @default_cache_dirs [
-    # Universal cache (Python pip, Go build, C/C++ ccache)
-    ".cache",
-    # Universal local share (pnpm state, generic tools)
-    ".local/share",
-    # Universal local state
-    ".local/state",
-    # Rust packages
-    ".cargo",
-    # Rust toolchains
-    ".rustup",
-    # Elixir Mix
-    ".mix",
-    # Elixir Hex
-    ".hex",
-    # Node.js npm
-    ".npm",
-    # Node.js yarn
-    ".yarn",
-    # Bun JS
-    ".bun",
-    # Java Maven
-    ".m2",
-    # Java Gradle
-    ".gradle",
-    # Golang workspace (default GOPATH)
-    "go"
-  ]
-
-  # Sensitive credential stores (home-relative) hidden from the sandbox by
-  # binding an EMPTY tmpfs over each — bwrap's replacement for systemd's
-  # InaccessiblePaths (bwrap has no "inaccessible" primitive). Mirrors the
-  # macOS deny-read list minus the macOS-specific `Library/Keychains`, and is a
-  # superset of linux.ex's 8 InaccessiblePaths dirs (adds `.password-store`,
-  # `.docker`, `.gem`, `.pypirc`).
-  @deny_list [
-    ".ssh",
-    ".gnupg",
-    ".aws",
-    ".kube",
-    ".config/sops",
-    ".git-credentials",
-    ".netrc",
-    ".password-store",
-    ".docker",
-    ".gem",
-    ".npmrc",
-    ".pypirc"
-  ]
 
   @doc "Returns true when sandbox mode allows bwrap on this platform."
   @spec enabled?() :: boolean()
@@ -301,7 +252,8 @@ defmodule EvoGit.Sandbox.Bwrap do
     # fresh procfs inside a nested pid namespace, so --unshare-pid is dropped
     # (see capability/0, probe_capability/0 and the moduledoc). Everything else
     # in the argv is identical in both modes.
-    build_args(cwd, executable, args, repo_root, capability() != :degraded)
+    spec = Spec.build(:bwrap, cwd: cwd, repo_root: repo_root)
+    build_args(spec, executable, args, capability() != :degraded)
   end
 
   @doc """
@@ -355,13 +307,14 @@ defmodule EvoGit.Sandbox.Bwrap do
       :unusable
     else
       cwd = EvoGit.Sandbox.resolve_tmpdir()
+      spec = Spec.build(:bwrap, cwd: cwd)
 
-      case probe_run(build_args(cwd, "true", [], nil, true)) do
+      case probe_run(build_args(spec, "true", [], true)) do
         0 ->
           :full
 
         _ ->
-          case probe_run(build_args(cwd, "true", [], nil, false)) do
+          case probe_run(build_args(spec, "true", [], false)) do
             0 -> :degraded
             _ -> :unusable
           end
@@ -393,43 +346,22 @@ defmodule EvoGit.Sandbox.Bwrap do
   end
 
   # Shared argv builder — the single source of truth for the bwrap argv shape.
-  # `unshare_pid?` controls whether `--unshare-pid` is emitted: false in
-  # :degraded mode (see capability/0 and the moduledoc); every other flag is
-  # identical in both modes.
-  defp build_args(cwd, executable, args, repo_root, unshare_pid?) do
-    home = System.user_home!()
-
+  # Every path comes from `spec` (`EvoGit.Sandbox.Spec`); `unshare_pid?` is the
+  # only environment-dependent input: false in :degraded mode (see capability/0
+  # and the moduledoc), identical otherwise.
+  defp build_args(spec, executable, args, unshare_pid?) do
     # Writable tmp dirs (always exist on Linux; --bind-try tolerates anything)
     tmp_bind_args =
-      Enum.flat_map(Platform.tmp_paths(), fn path -> ["--bind-try", path, path] end)
+      Enum.flat_map(spec.tmp_paths, fn path -> ["--bind-try", path, path] end)
 
-    # User-configurable writable paths (`[sandbox] write_paths`): nil (unset)
-    # → the built-in default cache-dir list; set (even `[]`) → the user's list
-    # REPLACES the default cache-dir list. Structural paths (cwd, tmp paths,
-    # nix store/var, git metadata dir) are ALWAYS included below — they are
-    # required for the sandbox to function, not part of the user-configurable
-    # list.
-    write_paths =
-      Helpers.resolve_write_paths(
-        EvoGit.Config.resolve([:sandbox, :write_paths]),
-        @default_cache_dirs,
-        home
-      )
-
-    nix_paths =
-      if Nix.enabled?() do
-        ["/nix/store", "/nix/var"]
-      else
-        []
-      end
-
-    # The git metadata dir is resolved through linked-worktree `gitdir:`
-    # pointers (see Helpers.git_metadata_dir/2) so `git commit` works in
-    # worktrees whose `.git` is a pointer file into a common dir.
-    git_meta = Helpers.git_metadata_dir(cwd, repo_root)
-
+    # Writable binds: the worktree (cwd), the resolved `[sandbox] write_paths`
+    # cache dirs, nix store/var (when enabled) and the git metadata dir
+    # (resolved through linked-worktree `gitdir:` pointers by the spec, so
+    # `git commit` works in worktrees whose `.git` is a pointer file into a
+    # common dir).
     writable_bind_args =
-      ([cwd] ++ write_paths ++ nix_paths ++ List.wrap(git_meta))
+      ([spec.cwd] ++
+         spec.cache_write_paths ++ spec.nix_paths ++ List.wrap(spec.git_metadata_dir))
       |> Enum.flat_map(fn path -> ["--bind-try", path, path] end)
 
     # The managed per-task tmpdir (when installed) is an ADDITIONAL writable
@@ -437,25 +369,26 @@ defmodule EvoGit.Sandbox.Bwrap do
     # MUST precede the command (bwrap's GOption parser stops at the first
     # non-option argument).
     task_tmp_bind_args =
-      Enum.flat_map(List.wrap(Helpers.task_tmpdir_path()), fn path ->
+      Enum.flat_map(List.wrap(spec.task_tmpdir), fn path ->
         ["--bind-try", path, path]
       end)
 
-    # Deny list: bind an EMPTY tmpfs over each sensitive home dir. Must come
-    # AFTER the --ro-bind / / (and after the writable binds) so it overrides
-    # them. bwrap mkdir_with_parents the destination, so non-existent dirs are
-    # still covered.
+    # Deny list: bind an EMPTY tmpfs over each sensitive home dir — bwrap's
+    # replacement for systemd's InaccessiblePaths (bwrap has no "inaccessible"
+    # primitive). Must come AFTER the --ro-bind / / (and after the writable
+    # binds) so it overrides them. bwrap mkdir_with_parents the destination, so
+    # non-existent dirs are still covered.
     deny_args =
-      Enum.flat_map(@deny_list, fn dir -> ["--tmpfs", Path.join(home, dir)] end)
+      Enum.flat_map(spec.credential_deny_paths, fn path -> ["--tmpfs", path] end)
 
     # Environment: PATH/HOME/NIX* flow through by inheritance (bwrap inherits
     # the caller env). TMPDIR must point at a path the sandbox actually grants
     # write access to; the git identity is resolved by GitEnv (the BEAM process
     # does not carry it) — see the moduledoc for the full rationale.
     env_args =
-      [{"TMPDIR", EvoGit.Sandbox.resolve_tmpdir()}] ++
+      spec.env ++
         if EvoGit.GitEnv.git_command?(executable),
-          do: EvoGit.GitEnv.git_env_list(cwd),
+          do: EvoGit.GitEnv.git_env_list(spec.cwd),
           else: []
 
     env_setenv_args =
@@ -483,15 +416,18 @@ defmodule EvoGit.Sandbox.Bwrap do
         if(unshare_pid?, do: ["--unshare-pid"], else: []) ++
         ["--unshare-uts", "--unshare-cgroup-try"]
 
+    # Read-only root: everything readable, writes restricted — the same posture
+    # as the systemd backend's `ProtectSystem=strict` and macOS's root-wide read
+    # allow (`spec.read_roots`).
+    read_only_root_args = Enum.flat_map(spec.read_roots, fn root -> ["--ro-bind", root, root] end)
+
     [
       "--die-with-parent",
       "--new-session"
     ] ++
       unshare_flags ++
+      read_only_root_args ++
       [
-        "--ro-bind",
-        "/",
-        "/",
         "--dev",
         "/dev",
         "--proc",
@@ -501,7 +437,7 @@ defmodule EvoGit.Sandbox.Bwrap do
       writable_bind_args ++
       task_tmp_bind_args ++
       deny_args ++
-      ["--chdir", cwd] ++
+      ["--chdir", spec.cwd] ++
       env_setenv_args ++
       ["--", cmd_exe | cmd_args]
   end

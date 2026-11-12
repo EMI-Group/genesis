@@ -10,6 +10,24 @@ defmodule EvoGit.Sandbox.LinuxTest do
 
   @tmp_prefix "--setenv=TMPDIR="
 
+  # The canonical credential deny list (mirrored from
+  # lib/evo_git/sandbox/spec.ex — `Spec.credential_paths/0`), in canonical
+  # order. Pinned here so a change to the order fails loudly.
+  @canonical_credential_dirs [
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".kube",
+    ".config/sops",
+    ".git-credentials",
+    ".netrc",
+    ".password-store",
+    ".npmrc",
+    ".pypirc",
+    ".docker",
+    ".gem"
+  ]
+
   # The default cache-dir write list (joined with the user home) that
   # `args/4` emits when the `[sandbox] write_paths` config key is unset.
   # Pinned here so a change to the lib defaults fails loudly.
@@ -31,6 +49,14 @@ defmodule EvoGit.Sandbox.LinuxTest do
 
   defp build_args(cwd \\ System.tmp_dir!()) do
     Linux.args(cwd, "/usr/bin/env", [], nil)
+  end
+
+  # The absolute paths of the `-p InaccessiblePaths=-<path>` pairs, in
+  # emission order — the systemd credential deny group.
+  defp inaccessible_paths(args) do
+    args
+    |> Enum.filter(&String.starts_with?(&1, "InaccessiblePaths=-"))
+    |> Enum.map(&String.replace_prefix(&1, "InaccessiblePaths=-", ""))
   end
 
   defp tmpdir_value(args) do
@@ -194,6 +220,18 @@ defmodule EvoGit.Sandbox.LinuxTest do
 
       assert "ReadWritePaths=-/tmp" in args
       assert "ReadWritePaths=-/var/tmp" in args
+    end
+  end
+
+  describe "args/4 — credential InaccessiblePaths group" do
+    test "emits the canonical credential list, in canonical order" do
+      args = build_args()
+      home = System.user_home!()
+
+      assert inaccessible_paths(args) ==
+               Enum.map(@canonical_credential_dirs, &Path.join(home, &1))
+
+      assert length(inaccessible_paths(args)) == 12
     end
   end
 
