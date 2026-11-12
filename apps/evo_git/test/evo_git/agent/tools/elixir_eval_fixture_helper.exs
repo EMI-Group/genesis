@@ -27,13 +27,17 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
   `%SchedMeta{task_id: task_id}` in `:oneshot` mode, `task_id` in the fixture
   map, the process dictionary and `spec.opts`, and a control-plane row.
 
-  `task: :none` is the TASK-LESS INTERACTIVE ROOT of a dashboard `/assistant`
-  conversation: NO task row is written, `task_id` is `nil` everywhere (fixture
-  map, `%SchedMeta{}`, `:evogit_task_id`), the scheduler metadata is
-  `mode: :interactive`, and `spec.opts` is exactly
-  `[repo_less: true, session_mode: :interactive]` (no `:task_id` key).
-  `update_task/2` applies to the task-backed shape only; `stop/1` skips the
-  store delete when there is no task id.
+  `task: :none` is the REAL TASK-LESS INTERACTIVE ROOT registration of a
+  dashboard `/assistant` conversation: `EvoGit.AgentScheduler.start_session/1`
+  mints a 16-hex binary `task_id` for every session and creates NO `tasks` row,
+  so the fixture carries that same MINTED binary id in the fixture map, in
+  `%SchedMeta{}` and in `:evogit_task_id`, writes no task row, keeps the
+  scheduler metadata at `mode: :interactive`, and keeps `spec.opts` EXACTLY
+  `[repo_less: true, session_mode: :interactive]` (no `:task_id` key). It is
+  therefore "task-id-bearing but task-row-less", which is what makes the
+  registry lookup answer `nil` for a genuinely registered session.
+  `update_task/2` applies to the task-backed shape only; `stop/1` deletes the
+  store row for the task-backed shape only (the interactive shape owns none).
 
   `call_async/2` accepts a zero-arity function and returns a handle containing
   `tool_pid`, `owner_pid`, `request_ref` and `owner_monitor`. The function runs
@@ -82,7 +86,7 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
 
     agent_id = 90_000_000 + System.unique_integer([:positive])
 
-    task_id = if task_shape == :reflect, do: "eval_fixture_#{agent_id}", else: nil
+    task_id = minted_task_id(task_shape, agent_id)
     context_node = %ContextNode{path: "./", repo: "[system]"}
 
     spec_opts =
@@ -126,6 +130,7 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
       registry: registry,
       agent_id: agent_id,
       task_id: task_id,
+      task_shape: task_shape,
       spec: spec,
       supervisor: supervisor,
       config_dir: Process.get(:evogit_config_dir)
@@ -238,7 +243,7 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
   @doc "Reads the agent's graceful-cancel flag back from the control plane."
   def cancel_requested?(fixture), do: ControlPlane.cancel_requested?(fixture.agent_id)
 
-  def update_task(%{task_id: task_id} = fixture, fun)
+  def update_task(%{task_shape: :reflect, task_id: task_id} = fixture, fun)
       when is_function(fun, 1) and is_binary(task_id) do
     %TaskInfo{id: ^task_id} = updated = fixture.store |> Store.get_task(task_id) |> fun.()
     :ok = Store.put_task(fixture.store, updated)
@@ -252,9 +257,11 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
     delete_row(:evogit_sched_meta, fixture.agent_id)
     ControlPlane.delete(fixture.agent_id)
 
-    # A task-less interactive fixture owns no task row, so there is nothing to
-    # delete; a live isolated Store is still required for the task-backed shape.
-    if is_binary(fixture.task_id) and GenServer.whereis(fixture.store) do
+    # Only the task-backed shape owns a `tasks` row: the interactive-root shape
+    # carries a scheduler-minted task id but no row at all (exactly what
+    # `EvoGit.AgentScheduler.start_session/1` registers), so there is nothing to
+    # delete for it.
+    if fixture.task_shape == :reflect and GenServer.whereis(fixture.store) do
       :ok = Store.delete_task(fixture.store, fixture.task_id)
     end
 
@@ -324,6 +331,15 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
         owner_loop(fixture, pending)
     end
   end
+
+  # The task id a REAL registration carries. `start_session/1` mints a 16-hex
+  # binary id for every session (and creates no `tasks` row), so the task-less
+  # interactive shape must mint one too — a `nil` task id is a driver shape the
+  # dashboard never produces.
+  defp minted_task_id(:reflect, agent_id), do: "eval_fixture_#{agent_id}"
+
+  defp minted_task_id(:none, _agent_id),
+    do: Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
 
   defp delete_row(table, id) do
     if :ets.whereis(table) != :undefined, do: :ets.delete(table, id)
