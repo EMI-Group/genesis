@@ -11,6 +11,7 @@ Fixtures resolve the concrete paths through `EvoGit.Config.config_dir/0` and `co
 
 `assistant_message_test.exs` renders `AssistantMessage.assistant_message/1` and tests `AgentStream.extract_failed_message/1` directly.
 `chat_state_test.exs`, `messages_test.exs`, and `transcript_test.exs` cover chat-state normalization, message extraction, and transcript normalization.
+`display_messages_test.exs` covers the ordered chat-transcript projection `EvoDashWeb.HomeLive.DisplayMessages` (`bubbles/1`, `bubble/1`, `user_authored?/1`) with hand-built `%ReqLLM.Message{}` fixtures: the `metadata[:user_authored]` marker, its `:unknown` shape-heuristic fallback, and totality on malformed payloads.
 `delta_test.exs` covers the pure `EvoDashWeb.HomeLive.Delta` reducer of the push-only agent-delta stream.
 
 ## Constraints
