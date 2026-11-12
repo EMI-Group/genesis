@@ -31,6 +31,8 @@ Long-form design records, reference documentation and short user-facing guides f
 - The `/dl/` Cloudflare Worker download proxy referenced throughout `auto-update.md` is implemented in the separate `genesis-doc` repository (`src/worker.ts` + `wrangler.jsonc`), not in this repo.
 - Behaviour of that proxy is documented in `genesis-doc`'s `CONTEXT.md`; do not duplicate it here.
 - `images/promo-poster.jpg` is a verbatim copy of an asset owned by the `genesis-doc` repo (its video directory); copy it again rather than regenerating or resizing it.
+- These files cover release *artifacts, feeds, signing and self-update*, but NOT native-binary packaging — `apps/evo_git/priv/vendor` (ripgrep/MinGit), `genesis.nix`/`mixFodDeps` hash recomputation, sidecar or extra-executable signing, and release-tree/tarball contents are undocumented here.
+- For those packaging questions route to `./nix/`, `./desktop/`, `./.github/workflows/`, `./apps/evo_git/` and `./rel/` instead of assuming `docs/` has an answer.
 
 ## Routing Table
 - `agent-runtime-refactor.md` — implemented agent-runtime refactor design record + P0–P6 plan (P0–P4 core + P6 dashboard landed; P5 durability deferred): one supervised `Agent.Session` per agent owning the single copy of state, a per-exchange worker running the loop, summary-only ETS read model, yield/finish split for interactive vs one-shot modes, consumer-gated push-only delta streaming over `EvoGit.PubSub` `"agent:<id>"` (session-lifetime worktree, no idle TTL; durability deferred) — read before changing the agent process model, `%EvoGit.Agent.State{}`/summary state mirroring, or `:awaiting_input` status handling.
