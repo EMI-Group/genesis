@@ -6,7 +6,9 @@ defmodule EvoGit.Sandbox.MacOS do
   metadata/tmp path comes from ONE `EvoGit.Sandbox.Spec` built by
   `EvoGit.Sandbox.Spec.build(:macos, cwd: cwd, repo_root: repo_root)`; the
   only macOS-specific policy left here is the extra `Library/Keychains`
-  deny-read entry and the SBPL syntax itself.
+  deny-read entry and the SBPL syntax itself. The renderer reads NO environment
+  and no config — `$TMPDIR`, the tmp paths, the config/data dirs and the
+  credential list all arrive through the spec.
 
   Filesystem policy: WRITES are deny-by-default with an explicit allow list
   (the repo worktree (cwd + `.git`), tmp paths, genesis config/data dirs,
@@ -31,13 +33,31 @@ defmodule EvoGit.Sandbox.MacOS do
   package-manager/toolchain cache dirs, with deny-write rules for sensitive
   dirs as defense in depth.
 
+  ## Spellings, credential carveouts, fcntl
+
+  Seatbelt matches RESOLVED vnodes, so a rule written with the logical
+  spelling of a path hidden behind a symlinked component (`/tmp` →
+  `/private/tmp`) never matches. Every rendered path is therefore emitted once
+  per SPELLING from `EvoGit.Sandbox.Spec.aliases/1` (identity when nothing
+  resolves) — read/write pairs for structural paths and the resolved pair
+  immediately after the logical one.
+
+  Each credential carveout carries BOTH path filters of ONE rule —
+  `(deny file-read* (literal "<p>") (subpath "<p>"))` — because SBPL
+  OR-combines the filters of a rule while `subpath` alone leaves a
+  first-time-creation gap (e.g. `mkdir ~/.ssh`). A single
+  `(deny system-fcntl (fcntl-command 80 110))` rule closes the "mutate a file
+  through a read-only fd" bypass (`F_MAKECOMPRESSED` / `F_TRANSFEREXTENTS`).
+
   Also enforces a process-count limit (`(limit number N)`, the spec's
   `:max_processes`) and keeps network default-allowed (agents run
   `git fetch/push`, `mix deps.get`, `curl`, and web tools). If the host's
-  `sandbox-exec` rejects the `(limit ...)` syntax (unverifiable without a
-  macOS host), `run/4`/`run_with_partial/6` transparently retry once with
-  the limit stripped and cache the decision — the sandbox keeps working
-  with all other hardening intact.
+  `sandbox-exec` rejects the `(limit ...)` or the `system-fcntl` rule
+  (unverifiable without a macOS host), `run/4`/`run_with_partial/6`
+  transparently retry once with the UNVERIFIED rules stripped and cache the
+  decision — the sandbox keeps working with all other hardening intact.
+  `generate_profile/3` exposes default-inert `:alias_fun` / `:host_tmpdir`
+  seams; production calls the 2-arity form.
   """
 
   @behaviour EvoGit.Sandbox.Behaviour
@@ -47,11 +67,12 @@ defmodule EvoGit.Sandbox.MacOS do
   alias EvoGit.{Nix, Platform}
   alias EvoGit.Sandbox.{Helpers, Spec}
 
-  # Cached decision that `sandbox-exec` on THIS macOS rejects the
-  # `(limit ...)` rule (see `strip_process_limit/1` and the retry logic in
-  # `run/4` / `run_with_partial/6`). Once set to `true`, every subsequent
-  # call uses the stripped profile directly, skipping the guaranteed-failing
-  # first attempt.
+  # Cached decision that `sandbox-exec` on THIS macOS rejects the profile's
+  # UNVERIFIED rules — `(limit ...)` and/or the `system-fcntl` deny (see
+  # `strip_unverified_rules/1` and the retry logic in `run/4` /
+  # `run_with_partial/6`). Once set to `true`, every subsequent call uses the
+  # stripped profile directly, skipping the guaranteed-failing first attempt.
+  # The key name is kept for the pinned test seam.
   @process_limit_rejected_key {EvoGit.Sandbox.MacOS, :process_limit_rejected}
 
   # macOS-only credential store: appended to the canonical
@@ -59,6 +80,19 @@ defmodule EvoGit.Sandbox.MacOS do
   # `.password-store`. It is NEVER part of the canonical list and never part of
   # the deny-WRITE list.
   @keychains_dir "Library/Keychains"
+
+  # The two fcntl commands that mutate a file's contents through an already
+  # open READ-ONLY descriptor, verified from Codex
+  # (`codex-rs/macos-seatbelt/src/seatbelt.rs`): `F_MAKECOMPRESSED = 80`,
+  # `F_TRANSFEREXTENTS = 110`. Denying them closes the "mutate a file through
+  # a read-only fd" bypass. Emitted exactly once, and it is one of the two
+  # UNVERIFIED rules `strip_unverified_rules/1` can drop.
+  @fcntl_deny_rule "(deny system-fcntl (fcntl-command 80 110))"
+
+  # Prefixes of the rules that could not be validated against a real macOS
+  # host (CI is Linux); a rejected rule makes `sandbox-exec` refuse the WHOLE
+  # profile, so the fail-safe retry drops every line starting with one of these.
+  @unverified_rule_prefixes ["(limit ", "(deny system-fcntl "]
 
   @doc "Returns true when sandbox mode allows sandbox-exec on macOS."
   @spec enabled?() :: boolean()
@@ -81,9 +115,9 @@ defmodule EvoGit.Sandbox.MacOS do
     if enabled?() do
       resolved_tmpdir = EvoGit.Sandbox.resolve_tmpdir()
 
-      # Once this macOS has been observed rejecting the `(limit ...)` rule,
-      # use the stripped profile directly — no guaranteed-failing first
-      # attempt on every call.
+      # Once this macOS has been observed rejecting the profile's UNVERIFIED
+      # rules ((limit ...) / the system-fcntl deny), use the stripped profile
+      # directly — no guaranteed-failing first attempt on every call.
       profile = effective_profile(cwd, repo_root)
 
       {exec, exec_args} =
@@ -141,15 +175,16 @@ defmodule EvoGit.Sandbox.MacOS do
   end
 
   # Returns the SBPL profile that is actually handed to `sandbox-exec` for
-  # `cwd`: `generate_profile/2`, minus the process-count `(limit ...)` rule
-  # when this macOS has already been observed rejecting it (see the fail-safe
-  # in `run/4`). Shared with `EvoGit.Sandbox.Background`, where a background
-  # job cannot be retried once started — the cached rejection decision is the
-  # only signal available, so the stripped profile must be chosen up front.
+  # `cwd`: `generate_profile/2`, minus the UNVERIFIED rules ((limit ...) and
+  # the system-fcntl deny) when this macOS has already been observed rejecting
+  # them (see the fail-safe in `run/4`). Shared with
+  # `EvoGit.Sandbox.Background`, where a background job cannot be retried once
+  # started — the cached rejection decision is the only signal available, so
+  # the stripped profile must be chosen up front.
   @doc false
   def effective_profile(cwd, repo_root \\ nil) do
     profile = generate_profile(cwd, repo_root)
-    if process_limit_rejected?(), do: strip_process_limit(profile), else: profile
+    if process_limit_rejected?(), do: strip_unverified_rules(profile), else: profile
   end
 
   # Generate an SBPL (Sandbox Policy Language) profile.
@@ -176,11 +211,18 @@ defmodule EvoGit.Sandbox.MacOS do
   # profile string) because `#` comment support in sandbox-exec could not be
   # validated here; the emitted profile is pure SBPL rules.
   @doc false
-  def generate_profile(cwd, repo_root \\ nil) when is_binary(cwd) do
+  def generate_profile(cwd, repo_root \\ nil, opts \\ []) when is_binary(cwd) do
     # The ONE place Genesis sandbox semantics live (roots, credential list,
     # cache dirs, git metadata, tmp/task/config/data dirs) — this module only
-    # renders them as SBPL.
-    spec = Spec.build(:macos, cwd: cwd, repo_root: repo_root)
+    # renders them as SBPL. `:host_tmpdir` is forwarded ONLY when present, so
+    # an absent option keeps the spec's own `$TMPDIR` read; the renderer
+    # never touches the environment or the config.
+    spec_opts = [cwd: cwd, repo_root: repo_root] ++ Keyword.take(opts, [:host_tmpdir])
+    spec = Spec.build(:macos, spec_opts)
+
+    # Path → spellings (logical first, resolved alias second) — see
+    # `EvoGit.Sandbox.Spec.aliases/1` and `spellings/2`.
+    spellings_fun = alias_fun(opts)
 
     # --- Filesystem READ rules ---
     #
@@ -198,10 +240,14 @@ defmodule EvoGit.Sandbox.MacOS do
         ~s{(allow file-read* (subpath "#{path}"))}
       end)
 
-    cwd_write_rules =
-      Enum.map_join(spec.write_roots, "\n    ", fn path ->
-        ~s{(allow file-write* (subpath "#{path}"))}
-      end)
+    # Repo access: the worktree (cwd) and every other structural write root,
+    # emitted as a read+write PAIR per SPELLING (the logical path first, its
+    # resolved alias immediately after) — Seatbelt matches resolved vnodes, so
+    # a single-spelling rule can silently miss.
+    write_root_rules =
+      spec.write_roots
+      |> Enum.flat_map(&spellings(&1, spellings_fun))
+      |> Enum.map_join("\n    ", &rw_rule/1)
 
     # Belt-and-suspenders: the specific read rules below (nix reads, home,
     # host $TMPDIR, vendored git, file-read-metadata, ssh literals) are
@@ -221,20 +267,16 @@ defmodule EvoGit.Sandbox.MacOS do
       end)
       |> Enum.join("\n    ")
 
-    # Repo access: the worktree (cwd) plus the git metadata dir. cwd is
-    # emitted above/below with the read and write allows. The metadata dir is
-    # resolved by `EvoGit.Sandbox.Spec` through `Helpers.git_metadata_dir/2`,
-    # which follows linked-worktree `gitdir:` pointer files so the common git
-    # dir is covered even when the caller passes a worktree root or nil
-    # repo_root.
-    git_metadata_rule =
-      case spec.git_metadata_dir do
-        nil ->
-          ""
-
-        git_path ->
-          ~s{(allow file-read* (subpath "#{git_path}"))\n    (allow file-write* (subpath "#{git_path}"))}
-      end
+    # Repo access: the git metadata dir (the worktree/cwd is the write root
+    # above). Resolved by `EvoGit.Sandbox.Spec` through
+    # `Helpers.git_metadata_dir/2`, which follows linked-worktree `gitdir:`
+    # pointer files so the common git dir is covered even when the caller
+    # passes a worktree root or nil repo_root. Read+write pair per spelling.
+    git_metadata_rules =
+      spec.git_metadata_dir
+      |> List.wrap()
+      |> Enum.flat_map(&spellings(&1, spellings_fun))
+      |> Enum.map_join("\n    ", &rw_rule/1)
 
     # Vendored git (desktop bundle): when git is NOT on PATH,
     # `Executable.resolve("git")` returns the absolute path of the bundled
@@ -251,15 +293,16 @@ defmodule EvoGit.Sandbox.MacOS do
       end
 
     git_rules =
-      [git_metadata_rule, git_binary_read_rule]
+      [git_metadata_rules, git_binary_read_rule]
       |> Enum.reject(&(&1 == ""))
       |> Enum.join("\n    ")
 
     # Tmp paths: read-write — processes create temp files and read them back.
+    # Per spelling: the resolved pair goes immediately after the logical pair.
     tmp_rules =
-      Enum.map_join(spec.tmp_paths, "\n    ", fn path ->
-        ~s{(allow file-read* (subpath "#{path}"))\n    (allow file-write* (subpath "#{path}"))}
-      end)
+      spec.tmp_paths
+      |> Enum.flat_map(&spellings(&1, spellings_fun))
+      |> Enum.map_join("\n    ", &rw_rule/1)
 
     # Managed per-task tmpdir (when installed on the calling process): the
     # runtime injects this as the sandbox TMPDIR, so it must be granted BOTH
@@ -267,18 +310,19 @@ defmodule EvoGit.Sandbox.MacOS do
     # (tmp_rules above) stay writable regardless. Evaluates to "" when unset,
     # mirroring the empty-group pattern used by git_rules/nix_rules.
     task_tmpdir_rules =
-      Enum.map_join(List.wrap(spec.task_tmpdir), "\n    ", fn path ->
-        ~s{(allow file-read* (subpath "#{path}"))\n    (allow file-write* (subpath "#{path}"))}
-      end)
+      spec.task_tmpdir
+      |> List.wrap()
+      |> Enum.flat_map(&spellings(&1, spellings_fun))
+      |> Enum.map_join("\n    ", &rw_rule/1)
 
     # Genesis config/data dirs (e.g. `~/Library/Application Support/genesis`
     # on macOS — NOT under /tmp or the repo): the runtime reads and writes
     # config, credentials, state, and logs there.
     genesis_rw_rules =
       [spec.config_dir, spec.data_dir]
-      |> Enum.map_join("\n    ", fn path ->
-        ~s{(allow file-read* (subpath "#{path}"))\n    (allow file-write* (subpath "#{path}"))}
-      end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.flat_map(&spellings(&1, spellings_fun))
+      |> Enum.map_join("\n    ", &rw_rule/1)
 
     # Home reads: allow the whole home, then deny-read the sensitive dirs.
     # Deny rules take precedence over allow rules in SBPL, so the deny-read
@@ -287,7 +331,11 @@ defmodule EvoGit.Sandbox.MacOS do
 
     # The canonical credential list (`Spec.credential_paths/0`) plus the
     # macOS-only `Library/Keychains` entry, emitted immediately AFTER
-    # `.password-store`.
+    # `.password-store`. Each rule carries BOTH filters (`literal` +
+    # `subpath`): SBPL OR-combines a rule's filters, and `subpath` alone leaves
+    # a first-time-creation gap (e.g. `mkdir ~/.ssh`); see `credential_rule/2`.
+    # The resolved spelling follows the logical one when the home path has a
+    # symlinked component.
     sensitive_read_dirs =
       Enum.flat_map(spec.credential_paths, fn
         ".password-store" = dir -> [dir, @keychains_dir]
@@ -295,19 +343,22 @@ defmodule EvoGit.Sandbox.MacOS do
       end)
 
     sensitive_read_rules =
-      Enum.map_join(sensitive_read_dirs, "\n    ", fn dir ->
-        path = Path.join(spec.home, dir)
-        ~s{(deny file-read* (subpath "#{path}"))}
-      end)
+      sensitive_read_dirs
+      |> Enum.map(&Path.join(spec.home, &1))
+      |> Enum.flat_map(&spellings(&1, spellings_fun))
+      |> Enum.map_join("\n    ", &credential_rule("file-read*", &1))
 
     # System-level sensitive locations (defense in depth): under the
     # root-wide read allow these must be explicitly denied. Most are
     # root-only-readable anyway, but the deny list guarantees it even if
     # file permissions are relaxed. Both symlink spellings are covered
     # (/etc ↔ /private/etc and /var ↔ /private/var), mirroring the pattern
-    # of the home-based list.
+    # of the home-based list; these keep the subpath-only shape (no
+    # first-time-creation concern for root-owned system paths).
     system_sensitive_read_rules =
-      Enum.map_join(spec.deny_paths, "\n    ", fn path ->
+      spec.deny_paths
+      |> Enum.flat_map(&spellings(&1, spellings_fun))
+      |> Enum.map_join("\n    ", fn path ->
         ~s{(deny file-read* (subpath "#{path}"))}
       end)
 
@@ -316,6 +367,8 @@ defmodule EvoGit.Sandbox.MacOS do
     # design — key-based auth over SSH requires ssh-agent (`SSH_AUTH_SOCK`),
     # which never exposes key material to the sandboxed process. These are the
     # spec's read-only carveouts inside the otherwise denied `~/.ssh`.
+    # Single-spelling on purpose: the files, not the enclosing dirs, are the
+    # grant.
     ssh_literal_rules =
       Enum.map_join(spec.read_only_subpaths, "\n    ", fn path ->
         ~s{(allow file-read-data (literal "#{path}"))}
@@ -325,12 +378,15 @@ defmodule EvoGit.Sandbox.MacOS do
     # NOT under /tmp. The skills executor and other callers write temp files
     # (e.g. skill scripts) to `System.tmp_dir!()` BEFORE invoking the
     # sandbox; with default-deny those files must still be readable inside.
-    # Skipped when TMPDIR is unset (`spec.host_tmpdir` is `nil`).
-    host_tmpdir_rule =
-      case spec.host_tmpdir do
-        nil -> ""
-        dir -> ~s{(allow file-read* (subpath "#{dir}"))}
-      end
+    # Skipped when TMPDIR is unset (`spec.host_tmpdir` is `nil`); emitted for
+    # both spellings.
+    host_tmpdir_rules =
+      spec.host_tmpdir
+      |> List.wrap()
+      |> Enum.flat_map(&spellings(&1, spellings_fun))
+      |> Enum.map_join("\n    ", fn dir ->
+        ~s{(allow file-read* (subpath "#{dir}"))}
+      end)
 
     # stat/ls/glob on arbitrary paths (e.g. PATH probing) under default-deny.
     file_read_metadata_rule = "(allow file-read-metadata)"
@@ -342,22 +398,24 @@ defmodule EvoGit.Sandbox.MacOS do
     # agent workflows. User-configurable via `[sandbox] write_paths`, resolved
     # ONCE in the spec: nil (unset) → the built-in default cache-dir list; set
     # (even `[]`) → the user's list REPLACES the default cache-dir list (only
-    # these cache-dir write rules; every other profile group is untouched).
+    # these cache-dir rules; every other profile group is untouched).
     # Structural paths (cwd, tmp, nix, repo .git, genesis dirs) are always
     # granted elsewhere in the profile — they are not part of the
-    # user-configurable list.
+    # user-configurable list. Read+write pair per spelling, like the other
+    # structural groups.
     cache_rw_rules =
-      Enum.map_join(spec.cache_write_paths, "\n    ", fn path ->
-        ~s{(allow file-write* (subpath "#{path}"))}
-      end)
+      spec.cache_write_paths
+      |> Enum.flat_map(&spellings(&1, spellings_fun))
+      |> Enum.map_join("\n    ", &rw_rule/1)
 
     # Sensitive dirs: deny WRITE too (defense in depth — reads are already
     # blocked by the deny-read rules above). The canonical list, in canonical
-    # order, WITHOUT the macOS-only `Library/Keychains` entry.
+    # order, WITHOUT the macOS-only `Library/Keychains` entry, with the same
+    # literal+subpath pairing (and resolved spelling) as the read group.
     sensitive_write_rules =
-      Enum.map_join(spec.deny_write_paths, "\n    ", fn path ->
-        ~s{(deny file-write* (subpath "#{path}"))}
-      end)
+      spec.deny_write_paths
+      |> Enum.flat_map(&spellings(&1, spellings_fun))
+      |> Enum.map_join("\n    ", &credential_rule("file-write*", &1))
 
     # --- Assembly (order matters for readability; SBPL deny precedence is
     # what makes the deny-read list win over the root read allow) ---
@@ -381,8 +439,7 @@ defmodule EvoGit.Sandbox.MacOS do
 
     #{read_root_rules}
     #{nix_rules}
-    (allow file-read* (subpath "#{spec.cwd}"))
-    #{cwd_write_rules}
+    #{write_root_rules}
     #{git_rules}
     #{tmp_rules}
     #{task_tmpdir_rules}
@@ -391,12 +448,13 @@ defmodule EvoGit.Sandbox.MacOS do
     #{sensitive_read_rules}
     #{system_sensitive_read_rules}
     #{ssh_literal_rules}
-    #{host_tmpdir_rule}
+    #{host_tmpdir_rules}
     #{file_read_metadata_rule}
     #{cache_rw_rules}
     (allow file-write-data (literal "/dev/null"))
     (allow file-write-data (literal "/dev/dtracehelper"))
     #{sensitive_write_rules}
+    #{@fcntl_deny_rule}
     (limit number #{spec.max_processes})
     (allow process-exec)
     (allow process-fork)
@@ -412,17 +470,59 @@ defmodule EvoGit.Sandbox.MacOS do
     |> String.trim()
   end
 
-  # Removes the `(limit ...)` line from a generated SBPL profile, preserving
-  # the rest verbatim. Used by the fail-safe retry: if `sandbox-exec` on
-  # some macOS rejects the `(limit number N)` syntax, the whole profile
-  # would fail to parse and EVERY sandboxed command would break — stripping
-  # just that line keeps all other hardening intact (the process-count limit
-  # is the only thing lost).
-  defp strip_process_limit(profile) do
+  # One read+write allowance pair for a structural path (every group grants
+  # both: a sandboxed command reads back what it writes).
+  defp rw_rule(path) do
+    ~s{(allow file-read* (subpath "#{path}"))\n    (allow file-write* (subpath "#{path}"))}
+  end
+
+  # A credential carveout rule: BOTH path filters in ONE rule. SBPL
+  # OR-combines a rule's filters, so `literal` + `subpath` covers the path
+  # itself even when it does not exist yet (a bare `subpath` leaves the
+  # first-time-creation gap, e.g. `mkdir ~/.ssh`).
+  defp credential_rule(operation, path) do
+    ~s{(deny #{operation} (literal "#{path}") (subpath "#{path}"))}
+  end
+
+  # `:alias_fun` (test seam, default-inert): the 1-arity path → spellings
+  # function the renderer emits rules for. The production default is
+  # `EvoGit.Sandbox.Spec.aliases/1`.
+  defp alias_fun(opts) do
+    case Keyword.get(opts, :alias_fun) do
+      fun when is_function(fun, 1) -> fun
+      _other -> &Spec.aliases/1
+    end
+  end
+
+  # Every spelling `path` can be visible under, logical first. On Linux
+  # nothing resolves, so the rule set generated there is unchanged; on macOS a
+  # symlinked top-level component (`/tmp` → `/private/tmp`) adds the resolved
+  # spelling Seatbelt actually matches.
+  defp spellings(path, alias_fun) when is_binary(path) do
+    case alias_fun.(path) |> List.wrap() |> Enum.filter(&is_binary/1) |> Enum.uniq() do
+      [] -> [path]
+      paths -> paths
+    end
+  end
+
+  defp spellings(_path, _alias_fun), do: []
+
+  # Removes the UNVERIFIED rules — `(limit ...)` and the `system-fcntl` deny —
+  # from a generated SBPL profile, preserving the rest verbatim. Used by the
+  # fail-safe retry: if `sandbox-exec` on some macOS rejects either rule, the
+  # whole profile would fail to parse and EVERY sandboxed command would break
+  # — stripping just those lines keeps all other hardening intact (the
+  # process-count limit and the fcntl deny are the only things lost).
+  defp strip_unverified_rules(profile) do
     profile
     |> String.split("\n")
-    |> Enum.reject(&String.starts_with?(String.trim_leading(&1), "(limit "))
+    |> Enum.reject(&unverified_rule?/1)
     |> Enum.join("\n")
+  end
+
+  defp unverified_rule?(line) do
+    trimmed = String.trim_leading(line)
+    Enum.any?(@unverified_rule_prefixes, &String.starts_with?(trimmed, &1))
   end
 
   defp process_limit_rejected?,
@@ -438,12 +538,12 @@ defmodule EvoGit.Sandbox.MacOS do
     )
   end
 
-  # Fail-safe process-limit retry. On macOS where `(limit ...)` IS valid,
-  # the first attempt succeeds and this helper is never reached — zero
-  # overhead on healthy systems. On macOS where it is rejected, the FIRST
-  # sandboxed command pays one extra spawn: the failed attempt is retried
-  # once with the process-count limit stripped; on retry success the
-  # decision is cached in `:persistent_term` (warned about once), so
+  # Fail-safe retry for the UNVERIFIED rules. On macOS where `(limit ...)` and
+  # the `system-fcntl` deny ARE valid, the first attempt succeeds and this
+  # helper is never reached — zero overhead on healthy systems. On macOS where
+  # either is rejected, the FIRST sandboxed command pays one extra spawn: the
+  # failed attempt is retried once with both rules stripped; on retry success
+  # the decision is cached in `:persistent_term` (warned about once), so
   # subsequent calls skip straight to the stripped profile. If the retry
   # ALSO fails, the command genuinely failed — the retry result is the more
   # accurate one.
@@ -465,13 +565,14 @@ defmodule EvoGit.Sandbox.MacOS do
       # ran was already stripped) — return this attempt's result as-is.
       result
     else
-      case sandbox_exec(strip_process_limit(profile), exec, exec_args, cwd, tmpdir, git_env) do
+      case sandbox_exec(strip_unverified_rules(profile), exec, exec_args, cwd, tmpdir, git_env) do
         {retry_output, 0} ->
           :persistent_term.put(@process_limit_rejected_key, true)
 
           Logger.warning(
-            "sandbox-exec rejected the (limit ...) rule on this macOS; " <>
-              "running with the process-count limit disabled"
+            "sandbox-exec rejected this profile's unverified rules " <>
+              "((limit ...) and (deny system-fcntl ...)); running with the " <>
+              "process-count limit and the fcntl deny disabled"
           )
 
           {retry_output, 0}
@@ -491,7 +592,7 @@ defmodule EvoGit.Sandbox.MacOS do
 
   `opts` is the observability option list: `:execution_id` addresses the tracked
   record and `:record_exit_status` (default true) suppresses the terminal-fact
-  recording for a command that will be re-run (the process-limit retry uses it
+  recording for a command that will be re-run (the unverified-rule retry uses
   internally). Both paths spawn the child through a directly owned port (the
   enabled one via `sandbox-exec`) and attach a `:posix` handle carrying its real
   OS pid, so foreground executions are observable and controllable (macOS has
@@ -535,7 +636,7 @@ defmodule EvoGit.Sandbox.MacOS do
       # The cached decision (if any) is resolved BEFORE the first attempt so a
       # known-rejecting macOS skips the guaranteed-failing one; the retry keeps
       # within the SAME overall timeout budget.
-      profile = if process_limit_rejected?(), do: strip_process_limit(profile), else: profile
+      profile = if process_limit_rejected?(), do: strip_unverified_rules(profile), else: profile
 
       {exec, exec_args} =
         if Nix.active?() do
@@ -596,7 +697,7 @@ defmodule EvoGit.Sandbox.MacOS do
 
   # One `sandbox-exec -p <profile> -- <exec> <args>` attempt through the shared
   # port-based runner: real OS pid, tracked attach, tree kill on timeout.
-  # `record_exit_status: false` because the process-limit RETRY re-runs the
+  # `record_exit_status: false` because the unverified-rule RETRY re-runs the
   # command — only the attempt reported by `run_with_partial/7` is recorded.
   defp run_sandbox_exec(profile, exec, exec_args, cwd, env, opts, timeout) do
     Helpers.run_tracked_command(
@@ -611,7 +712,7 @@ defmodule EvoGit.Sandbox.MacOS do
   end
 
   # Records the FINAL attempt's terminal fact on the tracked execution (the
-  # process-limit retry means earlier attempts are not the execution's
+  # unverified-rule retry means earlier attempts are not the execution's
   # outcome). Best-effort via the shared helpers; returns `result` untouched.
   defp record_result(opts, result) do
     case result do
@@ -623,9 +724,9 @@ defmodule EvoGit.Sandbox.MacOS do
     result
   end
 
-  # Fail-safe process-limit retry for the `run_with_partial` path: the first
+  # Fail-safe unverified-rule retry for the `run_with_partial` path: the first
   # attempt already failed non-zero, so — unless another caller has ALREADY
-  # discovered the rejection — retry once with the `(limit ...)` rule stripped,
+  # discovered the rejection — retry once with both UNVERIFIED rules stripped,
   # inside whatever is LEFT of the original timeout budget. On success the
   # decision is cached in `:persistent_term` (warned about once).
   defp retry_without_process_limit(
@@ -648,7 +749,7 @@ defmodule EvoGit.Sandbox.MacOS do
       remaining = max(deadline - System.monotonic_time(:millisecond), 1)
 
       case run_sandbox_exec(
-             strip_process_limit(profile),
+             strip_unverified_rules(profile),
              exec,
              exec_args,
              cwd,
@@ -660,8 +761,9 @@ defmodule EvoGit.Sandbox.MacOS do
           :persistent_term.put(@process_limit_rejected_key, true)
 
           Logger.warning(
-            "sandbox-exec rejected the (limit ...) rule on this macOS; " <>
-              "running with the process-count limit disabled"
+            "sandbox-exec rejected this profile's unverified rules " <>
+              "((limit ...) and (deny system-fcntl ...)); running with the " <>
+              "process-count limit and the fcntl deny disabled"
           )
 
           {:ok, Helpers.read_tempfile(tmpfile, max_bytes), 0}
