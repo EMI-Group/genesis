@@ -630,6 +630,28 @@ defmodule EvoGit.Agent.ContextBuilder do
     end
   end
 
+  @doc """
+  Materializes ONE injected (mid-run) user message that a USER actually sent,
+  marking it `:user_authored => true` (see `EvoGit.Agent.MessageMarker`).
+
+  This is exactly `build_injected_message/2` plus the marker, and it is the
+  ONLY injected-message builder a user-send transport may use. The sibling
+  `build_injected_message/2` deliberately stamps NO marker: it is the neutral
+  builder every SYNTHETIC injection goes through (background-job notices,
+  merge-conflict notes, …), so the marker stays opt-in and can never leak onto
+  harness text.
+
+  `turn` behaves exactly as in `build_injected_message/2` (integer → turn tag +
+  creation timestamp; `nil` → raw untagged message); the marker merges into
+  whichever metadata results, so `:turn` and `:timestamp` survive.
+  """
+  @spec build_user_authored_message(String.t() | map(), integer() | nil) :: ReqLLM.Message.t()
+  def build_user_authored_message(message, turn) do
+    message
+    |> build_injected_message(turn)
+    |> EvoGit.Agent.MessageMarker.mark_user_authored()
+  end
+
   # --- Turn Tagging ---
 
   @doc """
