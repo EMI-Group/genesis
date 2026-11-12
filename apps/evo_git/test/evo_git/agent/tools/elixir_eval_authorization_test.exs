@@ -440,13 +440,16 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
     test "a live task-less interactive root session is authorized", ctx do
       baseline = ctx.fixture
       fixture = task_less_fixture(ctx)
-      assert fixture.task_id == nil
+      # A REAL `/assistant` registration mints a 16-hex task id in
+      # `start_session/1` while creating no `tasks` row, so the task id is a
+      # non-empty binary even though nothing is persisted for it.
+      assert is_binary(fixture.task_id) and fixture.task_id != ""
 
       handle = Fixture.call_async(fixture, fn -> Authorization.authorize() end)
       assert {:ok, context} = Fixture.await(handle)
 
       assert context.agent_id == fixture.agent_id
-      assert context.task_id == nil
+      assert context.task_id == fixture.task_id
       assert context.owner_pid == fixture.owner_pid
       assert context.tool_pid == handle.tool_pid
       assert context.registry == fixture.registry
@@ -454,19 +457,23 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
 
       assert [{id, meta}] = :ets.lookup(:evogit_sched_meta, fixture.agent_id)
       assert id == fixture.agent_id
-      assert meta.task_id == nil
+      assert meta.task_id == fixture.task_id
       assert meta.mode == :interactive
       assert meta.depth == 0
       assert meta.parent_id == nil
       assert meta.result_sent == false
       assert meta.status == :running
 
-      # No task row was written for the task-less session: the isolated Store
-      # still holds exactly the baseline fixture's `:reflect` row.
+      # No task row was written for the session: the isolated Store still holds
+      # exactly the baseline fixture's `:reflect` row, and the minted task id
+      # resolves to NOTHING — which is what sends this attempt down the
+      # row-absent interactive-root branch.
       assert Enum.map(Store.select_task_ids(fixture.store), & &1.id) == [baseline.task_id]
+      assert Store.get_task(fixture.store, fixture.task_id) == nil
 
-      # The tool process itself carries no task identity.
-      assert call(fixture, fn -> Process.get(:evogit_task_id) end) == nil
+      # The tool process carries the scheduler-minted task id, exactly like a
+      # real exchange worker's tool task (`request.task_id`, never a row).
+      assert call(fixture, fn -> Process.get(:evogit_task_id) end) == fixture.task_id
     end
 
     test "a task-less ONESHOT session is denied", ctx do
@@ -504,14 +511,14 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
       end
     end
 
-    test "a scheduler task id with no process task id cannot borrow the task-backed clause",
+    test "a scheduler task id that disagrees with the process task id cannot borrow the row",
          ctx do
       fixture = task_less_fixture(ctx)
       Fixture.update_meta(fixture, &%{&1 | task_id: "smuggled_task"})
 
       assert call(fixture, fn ->
                {Process.get(:evogit_task_id), Authorization.authorize()}
-             end) == {nil, @denied}
+             end) == {fixture.task_id, @denied}
     end
 
     test "a forged process task id without a task row is denied", ctx do
@@ -778,8 +785,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
   defp authorize(fixture), do: call(fixture, &Authorization.authorize/0)
   defp call(fixture, fun), do: fixture |> Fixture.call_async(fun) |> Fixture.await()
 
-  # The TASK-LESS INTERACTIVE ROOT shape of a `/assistant` conversation: no task
-  # row, no task id anywhere, `mode: :interactive` and
+  # The TASK-LESS INTERACTIVE ROOT shape of a `/assistant` conversation: a
+  # scheduler-minted NON-EMPTY task id in the fixture map, the `%SchedMeta{}` row
+  # and the process dictionary, NO `tasks` row, `mode: :interactive`, and
   # `spec.opts == [repo_less: true, session_mode: :interactive]`.
   defp task_less_fixture(ctx) do
     fixture = Fixture.start!(self(), ctx.store, ctx.registry, task: :none)
