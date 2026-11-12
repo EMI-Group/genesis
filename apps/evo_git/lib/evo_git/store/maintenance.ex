@@ -25,8 +25,9 @@ defmodule EvoGit.Store.Maintenance do
     * **Never interferes with writes.** `PRAGMA optimize` is issued on the
       pool (via `EvoGit.Store.RepoScope.with_repo/2`, so it targets the store's
       own instance from this process) — the store's writes stay serialized
-      through `EvoGit.Store.Writer`, and SQLite's `busy_timeout` (30 s)
-      absorbs a transient lock.
+      through `EvoGit.Store.Writer`, and the connection's `busy_timeout`
+      (30 s) absorbs a transient lock by waiting HERE, in this calling
+      process, without parking a VM thread.
     * **No `VACUUM` here, ever.** Vacuuming rewrites the whole file and needs
       exclusive access; it is an on-demand operation (`mix store.maintenance
       --vacuum`), never an automatic one.

@@ -57,7 +57,9 @@ defmodule EvoGit.Store.Boot do
   # serializes them (and hands each write to the single `EvoGit.Store.Writer`
   # process) — so extra connections cannot introduce write-write contention.
   # The 30 s `busy_timeout` (repo.ex) covers any transient lock window (e.g. a
-  # checkpoint). What the extra connections buy is READ parallelism: with a
+  # checkpoint): a statement that meets another connection's lock waits up to
+  # 30 s in its OWN calling process (the boot here), with no VM thread parked
+  # while it does. What the extra connections buy is READ parallelism: with a
   # single connection every offloaded read Task, inline handler, write and
   # migration queued on the SAME connection, so all store SQL serialized at the
   # connection level, not just at the GenServer. Measured head-of-line blocking

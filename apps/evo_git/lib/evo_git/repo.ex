@@ -42,6 +42,20 @@ defmodule EvoGit.Repo do
   `Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir())`
   joined with `"tasks.sqlite"`. The defaults below are merged with start-opts
   winning. No `:url` support — the database path is always resolved here.
+  ## Lock waiting (`busy_timeout`)
+  A statement that meets another connection's lock answers at once at the NIF
+  and then WAITS IN THE CALLING PROCESS, sleeping between attempts for as long
+  as the connection's `busy_timeout` allows.
+  `busy_timeout: 30_000` is still exactly the per-call wait budget: a blocked
+  write parks its own caller (up to 30 s) instead of holding a VM thread or a
+  dirty I/O thread, and the connection stays usable by other calls meanwhile.
+  A raw `XqliteNIF` call never waits — `Xqlite.retry_busy/3` is the wrapper
+  that does.
+  When the budget runs out the adapter raises
+  `%XqliteEcto3.Error{type: :database_busy}` (details = xqlite's map carrying
+  `code`, `retry`, `retries` and `elapsed_ms`); a SQLite TABLE lock answers
+  `:database_locked` and is never waited for, and `retry: :transaction` comes
+  back at once.
 
   ## Where the EFFECTIVE DBConnection budget lives (`start_opts/0`, not `defaults/0`)
 
@@ -148,7 +162,9 @@ defmodule EvoGit.Repo do
     * `journal_mode: :wal` — matches the raw `EvoGit.Store` connection setup
     * `synchronous: :normal` — WAL's recommended durability level
     * `busy_timeout: 30_000` — matches the store's 30 s call timeout budget
-      (the adapter default is only 5 s)
+      (the adapter default is only 5 s); it is the per-call wait budget for a
+      locked database, waited in the CALLING process (no VM thread held while
+      it waits)
     * `pool_size: 2` — FALLBACK only: every store boot passes its own size
       (`EvoGit.Store.Boot.default_pool_size/0`), and without this key Ecto's
       `@defaults` `pool_size: 10` would apply to a bare `start_link/1`

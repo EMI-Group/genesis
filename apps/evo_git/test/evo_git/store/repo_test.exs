@@ -26,7 +26,10 @@ defmodule EvoGit.Store.RepoTest do
     * committed rows survive `Boot.stop/1` → `start_dynamic/1` on the same path
     * two dynamic instances on distinct paths coexist with independent data
     * the connection PRAGMAs reflect the `EvoGit.Repo` defaults
-      (`journal_mode: :wal`, `synchronous: :normal`, `busy_timeout: 30_000`)
+      (`journal_mode: :wal`, `synchronous: :normal`, `busy_timeout: 30_000`);
+      the busy wait is asserted through `Xqlite.get_busy_timeout/1` on the
+      connection handle, because `PRAGMA busy_timeout` read in SQL answers `0`
+      on every connection
 
   Raw introspection runs through `Repo.query!/3` inside `RepoScope.with_repo/2`;
   every result is the `Ecto.Adapters.SQL.Result` shape —
@@ -556,7 +559,9 @@ defmodule EvoGit.Store.RepoTest do
     # `Boot.start_dynamic/1` pins pool_size: 1 — a single connection — so the
     # per-connection pragmas below are deterministic. Values are what the
     # `EvoGit.Repo` defaults configure (repo.ex): journal_mode :wal,
-    # synchronous :normal, busy_timeout 30_000.
+    # synchronous :normal, busy_timeout 30_000. The busy wait lives in the
+    # connection's busy slot, so it is read through `Xqlite.get_busy_timeout/1`
+    # on the handle — a `PRAGMA busy_timeout` query answers `0`.
     test "journal_mode is wal (database-persistent)" do
       pid = start_repo!(:pragma_journal)
 
@@ -572,7 +577,19 @@ defmodule EvoGit.Store.RepoTest do
     test "busy_timeout is 30000 ms" do
       pid = start_repo!(:pragma_busy)
 
-      assert query_rows(pid, "PRAGMA busy_timeout") == [[30_000]]
+      # A statement that meets another connection's lock waits this long, in
+      # the CALLING process; SQLite answers the SQL read-back with `0`.
+      assert query_rows(pid, "PRAGMA busy_timeout") == [[0]]
+      assert busy_timeout(pid) == 30_000
     end
+  end
+
+  # The busy wait the connection keeps, read through the adapter's sanctioned
+  # raw-connection checkout: `PRAGMA busy_timeout` read as SQL reports `0`,
+  # while `Xqlite.get_busy_timeout/1` answers the wait itself.
+  defp busy_timeout(pid) do
+    {:ok, ms} = XqliteEcto3.with_xqlite(pid, fn conn -> Xqlite.get_busy_timeout(conn) end)
+
+    ms
   end
 end
