@@ -10,6 +10,7 @@ defmodule EvoDashWeb.HomeLive.Messages do
   is owned by the `:evo_git` core).
   """
 
+  alias EvoDashWeb.HomeLive.DisplayMessages
   alias EvoDashWeb.HomeLive.Transcript
 
   @doc """
@@ -83,15 +84,16 @@ defmodule EvoDashWeb.HomeLive.Messages do
 
   @doc """
   Builds BOTH halves of the chat surface from one history payload: the
-  thought-process `entries` (`to_entries/1`) and the transcript
-  (`EvoDashWeb.HomeLive.Transcript`) that belongs to them.
+  thought-process `entries` (`to_entries/1`) and the display transcript
+  (`EvoDashWeb.HomeLive.Transcript`) the user sees.
 
-  The transcript holds one `:user` entry per non-empty `data.content` of ANY
-  entry (the reflect assistant echoes the sent objective, so the history's
-  content entries ARE the conversation as the user saw it), followed by ONE
-  `:assistant` entry carrying `assistant_text/1` when that is non-empty. This
-  is the ONE shared builder behind the mount/attach seed and the history
-  refresh path, so both produce the same transcript.
+  The transcript is the ORDERED display projection of the conversation — one
+  `:user` bubble per USER-AUTHORED turn and one `:assistant` bubble per
+  assistant reply, in chronological order — computed by
+  `EvoDashWeb.HomeLive.DisplayMessages.bubbles/1`. The harness's system prompt,
+  the `<context>` block, runtime notices, compression checkpoints and tool
+  results never reach it (the agent's LLM context is not a chat log). This is
+  the ONE shared builder behind the attach seed and the watch snapshot.
 
   An empty/non-list payload yields `%{transcript: [], entries: []}`. Total.
   """
@@ -99,33 +101,15 @@ defmodule EvoDashWeb.HomeLive.Messages do
   def transcript(messages) do
     entries = to_entries(messages)
 
-    %{transcript: build_transcript(entries, assistant_text(messages)), entries: entries}
-  end
-
-  defp build_transcript(entries, text) do
     transcript =
-      entries
-      |> Enum.map(&entry_text/1)
-      |> Enum.reject(&(&1 == ""))
-      |> Enum.reduce(Transcript.new(), fn entry_text, acc ->
-        Transcript.append(acc, Transcript.entry(:user, entry_text))
+      messages
+      |> DisplayMessages.bubbles()
+      |> Enum.reduce(Transcript.new(), fn {role, text}, acc ->
+        Transcript.append(acc, Transcript.entry(role, text))
       end)
 
-    if text == "" do
-      transcript
-    else
-      Transcript.append(transcript, Transcript.entry(:assistant, text))
-    end
+    %{transcript: transcript, entries: entries}
   end
-
-  defp entry_text(entry) when is_map(entry) do
-    case Map.get(entry, :data) do
-      %{content: content} when is_binary(content) -> content
-      _other -> ""
-    end
-  end
-
-  defp entry_text(_entry), do: ""
 
   defp assistant_message?(message) when is_map(message) do
     role = Map.get(message, :role)
