@@ -490,6 +490,29 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
   alias EvoDashWeb.HomeLive.ApprovalWorkflow
   import EvoDashWeb.HomeLive.ApprovalWorkflowTest.Helpers
 
+  # Stands in for a scheduler-MINTED task id (`AgentScheduler.task_id_for_agent/1`
+  # via `SchedMeta.task_id`): a repo-less interactive `/assistant` session never
+  # writes a `tasks` row, so no approval gate may depend on task-store
+  # membership, a task-list read or a non-nil task ref.
+  @task_less_task_id "4f2a9c7e1b3d5a60"
+
+  defp task_less_socket(overrides \\ %{}) do
+    socket(Map.merge(%{chat_task_id: @task_less_task_id, chat_agent_id: 1001}, overrides))
+  end
+
+  defp task_less_request(overrides \\ %{}) do
+    Map.merge(
+      request(%{
+        request_id: "eval-less",
+        task_id: @task_less_task_id,
+        agent_id: "1001",
+        code: "EvoGit.Config.resolve()",
+        warning: nil
+      }),
+      Map.new(overrides)
+    )
+  end
+
   setup do
     for key <- [:approval_pending_runner, :approval_responder] do
       previous = Application.fetch_env(:evo_dash, key)
@@ -685,5 +708,158 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
     socket = ApprovalWorkflow.responded(socket, tag, result)
     assert socket.assigns.pending_approvals == []
     refute ApprovalWorkflow.busy?(socket.assigns, "request-1")
+  end
+
+  # The dashboard half of a WRITE/SUDO `elixir_eval` request from a repo-less
+  # interactive `/assistant` session: the request's task id is scheduler-MINTED
+  # and owns no `tasks` row, so ownership, recovery and response all key on the
+  # chat node plus that minted id OR the session agent id alone.
+  describe "task-less interactive assistant sessions" do
+    test "owns a write or sudo request by the minted task id or the agent id alone" do
+      socket = task_less_socket()
+
+      write = task_less_request()
+      assert ApprovalWorkflow.own_request?(socket.assigns, write)
+
+      # Attach has not landed (or the agent summary carries no task_id): the
+      # session agent id is the whole scope, with or without a stamped task id.
+      agent_only = socket(%{chat_task_id: nil, chat_agent_id: 1001})
+      assert ApprovalWorkflow.own_request?(agent_only.assigns, task_less_request(task_id: nil))
+      assert ApprovalWorkflow.own_request?(agent_only.assigns, task_less_request())
+
+      # The sudo tier is the same identity; its warning rides the request.
+      sudo =
+        task_less_request(
+          request_id: "eval-sudo",
+          tier: :sudo,
+          warning: "Unrestricted Elixir in the live runtime"
+        )
+
+      assert ApprovalWorkflow.own_request?(socket.assigns, sudo)
+
+      # Another session's agent id with no matching task id is never owned.
+      refute ApprovalWorkflow.own_request?(
+               socket.assigns,
+               task_less_request(task_id: nil, agent_id: "2002")
+             )
+    end
+
+    test "requested/2 records the card and leaves the dialog view state to the page" do
+      request =
+        task_less_request(tier: :sudo, warning: "Unrestricted Elixir in the live runtime")
+
+      socket = ApprovalWorkflow.requested(task_less_socket(), request)
+
+      assert socket.assigns.pending_approvals == [request]
+      # `approval_dialog_open` / `approval_dialog_index` are HomeLive's view
+      # state; the workflow must never invent (or open) them.
+      refute Map.has_key?(socket.assigns, :approval_dialog_open)
+      refute Map.has_key?(socket.assigns, :approval_dialog_index)
+    end
+
+    test "recovery needs no task row, works from the agent id alone, and drops foreign snapshots" do
+      owner = self()
+      request = task_less_request()
+
+      Application.put_env(:evo_dash, :approval_pending_runner, fn source ->
+        send(owner, {:task_less_pending, self(), source})
+        [request]
+      end)
+
+      # Minted task id only (no agent ref) — the rebuilt-from-URL shape.
+      socket =
+        ApprovalWorkflow.recover(socket(%{chat_task_id: @task_less_task_id, chat_agent_id: nil}))
+
+      seq = socket.assigns.approval_recovery_seq
+      assert_receive {:task_less_pending, worker, :source@host}, 2_000
+      refute worker == self()
+
+      assert_receive {{:approval_pending_loaded, ^seq, _} = tag, {:ok, [^request]} = result},
+                     2_000
+
+      assert ApprovalWorkflow.recovered(socket, tag, result).assigns.pending_approvals == [
+               request
+             ]
+
+      # Agent id only (the attach-has-not-landed / summary-carries-no-task_id
+      # shape) recovers the very same pending request.
+      Application.put_env(:evo_dash, :approval_pending_runner, fn _ -> [request] end)
+      socket = ApprovalWorkflow.recover(socket(%{chat_task_id: nil, chat_agent_id: 1001}))
+      seq = socket.assigns.approval_recovery_seq
+
+      assert_receive {{:approval_pending_loaded, ^seq, _} = tag, {:ok, [^request]} = result},
+                     2_000
+
+      assert ApprovalWorkflow.recovered(socket, tag, result).assigns.pending_approvals == [
+               request
+             ]
+
+      # A snapshot holding only a foreign request leaves the strip empty.
+      Application.put_env(:evo_dash, :approval_pending_runner, fn _ ->
+        [task_less_request(request_id: "foreign", task_id: "unrelated", agent_id: "2002")]
+      end)
+
+      socket = ApprovalWorkflow.recover(task_less_socket())
+      seq = socket.assigns.approval_recovery_seq
+      assert_receive {{:approval_pending_loaded, ^seq, _} = tag, {:ok, [_]} = result}, 2_000
+      assert ApprovalWorkflow.recovered(socket, tag, result).assigns.pending_approvals == []
+    end
+
+    test "respond/3 routes approve and deny to the chat node and clears on success or not_found" do
+      owner = self()
+
+      Application.put_env(:evo_dash, :approval_responder, fn source, id, decision ->
+        send(owner, {:task_less_response, self(), source, id, decision})
+
+        receive do
+          {:respond, result} -> result
+        after
+          5_000 -> flunk("task-less responder was not released")
+        end
+      end)
+
+      for {id, decision, result} <- [
+            {"eval-less", "approve", :ok},
+            {"eval-denied", "deny", {:error, :not_found}}
+          ] do
+        request = task_less_request(request_id: id)
+        socket = ApprovalWorkflow.requested(task_less_socket(), request)
+
+        socket = ApprovalWorkflow.respond(socket, id, decision)
+        assert ApprovalWorkflow.busy?(socket.assigns, id)
+
+        assert_receive {:task_less_response, worker, :source@host, ^id, ^decision}, 2_000
+        refute worker == self()
+        monitor = Process.monitor(worker)
+        send(worker, {:respond, result})
+
+        assert_receive {{:approval_workflow_response, _seq, _, ^id} = tag, envelope}, 2_000
+        assert envelope == {:ok, result}
+        assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, 2_000
+
+        socket = ApprovalWorkflow.responded(socket, tag, envelope)
+        assert socket.assigns.pending_approvals == []
+        refute ApprovalWorkflow.busy?(socket.assigns, id)
+        assert socket.assigns.approval_error == nil
+      end
+    end
+
+    test "a foreign request is ignored by broadcasts, recovery and respond/3" do
+      foreign = task_less_request(request_id: "foreign", task_id: "unrelated", agent_id: "2002")
+      socket = task_less_socket()
+
+      assert ApprovalWorkflow.requested(socket, foreign) == socket
+      assert ApprovalWorkflow.respond(socket, "foreign", "approve") == socket
+      refute ApprovalWorkflow.busy?(socket.assigns, "foreign")
+
+      Application.put_env(:evo_dash, :approval_pending_runner, fn _ -> [foreign] end)
+      socket = ApprovalWorkflow.recover(socket)
+      seq = socket.assigns.approval_recovery_seq
+
+      assert_receive {{:approval_pending_loaded, ^seq, _} = tag, {:ok, [^foreign]} = result},
+                     2_000
+
+      assert ApprovalWorkflow.recovered(socket, tag, result).assigns.pending_approvals == []
+    end
   end
 end

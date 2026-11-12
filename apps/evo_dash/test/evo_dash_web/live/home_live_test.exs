@@ -2834,6 +2834,17 @@ defmodule EvoDashWeb.HomeLiveTest do
     )
   end
 
+  # A repo-less interactive `/assistant` session owns NO `tasks` row: the
+  # scheduler MINTS its task id (`SchedMeta.task_id` via
+  # `AgentScheduler.task_id_for_agent/1`) and the session agent id is the only
+  # identity the dashboard always has. Approval gates must key on those alone,
+  # so this fixture deliberately references a task nothing ever inserted.
+  @task_less_task_id "4f2a9c7e1b3d5a60"
+
+  defp task_less_eval_request(overrides \\ %{}) do
+    eval_request(Map.merge(%{task_id: @task_less_task_id, agent_id: "1001"}, Map.new(overrides)))
+  end
+
   defp approval_button(id, decision) do
     ~s(button[phx-click="approval_response"][phx-value-request_id="#{id}"][phx-value-decision="#{decision}"])
   end
@@ -3843,6 +3854,170 @@ defmodule EvoDashWeb.HomeLiveTest do
         %{tag: "genesis-approval"},
         @async_wait_budget_ms
       )
+    end
+
+    # A task-LESS interactive session (the repo-less `/assistant` root) has a
+    # scheduler-MINTED task id that owns no `tasks` row. Everything the user
+    # sees must therefore come from the broadcast + `pending/0` snapshot, keyed
+    # on the chat node plus that minted id OR the session agent id.
+    test "a task-less interactive session surfaces, notifies and answers a live request", %{
+      conn: conn
+    } do
+      install_blocking_approval_responder()
+
+      # Nothing in the isolated store owns this minted id: no task row exists to
+      # read, list or gate on.
+      refute match?(%{status: _}, EvoGit.TaskRegistry.get_task_lite(@task_less_task_id))
+
+      {:ok, view, _html} = live(conn, "/assistant")
+
+      seed_chat_state(view, %{
+        chat_status: :awaiting_input,
+        chat_task_id: @task_less_task_id,
+        chat_agent_id: 1001,
+        chat_node: node()
+      })
+
+      request = task_less_eval_request()
+      html = send_and_render(view, {:approval_requested, request})
+
+      # The strip counts it, the dialog opens on its own, and the browser
+      # notification fires — the same treatment a task-backed request gets.
+      assert [%{request_id: "eval-1"}] = assigns(view).pending_approvals
+      assert approval_strip_count(html) == "1"
+      assert html =~ "Genesis is waiting for your approval"
+      assert dialog_open?(html)
+      assert present?(html, approval_button("eval-1", "approve"))
+
+      assert html |> Floki.parse_document!() |> Floki.find("pre code") |> Floki.text() ==
+               request.code
+
+      assert_push_event(
+        view,
+        "task_notification",
+        %{tag: "genesis-approval"},
+        @async_wait_budget_ms
+      )
+
+      # Approve travels to the responder with (chat node, request id, decision).
+      view |> element(approval_button("eval-1", "approve")) |> render_click()
+
+      assert_receive {:approval_response_called, worker, source, "eval-1", "approve"},
+                     @async_wait_budget_ms
+
+      assert source == node()
+      refute worker == view.pid
+      assert [%{request_id: "eval-1"}] = assigns(view).pending_approvals
+      assert dialog_open?(render(view))
+
+      # The core's own resolution (stamped with the SOURCE node) settles the
+      # card even while the response is still in flight.
+      html = send_and_render(view, {:approval_resolved, "eval-1", :approve, node()})
+
+      assert assigns(view).pending_approvals == []
+      assert assigns(view).approval_dialog_open == false
+      assert assigns(view).approval_dialog_index == 0
+      assert approval_strip_count(html) == ""
+      refute dialog_open?(html)
+
+      # A late success cannot resurrect the resolved card or raise an error.
+      monitor = Process.monitor(worker)
+      send(worker, {:respond, :ok})
+      assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, @async_wait_budget_ms
+      html = render(view)
+      assert assigns(view).pending_approvals == []
+      assert assigns(view).approval_error == nil
+      refute dialog_open?(html)
+    end
+
+    test "a task-less session never renders or notifies for another agent's request", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, "/assistant")
+
+      seed_chat_state(view, %{
+        chat_status: :awaiting_input,
+        chat_task_id: @task_less_task_id,
+        chat_agent_id: 1001,
+        chat_node: node()
+      })
+
+      # Another agent (no task ref at all), another minted task id, and a
+      # foreign source node: each is somebody else's decision.
+      for request <- [
+            task_less_eval_request(%{request_id: "other-agent", task_id: nil, agent_id: "2002"}),
+            task_less_eval_request(%{
+              request_id: "other-task",
+              task_id: "01f0b2c3",
+              agent_id: nil
+            }),
+            task_less_eval_request(%{request_id: "other-node", node: :foreign@node})
+          ] do
+        html = send_and_render(view, {:approval_requested, request})
+
+        assert assigns(view).pending_approvals == []
+        assert assigns(view).approval_dialog_open == false
+        assert approval_strip_count(html) == ""
+        refute dialog_open?(html)
+        refute html =~ "Genesis is waiting for your approval"
+        refute_push_event(view, "task_notification", %{tag: "genesis-approval"}, 50)
+      end
+    end
+
+    test "a task-less session recovers its pending request on mount without a task row", %{
+      conn: conn
+    } do
+      test_pid = self()
+      request = task_less_eval_request()
+
+      Application.put_env(:evo_dash, :approval_pending_runner, fn source ->
+        send(test_pid, {:task_less_snapshot, self(), source})
+        [request]
+      end)
+
+      chat_id = EvoDash.ChatHistory.new_chat()
+
+      EvoDash.ChatHistory.put_state(
+        chat_id,
+        EvoDashWeb.HomeLive.ChatState.build(%{
+          chat_status: :awaiting_input,
+          chat_task_status: :running,
+          chat_task_id: @task_less_task_id,
+          chat_agent_id: 1001,
+          chat_node: node()
+        })
+      )
+
+      refute match?(%{status: _}, EvoGit.TaskRegistry.get_task_lite(@task_less_task_id))
+
+      {:ok, view, _html} = live(conn, "/assistant")
+
+      assert_receive {:task_less_snapshot, worker, source}, @async_wait_budget_ms
+      refute worker == view.pid
+      assert source == node()
+      assert assigns(view).chat_id == chat_id
+
+      wait_until(fn -> length(assigns(view)[:pending_approvals]) == 1 end)
+      html = render(view)
+
+      assert [%{request_id: "eval-1"}] = assigns(view).pending_approvals
+      assert approval_strip_count(html) == "1"
+
+      # A recovery snapshot never auto-opens or notifies; Review opens it and
+      # the exact code is there.
+      assert assigns(view).approval_dialog_open == false
+      refute dialog_open?(html)
+      refute_push_event(view, "task_notification", %{tag: "genesis-approval"}, 50)
+
+      html =
+        view
+        |> element(~s(#approval-status-bar button[phx-click="open_approval_dialog"]))
+        |> render_click()
+
+      assert dialog_open?(html)
+
+      assert html |> Floki.parse_document!() |> Floki.find("pre code") |> Floki.text() ==
+               request.code
     end
   end
 
