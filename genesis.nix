@@ -33,7 +33,7 @@ let
   mixFodDeps = beamPackages.fetchMixDeps {
     pname = "mix-deps-${pname}";
     inherit src version;
-    hash = "sha256-f/J+vGBK+343lYS8EB+JDE1rtlWBa2mjNH1iTxncJZA=";
+    hash = "sha256-kXfKjM4unD+v4zn+GDv74sSikFISTW9BzyT/6pPMIu4=";
   };
 
   # ── Platform mapping ──────────────────────────────────────────────
@@ -100,18 +100,18 @@ let
       };
     }
 
-    # ── xqlite 0.12.2 ───────────────────────────────────────────═
+    # ── xqlite 0.16.0 ───────────────────────────────────────────═
     # Note: this package lives under dimitarvp/xqlite, not leandrocp/xqlite.
     # The library prefix is "libxqlitenif" (no underscore between xqlite and
     # nif) and its ABI suffix is nif-2.17 (versus mdex's nif-2.15).
     {
-      prefix = "libxqlitenif-v0.12.2-nif-2.17";
-      urlPrefix = "https://github.com/dimitarvp/xqlite/releases/download/v0.12.2";
+      prefix = "libxqlitenif-v0.16.0-nif-2.17";
+      urlPrefix = "https://github.com/dimitarvp/xqlite/releases/download/v0.16.0";
       hashes = {
-        x86_64-unknown-linux-gnu = "sha256-Aa/gE2ekBGq3ysMLxK47rT9yAmjLgqqPDZio5d0YSlw=";
-        aarch64-unknown-linux-gnu = "sha256-2XcuavYzf8TZZUndnVz2LPDhIXgmfWUn8tBdcWGsmJc=";
-        x86_64-apple-darwin = "sha256-3Z9uEz1tHPS1JKOQwmmt/0i/DG0LfdDfea2GMXFKMgM=";
-        aarch64-apple-darwin = "sha256-R7Px6hSEa31pCqvDqRGb4CcdVolh+mqoqwTpM/MeZvs=";
+        x86_64-unknown-linux-gnu = "sha256-rPX5FEPivUolHBKz3RkRasiiSMKmLl+pR5cDfZ0AVT8=";
+        aarch64-unknown-linux-gnu = "sha256-HELHtVz3fiBAQxejsaz4+VydrQr9WBB0o8IEsbg6GiI=";
+        x86_64-apple-darwin = "sha256-u9enDeEXY99vHMwTiF5TnI2grPfu6AYkulNJQfPCW5c=";
+        aarch64-apple-darwin = "sha256-cuLJElie6zny89+X88qyxh82uu9ffD7q3P1OzC8nCIw=";
       };
     }
   ];
