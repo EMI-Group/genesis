@@ -5311,6 +5311,15 @@ defmodule EvoDashWeb.HomeLiveTest do
     end)
   end
 
+  # One assistant message in the shape `NodeContext.get_agent_history/2` and the
+  # watch snapshot return.
+  defp history_assistant_message(text) do
+    %ReqLLM.Message{
+      role: :assistant,
+      content: [%ReqLLM.Message.ContentPart{type: :text, text: text}]
+    }
+  end
+
   # Polls until the parked session-attach answer landed (its summary task id is
   # the attach's observable marker), so a later status assertion cannot be
   # overwritten by a late attach.
@@ -5595,6 +5604,167 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert is_pid(pid)
       assert assigns(view).chat_stream == nil
       assert assigns(view).session_id == nil
+    end
+
+    test "a text → tool_call → text → turn turn renders ONE assistant bubble", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_111
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      await_stream_seeded(view, 7)
+
+      broadcast_delta(session_id, 8, [{:text, "first"}, {:tool_call, "c1", "bash"}])
+      wait_until(fn -> Enum.any?(assigns(view).transcript, &(&1.role == :tool)) end)
+
+      broadcast_delta(session_id, 9, [{:text, " second"}, {:tool_result, "c1", :ok}])
+      wait_until(fn -> assigns(view).chat_stream.delta.seq == 9 end)
+
+      broadcast_delta(session_id, 10, [{:turn, %{turn: 1, total_tokens: 5, duration_ms: 10}}])
+      wait_until(fn -> assigns(view).chat_stream.delta.seq == 10 end)
+
+      transcript = assigns(view).transcript
+
+      assert [%{role: :assistant, text: "first second", streaming: false}] =
+               Enum.filter(transcript, &(&1.role == :assistant))
+
+      assert [tool] = Enum.filter(transcript, &(&1.role == :tool))
+      assert tool.tool_call_id == "c1"
+      assert tool.tool_status == :ok
+      # The text after the tool call landed in the SAME bubble, never in a
+      # second one and never in an empty one.
+      refute Enum.any?(transcript, &(&1.role == :assistant and &1.text == ""))
+
+      assert render(view) =~ "first second"
+    end
+
+    test "a thinking-only turn leaves no empty assistant bubble", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_112
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      await_stream_seeded(view, 7)
+
+      broadcast_delta(session_id, 8, [{:thinking, "pondering"}, {:turn, %{turn: 1}}])
+
+      wait_until(fn ->
+        assigns(view).chat_stream.delta.seq == 8 and
+          inspect(assigns(view).thought_process) =~ "pondering"
+      end)
+
+      refute Enum.any?(assigns(view).transcript, &(&1.role == :assistant))
+      assert inspect(assigns(view).thought_process) =~ "pondering"
+    end
+
+    test "chat_stream_ready preserves an in-flight streaming bubble", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_113
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      # A PARKED watcher registration: the snapshot lands only when this test
+      # releases it, so the in-flight bubble is seeded before the snapshot's
+      # `{:chat_stream_ready, …}` can arrive.
+      install_session_seam(:home_agent_watch_runner, fn _node, agent_id, _watcher ->
+        send(test_pid, {:watch_pending, self()})
+
+        receive do
+          :release -> snapshot_answer(7, [history_assistant_message("from history")]).(agent_id)
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+
+      assert_receive {:watch_pending, watch_pid}, 5_000
+      await_attach_settled(view, session_id)
+
+      seed_chat_state(view, %{
+        transcript: [
+          %{id: "1", role: :user, text: "hello", streaming: false},
+          %{id: "2", role: :assistant, text: "in-flight reply", streaming: true}
+        ]
+      })
+
+      send(watch_pid, :release)
+
+      await_stream_seeded(view, 7)
+      wait_until(fn -> is_map(assigns(view).chat_stream_meta) end)
+
+      a = assigns(view)
+      # The in-flight reply survives: the snapshot never rebuilds over it...
+      assert Enum.any?(a.transcript, &(&1.text == "in-flight reply"))
+      refute Enum.any?(a.transcript, &(&1.text == "from history"))
+      # ...while the delta baseline and the message-count gate are seeded.
+      assert a.chat_stream.delta.seq == 7
+      assert a.agent_message_count == 1
+    end
+
+    test "a finished delta with no streamed text fetches the final reply once", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_114
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      await_attach_settled(view, session_id)
+      await_stream_seeded(view, 7)
+
+      install_session_seam(:home_agent_history_runner, fn _node, _agent_id ->
+        send(test_pid, :history_fetched)
+        [history_assistant_message("final reply from history")]
+      end)
+
+      # NO text before the finish: the final attempt's chunks were suppressed.
+      broadcast_delta(session_id, 8, [{:finished, :completed}])
+
+      assert_receive :history_fetched, 5_000
+
+      wait_until(fn ->
+        Enum.any?(assigns(view).transcript, &(&1.text == "final reply from history"))
+      end)
+
+      reply = Enum.find(assigns(view).transcript, &(&1.text == "final reply from history"))
+      assert reply.role == :assistant
+      assert reply.streaming == false
+      assert assigns(view).chat_status == :ended
+
+      # EXACTLY one reconciliation — never a fetch loop.
+      refute_receive :history_fetched, 300
+    end
+
+    test "streamed text suppresses the finished refresh", %{conn: conn} do
+      test_pid = self()
+      session_id = 7_115
+      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
+      await_stream_seeded(view, 7)
+
+      install_session_seam(:home_agent_history_runner, fn _node, _agent_id ->
+        send(test_pid, :history_fetched)
+        []
+      end)
+
+      broadcast_delta(session_id, 8, [{:text, "streamed"}])
+      wait_until(fn -> Enum.any?(assigns(view).transcript, &(&1.text == "streamed")) end)
+
+      broadcast_delta(session_id, 9, [{:turn, %{turn: 1}}])
+      wait_until(fn -> assigns(view).chat_stream.delta.seq == 9 end)
+
+      broadcast_delta(session_id, 10, [{:finished, :completed}])
+      wait_until(fn -> assigns(view).chat_status == :ended end)
+
+      refute_receive :history_fetched, 300
+
+      assert [%{role: :assistant, text: "streamed", streaming: false}] =
+               Enum.filter(assigns(view).transcript, &(&1.role == :assistant))
     end
   end
 

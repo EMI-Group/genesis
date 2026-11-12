@@ -205,6 +205,36 @@ defmodule EvoDashWeb.HomeLive.Transcript do
   end
 
   @doc """
+  Closes the last streaming entry: an EMPTY one is DROPPED, a non-empty one is
+  finalized (`streaming: false`, text untouched).
+
+  Used at every turn/terminal boundary of the delta stream, where an empty
+  placeholder (the pulsing-dots state opened by a send) must disappear rather
+  than settle into a blank bubble. A transcript with no streaming entry is
+  returned unchanged (normalized). Total.
+  """
+  @spec close_streaming(t) :: t
+  def close_streaming(transcript) do
+    entries = normalize(transcript)
+
+    case last_streaming_index(entries) do
+      nil ->
+        entries
+
+      index ->
+        case Enum.at(entries, index) do
+          %{text: ""} ->
+            List.delete_at(entries, index)
+
+          _entry ->
+            entries
+            |> List.update_at(index, &Map.put(&1, :streaming, false))
+            |> cap_entries()
+        end
+    end
+  end
+
+  @doc """
   Builds a non-streaming `:tool` entry for one tool invocation.
 
   `:tool_name` is `nil` for a non-binary name, `:turn` is `nil` for a

@@ -272,6 +272,43 @@ defmodule EvoDashWeb.HomeLive.TranscriptTest do
     end
   end
 
+  describe "close_streaming/1" do
+    test "finalizes a non-empty streaming entry, text untouched" do
+      transcript = [
+        Transcript.entry(:assistant, "done"),
+        Transcript.entry(:assistant, "live", streaming: true)
+      ]
+
+      assert [%{text: "done", streaming: false}, %{text: "live", streaming: false}] =
+               Transcript.close_streaming(transcript)
+    end
+
+    test "removes an EMPTY streaming entry instead of finalizing it" do
+      transcript = [
+        Transcript.entry(:user, "hi"),
+        Transcript.entry(:assistant, "", streaming: true)
+      ]
+
+      assert [%{role: :user, text: "hi", streaming: false}] =
+               Transcript.close_streaming(transcript)
+
+      # The pulsing-dots placeholder a send opens disappears entirely.
+      assert Transcript.close_streaming(Transcript.put_streaming_text([], "")) == []
+    end
+
+    test "a transcript with no streaming entry comes back normalized and unchanged" do
+      transcript = [%{id: "a", role: :user, text: "hi", streaming: false}]
+
+      assert Transcript.close_streaming(transcript) == transcript
+    end
+
+    test "it is total on junk input" do
+      for input <- [nil, :junk, "str", %{}, 42] do
+        assert Transcript.close_streaming(input) == []
+      end
+    end
+  end
+
   describe "tool entries" do
     test "tool_entry/4 builds a non-streaming :tool entry with its call fields" do
       entry = Transcript.tool_entry("bash", "c1", :running, 2)

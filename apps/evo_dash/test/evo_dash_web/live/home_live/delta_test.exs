@@ -148,18 +148,74 @@ defmodule EvoDashWeb.HomeLive.DeltaTest do
   end
 
   describe "tool deltas" do
-    test "a tool_call finalizes the streaming bubble and appends a running tool row" do
-      %{transcript: transcript} = run([{:text, "partial "}, {:tool_call, "c1", "bash"}])
+    test "a tool_call keeps the streaming bubble open and appends a running tool row" do
+      %{transcript: transcript} =
+        run([
+          {:text, "partial "},
+          {:tool_call, "c1", "bash"},
+          {:text, "more"},
+          {:tool_result, "c1", :ok}
+        ])
 
-      assert [%{role: :assistant, text: "partial ", streaming: false}, tool] = transcript
+      # ONE bubble per turn: the text after the tool call accumulates into the
+      # same assistant entry, which never holds empty text.
+      assert [assistant, tool] = transcript
+      assert assistant.role == :assistant
+      assert assistant.text == "partial more"
+      assert assistant.text != ""
+      assert assistant.streaming == true
+
       assert tool.role == :tool
       assert tool.text == ""
       assert tool.streaming == false
       assert tool.tool_name == "bash"
       assert tool.tool_call_id == "c1"
-      assert tool.tool_status == :running
+      assert tool.tool_status == :ok
       assert tool.turn == 0
       assert is_binary(tool.id)
+    end
+
+    test "a turn closes that single bubble and the next text opens a fresh one" do
+      %{transcript: transcript} =
+        run([
+          {:text, "partial "},
+          {:tool_call, "c1", "bash"},
+          {:text, "more"},
+          {:tool_result, "c1", :ok}
+        ])
+
+      %{transcript: transcript} = run([{:turn, %{turn: 1}}], stream(transcript))
+
+      assert Enum.filter(transcript, &(&1.role == :assistant)) ==
+               [Enum.find(transcript, &(&1.role == :assistant and &1.text == "partial more"))]
+
+      %{transcript: transcript} = run([{:text, "next"}], stream(transcript))
+
+      # Exactly TWO assistant entries: the closed turn and the new streaming one.
+      assert [
+               %{text: "partial more", streaming: false},
+               %{text: "next", streaming: true}
+             ] = Enum.filter(transcript, &(&1.role == :assistant))
+    end
+
+    test "a thinking-only segment drops the empty placeholder instead of finalizing it" do
+      state = stream(Transcript.put_streaming_text([], ""))
+
+      %{transcript: transcript, thought_process: thought_process} =
+        run([{:thinking, "hmm"}, {:turn, %{turn: 1}}], state)
+
+      refute Enum.any?(transcript, &(&1.role == :assistant))
+      assert [entry] = thought_process
+      assert [%{text: "hmm"}] = entry.data.reasoning_details
+    end
+
+    test "an empty placeholder is dropped on finished and on a text-less yield" do
+      for event <- [{:finished, :completed}, {:yield, ""}, {:yield, nil}] do
+        %{transcript: transcript} = run([event], stream(Transcript.put_streaming_text([], "")))
+
+        refute Enum.any?(transcript, &(&1.role == :assistant)),
+               "expected no assistant entry for #{inspect(event)}"
+      end
     end
 
     test "a tool_result by call id updates that exact row" do
@@ -273,6 +329,34 @@ defmodule EvoDashWeb.HomeLive.DeltaTest do
     test "the LAST outcome in a batch wins" do
       assert run([{:yield, "a"}, {:finished, :completed}]).outcome == {:finished, :completed}
       assert run([{:finished, :failed}, {:yield, "b"}]).outcome == :yield
+    end
+  end
+
+  describe "streamed_text?/1" do
+    test "false for a fresh delta, thinking-only and junk input" do
+      refute Delta.streamed_text?(Delta.new(1, node(), 0))
+
+      %{delta: delta} = run([{:thinking, "hmm"}])
+      refute Delta.streamed_text?(delta)
+
+      # Total on anything that is not a delta.
+      for junk <- [nil, :junk, %{}, "delta"] do
+        refute Delta.streamed_text?(junk)
+      end
+    end
+
+    test "true once text streamed in the open turn" do
+      %{delta: delta} = run([{:text, "a"}])
+
+      assert Delta.streamed_text?(delta)
+    end
+
+    test "a closed turn keeps the flag, and a later text-less turn clears it" do
+      %{delta: delta} = run([{:text, "a"}, {:turn, %{turn: 1}}])
+      assert Delta.streamed_text?(delta)
+
+      %{delta: delta} = run([{:text, "a"}, {:turn, %{turn: 1}}, {:turn, %{turn: 2}}])
+      refute Delta.streamed_text?(delta)
     end
   end
 

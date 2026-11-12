@@ -1026,7 +1026,16 @@ defmodule EvoDashWeb.HomeLive do
     else
       case result do
         msgs when is_list(msgs) ->
-          {:noreply, socket |> apply_history(msgs, false) |> ChatState.persist()}
+          socket = socket |> apply_history(msgs, false) |> ChatState.persist()
+
+          # No writer is left once the session stopped, so a reply that just
+          # landed from history must not stay rendered as still streaming.
+          socket =
+            if socket.assigns[:chat_status] in [:ended, :idle],
+              do: finalize_bubble(socket),
+              else: socket
+
+          {:noreply, socket}
 
         _ ->
           {:noreply, socket}
@@ -1186,6 +1195,7 @@ defmodule EvoDashWeb.HomeLive do
             |> maybe_assign_changed(:thought_process, thought_process, prev_thought_process)
             |> maybe_assign_changed(:chat_stream_meta, meta, prev_meta)
             |> fold_stream_outcome(outcome)
+            |> maybe_refresh_finished_turn(outcome, delta)
             |> ChatState.persist()
 
           {:noreply, socket}
@@ -1210,13 +1220,26 @@ defmodule EvoDashWeb.HomeLive do
       case Watch.snapshot_result(result, agent_id, node) do
         {:ok, %{snapshot: snapshot, delta: delta, meta: meta}} ->
           socket =
-            socket
-            |> apply_history(snapshot.messages, true)
-            |> assign(
-              chat_stream: %{agent_id: agent_id, node: node, delta: delta},
-              chat_stream_meta: meta
-            )
-            |> ChatState.persist()
+            if in_flight_streaming?(socket.assigns[:transcript]) do
+              # A reply is still streaming into the transcript, so rebuilding it
+              # from the snapshot would DISCARD that in-flight text: only the
+              # delta baseline (and its message count) is refreshed here.
+              socket
+              |> assign(
+                chat_stream: %{agent_id: agent_id, node: node, delta: delta},
+                chat_stream_meta: meta,
+                agent_message_count: snapshot_message_count(snapshot, socket)
+              )
+              |> ChatState.persist()
+            else
+              socket
+              |> apply_history(snapshot.messages, true)
+              |> assign(
+                chat_stream: %{agent_id: agent_id, node: node, delta: delta},
+                chat_stream_meta: meta
+              )
+              |> ChatState.persist()
+            end
 
           {:noreply, socket}
 
@@ -1237,6 +1260,37 @@ defmodule EvoDashWeb.HomeLive do
   # the transcript column jitter on every ~75 ms delta batch.
   defp maybe_assign_changed(socket, _key, new_value, new_value), do: socket
   defp maybe_assign_changed(socket, key, new_value, _previous), do: assign(socket, key, new_value)
+
+  # Whether the transcript still carries an in-flight (streaming) assistant
+  # bubble — the local answer that a snapshot must NOT rebuild over.
+  defp in_flight_streaming?(transcript) do
+    is_list(transcript) and
+      Enum.any?(transcript, fn entry ->
+        is_map(entry) and Map.get(entry, :role) == :assistant and
+          Map.get(entry, :streaming) == true
+      end)
+  end
+
+  # The attach snapshot's message count (the `:agent_message_count` gate), or
+  # the current value when the payload carries no message list.
+  defp snapshot_message_count(%{messages: messages}, _current) when is_list(messages),
+    do: length(messages)
+
+  defp snapshot_message_count(_snapshot, current), do: current
+
+  # The deltas of a FINAL attempt can be suppressed: the core gates text and
+  # thinking chunks on the watcher count at the START of an LLM attempt, so a
+  # short closing turn may finish with nothing streamed. A finish with no
+  # streamed text therefore reconciles ONCE from the core's own history.
+  defp maybe_refresh_finished_turn(socket, {:finished, _status}, delta) do
+    if socket.assigns[:chat_agent_id] != nil and Delta.streamed_text?(delta) == false do
+      async_fetch_history(socket, socket.assigns[:chat_node])
+    else
+      socket
+    end
+  end
+
+  defp maybe_refresh_finished_turn(socket, _outcome, _delta), do: socket
 
   # The outcome a delta batch reported: a yield parks the session (idle, waiting
   # for input), a finish ends it, and anything else terminal-looking fails it.
@@ -1294,9 +1348,12 @@ defmodule EvoDashWeb.HomeLive do
     seq = socket.assigns[:chat_fetch_seq] + 1
     pid = self()
 
+    runner =
+      Application.get_env(:evo_dash, :home_agent_history_runner, &NodeContext.get_agent_history/2)
+
     Task.Supervisor.start_child(TaskSupervisor, fn ->
       result =
-        SafeCall.run(fn -> NodeContext.get_agent_history(node, agent_id) end, [])
+        SafeCall.run(fn -> runner.(node, agent_id) end, [])
 
       send(pid, {:chat_history_loaded, node, seq, agent_id, result})
     end)
@@ -1359,9 +1416,10 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   # The terminal half of an interactive session: the in-flight assistant bubble
-  # is finalized so it never stays stuck "streaming" with no writer left.
+  # is CLOSED (an empty placeholder is dropped) so it never stays stuck
+  # "streaming" with no writer left.
   defp finalize_bubble(socket) do
-    assign(socket, transcript: Transcript.finalize_streaming(socket.assigns[:transcript]))
+    assign(socket, transcript: Transcript.close_streaming(socket.assigns[:transcript]))
   end
 
   defp one_shot_task_event(socket, status) do

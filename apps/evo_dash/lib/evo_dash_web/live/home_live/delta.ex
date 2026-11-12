@@ -9,19 +9,26 @@ defmodule EvoDashWeb.HomeLive.Delta do
   surface at once:
 
     * `{:text, chunk}` — appended to the last streaming assistant bubble
-      (`EvoDashWeb.HomeLive.Transcript.append_streaming_text/2`);
+      (`EvoDashWeb.HomeLive.Transcript.append_streaming_text/2`) and recorded as
+      this turn's streamed text;
     * `{:thinking, chunk}` — accumulated in `thinking` and mirrored into ONE
       upserted thought-process entry for the current turn (the bubble text
       excludes reasoning by design, see
       `EvoDashWeb.HomeLive.Messages.message_text/1`);
-    * `{:tool_call, id, name}` — the streaming bubble is finalized and a
-      `:tool` transcript entry appears (`:running`);
+    * `{:tool_call, id, name}` — a `:tool` transcript entry appears (`:running`)
+      while the streaming bubble stays OPEN, so text arriving after a tool call
+      keeps accumulating into the SAME bubble (one bubble per turn);
     * `{:tool_result, id, status}` — that entry's status is updated;
     * `{:turn, info}` — turn meta/token accounting is recorded, the bubble is
-      finalized and the thinking bucket starts over;
+      CLOSED (`EvoDashWeb.HomeLive.Transcript.close_streaming/1`, which drops a
+      bubble that never received text), the thinking bucket starts over and the
+      streamed-text flag moves to the closed turn;
     * `{:yield, text}` / `{:finished, status}` — the authoritative text is
-      finalized and the batch reports `outcome` so the page can stop the
-      stream and reconcile with the terminal task status.
+      finalized / the bubble closed, and the batch reports `outcome` so the page
+      can stop the stream and reconcile with the terminal task status.
+
+  A turn therefore renders exactly ONE assistant bubble, closed only at a turn
+  or terminal boundary, and a thinking/tool-only turn renders NO bubble at all.
 
   Everything here is PURE and TOTAL: no processes, no ETS, no side effects,
   and an unknown/malformed event (or a malformed batch) is ignored instead of
@@ -47,10 +54,18 @@ defmodule EvoDashWeb.HomeLive.Delta do
           node: atom() | nil,
           seq: non_neg_integer(),
           turn: non_neg_integer(),
-          thinking: String.t()
+          thinking: String.t(),
+          text_in_turn: boolean(),
+          text_in_closed_turn: boolean()
         }
 
-  defstruct agent_id: nil, node: nil, seq: 0, turn: 0, thinking: ""
+  defstruct agent_id: nil,
+            node: nil,
+            seq: 0,
+            turn: 0,
+            thinking: "",
+            text_in_turn: false,
+            text_in_closed_turn: false
 
   @doc """
   Builds the stream state for one agent on one node.
@@ -101,6 +116,22 @@ defmodule EvoDashWeb.HomeLive.Delta do
   def meta, do: %{turn: nil, total_tokens: nil, duration_ms: nil, usage: nil}
 
   @doc """
+  Whether this stream has produced assistant TEXT for the open turn, or for the
+  turn that was closed last.
+
+  The page uses it on `{:finished, status}`: the core gates `{:text, chunk}` /
+  `{:thinking, chunk}` on the number of watchers at the START of an LLM attempt,
+  so a session whose final attempt began before the page attached finishes with
+  no streamed text at all and needs ONE history reconciliation. Total: a
+  non-struct answers `false`.
+  """
+  @spec streamed_text?(term()) :: boolean()
+  def streamed_text?(%__MODULE__{text_in_turn: in_turn, text_in_closed_turn: in_closed_turn}),
+    do: in_turn == true or in_closed_turn == true
+
+  def streamed_text?(_delta), do: false
+
+  @doc """
   Folds one coalesced delta batch (a list of events, or a single event) into
   the chat surface.
 
@@ -143,7 +174,11 @@ defmodule EvoDashWeb.HomeLive.Delta do
   # --- events ---
 
   defp apply_event({:text, chunk}, acc) when is_binary(chunk) and chunk != "" do
-    %{acc | transcript: Transcript.append_streaming_text(acc.transcript, chunk)}
+    %{
+      acc
+      | delta: %{acc.delta | text_in_turn: true},
+        transcript: Transcript.append_streaming_text(acc.transcript, chunk)
+    }
   end
 
   defp apply_event({:thinking, chunk}, acc) when is_binary(chunk) and chunk != "" do
@@ -157,10 +192,12 @@ defmodule EvoDashWeb.HomeLive.Delta do
     }
   end
 
+  # The bubble stays OPEN here: text arriving after a tool call belongs to the
+  # SAME turn and keeps accumulating into it (one bubble per turn).
   defp apply_event({:tool_call, id, name}, acc) do
     entry = Transcript.tool_entry(name, id, :running, acc.delta.turn)
 
-    %{acc | transcript: Transcript.append(Transcript.finalize_streaming(acc.transcript), entry)}
+    %{acc | transcript: Transcript.append(acc.transcript, entry)}
   end
 
   defp apply_event({:tool_result, id, status}, acc) do
@@ -174,14 +211,16 @@ defmodule EvoDashWeb.HomeLive.Delta do
     delta = %{
       acc.delta
       | turn: turn_number(info, acc.delta.turn),
-        thinking: ""
+        thinking: "",
+        text_in_closed_turn: acc.delta.text_in_turn == true,
+        text_in_turn: false
     }
 
     %{
       acc
       | delta: delta,
         meta: update_meta(acc.meta, info),
-        transcript: Transcript.finalize_streaming(acc.transcript)
+        transcript: Transcript.close_streaming(acc.transcript)
     }
   end
 
@@ -190,7 +229,7 @@ defmodule EvoDashWeb.HomeLive.Delta do
       if is_binary(text) and text != "" do
         Transcript.finalize_assistant(acc.transcript, text)
       else
-        Transcript.finalize_streaming(acc.transcript)
+        Transcript.close_streaming(acc.transcript)
       end
 
     %{acc | transcript: transcript, outcome: :yield}
@@ -199,7 +238,7 @@ defmodule EvoDashWeb.HomeLive.Delta do
   defp apply_event({:finished, status}, acc) do
     %{
       acc
-      | transcript: Transcript.finalize_streaming(acc.transcript),
+      | transcript: Transcript.close_streaming(acc.transcript),
         outcome: {:finished, status}
     }
   end
