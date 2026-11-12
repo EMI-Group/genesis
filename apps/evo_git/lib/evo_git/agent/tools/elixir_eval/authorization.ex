@@ -231,9 +231,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
 
   defp valid_interactive_root_agent?(_, _, _), do: false
 
-  # Task-less admission, for the dashboard `/assistant` interactive root session
-  # described above: an owning `:reflect` task row is required only when the
-  # session HAS a task id, so this predicate carries the whole identity check.
+  # Nil-task-id admission, for an interactive root session whose driver supplies
+  # no task id at all, so no task lookup is even possible and this predicate
+  # carries the whole identity check.
   # Everything is required — a depth-zero, parent-less root whose result was not
   # sent, in `:interactive` mode with no task id, owned by this session pid, in
   # an admitted status, running the repo-less SelfReflective agent on the primary
