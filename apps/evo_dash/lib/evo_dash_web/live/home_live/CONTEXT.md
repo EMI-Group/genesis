@@ -111,10 +111,13 @@ There is no polling: the section refreshes on the broadcast debounce and after t
 
 ## Approvals
 
-With chat id = agent id, `chat_agent_id` is the session agent id and `chat_task_id` is the agent summary's `task_id`, set on adoption AND on reattach.
+With chat id = agent id, `chat_agent_id` is the session agent id and `chat_task_id` is the agent summary's `task_id`, set on adoption AND on reattach (it may legitimately stay `nil` when the summary carries none).
 `ApprovalWorkflow.init/1` + re-recovery run on every session switch (mount, reattach, adoption, new chat, session close), so a previous session's requests never render.
 `ApprovalWorkflow` filters on `Map.take(assigns, [:chat_id, :current_node_id, :current_node, :chat_node, :chat_task_id, :chat_agent_id])`.
 Pending requests are recovered from the core (`EvoGit.CommandApproval.pending/0`) rather than persisted; approval state stays ephemeral and outside `ChatState`.
+Approval surfacing for an interactive `/assistant` session matches a request by `agent_id` OR the scheduler-MINTED `task_id` and requires NO `tasks` row: a repo-less session's task id comes from `SchedMeta` and is never persisted as a task.
+A task-less session is recovered via `EvoGit.CommandApproval.pending/0` → `NodeContext.call_remote/4` and answered via `NodeContext.approval_response/3`; the recovery, auto-open and notification gates key on `chat_node` plus those ids only (`scoped?/1` accepts a usable `chat_agent_id` alone).
+Nothing in this path reads a `tasks` row, the task list or task-store membership, so a summary without `task_id`, a minted id with no row, and a task-backed one behave identically.
 
 `EvoDashWeb.HomeLive.ApprovalDialog` owns BOTH approval surfaces and is purely presentational — every decision still travels through `ApprovalWorkflow` as the request id plus a whitelisted `"approve"` / `"deny"`.
 `approval_bar/1` renders `#approval-status-bar`, a FIXED-HEIGHT (`h-10 shrink-0`) strip directly above the composer whose height is reserved whether or not anything is pending, so an arrival or a resolution never reflows the transcript column.
