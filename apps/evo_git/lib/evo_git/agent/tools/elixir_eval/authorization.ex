@@ -6,9 +6,12 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
   The context always names the ORIGINAL tool and assistant owner. Trusted broker
   and guardian processes may revalidate that context, but must never replace its
   identities with their own; Broker.start requires the original tool as caller.
-  The owning reflective task row is required only when the session carries a
-  task id; a task-less interactive root session is admitted by its scheduler
-  identity shape alone.
+  A session that carries a task id is admitted by ONE of two shapes, decided by
+  the task registry: a PRESENT owning `:reflect` task row must pass the
+  task-backed identity checks, while an ABSENT row admits only the dashboard
+  `/assistant` interactive root session, whose task id is minted by
+  `EvoGit.AgentScheduler.start_session/1` and therefore owns no task at all.
+  A session with no task id is admitted by its scheduler identity shape alone.
   """
 
   alias EvoGit.Agent.Tools.ElixirEval.Ancestry
@@ -79,10 +82,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
            true <- is_pid(Process.whereis(EvoGit.AgentScheduler)),
            [{^id, %SchedMeta{id: ^id} = meta}] <- :ets.lookup(:evogit_sched_meta, id),
            true <- valid_state?(id),
-           true <- valid_agent?(meta, owner, task_id),
-           %{id: ^task_id, type: :reflect, status: task_status} <-
-             GenServer.call(registry, {:get_task_lite, task_id}, @timeout),
-           true <- task_status in @accepted_agent_task_statuses,
+           true <- valid_owner_shape?(meta, owner, task_id, registry),
            true <- Process.alive?(owner) and Process.alive?(tool),
            [{^id, ^meta}] <- :ets.lookup(:evogit_sched_meta, id),
            true <- valid_state?(id) do
@@ -97,11 +97,10 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
     end
   end
 
-  # Dashboard `/assistant` conversations are started as INTERACTIVE ROOT
-  # SESSIONS with no `:task_id` (`EvoDashWeb.HomeLive` → `start_session/1`), so
-  # they own no `:reflect` task row and there is nothing to look up in the task
-  # registry. Admit exactly that shape, and no looser one: the checks below stay
-  # as strict as the task-backed clause (same process ancestry/liveness, same
+  # A session that carries NO task id at all (a driver that supplies none) owns no
+  # `:reflect` task row, so there is nothing to look up in the task registry.
+  # Admit exactly the interactive root shape, and no looser one: the checks below
+  # stay as strict as the task-backed clause (same process ancestry/liveness, same
   # single SchedMeta row, same primary/nil-parent/no-foreign-repos summary state
   # with no cancellation flag), while `valid_task_less_agent?/2` pins the spec
   # to a depth-zero, parent-less, repo-less SelfReflective root in `:interactive`
@@ -169,6 +168,68 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
   end
 
   defp valid_agent?(_, _, _), do: false
+
+  # Which admission applies is decided by the owning task ROW, read exactly once
+  # per attempt with the one-second deadline (never the full task payload).
+  # A row that is PRESENT must be the owning `:reflect` task in an admitted
+  # status AND satisfy the task-backed identity checks, so an interactive session
+  # whose (minted or supplied) task id really has a row can never take the
+  # row-absent branch and skip them. A row that is genuinely ABSENT admits only
+  # the dashboard `/assistant` interactive root shape, because
+  # `start_session/1` mints a task id for every session while the dashboard
+  # creates no `tasks` row at all. Any other answer denies.
+  defp valid_owner_shape?(meta, owner, task_id, registry) do
+    case GenServer.call(registry, {:get_task_lite, task_id}, @timeout) do
+      %{id: ^task_id, type: :reflect, status: status} ->
+        status in @accepted_agent_task_statuses and valid_agent?(meta, owner, task_id)
+
+      nil ->
+        valid_interactive_root_agent?(meta, owner, task_id)
+
+      _ ->
+        false
+    end
+  end
+
+  # Row-absent admission, for the dashboard `/assistant` interactive root session
+  # whose scheduler-minted task id owns no `tasks` row. The task id is NOT nil, so
+  # the minted identity must agree with the SchedMeta row exactly. Everything is
+  # required — a depth-zero, parent-less root whose result was not sent, in
+  # `:interactive` mode, owned by this session pid, in an admitted status, running
+  # the repo-less SelfReflective agent on the primary repo with no foreign repo,
+  # phylo node or custom-agent identity — and the forwarded opts must agree
+  # (repo-less, interactive, NO `:task_id` key at all, no foreign or custom
+  # identity), so a forged or half-migrated row cannot borrow this branch.
+  defp valid_interactive_root_agent?(
+         %SchedMeta{
+           depth: 0,
+           parent_id: nil,
+           result_sent: false,
+           mode: :interactive,
+           task_id: task_id,
+           session_pid: owner,
+           status: status,
+           spec: %AgentSpec{
+             agent_module: EvoGit.Agents.SelfReflective,
+             repo_id: "primary",
+             foreign_repos: [],
+             phylo_node: nil,
+             opts: opts
+           }
+         },
+         owner,
+         task_id
+       )
+       when is_binary(task_id) and task_id != "" and status in @accepted_agent_statuses and
+              is_list(opts) do
+    Keyword.keyword?(opts) and Keyword.get(opts, :repo_less) == true and
+      Keyword.get(opts, :session_mode) == :interactive and
+      not Keyword.has_key?(opts, :task_id) and
+      Keyword.get(opts, :foreign_repos, []) == [] and
+      Keyword.get(opts, :custom_agent_id) == nil and Keyword.get(opts, :agent) == nil
+  end
+
+  defp valid_interactive_root_agent?(_, _, _), do: false
 
   # Task-less admission, for the dashboard `/assistant` interactive root session
   # described above: an owning `:reflect` task row is required only when the
