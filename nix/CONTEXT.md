@@ -40,8 +40,21 @@ The run is isolated (temp `HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_RUNTI
 - `mixFodDeps` covers Hex deps only, so a NIF bump needs BOTH the `mixFodDeps.hash` refresh AND the `precompiled_nifs` entry update; verify each separately with `nix-store --realise <fod.drv>` on the drvs referenced by `nix eval --raw .#default.drvPath` (`.#desktop.drvPath` must evaluate too). A green `nix build .#default` is the end-to-end proof of both — the build sandbox has no network, so it also proves the seeded cache still satisfies `rustler_precompiled` at the new version.
 - Scripts in this directory are designed to run inside the `nix develop` shell where `curl`, `git`, and `rg` are available.
 - `bundle-vendor.sh` is only needed for the manual `nix develop` → `mix release` workflow. The `nix build` path handles vendor binaries via the derivation's `postInstall` hook.
+- `bundle-vendor.sh` and CI's `Bundle vendor binaries` step stay in parity on ripgrep `15.2.0` (musl target on Linux for a static binary) and both copy the host `git` binary; unlike CI, the script does NOT verify a `sha256`, so a corrupted download is copied silently.
 - `desktop-smoke.sh` is wrapped by `writeShellApplication`, which runs `shellcheck` at build time — the script must stay shellcheck-clean (and it relies on the wrapper's `set -o errexit -o nounset -o pipefail`).
 - Keep the smoke test out of `checks` and out of CI, and never make `desktop-smoke.sh` build anything: it consumes `$GENESIS_DESKTOP_APP` (an already-built `packages.desktop`) only.
+
+## Rust Binaries & New Native Payloads
+
+- The dev shell (`flake.nix` `devShells.default`) provides `cargo`/`rustc`/`rustfmt`/`clippy`; `nix/` itself contains no build logic.
+- The ONLY Rust build in Nix is `tauriBinary = rustPlatform.buildRustPackage` in `../genesis-desktop.nix`, with `src = src + "/desktop/src-tauri"` and `cargoLock.lockFile = ./desktop/src-tauri/Cargo.lock`.
+- `desktop/src-tauri` is the only in-repo Rust crate (`**/Cargo.toml` elsewhere are vendored `deps/` NIF crates).
+- A NEW standalone crate is built by its own `rustPlatform.buildRustPackage` (`src = src + "/<crate-dir>"`, `cargoLock.lockFile = ./<crate-dir>/Cargo.lock`, no `cargoHash`) and must be imported into `flake.nix` (or passed as an argument to `genesis.nix`/`genesis-desktop.nix`).
+- The vendor destination is `$out/lib/evo_git-${version}/priv/vendor/${vendorPlatform}` (`genesis.nix` `postInstall`), shared by BOTH `mixReleaseName` variants, so a payload copied there reaches the runtime through `Application.app_dir(:evo_git, "priv/vendor/<platform>")`.
+- `EvoGit.Executable.resolve/1` maps a bare name to `priv/vendor/<platform>/<name>` (`<name>.exe` on Windows; `git` → `mingit/cmd/git.exe`), so that directory is the drop-in spot for any new bundled external binary — system PATH still wins.
+- `packages.default` builds the `genesis` release only; the headless `genesis_server` release is CI-built and has NO flake package, so a new bundled binary also needs the `Bundle vendor binaries`-style step in `.github/workflows/build-desktop.yml`.
+- Tauri-side payloads ride `bundle.resources = ["resources/genesis-backend"]`; there is NO `externalBin`/sidecar declaration, so a binary that must sit beside the Tauri exe has to be reachable under the `resources/genesis-backend/…` symlink (populate it inside the release) rather than added to `externalBin`.
+- Gotcha: the `postBuild` `chmod -R u+w` in `genesis-desktop.nix` hardcodes `target/x86_64-unknown-linux-gnu/release/resources`; aarch64 relies on the non-fatal `target/release/resources` fallback, so a new resource under a non-x86_64 layout needs that fallback to hold.
 
 ## See Also
 
