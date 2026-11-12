@@ -17,7 +17,7 @@ Related integration suites include `reflect_tools_test.exs` and the parent tool-
 ## API Surface
 | File / modules | Contract |
 |---|---|
-| `authorization.ex` / `Authorization` | `authorize/0,1`, `assistant_owner?/0`, `revalidate/1` bind permission to the original assistant owner and tool process, admitting both the task-backed `:reflect` shape and the task-less interactive `/assistant` root shape; `accepted_agent_statuses/0` and `accepted_agent_task_statuses/0` are the single definitions of the admitted status sets. |
+| `authorization.ex` / `Authorization` | `authorize/0,1`, `assistant_owner?/0`, `revalidate/1` bind permission to the original assistant owner and tool process, admitting the task-backed `:reflect` shape and the interactive `/assistant` root shape whose scheduler-minted task id owns no `tasks` row; `accepted_agent_statuses/0` and `accepted_agent_task_statuses/0` are the single definitions of the admitted status sets. |
 | `ancestry.ex` / `Ancestry` | `includes?/2` and `broker/1` inspect bounded local Task/proc_lib ancestry. |
 | `engine.ex` / `Engine` | `run(code, tier, context, limits)` returns `{:ok, binary}` or `{:error, binary}`; `max_code_bytes/0` exposes the engine ceiling. |
 | `worker_tree.ex` / `WorkerTree` | `run(context, tier, limits, fun)` creates a guardian, authorized broker and independently owned traced evaluation subtree, with bounded execution, cleanup and caller waits. |
@@ -36,10 +36,12 @@ Related integration suites include `reflect_tools_test.exs` and the parent tool-
 Authorization ignores tool-task role flags and captures `agent_id`, `task_id`, `owner_pid`, original `tool_pid`, current `target_node` and the call-time TaskRegistry server.
 `authorize/1` requires the original tool to descend from the owner, and `revalidate/1` preserves those original identities even when called by trusted guardian/broker processes.
 Internal target selection accepts nil/current/local spellings or the exact current node name; no remote target or input-derived node atom is created.
-The owning `:reflect` task row and its `{:get_task_lite, id}` lookup are required ONLY when the session carries a task id; that row must be a live `:reflect` task (`:running`, or `:awaiting_input` for an idle interactive session) fetched under a one-second deadline.
-A task-less `/assistant` dashboard conversation is admitted as an interactive root session instead, with no task lookup at all: both original processes must be alive and local, the scheduler registered, and the SchedMeta/spec/summary shape below must hold exactly.
+The owning `:reflect` task row decides which admission applies: `{:get_task_lite, id}` is read exactly once per attempt under the one-second deadline.
+A PRESENT row must be a live `:reflect` task (`:running`, or `:awaiting_input` for an idle interactive session) matching the captured id, and it then requires the full task-backed identity checks, so a session whose task id really has a row never takes the row-absent branch.
+An ABSENT row (`nil`) admits only the `/assistant` interactive root session that `EvoGit.AgentScheduler.start_session/1` registers with a scheduler-MINTED task id and no `tasks` row at all: both original processes must be alive and local, the scheduler registered, and the SchedMeta/spec/summary shape below must hold exactly.
 SchedMeta must describe a depth-zero, nil-parent, unsent-result SelfReflective agent (session pid equal to the owner) in `:running`, `:blocked` or `:awaiting_input`, whose spec is on `"primary"`, repo-less, `session_mode: :interactive` and free of foreign repos, phylo node and custom-agent identity.
-A task-backed session's task-id option must equal the captured task id, while a task-less session requires a nil SchedMeta task id and `task_id: nil` in its opts.
+That minted task id must equal the captured SchedMeta task id, the SchedMeta mode must be `:interactive`, and the spec opts must carry NO `:task_id` key at all, while a task-backed session instead requires its task-id option to equal the captured task id.
+A session carrying no task id is admitted only by the nil-`task_id` interactive root shape, which requires a nil SchedMeta task id and a nil task-id option.
 `accepted_agent_statuses/0` (`[:running, :blocked, :awaiting_input]`) and `accepted_agent_task_statuses/0` (`[:running, :awaiting_input]`) are the only status sets this gate consults; `:blocked` is agent-side only and never a task status.
 An idle `:awaiting_input` interactive session admits evaluation exactly like a running one, because its session process, worktree and transcript are alive and its agent status is non-terminal.
 A projected ETS AgentState check requires primary/nil-parent/no-foreign-repos state and cancellation false or nil, without copying conversation or generation parameters.
