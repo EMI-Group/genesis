@@ -2,6 +2,12 @@ defmodule EvoGit.Sandbox.MacOS do
   @moduledoc """
   macOS sandbox backend using `sandbox-exec`.
 
+  This module is a pure RENDERER: every root, deny list, cache dir and git
+  metadata/tmp path comes from ONE `EvoGit.Sandbox.Spec` built by
+  `EvoGit.Sandbox.Spec.build(:macos, cwd: cwd, repo_root: repo_root)`; the
+  only macOS-specific policy left here is the extra `Library/Keychains`
+  deny-read entry and the SBPL syntax itself.
+
   Filesystem policy: WRITES are deny-by-default with an explicit allow list
   (the repo worktree (cwd + `.git`), tmp paths, genesis config/data dirs,
   and build caches); READS are allow-by-default at the ROOT —
@@ -25,8 +31,8 @@ defmodule EvoGit.Sandbox.MacOS do
   package-manager/toolchain cache dirs, with deny-write rules for sensitive
   dirs as defense in depth.
 
-  Also enforces a process-count limit (`(limit number N)`, see
-  `@max_processes`) and keeps network default-allowed (agents run
+  Also enforces a process-count limit (`(limit number N)`, the spec's
+  `:max_processes`) and keeps network default-allowed (agents run
   `git fetch/push`, `mix deps.get`, `curl`, and web tools). If the host's
   `sandbox-exec` rejects the `(limit ...)` syntax (unverifiable without a
   macOS host), `run/4`/`run_with_partial/6` transparently retry once with
@@ -38,13 +44,8 @@ defmodule EvoGit.Sandbox.MacOS do
 
   require Logger
 
-  alias EvoGit.{Nix, Platform, Sandbox.Helpers}
-
-  # Maximum number of concurrently live processes/threads the sandboxed
-  # process may spawn, enforced via SBPL `(limit number N)`. Tunable —
-  # chosen to fit `mix test`-style parallel workloads (worker processes,
-  # compiler ports) while still capping a runaway agent's fork bombs.
-  @max_processes 200
+  alias EvoGit.{Nix, Platform}
+  alias EvoGit.Sandbox.{Helpers, Spec}
 
   # Cached decision that `sandbox-exec` on THIS macOS rejects the
   # `(limit ...)` rule (see `strip_process_limit/1` and the retry logic in
@@ -53,27 +54,11 @@ defmodule EvoGit.Sandbox.MacOS do
   # first attempt.
   @process_limit_rejected_key {EvoGit.Sandbox.MacOS, :process_limit_rejected}
 
-  # Built-in writable cache dirs (home-relative) for package managers and
-  # toolchains (`mix deps.get`, `npm install`, `cargo build`). This is the
-  # DEFAULT list emitted as `(allow file-write* (subpath "<home>/<dir>"))`
-  # (rule group 12) when the user has NOT set `[sandbox] write_paths`. When
-  # set, the user's list REPLACES this one wholesale (even an empty list) —
-  # see `Helpers.resolve_write_paths/3`.
-  @default_cache_dirs [
-    ".cache",
-    ".local/share",
-    ".local/state",
-    ".cargo",
-    ".rustup",
-    ".mix",
-    ".hex",
-    ".npm",
-    ".yarn",
-    ".bun",
-    ".m2",
-    ".gradle",
-    "go"
-  ]
+  # macOS-only credential store: appended to the canonical
+  # `EvoGit.Sandbox.Spec.credential_paths/0` deny-read list, immediately after
+  # `.password-store`. It is NEVER part of the canonical list and never part of
+  # the deny-WRITE list.
+  @keychains_dir "Library/Keychains"
 
   @doc "Returns true when sandbox mode allows sandbox-exec on macOS."
   @spec enabled?() :: boolean()
@@ -192,7 +177,10 @@ defmodule EvoGit.Sandbox.MacOS do
   # validated here; the emitted profile is pure SBPL rules.
   @doc false
   def generate_profile(cwd, repo_root \\ nil) when is_binary(cwd) do
-    home = System.user_home!()
+    # The ONE place Genesis sandbox semantics live (roots, credential list,
+    # cache dirs, git metadata, tmp/task/config/data dirs) — this module only
+    # renders them as SBPL.
+    spec = Spec.build(:macos, cwd: cwd, repo_root: repo_root)
 
     # --- Filesystem READ rules ---
     #
@@ -205,7 +193,15 @@ defmodule EvoGit.Sandbox.MacOS do
     # Silicon Homebrew git). Protection for sensitive locations comes from
     # the deny-read rules below (SBPL deny precedence: denies win over
     # allows).
-    system_read_rule = ~s{(allow file-read* (subpath "/"))}
+    read_root_rules =
+      Enum.map_join(spec.read_roots, "\n    ", fn path ->
+        ~s{(allow file-read* (subpath "#{path}"))}
+      end)
+
+    cwd_write_rules =
+      Enum.map_join(spec.write_roots, "\n    ", fn path ->
+        ~s{(allow file-write* (subpath "#{path}"))}
+      end)
 
     # Belt-and-suspenders: the specific read rules below (nix reads, home,
     # host $TMPDIR, vendored git, file-read-metadata, ssh literals) are
@@ -214,30 +210,25 @@ defmodule EvoGit.Sandbox.MacOS do
     # (CI is Linux, so real-macOS validation of the root rule is pending).
 
     # Nix store/var: read (toolchain binaries) + write (build outputs) —
-    # only when nix is enabled.
+    # emitted only when nix is enabled (`spec.nix_paths` is `[]` otherwise).
     nix_rules =
-      if Nix.enabled?() do
-        nix_paths = ["/nix/store", "/nix/var"]
-
-        nix_paths
-        |> Enum.flat_map(fn path ->
-          [
-            ~s{(allow file-read* (subpath "#{path}"))},
-            ~s{(allow file-write* (subpath "#{path}"))}
-          ]
-        end)
-        |> Enum.join("\n    ")
-      else
-        ""
-      end
+      spec.nix_paths
+      |> Enum.flat_map(fn path ->
+        [
+          ~s{(allow file-read* (subpath "#{path}"))},
+          ~s{(allow file-write* (subpath "#{path}"))}
+        ]
+      end)
+      |> Enum.join("\n    ")
 
     # Repo access: the worktree (cwd) plus the git metadata dir. cwd is
-    # emitted here with the read allow; the write allow follows below. The
-    # metadata dir is resolved via `Helpers.git_metadata_dir/2`, which follows
-    # linked-worktree `gitdir:` pointer files so the common git dir is
-    # covered even when the caller passes a worktree root or nil repo_root.
+    # emitted above/below with the read and write allows. The metadata dir is
+    # resolved by `EvoGit.Sandbox.Spec` through `Helpers.git_metadata_dir/2`,
+    # which follows linked-worktree `gitdir:` pointer files so the common git
+    # dir is covered even when the caller passes a worktree root or nil
+    # repo_root.
     git_metadata_rule =
-      case Helpers.git_metadata_dir(cwd, repo_root) do
+      case spec.git_metadata_dir do
         nil ->
           ""
 
@@ -247,19 +238,16 @@ defmodule EvoGit.Sandbox.MacOS do
 
     # Vendored git (desktop bundle): when git is NOT on PATH,
     # `Executable.resolve("git")` returns the absolute path of the bundled
-    # binary (`<app_dir>/priv/vendor/macos-<arch>/git`). An explicit read
-    # rule for the binary's dirname is emitted (vendored binaries are
-    # self-contained — the dirname subpath is the minimal targeted rule).
-    # Redundant under the root-wide read allow but KEPT as belt-and-suspenders.
-    # When git IS on PATH, resolve returns the bare name "git" and no rule is
-    # emitted.
+    # binary (`<app_dir>/priv/vendor/macos-<arch>/git`), and `spec.git_binary_dir`
+    # carries its dirname so an explicit read rule is emitted (vendored
+    # binaries are self-contained — the dirname subpath is the minimal targeted
+    # rule). Redundant under the root-wide read allow but KEPT as
+    # belt-and-suspenders. When git IS on PATH, resolve returns the bare name
+    # "git" and no rule is emitted.
     git_binary_read_rule =
-      case EvoGit.Executable.resolve("git") do
-        "git" ->
-          ""
-
-        binary when is_binary(binary) ->
-          ~s{(allow file-read* (subpath "#{Path.dirname(binary)}"))}
+      case spec.git_binary_dir do
+        nil -> ""
+        dir -> ~s{(allow file-read* (subpath "#{dir}"))}
       end
 
     git_rules =
@@ -268,10 +256,8 @@ defmodule EvoGit.Sandbox.MacOS do
       |> Enum.join("\n    ")
 
     # Tmp paths: read-write — processes create temp files and read them back.
-    tmp_paths = Platform.tmp_paths()
-
     tmp_rules =
-      Enum.map_join(tmp_paths, "\n    ", fn path ->
+      Enum.map_join(spec.tmp_paths, "\n    ", fn path ->
         ~s{(allow file-read* (subpath "#{path}"))\n    (allow file-write* (subpath "#{path}"))}
       end)
 
@@ -281,7 +267,7 @@ defmodule EvoGit.Sandbox.MacOS do
     # (tmp_rules above) stay writable regardless. Evaluates to "" when unset,
     # mirroring the empty-group pattern used by git_rules/nix_rules.
     task_tmpdir_rules =
-      Enum.map_join(List.wrap(Helpers.task_tmpdir_path()), "\n    ", fn path ->
+      Enum.map_join(List.wrap(spec.task_tmpdir), "\n    ", fn path ->
         ~s{(allow file-read* (subpath "#{path}"))\n    (allow file-write* (subpath "#{path}"))}
       end)
 
@@ -289,7 +275,7 @@ defmodule EvoGit.Sandbox.MacOS do
     # on macOS — NOT under /tmp or the repo): the runtime reads and writes
     # config, credentials, state, and logs there.
     genesis_rw_rules =
-      [Platform.config_dir(), Platform.data_dir()]
+      [spec.config_dir, spec.data_dir]
       |> Enum.map_join("\n    ", fn path ->
         ~s{(allow file-read* (subpath "#{path}"))\n    (allow file-write* (subpath "#{path}"))}
       end)
@@ -297,29 +283,20 @@ defmodule EvoGit.Sandbox.MacOS do
     # Home reads: allow the whole home, then deny-read the sensitive dirs.
     # Deny rules take precedence over allow rules in SBPL, so the deny-read
     # list below wins over this allow.
-    home_read_rule = ~s{(allow file-read* (subpath "#{home}"))}
+    home_read_rule = ~s{(allow file-read* (subpath "#{spec.home}"))}
 
-    sensitive_read_dirs = [
-      ".ssh",
-      ".gnupg",
-      ".aws",
-      ".kube",
-      ".config/sops",
-      ".git-credentials",
-      ".netrc",
-      ".password-store",
-      "Library/Keychains",
-      # Additional credential stores (parity with the Linux backend's
-      # InaccessiblePaths, which already includes .npmrc).
-      ".npmrc",
-      ".pypirc",
-      ".docker",
-      ".gem"
-    ]
+    # The canonical credential list (`Spec.credential_paths/0`) plus the
+    # macOS-only `Library/Keychains` entry, emitted immediately AFTER
+    # `.password-store`.
+    sensitive_read_dirs =
+      Enum.flat_map(spec.credential_paths, fn
+        ".password-store" = dir -> [dir, @keychains_dir]
+        dir -> [dir]
+      end)
 
     sensitive_read_rules =
       Enum.map_join(sensitive_read_dirs, "\n    ", fn dir ->
-        path = Path.join(home, dir)
+        path = Path.join(spec.home, dir)
         ~s{(deny file-read* (subpath "#{path}"))}
       end)
 
@@ -329,44 +306,29 @@ defmodule EvoGit.Sandbox.MacOS do
     # file permissions are relaxed. Both symlink spellings are covered
     # (/etc ↔ /private/etc and /var ↔ /private/var), mirroring the pattern
     # of the home-based list.
-    system_sensitive_read_paths = [
-      "/etc/ssh",
-      "/private/etc/ssh",
-      "/var/root",
-      "/private/var/root",
-      "/etc/master.passwd",
-      "/private/etc/master.passwd",
-      "/var/db/dslocal",
-      "/private/var/db/dslocal",
-      "/var/db/Keychains",
-      "/private/var/db/Keychains"
-    ]
-
     system_sensitive_read_rules =
-      Enum.map_join(system_sensitive_read_paths, "\n    ", fn path ->
+      Enum.map_join(spec.deny_paths, "\n    ", fn path ->
         ~s{(deny file-read* (subpath "#{path}"))}
       end)
 
     # SSH host verification: `git fetch/push` over SSH must read known_hosts
     # and ssh config to verify the server. Private keys stay unreadable by
     # design — key-based auth over SSH requires ssh-agent (`SSH_AUTH_SOCK`),
-    # which never exposes key material to the sandboxed process.
+    # which never exposes key material to the sandboxed process. These are the
+    # spec's read-only carveouts inside the otherwise denied `~/.ssh`.
     ssh_literal_rules =
-      Enum.map_join(
-        [Path.join(home, ".ssh/known_hosts"), Path.join(home, ".ssh/config")],
-        "\n    ",
-        fn path -> ~s{(allow file-read-data (literal "#{path}"))} end
-      )
+      Enum.map_join(spec.read_only_subpaths, "\n    ", fn path ->
+        ~s{(allow file-read-data (literal "#{path}"))}
+      end)
 
     # Host $TMPDIR read: on macOS the per-user tmp dir is `/var/folders/...`,
     # NOT under /tmp. The skills executor and other callers write temp files
     # (e.g. skill scripts) to `System.tmp_dir!()` BEFORE invoking the
     # sandbox; with default-deny those files must still be readable inside.
-    # Skipped when TMPDIR is unset.
+    # Skipped when TMPDIR is unset (`spec.host_tmpdir` is `nil`).
     host_tmpdir_rule =
-      case System.get_env("TMPDIR") do
+      case spec.host_tmpdir do
         nil -> ""
-        "" -> ""
         dir -> ~s{(allow file-read* (subpath "#{dir}"))}
       end
 
@@ -377,40 +339,23 @@ defmodule EvoGit.Sandbox.MacOS do
 
     # Build-cache dirs: package managers and toolchains (`mix deps.get`,
     # `npm install`, `cargo build`) must write their caches — these are core
-    # agent workflows. User-configurable via `[sandbox] write_paths`: nil
-    # (unset) → the built-in default cache-dir list; set (even `[]`) → the
-    # user's list REPLACES the default cache-dir list (only these cache-dir
-    # write rules; every other profile group is untouched). Structural paths
-    # (cwd, tmp, nix, repo .git, genesis dirs) are always granted elsewhere in
-    # the profile — they are not part of the user-configurable list.
-    write_paths =
-      Helpers.resolve_write_paths(
-        EvoGit.Config.resolve([:sandbox, :write_paths]),
-        @default_cache_dirs,
-        home
-      )
-
+    # agent workflows. User-configurable via `[sandbox] write_paths`, resolved
+    # ONCE in the spec: nil (unset) → the built-in default cache-dir list; set
+    # (even `[]`) → the user's list REPLACES the default cache-dir list (only
+    # these cache-dir write rules; every other profile group is untouched).
+    # Structural paths (cwd, tmp, nix, repo .git, genesis dirs) are always
+    # granted elsewhere in the profile — they are not part of the
+    # user-configurable list.
     cache_rw_rules =
-      Enum.map_join(write_paths, "\n    ", fn path ->
+      Enum.map_join(spec.cache_write_paths, "\n    ", fn path ->
         ~s{(allow file-write* (subpath "#{path}"))}
       end)
 
     # Sensitive dirs: deny WRITE too (defense in depth — reads are already
-    # blocked by the deny-read rules above).
-    sensitive_write_dirs = [
-      ".ssh",
-      ".gnupg",
-      ".aws",
-      ".kube",
-      ".config/sops",
-      ".npmrc",
-      ".git-credentials",
-      ".netrc"
-    ]
-
+    # blocked by the deny-read rules above). The canonical list, in canonical
+    # order, WITHOUT the macOS-only `Library/Keychains` entry.
     sensitive_write_rules =
-      Enum.map_join(sensitive_write_dirs, "\n    ", fn dir ->
-        path = Path.join(home, dir)
+      Enum.map_join(spec.deny_write_paths, "\n    ", fn path ->
         ~s{(deny file-write* (subpath "#{path}"))}
       end)
 
@@ -427,14 +372,17 @@ defmodule EvoGit.Sandbox.MacOS do
     # Real-macOS validation warranted: `sandbox-exec -p` acceptance of the
     # root-wide `(allow file-read* (subpath "/"))` rule and the full profile
     # — see report.
+    network_rule =
+      if spec.network == :allow, do: "(allow network*)", else: ""
+
     """
     (version 1)
     (deny default)
 
-    #{system_read_rule}
+    #{read_root_rules}
     #{nix_rules}
-    (allow file-read* (subpath "#{cwd}"))
-    (allow file-write* (subpath "#{cwd}"))
+    (allow file-read* (subpath "#{spec.cwd}"))
+    #{cwd_write_rules}
     #{git_rules}
     #{tmp_rules}
     #{task_tmpdir_rules}
@@ -449,10 +397,10 @@ defmodule EvoGit.Sandbox.MacOS do
     (allow file-write-data (literal "/dev/null"))
     (allow file-write-data (literal "/dev/dtracehelper"))
     #{sensitive_write_rules}
-    (limit number #{@max_processes})
+    (limit number #{spec.max_processes})
     (allow process-exec)
     (allow process-fork)
-    (allow network*)
+    #{network_rule}
     (allow mach-lookup)
     (allow sysctl-read)
     (allow process-info*)

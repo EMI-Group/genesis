@@ -4,51 +4,25 @@ defmodule EvoGit.Sandbox.Linux do
 
   Provides full sandboxing: filesystem isolation, resource limits (CPU, memory),
   syscall filtering, and process isolation. Requires systemd.
+
+  This module is a pure RENDERER: the roots, deny list, cache dirs, git
+  metadata dir and managed per-task tmpdir all come from ONE
+  `EvoGit.Sandbox.Spec` built by
+  `EvoGit.Sandbox.Spec.build(:linux, cwd: cwd, ...)`. What stays backend-specific
+  here is `systemd-run` itself: the `[:sandbox, :linux]` hardening properties,
+  the `[:sandbox, :process]` resource limits and the nix command wrapping.
   """
 
   @behaviour EvoGit.Sandbox.Behaviour
 
-  alias EvoGit.{Nix, Platform, Sandbox.Helpers}
+  alias EvoGit.{Nix, Platform}
+  alias EvoGit.Sandbox.{Helpers, Spec}
 
   # Compile-time Mix env — safe in releases (Mix.env/0 is evaluated at compile
   # time; in prod releases it resolves to :prod). Used to skip systemd-run
   # execution entirely in the test environment, where the user D-Bus session
   # bus is typically unavailable (CI containers, nested sandboxes).
   @mix_env Mix.env()
-
-  # Built-in writable cache dirs (home-relative) for package managers and
-  # toolchains (`mix deps.get`, `npm install`, `cargo build`). This is the
-  # DEFAULT list emitted as `-p ReadWritePaths=-<home>/<dir>` when the user has
-  # NOT set `[sandbox] write_paths`. When set, the user's list REPLACES this
-  # one wholesale (even an empty list) — see `Helpers.resolve_write_paths/3`.
-  @default_cache_dirs [
-    # Universal cache (Python pip, Go build, C/C++ ccache)
-    ".cache",
-    # Universal local share (pnpm state, generic tools)
-    ".local/share",
-    # Universal local state
-    ".local/state",
-    # Rust packages
-    ".cargo",
-    # Rust toolchains
-    ".rustup",
-    # Elixir Mix
-    ".mix",
-    # Elixir Hex
-    ".hex",
-    # Node.js npm
-    ".npm",
-    # Node.js yarn
-    ".yarn",
-    # Bun JS
-    ".bun",
-    # Java Maven
-    ".m2",
-    # Java Gradle
-    ".gradle",
-    # Golang workspace (default GOPATH)
-    "go"
-  ]
 
   @doc "Returns true when sandbox mode allows systemd-run on Linux."
   @spec enabled?() :: boolean()
@@ -133,15 +107,20 @@ defmodule EvoGit.Sandbox.Linux do
     # Foreground shape: block until the unit exits (`--wait`), pipe its output
     # to the caller (`--pipe`) and let systemd GC the unit afterwards
     # (`--collect`).
-    build_args(
-      cwd,
-      executable,
-      args,
-      if(repo_root, do: [Path.join(repo_root, ".git")], else: []),
-      [],
-      ["--wait", "--pipe", "--collect"],
-      []
-    )
+    #
+    # `git_metadata:` pins THIS call site's historical input: the literal
+    # `<repo_root>/.git` when a repo root is given (and nothing otherwise) —
+    # deliberately NOT the pointer-resolving `Helpers.git_metadata_dir/2`
+    # default, so a repo-root `.git` pointer file never starts resolving to the
+    # common dir here.
+    spec =
+      Spec.build(:linux,
+        cwd: cwd,
+        repo_root: repo_root,
+        git_metadata: if(repo_root, do: [Path.join(repo_root, ".git")], else: [])
+      )
+
+    build_args(spec, executable, args, [], ["--wait", "--pipe", "--collect"], [])
   end
 
   @doc """
@@ -171,17 +150,23 @@ defmodule EvoGit.Sandbox.Linux do
 
   The git metadata dir is resolved from `cwd` via `Helpers.git_metadata_dir/2`
   (following linked-worktree `gitdir:` pointers) because a detached job has no
-  `repo_root` argument.
+  `repo_root` argument — pinned through the spec's `git_metadata:` option so it
+  stays byte-identical to this call site's historical input.
   """
   @spec detached_args(String.t(), String.t(), [String.t()], String.t(), String.t()) ::
           [String.t()]
   def detached_args(cwd, executable, args, output_path, unit_name)
       when is_list(args) and is_binary(output_path) and is_binary(unit_name) do
+    spec =
+      Spec.build(:linux,
+        cwd: cwd,
+        git_metadata: List.wrap(Helpers.git_metadata_dir(cwd, nil))
+      )
+
     build_args(
-      cwd,
+      spec,
       executable,
       args,
-      List.wrap(Helpers.git_metadata_dir(cwd, nil)),
       ["--unit=#{unit_name}"],
       # `--wait` keeps the client alive until the unit exits and makes it exit
       # with the unit's status — the observer signal the detached registry
@@ -200,63 +185,34 @@ defmodule EvoGit.Sandbox.Linux do
 
   # Shared systemd-run argv assembly — the ONE place the common fragments are
   # emitted, so `args/4` (foreground) and `detached_args/5` (background) can
-  # never drift:
+  # never drift. Every policy path comes from `spec`
+  # (`EvoGit.Sandbox.Spec`); only the shape differs:
   #
-  #   * `extra_write_paths` — git metadata dir(s) granted read+write access;
-  #   * `unit_args`         — `--unit=<name>` for detached jobs, `[]` otherwise;
-  #   * `mode_args`         — `--wait --pipe --collect` for foreground jobs,
-  #                           `--wait` alone for detached jobs (the client is
-  #                           the completion observer, see `detached_args/5`);
-  #   * `stdio_args`        — stdout/stderr properties for detached jobs
-  #                           (foreground pipes the output to the caller).
-  defp build_args(cwd, executable, args, extra_write_paths, unit_args, mode_args, stdio_args) do
-    home = System.user_home!()
-
-    # Keep sensitive credentials locked down
+  #   * `unit_args`  — `--unit=<name>` for detached jobs, `[]` otherwise;
+  #   * `mode_args`  — `--wait --pipe --collect` for foreground jobs,
+  #                    `--wait` alone for detached jobs (the client is the
+  #                    completion observer, see `detached_args/5`);
+  #   * `stdio_args` — stdout/stderr properties for detached jobs (foreground
+  #                    pipes the output to the caller).
+  defp build_args(spec, executable, args, unit_args, mode_args, stdio_args) do
+    # Keep sensitive credentials locked down: the canonical credential list,
+    # absolute and in canonical order.
     inaccessible_args =
-      [
-        ".ssh",
-        ".gnupg",
-        ".aws",
-        ".kube",
-        ".config/sops",
-        ".npmrc",
-        ".git-credentials",
-        ".netrc"
-      ]
-      |> Enum.flat_map(fn dir ->
-        ["-p", "InaccessiblePaths=-#{Path.join(home, dir)}"]
+      Enum.flat_map(spec.credential_deny_paths, fn path ->
+        ["-p", "InaccessiblePaths=-#{path}"]
       end)
 
-    # User-configurable writable paths (`[sandbox] write_paths`): nil (unset)
-    # → the built-in default cache-dir list; set (even `[]`) → the user's list
-    # REPLACES the default cache-dir list. Structural paths (cwd, tmp paths,
-    # nix store/var, repo .git) are ALWAYS appended below — they are required
-    # for the sandbox to function, not part of the user-configurable list.
-    write_paths =
-      Helpers.resolve_write_paths(
-        EvoGit.Config.resolve([:sandbox, :write_paths]),
-        @default_cache_dirs,
-        home
-      )
-
-    # Add nix store and daemon socket dirs when nix wrapping is enabled
-    nix_paths =
-      if Nix.enabled?() do
-        ["/nix/store", "/nix/var"]
-      else
-        []
-      end
-
-    # Add cwd, the system temp folders, and the language caches. The managed
-    # per-task tmpdir (when installed) is an ADDITIONAL writable path alongside
-    # the always-present system tmp dirs (`Platform.tmp_paths/0`).
+    # Add cwd, the system temp folders, the resolved `[sandbox] write_paths`
+    # cache dirs, nix store/var, the managed per-task tmpdir (when installed —
+    # an ADDITIONAL writable path alongside the always-present system tmp dirs)
+    # and the git metadata dir. The "-" prefix ensures systemd won't crash if a
+    # directory doesn't exist yet.
     read_write_paths =
-      [cwd | Platform.tmp_paths()] ++
-        write_paths ++
-        nix_paths ++
-        List.wrap(Helpers.task_tmpdir_path()) ++
-        extra_write_paths
+      [spec.cwd | spec.tmp_paths] ++
+        spec.cache_write_paths ++
+        spec.nix_paths ++
+        List.wrap(spec.task_tmpdir) ++
+        List.wrap(spec.git_metadata_dir)
 
     read_write_args =
       Enum.flat_map(read_write_paths, fn path ->
@@ -268,27 +224,19 @@ defmodule EvoGit.Sandbox.Linux do
     # nix store, user-local bin) are found inside the sandbox the same way they are in
     # the user's interactive shell. TMPDIR is forwarded to a path the sandbox actually
     # grants write access to (resolved by EvoGit.Sandbox.resolve_tmpdir/0) so that
-    # LLM-generated temp-file writes don't fail.
+    # LLM-generated temp-file writes don't fail. The base environment is the spec's
+    # (`nil` values already dropped).
     # Inject LC_ALL=C and GIT_EDITOR=<true path> for git commands so that
     # automated operations that may open an interactive editor (e.g.
     # `git merge --continue`, rebase, am, commit) never block inside the
     # sandbox. Detection uses the ORIGINAL executable param (before any
-    # nix wrapping) since the nix-wrapped exec is `{"bash", ["-c", ...]}`.
+    # nix wrapping) since the nix-wrapped exec is `{"bash", ["-c", ...]}`, so the
+    # executable-dependent git identity is the only env added here.
     env_args =
-      [
-        {"PATH", System.get_env("PATH")},
-        {"HOME", System.get_env("HOME")},
-        {"TMPDIR", EvoGit.Sandbox.resolve_tmpdir()}
-      ] ++
+      setenv_args(spec.env) ++
         if EvoGit.GitEnv.git_command?(executable),
-          do: EvoGit.GitEnv.git_env_list(cwd),
+          do: setenv_args(EvoGit.GitEnv.git_env_list(spec.cwd)),
           else: []
-
-    env_args =
-      Enum.flat_map(env_args, fn
-        {_key, nil} -> []
-        {key, value} -> ["--setenv=#{key}=#{value}"]
-      end)
 
     nix_env_args =
       if Nix.enabled?() do
@@ -307,7 +255,7 @@ defmodule EvoGit.Sandbox.Linux do
       nix_env_args ++
       [
         "-p",
-        "WorkingDirectory=#{cwd}",
+        "WorkingDirectory=#{spec.cwd}",
         "-p",
         "StandardInput=null"
       ] ++
@@ -322,6 +270,14 @@ defmodule EvoGit.Sandbox.Linux do
       else
         [executable | args]
       end
+  end
+
+  # `--setenv=K=V` properties for an environment list, skipping `nil` values.
+  defp setenv_args(env) do
+    Enum.flat_map(env, fn
+      {_key, nil} -> []
+      {key, value} -> ["--setenv=#{key}=#{value}"]
+    end)
   end
 
   defp resource_args do
