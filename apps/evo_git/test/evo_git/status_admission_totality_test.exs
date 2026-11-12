@@ -133,7 +133,9 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
     {"AgentScheduler.SchedMeta.idle_statuses/0", {SchedMeta, :idle_statuses}, :atom,
      :not_running},
     {"AgentScheduler.SchedMeta.cancel_reachable_statuses/0",
-     {SchedMeta, :cancel_reachable_statuses}, :atom, :running}
+     {SchedMeta, :cancel_reachable_statuses}, :atom, :running},
+    {"AgentScheduler.InteractiveRoot.accepted_statuses/0",
+     {EvoGit.AgentScheduler.InteractiveRoot, :accepted_statuses}, :atom, :running}
   ]
 
   # {label, {module, function}, :atom | :string, reason} — a list that admits
@@ -217,7 +219,8 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
             "Agent.Tools.ElixirEval.Projection.agent_statuses/0",
             "AgentScheduler.SchedMeta.statuses/0",
             "AgentScheduler.SchedMeta.live_statuses/0",
-            "AgentScheduler.SchedMeta.cancel_reachable_statuses/0"
+            "AgentScheduler.SchedMeta.cancel_reachable_statuses/0",
+            "AgentScheduler.InteractiveRoot.accepted_statuses/0"
           ] do
         {kind, statuses} = statuses_for!(label)
         assert marker(kind, @running) in statuses, "#{label} must admit :running"

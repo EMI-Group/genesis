@@ -1,3 +1,5 @@
+Code.require_file("agent/tools/elixir_eval_fixture_helper.exs", __DIR__)
+
 defmodule EvoGit.CommandApproval.EvalTest do
   @moduledoc """
   Exact-code approval registration and resolution, without running evaluated code.
@@ -15,6 +17,7 @@ defmodule EvoGit.CommandApproval.EvalTest do
   use EvoGit.TaskRegistryCase, async: false
 
   alias EvoGit.CommandApproval
+  alias EvoGit.TestSupport.ElixirEvalFixture, as: Fixture
 
   @receive_timeout 5_000
   @denying_statuses [:cancelling, :completed, :failed, :cancelled]
@@ -166,6 +169,61 @@ defmodule EvoGit.CommandApproval.EvalTest do
       result!(caller, :denied)
       task_id = task.id
       refute_received {:approval_requested, %{task_id: ^task_id}}
+    end
+  end
+
+  describe "interactive-root session precheck" do
+    test "a live task-less interactive session's minted task id may register approval" do
+      # A dashboard `/assistant` conversation registers through
+      # `EvoGit.AgentScheduler.start_session/1` with a scheduler-MINTED task id
+      # and NO `tasks` row, so the precheck decides on the shared
+      # `EvoGit.AgentScheduler.InteractiveRoot.live?/3` session shape instead.
+      fixture = Fixture.start!(self(), store(), TaskRegistry.server(), task: :none)
+      on_exit(fn -> Fixture.stop(fixture) end)
+      assert is_binary(fixture.task_id) and fixture.task_id != ""
+      assert is_nil(EvoGit.Store.get_task(store(), fixture.task_id))
+
+      caller = start_caller("1 + 1", :write, fixture.task_id, fixture.agent_id)
+      request = requested!(fixture.task_id, :write)
+      request_id = request.request_id
+      assert request.agent_id == Integer.to_string(fixture.agent_id)
+
+      assert CommandApproval.respond(request_id, :deny) == :ok
+      result!(caller, :denied)
+      assert_receive {:approval_resolved, ^request_id, :deny}, @receive_timeout
+      closed!(request_id)
+    end
+
+    test "a foreign task id for the same live session identity is denied before registration" do
+      fixture = Fixture.start!(self(), store(), TaskRegistry.server(), task: :none)
+      on_exit(fn -> Fixture.stop(fixture) end)
+      foreign_id = "foreign_#{System.unique_integer([:positive])}"
+
+      caller = start_caller("1 + 1", :write, foreign_id, fixture.agent_id)
+      result!(caller, :denied)
+      refute_received {:approval_requested, %{task_id: ^foreign_id}}
+    end
+
+    test "the same live session identity in a non-interactive shape is denied" do
+      fixture = Fixture.start!(self(), store(), TaskRegistry.server(), task: :none)
+      on_exit(fn -> Fixture.stop(fixture) end)
+      minted_id = fixture.task_id
+
+      # A one-shot session is a task-backed shape: its task id must own a row.
+      Fixture.update_meta(fixture, &%{&1 | mode: :oneshot})
+      caller = start_caller("1 + 1", :write, minted_id, fixture.agent_id)
+      result!(caller, :denied)
+      refute_received {:approval_requested, %{task_id: ^minted_id}}
+
+      # A graceful-cancel flag revokes the interactive-root admission too.
+      Fixture.update_meta(fixture, &%{&1 | mode: :interactive})
+      Fixture.set_cancel(fixture, true)
+      assert Fixture.cancel_requested?(fixture)
+      caller = start_caller("1 + 1", :sudo, minted_id, fixture.agent_id)
+      result!(caller, :denied)
+      refute_received {:approval_requested, %{task_id: ^minted_id}}
+
+      Fixture.set_cancel(fixture, false)
     end
   end
 

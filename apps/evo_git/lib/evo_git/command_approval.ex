@@ -56,6 +56,13 @@ defmodule EvoGit.CommandApproval do
   A request that carries NO task id (a task-less `/assistant` interactive
   session) has no task lifecycle to match: it resolves only by a user decision,
   the approval window, or caller death — never auto-approved.
+  A request that carries a NON-NIL task id whose `tasks` row is ABSENT is
+  admitted only when it names the live dashboard `/assistant` interactive-root
+  session — `EvoGit.AgentScheduler.start_session/1` mints a task id for such a
+  session while creating no task row — decided by the shared
+  `EvoGit.AgentScheduler.InteractiveRoot` predicate.
+  Every other unknown, terminal or unavailable task id is denied at
+  registration, and nothing is ever auto-approved.
 
   Fails closed: `request/5` returns `:timeout` (and the command is NOT
   executed) whenever the approval service is unavailable.
@@ -146,10 +153,13 @@ defmodule EvoGit.CommandApproval do
   nil warning; sudo requests use `"elixir_eval sudo"`, level 3 and an explicit
   unrestricted live-BEAM privilege warning (not OS root, no rollback).
 
-  When `task_id` is known, a bounded task read runs in the CALLER before
-  registration, denying cancelling/terminal or unavailable tasks. A task in
-  `:awaiting_input` (an interactive session between exchanges) is alive and
-  therefore admitted, exactly like `:running`. Lifecycle broadcasts still deny
+  When `task_id` is known, a bounded `EvoGit.TaskRegistry.get_task_lite/1` read
+  runs in the CALLER before registration. A live task row admits
+  `:pending`/`:running`/`:awaiting_input`/`:finalizing`; a terminal, unavailable
+  or unknown-row task id is denied UNLESS it is the live dashboard `/assistant`
+  interactive-root session shape, decided by
+  `EvoGit.AgentScheduler.InteractiveRoot.live?/3` on the paired agent identity.
+  A nil task id skips the read entirely. Lifecycle broadcasts still deny
   pending requests, but checking and registration are not atomic: the
   evaluator MUST recheck lifecycle before executing code.
   Approval is authorization only, not execution isolation or rollback.
@@ -161,7 +171,7 @@ defmodule EvoGit.CommandApproval do
              tier in [:write, :sudo] and is_atom(target_node) do
     task_id = normalize_id(task_id)
 
-    if eval_task_active?(task_id) do
+    if eval_task_active?(task_id, agent_id) do
       {command, level, warning} =
         case tier do
           :write -> {"elixir_eval", 2, nil}
@@ -406,21 +416,45 @@ defmodule EvoGit.CommandApproval do
     end
   end
 
-  defp eval_task_active?(nil), do: true
+  defp eval_task_active?(nil, _agent_id), do: true
 
-  defp eval_task_active?(task_id) do
+  defp eval_task_active?(task_id, agent_id) do
     # The existing public read has a bounded 30s call and degrades to nil on
     # store failure. Keep it OUTSIDE the approval GenServer so it cannot block
     # responses, lifecycle handling or timers. Registry races fail closed too.
     try do
       case EvoGit.TaskRegistry.get_task_lite(task_id) do
-        %{status: status} when status in @eval_active_task_statuses -> true
-        _missing_terminal_or_unavailable -> false
+        %{status: status} when status in @eval_active_task_statuses ->
+          true
+
+        nil ->
+          # A row-absent task id is the `/assistant` interactive-root session
+          # shape or nothing at all: `start_session/1` mints a task id while the
+          # dashboard creates no `tasks` row, so the shared predicate decides on
+          # the paired agent identity alone (pure ETS reads, no service call).
+          EvoGit.AgentScheduler.InteractiveRoot.live?(eval_agent_id(agent_id), task_id)
+
+        _missing_terminal_or_unavailable ->
+          false
       end
     catch
       :exit, _reason -> false
     end
   end
+
+  # The scheduler agent id is an integer; the approval contract's `agent_id` is a
+  # string. Normalize the well-formed integer shape and refuse anything else —
+  # a malformed identity can never select an interactive root session.
+  defp eval_agent_id(agent_id) when is_integer(agent_id), do: agent_id
+
+  defp eval_agent_id(agent_id) when is_binary(agent_id) do
+    case Integer.parse(agent_id) do
+      {id, ""} -> id
+      _other -> nil
+    end
+  end
+
+  defp eval_agent_id(_agent_id), do: nil
 
   # Maps a respond decision to the caller reply: :approve -> :approved,
   # :deny -> :denied.
