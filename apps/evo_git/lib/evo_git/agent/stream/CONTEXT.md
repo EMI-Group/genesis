@@ -3,7 +3,8 @@
 ## Intent
 Push-only delta streaming for a live agent, plus bounded one-shot inspection: no replay buffer, no cursor, no polling loop.
 `EvoGit.PubSub` topic `"agent:<agent_id>"` (`EvoGit.Agent.Stream.topic/1`) carries `{:agent_delta, agent_id, seq, events}`, and `events` is ALWAYS a list.
-The gate lives in the session: `EvoGit.Agent.Session.watching?/2` is `EvoGit.Agent.Stream.Watchers.watching?(watchers)` (`map_size(watchers) > 0`), evaluated at EACH LLM attempt start via `EvoGit.Agent.Stream.Sink.stream_opts/0`, so a watcher attaching mid-exchange starts receiving from the next attempt/turn.
+The gate lives in the session: `EvoGit.Agent.Session.watching?/2` is `EvoGit.Agent.Stream.Watchers.watching?(watchers)` (`map_size(watchers) > 0`), consulted by `EvoGit.Agent.Stream.Sink.stream_opts/0` at EACH LLM attempt start — so a watcher attaching mid-attempt gets no `process_stream/2` callbacks (no `:text`/`:thinking` chunks) until the NEXT attempt.
+The same boolean is re-checked per arriving `{:delta, events}` and again in `Watchers.flush/4`, so the non-stream emitters (`Sink.emit/1`: id-bearing `{:tool_call, …}`, `{:tool_result, …}`, `{:turn, …}`, `{:yield, …}`, `{:finished, …}`) DO reach a watcher that attached earlier in the same turn.
 Zero watchers ⇒ no stream callbacks (`process_stream/2` gets `[]`, byte-identical to the one-argument call) and no broadcast.
 A consumer that fell behind, reconnected or lost a delta resyncs with a fresh `snapshot/1` and drops stale deltas via `stale?/2`; nothing is ever replayed.
 
@@ -23,10 +24,13 @@ A consumer that fell behind, reconnected or lost a delta resyncs with a fresh `s
 | `normalize_batch/1` | `nil` → `[]`, a list → itself, a single event → `[it]`. |
 | errors | Only `{:error, {:not_found, reason}}` and `{:error, {:bad_state, phase}}`; every function is TOTAL (never raises or exits); `@call_timeout` 5_000 ms. |
 
+`{:watch, consumer_pid}` and `{:snapshot}` are served ONLY in `:running | :cancelling | :awaiting_input` (any other phase, e.g. `:starting`/`:finalizing`/`:done`, answers `{:error, {:bad_state, phase}}`), and a `{:delta, events}` arriving outside `:running`/`:cancelling` is logged and dropped.
+
 `EvoGit.AgentScheduler.RemoteAPI.register_watcher/2`, `unregister_watcher/2` and `watch_snapshot/1` are thin passthroughs to `register_watcher/2`, `unregister_watcher/2` and `snapshot/1` — ONE implementation, no second session-call path.
 `register_watcher/2` → `{:ok, %Snapshot{}, seq} | {:error, {:not_found, reason}} | {:error, {:bad_state, phase}}`, registers an EXTERNAL cross-node pid too, and answers `{:error, {:not_found, :invalid_consumer}}` for a non-pid instead of raising; `unregister_watcher/2` is idempotent `:ok` (also for a non-pid consumer) and `watch_snapshot/1` never opens the gate.
 All three are LOCAL-node session calls, because the session, its watchers and its transcript live on the node that OWNS the agent; `EvoGit.RemoteNode.watch_agent/3`, `unwatch_agent/2` and `watch_snapshot/2` are the caller-side mirrors.
 Payload profile: the snapshot carries the FULL transcript ⇒ 🟠 heavy (same class as `get_agent_history/1`), while `unregister_watcher/2` is 🟢 and delta batches are 🟢 PUBLISHED, never RPC-pulled.
+`Snapshot.messages` is the session's RAW `%ReqLLM.Context{}.messages` verbatim (`Snapshot.from/2`): the `:system` persona message, the `<context>`+`<objective>`-WRAPPED first user message, injected user messages, assistant messages and `:tool` results — the stream layer filters and projects NOTHING, so a consumer wanting only user-authored turns must interpret `metadata[:turn]`/`metadata[:checkpoint]` and the pinned synthetic text prefixes itself.
 
 `%Stream.Snapshot{}` fields: `agent_id`, `phase`, `seq`, `turn`, `total_tokens`, `usage`, `messages` (the transcript), `mode`, `model_spec`, `compression_count`.
 It is plain data (JSON-clean) and never carries the `%ReqLLM.Context{}`.
