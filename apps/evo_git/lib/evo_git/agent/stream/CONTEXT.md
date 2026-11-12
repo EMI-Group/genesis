@@ -49,6 +49,10 @@ Re-registering demonitors the old ref; `unregister_ref/3` removes an entry only 
 `event_seq` increments by EXACTLY one per flush that actually broadcasts, and `Watchers.flush/4` is the ONLY broadcast site; a flush with zero watchers drops the accumulated events with NO seq bump.
 `publish_checkpoint/2` re-stamps the session's `event_seq` and `watchers` onto the worker's state copy (`adopt_state/2`), so a checkpoint can never roll them back; `watchers` is SESSION-LOCAL transport bookkeeping, never part of a durable snapshot.
 Worker `{:delta, events}` info messages accumulate in a session-owned `%Stream.Batcher{}` (`stream/batcher.ex`, pure data) and flush coalesced after `Stream.Batcher.flush_interval_ms/0` = 75 ms.
+Only `{:text, …}`/`{:thinking, …}` come from stream-chunk callbacks, so they alone carry the per-attempt gate gap: content streamed during an attempt that began with zero watchers is never emitted, and the completed assistant message only becomes visible in a later snapshot/history at the turn-boundary checkpoint.
+Every other event (`{:tool_call, id, name}`, `{:tool_result, …}`, `{:turn, …}`, `{:yield, …}`, `{:finished, …}`) is emitted unconditionally by `ToolDispatch`/`Exchange` whenever the sink is installed and is gated by the session ON ARRIVAL, so a watcher registered earlier in the same turn receives them even when that turn's attempt started unwatched.
+A snapshot is built from the session's last checkpointed `%State{}` (`data.state`, adopted once per turn), so a mid-turn snapshot reflects the previous turn, never the in-flight one.
+`{:thinking, chunk}` appears only when the provider actually streams `:thinking` chunks (reasoning content) and `chunk.text` is non-nil; `{:text, chunk}` likewise needs a non-nil `chunk.text`, and both are per-chunk deltas, never cumulative.
 An immediate flush happens on `{:exchange_finished, …}`, before any transition out of `:running`/`:cancelling`, in `finalize/1`, before a force-cancel stop, and in `terminate/3` (best-effort, must never raise).
 `:awaiting_input`/`:finalizing`/`:done` hold NO flush timer (idle contract: an idle session has no timers).
 
