@@ -167,12 +167,11 @@ defmodule EvoGit.Sandbox.Helpers do
   @doc """
   Resolves the writable-path (cache-dir) list to absolute paths.
 
-  Shared by the Linux and macOS sandbox backends to apply the user-configurable
+  Called by `EvoGit.Sandbox.Spec.build/2` only, to apply the user-configurable
   `[sandbox] write_paths` list:
 
-    * `config_paths == nil` (config unset) → the provided `defaults` list (each
-      backend's built-in `@default_cache_dirs`) joined to `home` — byte-identical
-      to the historical hard-coded output.
+    * `config_paths == nil` (config unset) → the provided `defaults` list
+      (`Spec.default_cache_dirs/0`) joined to `home`.
     * `config_paths` set (even `[]`) → the user's list REPLACES the default
       cache-dir list; `[]` means no cache-dir write paths at all.
 
