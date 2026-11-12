@@ -19,7 +19,7 @@ The dispatcher `lib/evo_git/sandbox.ex` and the test suite `apps/evo_git/test/ev
 | `EvoGit.Sandbox.Linux` | systemd-run backend — full sandboxing (`ReadWritePaths`/`InaccessiblePaths`, `ProtectHome`/`ProtectSystem`, security toggles, resource limits, `--slice=evogit`); writable caches via `[sandbox] write_paths` |
 | `EvoGit.Sandbox.Bwrap` | bubblewrap backend — **filesystem-only isolation** (no resource limits/syscall filtering): `--ro-bind / /` + writable binds + empty-`--tmpfs` deny overlays; **no slice/unit-registry**; network retained; capability probing with `:degraded` fallback; env inherited, git identity via `--setenv` |
 | `EvoGit.Sandbox.MacOS` | sandbox-exec backend — SBPL: root-readable READS + deny-read credential list, deny-by-default WRITES + allow list, process-count limit with fail-safe, default-allow network |
-| `EvoGit.Sandbox.None` | Passthrough backend (Windows/unsupported) — no OS-level isolation; `run_with_partial/6` Windows clause kills the whole tree on timeout (`taskkill /PID <pid> /T /F`); public `resolve_executable/1` (absolute regular files as-is, else `System.find_executable/1`, then the Windows `powershell`/`pwsh` known-location fallback) |
+| `EvoGit.Sandbox.None` | Passthrough backend (Windows/unsupported) — `enabled?/0` is hardcoded `false` (`none.ex:36`), so `EvoGit.Sandbox.enabled?/0` is ALWAYS false on Windows even with `[sandbox] mode = "enabled"`; no OS-level isolation; `run_with_partial/6` Windows clause kills the whole tree on timeout (`taskkill /PID <pid> /T /F`); public `resolve_executable/1` (absolute regular files as-is, else `System.find_executable/1`, then the Windows `powershell`/`pwsh` known-location fallback) |
 | `EvoGit.Nix` | Shared helper — builds the dev env ONCE via `nix print-dev-env`, caches the script to `<data_dir>/nix-dev-env.sh`, sources it per call (`bash -c "source <path>; exec <cmd>"`); `active?/0` = enabled + build not failed, `enabled?/0` = static capability |
 
 ## Argv Shapes & Kill Primitives — at a glance
@@ -138,7 +138,8 @@ Only the systemd-run unit survives the BEAM, so its `status/1` stays queryable a
 ### Process-limit fail-safe — do not remove
 The exact SBPL `limit` syntax (`(limit number N)` vs `(limit (number N))`) is unverified without a macOS host (CI is Linux), and a wrong form makes `sandbox-exec` reject the WHOLE profile → every sandboxed command fails on macOS in `:auto` mode.
 `run/4` and `run_with_partial/6` (enabled paths) therefore retry ONCE with `strip_process_limit(profile)` on a non-zero exit with no cached decision; on retry success they cache `true` at `:persistent_term` key `{EvoGit.Sandbox.MacOS, :process_limit_rejected}` and warn once, after which calls use the stripped profile directly.
-`effective_profile/2` (`macos.ex`, `@doc false`) is the SINGLE place applying the cached decision — `run/4` and `EvoGit.Sandbox.Background` both call it; `generate_profile/2` still emits the limit and the fallback only catches rejection.
+`effective_profile/2` (`macos.ex:165-168`, `@doc false`) applies the cached decision for `run/4` and `EvoGit.Sandbox.Background`; `run_with_partial/7` does the same strip INLINE (`macos.ex:585-590`, `generate_profile/2` then `if process_limit_rejected?()`) and never calls `effective_profile/2`, so both places must change together.
+`generate_profile/2` still emits the limit and the fallback only catches rejection.
 
 ## macOS Git Commit Coverage
 
