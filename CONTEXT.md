@@ -127,6 +127,14 @@ Key design: spatial context tree for routing, phylogenetic graph for temporal ev
 - `mix store.maintenance [--data-dir <path>] [--vacuum]` — task-store upkeep: `PRAGMA optimize`, and `--vacuum` to reclaim freed pages (`VACUUM`, switches `auto_vacuum` to incremental); never runs automatically
 - `mix migrate.store` — report/apply task-store Ecto migrations manually (normally a no-op; boot applies them)
 
+### Platform-Specific Native Binaries (vendored tools, release bundling)
+
+Only two platform binaries are vendored today — `rg` (all platforms) and `git` (Linux `git`; Windows MinGit at `windows-x64/mingit/cmd/git.exe`; macOS uses Apple git from PATH).
+They are NEVER committed: CI and Nix drop them into `apps/evo_git/priv/vendor/{linux-x86_64,linux-arm64,macos-arm64,macos-x86_64,windows-x64}/` before `mix release`, and `EvoGit.Executable.resolve/1` resolves PATH first with the bundled copy as fallback (`Application.app_dir(:evo_git, "priv/vendor/<platform>")`, `:code.priv_dir` fallback; dev `_build` priv is a symlink to `apps/evo_git/priv`), degrading to the bare name when the platform dir is absent.
+Mix releases copy `priv/` automatically, so a binary present before `mix release` lands in the desktop `resources/genesis-backend` tree AND both `genesis_server_*.tar.xz` tarballs with no extra staging; `rel/overlays/bin/` is `genesis_server`-only (`overlays:` is declared on that release alone), and `tauri.conf.json` declares no `externalBin` sidecar — only the `resources/genesis-backend` release directory.
+No Elixir code compiles native code (no `cargo`/`rustc`/`cc`/`make` invocation in `apps/` — `mix bump.version` rewrites `Cargo.toml`/`Cargo.lock` as text): the only Rust crate is `desktop/src-tauri` (standalone, no root Cargo workspace), built by `tauri build` in CI and by `rustPlatform.buildRustPackage` + `cargoLock.lockFile` in `genesis-desktop.nix`.
+Adding a new binary therefore touches: `EvoGit.Executable` (name/platform mapping), a per-platform CI "Bundle vendor binaries" step (+ sha256 pins, and `Set up Rust` must move/be added before the release build), `genesis.nix` `postInstall`, `nix/bundle-vendor.sh`, a `.gitignore` entry — and on macOS `desktop/scripts/sign-macos-nested.sh` signs EVERY Mach-O under the copied release tree automatically (the `genesis_server` tarballs are neither signed nor notarized, and Windows has no Authenticode at all).
+Details: `./nix/CONTEXT.md` ("Rust Binaries & New Native Payloads"), `./.github/workflows/CONTEXT.md` ("Native (Rust) binaries beyond `tauri build`"), `./rel/CONTEXT.md`, `./apps/evo_git/` CONTEXT.md → "Executable Resolution".
 ### I/O Benchmark (`mix bench.io`)
 
 A self-contained tool for comparing machines, filesystems and SSDs — NOT part of the test suite.
