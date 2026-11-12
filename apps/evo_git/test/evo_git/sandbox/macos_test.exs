@@ -49,15 +49,57 @@ defmodule EvoGit.Sandbox.MacOSTest do
   defp cache_rule(dir),
     do: ~s{(allow file-write* (subpath "#{Path.join(System.user_home!(), dir)}"))}
 
-  # Extracts the paths of every `(deny file-read* (subpath "<path>"))` rule in
-  # the emitted profile, in EMISSION order (home-based credential rules first,
-  # then the system-level ones) — so group membership AND ordering can be
-  # asserted on the extracted list instead of a joined blob.
+  # A credential carveout rule carries BOTH path filters in ONE rule: SBPL
+  # OR-combines a rule's filters, so `literal` + `subpath` covers the path
+  # itself even when it does not exist yet (a bare `subpath` leaves the
+  # first-time-creation gap, e.g. `mkdir ~/.ssh`). System-level `deny_paths`
+  # stay subpath-only — no first-time creation concern for root-owned paths.
+  defp credential_deny_rule(operation, path),
+    do: ~s{(deny #{operation} (literal "#{path}") (subpath "#{path}"))}
+
+  # Extracts the paths of every credential deny-read carveout rule
+  # (`(deny file-read* (literal "<p>") (subpath "<p>"))`) in EMISSION order —
+  # so group membership AND ordering can be asserted on the extracted list
+  # instead of a joined blob. The subpath-only system-level rules are matched
+  # by their own literal assertions, never by this extractor.
   defp deny_read_subpaths(profile) do
-    ~r/\(deny file-read\* \(subpath "([^"]+)"\)\)/
+    ~r/\(deny file-read\* \(literal "[^"]+"\) \(subpath "([^"]+)"\)\)/
     |> Regex.scan(profile, capture: :all_but_first)
     |> List.flatten()
   end
+
+  # The profile's non-blank lines, indentation stripped (groups are joined with
+  # `"\n    "`, so only the FIRST line of a group is unindented).
+  defp profile_lines(profile) do
+    profile
+    |> String.split("\n")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  # Asserts `resolved` is emitted on the line IMMEDIATELY after `logical`.
+  # The renderer emits a path's resolved spelling right after its logical one,
+  # so the pair reads as a unit — that adjacency is what makes the resolved
+  # rule land in the same group as the rule it mirrors.
+  defp assert_emitted_right_after(profile, logical, resolved) do
+    lines = profile_lines(profile)
+
+    index =
+      Enum.find_index(lines, &(&1 == logical)) ||
+        flunk("expected the profile to emit #{inspect(logical)}")
+
+    assert Enum.at(lines, index + 1) == resolved,
+           "expected #{inspect(resolved)} immediately after #{inspect(logical)}, " <>
+             "got #{inspect(Enum.at(lines, index + 1))}"
+  end
+
+  # Fake system-alias seam for the tmp pair every macOS host has (`/tmp` →
+  # `/private/tmp`, `/var/tmp` → `/private/var/tmp`); anything else is
+  # identity. Injected so the resolved-spelling pins never depend on the
+  # HOST's real symlink layout (CI is Linux, where nothing resolves).
+  defp tmp_alias("/tmp"), do: ["/tmp", "/private/tmp"]
+  defp tmp_alias("/var/tmp"), do: ["/var/tmp", "/private/var/tmp"]
+  defp tmp_alias(path), do: [path]
 
   # Writes a minimal `[sandbox] write_paths = ...` config.toml into the
   # XDG_CONFIG_HOME temp dir isolated by the global setup (each test gets a
@@ -212,7 +254,7 @@ defmodule EvoGit.Sandbox.MacOSTest do
           ] do
         path = Path.join(System.user_home!(), dir)
 
-        assert profile =~ ~s{(deny file-read* (subpath "#{path}"))},
+        assert profile =~ credential_deny_rule("file-read*", path),
                "expected a deny-read rule for #{dir}"
       end
     end
@@ -247,8 +289,28 @@ defmodule EvoGit.Sandbox.MacOSTest do
       for dir <- @canonical_credential_dirs do
         path = Path.join(System.user_home!(), dir)
 
-        assert profile =~ ~s{(deny file-write* (subpath "#{path}"))},
+        assert profile =~ credential_deny_rule("file-write*", path),
                "expected a deny-write rule for #{dir}"
+      end
+    end
+
+    test "writes each credential carveout as ONE rule carrying BOTH path filters" do
+      profile = MacOS.generate_profile("/some/cwd", nil)
+      home = System.user_home!()
+
+      for dir <- @canonical_credential_dirs, operation <- ["file-read*", "file-write*"] do
+        path = Path.join(home, dir)
+        rule = credential_deny_rule(operation, path)
+
+        # Exactly ONE rule per operation — the literal+subpath pair — never the
+        # pair PLUS a legacy bare-subpath rule for the same path.
+        assert length(Regex.scan(Regex.compile!(Regex.escape(rule)), profile)) == 1,
+               "expected exactly one #{operation} carveout for #{dir}"
+
+        # `literal` closes the first-time-creation gap (e.g. `mkdir ~/.ssh`)
+        # that a subpath-only rule leaves open.
+        refute profile =~ ~s{(deny #{operation} (subpath "#{path}"))},
+               "expected no subpath-only #{operation} rule for #{dir}"
       end
     end
 
@@ -263,13 +325,21 @@ defmodule EvoGit.Sandbox.MacOSTest do
         end)
 
       # Home-based deny-read rules, extracted in emission order: "deny" beats
-      # "allow" in SBPL, so this list IS the protected credential set.
+      # "allow" in SBPL, so this list IS the protected credential set. On a
+      # host where no home path has a symlinked component every path has ONE
+      # spelling, so the extracted list must equal the canonical order.
       home_deny_reads =
         profile
         |> deny_read_subpaths()
         |> Enum.filter(&String.starts_with?(&1, home <> "/"))
 
       assert home_deny_reads == Enum.map(expected_dirs, &Path.join(home, &1))
+
+      # The macOS-only keychain entry is IN the deny-read extraction list, at
+      # its canonical position (immediately after `.password-store`).
+      keychains_index = Enum.find_index(expected_dirs, &(&1 == "Library/Keychains"))
+
+      assert Enum.at(home_deny_reads, keychains_index) == Path.join(home, "Library/Keychains")
 
       # Belt and braces on the emitted STRING: the macOS-only keychain entry
       # sits between `.password-store` and `.npmrc`.
@@ -285,7 +355,8 @@ defmodule EvoGit.Sandbox.MacOSTest do
       profile = MacOS.generate_profile("/some/cwd", nil)
       keychains = Path.join(System.user_home!(), "Library/Keychains")
 
-      assert profile =~ ~s{(deny file-read* (subpath "#{keychains}"))}
+      assert profile =~ credential_deny_rule("file-read*", keychains)
+      refute profile =~ credential_deny_rule("file-write*", keychains)
       refute profile =~ ~s{(deny file-write* (subpath "#{keychains}"))}
 
       # It is a macOS-only extra, never part of the shared canonical list.
@@ -502,6 +573,133 @@ defmodule EvoGit.Sandbox.MacOSTest do
     end
   end
 
+  # Seatbelt matches RESOLVED vnodes, so a rule written with a path's logical
+  # spelling (`/tmp` → `/private/tmp`) never matches. Every rendered path is
+  # emitted once per spelling, logical first, through the default-inert
+  # `:alias_fun` seam — these pins inject a fake resolver so the expectation
+  # never depends on the HOST's symlink layout (CI is Linux: nothing resolves).
+  describe "generate_profile/3 — resolved alias spellings" do
+    test "emits the tmp rules once per spelling, logical then resolved" do
+      profile = MacOS.generate_profile("/some/cwd", nil, alias_fun: &tmp_alias/1)
+
+      for path <- ["/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"] do
+        assert profile =~ ~s{(allow file-read* (subpath "#{path}"))}
+        assert profile =~ ~s{(allow file-write* (subpath "#{path}"))}
+      end
+
+      # The resolved pair follows the logical pair (a read+write pair per
+      # spelling, so the two spellings read as one unit in the profile).
+      assert_emitted_right_after(
+        profile,
+        ~s{(allow file-read* (subpath "/tmp"))},
+        ~s{(allow file-write* (subpath "/tmp"))}
+      )
+
+      assert_emitted_right_after(
+        profile,
+        ~s{(allow file-write* (subpath "/tmp"))},
+        ~s{(allow file-read* (subpath "/private/tmp"))}
+      )
+
+      assert_emitted_right_after(
+        profile,
+        ~s{(allow file-write* (subpath "/var/tmp"))},
+        ~s{(allow file-read* (subpath "/private/var/tmp"))}
+      )
+
+      # The logical spellings are not replaced: /tmp stays a hard rule.
+      assert profile =~ ~s{(allow file-write* (subpath "/tmp"))}
+    end
+
+    test "emits a DENY path's resolved spelling right after the logical one" do
+      # A deny written only on the logical spelling misses the resolved vnode —
+      # the bypass this wiring closes.
+      home = System.user_home!()
+      ssh = Path.join(home, ".ssh")
+      resolved_ssh = "/resolved" <> ssh
+
+      alias_fun = fn
+        ^ssh -> [ssh, resolved_ssh]
+        "/etc/ssh" -> ["/etc/ssh", "/resolved/etc/ssh"]
+        path -> [path]
+      end
+
+      profile = MacOS.generate_profile("/some/cwd", nil, alias_fun: alias_fun)
+
+      # Credential carveouts carry both filters for BOTH spellings, for reads…
+      assert_emitted_right_after(
+        profile,
+        credential_deny_rule("file-read*", ssh),
+        credential_deny_rule("file-read*", resolved_ssh)
+      )
+
+      # …and for writes.
+      assert_emitted_right_after(
+        profile,
+        credential_deny_rule("file-write*", ssh),
+        credential_deny_rule("file-write*", resolved_ssh)
+      )
+
+      # The system-level deny list follows the same wiring (subpath-only shape).
+      assert_emitted_right_after(
+        profile,
+        ~s{(deny file-read* (subpath "/etc/ssh"))},
+        ~s{(deny file-read* (subpath "/resolved/etc/ssh"))}
+      )
+
+      # The logical deny is still emitted, and the untouched sibling spelling is
+      # not duplicated.
+      assert profile =~ credential_deny_rule("file-read*", ssh)
+      refute profile =~ credential_deny_rule("file-read*", "/private/resolved" <> ssh)
+    end
+
+    test "emits a read rule for an injected host_tmpdir" do
+      profile = MacOS.generate_profile("/some/cwd", nil, host_tmpdir: "/var/folders/ab/T")
+
+      assert profile =~ ~s{(allow file-read* (subpath "/var/folders/ab/T"))}
+    end
+
+    test "host_tmpdir: nil suppresses the host tmp read rule the ambient $TMPDIR would emit" do
+      save_tmpdir()
+
+      ambient =
+        Path.join(System.tmp_dir!(), "evogit_host_tmp_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(ambient)
+      on_exit(fn -> File.rm_rf!(ambient) end)
+      System.put_env("TMPDIR", ambient)
+
+      # The seam WINS over the environment: an explicit nil means "no rule".
+      refute MacOS.generate_profile("/some/cwd", nil, host_tmpdir: nil) =~
+               ~s{(allow file-read* (subpath "#{ambient}"))}
+
+      # …and the default (absent option) reads the ambient $TMPDIR and emits it.
+      assert MacOS.generate_profile("/some/cwd", nil) =~
+               ~s{(allow file-read* (subpath "#{ambient}"))}
+    end
+
+    test "emits an injected host_tmpdir's resolved spelling too" do
+      alias_fun = fn
+        "/var/folders/ab/T" -> ["/var/folders/ab/T", "/private/var/folders/ab/T"]
+        path -> [path]
+      end
+
+      profile =
+        MacOS.generate_profile("/some/cwd", nil,
+          host_tmpdir: "/var/folders/ab/T",
+          alias_fun: alias_fun
+        )
+
+      assert profile =~ ~s{(allow file-read* (subpath "/private/var/folders/ab/T"))}
+
+      assert_emitted_right_after(
+        profile,
+        ~s{(allow file-read* (subpath "/var/folders/ab/T"))},
+        ~s{(allow file-read* (subpath "/private/var/folders/ab/T"))}
+      )
+    end
+  end
+
   describe "fail-safe process-limit handling" do
     # The rejection cache is VM-global persistent_term — start each test from
     # a clean slate and always clean up so no state leaks between tests.
@@ -513,6 +711,45 @@ defmodule EvoGit.Sandbox.MacOSTest do
 
     test "the rejection cache defaults to false" do
       assert :persistent_term.get({EvoGit.Sandbox.MacOS, :process_limit_rejected}, false) == false
+    end
+
+    test "emits the fcntl deny rule exactly once, between the credential group and the limit" do
+      profile = MacOS.generate_profile("/some/cwd", nil)
+      fcntl = "(deny system-fcntl (fcntl-command 80 110))"
+
+      assert length(Regex.scan(~r/\(deny system-fcntl \(fcntl-command 80 110\)\)/, profile)) ==
+               1
+
+      # Position: after the LAST deny-write credential rule and before the
+      # process-count limit.
+      last_credential_write =
+        credential_deny_rule("file-write*", Path.join(System.user_home!(), ".gem"))
+
+      assert_emitted_right_after(profile, last_credential_write, fcntl)
+      assert_emitted_right_after(profile, fcntl, "(limit number 200)")
+    end
+
+    test "the cached rejection strips the fcntl deny AND the process-count limit" do
+      :persistent_term.put({EvoGit.Sandbox.MacOS, :process_limit_rejected}, true)
+
+      # The degraded retry path: both UNVERIFIED rules are gone, everything else
+      # (the credential carveouts, the structural grants) is preserved verbatim.
+      degraded = MacOS.effective_profile("/some/cwd", nil)
+
+      refute degraded =~ "(deny system-fcntl"
+      refute degraded =~ "(limit "
+      refute degraded =~ "(limit number 200)"
+
+      assert degraded =~
+               credential_deny_rule("file-read*", Path.join(System.user_home!(), ".ssh"))
+
+      assert degraded =~ ~s{(allow file-write* (subpath "/tmp"))}
+      assert degraded =~ "(allow network*)"
+
+      # The full profile keeps both: only `effective_profile/2` strips.
+      full = MacOS.generate_profile("/some/cwd", nil)
+      assert full =~ "(deny system-fcntl (fcntl-command 80 110))"
+      assert full =~ "(limit number 200)"
     end
 
     test "a cached rejection never breaks profile generation or execution" do
