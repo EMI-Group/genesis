@@ -12,22 +12,23 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
   `/assistant` interactive root session, whose task id is minted by
   `EvoGit.AgentScheduler.start_session/1` and therefore owns no task at all.
   A session with no task id is admitted by its scheduler identity shape alone.
+  `EvoGit.AgentScheduler.InteractiveRoot` is the ONE definition of that shared
+  interactive-root session shape, so this gate and
+  `EvoGit.CommandApproval.request_eval/5`'s lifecycle precheck cannot drift.
   """
 
   alias EvoGit.Agent.Tools.ElixirEval.Ancestry
-  alias EvoGit.AgentScheduler.{AgentState, SchedMeta}
+  alias EvoGit.AgentScheduler.{AgentState, InteractiveRoot, SchedMeta}
   alias EvoGit.AgentSpec
 
   @denied "Elixir evaluation requires a live root reflective assistant on the local node."
   @timeout 1_000
 
-  # SchedMeta statuses of a live assistant agent: `:running` (an exchange is in
+  # SchedMeta statuses of a live assistant agent — `:running` (an exchange is in
   # flight), `:blocked` (parked in a slot queue) and `:awaiting_input` (an idle
-  # INTERACTIVE session between exchanges — no worker, no slot, no timer, but
-  # its session process, worktree and transcript are alive, so inspecting and
-  # driving it is legitimate). Defined once and exposed for the table-driven
-  # status-admission test.
-  @accepted_agent_statuses [:running, :blocked, :awaiting_input]
+  # INTERACTIVE session between exchanges). Owned by the shared interactive-root
+  # module and exposed for the table-driven status-admission test.
+  @accepted_agent_statuses InteractiveRoot.accepted_statuses()
 
   # Statuses of the OWNING task row: `:blocked` is agent-side only, so the task
   # is `:running` while the assistant works and `:awaiting_input` while its
@@ -175,61 +176,22 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
   # status AND satisfy the task-backed identity checks, so an interactive session
   # whose (minted or supplied) task id really has a row can never take the
   # row-absent branch and skip them. A row that is genuinely ABSENT admits only
-  # the dashboard `/assistant` interactive root shape, because
-  # `start_session/1` mints a task id for every session while the dashboard
-  # creates no `tasks` row at all. Any other answer denies.
+  # the dashboard `/assistant` interactive root shape (the shared
+  # `InteractiveRoot.session_meta?/3` predicate), because `start_session/1`
+  # mints a task id for every session while the dashboard creates no `tasks` row
+  # at all. Any other answer denies.
   defp valid_owner_shape?(meta, owner, task_id, registry) do
     case GenServer.call(registry, {:get_task_lite, task_id}, @timeout) do
       %{id: ^task_id, type: :reflect, status: status} ->
         status in @accepted_agent_task_statuses and valid_agent?(meta, owner, task_id)
 
       nil ->
-        valid_interactive_root_agent?(meta, owner, task_id)
+        InteractiveRoot.session_meta?(meta, task_id, owner)
 
       _ ->
         false
     end
   end
-
-  # Row-absent admission, for the dashboard `/assistant` interactive root session
-  # whose scheduler-minted task id owns no `tasks` row. The task id is NOT nil, so
-  # the minted identity must agree with the SchedMeta row exactly. Everything is
-  # required — a depth-zero, parent-less root whose result was not sent, in
-  # `:interactive` mode, owned by this session pid, in an admitted status, running
-  # the repo-less SelfReflective agent on the primary repo with no foreign repo,
-  # phylo node or custom-agent identity — and the forwarded opts must agree
-  # (repo-less, interactive, NO `:task_id` key at all, no foreign or custom
-  # identity), so a forged or half-migrated row cannot borrow this branch.
-  defp valid_interactive_root_agent?(
-         %SchedMeta{
-           depth: 0,
-           parent_id: nil,
-           result_sent: false,
-           mode: :interactive,
-           task_id: task_id,
-           session_pid: owner,
-           status: status,
-           spec: %AgentSpec{
-             agent_module: EvoGit.Agents.SelfReflective,
-             repo_id: "primary",
-             foreign_repos: [],
-             phylo_node: nil,
-             opts: opts
-           }
-         },
-         owner,
-         task_id
-       )
-       when is_binary(task_id) and task_id != "" and status in @accepted_agent_statuses and
-              is_list(opts) do
-    Keyword.keyword?(opts) and Keyword.get(opts, :repo_less) == true and
-      Keyword.get(opts, :session_mode) == :interactive and
-      not Keyword.has_key?(opts, :task_id) and
-      Keyword.get(opts, :foreign_repos, []) == [] and
-      Keyword.get(opts, :custom_agent_id) == nil and Keyword.get(opts, :agent) == nil
-  end
-
-  defp valid_interactive_root_agent?(_, _, _), do: false
 
   # Nil-task-id admission, for an interactive root session whose driver supplies
   # no task id at all, so no task lookup is even possible and this predicate
