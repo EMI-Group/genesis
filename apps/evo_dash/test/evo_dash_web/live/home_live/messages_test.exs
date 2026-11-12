@@ -153,15 +153,13 @@ defmodule EvoDashWeb.HomeLive.MessagesTest do
 
       assert %{transcript: transcript, entries: entries} = Messages.transcript(messages)
 
-      # One user entry per NON-EMPTY data.content of ANY entry (the history's
-      # content entries are the conversation as the user saw it), then ONE
-      # assistant entry carrying the joined assistant text.
+      # The ORDERED display projection: the system prompt never becomes a
+      # bubble, the user-authored turn keeps its text, and EACH assistant
+      # message gets its own bubble in chronological order.
       assert Enum.map(transcript, &{&1.role, &1.text}) == [
-               {:user, "system prompt"},
                {:user, "Fix the bug"},
-               {:user, "Looking"},
-               {:user, "into it"},
-               {:assistant, "Looking\ninto it"}
+               {:assistant, "Looking"},
+               {:assistant, "into it"}
              ]
 
       refute Enum.any?(transcript, & &1.streaming)
