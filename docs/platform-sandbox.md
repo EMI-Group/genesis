@@ -38,12 +38,13 @@ We support only the newest, cleanest platform stack (Windows MXC; Apple's `sandb
 - **Denials surface as the child's exit status plus `Operation not permitted` on stderr**; Codex classifies violations by stderr keywords and best-effort extracts the path.
 - **License**: Apache-2.0 (`codex-rs`); the base `.sbpl` fragments themselves derive from Chromium's `common.sb`/`renderer.sb` (BSD-3-Clause) — keep attribution when vendoring.
 
-## Genesis today
+## Where we stand
 
 - Contract: `EvoGit.Sandbox.Behaviour` — `enabled?/0`, `ensure_initialized/0`, `run/4` (untimed), `run_with_partial/6`, optional `run_with_partial/7` (`:execution_id` for `ProcessManager`). Detached execution is `EvoGit.Sandbox.spawn_detached/kill_detached/detached_status` (`sandbox/background.ex`), not a callback.
-- Backends and per-call selection: `EvoGit.Sandbox.backend/0` reads `[:sandbox, :backend]` (`:auto|:systemd|:bwrap`) from the **file** config, then `Platform.sandbox_backend/0` → `Linux` (systemd-run), `Bwrap`, `MacOS`, `None`.
-- `MacOS.generate_profile/2` today: `(deny default)`; reads are effectively **allow-all** (`(allow file-read* (subpath "/"))`) minus a home/system deny list; writes are deny-by-default with cwd, tmp dirs, task tmpdir, `.git` metadata, Genesis config/data dirs and 13 cache dirs; network `allow network*`; `mach-lookup` allow-all; `(limit number 200)`; single-line string interpolation of every path.
-- Windows: `EvoGit.Sandbox.None` — `enabled?/0` is hardcoded `false`, so `mode: "enabled"` silently means "run directly"; commands are `System.cmd` argv arrays (PowerShell `-EncodedCommand`), timeout is an **idle** timeout, kill is `taskkill /T /F`. No isolation of any kind.
+- Backends and per-call selection: `EvoGit.Sandbox.backend/0` reads `[:sandbox, :backend]` (`:auto|:systemd|:bwrap`) from the **file** config, then `Platform.sandbox_backend/0` → `Linux` (systemd-run), `Bwrap`, `MacOS`, `None`; `backend_reason/0` reports which one is in effect (see the backend matrix).
+- `MacOS.generate_profile/3`: `(deny default)`; reads are effectively **allow-all** (`(allow file-read* (subpath "/"))`) minus a home/credential/system deny list; writes are deny-by-default with cwd, tmp dirs, task tmpdir, `.git` metadata, Genesis config/data dirs and the 13 cache dirs; network `allow network*`; `mach-lookup` allow-all; `(limit number 200)`; paths are still single-line string interpolation (the `-D` rework is open).
+- Windows: `EvoGit.Sandbox.None` — `enabled?/0` is hardcoded `false`, so `mode: "enabled"` means "run directly"; commands are `System.cmd` argv arrays (PowerShell `-EncodedCommand`), timeout is an **idle** timeout, kill is `taskkill /T /F`. No isolation of any kind, and no Windows backend is planned while the project has no Windows build or test host (P1 deferred).
+- The unisolated state is no longer SILENT: `EvoGit.Sandbox.backend_reason/0` names it (including the unsupported-platform `:auto` fallback and "NO OS-LEVEL ISOLATION on <platform>" with the `[sandbox] backend` / `[sandbox] mode` fix), and `EvoGit.Sandbox.warn_if_unisolated/0` logs one latched warning per BEAM when isolation was demanded and no backend is usable.
 - Bypass surface (not sandboxed today): `lsp` tool spawn, `elixir_eval` sudo tier, custom tools, Windows skill scripts, the repo `genesis.toml [worktree]` init script.
 - No test ever executes a real backend (`@mix_env == :test` short-circuits Linux/bwrap/macOS), so backend tests are argv/profile-string assertions only.
 - Packaging: `EvoGit.Executable.resolve/1` = PATH first, then `priv/vendor/<platform>/`; releases copy `priv/` automatically; CI has **no** cargo build step outside `tauri build`; `sign-macos-nested.sh` signs every Mach-O under the copied release tree; Windows has no signing at all.
@@ -52,41 +53,50 @@ We support only the newest, cleanest platform stack (Windows MXC; Apple's `sandb
 
 One Elixir **policy spec** + one renderer per platform. The spec is the only place that knows Genesis semantics (which roots are writable, which are denied, git metadata, tmp dirs); renderers only know how to express it.
 
-### `EvoGit.Sandbox.Spec` (new, additive)
+### `EvoGit.Sandbox.Spec` (implemented — P0)
+
+ONE struct carries everything a renderer needs, and `EvoGit.Sandbox.Spec.build(:macos | :linux | :bwrap, opts)` is the only builder:
 
 ```
 %Spec{
-  cwd,                      # absolute
-  workspace_root,           # absolute
-  read_roots,               # absolute, recursive
-  write_roots,              # absolute, recursive
-  read_only_subpaths,       # carveouts under write roots
-  deny_read_roots,          # home secrets, /etc/ssh, …
-  deny_write_roots,
-  deny_globs,               # pattern list; macOS renders SBPL regex, Windows ignores (P1)
-  network,                  # :allow | :deny
-  env,                      # map/list, already sanitized
-  meta: %{git_dir, task_tmpdir, config_dir, data_dir}
+  backend,                                       # :macos | :linux | :bwrap — which renderer consumes it
+  cwd, repo_root, home,                          # working dir; repo boundary for git metadata; home anchor
+  read_roots, write_roots, read_only_subpaths,   # grants: readable / writable / carveouts under a write root
+  deny_paths, deny_write_paths,                  # deny-read and deny-write locations
+  credential_paths, credential_deny_paths,       # the ONE canonical credential list, projected per rule kind
+  cache_write_paths, tmp_paths, nix_paths,       # package-manager caches, tmp dirs, nix store/var
+  git_metadata_dir, task_tmpdir,                 # git metadata (per call site), managed per-task tmpdir
+  config_dir, data_dir, host_tmpdir,             # Genesis config/data dirs, macOS host $TMPDIR read source
+  git_binary_dir,                                # read rule for a vendored git (macOS, PATH miss only)
+  network, env,                                  # :allow | :deny; env already shaped for the renderer
+  max_processes, resources                       # process-count limit; per-backend resource limits
 }
 ```
 
-Built by `EvoGit.Sandbox.Spec.build/2` from the current inputs (config `[:sandbox, :write_paths]`, `Platform.tmp_paths/0`, task tmpdir, git metadata dir, home deny lists) so `macos.ex` and `linux.ex` stop carrying duplicated lists.
-P0 keeps byte-identical macOS output; the refactor is verified by the existing profile-string tests.
+`build/2` is TOTAL and `cwd:` is its ONLY required input; every other value is a default-inert injection seam (`repo_root`, `home`, `tmp_paths`, `task_tmpdir`, `write_paths`, `nix_enabled?`, `config_dir`, `data_dir`, `host_tmpdir`, `network`, `max_processes`, `git_metadata`).
+An ABSENT option means "resolve it live, exactly as production does", so a test pins one value without touching app env, `:persistent_term` or user config; a nil repo root, an absent per-task tmpdir, a missing cache dir and `write_paths: nil | [] | [...]` are all valid.
+Each call site pins its historical git-metadata input through `git_metadata:` (systemd foreground passes `<repo_root>/.git`, systemd detached passes `git_metadata_dir(cwd, nil)`), so that asymmetry cannot silently unify.
+Companions: `credential_paths/0` (the canonical ordered home-relative list), `default_cache_dirs/0` (the canonical 13 cache dirs), `backends/0`, and the macOS spelling pair `aliases/1` + `resolve_alias/2` (ONE-hop first-component symlink resolution; a NESTING resolution answers `nil`).
 
-### Backend matrix after the plan
+Credential parity: ONE canonical 12-dir list (`.ssh`, `.gnupg`, `.aws`, `.kube`, `.config/sops`, `.git-credentials`, `.netrc`, `.password-store`, `.npmrc`, `.pypirc`, `.docker`, `.gem`) feeds systemd `InaccessiblePaths`, the bwrap deny `--tmpfs` overlays, and the macOS deny-read AND deny-write groups; `Library/Keychains` is macOS-only and appended by the macOS renderer to the deny-READ group, immediately after `.password-store`.
+Linux `InaccessiblePaths`, the bwrap deny overlays and the macOS deny-write group all cover the full canonical 12; every other SBPL rule and argv element is byte-identical to the pre-extraction output, and deny groups are emitted in canonical order (semantically irrelevant).
+`deny_globs` does NOT exist in the shipped struct: glob patterns remain unimplemented (macOS P2; never on Windows), and no renderer accepts a pattern list today.
+
+### Backend matrix
 
 | Host | Backend | Mechanism | Status |
 |---|---|---|---|
-| Linux + systemd | `Sandbox.Linux` | transient user unit, hardening props, slice `MemoryMax` | exists |
-| Linux, no systemd | `Sandbox.Bwrap` | filesystem namespace, `--ro-bind /` | exists |
-| macOS | `Sandbox.MacOS` | `sandbox-exec` + `-D`-parameterized SBPL | harden (P2) |
-| Windows 11 24H2+ (PSEC) | `Sandbox.WindowsMxc` | `genesis-sandbox.exe` → MXC PSEC | new (P1) |
-| anything else | `Sandbox.None` | direct | exists, now *reported* |
+| Linux + systemd | `Sandbox.Linux` | transient user unit, hardening props, slice `MemoryMax` | exists, spec renderer |
+| Linux, no systemd | `Sandbox.Bwrap` | filesystem namespace, `--ro-bind /` | exists, spec renderer |
+| macOS | `Sandbox.MacOS` | `sandbox-exec` + SBPL | exists, spec renderer; P2 remainder open |
+| Windows 11 24H2+ (PSEC) | `Sandbox.WindowsMxc` | `genesis-sandbox.exe` → MXC PSEC | deferred (no Windows build or test host) |
+| anything else | `Sandbox.None` | direct | exists, and *reported* |
 
-`[:sandbox, :backend]` gains `:windows_mxc`; `:auto` prefers it on Windows when the helper probe passes.
-When `mode: "enabled"` and no real backend is available, `EvoGit.Sandbox.backend_reason/0` must say why (dashboard warning + one log line), instead of silently running unisolated.
+`[:sandbox, :backend]` would gain `:windows_mxc` with P1; `:auto` would prefer it on Windows when the helper probe passes.
+The no-sandbox state is no longer silent: `EvoGit.Sandbox.backend_reason/0` returns an operator-facing string naming the active backend (`systemd-run` / `bwrap` / `sandbox-exec`) or plainly stating that commands run UNISOLATED (deliberately disabled, the `:auto` fallback, or "NO OS-LEVEL ISOLATION on `<platform>`" naming the `[sandbox] backend` / `[sandbox] mode` fix), and `EvoGit.Sandbox.warn_if_unisolated/0` logs EXACTLY ONE `Logger.warning` per BEAM (a `:persistent_term` latch) when the configuration DEMANDS isolation while no backend is usable — never when sandboxing is on, and never when it was deliberately disabled.
+The dashboard surface for that string remains open (P4).
 
-### Windows helper: `genesis-sandbox.exe` (Rust, new crate)
+### Windows helper: `genesis-sandbox.exe` (Rust, new crate — deferred with P1)
 
 Location `apps/evo_git/native/genesis-sandbox/` (standalone crate + `Cargo.lock`; not a workspace member — the repo has no root Cargo workspace).
 
@@ -107,25 +117,36 @@ genesis-sandbox run --spec <path-to-json> -- <cmd> [args…]
 
 ### macOS policy upgrade (stay in Elixir)
 
-No second binary on macOS — the policy is string generation, and a helper would add signing/notarization surface for zero benefit:
+No second binary on macOS — the policy is string generation, and a helper would add signing/notarization surface for zero benefit.
 
-- move the SBPL fragments to `apps/evo_git/priv/sandbox/*.sbpl` (`seatbelt_base`, `read_only_platform_defaults`, `network`), loaded with `Application.app_dir/2`, with Chromium/Codex attribution headers;
-- render `-DKEY=VALUE` parameters (`READABLE_ROOT_i`, `WRITABLE_ROOT_i`, `WRITABLE_ROOT_i_EXCLUDED_j[_RESOLVED]`, `PROTECTED_ANCESTOR_i`) instead of interpolating paths;
-- add the four anti-bypass blocks (writable-root unlink anchor, protected ancestors of carveouts, `require-not literal` + `subpath`, metadata-name anchored regex);
-- fail closed on nested symlinked writable roots; normalize only top-level aliases; emit both logical and resolved spellings for carveouts;
-- add `(deny system-fcntl (fcntl-command 80 110))`; keep `(limit number N)`, the strip-and-retry fallback, and network default-allow (Genesis tools need network).
+Shipped (the cheap subset of P2):
+
+- resolved-spelling alias rules: `/tmp` + `/private/tmp`, `/var/tmp` + `/private/var/tmp`, and — for cwd, cache dirs, the task tmpdir, the config/data dirs, the git-metadata dir, the credential denies, the system denies and the host `$TMPDIR` read rule — one rule per spelling, logical first, because Seatbelt matches RESOLVED vnodes and a logical spelling alone silently misses;
+- credential `literal` + `subpath` in ONE rule (`(deny file-read* (literal "<p>") (subpath "<p>"))`), read and write groups alike: `subpath` alone leaves a first-time `mkdir` gap, and SBPL OR-combines a rule's filters;
+- exactly one `(deny system-fcntl (fcntl-command 80 110))` (`F_MAKECOMPRESSED` / `F_TRANSFEREXTENTS` mutate file contents through an already-open read-only fd), emitted after the deny-write group and stripped together with the `(limit …)` line by the strip-and-retry fail-safe;
+- an env-free renderer: `MacOS.generate_profile/3` takes the `:alias_fun` / `:host_tmpdir` seams, `spec.host_tmpdir` drives the host-tmpdir rule, and the renderer reads no env or config itself.
+
+Still open (P2 remainder):
+
+- `-DKEY=VALUE` parameter rendering (`READABLE_ROOT_i`, `WRITABLE_ROOT_i`, `WRITABLE_ROOT_i_EXCLUDED_j[_RESOLVED]`, `PROTECTED_ANCESTOR_i`) instead of string interpolation of paths;
+- protected-ancestor machinery: every read-only carveout inside a writable root protects ALL its ancestors (logical and resolved) against rename/unlink;
+- deny-glob → anchored SBPL regex compilation;
+- the symlink-fail-closed rework (a writable root containing a nested symlink fails closed; only top-level aliases normalize);
+- extracting the SBPL fragments to `apps/evo_git/priv/sandbox/*.sbpl` (`seatbelt_base`, `read_only_platform_defaults`, `network`), loaded with `Application.app_dir/2`, with Chromium/Codex attribution headers.
+
+Kept as is: `(limit number N)`, the strip-and-retry fallback, and network default-allow (Genesis tools need network).
 
 ## Phased plan
 
-| Phase | Deliverable | Exit criteria | Rough size |
+| Phase | Deliverable | Exit criteria | Status |
 |---|---|---|---|
-| **P0** | `EvoGit.Sandbox.Spec` + `Spec.build/2`; macOS/Linux renderers consume it; shared root/deny lists extracted | profile/argv tests still green, output byte-identical for macOS | ~0.5–1 day |
-| **P1** | Rust helper crate + `Sandbox.WindowsMxc` backend + `Background` clause + config enum + `backend_reason/0` + probe caching (`:persistent_term`) + test seams | `cargo test` green on CI windows runner; Elixir tests pass against a fixture helper binary on POSIX; `probe` gated skip on hosts without PSEC | ~3–4 days |
-| **P2** | macOS hardening (fragments + `-D` rendering + anti-bypass + symlink fail-closed) + ported policy tests | new profile assertions pin each anti-bypass rule; real `sandbox-exec` tests skip when nested denial is unavailable | ~2 days |
-| **P3** | Resource governance (separate workstream; see below) | memory budget enforced or explicitly documented as best-effort per backend | ~2 days |
-| **P4** | Packaging & ops: CI cargo build before `mix release` in `build-windows-x64`, `.gitignore`, dev build task (`mix sandbox.build_helper`, shells to cargo; the first such task in the repo), Settings/System status surface, `docs/` + CONTEXT.md updates | `genesis_desktop` Windows bundle contains `priv/vendor/windows-x64/genesis-sandbox.exe`; `EvoGit.Executable.resolve/1` finds it | ~1 day |
+| **P0** | `EvoGit.Sandbox.Spec` + `Spec.build/2`; macOS/Linux/bwrap renderers consume it; shared root/deny/cache/credential lists extracted | profile/argv tests green; only the credential-parity delta changed | **implemented** |
+| **P1** | Rust helper crate + `Sandbox.WindowsMxc` backend + `Background` clause + config enum + probe caching (`:persistent_term`) + test seams | `cargo test` green on CI windows runner; Elixir tests pass against a fixture helper binary on POSIX; `probe` gated skip on hosts without PSEC | **deferred** — no Windows build or test host in the project |
+| **P2** | macOS hardening: fragments + `-D` rendering + protected ancestors + deny-glob compilation + symlink fail-closed | new profile assertions pin each anti-bypass rule; real `sandbox-exec` tests skip when nested denial is unavailable | cheap subset **implemented**, remainder open |
+| **P3** | Resource governance (separate workstream; see below) | memory budget enforced or explicitly documented as best-effort per backend | open |
+| **P4** | Packaging & ops: CI cargo build before `mix release` in `build-windows-x64`, `.gitignore`, dev build task (`mix sandbox.build_helper`, shells to cargo; the first such task in the repo), Settings/System status surface via `backend_reason/0`, `docs/` + CONTEXT.md updates | `genesis_desktop` Windows bundle contains `priv/vendor/windows-x64/genesis-sandbox.exe`; `EvoGit.Executable.resolve/1` finds it | blocked on P1 |
 
-Order: P0 → P1 → P2 can overlap P1 once the spec exists; P3 and P4 last (P4's Windows half must land with P1 to be usable, so its CI step effectively ships alongside P1).
+Order: P0 → (P1 ∥ P2) → P3 → P4; P4's Windows half ships with P1, so the whole Windows half waits for a build host.
 
 ### P1 detail (the risky one)
 
@@ -153,7 +174,7 @@ Do not present sandboxing as an OOM fix in user-facing copy.
 - Codex's managed network proxy (`NetworkProxy`, proxy-port-only Seatbelt rules, `CODEX_SANDBOX_LAUNCH_*` env transport).
 - Deny-glob support on Windows in P1 (macOS gets it in P2), volume-root expansion, UNC handling.
 - PTY support for sandboxed commands (unchanged: buffered output today).
-- Protecting `.git` under writable roots by default: Genesis agents legitimately write `.git` (worktree pointer, commits through the `git` tool), so `.git` stays writable; `.genesis/` (runtime artifacts) becomes a read-only carveout. Revisit if the shell tool stops being used for git.
+- Protecting `.git` or `.genesis/` under writable roots: Genesis agents legitimately write `.git` (worktree pointer, commits through the `git` tool), and every agent worktree lives UNDER `<repo>/.genesis/workers/…` (foreign read views under `<repo>/.genesis/foreign_repos/…`), so a read-only or deny carveout there would block every agent's own cwd — both stay writable, and a `.genesis/` carveout is deliberately NOT implemented (do not re-attempt it without moving worktrees out of `.genesis/` first). Revisit if the shell tool stops being used for git.
 
 ## Risks & gotchas
 
