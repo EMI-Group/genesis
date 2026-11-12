@@ -338,4 +338,88 @@ defmodule EvoGit.Sandbox.SpecTest do
       assert build(:linux, ctx, cwd: worktree, git_metadata: nil).git_metadata_dir == nil
     end
   end
+
+  describe "resolve_alias/2 — system aliases (root: fixture seam)" do
+    # A fixture tree standing in for "/" (the documented `:root` TEST SEAM), so
+    # the one-hop resolution is exercised without touching the host's own
+    # symlinks: `/tmp` -> `private/tmp` (relative target), `/abs` -> an
+    # absolute target, `/real` a plain dir and `/nested` -> `inner` where
+    # `inner` is ITSELF a symlink (resolution would nest -> refused).
+    setup %{tmp_dir: tmp_dir} do
+      root = Path.join(tmp_dir, "root")
+      File.mkdir_p!(Path.join(root, "private/tmp"))
+      File.mkdir_p!(Path.join(root, "real"))
+      File.mkdir_p!(Path.join(root, "deep"))
+      File.ln_s!("private/tmp", Path.join(root, "tmp"))
+      File.ln_s!("/absolute/target", Path.join(root, "abs"))
+      File.ln_s!("inner", Path.join(root, "nested"))
+      File.ln_s!("deep", Path.join(root, "inner"))
+
+      %{root: root}
+    end
+
+    test "resolves a RELATIVE link target and keeps the suffix", %{root: root} do
+      assert Spec.resolve_alias("/tmp/agent", root: root) == Path.join(root, "private/tmp/agent")
+    end
+
+    test "resolves the top-level component alone (no suffix)", %{root: root} do
+      assert Spec.resolve_alias("/tmp", root: root) == Path.join(root, "private/tmp")
+    end
+
+    test "keeps an ABSOLUTE link target as-is and appends the suffix", %{root: root} do
+      assert Spec.resolve_alias("/abs/agent", root: root) == "/absolute/target/agent"
+    end
+
+    test "a non-symlink component yields nil", %{root: root} do
+      assert is_nil(Spec.resolve_alias("/real/agent", root: root))
+    end
+
+    test "a missing component yields nil", %{root: root} do
+      assert is_nil(Spec.resolve_alias("/missing/agent", root: root))
+    end
+
+    test "refuses a NESTED alias (the resolved component is itself a symlink)", %{root: root} do
+      assert is_nil(Spec.resolve_alias("/nested/agent", root: root))
+    end
+
+    test "a relative input or the bare root yields nil", %{root: root} do
+      assert is_nil(Spec.resolve_alias("tmp/agent", root: root))
+      assert is_nil(Spec.resolve_alias("/", root: root))
+    end
+
+    test "is TOTAL: a non-binary path, a blank/nil/absent root never raise", %{root: root} do
+      assert is_nil(Spec.resolve_alias(nil, root: root))
+      assert is_nil(Spec.resolve_alias("/tmp/agent", root: ""))
+      assert is_nil(Spec.resolve_alias("/tmp/agent", root: nil))
+      # The default root is "/" — a fixture path never resolves through it.
+      assert is_nil(Spec.resolve_alias("/evogit-spec-no-such-top/agent"))
+    end
+  end
+
+  describe "aliases/1" do
+    test "pairs every path with its resolved spelling, logical first" do
+      # `aliases/1` always resolves against the REAL "/" (it has no root seam),
+      # so the pin is expressed against `resolve_alias/2` itself: the logical
+      # spelling first, then the resolved one — or the identity pair when the
+      # top-level component is not a symlink. The probes cover a nonexistent
+      # top level (always identity here) plus the host's own top-level
+      # symlinks (macOS: /tmp, /var, /etc; merged-usr Linux: /bin, /lib).
+      probes = [
+        "/evogit-spec-no-such-top-#{System.unique_integer([:positive])}/file",
+        "/tmp/evogit-spec-alias-probe",
+        "/etc/evogit-spec-alias-probe",
+        "/var/evogit-spec-alias-probe"
+      ]
+
+      for probe <- probes do
+        case Spec.resolve_alias(probe) do
+          nil -> assert Spec.aliases(probe) == [probe]
+          resolved -> assert Spec.aliases(probe) == [probe, resolved]
+        end
+      end
+
+      # Total for a non-binary input: the identity form, never a raise.
+      assert Spec.aliases(nil) == [nil]
+    end
+  end
 end

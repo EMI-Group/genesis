@@ -15,6 +15,17 @@ defmodule EvoGit.Sandbox.Spec do
   handled, no path is required to exist, and no value has to be a valid
   filesystem object. The only required input is `cwd`.
 
+  ## System aliases
+
+  A path can be visible under more than one spelling: on macOS `/tmp` is a
+  symlink to `/private/tmp`, so Seatbelt — which matches RESOLVED vnodes —
+  never matches a rule written with the logical spelling. `aliases/1` answers
+  the spelling pair and `resolve_alias/2` does the ONE-hop resolution (see
+  Codex `utils/absolute-path/src/system_aliases.rs`, `normalize_system_aliases`);
+  a renderer that can hit a resolvable component emits its rules once per
+  spelling. Resolution that would NEST is refused (`nil`), so a helper built on
+  it can never loop.
+
   ## Injection seams (test seams)
 
   Every input can be injected per call, so a test can pin ONE value without
@@ -247,6 +258,71 @@ defmodule EvoGit.Sandbox.Spec do
   def backends, do: @backends
 
   @doc """
+  Every spelling `path` may be visible under inside the sandbox.
+
+  `[path]` when the path's top-level component is not a symlink, else
+  `[path, resolved]` — the LOGICAL spelling first, the resolved one second,
+  deduped. See `resolve_alias/2`.
+  """
+  @spec aliases(String.t()) :: [String.t()]
+  def aliases(path) when is_binary(path) do
+    case resolve_alias(path) do
+      nil -> [path]
+      resolved -> [path, resolved]
+    end
+  end
+
+  def aliases(path), do: [path]
+
+  @doc """
+  Resolves the FIRST component of `path` through a symlink, ONE hop only.
+
+  `"/tmp/x"` splits into the top-level component `"/tmp"` and the suffix
+  `"/x"`; when `<root>/tmp` is a symlink, appending the suffix verbatim to its
+  resolved target gives the second spelling (`"/private/tmp/x"`).
+
+  Returns `nil` when there is nothing to resolve:
+
+    * `path` is not absolute, or is `"/"` (no top-level component);
+    * `<root>/<first component>` is not a symlink (missing, unreadable, or a
+      real file/dir);
+    * resolution would NEST — the resolved top-level component is itself a
+      symlink. `normalize_system_aliases` iterates; this helper deliberately
+      refuses instead of following a second hop;
+    * the resolved spelling equals `path`.
+
+  A relative link target is expanded against the component's PARENT (`root`);
+  an absolute target is kept as-is. Total: never raises, for any input shape.
+
+  ## Options
+
+    * `:root` — the directory the top-level component is read from. Default
+      `"/"`. It exists as a TEST SEAM, so a fixture tree can stand in for `/`
+      and a fake `tmp` symlink can be exercised without touching the host;
+      production always resolves against `"/"`.
+  """
+  @spec resolve_alias(String.t(), keyword()) :: String.t() | nil
+  def resolve_alias(path, opts \\ [])
+
+  def resolve_alias(path, opts) when is_binary(path) and is_list(opts) do
+    root = alias_root(opts)
+
+    with true <- is_binary(root) and String.starts_with?(path, "/"),
+         [top | rest] <- String.split(path, "/", trim: true),
+         {:ok, target} <- read_link(Path.join(root, top)),
+         resolved when is_binary(resolved) <- expand_link_target(target, root),
+         false <- symlink?(resolved),
+         resolved_path = spelling(resolved, suffix(rest)),
+         false <- resolved_path == path do
+      resolved_path
+    else
+      _other -> nil
+    end
+  end
+
+  def resolve_alias(_path, _opts), do: nil
+
+  @doc """
   Builds the policy spec for `backend`.
 
   `:cwd` is required; every other option is a default-inert test seam (see the
@@ -390,4 +466,49 @@ defmodule EvoGit.Sandbox.Spec do
   end
 
   defp reject_nil_env(env), do: Enum.reject(env, fn {_key, value} -> is_nil(value) end)
+
+  # --- System aliases (see `resolve_alias/2`) ---
+
+  defp alias_root(opts) do
+    case Keyword.get(opts, :root, "/") do
+      root when is_binary(root) and root != "" -> root
+      _other -> nil
+    end
+  end
+
+  # `:file.read_link_all/1` returns the RAW link target (never a resolved
+  # path) and does not reject a target that is not a valid filename, so the
+  # one hop stays exactly one hop. The Erlang file driver may answer a charlist
+  # even for a binary path, so both name types are normalized to a binary. Any
+  # non-link — a real dir/file, a missing or unreadable path — is
+  # `{:error, reason}`.
+  defp read_link(path) do
+    case :file.read_link_all(path) do
+      {:ok, target} when is_binary(target) -> {:ok, target}
+      {:ok, target} when is_list(target) -> {:ok, List.to_string(target)}
+      _other -> :error
+    end
+  rescue
+    # A malformed path makes the file driver raise `badarg`; `resolve_alias/2`
+    # is contractually total, so a raise becomes "nothing to resolve".
+    _error -> :error
+  end
+
+  defp symlink?(path), do: match?({:ok, _target}, read_link(path))
+
+  defp expand_link_target(target, root) do
+    case Path.type(target) do
+      :absolute -> Path.expand(target)
+      :relative -> Path.expand(target, root)
+      _other -> nil
+    end
+  end
+
+  defp suffix([]), do: ""
+  defp suffix(rest), do: Enum.map_join(rest, "", &("/" <> &1))
+
+  # A component resolving to "/" must not produce a "//" prefix.
+  defp spelling(resolved, ""), do: resolved
+  defp spelling("/", suffix), do: suffix
+  defp spelling(resolved, suffix), do: resolved <> suffix
 end
