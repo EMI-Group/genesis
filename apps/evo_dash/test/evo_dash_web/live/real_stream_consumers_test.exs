@@ -16,20 +16,56 @@ defmodule EvoDashWeb.RealStreamConsumersTest.Provider do
     %{pid: pid, listener: listener, url: "http://127.0.0.1:#{port}"}
   end
 
-  def request(%{pid: pid}, index) do
+  def request(provider, index), do: elem(request_with_body(provider, index), 0)
+
+  def request_with_body(%{pid: pid}, index) do
     assert_receive {:provider_request, ^pid, ^index, socket, body}, @budget
     assert body["stream"] == true
     assert is_list(body["messages"])
-    socket
+    {socket, body}
   end
 
-  def open(socket) do
+  def unavailable(provider, socket) do
+    body =
+      Jason.encode!(%{error: %{message: "fixture temporarily unavailable", type: "server_error"}})
+
     :ok =
       :gen_tcp.send(
         socket,
-        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n"
+        "HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\n" <>
+          "content-length: #{byte_size(body)}\r\nconnection: close\r\n\r\n" <> body
+      )
+
+    send(provider.pid, :next_request)
+  end
+
+  def tool(socket, index, id, path) do
+    write(socket, %{
+      tool_calls: [
+        %{
+          index: index,
+          id: id,
+          type: "function",
+          function: %{name: "read", arguments: Jason.encode!(%{file_path: path})}
+        }
+      ]
+    })
+  end
+
+  def open(socket, content_length \\ nil) do
+    length_header = if content_length, do: "content-length: #{content_length}\r\n", else: ""
+
+    :ok =
+      :gen_tcp.send(
+        socket,
+        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n" <>
+          length_header <> "connection: close\r\n\r\n"
       )
   end
+
+  # With an advertised Content-Length, early EOF is a genuine transport failure,
+  # not a valid SSE response ending at connection close. No fake stream errors.
+  def truncate(provider), do: send(provider.pid, :next_request)
 
   def write(socket, delta, finish \\ nil) do
     chunk = %{
@@ -48,8 +84,8 @@ defmodule EvoDashWeb.RealStreamConsumersTest.Provider do
     :ok = :gen_tcp.send(socket, "data: " <> Jason.encode!(chunk) <> "\n\n")
   end
 
-  def finish(provider, socket) do
-    write(socket, %{}, "stop")
+  def finish(provider, socket, reason \\ "stop") do
+    write(socket, %{}, reason)
     :ok = :gen_tcp.send(socket, "data: [DONE]\n\n")
     send(provider.pid, :next_request)
   end
@@ -402,12 +438,185 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
     await(fn -> watchers(session) == %{} end)
   end
 
+  test "real read tools publish results, retire their call and start a fresh inspector call",
+       ctx do
+    session = start_session(ctx.provider)
+    socket = Provider.request(ctx.provider, 0)
+    Provider.open(socket)
+    Provider.write(socket, %{role: "assistant", reasoning_content: "Read planning thought"})
+    Provider.write(socket, %{content: "Checking the fixture"})
+    first = await_call(session, "Checking the fixture", "Read planning thought")
+    view = mount_inspector(ctx.conn, session)
+    await(fn -> text(view, "#inspector-stream article div pre") == "Checking the fixture" end)
+    {:ok, _, _} = Stream.watch(session.pid)
+
+    # A paused scheduler gates the REAL tool-slot acquisition, not tool execution
+    # or its result. This makes the otherwise very short :tools phase observable.
+    :ok = AgentScheduler.pause()
+    Provider.tool(socket, 0, "read-ok", Path.join(session.dir, "fixture.txt"))
+    Provider.tool(socket, 1, "read-missing", Path.join(session.dir, "missing.txt"))
+    Provider.finish(ctx.provider, socket, "tool_calls")
+
+    await(fn -> text(view, "#inspector-activity") == "Executing tools" end)
+    {:ok, during_tools, _} = Stream.snapshot(session.pid)
+    assert during_tools.activity.phase == :tools
+    assert during_tools.activity.current_call.id == first.activity.current_call.id
+    refute has_element?(view, "#inspector-stream-cursor")
+    assert text(view, "#inspector-stream details pre") == "Read planning thought"
+
+    :ok = AgentScheduler.resume()
+    {next_socket, request} = Provider.request_with_body(ctx.provider, 1)
+    tool_messages = Enum.filter(request["messages"], &(&1["role"] == "tool"))
+    assert Enum.map(tool_messages, & &1["tool_call_id"]) == ["read-ok", "read-missing"]
+    assert Enum.at(tool_messages, 0)["content"] =~ "real tool fixture payload"
+    assert Enum.at(tool_messages, 1)["content"] =~ "Error:"
+
+    # The consumer sees production tool events (including the error status), not
+    # synthetic batches; a terminal tool_result is the drain boundary here.
+    events = receive_events_until(session.id, {:tool_result, "read-missing", :error})
+    assert {:tool_call, "read-ok", "read"} in events
+    assert {:tool_call, "read-missing", "read"} in events
+    assert {:tool_result, "read-ok", :ok} in events
+    assert Enum.count(events, &(&1 == {:tool_result, "read-ok", :ok})) == 1
+    assert Enum.count(events, &(&1 == {:tool_result, "read-missing", :error})) == 1
+
+    Provider.open(next_socket)
+    Provider.write(next_socket, %{role: "assistant", reasoning_content: "After tools thought"})
+    Provider.write(next_socket, %{content: "After tools answer"})
+    next = await_call(session, "After tools answer", "After tools thought")
+    refute next.activity.current_call.id == first.activity.current_call.id
+    assert next.activity.current_call.turn > first.activity.current_call.turn
+    assert next.activity.current_call.attempt == 0
+    await(fn -> text(view, "#inspector-stream article div pre") == "After tools answer" end)
+    assert text(view, "#inspector-stream details pre") == "After tools thought"
+    assert length(elements(view, "#inspector-stream article")) == 1
+    refute text(view, "#inspector-stream") =~ "Read planning thought"
+
+    Provider.finish(ctx.provider, next_socket)
+    assert_yield(session, "After tools answer")
+    await(fn -> assigns(view).inspector_stream.state.projections == [] end)
+    history = Session.history(session.pid)
+    assert Enum.count(history, &(&1.role == :tool)) == 2
+    assert Enum.count(history, &(&1.role == :assistant)) == 2
+    refute has_element?(view, "#inspector-stream-cursor")
+    Stream.unwatch(session.pid)
+    stop_consumer(view)
+    await(fn -> watchers(session) == %{} end)
+  end
+
+  test "real HTTP retry replaces inspector call identity within the same turn", ctx do
+    # 503 is not retried internally by ReqLLM's Finch streaming transport (unlike
+    # 429). The next request therefore exercises EvoGit's actual attempt loop.
+    ExUnit.CaptureLog.capture_log(fn ->
+      session = start_session(ctx.provider, max_retries: 1)
+      socket = Provider.request(ctx.provider, 0)
+      {:ok, first, _} = Stream.snapshot(session.pid)
+      assert first.activity.phase == :llm
+      assert first.activity.current_call.attempt == 0
+      view = mount_inspector(ctx.conn, session)
+      {:ok, _, _} = Stream.watch(session.pid)
+      Provider.unavailable(ctx.provider, socket)
+
+      next_socket = Provider.request(ctx.provider, 1)
+      {:ok, retry, _} = Stream.snapshot(session.pid)
+      assert retry.activity.phase == :llm
+      assert retry.activity.current_call.attempt == 1
+      assert retry.activity.current_call.turn == first.activity.current_call.turn
+      refute retry.activity.current_call.id == first.activity.current_call.id
+      assert retry.activity.current_call.text == ""
+      assert retry.activity.current_call.thinking == ""
+
+      events = receive_events_until(session.id, {:activity, retry.activity})
+      assert {:activity, %{phase: :retry_wait, current_call: nil}} in events
+      Provider.open(next_socket)
+      Provider.write(next_socket, %{role: "assistant", reasoning_content: "Recovered thought"})
+      Provider.write(next_socket, %{content: "Recovered answer"})
+      await_call(session, "Recovered answer", "Recovered thought")
+      await(fn -> text(view, "#inspector-stream article div pre") == "Recovered answer" end)
+      assert text(view, "#inspector-stream details pre") == "Recovered thought"
+      assert length(elements(view, "#inspector-stream article")) == 1
+      assert has_element?(view, "#inspector-stream-cursor")
+      Provider.finish(ctx.provider, next_socket)
+      assert_yield(session, "Recovered answer")
+      await(fn -> assigns(view).inspector_stream.state.projections == [] end)
+      assert Enum.count(Session.history(session.pid), &(&1.role == :assistant)) == 1
+      Stream.unwatch(session.pid)
+      stop_consumer(view)
+      await(fn -> watchers(session) == %{} end)
+    end)
+    |> then(fn log -> assert log =~ "LLM request failed, retrying" end)
+  end
+
+  test "a truncated real SSE attempt cannot leak its inspector excerpts into the retry", ctx do
+    ExUnit.CaptureLog.capture_log(fn ->
+      session = start_session(ctx.provider, max_retries: 1)
+      socket = Provider.request(ctx.provider, 0)
+      Provider.open(socket, 100_000)
+      Provider.write(socket, %{role: "assistant", reasoning_content: "Abandoned thought"})
+      Provider.write(socket, %{content: "Abandoned answer"})
+      first = await_call(session, "Abandoned answer", "Abandoned thought")
+      view = mount_inspector(ctx.conn, session)
+      await(fn -> text(view, "#inspector-stream article div pre") == "Abandoned answer" end)
+      assert text(view, "#inspector-stream details pre") == "Abandoned thought"
+      {:ok, _, _} = Stream.watch(session.pid)
+      Provider.truncate(ctx.provider)
+
+      next_socket = Provider.request(ctx.provider, 1)
+      {:ok, retry, _} = Stream.snapshot(session.pid)
+      assert retry.activity.current_call.attempt == 1
+      assert retry.activity.current_call.turn == first.activity.current_call.turn
+      refute retry.activity.current_call.id == first.activity.current_call.id
+      assert retry.activity.current_call.text == ""
+      assert retry.activity.current_call.thinking == ""
+      events = receive_events_until(session.id, {:activity, retry.activity})
+      assert {:activity, %{phase: :retry_wait, current_call: nil}} in events
+      await(fn -> assigns(view).inspector_stream.state.response == "" end)
+      assert assigns(view).inspector_stream.state.thinking == ""
+      refute text(view, "#inspector-stream") =~ "Abandoned"
+
+      Provider.open(next_socket)
+      Provider.write(next_socket, %{role: "assistant", reasoning_content: "Replacement thought"})
+      Provider.write(next_socket, %{content: "Replacement answer"})
+      await_call(session, "Replacement answer", "Replacement thought")
+      await(fn -> text(view, "#inspector-stream article div pre") == "Replacement answer" end)
+      assert text(view, "#inspector-stream details pre") == "Replacement thought"
+      assert length(elements(view, "#inspector-stream article")) == 1
+      Provider.finish(ctx.provider, next_socket)
+      assert_yield(session, "Replacement answer")
+      await(fn -> assigns(view).inspector_stream.state.projections == [] end)
+      history = Session.history(session.pid)
+      assert Enum.count(history, &(&1.role == :assistant)) == 1
+      refute inspect(history) =~ "Abandoned"
+      Stream.unwatch(session.pid)
+      stop_consumer(view)
+      await(fn -> watchers(session) == %{} end)
+    end)
+    |> then(fn log -> assert log =~ "LLM request failed, retrying" end)
+  end
+
+  defp mount_inspector(conn, session) do
+    {:ok, view, _} = live(conn, "/agents")
+    track_consumer(view)
+    await(fn -> not assigns(view).agents_loading end)
+    view |> element("#agent-card-#{session.id}") |> render_click()
+    track_watch_worker(view)
+    await(fn -> assigns(view).inspector_stream.snapshot != nil end)
+    view
+  end
+
+  defp receive_events_until(id, terminal, acc \\ []) do
+    assert_receive {:agent_delta, ^id, _seq, batch}, @budget
+    events = acc ++ batch
+    if terminal in events, do: events, else: receive_events_until(id, terminal, events)
+  end
+
   defp scheduler_config(opts), do: GenServer.call(AgentScheduler, {:update_config, opts}, @budget)
 
-  defp start_session(provider) do
+  defp start_session(provider, opts \\ []) do
     id = 35_000_000 + System.unique_integer([:positive, :monotonic])
     dir = Path.join(System.tmp_dir!(), "real_stream_consumers_#{id}")
     File.mkdir_p!(dir)
+    File.write!(Path.join(dir, "fixture.txt"), "real tool fixture payload\n")
     node = %EvoGit.Core.ContextNode{path: "./", repo: dir}
 
     spec = %EvoGit.AgentSpec{
@@ -434,7 +643,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
         llm_generation_params: [api_key: "loopback-fixture-only"],
         model_id: @pool,
         max_turns: 16,
-        max_retries: 0,
+        max_retries: Keyword.get(opts, :max_retries, 0),
         max_depth: 1,
         repo_root: dir,
         mode: :interactive
@@ -459,7 +668,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
       )
 
     Process.unlink(pid)
-    session = %{id: id, pid: pid}
+    session = %{id: id, pid: pid, dir: dir}
 
     on_exit(fn ->
       {_, data} = if Process.alive?(pid), do: :sys.get_state(pid, @budget), else: {nil, %{}}
@@ -505,7 +714,14 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
             {key, :queue.filter(fn entry -> elem(entry, 0) != id end, queue)}
           end)
 
-        %{state | llm_holders: holders, llm_waiting: waiting}
+        %{
+          state
+          | llm_holders: holders,
+            llm_waiting: waiting,
+            tool_holders: MapSet.delete(state.tool_holders, id),
+            tool_waiting:
+              :queue.filter(fn {agent_id, _from} -> agent_id != id end, state.tool_waiting)
+        }
       end)
 
       Store.delete_agent_state(id)
@@ -644,7 +860,9 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
     assert length(rows) == length(expected)
 
     for {row, thought} <- Enum.zip(rows, expected) do
-      assert length(elements(view, "#chat-entry-#{row.id} details")) == 1
+      assert length(elements(view, "#chat-entry-#{row.id} details")) == 1,
+             "Expected one thinking disclosure for #{inspect(row.text)}, got: #{inspect(row.reasoning)}"
+
       assert text(view, "#chat-entry-#{row.id} details .italic.whitespace-pre-wrap") == thought
     end
 
