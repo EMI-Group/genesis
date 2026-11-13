@@ -47,7 +47,9 @@ Its driver reports `{:projection_worker, worker, context}`, accepts `{:projectio
 Its exact yield/resume case at lines 97-162 asserts `{:agent_session_yield, id, pid, text}`, worker `:DOWN`, idle snapshot/history, `Session.start_input(pid, text, :queue)`, `{:agent_session_resumed, id, pid}`, fresh worker/call, stable cache key and a second exact yield.
 `interactive_test.exs:536-575` constructs a repo-less dispatch keyword list with `agent_id`, `depth`, `repo_root`, `repo_id`, `worktree_path`, `retries`, `spec`, `meta`, `repo_less`, `repo_less_repo_path`, `notify`, `scheduler` and `exchange_opts`, passing the latter through after deleting its test-only `:agent_module` selector.
 Its registration row at lines 496-517 carries `llm_model: nil`, a legacy pool `model_id`, `llm_context_window: 200_000` and `llm_generation_params: [temperature: 0.2, provider_options: [prompt_cache_key: key]]`, so it is a scripted fixture rather than a working real-provider request setup.
-No file in this node configures `stream_start`; the imported `StreamCase` implementation and real-provider model overrides must be checked in the shared support node before adapting this fixture to actual LLMPrompting.
+No test source in this node mentions `stream_start` or `stream_start: nil`, so these tests do not establish that disabling a stream-start seam is necessary for actual LLMPrompting integration.
+`activity_lifecycle_test.exs:260-262` explicitly calls `Sink.start_call(0)`, `Sink.call_phase(call, :llm)` and `Sink.stream_opts()` inside its scripted LLM, while `activity_projection_test.exs:321-324` additionally calls `Sink.start_turn(turn)` before `Sink.start_call(1)`.
+Both activity suites import `EvoGit.Agent.StreamCase`, so its out-of-node `test/support/stream_case.ex` implementation must be checked for implicit `stream_start` defaults and dispatch option merging before adapting these fixtures to actual LLMPrompting.
 `ActivityLifecycleTest.start_activity/2` force-cancels and monitors the session during teardown to reap its parked worker, whereas the older interactive `start_session/1` helper only kills the session as a last resort.
 
 ## Routing Table
