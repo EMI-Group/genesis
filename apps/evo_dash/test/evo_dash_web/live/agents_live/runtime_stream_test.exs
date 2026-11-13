@@ -19,6 +19,24 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStreamTest do
   end
 
   describe "snapshot replacement and sequence ownership" do
+    test "initialization scopes an empty projection without guessing lifecycle or activity" do
+      state = fresh()
+
+      assert state == %RuntimeStream{agent_id: 41, node: :inspector@host}
+      assert state.seq == 0
+      assert state.phase == nil
+      assert state.activity == nil
+      assert state.messages == []
+      assert state.projections == []
+      assert state.message_index == nil
+      assert state.response == ""
+      assert state.thinking == ""
+      assert state.tool_calls == []
+      refute state.finished
+      refute RuntimeStream.active?(state)
+      assert RuntimeStream.current_call_id(state) == nil
+    end
+
     test "seeds raw history without extracting checkpoint text or inventing live content" do
       messages = [%{role: :assistant, content: "checkpoint", reasoning: "raw reasoning"}]
       snapshot = %Snapshot{agent_id: 41, seq: 7, phase: :running, turn: 3, messages: messages}
@@ -117,22 +135,22 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStreamTest do
             {nil, -1, 0},
             {nil, "9", 0}
           ] do
-        seeded = RuntimeStream.seed(old, %{agent_id: 41, seq: embedded}, explicit)
+        snapshot = %{agent_id: 41, seq: embedded, activity: activity(:idle, nil)}
+        seeded = RuntimeStream.seed(old, snapshot, explicit)
         assert seeded.seq == expected
         assert seeded.response == ""
         assert seeded.projections == []
+        assert seeded.message_index == old.message_index
       end
 
       # Seed is replacement, not a stale-snapshot gate; StreamWatch owns admission.
       assert RuntimeStream.seed(old, %{seq: 1}, nil).seq == 1
     end
 
-    test "malformed snapshot fields reset to defaults and invalid state is total" do
-      old = batch(started(), 2, [{:text, "old"}])
-
+    test "malformed snapshot fields normalize to defaults on initialization and invalid state is total" do
       state =
         RuntimeStream.seed(
-          old,
+          fresh(),
           %{seq: -1, turn: "2", messages: :bad, phase: "running", activity: []},
           :bad
         )
@@ -395,20 +413,67 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStreamTest do
       end
     end
 
-    test "identity reader accepts explicit map identity without guessing from content" do
-      assert RuntimeStream.message_identity(%{"turn" => 2, "message_index" => 4, "id" => "call"}) ==
-               %{turn: 2, message_index: 4, id: "call"}
+    test "current call identity follows authoritative replacement and retirement, not checkpoints" do
+      state =
+        RuntimeStream.seed(
+          fresh(),
+          %Snapshot{
+            messages: [%{role: :assistant, content: "same text", id: "checkpoint"}],
+            activity: activity(:llm, call("live", %{text: "same text"}))
+          },
+          1
+        )
 
-      for malformed <- [
-            nil,
-            -1,
-            "backend-id",
-            [],
-            %{turn: -1, message_index: "4", id: nil},
-            %{response: "same text", row: 4}
-          ] do
-        assert RuntimeStream.message_identity(malformed) == %{}
+      assert RuntimeStream.current_call_id(state) == "live"
+      assert RuntimeStream.current_call_id(batch(state, 2, {:text, " tail"})) == "live"
+
+      replaced = batch(state, 2, {:activity, activity(:llm_waiting, call("retry"))})
+      assert RuntimeStream.current_call_id(replaced) == "retry"
+      retired = batch(replaced, 3, {:activity, activity(:idle, nil)})
+      assert RuntimeStream.current_call_id(retired) == nil
+
+      for invalid <- [nil, %{}, %{id: "checkpoint"}, %{identity: %{id: "not a stream"}}] do
+        assert RuntimeStream.current_call_id(invalid) == nil
       end
+    end
+
+    test "checkpoint transitions inspect every ordered activity replacement without guessing from chunks" do
+      state = started("live")
+
+      for events <- [
+            [{:activity, activity(:idle, nil)}],
+            [{:activity, activity(:llm_waiting, call("next"))}],
+            [
+              {:activity, activity(:idle, nil)},
+              {:activity, activity(:llm_waiting, call("live"))}
+            ]
+          ] do
+        assert RuntimeStream.checkpoint_transition?(state, events)
+      end
+
+      # A batch can establish and retire a call even when no call existed before it.
+      assert RuntimeStream.checkpoint_transition?(fresh(), [
+               {:activity, activity(:llm, call("new"))},
+               {:activity, activity(:idle, nil)}
+             ])
+
+      for events <- [
+            [],
+            [{:activity, activity(:llm_complete, call("live", %{text: "whole answer"}))}],
+            [{:text, "chunk"}, {:thinking, "thought"}, {:tool_result, "tool", :ok}],
+            [{:turn, %{turn: 2}}, {:yield, "answer"}],
+            [{:activity, activity(:unknown, nil)}],
+            [{:activity, %{phase: :idle}}],
+            nil
+          ] do
+        refute RuntimeStream.checkpoint_transition?(state, events)
+      end
+
+      refute RuntimeStream.checkpoint_transition?(fresh(), [
+               {:activity, activity(:llm_waiting, call("first"))}
+             ])
+
+      refute RuntimeStream.checkpoint_transition?(nil, [])
     end
   end
 
