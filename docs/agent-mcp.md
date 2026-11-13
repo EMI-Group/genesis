@@ -51,7 +51,7 @@ Discover `genesis_check`, `genesis_start_task`, `genesis_get_task`, `genesis_lis
 
 ## Tasks and results
 
-- **Start:** `genesis_start_task` takes an absolute `path` and `objective`. `evolve`/`simple` develops an existing project; `genesis`/`new` builds a new one. `genesis`/`existing` is also available. Optional `model_id` selects a configured profile.
+- **Start:** `genesis_start_task` takes an absolute `path` and `objective`. `evolve`/`simple` develops an existing project; `genesis`/`new` builds a new one. `genesis`/`existing` is also available. Optional `model_id` selects a configured profile. Optional boolean `persistent_state` (default `true`) enables per-agent durable checkpoints so a crash retry resumes from its last turn; `false` disables them for that task.
 - **Track:** retain the returned ID and query `genesis_get_task`. `running`, `cancelling` and `finalizing` are not completion. The backend owns task execution independently of HTTP requests.
 - **Reconnect:** `genesis_list_tasks` can filter by project and page through recent tasks. Inspect existing tasks after an uncertain submission before submitting again.
 - **Continue:** use an `evolve` task with `resume_from` identifying a finished task in the same project. It starts a new task using the prior result context; it does not revive a process.
