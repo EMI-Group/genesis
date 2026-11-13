@@ -4968,7 +4968,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "a VANISHED session keeps the cached conversation read-only and ends the chat",
          %{conn: conn} do
       test_pid = self()
-      session_id = 6_503
+      session_id = System.unique_integer([:positive]) + 1_000_000_000
       attach_calls = :counters.new(1, [:atomics])
       start_calls = :counters.new(1, [:atomics])
       install_session_seam(:home_session_list_runner, fn _node -> {[], []} end)
@@ -4979,7 +4979,8 @@ defmodule EvoDashWeb.HomeLiveTest do
         {:ok, 1}
       end)
 
-      install_gone_watch_fixture()
+      # No watch seam: the default NodeContext/core registration must establish
+      # that this unique id genuinely has no session.
 
       install_session_seam(
         :home_session_attach_runner,
@@ -4987,14 +4988,20 @@ defmodule EvoDashWeb.HomeLiveTest do
       )
 
       cached_thoughts = [
-        %{type: "user", turn: 1, data: %{content: "cached reasoning"}, timestamp: nil}
+        %{type: "assistant", turn: 1, data: %{content: "cached reasoning"}, timestamp: nil}
       ]
 
       seed_cached_chat(
         session_id,
         [
           %{id: "u1", role: :user, text: "cached before vanish", streaming: false},
-          %{id: "a1", role: :assistant, text: "cached answer", streaming: false}
+          %{
+            id: "a1",
+            role: :assistant,
+            text: "cached answer",
+            streaming: false,
+            reasoning: cached_thoughts
+          }
         ],
         cached_thoughts
       )
@@ -5004,12 +5011,8 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
 
-      wait_until(fn ->
-        a = assigns(view)
-
-        a.chat_status == :ended or
-          match?(%{error: {:not_found, :session_not_found}}, a.chat_stream)
-      end)
+      monitor_watch_cleanup(view)
+      wait_until(fn -> assigns(view).chat_status == :ended end)
 
       assert assigns(view).chat_status == :ended
 
@@ -5020,6 +5023,9 @@ defmodule EvoDashWeb.HomeLiveTest do
       # transcript and its reasoning are KEPT (never wiped by `[]`).
       assert Enum.map(a.transcript, & &1.text) == ["cached before vanish", "cached answer"]
       assert a.thought_process == cached_thoughts
+      assert List.last(a.transcript).reasoning == cached_thoughts
+      assert a.chat_stream.error == {:not_found, :session_not_found}
+      refute present?(render(view), "#chat-stream-error")
       # Exactly ONE attach, no session start and no task row.
       assert :counters.get(attach_calls, 1) == 1
       assert :counters.get(start_calls, 1) == 0
@@ -5040,12 +5046,13 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "a VANISHED session with no cached conversation renders the session-ended state",
          %{conn: conn} do
       test_pid = self()
-      session_id = 6_504
+      session_id = System.unique_integer([:positive]) + 1_000_000_000
       attach_calls = :counters.new(1, [:atomics])
       install_session_seam(:home_session_list_runner, fn _node -> {[], []} end)
       install_session_seam(:source_availability_runner, fn -> true end)
 
-      install_gone_watch_fixture()
+      # No watch seam: the default NodeContext/core registration must establish
+      # that this unique id genuinely has no session.
 
       install_session_seam(
         :home_session_attach_runner,
@@ -5056,16 +5063,14 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
 
-      wait_until(fn ->
-        a = assigns(view)
-
-        a.chat_status == :ended or
-          match?(%{error: {:not_found, :session_not_found}}, a.chat_stream)
-      end)
+      monitor_watch_cleanup(view)
+      wait_until(fn -> assigns(view).chat_status == :ended end)
 
       assert assigns(view).chat_status == :ended
 
       assert assigns(view).transcript == []
+      assert assigns(view).chat_stream.error == {:not_found, :session_not_found}
+      refute present?(render(view), "#chat-stream-error")
       assert :counters.get(attach_calls, 1) == 1
       assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
 
@@ -5511,7 +5516,8 @@ defmodule EvoDashWeb.HomeLiveTest do
   # suite's session-list / source-availability stubs, a PARKED attach answer (so
   # the page settles writable and cannot clobber a later status assertion), and
   # the register/unregister runners reporting into the test process.
-  # `snapshot_fun` receives the agent id and returns the runner's flat answer.
+  # `snapshot_fun` receives the agent id (and optionally the consumer pid for
+  # cancellation-safe blocking fixtures) and returns the runner's flat answer.
   defp install_watch_seams(session_id, test_pid, snapshot_fun) do
     install_session_seam(:home_session_list_runner, fn _node -> {[], []} end)
     install_session_seam(:source_availability_runner, fn -> true end)
@@ -5522,7 +5528,10 @@ defmodule EvoDashWeb.HomeLiveTest do
 
     install_session_seam(:home_agent_watch_runner, fn node, agent_id, watcher ->
       send(test_pid, {:agent_watched, node, agent_id, watcher})
-      snapshot_fun.(agent_id)
+
+      if is_function(snapshot_fun, 2),
+        do: snapshot_fun.(agent_id, watcher),
+        else: snapshot_fun.(agent_id)
     end)
 
     install_session_seam(:home_agent_unwatch_runner, fn node, agent_id, watcher ->
@@ -5560,12 +5569,22 @@ defmodule EvoDashWeb.HomeLiveTest do
     install_session_seam(:home_agent_unwatch_runner, fn _node, _id, _consumer -> :ok end)
   end
 
-  defp install_gone_watch_fixture do
-    install_session_seam(:home_agent_watch_runner, fn _node, _id, _consumer ->
-      {:error, {:not_found, :session_not_found}}
-    end)
+  # Registered after the seams, so ExUnit's LIFO teardown awaits the actual
+  # consumer/serial worker before restoring the app-global runner callbacks.
+  defp monitor_watch_cleanup(view) do
+    consumer = view.pid
+    worker = assigns(view).chat_stream_worker
 
-    install_session_seam(:home_agent_unwatch_runner, fn _node, _id, _consumer -> :ok end)
+    on_exit(fn ->
+      consumer_ref = Process.monitor(consumer)
+      if Process.alive?(consumer), do: Process.exit(consumer, :kill)
+      assert_receive {:DOWN, ^consumer_ref, :process, ^consumer, _}, @async_wait_budget_ms
+
+      if is_pid(worker) do
+        worker_ref = Process.monitor(worker)
+        assert_receive {:DOWN, ^worker_ref, :process, ^worker, _}, @async_wait_budget_ms
+      end
+    end)
   end
 
   # The watch runner's answer: a real `%EvoGit.Agent.Stream.Snapshot{}` at `seq`.
@@ -5629,6 +5648,149 @@ defmodule EvoDashWeb.HomeLiveTest do
   # overwritten by a late attach.
   defp await_attach_settled(view, session_id) do
     wait_until(fn -> assigns(view)[:chat_task_id] == "task-#{session_id}" end)
+  end
+
+  describe "mounted watch recovery" do
+    for failure <- [:timeout, :overflow, :worker_death] do
+      test "#{failure} keeps the cache live until an explicit Retry adopts a new snapshot", %{
+        conn: conn
+      } do
+        assert_watch_retry(conn, unquote(failure))
+      end
+    end
+  end
+
+  defp assert_watch_retry(conn, failure) do
+    test_pid = self()
+    session_id = System.unique_integer([:positive]) + 1_000_000_000
+    attempts = :counters.new(1, [:atomics])
+
+    thoughts = [
+      %{
+        type: "assistant",
+        turn: 1,
+        timestamp: nil,
+        data: %{content: "retained recovery reasoning"}
+      }
+    ]
+
+    cached = [
+      %{
+        id: "cached-recovery",
+        role: :assistant,
+        text: "retained recovery answer",
+        streaming: false,
+        reasoning: thoughts
+      }
+    ]
+
+    install_watch_seams(session_id, test_pid, fn id, consumer ->
+      :counters.add(attempts, 1, 1)
+      attempt = :counters.get(attempts, 1)
+      send(test_pid, {:registration_attempt, attempt, self()})
+
+      if attempt == 1 do
+        case failure do
+          :timeout ->
+            {:error, :timeout}
+
+          _ ->
+            # This IS the real serial registration worker, not a fabricated
+            # DOWN/result message. Consumer death releases it on failed tests.
+            await_snapshot_release(consumer, fn -> {:error, :timeout} end)
+        end
+      else
+        snapshot_answer(20, [history_assistant_message("recovered authoritative answer")],
+          phase: :running
+        ).(id)
+      end
+    end)
+
+    seed_cached_chat(session_id, cached, thoughts)
+    {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+    monitor_watch_cleanup(view)
+    assert_receive {:registration_attempt, 1, worker}, @async_wait_budget_ms
+    assert assigns(view).chat_stream_worker == worker
+    assert_receive {:agent_watched, _node, ^session_id, consumer}, @async_wait_budget_ms
+    assert consumer == view.pid
+    await_attach_settled(view, session_id)
+
+    expected_error =
+      case failure do
+        :timeout ->
+          :timeout
+
+        :overflow ->
+          # Overflow the real pending registration buffer through subscribed
+          # deltas, rather than fabricating a lifecycle/failure result.
+          for seq <- 1..129, do: broadcast_delta(session_id, seq, [{:text, "buffered"}])
+          wait_until(fn -> assigns(view).chat_stream.error == :watch_buffer_overflow end)
+          send(worker, :release)
+          :watch_buffer_overflow
+
+        :worker_death ->
+          ref = Process.monitor(worker)
+          Process.exit(worker, :kill)
+          assert_receive {:DOWN, ^ref, :process, ^worker, :killed}, @async_wait_budget_ms
+          {:watch_worker_down, :killed}
+      end
+
+    wait_until(fn -> assigns(view).chat_stream.error == expected_error end)
+
+    if failure != :worker_death do
+      # The failed register and its queued cleanup have actually completed.
+      assert_receive {:agent_unwatched, _node, ^session_id, ^consumer}, @async_wait_budget_ms
+    end
+
+    a = assigns(view)
+    assert Process.alive?(view.pid)
+    assert a.chat_status != :ended
+    assert a.transcript == cached
+    assert a.thought_process == thoughts
+    html = render(view)
+    assert html =~ "retained recovery answer"
+    assert html =~ "retained recovery reasoning"
+    assert html =~ "The conversation may still be running."
+    refute present?(html, "#chat-session-ended")
+
+    assert has_element?(
+             view,
+             ~s(#chat-stream-error button[phx-click="retry_chat_stream"]),
+             "Retry"
+           )
+
+    # A completed failure is stable: ordinary updates and stray late chunks
+    # cannot restart registration or replace the cache behind the user's back.
+    send(view.pid, {:agent_updated, session_id, [message_count: 99], node()})
+
+    send(
+      view.pid,
+      {:agent_delta, session_id, 19, [call_started(session_id), {:text, "ignored late"}]}
+    )
+
+    assert assigns(view).chat_stream.error == expected_error
+    assert assigns(view).transcript == cached
+    assert :counters.get(attempts, 1) == 1
+
+    view
+    |> element(~s(#chat-stream-error button[phx-click="retry_chat_stream"]))
+    |> render_click()
+
+    assert_receive {:registration_attempt, 2, recovered_worker}, @async_wait_budget_ms
+    monitor_watch_cleanup(view)
+    if failure == :worker_death, do: assert(recovered_worker != worker)
+    await_stream_seeded(view, 20)
+    assert assigns(view).chat_status == :running
+    assert assigns(view).chat_stream.error == nil
+    refute has_element?(view, "#chat-stream-error")
+    assert render(view) =~ "recovered authoritative answer"
+    refute render(view) =~ "retained recovery answer"
+
+    broadcast_delta(session_id, 21, [call_started(session_id), {:text, "newer recovered delta"}])
+    await_stream_seeded(view, 21)
+    assert render(view) =~ "newer recovered delta"
+    assert :counters.get(attempts, 1) == 2
+    assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
   end
 
   describe "push-only delta streaming" do
