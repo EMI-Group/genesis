@@ -55,6 +55,8 @@ The run is isolated (temp `HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_RUNTI
 - `/run/opengl-driver` exists only on NixOS, so the override also keeps the package correct on non-NixOS hosts, where the flake's mesa is the only vendor dir available.
 - Do NOT set `EGL_PLATFORM` or any WebKit workaround env var: the vendor-dir override is the fix, and the tested alternatives did not help.
 - `WEBKIT_DISABLE_DMABUF_RENDERER=1` (dev shell) stays a separate, unrelated compositor workaround.
+- The override REPLACES the host vendor dirs, so a proprietary-NVIDIA EGL vendor under `/run/opengl-driver` is not consulted; such hosts fall back to the bundled mesa (llvmpipe software rendering) and can re-enable their vendor with an explicit `__EGL_VENDOR_LIBRARY_DIRS` (the app wrapper uses `--set-default` so an operator override wins).
+- `nix/desktop-smoke.sh` runs the shell in its `--headless` mode, which creates NO WebView, so it cannot catch a WebView/EGL regression like this one; the window-free way to check the GUI path is to run the packaged app against a headless compositor (`XDG_RUNTIME_DIR=<writable tmp> weston --backend=headless-backend.so --socket=wl-test`, then `WAYLAND_DISPLAY=wl-test <pkg>/bin/genesis-desktop` with `DISPLAY` unset) and assert ZERO `Could not create default EGL display` lines plus the `[desktop] webview loaded the dashboard` log line.
 
 ## Rust Binaries & New Native Payloads
 
