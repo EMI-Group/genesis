@@ -655,7 +655,10 @@ defmodule EvoGit.Runtime.Helpers do
         model_id: Keyword.get(opts, :model_id),
         model_spec: Keyword.get(opts, :model_spec),
         model_id_locked: model_id_locked?(opts),
-        quality_level: Keyword.get(opts, :quality_level)
+        quality_level: Keyword.get(opts, :quality_level),
+        # Durable per-run agent-state checkpoints, task-wide: default true, and
+        # only an explicit `false` opts out (subagents inherit it from State).
+        persistent_state: Keyword.get(opts, :persistent_state, true) != false
       ]
       |> normalize_model_selection_opts()
       |> maybe_put_attachments(attachments)

@@ -231,7 +231,8 @@ There is no `EvoGit.Runtime.Phase` and no `EvoGit.Runtime.Prompts` module; the o
 ### Root-Agent Spec Builder (`Helpers.build_root_agent_spec/7`)
 
 `Helpers.build_root_agent_spec/7` is the shared builder producing the root `AgentSpec` for evolution (simple AND custom) and the genesis phase roots.
-It resolves the default/custom root module via `resolve_root_agent/2` → `{module, opts}` (unknown ids raise `ArgumentError`) and threads `foreign_repos`, `repo_notes`, `archive`, `task_id`, model selection, `quality_level` (absent → `nil`; subagent spec builders never carry the key, so subagent prompts stay unaffected) and `:attachments` (omit-when-nil), then appends custom-agent identity and canonical default opts and applies the legacy definition fallback without changing the task lock.
+It resolves the default/custom root module via `resolve_root_agent/2` → `{module, opts}` (unknown ids raise `ArgumentError`) and threads `foreign_repos`, `repo_notes`, `archive`, `task_id`, model selection, `quality_level` (absent → `nil`; subagent spec builders never carry the key, so subagent prompts stay unaffected), `:persistent_state` and `:attachments` (omit-when-nil), then appends custom-agent identity and canonical default opts and applies the legacy definition fallback without changing the task lock.
+`:persistent_state` is task-wide and defaults to `true` (absent or `nil` → `true`), and only an explicit `false` opts out — descendants inherit it from `%EvoGit.Agent.State{}`.
 New code constructing a root-agent spec should reuse it instead of hand-assembling specs at call sites.
 
 ### Task Model Selection
