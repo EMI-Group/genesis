@@ -18,6 +18,9 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
   WITHOUT clearing it. The next text/thinking chunk starts a new projection;
   intervening tool announcements/results still belong to the completed one.
   This reflects accounting after an LLM response, not completion of its tools.
+  `generation_complete` is set by `:turn` or `:yield`, never merely by a failed
+  lifecycle finish. It does not assert complete thinking capture: a consumer
+  attaching mid-generation may have missed chunks even after generation ends.
   `:yield` completes a message and parks the lifecycle; `:finished` terminates
   it. Neither erases the message's reasoning. A nonempty yield text replaces
   the current response (it is a complete response, not another chunk).
@@ -43,7 +46,8 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
           response: binary(),
           thinking: binary(),
           tool_calls: [map()],
-          complete: boolean()
+          complete: boolean(),
+          generation_complete: boolean()
         }
   @type t :: %__MODULE__{
           agent_id: term(),
@@ -212,7 +216,7 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
     state = %{state | turn: turn}
 
     state
-    |> update_current(fn message -> %{message | turn: turn} end)
+    |> update_current(fn message -> %{message | turn: turn, generation_complete: true} end)
     |> complete_current()
   end
 
@@ -226,6 +230,7 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
         |> update_current(fn message -> %{message | response: value} end)
       end
 
+    state = update_current(state, &%{&1 | generation_complete: true})
     %{complete_current(state) | phase: :awaiting_input, status: :awaiting_input, activity: nil}
   end
 
@@ -260,7 +265,8 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
           response: "",
           thinking: "",
           tool_calls: [],
-          complete: false
+          complete: false,
+          generation_complete: false
         }
 
         sync(%{state | projections: state.projections ++ [message], turn: turn})

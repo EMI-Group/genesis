@@ -87,7 +87,8 @@ Node fills, edge strokes, status palettes (`EvoDashWeb.Helpers.agent_status_svg_
 
 `EvoDashWeb.AgentsLive.RuntimeStream` in `runtime_stream.ex` is a pure inspector reducer, independent of the Assistant bubble/transcript reducers, with public `new(agent_id, node)`, `seed(state, snapshot, seq)`, `apply_batch(state, agent_id, seq, events)` and `active?(state)`.
 Its `%RuntimeStream{}` exposes `agent_id`, `node`, monotonic `seq`, lifecycle `phase`, separate optional `activity`, accounting `turn`, raw checkpoint `messages`, current `response`/`thinking` binaries, current `tool_calls`, ordered `projections`, current `message_index`, boolean `finished` and optional atom `status`.
-Each live projection is `%{identity: map, turn: integer, message_index: integer, response: binary, thinking: binary, tool_calls: list, complete: boolean}`, and `projections` includes the current message as its last entry while preserving all earlier messages for rendering.
+Each live projection is `%{identity: map, turn: integer, message_index: integer, response: binary, thinking: binary, tool_calls: list, complete: boolean, generation_complete: boolean}`, and `projections` includes the current message as its last entry while preserving all earlier messages for rendering.
+`generation_complete` is set by turn accounting or yield, not merely by a failed lifecycle finish, and never proves that this watcher captured all thinking chunks.
 Projection indexes are zero-based local ordinals unless an explicit nonnegative `message_index` is supplied, and neither the indexes nor these live projections are reconciled against raw checkpoint history.
 Each tool descriptor is `%{id: term, name: binary, status: term}`, initially `:announced`, with matching id-bearing results updating descriptors across all projections and same-name anonymous announcements upgraded when dispatch supplies an id.
 `active?/1` means a nonfinished lifecycle of `:running` or `:cancelling`, never an inference about LLM/tool execution.
@@ -107,10 +108,23 @@ There are no retention caps in this raw inspector reducer, so the page owns any 
 Forward `{:inspector_stream_ready, node, token, agent_id, result}` to `StreamWatch.ready/5` and `{:agent_delta, agent_id, seq, events}` to `StreamWatch.push/4`, then render `socket.assigns.inspector_stream.state` as the `RuntimeStream` projection.
 `StreamWatch.active?(socket, agent_id)` includes snapshot-pending watches and excludes errors, allowing the page to suppress message-count-triggered history fetches during a healthy attachment.
 `StreamWatch.detach/1` clears the render state and consumer-local subscription immediately, with asynchronous serialized unregister on selection, node or lifecycle teardown.
-Keep `inspector_stream_token` and private `inspector_stream_worker` bookkeeping across page resets, since tokens must remain monotonic and the same worker orders rapid A-to-B-to-A registration changes.
+Keep `inspector_stream_token`, private `inspector_stream_worker` and `inspector_stream_worker_monitor` bookkeeping across page resets, since tokens must remain monotonic and the same worker orders rapid A-to-B-to-A registration changes.
+Forward worker `{:DOWN, ref, :process, pid, reason}` messages to `StreamWatch.down/4` after handling other page-owned monitors; matching death explicitly fails the watch, unsubscribes and allows a retry while unrelated monitors are inert.
+Pending remote contexts cannot attach locally, readiness and push application require the current viewed node, negative sequence watermarks are rejected, and a snapshot explicitly naming another agent fails the watch.
 Pre-snapshot deltas are replayed only above the snapshot watermark, buffered up to 128 batches or 1 MiB, and overflow or supervisor-start failures produce explicit watch errors instead of silent loss or stuck loading.
 Runner seams are `:agents_watch_runner` and `:agents_unwatch_runner`, both `(node, agent_id, liveview_pid)`, defaulting to the corresponding `NodeContext` watcher functions.
-The worker performs RPC through `SafeCall`, cleans up after consumer death, and uses no polling; unexpected worker death after startup is not currently surfaced to the page and delta messages have no publisher-node stamp.
+The worker performs RPC through `SafeCall`, cleans up after consumer death, and uses no polling; delta messages have no publisher-node stamp.
+
+## Inspector Stream Presentation
+`StreamPresentation.build/1` is the pure bounded render model over `RuntimeStream`, retaining the last 12 live projections, the first 12,000 graphemes of response and thinking separately, and at most 20 tool descriptors per projection with explicit omission counts.
+The raw reducer remains unchanged and unbounded, so rendering limits are not transcript-retention limits and do not silently delete captured content.
+`StreamPresentation.activity/1` reads only authoritative activity (`:llm`, `:tool`/`:tools`, `:idle`, `:waiting`), with missing or unknown activity rendered as unavailable rather than inferred from chunks, lifecycle or announcements.
+`thinking_status/2` reports `:present`, `:pending`, `:unavailable` or `:none`; `:none` requires generation completion plus an explicit `:complete` coverage assertion from a caller whose backend guarantees full capture.
+The default partial-capture policy cannot assert absent reasoning, and its no-capture notice appears only after generation completes, never during generation or merely after an aborted lifecycle finish.
+`StreamPresentation.owned?/3` checks exact RuntimeStream agent/node ownership for parent render guards.
+`StreamPanel.stream_panel/1` accepts the `StreamWatch` assign as `stream`, shows separate bounded live excerpts with truthful activity/tool announcement labels, escapes content, and emits the parent-owned `retry_inspector_stream` event on transport failure.
+The panel intentionally does not merge excerpts with checkpoint history or promise duplicate-free/lossless attachment, because the committed core snapshot lacks a reconciled in-flight projection and transcript-coverage watermark.
+
 ## Inspector Streaming Integration Constraints
 
 The existing inspector history uses checkpointed session reads rather than a selected-agent delta watch; adding live chunks requires a consumer-local subscription plus asynchronous watcher registration using the LiveView pid, with agent/node/generation guards and explicit detach cleanup.
