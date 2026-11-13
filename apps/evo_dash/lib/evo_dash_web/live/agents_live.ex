@@ -39,6 +39,7 @@ defmodule EvoDashWeb.AgentsLive do
     LoadData,
     OptimisticMessages,
     PendingEvents,
+    RuntimeStream,
     StreamPanel,
     StreamPresentation,
     StreamWatch,
@@ -79,6 +80,7 @@ defmodule EvoDashWeb.AgentsLive do
         inspector_stream_worker_monitor: nil,
         inspector_history_seq: 0,
         inspector_reconcile_pending: false,
+        inspector_history_error: false,
         selected_history_entry: nil,
         selected_objective: nil,
         show_usage: false,
@@ -216,6 +218,7 @@ defmodule EvoDashWeb.AgentsLive do
           agents_error: nil,
           history_loading_agent_id: nil,
           inspector_reconcile_pending: false,
+          inspector_history_error: false,
           full_message_pending_agent_id: nil,
           # Drop any buffered agent events from the previous node so stale-node
           # events never leak into the newly-viewed node's tree. A flush timer
@@ -577,7 +580,8 @@ defmodule EvoDashWeb.AgentsLive do
         selected_history_entry: nil,
         history_loading_agent_id: nil,
         full_message_pending_agent_id: nil,
-        inspector_reconcile_pending: false
+        inspector_reconcile_pending: false,
+        inspector_history_error: false
       )
       |> StreamWatch.attach(agent_id)
 
@@ -619,6 +623,22 @@ defmodule EvoDashWeb.AgentsLive do
     {:noreply, maybe_attach_inspector(socket)}
   end
 
+  def handle_event("retry_inspector_history", _params, socket) do
+    id = socket.assigns.selected_agent_id
+
+    socket =
+      if is_integer(id) and socket.assigns.inspector_history_error and
+           socket.assigns.history_loading_agent_id != id do
+        socket
+        |> assign(inspector_reconcile_pending: false, history_loading_agent_id: id)
+        |> spawn_history_fetch(id, nil)
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
   @impl true
   def handle_event("close_details", _params, socket) do
     {:noreply,
@@ -626,6 +646,7 @@ defmodule EvoDashWeb.AgentsLive do
      |> StreamWatch.detach()
      |> assign(
        inspector_reconcile_pending: false,
+       inspector_history_error: false,
        history_loading_agent_id: nil,
        full_message_pending_agent_id: nil,
        selected_agent_id: nil,
@@ -893,6 +914,7 @@ defmodule EvoDashWeb.AgentsLive do
               history_gate: HistoryGate.record(socket.assigns.history_gate, agent_id, count),
               history_loading_agent_id: nil,
               full_message_pending_agent_id: nil,
+              inspector_history_error: false,
               optimistic_messages: optimistic_messages
             )
 
@@ -904,7 +926,7 @@ defmodule EvoDashWeb.AgentsLive do
           {:noreply, reconcile_inspector_history(socket)}
 
         {:error, _reason} ->
-          {:noreply, clear_history_loading_flags(socket, agent_id)}
+          {:noreply, fail_inspector_history(socket, agent_id)}
       end
     end
   end
@@ -944,14 +966,19 @@ defmodule EvoDashWeb.AgentsLive do
   defp reconcile_inspector_history(socket) do
     id = socket.assigns.selected_agent_id
 
-    if socket.assigns.inspector_reconcile_pending and StreamWatch.active?(socket, id) and
-         socket.assigns.inspector_stream.snapshot != nil and
-         socket.assigns.history_loading_agent_id != id do
-      socket
-      |> assign(inspector_reconcile_pending: false, history_loading_agent_id: id)
-      |> spawn_history_fetch(id, nil)
-    else
-      socket
+    cond do
+      not StreamWatch.active?(socket, id) ->
+        assign(socket, inspector_reconcile_pending: false)
+
+      socket.assigns.inspector_reconcile_pending and
+        socket.assigns.inspector_stream.snapshot != nil and
+          socket.assigns.history_loading_agent_id != id ->
+        socket
+        |> assign(inspector_reconcile_pending: false, history_loading_agent_id: id)
+        |> spawn_history_fetch(id, nil)
+
+      true ->
+        socket
     end
   end
 
@@ -974,21 +1001,21 @@ defmodule EvoDashWeb.AgentsLive do
     )
   end
 
-  # Hide only an exactly duplicated live excerpt in a NEW checkpoint row.
-  # Snapshot rows, tool arguments/results and full-message modal data remain
-  # untouched. Without an identity/coverage watermark, partial excerpts and
-  # compressed/reordered checkpoints must remain separate rather than guessed.
-  defp inspector_live_part?(stream, entry, index, part) do
+  # Only authoritative message metadata can identify checkpoint coverage. Never
+  # synthesize identity from a row index or inferred turn, or compare previews.
+  # Missing identity/coverage preserves the original checkpoint presentation.
+  defp inspector_live_part?(stream, entry, part) do
     case stream do
-      %{snapshot: %{messages: messages}, state: state} ->
-        value =
+      %{state: state} ->
+        identity = RuntimeStream.message_identity(Map.get(entry.data, :metadata))
+
+        full_value =
           case part do
             :response -> entry.data.content
             :thinking -> format_reasoning_details(Map.get(entry.data, :reasoning_details))
           end
 
-        index >= length(messages) and is_binary(value) and value != "" and
-          Enum.any?(StreamPresentation.build(state).messages, &(Map.get(&1, part) == value))
+        StreamPresentation.checkpoint_part_covered?(state, identity, part, full_value)
 
       _ ->
         false
@@ -1035,7 +1062,20 @@ defmodule EvoDashWeb.AgentsLive do
 
     case started do
       {:ok, {:ok, _pid}} -> socket
-      _ -> clear_history_loading_flags(socket, agent_id)
+      _ -> fail_inspector_history(socket, agent_id)
+    end
+  end
+
+  # Failure consumes queued reconciliation work instead of leaving it latched
+  # behind an RPC that has ended. Keep the checkpoint and excerpts intact and
+  # offer an explicit retry; only a new stream event may schedule more work.
+  defp fail_inspector_history(socket, agent_id) do
+    socket = clear_history_loading_flags(socket, agent_id)
+
+    if socket.assigns.selected_agent_id == agent_id do
+      assign(socket, inspector_reconcile_pending: false, inspector_history_error: true)
+    else
+      socket
     end
   end
 

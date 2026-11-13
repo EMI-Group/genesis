@@ -688,6 +688,24 @@
                       data-inspector-scope={inspector_scope(assigns)}
                     >
                       <StreamPanel.stream_panel stream={@inspector_stream} />
+                      <div
+                        :if={@inspector_history_error}
+                        id="inspector-history-error"
+                        role="alert"
+                        class="flex items-center gap-2 p-3 text-xs text-error"
+                      >
+                        <span>{gettext(
+                          "Could not refresh checkpoint history. Live excerpts are preserved."
+                        )}</span>
+                        <button
+                          type="button"
+                          class="btn btn-xs btn-ghost"
+                          phx-click="retry_inspector_history"
+                          disabled={@history_loading_agent_id == agent.id}
+                        >
+                          {gettext("Retry")}
+                        </button>
+                      </div>
                       <%= if history_entries != [] do %>
                         <div class="divide-y divide-base-300">
                           <%= for {entry, index} <- Enum.with_index(history_entries) do %>
@@ -831,7 +849,6 @@
                                         inspector_live_part?(
                                           @inspector_stream,
                                           entry,
-                                          index,
                                           :response
                                         )
                                       }
@@ -846,7 +863,6 @@
                                           not inspector_live_part?(
                                             @inspector_stream,
                                             entry,
-                                            index,
                                             :thinking
                                           )
                                         }
@@ -874,7 +890,6 @@
                                           not inspector_live_part?(
                                             @inspector_stream,
                                             entry,
-                                            index,
                                             :response
                                           )
                                         }
