@@ -34,6 +34,10 @@ Stateful AgentsLive page integration tests live in `../agents_live_test.exs` (pa
 ## Inspector Stream Coverage Boundaries
 
 The tests execute production reducers and transport helpers, never a copied reducer or replacement implementation.
+The two stream suites construct every snapshot and event locally and never start a real core session, so they establish consumer behavior rather than producer/consumer wire compatibility.
+`runtime_stream_test.exs` uses synthetic top-level `in_flight`, `message_start`, explicit `capture_coverage` and activity-root identity fixtures, with no nested `activity.current_call` or attempt-identity fixture.
+`stream_watch_test.exs` uses lifecycle-only `%Snapshot{agent_id:, seq:, phase: :running}` fixtures and a self-pid worker-command capture boundary; actual PubSub dispatch checks subscription ownership but not core-generated deltas.
+Real-core coverage is needed for mid-call attachment before any watcher existed, whole-activity replacement versus appended chunks, retry attempt identity, completed-call retention through tools and retirement into checkpoint history.
 `RuntimeStream` keeps raw checkpoint messages untouched and separate from live projections; `seed/3` replaces live state while the transport owns node/token guards and snapshot admission.
 `runtime_stream_test.exs` pins explicit `capture_coverage` separately from `complete` and `generation_complete`, because lifecycle finish or empty captured thinking alone never proves that no thinking was generated.
 An early explicit message start proves source capture, an activity identity alone does not, and a late repeated start cannot upgrade partial capture after chunks or completed generation.
