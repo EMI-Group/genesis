@@ -104,7 +104,9 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
       result = {:ok, {:ok, snapshot(id), 5}}
 
       assert StreamWatch.ready(socket, :other@host, stream.token, id, result) === socket
-      assert_receive {:cleanup, {:other@host, ^id}}, @timeout
+      # A foreign viewed-node result is rejected before it can issue any worker command.
+      # Commands to the capture pid are synchronous, so this mailbox probe is conclusive.
+      refute_receive {:cleanup, _}, 0
       assert StreamWatch.ready(socket, stream.node, stream.token - 1, id, result) === socket
       # Same-target stale results must NOT unregister the newer watch.
       refute_receive {:cleanup, _}, 0
@@ -134,6 +136,139 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
         assert StreamWatch.push(failed, id, 7, [{:text, "ignored"}]) === failed
         assert ready(failed, {:ok, snapshot(id), 5}) === failed
       end
+    end
+
+    test "mismatched-agent snapshot fails before accepting its watermark and can retry" do
+      id = unique_id()
+      pending = StreamWatch.push(socket(id), id, 6, [{:text, "pending"}])
+      failed = ready(pending, {:ok, snapshot(id + 1, 900), 999})
+      stream = failed.assigns.inspector_stream
+      assert stream.error == :snapshot_agent_mismatch
+      assert stream.snapshot == nil
+      assert stream.seq == nil
+      assert stream.state == RuntimeStream.new(id, :inspector@host)
+      assert stream.pending == []
+      assert stream.buffer_bytes == 0
+      refute StreamWatch.active?(failed, id)
+      assert_receive {:desired, 4, nil}, @timeout
+      assert StreamWatch.push(failed, id, 1_000, [{:text, "foreign watermark"}]) === failed
+
+      retried = StreamWatch.attach(failed, id)
+      assert_receive {:desired, 5, nil}, @timeout
+      assert_receive {:desired, 6, %{id: ^id, token: 6}}, @timeout
+      refute StreamWatch.active?(failed, id)
+      assert StreamWatch.active?(retried, id)
+      assert retried.assigns.inspector_stream.error == nil
+      assert retried.assigns.inspector_stream.pending == []
+      assert retried.assigns.inspector_stream.seq == nil
+
+      recovered = ready(retried, {:ok, snapshot(id, 2), 2})
+      assert recovered.assigns.inspector_stream.seq == 2
+      assert recovered.assigns.inspector_stream.state.seq == 2
+      assert recovered.assigns.inspector_stream.error == nil
+
+      assert StreamWatch.push(recovered, id, 3, [{:text, "recovered"}]).assigns.inspector_stream.state.response ==
+               "recovered"
+
+      StreamWatch.detach(recovered)
+      assert_receive {:desired, 7, nil}, @timeout
+    end
+
+    test "failed attachment preserves the last checkpoint until retry replaces it, never appends" do
+      id = unique_id()
+      checkpoint = [%{role: :assistant, content: "checkpoint"}]
+      original = %{snapshot(id, 5) | messages: checkpoint}
+      established = ready(socket(id), {:ok, original, 5})
+
+      live =
+        StreamWatch.push(established, id, 6, [{:thinking, "live thought"}, {:text, "live tail"}])
+
+      ref = make_ref()
+      monitored = Phoenix.Component.assign(live, inspector_stream_worker_monitor: ref)
+      failed = StreamWatch.down(monitored, ref, self(), :crashed)
+      assert failed.assigns.inspector_stream.error == {:watch_worker_down, :crashed}
+      assert failed.assigns.inspector_stream.snapshot === original
+      assert failed.assigns.inspector_stream.state === live.assigns.inspector_stream.state
+      assert failed.assigns.inspector_stream.state.messages === checkpoint
+      assert failed.assigns.inspector_stream.state.thinking == "live thought"
+      assert failed.assigns.inspector_stream_worker == nil
+      assert failed.assigns.inspector_stream_worker_monitor == nil
+      assert_receive {:desired, 4, nil}, @timeout
+      assert ready(failed, {:ok, snapshot(id, 99), 99}) === failed
+      assert StreamWatch.push(failed, id, 7, [{:text, "ignored"}]) === failed
+
+      # Reinstall only the command-capture boundary; no worker or RPC is run here.
+      retried =
+        failed
+        |> Phoenix.Component.assign(inspector_stream_worker: self())
+        |> StreamWatch.attach(id)
+
+      assert_receive {:desired, 5, nil}, @timeout
+      assert_receive {:desired, 6, %{id: ^id}}, @timeout
+      assert retried.assigns.inspector_stream.state.messages == []
+      assert retried.assigns.inspector_stream.state.projections == []
+      assert StreamWatch.ready(retried, :inspector@host, 4, id, {:ok, original, 5}) === retried
+      refute_receive {:cleanup, _}, 0
+
+      replacement = [%{role: :assistant, content: "new checkpoint", reasoning: "saved thought"}]
+      current = %{snapshot(id, 8) | messages: replacement}
+
+      recovered =
+        retried
+        |> StreamWatch.push(id, 8, [{:text, "covered"}])
+        |> StreamWatch.push(id, 9, [{:text, "new tail"}])
+        |> ready({:ok, current, 8})
+
+      assert recovered.assigns.inspector_stream.snapshot === current
+      assert recovered.assigns.inspector_stream.state.messages === replacement
+      assert recovered.assigns.inspector_stream.state.response == "new tail"
+      assert recovered.assigns.inspector_stream.state.thinking == ""
+
+      assert [%{capture_coverage: :partial, generation_complete: false}] =
+               recovered.assigns.inspector_stream.state.projections
+
+      assert recovered.assigns.inspector_stream.seq == 9
+      assert recovered.assigns.inspector_stream.pending == []
+      assert recovered.assigns.inspector_stream.buffer_bytes == 0
+      StreamWatch.detach(recovered)
+      assert_receive {:desired, 7, nil}, @timeout
+    end
+
+    test "explicit registration watermark wins and obsolete or duplicate snapshots never replace it" do
+      id = unique_id()
+      seeded = ready(socket(id), {:ok, {:ok, snapshot(id, 50), 5}})
+      assert seeded.assigns.inspector_stream.seq == 5
+      assert seeded.assigns.inspector_stream.state.seq == 5
+      live = StreamWatch.push(seeded, id, 6, [{:text, "keep"}])
+
+      for seq <- [0, 5, 6, 99] do
+        assert ready(live, {:ok, snapshot(id, seq), seq}) === live
+      end
+
+      assert StreamWatch.push(live, id, 5, [{:text, "duplicate"}]) === live
+      assert StreamWatch.push(live, id, 6, [{:thinking, "duplicate"}]) === live
+      assert live.assigns.inspector_stream.state.response == "keep"
+    end
+
+    test "unrelated worker DOWN and pending remote contexts cannot mutate a healthy watch" do
+      id = unique_id()
+      ref = make_ref()
+      initial = Phoenix.Component.assign(socket(id), inspector_stream_worker_monitor: ref)
+      assert StreamWatch.down(initial, make_ref(), self(), :crashed) === initial
+      assert StreamWatch.down(initial, ref, nil, :crashed) === initial
+      switched = Phoenix.Component.assign(initial, current_node: :other@host)
+      refute StreamWatch.active?(switched, id)
+      assert StreamWatch.push(switched, id, 20, [{:text, "old node"}]) === switched
+
+      pending =
+        Phoenix.Component.assign(initial, current_node: node(), current_node_id: "remote-target")
+
+      refute StreamWatch.active?(pending, id)
+      assert StreamWatch.attach(pending, id) === pending
+      assert StreamWatch.push(pending, id, 20, [{:text, "pending remote"}]) === pending
+      assert StreamWatch.ready(pending, node(), 4, id, {:ok, snapshot(id), 5}) === pending
+      refute_receive {:desired, _, _}, 0
+      refute_receive {:cleanup, _}, 0
     end
 
     test "batch count and byte limits fail explicitly rather than silently dropping deltas" do
