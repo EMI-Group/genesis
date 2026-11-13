@@ -80,7 +80,7 @@ Stop is separate and stays distinct: `NodeContext.cancel_task/2` (graceful cance
 `handle_params/3` with `?session=<id>`: sets `session_id`, `current_session_id`, `chat_id = session_id`, `session_mode: :interactive`, clears per-chat refs (`chat_task_id`, `chat_task_status`, `agent_message_count`, queued echoes), and restores the cached transcript from `ChatHistory.get_state(session_id)` through `ChatState.restore/1` (total — garbage degrades to defaults).
 ONE supervised attach task per (seq, node, session) gathers `list_agents/1` + `list_awaiting_input/1` + `get_agent_history/2` and returns `SessionActions.load_attach/2`'s bare map `%{summary:, awaiting?:, history:}` (no `{:ok, _}` tag — `EvoDash.SafeCall.run/1` wraps it, which is why `apply_attach/2` matches `{:ok, %{…}}`).
 Apply only when the `session_attach_seq` is current, the node matches and the `session_id` matches.
-A non-empty history REPLACES the cached transcript (`Messages.transcript/1`, whose entries half comes from `Messages.to_entries/1`); the phase comes from the summary / awaiting list.
+A non-empty independent attach history replaces the cached transcript through `Messages.transcript/1` only when no watch owns the surface and the captured `stream_attach_seq` still matches; its phase then comes from the summary / awaiting list.
 An EMPTY history never wipes a non-empty cached transcript: `apply_history/3` keeps the cached transcript and its thought process (rendered read-only) instead of assigning `[]`.
 A first-ever attach with no cache keeps the empty transcript.
 Session gone (no summary, not awaiting) with an empty cache → the ended-session empty state (`HomeLive.ChatMessages.session_ended_state/1`, `#chat-session-ended`), composer disabled, New chat affordance.
@@ -220,8 +220,8 @@ Live per-chunk deltas ARE consumed: a mounted `?session=<id>` page holds one `%D
 `EvoDashWeb.HomeLive.Delta.apply_batch/5` keeps ONE assistant bubble per turn: it accumulates EVERY text segment of that turn across tool calls into the same entry and closes it only at a turn boundary (`{:turn, info}`, `{:yield, text}`, `{:finished, status}`), where `EvoDashWeb.HomeLive.Transcript.close_streaming/1` DROPS a bubble that never received text.
 `{:tool_call, id, name}` appends the `:running` `:tool` row without finalizing the bubble, so text arriving after a tool call continues the same bubble and a thinking/tool-only turn renders no bubble at all.
 `Delta.streamed_text?/1` is the per-turn streamed-text flag (`text_in_turn` for the open turn, `text_in_closed_turn` for the turn closed last).
-A delta arriving before the snapshot lands is dropped — `chat_stream.delta` is `nil` until then — and a delta covered by the snapshot (`seq <= snapshot.seq`, `EvoGit.Agent.Stream.stale?/2`) is dropped too; the snapshot is the ONLY resync (no replay buffer, no poll loop, never a full-context broadcast).
-A `{:chat_stream_ready, …}` result never rebuilds the transcript while an in-flight streaming assistant bubble exists: it then only seeds the delta baseline, `chat_stream_meta` and `agent_message_count` from the snapshot, because `apply_history/3` would discard the text still streaming into that bubble.
+Batches arriving before the snapshot lands are buffered by Watch and replayed in arrival order only when newer than the snapshot; covered batches (`seq <= snapshot.seq`) are ignored.
+A matching `{:chat_stream_ready, …}` result atomically installs Watch's hydrated transcript, thought process, metadata and sequence baseline, applies `snapshot.phase`, then folds replayed outcomes; the snapshot remains the only resync, with no polling or independent history overwrite.
 A `{:finished, status}` whose delta has no answer text reconciles exactly ONCE through the existing async history fetch, guarded by `chat_fetch_seq` + node + agent id.
 The core captures current-call text/thinking unconditionally, including before any watcher attaches, and `Watch.snapshot_result/3` includes that captured prefix in its returned display surface.
 A history reply that lands when no writer is left (`chat_status` `:ended` or `:idle`) is finalized by `finalize_bubble/1`, so it never stays `streaming: true`.
@@ -280,10 +280,7 @@ The worker serializes every register/unregister command, including detach during
 Healthy same-scope attaches are no-ops; scope identity includes both node and agent, detach advances the generation, and worker-start failures settle as `{:watch_start_failed, reason}`.
 Cleanup RPC failures are logged without automatic retries, and unexpected worker death fails the watch explicitly while the core's own consumer monitor remains its final reaper.
 
-## Known Issues
-
-- The parent `home_live.ex` snapshot handler still reads only `snapshot`, `delta` and `meta`, so it must consume Watch's returned `transcript`/`thought_process` together before captured late-attach prefixes render correctly.
-- The parent drops pre-seed batches and its separate attach/history loader can overwrite a newer watch surface; those handlers require a shared watch-generation guard, buffering/replay above snapshot seq and lifecycle application from `snapshot.phase`.
+## Presentation and test notes
 
 - The assistant message's `status_label/1` (`assistant_message.ex`) renders `:awaiting_input` as the gettext label "Awaiting input"; the badge and dot colours come from `EvoDashWeb.Helpers.task_status_badge/1` / `task_status_dot_class/1` (the violet idle-session family).
 - `home_live_test.exs`'s `:reflect` assertions exercise the fallback path only, because its fixture configures `model_profiles: []` (so `start_session` answers `:llm_not_configured`).
