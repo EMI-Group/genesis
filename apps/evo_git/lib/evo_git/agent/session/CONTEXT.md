@@ -141,6 +141,14 @@ DEGRADATION (documented, never a silent loss): the chunk-level halt needs an ins
 That fallback stays race-free, because the message travels exactly once through the pending-message transport — it is therefore never lost and never delivered twice.
 A `{:evogit_interrupt, _ref}` that arrives after the last chunk of a turn (or while no watcher exists) stays unread in that SHORT-LIVED worker's mailbox and dies with the process; the next exchange runs in a NEW worker (and `Sink.install/2` sweeps the mailbox anyway), so one request can never abort two turns.
 
+## Execution-Activity Projection Boundaries
+
+`Worker.run/3` currently sends turn checkpoints as `{:checkpoint, state}` without a worker pid or attempt identity, whereas its terminal `{:exchange_finished, self(), outcome}` includes the worker pid.
+The installed streaming sink is watcher-gated and removed before fallback commit or foreign-worktree sync, so its deltas cannot serve as an always-on execution-activity channel or describe that cleanup work.
+The session currently owns no independent LLM-versus-tools activity or current-attempt text/thinking accumulator, and `history/2` is explicitly the last checkpointed conversation rather than the partial response in flight.
+Worker checkpoints replace the owned state through `adopt_state/2`, which only re-stamps the session-owned watcher set and event sequence, so any additional independently owned projection must receive equivalent protection or stay outside the worker-held struct.
+`Summary.publish/3` only derives its explicit summary fields and ignores unknown extra keys, so an additive activity field also requires the scheduler summary schema to admit it if it must appear in the agent roster.
+
 ## Snapshot-Only Reads (no polling)
 
 `inspect/2` and `history/2` remain TOTAL one-shot reads: `inspect/2` returns the current `%State{}` + phase (so `:awaiting_input` is observable for free) and `history/2` the current message list, which is the one-answer fallback for a consumer that does not subscribe.
