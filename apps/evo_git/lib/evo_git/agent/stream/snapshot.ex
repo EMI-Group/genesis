@@ -23,6 +23,7 @@ defmodule EvoGit.Agent.Stream.Snapshot do
   @type t :: %__MODULE__{
           agent_id: term(),
           phase: State.phase() | nil,
+          status: :done | :failed | nil,
           seq: non_neg_integer(),
           turn: non_neg_integer(),
           total_tokens: non_neg_integer(),
@@ -36,6 +37,7 @@ defmodule EvoGit.Agent.Stream.Snapshot do
 
   defstruct agent_id: nil,
             phase: nil,
+            status: nil,
             seq: 0,
             turn: 0,
             total_tokens: 0,
@@ -53,6 +55,7 @@ defmodule EvoGit.Agent.Stream.Snapshot do
   checkpointed yet is not offered), so no raising guard is added for impossible input. A state
   whose context is not a list of messages yields `[]` rather than leaking the raw term.
   The `:activity` option is the session's current live projection, defaulting to idle.
+  The optional `:status` is `:done` or `:failed` for a terminal snapshot, defaulting to `nil`.
   The session must settle pending public events before choosing the snapshot sequence.
   """
   @spec from(State.t(), State.phase(), keyword()) :: t()
@@ -60,6 +63,7 @@ defmodule EvoGit.Agent.Stream.Snapshot do
     %__MODULE__{
       agent_id: state.agent_id,
       phase: phase,
+      status: Keyword.get(opts, :status),
       seq: state.event_seq,
       turn: state.turn,
       total_tokens: state.total_tokens,

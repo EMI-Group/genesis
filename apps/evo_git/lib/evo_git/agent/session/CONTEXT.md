@@ -9,6 +9,8 @@ The exchange engine (`EvoGit.Agent.Exchange`) stays a pure function over the str
 The session IS the one lifecycle for every agent: `EvoGit.AgentScheduler.Dispatch.do_try_dispatch/4` starts it under `EvoGit.Agent.Session.Supervisor` and `EvoGit.AgentScheduler` admits its ONE terminal `{:agent_session_result, …}`.
 The session serves BOTH drivers: a `:oneshot` role ends at its first text reply, while an `:interactive` role YIELDS a text reply and parks in `:awaiting_input` until `start_input/3` resumes it on the SAME pid/worktree/context or `close/2` finalizes it.
 The session also OWNS the push-only streaming contract — the watcher set, the monotonic `event_seq` and the coalescing batcher — so a live consumer is PUSHED deltas and never polls.
+`../session.ex` is intentionally long and cohesive: the `gen_statem` lifecycle, authoritative state and stream sequence, and terminal ordering must remain together.
+`TerminalHandoff` extracts only direct fan-out, never lifecycle ownership.
 
 ## API Surface
 
@@ -120,6 +122,18 @@ The final summary publishes `status: :done` for `{:ok, result}`, `:failed` for `
 `EvoGit.AgentScheduler.handle_info({:agent_session_result, agent_id, session_pid, result}, state)` admits that message only for an existing `SchedMeta` whose `session_pid` is `nil` (already recycled) or the sending pid, and delegates to `EvoGit.AgentScheduler.Lifecycle.handle_session_result/3`; a message from a stale session or for a missing agent is logged at `:debug` and ignored.
 `{:agent_session_yield, agent_id, session_pid, text}` and `{:agent_session_resumed, agent_id, session_pid}` are EMITTED here and consumed by the scheduler side; they carry no result and must never be treated as terminal.
 
+## Terminal Watched-Inspector Handoff
+
+`finalize/1` delivers exactly one direct terminal handoff to each registered watcher pid after final state adoption, activity reset and delta flush, BEFORE final summary publication, scheduler result delivery and eventual removal.
+Only a nonempty watcher map and an owned `%State{}` allocate ONE shared `%EvoGit.Agent.Stream.Snapshot{}`; unwatched sessions and sessions without a constructed state allocate none.
+The snapshot has `phase: :done` and `status: :done | :failed` from the same decision as the final summary, with retired activity and `seq` explicitly set to the post-flush session-authoritative `data.event_seq`; the handoff does not increment the sequence.
+Success uses the final adopted state, while a returned `{:error, reason}` preserves the last accepted checkpoint transcript and never synthesizes assistant text from the error or partial activity.
+`EvoGit.Agent.Session.TerminalHandoff.deliver/2` accepts the session-owned `%{watcher_pid => monitor_ref}` map and that snapshot, sends each registered pid `{:agent_stream_closed, agent_id, snapshot, snapshot.seq}` directly with `send/2`, and returns `:ok`.
+Remote watcher pids are supported without a local-only liveness probe, and dead watchers require no retry.
+There is no handoff on an interactive yield, `terminate/3`, force cancellation or an abnormal worker-down path.
+The full-context snapshot never travels through PubSub and adds no persistence, retention, replay, acknowledgement or polling.
+Sending before other terminal notifications is session-side ordering only: different senders or channels do not guarantee that a consumer processes the handoff before a PubSub summary/removal event.
+
 ## Live Streaming (watchers, `event_seq`, coalesced deltas)
 
 The session OWNS the push-only delta contract: the watcher set (`watchers`, `%{consumer_pid => monitor_ref}`), the monotonic `event_seq` and the coalescing `EvoGit.Agent.Stream.Batcher`.
@@ -213,6 +227,7 @@ An unwatched worker still captures live activity and supports chunk-level interr
 - `../stream.ex` + `../stream/` → `EvoGit.Agent.Stream` (consumer API: `watch/1`, `register_watcher/2`, `unwatch/1`, `unregister_watcher/2`, `snapshot/1`, `stale?/2`, `topic/1`), `Stream.Watchers` (the session watcher set + the ONE `flush/4` broadcast), `Stream.Batcher` (the ONE coalescing buffer, `flush_interval_ms/0`), `Stream.Sink` (the worker-process-local, default-inert emitter + `{:evogit_interrupt, _ref}` consumption), `Stream.Snapshot` (the plain-data point-in-time view) and `Stream.Interrupted` (the halt exception) — wire contract: `../stream/CONTEXT.md`.
 - `./worker.ex` → `EvoGit.Agent.Session.Worker`, the per-exchange task body.
 - `./summary.ex` → `EvoGit.Agent.Session.Summary`, the one `:evogit_agent_summary` merge/read helper.
+- `./terminal_handoff.ex` → `EvoGit.Agent.Session.TerminalHandoff`, direct fan-out of ONE prepared terminal snapshot to registered watcher pids from the session's finalization path.
 - `./registry.ex` → `EvoGit.Agent.Session.Registry`; `./supervisor.ex` → `EvoGit.Agent.Session.Supervisor`.
 - `../state.ex` → `%EvoGit.Agent.State{}`, the authoritative struct these functions build and project from (`mode`, `phase`, `prompt_cache_key`, `exchange_turn_base`), whose `watchers`/`event_seq` fields are only the session's re-stamped projection (`adopt_state/2`).
 - `../exchange.ex` → the engine the worker runs (`{:yield, state, text} | {:finish, state, result} | {:error, reason}`); `../completion/builder.ex` → `Completion.Builder.finalize/2`, the ONE completion writer the finalizer calls; `../runner.ex` → the thin HELPER module (`refresh_commit_sha/1` + `@doc false` engine delegates), whose `try/after` + `refresh_commit_sha/1` shape the worker follows.
