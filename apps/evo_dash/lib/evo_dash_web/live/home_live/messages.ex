@@ -101,11 +101,27 @@ defmodule EvoDashWeb.HomeLive.Messages do
   def transcript(messages) do
     entries = to_entries(messages)
 
-    transcript =
-      messages
-      |> DisplayMessages.bubbles()
-      |> Enum.reduce(Transcript.new(), fn {role, text}, acc ->
-        Transcript.append(acc, Transcript.entry(role, text))
+    {transcript, _pending} =
+      Enum.reduce(if(is_list(messages), do: messages, else: []), {Transcript.new(), []}, fn
+        message, {transcript, pending} ->
+          thought = to_entry(message)
+
+          pending =
+            if thought && thought.type in ["assistant", "tool"],
+              do: Enum.take(pending ++ [thought], -40),
+              else: pending
+
+          case DisplayMessages.bubble(message) do
+            {:user, text} ->
+              {Transcript.append(transcript, Transcript.entry(:user, text)), []}
+
+            {:assistant, text} ->
+              entry = Transcript.entry(:assistant, text, reasoning: pending)
+              {Transcript.append(transcript, entry), []}
+
+            nil ->
+              {transcript, pending}
+          end
       end)
 
     %{transcript: transcript, entries: entries}

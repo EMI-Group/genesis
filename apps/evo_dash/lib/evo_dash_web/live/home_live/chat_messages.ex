@@ -138,8 +138,8 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
   # The transcript message list, oldest first. User entries are right-aligned
   # content-fit bubbles; assistant entries are answer-first columns; tool
   # entries are quiet single-line rows; error entries use a soft red tint.
-  # Only the LAST assistant entry receives the task badge + thought process +
-  # stream meta.
+  # Reasoning belongs to each reply; only the task badge and stream meta belong
+  # to the last assistant entry.
   def message_list(assigns) do
     ~H"""
     <div class="px-3 py-6 pb-8 space-y-8 sm:px-4 sm:space-y-10">
@@ -154,7 +154,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
                 entry={entry}
                 raw={MapSet.member?(@raw_entry_ids, Map.get(entry, :id))}
                 task_status={if is_last, do: @chat_task_status, else: nil}
-                thought_process={if is_last, do: @thought_process, else: []}
+                thought_process={Map.get(entry, :reasoning, [])}
                 stream_meta={if is_last, do: @stream_meta, else: nil}
               />
             <% :error -> %>

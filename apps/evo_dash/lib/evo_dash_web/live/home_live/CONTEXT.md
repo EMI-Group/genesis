@@ -170,11 +170,12 @@ The attach menu sits OUTSIDE `#chat-form`, and the textarea is NOT `phx-update="
 
 ## Reasoning retention
 
-Reasoning is NOT attached per transcript entry today: `Transcript.put_reasoning/3` exists and is unit-tested but has NO production call site, and `AssistantMessage.assistant_message/1` never reads an entry's `:reasoning`.
-The rendered thought process is ONE global `@thought_process` assign — the full `Messages.to_entries/1` list of the last `get_agent_history/2` read, rewritten wholesale by `apply_history/3` and cleared only by `reset_chat/1` — passed ONLY to the LAST assistant entry (`ChatMessages.message_list/1`), so earlier assistant entries render no thought section.
-Entries built by `Transcript.entry/3` do always carry `reasoning: []`, and `Transcript.normalize/1` preserves an existing `:reasoning` key, so the field is dormant scaffolding for a future per-message migration, not a live path.
-`ChatState` persists `thought_process` verbatim and rebuilds it through `normalize_thought_process/1` on restore (`%{turn, timestamp, type, data}`, with `data` kept verbatim).
-The delta path reuses that one buffer: `{:thinking, chunk}` accumulates into a SINGLE upserted entry (`type: "assistant"`, `data.metadata.thinking == true`, `data.reasoning_details: [%{text:, type: "thinking"}]`) for the current turn, so the collapsible section grows live and never shows the same text as the bubble (`Messages.message_text/1` excludes `:thinking` parts).
+Reasoning belongs to each transcript entry's `:reasoning` list, preserved by `Transcript.normalize/1` and `ChatState` restore.
+`Messages.transcript/1` attaches each reply's own history projection, including preceding assistant/tool-only entries since the previous bubble, bounded to 40 entries and reset on an authored user message.
+`LiveCall` replaces the current bubble's reasoning from its call-id-keyed complete thinking projection, while legacy text/thinking deltas attach their current-turn bucket through `Transcript.put_reasoning/3`.
+`ChatMessages.message_list/1` passes each assistant entry's reasoning to `AssistantMessage`, so completed replies retain their own Thought process section instead of borrowing the last global buffer.
+The global `thought_process` remains a reducer/history output but is not the presentation authority; callers that update a transcript without adopting `Messages.transcript/1` must explicitly attach the corresponding reasoning.
+Whole activity replacement overwrites captured prefixes, retry removes the failed call's answer and thinking, and checkpoint retirement preserves the committed entry's reasoning.
 
 ## Async contract (message tags + stale guards)
 
@@ -259,7 +260,7 @@ With `:unknown`, the shape heuristics decide: the turn-0 wrapper is unwrapped so
 A streamed assistant answer has `.help-caret`, while a finalized answer exposes `button[id^="assistant-copy-"][data-content]` and ordinarily `.md-content`; scope answer assertions outside the Thought process details because history-derived thought entries can repeat the answer text.
 `Watch.snapshot_result/3` seeds only sequence and turn through `Delta.seed/3`; the current Delta struct has no `current_call` or in-flight snapshot projection, so a late attach cannot be assumed to display already-emitted in-flight chunks from the snapshot alone.
 `Delta` ignores unknown events, so consumers must implement any richer core event vocabulary explicitly rather than assuming it is rendered here.
-`Delta` closes a streaming bubble on `:turn`, and `:yield` then calls `Transcript.finalize_assistant/2`, which appends an assistant entry when no streaming entry remains; a separate turn-close followed by yield can therefore duplicate the final answer.
+`Delta` retains the streamed bubble's entry id across a turn boundary, so a subsequent authoritative yield updates that reply rather than appending a duplicate answer.
 
 ## Watch/Delta reuse constraints
 
