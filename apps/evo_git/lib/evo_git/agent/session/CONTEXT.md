@@ -48,7 +48,8 @@ The only per-turn publication is the `:checkpoint` event → `Summary.publish/3`
 
 ## Phases, Events and Commands (yield/finish split)
 
-The `:gen_statem` uses `callback_mode: :handle_event_function` and its state name IS the phase: `:starting | :running | :awaiting_input | :cancelling | :finalizing | :done` (`data.phase` is kept in sync on every transition because `inspect/2` surfaces it).
+The `:gen_statem` uses `callback_mode: :handle_event_function` and its state name IS the lifecycle phase: `:starting | :running | :awaiting_input | :cancelling | :finalizing | :done`.
+`inspect/2` exposes that live phase separately from the last checkpointed `%State{}`; `state.phase` is not re-stamped on cancellation or finalization and must not be treated as live phase truth.
 Internal data is a plain map `%{state:, worker:, finalizer:, start_task:, start_timers:, last_yield_text:, notify_pid:, dispatch_ctx:, tmpdir:, result:, phase:, last_published_turn:, watchers:, event_seq:, batcher:}`, where `notify_pid` is the normalized `{pid, tag} | nil` close sink (`init/1` maps `{pid, tag}` as-is, a bare `pid` to `{pid, nil}`, anything else to `nil`); `start_task` is the `:starting` phase's ONE durable-setup `%Task{}` and `start_timers` its `{slow_warn_ref, stall_ref}` pair (cleared as soon as the task replies, so a later `:DOWN`/timer for it is stale by construction); `watchers` (`%{consumer_pid => monitor_ref}`), `event_seq` and `batcher` are SESSION-authoritative streaming state that no worker state copy may override; the worker ref is the ONLY identity that can deliver an outcome (`current_worker?/2`), the start task ref the only one that can finish `:starting` (`current_start_ref?/2`), and the finalizer handle the only one that can deliver a finalization.
 
 Transition table (as implemented):
@@ -124,6 +125,11 @@ The session OWNS the push-only delta contract: the watcher set (`watchers`, `%{c
 `{:watch, consumer_pid}` REGISTERS the consumer with `Process.monitor/1` (a monitor works for a local or a remote pid) and answers `{:ok, %EvoGit.Agent.Stream.Snapshot{}, seq}`, so a consumer starts from a coherent point and is then PUSHED `{:agent_delta, agent_id, seq, events}` — it never polls.
 `{:snapshot}` is the ONLY resync: one bounded one-shot read answering `{:ok, %Snapshot{}, seq}`, and a delta whose `seq` is `<=` the snapshot's `seq` is dropped (`EvoGit.Agent.Stream.stale?/2`); there is no replay ring buffer and no cursor.
 The snapshot's `seq` and `phase` are SESSION-authoritative, never the state's boundary copies (`snapshot_reply/2` stamps `data.event_seq` and the LIVE gen_statem phase).
+Snapshot consistency caveat: `snapshot_reply/2` combines the last checkpointed transcript with the last FLUSHED delta sequence, without flushing or reconciling `data.batcher`, and `publish_checkpoint/2` adopts the transcript without advancing or draining that batch.
+Consequently a snapshot can contain a completed turn whose buffered deltas will later arrive with a larger sequence (duplicate replay), or carry a flushed sequence for in-flight content absent from its checkpointed transcript (missing content when deltas at or below that sequence are discarded).
+Watch registration uses that same snapshot path, so a sequence comparison alone is not a transcript coverage watermark.
+The session emits no stream delta for phase/status transitions or terminal closure: yield/resume go to the scheduler plus Summary, cancellation publishes Summary, and terminal delivery uses scheduler/notify messages plus Summary rather than a guaranteed final stream snapshot.
+Starting and finalizing reject watch/snapshot, so consumers need lifecycle-driven retry or reconciliation outside the delta topic; a finalizing session may still serve `history/2` until it stops.
 `EvoGit.Agent.Stream.Sink.emit/1` sends `{:delta, events}` from the exchange worker; the session buffers them for `Stream.Batcher.flush_interval_ms/0` (75 ms), and `EvoGit.Agent.Stream.Watchers.flush/4` is the ONE broadcast site — exactly ONE `{:agent_delta, agent_id, seq, events}` on the `"agent:<agent_id>"` `EvoGit.PubSub` topic per flush, with `event_seq` incremented by exactly one.
 `event_seq` and `watchers` live in the session's data and stay authoritative: `publish_checkpoint/2` RE-STAMPS them onto every adopted worker state copy (`adopt_state/2`), so a checkpoint can never roll streaming state back.
 Flush points: a `{:exchange_finished, …}` outcome (i.e. before ANY transition out of `:running`/`:cancelling`), `finalize/1` before the terminal delivery, before a force-cancel stop, and best-effort in `terminate/3` (which never raises).
@@ -140,6 +146,16 @@ The worker's per-chunk `Sink` callback consumes that message exactly once (`Sink
 DEGRADATION (documented, never a silent loss): the chunk-level halt needs an installed stream callback, and `Sink.stream_opts/0` is `[]` while no watcher is registered, so with ZERO watchers `:interrupt` cannot pre-empt the in-flight turn and is applied at the NEXT turn boundary instead.
 That fallback stays race-free, because the message travels exactly once through the pending-message transport — it is therefore never lost and never delivered twice.
 A `{:evogit_interrupt, _ref}` that arrives after the last chunk of a turn (or while no watcher exists) stays unread in that SHORT-LIVED worker's mailbox and dies with the process; the next exchange runs in a NEW worker (and `Sink.install/2` sweeps the mailbox anyway), so one request can never abort two turns.
+
+## Inspector Snapshot Limitations
+
+`Stream.Snapshot` currently contains exactly `agent_id`, lifecycle `phase`, `seq`, `turn`, `total_tokens`, `usage`, `messages`, `mode`, `model_spec` and `compression_count`, with no in-flight response, active-tool list or runtime-activity phase.
+`history/2` and snapshot `messages` expose the last checkpointed conversation, not the currently streaming assistant response or in-progress tool batch.
+The delta handler only buffers events for broadcast and never folds text, thinking or tool events into snapshot state, so a mid-turn attachment or resnapshot cannot recover already-flushed fragments even though its `seq` includes those flushes.
+Watch and snapshot calls neither flush the batcher nor reconcile its events with checkpointed history, so a pending batch can also overlap a newer checkpoint's messages.
+The session's lifecycle phase does not distinguish thinking, generating, executing tools, waiting for slots or waiting for subagents, and the session emits no lifecycle delta on yield/resume/cancel/finalization itself.
+An interactive close finalizes through `Session.Finalize` rather than the exchange engine, so session shutdown cannot be inferred solely from the exchange's `{:finished, status}` delta.
+Adding an explicit inspector runtime-activity contract requires session-owned snapshot state distinct from lifecycle phase and restamped independently of worker checkpoints, plus ordered runtime transition events from the worker and terminal session paths.
 
 ## Snapshot-Only Reads (no polling)
 

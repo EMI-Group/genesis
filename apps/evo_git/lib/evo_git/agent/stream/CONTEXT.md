@@ -15,7 +15,7 @@ A consumer that fell behind, reconnected or lost a delta resyncs with a fresh `s
 | `topic/1` | `"agent:<agent_id>"`. |
 | `subscribe(agent_id)` | Subscribes the CALLING process at most once per agent: a CONSUMER-LOCAL `Process` memo of subscribed topics (`:evogit_stream_subscriptions`, a `MapSet`) makes a repeat subscribe a no-op, because `Phoenix.PubSub`'s registry is `keys: :duplicate` and a duplicate subscribe would deliver every batch TWICE. PubSub unavailable → `{:error, {:not_found, :pubsub_unavailable}}`, never an exit. |
 | `unsubscribe(agent_id)` | `Phoenix.PubSub.unsubscribe/2` + clears the memo entry; idempotent `:ok` (also when PubSub is gone), so a later `subscribe/1` subscribes for real again. |
-| `watch(agent_id_or_pid)` | Subscribes the CALLING process FIRST (through `subscribe/1`, so a re-watch is idempotent), then registers it as a watcher and returns `{:ok, %Snapshot{}, seq}`; unsubscribes again and returns the error if registration fails. The ordering is load-bearing: a delta in the gap is either covered by the snapshot (`seq <= snapshot.seq`) or newer and delivered normally. |
+| `watch(agent_id_or_pid)` | Subscribes the CALLING process FIRST (through `subscribe/1`, so a re-watch is idempotent), then registers it as a watcher and returns `{:ok, %Snapshot{}, seq}`; unsubscribes again and returns the error if registration fails. Subscribe-before-register prevents a transport subscription gap, but snapshot transcript coverage is not synchronized to its seq watermark (see Known Issues). |
 | `register_watcher(target, consumer_pid)` | RPC-facing: registers an ARBITRARY pid (a local pid or a remote external pid, since `Process.monitor/1` delivers the `:DOWN` locally) with NO subscription. |
 | `unregister_watcher/2` | Removes a watcher; idempotent `:ok`. |
 | `unwatch/1` | Unregisters the calling pid and `Phoenix.PubSub.unsubscribe/2`s it; idempotent and total (`:ok` even when the session or the watcher entry is already gone). |
@@ -27,7 +27,9 @@ A consumer that fell behind, reconnected or lost a delta resyncs with a fresh `s
 `{:watch, consumer_pid}` and `{:snapshot}` are served ONLY in `:running | :cancelling | :awaiting_input` (any other phase, e.g. `:starting`/`:finalizing`/`:done`, answers `{:error, {:bad_state, phase}}`), and a `{:delta, events}` arriving outside `:running`/`:cancelling` is logged and dropped.
 
 `EvoGit.AgentScheduler.RemoteAPI.register_watcher/2`, `unregister_watcher/2` and `watch_snapshot/1` are thin passthroughs to `register_watcher/2`, `unregister_watcher/2` and `snapshot/1` — ONE implementation, no second session-call path.
-`register_watcher/2` → `{:ok, %Snapshot{}, seq} | {:error, {:not_found, reason}} | {:error, {:bad_state, phase}}`, registers an EXTERNAL cross-node pid too, and answers `{:error, {:not_found, :invalid_consumer}}` for a non-pid instead of raising; `unregister_watcher/2` is idempotent `:ok` (also for a non-pid consumer) and `watch_snapshot/1` never opens the gate.
+`register_watcher/2` → `{:ok, %Snapshot{}, seq} | {:error, {:not_found, reason}} | {:error, {:bad_state, phase}}` for pid consumers, including EXTERNAL cross-node pids, while `watch_snapshot/1` never opens the gate.
+`register_watcher/2` and `unregister_watcher/2` have only pid-guarded clauses, so a non-pid consumer raises `FunctionClauseError` despite the module's totality claim.
+`unregister_watcher/2` may return a missing-session error, while `unwatch/1` always returns `:ok`.
 All three are LOCAL-node session calls, because the session, its watchers and its transcript live on the node that OWNS the agent; `EvoGit.RemoteNode.watch_agent/3`, `unwatch_agent/2` and `watch_snapshot/2` are the caller-side mirrors.
 Payload profile: the snapshot carries the FULL transcript ⇒ 🟠 heavy (same class as `get_agent_history/1`), while `unregister_watcher/2` is 🟢 and delta batches are 🟢 PUBLISHED, never RPC-pulled.
 `Snapshot.messages` is the session's RAW `%ReqLLM.Context{}.messages` verbatim (`Snapshot.from/2`): the `:system` persona message, the `<context>`+`<objective>`-WRAPPED first user message, injected user messages, assistant messages and `:tool` results — the stream layer filters and projects NOTHING, so a consumer wanting only user-authored turns must interpret `metadata[:turn]`/`metadata[:checkpoint]` and the pinned synthetic text prefixes itself.
@@ -50,7 +52,7 @@ It is plain data (JSON-clean) and never carries the `%ReqLLM.Context{}`.
 The SESSION owns `state.watchers` (`%{pid() => reference()}`) and `state.event_seq`.
 `{:watch, pid}` monitors the consumer and stores `watchers[pid] = ref`; a `:DOWN` removes a WATCHER ref (matched via `Watchers.watcher_ref?/3` BEFORE the worker/finalizer `:DOWN` arms).
 Re-registering demonitors the old ref; `unregister_ref/3` removes an entry only when the stored ref is the one that went down, so a stale `:DOWN` can never evict a live re-registration.
-`event_seq` increments by EXACTLY one per flush that actually broadcasts, and `Watchers.flush/4` is the ONLY broadcast site; a flush with zero watchers drops the accumulated events with NO seq bump.
+`event_seq` increments by EXACTLY one per nonempty watched flush (even if PubSub is unavailable and the broadcast is dropped), and `Watchers.flush/4` is the ONLY broadcast site; a flush with zero watchers drops the accumulated events with NO seq bump.
 `publish_checkpoint/2` re-stamps the session's `event_seq` and `watchers` onto the worker's state copy (`adopt_state/2`), so a checkpoint can never roll them back; `watchers` is SESSION-LOCAL transport bookkeeping, never part of a durable snapshot.
 Worker `{:delta, events}` info messages accumulate in a session-owned `%Stream.Batcher{}` (`stream/batcher.ex`, pure data) and flush coalesced after `Stream.Batcher.flush_interval_ms/0` = 75 ms.
 Only `{:text, …}`/`{:thinking, …}` come from stream-chunk callbacks, so they alone carry the per-attempt gate gap: content streamed during an attempt that began with zero watchers is never emitted, and the completed assistant message only becomes visible in a later snapshot/history at the turn-boundary checkpoint.
@@ -60,8 +62,15 @@ A snapshot is built from the session's last checkpointed `%State{}` (`data.state
 An immediate flush happens on `{:exchange_finished, …}`, before any transition out of `:running`/`:cancelling`, in `finalize/1`, before a force-cancel stop, and in `terminate/3` (best-effort, must never raise).
 `:awaiting_input`/`:finalizing`/`:done` hold NO flush timer (idle contract: an idle session has no timers).
 
+## Known Issues
+A snapshot combines the last checkpointed transcript with the latest flushed delta seq, not a transcript-coverage watermark: already-flushed in-flight chunks can be absent from the snapshot, while buffered events already represented in its transcript can arrive later with a higher seq.
+Consequently subscribe-before-register and `stale?/2` alone do not guarantee lossless or duplicate-free transcript reconciliation.
+The delta vocabulary carries no phase/status transition event for cancel, park, resume, finalizing or close, and no guaranteed final transcript snapshot; inspectors need the separate agent-summary lifecycle feed.
+Core `Stream.unwatch/1` cannot unsubscribe when its target no longer resolves (it returns `:ok` without clearing the topic memo), so a live consumer must call `unsubscribe(agent_id)` explicitly for that case; `RemoteNode.unwatch_agent/2` has a separate cleanup path covered by subscription tests.
+PubSub restart drops real subscriptions without clearing consumer-local memos, so re-watch alone can remain unsubscribed until an explicit unsubscribe/subscribe cycle.
+
 ## Constraints
-Gap repair is always a fresh `snapshot/1` + `stale?/2`, never a replay.
+Gap repair is intended to use a fresh `snapshot/1` + `stale?/2`, never a replay, subject to the transcript-coverage limitation above.
 `:interrupt` requires an installed stream callback to pre-empt the in-flight turn: with zero watchers there are no callbacks, so it degrades to next-turn-boundary semantics — the message is still delivered exactly once through the pending-message transport and is never lost.
 The streaming gate is the session's own watcher count, which no `Registry` or `Phoenix.PubSub` can answer.
 The watcher set is session DATA monitored per consumer, never ETS, never a bookkeeping process.
