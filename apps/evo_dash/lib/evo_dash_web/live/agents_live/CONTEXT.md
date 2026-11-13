@@ -83,6 +83,25 @@ The contract boundary: this builder owns ONLY the view model (`repo_key`/`repo_d
 `CommitGraph.build/2` emits exactly ONE color per entry in the `agents` list — `color`, the agent's depth hue (`EvoDashWeb.ThemeColor.hsl_to_hex(hue, 70, 54)` with `hue = Integer.mod(round(depth * 137.508) + 265, 360)`; depth 0 = `#7c38dc`).
 Node fills, edge strokes, status palettes (`EvoDashWeb.Helpers.agent_status_svg_color/1`) and per-theme CSS-var tokens are the renderer's concern — the builder never chooses them.
 
+## Inspector RuntimeStream Reducer
+
+`EvoDashWeb.AgentsLive.RuntimeStream` in `runtime_stream.ex` is a pure inspector reducer, independent of the Assistant bubble/transcript reducers, with public `new(agent_id, node)`, `seed(state, snapshot, seq)`, `apply_batch(state, agent_id, seq, events)` and `active?(state)`.
+Its `%RuntimeStream{}` exposes `agent_id`, `node`, monotonic `seq`, lifecycle `phase`, separate optional `activity`, accounting `turn`, raw checkpoint `messages`, current `response`/`thinking` binaries, current `tool_calls`, ordered `projections`, current `message_index`, boolean `finished` and optional atom `status`.
+Each live projection is `%{identity: map, turn: integer, message_index: integer, response: binary, thinking: binary, tool_calls: list, complete: boolean}`, and `projections` includes the current message as its last entry while preserving all earlier messages for rendering.
+Projection indexes are zero-based local ordinals unless an explicit nonnegative `message_index` is supplied, and neither the indexes nor these live projections are reconciled against raw checkpoint history.
+Each tool descriptor is `%{id: term, name: binary, status: term}`, initially `:announced`, with matching id-bearing results updating descriptors across all projections and same-name anonymous announcements upgraded when dispatch supplies an id.
+`active?/1` means a nonfinished lifecycle of `:running` or `:cancelling`, never an inference about LLM/tool execution.
+`seed/3` replaces previous checkpoint/live content, accepts map/struct snapshots with absent optional keys via defensive reads, preserves agent/node ownership, ignores snapshots explicitly naming another agent and clears malformed fields to empty defaults.
+The explicit nonnegative seed seq wins over snapshot seq, then zero; invalid state input produces a fresh unowned empty struct, while wrong-agent, stale/invalid-seq and post-finish batches are no-ops.
+Optional snapshot `activity` accepts an atom or map, and optional `in_flight` accepts `response` (or `text`), `thinking`, `turn`, `message_index` and `id` to seed one live projection.
+Missing activity stays nil and never means idle, absent thinking stays an empty binary and never determines activity, and tool announcements never assert execution.
+Authoritative optional `{:activity, atom_or_map}` events update activity independently from lifecycle, with `{:activity, %{phase: :llm, ...identity...}}` also starting a message only when identity is actually supplied.
+Explicit optional `{:message_start, identity}` accepts a map with nonnegative `turn`/`message_index` and/or binary/integer `id`, a nonnegative integer shorthand for `message_index`, or a nonempty binary shorthand for `id`; repeating the current exact identity is idempotent, while a distinct identity completes the old projection and opens a new one.
+For the existing identity-free stream, `{:turn, map}` records accounting and marks the current projection complete WITHOUT clearing response/thinking/tools, and only the next text/thinking chunk opens a new projection while intervening tool events stay with the previous message.
+`{:yield, text}` treats nonempty text as the current complete response, preserves thinking and tools, completes that projection and sets lifecycle/status to `:awaiting_input` with activity nil; `{:finished, status}` completes the projection, sets phase `:finished`, records status and clears activity.
+Unknown/malformed events are ignored, a newer accepted batch still advances its watermark, atom/string-key map reads are tolerated and the reducer does no I/O, process work, gettext or checkpoint text extraction through a competing `ContentText` implementation.
+There are no retention caps in this raw inspector reducer, so the page owns any render/retention policy and must not treat it as a bounded Assistant transcript.
+
 ## Inspector Streaming Integration Constraints
 
 The existing inspector history uses checkpointed session reads rather than a selected-agent delta watch; adding live chunks requires a consumer-local subscription plus asynchronous watcher registration using the LiveView pid, with agent/node/generation guards and explicit detach cleanup.
