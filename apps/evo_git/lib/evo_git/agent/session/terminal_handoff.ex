@@ -5,7 +5,11 @@ defmodule EvoGit.Agent.Session.TerminalHandoff do
   The session calls `deliver/2` exactly once in its normal finalization path, after
   adopting the final state, retiring activity and flushing deltas, but before
   publishing the final summary or delivering the scheduler result. The session
-  builds ONE snapshot at that post-flush sequence cut and passes it here.
+  builds ONE snapshot at that post-flush sequence cut and passes it here. It must
+  guard snapshot construction on a nonempty watcher map and an owned `%State{}`;
+  this helper receives an already-built snapshot and cannot avoid its allocation.
+  The snapshot's `seq` must be set explicitly from the session's post-flush
+  `event_seq`, not from the worker state's potentially older `event_seq`.
 
   The snapshot must have `phase: :done` and `status: :done | :failed`, with the
   status taken from the same terminal decision as the final summary. Adding that
@@ -32,9 +36,11 @@ defmodule EvoGit.Agent.Session.TerminalHandoff do
   @spec deliver(%{pid() => reference()}, Snapshot.t()) :: :ok
   def deliver(watchers, %{__struct__: Snapshot, phase: :done, status: status} = snapshot)
       when is_map(watchers) and status in [:done, :failed] do
-    message = {:agent_stream_closed, snapshot.agent_id, snapshot, snapshot.seq}
+    if map_size(watchers) > 0 do
+      message = {:agent_stream_closed, snapshot.agent_id, snapshot, snapshot.seq}
+      Enum.each(watchers, fn {pid, _monitor_ref} -> send(pid, message) end)
+    end
 
-    Enum.each(watchers, fn {pid, _monitor_ref} -> send(pid, message) end)
     :ok
   end
 end
