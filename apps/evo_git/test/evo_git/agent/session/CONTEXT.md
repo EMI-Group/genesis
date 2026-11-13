@@ -25,6 +25,18 @@ No test in this directory subscribes through `Agent.Stream`, asserts an `agent_d
 No test here directly drives a checkpoint callback or establishes mid-turn summary publication; the summary suite calls the projection helper directly.
 `interactive_test.exs` uses process-dictionary reply sequencing despite fresh exchange workers, and its `await_yield` helper can accept an idle phase after missing the expected reply text, so it is not a strong exact cross-exchange reply-order pin.
 
+## Activity Regression Planning and Deterministic Seams
+Production session activity is separate from `%State{}` and the summary row, so activity assertions must use `Agent.Stream.watch/1` or `snapshot/1` rather than `Session.inspect/2` or `Summary.read/1` alone.
+The sibling `../stream/` suites share `EvoGit.Agent.StreamCase` from `test/support/stream_case.ex`, whose `scripted_llm_call/1`, direct session startup and forwarded `exchange_opts` support parked worker-local `Stream.Sink` calls without global app-env seams.
+An activity emitter must synchronize with the session before acknowledging the test, for example by calling `Session.inspect/2` from that same worker after sending activity, because a worker-to-test notice alone does not order a later test-to-session snapshot against the activity messages.
+The existing driver uses legacy `Sink.emit/1` rather than call-start and callback activity APIs, so it cannot by itself establish unwatched retained text/thinking or callback identity.
+The required activity boundary matrix includes unwatched partial capture followed by mid-call watch, snapshot flush/dedup, advancing versus duplicate/older/current-call checkpoints, stale-worker rejection, and cleanup on error, worker death, force cancellation, interrupt, yield and resume.
+An advancing checkpoint preserves activity when its current call's turn is at least the checkpoint turn and retires older activity otherwise, while duplicate and older checkpoints must change neither activity nor transcript nor summary.
+Running graceful cancellation preserves current activity and the worker rather than behaving like force cancellation.
+Tool declarations, including streamed nil-id declarations, are not execution-start evidence and must not independently set the `:tools` activity phase.
+New activity suites can remain `async: true` by reusing unique production-shaped scheduler rows, agent-id-specific stream topics and per-dispatch seams, with no real git fixture needed for projection-only cases.
+Exact yield notices and explicit worker release messages are stronger evidence than `interactive_test.exs`'s phase-fallback `await_yield` helper or its auto-releasing five-second blocker.
+
 ## Routing Table
 There are no child directories.
 Streaming and checkpoint suites are owned by the sibling `../stream/` directory and parent agent test node rather than this directory.
