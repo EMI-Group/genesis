@@ -2,21 +2,17 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
   @moduledoc """
   Bounded, display-only view of an inspector RuntimeStream.
 
-  This does not merge live excerpts into checkpoint history: today's core does
-  not supply a transcript-coverage watermark, so doing so would risk duplication
-  or loss. Reducer excerpts remain unchanged, and every omitted byte,
-  projection and tool has an explicit count in the returned view. Legacy
-  `omitted_response`/`omitted_thinking` count render-stage graphemes only;
-  `omitted_response_bytes`/`omitted_thinking_bytes` include retention AND render
-  omissions. Message/tool omissions likewise include reducer retention counts.
+  Core activity owns the single live call; retirement removes its excerpts
+  instead of guessing overlap with checkpoint history. Every omitted byte and
+  tool has an explicit count. `omitted_response`/`omitted_thinking` count
+  render-stage graphemes only; their byte counterparts include reducer AND
+  render omissions without counting full replacement transmissions twice.
 
-  Activity comes ONLY from the authoritative activity field, never lifecycle,
-  thinking chunks, tool announcements or tool results. Missing activity is
-  unknown, not idle. `thinking_status/2` uses the reducer's capture coverage by
-  default; an explicit second argument remains a caller-owned coverage override.
-  Completed generation alone is not proof that no thinking was generated.
-  `checkpoint_part_covered?/4` is a conservative identity/coverage-aware display
-  predicate over only wholly rendered parts, never bounded-prefix equality.
+  Activity comes ONLY from the authoritative phase, never lifecycle, chunks or
+  tool announcements. Missing activity is unknown, not idle. Empty thinking is
+  reported only after successful generation with complete source capture and
+  no omitted thinking. The checkpoint predicate remains a safe always-false
+  API for the parent template: core checkpoint messages have no call identity.
   """
 
   alias EvoDashWeb.AgentsLive.{RuntimeStream, StreamLimits}
@@ -66,10 +62,11 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
   @doc "Classifies only authoritative activity; unknown shapes remain unknown."
   def activity(value) when is_map(value), do: activity(field(value, :phase))
   def activity(:llm), do: :llm
-  def activity(:tool), do: :tool
   def activity(:tools), do: :tool
   def activity(:idle), do: :idle
-  def activity(:waiting), do: :waiting
+  def activity(:llm_waiting), do: :waiting
+  def activity(:llm_complete), do: :llm_complete
+  def activity(:retry_wait), do: :retry_wait
   def activity(_value), do: :unknown
 
   @doc """
@@ -80,8 +77,8 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
   Failed/aborted lifecycle completion is NOT generation completion; callers
   providing their own message maps must preserve that distinction.
   """
-  def thinking_status(projection, coverage \\ nil) do
-    coverage = coverage || field(projection, :capture_coverage)
+  def thinking_status(projection) do
+    coverage = field(projection, :capture_coverage)
 
     cond do
       text(field(projection, :thinking)) != "" -> :present
@@ -93,31 +90,13 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
   end
 
   @doc """
-  Whether a checkpoint part is wholly represented in a currently rendered live message.
+  Safe parent-template compatibility boundary: no checkpoint part is suppressed.
 
-  The caller must supply the checkpoint's authoritative message identity, never
-  its row index, a turn guess or a text match. Identity must exactly match the
-  explicit stream identity and contain an id or message_index. Unknown identity,
-  partial capture, unfinished generation, omitted projections and truncated
-  parts all return false. This is a display predicate, never a history mutation.
+  Core call ids identify live attempts only; checkpoint messages currently carry
+  neither those ids nor a coverage watermark. Matching content, turn numbers or
+  local ordinals cannot establish coverage, even when a caller supplies metadata.
   """
-  def checkpoint_part_covered?(state, checkpoint_identity, part, value)
-      when part in [:response, :thinking] and is_map(checkpoint_identity) and
-             is_binary(value) and value != "" do
-    identity = RuntimeStream.message_identity(checkpoint_identity)
-    omission_key = if part == :response, do: :omitted_response, else: :omitted_thinking
-
-    if Map.has_key?(identity, :id) or Map.has_key?(identity, :message_index) do
-      Enum.any?(build(state).messages, fn message ->
-        message.identity == identity and message.capture_coverage == :complete and
-          message.generation_complete and Map.get(message, omission_key) == 0 and
-          Map.get(message, byte_omission_key(part)) == 0 and Map.get(message, part) == value
-      end)
-    else
-      false
-    end
-  end
-
+  @spec checkpoint_part_covered?(term(), term(), term(), term()) :: boolean()
   def checkpoint_part_covered?(_state, _identity, _part, _value), do: false
 
   @doc "True only for a RuntimeStream owned by the exact selected agent and viewed node."
@@ -135,6 +114,7 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
       generation_complete: field(projection, :generation_complete) == true,
       message_index: field(projection, :message_index),
       turn: field(projection, :turn),
+      attempt: field(projection, :attempt),
       complete: field(projection, :complete) == true,
       response: response,
       thinking: thinking,
@@ -172,8 +152,6 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
      byte_size(value) - byte_size(preview)}
   end
 
-  defp byte_omission_key(:response), do: :omitted_response_bytes
-  defp byte_omission_key(:thinking), do: :omitted_thinking_bytes
   defp count(value) when is_integer(value) and value >= 0, do: value
   defp count(_value), do: 0
 
