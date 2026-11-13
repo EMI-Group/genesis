@@ -24,8 +24,9 @@ Invalid consumer pids are refused as `{:error, {:not_found, :invalid_consumer}}`
 `%Snapshot{}` fields are `agent_id`, `phase`, `seq`, `turn`, `total_tokens`, `usage`, `messages`, `mode`, `model_spec`, `compression_count` and `activity`.
 The snapshot is plain data, carries no `%ReqLLM.Context{}`, and exposes raw message structs rather than filtering the transcript.
 Consumers displaying only real user turns use `MessageMarker.user_authored?/1` and unwrap the first message's `<objective>`.
-The transcript is checkpointed once per turn, while the activity option supplies the separate live call projection.
-The session integration must settle pending public events before selecting snapshot seq so the projection cannot include unsequenced contents that a consumer then appends twice.
+The transcript remains checkpointed once per turn, while the activity option supplies the separate live call projection.
+Activity deltas carry no messages; consumers needing newly checkpointed transcript contents use a bounded one-shot snapshot resync, not periodic polling.
+The session flushes pending deltas after watch registration and before taking either a watch or snapshot reply, returning live activity, live session phase and post-flush seq as a consistent cut so consumers drop already-covered deltas without double-appending.
 
 ### Activity pure projection
 `Activity.new/0` returns `%{phase: :idle, current_call: nil}`.
@@ -65,7 +66,10 @@ Re-registering demonitors the old ref, and `Watchers.unregister_ref/3` removes a
 `Watchers.flush/4` is the only broadcast site and increments seq exactly once per published non-empty flush.
 A flush without watchers drops events without consuming seq; publication failure degrades to a dropped batch, not a crashed session.
 `Batcher` is unchanged pure data with a 75 ms coalescing interval and session-owned timers.
-Immediate flushes belong at exchange completion, finalization, force cancellation and termination; idle sessions retain no flush timer.
+Activity retirement does not always flush immediately: successful resume, yield and finalizer startup may leave public reset events pending.
+Terminal delivery, current-worker down, force cancellation and termination reset activity and flush; watch and snapshot also flush, while running graceful cancel preserves activity and the pending batch.
+At most one flush timer exists; a bounded pending yield/reset batch may briefly keep it in `:awaiting_input` or `:finalizing`, and `:flush_deltas` is handled in every phase.
+Once the pending batch settles, no flush timer remains; there is no idle TTL or polling timer.
 
 ## Constraints
 No replay or periodic snapshot polling may be added.
