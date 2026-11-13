@@ -46,7 +46,7 @@ The stream suites never start a real core session, so Session/provider callback 
 An activity event replaces the whole activity and current call, text/thinking events append to that call, a new attempt replaces prior excerpts and nil current call retires the projection.
 `stream_watch_test.exs` includes compatibility coverage through public core `Activity.apply/2` and `Snapshot.from/3`, then feeds those snapshots/events through production consumer helpers.
 Its self-pid worker-command capture boundary and consumer-local PubSub checks establish subscription ownership, not actual core watch registration or provider callback delivery.
-Real-session coverage is still needed for mid-call attachment before any watcher existed and actual completed-call checkpoint retirement.
+Real-session mid-call attachment and completed-call checkpoint retirement coverage belongs to the parent `../real_stream_consumers_test.exs`; these helper fixtures establish only reducer/transport compatibility.
 `RuntimeStream` keeps raw checkpoint messages untouched and separate from the current live projection; `seed/3` replaces checkpoint history without duplication while the transport owns node/token guards and snapshot admission.
 These helper suites make no guessed historical checkpoint-part suppression assertions.
 The reducer suite retains independent response/thinking byte budgets, exact-boundary and UTF-8-safe copied-prefix assertions, cumulative omissions, bounded tool descriptors/names and uncapped checkpoint fidelity.
@@ -67,6 +67,15 @@ Watch-owned checkpoint history and its live projection are replaced together, wh
 Deltas have no publisher-node or attachment-token field, so old same-agent deltas across node switches cannot be distinguished by these helpers.
 Snapshot-plus-sequence replay cannot recover pre-attachment chunks absent from the core's snapshot.
 Run the scoped tests with `mix test apps/evo_dash/test/evo_dash_web/live/agents_live` from the umbrella root.
+
+## Terminal Snapshot Coverage Gap
+Neither helper suite mentions `{:agent_stream_closed, agent_id, snapshot, seq}` or exercises authoritative pushed closure after the Session has disappeared.
+`stream_watch_test.exs` provides async `socket/1`, `call_snapshot/3`, `ready/2` and `reconciled/2` fixtures with synchronous worker-command capture, suitable for extending terminal snapshot admission without real Sessions or global seams.
+Its attachment failures include `:not_found`, its boundary failures include offline or invalid snapshots, and failed watches reject later ordinary results/deltas while preserving any prior coherent pair; no test establishes whether a later pushed closure may recover that failed watch.
+Its registration/reconciliation tests guard node, token, agent, request and sequence watermarks, but do not cover closure overtaking a pending ready/reconcile result, closure before initial registration, duplicate closure, or stale results arriving after closure.
+`runtime_stream_test.exs` pins terminal batch freezing and terminal snapshot projection completion separately, but does not combine a finished reducer with later authoritative checkpoint replacement.
+`RuntimeStream.seed/3` deliberately permits sequence regression for admitted snapshots, so closure freshness must be pinned at the transport boundary rather than assumed from the reducer.
+Tests of the page's incoming closure-message handler, actual Session removal and real worker-result races belong to parent integration suites, not these command-capture helpers.
 
 ## Page-Level Commit-History Contracts (owned by `../agents_live_test.exs`)
 `@left_view` (`:tree` default | `:commits`) is toggled by `handle_event("switch_left_view", %{"view" => "tree"|"commits"})` (any other value is a no-op); the segmented buttons are `#left-view-tree` / `#left-view-commits`.
