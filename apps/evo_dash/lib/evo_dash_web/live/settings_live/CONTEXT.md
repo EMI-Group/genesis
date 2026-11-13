@@ -135,6 +135,19 @@ A legacy-only configuration yields no selection snapshot to keep, which is not a
 Category/provider/variant/key-path conversions use schema/catalog whitelists rather than client-derived atoms.
 SearchEvents resets in memory and delegates parent persistence/reload, handling invalid key paths only.
 
+## Config Read/Write Freshness
+ConfigIO.load_file_config/0 is the leaf's ONLY config read (`EvoGit.Config.resolve/0`); no function here reads or writes config.toml/credentials.toml with `File` APIs.
+The leaf's only direct filesystem call is `File.exists?(EvoGit.Config.config_path())` at mount (settings_live.ex:779), feeding the sidebar's "config file does not exist" hint; after a save receipt the parent sets `config_file_exists: true` without touching disk.
+Whole-file config writes go `persist_file_config/3,4` → `ConfigSave.start/4` → `NodeContext.save_user_config/2` → core `EvoGit.Config.save_user_config/1`; credentials go `NodeContext.save_credentials/2` → core `EvoGit.Config.save_credentials/1`.
+Custom-agent and model-selection-script saves write `<config_dir>/agents.toml` and remote-target CRUD writes `<config_dir>/remote_connections.toml` — separate files that never pass through the config save APIs.
+`ConfigSave.save/3` re-reads the authoritative config AFTER the write from the SAME supervised task (local `ConfigIO.load_file_config/0`, remote `NodeContext.get_resolved_config/1` → `EvoGit.Config.resolve/0`); both the receipt's `file_config` and the `candidate_written?/2` decision for an unacknowledged write depend on that read observing the just-written file.
+After a receipt the parent re-reads `config_status` (→ `resolve/0`) and OAuth statuses, and pushes runtime options to the LOCAL scheduler only.
+`save_api_key_local/2` reads `config_status/0` and `EvoGit.Config.credentials/0` synchronously in the LiveView process right after the credentials write; the remote path reloads and re-fetches status/credentials over RPC.
+`EvoGit.Config.config_status/0` takes `validation_errors` from the CALLER's process dictionary (written by `resolve/0` in that same process), so a resolve that validates elsewhere loses them and can report `ok?: true` for an invalid file.
+`file_config` is a per-session snapshot refreshed only by mount, `handle_params` (node switch / URL navigation via `NodeData.start/3`), a save receipt, or the custom-agent loaders — category switching is a `phx-click` event and never re-reads.
+The page subscribes only to "scheduler_config" (mount, settings_live.ex:774) and has no "config" subscription, so a config edit made outside the page never reaches an open page and the next whole-file save overwrites it from the stale snapshot.
+The shell accent (`@accent_color`) belongs to `EvoDashWeb.LiveHooks.Appearance`, not this page: a save here does not repaint it.
+
 ## ConfigSave Ownership
 ConfigSave.start/4 returns {:started, socket}, {:rejected, reason, socket} or {:failed, {:startup, reason}, socket} and never optimistically assigns file_config.
 complete/2 consumes the entire nested SafeCall message and returns {:saved, receipt, socket}, {:failed, receipt, socket} or {:stale, unchanged_socket}.
