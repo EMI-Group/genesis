@@ -34,15 +34,16 @@ Phoenix LiveView modules and templates for the EvoDash interactive UI — real-t
 
 `agents_live.ex` attaches the selected connected inspector through `agents_live/StreamWatch`, forwarding `:inspector_stream_ready`, `:agent_delta` and worker `:DOWN` messages in the LiveView consumer process.
 Selection close/removal, node or target changes and termination detach the watch, while the serial worker fields and monotonic watch/history counters survive scope resets.
-A healthy watch includes its snapshot-pending interval and suppresses message-count-triggered whole-history reads.
-The snapshot replaces checkpoint history once, while tool results, yield and finish request coalesced asynchronous checkpoint-detail reconciliation.
-A successful history fetch drains at most one coalesced pending follow-up, while a failed fetch or loader startup clears pending/loading state and exposes an explicit checkpoint-history Retry without automatic error retries or polling.
-History results use `{:agent_history_loaded, agent_id, node, history_seq, watch_token, result, modal_index}` and require matching selection, node, sequence and watch token; unscoped five-element results are ignored.
-`StreamPanel.stream_panel/1` renders live excerpts separately from checkpoint memory, and `StreamPresentation.checkpoint_part_covered?/4` suppresses a checkpoint part only with an explicit matching `RuntimeStream.message_identity/1` from message metadata, complete generation/capture and full exact untruncated content.
-Missing checkpoint identity preserves original history, and row indices, inferred turns and bounded-preview equality never establish coverage.
+The parent forwards ready, reconciled and delta messages through StreamWatch and projects newly admitted `state.messages` into checkpoint rows in the SAME callback as the live-state update.
+Core snapshots atomically capture checkpoint messages, nested `activity: %{phase:, current_call: nil | %{id:, turn:, attempt:, text:, thinking:}}` and an authoritative sequence, including complete accumulated current-call content even without watchers.
+StreamWatch freezes retirement/replacement batches before applying them, coalesces atomic snapshot requests and replays only newer buffered deltas, freezing again if replay crosses another ownership boundary.
+`{:inspector_stream_reconciled, node, token, agent_id, request, result}` forwards to `StreamWatch.reconciled/6`, whose admission guards protect scope, request identity and the required sequence watermark.
+Watched checkpoint history belongs exclusively to the stream, including snapshot-pending, reconciling and FAILED watches retaining their last coherent checkpoint/live pair.
+Independent history responses cannot overwrite owned checkpoint rows, and message-count updates cannot start history RPCs while that ownership remains.
+Watched history Retry and empty-history full-message refresh use `StreamWatch.reconcile/1`; transport failures require explicit stream reattachment and never trigger automatic fallback history reads or polling.
+Unwatchable agents retain the independent history fallback with `{:agent_history_loaded, agent_id, node, history_seq, watch_token, result, modal_index}` guarded by selection, node, sequence and watch token, while unscoped five-element results are ignored.
+`StreamPanel.stream_panel/1` renders temporary current-call excerpts separately from unsuppressed checkpoint memory, with no message-identity or content/turn/index-based suppression API.
 Raw history, tool details, full-message modals and stable DOM ids remain intact.
-Atomic replacement of obsolete live excerpts needs a sequence-consistent snapshot with complete in-flight text/thinking coverage or an explicit checkpoint coverage watermark, plus consumer-side buffering/replay of deltas newer than that snapshot.
-The current core snapshot has checkpoint messages and sequence but no in-flight coverage, so a history-only reconciliation cannot safely reset live excerpts or repair missing chunks.
 The stable `agent-history-<id>` root uses `InspectorMessages`, `data-inspector-scope` binds node/target/selection/watch/snapshot scope, and checkpoint rows expose stable `data-inspector-message` markers without changing existing DOM ids.
 Activity interpretation and thinking-coverage presentation remain owned by `StreamPresentation` and `StreamPanel`, never inferred from agent lifecycle status by the page.
 

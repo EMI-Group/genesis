@@ -844,30 +844,9 @@
                                   </div>
                                 <% "assistant" -> %>
                                   <div class="mt-1 space-y-2">
-                                    <p
-                                      :if={
-                                        inspector_live_part?(
-                                          @inspector_stream,
-                                          entry,
-                                          :response
-                                        )
-                                      }
-                                      class="text-xs text-base-content/60"
-                                    >
-                                      {gettext("Response shown in live activity above.")}
-                                    </p>
                                     <% reasoning_details = Map.get(entry.data, :reasoning_details) %>
                                     <%= if reasoning_details do %>
-                                      <div
-                                        :if={
-                                          not inspector_live_part?(
-                                            @inspector_stream,
-                                            entry,
-                                            :thinking
-                                          )
-                                        }
-                                        class="inspector-thinking text-xs bg-base-content/5 p-2 rounded text-base-content/70"
-                                      >
+                                      <div class="inspector-thinking text-xs bg-base-content/5 p-2 rounded text-base-content/70">
                                         <div class="font-semibold mb-1">
                                           {gettext("Thinking")}
                                         </div>
@@ -885,16 +864,7 @@
                                       </div>
                                     <% end %>
                                     <%= if entry.data.content && String.trim(entry.data.content) != "" do %>
-                                      <div
-                                        :if={
-                                          not inspector_live_part?(
-                                            @inspector_stream,
-                                            entry,
-                                            :response
-                                          )
-                                        }
-                                        class="text-sm bg-base-100 p-2 rounded text-base-content"
-                                      >
+                                      <div class="text-sm bg-base-100 p-2 rounded text-base-content">
                                         <div class="text-xs font-semibold mb-1">
                                           {gettext("Response")}
                                         </div>
