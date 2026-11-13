@@ -483,6 +483,15 @@ defmodule EvoDashWeb.AgentsLive do
      |> project_inspector_checkpoint(previous)}
   end
 
+  def handle_info({:agent_stream_closed, id, snapshot, seq}, socket) do
+    previous = socket.assigns.inspector_stream
+
+    {:noreply,
+     socket
+     |> StreamWatch.closed(id, snapshot, seq)
+     |> project_inspector_checkpoint(previous)}
+  end
+
   def handle_info({:DOWN, ref, :process, pid, reason}, socket) do
     socket = StreamWatch.down(socket, ref, pid, reason)
     {:noreply, maybe_fetch_selected_history(socket)}
@@ -661,7 +670,7 @@ defmodule EvoDashWeb.AgentsLive do
   def handle_event("view_full_message", %{"index" => index}, socket) do
     index = String.to_integer(index)
 
-    agent = Enum.find(socket.assigns.agents, &(&1.id == socket.assigns.selected_agent_id))
+    agent = selected_inspector_agent(socket.assigns)
 
     if agent && agent.history == [] do
       # Refresh through the watch's atomic snapshot when it owns this history;
@@ -696,7 +705,7 @@ defmodule EvoDashWeb.AgentsLive do
 
   @impl true
   def handle_event("view_full_objective", _params, socket) do
-    agent = Enum.find(socket.assigns.agents, &(&1.id == socket.assigns.selected_agent_id))
+    agent = selected_inspector_agent(socket.assigns)
 
     if agent do
       {:noreply, assign(socket, :selected_objective, agent.objective)}
@@ -905,7 +914,13 @@ defmodule EvoDashWeb.AgentsLive do
         %{agent | history: entries}
       end)
 
-    agent = Enum.find(agents, &(&1.id == agent_id))
+    retained_agents =
+      Map.new(socket.assigns.retained_agents, fn
+        {^agent_id, agent} -> {agent_id, %{agent | history: entries}}
+        entry -> entry
+      end)
+
+    agent = Enum.find(agents, &(&1.id == agent_id)) || Map.get(retained_agents, agent_id)
     count = (agent && agent.message_count) || length(entries)
 
     # Retain all roles/reasoning and prune only confirmed optimistic messages.
@@ -920,6 +935,7 @@ defmodule EvoDashWeb.AgentsLive do
     socket =
       assign(socket,
         agents: agents,
+        retained_agents: retained_agents,
         history_gate: HistoryGate.record(socket.assigns.history_gate, agent_id, count),
         history_loading_agent_id: nil,
         full_message_pending_index: nil,
@@ -943,7 +959,7 @@ defmodule EvoDashWeb.AgentsLive do
   defp detach_absent_inspector(socket) do
     id = socket.assigns.selected_agent_id
 
-    if socket.assigns.inspector_stream != nil and
+    if socket.assigns.inspector_stream != nil and not StreamWatch.owns?(socket, id) and
          not Enum.any?(socket.assigns.agents, &(&1.id == id)) do
       socket
       |> StreamWatch.detach()
@@ -955,14 +971,30 @@ defmodule EvoDashWeb.AgentsLive do
 
   # Failed watches still own the last coherent checkpoint/live pair. Health is
   # not an ownership test: independent history must wait until detachment.
-  defp inspector_owns_checkpoint?(socket, agent_id) do
-    case socket.assigns.inspector_stream do
-      %{agent_id: ^agent_id, node: target} ->
-        agent_id == socket.assigns.selected_agent_id and
-          target == socket.assigns.current_node
+  defp inspector_owns_checkpoint?(socket, agent_id), do: StreamWatch.owns?(socket, agent_id)
 
-      _ ->
-        false
+  defp selected_inspector_agent(assigns) do
+    Enum.find(assigns.agents, &(&1.id == assigns.selected_agent_id)) ||
+      if StreamWatch.owns?(%{assigns: assigns}, assigns.selected_agent_id) do
+        Map.get(assigns.retained_agents, assigns.selected_agent_id)
+      end
+  end
+
+  # A sealed snapshot outranks late summary/status updates, including failure
+  # broadcasts racing successful completion, without adding rows to the tree.
+  defp preserve_terminal_inspector(socket, agent) do
+    if StreamWatch.terminal?(socket, agent.id) do
+      snapshot = socket.assigns.inspector_stream.snapshot
+      previous = selected_inspector_agent(socket.assigns)
+
+      agent
+      |> Map.put(
+        :status,
+        Map.get(snapshot, :status) || (previous && previous.status) || agent.status
+      )
+      |> Map.put(:history, messages_to_history_entries(snapshot.messages))
+    else
+      agent
     end
   end
 
@@ -985,12 +1017,33 @@ defmodule EvoDashWeb.AgentsLive do
             messages_to_history_entries(state.messages),
             socket.assigns.full_message_pending_index
           )
+          |> project_terminal_inspector(id)
         else
           socket
         end
 
       _ ->
         socket
+    end
+  end
+
+  defp project_terminal_inspector(socket, id) do
+    if StreamWatch.terminal?(socket, id) do
+      assign(socket,
+        agents:
+          update_agent_in_list(
+            socket.assigns.agents,
+            id,
+            &preserve_terminal_inspector(socket, &1)
+          ),
+        retained_agents:
+          Map.new(socket.assigns.retained_agents, fn
+            {^id, agent} -> {id, preserve_terminal_inspector(socket, agent)}
+            entry -> entry
+          end)
+      )
+    else
+      socket
     end
   end
 
@@ -1343,6 +1396,7 @@ defmodule EvoDashWeb.AgentsLive do
   # fresh message counts into the gate, and (re)triggers a history fetch for
   # the selected agent when its count moved on.
   defp apply_agents_result(socket, agents) do
+    agents = Enum.map(agents, &preserve_terminal_inspector(socket, &1))
     current_ids = MapSet.new(agents, & &1.id)
     current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
 
@@ -1651,7 +1705,7 @@ defmodule EvoDashWeb.AgentsLive do
         |> handle_special_fields()
 
       # Merge changed fields into agent
-      agent = Map.merge(agent, changed_map)
+      agent = agent |> Map.merge(changed_map) |> then(&preserve_terminal_inspector(socket, &1))
 
       # A nil/non-positive threshold delta means "unknown" — keep the row's
       # previous (usable) denominator so a bar can never divide by nil.
@@ -1786,7 +1840,7 @@ defmodule EvoDashWeb.AgentsLive do
   # branch when it recycles, so nothing else remembers it. Returns the socket.
   defp apply_agent_removed(socket, agent_id) do
     socket =
-      if socket.assigns.selected_agent_id == agent_id do
+      if socket.assigns.selected_agent_id == agent_id and not StreamWatch.owns?(socket, agent_id) do
         socket
         |> StreamWatch.detach()
         |> clear_history_loading_flags(agent_id)
@@ -1822,10 +1876,8 @@ defmodule EvoDashWeb.AgentsLive do
 
       repo_trees = build_repo_trees(agents)
 
-      # Retain the ended agent for the commit-history view. @selected_agent_id is
-      # deliberately NOT cleared: the selection drives the graph's START/END
-      # annotation for the retained lane, and the right-hand detail panel shows
-      # its (natural) "Agent not found" empty state while the agent is gone.
+      # Keep the selected owned watch's ended detail independently of the live
+      # tree; retention also preserves the commit graph's lane and markers.
       retained_agents =
         Map.put(socket.assigns.retained_agents, agent_id, Map.put(removed_agent, :ended, true))
 

@@ -33,8 +33,10 @@ Phoenix LiveView modules and templates for the EvoDash interactive UI — real-t
 ### AgentsLive selected-agent streaming
 
 `agents_live.ex` attaches the selected connected inspector through `agents_live/StreamWatch`, forwarding `:inspector_stream_ready`, `:agent_delta` and worker `:DOWN` messages in the LiveView consumer process.
-Selection close/removal, node or target changes and termination detach the watch, while the serial worker fields and monotonic watch/history counters survive scope resets.
-The parent forwards ready, reconciled and delta messages through StreamWatch and projects newly admitted `state.messages` into checkpoint rows in the SAME callback as the live-state update.
+Selection close, node or target changes and termination detach the watch, while a selected owned watch survives agent removal or absence and its retained ended detail remains outside the live tree.
+The serial worker fields and monotonic watch/history counters survive scope resets.
+The parent forwards ready, reconciled, delta and `{:agent_stream_closed, agent_id, snapshot, seq}` messages through StreamWatch and projects newly admitted checkpoint messages and authoritative terminal status in the SAME callback.
+A sealed inspector snapshot outranks late summary/status updates, and retained ended detail remains available to the full-message and objective controls without reinserting the agent into the tree.
 Core snapshots atomically capture checkpoint messages, nested `activity: %{phase:, current_call: nil | %{id:, turn:, attempt:, text:, thinking:}}` and an authoritative sequence, including complete accumulated current-call content even without watchers.
 StreamWatch freezes retirement/replacement batches before applying them, coalesces atomic snapshot requests and replays only newer buffered deltas, freezing again if replay crosses another ownership boundary.
 `{:inspector_stream_reconciled, node, token, agent_id, request, result}` forwards to `StreamWatch.reconciled/6`, whose admission guards protect scope, request identity and the required sequence watermark.
@@ -99,11 +101,13 @@ The dialog preserves the exact original Elixir code and target runtime, distingu
 Decisions route by chat/source node through ApprovalWorkflow, never by evaluator target node; the dialog keeps showing the busy request with BOTH decisions disabled (`approval_responses` holds the in-flight request id) until a matching result arrives.
 Response failures retain the request and the strip shows retry guidance; success, backend not-found or resolution broadcasts remove them, while scope/token guards and recovery tombstones reject late results and prevent snapshot resurrection.
 Approval state remains ephemeral and outside ChatState; remount/reconnect recovery rebuilds it from the actual core `EvoGit.CommandApproval.pending/0` via `NodeContext.call_remote/4`.
-Assistant watch ready/delta/worker-DOWN messages delegate to `Watch.ready/5`, `Watch.push/4` and `Watch.down/4`, atomically installing the returned socket and complete transcript/thought-process/meta surface.
+Assistant watch ready/delta/closed/worker-DOWN messages delegate to `Watch.ready/5`, `Watch.push/4`, `Watch.closed/4` and `Watch.down/4`, atomically installing the returned socket and complete transcript/thought-process/meta surface.
+A terminal snapshot's `phase: :done` ends the chat and its optional authoritative `status` settles the task status after transcript projection, even though the closed surface has no synthetic outcome.
+Task broadcasts cannot reopen or replace a sealed terminal watch.
 Ready applies the snapshot phase before replayed outcomes, pending and failed watches retain display/phase ownership, and independent attach/history results carry the captured `stream_attach_seq` so they cannot overwrite a newer watch even after detach.
 The serial watch worker and monotonic generation survive chat resets; sequence-gated registration buffers replay only batches newer than the snapshot, without independent history polling.
 An interactive terminal task broadcast closes the bubble but retains active watch ownership (including pending or failed watches), so it neither invalidates the silent finish's exactly-once final atomic snapshot nor starts independent history.
-If that terminal snapshot is unavailable, the last coherent cached text remains visible; core sessions are removed immediately on termination and reject finalizing snapshots, so an unseen final answer cannot always be recovered.
+If the terminal handoff is unavailable, the last coherent cached text remains visible rather than starting an independent history read.
 Completed/cancelled events fetch a lite task row and finalize from its result, but a live failed broadcast immediately displays generic "The task failed." and clears refs without fetching its structured error; structured failure detail is available only through fetched-task reconciliation.
 A failed terminal task read degrades to nil and is displayed as "The conversation was deleted.", conflating RPC/store failure with a genuinely missing task.
 Chat lookup/history share `chat_fetch_seq`, terminal reads use a separate `chat_task_fetch_seq`, and model/source loads have separate counters; `reset_chat/1` resets both chat counters to zero while model/source counters survive.
