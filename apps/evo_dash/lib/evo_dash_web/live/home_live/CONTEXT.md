@@ -222,7 +222,11 @@ Live per-chunk deltas ARE consumed: a mounted `?session=<id>` page holds one `%D
 `Delta.streamed_text?/1` is the per-turn streamed-text flag (`text_in_turn` for the open turn, `text_in_closed_turn` for the turn closed last).
 Batches arriving before the snapshot lands are buffered by Watch and replayed in arrival order only when newer than the snapshot; covered batches (`seq <= snapshot.seq`) are ignored.
 A matching `{:chat_stream_ready, …}` result atomically installs Watch's hydrated transcript, thought process, metadata and sequence baseline, applies `snapshot.phase`, then folds replayed outcomes; the snapshot remains the only resync, with no polling or independent history overwrite.
-A `{:finished, status}` whose delta has no answer text reconciles exactly ONCE through the existing async history fetch, guarded by `chat_fetch_seq` + node + agent id.
+A `{:finished, status}` with no current or last-closed turn answer text requests exactly ONE final atomic snapshot through the same serial watch worker, never an independent history read.
+The final request advances `stream_attach_seq`, retains the subscription and last coherent surface, buffers newer batches and admits only its matching node/session/token result at or above the finish sequence before replaying newer deltas.
+Buffered silent finishes replayed after initial registration take this same route, while streamed finishes and duplicate finish batches never request another automatic snapshot.
+The terminal outcome is retained across a final snapshot so an earlier phase in the reply cannot reopen the composer, and snapshot errors or worker/session disappearance retain the cached transcript and failed-watch history ownership for explicit retry.
+The core currently stops terminal sessions immediately and refuses watch/snapshot in `:finalizing` or `:done`, so a final read that loses that race surfaces an error without inventing a response or falling back to history.
 The core captures current-call text/thinking unconditionally, including before any watcher attaches, and `Watch.snapshot_result/3` includes that captured prefix in its returned display surface.
 A history reply that lands when no writer is left (`chat_status` `:ended` or `:idle`) is finalized by `finalize_bubble/1`, so it never stays `streaming: true`.
 `EvoDash.NodeContext` is the boundary: `subscribe_agent_deltas/1`, `unsubscribe_agent_deltas/1`, `register_agent_watcher/3`, `unregister_agent_watcher/3`, `watch_agent_snapshot/2`.

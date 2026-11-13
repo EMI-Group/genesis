@@ -11,6 +11,10 @@ defmodule EvoDashWeb.HomeLive.Watch do
   `surface.outcome`; snapshot history, live activity and sequence are one cut.
 
   Registration-time batches buffer and replay only above the snapshot sequence.
+  A text-less finish requests one final atomic cut through the same worker and
+  ready/5 route, keeping the subscription and cached surface while it is pending.
+  Its generation and finish-sequence watermark reject obsolete or stale replies;
+  failure never falls back to independent history or automatically repeats.
   `stream_active?/1` denotes history OWNERSHIP, including pending/failed watches:
   independent attach/history results must not overwrite their display or phase.
   Tag independent reads with `stream_attach_seq` and reject results after that
@@ -30,7 +34,7 @@ defmodule EvoDashWeb.HomeLive.Watch do
 
   alias EvoGit.Agent.Stream.Snapshot
   alias EvoDash.{NodeContext, SafeCall, TaskSupervisor}
-  alias EvoDashWeb.HomeLive.{Delta, Messages}
+  alias EvoDashWeb.HomeLive.{Delta, Messages, Transcript}
 
   @max_batches 128
   @max_bytes 1_048_576
@@ -59,6 +63,9 @@ defmodule EvoDashWeb.HomeLive.Watch do
           snapshot: nil,
           pending: [],
           buffer_bytes: 0,
+          final_resync: nil,
+          terminal_outcome: nil,
+          required_seq: 0,
           error: nil
         }
 
@@ -66,25 +73,7 @@ defmodule EvoDashWeb.HomeLive.Watch do
 
         with :ok <- NodeContext.subscribe_agent_deltas(id),
              {:ok, socket} <- ensure_worker(socket) do
-          registration = %{
-            node: target_node,
-            id: id,
-            token: token,
-            watch:
-              Application.get_env(
-                :evo_dash,
-                :home_agent_watch_runner,
-                &NodeContext.register_agent_watcher/3
-              ),
-            unwatch:
-              Application.get_env(
-                :evo_dash,
-                :home_agent_unwatch_runner,
-                &NodeContext.unregister_agent_watcher/3
-              )
-          }
-
-          command(socket, {:register, registration})
+          register(socket, stream)
           socket
         else
           {:error, reason} -> fail(socket, reason)
@@ -111,11 +100,13 @@ defmodule EvoDashWeb.HomeLive.Watch do
   @doc "Admits the current atomic snapshot and replays only newer buffered batches."
   def ready(socket, target_node, token, id, result) do
     case socket.assigns[:chat_stream] do
-      %{node: ^target_node, token: ^token, agent_id: ^id, delta: nil, error: nil} = stream ->
+      %{node: ^target_node, token: ^token, agent_id: ^id, error: nil} = stream
+      when stream.delta == nil or stream.final_resync == :pending ->
         if stream_active?(socket) do
           case snapshot_result(result, id, target_node) do
-            {:ok, surface} ->
-              surface = Map.put(surface, :outcome, nil)
+            {:ok, surface} when surface.delta.seq >= stream.required_seq ->
+              outcome = if stream.final_resync == :pending, do: stream.terminal_outcome
+              surface = Map.put(surface, :outcome, outcome)
 
               surface =
                 stream.pending
@@ -124,15 +115,26 @@ defmodule EvoDashWeb.HomeLive.Watch do
                   reduce_batch(surface, seq, events)
                 end)
 
+              surface =
+                if stream.final_resync == :pending or surface.snapshot.phase == :done,
+                  do: %{surface | transcript: Transcript.close_streaming(surface.transcript)},
+                  else: surface
+
               stream = %{
                 stream
                 | delta: surface.delta,
                   snapshot: surface.snapshot,
                   pending: [],
-                  buffer_bytes: 0
+                  buffer_bytes: 0,
+                  final_resync: if(stream.final_resync == :pending, do: :done)
               }
 
-              {:ok, assign(socket, chat_stream: stream), surface}
+              socket = assign(socket, chat_stream: stream)
+              {:ok, maybe_final_resync(socket, surface), surface}
+
+            {:ok, surface} ->
+              reason = {:snapshot_before_finish, surface.delta.seq, stream.required_seq}
+              {:error, fail(socket, reason), reason}
 
             {:error, reason} ->
               {:error, fail(socket, reason), reason}
@@ -152,7 +154,10 @@ defmodule EvoDashWeb.HomeLive.Watch do
       %{agent_id: ^id, error: nil} = stream ->
         if stream_active?(socket) do
           case stream.delta do
-            nil ->
+            %Delta{seq: previous} when seq <= previous ->
+              {:ignored, socket}
+
+            delta when delta == nil or stream.final_resync == :pending ->
               bytes = stream.buffer_bytes + :erlang.external_size(events)
 
               if length(stream.pending) >= @max_batches or bytes > @max_bytes do
@@ -177,7 +182,8 @@ defmodule EvoDashWeb.HomeLive.Watch do
               }
 
               surface = reduce_batch(surface, seq, events)
-              {:ok, assign(socket, chat_stream: %{stream | delta: surface.delta}), surface}
+              socket = assign(socket, chat_stream: %{stream | delta: surface.delta})
+              {:ok, maybe_final_resync(socket, surface), surface}
 
             _ ->
               {:ignored, socket}
@@ -192,6 +198,56 @@ defmodule EvoDashWeb.HomeLive.Watch do
   end
 
   def push(socket, _id, _seq, _events), do: {:ignored, socket}
+
+  # A silent finish retires the live call without its answer. Re-register through
+  # the same worker for ONE authoritative cut, with no unsubscribe gap or history
+  # fallback. Keep the last surface intact if the terminal session is already gone.
+  defp maybe_final_resync(socket, %{outcome: {:finished, _} = outcome, delta: delta}) do
+    stream = socket.assigns.chat_stream
+
+    if stream.final_resync == nil and not Delta.streamed_text?(delta) do
+      token = next_token(socket)
+
+      stream = %{
+        stream
+        | token: token,
+          final_resync: :pending,
+          required_seq: delta.seq,
+          terminal_outcome: outcome
+      }
+
+      register(socket, stream)
+      assign(socket, chat_stream: stream, stream_attach_seq: token)
+    else
+      socket
+    end
+  end
+
+  defp maybe_final_resync(socket, _surface), do: socket
+
+  defp register(socket, stream) do
+    command(
+      socket,
+      {:register,
+       %{
+         node: stream.node,
+         id: stream.agent_id,
+         token: stream.token,
+         watch:
+           Application.get_env(
+             :evo_dash,
+             :home_agent_watch_runner,
+             &NodeContext.register_agent_watcher/3
+           ),
+         unwatch:
+           Application.get_env(
+             :evo_dash,
+             :home_agent_unwatch_runner,
+             &NodeContext.unregister_agent_watcher/3
+           )
+       }}
+    )
+  end
 
   defp reduce_batch(surface, seq, events) do
     if seq > surface.delta.seq do
