@@ -10,7 +10,7 @@ defmodule EvoGit.TaskControl do
   alias EvoGit.Store.Codec
 
   @terminal [:completed, :failed, :cancelled]
-  @start_keys ~w(path objective task_type mode resume_from model_id)
+  @start_keys ~w(path objective task_type mode resume_from model_id persistent_state)
 
   def check(args) do
     with :ok <- keys(args, ~w(path)),
@@ -59,6 +59,7 @@ defmodule EvoGit.TaskControl do
          {:ok, _} <- required_string(args, "objective"),
          :ok <- optional_strings(args, ~w(task_type mode resume_from model_id)),
          :ok <- model_profile(args),
+         :ok <- optional_boolean(args, "persistent_state"),
          {:ok, args} <- task_mode(args),
          :ok <- resume(args, path),
          {type, opts} = start_options(Map.put(args, "path", path)) do
@@ -77,7 +78,7 @@ defmodule EvoGit.TaskControl do
     opts = if type == :genesis, do: Keyword.put(opts, :prompt, args["objective"]), else: opts
 
     opts =
-      Enum.reduce(~w(resume_from model_id)a, opts, fn key, acc ->
+      Enum.reduce(~w(resume_from model_id persistent_state)a, opts, fn key, acc ->
         case Map.get(args, Atom.to_string(key)) do
           nil -> acc
           value -> Keyword.put(acc, key, value)
@@ -367,6 +368,16 @@ defmodule EvoGit.TaskControl do
         error -> {:halt, error}
       end
     end)
+  end
+
+  # An OPTIONAL boolean flag: absent is fine (the core default applies), any
+  # present non-boolean is refused before a task is enqueued.
+  defp optional_boolean(args, key) do
+    case Map.fetch(args, key) do
+      {:ok, value} when is_boolean(value) -> :ok
+      {:ok, _value} -> error("invalid_arguments", "#{key} must be a boolean.")
+      :error -> :ok
+    end
   end
 
   defp required_path(args) do
