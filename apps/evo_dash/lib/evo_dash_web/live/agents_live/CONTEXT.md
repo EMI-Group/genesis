@@ -83,6 +83,15 @@ The contract boundary: this builder owns ONLY the view model (`repo_key`/`repo_d
 `CommitGraph.build/2` emits exactly ONE color per entry in the `agents` list — `color`, the agent's depth hue (`EvoDashWeb.ThemeColor.hsl_to_hex(hue, 70, 54)` with `hue = Integer.mod(round(depth * 137.508) + 265, 360)`; depth 0 = `#7c38dc`).
 Node fills, edge strokes, status palettes (`EvoDashWeb.Helpers.agent_status_svg_color/1`) and per-theme CSS-var tokens are the renderer's concern — the builder never chooses them.
 
+## Inspector Streaming Integration Constraints
+
+The existing inspector history uses checkpointed session reads rather than a selected-agent delta watch; adding live chunks requires a consumer-local subscription plus asynchronous watcher registration using the LiveView pid, with agent/node/generation guards and explicit detach cleanup.
+Core transport and snapshot contracts live in `apps/evo_git/lib/evo_git/agent/stream/CONTEXT.md`, lifecycle/activity limitations in `apps/evo_git/lib/evo_git/agent/session/CONTEXT.md`, and the existing Assistant consumer pattern in `../home_live/CONTEXT.md`.
+The current snapshot has checkpointed messages and a broadcast sequence watermark but no in-flight projection, so snapshot-plus-stale-sequence filtering alone cannot guarantee lossless, duplicate-free mid-turn attachment.
+Current deltas expose text/thinking chunks and tool id/name/status but not tool arguments, result bodies or full history-message changes, and lifecycle phase does not distinguish thinking/generating/tool execution/waits.
+Assistant `Watch` supplies the transport pattern, but its capped bubble-oriented `Delta` reducer is not a lossless inspector history model.
+An explicit inspector activity indicator needs a separate session-owned runtime-activity contract in snapshot and ordered deltas, including exhaustive session-owned terminal transitions; reliable transcript resync additionally needs a checkpoint-reconciled in-flight projection.
+
 ## Send-Message Flow (in `agents_live.ex` + `agents_live.html.heex`)
 
 - **Event handlers in `agents_live.ex`**: `open_send_message` (sets `send_message_agent_id` + clears `send_message_text`), `close_send_message`, `validate_send_message` (`phx-change` syncs `@send_message_text`), **`send_agent_message`** — the submit handler. Params: `%{"agent_id" => id, "message" => message}` (hidden input heex line 670 + textarea). It calls `EvoDash.NodeContext.send_user_message(node, agent_id, message)` through the private `send_user_message_safely/3`, which wraps the call in `EvoDash.SafeCall.run/1` and FLATTENS the wrapper (a call timeout / dead scheduler becomes `{:error, reason}` instead of exiting the LiveView).
