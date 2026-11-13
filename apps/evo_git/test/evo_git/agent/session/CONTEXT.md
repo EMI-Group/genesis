@@ -11,6 +11,7 @@ All sessions are started directly with dispatch contexts rather than through sch
 `start_stall_test.exs` exercises public identity, close and force cancellation while the worktree create seam is parked, plus diagnosable setup timeout.
 `activity_projection_test.exs` exercises unwatched partial capture, mid-call watch, consistent watch/snapshot cuts and sequence-based deduplication, checkpoint retirement/preservation and stale or unauthenticated message rejection.
 `activity_lifecycle_test.exs` exercises rejection, worker death, graceful versus force cancellation, exact interactive yield/resume cleanup, genuine unwatched chunk interruption, and streamed tool declaration versus actual tool-batch phase.
+`terminal_handoff_test.exs` exercises the direct `{:agent_stream_closed, agent_id, snapshot, seq}` watcher handoff through genuine one-shot finish, rejected exchange and interactive-close finalization paths.
 
 ## Constraints
 Summary, interactive and activity suites are `async: true` and insert only per-test uniquely keyed production-shaped scheduler rows, deleting their own rows on exit.
@@ -27,6 +28,11 @@ The activity projection suite pins session-owned watchers and sequence against s
 The activity lifecycle suite pins exact yield notices and fresh resumed workers/call identities independently of the older interactive suite's fallback helpers.
 `interactive_test.exs` uses process-dictionary reply sequencing despite fresh exchange workers, and its `await_yield` helper can accept an idle phase after missing the expected reply text, so it is not a strong exact cross-exchange reply-order pin.
 Tool-batch phase coverage establishes the session projection boundary, not ProcessManager execution lifetime or real provider callback integration.
+Terminal-handoff regressions require one final `:done`-phase snapshot with terminal status, idle activity, authoritative messages and the flushed sequence before final summary publication and result delivery.
+They pin pending-delta ordering, last-accepted-checkpoint retention on error, transcript usability after session exit and summary-row removal, registered-recipient-only exactly-once delivery and explicit-close finalization.
+The success case authenticates a same-turn pre-report checkpoint so the engine's later checkpoint is a duplicate, forcing the handoff to use final-outcome adoption rather than accidentally passing with a previously adopted final checkpoint.
+The unwatched regression uses a positive-control OTP trace session scoped to its private session pid to prove no terminal snapshot allocation or stream publication without mutating legacy VM-global trace patterns.
+The terminal-handoff suite intentionally requires the new protocol even when the checked-out production session has not implemented it; missing close messages or terminal snapshot status are source-contract failures, not assertions to weaken.
 
 ## Deterministic Activity Seams
 Production session activity is separate from `%State{}` and the summary row, so activity assertions use `Agent.Stream.watch/1` or `snapshot/1` rather than `Session.inspect/2` or `Summary.read/1` alone.
