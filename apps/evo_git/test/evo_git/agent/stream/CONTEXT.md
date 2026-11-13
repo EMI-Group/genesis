@@ -51,6 +51,9 @@ The `[0, 1, 0]` Sink test pins fresh IDs for retry/nudge-shaped attempt inputs, 
 The `:llm_call` exchange seam replaces LLMPrompting, so it cannot prove real provider callback installation, request retries or empty-response nudge behavior.
 Actual LLMPrompting integration needs the existing serialized scheduler/loopback HTTP machinery or a lower-level process-local seam coordinated above this node.
 The pending-snapshot suite invokes real Sink callbacks in a genuine worker but does not invoke ReqLLM's network stream decoder.
+`activity_snapshot_test.exs` orders callback messages and the snapshot/watch request from the SAME worker while the session is suspended, proving pending-batch flushing but not checkpoint-versus-history or worker-completion races.
+`inspection_test.exs` reads history only after `await_yield/2`, so its exact RPC/session equality does not establish a coherent mid-turn snapshot/history cut.
+No test in this directory drives a failed provider attempt through a genuine Session or pins tool-free terminal text delivery during one-shot completion; the session fixtures here park interactive replies instead.
 Real cross-node RemoteNode watch routing needs another BEAM and is not established by local-node subscription tests.
 Managed tool execution lifetimes, overlap, execution identities and tool results are not established by synthetic tool declarations here.
 Snapshot no-context assertions inspect top-level values rather than recursively JSON-encoding the whole projection.
@@ -65,3 +68,5 @@ These are documented source behaviors, not proof of a production failure in the 
 A scripted response with non-catalog `test:model` may emit a best-effort cost warning, which stays captured by the suite's log capture.
 Do not use `process_stream/2` tracing to claim network stream coverage when the exchange seam bypasses it entirely.
 `{:interrupted, reason}` is the early-turn non-error seam contract; replacing it with `{:error, reason}` exercises a different failure path.
+`interrupt_test.exs` still contains stale comments claiming zero watchers makes `Sink.stream_opts/0` empty and prevents callback interruption, contradicted by the real installed-Sink assertions in `gate_test.exs:48-141` and the pure Sink suite.
+The interrupt suite's second case uses a scripted reply that never invokes callbacks, so its next-exchange delivery is a fixture behavior rather than evidence of watcher-dependent production interruption.

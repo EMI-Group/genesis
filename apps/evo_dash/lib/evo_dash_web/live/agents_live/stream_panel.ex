@@ -43,7 +43,7 @@ defmodule EvoDashWeb.AgentsLive.StreamPanel do
       </p>
       <p class="text-xs text-base-content/60">
         {gettext(
-          "Live excerpts are separate from checkpoint history; content before attachment may not have been captured."
+          "The current call is shown live until retirement; checkpoint history is shown below."
         )}
       </p>
       <div
@@ -115,7 +115,9 @@ defmodule EvoDashWeb.AgentsLive.StreamPanel do
   defp activity_label(:llm), do: gettext("Generating response")
   defp activity_label(:tool), do: gettext("Executing tools")
   defp activity_label(:idle), do: gettext("Idle")
-  defp activity_label(:waiting), do: gettext("Waiting")
+  defp activity_label(:waiting), do: gettext("Waiting for model capacity")
+  defp activity_label(:llm_complete), do: gettext("Response generated")
+  defp activity_label(:retry_wait), do: gettext("Waiting to retry")
   defp activity_label(_), do: gettext("Activity unavailable")
 
   defp tool_label(:announced), do: gettext("Announced")

@@ -4,8 +4,8 @@ defmodule EvoDashWeb.AgentsLive.StreamLimits do
 
   Text keeps a UTF-8-safe prefix, copied so a small excerpt cannot pin a large
   incoming binary. Omission counts are bytes, not graphemes. Each discarded
-  incoming byte is counted, including content supplied by replacement snapshots
-  or yield events; counters are cumulative within a projection until resync.
+  chunk byte is counted; a full activity replacement resets omissions to the
+  bytes missing from that authoritative value rather than counting retransmits.
   Identity and capture coverage are never synthesized from truncated content.
   """
 

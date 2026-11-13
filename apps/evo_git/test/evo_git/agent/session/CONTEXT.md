@@ -27,6 +27,8 @@ The activity projection suite pins session-owned watchers and sequence against s
 The activity lifecycle suite pins exact yield notices and fresh resumed workers/call identities independently of the older interactive suite's fallback helpers.
 `interactive_test.exs` uses process-dictionary reply sequencing despite fresh exchange workers, and its `await_yield` helper can accept an idle phase after missing the expected reply text, so it is not a strong exact cross-exchange reply-order pin.
 Tool-batch phase coverage establishes the session projection boundary, not ProcessManager execution lifetime or real provider callback integration.
+No test here mounts a dashboard consumer or proves terminal-history recovery after session exit; terminal fixtures assert result/closed messages and process death, while interactive fixtures inspect retained history before close.
+A resumed worker sees newly drained user input before the public checkpoint transcript includes it, explicitly pinned by `activity_projection_test.exs:269-273`, so a running snapshot must not be assumed to include queued or freshly drained input.
 
 ## Deterministic Activity Seams
 Production session activity is separate from `%State{}` and the summary row, so activity assertions use `Agent.Stream.watch/1` or `snapshot/1` rather than `Session.inspect/2` or `Summary.read/1` alone.
