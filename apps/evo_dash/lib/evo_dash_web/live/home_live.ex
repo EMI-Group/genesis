@@ -1402,11 +1402,21 @@ defmodule EvoDashWeb.HomeLive do
     socket =
       cond do
         status in @terminal_statuses ->
-          socket
-          |> assign(chat_task_status: status, chat_status: :ended, queued_echoes: [])
-          |> finalize_bubble()
-          |> Watch.detach()
-          |> async_fetch_history(socket.assigns[:chat_node])
+          socket =
+            socket
+            |> assign(chat_task_status: status, chat_status: :ended, queued_echoes: [])
+            |> finalize_bubble()
+
+          # Pending and failed watches still own the surface. Detaching here
+          # invalidates the silent finish's final snapshot (or loses a finish
+          # still in flight); keep cached text if that snapshot is unavailable.
+          if Watch.stream_active?(socket) do
+            socket
+          else
+            socket
+            |> Watch.detach()
+            |> async_fetch_history(socket.assigns[:chat_node])
+          end
 
         status == :cancelling ->
           # No more text is coming, but the session is still alive: finalize the
