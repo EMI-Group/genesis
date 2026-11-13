@@ -19,6 +19,7 @@ All sessions are started directly with dispatch contexts rather than through sch
 Summary, interactive and activity suites are `async: true` and insert only per-test uniquely keyed production-shaped scheduler rows, deleting their own rows on exit.
 The start-stall suite is `async: false` because it mutates the shared `:worktree_create_fun`, `:worktree_create_slow_warn_ms` and `:worktree_create_stall_timeout_ms` app-env seams.
 Session fixtures inject `exchange_opts` and `scheduler: self()` so scripted worker behavior and terminal messages are test-local.
+Session API calls (`inspect/2`, `history/2`) are bounded RETRIES, never one tight call timeout: a late reply on a saturated host is a VM-scheduling artifact, not a session fact, and a blocked-turn seam's `after` budget stays far above every bounded wait so a turn never ends under an assertion.
 Interactive-close finalizers lack the test process dictionary, so archive assertions read uniquely identified rows in the app-global task store.
 A sequence shared across exchanges must live outside the exchange worker process dictionary because each exchange has a fresh worker; `interactive_close_test.exs` uses a linked Agent for its reply sequence.
 
