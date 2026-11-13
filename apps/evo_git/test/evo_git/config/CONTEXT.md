@@ -29,6 +29,8 @@ The parent `../CONTEXT.md` and `../../CONTEXT.md` own the cross-cutting async-sa
 | `llm_catalog_test.exs` | `LLMCatalogTest` | `true` | Static catalog providers/models, credential keys, auth modes, endpoints and variants |
 | `llm_generation_params_test.exs` | `LLMGenerationParamsTest` | `false` | Provider-aware generation/OAuth options, constraints and metadata seam |
 | `version_state_test.exs` | `VersionStateTest` | `true` | Version-state TOML, path-aware cache, upgrade and onboarding detection |
+| `reload_event_test.exs` | `ReloadEventTest` | `true` | Config-refresh event with NO answering watcher: an absent, unregistered, dead or unresponsive target falls back to the SAME guarded snapshot reload synchronously, exactly one generation bump per content change, bounded by the call timeout |
+| `reload_event_test.exs` | `ReloadEventWatchTest` | `true` | Config-refresh event through a LIVE watcher: a save raises ONE event whose own file write is a debounce no-op, an explicit `notify_change/2` refreshes synchronously, and a watcher on another dir still refreshes the explicitly requested dir (`@moduletag skip:` when the `file_system` backend is unavailable) |
 
 ## Constraints
 Only `llm_generation_params_test.exs` is synchronous because it mutates the BEAM-global `:llm_model_metadata_fun` and `:auth_home_fun` app-env seams.
@@ -43,6 +45,7 @@ Both writer-side file operations use raw I/O because the shared file server is w
 The FIFO rendezvous uses no sleep, timing race, app-env override, global tracing or OS-env mutation and is skipped on Windows; the remaining health tests are cross-platform.
 The environment-over-persisted credential test only reads the existing `PATH` value and never writes an OS environment variable.
 `version_state_test.exs` is async-safe because the version-state cache stores its path and reclassifies whenever the per-process path changes.
+The reload-event suites are async-safe for the same reason the cache suite is: every test owns a unique config directory (so its `:persistent_term` snapshot key is private), registers its watcher or stub under a unique name, and filters every `"config"` broadcast assertion on that test's own `dir`.
 Never edit files outside this node; the parent roundtrip suite and parent context documentation have separate owners.
 Keep new focused suites below roughly 1000 lines and express related input families as table-driven cases without dropping assertions.
 No mocks or real LLM requests are used here.
@@ -63,6 +66,6 @@ There is no global `[llm] oauth_file` schema key; OAuth files are per account/pr
 The `[tmp]` enum is `[:system, :custom, :per_repo]`, with rejected values reported at `[:tmp, :mode]` under the corresponding `{:in, ...}` rule.
 
 ## Test Inventory
-This node contains 360 tests across eleven modules.
-Per-file counts are schema 122, provider normalization/enumeration 14, provider resolution 21, provider validation 12, config health 3, Ecto validation 48, generation parameters 66, catalog 40, version state 15, context window 12 and tmp schema 7.
+This node contains 395 tests across sixteen modules.
+Per-file counts are schema 122, provider normalization/enumeration 14, provider resolution 21, provider validation 12, config health 3, Ecto validation 48, generation parameters 66, catalog 40, version state 15, context window 12, tmp schema 7, config cache 11, config watcher 3, LLM cache identity 14 and reload event 7 (4 fallback cases plus 3 live-watcher cases that skip when the `file_system` backend is unavailable).
 Run the complete node with `mix test apps/evo_git/test/evo_git/config` from the umbrella root.
