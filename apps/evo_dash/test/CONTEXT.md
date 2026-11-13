@@ -29,6 +29,8 @@ Web-layer tests reference those singletons directly; per-test Store/TaskRegistry
 - `evo_dash_web/plugs/` → the MCP endpoint suite `mcp_test.exs` (`EvoDashWeb.MCPTest`, 7, `async: false`, plain HTTP `POST /mcp` requests; forcing global: the process-global `EvoGit.AgentScheduler` state its config-reload tool rewrites) — see the sync inventory below.
 - Provider-profile selection contracts → `evo_dash_web/components/CONTEXT.md` and `evo_dash_web/live/CONTEXT.md`, with focused support-module contracts documented under `live/projects_live/`, `live/home_live/` and `live/settings_live/`.
 - Interactive-session coverage map (send path, rail, `:awaiting_input` admission, TasksLive `session_mode` filter, update wind-down) → `evo_dash_web/CONTEXT.md` → "Interactive-session coverage map", summarized below.
+- Stream producer/consumer integration gaps and real-session fixture reuse → `evo_dash_web/live/CONTEXT.md`, with synthetic inspector fixture limitations in `live/agents_live/CONTEXT.md` and Assistant reducer state/attempt-identity gaps in `live/home_live/CONTEXT.md`.
+Existing mounted stream suites stub watch snapshots and publish fabricated batches, while the real-session Home fixture exercises finished-response/history checkpoints rather than callback-driven stream capture.
 
 ## API Surface
 
