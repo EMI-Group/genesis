@@ -55,6 +55,7 @@ defmodule EvoGit.AgentSpec do
   - `:foreign_repos` — list of foreign repos available to this agent
   - `:repo_notes` — the already-rendered git-submodules note block (markdown text) for this agent's repo tree, or `nil` when the repo has no submodules (or detection failed)
   - `:archive` — whether task archiving is enabled
+  - `:persistent_state` — whether durable per-run agent-state checkpoints are enabled for this task (threaded through `opts`)
   - `:task_id` — optional explicit task ID override
   """
   @spec new(ContextNode.t(), PhyloGraphNode.t(), module(), String.t(), keyword()) :: t()

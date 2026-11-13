@@ -264,6 +264,15 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         # registration and mirrored on SchedMeta. An interactive session yields
         # to `:awaiting_input` on a tool-free reply instead of finishing.
         session_mode: meta.mode,
+        # `:persistent_state` is the TASK-WIDE durability flag (default `true`,
+        # `false` opts the whole task — root plus descendants — out of durable
+        # per-agent checkpoints). `:restore_agent_state` is set only on a crash
+        # RETRY of the SAME `agent_id`, so the rebuilt session merges the
+        # persisted conversation onto its fresh dispatch (fresh worktree/repo
+        # path, same identity); a first attempt always starts clean.
+        persistent_state: Keyword.get(spec.opts, :persistent_state, true) != false,
+        restore_agent_state:
+          retries > 0 and Keyword.get(spec.opts, :persistent_state, true) != false,
         scheduler: self()
       ]
       |> append_repo_less_ctx(spec, agent_repo_root)

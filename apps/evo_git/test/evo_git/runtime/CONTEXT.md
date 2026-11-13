@@ -58,6 +58,12 @@ This directory contains no tests for self-reflective tool-schema exposure, tool 
 The source-root tests do not exercise selection of a valid managed clone, a non-root `:node_path`, or model-lock propagation in a self-reflective spec.
 The `guarded_run/2` helper catches every exit rather than specifically matching scheduler `:noproc`, and both runtime files' `quiet_error_result/1` fallback makes unexpected return values pass their truthiness assertion.
 
+### `:persistent_state` Threading
+Pinned by `root_agent_helpers_test.exs` (the root path) and `self_reflective_test.exs` (the repo-less path).
+`Runtime.Helpers.build_root_agent_spec/7` ALWAYS emits a boolean `spec.opts[:persistent_state]`: absent/`nil`/`true` → `true`, an explicit `false` → `false`, and the key is always PRESENT (asserted with `Keyword.fetch/2 == {:ok, _}`).
+`SelfReflective.build_spec/2` forwards the key VERBATIM instead: an absent key stays OMITTED (`refute Keyword.has_key?/2`), `nil` stays present-as-`nil`, `true` stays `true`, and only an explicit `false` opts out.
+Both are asserted through the dispatch-effective `Keyword.get(spec.opts, :persistent_state, true) != false`.
+
 ## Foreign-Repo Test Coverage (`helpers_test.exs`)
 
 All writable-foreign-repo coverage in this node lives in `helpers_test.exs` (`async: true`).

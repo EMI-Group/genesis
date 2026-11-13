@@ -326,6 +326,121 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
     end
   end
 
+  describe "persistent_state/1" do
+    test "nil means the default true" do
+      assert RuntimeOpts.persistent_state(nil) == true
+    end
+
+    test "passes booleans through" do
+      assert RuntimeOpts.persistent_state(true) == true
+      assert RuntimeOpts.persistent_state(false) == false
+    end
+
+    test "raises a descriptive ArgumentError for non-boolean values" do
+      for value <- ["true", :yes, 1, [], %{}] do
+        assert_raise ArgumentError, ~r/invalid persistent_state/, fn ->
+          RuntimeOpts.persistent_state(value)
+        end
+      end
+    end
+  end
+
+  describe "admit_persistent_state/1" do
+    test "an absent opt returns the opts unchanged (no key added)" do
+      opts = [path: "/tmp/repo"]
+
+      assert {:ok, result} = RuntimeOpts.admit_persistent_state(opts)
+      assert result == opts
+      refute Keyword.has_key?(result, :persistent_state)
+    end
+
+    test "a present nil opt returns the opts unchanged with the key still present" do
+      opts = [path: "/tmp/repo", persistent_state: nil]
+
+      assert {:ok, result} = RuntimeOpts.admit_persistent_state(opts)
+      assert result == opts
+      assert Keyword.has_key?(result, :persistent_state)
+      assert Keyword.fetch!(result, :persistent_state) == nil
+    end
+
+    test "booleans are kept as booleans" do
+      assert {:ok, result} = RuntimeOpts.admit_persistent_state(persistent_state: true)
+      assert Keyword.fetch!(result, :persistent_state) == true
+
+      assert {:ok, result} = RuntimeOpts.admit_persistent_state(persistent_state: false)
+      assert Keyword.fetch!(result, :persistent_state) == false
+    end
+
+    test "non-boolean values answer an error tuple without raising" do
+      for value <- ["true", :yes, 1, [], %{}] do
+        assert RuntimeOpts.admit_persistent_state(persistent_state: value) ==
+                 {:error, :invalid_persistent_state}
+      end
+    end
+  end
+
+  describe "build_common_runtime_opts/3 — :persistent_state" do
+    test "an absent opt yields :persistent_state true (present, never omitted)" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts([path: "/tmp/repo"], "task-ps-1", :evolve)
+
+      assert Keyword.fetch!(runtime_opts, :persistent_state) == true
+    end
+
+    test "an explicit false opt is threaded as false" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", persistent_state: false],
+          "task-ps-2",
+          :evolve
+        )
+
+      assert Keyword.fetch!(runtime_opts, :persistent_state) == false
+    end
+
+    test "an explicit true opt is threaded as true" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", persistent_state: true],
+          "task-ps-3",
+          :evolve
+        )
+
+      assert Keyword.fetch!(runtime_opts, :persistent_state) == true
+    end
+
+    test "an explicit nil opt falls back to the default true" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", persistent_state: nil],
+          "task-ps-4",
+          :evolve
+        )
+
+      assert Keyword.fetch!(runtime_opts, :persistent_state) == true
+    end
+
+    test "raises a descriptive ArgumentError for an invalid evolve value" do
+      assert_raise ArgumentError, ~r/invalid persistent_state/, fn ->
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", persistent_state: "true"],
+          "task-ps-5",
+          :evolve
+        )
+      end
+    end
+
+    test "raises a descriptive ArgumentError for an invalid genesis value" do
+      assert_raise ArgumentError, ~r/invalid persistent_state/, fn ->
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", mode: "new", persistent_state: :yes],
+          "task-ps-6",
+          :genesis
+        )
+      end
+    end
+  end
+
   describe "evolution_mode_atom/1" do
     test "converts \"simple\" to :simple" do
       assert RuntimeOpts.evolution_mode_atom("simple") == :simple

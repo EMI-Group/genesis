@@ -987,6 +987,13 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
 
   Delegates to `EvoGit.TaskRegistry.start_task/2` (a `GenServer.call`).
   `task_type` is an atom (`:genesis` or `:evolve`), `opts` is a keyword list.
+  Task-level opts include `:path`, `:mode`, `:node_path`, `:starting_commit`,
+  `:archive`, `:quality_level`, `:foreign_repos`, `:attachments`,
+  `:model_spec`/`:model_id` and `:persistent_state` — the last being a boolean
+  (default `true`) that keeps each agent run's conversation and scalar state
+  durable in the separate `agent_state.sqlite`; `false` opts the WHOLE task
+  (root plus descendants) out of it, at the cost of losing a crashed run's
+  conversation.
   This runs on the REMOTE node when called via `:erpc.call/5`.
 
   Returns `{:ok, %EvoGit.TaskInfo{}}` on success or `{:error, reason}` on failure.

@@ -587,8 +587,11 @@ defmodule EvoGit.TaskRegistry do
         # not enqueue work, and the stored opts must match the admitted selection.
         # `:session_mode` is admitted the same way (non-raising — a raise here
         # would kill the registry); an invalid value never enqueues a task.
+        # `:persistent_state` is admitted the same way: it turns durable
+        # per-run agent-state checkpoints on for this task.
         with {:ok, opts} <- RuntimeOpts.admit_model_selection(opts, EvoGit.Config.resolve()),
-             {:ok, opts} <- RuntimeOpts.admit_session_mode(opts) do
+             {:ok, opts} <- RuntimeOpts.admit_session_mode(opts),
+             {:ok, opts} <- RuntimeOpts.admit_persistent_state(opts) do
           task_ref =
             Task.Supervisor.async_nolink(
               EvoGit.TaskSupervisor,
@@ -996,6 +999,10 @@ defmodule EvoGit.TaskRegistry do
           # disk-full the rows remain and nothing was deleted).
           Enum.each(task_ids, fn task_id ->
             Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_deleted, task_id, node()})
+
+            # Same cascade as a single-task delete: a cleared task owns no
+            # durable run state (best-effort, see `delete_agent_state/1`).
+            delete_agent_state(task_id)
           end)
 
           :ok
@@ -1033,6 +1040,11 @@ defmodule EvoGit.TaskRegistry do
         # Broadcast only on the successful write — on disk-full the row
         # remains and nothing was deleted.
         Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_deleted, task_id, node()})
+
+        # A deleted task owns no durable run state: drop its rows from the
+        # SEPARATE agent-state database too, best-effort (see the helper).
+        delete_agent_state(task_id)
+
         :ok
 
       {:error, :disk_full} ->
@@ -1466,6 +1478,28 @@ defmodule EvoGit.TaskRegistry do
   # always observable — never silent.
   defp safe_store_read(op, degraded, fun), do: StoreGuard.read(op, degraded, fun)
   defp safe_store_write(op, fun), do: StoreGuard.write(op, fun)
+
+  # A task delete cascades to the task's DURABLE agent state, which lives in a
+  # SEPARATE best-effort SQLite database (`EvoGit.AgentState`). A failed
+  # cleanup must never break the delete (the task row is already gone and the
+  # dashboard has been told), and retention pruning is the backstop — so this
+  # contains every failure and only logs it.
+  defp delete_agent_state(task_id) do
+    EvoGit.AgentState.delete_task(task_id)
+  rescue
+    error ->
+      log_agent_state_delete_failure(task_id, error)
+  catch
+    :exit, reason ->
+      log_agent_state_delete_failure(task_id, {:exit, reason})
+  end
+
+  defp log_agent_state_delete_failure(task_id, detail) do
+    Logger.warning(
+      "TaskRegistry: could not delete durable agent state for task #{task_id} " <>
+        "(#{inspect(detail)}); retention pruning will reclaim it"
+    )
+  end
 
   # ── Unreadable persisted status (`{:unknown, raw}`) ──────────────────
   #

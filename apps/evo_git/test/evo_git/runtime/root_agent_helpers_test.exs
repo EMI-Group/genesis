@@ -23,6 +23,18 @@ defmodule EvoGit.Runtime.RootAgentHelpersTest do
   defp context_node, do: %EvoGit.Core.ContextNode{path: ".", repo: "/tmp/repo"}
   defp phylo_node, do: %EvoGit.Core.PhyloGraphNode{repo: "/tmp/repo"}
 
+  defp root_agent_spec(opts) do
+    Helpers.build_root_agent_spec(
+      context_node(),
+      phylo_node(),
+      DefaultRoot,
+      "do the thing",
+      opts,
+      [],
+      nil
+    )
+  end
+
   describe "resolve_root_agent/2" do
     test "returns the default module with [] opts when :agent is absent" do
       assert Helpers.resolve_root_agent([], DefaultRoot) == {DefaultRoot, []}
@@ -105,6 +117,38 @@ defmodule EvoGit.Runtime.RootAgentHelpersTest do
         )
 
       assert Keyword.get(spec.opts, :quality_level) == nil
+    end
+  end
+
+  describe "build_root_agent_spec/7 — :persistent_state threading" do
+    test "an absent :persistent_state defaults to true and the key is PRESENT" do
+      spec = root_agent_spec([])
+
+      assert spec.agent_module == DefaultRoot
+      assert spec.opts[:persistent_state] == true
+      assert Keyword.fetch(spec.opts, :persistent_state) == {:ok, true}
+    end
+
+    test ":persistent_state nil defaults to true" do
+      spec = root_agent_spec(persistent_state: nil)
+
+      assert spec.agent_module == DefaultRoot
+      assert spec.opts[:persistent_state] == true
+      assert Keyword.fetch(spec.opts, :persistent_state) == {:ok, true}
+    end
+
+    test ":persistent_state true yields true" do
+      spec = root_agent_spec(persistent_state: true)
+
+      assert spec.agent_module == DefaultRoot
+      assert spec.opts[:persistent_state] == true
+    end
+
+    test ":persistent_state false yields false" do
+      spec = root_agent_spec(persistent_state: false)
+
+      assert spec.agent_module == DefaultRoot
+      assert spec.opts[:persistent_state] == false
     end
   end
 end

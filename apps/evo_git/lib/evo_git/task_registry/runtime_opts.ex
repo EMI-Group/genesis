@@ -3,9 +3,10 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
   Runtime options builder for `EvoGit.TaskRegistry`.
 
   Builds the `runtime_opts` keyword list passed to `EvoGit.Runtime.*` modules
-  when executing genesis, evolve, or skill extraction tasks, and owns the two
-  task-option admissions (`:model_spec` / legacy `:model_id` and the optional
-  `:session_mode` driver selection).
+  when executing genesis, evolve, or skill extraction tasks, and owns the three
+  task-option admissions (`:model_spec` / legacy `:model_id`, the optional
+  `:session_mode` driver selection, and the optional `:persistent_state`
+  per-agent-state opt-out).
   """
 
   @doc """
@@ -96,6 +97,46 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
     end
   end
 
+  ## Per-agent persistent state (`:persistent_state`)
+
+  @doc """
+  Normalizes the `:persistent_state` task-option VALUE to a boolean.
+
+  `nil` (the opt is absent) means the default `true`: a task that does not opt
+  out of persistence persists per-agent state for its root agent and every
+  descendant. Only booleans are accepted — a string, atom or number raises a
+  descriptive `ArgumentError` rather than being coerced.
+  """
+  @spec persistent_state(term()) :: boolean()
+  def persistent_state(nil), do: true
+  def persistent_state(value) when is_boolean(value), do: value
+
+  def persistent_state(other),
+    do: raise(ArgumentError, "invalid persistent_state: #{inspect(other)}")
+
+  @doc """
+  Admits the OPTIONAL `:persistent_state` task opt before the task is enqueued
+  and persisted — the non-raising counterpart of `persistent_state/1`, because
+  it runs inside the registry GenServer (a raise there would kill the registry).
+
+  - absent → `{:ok, opts}` unchanged; the default `true` applies at build time,
+    so the opt is never required and no existing caller changes;
+  - `nil` → `{:ok, opts}` unchanged (`nil` means "unset", i.e. the default);
+  - `true` / `false` → `{:ok, opts}` with the boolean;
+  - anything else (a string, atom, number, …) →
+    `{:error, :invalid_persistent_state}`.
+  """
+  @spec admit_persistent_state(keyword()) ::
+          {:ok, keyword()} | {:error, :invalid_persistent_state}
+  def admit_persistent_state(opts) do
+    case Keyword.fetch(opts, :persistent_state) do
+      :error -> {:ok, opts}
+      {:ok, nil} -> {:ok, opts}
+      {:ok, value} when is_boolean(value) -> {:ok, Keyword.put(opts, :persistent_state, value)}
+      {:ok, _other} -> {:error, :invalid_persistent_state}
+    end
+  end
+
   @doc """
   Builds common runtime options for genesis and evolve tasks.
 
@@ -104,7 +145,8 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
 
   Returns `{nil, runtime_opts}` — the first element is `nil` (the input arg,
   unused for genesis/evolve; resume-from tasks prepend context to the objective
-  separately).
+  separately). `:persistent_state` is ALWAYS present as a boolean (`true` when
+  the task did not opt out); every other optional key is omitted when unset.
   """
   def build_common_runtime_opts(opts, task_id, task_type) do
     repo_path = Keyword.fetch!(opts, :path)
@@ -112,10 +154,19 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
 
     Application.ensure_all_started(:evo_git)
 
+    # Per-agent persistent state (boolean, DEFAULT true). Unlike `:session_mode`
+    # below, this key is NEVER omitted: a task that does not opt out persists
+    # per-agent state, and the runtime reads an explicit boolean. Strictness is
+    # the same convention as `:mode` / `:session_mode` (an invalid data-plane
+    # value raises), while `admit_persistent_state/1` is the non-raising gate
+    # the registry calls before enqueue.
+    persistent_state = persistent_state(Keyword.get(opts, :persistent_state))
+
     runtime_opts = [
       repo_path: repo_path,
       mode: mode_atom(task_type, mode),
-      task_id: task_id
+      task_id: task_id,
+      persistent_state: persistent_state
     ]
 
     # Interactive-session driver selection. Same strictness convention as

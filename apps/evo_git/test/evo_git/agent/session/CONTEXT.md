@@ -12,6 +12,8 @@ All sessions are started directly with dispatch contexts rather than through sch
 `activity_projection_test.exs` exercises unwatched partial capture, mid-call watch, consistent watch/snapshot cuts and sequence-based deduplication, checkpoint retirement/preservation and stale or unauthenticated message rejection.
 `activity_lifecycle_test.exs` exercises rejection, worker death, graceful versus force cancellation, exact interactive yield/resume cleanup, genuine unwatched chunk interruption, and streamed tool declaration versus actual tool-batch phase.
 `terminal_handoff_test.exs` exercises the direct `{:agent_stream_closed, agent_id, snapshot, seq}` watcher handoff through genuine one-shot finish, rejected exchange and interactive-close finalization paths.
+`persistence_test.exs` exercises the UNIT-level durable-state contract of `Session.Persistence` (`checkpoint/2` opt-out inertness, first-checkpoint rewrite, tail-only append, store-level empty-tail UPSERT, compression and non-prefix rewrites, gap detection plus `resync/1`, `restore/3` merge and its error paths, `complete/1`) and `Setup.build_initial_state/3`'s restore gate.
+`persistence_session_test.exs` exercises the SESSION-level wiring: a completed one-shot run persisted and marked completed, an interactive run parked in `:awaiting_input` not marked, a force-killed run never marked, a `persistent_state: false` run writing nothing, and the `{:agent_state_resync, task_id, agent_id}` handler healing a diverged store.
 
 ## Constraints
 Summary, interactive and activity suites are `async: true` and insert only per-test uniquely keyed production-shaped scheduler rows, deleting their own rows on exit.
