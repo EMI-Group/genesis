@@ -106,6 +106,7 @@ defmodule EvoGit.Store.StoreInvariantsTest do
       }
     ],
     quality_level: "fast",
+    persistent_state: false,
     # Only the outer opt key is atomized; canonical selection fields stay strings.
     model_spec: %{
       "provider_profile_id" => "account-a",
@@ -239,6 +240,11 @@ defmodule EvoGit.Store.StoreInvariantsTest do
     refute Keyword.has_key?(decoded, :model_id)
     refute Keyword.has_key?(decoded, :agent)
     refute Keyword.has_key?(decoded, :build_system)
+  end
+
+  test "persistent_state decodes ATOM-keyed as a boolean (false preserved)" do
+    assert Codec.decode_opts(Codec.encode_opts(persistent_state: false)) ==
+             [persistent_state: false]
   end
 
   test "an opt key outside known_opt_keys/0 comes back STRING-keyed (the failure mode)" do

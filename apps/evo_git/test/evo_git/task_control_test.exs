@@ -245,6 +245,34 @@ defmodule EvoGit.TaskControlTest do
     assert :ok = Task.await(writer)
   end
 
+  test "threads persistent_state through start options", %{tmp_dir: path} do
+    # ONE project dir per start: these runs are cancelled while their evolution
+    # is still initializing, so sharing a repo would race git's index lock.
+    start = fn name, extra ->
+      dir = Path.join(path, name)
+      File.mkdir_p!(dir)
+
+      assert {:ok, %{id: id}} =
+               TaskControl.start(Map.merge(%{"path" => dir, "objective" => "work"}, extra))
+
+      {id, TaskRegistry.get_task(id).opts}
+    end
+
+    {id, opts} = start.("off", %{"persistent_state" => false})
+    assert opts[:persistent_state] == false
+    refute Map.has_key?(Map.new(opts), "persistent_state")
+    TaskRegistry.cancel_task(id)
+
+    {id2, opts2} = start.("on", %{"persistent_state" => true})
+    assert opts2[:persistent_state] == true
+    TaskRegistry.cancel_task(id2)
+
+    {id3, opts3} = start.("omitted", %{})
+    refute Keyword.has_key?(opts3, :persistent_state)
+    assert Keyword.get(opts3, :persistent_state, true) == true
+    TaskRegistry.cancel_task(id3)
+  end
+
   defp seed!(id, status, path, result) do
     :ok =
       EvoGit.Store.put_task(store(), %TaskInfo{
@@ -256,5 +284,27 @@ defmodule EvoGit.TaskControlTest do
         started_at: DateTime.utc_now(),
         result: result
       })
+  end
+end
+
+defmodule EvoGit.TaskControlArgumentTest do
+  # Pre-submission validation only: every case is rejected before
+  # `TaskRegistry.start_task/2`, so no shared store/registry state is touched.
+  use ExUnit.Case, async: true
+
+  alias EvoGit.TaskControl
+  @moduletag :tmp_dir
+
+  test "rejects a non-boolean persistent_state before submission", %{tmp_dir: path} do
+    for value <- ["yes", 1, 0, nil, [], %{}] do
+      assert {:error, %{code: "invalid_arguments", message: message}} =
+               TaskControl.start(%{
+                 "path" => path,
+                 "objective" => "work",
+                 "persistent_state" => value
+               })
+
+      assert message =~ "persistent_state"
+    end
   end
 end
