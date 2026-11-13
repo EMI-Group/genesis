@@ -36,9 +36,13 @@ Phoenix LiveView modules and templates for the EvoDash interactive UI — real-t
 Selection close/removal, node or target changes and termination detach the watch, while the serial worker fields and monotonic watch/history counters survive scope resets.
 A healthy watch includes its snapshot-pending interval and suppresses message-count-triggered whole-history reads.
 The snapshot replaces checkpoint history once, while tool results, yield and finish request coalesced asynchronous checkpoint-detail reconciliation.
+A successful history fetch drains at most one coalesced pending follow-up, while a failed fetch or loader startup clears pending/loading state and exposes an explicit checkpoint-history Retry without automatic error retries or polling.
 History results use `{:agent_history_loaded, agent_id, node, history_seq, watch_token, result, modal_index}` and require matching selection, node, sequence and watch token; unscoped five-element results are ignored.
-`StreamPanel.stream_panel/1` renders live excerpts separately from checkpoint memory, and only exact matching excerpts in newly checkpointed rows are suppressed without altering raw history, tool details or full-message modals.
-Partial excerpts and compressed/reordered checkpoints are not heuristically merged without a core identity/coverage watermark.
+`StreamPanel.stream_panel/1` renders live excerpts separately from checkpoint memory, and `StreamPresentation.checkpoint_part_covered?/4` suppresses a checkpoint part only with an explicit matching `RuntimeStream.message_identity/1` from message metadata, complete generation/capture and full exact untruncated content.
+Missing checkpoint identity preserves original history, and row indices, inferred turns and bounded-preview equality never establish coverage.
+Raw history, tool details, full-message modals and stable DOM ids remain intact.
+Atomic replacement of obsolete live excerpts needs a sequence-consistent snapshot with complete in-flight text/thinking coverage or an explicit checkpoint coverage watermark, plus consumer-side buffering/replay of deltas newer than that snapshot.
+The current core snapshot has checkpoint messages and sequence but no in-flight coverage, so a history-only reconciliation cannot safely reset live excerpts or repair missing chunks.
 The stable `agent-history-<id>` root uses `InspectorMessages`, `data-inspector-scope` binds node/target/selection/watch/snapshot scope, and checkpoint rows expose stable `data-inspector-message` markers without changing existing DOM ids.
 Activity interpretation and thinking-coverage presentation remain owned by `StreamPresentation` and `StreamPanel`, never inferred from agent lifecycle status by the page.
 
