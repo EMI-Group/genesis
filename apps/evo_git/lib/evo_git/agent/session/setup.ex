@@ -29,6 +29,7 @@ defmodule EvoGit.Agent.Session.Setup do
 
   require Logger
 
+  alias EvoGit.Agent.Session.Persistence
   alias EvoGit.Agent.State
 
   @doc """
@@ -420,6 +421,7 @@ defmodule EvoGit.Agent.Session.Setup do
         custom_agent_id: get_field(ctx, :custom_agent_id),
         mode: resolve_session_mode(agent_module, ctx, depth),
         archive: fetch_field!(ctx, :archive),
+        persistent_state: get_field(ctx, :persistent_state, true) != false,
         worktree: repo_path,
         # conversation fields the old ETS reads supplied (same scheduler row)
         compression_count: fetch_field!(ctx, :compression_count),
@@ -438,7 +440,36 @@ defmodule EvoGit.Agent.Session.Setup do
         phase: :running
       }
 
-      {:ok, state}
+      {:ok, maybe_restore_state(state, ctx)}
+    end
+  end
+
+  # A CRASH RETRY of the SAME agent_id asks the durable store to restore its
+  # conversation onto the freshly built state: the persisted transcript is
+  # AUTHORITATIVE (it replaces the `[system, user]` pair rebuilt from disk)
+  # while identity, worktree, paths, model selection and phase stay FRESH — they
+  # belong to THIS run and to its re-created worktree. A missing/corrupt/
+  # unavailable row simply leaves the fresh state untouched: durable state is an
+  # optimisation, never a prerequisite for running.
+  defp maybe_restore_state(%State{} = state, ctx) do
+    task_id = get_field(ctx, :task_id)
+
+    if get_field(ctx, :restore_agent_state) == true and state.persistent_state and
+         is_binary(task_id) do
+      case Persistence.restore(state, task_id, state.agent_id) do
+        %State{} = restored ->
+          restored
+
+        {:error, reason} ->
+          Logger.info(
+            "Agent #{state.agent_id}: durable state not restored (#{inspect(reason)}); " <>
+              "starting fresh"
+          )
+
+          state
+      end
+    else
+      state
     end
   end
 

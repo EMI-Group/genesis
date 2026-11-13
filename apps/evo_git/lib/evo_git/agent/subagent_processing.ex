@@ -218,6 +218,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
                   foreign_repos: foreign_repos,
                   repo_notes: repo_notes,
                   archive: state.archive,
+                  persistent_state: state.persistent_state,
                   task_tmpdir: task_tmpdir
                 )
               )
