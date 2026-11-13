@@ -5,6 +5,7 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
 
   alias EvoDashWeb.AgentsLive
   alias EvoDashWeb.AgentsLive.{RuntimeStream, StreamPresentation}
+  alias EvoGit.Agent.Stream.Snapshot
 
   @agent_id 41
   @history "#agent-history-41"
@@ -80,7 +81,7 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
   defp watch(call \\ call(), phase \\ :llm, snapshot_fields \\ %{}) do
     snapshot =
       Map.merge(
-        %{agent_id: @agent_id, seq: 10, phase: :running, activity: activity(phase, call)},
+        %Snapshot{agent_id: @agent_id, seq: 10, phase: :running, activity: activity(phase, call)},
         snapshot_fields
       )
 

@@ -15,7 +15,7 @@ end
 
 # The fixture module is defined before the case module so it is available even
 # when this file is loaded on its own.
-# This synthetic transport suite intentionally keeps five cohesive mounted state
+# This synthetic transport suite intentionally keeps six cohesive mounted state
 # machines together; the reference-scoped runner/teardown helpers account for its
 # length and let each scenario reuse one mount without timing-based waits.
 # Snapshots and batches match the core contract, but do not replace real Session
@@ -44,6 +44,8 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     owner = self()
     id = System.unique_integer([:positive]) + 20_000_000
     saved = Map.new(@seams, &{&1, Application.fetch_env(:evo_dash, &1)})
+    calls = :atomics.new(2, [])
+    Process.put(:inspector_runner_calls, calls)
     EvoDash.Test.ConfigDir.isolate!()
 
     Application.put_env(:evo_dash, :agents_list_runner, fn _ ->
@@ -53,7 +55,12 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     Application.put_env(:evo_dash, :agents_config_runner, fn _ -> {:ok, %{}} end)
 
     Application.put_env(:evo_dash, :agents_watch_runner, fn target, agent, consumer ->
-      request(owner, {:watch, target, agent, consumer})
+      :atomics.add(calls, 1, 1)
+
+      case request(owner, {:watch, target, agent, consumer}) do
+        {:exit, reason} -> exit(reason)
+        result -> result
+      end
     end)
 
     Application.put_env(:evo_dash, :agents_unwatch_runner, fn target, agent, consumer ->
@@ -61,11 +68,12 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
       :ok
     end)
 
+    # A watched inspector owns history through atomic watch snapshots only.
+    # Count unexpected independent reads without blocking teardown on a bad call.
     Application.put_env(:evo_dash, :agents_history_runner, fn target, agent ->
-      case request(owner, {:history, target, agent}) do
-        {:exit, reason} -> exit(reason)
-        messages -> messages
-      end
+      :atomics.add(calls, 2, 1)
+      send(owner, {:unexpected_history, target, agent})
+      []
     end)
 
     on_exit(fn ->
@@ -138,6 +146,12 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     assert text(view, "#inspector-live-message-0 div pre") == "The answer is 42."
     retry = call("", "", 1, 2)
     delta(view, id, 10, [{:activity, activity(:llm_waiting, retry)}])
+    refresh = watch_request(view, id)
+    # Replacing a call freezes the old coherent pair until an atomic snapshot.
+    assert text(view, "#inspector-activity") == "Waiting to retry"
+    assert text(view, "#inspector-live-message-0 div pre") == "The answer is 42."
+    reply(refresh, snapshot(id, 10, [], activity(:llm_waiting, retry)))
+    await_snapshot(view, 10)
     assert text(view, "#inspector-activity") == "Waiting for model capacity"
     refute has_element?(view, "#inspector-live-message-0")
     refute text(view, "#inspector-stream") =~ "The answer is 42."
@@ -145,6 +159,10 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     assert text(view, "#inspector-live-message-1 div pre") == "Retry answer"
     assert has_element?(view, "#inspector-thinking")
     delta(view, id, 12, [{:activity, activity(:idle, nil)}])
+    refresh = watch_request(view, id)
+    assert text(view, "#inspector-live-message-1 div pre") == "Retry answer"
+    reply(refresh, snapshot(id, 12))
+    await_snapshot(view, 12)
     assert text(view, "#inspector-activity") == "Idle"
     refute has_element?(view, "#inspector-stream article")
     assert assigns(view).inspector_stream.state.phase == :running
@@ -170,7 +188,11 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
 
     delta(view, id, 11, [{:text, "DUPLICATE"}])
     delta(view, id, 10, [{:text, "STALE"}])
-    assert length(assigns(view).inspector_stream.pending) == 4
+    # Duplicate and out-of-order deliveries consume no pending capacity.
+    assert Enum.map(assigns(view).inspector_stream.pending, &elem(&1, 0)) == [9, 11]
+
+    assert assigns(view).inspector_stream.buffer_bytes ==
+             Enum.sum(Enum.map(assigns(view).inspector_stream.pending, &:erlang.external_size/1))
 
     update_count(view, id, 8)
     assert history_calls(view) == 0
@@ -232,6 +254,10 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     # empty thinking in a complete replacement proves absence only on success.
     complete_call = call("Fully observed response", "", 2)
     delta(view, id, 3, [{:activity, activity(:llm, complete_call)}])
+    refresh = watch_request(view, id)
+    assert text(view, "#inspector-live-message-0 div pre") == "Partial capture response"
+    reply(refresh, snapshot(id, 3, [], activity(:llm, complete_call)))
+    await_snapshot(view, 3)
     refute text(view, "#inspector-stream") =~ "No thinking content available"
     delta(view, id, 4, [{:activity, activity(:llm_complete, complete_call)}])
 
@@ -333,7 +359,72 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     assert history_calls(view) == 0
   end
 
-  test "failed checkpoint reconciliation keeps live and raw history, clears pending work and retries",
+  test "replacement and retirement hand off checkpoint and live content atomically", %{
+    conn: conn,
+    id: id
+  } do
+    view = mount_inspector(conn)
+    initial = [message(:user, "Question")]
+    a = call("Answer A", "Reason A")
+    b = call("Answer B", "Reason B", 2)
+    select(view, id)
+    reply(watch_request(view, id), snapshot(id, 10, initial, activity(:llm_complete, a)))
+    await_snapshot(view, 10)
+
+    delta(view, id, 11, [
+      {:activity, activity(:idle, nil)},
+      {:activity, activity(:llm, b)},
+      {:text, " prefix"}
+    ])
+
+    refresh = watch_request(view, id)
+    assert history_content(view, id) == ["Question"]
+    assert text(view, "#inspector-live-message-0 div pre") == "Answer A"
+    refute render(view) =~ "Answer B"
+    delta(view, id, 12, [{:text, " suffix"}])
+    delta(view, id, 12, [{:text, "DUPLICATE"}])
+
+    answer_a = %{message(:assistant, a.text) | reasoning_details: [%{text: a.thinking}]}
+    checkpoint = initial ++ [answer_a]
+    reply(refresh, snapshot(id, 11, checkpoint, activity(:llm, %{b | text: "Answer B prefix"})))
+    await_snapshot(view, 12)
+
+    assert history_content(view, id) == ["Question", "Answer A"]
+    assert text(view, "#agent-history-entry-#{id}-1 .text-sm") =~ "Answer A"
+    assert text(view, "#agent-history-entry-#{id}-1 .inspector-thinking") =~ "Reason A"
+    assert text(view, "#inspector-live-message-1 div pre") == "Answer B prefix suffix"
+    assert text(view, "#inspector-stream details pre") == "Reason B"
+    refute has_element?(view, "#inspector-live-message-0")
+    assert length(elements(view, "#inspector-stream article")) == 1
+    refute render(view) =~ "DUPLICATE"
+
+    # No intermediate render may combine checkpoint B with its old live copy.
+    delta(view, id, 13, [{:activity, activity(:idle, nil)}, {:yield, "Answer B prefix suffix"}])
+    retirement = watch_request(view, id)
+    assert history_content(view, id) == ["Question", "Answer A"]
+    assert text(view, "#inspector-live-message-1 div pre") == "Answer B prefix suffix"
+    delta(view, id, 14, [{:yield, "Answer B prefix suffix"}])
+
+    answer_b = %{
+      message(:assistant, "Answer B prefix suffix")
+      | reasoning_details: [%{text: b.thinking}]
+    }
+
+    {:ok, retired, 13} = snapshot(id, 13, checkpoint ++ [answer_b])
+    reply(retirement, {:ok, %{retired | phase: :awaiting_input}, 13})
+    await_snapshot(view, 14)
+
+    assert history_content(view, id) == ["Question", "Answer A", "Answer B prefix suffix"]
+    refute has_element?(view, "#inspector-stream article")
+    refute has_element?(view, "#inspector-stream-cursor")
+    assert length(elements(view, "#agent-history-entry-#{id}-2")) == 1
+    assert text(view, "#agent-history-entry-#{id}-2 .inspector-thinking") =~ "Reason B"
+    assert assigns(view).inspector_stream.state.phase == :awaiting_input
+    assert watch_calls() == 3
+    assert history_calls(view) == 0
+  end
+
+  test "atomic checkpoint failure preserves the coherent pair and explicit retry hands off once",
        %{
          conn: conn,
          id: id
@@ -349,29 +440,50 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
       {:tool_call, "call-1", "read"}
     ])
 
+    # Tool/yield notifications alone do not fetch history or prove adoption.
+    delta(view, id, 3, [{:tool_result, "call-1", :ok}])
+    assert watch_calls() == 1
     assert history_calls(view) == 0
 
-    delta(view, id, 3, [{:tool_result, "call-1", :ok}])
-    first = history_request(id)
-    assert assigns(view).history_loading_agent_id == id
-    # Work arriving during the first RPC is remembered, but failure consumes it
-    # rather than silently scheduling an unbounded retry loop.
-    delta(view, id, 4, [{:yield, "Live response stays"}])
-    assert assigns(view).inspector_reconcile_pending
-    reply(first, {:exit, :checkpoint_unavailable})
-    await(fn -> assigns(view).inspector_history_error end)
+    delta(view, id, 4, [{:activity, activity(:idle, nil)}, {:text, "UNOWNED"}])
+    first = watch_request(view, id)
+    old = assigns(view).inspector_stream
+    assert old.seq == 3
+    assert history_content(view, id) == ["System checkpoint", "Original question"]
+    assert text(view, "#inspector-live-message-0 div pre") == "Live response stays"
 
-    assert assigns(view).history_loading_agent_id == nil
-    refute assigns(view).inspector_reconcile_pending
-    assert has_element?(view, "#inspector-history-error")
+    # Explicit refreshes coalesce into the same worker snapshot. The ENTIRE
+    # retirement batch and newer yields stay behind the atomic snapshot barrier.
+    render_click(view, "retry_inspector_history")
+    render_click(view, "retry_inspector_history")
+    delta(view, id, 5, [{:yield, "Live response stays"}])
+    delta(view, id, 5, [{:text, "DUPLICATE"}])
+    assert watch_calls() == 2
+    assert Enum.map(assigns(view).inspector_stream.pending, &elem(&1, 0)) == [4, 5]
+    reply(first, {:exit, :checkpoint_unavailable})
+    await(fn -> assigns(view).inspector_stream.error != nil end)
+
+    assert assigns(view).inspector_stream.error == {:exit, :checkpoint_unavailable}
+    assert assigns(view).inspector_stream.pending == []
+    assert assigns(view).inspector_stream.buffer_bytes == 0
+    assert has_element?(view, "button[phx-click='retry_inspector_stream']")
     assert text(view, "#inspector-stream details pre") == "Live reasoning stays"
     assert text(view, "#inspector-live-message-0 div pre") == "Live response stays"
     assert history_content(view, id) == ["System checkpoint", "Original question"]
-    assert history_calls(view) == 1
+    assert watch_calls() == 2
+    assert history_calls(view) == 0
 
-    view |> element("button[phx-click='retry_inspector_history']") |> render_click()
-    retry = history_request(id)
-    assert assigns(view).history_loading_agent_id == id
+    # Failure retains watch-owned history; neither independent history results
+    # nor an old in-flight reconciliation may replace the coherent pair.
+    send(
+      view.pid,
+      {:agent_history_loaded, id, node(), assigns(view).inspector_history_seq, old.token, [], nil}
+    )
+
+    assert history_content(view, id) == ["System checkpoint", "Original question"]
+    view |> element("button[phx-click='retry_inspector_stream']") |> render_click()
+    retry = watch_request(view, id)
+    assert assigns(view).inspector_stream.token > old.token
 
     answer = %{
       message(:assistant, "Live response stays")
@@ -379,11 +491,17 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     }
 
     checkpoint = initial ++ [answer, message(:tool, "Authoritative tool output")]
-    reply(retry, checkpoint)
-    await(fn -> assigns(view).history_loading_agent_id == nil end)
+    reply(retry, snapshot(id, 5, checkpoint))
+    await_snapshot(view, 5)
 
-    refute assigns(view).inspector_history_error
-    refute has_element?(view, "#inspector-history-error")
+    send(
+      view.pid,
+      {:inspector_stream_reconciled, node(), old.token, id, old.snapshot_request,
+       snapshot(id, 99, initial)}
+    )
+
+    delta(view, id, 4, [{:text, "STALE"}])
+    assert assigns(view).inspector_stream.seq == 5
 
     assert history_content(view, id) == [
              "System checkpoint",
@@ -395,25 +513,22 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     entries = Enum.find(assigns(view).agents, &(&1.id == id)).history
     assert Enum.map(entries, & &1.type) == ["system", "user", "assistant", "tool"]
     assert Enum.at(entries, 2).data.reasoning_details == [%{text: "Live reasoning stays"}]
-    # Matching checkpoint content is not permission to suppress either part.
     row = "#agent-history-entry-#{id}-2"
-    assert text(view, "#{row} .inspector-thinking .whitespace-pre-wrap") == "Live reasoning stays"
-    assert text(view, "#{row} .text-sm") =~ "Live response stays"
-    assert text(view, "#inspector-stream details pre") == "Live reasoning stays"
-
-    # Explicit producer retirement is the duplicate-free checkpoint boundary.
-    delta(view, id, 5, [{:activity, activity(:idle, nil)}])
-    refute has_element?(view, "#inspector-stream article")
     assert text(view, "#{row} .inspector-thinking .whitespace-pre-wrap") == "Live reasoning stays"
     assert text(view, "#{row} .text-sm") =~ "Live response stays"
     assert has_element?(view, "#agent-detail-#{id}", "Authoritative tool output")
     assert length(elements(view, row)) == 1
     assert length(elements(view, "#{row} .inspector-thinking")) == 1
     assert length(elements(view, "#{row} .text-sm")) == 1
+    refute has_element?(view, "#inspector-stream article")
+    refute render(view) =~ "UNOWNED"
+    refute render(view) =~ "DUPLICATE"
+    refute render(view) =~ "STALE"
     assert assigns(view).inspector_stream.state.projections == []
     assert assigns(view).inspector_stream.state.response == ""
     assert assigns(view).inspector_stream.state.thinking == ""
-    assert history_calls(view) == 2
+    assert watch_calls() == 3
+    assert history_calls(view) == 0
   end
 
   # Runner calls are reference-scoped handshakes, not delays. Owner monitoring
@@ -453,12 +568,6 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
       assert_receive {:DOWN, ^monitor, :process, ^worker, _}, @budget
     end)
 
-    {ref, pid}
-  end
-
-  defp history_request(id) do
-    target = node()
-    assert_receive {:runner, ref, pid, {:history, ^target, ^id}}, @budget
     {ref, pid}
   end
 
@@ -524,12 +633,14 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     await(fn -> Enum.find(assigns(view).agents, &(&1.id == id)).message_count == count end)
   end
 
-  # The page increments inspector_history_seq synchronously for each snapshot
-  # apply and each history dispatch. Subtract only snapshots explicitly awaited
-  # by this test, not a timed runner-call count: an unexpected dispatch cannot
-  # hide merely because its supervised task has not started yet.
-  defp history_calls(view),
-    do: assigns(view).inspector_history_seq - Process.get({:snapshots, view.pid}, 0)
+  defp history_calls(view) do
+    # The synchronous dispatch counter catches even a loader that has not yet
+    # reached the runner; the runner counter independently catches actual reads.
+    assert assigns(view).inspector_history_seq == Process.get({:snapshots, view.pid}, 0)
+    :atomics.get(Process.get(:inspector_runner_calls), 2)
+  end
+
+  defp watch_calls, do: :atomics.get(Process.get(:inspector_runner_calls), 1)
 
   defp history_content(view, id) do
     Enum.find(assigns(view).agents, &(&1.id == id)).history |> Enum.map(& &1.data.content)

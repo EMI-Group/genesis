@@ -238,10 +238,92 @@ defmodule EvoDashWeb.AgentsStreamWatchLifecycleTest do
     assert length(Regex.scan(~r/Inspector stream cleanup failed/, log)) == 1
   end
 
+  test "reconciliation reuses the serial watch and atomically adopts history before replay", %{
+    consumer: consumer
+  } do
+    id = unique_id()
+    selected = select(consumer, id)
+    worker = selected.inspector_stream_worker
+    token = selected.inspector_stream.token
+    a = %{id: "attempt-a", text: "Answer A", thinking: "Reason A", turn: 1, attempt: 1}
+    b = %{id: "attempt-b", text: "Answer B", thinking: "Reason B", turn: 2, attempt: 1}
+    initial_messages = [%ReqLLM.Message{role: :user, content: [%{type: :text, text: "Question"}]}]
+
+    checkpoint_messages =
+      initial_messages ++
+        [
+          %ReqLLM.Message{role: :assistant, content: [%{type: :text, text: a.text}]}
+        ]
+
+    initial = %Snapshot{
+      agent_id: id,
+      seq: 5,
+      phase: :running,
+      messages: initial_messages,
+      activity: %{phase: :llm, current_call: a}
+    }
+
+    release(expect_rpc(:watch, @old_node, id, consumer, worker), {:ok, initial, 5})
+    expect_ready(token)
+
+    frozen = command(consumer, {:push, 6, [{:activity, %{phase: :llm, current_call: b}}]})
+    refresh = expect_rpc(:watch, @old_node, id, consumer, worker)
+    assert frozen.inspector_stream.state.messages == initial_messages
+    assert frozen.inspector_stream.state.response == "Answer A"
+    assert frozen.inspector_stream.seq == 5
+    assert command(consumer, :reconcile).inspector_stream == frozen.inspector_stream
+    buffered = command(consumer, {:push, 7, [{:text, " tail"}]})
+
+    assert command(consumer, {:push, 7, [{:text, "DUPLICATE"}]}).inspector_stream ==
+             buffered.inspector_stream
+
+    assert command(consumer, {:push, 4, [{:text, "STALE"}]}).inspector_stream ==
+             buffered.inspector_stream
+
+    # A wrong request cannot open the barrier, even with a higher watermark.
+    send(consumer, {:inspector_stream_reconciled, @old_node, token, id, 0, snapshot(id, 99)})
+    assert expect_reconciled(0).inspector_stream == buffered.inspector_stream
+
+    checkpoint = %{
+      initial
+      | seq: 6,
+        messages: checkpoint_messages,
+        activity: %{phase: :llm, current_call: b}
+    }
+
+    release(refresh, {:ok, checkpoint, 6})
+    adopted = expect_reconciled(1).inspector_stream
+    assert adopted.snapshot == checkpoint
+    assert adopted.state.messages == checkpoint_messages
+    assert adopted.state.response == "Answer B tail"
+    assert adopted.state.thinking == "Reason B"
+    assert adopted.seq == 7
+    assert adopted.pending == []
+    assert adopted.buffer_bytes == 0
+    assert [%{identity: %{id: "attempt-b"}}] = adopted.state.projections
+
+    send(consumer, {:inspector_stream_reconciled, @old_node, token, id, 1, snapshot(id, 99)})
+    assert expect_reconciled(1).inspector_stream == adopted
+    command(consumer, :detach)
+    # The NEXT operation must be cleanup: no redundant refresh or registration
+    # gap is allowed, and the original consumer/worker identities stay pinned.
+    release(expect_rpc(:unwatch, @old_node, id, consumer, worker), :ok)
+    stop_and_await(consumer, worker)
+    refute_receive {:rpc, _, _, _, _, _, _}, 0
+  end
+
   defp socket do
     %Phoenix.LiveView.Socket{
       transport_pid: self(),
-      assigns: %{__changed__: %{}, current_node: @old_node, inspector_stream: nil}
+      assigns: %{
+        __changed__: %{},
+        current_node: @old_node,
+        current_node_id: nil,
+        inspector_stream: nil,
+        inspector_stream_token: 0,
+        inspector_stream_worker: nil,
+        inspector_stream_worker_monitor: nil
+      }
     }
   end
 
@@ -260,6 +342,12 @@ defmodule EvoDashWeb.AgentsStreamWatchLifecycleTest do
             :detach ->
               StreamWatch.detach(socket)
 
+            :reconcile ->
+              StreamWatch.reconcile(socket)
+
+            {:push, seq, events} ->
+              StreamWatch.push(socket, socket.assigns.inspector_stream.agent_id, seq, events)
+
             :state ->
               socket
           end
@@ -274,6 +362,11 @@ defmodule EvoDashWeb.AgentsStreamWatchLifecycleTest do
       {:inspector_stream_ready, target_node, token, id, result} ->
         socket = StreamWatch.ready(socket, target_node, token, id, result)
         send(owner, {:ready_applied, token, socket.assigns})
+        consume(socket, owner, workers)
+
+      {:inspector_stream_reconciled, target_node, token, id, request, result} ->
+        socket = StreamWatch.reconciled(socket, target_node, token, id, request, result)
+        send(owner, {:reconciled_applied, request, socket.assigns})
         consume(socket, owner, workers)
 
       :stop ->
@@ -333,6 +426,11 @@ defmodule EvoDashWeb.AgentsStreamWatchLifecycleTest do
 
   defp release(call, result), do: respond(call, {:return, result})
   defp respond({worker, ref}, action), do: send(worker, {ref, action})
+
+  defp expect_reconciled(request) do
+    assert_receive {:reconciled_applied, ^request, assigns}, @timeout
+    assigns
+  end
 
   defp expect_ready(token) do
     assert_receive {:ready_applied, ^token, assigns}, @timeout
