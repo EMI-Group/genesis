@@ -200,13 +200,15 @@ Live-page deltas:
 - **`agents_live_test.exs` is `async: true`**: it seeds the global `:evogit_sched_meta` / `:evogit_agent_summary` rows under a UNIQUE per-test agent id (`System.unique_integer([:positive]) + 10_000_000`, via `agent_id/0` reading the process dictionary), so no two concurrent modules collide.
 - **`agents_live_test.exs` fixed waits (by design, seam-less)**: THREE `Process.sleep(250)` sites, each followed by `flush_agent_events(view)` to keep a real core write's THROTTLED `{:agents_updated, node}` bulk signal (core `@throttle_ms` ≈ 200 ms) on THIS socket; plus one sampled negative poll with a 40 ms deadline (4× the 10 ms debounce seam) asserting `tasks_reload_pending` never becomes true. The duplicated page load is freed with a shared `:atomics` release latch (`await_latch/2`, 5 s non-raising fallback).
 
-## Known Issues — real Assistant stream consumer
+## Known Issues — mounted Assistant lifecycle and recovery
 
-Focused inspector/Assistant validation passes 662 of 665 cases, and the full dashboard suite passes 2696 of 2699 cases (2 doctests and 2697 tests), with the same three `real_stream_consumers_test.exs` Assistant failures.
-Late attachment captures the in-flight text/thinking prefix in Delta state but fails to render an assistant transcript entry.
-After follow-up, the completed answer loses its thinking disclosure, and restoring two completed answers loses the earlier answer's thinking disclosure.
-The duplicate-follow-up and no-caret assertions remain strong; the currently reached failure is thinking retention rather than duplicate text.
-The inspector and all three real tool/retry scenarios pass collectively, and the Assistant failures also reproduce in standalone real-stream runs.
+The real producer/consumer suite's seven cases and the Assistant helper suites pass together (263 tests with seed 0), and combined runs including the mounted Home suite pass 394 of 397 tests with seeds 0 and 734.
+The mounted Home subset passes 131 of 134 cases; all three remaining failures are source lifecycle/recovery gaps rather than obsolete fixture routes.
+The three combined-run failures are the mounted lifecycle/recovery gaps below, not real-stream or helper regressions.
+The legacy mounted Home suite uses scoped independent history replies and authoritative Watch lifecycle/message fixtures, preserving rendered text, status, thought details, raw toggles, copy and badge contracts.
+Three source gaps remain pinned without fallback fixtures: not-found watches leave vanished cached and empty sessions non-terminal, and a silent finished delta does not request the authoritative final snapshot.
+Snapshot-ready coverage reconstructs checkpoint history and captured current-call prefixes atomically and replays a buffered suffix exactly once.
+Per-answer reasoning disclosures contain assistant/tool entries rather than harness system/user messages, while the complete raw context remains available in `thought_process`.
 
 ## Notes for Agents — running these suites
 

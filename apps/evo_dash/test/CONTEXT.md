@@ -6,10 +6,9 @@ ExUnit suite for the `:evo_dash` app: the runner bootstrap, shared support modul
 Test files (`*_test.exs`) live in `evo_dash/` and `evo_dash_web/` beside the code they cover, plus `support/config_dir_test.exs` and `evo_dash/runtime_config_test.exs` covering the root `config/runtime.exs`, with bootstrap in `test_helper.exs` and helpers in `support/`.
 `support/` holds 6 compiled `.ex` modules plus ONE test script — `support/config_dir_test.exs`, placed there because it is the proof module for that directory's seam (only `*.ex` files are compiled, so ExUnit loads the `_test.exs` like any other suite).
 Case modules are split between `async: true` and globally constrained `async: false` suites, with ownership rules below.
-The latest reported full dashboard run passed 2 696 of 2 699 cases (2 doctests plus 2 697 tests), with three failures exposing the Assistant production gaps documented under "Known Issues".
 Suite runtime and the sync inventory live below ("Async policy", "Suite runtime: what actually costs time"); absolute timings move with host load, so compare same-session runs.
 The gap between ExUnit's `Finished in` and the process wall clock is the umbrella's app boot, paid once per `mix test` invocation.
-The real stream-consumer suite exposes three Assistant production gaps while its inspector, tool and retry scenarios pass collectively; see `## Known Issues` for the precise results and the isolation advice that still applies.
+The real stream-consumer suite covers actual inspector and Assistant snapshot/delta delivery, per-answer thinking retention, tool execution and retry identity; mounted legacy fixtures use the same authoritative Watch ownership contract.
 `mix test apps/evo_dash/test` from the umbrella root runs exactly this app's suite; bare root `mix test` also runs the `evo_git` suite first.
 The domain singletons (`EvoGit.Store`, `EvoGit.TaskRegistry`, `EvoGit.TaskInfo`, `EvoGit.VCT`) live in `:evo_git` and are tested there; no suite here owns them.
 `EvoGit.VCT` is the project registry: each opened project is a `%EvoGit.VCT.Mount{}` (`point` = `vct:///projects/<name>`, absolute OS `path`, `name`, `kind`, `last_opened_at`) persisted in the shared task store's `vct_mounts` table, newest-opened first, capped by `EvoGit.VCT.max_projects/0` (100 by default; over-cap registration evicts the oldest).
@@ -273,12 +272,9 @@ Standalone pure/render checks and individually green helper directories do not e
 
 ## Known Issues
 
-The latest reported full dashboard suite passed 2 696 of 2 699 cases (2 doctests plus 2 697 tests); all three failures are precise Assistant production gaps exposed by `evo_dash_web/live/real_stream_consumers_test.exs`, not evidence of a collectively green suite.
-Assistant late attachment captures the core snapshot's `activity.current_call` text/thinking prefix in Delta state but renders no assistant transcript entry (`real_stream_consumers_test.exs:297`).
-After a post-yield follow-up, the completed first answer loses its thinking disclosure (`real_stream_consumers_test.exs:360`).
-Restoring two completed answers loses the earlier answer's thinking disclosure (`real_stream_consumers_test.exs:408`).
-The inspector retirement/checkpoint test and the real tools and retry/fresh-ID scenarios pass collectively.
-Existing isolation advice remains applicable:
+Mounted Assistant lifecycle coverage requires a vanished session to settle as `:ended`, retaining a cached transcript read-only or rendering the empty session-ended state.
+A silent finished delta must request an authoritative final Watch snapshot rather than an unscoped history result.
+These lifecycle contracts and their current source gaps are documented in `evo_dash_web/live/CONTEXT.md` and `evo_dash_web/live/home_live/CONTEXT.md`.
 `evo_dash_web/live/agents_live_test.exs` — a NEGATIVE `tasks_reload_pending` sample is a claim about GLOBAL quiet, so it lives in the `async: false` `live/agents_live_task_broadcast_test.exs` (forcing global: the shared `"tasks"` PubSub topic every mounted page subscribes to); the 40 ms window is the detection mechanism and must never be widened to hide a re-arm, while the positive broadcast shapes stay in the async module.
 `evo_dash_web/live/agents_live_test.exs` — `send_agent_message` resolves the call-time `:agents_send_message_runner` seam (default `&EvoDash.NodeContext.send_user_message/3`); exactly ONE test drives the real delegate (gated on `EvoGit.AgentScheduler.paused?/0` readiness, retried through `submit_until_pending_hint/3`, asserting the persisted `ControlPlane.pending_messages/1` queue and containing its throttled `{:agents_updated, node}` via `drain_agents_bulk_signal/1`, a throttle-flush proof rather than a sleep) and the rest pin the optimistic bookkeeping through the seam.
 A worker or scheduler call that TIMES OUT is not the core's answer: retry helpers key on the `{:exit, {:timeout` flash text, and the stalled-scheduler failure state (failure flash, no optimistic entry, empty pending queue) is pinned separately.

@@ -954,10 +954,33 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       seq = assigns(view)[:chat_fetch_seq]
       seed_running_chat(view)
+      stream_seq = assigns(view)[:stream_attach_seq]
+
+      # Every independent read carries BOTH generations plus agent identity.
+      # Neither the old unscoped route nor stale/wrong-scope replies may write.
+      for message <- [
+            {:chat_history_loaded, node(), seq, 1001,
+             [%{role: :assistant, content: "unscoped reply"}]},
+            {:chat_history_loaded, node(), seq - 1, 1001, stream_seq,
+             [%{role: :assistant, content: "stale history reply"}]},
+            {:chat_history_loaded, node(), seq, 1002, stream_seq,
+             [%{role: :assistant, content: "wrong agent reply"}]},
+            {:chat_history_loaded, node(), seq, 1001, stream_seq + 1,
+             [%{role: :assistant, content: "obsolete watch reply"}]}
+          ] do
+        send(view.pid, message)
+      end
+
+      ignored = render(view)
+      refute ignored =~ "unscoped reply"
+      refute ignored =~ "stale history reply"
+      refute ignored =~ "wrong agent reply"
+      refute ignored =~ "obsolete watch reply"
+      assert assigns(view).agent_message_count == nil
 
       send(
         view.pid,
-        {:chat_history_loaded, node(), seq, 1001,
+        {:chat_history_loaded, node(), seq, 1001, stream_seq,
          [%{role: :assistant, content: [%{text: "Genesis responds"}]}]}
       )
 
@@ -997,7 +1020,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       send(
         view.pid,
-        {:chat_history_loaded, node(), seq, 1001,
+        {:chat_history_loaded, node(), seq, 1001, assigns(view)[:stream_attach_seq],
          [%{role: :assistant, content: [%{text: "Genesis responds"}]}]}
       )
 
@@ -1144,7 +1167,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       # :message_count refetch bumped it).
       send(
         view.pid,
-        {:chat_history_loaded, node(), assigns(view)[:chat_fetch_seq], 1, real_history()}
+        {:chat_history_loaded, node(), assigns(view)[:chat_fetch_seq], 1,
+         assigns(view)[:stream_attach_seq], real_history()}
       )
 
       # Await the assign the {:chat_history_loaded, ...} handler writes (the
@@ -1226,7 +1250,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       send(
         view.pid,
-        {:chat_history_loaded, :other@host, seq, 1001,
+        {:chat_history_loaded, :other@host, seq, 1001, assigns(view)[:stream_attach_seq],
          [%{role: :assistant, content: [%{text: "NOPE"}]}]}
       )
 
@@ -1259,7 +1283,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # a markdown render (half-rendered streams would flicker).
       send(
         view.pid,
-        {:chat_history_loaded, node(), seq, 1001,
+        {:chat_history_loaded, node(), seq, 1001, assigns(view)[:stream_attach_seq],
          [%{role: :assistant, content: [%{text: "partial **md**"}]}]}
       )
 
@@ -1661,7 +1685,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # assign path (history fetch updates the streaming bubble).
       send(
         view.pid,
-        {:chat_history_loaded, node(), seq, 1001,
+        {:chat_history_loaded, node(), seq, 1001, assigns(view)[:stream_attach_seq],
          [%{role: :assistant, content: [%{text: "streamed"}]}]}
       )
 
@@ -1684,14 +1708,28 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, _html} = live(conn, "/assistant")
       seq = assigns(view)[:chat_fetch_seq]
       seed_running_chat(view)
-      send(view.pid, {:chat_history_loaded, node(), seq, 1001, real_history()})
+
+      send(
+        view.pid,
+        {:chat_history_loaded, node(), seq, 1001, assigns(view)[:stream_attach_seq],
+         real_history()}
+      )
+
       html = render(view)
-      # Zero-JS <details> section with the 5 entry headers.
+      # The disclosure belongs to this answer: assistant/tool reasoning only,
+      # not the system prompt or user turns from the raw context.
       assert html =~ "Thought process"
-      assert html =~ "(5)"
-      # System/user entry contents.
-      assert html =~ "you are genesis"
-      assert html =~ "New message: hi"
+      assert html =~ "(3)"
+
+      thoughts =
+        html |> Floki.parse_document!() |> Floki.find("#chat-messages details") |> Floki.text()
+
+      refute thoughts =~ "you are genesis"
+      refute thoughts =~ "New message: hi"
+      # The complete five-row context is still retained in the debug projection.
+      assert length(assigns(view).thought_process) == 5
+      assert inspect(assigns(view).thought_process) =~ "you are genesis"
+      assert inspect(assigns(view).thought_process) =~ "New message: hi"
       # Assistant entry: reasoning details render from reasoning_details; the
       # :thinking content part's text is EXCLUDED from the entry content (it
       # would otherwise duplicate the reasoning text).
@@ -1728,7 +1766,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       send(
         view.pid,
-        {:chat_history_loaded, node(), seq, 1001,
+        {:chat_history_loaded, node(), seq, 1001, assigns(view)[:stream_attach_seq],
          [%{role: :assistant, content: [%{text: "streamed tail"}]}]}
       )
 
@@ -4543,6 +4581,8 @@ defmodule EvoDashWeb.HomeLiveTest do
         {:ok, 4242}
       end)
 
+      install_snapshot_fixture(4242, attach_history("re-attached transcript"), :running)
+
       install_session_seam(
         :home_session_attach_runner,
         running_attach(4242, attach_history("re-attached transcript"))
@@ -4577,16 +4617,11 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns.chat_status == :running
       assert assigns.chat_draft == ""
       # The optimistic user bubble is in the synchronous submit render. The
-      # attach then REPLACES the transcript with the live history, so the
-      # transcript is asserted from its distinct attach marker below (the
-      # attach is asynchronous and may already have landed here).
+      # authoritative Watch cut then replaces it with the live transcript.
       assert html =~ text
 
-      # The reattach loader lands too (bounded poll, no sleep) and keeps the
-      # same session, transcript and running status. Poll the ATTACH TRANSCRIPT
-      # itself: `apply_attach/2` first assigns `agent_message_count` from the
-      # summary and `apply_history/3` then overwrites it with the history's
-      # length, so the count is NOT a stable attach signal.
+      # Await the watch transcript itself, not an independent attach reply or
+      # summary message count: history and current activity belong to one cut.
       wait_until(fn ->
         Enum.any?(assigns(view)[:transcript], fn entry ->
           entry.role == :user and entry.text == "re-attached transcript"
@@ -4804,10 +4839,9 @@ defmodule EvoDashWeb.HomeLiveTest do
   # REATTACH (`?session=<id>`) and the mounted SESSION LIST.
   #
   # A reattach ADOPTS an existing interactive session: the cached conversation is
-  # restored from `EvoDash.ChatHistory`, then the core is asked for the session's
-  # summary + history (`:home_session_attach_runner`) and the phase is mapped onto
-  # the chat status. It must NEVER start a task, so every test below also pins the
-  # empty task store.
+  # restored from ChatHistory, then Watch supplies the authoritative lifecycle
+  # and transcript while the independent attach loader supplies task identity.
+  # It must NEVER start a task, so tests also pin the empty task store.
   # ─────────────────────────────────────────────────────────────────────────────
   describe "interactive session reattach (?session=)" do
     test "adopts a parked session from the cache in ONE attach and starts no task", %{conn: conn} do
@@ -4829,6 +4863,18 @@ defmodule EvoDashWeb.HomeLiveTest do
         counting_attach_runner(attach_calls, test_pid, true)
       )
 
+      # Hold the authoritative cut alongside attach so the cached render below
+      # remains observable until this test releases the live lifecycle.
+      install_session_seam(:home_agent_watch_runner, fn _node, ^session_id, consumer ->
+        send(test_pid, {:watch_pending, self()})
+
+        await_snapshot_release(consumer, fn ->
+          snapshot_answer(7, attach_history("cached text"), phase: :awaiting_input).(session_id)
+        end)
+      end)
+
+      install_session_seam(:home_agent_unwatch_runner, fn _node, _id, _consumer -> :ok end)
+
       seed_cached_chat(session_id, [
         %{id: "u1", role: :user, text: "cached text", streaming: false}
       ])
@@ -4848,6 +4894,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       # spawned attach child parked forever.
       on_exit(fn -> send(attach_pid, {:release_attach, gone_attach()}) end)
 
+      assert_receive {:watch_pending, watch_pid}, @async_wait_budget_ms
+      send(watch_pid, :release)
       send(attach_pid, {:release_attach, parked_attach(session_id)})
 
       wait_until(fn ->
@@ -4885,6 +4933,8 @@ defmodule EvoDashWeb.HomeLiveTest do
         :counters.add(start_calls, 1, 1)
         {:ok, 1}
       end)
+
+      install_snapshot_fixture(session_id, attach_history("live transcript line"), :running)
 
       install_session_seam(
         :home_session_attach_runner,
@@ -4929,6 +4979,8 @@ defmodule EvoDashWeb.HomeLiveTest do
         {:ok, 1}
       end)
 
+      install_gone_watch_fixture()
+
       install_session_seam(
         :home_session_attach_runner,
         counting_attach_runner(attach_calls, test_pid, false, gone_attach())
@@ -4951,7 +5003,15 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert html =~ "cached before vanish"
 
       assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
-      wait_until(fn -> assigns(view).chat_status == :ended end)
+
+      wait_until(fn ->
+        a = assigns(view)
+
+        a.chat_status == :ended or
+          match?(%{error: {:not_found, :session_not_found}}, a.chat_stream)
+      end)
+
+      assert assigns(view).chat_status == :ended
 
       a = assigns(view)
       assert a.chat_task_id == nil
@@ -4985,6 +5045,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       install_session_seam(:home_session_list_runner, fn _node -> {[], []} end)
       install_session_seam(:source_availability_runner, fn -> true end)
 
+      install_gone_watch_fixture()
+
       install_session_seam(
         :home_session_attach_runner,
         counting_attach_runner(attach_calls, test_pid, false, gone_attach())
@@ -4993,7 +5055,15 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
       assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
-      wait_until(fn -> assigns(view).chat_status == :ended end)
+
+      wait_until(fn ->
+        a = assigns(view)
+
+        a.chat_status == :ended or
+          match?(%{error: {:not_found, :session_not_found}}, a.chat_stream)
+      end)
+
+      assert assigns(view).chat_status == :ended
 
       assert assigns(view).transcript == []
       assert :counters.get(attach_calls, 1) == 1
@@ -5025,6 +5095,8 @@ defmodule EvoDashWeb.HomeLiveTest do
         :counters.add(start_calls, 1, 1)
         {:ok, 1}
       end)
+
+      install_snapshot_fixture(session_id, attach_history("live transcript line"), :running)
 
       install_session_seam(
         :home_session_attach_runner,
@@ -5461,10 +5533,51 @@ defmodule EvoDashWeb.HomeLiveTest do
     :ok
   end
 
+  # A failed assertion must not strand a serial watch worker inside its runner.
+  # Consumer death releases this gate even before the test learns the worker pid.
+  defp await_snapshot_release(consumer, snapshot_fun) do
+    monitor = Process.monitor(consumer)
+
+    result =
+      receive do
+        :release -> snapshot_fun.()
+        {:DOWN, ^monitor, :process, ^consumer, _reason} -> {:error, :consumer_down}
+      after
+        @async_wait_budget_ms -> {:error, :fixture_release_timeout}
+      end
+
+    Process.demonitor(monitor, [:flush])
+    result
+  end
+
+  # Lifecycle and transcript come from ONE authoritative watch cut, not the
+  # independent attach loader (which supplies task identity only while watched).
+  defp install_snapshot_fixture(session_id, messages, phase) do
+    install_session_seam(:home_agent_watch_runner, fn _node, ^session_id, _consumer ->
+      snapshot_answer(7, messages, phase: phase).(session_id)
+    end)
+
+    install_session_seam(:home_agent_unwatch_runner, fn _node, _id, _consumer -> :ok end)
+  end
+
+  defp install_gone_watch_fixture do
+    install_session_seam(:home_agent_watch_runner, fn _node, _id, _consumer ->
+      {:error, {:not_found, :session_not_found}}
+    end)
+
+    install_session_seam(:home_agent_unwatch_runner, fn _node, _id, _consumer -> :ok end)
+  end
+
   # The watch runner's answer: a real `%EvoGit.Agent.Stream.Snapshot{}` at `seq`.
-  defp snapshot_answer(seq, messages \\ []) do
+  defp snapshot_answer(seq, messages \\ [], overrides \\ []) do
     fn agent_id ->
-      {:ok, %EvoGit.Agent.Stream.Snapshot{agent_id: agent_id, messages: messages, seq: seq}, seq}
+      snapshot =
+        struct!(
+          EvoGit.Agent.Stream.Snapshot,
+          [agent_id: agent_id, messages: messages, seq: seq] ++ overrides
+        )
+
+      {:ok, snapshot, seq}
     end
   end
 
@@ -5889,15 +6002,20 @@ defmodule EvoDashWeb.HomeLiveTest do
       session_id = 7_113
       install_watch_seams(session_id, test_pid, snapshot_answer(7))
 
-      # A PARKED watcher registration: the snapshot lands only when this test
-      # releases it, so the in-flight bubble is seeded before the snapshot's
-      # `{:chat_stream_ready, …}` can arrive.
-      install_session_seam(:home_agent_watch_runner, fn _node, agent_id, _watcher ->
+      # Registration is held while newer batches buffer. The cut includes the
+      # captured prefix of the CURRENT call alongside checkpointed history.
+      install_session_seam(:home_agent_watch_runner, fn _node, agent_id, consumer ->
         send(test_pid, {:watch_pending, self()})
 
-        receive do
-          :release -> snapshot_answer(7, [history_assistant_message("from history")]).(agent_id)
-        end
+        await_snapshot_release(consumer, fn ->
+          {:activity, activity} = call_started(agent_id)
+          activity = put_in(activity.current_call.text, "in-flight reply")
+
+          snapshot_answer(7, [history_assistant_message("from history")],
+            phase: :running,
+            activity: activity
+          ).(agent_id)
+        end)
       end)
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
@@ -5905,31 +6023,41 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert_receive {:watch_pending, watch_pid}, 5_000
       await_attach_settled(view, session_id)
 
-      seed_chat_state(view, %{
-        transcript: [
-          %{id: "1", role: :user, text: "hello", streaming: false},
-          %{id: "2", role: :assistant, text: "in-flight reply", streaming: true}
-        ]
-      })
-
+      broadcast_delta(session_id, 8, [{:text, " plus suffix"}])
+      wait_until(fn -> length(assigns(view).chat_stream.pending) == 1 end)
+      assert assigns(view).chat_stream.delta == nil
       send(watch_pid, :release)
 
-      await_stream_seeded(view, 7)
+      await_stream_seeded(view, 8)
       wait_until(fn -> is_map(assigns(view).chat_stream_meta) end)
 
       a = assigns(view)
-      # The in-flight reply survives: the snapshot never rebuilds over it...
-      assert Enum.any?(a.transcript, &(&1.text == "in-flight reply"))
-      refute Enum.any?(a.transcript, &(&1.text == "from history"))
-      # ...while the delta baseline and the message-count gate are seeded.
-      assert a.chat_stream.delta.seq == 7
+      assert Enum.any?(a.transcript, &(&1.text == "in-flight reply plus suffix" and &1.streaming))
+      assert Enum.any?(a.transcript, &(&1.text == "from history" and not &1.streaming))
+      assert render(view) =~ "in-flight reply plus suffix"
+      assert length(Enum.filter(a.transcript, &String.contains?(&1.text, "in-flight reply"))) == 1
+      assert a.chat_stream.delta.seq == 8
       assert a.agent_message_count == 1
     end
 
-    test "a finished delta with no streamed text fetches the final reply once", %{conn: conn} do
+    test "a finished delta with no streamed text resyncs the authoritative snapshot once", %{
+      conn: conn
+    } do
       test_pid = self()
       session_id = 7_114
-      install_watch_seams(session_id, test_pid, snapshot_answer(7))
+      watches = :counters.new(1, [:atomics])
+
+      install_watch_seams(session_id, test_pid, fn agent_id ->
+        :counters.add(watches, 1, 1)
+
+        if :counters.get(watches, 1) == 1 do
+          snapshot_answer(7).(agent_id)
+        else
+          snapshot_answer(8, [history_assistant_message("final reply from history")],
+            phase: :done
+          ).(agent_id)
+        end
+      end)
 
       {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
 
@@ -5943,9 +6071,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       end)
 
       # NO text before the finish: the final attempt's chunks were suppressed.
+      # Recovery must use a new atomic cut, never independent history.
       broadcast_delta(session_id, 8, [{:finished, :completed}])
 
-      assert_receive :history_fetched, 5_000
+      assert_receive {:agent_watched, _node, ^session_id, _watcher}, @async_wait_budget_ms
 
       wait_until(fn ->
         Enum.any?(assigns(view).transcript, &(&1.text == "final reply from history"))
@@ -5956,8 +6085,9 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert reply.streaming == false
       assert assigns(view).chat_status == :ended
 
-      # EXACTLY one reconciliation — never a fetch loop.
-      refute_receive :history_fetched, 300
+      # EXACTLY one atomic reconciliation — never a fetch loop or a legacy read.
+      assert :counters.get(watches, 1) == 2
+      refute_receive :history_fetched, 0
     end
 
     test "streamed text suppresses the finished refresh", %{conn: conn} do
