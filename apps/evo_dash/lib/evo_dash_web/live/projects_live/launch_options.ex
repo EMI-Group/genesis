@@ -30,6 +30,7 @@ defmodule EvoDashWeb.ProjectsLive.LaunchOptions do
         |> Keyword.merge(model_opts)
         |> put_agent(assigns[:selected_agent_id])
         |> put_quality(assigns[:quality_level])
+        |> put_persistent_state(assigns[:persist_agent_state?])
 
       {:ok, opts}
     end
@@ -54,4 +55,15 @@ defmodule EvoDashWeb.ProjectsLive.LaunchOptions do
     do: Keyword.put(opts, :quality_level, quality)
 
   defp put_quality(opts, _quality), do: Keyword.delete(opts, :quality_level)
+
+  # The persist-agent-state opt is ALWAYS put explicitly, in both directions:
+  # the boolean assign is used verbatim, and a non-boolean/nil assign — the
+  # GitHub-issue fix path, a restored payload or older browser state — falls
+  # back to the default `true`. The core default is ON, but an absent assign
+  # must still mean the default rather than depending on an implicit core
+  # default, and sending it explicitly keeps the task opts self-describing.
+  defp put_persistent_state(opts, state) when is_boolean(state),
+    do: Keyword.put(opts, :persistent_state, state)
+
+  defp put_persistent_state(opts, _state), do: Keyword.put(opts, :persistent_state, true)
 end

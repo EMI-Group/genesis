@@ -90,14 +90,19 @@ defmodule EvoDashWeb.ProjectsLive.LaunchOptionsTest do
                  quality_level: "balanced"
                })
 
-      assert opts == payload
+      # The persist-agent-state opt is ALWAYS present; drop it from the exact
+      # comparison instead of weakening it, and assert it explicitly below.
+      assert Keyword.drop(opts, [:persistent_state]) == payload
+      assert opts[:persistent_state] == true
     end
   end
 
   test "uninitialized selection locks the configured default even when rules are enabled" do
     assert {:ok, opts} = LaunchOptions.apply([], %{model_selection: selection(true)})
 
-    assert opts == [
+    assert opts[:persistent_state] == true
+
+    assert Keyword.drop(opts, [:persistent_state]) == [
              model_spec: %{
                "provider_profile_id" => "account-a",
                "model" => "test-model",
@@ -170,14 +175,19 @@ defmodule EvoDashWeb.ProjectsLive.LaunchOptionsTest do
 
       assert Keyword.take(opts, Keyword.keys(payload)) == payload
 
-      assert Keyword.drop(opts, Keyword.keys(payload)) == [
+      assert Keyword.drop(opts, Keyword.keys(payload) ++ [:persistent_state]) == [
                model_spec: spec,
                model_id_locked: true
              ]
 
+      assert opts[:persistent_state] == true
+
       for auto <- [%{}, ""] do
-        assert LaunchOptions.apply(payload, Map.put(assigns, :selected_model_spec, auto)) ==
-                 {:ok, payload}
+        assert {:ok, auto_opts} =
+                 LaunchOptions.apply(payload, Map.put(assigns, :selected_model_spec, auto))
+
+        assert Keyword.drop(auto_opts, [:persistent_state]) == payload
+        assert auto_opts[:persistent_state] == true
       end
     end
   end
@@ -220,6 +230,25 @@ defmodule EvoDashWeb.ProjectsLive.LaunchOptionsTest do
   test "a picker that has not loaded cannot launch, including an explicit Auto" do
     for assigns <- [%{}, %{model_selection: nil, selected_model_spec: %{}}] do
       assert LaunchOptions.apply([], assigns) == {:error, :model_selection_not_loaded}
+    end
+  end
+
+  test "the persist-agent-state opt is always explicit, defaulting to true" do
+    base = %{model_selection: selection(), selected_model_spec: %{}}
+
+    # A nil/absent assign (GitHub-issue fix path, restored payload, older
+    # browser state) means the ON default — never an implicit core default.
+    for assigns <- [base, Map.put(base, :persist_agent_state?, nil)] do
+      assert {:ok, opts} = LaunchOptions.apply([], assigns)
+      assert Keyword.has_key?(opts, :persistent_state)
+      assert opts[:persistent_state] == true
+    end
+
+    for {value, expected} <- [{true, true}, {false, false}] do
+      assert {:ok, opts} = LaunchOptions.apply([], Map.put(base, :persist_agent_state?, value))
+
+      assert Keyword.has_key?(opts, :persistent_state)
+      assert opts[:persistent_state] == expected
     end
   end
 end

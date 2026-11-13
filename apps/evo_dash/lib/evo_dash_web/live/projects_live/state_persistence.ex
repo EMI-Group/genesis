@@ -31,6 +31,7 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
       show_advanced: socket.assigns.show_advanced,
       show_project_settings: socket.assigns.show_project_settings,
       task_archive: socket.assigns.task_archive,
+      persist_agent_state?: socket.assigns[:persist_agent_state?],
       foreign_repos: serialize_foreign_repos(socket.assigns[:foreign_repos]),
       # Per-node storage: the StatePersistence JS hook reads `data-node-id`
       # from #dashboard-root and merges `node` into sessionStorage, and the
@@ -152,6 +153,7 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
       task_starting_commit: "",
       show_advanced: false,
       task_archive: false,
+      persist_agent_state?: true,
       selected_agent_id: nil,
       model_selection: nil,
       model_selection_scope: nil,
@@ -254,6 +256,27 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
   def maybe_restore_task_archive(socket, "true"), do: assign(socket, :task_archive, true)
   def maybe_restore_task_archive(socket, true), do: assign(socket, :task_archive, true)
   def maybe_restore_task_archive(socket, _), do: assign(socket, :task_archive, false)
+
+  @doc """
+  Restores the `persist_agent_state?` assign from a persisted value.
+  The default is ON (unlike `maybe_restore_task_archive/2`, which defaults
+  false): only an explicit `true`/`false` (boolean or its string form) is
+  applied, so a nil/absent/unknown value returns the socket unchanged and the
+  mount-time `true` stays.
+  """
+  def maybe_restore_persist_agent_state(socket, "true"),
+    do: assign(socket, :persist_agent_state?, true)
+
+  def maybe_restore_persist_agent_state(socket, true),
+    do: assign(socket, :persist_agent_state?, true)
+
+  def maybe_restore_persist_agent_state(socket, "false"),
+    do: assign(socket, :persist_agent_state?, false)
+
+  def maybe_restore_persist_agent_state(socket, false),
+    do: assign(socket, :persist_agent_state?, false)
+
+  def maybe_restore_persist_agent_state(socket, _), do: socket
 
   @doc """
   Restores the `show_advanced` assign from a persisted value.

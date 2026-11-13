@@ -774,6 +774,39 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       refute html =~ "Starting Commit"
       refute html =~ "Resume from"
     end
+
+    # Persist-agent-state toggle: rendered for ALL modes next to the Archive
+    # toggle and DEFAULT ON. The checkbox is server-assign-driven, so it has
+    # NO `name` (and no form=) — a `phx-click` on a checked checkbox sends
+    # %{"value" => "true"}; an unchecked one omits the key.
+    test "persist-agent-state toggle renders for all modes, checked by default, with no name" do
+      for mode <- ["genesis_new", "custom_agent"] do
+        html = render_component(&EvoDashWeb.TaskFormComponents.task_options_tab/1, mode: mode)
+        [input] = Floki.find(parse(html), "input#persist-agent-state-toggle")
+
+        assert input |> Floki.attribute("type") |> List.first() == "checkbox"
+
+        assert input |> Floki.attribute("phx-click") |> List.first() ==
+                 "toggle_persist_agent_state"
+
+        assert input |> Floki.attribute("checked") == ["checked"]
+        # Load-bearing: no name/form, so form params never carry the value.
+        assert input |> Floki.attribute("name") == []
+        assert input |> Floki.attribute("form") == []
+        assert html =~ "Persist agent state"
+      end
+    end
+
+    test "persist-agent-state toggle renders unchecked when the assign is false" do
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_options_tab/1,
+          mode: "genesis_new",
+          persist_agent_state?: false
+        )
+
+      [input] = Floki.find(parse(html), "input#persist-agent-state-toggle")
+      assert input |> Floki.attribute("checked") == []
+    end
   end
 
   # Speed ↔ quality segmented control — the fused mode+speed capsule's Layer-1
