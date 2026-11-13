@@ -106,8 +106,10 @@ defmodule EvoGit.Agent.Session do
   both refuse with `{:error, {:bad_state, phase}}`.
   The snapshot's `seq` is SESSION-authoritative: watch/snapshot flush the pending batch before
   replying, so consumers discard every delta at or below that cut without duplicating content.
-  The session captures worker-identified activity even with ZERO watchers, retaining only the
-  current call's text/thinking; stale workers cannot update activity or checkpoint state.
+  The installed worker sink captures chunks independently of watchers, retaining only the
+  current call's text/thinking in `Snapshot.activity`; stale workers cannot update activity or
+  checkpoint state. The additive activity shape and public event contract live in
+  `stream/CONTEXT.md`.
   `EvoGit.Agent.Stream.Sink.emit/1` sends `{:delta, events}` in; the session publishes ONE
   `{:agent_delta, agent_id, seq, events}` broadcast per ~75 ms window, and with ZERO watchers the
   public events are dropped on arrival (no buffer, no timer, no broadcast).
@@ -323,11 +325,11 @@ defmodule EvoGit.Agent.Session do
   def identity(_other, _timeout), do: :error
 
   @doc """
-  Whether any consumer is watching this session — the streaming gate — FAIL-CLOSED.
+  Whether any consumer is watching this session — the publication gate — FAIL-CLOSED.
 
   `false` when the session is gone, did not answer within `timeout`, or answered with anything
-  other than `true`. An emitter that reads `false` installs NO streaming callbacks at all, so the
-  unwatched LLM path carries no streaming overhead; guessing `true` here would re-introduce it.
+  other than `true`. The installed worker sink still supplies chunk callbacks for live activity
+  capture and interrupts without watchers; only public delta publication is watcher-gated.
   """
   @spec watching?(dispatch_target(), timeout()) :: boolean()
   def watching?(target, timeout \\ @call_timeout) do
