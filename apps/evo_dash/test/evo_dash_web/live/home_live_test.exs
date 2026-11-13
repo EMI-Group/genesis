@@ -5840,6 +5840,312 @@ defmodule EvoDashWeb.HomeLiveTest do
     assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
   end
 
+  # Direct terminal handoff is a final atomic cut, not another asynchronous
+  # history read. Keep these mounted contracts beside the push-only stream tests.
+  defp terminal_chat_snapshot(session_id, seq, status \\ :completed) do
+    {:ok, snapshot, ^seq} =
+      snapshot_answer(
+        seq,
+        [
+          %ReqLLM.Message{
+            role: :assistant,
+            content: [
+              %ReqLLM.Message.ContentPart{
+                type: :thinking,
+                text: "authoritative terminal thinking"
+              },
+              %ReqLLM.Message.ContentPart{type: :text, text: "authoritative terminal answer"}
+            ],
+            reasoning_details: [
+              %ReqLLM.Message.ReasoningDetails{text: "authoritative terminal thinking", index: 0}
+            ]
+          }
+        ],
+        phase: :done
+      ).(session_id)
+
+    Map.put(snapshot, :status, status)
+  end
+
+  defp assert_terminal_chat(view, snapshot, status) do
+    a = assigns(view)
+    closed? = EvoDashWeb.HomeLive.Watch.closed?(%{assigns: a})
+    assert closed?
+    assert a.chat_stream.closed_seq == snapshot.seq
+    assert a.chat_stream.error == nil
+    assert a.chat_status == :ended
+    assert a.chat_task_status == status
+    assert a.agent_message_count == length(snapshot.messages)
+    assert a.queued_echoes == []
+
+    assert [%{role: :assistant, text: "authoritative terminal answer", streaming: false} = reply] =
+             a.transcript
+
+    assert a.thought_process == EvoDashWeb.HomeLive.Messages.to_entries(snapshot.messages)
+    assert inspect(reply.reasoning) =~ "authoritative terminal thinking"
+    html = render(view)
+    assert html =~ "authoritative terminal answer"
+    assert html =~ "authoritative terminal thinking"
+    refute present?(html, ".help-caret")
+    refute present?(html, "#chat-stream-error")
+    assert disabled?(html, ~s(textarea[name="message"]))
+    assert EvoDash.ChatHistory.get_state(a.chat_id).transcript == a.transcript
+    a
+  end
+
+  describe "mounted authoritative terminal handoff" do
+    for status <- [:completed, :failed, :cancelled] do
+      test "#{status} closure replaces partial text/thinking and stays closed after removal", %{
+        conn: conn
+      } do
+        test_pid = self()
+        session_id = System.unique_integer([:positive]) + 1_000_000_000
+        watches = :counters.new(1, [:atomics])
+        history_reads = :counters.new(1, [:atomics])
+
+        install_watch_seams(session_id, test_pid, fn id ->
+          :counters.add(watches, 1, 1)
+          snapshot_answer(7, [], phase: :running).(id)
+        end)
+
+        install_session_seam(:home_agent_history_runner, fn _node, _id ->
+          :counters.add(history_reads, 1, 1)
+          [history_assistant_message("forbidden post-closure history")]
+        end)
+
+        {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+        monitor_watch_cleanup(view)
+        await_attach_settled(view, session_id)
+        await_stream_seeded(view, 7)
+
+        send(
+          view.pid,
+          {:agent_delta, session_id, 8,
+           [
+             call_started(session_id),
+             {:thinking, "abandoned thinking"},
+             {:text, "partial answer"}
+           ]}
+        )
+
+        await_stream_seeded(view, 8)
+        seed_chat_state(view, %{queued_echoes: [%{id: "terminal-echo", text: "queued", at: 0}]})
+
+        # Equality is essential: messages may checkpoint at the finish batch's
+        # existing watermark without another public delta increment.
+        snapshot = terminal_chat_snapshot(session_id, 8, unquote(status))
+        send(view.pid, {:agent_stream_closed, session_id, snapshot, 8})
+        final = assert_terminal_chat(view, snapshot, unquote(status))
+        consumer = view.pid
+        local_node = node()
+
+        assert_receive {:agent_unwatched, ^local_node, ^session_id, ^consumer},
+                       @async_wait_budget_ms
+
+        send(view.pid, {:agent_removed, session_id, node()})
+        send(view.pid, {:agent_updated, session_id, [message_count: 999], node()})
+        send(view.pid, {:agents_updated, node()})
+
+        send(
+          view.pid,
+          {:agent_delta, session_id, 99, [call_started(session_id), {:text, "late text"}]}
+        )
+
+        send(
+          view.pid,
+          {:agent_stream_closed, session_id, terminal_chat_snapshot(session_id, 100, :failed),
+           100}
+        )
+
+        render_click(view, "retry_chat_stream")
+        settled = assert_terminal_chat(view, snapshot, unquote(status))
+        assert settled.transcript == final.transcript
+        assert settled.chat_fetch_seq == final.chat_fetch_seq
+        assert settled.stream_attach_seq == final.stream_attach_seq
+        assert :counters.get(watches, 1) == 1
+        assert :counters.get(history_reads, 1) == 0
+
+        # Even an actual registration-worker death after cleanup cannot turn
+        # the authoritative terminal view into a retryable watch error.
+        worker = settled.chat_stream_worker
+        ref = Process.monitor(worker)
+        Process.exit(worker, :kill)
+        assert_receive {:DOWN, ^ref, :process, ^worker, :killed}, @async_wait_budget_ms
+        wait_until(fn -> assigns(view).chat_stream_worker == nil end)
+        assert_terminal_chat(view, snapshot, unquote(status))
+        assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
+      end
+    end
+
+    for result <- [:success, :failure] do
+      test "closure wins over a late #{result} from the actual final-snapshot worker", %{
+        conn: conn
+      } do
+        test_pid = self()
+        session_id = System.unique_integer([:positive]) + 1_000_000_000
+        attempts = :counters.new(1, [:atomics])
+
+        install_watch_seams(session_id, test_pid, fn id, consumer ->
+          :counters.add(attempts, 1, 1)
+
+          if :counters.get(attempts, 1) == 1 do
+            snapshot_answer(7, [], phase: :running).(id)
+          else
+            send(test_pid, {:final_snapshot_blocked, self()})
+
+            await_snapshot_release(consumer, fn ->
+              case unquote(result) do
+                :success ->
+                  snapshot_answer(9, [history_assistant_message("obsolete async answer")],
+                    phase: :awaiting_input
+                  ).(id)
+
+                :failure ->
+                  {:error, {:not_found, :session_not_found}}
+              end
+            end)
+          end
+        end)
+
+        {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+        monitor_watch_cleanup(view)
+        await_attach_settled(view, session_id)
+        await_stream_seeded(view, 7)
+        send(view.pid, {:agent_delta, session_id, 8, [{:finished, :completed}]})
+        assert_receive {:final_snapshot_blocked, worker}, @async_wait_budget_ms
+        assert assigns(view).chat_stream.final_resync == :pending
+        assert assigns(view).chat_stream_worker == worker
+
+        snapshot = terminal_chat_snapshot(session_id, 8)
+        send(view.pid, {:agent_stream_closed, session_id, snapshot, 8})
+        final = assert_terminal_chat(view, snapshot, :completed)
+        send(worker, :release)
+        consumer = view.pid
+        assert_receive {:agent_unwatched, _node, ^session_id, ^consumer}, @async_wait_budget_ms
+        # The worker sends ready BEFORE servicing unregister. Its own mailbox
+        # barrier proves that result was sent; the view round-trip drains it.
+        wait_until(fn -> assigns(view).chat_stream.token == final.chat_stream.token end)
+        assert_terminal_chat(view, snapshot, :completed)
+        assert :counters.get(attempts, 1) == 2
+        refute render(view) =~ "obsolete async answer"
+      end
+    end
+
+    test "closure during registration respects buffered sequence and survives a late missing-session answer",
+         %{
+           conn: conn
+         } do
+      test_pid = self()
+      session_id = System.unique_integer([:positive]) + 1_000_000_000
+
+      install_watch_seams(session_id, test_pid, fn _id, consumer ->
+        send(test_pid, {:initial_snapshot_blocked, self()})
+        await_snapshot_release(consumer, fn -> {:error, {:not_found, :session_not_found}} end)
+      end)
+
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+      monitor_watch_cleanup(view)
+      assert_receive {:initial_snapshot_blocked, worker}, @async_wait_budget_ms
+      await_attach_settled(view, session_id)
+
+      send(
+        view.pid,
+        {:agent_delta, session_id, 11, [call_started(session_id), {:text, "buffered suffix"}]}
+      )
+
+      assert length(assigns(view).chat_stream.pending) == 1
+      assert assigns(view).chat_stream.delta == nil
+
+      # A cut older than a buffered batch is not authoritative for this view.
+      send(
+        view.pid,
+        {:agent_stream_closed, session_id, terminal_chat_snapshot(session_id, 10), 10}
+      )
+
+      assert assigns(view).chat_stream.closed_seq == nil
+      assert length(assigns(view).chat_stream.pending) == 1
+
+      snapshot = terminal_chat_snapshot(session_id, 11)
+      send(view.pid, {:agent_stream_closed, session_id, snapshot, 11})
+      assert_terminal_chat(view, snapshot, :completed)
+      assert assigns(view).chat_stream.pending == []
+      send(worker, :release)
+      consumer = view.pid
+      assert_receive {:agent_unwatched, _node, ^session_id, ^consumer}, @async_wait_budget_ms
+      assert_terminal_chat(view, snapshot, :completed)
+      refute render(view) =~ "buffered suffix"
+    end
+
+    test "stale sequences, foreign agents and an old node scope cannot close the current chat", %{
+      conn: conn
+    } do
+      session_id = System.unique_integer([:positive]) + 1_000_000_000
+      install_watch_seams(session_id, self(), snapshot_answer(7, [], phase: :running))
+      {:ok, view, _html} = live(conn, "/assistant?session=#{session_id}")
+      monitor_watch_cleanup(view)
+      await_attach_settled(view, session_id)
+      await_stream_seeded(view, 7)
+
+      send(
+        view.pid,
+        {:agent_delta, session_id, 8, [call_started(session_id), {:text, "current answer"}]}
+      )
+
+      await_stream_seeded(view, 8)
+      before = assigns(view)
+
+      send(view.pid, {:agent_stream_closed, session_id, terminal_chat_snapshot(session_id, 7), 7})
+
+      send(
+        view.pid,
+        {:agent_stream_closed, session_id + 1, terminal_chat_snapshot(session_id + 1, 20), 20}
+      )
+
+      send(
+        view.pid,
+        {:agent_stream_closed, session_id, terminal_chat_snapshot(session_id + 1, 20), 20}
+      )
+
+      send(
+        view.pid,
+        {:agent_stream_closed, session_id, terminal_chat_snapshot(session_id, 20), 19}
+      )
+
+      a = assigns(view)
+      assert a.transcript == before.transcript
+      assert a.chat_status == :running
+      refute EvoDashWeb.HomeLive.Watch.closed?(%{assigns: a})
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{
+          ssh_target: "user@host",
+          id: "terminal-remote",
+          name: "Terminal Remote"
+        })
+
+      start_supervised!(
+        {EvoDashWeb.HomeLiveTest.ConnectionManager,
+         {"terminal-remote",
+          %{phase: :connected, node: "terminal_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      render_patch(view, "/assistant?node=terminal-remote")
+      assert assigns(view).current_node == :"terminal_remote@127.0.0.1"
+      remote = assigns(view)
+
+      send(
+        view.pid,
+        {:agent_stream_closed, session_id, terminal_chat_snapshot(session_id, 30), 30}
+      )
+
+      a = assigns(view)
+      assert a.chat_id == remote.chat_id
+      assert a.transcript == remote.transcript
+      assert a.chat_status == remote.chat_status
+      refute EvoDashWeb.HomeLive.Watch.closed?(%{assigns: a})
+    end
+  end
+
   describe "push-only delta streaming" do
     test "a published delta updates a mounted page", %{conn: conn} do
       test_pid = self()
