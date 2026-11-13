@@ -29,12 +29,21 @@ let
   version = lib.trim (lib.fileContents ./VERSION);
 
   # ── Mix dependencies ──────────────────────────────────────────────
-  # Lockfile-driven dependency fetch. Update this hash when mix.lock changes.
+  # Lockfile-driven dependency fetch. Update this hash when mix.lock changes OR
+  # when the prod-visible dependency set changes.
+  # The hash pins the PROD-VISIBLE dependency set: `fetchMixDeps` runs
+  # `mix deps.get --only prod`, so a dependency moving into prod scope (e.g.
+  # dropping `only: [:dev, :test]` in a mix.exs) changes this FOD's contents
+  # even when `mix.lock` is untouched. A stale hash is silently reused on any
+  # machine that already has the old content-addressed output, so the only
+  # symptom is a later, cryptic `** (Mix) Could not find application :x` during
+  # app compilation — that is what the postConfigure preflight below catches.
   mixFodDeps = beamPackages.fetchMixDeps {
     pname = "mix-deps-${pname}";
     inherit src version;
-    hash = "sha256-kXfKjM4unD+v4zn+GDv74sSikFISTW9BzyT/6pPMIu4=";
+    hash = "sha256-eLRLV4m8JdlDqGgf6vXRy+wHvB1RoY92mqfrOafBsUE=";
   };
+
 
   # ── Platform mapping ──────────────────────────────────────────────
   # Map the Nix system string to a Rust target triple for precompiled NIFs.
@@ -171,6 +180,31 @@ beamPackages.mixRelease {
       '') nifAssets
     )}
     ls -l $RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH
+  '';
+
+  # ── Stale dependency-set preflight ──────────────────────────────
+  # `mixFodDeps` is a fixed-output derivation, so a stale pin is silently
+  # reused (no hash-mismatch error) on a machine that already has the old
+  # output. `mix deps` is the authority on whether the pinned tree satisfies
+  # every app's mix.exs: a missing prod dep reports
+  # `the dependency is not available, run "mix deps.get"` (Mix 1.20) and still
+  # exits 0, so the line is grepped rather than relying on the exit status.
+  postConfigure = ''
+    deps_report=$(mktemp)
+    if ! mix deps > "$deps_report" 2>&1; then
+      cat "$deps_report" >&2
+      echo "genesis.nix: 'mix deps' failed against the pinned dependency set — see the report above." >&2
+      exit 1
+    fi
+    if grep -q 'the dependency is not available' "$deps_report"; then
+      cat "$deps_report" >&2
+      echo "" >&2
+      echo "genesis.nix: the pinned mix dependency set (mixFodDeps) is stale — a prod dependency is missing." >&2
+      echo "Recompute mixFodDeps.hash in genesis.nix: set 'hash = lib.fakeHash;', run" >&2
+      echo "'nix build .#default --no-link' and copy the sha256 reported in the hash-mismatch error." >&2
+      echo "A dep moving out of 'only: [:dev, :test]' triggers this even with an untouched mix.lock." >&2
+      exit 1
+    fi
   '';
 
   # ── Asset pipeline ──────────────────────────────────────────────
