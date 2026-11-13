@@ -160,11 +160,13 @@ The stable `agent-history-<id>` root uses `InspectorMessages`, with `data-inspec
 Only newly keyed rows animate, reduced motion is respected and history scrolling stays instant.
 
 Core transport and snapshot contracts live in `apps/evo_git/lib/evo_git/agent/stream/CONTEXT.md` and lifecycle/activity limitations in `apps/evo_git/lib/evo_git/agent/session/CONTEXT.md`.
-The current core snapshot has checkpointed messages and a broadcast sequence watermark but no in-flight coverage, so snapshot-plus-stale-sequence filtering alone cannot guarantee lossless, duplicate-free mid-turn attachment.
-Atomic replacement of obsolete live excerpts requires a sequence-consistent snapshot with complete in-flight text/thinking coverage or an explicit checkpoint coverage watermark, plus consumer-side buffering/replay of newer deltas; history-only reconciliation cannot safely reset excerpts or repair missing chunks.
-Current deltas expose text/thinking chunks and tool id/name/status but not tool arguments, result bodies or full history-message changes, and lifecycle phase does not distinguish thinking/generating/tool execution/waits.
-The inspector accepts optional authoritative activity, identity and coverage metadata as documented above, but this consumer support does not guarantee that the core publishes it.
-Truthful activity requires a session-owned runtime-activity contract in snapshot and ordered deltas, including exhaustive terminal transitions; absent metadata stays unavailable rather than being inferred.
+The core snapshot includes session-owned `activity: %{phase:, current_call: nil | %{id:, turn:, attempt:, text:, thinking:}}`, and ordered `{:activity, projection}` events replace that projection while ordinary text/thinking events append to its current call.
+Core phases are `:idle`, `:llm_waiting`, `:llm`, `:llm_complete`, `:retry_wait` and `:tools`, and activity capture continues without watchers; watch and snapshot flush pending events before returning the authoritative sequence.
+The inspector reducer currently consumes hypothetical top-level `in_flight` and flattened identity fields instead of core `activity.current_call`, so mid-call snapshot text/thinking is ignored, replacement activity text is not adopted and retry identities do not separate live excerpts.
+Presentation recognizes `:llm`, `:tools` and `:idle` but classifies core `:llm_waiting`, `:llm_complete` and `:retry_wait` as unknown, and core activity provides no hypothetical `message_start` or explicit `capture_coverage` fields.
+Current deltas expose text/thinking chunks and tool id/name/status but not tool arguments, result bodies or full history-message changes.
+Core current-call identity and accumulated content support coherent mid-call attachment, but there is still no transcript checkpoint-coverage watermark or checkpoint-message call identity, so replacing all old excerpts from history or suppressing checkpoint parts by guessed turn/content remains unsafe.
+Atomic replacement of checkpoint-covered live excerpts requires an explicit checkpoint identity or coverage contract; retain consumer buffering/replay strictly above snapshot sequence and keep unknown legacy metadata truthful.
 The inspector uses its own bounded `RuntimeStream` reducer rather than the Assistant's capped bubble-oriented `Delta` reducer (`../home_live/CONTEXT.md`), and neither is a lossless history model.
 
 ## Send-Message Flow (in `agents_live.ex` + `agents_live.html.heex`)
