@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.2] - 2026-11-13
+
+### Added
+
+- Added interactive agent sessions with a push-only streaming dashboard, including an :awaiting_input status, graceful resume/close, coalesced streaming deltas, reply panels, session lists, conversations, and automatic closing of idle sessions.
+- Added a /processes dashboard page for monitoring and managing running processes, with status tabs, filtering, search, per-row details, and pause/resume/terminate controls.
+- Added a process manager subsystem to track and control live agent/task OS processes, with pluggable systemd/posix/windows backends, bounded owner monitors, a configurable finished-record retention cap, and support for pause/resume/signal/kill.
+- Foreground sandbox commands now run as tracked OS processes with their real pid attached to the execution and the whole process tree killed on timeout, and managed processes can now be listed, inspected and controlled on local and remote nodes via new RPC endpoints.
+- Process tracking now records terminal execution facts such as exit code and reason (e.g. timeout or operator kill), distinguishes built-in in-process tools from external OS processes, and surfaces them on the /processes page.
+- Exposed local task control to coding agents via MCP, with task progress persisted through bounded background execution.
+- Messages now expose an ordered per-message projection with a stable :user_authored marker distinguishing real user messages from synthetic or system ones.
+- Added a `genesis update` (alias `upgrade`) self-update command to the headless server CLI, with release-feed manifest and checksum verification, staged swap with automatic rollback, a `--check`/`--json` availability mode, an update lock, and a `/server/status` probe gating updates.
+- Genesis Source now uses a reserved `vct:///genesis-source` VCT mount, kept out of project listings, mounted idempotently at boot, and shown on the dashboard's Genesis Source card.
+
+### Changed
+
+- Background jobs are now tracked as :background_job executions with normalized handles, settled as completed, failed, or killed.
+- Projects and recent-project lists are now backed by a SQLite VCT mount registry, showing `vct:///` mount points in the palette and active-project identity, with new forget-project actions for local and remote nodes.
+- Upgraded to xqlite 0.16.0, where `PRAGMA busy_timeout` reads back as 0 and lock waits happen in the calling process; the 30 s busy timeout is now a per-call wait budget exposed via the connection handle.
+- The assistant chat page moved to /assistant (with /help redirecting there), with a redesigned approvals experience: a stepping modal approval dialog with a fixed-height status strip, a stabilised streaming transcript layout, and the conversation list in the shared sidebar.
+- Sandbox hardening: a unified platform-neutral policy spec with canonical credential paths, macOS Seatbelt alias resolution and fcntl/credential carveout fixes, and honest no-isolation backend reporting with a once-per-BEAM warning.
+- Tool-call execution now runs through a managed runtime with per-call timeouts, tool-slot gating, and process manager tracking.
+- The one-shot `mix run` task CLI was removed in favor of task options, dashboard selection, and runtime overrides.
+- Dashboard project rows and the command-palette omnibox trigger now show the friendly project name instead of the long VCT mount point.
+- The /assistant route (in addition to the legacy /help) is now allowed by the elixir_eval guide page whitelist.
+- Background job notices and compression-refresh hints now show the literal `job_id` parameter spelling, and job output surfaces inferred reads with a required `job_id`.
+- Restored Chat History and Session Memory panels on the /agents detail page and removed the Processes section from that panel.
+- Updated dependencies: xqlite 0.16.0, xqlite_ecto 3, llm_db 2026.11.2, and websock_adapter 0.7.2.
+
+### Fixed
+
+- Fixed write/sudo approval requests being refused before registration in task-less /assistant interactive root sessions, and fixed those sessions being rejected by reflective admission and having elixir_eval refused in the dashboard.
+- Fixed the home live view to render a single assistant bubble per turn, correctly accumulating text after tool calls, reconciling silent finishes, and building an ordered display transcript that only includes user-authored user bubbles.
+- Fixed Genesis Assistant approval UX defects: correct target node display, request warnings rendered for all tiers, task notifications restricted to owned requests, and the approval dialog reliably closing and clamping.
+- Fixed chat auto-scroll shaking, browser notifications now appear only when the page is hidden or unfocused, and the approval dialog hook behavior is hardened.
+- Config saves no longer report failure when the post-write scheduler reload times out, started sessions no longer block on slow worktree creation, and elixir_eval now classifies denied facade calls descriptively.
+- Fixed crashes when rendering managed processes and agents, including the Agents Processes section in the live agents view, by correctly reading Execution struct fields and serving local process data directly.
+- Fixed Processes page crashes and error states (missing config status, double-wrapped load results, dropped kill/terminate reason, and expanded-row render failure).
+- Fixed the process manager marking processes as killed when the backend kill failed; failed kills now keep the process status, log a kill_failed control entry, and return the error.
+- Fixed sandbox terminal worktree metadata path resolution.
+- Fixed background job notices showing a hardcoded example job id that could collide with a real job.
+- Fixed release version parsing so the release name is stripped from `genesis version` and update checks, and `latest.json` now always includes a `platforms` map so server-only releases don't break desktop update parsing.
+- Fixed transient network failures during release and CI build steps.
+
 ## [0.14.1] - 2026-11-08
 
 ### Added
