@@ -5180,6 +5180,10 @@ defmodule EvoDashWeb.HomeLiveTest do
         counting_attach_runner(attach_calls, test_pid, false, parked_attach(cached_id))
       )
 
+      # The synthetic parked session needs a matching authoritative Watch cut;
+      # the independent attach answer alone cannot establish its idle lifecycle.
+      install_snapshot_fixture(cached_id, [], :awaiting_input)
+
       seed_cached_chat(cached_id, [
         %{id: "u1", role: :user, text: "cached objective", streaming: false}
       ])
@@ -5202,7 +5206,10 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       # Patching a row ADOPTS that session: ONE attach, never a new task.
       render_patch(view, "/assistant?session=#{cached_id}")
+      monitor_watch_cleanup(view)
       assert_receive {:attach_called, _node, ^cached_id, _pid}, 5_000
+      await_stream_seeded(view, 7)
+      await_attach_settled(view, cached_id)
 
       wait_until(fn ->
         assigns(view).session_id == cached_id and assigns(view).chat_status == :idle
