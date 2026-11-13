@@ -83,6 +83,90 @@ The contract boundary: this builder owns ONLY the view model (`repo_key`/`repo_d
 `CommitGraph.build/2` emits exactly ONE color per entry in the `agents` list — `color`, the agent's depth hue (`EvoDashWeb.ThemeColor.hsl_to_hex(hue, 70, 54)` with `hue = Integer.mod(round(depth * 137.508) + 265, 360)`; depth 0 = `#7c38dc`).
 Node fills, edge strokes, status palettes (`EvoDashWeb.Helpers.agent_status_svg_color/1`) and per-theme CSS-var tokens are the renderer's concern — the builder never chooses them.
 
+## Inspector RuntimeStream Reducer
+
+`EvoDashWeb.AgentsLive.RuntimeStream` in `runtime_stream.ex` is a pure inspector reducer, independent of the Assistant bubble/transcript reducers, with public `new(agent_id, node)`, `seed(state, snapshot, seq)`, `apply_batch(state, agent_id, seq, events)` and `active?(state)`.
+Its `%RuntimeStream{}` exposes `agent_id`, `node`, monotonic `seq`, lifecycle `phase`, separate optional `activity`, accounting `turn`, raw checkpoint `messages`, current `response`/`thinking` binaries, current `tool_calls`, ordered `projections`, current `message_index`, boolean `finished` and optional atom `status`.
+Each live projection is `%{identity: map, turn: integer, message_index: integer, response: binary, thinking: binary, tool_calls: list, complete: boolean, generation_complete: boolean, capture_coverage: :partial | :complete, chunks_seen: boolean}`, and `projections` includes the current message as its last entry while preserving all earlier messages for rendering.
+`generation_complete` is set by turn accounting, yield or an explicit in-flight snapshot field, not merely by a failed lifecycle finish, and never alone proves that this watcher captured all thinking chunks.
+`capture_coverage` becomes complete only when an explicit message-start event precedes this message's chunks or an in-flight snapshot explicitly asserts complete capture with binary response/text AND thinking fields.
+Repeated message-start events after chunks or generation completion never upgrade partial coverage, and authoritative activity with identity can start a projection but never proves coverage.
+`message_identity/1` is the shared total identity normalizer used by both the reducer and presentation overlap predicate.
+Projection indexes are zero-based local ordinals unless an explicit nonnegative `message_index` is supplied, and neither the indexes nor these live projections are reconciled against raw checkpoint history.
+Each tool descriptor is `%{id: term, name: binary, status: term}`, initially `:announced`, with matching id-bearing results updating descriptors across all projections and same-name anonymous announcements upgraded when dispatch supplies an id.
+`active?/1` means a nonfinished lifecycle of `:running` or `:cancelling`, never an inference about LLM/tool execution.
+`seed/3` replaces previous checkpoint/live content, accepts map/struct snapshots with absent optional keys via defensive reads, preserves agent/node ownership, ignores snapshots explicitly naming another agent and clears malformed fields to empty defaults.
+The explicit nonnegative seed seq wins over snapshot seq, then zero; invalid state input produces a fresh unowned empty struct, while wrong-agent, stale/invalid-seq and post-finish batches are no-ops.
+Optional snapshot `activity` accepts an atom or map, and optional `in_flight` accepts `response` (or `text`), `thinking`, `turn`, `message_index`, `id`, explicit `generation_complete` and `capture_coverage: :complete` to seed one live projection.
+An absent or nonbinary thinking field makes in-flight capture partial even when coverage is asserted, so producers must send an explicit empty string to prove no thinking.
+Missing activity stays nil and never means idle, absent thinking stays an empty binary and never determines activity, and tool announcements never assert execution.
+Authoritative optional `{:activity, atom_or_map}` events update activity independently from lifecycle, with `{:activity, %{phase: :llm, ...identity...}}` also starting a message only when identity is actually supplied.
+Explicit optional `{:message_start, identity}` accepts a map with nonnegative `turn`/`message_index` and/or binary/integer `id`, a nonnegative integer shorthand for `message_index`, or a nonempty binary shorthand for `id`; repeating the current exact identity is idempotent, while a distinct identity completes the old projection and opens a new one.
+For the existing identity-free stream, `{:turn, map}` records accounting and marks the current projection complete WITHOUT clearing response/thinking/tools, and only the next text/thinking chunk opens a new projection while intervening tool events stay with the previous message.
+`{:yield, text}` treats nonempty text as the current complete response, preserves thinking and tools, completes that projection and sets lifecycle/status to `:awaiting_input` with activity nil; `{:finished, status}` completes the projection, sets phase `:finished`, records status and clears activity.
+Unknown/malformed events are ignored, a newer accepted batch still advances its watermark, atom/string-key map reads are tolerated and the reducer does no I/O, process work, gettext or checkpoint text extraction through a competing `ContentText` implementation.
+The reducer is a bounded live-excerpt cache, not a lossless transcript: `StreamLimits` (also delegated by `RuntimeStream`) exposes `max_projections/0` = 12, `max_text_bytes/0` = 48_000 independently for response AND thinking, `max_tools/0` = 20 and `max_tool_name_bytes/0` = 1_024.
+It retains the newest 12 projections and the first UTF-8-safe text prefix per part, copies retained binary slices to avoid pinning large incoming binaries, and never concatenates an unbounded incoming chunk before applying the byte limit.
+Once a part omits bytes, later chunks are counted but not appended, so a UTF-8 boundary cannot introduce a gap into the retained prefix.
+Each projection carries cumulative nonnegative `omitted_response_bytes`, `omitted_thinking_bytes` and `omitted_tools`; the state carries cumulative `omitted_messages` for evicted projections, reset by seed/resync.
+Byte counters count discarded incoming bytes within a retained projection, including replacement yield payloads, so repeated replacement payloads can contribute again; counts belonging to evicted projections are summarized by the omitted-message count, not kept as unbounded tombstones.
+Tool retention keeps the first 20 descriptors, counts later unretained announcements (not unique tool ids) and still updates results for retained descriptors; retained names carry `omitted_name_bytes` and opaque ids/status remain protocol metadata rather than excerpt text.
+Source `capture_coverage` and explicit identity remain unchanged by retention, but complete capture never implies complete retained content; omission counters independently forbid checkpoint suppression and omitted thinking never proves absence.
+Raw checkpoint `messages` is unchanged and uncapped by this helper policy; attachment snapshots and protocol metadata are not covered by the live-text byte budget.
+
+## Inspector StreamWatch Lifecycle
+`StreamWatch.attach(socket, agent_id)` subscribes in the connected LiveView process and asynchronously registers that same LiveView pid through one serialized, consumer-monitored worker.
+Forward `{:inspector_stream_ready, node, token, agent_id, result}` to `StreamWatch.ready/5` and `{:agent_delta, agent_id, seq, events}` to `StreamWatch.push/4`, then render `socket.assigns.inspector_stream.state` as the `RuntimeStream` projection.
+`StreamWatch.active?(socket, agent_id)` includes snapshot-pending watches and excludes errors, allowing the page to suppress message-count-triggered history fetches during a healthy attachment.
+`StreamWatch.detach/1` clears the render state and consumer-local subscription immediately, with asynchronous serialized unregister on selection, node or lifecycle teardown.
+Keep `inspector_stream_token`, private `inspector_stream_worker` and `inspector_stream_worker_monitor` bookkeeping across page resets, since tokens must remain monotonic and the same worker orders rapid A-to-B-to-A registration changes.
+Forward worker `{:DOWN, ref, :process, pid, reason}` messages to `StreamWatch.down/4` after handling other page-owned monitors; matching death explicitly fails the watch, unsubscribes and allows a retry while unrelated monitors are inert.
+Pending remote contexts cannot attach locally, readiness and push application require the current viewed node, negative sequence watermarks are rejected, and a snapshot explicitly naming another agent fails the watch.
+Pre-snapshot deltas are replayed only above the snapshot watermark, buffered up to 128 batches or 1 MiB, and overflow or supervisor-start failures produce explicit watch errors instead of silent loss or stuck loading.
+Runner seams are `:agents_watch_runner` and `:agents_unwatch_runner`, both `(node, agent_id, liveview_pid)`, defaulting to the corresponding `NodeContext` watcher functions.
+The worker performs RPC through `SafeCall`, cleans up after consumer death, and uses no polling; delta messages have no publisher-node stamp.
+
+## Inspector Stream Presentation
+`StreamPresentation.build/1` is the pure bounded render model over `RuntimeStream`, retaining the last 12 live projections, the first 12,000 graphemes of response and thinking separately, and at most 20 tool descriptors per projection with explicit omission counts.
+The reducer retains bounded excerpts and the presentation applies a second display cap without mutating them; checkpoint history remains unchanged.
+`StreamPresentation.max_messages/0`, `max_characters/0` and `max_tools/0` expose the render limits (12 messages, 12_000 graphemes per part and 20 tools).
+Existing `omitted_response`/`omitted_thinking` fields remain render-stage grapheme counts, while new `omitted_response_bytes`/`omitted_thinking_bytes` sum reducer omissions and bytes excluded by rendering, and `omitted_messages`/`omitted_tools` include both retention and rendering omissions.
+The panel displays total byte omissions for each part even if its retained text is empty, name byte omissions and aggregate message/tool omissions; a truncated part always fails `checkpoint_part_covered?/4`, and omitted thinking can never return `:none` even with an explicit complete-coverage override.
+`StreamPresentation.activity/1` reads only authoritative activity (`:llm`, `:tool`/`:tools`, `:idle`, `:waiting`), with missing or unknown activity rendered as unavailable rather than inferred from chunks, lifecycle or announcements.
+`thinking_status/2` reports `:present`, `:pending`, `:unavailable` or `:none`; its default reads the reducer's per-message `capture_coverage`, while an explicit second argument remains a caller-owned coverage override.
+Only completed generation with complete capture and empty thinking returns `:none`, and `StreamPanel` renders exactly `gettext("No thinking content available")` for that case.
+Partial or aborted capture renders no missing-thinking notice, and lifecycle completion never upgrades generation or capture coverage.
+The bounded message view exposes identity, capture coverage and generation completion alongside omission counts.
+`checkpoint_part_covered?(state, checkpoint_identity, :response | :thinking, full_value)` returns true only for a retained, completely captured, generation-complete projection with exactly matching explicit identity, exact nonempty whole content and zero omitted characters for that part.
+The identity must contain a backend id or message_index and come from the checkpoint's authoritative stream identity, never a local row ordinal, inferred turn or content match.
+The page/template uses this predicate with `RuntimeStream.message_identity/1` from checkpoint message metadata to suppress only an individually covered response or thinking part at render time.
+Missing checkpoint identity preserves the original part; local row ordinals, inferred turns and bounded-prefix equality never establish coverage, and raw history, tool details and full-message modals remain unchanged.
+`StreamPresentation.owned?/3` checks exact RuntimeStream agent/node ownership for parent render guards.
+`StreamPanel.stream_panel/1` accepts the `StreamWatch` assign as `stream`, shows separate bounded live excerpts with truthful activity/tool announcement labels, escapes content, and emits the parent-owned `retry_inspector_stream` event on transport failure.
+`#inspector-thinking` uses the existing skeleton shimmer and `#inspector-stream-cursor` uses a pulse only for authoritative LLM activity on an unfinished current projection (or the shimmer while awaiting its first projection), never lifecycle status or chunk presence.
+Both animations respect reduced-motion utilities, and every live article carries a stable `data-inspector-message="live-<message_index>"` marker inside the parent's scoped InspectorMessages root.
+The panel keeps bounded live excerpts separate from checkpoint history; attachment/resync limitations are documented below.
+
+## Inspector Streaming Integration & Core Constraints
+
+`agents_live.ex` attaches the selected connected agent through `StreamWatch`, forwards ready/delta/worker-monitor messages in the LiveView consumer process and renders `StreamPanel` alongside checkpoint history in `agents_live.html.heex`.
+Selection close/removal, node or target changes and termination detach the watch; serial worker bookkeeping and monotonic watch/history counters survive scope resets.
+A healthy watch, including its snapshot-pending interval, suppresses message-count-triggered whole-history reads.
+The snapshot seeds checkpoint history once, while tool results, yield and finish request coalesced asynchronous checkpoint-detail reconciliation.
+A successful history fetch drains at most one pending follow-up; a failed fetch or loader startup clears pending/loading state and exposes checkpoint-history Retry without automatic error retries or polling.
+History results use `{:agent_history_loaded, agent_id, node, history_seq, watch_token, result, modal_index}` and require matching selection, node, sequence and watch token; unscoped five-element results are ignored.
+The template's part-level overlap predicate is documented under Inspector Stream Presentation; checkpoint reconciliation does not reset live excerpts.
+The stable `agent-history-<id>` root uses `InspectorMessages`, with `data-inspector-scope` binding node/target/selection/watch/snapshot scope and stable `data-inspector-message` row markers without changing existing DOM ids.
+Only newly keyed rows animate, reduced motion is respected and history scrolling stays instant.
+
+Core transport and snapshot contracts live in `apps/evo_git/lib/evo_git/agent/stream/CONTEXT.md` and lifecycle/activity limitations in `apps/evo_git/lib/evo_git/agent/session/CONTEXT.md`.
+The current core snapshot has checkpointed messages and a broadcast sequence watermark but no in-flight coverage, so snapshot-plus-stale-sequence filtering alone cannot guarantee lossless, duplicate-free mid-turn attachment.
+Atomic replacement of obsolete live excerpts requires a sequence-consistent snapshot with complete in-flight text/thinking coverage or an explicit checkpoint coverage watermark, plus consumer-side buffering/replay of newer deltas; history-only reconciliation cannot safely reset excerpts or repair missing chunks.
+Current deltas expose text/thinking chunks and tool id/name/status but not tool arguments, result bodies or full history-message changes, and lifecycle phase does not distinguish thinking/generating/tool execution/waits.
+The inspector accepts optional authoritative activity, identity and coverage metadata as documented above, but this consumer support does not guarantee that the core publishes it.
+Truthful activity requires a session-owned runtime-activity contract in snapshot and ordered deltas, including exhaustive terminal transitions; absent metadata stays unavailable rather than being inferred.
+The inspector uses its own bounded `RuntimeStream` reducer rather than the Assistant's capped bubble-oriented `Delta` reducer (`../home_live/CONTEXT.md`), and neither is a lossless history model.
+
 ## Send-Message Flow (in `agents_live.ex` + `agents_live.html.heex`)
 
 - **Event handlers in `agents_live.ex`**: `open_send_message` (sets `send_message_agent_id` + clears `send_message_text`), `close_send_message`, `validate_send_message` (`phx-change` syncs `@send_message_text`), **`send_agent_message`** — the submit handler. Params: `%{"agent_id" => id, "message" => message}` (hidden input heex line 670 + textarea). It calls `EvoDash.NodeContext.send_user_message(node, agent_id, message)` through the private `send_user_message_safely/3`, which wraps the call in `EvoDash.SafeCall.run/1` and FLATTENS the wrapper (a call timeout / dead scheduler becomes `{:error, reason}` instead of exiting the LiveView).
@@ -92,11 +176,11 @@ Node fills, edge strokes, status palettes (`EvoDashWeb.Helpers.agent_status_svg_
 
 ## Agent-detail Panel (right column)
 
-The right column renders `#agent-detail-<id>` for the selected agent — a pure read of `@agents` (`Enum.find/2` on `@selected_agent_id`) with no async work of its own.
+The right column renders `#agent-detail-<id>` from the selected row in `@agents` (`Enum.find/2` on `@selected_agent_id`); selected-agent watch and checkpoint-history loads run asynchronously under the integration contract above.
 Header: the `task_local_id`/`id` title, the status badge (`Helpers.agent_status_bg/1` + icon/label/uppercased label), the Send Message button (only for a `:running`/`:waiting`/`:pending`/`:blocked` agent) and Close.
 Identity and spec grid: Agent Module, Model (`agent.model_label || gettext("N/A")` — the `EvoDashWeb.ModelLabel` derivation), Context Path, Objective (first 150 chars + the full-objective modal), Worktree, Task ID/Depth/Retries, Base/Current Commit chips and Parent/Children links.
 The collapsible "Token and Cost" section (`toggle_usage`): Input/Output/Total Tokens, Cached Tokens + Cache Hit Rate, the Context tile (`ContextMeter.build/1` meter) and Input/Output/Total Cost plus the cost-estimate notice.
-The "Chat History / Session Memory" panel (`#agent-history-<id>`, fed by `OptimisticMessages.merge/2`) follows it and ends the panel.
+The "Chat History / Session Memory" panel (`#agent-history-<id>`) follows it, rendering separate live excerpts through `StreamPanel` and checkpoint history fed by `OptimisticMessages.merge/2` with the identity/coverage overlap guard above.
 Empty states: `gettext("Select an agent to view details")` with no selection, `gettext("Agent not found")` for a stale id.
 The page subscribes to the `"agents"` PubSub topic for its tree/detail updates — see the Agent Event Contract below.
 

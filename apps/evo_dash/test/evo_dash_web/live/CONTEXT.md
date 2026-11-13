@@ -21,6 +21,10 @@ No page or unit suite writes the config dir BEAM-globally: it is isolated per pr
 - `./tasks_live_test.exs` (86, `async: false`) → cross-project task list: search/filter, pagination, cancel/force-kill modals, `:cancelling` display, debounced reloads, exit-safe page loads, lazy per-card detail + archive, server-side `session_mode` filter.
 - `./agents_live_test.exs` (70, `async: true`) → agent tree (node-aware async loads, push-driven refresh), the left-panel view switcher + TEMPORAL commit-history view, the compression threshold, the context meter and `LoadData`.
 - `./agents_live/` → `commit_graph_test.exs` (63), `commit_graph_refresh_test.exs` (11), `context_meter_test.exs` (13) and `tool_call_display_test.exs` (10) — `./agents_live/CONTEXT.md`.
+- `./agents_stream_integration_test.exs` → five synchronous mounted inspector-stream integration tests covering watch/snapshot/delta delivery, activity, cleanup, no watched history-count refetch and checkpoint failure/retry.
+- `./agents_stream_render_test.exs` → fourteen async public page-render contracts for stream presentation, capture-aware no-thinking verdicts and per-message animation API/scope.
+- `./agents_stream_watch_lifecycle_test.exs` → seven synchronous real `StreamWatch` worker lifecycle tests using an isolated spawned consumer and a connected hand-built socket, not a mounted page.
+  The forcing globals are the BEAM-global `:agents_watch_runner` / `:agents_unwatch_runner` seams, snapshotted and restored only after the consumer and its supervised workers have exited.
 - `./processes_live_test.exs` (23, `async: false` `EvoDashWeb.ProcessesLiveTest`) → the managed-process `/processes` page: status/kind/free-text/agent-id/task-id URL filters, the five node-tagged `"processes"` PubSub events applied without refetching, pause/resume, the reason-required Terminate/Kill modal, control-error flashes, the load-error + Retry state, and row expansion with the control log.
 - `./home_live_render_test.exs` → sixteen `async: true` pure page-template contracts via `render_component(&HomeLive.render/1, assigns)` covering empty/restored conversations, actionable suggestions, composer accessibility/keyboard wiring, Send/Stop states, the awaiting-input/ended/cancelling session composer states, queued echoes and the interrupt affordance, the conversation rail (rows plus its empty and load-error states), local-source gating and the fused-capsule drill-down DOM without an `/assistant` mount or global ChatHistory writes; the rendered section body is `#chat-session-list` with NO `<h2>` of its own, because the "Conversations" header belongs to the app layout.
 - `./approval_dialog_render_test.exs` → seventeen `async: true` pure `ApprovalDialog` render contracts: the fixed-height `#approval-status-bar` idle-versus-pending shape with its count badge + Review button, the preserved recovery/response error notices, the `dialog#approval-dialog` shell, title/summary/body per kind and tier, byte-exact evaluator code, write-versus-sudo authority, request-id-only decision payloads, busy controls, the request's own `:warning` block (any tier, never duplicated), and `view/2` position/stepping bounds.
@@ -113,6 +117,23 @@ Switching to `:commits` lazily fetches the TEMPORAL graph through `:agents_commi
 The fetch is TASK-SCOPED and stale-guarded on the viewed node plus `seq < commit_graph_seq`; `{:error, reason}` KEEPS the last good graph and only sets `commit_graph_error`.
 `@retained_agents` keeps an ended agent's last-known map (`ended: true`) so its graph entry, rows and START/END annotations survive removal while the agent TREE shows only `@agents`.
 Page-level ids, the lane/edge/row contract, the partial-success + fingerprint-gate wiring and the two production behaviours the tests work around: `./agents_live/CONTEXT.md`.
+
+## Notes for Agents — inspector stream lifecycle and integration boundary
+
+`agents_stream_watch_lifecycle_test.exs` exercises real public `StreamWatch.attach/2`, `detach/1` and `ready/5` calls in an isolated connected consumer, with actual supervised serial workers rather than fabricated worker-command capture.
+Its synchronous module owns the BEAM-global `:agents_watch_runner` / `:agents_unwatch_runner` seams; every RPC blocks on a reference-specific release handshake, and all consumer/worker cleanup is monitored and awaited before restoring the seams.
+The runner handshakes pin the consumer pid (the LiveView-equivalent subscriber), never the worker pid, and the exact next RPC identity/order across blocked A→B→A coalescing, obsolete-registration cleanup before reattach, detach and same-id node switches.
+Consumer death is covered both after registration and while registration is blocked, including late-success unregister and normal worker exit.
+Error results, exits, exceptions and malformed registration results must clean up and permit retry on the same worker; failed unregister logs once without retrying or blocking the next selection.
+Negative RPC probes occur only after the worker's terminal DOWN, not after an arbitrary quiet window, and teardown owner monitors release blocked test runners even when an assertion fails.
+The child async `agents_live/stream_watch_test.exs` covers pure snapshot/replay and worker-command boundaries, not real RPC ordering or consumer-death cleanup.
+`agents_stream_integration_test.exs` covers the mounted `/agents` inspector-stream path through actual selection/watch seams, buffered snapshot replay, stale/duplicate/foreign deltas, authoritative LLM/tools phases, and suppression of message-count history refetch while watched.
+Its five mounted tests also pin selection/close/local-to-remote URL-patch cleanup and checkpoint reconciliation failure with retained content and explicit retry.
+The module is synchronous because its global app-env runner seams overlap the existing async page suites, and monitored consumer/worker teardown completes before those seams are restored.
+`agents_stream_render_test.exs` has fourteen async tests exercising the public `AgentsLive.render/1` without mounting or mutating global state.
+It pins response/thinking separation, authoritative activity, no-thinking only after completed generation with explicit complete thinking capture, and stable per-message animation identities, attachment scope, disclosure/expansion and checkpoint-part identity gates.
+Incomplete, omitted-thinking, late-start, failed and cancelled captures never establish a no-thinking verdict.
+Run all scoped inspector tests with `mix test apps/evo_dash/test/evo_dash_web/live/agents_live apps/evo_dash/test/evo_dash_web/live/agents*_test.exs` from the umbrella root.
 
 ## Notes for Agents — Home chat suite (`home_live_test.exs`)
 
