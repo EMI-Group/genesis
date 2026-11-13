@@ -37,9 +37,7 @@ Valid phases are `:idle`, `:llm_waiting`, `:llm`, `:llm_complete`, `:retry_wait`
 `{:phase, phase}` changes the phase and preserves the current call except that `:idle` clears it.
 `:reset` replaces the projection with idle and no call.
 Start, valid phase and reset events emit `{:activity, new_projection}` replacement public events.
-A replacement carries the COMPLETE nested `current_call.text` and `current_call.thinking` accumulated so far, so consumers replace both buffers rather than appending them again and clear both when `current_call` is nil.
 `{:chunk, id, :text | :thinking, binary}` appends only to the matching current call and emits the existing `{:text | :thinking, binary}` public append event, not a replacement.
-The batcher preserves emission order without collapsing replacements or append events, so a consumer applies every event sequentially even when a chunk, full replacement and reset share one batch.
 Stale call identities, invalid phases, malformed chunks and unknown events are no-ops.
 Start-call validation checks only that the id is binary, not that it is nonempty or that turn/attempt are nonnegative integers; matching chunks are accepted in every phase while a current call remains, including `:llm_complete` and `:tools`.
 Unkeyed `{:phase, phase}` and `:reset` events have no call-id validation, so stale-worker rejection belongs to the session rather than this projection.
