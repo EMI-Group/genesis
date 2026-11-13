@@ -678,7 +678,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
                    "Terminal thought after suspension"
 
           assert length(Regex.scan(~r/Terminal answer after suspension/, render(view))) == 1
-          assert text(view, "#agent-detail-#{id}") =~ "Done"
+          assert text(view, "#agent-detail-#{id}") =~ "DONE"
           refute has_element?(view, "#inspector-stream-cursor")
           refute has_element?(view, "#inspector-stream article")
 
