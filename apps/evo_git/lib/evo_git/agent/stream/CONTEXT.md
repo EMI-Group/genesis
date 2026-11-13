@@ -65,6 +65,9 @@ The delta vocabulary has no explicit LLM-attempt start/end, retry identity, slot
 A streamed `{:tool_call, nil, name}` is a model declaration, not an execution start, and the later id-bearing declaration still precedes dispatch rather than establishing an individual tool task's running lifetime.
 `Snapshot.from/2` copies only checkpointed messages and has no live text/thinking accumulator or current execution activity field, even though `seq` is the current transport sequence.
 Consequently a mid-turn snapshot cannot reconstruct content already broadcast during that unfinished turn, and dropping batches at or below its sequence only reconciles the checkpointed transcript, not an in-flight streaming bubble.
+The 75 ms batcher also holds accepted but unpublished events outside the current `event_seq`, so a future live accumulator applied on receipt cannot be returned under that sequence without first settling the pending batch or otherwise excluding its unsequenced contents.
+A future reset/current-call projection must distinguish individual LLM attempts and checkpoint adoption, because existing `:text`/`:thinking` deltas have neither attempt identity nor a reset event, and a retry can otherwise concatenate failed partial text with the next attempt.
+Complete mid-attempt attachment is impossible under the existing no-watchers callback gate because the unwatched prefix was never captured, so full live resync requires changing capture independently of the publication gate or explicitly advertising incomplete content.
 ## Constraints
 Gap repair is always a fresh `snapshot/1` + `stale?/2`, never a replay.
 `:interrupt` requires an installed stream callback to pre-empt the in-flight turn: with zero watchers there are no callbacks, so it degrades to next-turn-boundary semantics — the message is still delivered exactly once through the pending-message transport and is never lost.
