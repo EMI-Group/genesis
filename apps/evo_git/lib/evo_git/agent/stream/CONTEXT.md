@@ -21,12 +21,16 @@ Watch and snapshot commands are served in `:running`, `:cancelling` and `:awaiti
 RemoteAPI's `register_watcher/2`, `unregister_watcher/2` and `watch_snapshot/1` delegate to the same implementation on the owning node, while RemoteNode subscribes the consumer on its own node before RPC registration.
 Invalid consumer pids are refused as `{:error, {:not_found, :invalid_consumer}}` for registration and ignored for unregistration.
 `Snapshot.from(state, phase, opts \\ [])` copies checkpointed transcript and summary fields, with `opts[:activity]` defaulting to `Activity.new/0`.
-`%Snapshot{}` fields are `agent_id`, `phase`, `seq`, `turn`, `total_tokens`, `usage`, `messages`, `mode`, `model_spec`, `compression_count` and `activity`.
+`%Snapshot{}` fields are `agent_id`, `phase`, `status`, `seq`, `turn`, `total_tokens`, `usage`, `messages`, `mode`, `model_spec`, `compression_count` and `activity`.
+`opts[:status]` supplies terminal status `:done | :failed`, defaulting to `nil` for existing callers.
 The snapshot is plain data, carries no `%ReqLLM.Context{}`, and exposes raw message structs rather than filtering the transcript.
 Consumers displaying only real user turns use `MessageMarker.user_authored?/1` and unwrap the first message's `<objective>`.
 The transcript remains checkpointed once per turn, while the activity option supplies the separate live call projection.
 Activity deltas carry no messages; consumers needing newly checkpointed transcript contents use a bounded one-shot snapshot resync, not periodic polling.
 The session flushes pending deltas after watch registration and before taking either a watch or snapshot reply, returning live activity, live session phase and post-flush seq as a consistent cut so consumers drop already-covered deltas without double-appending.
+For terminal watched-inspector handoff, the parent session sends one `{:agent_stream_closed, agent_id, snapshot, seq}` directly to each watcher before summary/result/removal.
+When watched and holding a `%State{}`, it builds `Snapshot.from(state, :done, activity: data.activity, status: final_status)` and explicitly sets `snapshot.seq` to the post-flush `event_seq`.
+The handoff consumes no sequence number and never publishes the full transcript through PubSub; retention and replay remain unchanged.
 
 ### Activity pure projection
 `Activity.new/0` returns `%{phase: :idle, current_call: nil}`.
