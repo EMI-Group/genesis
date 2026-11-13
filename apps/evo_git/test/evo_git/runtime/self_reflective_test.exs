@@ -97,6 +97,56 @@ defmodule EvoGit.Runtime.SelfReflectiveTest do
         assert spec.context_node.repo == tmp_dir
       end)
     end
+
+    test "an absent :persistent_state is omitted and dispatch-effective true" do
+      spec = SelfReflective.build_spec("x", source_root: "/nonexistent/dir", node_path: "./")
+
+      # Repo-less path is preserved.
+      assert spec.opts[:repo_less] == true
+      refute Keyword.has_key?(spec.opts, :persistent_state)
+      assert Keyword.get(spec.opts, :persistent_state, true) != false
+    end
+
+    test ":persistent_state nil stays present as nil and dispatch-effective true" do
+      spec =
+        SelfReflective.build_spec("x",
+          source_root: "/nonexistent/dir",
+          node_path: "./",
+          persistent_state: nil
+        )
+
+      assert Keyword.has_key?(spec.opts, :persistent_state)
+      assert spec.opts[:persistent_state] == nil
+      assert Keyword.get(spec.opts, :persistent_state, true) != false
+    end
+
+    test ":persistent_state true stays present and dispatch-effective true" do
+      spec =
+        SelfReflective.build_spec("x",
+          source_root: "/nonexistent/dir",
+          node_path: "./",
+          persistent_state: true
+        )
+
+      assert Keyword.has_key?(spec.opts, :persistent_state)
+      assert spec.opts[:persistent_state] == true
+      assert Keyword.get(spec.opts, :persistent_state, true) != false
+    end
+
+    test ":persistent_state false stays present and dispatch-effective false" do
+      spec =
+        SelfReflective.build_spec("x",
+          source_root: "/nonexistent/dir",
+          node_path: "./",
+          persistent_state: false
+        )
+
+      assert Keyword.has_key?(spec.opts, :persistent_state)
+      assert spec.opts[:persistent_state] == false
+
+      effective = Keyword.get(spec.opts, :persistent_state, true) != false
+      assert effective == false
+    end
   end
 
   describe "run/2" do
