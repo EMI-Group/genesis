@@ -29,6 +29,8 @@ All helpers that construct drafts are pure, and page event handlers own the loca
 The parent must reject mutation and connection-test events whenever `current_node_id` is non-nil, including disconnected targets temporarily resolving to the local BEAM.
 No onboarding path creates or edits legacy `llm.models`, and persistence must never write a resolved config snapshot with migration-generated profiles or runtime defaults.
 Save and connection test both run fresh raw-config preflight before credential writes, and only save persists the resulting config.
+`read_config/0` is a direct `File.read/1` of `EvoGit.Config.config_path/0` decoded with `TomlElixir`, deliberately bypassing `EvoGit.Config.user_config/0` (its file cache and any in-RAM snapshot), so the read-modify-write always starts from disk truth.
+`write/1` only wraps its argument in `EvoDash.SafeCall.run/1`, returning the value or `{:error, reason}`; the actual disk write is always `EvoGit.Config.save_credentials/1` or `save_user_config/1`.
 Credential writes preceding config writes are not transactional and cannot be rolled back by this helper.
 Catalog entries are trusted server data, while model selections must remain constrained to the active provider and variant.
 Configuration, credentials, resolved profiles and generation parameters are server-only and must never enter browser persistence, push-event payloads or client data attributes.
