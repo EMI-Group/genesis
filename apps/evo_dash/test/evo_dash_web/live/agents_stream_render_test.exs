@@ -4,7 +4,7 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
   import Phoenix.LiveViewTest, only: [render_component: 2]
 
   alias EvoDashWeb.AgentsLive
-  alias EvoDashWeb.AgentsLive.RuntimeStream
+  alias EvoDashWeb.AgentsLive.{RuntimeStream, StreamPresentation}
 
   @agent_id 41
   @history "#agent-history-41"
@@ -77,10 +77,10 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
     |> Floki.parse_document!()
   end
 
-  defp watch(flight \\ nil, snapshot_fields \\ %{}) do
+  defp watch(call \\ call(), phase \\ :llm, snapshot_fields \\ %{}) do
     snapshot =
       Map.merge(
-        %{agent_id: @agent_id, seq: 10, phase: :running, activity: :llm, in_flight: flight},
+        %{agent_id: @agent_id, seq: 10, phase: :running, activity: activity(phase, call)},
         snapshot_fields
       )
 
@@ -98,15 +98,16 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
     }
   end
 
-  defp flight(overrides \\ %{}) do
+  defp activity(phase, call), do: %{phase: phase, current_call: call}
+
+  defp call(overrides \\ %{}) do
     Map.merge(
       %{
-        message_index: 7,
+        id: "render-call-2-1",
         turn: 2,
-        response: "Live response <not markup>",
-        thinking: "Live reasoning & evidence",
-        capture_coverage: :complete,
-        generation_complete: false
+        attempt: 1,
+        text: "Live response <not markup>",
+        thinking: "Live reasoning & evidence"
       },
       overrides
     )
@@ -137,14 +138,14 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
   defp scope(dom), do: attr(dom, "[phx-hook='InspectorMessages']", "data-inspector-scope")
 
   test "page presents live response and thinking separately from checkpoint history" do
-    dom = page(watch(flight()), agent: %{history: [checkpoint()]})
+    dom = page(watch(), agent: %{history: [checkpoint()]})
 
     assert text(dom, "#inspector-stream h4") == "Live activity"
-    assert text(dom, "#inspector-live-message-7 details summary") == "Thinking"
-    assert text(dom, "#inspector-live-message-7 details pre") == "Live reasoning & evidence"
-    assert text(dom, "#inspector-live-message-7 > div pre") == "Live response <not markup>"
-    assert text(dom, "#inspector-live-message-7 > div .font-medium") == "Response"
-    assert Floki.find(dom, "#inspector-live-message-7 pre not") == []
+    assert text(dom, "#inspector-live-message-0 details summary") == "Thinking"
+    assert text(dom, "#inspector-live-message-0 details pre") == "Live reasoning & evidence"
+    assert text(dom, "#inspector-live-message-0 > div pre") == "Live response <not markup>"
+    assert text(dom, "#inspector-live-message-0 > div .font-medium") == "Response"
+    assert Floki.find(dom, "#inspector-live-message-0 pre not") == []
 
     assert text(dom, "#agent-history-entry-41-0 .inspector-thinking .whitespace-pre-wrap") ==
              "Checkpoint reasoning"
@@ -155,9 +156,7 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
   end
 
   test "authoritative llm phase animates generation even after tool announcements and results" do
-    stream =
-      watch(flight())
-      |> batch([{:tool_call, "call-1", "read"}, {:tool_result, "call-1", :ok}])
+    stream = watch() |> batch([{:tool_call, "call-1", "read"}, {:tool_result, "call-1", :ok}])
 
     dom = page(stream)
     assert text(dom, "#inspector-activity") == "Generating response"
@@ -166,82 +165,67 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
     assert attr(dom, "#inspector-stream-cursor", "aria-hidden") == ["true"]
     assert attr(dom, "#inspector-thinking", "class") |> hd() =~ "motion-reduce:animate-none"
     assert attr(dom, "#inspector-stream-cursor", "class") |> hd() =~ "motion-reduce:animate-none"
-    assert text(dom, "#inspector-live-message-7 li") == "readCompleted"
+    assert text(dom, "#inspector-live-message-0 li") == "readCompleted"
   end
 
-  test "authoritative tools phase stops llm indicators without hiding response or thinking" do
-    dom =
-      watch(flight())
-      |> batch([{:activity, %{phase: :tools}}, {:thinking, " still retained"}])
-      |> page()
+  test "authoritative activity phases are independent of the running snapshot lifecycle" do
+    for phase <- [:idle, :llm_waiting, :llm, :llm_complete, :retry_wait, :tools] do
+      stream = watch(call(), phase)
+      dom = page(stream)
+      assert stream.state.phase == :running
+      assert stream.state.activity == phase
+      assert text(live(dom), "details pre") == "Live reasoning & evidence"
+      assert text(live(dom), "article > div pre") == "Live response <not markup>"
+      assert Floki.find(dom, "#inspector-thinking") != [] == (phase == :llm)
+      assert Floki.find(dom, "#inspector-stream-cursor") != [] == (phase == :llm)
+    end
 
+    dom = watch() |> batch([{:activity, activity(:tools, call())}]) |> page()
     assert text(dom, "#inspector-activity") == "Executing tools"
-    assert Floki.find(dom, "#inspector-thinking, #inspector-stream-cursor") == []
-
-    assert text(dom, "#inspector-live-message-7 details pre") ==
-             "Live reasoning & evidence still retained"
-
-    assert text(dom, "#inspector-live-message-7 > div pre") == "Live response <not markup>"
   end
 
-  test "missing activity never infers generation or tools from chunks or running lifecycle" do
+  test "missing activity never infers a call from chunks, tool announcements or running lifecycle" do
     dom =
-      watch(nil, %{activity: nil})
+      watch(nil, :idle, %{activity: nil})
       |> batch([
-        {:thinking, "Observed thought"},
-        {:text, "Observed reply"},
+        {:thinking, "Unowned thought"},
+        {:text, "Unowned reply"},
         {:tool_call, "c", "rg"}
       ])
       |> page()
 
     assert text(dom, "#inspector-activity") == "Activity unavailable"
     assert Floki.find(dom, "#inspector-thinking, #inspector-stream-cursor") == []
-    assert text(live(dom), "details pre") == "Observed thought"
-    assert text(live(dom), "article > div pre") == "Observed reply"
-    assert text(live(dom), "li") == "rgAnnounced"
+    assert Floki.find(live(dom), "article") == []
+    refute text(live(dom), "pre") =~ "Unowned"
   end
 
-  test "no-thinking notice requires completed generation, explicit complete capture and empty thinking" do
-    for generation_complete <- [false, true], capture_coverage <- [:partial, :complete] do
-      dom =
-        flight(%{
-          thinking: "",
-          generation_complete: generation_complete,
-          capture_coverage: capture_coverage
-        })
-        |> watch()
-        |> page()
+  test "no-thinking notice requires successful generation and explicitly captured empty thinking" do
+    for phase <- [:llm, :llm_complete, :retry_wait, :tools], complete? <- [false, true] do
+      current = call(%{thinking: ""})
+      current = if complete?, do: current, else: Map.delete(current, :thinking)
+      dom = watch(current, phase) |> page()
 
       notices =
         Floki.find(live(dom), "article > p")
         |> Enum.map(&Floki.text/1)
         |> Enum.map(&String.trim/1)
 
-      expected =
-        if generation_complete and capture_coverage == :complete, do: [@no_thinking], else: []
-
-      assert notices == expected,
-             "generation_complete=#{generation_complete}, capture_coverage=#{capture_coverage}"
-
+      expected = if phase in [:llm_complete, :tools] and complete?, do: [@no_thinking], else: []
+      assert notices == expected, "phase=#{phase}, explicit thinking=#{complete?}"
       assert Floki.find(live(dom), "details") == []
       assert text(live(dom), "article > div pre") == "Live response <not markup>"
     end
   end
 
-  test "missing thinking in a purported complete snapshot cannot fabricate no-thinking" do
-    dom =
-      flight(%{generation_complete: true})
-      |> Map.delete(:thinking)
-      |> watch()
-      |> page()
-
+  test "missing response in a completed snapshot cannot fabricate complete capture" do
+    dom = call(%{thinking: ""}) |> Map.delete(:text) |> watch(:llm_complete) |> page()
     refute text(live(dom), "article") =~ @no_thinking
     assert Floki.find(live(dom), "details") == []
-    assert text(live(dom), "article > div pre") == "Live response <not markup>"
   end
 
   test "completed captured thinking stays visible and never receives a no-thinking notice" do
-    dom = watch(flight(%{generation_complete: true})) |> page()
+    dom = watch(call(), :llm_complete) |> page()
 
     assert text(live(dom), "details pre") == "Live reasoning & evidence"
     assert text(live(dom), "article > div pre") == "Live response <not markup>"
@@ -249,104 +233,95 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
     assert Floki.find(dom, "#inspector-thinking, #inspector-stream-cursor") == []
   end
 
-  test "a late message-start cannot turn a partially captured text-only answer into no-thinking" do
-    dom =
-      watch(flight(%{thinking: "", capture_coverage: :partial}))
-      |> batch([{:message_start, %{message_index: 7, turn: 2}}, {:turn, %{turn: 2}}])
-      |> page()
-
-    refute text(live(dom), "article") =~ @no_thinking
-    assert text(live(dom), "article > div pre") == "Live response <not markup>"
-    assert Floki.find(live(dom), "details") == []
-  end
-
-  test "failed or cancelled lifecycle is not proof that thinking generation completed" do
+  test "turn accounting and lifecycle failure do not establish successful generation" do
     for status <- [:failed, :cancelled] do
-      dom =
-        watch()
-        |> batch([
-          {:message_start, %{message_index: 8, turn: 3}},
-          {:text, "Unfinished response"},
-          {:finished, status}
-        ])
-        |> page()
+      stream = watch(call(%{thinking: ""})) |> batch([{:turn, %{turn: 2}}])
+      refute text(page(stream) |> live(), "article") =~ @no_thinking
 
+      dom = stream |> batch([{:finished, status}]) |> page()
       refute text(live(dom), "article") =~ @no_thinking
-      assert text(live(dom), "article > div pre") == "Unfinished response"
+      assert text(live(dom), "article > div pre") == "Live response <not markup>"
       assert Floki.find(dom, "#inspector-thinking, #inspector-stream-cursor") == []
     end
   end
 
-  test "a fully observed empty-thinking message gains a notice only when its generation ends" do
-    stream =
-      watch()
-      |> batch([{:message_start, %{message_index: 8, turn: 3}}, {:text, "Text-only answer"}])
-
+  test "full replacements retain a stable key but replace rather than duplicate accumulated chunks" do
+    current = call(%{thinking: "", text: "Text-only"})
+    stream = watch(current) |> batch([{:text, " answer"}])
     refute text(page(stream) |> live(), "article") =~ @no_thinking
 
-    dom = stream |> batch([{:turn, %{turn: 3}}]) |> page()
+    complete = %{current | text: "Text-only answer"}
+    stream = batch(stream, [{:activity, activity(:llm_complete, complete)}])
+    dom = page(stream)
     assert text(live(dom), "article > p") == @no_thinking
     assert text(live(dom), "article > div pre") == "Text-only answer"
+    assert messages(dom) == ["live-0"]
     assert Floki.find(dom, "#inspector-thinking, #inspector-stream-cursor") == []
+
+    repeated = batch(stream, [{:activity, activity(:llm_complete, complete)}]) |> page()
+    assert text(live(repeated), "article > div pre") == "Text-only answer"
+    assert messages(repeated) == messages(dom)
   end
 
-  test "message animation keys are unique, stable across chunks, and wrap both parts and expansion" do
-    first = watch(flight())
+  test "animation keys are stable across chunks and replacements but a retry replaces the old call" do
+    first = watch()
     updated = batch(first, [{:text, " plus more"}, {:thinking, " plus evidence"}])
     first_dom = page(first)
     updated_dom = page(updated)
 
     assert attr(first_dom, @history, "phx-hook") == ["InspectorMessages"]
     assert attr(first_dom, "[phx-hook='InspectorMessages']", "id") == ["agent-history-41"]
-    assert messages(first_dom) == ["live-7"]
+    assert messages(first_dom) == ["live-0"]
     assert messages(updated_dom) == messages(first_dom)
     assert scope(updated_dom) == scope(first_dom)
 
     assert attr(updated_dom, "#{@history} [data-inspector-message]", "id") ==
-             ["inspector-live-message-7"]
+             ["inspector-live-message-0"]
 
-    assert Floki.find(updated_dom, "#inspector-live-message-7 details[open]") == []
-    assert text(updated_dom, "#inspector-live-message-7 details summary") == "Thinking"
+    assert Floki.find(updated_dom, "#inspector-live-message-0 details[open]") == []
+    assert text(updated_dom, "#inspector-live-message-0 details summary") == "Thinking"
 
-    assert text(updated_dom, "#inspector-live-message-7 details pre") ==
+    assert text(updated_dom, "#inspector-live-message-0 details pre") ==
              "Live reasoning & evidence plus evidence"
 
-    assert text(updated_dom, "#inspector-live-message-7 > div pre") ==
+    assert text(updated_dom, "#inspector-live-message-0 > div pre") ==
              "Live response <not markup> plus more"
 
-    assert Floki.find(updated_dom, "#inspector-live-message-7 details [data-inspector-message]") ==
+    assert Floki.find(updated_dom, "#inspector-live-message-0 details [data-inspector-message]") ==
              []
 
-    assert Floki.find(updated_dom, "#inspector-live-message-7 [phx-hook]") == []
+    assert Floki.find(updated_dom, "#inspector-live-message-0 [phx-hook]") == []
     assert Floki.find(updated_dom, "#{@history} .inspector-message-enter") == []
 
-    second =
-      updated
-      |> batch([
-        {:turn, %{turn: 2}},
-        {:message_start, %{message_index: 9, turn: 3}},
-        {:text, "Second response"},
-        {:thinking, "Second thought"}
-      ])
-      |> page()
+    replacement = call(%{text: "Replacement response", thinking: "Replacement thought"})
+    replaced = batch(updated, [{:activity, activity(:retry_wait, replacement)}])
+    assert messages(page(replaced)) == ["live-0"]
+    assert text(live(page(replaced)), "article > div pre") == "Replacement response"
 
-    assert messages(second) == ["live-7", "live-9"]
+    retry =
+      call(%{
+        id: "render-call-2-2",
+        attempt: 2,
+        text: "Retry response",
+        thinking: "Retry thought"
+      })
 
-    assert attr(second, "#{@history} [data-inspector-message]", "id") ==
-             ["inspector-live-message-7", "inspector-live-message-9"]
+    second = replaced |> batch([{:activity, activity(:llm, retry)}]) |> page()
+    assert messages(second) == ["live-1"]
 
-    assert text(second, "#inspector-live-message-7 details pre") ==
-             "Live reasoning & evidence plus evidence"
+    assert attr(second, "#{@history} [data-inspector-message]", "id") == [
+             "inspector-live-message-1"
+           ]
 
-    assert text(second, "#inspector-live-message-9 details pre") == "Second thought"
-    assert text(second, "#inspector-live-message-9 > div pre") == "Second response"
+    assert Floki.find(second, "#inspector-live-message-0") == []
+    assert text(second, "#inspector-live-message-1 details pre") == "Retry thought"
+    assert text(second, "#inspector-live-message-1 > div pre") == "Retry response"
     assert attr(second, "#inspector-stream-cursor", "id") == ["inspector-stream-cursor"]
-    assert Floki.find(second, "#inspector-live-message-7 #inspector-stream-cursor") == []
-    assert Floki.find(second, "#inspector-live-message-9 #inspector-stream-cursor") != []
+    assert Floki.find(second, "#inspector-live-message-1 #inspector-stream-cursor") != []
   end
 
   test "animation scope includes target, node, agent, attachment token and snapshot baseline" do
-    stream = watch(flight())
+    stream = watch()
     assert scope(page(stream)) == ["local:#{node()}:41:3:10"]
 
     assert scope(page(stream, current_node_id: "remote-target", current_node: :remote@host)) ==
@@ -363,49 +338,76 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
     assert Floki.find(page(nil), "#inspector-stream") == []
   end
 
-  test "checkpoint coverage is identity-gated and independently scoped to response and thinking" do
-    flight = flight(%{generation_complete: true})
-    stream = watch(flight)
-    entry = checkpoint(flight.response, flight.thinking)
+  test "checkpoint parts are never guessed away; explicit retirement leaves one authoritative copy" do
+    current = call()
+    stream = watch(current, :llm_complete)
+    entry = checkpoint(current.text, current.thinking)
     row = "#agent-history-entry-41-0"
 
-    # Matching text alone is not proof that a live excerpt covers a checkpoint.
-    unowned = page(stream, agent: %{history: [entry]})
-    assert text(unowned, "#{row} .inspector-thinking .whitespace-pre-wrap") == flight.thinking
-    assert words(unowned, "#{row} .text-sm") == "Response " <> flight.response
-    assert Floki.find(unowned, "#{row} > .space-y-2 > p") == []
-
-    owned = put_in(entry, [:data, :metadata], %{message_index: 7, turn: 2})
-    response_only = put_in(owned, [:data, :reasoning_details], [%{text: "Different reasoning"}])
-    dom = page(stream, agent: %{history: [response_only]})
-    assert text(dom, "#{row} > .space-y-2 > p") == "Response shown in live activity above."
-    assert Floki.find(dom, "#{row} .text-sm") == []
-    assert text(dom, "#{row} .inspector-thinking .whitespace-pre-wrap") == "Different reasoning"
-
-    thinking_only = put_in(owned, [:data, :content], "Different response")
-    dom = page(stream, agent: %{history: [thinking_only]})
-    assert Floki.find(dom, "#{row} .inspector-thinking") == []
-    assert words(dom, "#{row} .text-sm") == "Response Different response"
+    # Even apparent matching metadata cannot establish checkpoint coverage.
+    # Call ids belong to live attempts; history has no producer coverage watermark.
+    entry = put_in(entry, [:data, :metadata], %{id: current.id, message_index: 0, turn: 2})
+    dom = page(stream, agent: %{history: [entry]})
+    assert text(dom, "#{row} .inspector-thinking .whitespace-pre-wrap") == current.thinking
+    assert words(dom, "#{row} .text-sm") == "Response " <> current.text
     assert Floki.find(dom, "#{row} > .space-y-2 > p") == []
 
-    # Partial attachment must preserve BOTH checkpoint parts, even with identity
-    # and exact text equality; excerpt overlap cannot establish full capture.
-    partial = watch(%{flight | capture_coverage: :partial})
-    dom = page(partial, agent: %{history: [owned]})
-    assert text(dom, "#{row} .inspector-thinking .whitespace-pre-wrap") == flight.thinking
-    assert words(dom, "#{row} .text-sm") == "Response " <> flight.response
-    assert Floki.find(dom, "#{row} > .space-y-2 > p") == []
+    retired = batch(stream, [{:activity, activity(:idle, nil)}])
+    dom = page(retired, agent: %{history: [entry]})
+    assert messages(dom) == ["0-#{:erlang.phash2(entry)}"]
+    assert Floki.find(live(dom), "article") == []
+    assert text(dom, "#{row} .inspector-thinking .whitespace-pre-wrap") == current.thinking
+    assert words(dom, "#{row} .text-sm") == "Response " <> current.text
+    assert length(Floki.find(dom, "#{row}")) == 1
+
+    # Neither yield text nor unowned chunks can resurrect a retired call.
+    late =
+      batch(retired, [
+        {:text, current.text},
+        {:thinking, current.thinking},
+        {:yield, current.text}
+      ])
+
+    assert messages(page(late, agent: %{history: [entry]})) == messages(dom)
+  end
+
+  test "large full replacements remain bounded and retirement clears all live excerpts" do
+    cap = RuntimeStream.max_text_bytes()
+
+    current =
+      call(%{text: String.duplicate("x", cap + 37), thinking: String.duplicate("y", cap + 19)})
+
+    stream = watch(current, :llm_complete)
+    repeated = batch(stream, [{:activity, activity(:llm_complete, current)}])
+    assert byte_size(repeated.state.response) == cap
+    assert byte_size(repeated.state.thinking) == cap
+    assert [projection] = repeated.state.projections
+    assert projection.omitted_response_bytes == 37
+    assert projection.omitted_thinking_bytes == 19
+    dom = page(repeated)
+
+    assert String.length(text(live(dom), "article > div pre")) ==
+             StreamPresentation.max_characters()
+
+    assert String.length(text(live(dom), "details pre")) == StreamPresentation.max_characters()
+    refute text(live(dom), "article") =~ @no_thinking
+
+    retired = batch(repeated, [{:activity, activity(:idle, nil)}])
+    assert retired.state.projections == []
+    assert retired.state.response == ""
+    assert retired.state.thinking == ""
+    assert Floki.find(live(page(retired)), "article") == []
   end
 
   test "checkpoint entries retain independent animation keys and full-message expansion payloads" do
     response = String.duplicate("Response body ", 30)
     thinking = String.duplicate("Thinking body ", 30)
     entry = checkpoint(response, thinking)
-    stream = watch(flight())
+    stream = watch()
     dom = page(stream, agent: %{history: [entry]}, selected_history_entry: entry)
     row = "#agent-history-entry-41-0"
 
-    assert messages(dom) == ["live-7", "0-#{:erlang.phash2(entry)}"]
+    assert messages(dom) == ["live-0", "0-#{:erlang.phash2(entry)}"]
     assert attr(dom, "#{row} button[phx-click='view_full_message']", "phx-value-index") == ["0"]
 
     assert text(dom, "#{row} .inspector-thinking .whitespace-pre-wrap") ==
