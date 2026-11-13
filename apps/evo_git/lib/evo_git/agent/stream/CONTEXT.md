@@ -46,6 +46,7 @@ The process-local keys are `:evogit_stream_session`, `:evogit_stream_agent_id`, 
 `start_turn(turn)` records the turn and resets activity; `start_call(attempt)` allocates a unique string id, records it, emits start-call for the recorded turn (default 0), and returns the id.
 `call_phase(id, phase)`, `phase(phase)` and `reset/0` emit internal activity events to the session as `{:activity, worker_pid, event}`.
 `stream_opts/0` returns [] only without an installed sink, otherwise the four callbacks `on_result`, `on_thinking`, `on_tool_call` and `on_chunk`, irrespective of watcher count.
+ReqLLM.StreamResponse.process_stream/2 passes `chunk.text` binaries to `on_result` and `on_thinking`, but the full tool-call chunk to `on_tool_call`, matching Sink's callback shapes (`deps/req_llm/lib/req_llm/stream_response.ex`, `invoke_callbacks/2`).
 Text and thinking closures capture session pid, worker pid and call id at installation, so a late callback never acquires a newer attempt's identity by reading mutable process-local state.
 The interrupt callback is always installed with a sink and consumes `{:evogit_interrupt, ref}` in the worker, raising `%Interrupted{}` for ReqLLM to return as an error.
 `interrupt_requested?/0` is a non-blocking consuming peek, and `clear_interrupt/0` drains stale signals at exchange start.
