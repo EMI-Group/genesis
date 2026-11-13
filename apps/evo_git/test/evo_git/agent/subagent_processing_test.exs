@@ -580,6 +580,162 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
   end
 
+  describe "build_subagent_specs/3 — persistent_state inheritance" do
+    alias EvoGit.Agent.State
+    alias EvoGit.AgentSpec
+    alias EvoGit.AgentScheduler.AgentState
+    alias EvoGit.Core.ContextNode
+
+    # `DummyAgentModule` is defined ONCE, inside the model_id-inheritance
+    # describe above it: a `defmodule` inside `describe` is still a module-level
+    # definition, so its full name is file-wide and is REUSED here instead of
+    # redefined (a second definition would be a redefinition warning).
+    @dummy_agent_module EvoGit.Agent.SubagentProcessingTest.DummyAgentModule
+
+    setup do
+      # Ensure the ETS table exists (app may already create it)
+      if :ets.whereis(:evogit_agent_summary) == :undefined do
+        :ets.new(:evogit_agent_summary, [:set, :public, :named_table])
+      end
+
+      agent_id = 9_900_000 + :erlang.unique_integer([:positive])
+
+      parent_state = %AgentState{
+        context_node: %ContextNode{path: "./", repo: "/test/repo"},
+        current_commit: "abc123",
+        llm_model: "test-model",
+        max_retries: 3,
+        max_depth: 5,
+        model_id: "claude-sonnet"
+      }
+
+      :ets.insert(:evogit_agent_summary, {agent_id, parent_state})
+
+      previous_repo_path = Process.get(:repo_path)
+      Process.put(:repo_path, "/test/repo")
+
+      on_exit(fn ->
+        :ets.delete(:evogit_agent_summary, agent_id)
+
+        if previous_repo_path do
+          Process.put(:repo_path, previous_repo_path)
+        else
+          Process.delete(:repo_path)
+        end
+      end)
+
+      %{agent_id: agent_id}
+    end
+
+    test "child spec inherits persistent_state: true from the parent", %{agent_id: agent_id} do
+      state = %State{
+        agent_id: agent_id,
+        agent_module: @dummy_agent_module,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: [],
+        persistent_state: true
+      }
+
+      call =
+        ReqLLM.ToolCall.new(
+          "call_1",
+          "subagent_investigator",
+          ~s({"path":"./src","objective":"investigate src"})
+        )
+
+      [spec] = SubagentProcessing.build_subagent_specs([{call, 0}], state, %{})
+
+      assert %AgentSpec{} = spec
+      assert Keyword.fetch!(spec.opts, :persistent_state) == true
+    end
+
+    test "child spec inherits persistent_state: false from the parent", %{agent_id: agent_id} do
+      state = %State{
+        agent_id: agent_id,
+        agent_module: @dummy_agent_module,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: [],
+        persistent_state: false
+      }
+
+      call =
+        ReqLLM.ToolCall.new(
+          "call_1",
+          "subagent_investigator",
+          ~s({"path":"./src","objective":"investigate src"})
+        )
+
+      [spec] = SubagentProcessing.build_subagent_specs([{call, 0}], state, %{})
+
+      assert %AgentSpec{} = spec
+      # The key must be PRESENT and false — not merely absent/defaulted.
+      assert Keyword.fetch!(spec.opts, :persistent_state) == false
+    end
+
+    test "child spec follows the struct DEFAULT (false) when the parent never set the flag",
+         %{agent_id: agent_id} do
+      state = %State{
+        agent_id: agent_id,
+        agent_module: @dummy_agent_module,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: []
+      }
+
+      call =
+        ReqLLM.ToolCall.new(
+          "call_1",
+          "subagent_investigator",
+          ~s({"path":"./src","objective":"investigate src"})
+        )
+
+      [spec] = SubagentProcessing.build_subagent_specs([{call, 0}], state, %{})
+
+      assert %AgentSpec{} = spec
+      # Inheritance follows the state VALUE, not a hardcoded `true`.
+      assert Keyword.fetch!(spec.opts, :persistent_state) == false
+    end
+
+    test "every child of a two-subagent batch inherits persistent_state: true",
+         %{agent_id: agent_id} do
+      state = %State{
+        agent_id: agent_id,
+        agent_module: @dummy_agent_module,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: [],
+        persistent_state: true
+      }
+
+      calls = [
+        {ReqLLM.ToolCall.new(
+           "call_1",
+           "subagent_investigator",
+           ~s({"path":"./src","objective":"investigate src"})
+         ), 0},
+        {ReqLLM.ToolCall.new(
+           "call_2",
+           "subagent_investigator",
+           ~s({"path":"./lib","objective":"investigate lib"})
+         ), 1}
+      ]
+
+      specs = SubagentProcessing.build_subagent_specs(calls, state, %{})
+
+      assert length(specs) == 2
+      assert Enum.all?(specs, &match?(%AgentSpec{}, &1))
+
+      # The flag is threaded PER CHILD, not only for the first one.
+      assert Enum.map(specs, &Keyword.fetch!(&1.opts, :persistent_state)) == [true, true]
+    end
+  end
+
   describe "build_subagent_specs/3 — foreign repo phylo nodes" do
     alias EvoGit.Agent.State
     alias EvoGit.AgentSpec
