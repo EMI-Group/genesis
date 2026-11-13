@@ -44,6 +44,18 @@ The run is isolated (temp `HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_RUNTI
 - `desktop-smoke.sh` is wrapped by `writeShellApplication`, which runs `shellcheck` at build time — the script must stay shellcheck-clean (and it relies on the wrapper's `set -o errexit -o nounset -o pipefail`).
 - Keep the smoke test out of `checks` and out of CI, and never make `desktop-smoke.sh` build anything: it consumes `$GENESIS_DESKTOP_APP` (an already-built `packages.desktop`) only.
 
+## EGL / Mesa
+
+- The desktop package and the dev shell MUST resolve EGL from the flake's OWN `pkgs.mesa` via `__EGL_VENDOR_LIBRARY_DIRS=${mesa}/share/glvnd/egl_vendor.d` (the app wrapper uses `--set-default`, the shell exports it).
+- `libglvnd` has the vendor dirs `/run/opengl-driver/share/glvnd/egl_vendor.d:/etc/glvnd/egl_vendor.d:/usr/share/glvnd/egl_vendor.d` compiled in, so the HOST's mesa is tried first.
+- A host mesa built against a NEWER glibc than the flake's pin fails `dlopen(libEGL_mesa.so.0)` with `version 'GLIBC_2.43' not found`, leaving glvnd with no usable EGL vendor.
+- `eglGetDisplay` then returns `EGL_NO_DISPLAY` and WebKitWebProcess aborts with `Could not create default EGL display: EGL_BAD_PARAMETER`.
+- The symptom is a blank / never-loading WebView while the BEAM backend still serves HTTP 200, so it looks like a frontend bug rather than a graphics one.
+- Bundling mesa costs roughly 1 GiB of closure (`libgallium` + `llvm`); `mesa.override` trimming would drop the binary-cache hits, so it is deliberately NOT done.
+- `/run/opengl-driver` exists only on NixOS, so the override also keeps the package correct on non-NixOS hosts, where the flake's mesa is the only vendor dir available.
+- Do NOT set `EGL_PLATFORM` or any WebKit workaround env var: the vendor-dir override is the fix, and the tested alternatives did not help.
+- `WEBKIT_DISABLE_DMABUF_RENDERER=1` (dev shell) stays a separate, unrelated compositor workaround.
+
 ## Rust Binaries & New Native Payloads
 
 - The dev shell (`flake.nix` `devShells.default`) provides `cargo`/`rustc`/`rustfmt`/`clippy`; `nix/` itself contains no build logic.
