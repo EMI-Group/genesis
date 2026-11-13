@@ -146,6 +146,11 @@ The synthetic suites establish dashboard transport/presentation behavior; real p
 Its seven scenarios cover late attachment, inspector retirement/checkpoint reconciliation, real `read` tool success/error and ordered tool history, HTTP 503 retry with a fresh call id, truncated-SSE retry clearing abandoned text/thinking, actual remounts and per-answer thinking retention.
 The cohesive file-local TCP fixture and its tests remain below 1000 lines.
 All consumer, Session/exchange-worker and provider cleanup completes before restoring the forcing globals.
+The real-stream fixture starts both `AgentState.mode` and `Session.session_mode` as `:interactive`, routes scheduler notifications to the test process, and finishes every successful provider exchange at a nonterminal yield, so its current scenarios do not establish terminal delivery after Session process death.
+Its `agent_history/2` helper searches only the live `assigns.agents` list and `watchers/1` calls the live Session, so neither helper is safe as a post-removal assertion.
+No current live-page or helper regression sends the direct watcher message `{:agent_stream_closed, agent_id, snapshot, seq}`.
+The mounted Assistant silent-finish test supplies a successful second watch snapshot after the finished delta, so it does not exercise a disappeared Session or a failed in-flight reconciliation.
+The Agents retained-ended-agent suite preserves graph selection but explicitly permits the removed agent's detail panel to degrade to not-found; it does not pin terminal inspector history retention.
 
 ## Notes for Agents — Home chat suite (`home_live_test.exs`)
 
