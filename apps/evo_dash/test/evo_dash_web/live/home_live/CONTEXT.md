@@ -3,7 +3,7 @@
 ## Intent
 
 This directory tests the support modules and assistant component used by the `GET /assistant` chat page.
-All suites use `async: true` and avoid mounting HomeLive; only the approval runner suite owns the app-env seams documented below.
+All suites use `async: true` and avoid mounting HomeLive; the approval runner suite owns approval app-env seams and `session_actions_test.exs` owns the `:home_session_*_runner` seams it installs.
 ModelSelect config-loading tests use the existing per-process ConfigDir seam and unique files, never process-global environment changes.
 Fixtures resolve the concrete paths through `EvoGit.Config.config_dir/0` and `config_path/0`, because the isolation helper returns the override root rather than the final application directory.
 
@@ -97,6 +97,11 @@ A NON-EMPTY fetched history always wins: the cached transcript and reasoning are
 
 ### Push-only delta streaming coverage
 `delta_test.exs` pins the pure reducer `EvoDashWeb.HomeLive.Delta` (`new/3`, `seed/3`, `apply_batch/5`), including text/thinking/tool/turn/yield/finished folding, the 8 000-grapheme and 40-thought caps, and malformed-batch totality.
+Its snapshot fixtures assert only seq and turn, and no test in this directory sends an `:activity` event or asserts `current_call`, attempt identity or snapshot lifecycle phase.
+The `stream/3` helper always creates `Delta.new(7, node(), 0)`, so multi-batch tests passing only transcript/thought lists discard the previous reducer state rather than exercising a continuous watched stream.
+The thinking fixtures bucket by turn alone, and the tool fixture appends response text between a tool-call event and its result without modelling distinct LLM attempts or activity transitions.
+These fixtures do not establish compatibility with whole-replacement `%{phase:, current_call:}` activity, append-only text/thinking deltas, fresh retry call ids, unconditional pre-watch capture or completed-call retention through checkpoint retirement.
+There is no helper-level `Watch` lifecycle or real-session snapshot integration suite in this directory; those require the mounted or core-owned test boundary, not an async helper test that starts an unisolated session.
 The `describe "push-only delta streaming"` block of `../home_live_test.exs` mounts `/assistant?session=<id>`, drives the call-time `:home_agent_watch_runner` / `:home_agent_unwatch_runner` seams and broadcasts `{:agent_delta, agent_id, seq, batch}` on `"agent:<id>"`, pinning that the LiveView process itself subscribes and applies a published batch, that `seq <= snapshot.seq` batches are dropped through `EvoGit.Agent.Stream.stale?/2` while a newer seq applies, that another agent's delta is dropped, that the attach snapshot seeds the transcript and thought process, that thinking/tool/turn deltas reach both surfaces, that `:yield` parks the session and `:finished` ends it, that a watched session keeps `chat_fetch_seq` unchanged on a `{:agent_updated, …}` message-count change, and that New chat detaches through the unwatch runner.
 The page boundary is `EvoDashWeb.HomeLive.Watch` over `EvoDash.NodeContext.subscribe_agent_deltas/1`, `unsubscribe_agent_deltas/1`, `register_agent_watcher/3` and `unregister_agent_watcher/3`.
 The remaining `{:chat_history_loaded, ...}` gap is narrower: the mounted suite pins only the foreign-node drop, so no test drops a stale-seq or wrong-agent `{:chat_history_loaded, ...}`, and the `{:chat_agent_lookup, ...}` stale/node/task_id/non-map branches are not asserted.
