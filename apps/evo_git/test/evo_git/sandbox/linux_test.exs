@@ -113,6 +113,8 @@ defmodule EvoGit.Sandbox.LinuxTest do
     path = Path.join([System.get_env("XDG_CONFIG_HOME"), "genesis", "config.toml"])
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, "[sandbox]\nwrite_paths = #{inspect(paths)}\n")
+    # Config reads come from the RAM snapshot; a direct write needs the reload.
+    EvoGit.Config.Cache.reload()
     on_exit(fn -> File.rm(path) end)
     path
   end

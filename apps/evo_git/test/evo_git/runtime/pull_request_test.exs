@@ -98,5 +98,7 @@ defmodule EvoGit.Runtime.PullRequestTest do
     dir = Config.config_dir()
     File.mkdir_p!(dir)
     File.write!(Config.config_path(), "[llm]\nmodel = \"\"\n")
+    # Config reads come from the RAM snapshot; a direct write needs the reload.
+    EvoGit.Config.Cache.reload()
   end
 end

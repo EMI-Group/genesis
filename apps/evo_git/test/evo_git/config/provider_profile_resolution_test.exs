@@ -363,6 +363,9 @@ defmodule EvoGit.Config.ProviderProfileResolutionTest do
         "#{key_a} = \"a-secret\"\n#{key_b} = \"b-secret\"\n"
       )
 
+      # Config reads come from the RAM snapshot; a direct write needs the reload.
+      EvoGit.Config.Cache.reload(dir: dir)
+
       config =
         config([
           account("a", %{api_key_env_var: key_a, concurrency: 2}),
@@ -385,6 +388,8 @@ defmodule EvoGit.Config.ProviderProfileResolutionTest do
     test "nested models cannot replace shared API account auth or scheduling", %{config_dir: dir} do
       key = "GENESIS_SCHEMA_SHARED_#{System.unique_integer([:positive])}"
       File.write!(Path.join(dir, "credentials.toml"), "#{key} = \"shared-secret\"\n")
+      # Config reads come from the RAM snapshot; a direct write needs the reload.
+      EvoGit.Config.Cache.reload(dir: dir)
 
       config =
         config([
@@ -423,6 +428,8 @@ defmodule EvoGit.Config.ProviderProfileResolutionTest do
       path = System.fetch_env!("PATH")
       assert path != ""
       File.write!(Path.join(dir, "credentials.toml"), "PATH = \"persisted-fallback\"\n")
+      # Config reads come from the RAM snapshot; a direct write needs the reload.
+      EvoGit.Config.Cache.reload(dir: dir)
       resolved = resolve!(config([account("a", %{api_key_env_var: "PATH"})]), nil)
       assert resolved.generation_params[:api_key] == path
     end

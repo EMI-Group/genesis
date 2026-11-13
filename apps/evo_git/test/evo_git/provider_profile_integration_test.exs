@@ -161,6 +161,8 @@ defmodule EvoGit.ProviderProfileIntegrationTest do
       max_tokens = 765
       """)
 
+      # A direct disk write reaches the RAM snapshot only through a reload.
+      Config.Cache.reload()
       loaded = Config.resolve()
       [profile] = Schema.provider_profiles(loaded)
       assert profile["default_model"] == "integration-chat"
@@ -719,6 +721,7 @@ defmodule EvoGit.ProviderProfileIntegrationTest do
 
       assert {:ok, toml} = TomlElixir.encode(raw)
       File.write!(Config.config_path(), toml)
+      Config.Cache.reload()
 
       ExUnit.CaptureLog.capture_log(fn ->
         loaded = Config.resolve()

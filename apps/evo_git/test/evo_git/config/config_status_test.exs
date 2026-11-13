@@ -1,21 +1,28 @@
 defmodule EvoGit.Config.ConfigStatusTest do
   @moduledoc """
-  Public disk-backed health checks with per-process config isolation and a custom
-  credential name that never populates ReqLLM's global API-key store.
+  Public health checks over the RAM-resident config snapshot: per-process config
+  isolation, a custom credential name that never populates ReqLLM's global
+  API-key store, and the snapshot's `validation_errors` driving `ok?` instead of
+  the removed process-dictionary error slot.
+
+  `async: true` is safe: every test writes into its OWN unique config directory
+  (`EvoGit.TestSupport.ConfigDir.isolate!/1`), so neither the files nor the
+  `{EvoGit.Config.Cache, dir}` snapshot keys are shared with another module.
   """
   use ExUnit.Case, async: true
 
   alias EvoGit.Config
+  alias EvoGit.Config.Cache
   alias EvoGit.Config.Schema.ValidationError
   alias EvoGit.TestSupport.ConfigDir
 
-  @errors_key :evo_git_config_validation_errors
   @credential "GENESIS_CONFIG_STATUS_TOKEN"
 
   setup do
     ConfigDir.isolate!("config_status")
     File.mkdir_p!(Config.config_dir())
     File.write!(Config.credentials_path(), credentials())
+    on_exit(fn -> Cache.invalidate(Config.config_dir()) end)
     :ok
   end
 
@@ -30,61 +37,28 @@ defmodule EvoGit.Config.ConfigStatusTest do
            }
   end
 
-  # A FIFO rendezvous is POSIX-only; all paths and processes belong to this test,
-  # so this real I/O requires neither global app-env changes nor serialization.
-  @tag skip: match?({:win32, _}, :os.type())
-  test "initial errors survive a successful nested resolve inside the same health check" do
-    config_path = Config.config_path()
-    credentials_path = Config.credentials_path()
-    File.write!(config_path, config("missing-account"))
-    File.rm!(credentials_path)
-    assert {_, 0} = System.cmd("mkfifo", [credentials_path], stderr_to_stdout: true)
+  test "a repaired config is healthy from a fresh snapshot, never from stale errors" do
+    File.write!(Config.config_path(), config("missing-account"))
 
-    caller = self()
+    first = Config.config_status()
+    assert first.ok? == false
+    assert first.validation_errors == [selector_error()]
 
-    writer =
-      Task.async(fn ->
-        # Opening the writer blocks until config_status has finished its initial
-        # resolve and starts reading credentials. Repair the config BEFORE EOF
-        # releases that read, so tools_search_enabled?'s nested resolve must see
-        # the valid selector. The changed file size also invalidates the cache.
-        # Use raw I/O for BOTH writes: the shared file server is waiting for the
-        # credentials read to finish and cannot service a normal File.write!.
-        File.open!(credentials_path, [:raw, :write], fn pipe ->
-          initial_errors = Process.info(caller, :dictionary)
-          File.open!(config_path, [:raw, :write], &IO.binwrite(&1, config("work")))
-          IO.binwrite(pipe, credentials())
-          initial_errors
-        end)
-      end)
+    # Reads are snapshot-backed: an external edit is invisible until an event
+    # refreshes the cache, so the error report must not silently change under a
+    # caller that owns the file.
+    File.write!(Config.config_path(), config("work"))
+    stale = Config.config_status()
+    assert stale.ok? == false
+    assert stale.validation_errors == [selector_error()]
 
-    status = Config.config_status()
-    {:dictionary, during_health_check} = Task.await(writer, 30_000)
-
-    # Prove the rendezvous really occurred after the failing initial resolve.
-    assert Keyword.fetch!(during_health_check, @errors_key) == [selector_error()]
-    # And the later resolve really succeeded BEFORE config_status returned,
-    # clearing the caller-local error slot without clearing its saved report.
-    assert Process.get(@errors_key, :cleared) == :cleared
-
-    assert status == %{
-             ok?: false,
-             missing: [],
-             warnings: [],
-             validation_errors: [selector_error()]
-           }
-
-    # A new invocation must describe the repaired config, not retain old errors.
-    # Restore an ordinary credentials file rather than relying on FIFO caching.
-    File.rm!(credentials_path)
-    File.write!(credentials_path, credentials())
+    Cache.reload()
     assert Config.config_status() == healthy_status()
   end
 
   test "a fresh valid canonical configuration is healthy" do
     File.write!(Config.config_path(), config("work"))
     assert Config.config_status() == healthy_status()
-    assert Process.get(@errors_key, :cleared) == :cleared
   end
 
   defp config(default) do

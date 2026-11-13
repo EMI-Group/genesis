@@ -174,5 +174,7 @@ defmodule EvoGitTest do
   defp write_config_toml(tools_body) do
     File.mkdir_p!(Config.config_dir())
     File.write!(Config.config_path(), "[tools]\n#{tools_body}\n")
+    # Config reads come from the RAM snapshot; a direct write needs the reload.
+    EvoGit.Config.Cache.reload()
   end
 end

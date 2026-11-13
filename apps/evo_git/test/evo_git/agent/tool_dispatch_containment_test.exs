@@ -727,6 +727,9 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
     default_tool_timeout = #{timeout_ms}
     """)
 
+    # Config reads come from the RAM snapshot; a direct write needs the reload.
+    EvoGit.Config.Cache.reload()
+
     on_exit(fn ->
       if original_xdg do
         System.put_env("XDG_CONFIG_HOME", original_xdg)

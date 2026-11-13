@@ -301,6 +301,8 @@ defmodule EvoGit.TaskTmpdirTest do
         if(path, do: ["path = \"#{path}\"\n"], else: [])
 
     File.write!(EvoGit.Config.config_path(), IO.iodata_to_binary(body))
+    # Config reads come from the RAM snapshot; a direct write needs the reload.
+    EvoGit.Config.Cache.reload()
   end
 
   # A test-owned scratch directory under the system tmp dir, cleaned up on exit.

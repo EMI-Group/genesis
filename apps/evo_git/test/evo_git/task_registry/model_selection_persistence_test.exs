@@ -53,6 +53,8 @@ defmodule EvoGit.TaskRegistry.ModelSelectionFixtures do
     models = ["gpt-5", "gpt-5-mini"]
     """)
 
+    # Config reads come from the RAM snapshot; a direct write needs the reload.
+    EvoGit.Config.Cache.reload(dir: dir)
     config = Config.resolve()
     {:ok, default} = Schema.resolve_model_spec(config, nil)
     # An invalid explicit choice must fail even though Auto has a valid target.
