@@ -132,6 +132,14 @@ Pending remote contexts cannot attach locally, readiness and push application re
 Initial attachment and reconciliation deltas buffer up to 128 ordered batches or 1 MiB, duplicate/stale batches consume no capacity, and overflow or supervisor-start failures produce explicit watch errors instead of silent loss or stuck loading.
 Runner seams are `:agents_watch_runner` and `:agents_unwatch_runner`, both `(node, agent_id, liveview_pid)`, defaulting to the corresponding `NodeContext` watcher functions.
 The worker performs RPC through `SafeCall`, cleans up after consumer death, and uses no polling; delta messages have no publisher-node stamp.
+`StreamWatch.closed/4` admits the direct `{:agent_stream_closed, agent_id, snapshot, seq}` terminal handoff atomically, including after a finished delta, summary removal or failed async snapshot request.
+Admission requires a `Snapshot` with matching agent, `phase: :done` and embedded sequence, selected-agent/current-token/target-id/viewed-node ownership, and a sequence at least as new as the rendered, required and buffered watermarks.
+The final handoff replaces checkpoint messages and activity together, clears pending buffers/errors, unsubscribes live deltas and seals the pair against late ready/reconciled failures, worker death and deltas without replaying older buffered events.
+`RuntimeStream.seed/3` treats `:done` as terminal and preserves the snapshot's terminal status when present.
+`StreamWatch.owns?/2` includes selected pending, failed and terminal watches, while `terminal?/2` means an admitted final handoff and `active?/2` excludes that sealed watch.
+A same-target attach preserves a sealed watch, and only explicit selection/node/lifecycle teardown should detach it.
+The parent must retain the selected watch across summary removal or absence, forward the handoff to `closed/4`, project its checkpoint in the same callback and use the retained ended agent row to keep the selected detail panel visible.
+No handoff can recover a watch already explicitly detached, and retained terminal history remains page-local rather than durable.
 
 ## Inspector Stream Presentation
 `StreamPresentation.build/1` applies a second render cap of 12_000 graphemes per response/thinking part and at most 20 tools without mutating the reducer or checkpoint history.

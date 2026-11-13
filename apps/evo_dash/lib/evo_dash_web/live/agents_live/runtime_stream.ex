@@ -59,7 +59,7 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
   def seed(%__MODULE__{} = state, snapshot, seq) do
     if field(snapshot, :agent_id) in [nil, state.agent_id] do
       phase = atom_or_nil(field(snapshot, :phase))
-      finished = phase in [:finished, :completed, :failed, :cancelled]
+      finished = phase in [:done, :finished, :completed, :failed, :cancelled]
 
       seeded = %{
         new(state.agent_id, state.node)
