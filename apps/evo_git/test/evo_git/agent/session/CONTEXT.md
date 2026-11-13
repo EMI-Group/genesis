@@ -32,6 +32,9 @@ A resumed worker sees newly drained user input before the public checkpoint tran
 
 ## Deterministic Activity Seams
 Production session activity is separate from `%State{}` and the summary row, so activity assertions use `Agent.Stream.watch/1` or `snapshot/1` rather than `Session.inspect/2` or `Summary.read/1` alone.
+The retained running shape is `%{phase: :llm, current_call: %{id: id, turn: turn, attempt: attempt, text: text, thinking: thinking}}`, accessed as `snapshot.activity.current_call`, and idle activity is exactly `%{phase: :idle, current_call: nil}`.
+`activity_lifecycle_test.exs:109-123` orders exact yield notification and worker `:DOWN` before snapshot assertions for `:awaiting_input`, idle activity, checkpointed reply/history, `data.worker == nil` and `Batcher.new()`.
+No own-level test calls `unwatch` or unmounts a LiveView, so watcher removal after dashboard unmount must be established in the consumer or sibling stream tests rather than inferred from these fixtures.
 The activity suites reuse `EvoGit.Agent.StreamCase` from `test/support/stream_case.ex` with direct session startup and forwarded per-dispatch `exchange_opts`, avoiding network and app-env mutations.
 Activity is emitted through actual worker-local `Stream.Sink` call-start and callback APIs rather than only the harness driver's legacy `Sink.emit/1` path.
 An emitter synchronizes with the session by calling `Session.inspect/2` from that same worker before acknowledging the test, because a worker-to-test notice alone does not order a later test-to-session snapshot against activity messages.
