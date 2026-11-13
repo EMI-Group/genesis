@@ -9,9 +9,11 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
 
   Activity comes ONLY from the authoritative activity field, never lifecycle,
   thinking chunks, tool announcements or tool results. Missing activity is
-  unknown, not idle. `thinking_status/2` defaults to partial capture; callers
-  may assert complete coverage only when the core guarantees it for that message.
-  A completed projection alone is not proof that no thinking was generated.
+  unknown, not idle. `thinking_status/2` uses the reducer's capture coverage by
+  default; an explicit second argument remains a caller-owned coverage override.
+  Completed generation alone is not proof that no thinking was generated.
+  `checkpoint_part_covered?/4` is a conservative identity/coverage-aware display
+  predicate over only wholly rendered parts, never bounded-prefix equality.
   """
 
   alias EvoDashWeb.AgentsLive.RuntimeStream
@@ -24,13 +26,26 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
   def build(state) do
     projections = list(field(state, :projections))
     retained = Enum.take(projections, -@max_messages)
+    generating = activity(field(state, :activity)) == :llm and field(state, :finished) != true
+
+    messages =
+      retained
+      |> Enum.with_index()
+      |> Enum.map(fn {projection, index} ->
+        active =
+          generating and index == length(retained) - 1 and
+            field(projection, :complete) != true
+
+        Map.put(message(projection), :active, active)
+      end)
 
     %{
       activity: activity(field(state, :activity)),
+      generating: generating and (messages == [] or List.last(messages).active),
       phase: field(state, :phase),
       status: field(state, :status),
       finished: field(state, :finished) == true,
-      messages: Enum.map(retained, &message/1),
+      messages: messages,
       omitted_messages: max(length(projections) - length(retained), 0)
     }
   end
@@ -52,7 +67,9 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
   Failed/aborted lifecycle completion is NOT generation completion; callers
   providing their own message maps must preserve that distinction.
   """
-  def thinking_status(projection, coverage \\ :partial) do
+  def thinking_status(projection, coverage \\ nil) do
+    coverage = coverage || field(projection, :capture_coverage)
+
     cond do
       text(field(projection, :thinking)) != "" -> :present
       field(projection, :generation_complete) != true -> :pending
@@ -60,6 +77,34 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
       true -> :unavailable
     end
   end
+
+  @doc """
+  Whether a checkpoint part is wholly represented in a currently rendered live message.
+
+  The caller must supply the checkpoint's authoritative message identity, never
+  its row index, a turn guess or a text match. Identity must exactly match the
+  explicit stream identity and contain an id or message_index. Unknown identity,
+  partial capture, unfinished generation, omitted projections and truncated
+  parts all return false. This is a display predicate, never a history mutation.
+  """
+  def checkpoint_part_covered?(state, checkpoint_identity, part, value)
+      when part in [:response, :thinking] and is_map(checkpoint_identity) and
+             is_binary(value) and value != "" do
+    identity = RuntimeStream.message_identity(checkpoint_identity)
+    omission_key = if part == :response, do: :omitted_response, else: :omitted_thinking
+
+    if Map.has_key?(identity, :id) or Map.has_key?(identity, :message_index) do
+      Enum.any?(build(state).messages, fn message ->
+        message.identity == identity and message.capture_coverage == :complete and
+          message.generation_complete and Map.get(message, omission_key) == 0 and
+          Map.get(message, part) == value
+      end)
+    else
+      false
+    end
+  end
+
+  def checkpoint_part_covered?(_state, _identity, _part, _value), do: false
 
   @doc "True only for a RuntimeStream owned by the exact selected agent and viewed node."
   def owned?(%RuntimeStream{agent_id: id, node: target}, id, target), do: true
@@ -71,6 +116,9 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
     tools = list(field(projection, :tool_calls))
 
     %{
+      identity: RuntimeStream.message_identity(field(projection, :identity)),
+      capture_coverage: field(projection, :capture_coverage),
+      generation_complete: field(projection, :generation_complete) == true,
       message_index: field(projection, :message_index),
       turn: field(projection, :turn),
       complete: field(projection, :complete) == true,

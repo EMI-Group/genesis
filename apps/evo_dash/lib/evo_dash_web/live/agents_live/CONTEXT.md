@@ -87,14 +87,18 @@ Node fills, edge strokes, status palettes (`EvoDashWeb.Helpers.agent_status_svg_
 
 `EvoDashWeb.AgentsLive.RuntimeStream` in `runtime_stream.ex` is a pure inspector reducer, independent of the Assistant bubble/transcript reducers, with public `new(agent_id, node)`, `seed(state, snapshot, seq)`, `apply_batch(state, agent_id, seq, events)` and `active?(state)`.
 Its `%RuntimeStream{}` exposes `agent_id`, `node`, monotonic `seq`, lifecycle `phase`, separate optional `activity`, accounting `turn`, raw checkpoint `messages`, current `response`/`thinking` binaries, current `tool_calls`, ordered `projections`, current `message_index`, boolean `finished` and optional atom `status`.
-Each live projection is `%{identity: map, turn: integer, message_index: integer, response: binary, thinking: binary, tool_calls: list, complete: boolean, generation_complete: boolean}`, and `projections` includes the current message as its last entry while preserving all earlier messages for rendering.
-`generation_complete` is set by turn accounting or yield, not merely by a failed lifecycle finish, and never proves that this watcher captured all thinking chunks.
+Each live projection is `%{identity: map, turn: integer, message_index: integer, response: binary, thinking: binary, tool_calls: list, complete: boolean, generation_complete: boolean, capture_coverage: :partial | :complete, chunks_seen: boolean}`, and `projections` includes the current message as its last entry while preserving all earlier messages for rendering.
+`generation_complete` is set by turn accounting, yield or an explicit in-flight snapshot field, not merely by a failed lifecycle finish, and never alone proves that this watcher captured all thinking chunks.
+`capture_coverage` becomes complete only when an explicit message-start event precedes this message's chunks or an in-flight snapshot explicitly asserts complete capture with binary response/text AND thinking fields.
+Repeated message-start events after chunks or generation completion never upgrade partial coverage, and authoritative activity with identity can start a projection but never proves coverage.
+`message_identity/1` is the shared total identity normalizer used by both the reducer and presentation overlap predicate.
 Projection indexes are zero-based local ordinals unless an explicit nonnegative `message_index` is supplied, and neither the indexes nor these live projections are reconciled against raw checkpoint history.
 Each tool descriptor is `%{id: term, name: binary, status: term}`, initially `:announced`, with matching id-bearing results updating descriptors across all projections and same-name anonymous announcements upgraded when dispatch supplies an id.
 `active?/1` means a nonfinished lifecycle of `:running` or `:cancelling`, never an inference about LLM/tool execution.
 `seed/3` replaces previous checkpoint/live content, accepts map/struct snapshots with absent optional keys via defensive reads, preserves agent/node ownership, ignores snapshots explicitly naming another agent and clears malformed fields to empty defaults.
 The explicit nonnegative seed seq wins over snapshot seq, then zero; invalid state input produces a fresh unowned empty struct, while wrong-agent, stale/invalid-seq and post-finish batches are no-ops.
-Optional snapshot `activity` accepts an atom or map, and optional `in_flight` accepts `response` (or `text`), `thinking`, `turn`, `message_index` and `id` to seed one live projection.
+Optional snapshot `activity` accepts an atom or map, and optional `in_flight` accepts `response` (or `text`), `thinking`, `turn`, `message_index`, `id`, explicit `generation_complete` and `capture_coverage: :complete` to seed one live projection.
+An absent or nonbinary thinking field makes in-flight capture partial even when coverage is asserted, so producers must send an explicit empty string to prove no thinking.
 Missing activity stays nil and never means idle, absent thinking stays an empty binary and never determines activity, and tool announcements never assert execution.
 Authoritative optional `{:activity, atom_or_map}` events update activity independently from lifecycle, with `{:activity, %{phase: :llm, ...identity...}}` also starting a message only when identity is actually supplied.
 Explicit optional `{:message_start, identity}` accepts a map with nonnegative `turn`/`message_index` and/or binary/integer `id`, a nonnegative integer shorthand for `message_index`, or a nonempty binary shorthand for `id`; repeating the current exact identity is idempotent, while a distinct identity completes the old projection and opens a new one.
@@ -119,11 +123,18 @@ The worker performs RPC through `SafeCall`, cleans up after consumer death, and 
 `StreamPresentation.build/1` is the pure bounded render model over `RuntimeStream`, retaining the last 12 live projections, the first 12,000 graphemes of response and thinking separately, and at most 20 tool descriptors per projection with explicit omission counts.
 The raw reducer remains unchanged and unbounded, so rendering limits are not transcript-retention limits and do not silently delete captured content.
 `StreamPresentation.activity/1` reads only authoritative activity (`:llm`, `:tool`/`:tools`, `:idle`, `:waiting`), with missing or unknown activity rendered as unavailable rather than inferred from chunks, lifecycle or announcements.
-`thinking_status/2` reports `:present`, `:pending`, `:unavailable` or `:none`; `:none` requires generation completion plus an explicit `:complete` coverage assertion from a caller whose backend guarantees full capture.
-The default partial-capture policy cannot assert absent reasoning, and its no-capture notice appears only after generation completes, never during generation or merely after an aborted lifecycle finish.
+`thinking_status/2` reports `:present`, `:pending`, `:unavailable` or `:none`; its default reads the reducer's per-message `capture_coverage`, while an explicit second argument remains a caller-owned coverage override.
+Only completed generation with complete capture and empty thinking returns `:none`, and `StreamPanel` renders exactly `gettext("No thinking content available")` for that case.
+Partial or aborted capture renders no missing-thinking notice, and lifecycle completion never upgrades generation or capture coverage.
+The bounded message view exposes identity, capture coverage and generation completion alongside omission counts.
+`checkpoint_part_covered?(state, checkpoint_identity, :response | :thinking, full_value)` returns true only for a retained, completely captured, generation-complete projection with exactly matching explicit identity, exact nonempty whole content and zero omitted characters for that part.
+The identity must contain a backend id or message_index and come from the checkpoint's authoritative stream identity, never a local row ordinal, inferred turn or content match.
+The parent must replace its bounded-prefix equality suppression with this predicate, or suppress nothing until checkpoint identity exists; this helper does not itself alter parent checkpoint rendering.
 `StreamPresentation.owned?/3` checks exact RuntimeStream agent/node ownership for parent render guards.
 `StreamPanel.stream_panel/1` accepts the `StreamWatch` assign as `stream`, shows separate bounded live excerpts with truthful activity/tool announcement labels, escapes content, and emits the parent-owned `retry_inspector_stream` event on transport failure.
-The panel intentionally does not merge excerpts with checkpoint history or promise duplicate-free/lossless attachment, because the committed core snapshot lacks a reconciled in-flight projection and transcript-coverage watermark.
+`#inspector-thinking` uses the existing skeleton shimmer and `#inspector-stream-cursor` uses a pulse only for authoritative LLM activity on an unfinished current projection (or the shimmer while awaiting its first projection), never lifecycle status or chunk presence.
+Both animations respect reduced-motion utilities, and every live article carries a stable `data-inspector-message="live-<message_index>"` marker inside the parent's scoped InspectorMessages root.
+The panel intentionally does not merge excerpts with checkpoint history or promise duplicate-free/lossless attachment without core identity and coverage metadata.
 
 ## Inspector Streaming Integration Constraints
 

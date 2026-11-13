@@ -27,14 +27,19 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
 
   Activity is optional, authoritative data, never inferred from thinking text
   or tool announcements. Missing activity is `nil`, not an idle assertion.
-  Snapshot `:in_flight` is optional and accepts `:response` (or `:text`),
-  `:thinking`, `:turn` and `:message_index`. Seed replaces all previous live
-  projections, so a resync cannot concatenate old chunks into a new checkpoint.
+  Snapshot `:in_flight` accepts `:response` (or `:text`), `:thinking`, `:turn`,
+  `:message_index`, `:id` and optional `:generation_complete`. Its explicit
+  `capture_coverage: :complete` assertion proves full capture only when both
+  response and thinking are binaries (empty thinking must be explicit).
+  Observing `:message_start` before this message's first chunk also proves
+  complete capture; activity alone never does, and a late repeated start never
+  upgrades partial capture. `message_identity/1` is the shared identity reader.
+  Seed replaces all previous live projections so a resync cannot concatenate
+  old chunks into a new checkpoint.
 
-  The current core snapshot has no in-flight projection: its seq may cover
-  chunks absent from its checkpoint messages. Dropping batches at/below that
-  watermark cannot recover those chunks. This reducer does not pretend that
-  attachment is lossless or deduplicate projections against checkpoint history.
+  A snapshot without in-flight coverage can omit already flushed chunks.
+  This reducer does not pretend that attachment is lossless or deduplicate
+  projections against checkpoint history.
   """
 
   alias EvoGit.Agent.Stream
@@ -47,7 +52,9 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
           thinking: binary(),
           tool_calls: [map()],
           complete: boolean(),
-          generation_complete: boolean()
+          generation_complete: boolean(),
+          capture_coverage: :complete | :partial,
+          chunks_seen: boolean()
         }
   @type t :: %__MODULE__{
           agent_id: term(),
@@ -149,13 +156,27 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
   def active?(_state), do: false
 
   defp seed_in_flight(state, flight) when is_map(flight) do
-    state = start_message(state, identity(flight))
+    state = start_message(state, message_identity(flight))
+    response = field(flight, :response) || field(flight, :text)
+    thinking = field(flight, :thinking)
+
+    # Only an explicit complete snapshot assertion with both content fields
+    # proves capture; lifecycle and a missing thinking field prove nothing.
+    coverage =
+      if field(flight, :capture_coverage) == :complete and is_binary(response) and
+           is_binary(thinking),
+         do: :complete,
+         else: :partial
 
     update_current(state, fn message ->
       %{
         message
-        | response: text(field(flight, :response) || field(flight, :text)),
-          thinking: text(field(flight, :thinking))
+        | response: text(response),
+          thinking: text(thinking),
+          capture_coverage: coverage,
+          chunks_seen: response not in [nil, ""] or thinking not in [nil, ""],
+          generation_complete: field(flight, :generation_complete) == true,
+          complete: field(flight, :generation_complete) == true
       }
     end)
   end
@@ -169,21 +190,35 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
        when kind in [:text, :thinking] and is_binary(chunk) and chunk != "" do
     state = ensure_message(state, true)
     key = if kind == :text, do: :response, else: :thinking
-    update_current(state, &Map.update!(&1, key, fn previous -> previous <> chunk end))
+
+    update_current(state, fn message ->
+      message
+      |> Map.update!(key, fn previous -> previous <> chunk end)
+      |> Map.put(:chunks_seen, true)
+    end)
   end
 
   defp apply_event({:message_start, value}, state) do
-    case identity(value) do
-      identity when map_size(identity) > 0 -> start_message(state, identity)
-      _ -> state
+    case message_identity(value) do
+      identity when map_size(identity) > 0 ->
+        state
+        |> start_message(identity)
+        |> update_current(fn message ->
+          if not message.chunks_seen and not message.generation_complete,
+            do: %{message | capture_coverage: :complete},
+            else: message
+        end)
+
+      _ ->
+        state
     end
   end
 
   defp apply_event({:activity, value}, state) when is_atom(value) or is_map(value) do
     state = %{state | activity: activity(value)}
 
-    if field(value, :phase) == :llm and map_size(identity(value)) > 0 do
-      start_message(state, identity(value))
+    if field(value, :phase) == :llm and map_size(message_identity(value)) > 0 do
+      start_message(state, message_identity(value))
     else
       state
     end
@@ -266,7 +301,9 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
           thinking: "",
           tool_calls: [],
           complete: false,
-          generation_complete: false
+          generation_complete: false,
+          capture_coverage: :partial,
+          chunks_seen: false
         }
 
         sync(%{state | projections: state.projections ++ [message], turn: turn})
@@ -315,10 +352,11 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
     end
   end
 
-  defp identity(value) when is_integer(value) and value >= 0, do: %{message_index: value}
-  defp identity(value) when is_binary(value) and value != "", do: %{id: value}
+  @doc "Normalizes explicit stream/checkpoint message identity, never a local row ordinal."
+  def message_identity(value) when is_integer(value) and value >= 0, do: %{message_index: value}
+  def message_identity(value) when is_binary(value) and value != "", do: %{id: value}
 
-  defp identity(value) when is_map(value) do
+  def message_identity(value) when is_map(value) do
     Enum.reduce([:turn, :message_index, :id], %{}, fn key, acc ->
       candidate = field(value, key)
 
@@ -335,7 +373,7 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
     end)
   end
 
-  defp identity(_value), do: %{}
+  def message_identity(_value), do: %{}
 
   defp field(value, key) when is_map(value),
     do: Map.get(value, key, Map.get(value, to_string(key)))

@@ -46,6 +46,14 @@ defmodule EvoDashWeb.AgentsLive.StreamPanel do
           "Live excerpts are separate from checkpoint history; content before attachment may not have been captured."
         )}
       </p>
+      <div
+        :if={@view.generating}
+        id="inspector-thinking"
+        class="skeleton h-1 w-full rounded motion-reduce:animate-none"
+        role="status"
+        aria-label={gettext("Generating response")}
+      >
+      </div>
       <p :if={@view.omitted_messages > 0} class="text-xs text-base-content/70">
         {gettext("%{count} earlier live messages omitted from this preview.",
           count: @view.omitted_messages
@@ -54,6 +62,7 @@ defmodule EvoDashWeb.AgentsLive.StreamPanel do
       <article
         :for={message <- @view.messages}
         id={"inspector-live-message-#{message.message_index}"}
+        data-inspector-message={"live-#{message.message_index}"}
         class="space-y-2 rounded-md border border-base-300 bg-base-200/50 p-3"
       >
         <div class="text-xs text-base-content/70">
@@ -64,14 +73,20 @@ defmodule EvoDashWeb.AgentsLive.StreamPanel do
           <pre class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">{message.thinking}</pre>
           <.omission count={message.omitted_thinking} />
         </details>
-        <p :if={message.thinking_status == :unavailable} class="text-xs text-base-content/60">
-          {gettext("No thinking was captured for this response.")}
+        <p :if={message.thinking_status == :none} class="text-xs text-base-content/60">
+          {gettext("No thinking content available")}
         </p>
         <div :if={message.response != ""}>
           <div class="text-xs font-medium">{gettext("Response")}</div>
           <pre class="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm">{message.response}</pre>
           <.omission count={message.omitted_response} />
         </div>
+        <span
+          :if={message.active}
+          id="inspector-stream-cursor"
+          class="inline-block h-4 w-1.5 animate-pulse bg-primary motion-reduce:animate-none"
+          aria-hidden="true"
+        ></span>
         <ul :if={message.tool_calls != []} class="space-y-1 text-xs">
           <li :for={tool <- message.tool_calls} class="flex min-w-0 gap-2">
             <span class="min-w-0 truncate font-mono">{tool.name}</span>
