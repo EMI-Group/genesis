@@ -127,5 +127,4 @@ The `describe "push-only delta streaming"` block of `../home_live_test.exs` moun
 The page boundary is `EvoDashWeb.HomeLive.Watch` over `EvoDash.NodeContext.subscribe_agent_deltas/1`, `unsubscribe_agent_deltas/1`, `register_agent_watcher/3` and `unregister_agent_watcher/3`.
 Independent `{:chat_history_loaded, node, history_seq, agent_id, stream_attach_seq, messages}` fixtures carry both generations and agent identity, with mounted rejection assertions for unscoped, stale-history, wrong-agent, obsolete-watch and foreign-node replies.
 Snapshot-ready coverage atomically captures checkpoint history plus the current call's prefix and replays a buffered suffix exactly once, rather than preserving an arbitrary pre-watch bubble.
-The silent-finished regression remains an unresolved source blocker: after a finished delta with no streamed text, the consumer must request exactly one authoritative final Watch snapshot, never substitute an independent legacy history read.
-The mounted regression asserts that atomic reconciliation and is not a passing-coverage claim.
+The mounted silent-finish regression pins exactly-once atomic reconciliation through an authoritative final Watch snapshot after a finished delta with no streamed text, never an independent legacy history read.
