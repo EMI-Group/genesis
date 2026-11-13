@@ -41,6 +41,10 @@ defmodule EvoGit.MixProject do
       {:retry, "~> 0.19"},
       {:req, "~> 0.7.0"},
       {:phoenix_pubsub, "~> 2.2"},
+      # Directory file-watching backend behind `EvoGit.Config.Watcher`, which
+      # keeps the RAM config snapshot (`EvoGit.Config.Cache`) fresh on
+      # config.toml/credentials.toml/agents.toml changes.
+      {:file_system, "~> 1.1"},
       # TomlElixir
       {:toml_elixir, "~> 3.1"},
       # IANA time zone database (Tz.TimeZoneDatabase) for per-profile

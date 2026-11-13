@@ -107,102 +107,115 @@ defmodule EvoGit.Application do
     # It ships with every release automatically as a dep of :evo_git.
     Calendar.put_time_zone_database(Tz.TimeZoneDatabase)
 
-    children = [
-      {Phoenix.PubSub, name: EvoGit.PubSub},
-      # PubSub broadcast throttle (coalesces rapid agent-update signals)
-      {EvoGit.AgentScheduler.PubSub.Throttle, []},
-      # Human-in-the-loop approval gate for the self-reflective agent's command
-      # shell (level-2/3 commands). Starts AFTER EvoGit.PubSub — it subscribes
-      # to the "tasks" topic in init to auto-deny pending approvals when the
-      # owning task is cancelled/reaches a terminal state.
-      {EvoGit.CommandApproval, []},
-      {Registry, keys: :unique, name: EvoGit.RemoteConnection.Registry},
-      {DynamicSupervisor, name: EvoGit.RemoteConnection.Supervisor, strategy: :one_for_one},
-      # Agent-session infrastructure: the unique-name registry a session
-      # registers under, and the DynamicSupervisor sessions run under.
-      # `EvoGit.AgentScheduler.Dispatch.do_try_dispatch/4` starts one session per
-      # dispatched agent. Explicit ids are required — both child specs default
-      # to a fixed id, so a second Registry/DynamicSupervisor would be a
-      # duplicate-id boot failure.
-      {Registry, keys: :unique, name: EvoGit.Agent.Session.Registry, id: :agent_session_registry},
-      {DynamicSupervisor,
-       name: EvoGit.Agent.Session.Supervisor,
-       strategy: :one_for_one,
-       id: :agent_session_supervisor},
-      {EvoGit.Store,
-       data_dir:
-         Path.join(
-           Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir()),
-           "tasks.sqlite"
-         )},
-      # Periodic, best-effort SQLite maintenance (`PRAGMA optimize`) for the
-      # task store — one pass every 60 minutes, no tick at boot (the store's
-      # boot path already optimized on the migrated connection). Starts AFTER
-      # EvoGit.Store so its first tick always finds the store; every tick is
-      # total, so a restarting/absent store is skipped, never a crash.
-      {EvoGit.Store.Maintenance, []},
-      # Virtual Context Tree mount store (pure namespace over OS paths).
-      # Starts AFTER EvoGit.Store because its mount table lives in the task
-      # store (`vct_mounts`) and is loaded at init — the store MUST already be
-      # up — and BEFORE EvoGit.TaskRegistry so every later reader (dashboard,
-      # agents) finds a ready mount table. The host-declared `:system_mounts`
-      # registers the RESERVED `vct:///genesis-source` mount (the
-      # self-reflective agent's Genesis source checkout) idempotently at boot;
-      # a reserved point is never listed as a project, never evicted, and its
-      # recorded OS path need not exist yet.
-      {EvoGit.VCT, system_mounts: EvoGit.SelfReflectiveSource.system_mounts()},
-      # Dedicated pool for the TaskRegistry's offloaded READS: a heavy decode
-      # (`list_tasks`, `list_tasks_page`, archives, summaries) runs in one of
-      # these workers and replies to its caller directly, so the decoded term
-      # never enters the registry's heap. Deliberately NOT `EvoGit.TaskSupervisor`
-      # (nested under AgentGroupSupervisor): a scheduler restart must not kill
-      # in-flight dashboard reads, and read workers must not compete with task
-      # wrappers.
-      Supervisor.child_spec(
-        {Task.Supervisor, name: EvoGit.TaskRegistry.ReadSupervisor},
-        id: EvoGit.TaskRegistry.ReadSupervisor
-      ),
-      {Registry,
-       keys: :unique,
-       name: EvoGit.TaskRegistry.ProcessRegistry,
-       id: :task_registry_process_registry},
-      {EvoGit.TaskRegistry, []},
-      # THE live OS-execution registry (one record per foreground tool call /
-      # detached background job, with its normalized OS handle, stats sampling
-      # and PubSub topic "processes"). It starts BEFORE EvoGit.BackgroundJobs
-      # because BackgroundJobs REGISTERS its detached jobs here — a job whose
-      # registry lookup failed at spawn time would be invisible to the
-      # dashboard and to operator kill/pause. It starts AFTER PubSub (its
-      # broadcasts go out on "processes") and after the store group, but it
-      # touches no SQLite state of its own.
-      {EvoGit.ProcessManager, []},
-      # Registry for DETACHED ("background") shell jobs started by agents.
-      # Unconditional — unlike the Linux-only SandboxProcessRegistry/SandboxSlice
-      # below, background jobs exist on every platform (the detached entry point
-      # in EvoGit.Sandbox is answered for every backend). Jobs are killed when
-      # their owning agent process dies.
-      {EvoGit.BackgroundJobs, []},
-      {EvoGit.AgentScheduler.WorktreeManager, []},
-      # Dedicated pool for agent-tool RUNTIME work that must outlive one
-      # dispatch (the process-manager probes and, in a later round, the
-      # detached control paths). Declared before AgentGroupSupervisor so a
-      # scheduler restart cannot take in-flight tool runtime work down with it.
-      Supervisor.child_spec({Task.Supervisor, name: EvoGit.ToolRuntime.TaskSupervisor},
-        id: EvoGit.ToolRuntime.TaskSupervisor
-      ),
-      {EvoGit.AgentGroupSupervisor, []},
-      # Peak-hour LLM concurrency engine — watches the local wall clock and
-      # dynamically pushes per-model peak/off-peak concurrency via
-      # update_config(model_concurrency:). Starts AFTER AgentGroupSupervisor
-      # (it calls the scheduler on its initial check); its own
-      # {:scheduler_config_updated, node} subscription re-applies on config
-      # edits/reloads.
-      {EvoGit.PeakHourEngine, []},
-      # System sampling — broadcasts {:system_sample, node, seq, sample} on
-      # PubSub topic "system" every 3s. Runs on every node (incl. the headless
-      # genesis_server daemon) so remote dashboards get chart pushes.
-      {EvoGit.SystemSampler, []}
-    ]
+    # Config-directory watcher: keeps the RAM config snapshot
+    # (`EvoGit.Config.Cache`) fresh when config.toml/credentials.toml/agents.toml
+    # change on disk. Placed immediately after PubSub (its `"config"` broadcasts
+    # need it) and before everything that reads config
+    # (AgentGroupSupervisor → the scheduler) so the first reader finds a primed
+    # snapshot. Skipped in the test env, like the DaemonControl/Distribution
+    # guards below: it would otherwise watch the developer's real
+    # ~/.config/genesis.
+    config_watcher = if @mix_env != :test, do: [{EvoGit.Config.Watcher, []}], else: []
+
+    children =
+      [{Phoenix.PubSub, name: EvoGit.PubSub}] ++
+        config_watcher ++
+        [
+          # PubSub broadcast throttle (coalesces rapid agent-update signals)
+          {EvoGit.AgentScheduler.PubSub.Throttle, []},
+          # Human-in-the-loop approval gate for the self-reflective agent's command
+          # shell (level-2/3 commands). Starts AFTER EvoGit.PubSub — it subscribes
+          # to the "tasks" topic in init to auto-deny pending approvals when the
+          # owning task is cancelled/reaches a terminal state.
+          {EvoGit.CommandApproval, []},
+          {Registry, keys: :unique, name: EvoGit.RemoteConnection.Registry},
+          {DynamicSupervisor, name: EvoGit.RemoteConnection.Supervisor, strategy: :one_for_one},
+          # Agent-session infrastructure: the unique-name registry a session
+          # registers under, and the DynamicSupervisor sessions run under.
+          # `EvoGit.AgentScheduler.Dispatch.do_try_dispatch/4` starts one session per
+          # dispatched agent. Explicit ids are required — both child specs default
+          # to a fixed id, so a second Registry/DynamicSupervisor would be a
+          # duplicate-id boot failure.
+          {Registry,
+           keys: :unique, name: EvoGit.Agent.Session.Registry, id: :agent_session_registry},
+          {DynamicSupervisor,
+           name: EvoGit.Agent.Session.Supervisor,
+           strategy: :one_for_one,
+           id: :agent_session_supervisor},
+          {EvoGit.Store,
+           data_dir:
+             Path.join(
+               Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir()),
+               "tasks.sqlite"
+             )},
+          # Periodic, best-effort SQLite maintenance (`PRAGMA optimize`) for the
+          # task store — one pass every 60 minutes, no tick at boot (the store's
+          # boot path already optimized on the migrated connection). Starts AFTER
+          # EvoGit.Store so its first tick always finds the store; every tick is
+          # total, so a restarting/absent store is skipped, never a crash.
+          {EvoGit.Store.Maintenance, []},
+          # Virtual Context Tree mount store (pure namespace over OS paths).
+          # Starts AFTER EvoGit.Store because its mount table lives in the task
+          # store (`vct_mounts`) and is loaded at init — the store MUST already be
+          # up — and BEFORE EvoGit.TaskRegistry so every later reader (dashboard,
+          # agents) finds a ready mount table. The host-declared `:system_mounts`
+          # registers the RESERVED `vct:///genesis-source` mount (the
+          # self-reflective agent's Genesis source checkout) idempotently at boot;
+          # a reserved point is never listed as a project, never evicted, and its
+          # recorded OS path need not exist yet.
+          {EvoGit.VCT, system_mounts: EvoGit.SelfReflectiveSource.system_mounts()},
+          # Dedicated pool for the TaskRegistry's offloaded READS: a heavy decode
+          # (`list_tasks`, `list_tasks_page`, archives, summaries) runs in one of
+          # these workers and replies to its caller directly, so the decoded term
+          # never enters the registry's heap. Deliberately NOT `EvoGit.TaskSupervisor`
+          # (nested under AgentGroupSupervisor): a scheduler restart must not kill
+          # in-flight dashboard reads, and read workers must not compete with task
+          # wrappers.
+          Supervisor.child_spec(
+            {Task.Supervisor, name: EvoGit.TaskRegistry.ReadSupervisor},
+            id: EvoGit.TaskRegistry.ReadSupervisor
+          ),
+          {Registry,
+           keys: :unique,
+           name: EvoGit.TaskRegistry.ProcessRegistry,
+           id: :task_registry_process_registry},
+          {EvoGit.TaskRegistry, []},
+          # THE live OS-execution registry (one record per foreground tool call /
+          # detached background job, with its normalized OS handle, stats sampling
+          # and PubSub topic "processes"). It starts BEFORE EvoGit.BackgroundJobs
+          # because BackgroundJobs REGISTERS its detached jobs here — a job whose
+          # registry lookup failed at spawn time would be invisible to the
+          # dashboard and to operator kill/pause. It starts AFTER PubSub (its
+          # broadcasts go out on "processes") and after the store group, but it
+          # touches no SQLite state of its own.
+          {EvoGit.ProcessManager, []},
+          # Registry for DETACHED ("background") shell jobs started by agents.
+          # Unconditional — unlike the Linux-only SandboxProcessRegistry/SandboxSlice
+          # below, background jobs exist on every platform (the detached entry point
+          # in EvoGit.Sandbox is answered for every backend). Jobs are killed when
+          # their owning agent process dies.
+          {EvoGit.BackgroundJobs, []},
+          {EvoGit.AgentScheduler.WorktreeManager, []},
+          # Dedicated pool for agent-tool RUNTIME work that must outlive one
+          # dispatch (the process-manager probes and, in a later round, the
+          # detached control paths). Declared before AgentGroupSupervisor so a
+          # scheduler restart cannot take in-flight tool runtime work down with it.
+          Supervisor.child_spec({Task.Supervisor, name: EvoGit.ToolRuntime.TaskSupervisor},
+            id: EvoGit.ToolRuntime.TaskSupervisor
+          ),
+          {EvoGit.AgentGroupSupervisor, []},
+          # Peak-hour LLM concurrency engine — watches the local wall clock and
+          # dynamically pushes per-model peak/off-peak concurrency via
+          # update_config(model_concurrency:). Starts AFTER AgentGroupSupervisor
+          # (it calls the scheduler on its initial check); its own
+          # {:scheduler_config_updated, node} subscription re-applies on config
+          # edits/reloads.
+          {EvoGit.PeakHourEngine, []},
+          # System sampling — broadcasts {:system_sample, node, seq, sample} on
+          # PubSub topic "system" every 3s. Runs on every node (incl. the headless
+          # genesis_server daemon) so remote dashboards get chart pushes.
+          {EvoGit.SystemSampler, []}
+        ]
 
     # Runtime distribution control plane (SIGHUP + <data_dir>/remote files).
     # This is what the release CLI drives, so ONE genesis_server instance per
