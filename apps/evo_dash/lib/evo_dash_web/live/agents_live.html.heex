@@ -286,7 +286,7 @@
         <div class="card bg-base-100 border border-base-300 rounded-lg">
           <div class="card-body p-4">
             <%= if @selected_agent_id do %>
-              <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
+              <% agent = selected_inspector_agent(assigns) %>
               <%= if agent do %>
                 <div id={"agent-detail-#{agent.id}"} class="agent-detail-content">
                   <div class="flex flex-wrap items-center justify-between gap-2 mb-3">

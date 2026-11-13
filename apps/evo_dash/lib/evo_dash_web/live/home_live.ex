@@ -1105,7 +1105,7 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   def handle_info({:chat_task_loaded, node, seq, task_id, task}, socket) do
-    if node != socket.assigns[:current_node] or
+    if Watch.closed?(socket) or node != socket.assigns[:current_node] or
          seq != socket.assigns[:chat_task_fetch_seq] or
          task_id != socket.assigns[:chat_task_id] do
       {:noreply, socket}
@@ -1218,6 +1218,10 @@ defmodule EvoDashWeb.HomeLive do
     {:noreply, apply_watch_result(Watch.push(socket, agent_id, seq, batch))}
   end
 
+  def handle_info({:agent_stream_closed, agent_id, snapshot, seq}, socket) do
+    {:noreply, apply_watch_result(Watch.closed(socket, agent_id, snapshot, seq))}
+  end
+
   def handle_info({:chat_stream_ready, node, seq, agent_id, result}, socket) do
     {:noreply, apply_watch_result(Watch.ready(socket, node, seq, agent_id, result))}
   end
@@ -1257,11 +1261,31 @@ defmodule EvoDashWeb.HomeLive do
     )
     |> maybe_assign_changed(:chat_stream_meta, surface.meta, socket.assigns[:chat_stream_meta])
     |> fold_stream_outcome(surface.outcome)
+    |> apply_terminal_snapshot(surface)
     |> ChatState.persist()
   end
 
   defp apply_watch_result({:error, socket, _reason}), do: settle_watch_failure(socket)
   defp apply_watch_result({_status, socket}), do: socket
+
+  # Closed snapshots deliberately have no synthetic delta outcome: lifecycle
+  # and final status come from the authoritative snapshot, after its transcript.
+  defp apply_terminal_snapshot(socket, %{snapshot: %{phase: :done} = snapshot}) do
+    socket =
+      case Map.get(snapshot, :status) do
+        status when status in @terminal_statuses ->
+          assign(socket, chat_task_status: status)
+
+        _ ->
+          socket
+      end
+
+    socket
+    |> assign(chat_status: :ended, queued_echoes: [])
+    |> finalize_bubble()
+  end
+
+  defp apply_terminal_snapshot(socket, _surface), do: socket
 
   defp settle_watch_failure(socket) do
     # Only the registry's absent-session verdict proves the session has ended.
@@ -1401,6 +1425,9 @@ defmodule EvoDashWeb.HomeLive do
   defp session_task_event(socket, status) do
     socket =
       cond do
+        Watch.closed?(socket) ->
+          socket
+
         status in @terminal_statuses ->
           socket =
             socket
