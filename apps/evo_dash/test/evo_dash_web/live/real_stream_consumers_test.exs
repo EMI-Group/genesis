@@ -594,6 +594,135 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
     |> then(fn log -> assert log =~ "LLM request failed, retrying" end)
   end
 
+  for page <- [:inspector, :assistant] do
+    @page page
+    test "real one-shot #{@page} receives its final handoff only after Session death", ctx do
+      session = start_session(ctx.provider, mode: :oneshot)
+      socket = Provider.request(ctx.provider, 0)
+      Provider.open(socket)
+      Provider.write(socket, %{role: "assistant", reasoning_content: "Terminal thought"})
+      Provider.write(socket, %{content: "Terminal answer"})
+      assert await_call(session, "Terminal answer", "Terminal thought").mode == :oneshot
+
+      view =
+        case @page do
+          :inspector ->
+            view = mount_inspector(ctx.conn, session)
+            await(fn -> text(view, "#inspector-stream article div pre") == "Terminal answer" end)
+            view
+
+          :assistant ->
+            view = mount_assistant(ctx.conn, session)
+            await_answers(view, ["Terminal answer"], :streaming)
+            view
+        end
+
+      await(fn -> Map.has_key?(watchers(session), view.pid) end)
+      owner = self()
+      key = if @page == :inspector, do: :agents_history_runner, else: :home_agent_history_runner
+      previous = Application.fetch_env(:evo_dash, key)
+
+      on_exit(fn ->
+        case previous do
+          {:ok, runner} -> Application.put_env(:evo_dash, key, runner)
+          :error -> Application.delete_env(:evo_dash, key)
+        end
+      end)
+
+      Application.put_env(:evo_dash, key, fn target, id ->
+        send(owner, {:unexpected_terminal_history_read, id})
+        EvoDash.NodeContext.get_agent_history(target, id)
+      end)
+
+      # The suffix is NEVER rendered while the producer exists. Inspect the real
+      # consumer mailbox after DOWN: no fabricated snapshot, handoff or delta.
+      ref = Process.monitor(session.pid)
+      :ok = :sys.suspend(view.pid)
+
+      on_exit({:resume, view.pid}, fn ->
+        ExUnit.CaptureLog.capture_log(fn ->
+          resume_consumer(view)
+          stop_consumer(view)
+        end)
+      end)
+
+      Provider.write(socket, %{reasoning_content: " after suspension"})
+      Provider.write(socket, %{content: " after suspension"})
+      await_call(session, "Terminal answer after suspension", "Terminal thought after suspension")
+      Provider.finish(ctx.provider, socket)
+      id = session.id
+      pid = session.pid
+      assert_receive {:agent_session_result, ^id, ^pid, {:ok, result}}, @budget
+      assert result.result == "Terminal answer after suspension"
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, @budget
+      refute Process.alive?(pid)
+      assert {:error, {:not_found, _reason}} = Stream.watch(id)
+      assert {:error, {:not_found, _reason}} = Stream.snapshot(id)
+
+      {:messages, queued} = Process.info(view.pid, :messages)
+
+      assert [{:agent_stream_closed, ^id, snapshot, seq}] =
+               Enum.filter(queued, &match?({:agent_stream_closed, ^id, _, _}, &1))
+
+      assert %Stream.Snapshot{agent_id: ^id, phase: :done, seq: ^seq, mode: :oneshot} = snapshot
+      assert snapshot.activity == %{phase: :idle, current_call: nil}
+      assert is_integer(seq) and seq > 0
+      assert Enum.any?(snapshot.messages, &(&1.role == :assistant))
+      :ok = :sys.resume(view.pid)
+
+      case @page do
+        :inspector ->
+          await(fn -> assigns(view).inspector_stream.snapshot == snapshot end)
+
+          assert text(view, "#agent-detail-#{id} .inspector-thinking .whitespace-pre-wrap") ==
+                   "Terminal thought after suspension"
+
+          assert length(Regex.scan(~r/Terminal answer after suspension/, render(view))) == 1
+          assert text(view, "#agent-detail-#{id}") =~ "Done"
+          refute has_element?(view, "#inspector-stream-cursor")
+          refute has_element?(view, "#inspector-stream article")
+
+        :assistant ->
+          await(fn ->
+            a = assigns(view)
+            a.chat_status == :ended and a.chat_stream.snapshot == snapshot
+          end)
+
+          assert assigns(view).chat_task_status == :completed
+          assert answers(view) == ["Terminal answer after suspension"]
+          assert_thoughts(view, ["Terminal thought after suspension"])
+          refute has_element?(view, ".help-caret")
+          assert Enum.all?(assigns(view).transcript, &(not &1.streaming))
+      end
+
+      stop_consumer(view)
+      refute_receive {:unexpected_terminal_history_read, ^id}, 0
+    end
+  end
+
+  test "an unwatched real one-shot leaves no terminal Session to attach to", ctx do
+    session = start_session(ctx.provider, mode: :oneshot)
+    socket = Provider.request(ctx.provider, 0)
+    Provider.open(socket)
+    Provider.write(socket, %{role: "assistant", reasoning_content: "Unwatched thought"})
+    Provider.write(socket, %{content: "Unwatched answer"})
+    await_call(session, "Unwatched answer", "Unwatched thought")
+    assert watchers(session) == %{}
+    ref = Process.monitor(session.pid)
+    Provider.finish(ctx.provider, socket)
+    pid = session.pid
+    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, @budget
+    assert {:error, {:not_found, _reason}} = Stream.watch(session.id)
+    assert {:error, {:not_found, _reason}} = Stream.snapshot(session.id)
+  end
+
+  defp resume_consumer(view) do
+    if Process.alive?(view.pid), do: :sys.resume(view.pid)
+  catch
+    # Teardown only: LiveViewTest may already have stopped the suspended owner.
+    :exit, {:noproc, _} -> :ok
+  end
+
   defp mount_inspector(conn, session) do
     {:ok, view, _} = live(conn, "/agents")
     track_consumer(view)
@@ -614,6 +743,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
 
   defp start_session(provider, opts \\ []) do
     id = 35_000_000 + System.unique_integer([:positive, :monotonic])
+    mode = Keyword.get(opts, :mode, :interactive)
     dir = Path.join(System.tmp_dir!(), "real_stream_consumers_#{id}")
     File.mkdir_p!(dir)
     File.write!(Path.join(dir, "fixture.txt"), "real tool fixture payload\n")
@@ -646,7 +776,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
         max_retries: Keyword.get(opts, :max_retries, 0),
         max_depth: 1,
         repo_root: dir,
-        mode: :interactive
+        mode: mode
       })
 
     :ok = Store.put_sched_meta(id, meta)
@@ -663,7 +793,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
         meta: meta,
         repo_less: true,
         repo_less_repo_path: dir,
-        session_mode: :interactive,
+        session_mode: mode,
         scheduler: self()
       )
 
