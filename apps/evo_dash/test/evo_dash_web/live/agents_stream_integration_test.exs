@@ -15,7 +15,7 @@ end
 
 # The fixture module is defined before the case module so it is available even
 # when this file is loaded on its own.
-# This synthetic transport suite intentionally keeps six cohesive mounted state
+# This synthetic transport suite intentionally keeps cohesive mounted state
 # machines together; the reference-scoped runner/teardown helpers account for its
 # length and let each scenario reuse one mount without timing-based waits.
 # Snapshots and batches match the core contract, but do not replace real Session
@@ -531,6 +531,249 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     assert history_calls(view) == 0
   end
 
+  for order <- [
+        [:finished, :status, :removed, :closed],
+        [:removed, :finished, :closed],
+        [:closed, :finished, :status, :removed]
+      ] do
+    @terminal_order order
+    test "final handoff retains the selected ended transcript with ordering #{inspect(order)}", %{
+      conn: conn,
+      id: id
+    } do
+      view = mount_inspector(conn)
+      select(view, id)
+
+      reply(
+        watch_request(view, id),
+        snapshot(id, 10, [message(:user, "Question")], activity(:llm, call("Obsolete excerpt")))
+      )
+
+      await_snapshot(view, 10)
+      assert Enum.any?(Registry.lookup(EvoGit.PubSub, "agent:#{id}"), &(elem(&1, 0) == view.pid))
+      final = final_snapshot(id, 13)
+
+      Enum.each(@terminal_order, fn event ->
+        case event do
+          :finished ->
+            delta(view, id, 12, [{:finished, :completed}])
+
+          :status ->
+            send(view.pid, {:agent_updated, id, [status: :completed, message_count: 4], node()})
+            send(view.pid, :flush_agent_events)
+            assert Enum.find(assigns(view).agents, &(&1.id == id)).status == :completed
+
+          :removed ->
+            remove_agent(view, id)
+
+          :closed ->
+            admit_closure(view, id, final)
+        end
+
+        if Map.get(assigns(view).inspector_stream || %{}, :closed, false) do
+          assert_final_transcript(view, id, final)
+        end
+      end)
+
+      assert_final_transcript(view, id, final)
+      assert assigns(view).selected_agent_id == id
+      assert assigns(view).retained_agents[id].ended
+      refute has_element?(view, "#agent-card-#{id}")
+      assert has_element?(view, "#agent-detail-#{id}")
+      refute render(view) =~ "Agent not found"
+      assert_terminal_cleanup(view, id, 1)
+    end
+  end
+
+  for stage <- [:attachment, :reconciliation], outcome <- [:success, :failure] do
+    @late_stage stage
+    @late_outcome outcome
+    test "final closure wins over late #{@late_stage} #{@late_outcome}", %{conn: conn, id: id} do
+      view = mount_inspector(conn)
+      select(view, id)
+      initial = watch_request(view, id)
+
+      pending =
+        if @late_stage == :attachment do
+          initial
+        else
+          reply(initial, snapshot(id, 10, [], activity(:llm, call("Uncheckpointed prefix"))))
+          await_snapshot(view, 10)
+          delta(view, id, 11, [{:activity, activity(:idle, nil)}])
+          request = watch_request(view, id)
+          assert assigns(view).inspector_stream.reconciling
+          request
+        end
+
+      old = assigns(view).inspector_stream
+      final = final_snapshot(id, 12)
+      admit_closure(view, id, final)
+      assert_final_transcript(view, id, final)
+
+      # Release a REAL blocked serial-worker RPC after the direct handoff. Its
+      # unregister acknowledgement proves that result was sent before cleanup.
+      result =
+        if @late_outcome == :success,
+          do: snapshot(id, 99, [message(:assistant, "LATE SNAPSHOT MUST NOT WIN")]),
+          else: {:exit, :late_session_not_found}
+
+      reply(pending, result)
+      local = node()
+      consumer = view.pid
+      assert_receive {:unwatch, ^local, ^id, ^consumer}, @budget
+      assert_final_transcript(view, id, final)
+      refute has_element?(view, "button[phx-click='retry_inspector_stream']")
+
+      # A ready result already queued in the consumer's mailbox is independently
+      # stale, as is a reconciliation with the old token AND request identity.
+      send(view.pid, {:inspector_stream_ready, local, old.token, id, result})
+
+      send(
+        view.pid,
+        {:inspector_stream_reconciled, local, old.token, id, old.snapshot_request, result}
+      )
+
+      assert_final_transcript(view, id, final)
+      remove_agent(view, id)
+      assert_final_transcript(view, id, final)
+      assert_terminal_cleanup(view, id, if(@late_stage == :attachment, do: 1, else: 2), false)
+    end
+  end
+
+  test "foreign, stale and malformed closures cannot replace a selected final handoff", %{
+    conn: conn,
+    id: id
+  } do
+    view = mount_inspector(conn)
+    select(view, id)
+    reply(watch_request(view, id), snapshot(id, 10))
+    await_snapshot(view, 10)
+    select(view, id + 1)
+    reply(watch_request(view, id + 1), snapshot(id + 1, 20, [message(:user, "Current question")]))
+    await_snapshot(view, 20)
+    before = assigns(view).inspector_stream
+
+    for {agent, final, seq} <- [
+          {id, final_snapshot(id, 100), 100},
+          {id + 1, final_snapshot(id + 1, 19), 19},
+          {id + 1, final_snapshot(id, 100), 100},
+          {id + 1, final_snapshot(id + 1, 100), 101}
+        ] do
+      send(view.pid, {:agent_stream_closed, agent, final, seq})
+      assert assigns(view).inspector_stream == before
+      assert history_content(view, id + 1) == ["Current question"]
+    end
+
+    final = final_snapshot(id + 1, 21)
+    admit_closure(view, id + 1, final)
+    assert_final_transcript(view, id + 1, final)
+    send(view.pid, {:agent_stream_closed, id + 1, final_snapshot(id + 1, 100), 100})
+    assert_final_transcript(view, id + 1, final)
+    assert_terminal_cleanup(view, id + 1, 2)
+  end
+
+  defp final_snapshot(id, seq) do
+    answer = %{
+      message(:assistant, "Authoritative final answer")
+      | reasoning_details: [%{text: "Authoritative final reasoning"}]
+    }
+
+    %Snapshot{
+      agent_id: id,
+      seq: seq,
+      phase: :done,
+      messages: [message(:user, "Question"), answer, message(:tool, "Final tool output")],
+      activity: activity(:idle, nil)
+    }
+  end
+
+  defp admit_closure(view, id, final) do
+    before = assigns(view).inspector_history_seq
+    send(view.pid, {:agent_stream_closed, id, final, final.seq})
+    assert assigns(view).inspector_stream.closed
+    assert assigns(view).inspector_history_seq == before + 1
+    Process.put({:snapshots, view.pid}, Process.get({:snapshots, view.pid}, 0) + 1)
+  end
+
+  defp assert_final_transcript(view, id, final) do
+    stream = assigns(view).inspector_stream
+    assert stream.closed
+    assert stream.snapshot == final
+    assert stream.seq == final.seq
+    assert stream.state.messages == final.messages
+    assert stream.state.activity == :idle
+    assert stream.state.finished
+    assert stream.error == nil
+    refute stream.reconciling
+    assert stream.pending == []
+    assert stream.buffer_bytes == 0
+    refute Enum.any?(Registry.lookup(EvoGit.PubSub, "agent:#{id}"), &(elem(&1, 0) == view.pid))
+
+    assert history_content(view, id) == [
+             "Question",
+             "Authoritative final answer",
+             "Final tool output"
+           ]
+
+    row = "#agent-history-entry-#{id}-1"
+    assert length(elements(view, row)) == 1
+
+    assert text(view, "#{row} .inspector-thinking .whitespace-pre-wrap") ==
+             "Authoritative final reasoning"
+
+    assert text(view, "#{row} .text-sm") =~ "Authoritative final answer"
+    assert has_element?(view, "#agent-detail-#{id}", "Final tool output")
+    assert text(view, "#inspector-activity") == "Idle"
+    refute has_element?(view, "#inspector-stream article")
+    refute has_element?(view, "#inspector-stream-cursor")
+    refute has_element?(view, "#inspector-thinking")
+    refute render(view) =~ "Obsolete excerpt"
+    refute render(view) =~ "LATE SNAPSHOT MUST NOT WIN"
+    assert history_calls(view) == 0
+  end
+
+  defp remove_agent(view, id) do
+    # A fallback list refresh must not accidentally resurrect this fixture.
+    other = id + 1
+    Application.put_env(:evo_dash, :agents_list_runner, fn _ -> [summary(other)] end)
+    send(view.pid, {:agent_removed, id, node()})
+    send(view.pid, :flush_agent_events)
+    refute Enum.any?(assigns(view).agents, &(&1.id == id))
+    assert assigns(view).retained_agents[id].ended
+  end
+
+  defp assert_terminal_cleanup(view, id, expected_watches, await_unwatch? \\ true) do
+    local = node()
+    consumer = view.pid
+
+    if await_unwatch?, do: assert_receive({:unwatch, ^local, ^id, ^consumer}, @budget)
+
+    final = assigns(view).inspector_stream.snapshot
+    # Exercise every refresh affordance after closure. None may register again
+    # or launch an independent history read, even for a removed selected row.
+    render_click(view, "retry_inspector_history")
+    render_click(view, "retry_inspector_stream")
+
+    send(
+      view.pid,
+      {:agent_delta, id, final.seq + 1, [{:activity, activity(:llm, call("LATE DELTA"))}]}
+    )
+
+    assert_final_transcript(view, id, final)
+    assert watch_calls() == expected_watches
+
+    worker = assigns(view).inspector_stream_worker
+    monitor = Process.monitor(worker)
+    stop_view(view)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, _}, @budget
+    # Worker termination is the fence for these negative mailbox probes; no
+    # arbitrary quiet window can hide a queued rewatch or poll after closure.
+    assert watch_calls() == expected_watches
+    assert :atomics.get(Process.get(:inspector_runner_calls), 2) == 0
+    refute_receive {:runner, _, _, {:watch, _, ^id, ^consumer}}, 0
+    refute_receive {:unexpected_history, _, ^id}, 0
+  end
+
   # Runner calls are reference-scoped handshakes, not delays. Owner monitoring
   # frees a blocked runner even if its test fails before supplying a response.
   defp request(owner, payload) do
@@ -643,7 +886,9 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
   defp watch_calls, do: :atomics.get(Process.get(:inspector_runner_calls), 1)
 
   defp history_content(view, id) do
-    Enum.find(assigns(view).agents, &(&1.id == id)).history |> Enum.map(& &1.data.content)
+    state = assigns(view)
+    agent = Enum.find(state.agents, &(&1.id == id)) || state.retained_agents[id]
+    Enum.map(agent.history, & &1.data.content)
   end
 
   defp await_snapshot(view, seq) do
