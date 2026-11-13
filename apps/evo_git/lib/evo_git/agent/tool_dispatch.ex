@@ -203,6 +203,7 @@ defmodule EvoGit.Agent.ToolDispatch do
         trigger_recovery_fn,
         opts
       ) do
+    Sink.start_turn(state.turn)
     context = state.context
     tools = effective_tools_fn.(state)
 
@@ -849,7 +850,9 @@ defmodule EvoGit.Agent.ToolDispatch do
         SubagentSchemas.subagent_module_for(ReqLLM.ToolCall.name(call), subagent_modules) != nil
       end)
 
-    # 4. Batch: Process each batch
+    # 4. Batch: Process each batch. Declarations above are not active tools;
+    # the whole execution boundary includes tool-slot and subagent queueing.
+    if indexed_calls != [], do: Sink.phase(:tools)
     indexed_standard_results = process_standard_calls(indexed_standard_calls, state, opts)
 
     {indexed_subagent_results, merge_message, subagent_usage} =
@@ -858,6 +861,9 @@ defmodule EvoGit.Agent.ToolDispatch do
         state,
         sync_commit_fn: &sync_current_commit_after_tools/1
       )
+
+    # Keep the accepted response available until the session checkpoints it.
+    if indexed_calls != [], do: Sink.phase(:llm_complete)
 
     # 5. Re-sort: Merge and sort by index to restore original order
     all_indexed_results = indexed_subagent_results ++ indexed_standard_results

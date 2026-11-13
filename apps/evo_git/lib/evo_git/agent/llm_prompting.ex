@@ -187,7 +187,7 @@ defmodule EvoGit.Agent.LLMPrompting do
 
   # Manual retry loop. `attempt` is 0-based; total attempts = max_retries + 1.
   defp do_call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries, attempt) do
-    case run_llm_attempt(context, tools, llm_gen_opts, agent_id) do
+    case run_llm_attempt(context, tools, llm_gen_opts, agent_id, attempt) do
       {:ok, _response, _llm_duration} = result ->
         result
 
@@ -304,11 +304,16 @@ defmodule EvoGit.Agent.LLMPrompting do
   # attempt (the slot-per-attempt invariant). Any exception raised inside — e.g.
   # `{:error, :cancelled}` from a force-kill purge in
   # `AgentScheduler.with_llm_slot/2` — propagates IMMEDIATELY (no rescue).
-  defp run_llm_attempt(context, tools, llm_gen_opts, agent_id) do
+  defp run_llm_attempt(context, tools, llm_gen_opts, agent_id, attempt) do
     request_params = request_parameters(tools, llm_gen_opts)
     log_request_parameters(agent_id, request_params)
 
+    # Start before queueing: a waiting slot is not an active provider request.
+    call_id = Sink.start_call(attempt)
+
     AgentScheduler.with_llm_slot(agent_id, fn ->
+      Sink.call_phase(call_id, :llm)
+
       with llm_start <- System.monotonic_time(:millisecond),
            {:ok, stream_resp} <-
              ReqLLM.stream_text(
@@ -327,6 +332,7 @@ defmodule EvoGit.Agent.LLMPrompting do
         # `{:turn, %{duration_ms: …}}` delta. PROCESS-LOCAL and never persisted:
         # the key is read + deleted by `ToolDispatch.process_llm_response/7` at
         # the turn boundary, in this SAME (exchange worker) process.
+        Sink.call_phase(call_id, :llm_complete)
         Process.put(:evogit_llm_attempt_duration_ms, llm_end - llm_start)
 
         {:ok, response, llm_end - llm_start}
@@ -336,9 +342,12 @@ defmodule EvoGit.Agent.LLMPrompting do
           # `process_stream/2`'s own rescue converted it into this error value.
           # Handled BEFORE the generic arm so a deliberate, non-error halt never
           # gets a failure warning or triggers `excess_queuing` pool bumping.
+          Sink.call_phase(call_id, :idle)
           {:interrupted, interrupted}
 
         {:error, reason} ->
+          Sink.call_phase(call_id, :retry_wait)
+
           Logger.warning(
             "Agent #{agent_id}: LLM request failed#{retry_intent(reason)} Reason: #{inspect(reason)}"
           )
