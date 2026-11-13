@@ -97,10 +97,13 @@ A NON-EMPTY fetched history always wins: the cached transcript and reasoning are
 
 ### Push-only delta streaming coverage
 `delta_test.exs` pins the pure reducer `EvoDashWeb.HomeLive.Delta` (`new/3`, `seed/3`, `apply_batch/5`), including text/thinking/tool/turn/yield/finished folding, the 8 000-grapheme and 40-thought caps, and malformed-batch totality.
-Its snapshot fixtures assert only seq and turn, and no test in this directory sends an `:activity` event or asserts `current_call`, attempt identity or snapshot lifecycle phase.
-The `stream/3` helper always creates `Delta.new(7, node(), 0)`, so multi-batch tests passing only transcript/thought lists discard the previous reducer state rather than exercising a continuous watched stream.
-The thinking fixtures bucket by turn alone, and the tool fixture appends response text between a tool-call event and its result without modelling distinct LLM attempts or activity transitions.
-These fixtures do not establish compatibility with whole-replacement `%{phase:, current_call:}` activity, append-only text/thinking deltas, fresh retry call ids, unconditional pre-watch capture or completed-call retention through checkpoint retirement.
+Continuous multi-batch tests pass the complete prior reducer result, preserving call identity, accumulated thinking, turn/meta state and streamed-text flags rather than reconstructing `Delta.new/3`.
+Whole `%{phase:, current_call:}` projections use the production call shape (`id`, `turn`, `attempt`, `text`, `thinking`) and pin captured-prefix hydration followed by append-only chunks, same-call replacement across completion/tools phases, reasoning timestamp retention and explicit thinking clearing.
+Retry regressions pin removal of only the failed attempt's bubble and reasoning while retaining prior completed content, fresh waiting-attempt state, and replacement by a new same-turn call id even when the captured content is identical.
+New-turn identities preserve distinct answers and reasoning even with identical content, and completion/yield/idle retirement retains exactly one finalized answer with its reasoning while ignoring stray chunks after retirement.
+Thinking-only/no-call phases never fabricate answer text, and invalid phases or malformed call identities leave the entire active surface unchanged.
+Legacy chunk-only fixtures retain turn-bucket reasoning and tool-row behavior as compatibility coverage rather than claiming to model current activity-owned call identities.
+Snapshot fixtures here assert seq and turn only; unconditional pre-watch capture, default watch lifecycle, actual SSE producer compatibility and mounted rendering remain integration concerns rather than contracts established by this pure suite.
 There is no helper-level `Watch` lifecycle or real-session snapshot integration suite in this directory; those require the mounted or core-owned test boundary, not an async helper test that starts an unisolated session.
 The sibling mounted suite's `seed_scripted_session!/3` is private, uses `HomeLiveTest.ScriptedAgent` and per-session `:llm_call`/`:tool_batch` replacements, and therefore cannot establish real ReqLLM SSE producer compatibility.
 A real default Assistant attach filters the roster for the root `EvoGit.Agents.SelfReflective` role, so a custom scripted role needs an explicitly delegated real attach adapter rather than assuming it is discovered normally.

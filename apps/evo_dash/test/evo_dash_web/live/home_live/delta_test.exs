@@ -9,14 +9,22 @@ defmodule EvoDashWeb.HomeLive.DeltaTest do
   # (transcript / thought process / turn meta) with no processes and no
   # side effects, and malformed payloads are ignored instead of raising.
 
-  defp stream(transcript \\ [], thought_process \\ [], meta \\ nil) do
+  # Only initial fixtures create a reducer; subsequent batches pass run/2's
+  # complete result so call identity, thinking prefixes and flags survive.
+  defp stream(transcript \\ []) do
     %{
       delta: Delta.new(7, node(), 0),
       transcript: transcript,
-      thought_process: thought_process,
-      meta: meta || Delta.meta()
+      thought_process: [],
+      meta: Delta.meta()
     }
   end
+
+  defp call(id, turn \\ 0, attempt \\ 0, text \\ "", thinking \\ "") do
+    %{id: id, turn: turn, attempt: attempt, text: text, thinking: thinking}
+  end
+
+  defp activity(phase, call), do: {:activity, %{phase: phase, current_call: call}}
 
   defp run(events, state \\ nil) do
     state = state || stream()
@@ -63,6 +71,191 @@ defmodule EvoDashWeb.HomeLive.DeltaTest do
     end
   end
 
+  describe "whole activity projections and call identity" do
+    test "a captured prefix hydrates text and thinking, then later batches append exactly once" do
+      current = call("call-a", 3, 1, "prefix", "reason")
+      state = run([activity(:llm, current)])
+      id = state.delta.call_entry_id
+
+      assert [%{id: ^id, text: "prefix", streaming: true}] = state.transcript
+      assert state.delta.turn == 3
+      assert Delta.streamed_text?(state.delta)
+      assert state.delta.activity == %{phase: :llm, current_call: current}
+      assert [thought] = state.thought_process
+      assert thought.data.metadata == %{thinking: true, call_id: "call-a"}
+      assert thought.turn == 3
+      assert thought.data.content == ""
+      assert [%{text: "reason"}] = thought.data.reasoning_details
+
+      state = run([{:text, " suffix"}, {:thinking, " more"}], state)
+      assert [%{id: ^id, text: "prefix suffix"}] = state.transcript
+      assert state.delta.thinking == "reason more"
+      assert state.delta.activity.current_call.text == "prefix suffix"
+      assert state.delta.activity.current_call.thinking == "reason more"
+      assert [extended] = state.thought_process
+      assert extended.timestamp == thought.timestamp
+      assert [%{text: "reason more"}] = extended.data.reasoning_details
+    end
+
+    test "same-call phase replacements overwrite rather than append captured content" do
+      state = run([activity(:llm, call("call-a", 2, 0, "old", "old thought"))])
+      id = state.delta.call_entry_id
+      timestamp = hd(state.thought_process).timestamp
+      corrected = call("call-a", 2, 0, "corrected", "new thought")
+
+      state = run([activity(:llm_complete, corrected)], state)
+      state = run([activity(:tools, corrected)], state)
+
+      assert state.delta.activity == %{phase: :tools, current_call: corrected}
+      assert [%{id: ^id, text: "corrected", streaming: true}] = state.transcript
+      assert [thought] = state.thought_process
+      assert thought.timestamp == timestamp
+      assert [%{text: "new thought"}] = thought.data.reasoning_details
+
+      state = run([activity(:tools, %{corrected | thinking: ""})], state)
+      assert state.thought_process == []
+      assert state.delta.thinking == ""
+      assert [%{id: ^id, text: "corrected", streaming: true}] = state.transcript
+    end
+
+    test "retry_wait discards only the failed attempt and a fresh attempt starts empty" do
+      state = run([activity(:llm, call("older", 3, 0, "earlier answer", "earlier thought"))])
+      state = run([{:turn, %{turn: 4}}, activity(:idle, nil)], state)
+      [older] = state.transcript
+      [older_thought] = state.thought_process
+      state = run([activity(:llm, call("failed", 4, 0, "discard me", "bad thought"))], state)
+
+      failed_id = state.delta.call_entry_id
+      state = run([activity(:retry_wait, nil)], state)
+
+      assert state.transcript == [older]
+      assert state.thought_process == [older_thought]
+      assert state.delta.call_entry_id == nil
+      assert state.delta.thinking == ""
+      assert state.delta.text_in_turn == false
+      assert state.delta.text_in_closed_turn == true
+      assert state.delta.activity == %{phase: :retry_wait, current_call: nil}
+
+      state = run([activity(:llm_waiting, call("retry", 4, 1))], state)
+      assert state.transcript == [older]
+      assert state.delta.call_entry_id == nil
+      state = run([{:thinking, "fresh thought"}, {:text, "fresh answer"}], state)
+
+      assert [^older, %{id: retry_id, text: "fresh answer", streaming: true}] = state.transcript
+      assert retry_id != failed_id
+
+      assert state.delta.activity.current_call ==
+               call("retry", 4, 1, "fresh answer", "fresh thought")
+
+      assert [^older_thought, thought] = state.thought_process
+      assert thought.data.metadata.call_id == "retry"
+      assert [%{text: "fresh thought"}] = thought.data.reasoning_details
+    end
+
+    test "a new same-turn call id replaces the old attempt even when its text is identical" do
+      state = run([activity(:llm, call("attempt-0", 1, 0, "same", "same thought"))])
+      previous_id = state.delta.call_entry_id
+      state = run([activity(:llm, call("attempt-1", 1, 1, "same", "same thought"))], state)
+
+      assert [%{id: id, text: "same"}] = state.transcript
+      assert id != previous_id
+      assert state.delta.call_entry_id == id
+      assert [thought] = state.thought_process
+      assert thought.data.metadata.call_id == "attempt-1"
+      state = run([{:text, " suffix"}, {:thinking, " suffix"}], state)
+      assert [%{id: ^id, text: "same suffix"}] = state.transcript
+
+      assert [%{data: %{reasoning_details: [%{text: "same thought suffix"}]}}] =
+               state.thought_process
+    end
+
+    test "new-turn identity keeps earlier text and thinking even with identical content" do
+      state = run([activity(:llm, call("first", 1, 0, "same", "same thought"))])
+      first_id = state.delta.call_entry_id
+      state = run([{:turn, %{turn: 2, total_tokens: 99}}], state)
+      state = run([activity(:llm, call("second", 2, 0, "same", "same thought"))], state)
+
+      assert [
+               %{id: ^first_id, text: "same", streaming: false},
+               %{id: second_id, text: "same", streaming: true}
+             ] = state.transcript
+
+      assert second_id != first_id
+      assert state.delta.call_entry_id == second_id
+      assert state.meta.total_tokens == 99
+
+      assert Enum.map(state.thought_process, &{&1.turn, &1.data.metadata.call_id}) ==
+               [{1, "first"}, {2, "second"}]
+    end
+
+    test "completion and idle retirement preserve one finalized answer and its reasoning" do
+      current = call("answer", 1, 0, "partial", "reasoning")
+      state = run([activity(:llm, current)])
+      id = state.delta.call_entry_id
+      state = run([activity(:llm_complete, %{current | text: "complete"})], state)
+      state = run([{:turn, %{turn: 1}}, {:yield, "authoritative"}], state)
+
+      assert state.outcome == :yield
+      assert [%{id: ^id, text: "authoritative", streaming: false}] = state.transcript
+      thoughts = state.thought_process
+      state = run([activity(:idle, nil)], state)
+      assert state.outcome == nil
+      assert state.delta.activity == %{phase: :idle, current_call: nil}
+      assert state.delta.thinking == ""
+      assert state.thought_process == thoughts
+      assert [%{id: ^id, text: "authoritative", streaming: false}] = state.transcript
+      assert Delta.streamed_text?(state.delta)
+      # A retired call must not accept stray text/thinking chunks.
+      assert run([{:text, "stray"}, {:thinking, "stray"}], state) == state
+    end
+
+    test "thinking-only activity never creates a bubble and no-call phases ignore chunks" do
+      for phase <- [:idle, :llm_waiting, :retry_wait, :tools] do
+        state = run([activity(phase, nil)])
+        assert run([{:text, "stray"}, {:thinking, "stray"}], state) == state
+        refute Delta.streamed_text?(state.delta)
+      end
+
+      state = run([activity(:llm, call("thinking-only", 0, 0, "", "reason"))])
+      assert state.transcript == []
+      assert length(state.thought_process) == 1
+      refute Delta.streamed_text?(state.delta)
+      state = run([{:finished, :cancelled}], state)
+      assert state.outcome == {:finished, :cancelled}
+      assert state.transcript == []
+      assert [%{data: %{metadata: %{call_id: "thinking-only"}}}] = state.thought_process
+    end
+
+    test "malformed activity replacements preserve the entire active surface" do
+      state = run([activity(:llm, call("valid", 2, 0, "keep", "keep thought"))])
+
+      invalid_calls = [
+        :junk,
+        %{},
+        Map.delete(call("bad"), :attempt),
+        %{call("bad") | id: 42},
+        %{call("bad") | turn: -1},
+        %{call("bad") | attempt: -1},
+        %{call("bad") | text: nil},
+        %{call("bad") | thinking: nil}
+      ]
+
+      projections =
+        [
+          nil,
+          :llm,
+          %{phase: :llm},
+          %{current_call: call("bad")},
+          %{phase: :unknown, current_call: nil}
+        ] ++
+          Enum.map(invalid_calls, &%{phase: :llm, current_call: &1})
+
+      for projection <- projections do
+        assert run([{:activity, projection}], state) == state
+      end
+    end
+  end
+
   describe "text deltas" do
     test "the first chunk creates ONE streaming assistant entry" do
       %{transcript: transcript} = run([{:text, "Hello"}])
@@ -86,10 +279,9 @@ defmodule EvoDashWeb.HomeLive.DeltaTest do
     end
 
     test "the 8 000-grapheme per-entry cap still applies across chunks" do
-      %{transcript: transcript} = run([{:text, String.duplicate("a", 7_900)}])
+      state = run([{:text, String.duplicate("a", 7_900)}])
 
-      %{transcript: transcript} =
-        run([{:text, String.duplicate("b", 500)}], stream(transcript))
+      %{transcript: transcript} = run([{:text, String.duplicate("b", 500)}], state)
 
       assert [%{text: text}] = transcript
       assert String.length(text) == 8_000
@@ -113,11 +305,20 @@ defmodule EvoDashWeb.HomeLive.DeltaTest do
       assert is_integer(entry.timestamp)
     end
 
+    test "later batches extend the same thinking prefix without replacing it" do
+      state = run([{:thinking, "let me "}])
+      state = run([{:thinking, "think"}], state)
+
+      assert state.delta.thinking == "let me think"
+      assert [entry] = state.thought_process
+      assert [%{text: "let me think"}] = entry.data.reasoning_details
+    end
+
     test "a new turn starts a NEW thinking entry (one bucket per turn)" do
-      %{thought_process: first} = run([{:thinking, "turn zero"}])
+      state = run([{:thinking, "turn zero"}])
 
       %{thought_process: thought_process} =
-        run([{:turn, %{turn: 1}}, {:thinking, "turn one"}], stream([], first))
+        run([{:turn, %{turn: 1}}, {:thinking, "turn one"}], state)
 
       assert [zero, one] = thought_process
       assert zero.turn == 0
@@ -176,7 +377,7 @@ defmodule EvoDashWeb.HomeLive.DeltaTest do
     end
 
     test "a turn closes that single bubble and the next text opens a fresh one" do
-      %{transcript: transcript} =
+      state =
         run([
           {:text, "partial "},
           {:tool_call, "c1", "bash"},
@@ -184,12 +385,14 @@ defmodule EvoDashWeb.HomeLive.DeltaTest do
           {:tool_result, "c1", :ok}
         ])
 
-      %{transcript: transcript} = run([{:turn, %{turn: 1}}], stream(transcript))
+      state = run([{:turn, %{turn: 1}}], state)
 
-      assert Enum.filter(transcript, &(&1.role == :assistant)) ==
-               [Enum.find(transcript, &(&1.role == :assistant and &1.text == "partial more"))]
+      assert [%{text: "partial more", streaming: false}] =
+               Enum.filter(state.transcript, &(&1.role == :assistant))
 
-      %{transcript: transcript} = run([{:text, "next"}], stream(transcript))
+      %{transcript: transcript, delta: delta} = run([{:text, "next"}], state)
+
+      assert delta.turn == 1
 
       # Exactly TWO assistant entries: the closed turn and the new streaming one.
       assert [
@@ -219,9 +422,9 @@ defmodule EvoDashWeb.HomeLive.DeltaTest do
     end
 
     test "a tool_result by call id updates that exact row" do
-      %{transcript: transcript} = run([{:tool_call, "c1", "bash"}, {:tool_call, "c2", "read"}])
+      state = run([{:tool_call, "c1", "bash"}, {:tool_call, "c2", "read"}])
 
-      %{transcript: transcript} = run([{:tool_result, "c1", :ok}], stream(transcript))
+      %{transcript: transcript} = run([{:tool_result, "c1", :ok}], state)
 
       assert [
                %{tool_call_id: "c1", tool_status: :ok},
@@ -231,10 +434,9 @@ defmodule EvoDashWeb.HomeLive.DeltaTest do
     end
 
     test "a nil call id updates the most recent still-running row" do
-      %{transcript: transcript} =
-        run([{:tool_call, nil, "bash"}, {:tool_call, nil, "read"}])
+      state = run([{:tool_call, nil, "bash"}, {:tool_call, nil, "read"}])
 
-      %{transcript: transcript} = run([{:tool_result, nil, :timeout}], stream(transcript))
+      %{transcript: transcript} = run([{:tool_result, nil, :timeout}], state)
 
       assert [
                %{tool_name: "bash", tool_status: :running},
@@ -259,11 +461,11 @@ defmodule EvoDashWeb.HomeLive.DeltaTest do
     end
 
     test "an unmatched tool_result leaves the transcript untouched" do
-      %{transcript: transcript} = run([{:tool_call, "c1", "bash"}])
+      state = run([{:tool_call, "c1", "bash"}])
 
-      %{transcript: after_result} = run([{:tool_result, "nope", :ok}], stream(transcript))
+      %{transcript: after_result} = run([{:tool_result, "nope", :ok}], state)
 
-      assert after_result == Transcript.normalize(transcript)
+      assert after_result == Transcript.normalize(state.transcript)
       assert [%{tool_status: :running}] = after_result
     end
   end
@@ -352,11 +554,11 @@ defmodule EvoDashWeb.HomeLive.DeltaTest do
     end
 
     test "a closed turn keeps the flag, and a later text-less turn clears it" do
-      %{delta: delta} = run([{:text, "a"}, {:turn, %{turn: 1}}])
-      assert Delta.streamed_text?(delta)
+      state = run([{:text, "a"}, {:turn, %{turn: 1}}])
+      assert Delta.streamed_text?(state.delta)
 
-      %{delta: delta} = run([{:text, "a"}, {:turn, %{turn: 1}}, {:turn, %{turn: 2}}])
-      refute Delta.streamed_text?(delta)
+      state = run([{:turn, %{turn: 2}}], state)
+      refute Delta.streamed_text?(state.delta)
     end
   end
 
