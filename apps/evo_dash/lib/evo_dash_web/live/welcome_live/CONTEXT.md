@@ -53,5 +53,14 @@ The page and sibling tests are owned outside this helper node.
 For example, `Setup.prepare/3` currently accepts an unrelated raw `"scheduler" => %{"max_tool_concurrency" => "invalid"}` section while the atom-keyed equivalent is rejected.
 This gap belongs to the core's validation normalization and must not be bypassed with an onboarding-specific validator or resolved-config persistence.
 
+## Config I/O Touch Points (page + helper)
+`welcome_live.ex` reads config only via `ConfigIO.load_file_config/0` (= `EvoGit.Config.resolve/0`) in `mount/3` and after a save, and carries `EvoGit.Config.credentials/0` into the `credentials` assign at mount, after save and after a connection test.
+`Setup.read_config/0` (`setup.ex:176-194`) is the deliberate raw-TOML read (`File.read(EvoGit.Config.config_path())` + `TomlElixir.decode`) used as the read-modify-write base for save and test, so persisted defaults and migration output never land in the file.
+Writes are only `EvoGit.Config.save_credentials/1` (`save_key/3` at `welcome_live.ex:676`) and `EvoGit.Config.save_user_config/1` (`welcome_live.ex:504`), both wrapped by `Setup.write/1` (`EvoDash.SafeCall.run/1`, not transactional together).
+After a successful save the page re-reads `load_file_config/0` (`:505`), re-reads `credentials/0` (`:514`) and pushes scheduler options through `ConfigIO.update_runtime_from_file_config/2` (`:519`); it never calls `reload_remote_config/1` or `RemoteAPI.reload_config/0`.
+`save_key/3` runs before both the config write and the connection test, so the API key reaches the test through `save_credentials/1`'s file write plus its `ReqLLM.put_key` side effect, not from the `api_key_input` assign.
+The page subscribes to no config-change topic: `has_model?`, `credentials` (and the `key_is_set` badge / `can_save?/1`) only refresh on mount or after this page's own writes, so an external config or credentials edit stays invisible until remount.
+`file_config` is assigned in `mount/3` and after save but is never rendered or read — a dead assign holding the resolved config map in socket state.
+
 ## Routing Table
 This helper directory has no child directories.
