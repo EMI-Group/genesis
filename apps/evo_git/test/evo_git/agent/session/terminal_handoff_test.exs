@@ -61,7 +61,7 @@ defmodule EvoGit.Agent.Session.TerminalHandoffTest do
     assert seq == 1
     assert {:text, "streamed fragment, not the final answer"} in events
     assert {:thinking, "private partial thought"} in events
-    assert {:finished, :done} in events
+    assert {:finished, :completed} in events
     assert List.last(events) == {:activity, Activity.new()}
 
     assert index_of(messages, &match?({:agent_delta, ^id, _, _}, &1)) <
