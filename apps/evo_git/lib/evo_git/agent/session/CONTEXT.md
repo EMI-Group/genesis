@@ -9,6 +9,8 @@ The exchange engine (`EvoGit.Agent.Exchange`) stays a pure function over the str
 The session IS the one lifecycle for every agent: `EvoGit.AgentScheduler.Dispatch.do_try_dispatch/4` starts it under `EvoGit.Agent.Session.Supervisor` and `EvoGit.AgentScheduler` admits its ONE terminal `{:agent_session_result, …}`.
 The session serves BOTH drivers: a `:oneshot` role ends at its first text reply, while an `:interactive` role YIELDS a text reply and parks in `:awaiting_input` until `start_input/3` resumes it on the SAME pid/worktree/context or `close/2` finalizes it.
 The session also OWNS the push-only streaming contract — the watcher set, the monotonic `event_seq` and the coalescing batcher — so a live consumer is PUSHED deltas and never polls.
+`../session.ex` is intentionally long and cohesive: the `gen_statem` lifecycle, authoritative state and stream sequence, and terminal ordering must remain together.
+`TerminalHandoff` extracts only direct fan-out, never lifecycle ownership.
 
 ## API Surface
 
