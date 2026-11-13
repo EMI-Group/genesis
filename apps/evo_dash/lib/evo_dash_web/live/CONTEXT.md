@@ -36,7 +36,10 @@ Phoenix LiveView modules and templates for the EvoDash interactive UI — real-t
 Selection close, node or target changes and termination detach the watch, while a selected owned watch survives agent removal or absence and its retained ended detail remains outside the live tree.
 The serial worker fields and monotonic watch/history counters survive scope resets.
 The parent forwards ready, reconciled, delta and `{:agent_stream_closed, agent_id, snapshot, seq}` messages through StreamWatch and projects newly admitted checkpoint messages and authoritative terminal status in the SAME callback.
-A sealed inspector snapshot outranks late summary/status updates, and retained ended detail remains available to the full-message and objective controls without reinserting the agent into the tree.
+A sealed inspector snapshot's explicit status outranks late summary/status updates, while snapshots without status allow the first terminal summary to settle both live and retained detail and then reject stale status overwrites.
+The snapshot phase `:done` alone never implies successful completion.
+A late terminal summary can settle an already removed selected agent without reintroducing its live tree row, and stale registration cannot replace that sealed retained detail.
+Retained ended detail remains available to the full-message and objective controls without reinserting the agent into the tree.
 Core snapshots atomically capture checkpoint messages, nested `activity: %{phase:, current_call: nil | %{id:, turn:, attempt:, text:, thinking:}}` and an authoritative sequence, including complete accumulated current-call content even without watchers.
 StreamWatch freezes retirement/replacement batches before applying them, coalesces atomic snapshot requests and replays only newer buffered deltas, freezing again if replay crosses another ownership boundary.
 `{:inspector_stream_reconciled, node, token, agent_id, request, result}` forwards to `StreamWatch.reconciled/6`, whose admission guards protect scope, request identity and the required sequence watermark.

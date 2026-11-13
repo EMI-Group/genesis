@@ -980,18 +980,24 @@ defmodule EvoDashWeb.AgentsLive do
       end
   end
 
-  # A sealed snapshot outranks late summary/status updates, including failure
-  # broadcasts racing successful completion, without adding rows to the tree.
+  # A sealed snapshot's explicit status outranks late summaries. Older snapshots
+  # may omit it: let a terminal summary settle the row once, without inferring
+  # success from :done or letting stale updates reopen it.
   defp preserve_terminal_inspector(socket, agent) do
     if StreamWatch.terminal?(socket, agent.id) do
       snapshot = socket.assigns.inspector_stream.snapshot
       previous = selected_inspector_agent(socket.assigns)
 
+      previous_status = previous && previous.status
+
+      status =
+        Map.get(snapshot, :status) ||
+          if previous_status in [:completed, :failed, :cancelled],
+            do: previous_status,
+            else: agent.status
+
       agent
-      |> Map.put(
-        :status,
-        Map.get(snapshot, :status) || (previous && previous.status) || agent.status
-      )
+      |> Map.put(:status, status)
       |> Map.put(:history, messages_to_history_entries(snapshot.messages))
     else
       agent
@@ -1669,7 +1675,11 @@ defmodule EvoDashWeb.AgentsLive do
   defp apply_agent_registered(socket, agent_id, summary) do
     already_exists = Enum.any?(socket.assigns.agents, fn a -> a.id == agent_id end)
 
-    if already_exists do
+    retained_terminal? =
+      StreamWatch.terminal?(socket, agent_id) and
+        Map.has_key?(socket.assigns.retained_agents, agent_id)
+
+    if already_exists or retained_terminal? do
       {:ok, socket}
     else
       merge_registered_agent(socket, agent_id, summary)
@@ -1688,8 +1698,30 @@ defmodule EvoDashWeb.AgentsLive do
     agent_idx = Enum.find_index(agents, fn a -> a.id == agent_id end)
 
     if agent_idx == nil do
-      # Race — agent not yet in our list, fall back to an async full refresh
-      :fallback
+      case Map.get(socket.assigns.retained_agents, agent_id) do
+        nil ->
+          # Race — agent not yet in our list, fall back to an async full refresh
+          :fallback
+
+        retained ->
+          if StreamWatch.terminal?(socket, agent_id) do
+            # Removal can precede the terminal summary. Settle the retained
+            # detail without resurrecting a live tree row or its old history.
+            agent =
+              retained
+              |> Map.merge(handle_special_fields(Map.new(changed_fields)))
+              |> then(&preserve_terminal_inspector(socket, &1))
+
+            {:ok,
+             assign(
+               socket,
+               :retained_agents,
+               Map.put(socket.assigns.retained_agents, agent_id, agent)
+             )}
+          else
+            :fallback
+          end
+      end
     else
       agent = Enum.at(agents, agent_idx)
 
