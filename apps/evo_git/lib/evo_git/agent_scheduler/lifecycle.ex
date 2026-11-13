@@ -280,6 +280,13 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
     # On retry, just update retry count and status. The crashed agent's
     # worktree is reclaimed by WorktreeManager via its monitor; the retry's
     # session requests a FRESH worktree.
+    #
+    # The SAME `agent_id` is re-dispatched with `retries: meta.retries + 1`, so
+    # `Dispatch.do_try_dispatch/4` emits `restore_agent_state: true` for this
+    # rebuilt session (when the task's `:persistent_state` flag is not `false`):
+    # the session merges the persisted conversation for this agent id onto the
+    # fresh dispatch. This does NOT change the retry policy — an INTERACTIVE
+    # session is still never retried (see `retry?/2`).
     Store.put_sched_meta(agent_id, %{
       meta
       | retries: meta.retries + 1,

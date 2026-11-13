@@ -31,11 +31,14 @@ defmodule EvoGit.AgentScheduler.SessionOpts do
     spec opts.
   - `:node_path` — in-repo relative path inside the context tree (default `"./"`)
   - `:task_id`, `:model_id`, `:model_spec`, `:archive`, `:attachments`,
-    `:quality_level`, `:foreign_repos`, `:repo_notes`, `:notify`,
-    `:session_mode` — forwarded into the spec opts verbatim (model selection is
-    normalized through `EvoGit.Runtime.Helpers.normalize_model_selection_opts/1`,
-    exactly like the self-reflective builder, so an explicit `:model_spec` wins
-    over a legacy `:model_id` and locks the selection)
+    `:quality_level`, `:persistent_state`, `:foreign_repos`, `:repo_notes`,
+    `:notify`, `:session_mode` — forwarded into the spec opts verbatim (model
+    selection is normalized through
+    `EvoGit.Runtime.Helpers.normalize_model_selection_opts/1`, exactly like the
+    self-reflective builder, so an explicit `:model_spec` wins over a legacy
+    `:model_id` and locks the selection). `:persistent_state` is the boolean
+    durability flag (default `true`; `false` opts the whole task out of the
+    durable per-agent checkpoints kept in `agent_state.sqlite`).
 
   `:depth` / `:parent_id` are accepted ONLY as `0` / `nil`: interactive
   sessions are root-only in v1 (a subagent that lives across exchanges never
