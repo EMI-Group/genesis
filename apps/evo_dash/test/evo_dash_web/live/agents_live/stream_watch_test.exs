@@ -26,7 +26,9 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
   end
 
   defp socket(id) do
-    initialized = StreamWatch.attach(blank_socket(), id)
+    initialized =
+      blank_socket() |> Phoenix.Component.assign(selected_agent_id: id) |> StreamWatch.attach(id)
+
     assert_receive {:desired, 3, nil}, @timeout
     assert_receive {:desired, 4, %{id: ^id, token: 4, snapshot_request: 0}}, @timeout
     initialized
@@ -699,6 +701,260 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
       refute_subscribed(id)
       assert_receive {:desired, 4, nil}, @timeout
     end
+  end
+
+  describe "persistent terminal handoff" do
+    test "ownership includes pending, failed and terminal watches but requires the selected scope" do
+      id = unique_id()
+      pending = socket(id)
+      live = ready(pending, {:ok, call_snapshot(id, 5), 5})
+      failed = ready(pending, {:error, :not_found})
+      assert_receive {:desired, 4, nil}, @timeout
+      final = terminal_snapshot(id, 6)
+      closed = StreamWatch.closed(failed, id, final, 6)
+      assert_receive {:desired, 4, nil}, @timeout
+
+      for owned <- [pending, live, failed, closed] do
+        assert StreamWatch.owns?(owned, id)
+        refute StreamWatch.owns?(owned, id + 1)
+        assert StreamWatch.terminal?(owned, id) == (owned === closed)
+      end
+
+      assert StreamWatch.active?(pending, id)
+      assert StreamWatch.active?(live, id)
+      refute StreamWatch.active?(failed, id)
+      refute StreamWatch.active?(closed, id)
+      refute StreamWatch.terminal?(closed, id + 1)
+
+      for changes <- [
+            [selected_agent_id: nil],
+            [selected_agent_id: id + 1],
+            [inspector_stream_token: 5],
+            [current_node: :other@host],
+            [current_node_id: "other-target"],
+            [current_node: node(), current_node_id: "pending-target"]
+          ],
+          owned <- [pending, live, failed, closed] do
+        foreign = Phoenix.Component.assign(owned, changes)
+        refute StreamWatch.owns?(foreign, id)
+        refute StreamWatch.terminal?(foreign, id)
+        assert StreamWatch.closed(foreign, id, final, 6) === foreign
+      end
+
+      detached = StreamWatch.detach(closed)
+      assert_receive {:desired, 5, nil}, @timeout
+      refute StreamWatch.owns?(detached, id)
+      refute StreamWatch.terminal?(detached, id)
+      assert StreamWatch.closed(detached, id, final, 6) === detached
+      refute_receive {:desired, _, _}, 0
+    end
+
+    test "finished delta is not a handoff; equal-watermark closure replaces and seals the final pair" do
+      id = unique_id()
+
+      original = %{
+        call_snapshot(id, 5, text: "live", thinking: "live reasoning")
+        | messages: [%{role: :assistant, content: "old checkpoint"}]
+      }
+
+      established = ready(socket(id), {:ok, original, 5})
+      finished = StreamWatch.push(established, id, 6, [{:finished, :completed}])
+      assert finished.assigns.inspector_stream.state.finished
+      assert StreamWatch.owns?(finished, id)
+      refute StreamWatch.terminal?(finished, id)
+      assert_subscribed(id)
+
+      final = terminal_snapshot(id, 6)
+      closed = StreamWatch.closed(finished, id, final, 6)
+      assert_terminal(closed, final)
+      assert closed.assigns.inspector_stream.token == 4
+      assert closed.assigns.inspector_stream_token == 4
+      assert_receive {:desired, 4, nil}, @timeout
+      refute_subscribed(id)
+
+      assert StreamWatch.attach(closed, id) === closed
+      assert StreamWatch.reconcile(closed) === closed
+      assert StreamWatch.push(closed, id, 99, [{:text, "late"}]) === closed
+      assert StreamWatch.closed(closed, id, final, 6) === closed
+      assert StreamWatch.closed(closed, id, terminal_snapshot(id, 99), 99) === closed
+      refute_receive {:desired, _, _}, 0
+      refute_receive {:reconcile, _, _}, 0
+
+      detached = StreamWatch.detach(closed)
+      assert_receive {:desired, 5, nil}, @timeout
+      assert detached.assigns.inspector_stream == nil
+      refute StreamWatch.terminal?(detached, id)
+    end
+
+    test "freshness covers applied, boundary and buffered watermarks without sequence regression" do
+      for kind <- [:applied, :boundary, :buffered] do
+        id = unique_id()
+        established = ready(socket(id), {:ok, call_snapshot(id, 5, text: "keep"), 5})
+
+        {current, watermark} =
+          case kind do
+            :applied ->
+              {StreamWatch.push(established, id, 7, [{:text, " suffix"}]), 7}
+
+            :boundary ->
+              pending = StreamWatch.push(established, id, 8, [{:activity, Activity.new()}])
+              assert_receive {:reconcile, 4, 1}, @timeout
+              assert pending.assigns.inspector_stream.required_seq == 8
+              {pending, 8}
+
+            :buffered ->
+              pending = StreamWatch.reconcile(established)
+              assert_receive {:reconcile, 4, 1}, @timeout
+              {StreamWatch.push(pending, id, 10, [{:text, "buffered"}]), 10}
+          end
+
+        stale = terminal_snapshot(id, watermark - 1)
+        assert StreamWatch.closed(current, id, stale, stale.seq) === current
+        assert_subscribed(id)
+        refute_receive {:desired, _, _}, 0
+        final = terminal_snapshot(id, watermark)
+        closed = StreamWatch.closed(current, id, final, watermark)
+        assert_terminal(closed, final)
+        assert_receive {:desired, 4, nil}, @timeout
+        refute_subscribed(id)
+      end
+    end
+
+    test "rejects mismatched agents, nonterminal snapshots and malformed sequence envelopes inertly" do
+      id = unique_id()
+      current = ready(socket(id), {:ok, call_snapshot(id, 5, text: "keep"), 5})
+      final = terminal_snapshot(id, 6)
+
+      for {agent, snap, seq} <- [
+            {id + 1, terminal_snapshot(id + 1, 6), 6},
+            {id, terminal_snapshot(id + 1, 6), 6},
+            {id, %{final | phase: :running}, 6},
+            {id, %{final | seq: 7}, 6},
+            {id, %{final | seq: -1}, -1},
+            {id, %{final | seq: "6"}, "6"},
+            {id, Map.from_struct(final), 6},
+            {id, nil, 6}
+          ] do
+        assert StreamWatch.closed(current, agent, snap, seq) === current
+      end
+
+      assert_subscribed(id)
+      refute_receive {:desired, _, _}, 0
+      refute_receive {:cleanup, _}, 0
+    end
+
+    test "closure overtakes pending registration and its buffered suffix before any snapshot is ready" do
+      id = unique_id()
+      pending = socket(id) |> StreamWatch.push(id, 8, [{:text, "unadmitted suffix"}])
+      assert pending.assigns.inspector_stream.snapshot == nil
+      assert pending.assigns.inspector_stream.buffer_bytes > 0
+      stale = terminal_snapshot(id, 7)
+      assert StreamWatch.closed(pending, id, stale, 7) === pending
+
+      final = terminal_snapshot(id, 8)
+      closed = StreamWatch.closed(pending, id, final, 8)
+      assert_terminal(closed, final)
+      assert_receive {:desired, 4, nil}, @timeout
+      refute_subscribed(id)
+
+      # These are the real public ready envelopes, delivered after direct closure.
+      for result <- [
+            {:error, :timeout},
+            {:ok, {:error, :not_found}},
+            {:ok, call_snapshot(id, 5, text: "old"), 5},
+            {:ok, {:ok, call_snapshot(id, 99, text: "late"), 99}}
+          ] do
+        assert ready(closed, result) === closed
+      end
+
+      refute_receive {:desired, _, _}, 0
+      refute_receive {:cleanup, _}, 0
+    end
+
+    test "closure overtakes reconciliation and late success or failure cannot overwrite its checkpoint" do
+      id = unique_id()
+      established = ready(socket(id), {:ok, call_snapshot(id, 5, text: "keep"), 5})
+      pending = StreamWatch.push(established, id, 6, [{:activity, Activity.new()}])
+      assert_receive {:reconcile, 4, 1}, @timeout
+      buffered = StreamWatch.push(pending, id, 7, [{:thinking, "unadmitted"}])
+      final = terminal_snapshot(id, 7)
+      closed = StreamWatch.closed(buffered, id, final, 7)
+      assert_terminal(closed, final)
+      assert_receive {:desired, 4, nil}, @timeout
+      refute_subscribed(id)
+
+      for result <- [
+            {:error, :offline},
+            {:ok, {:error, :not_found}},
+            {:ok, call_snapshot(id, 6, text: "old"), 6},
+            {:ok, {:ok, call_snapshot(id, 99, text: "late"), 99}}
+          ] do
+        assert reconciled(closed, result) === closed
+        assert ready(closed, result) === closed
+      end
+
+      assert StreamWatch.reconcile(closed) === closed
+      assert StreamWatch.push(closed, id, 100, [{:activity, Activity.new()}]) === closed
+      refute_receive {:desired, _, _}, 0
+      refute_receive {:cleanup, _}, 0
+      refute_receive {:reconcile, _, _}, 0
+    end
+
+    test "direct closure recovers a failed reconciliation without reattaching or losing final reasoning" do
+      id = unique_id()
+      established = ready(socket(id), {:ok, call_snapshot(id, 5, text: "keep"), 5})
+      pending = StreamWatch.push(established, id, 6, [{:activity, Activity.new()}])
+      assert_receive {:reconcile, 4, 1}, @timeout
+      failed = reconciled(pending, {:error, :not_found})
+      assert_receive {:desired, 4, nil}, @timeout
+      assert failed.assigns.inspector_stream.error == :not_found
+      assert failed.assigns.inspector_stream.state === established.assigns.inspector_stream.state
+      assert StreamWatch.owns?(failed, id)
+      refute_subscribed(id)
+      # Failure cleared the buffer, but its required boundary still forbids rollback.
+      assert failed.assigns.inspector_stream.pending == []
+      assert failed.assigns.inspector_stream.required_seq == 6
+      assert StreamWatch.closed(failed, id, terminal_snapshot(id, 5), 5) === failed
+      final = terminal_snapshot(id, 6)
+      closed = StreamWatch.closed(failed, id, final, 6)
+      assert_terminal(closed, final)
+      assert_receive {:desired, 4, nil}, @timeout
+      assert reconciled(closed, {:error, :timeout}) === closed
+      assert ready(closed, {:ok, call_snapshot(id, 99), 99}) === closed
+      refute_receive {:desired, _, _}, 0
+      refute_receive {:cleanup, _}, 0
+    end
+  end
+
+  defp terminal_snapshot(id, seq) do
+    %{
+      snapshot(id, seq)
+      | phase: :done,
+        messages: [
+          %{role: :user, content: "objective"},
+          %{role: :assistant, content: "final answer — complete", reasoning: "final reasoning"}
+        ]
+    }
+  end
+
+  defp assert_terminal(socket, snapshot) do
+    stream = socket.assigns.inspector_stream
+    assert stream.snapshot === snapshot
+    assert stream.seq == snapshot.seq
+    assert stream.state.seq == snapshot.seq
+    assert stream.state.messages === snapshot.messages
+    assert stream.state.phase == :done
+    assert stream.state.finished
+    assert stream.state.response == ""
+    assert stream.state.thinking == ""
+    assert stream.state.projections == []
+    assert stream.pending == []
+    assert stream.buffer_bytes == 0
+    assert stream.error == nil
+    refute stream.reconciling
+    assert StreamWatch.owns?(socket, snapshot.agent_id)
+    assert StreamWatch.terminal?(socket, snapshot.agent_id)
+    refute StreamWatch.active?(socket, snapshot.agent_id)
   end
 
   defp assert_subscribed(id) do
