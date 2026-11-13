@@ -30,7 +30,7 @@ A consumer that fell behind, reconnected or lost a delta resyncs with a fresh `s
 `register_watcher/2` → `{:ok, %Snapshot{}, seq} | {:error, {:not_found, reason}} | {:error, {:bad_state, phase}}`, registers an EXTERNAL cross-node pid too, and answers `{:error, {:not_found, :invalid_consumer}}` for a non-pid instead of raising; `unregister_watcher/2` is idempotent `:ok` (also for a non-pid consumer) and `watch_snapshot/1` never opens the gate.
 All three are LOCAL-node session calls, because the session, its watchers and its transcript live on the node that OWNS the agent; `EvoGit.RemoteNode.watch_agent/3`, `unwatch_agent/2` and `watch_snapshot/2` are the caller-side mirrors.
 Payload profile: the snapshot carries the FULL transcript ⇒ 🟠 heavy (same class as `get_agent_history/1`), while `unregister_watcher/2` is 🟢 and delta batches are 🟢 PUBLISHED, never RPC-pulled.
-`Snapshot.messages` is the session's RAW `%ReqLLM.Context{}.messages` verbatim (`Snapshot.from/2`): the `:system` persona message, the `<context>`+`<objective>`-WRAPPED first user message, injected user messages, assistant messages and `:tool` results — the stream layer filters and projects NOTHING, so a consumer wanting only user-authored turns must interpret `metadata[:turn]`/`metadata[:checkpoint]` and the pinned synthetic text prefixes itself.
+`Snapshot.messages` is the session's RAW `%ReqLLM.Context{}.messages` verbatim (`Snapshot.from/2`): the `:system` persona message, the `<context>`+`<objective>`-WRAPPED first user message, injected user messages, assistant messages and `:tool` results — the stream layer filters and projects NOTHING, so a consumer wanting only user-authored turns uses `EvoGit.Agent.MessageMarker.user_authored?/1` and unwraps the first message's `<objective>` for display.
 
 `%Stream.Snapshot{}` fields: `agent_id`, `phase`, `seq`, `turn`, `total_tokens`, `usage`, `messages` (the transcript), `mode`, `model_spec`, `compression_count`.
 It is plain data (JSON-clean) and never carries the `%ReqLLM.Context{}`.
@@ -60,6 +60,11 @@ A snapshot is built from the session's last checkpointed `%State{}` (`data.state
 An immediate flush happens on `{:exchange_finished, …}`, before any transition out of `:running`/`:cancelling`, in `finalize/1`, before a force-cancel stop, and in `terminate/3` (best-effort, must never raise).
 `:awaiting_input`/`:finalizing`/`:done` hold NO flush timer (idle contract: an idle session has no timers).
 
+## Inspector Integration Limits
+The delta vocabulary has no explicit LLM-attempt start/end, retry identity, slot-wait state or tool-execution start event, so `phase: :running` and the most recent text/thinking chunk do not prove what is executing now.
+A streamed `{:tool_call, nil, name}` is a model declaration, not an execution start, and the later id-bearing declaration still precedes dispatch rather than establishing an individual tool task's running lifetime.
+`Snapshot.from/2` copies only checkpointed messages and has no live text/thinking accumulator or current execution activity field, even though `seq` is the current transport sequence.
+Consequently a mid-turn snapshot cannot reconstruct content already broadcast during that unfinished turn, and dropping batches at or below its sequence only reconciles the checkpointed transcript, not an in-flight streaming bubble.
 ## Constraints
 Gap repair is always a fresh `snapshot/1` + `stale?/2`, never a replay.
 `:interrupt` requires an installed stream callback to pre-empt the in-flight turn: with zero watchers there are no callbacks, so it degrades to next-turn-boundary semantics — the message is still delivered exactly once through the pending-message transport and is never lost.
