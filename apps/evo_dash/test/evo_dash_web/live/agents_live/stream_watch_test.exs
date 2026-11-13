@@ -8,34 +8,28 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
 
   @timeout 30_000
 
-  defp socket(id, overrides \\ []) do
+  defp blank_socket do
     target_node = :inspector@host
-
-    stream = %{
-      agent_id: id,
-      node: target_node,
-      token: 4,
-      snapshot: nil,
-      seq: nil,
-      pending: [],
-      buffer_bytes: 0,
-      error: nil,
-      state: RuntimeStream.new(id, target_node)
-    }
 
     %Phoenix.LiveView.Socket{
       transport_pid: self(),
       assigns: %{
         __changed__: %{},
         current_node: target_node,
-        inspector_stream: stream,
-        inspector_stream_token: 4,
+        inspector_stream: nil,
+        inspector_stream_token: 2,
         # Capture only the public worker command boundary, without replacing
         # the BEAM-global runner seams or calling a real session/RPC.
         inspector_stream_worker: self()
       }
     }
-    |> Phoenix.Component.assign(overrides)
+  end
+
+  defp socket(id) do
+    initialized = StreamWatch.attach(blank_socket(), id)
+    assert_receive {:desired, 3, nil}, @timeout
+    assert_receive {:desired, 4, %{id: ^id, token: 4, snapshot_request: 0}}, @timeout
+    initialized
   end
 
   defp snapshot(id, seq \\ 5), do: %Snapshot{agent_id: id, seq: seq, phase: :running}
@@ -50,6 +44,19 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
   defp ready(socket, result) do
     stream = socket.assigns.inspector_stream
     StreamWatch.ready(socket, stream.node, stream.token, stream.agent_id, result)
+  end
+
+  defp reconciled(socket, result) do
+    stream = socket.assigns.inspector_stream
+
+    StreamWatch.reconciled(
+      socket,
+      stream.node,
+      stream.token,
+      stream.agent_id,
+      stream.snapshot_request,
+      result
+    )
   end
 
   defp unique_id, do: System.unique_integer([:positive]) + 100_000_000
@@ -71,8 +78,13 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
         |> StreamWatch.push(id, 7, [{:text, "late"}])
         |> StreamWatch.push(id, 9, [{:text, " tail"}])
 
-      assert length(buffered.assigns.inspector_stream.pending) == 7
-      assert buffered.assigns.inspector_stream.buffer_bytes > 0
+      assert Enum.map(buffered.assigns.inspector_stream.pending, &elem(&1, 0)) == [4, 5, 6, 8, 9]
+
+      assert buffered.assigns.inspector_stream.buffer_bytes ==
+               Enum.sum(
+                 Enum.map(buffered.assigns.inspector_stream.pending, &:erlang.external_size/1)
+               )
+
       assert buffered.assigns.inspector_stream.state.response == ""
       snap = call_snapshot(id, 5, text: "snapshot ", thinking: "saved ")
       seeded = ready(buffered, {:ok, {:ok, snap, 5}})
@@ -175,7 +187,14 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
       assert established.assigns.inspector_stream.state.response == "failed prefix"
 
       {activity, retry_wait} = Activity.apply(activity, {:call_phase, "attempt-1", :retry_wait})
-      waiting = StreamWatch.push(established, id, 6, retry_wait)
+      pending_retry = StreamWatch.push(established, id, 6, retry_wait)
+      assert_receive {:reconcile, 4, 1}, @timeout
+
+      assert pending_retry.assigns.inspector_stream.state ===
+               established.assigns.inspector_stream.state
+
+      retry_snapshot = %{snapshot(id, 6) | activity: activity}
+      waiting = reconciled(pending_retry, {:ok, retry_snapshot, 6})
       assert waiting.assigns.inspector_stream.state.activity == :retry_wait
       assert waiting.assigns.inspector_stream.state.response == ""
       assert waiting.assigns.inspector_stream.state.projections == []
@@ -190,7 +209,7 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
 
       {activity, generating} = Activity.apply(activity, {:call_phase, "attempt-2", :llm})
       {activity, chunks} = Activity.apply(activity, {:chunk, "attempt-2", :text, "success"})
-      {_activity, completed} = Activity.apply(activity, {:call_phase, "attempt-2", :llm_complete})
+      {activity, completed} = Activity.apply(activity, {:call_phase, "attempt-2", :llm_complete})
 
       completed_socket =
         restarted
@@ -203,7 +222,16 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
                completed_socket.assigns.inspector_stream.state.projections
 
       {idle, retired} = Activity.apply(activity, :reset)
-      retired_socket = StreamWatch.push(completed_socket, id, 10, retired)
+      pending_retirement = StreamWatch.push(completed_socket, id, 10, retired)
+      assert_receive {:reconcile, 4, 2}, @timeout
+
+      assert pending_retirement.assigns.inspector_stream.state ===
+               completed_socket.assigns.inspector_stream.state
+
+      checkpoint = [%{role: :assistant, content: "success"}]
+      current = %{snapshot(id, 10) | messages: checkpoint, activity: idle}
+      retired_socket = reconciled(pending_retirement, {:ok, current, 10})
+      assert retired_socket.assigns.inspector_stream.state.messages === checkpoint
       assert retired_socket.assigns.inspector_stream.state.activity == :idle
       assert retired_socket.assigns.inspector_stream.state.projections == []
       assert retired_socket.assigns.inspector_stream.state.response == ""
@@ -214,8 +242,7 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
       late = StreamWatch.push(retired_socket, id, 11, [{:text, "orphan"}, {:thinking, "orphan"}])
       assert late.assigns.inspector_stream.state.projections == []
 
-      checkpoint = [%{role: :assistant, content: "success"}]
-      current = %{snapshot(id, 12) | messages: checkpoint, activity: idle}
+      current = %{current | seq: 12}
       reattached = late |> StreamWatch.detach() |> StreamWatch.attach(id)
       assert_receive {:desired, 5, nil}, @timeout
       assert_receive {:desired, 6, nil}, @timeout
@@ -228,6 +255,165 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
       assert ready(recovered, {:ok, current, 12}) === recovered
       StreamWatch.detach(recovered)
       assert_receive {:desired, 8, nil}, @timeout
+    end
+
+    test "explicit refresh coalesces and atomically replaces checkpoint and current call before replay" do
+      id = unique_id()
+      old = %{call_snapshot(id, 5, text: "old live") | messages: [%{content: "old checkpoint"}]}
+      established = ready(socket(id), {:ok, old, 5})
+      refreshing = StreamWatch.reconcile(established)
+      assert_receive {:reconcile, 4, 1}, @timeout
+      assert StreamWatch.active?(refreshing, id)
+      assert StreamWatch.reconcile(refreshing) === refreshing
+      refute_receive {:reconcile, _, _}, 0
+      refute_receive {:desired, _, _}, 0
+
+      buffered =
+        refreshing
+        |> StreamWatch.push(id, 5, [{:text, "stale"}])
+        |> StreamWatch.push(id, 6, [{:text, "covered"}])
+        |> StreamWatch.push(id, 6, [{:text, "duplicate"}])
+        |> StreamWatch.push(id, 8, [{:text, " suffix"}])
+        |> StreamWatch.push(id, 7, [{:text, "out of order"}])
+
+      assert buffered.assigns.inspector_stream.state ===
+               established.assigns.inspector_stream.state
+
+      assert Enum.map(buffered.assigns.inspector_stream.pending, &elem(&1, 0)) == [6, 8]
+
+      for {target, token, agent, request} <- [
+            {:other@host, 4, id, 1},
+            {:inspector@host, 3, id, 1},
+            {:inspector@host, 4, id + 1, 1},
+            {:inspector@host, 4, id, 0},
+            {:inspector@host, 4, id, 2}
+          ] do
+        assert StreamWatch.reconciled(buffered, target, token, agent, request, {:ok, old, 5}) ===
+                 buffered
+      end
+
+      replacement = %{
+        call_snapshot(id, 6, text: "snapshot")
+        | messages: [%{content: "new checkpoint"}]
+      }
+
+      adopted = reconciled(buffered, {:ok, {:ok, replacement, 6}})
+      assert adopted.assigns.inspector_stream.snapshot === replacement
+      assert adopted.assigns.inspector_stream.state.messages === replacement.messages
+      assert adopted.assigns.inspector_stream.state.response == "snapshot suffix"
+      assert adopted.assigns.inspector_stream.seq == 8
+      assert adopted.assigns.inspector_stream.pending == []
+      assert adopted.assigns.inspector_stream.buffer_bytes == 0
+      assert reconciled(adopted, {:ok, old, 99}) === adopted
+      assert ready(adopted, {:ok, old, 99}) === adopted
+      refute_receive {:cleanup, _}, 0
+    end
+
+    test "replay holds an entire replacement batch and requests the next atomic pair" do
+      id = unique_id()
+      original = call_snapshot(id, 5, text: "first")
+      established = ready(socket(id), {:ok, original, 5})
+      refreshing = StreamWatch.reconcile(established)
+      assert_receive {:reconcile, 4, 1}, @timeout
+      next = call_snapshot(id, 8, id: "call-2", turn: 2, text: "second")
+      boundary = [{:text, "must not leak"}, {:activity, next.activity}, {:yield, "not adoption"}]
+
+      pending =
+        refreshing
+        |> StreamWatch.push(id, 8, boundary)
+        |> StreamWatch.push(id, 9, [{:thinking, " suffix thought"}])
+
+      # The first snapshot is valid for its own request, but replay crosses a
+      # later boundary; none of that boundary batch may touch the rendered pair.
+      intermediate = %{original | seq: 6, messages: [%{content: "first checkpoint"}]}
+      held = reconciled(pending, {:ok, intermediate, 6})
+      assert_receive {:reconcile, 4, 2}, @timeout
+      assert held.assigns.inspector_stream.snapshot === intermediate
+      assert held.assigns.inspector_stream.state.messages === intermediate.messages
+      assert held.assigns.inspector_stream.state.response == "first"
+      assert held.assigns.inspector_stream.state.phase == :running
+      assert held.assigns.inspector_stream.seq == 6
+      assert Enum.map(held.assigns.inspector_stream.pending, &elem(&1, 0)) == [8, 9]
+      assert StreamWatch.reconcile(held) === held
+      refute_receive {:reconcile, _, _}, 0
+
+      current = %{next | messages: [%{content: "first adopted once"}]}
+      adopted = reconciled(held, {:ok, current, 8})
+      assert adopted.assigns.inspector_stream.state.messages === current.messages
+      assert adopted.assigns.inspector_stream.state.response == "second"
+      assert adopted.assigns.inspector_stream.state.thinking == " suffix thought"
+      assert adopted.assigns.inspector_stream.state.phase == :running
+      assert [%{identity: %{id: "call-2"}}] = adopted.assigns.inspector_stream.state.projections
+      assert adopted.assigns.inspector_stream.seq == 9
+      assert adopted.assigns.inspector_stream.pending == []
+      assert StreamWatch.push(adopted, id, 8, boundary) === adopted
+
+      assert StreamWatch.reconciled(adopted, :inspector@host, 4, id, 1, {:ok, intermediate, 99}) ===
+               adopted
+    end
+
+    test "boundary reconciliation failures preserve the coherent pair and require explicit retry" do
+      id = unique_id()
+      original = %{call_snapshot(id, 5, text: "keep") | messages: [%{content: "checkpoint"}]}
+
+      for {result, reason} <- [
+            {{:error, :offline}, :offline},
+            {{:ok, snapshot(id, 5), 5}, {:snapshot_before_boundary, 5, 6}},
+            {{:ok, snapshot(id + 1, 6), 6}, :snapshot_agent_mismatch},
+            {{:ok, %{}, 6}, {:invalid_watch_result, {:ok, %{}, 6}}}
+          ] do
+        established = ready(socket(id), {:ok, original, 5})
+        pending = StreamWatch.push(established, id, 6, [{:activity, Activity.new()}])
+        assert_receive {:reconcile, 4, 1}, @timeout
+
+        assert pending.assigns.inspector_stream.state ===
+                 established.assigns.inspector_stream.state
+
+        failed = reconciled(pending, result)
+        assert failed.assigns.inspector_stream.error == reason
+        assert failed.assigns.inspector_stream.snapshot === original
+
+        assert failed.assigns.inspector_stream.state ===
+                 established.assigns.inspector_stream.state
+
+        assert failed.assigns.inspector_stream.pending == []
+        assert failed.assigns.inspector_stream.buffer_bytes == 0
+        refute StreamWatch.active?(failed, id)
+        refute_subscribed(id)
+        assert_receive {:desired, 4, nil}, @timeout
+        assert StreamWatch.reconcile(failed) === failed
+        assert StreamWatch.push(failed, id, 7, [{:text, "ignored"}]) === failed
+        assert reconciled(failed, {:ok, snapshot(id, 7), 7}) === failed
+        refute_receive {:reconcile, _, _}, 0
+      end
+    end
+
+    test "reconciliation buffer overflow preserves the admitted checkpoint and excerpt" do
+      id = unique_id()
+      snap = %{call_snapshot(id, 5, text: "keep") | messages: [%{content: "checkpoint"}]}
+      established = ready(socket(id), {:ok, snap, 5})
+      pending = StreamWatch.push(established, id, 6, [{:activity, Activity.new()}])
+      assert_receive {:reconcile, 4, 1}, @timeout
+
+      full =
+        Enum.reduce(7..133, pending, fn seq, socket ->
+          StreamWatch.push(socket, id, seq, [{:text, "buffered"}])
+        end)
+
+      assert length(full.assigns.inspector_stream.pending) == 128
+      assert StreamWatch.push(full, id, 133, []) === full
+      failed = StreamWatch.push(full, id, 134, [])
+      assert failed.assigns.inspector_stream.error == :snapshot_buffer_overflow
+      assert failed.assigns.inspector_stream.state === established.assigns.inspector_stream.state
+      assert failed.assigns.inspector_stream.snapshot === snap
+      assert failed.assigns.inspector_stream.pending == []
+      assert failed.assigns.inspector_stream.buffer_bytes == 0
+      refute StreamWatch.active?(failed, id)
+      refute_subscribed(id)
+      assert_receive {:desired, 4, nil}, @timeout
+      assert reconciled(failed, {:ok, snapshot(id, 134), 134}) === failed
+      assert StreamWatch.reconcile(failed) === failed
+      refute_receive {:reconcile, _, _}, 0
     end
 
     test "rejects foreign agents and malformed deltas before and after snapshot" do
@@ -432,15 +618,17 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
 
       assert length(full.assigns.inspector_stream.pending) == 128
       assert full.assigns.inspector_stream.error == nil
+      assert StreamWatch.push(full, id, 128, [{:text, "duplicate"}]) === full
+      assert StreamWatch.push(full, id, 1, [{:text, "old"}]) === full
       overflow = StreamWatch.push(full, id, 129, [])
-      assert overflow.assigns.inspector_stream.error == :pre_snapshot_buffer_overflow
+      assert overflow.assigns.inspector_stream.error == :snapshot_buffer_overflow
       assert overflow.assigns.inspector_stream.pending == []
       assert overflow.assigns.inspector_stream.buffer_bytes == 0
       refute StreamWatch.active?(overflow, id)
       assert_receive {:desired, 4, nil}, @timeout
 
       oversized = StreamWatch.push(socket(id), id, 1, [{:text, String.duplicate("x", 1_048_576)}])
-      assert oversized.assigns.inspector_stream.error == :pre_snapshot_buffer_overflow
+      assert oversized.assigns.inspector_stream.error == :snapshot_buffer_overflow
       assert oversized.assigns.inspector_stream.pending == []
       assert_receive {:desired, 4, nil}, @timeout
     end
@@ -464,7 +652,7 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
     test "rapid A to B to A selection unsubscribes old topics and orders monotonic desired commands" do
       a = unique_id()
       b = unique_id()
-      socket = socket(a, inspector_stream: nil)
+      socket = Phoenix.Component.assign(blank_socket(), inspector_stream_token: 4)
       # Subscription ownership is the calling consumer, not the worker.
       first = StreamWatch.attach(socket, a)
       assert_receive {:desired, 5, nil}, @timeout
