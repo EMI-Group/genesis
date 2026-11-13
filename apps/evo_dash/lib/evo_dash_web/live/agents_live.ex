@@ -191,7 +191,11 @@ defmodule EvoDashWeb.AgentsLive do
     current_node = socket.assigns.current_node
 
     socket =
-      if {socket.assigns[:current_node_id], current_node} != previous_scope do
+      if current_node != socket.assigns.previous_node or
+           {socket.assigns[:current_node_id], current_node} != previous_scope do
+        # Keep the persisted node check: NodeAware may have changed current_node
+        # before handle_params runs. The scope check also catches target changes
+        # that resolve to the same node.
         # Node changed (e.g. user switched from Local to a remote target, or
         # vice versa). Clear per-agent selection state, the history gate, and
         # the threshold cache — agent ids and config are per-node. The agent
