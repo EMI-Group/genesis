@@ -1,201 +1,525 @@
 defmodule EvoDashWeb.HomeLive.Watch do
   @moduledoc """
-  Owns the `/assistant` page's PUSH-ONLY agent-delta watch lifecycle.
+  Consumer-local subscription and serial, supervised registration for Assistant.
 
-  The core contract (`EvoGit.Agent.Stream`) has TWO halves, and they must run in
-  DIFFERENT processes:
+  Forward `{:chat_stream_ready, node, token, id, result}` to `ready/5`, deltas
+  to `push/4`, terminal `{:agent_stream_closed, id, snapshot, seq}` handoffs to
+  `closed/4`, and worker `:DOWN` messages to `down/4` in the LiveView process.
+  `ready/5`, `push/4` and `closed/4` return `{:ok, socket, surface}`, `{:ignored, socket}`,
+  `{:buffered, socket}` or `{:error, socket, reason}`. Install the returned
+  `transcript`, `thought_process` and `meta` in the SAME callback as the returned
+  socket. On ready, apply `surface.snapshot.phase` FIRST, then the replayed
+  `surface.outcome`; snapshot history, live activity and sequence are one cut.
 
-    * the PubSub SUBSCRIPTION is CONSUMER-LOCAL — deltas are delivered to the
-      process that subscribed, and the core's per-process memo makes a repeat
-      subscribe a no-op. It is therefore made INLINE by the LiveView process in
-      `attach/1` (and undone inline by `detach/1`);
-    * the WATCHER REGISTRATION + snapshot is a SESSION call — it may cross a node
-      boundary and reads the session's whole transcript, so it runs in an
-      `EvoDash.TaskSupervisor` child with the LIVEWIEW pid as the consumer (the
-      session `Process.monitor/1`s that pid, so it reaps a dead page by itself).
+  Registration-time batches buffer and replay only above the snapshot sequence.
+  A text-less finish requests one final atomic cut through the same worker and
+  ready/5 route, keeping the subscription and cached surface while it is pending.
+  Its generation and finish-sequence watermark reject obsolete or stale replies;
+  failure never falls back to independent history or automatically repeats.
+  `stream_active?/1` denotes history OWNERSHIP, including pending/failed watches:
+  independent attach/history results must not overwrite their display or phase.
+  Tag independent reads with `stream_attach_seq` and reject results after that
+  generation changes, even if the watch has since detached.
 
-  That split is why the page drops every delta until the snapshot lands: the
-  page keeps `chat_stream: %{agent_id, node, delta}` with `delta: nil` while the
-  registration is in flight, and `handle_info({:agent_delta, ...})` only applies
-  a batch once `delta` is a `%Delta{}` with an integer `seq`. A delta published
-  in the gap between the subscribe and the snapshot is not lost — it is covered
-  by the snapshot's `seq` (`EvoGit.Agent.Stream.stale?/2`), which is the ONLY
-  reconciliation rule of the contract (no replay buffer, no poll loop).
-
-  ## Runner seams (resolved at spawn time)
-
-    * `:home_agent_watch_runner` — 3-arity `(node, agent_id, watcher_pid)`,
-      default `&EvoDash.NodeContext.register_agent_watcher/3`. Returns the flat
-      `{:ok, %EvoGit.Agent.Stream.Snapshot{}, seq} | {:error, term}`.
-    * `:home_agent_unwatch_runner` — 3-arity `(node, agent_id, watcher_pid)`,
-      default `&EvoDash.NodeContext.unregister_agent_watcher/3`.
-
-  Everything here is TOTAL: a dead render, a missing assign, a non-map
-  `chat_stream` and an unexpected runner answer all degrade instead of raising.
+  One consumer-monitored worker serializes registration and cleanup, passing the
+  LiveView pid to the core. Detach never races a later register; worker startup,
+  RPC failures and buffer overflow remain explicit errors, not history fallback.
+  Runner seams are `:home_agent_watch_runner` and `:home_agent_unwatch_runner`,
+  both `(node, agent_id, consumer_pid)`, resolved when attach is requested.
   """
 
   import Phoenix.Component, only: [assign: 2]
   import Phoenix.LiveView, only: [connected?: 1]
 
+  require Logger
+
   alias EvoGit.Agent.Stream.Snapshot
   alias EvoDash.{NodeContext, SafeCall, TaskSupervisor}
-  alias EvoDashWeb.HomeLive.Delta
+  alias EvoDashWeb.HomeLive.{Delta, Messages, Transcript}
 
-  @watch_runner_key :home_agent_watch_runner
-  @unwatch_runner_key :home_agent_unwatch_runner
+  @max_batches 128
+  @max_bytes 1_048_576
+
+  @doc "Attaches a connected, resolved session; a healthy same-scope watch is a no-op."
+  def attach(socket) do
+    id = socket.assigns[:session_id]
+    target_node = socket.assigns[:current_node] || node()
+
+    cond do
+      not connected?(socket) or not positive_int?(id) or pending_remote?(socket) ->
+        socket
+
+      stream_active?(socket) and socket.assigns.chat_stream[:error] == nil ->
+        socket
+
+      true ->
+        socket = detach(socket)
+        token = next_token(socket)
+
+        stream = %{
+          agent_id: id,
+          node: target_node,
+          target_id: socket.assigns[:current_node_id],
+          token: token,
+          delta: nil,
+          snapshot: nil,
+          pending: [],
+          buffer_bytes: 0,
+          final_resync: nil,
+          closed_seq: nil,
+          terminal_outcome: nil,
+          required_seq: 0,
+          error: nil
+        }
+
+        socket = assign(socket, chat_stream: stream, stream_attach_seq: token)
+
+        with :ok <- NodeContext.subscribe_agent_deltas(id),
+             {:ok, socket} <- ensure_worker(socket) do
+          register(socket, stream)
+          socket
+        else
+          {:error, reason} -> fail(socket, reason)
+        end
+    end
+  end
+
+  @doc "Unsubscribes inline, queues serial cleanup, and invalidates every older result."
+  def detach(socket) do
+    case socket.assigns[:chat_stream] do
+      %{agent_id: id} -> NodeContext.unsubscribe_agent_deltas(id)
+      _ -> :ok
+    end
+
+    command(socket, :unregister)
+
+    assign(socket,
+      chat_stream: nil,
+      chat_stream_meta: nil,
+      stream_attach_seq: next_token(socket)
+    )
+  end
+
+  @doc "Admits the current atomic snapshot and replays only newer buffered batches."
+  def ready(socket, target_node, token, id, result) do
+    case socket.assigns[:chat_stream] do
+      %{closed_seq: seq} when is_integer(seq) ->
+        {:ignored, socket}
+
+      %{node: ^target_node, token: ^token, agent_id: ^id, error: nil} = stream
+      when stream.delta == nil or stream.final_resync == :pending ->
+        if stream_active?(socket) do
+          case snapshot_result(result, id, target_node) do
+            {:ok, surface} when surface.delta.seq >= stream.required_seq ->
+              outcome = if stream.final_resync == :pending, do: stream.terminal_outcome
+              surface = Map.put(surface, :outcome, outcome)
+
+              surface =
+                stream.pending
+                |> Enum.reverse()
+                |> Enum.reduce(surface, fn {seq, events}, surface ->
+                  reduce_batch(surface, seq, events)
+                end)
+
+              surface =
+                if stream.final_resync == :pending or surface.snapshot.phase == :done,
+                  do: %{surface | transcript: Transcript.close_streaming(surface.transcript)},
+                  else: surface
+
+              stream = %{
+                stream
+                | delta: surface.delta,
+                  snapshot: surface.snapshot,
+                  pending: [],
+                  buffer_bytes: 0,
+                  final_resync: if(stream.final_resync == :pending, do: :done)
+              }
+
+              socket = assign(socket, chat_stream: stream)
+              {:ok, maybe_final_resync(socket, surface), surface}
+
+            {:ok, surface} ->
+              reason = {:snapshot_before_finish, surface.delta.seq, stream.required_seq}
+              {:error, fail(socket, reason), reason}
+
+            {:error, reason} ->
+              {:error, fail(socket, reason), reason}
+          end
+        else
+          {:ignored, socket}
+        end
+
+      _ ->
+        {:ignored, socket}
+    end
+  end
+
+  @doc "Buffers during registration, otherwise applies a strictly newer batch."
+  def push(socket, id, seq, events) when is_integer(seq) and seq >= 0 and is_list(events) do
+    case socket.assigns[:chat_stream] do
+      %{closed_seq: closed_seq} when is_integer(closed_seq) ->
+        {:ignored, socket}
+
+      %{agent_id: ^id, error: nil} = stream ->
+        if stream_active?(socket) do
+          case stream.delta do
+            %Delta{seq: previous} when seq <= previous ->
+              {:ignored, socket}
+
+            delta when delta == nil or stream.final_resync == :pending ->
+              bytes = stream.buffer_bytes + :erlang.external_size(events)
+
+              if length(stream.pending) >= @max_batches or bytes > @max_bytes do
+                {:error, fail(socket, :watch_buffer_overflow), :watch_buffer_overflow}
+              else
+                stream = %{
+                  stream
+                  | pending: [{seq, events} | stream.pending],
+                    buffer_bytes: bytes
+                }
+
+                {:buffered, assign(socket, chat_stream: stream)}
+              end
+
+            %Delta{seq: previous} when seq > previous ->
+              surface = %{
+                delta: stream.delta,
+                transcript: socket.assigns[:transcript] || [],
+                thought_process: socket.assigns[:thought_process] || [],
+                meta: socket.assigns[:chat_stream_meta] || Delta.meta(),
+                outcome: nil
+              }
+
+              surface = reduce_batch(surface, seq, events)
+              socket = assign(socket, chat_stream: %{stream | delta: surface.delta})
+              {:ok, maybe_final_resync(socket, surface), surface}
+
+            _ ->
+              {:ignored, socket}
+          end
+        else
+          {:ignored, socket}
+        end
+
+      _ ->
+        {:ignored, socket}
+    end
+  end
+
+  def push(socket, _id, _seq, _events), do: {:ignored, socket}
 
   @doc """
-  Attaches the page to its session's delta stream (LiveView process only).
+  Admits the authoritative final cut delivered directly by the watched session.
 
-  A no-op unless the socket is CONNECTED and `session_id` is a positive integer
-  (the interactive-session identity). It first detaches a stream belonging to a
-  DIFFERENT agent, then subscribes THIS process, then spawns the watcher
-  registration with this pid as the consumer and stamps a fresh
-  `stream_attach_seq`.
+  This may precede registration's reply or follow a failed final resync. It
+  replaces the whole display surface, never appends or guesses message identity.
+  Equal sequence is intentional: the final messages can checkpoint at the same
+  watermark as an already applied finish batch. Once admitted, no late delta,
+  registration reply or worker failure can replace this terminal cut.
 
-  Re-attaching the SAME agent id deliberately does NOT detach first: registering
-  the same pid again is idempotent core-side, while a detach → re-register could
-  race the fire-and-forget unregister.
+  The returned snapshot retains the core's terminal status fields verbatim;
+  the page must apply that status alongside `snapshot.phase` and the surface.
   """
-  @spec attach(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
-  def attach(socket) do
-    agent_id = socket.assigns[:session_id]
+  def closed(socket, id, %Snapshot{agent_id: id, phase: :done, seq: seq} = snapshot, seq)
+      when is_integer(seq) and seq >= 0 do
+    case socket.assigns[:chat_stream] do
+      %{closed_seq: closed_seq} when is_integer(closed_seq) ->
+        {:ignored, socket}
 
-    if connected?(socket) and positive_int?(agent_id) do
-      socket = detach_other(socket, agent_id)
-      node = socket.assigns[:current_node]
+      %{agent_id: ^id} = stream ->
+        if stream_active?(socket) and stream.token == socket.assigns[:stream_attach_seq] and
+             seq >= observed_seq(stream) do
+          {:ok, surface} = snapshot_result({:ok, snapshot, seq}, id, stream.node)
 
-      _ = NodeContext.subscribe_agent_deltas(agent_id)
+          surface =
+            surface
+            |> Map.put(:outcome, nil)
+            |> Map.update!(:transcript, &Transcript.close_streaming/1)
 
-      seq = (socket.assigns[:stream_attach_seq] || 0) + 1
-      pid = self()
+          token = next_token(socket)
 
-      runner =
-        Application.get_env(:evo_dash, @watch_runner_key, &NodeContext.register_agent_watcher/3)
+          stream =
+            Map.merge(stream, %{
+              token: token,
+              delta: surface.delta,
+              snapshot: snapshot,
+              pending: [],
+              buffer_bytes: 0,
+              final_resync: :done,
+              closed_seq: seq,
+              terminal_outcome: nil,
+              required_seq: seq,
+              error: nil
+            })
 
-      _ =
-        Task.Supervisor.start_child(TaskSupervisor, fn ->
-          send(
-            pid,
-            {:chat_stream_ready, node, seq, agent_id,
-             SafeCall.run(fn -> runner.(node, agent_id, pid) end)}
-          )
-        end)
+          NodeContext.unsubscribe_agent_deltas(id)
+          command(socket, :unregister)
+          socket = assign(socket, chat_stream: stream, stream_attach_seq: token)
+          {:ok, socket, surface}
+        else
+          {:ignored, socket}
+        end
 
-      assign(socket,
-        chat_stream: %{agent_id: agent_id, node: node, delta: nil},
-        chat_stream_meta: nil,
-        stream_attach_seq: seq
-      )
+      _ ->
+        {:ignored, socket}
+    end
+  end
+
+  def closed(socket, _id, _snapshot, _seq), do: {:ignored, socket}
+
+  defp observed_seq(stream) do
+    previous = if match?(%Delta{}, stream.delta), do: stream.delta.seq, else: 0
+
+    Enum.reduce(stream.pending, max(previous, stream.required_seq), fn {seq, _events}, latest ->
+      max(seq, latest)
+    end)
+  end
+
+  # A silent finish retires the live call without its answer. Re-register through
+  # the same worker for ONE authoritative cut, with no unsubscribe gap or history
+  # fallback. Keep the last surface intact if the terminal session is already gone.
+  defp maybe_final_resync(socket, %{outcome: {:finished, _} = outcome, delta: delta}) do
+    stream = socket.assigns.chat_stream
+
+    if stream.final_resync == nil and not Delta.streamed_text?(delta) do
+      token = next_token(socket)
+
+      stream = %{
+        stream
+        | token: token,
+          final_resync: :pending,
+          required_seq: delta.seq,
+          terminal_outcome: outcome
+      }
+
+      register(socket, stream)
+      assign(socket, chat_stream: stream, stream_attach_seq: token)
     else
       socket
     end
   end
 
-  @doc """
-  Detaches the page from its session's delta stream.
+  defp maybe_final_resync(socket, _surface), do: socket
 
-  Unsubscribes THIS process inline and fires the watcher unregister in a
-  supervised child (nothing is reported back — a gone watcher is reaped by the
-  session's own monitor anyway), then clears `chat_stream`/`chat_stream_meta`.
-  Idempotent and total: a nil/non-map `chat_stream` only clears the assigns.
-  """
-  @spec detach(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
-  def detach(socket) do
-    case socket.assigns[:chat_stream] do
-      %{agent_id: agent_id, node: node} ->
-        _ = NodeContext.unsubscribe_agent_deltas(agent_id)
-
-        pid = self()
-
-        runner =
-          Application.get_env(
-            :evo_dash,
-            @unwatch_runner_key,
-            &NodeContext.unregister_agent_watcher/3
-          )
-
-        _ = Task.Supervisor.start_child(TaskSupervisor, fn -> runner.(node, agent_id, pid) end)
-
-        assign(socket, chat_stream: nil, chat_stream_meta: nil)
-
-      _other ->
-        assign(socket, chat_stream: nil, chat_stream_meta: nil)
-    end
+  defp register(socket, stream) do
+    command(
+      socket,
+      {:register,
+       %{
+         node: stream.node,
+         id: stream.agent_id,
+         token: stream.token,
+         watch:
+           Application.get_env(
+             :evo_dash,
+             :home_agent_watch_runner,
+             &NodeContext.register_agent_watcher/3
+           ),
+         unwatch:
+           Application.get_env(
+             :evo_dash,
+             :home_agent_unwatch_runner,
+             &NodeContext.unregister_agent_watcher/3
+           )
+       }}
+    )
   end
 
-  @doc """
-  Turns a watcher-registration result into the page's stream seed.
+  defp reduce_batch(surface, seq, events) do
+    if seq > surface.delta.seq do
+      reduced =
+        Delta.apply_batch(
+          surface.delta,
+          surface.transcript,
+          surface.thought_process,
+          surface.meta,
+          events
+        )
 
-  Accepts the runner's flat `{:ok, %EvoGit.Agent.Stream.Snapshot{}, seq}` — and
-  the `EvoDash.SafeCall`-wrapped `{:ok, {:ok, %Snapshot{}, seq}}` the async
-  registration task actually sends — and answers
-  `{:ok, %{snapshot:, delta:, meta:}}`, where the delta is seeded with the
-  snapshot's seq/turn and the meta carries its turn/token/usage accounting.
-  Every other shape (including an `{:error, reason}`) is `{:error, reason}`.
-  Total: never raises.
-  """
-  @spec snapshot_result(term(), term(), node() | nil) ::
-          {:ok, %{snapshot: Snapshot.t(), delta: Delta.t(), meta: map()}} | {:error, term()}
-  def snapshot_result(result, agent_id, node) do
-    snapshot =
-      case result do
-        {:ok, %Snapshot{} = snapshot, _seq} -> snapshot
-        {:ok, {:ok, %Snapshot{} = snapshot, _seq}} -> snapshot
-        _other -> nil
-      end
-
-    seq =
-      case result do
-        {:ok, %Snapshot{}, seq} -> seq
-        {:ok, {:ok, %Snapshot{}, seq}} -> seq
-        _other -> nil
-      end
-
-    if is_struct(snapshot, Snapshot) do
-      delta = Delta.seed(Delta.new(agent_id, node, seq), snapshot, seq)
-
-      meta = %{
-        Delta.meta()
-        | turn: snapshot.turn,
-          total_tokens: snapshot.total_tokens,
-          usage: snapshot.usage
-      }
-
-      {:ok, %{snapshot: snapshot, delta: delta, meta: meta}}
+      Map.merge(surface, %{reduced | delta: %{reduced.delta | seq: seq}})
+      |> Map.put(:outcome, reduced.outcome || surface.outcome)
     else
-      {:error, unwrap_error(result)}
+      surface
     end
   end
 
-  @doc """
-  Whether the page currently has a SEEDED stream (a delta with an integer seq),
-  i.e. deltas are being applied instead of being dropped.
+  @doc "Builds checkpoint history plus the complete captured current-call prefixes."
+  @spec snapshot_result(term(), term(), node() | nil) :: {:ok, map()} | {:error, term()}
+  def snapshot_result({:ok, result}, agent_id, target_node),
+    do: snapshot_result(result, agent_id, target_node)
 
-  Used by the `"agents"` handlers to skip the per-message-count history refetch
-  while a stream is live — that refetch IS the polling this feature removes.
-  """
-  @spec stream_active?(Phoenix.LiveView.Socket.t()) :: boolean()
+  def snapshot_result({:ok, %Snapshot{agent_id: id} = snapshot, seq}, id, target_node)
+      when is_integer(seq) and seq >= 0 do
+    delta = Delta.seed(Delta.new(id, target_node, seq), snapshot, seq)
+
+    meta = %{
+      Delta.meta()
+      | turn: snapshot.turn,
+        total_tokens: snapshot.total_tokens,
+        usage: snapshot.usage
+    }
+
+    %{transcript: transcript, entries: thoughts} = Messages.transcript(snapshot.messages)
+
+    surface =
+      Delta.apply_batch(delta, transcript, thoughts, meta, [{:activity, snapshot.activity}])
+
+    {:ok,
+     %{
+       snapshot: snapshot,
+       delta: surface.delta,
+       meta: surface.meta,
+       transcript: surface.transcript,
+       thought_process: surface.thought_process
+     }}
+  end
+
+  def snapshot_result({:error, reason}, _id, _node), do: {:error, reason}
+  def snapshot_result(result, _id, _node), do: {:error, {:invalid_watch_result, result}}
+
+  @doc "True while this scope owns history, including registration and failed watches."
   def stream_active?(socket) do
     case socket.assigns[:chat_stream] do
-      %{delta: %Delta{seq: seq}} when is_integer(seq) -> true
-      _other -> false
+      %{agent_id: id, node: target_node} = stream ->
+        id == socket.assigns[:session_id] and
+          target_node == (socket.assigns[:current_node] || node()) and
+          Map.get(stream, :target_id, socket.assigns[:current_node_id]) ==
+            socket.assigns[:current_node_id] and
+          not pending_remote?(socket)
+
+      _ ->
+        false
     end
   end
 
-  # Only a stream belonging to a DIFFERENT agent is torn down first; the same
-  # agent is re-registered idempotently (see attach/1).
-  defp detach_other(socket, agent_id) do
+  @doc "True when the current scope owns an admitted terminal handoff."
+  def closed?(socket) do
     case socket.assigns[:chat_stream] do
-      %{agent_id: ^agent_id} -> socket
-      %{} -> detach(socket)
-      _other -> socket
+      %{closed_seq: seq} when is_integer(seq) -> stream_active?(socket)
+      _ -> false
     end
   end
 
-  defp unwrap_error({:ok, {:error, reason}}), do: reason
-  defp unwrap_error({:error, reason}), do: reason
-  defp unwrap_error(result), do: result
+  @doc "The current scope's watch failure, retained without surrendering history ownership."
+  def failure(assigns) do
+    if stream_active?(%{assigns: assigns}) do
+      assigns.chat_stream.error
+    end
+  end
 
+  @doc "Settles an unexpected registration-worker death; forward its monitor DOWN."
+  def down(socket, ref, pid, reason) do
+    if ref == socket.assigns[:chat_stream_worker_monitor] and
+         pid == socket.assigns[:chat_stream_worker] do
+      socket
+      |> fail({:watch_worker_down, reason})
+      |> assign(chat_stream_worker: nil, chat_stream_worker_monitor: nil)
+    else
+      socket
+    end
+  end
+
+  defp fail(socket, reason) do
+    case socket.assigns[:chat_stream] do
+      %{closed_seq: seq} when is_integer(seq) ->
+        socket
+
+      %{} = stream ->
+        NodeContext.unsubscribe_agent_deltas(stream.agent_id)
+        command(socket, :unregister)
+
+        assign(socket,
+          chat_stream: %{
+            stream
+            | error: reason,
+              required_seq: observed_seq(stream),
+              pending: [],
+              buffer_bytes: 0
+          }
+        )
+
+      _ ->
+        socket
+    end
+  end
+
+  defp ensure_worker(socket) do
+    case socket.assigns[:chat_stream_worker] do
+      pid when is_pid(pid) ->
+        if Process.alive?(pid), do: {:ok, socket}, else: spawn_worker(socket)
+
+      _ ->
+        spawn_worker(socket)
+    end
+  end
+
+  defp spawn_worker(socket) do
+    consumer = self()
+
+    case SafeCall.run(fn ->
+           Task.Supervisor.start_child(TaskSupervisor, fn ->
+             worker(consumer, Process.monitor(consumer), nil)
+           end)
+         end) do
+      {:ok, {:ok, pid}} ->
+        {:ok,
+         assign(socket,
+           chat_stream_worker: pid,
+           chat_stream_worker_monitor: Process.monitor(pid)
+         )}
+
+      {:ok, {:error, reason}} ->
+        {:error, {:watch_start_failed, reason}}
+
+      {:error, reason} ->
+        {:error, {:watch_start_failed, reason}}
+    end
+  end
+
+  defp command(socket, message) do
+    case socket.assigns[:chat_stream_worker] do
+      pid when is_pid(pid) -> send(pid, message)
+      _ -> :ok
+    end
+  end
+
+  # FIFO commands from ONE consumer serialize every RPC, including detach while
+  # registration is blocked. The core also monitors the consumer, not this worker.
+  defp worker(consumer, monitor, registration) do
+    receive do
+      {:register, desired} ->
+        if registration != nil and target(registration) != target(desired),
+          do: unwatch(registration, consumer)
+
+        result = SafeCall.run(fn -> desired.watch.(desired.node, desired.id, consumer) end)
+        send(consumer, {:chat_stream_ready, desired.node, desired.token, desired.id, result})
+        worker(consumer, monitor, desired)
+
+      :unregister ->
+        if registration != nil, do: unwatch(registration, consumer)
+        worker(consumer, monitor, nil)
+
+      {:DOWN, ^monitor, :process, ^consumer, _reason} ->
+        if registration != nil, do: unwatch(registration, consumer)
+    end
+  end
+
+  defp unwatch(registration, consumer) do
+    case SafeCall.run(fn ->
+           registration.unwatch.(registration.node, registration.id, consumer)
+         end) do
+      {:ok, :ok} -> :ok
+      {:ok, {:ok, _}} -> :ok
+      other -> Logger.warning("Assistant stream cleanup failed: #{inspect(other)}")
+    end
+  end
+
+  defp target(registration), do: {registration.node, registration.id}
+  defp next_token(socket), do: (socket.assigns[:stream_attach_seq] || 0) + 1
   defp positive_int?(id), do: is_integer(id) and id > 0
+
+  defp pending_remote?(socket),
+    do:
+      socket.assigns[:current_node_id] != nil and
+        (socket.assigns[:current_node] || node()) == node()
 end

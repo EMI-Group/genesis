@@ -3,14 +3,12 @@ defmodule EvoGit.Agent.Stream.GateTest do
   P4 push-only streaming invariants (`docs/agent-runtime-refactor.md` §3 D5,
   §4.6, §4.12 and §7 invariant 2) that need a REAL session:
 
-  * **(a) zero watchers ⇒ zero callback installs and zero broadcasts** — the
-    gate is `EvoGit.Agent.Session.watching?/2`, consulted once per LLM attempt
-    through `EvoGit.Agent.Stream.Sink.stream_opts/0`, which is the 2nd argument
-    of the ONE `ReqLLM.StreamResponse.process_stream/2` call site
-    (`EvoGit.Agent.LLMPrompting.run_llm_attempt/4`). The Sink unit tests pin
-    `stream_opts/0` itself (`[]` vs the four callbacks); the end-to-end case
-    pins that a running exchange which emits deltas with no watcher produces no
-    `{:agent_delta, …}` and consumes no `seq`.
+  * **(a) zero watchers ⇒ capture and interruption, but zero broadcasts** —
+    `Sink.stream_opts/0` returns four callbacks whenever a sink is installed,
+    and `[]` only without one. The callbacks capture live text/thinking and
+    honor interrupts independently of watchers; the session gates publication.
+    The end-to-end cases pin that an unwatched exchange retains its current
+    call for a snapshot but produces no `{:agent_delta, …}` and consumes no `seq`.
   * **(b) one watcher ⇒ coalesced batches** — 100 individually-emitted chunks
     arrive as a handful of batches, all events preserved in emission order.
   * **(c) seq ordering + snapshot reconciliation** — monotonic per-session
@@ -21,7 +19,7 @@ defmodule EvoGit.Agent.Stream.GateTest do
 
   Every case here drives the exchange through the `:llm_call` engine seam, which
   REPLACES `LLMPrompting.prompt_until_tools_or_limit/5` — so `process_stream/2`
-  is never called and a call trace over it would vacuously "prove" `[]` in both
+  is never called and a call trace over it would vacuously pass in both
   the watched and unwatched case. Turning the real streaming path on would need
   a loopback SSE responder plus a pinned global scheduler model pool (the
   `implicit_completion_test.exs` machinery), which buys nothing beyond what the
@@ -41,32 +39,52 @@ defmodule EvoGit.Agent.Stream.GateTest do
   # ---------------------------------------------------------------------------
   # (a) zero watchers
   # ---------------------------------------------------------------------------
-  describe "(a) zero watchers install no callbacks and broadcast nothing" do
+  describe "(a) zero watchers retain capture and interruption but broadcast nothing" do
     test "Sink.stream_opts/0 is [] when the sink is not installed in this process" do
       refute Sink.installed?()
       assert Sink.stream_opts() == []
     end
 
-    test "an installed sink whose session has no watcher yields [], and the four callbacks with one",
+    test "an unwatched installed sink captures callbacks and honors interrupts without publishing",
          %{agent_id: agent_id, tmp_dir: tmp_dir} do
-      {:ok, pid, _ref} =
-        start_session(dispatch_ctx(agent_id, tmp_dir, llm_call: driver_llm_call(self())))
+      test_pid = self()
+      assert :ok = subscribe_topic(agent_id)
 
-      assert_receive {:llm_call, _worker, _context}, 5_000
+      llm_call =
+        scripted_llm_call(fn context, _tools, _params, _agent_id, _retries ->
+          # Run in the genuine exchange worker: the session rejects activity
+          # envelopes from any other process, including the test process.
+          call_id = Sink.start_call(0)
+          opts = Sink.stream_opts()
+          send(test_pid, {:callbacks_ready, self(), opts, call_id})
 
-      # The sink lives in the WORKER process; installing it here mirrors exactly
-      # what `Session.Worker.run/3` does before the exchange, so this pins the
-      # gate from the emitter's point of view.
-      assert :ok = Sink.install(pid, agent_id)
-      assert Sink.installed?()
+          receive do
+            :capture -> :ok
+          end
+
+          assert :ok = opts[:on_result].("unwatched ")
+          assert :ok = opts[:on_result].("text")
+          assert :ok = opts[:on_thinking].("private ")
+          assert :ok = opts[:on_thinking].("thinking")
+          assert :ok = opts[:on_tool_call].(%{name: "read"})
+          assert :ok = opts[:on_chunk].(:chunk)
+
+          send(self(), {:evogit_interrupt, make_ref()})
+          assert_raise Interrupted, fn -> opts[:on_chunk].(:chunk) end
+          # The interrupt is consumed exactly once, not left to poison a later chunk.
+          assert :ok = opts[:on_chunk].(:chunk)
+          send(test_pid, {:callbacks_captured, self()})
+
+          receive do
+            :finish ->
+              text = "unwatched callback yield"
+              {:implicit_completion, response(context, text), text}
+          end
+        end)
+
+      {:ok, pid, _ref} = start_session(dispatch_ctx(agent_id, tmp_dir, llm_call: llm_call))
+      assert_receive {:callbacks_ready, worker, opts, call_id}, 5_000
       refute Session.watching?(pid)
-      assert Sink.stream_opts() == []
-
-      assert {:ok, %Snapshot{}, 0} = Stream.watch(pid)
-      assert Session.watching?(pid)
-
-      opts = Sink.stream_opts()
-
       assert Keyword.keyword?(opts)
 
       assert opts |> Keyword.keys() |> Enum.sort() == [
@@ -77,6 +95,50 @@ defmodule EvoGit.Agent.Stream.GateTest do
              ]
 
       assert Enum.all?(opts, fn {_key, fun} -> is_function(fun, 1) end)
+      send(worker, :capture)
+      assert_receive {:callbacks_captured, ^worker}, 5_000
+
+      # The worker's acknowledgment and the snapshot request have different
+      # senders. Wait for the captured state, not a timer or mailbox race.
+      assert wait_until(fn ->
+               case Stream.snapshot(pid) do
+                 {:ok,
+                  %Snapshot{
+                    activity: %{
+                      current_call: %{text: "unwatched text", thinking: "private thinking"}
+                    }
+                  }, 0} ->
+                   true
+
+                 _ ->
+                   false
+               end
+             end)
+
+      assert {:ok,
+              %Snapshot{
+                seq: 0,
+                activity: %{
+                  current_call: %{
+                    id: ^call_id,
+                    attempt: 0,
+                    text: "unwatched text",
+                    thinking: "private thinking"
+                  }
+                }
+              }, 0} = Stream.snapshot(pid)
+
+      refute_receive {:agent_delta, ^agent_id, _seq, _events}, 0
+
+      # A late watcher recovers captured content, without replay or a consumed seq.
+      assert {:ok, %Snapshot{activity: %{current_call: %{id: ^call_id, text: "unwatched text"}}},
+              0} =
+               Stream.watch(pid)
+
+      assert Session.watching?(pid)
+      refute_receive {:agent_delta, ^agent_id, _seq, _events}, 0
+      send(worker, :finish)
+      assert await_yield(pid, "unwatched callback yield")
     end
 
     test "a running exchange with NO watcher emits no {:agent_delta, _} and consumes no seq",

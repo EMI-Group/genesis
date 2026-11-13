@@ -10,6 +10,8 @@ This directory holds all frontend source assets (JavaScript, CSS, vendor librari
 - `./js/hooks/` → Standalone JS hook files (`sidebar_collapse.js`, `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js`, `diff_viewer.js`, `commit_graph.js`, `capsule_panel.js`) — registration table + behavior notes in `js/hooks/CONTEXT.md`
 - `./js/*.test.cjs` → Node-run unit tests for the PURE logic of inline hooks (`agent_history_scroll.test.cjs`, `state_persistence.test.cjs`) — `node --test apps/evo_dash/assets/js/*.test.cjs`, never part of `mix test`; detail in `js/CONTEXT.md` → "JS Unit Tests"
 - `./css/` → Stylesheets (Tailwind CSS 4 configuration, DaisyUI themes)
+- `/agents` inspector animation assets → `js/hooks/inspector_messages.js` (`InspectorMessages`, `data-inspector-scope` + stable `data-inspector-message` keys) and `css/app.css` (`inspector-thinking`, `inspector-stream-cursor`, `inspector-message-enter`); exact contracts live in `js/hooks/CONTEXT.md` and `css/CONTEXT.md`.
+- Run all asset Node tests, including standalone-hook regressions, with `node --test apps/evo_dash/assets/js/*.test.cjs apps/evo_dash/assets/js/hooks/*.test.cjs`.
 - `./vendor/` → Third-party JS libraries (DaisyUI, Heroicons, Topbar, highlight.js, brand SVGs)
 
 ## API Surface

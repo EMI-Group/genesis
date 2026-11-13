@@ -24,9 +24,9 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
       `EvoDashWeb.HomeLive.Messages.to_entries/1` shape; tool calls rendered
       via `EvoDashWeb.AgentsLive.ToolCallDisplay.display/1`).
 
-  `task_status`/`thought_process` are passed only for the transcript's LAST
-  assistant entry (the one tied to the current/last chat task); earlier
-  assistant entries render the frame without the badge/details.
+  `task_status` is passed only for the transcript's LAST assistant entry (the
+  one tied to the current/last chat task); `thought_process` belongs to each
+  entry's own reply, including completed historical answers.
 
   Total: every payload access is `Map.get`-guarded — nil/absent keys and
   malformed entries degrade instead of raising.

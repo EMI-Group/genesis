@@ -8,7 +8,9 @@ defmodule EvoDashWeb.HomeLive.Delta do
   `apply_batch/5`, which folds the batch's events into the whole chat
   surface at once:
 
-    * `{:text, chunk}` — appended to the last streaming assistant bubble
+    * `{:activity, projection}` — replaces the current call's text/thinking,
+      keyed by its fresh attempt id; retry removes the failed attempt's output;
+    * `{:text, chunk}` — appends to the current call and its assistant bubble
       (`EvoDashWeb.HomeLive.Transcript.append_streaming_text/2`) and recorded as
       this turn's streamed text;
     * `{:thinking, chunk}` — accumulated in `thinking` and mirrored into ONE
@@ -40,7 +42,7 @@ defmodule EvoDashWeb.HomeLive.Delta do
   and `seed/3` records the snapshot's seq/turn when the page attaches.
   """
 
-  alias EvoDashWeb.HomeLive.Transcript
+  alias EvoDashWeb.HomeLive.{LiveCall, Transcript}
 
   # Mirrors `EvoDashWeb.HomeLive.Transcript`'s per-turn reasoning cap so the
   # streamed thinking entries can never outgrow the history-derived ones.
@@ -56,7 +58,9 @@ defmodule EvoDashWeb.HomeLive.Delta do
           turn: non_neg_integer(),
           thinking: String.t(),
           text_in_turn: boolean(),
-          text_in_closed_turn: boolean()
+          text_in_closed_turn: boolean(),
+          activity: map() | nil,
+          call_entry_id: String.t() | nil
         }
 
   defstruct agent_id: nil,
@@ -65,7 +69,9 @@ defmodule EvoDashWeb.HomeLive.Delta do
             turn: 0,
             thinking: "",
             text_in_turn: false,
-            text_in_closed_turn: false
+            text_in_closed_turn: false,
+            activity: nil,
+            call_entry_id: nil
 
   @doc """
   Builds the stream state for one agent on one node.
@@ -119,11 +125,9 @@ defmodule EvoDashWeb.HomeLive.Delta do
   Whether this stream has produced assistant TEXT for the open turn, or for the
   turn that was closed last.
 
-  The page uses it on `{:finished, status}`: the core gates `{:text, chunk}` /
-  `{:thinking, chunk}` on the number of watchers at the START of an LLM attempt,
-  so a session whose final attempt began before the page attached finishes with
-  no streamed text at all and needs ONE history reconciliation. Total: a
-  non-struct answers `false`.
+  The flag includes text hydrated from snapshot activity, not just chunks seen
+  after attachment. A text-less finish can still request one checkpoint-history
+  reconciliation. Total: a non-struct answers `false`.
   """
   @spec streamed_text?(term()) :: boolean()
   def streamed_text?(%__MODULE__{text_in_turn: in_turn, text_in_closed_turn: in_closed_turn}),
@@ -173,12 +177,23 @@ defmodule EvoDashWeb.HomeLive.Delta do
 
   # --- events ---
 
+  defp apply_event({:activity, projection}, acc), do: LiveCall.replace(acc, projection)
+
+  defp apply_event({kind, chunk}, %{delta: %{activity: activity}} = acc)
+       when kind in [:text, :thinking] and is_map(activity) and is_binary(chunk) do
+    LiveCall.append(acc, kind, chunk)
+  end
+
   defp apply_event({:text, chunk}, acc) when is_binary(chunk) and chunk != "" do
+    transcript = Transcript.append_streaming_text(acc.transcript, chunk)
+    id = streaming_id(transcript)
+
     %{
       acc
-      | delta: %{acc.delta | text_in_turn: true},
-        transcript: Transcript.append_streaming_text(acc.transcript, chunk)
+      | delta: %{acc.delta | text_in_turn: true, call_entry_id: id},
+        transcript: transcript
     }
+    |> retain_thinking()
   end
 
   defp apply_event({:thinking, chunk}, acc) when is_binary(chunk) and chunk != "" do
@@ -190,6 +205,7 @@ defmodule EvoDashWeb.HomeLive.Delta do
       | delta: delta,
         thought_process: upsert_thinking(acc.thought_process, delta.turn, thinking)
     }
+    |> retain_thinking()
   end
 
   # The bubble stays OPEN here: text arriving after a tool call belongs to the
@@ -211,6 +227,9 @@ defmodule EvoDashWeb.HomeLive.Delta do
     delta = %{
       acc.delta
       | turn: turn_number(info, acc.delta.turn),
+        call_entry_id:
+          streaming_id(acc.transcript) ||
+            if(acc.delta.text_in_turn, do: acc.delta.call_entry_id),
         thinking: "",
         text_in_closed_turn: acc.delta.text_in_turn == true,
         text_in_turn: false
@@ -227,7 +246,17 @@ defmodule EvoDashWeb.HomeLive.Delta do
   defp apply_event({:yield, text}, acc) do
     transcript =
       if is_binary(text) and text != "" do
-        Transcript.finalize_assistant(acc.transcript, text)
+        case acc.delta.call_entry_id do
+          nil ->
+            Transcript.finalize_assistant(acc.transcript, text)
+
+          id ->
+            acc.transcript
+            |> Enum.map(fn entry ->
+              if entry.id == id, do: %{entry | text: text, streaming: false}, else: entry
+            end)
+            |> Transcript.normalize()
+        end
       else
         Transcript.close_streaming(acc.transcript)
       end
@@ -245,11 +274,32 @@ defmodule EvoDashWeb.HomeLive.Delta do
 
   defp apply_event(_event, acc), do: acc
 
+  defp streaming_id(transcript) do
+    transcript
+    |> Transcript.normalize()
+    |> Enum.reverse()
+    |> Enum.find_value(fn entry -> if entry.streaming and entry.text != "", do: entry.id end)
+  end
+
   # --- thinking ---
+
+  defp retain_thinking(%{delta: %{text_in_turn: false}} = acc), do: acc
+
+  defp retain_thinking(acc) do
+    thoughts =
+      if acc.delta.thinking == "",
+        do: [],
+        else: [LiveCall.thinking_entry(acc.delta.turn, acc.delta.thinking)]
+
+    %{
+      acc
+      | transcript: Transcript.put_reasoning(acc.transcript, acc.delta.call_entry_id, thoughts)
+    }
+  end
 
   defp upsert_thinking(thought_process, turn, text) do
     entries = if is_list(thought_process), do: thought_process, else: []
-    entry = thinking_thought(turn, text)
+    entry = LiveCall.thinking_entry(turn, text)
 
     if thinking_thought?(List.last(entries), turn) do
       Enum.drop(entries, -1) ++ [entry]
@@ -260,21 +310,6 @@ defmodule EvoDashWeb.HomeLive.Delta do
 
   defp thinking_thought?(%{turn: turn, data: %{metadata: %{thinking: true}}}, turn), do: true
   defp thinking_thought?(_entry, _turn), do: false
-
-  defp thinking_thought(turn, text) do
-    %{
-      turn: turn,
-      timestamp: System.system_time(:second),
-      type: "assistant",
-      data: %{
-        content: "",
-        tool_calls: [],
-        reasoning_details: [%{text: text, type: "thinking"}],
-        tool_name: nil,
-        metadata: %{thinking: true}
-      }
-    }
-  end
 
   # --- turn meta ---
 

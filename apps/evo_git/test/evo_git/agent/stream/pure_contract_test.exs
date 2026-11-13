@@ -342,6 +342,16 @@ defmodule EvoGit.Agent.Stream.PureContractTest do
       assert snapshot.mode == :interactive
       assert snapshot.model_spec == model_spec
       assert snapshot.compression_count == 2
+      assert snapshot.activity == %{phase: :idle, current_call: nil}
+
+      activity = %{
+        phase: :llm,
+        current_call: %{id: "live-call", turn: 4, attempt: 1, text: "partial", thinking: "why"}
+      }
+
+      live_snapshot = Snapshot.from(state, :running, activity: activity)
+      assert live_snapshot.activity == activity
+      assert %{live_snapshot | activity: snapshot.activity} == snapshot
 
       # Plain JSON-clean data: no `%ReqLLM.Context{}` (the whole conversation
       # struct) is ever carried into a snapshot.

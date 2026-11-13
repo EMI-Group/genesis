@@ -21,11 +21,18 @@ No page or unit suite writes the config dir BEAM-globally: it is isolated per pr
 - `./tasks_live_test.exs` (86, `async: false`) → cross-project task list: search/filter, pagination, cancel/force-kill modals, `:cancelling` display, debounced reloads, exit-safe page loads, lazy per-card detail + archive, server-side `session_mode` filter.
 - `./agents_live_test.exs` (70, `async: true`) → agent tree (node-aware async loads, push-driven refresh), the left-panel view switcher + TEMPORAL commit-history view, the compression threshold, the context meter and `LoadData`.
 - `./agents_live/` → `commit_graph_test.exs` (63), `commit_graph_refresh_test.exs` (11), `context_meter_test.exs` (13) and `tool_call_display_test.exs` (10) — `./agents_live/CONTEXT.md`.
+- `./real_stream_consumers_test.exs` → synchronous real producer-to-mounted inspector and Assistant regressions using actual SelfReflective Sessions, default attach/watch registration and gated loopback SSE decoded by ReqLLM, with a cohesive file-local TCP fixture above the case module.
+  These tests assert unwatched-prefix snapshot capture, suffix uniqueness, nested call identity, yield retirement, actual unmount/remount and per-answer thinking retention without stale carets, and retain strong failures when the source consumer cannot honor the producer contract.
+  Teardown monitors consumers, their supervised watch/load workers, Session/exchange/ReqLLM descendants and the SSE acceptor before restoring scheduler pools and shared ChatHistory state.
+- `./agents_stream_integration_test.exs` → synchronous mounted inspector-stream integration tests covering watch/snapshot/delta delivery, activity, cleanup, no watched history-count refetch and atomic checkpoint failure/retry.
+- `./agents_stream_render_test.exs` → fourteen async public page-render contracts for stream presentation, capture-aware no-thinking verdicts and per-message animation API/scope.
+- `./agents_stream_watch_lifecycle_test.exs` → seven synchronous real `StreamWatch` worker lifecycle tests using an isolated spawned consumer and a connected hand-built socket, not a mounted page.
+  The forcing globals are the BEAM-global `:agents_watch_runner` / `:agents_unwatch_runner` seams, snapshotted and restored only after the consumer and its supervised workers have exited.
 - `./processes_live_test.exs` (23, `async: false` `EvoDashWeb.ProcessesLiveTest`) → the managed-process `/processes` page: status/kind/free-text/agent-id/task-id URL filters, the five node-tagged `"processes"` PubSub events applied without refetching, pause/resume, the reason-required Terminate/Kill modal, control-error flashes, the load-error + Retry state, and row expansion with the control log.
 - `./home_live_render_test.exs` → sixteen `async: true` pure page-template contracts via `render_component(&HomeLive.render/1, assigns)` covering empty/restored conversations, actionable suggestions, composer accessibility/keyboard wiring, Send/Stop states, the awaiting-input/ended/cancelling session composer states, queued echoes and the interrupt affordance, the conversation rail (rows plus its empty and load-error states), local-source gating and the fused-capsule drill-down DOM without an `/assistant` mount or global ChatHistory writes; the rendered section body is `#chat-session-list` with NO `<h2>` of its own, because the "Conversations" header belongs to the app layout.
 - `./approval_dialog_render_test.exs` → seventeen `async: true` pure `ApprovalDialog` render contracts: the fixed-height `#approval-status-bar` idle-versus-pending shape with its count badge + Review button, the preserved recovery/response error notices, the `dialog#approval-dialog` shell, title/summary/body per kind and tier, byte-exact evaluator code, write-versus-sudo authority, request-id-only decision payloads, busy controls, the request's own `:warning` block (any tier, never duplicated), and `view/2` position/stepping bounds.
   `ApprovalDialog.target_text/1` reads `:target_node` (the field the core's public request maps carry), keeps the "Unknown target" fallback and renders a binary node name verbatim; the request's own optional `:warning` renders in `#approval-request-warning` for any tier, never twice.
-- `./home_live_test.exs` (`async: false`, 134 tests) → mounted Genesis Assistant page (`GET /assistant`, `:reflect` self-reflective agent), interactive sessions, evaluator/legacy approval presentation with the strip + one-at-a-time dialog flow and asynchronous recovery/response integration — `./home_live/CONTEXT.md`.
+- `./home_live_test.exs` (`async: false`, 137 tests) → mounted Genesis Assistant page (`GET /assistant`, `:reflect` self-reflective agent), interactive sessions, evaluator/legacy approval presentation with the strip + one-at-a-time dialog flow and asynchronous recovery/response integration — `./home_live/CONTEXT.md`.
   Its command-approvals describe also pins the TASK-LESS interactive session (`@task_less_task_id`, a scheduler-minted id owning no `tasks` row): a live `{:approval_requested, …}` renders the strip/dialog/exact code and notifies, a click sends only the request id + decision to `:approval_responder`, a source-stamped `{:approval_resolved, …}` empties it, a foreign agent/task/node neither renders nor notifies, and an `:approval_pending_runner` snapshot recovers it on mount.
 - `./home_live/` → `async: true` support-module units (assistant message, chat state, messages, transcript, session actions/list, model select, approval workflow) — `./home_live/CONTEXT.md`.
   `./home_live/approval_workflow_test.exs`'s runner module owns the `:approval_pending_runner` / `:approval_responder` seams and pins the same task-less shape at the state-machine level (ownership by minted id OR agent id, headless `requested/2`, recovery with no task row, respond routing, foreign rejection).
@@ -114,10 +121,44 @@ The fetch is TASK-SCOPED and stale-guarded on the viewed node plus `seq < commit
 `@retained_agents` keeps an ended agent's last-known map (`ended: true`) so its graph entry, rows and START/END annotations survive removal while the agent TREE shows only `@agents`.
 Page-level ids, the lane/edge/row contract, the partial-success + fingerprint-gate wiring and the two production behaviours the tests work around: `./agents_live/CONTEXT.md`.
 
+## Notes for Agents — inspector stream lifecycle and integration boundary
+
+`agents_stream_watch_lifecycle_test.exs` exercises real public `StreamWatch.attach/2`, `detach/1` and `ready/5` calls in an isolated connected consumer, with actual supervised serial workers rather than fabricated worker-command capture.
+Its synchronous module owns the BEAM-global `:agents_watch_runner` / `:agents_unwatch_runner` seams; every RPC blocks on a reference-specific release handshake, and all consumer/worker cleanup is monitored and awaited before restoring the seams.
+The runner handshakes pin the consumer pid (the LiveView-equivalent subscriber), never the worker pid, and the exact next RPC identity/order across blocked A→B→A coalescing, obsolete-registration cleanup before reattach, detach and same-id node switches.
+Consumer death is covered both after registration and while registration is blocked, including late-success unregister and normal worker exit.
+Error results, exits, exceptions and malformed registration results must clean up and permit retry on the same worker; failed unregister logs once without retrying or blocking the next selection.
+Negative RPC probes occur only after the worker's terminal DOWN, not after an arbitrary quiet window, and teardown owner monitors release blocked test runners even when an assertion fails.
+The child async `agents_live/stream_watch_test.exs` covers pure snapshot/replay and worker-command boundaries, not real RPC ordering or consumer-death cleanup.
+`agents_stream_integration_test.exs` covers the mounted `/agents` inspector-stream path through actual selection/watch seams, buffered snapshot replay, stale/duplicate/foreign deltas, authoritative LLM/tools phases, and suppression of message-count history refetch while watched.
+Its mounted tests also pin selection/close/local-to-remote URL-patch cleanup and atomic checkpoint reconciliation failure with retained content and explicit retry.
+The module is synchronous because its global app-env runner seams overlap the existing async page suites, and monitored consumer/worker teardown completes before those seams are restored.
+`agents_stream_render_test.exs` has fourteen async tests exercising the public `AgentsLive.render/1` without mounting or mutating global state.
+It pins response/thinking separation, authoritative activity, no-thinking only after completed generation with explicit complete thinking capture, and stable per-message animation identities, attachment scope, disclosure/expansion and checkpoint-part identity gates.
+Incomplete, omitted-thinking, late-start, failed and cancelled captures never establish a no-thinking verdict.
+Run all scoped inspector tests with `mix test apps/evo_dash/test/evo_dash_web/live/agents_live apps/evo_dash/test/evo_dash_web/live/agents*_test.exs` from the umbrella root.
+The mounted inspector integration suite fabricates `%Snapshot{}` watch answers and manually broadcasts delta batches; it does not start a real core session or call real `Stream.watch`.
+The inspector fixtures initialize actual watch state and use watch-owned atomic snapshots for history/checkpoint reconciliation, filtering buffered deltas against the snapshot sequence and coalescing refreshes without compatibility fields or the removed historical `message_identity/1` API.
+`agents_live_test.exs` uses `%Snapshot{}` watch answers for selected-agent history, preserves optimistic-message compression assertions, and verifies message-count events cannot independently refetch watched history.
+The mounted Assistant push-only suite fabricates snapshot answers and publishes its own deltas with valid `activity.current_call` identity before text/thinking, retaining exact thinking, stale replay and foreign-agent rejection assertions.
+The synthetic suites establish dashboard transport/presentation behavior; real producer compatibility is exercised separately through actual Sessions.
+`real_stream_consumers_test.exs` supplies that real core-stream boundary synchronously through gated loopback SSE and ReqLLM decoding, retaining actual SelfReflective Session/watch production rather than a provider callback override.
+Its seven scenarios cover late attachment, inspector retirement/checkpoint reconciliation, real `read` tool success/error and ordered tool history, HTTP 503 retry with a fresh call id, truncated-SSE retry clearing abandoned text/thinking, actual remounts and per-answer thinking retention.
+The cohesive file-local TCP fixture and its tests remain below 1000 lines.
+All consumer, Session/exchange-worker and provider cleanup completes before restoring the forcing globals.
+The real-stream fixture starts both `AgentState.mode` and `Session.session_mode` as `:interactive`, routes scheduler notifications to the test process, and finishes every successful provider exchange at a nonterminal yield, so its current scenarios do not establish terminal delivery after Session process death.
+Its `agent_history/2` helper searches only the live `assigns.agents` list and `watchers/1` calls the live Session, so neither helper is safe as a post-removal assertion.
+No current live-page or helper regression sends the direct watcher message `{:agent_stream_closed, agent_id, snapshot, seq}`.
+The mounted Assistant silent-finish test supplies a successful second watch snapshot after the finished delta, so it does not exercise a disappeared Session or a failed in-flight reconciliation.
+The Agents retained-ended-agent suite preserves graph selection but explicitly permits the removed agent's detail panel to degrade to not-found; it does not pin terminal inspector history retention.
+
 ## Notes for Agents — Home chat suite (`home_live_test.exs`)
 
 The mounted `/assistant` suite is `async: false` and owns the process-global `EvoDash.ChatHistory`, `EvoDash.ActiveTasks`, the isolated Store/TaskRegistry pair and the per-test `:home_session_*` / `:approval_*` / `:source_*` app-env seams.
-Chat state is SEEDED (never driven by a real send) except ONE canonical real-send pin; interactive sessions, the approval strip/dialog flow and the genesis-source gate are documented in `./home_live/CONTEXT.md`.
+Most chat state is seeded, but three history/refetch regressions use real repo-less `EvoGit.Agent.Session` fixtures through the file-local `seed_scripted_session!/3` and top-of-file `ScriptedAgent` role.
+Those fixtures install per-session `exchange_opts[:llm_call]` and `:tool_batch`, checkpoint scripted tool-calling replies, then park the next LLM call; they exercise real session history, not provider stream callbacks or actual `Stream.watch` snapshot production.
+Their fixture code is private to `home_live_test.exs` and cannot be reused by another file without extracting a compiled support helper or defining an independent role/helper above that file's case module.
+Interactive sessions, the approval strip/dialog flow and the genesis-source gate are documented in `./home_live/CONTEXT.md`.
 
 ## Notes for Agents
 
@@ -163,6 +204,20 @@ Live-page deltas:
   The mounted-only config-dir proof runs sync because async Projects tests own the global `:projects_async_load_runner`.
 - **`agents_live_test.exs` is `async: true`**: it seeds the global `:evogit_sched_meta` / `:evogit_agent_summary` rows under a UNIQUE per-test agent id (`System.unique_integer([:positive]) + 10_000_000`, via `agent_id/0` reading the process dictionary), so no two concurrent modules collide.
 - **`agents_live_test.exs` fixed waits (by design, seam-less)**: THREE `Process.sleep(250)` sites, each followed by `flush_agent_events(view)` to keep a real core write's THROTTLED `{:agents_updated, node}` bulk signal (core `@throttle_ms` ≈ 200 ms) on THIS socket; plus one sampled negative poll with a 40 ms deadline (4× the 10 ms debounce seam) asserting `tasks_reload_pending` never becomes true. The duplicated page load is freed with a shared `:atomics` release latch (`await_latch/2`, 5 s non-raising fallback).
+
+## Mounted Assistant lifecycle and recovery
+
+The vanished-session tests use default NodeContext/core watch registration against unique nonexistent session ids, not fabricated not-found answers, and positively await `:ended`.
+A vanished cached conversation retains read-only text, per-entry `:reasoning` disclosures and global `:thought_process`, while an empty vanished conversation renders the ended-state affordance instead of suggestions.
+The mounted recovery tests count actual serial-worker runner attempts for a returned timeout, real pending-buffer overflow and actual registration-worker death.
+They preserve cached text/reasoning and the live consumer without declaring the session ended, require the rendered Retry button to rewatch, adopt the second authoritative snapshot and accept a newer delta.
+Worker-death coverage blocks the real registration runner, exposes its pid, monitors and kills that worker, awaits its DOWN and verifies Retry creates a replacement worker.
+All recovery consumers and workers are monitored through teardown before app-global runner seams are restored, and no fixed sleeps establish recovery.
+Snapshot-ready coverage reconstructs checkpoint history and captured current-call prefixes atomically and replays a buffered suffix exactly once.
+Per-answer reasoning disclosures contain assistant/tool entries rather than harness system/user messages, while the complete raw context remains available in `thought_process`.
+The mounted session-list row-patch fixture supplies a scoped authoritative `:awaiting_input` Watch snapshot matching its synthetic parked attach answer and awaits both results before asserting exact `:idle` status, one attach and no new task.
+The real vanished-session tests retain default watch registration against unique missing ids rather than inheriting that synthetic fixture.
+The mounted silent-finish regression pins exactly-once atomic reconciliation via an authoritative final Watch snapshot after a finished delta without streamed text, never independent legacy history reads.
 
 ## Notes for Agents — running these suites
 
