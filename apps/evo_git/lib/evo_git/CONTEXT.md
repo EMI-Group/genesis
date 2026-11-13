@@ -57,7 +57,7 @@ Per-function detail (signatures, arities, return shapes) lives in the child CONT
 | `EvoGit.PeakHours` / `PeakHourEngine` | window math + flip engine → § Peak/Off-Peak |
 | `EvoGit.ReqLLMPool` · `SystemSampler` · `Powershell` · `Executable` | §§ below |
 | `EvoGit.Store` / `Store.Codec` | § SQLite Store |
-| `EvoGit.AgentState` | durable per-run agent state in its own SQLite DB: `start_link/1`, `server/0`, `repo/1` (server→repo pid via `:persistent_term`), `checkpoint/4` (cast, total), `load/3` (total caller-side read), `mark_completed/3`, `delete/3`, `delete_task/2`, `prune/1` → `agent_state/CONTEXT.md` |
+| `EvoGit.AgentState` | durable per-run agent state in its own SQLite DB: `start_link/1`, `server/0`, `repo/1` (server→repo pid via `:persistent_term`), `checkpoint/4` (cast, total), `flush/1` (read-your-writes barrier), `load/3` (total caller-side read), `mark_completed/3`, `delete/3`, `delete_task/2`, `prune/1` → `agent_state/CONTEXT.md` |
 | `EvoGit.Review` / `CommitGraph` / `TaskCommitGraph` | § Review / RemoteNode Return-Shape Contract |
 | `EvoGit.RemoteNode` / `AgentScheduler.RemoteAPI` | `:erpc.call/5` (`:remote_rpc_timeout`, 30s at call time) ↔ read-only RPC over scheduler ETS |
 | `EvoGit.RemoteConnections` / `RemoteConnection` / `RemoteBootstrap` / `EpmdDist` / `Distribution` | § SSH Remote |

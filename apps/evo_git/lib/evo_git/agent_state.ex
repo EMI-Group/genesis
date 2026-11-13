@@ -106,7 +106,9 @@ defmodule EvoGit.AgentState do
   @spec checkpoint(String.t(), integer(), map(), keyword()) :: :ok
   def checkpoint(task_id, agent_id, entry, opts \\ []) do
     case target(opts) do
-      server when is_pid(server) ->
+      # `GenServer.cast/2` is total for a name as well as a pid (it returns
+      # `:ok` even when the name is unregistered), so a named store is safe too.
+      server when is_pid(server) or (is_atom(server) and not is_nil(server)) ->
         GenServer.cast(server, {:checkpoint, task_id, agent_id, entry})
 
       _none ->
@@ -117,10 +119,32 @@ defmodule EvoGit.AgentState do
   end
 
   @doc """
+  Flushes the writer: returns once every checkpoint cast enqueued BEFORE this
+  call has been persisted.
+
+  A read-your-writes barrier for callers that checkpoint and then `load/3`/
+  `prune/1` in the same process — a plain read deliberately does NOT queue
+  behind the writer (see `load/3`). Total: `:ok` even when the server is
+  absent/dead. Accepts `store:` opts or a server pid.
+  """
+  @spec flush(keyword() | pid() | nil) :: :ok
+  def flush(opts \\ [])
+
+  def flush(opts) when is_list(opts), do: flush(target(opts))
+
+  def flush(server) when is_pid(server) do
+    _ = safe_call(server, :sync)
+    :ok
+  end
+
+  def flush(_none), do: :ok
+
+  @doc """
   Loads one run's persisted state.
 
   Reads in the CALLING process against the server's repo, so it never queues
-  behind pending checkpoint casts.
+  behind pending checkpoint casts (use `flush/1` for a read-your-writes
+  barrier).
   """
   @spec load(String.t(), integer(), keyword()) ::
           {:ok, EvoGit.AgentState.Record.t()}
@@ -180,6 +204,7 @@ defmodule EvoGit.AgentState do
   defp call(opts, message) do
     case target(opts) do
       server when is_pid(server) -> safe_call(server, message)
+      server when is_atom(server) and not is_nil(server) -> safe_call(server, message)
       _none -> :error
     end
   end

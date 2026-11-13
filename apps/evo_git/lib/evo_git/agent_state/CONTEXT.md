@@ -14,6 +14,7 @@ Writes are serialized through ONE writer process; reads run in the caller agains
 | `server/0` | `pid \| nil` | process-dictionary `:evogit_agent_state_server` wins, else the named default when alive |
 | `repo/1` | `pid \| nil` | server → dynamic `EvoGit.Repo` pid via `:persistent_term`; `nil` when absent/dead |
 | `checkpoint/4` | `:ok` always | CAST; opts `:store` |
+| `flush/1` | `:ok` always | read-your-writes barrier: returns after every earlier checkpoint cast is persisted; takes `store:` opts or a server pid |
 | `load/3` | `{:ok, %Record{}} \| {:error, :not_found \| :corrupt_state \| :store_unavailable}` | caller-side read |
 | `mark_completed/3` | `:ok` | sets `status='completed'` + `completed_at`; row kept |
 | `delete/3` | `:ok` | one run's row + chunks |
@@ -74,7 +75,7 @@ Timestamps are `%DateTime{}` (ISO8601 second precision, UTC) or `nil`.
 ## Notes for Agents
 
 - Never add a second writer: the server's single process is what guarantees strict checkpoint ordering (a later `:append` must see the earlier `message_count`).
-- `checkpoint/4` is asynchronous; a test that asserts immediately after it must first flush the server (e.g. a synchronous `prune/1`, `mark_completed/3` or `:sys.get_state/1` call on the same server).
+- `checkpoint/4` is asynchronous; a caller or test that reads immediately after it must first call `flush/1` (e.g. `EvoGit.AgentState.flush(store: server)`) — a plain `load/3` does not queue behind the writer by design.
 - `repo/1` deliberately uses `:persistent_term` instead of a `GenServer.call` — a call would queue behind pending cast checkpoints and defeat the off-write-path read design.
 - A binary SQLite parameter is stored as TEXT when its bytes are valid UTF-8 and as BLOB otherwise; both round-trip unchanged, so `term_to_binary` payloads can be bound directly (verified end-to-end).
 - The server is started by `EvoGit.Application` immediately after `{EvoGit.Store, …}` and before `EvoGit.TaskRegistry`.
@@ -82,7 +83,7 @@ Timestamps are `%DateTime{}` (ISO8601 second precision, UTC) or `nil`.
 ## Test Strategy
 
 The suite (`apps/evo_git/test/**`, owned by a higher-scope agent) must cover, with an isolated instance per test:
-`EvoGit.AgentState.start_link(database: <tmp path>, name: nil)` + `store: <pid>` on every call:
+`EvoGit.AgentState.start_link(database: <tmp path>, name: nil)` + `store: <pid>` on every call, calling `flush(store: pid)` before every read-backed assertion:
 
 1. `:append` + `load` round-trips `%ReqLLM.Message{}` EXACTLY, including tool calls, tool results and image + audio `ReqLLM.Message.ContentPart`s.
 2. N sequential `:append` checkpoints produce N chunk rows whose payloads hold only their tail; `load` rebuilds the same list in `seq` order.
