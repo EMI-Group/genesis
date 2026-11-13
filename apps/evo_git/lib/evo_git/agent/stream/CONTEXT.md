@@ -39,6 +39,8 @@ Valid phases are `:idle`, `:llm_waiting`, `:llm`, `:llm_complete`, `:retry_wait`
 Start, valid phase and reset events emit `{:activity, new_projection}` replacement public events.
 `{:chunk, id, :text | :thinking, binary}` appends only to the matching current call and emits the existing `{:text | :thinking, binary}` public append event, not a replacement.
 Stale call identities, invalid phases, malformed chunks and unknown events are no-ops.
+Start-call validation checks only that the id is binary, not that it is nonempty or that turn/attempt are nonnegative integers; matching chunks are accepted in every phase while a current call remains, including `:llm_complete` and `:tools`.
+Unkeyed `{:phase, phase}` and `:reset` events have no call-id validation, so stale-worker rejection belongs to the session rather than this projection.
 Retained call text and thinking cover one current attempt only, never a replay of earlier attempts.
 
 ### Sink
@@ -63,7 +65,7 @@ A tool declaration is not proof of tool execution lifetime, and process executio
 ## Watchers, Seq and Batching
 The session owns `%{consumer_pid => monitor_ref}` watchers and `event_seq`; checkpoints must not roll these session-local fields backward.
 Re-registering demonitors the old ref, and `Watchers.unregister_ref/3` removes an entry only when its stored ref matches, so stale DOWN messages cannot evict a new registration.
-`Watchers.flush/4` is the only broadcast site and increments seq exactly once per published non-empty flush.
+`Watchers.flush/4` is the only broadcast site and increments seq exactly once per non-empty flush with watchers, even when the best-effort broadcast fails.
 A flush without watchers drops events without consuming seq; publication failure degrades to a dropped batch, not a crashed session.
 `Batcher` is unchanged pure data with a 75 ms coalescing interval and session-owned timers.
 Activity retirement does not always flush immediately: successful resume, yield and finalizer startup may leave public reset events pending.
