@@ -63,7 +63,9 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
 
       seeded = %{
         new(state.agent_id, state.node)
-        | seq: number(seq) || number(field(snapshot, :seq)) || 0,
+        | message_index: state.message_index,
+          projections: state.projections,
+          seq: number(seq) || number(field(snapshot, :seq)) || 0,
           phase: phase,
           turn: number(field(snapshot, :turn)) || 0,
           messages: list(field(snapshot, :messages)),
@@ -94,6 +96,38 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
   end
 
   def apply_batch(_state, _agent_id, _seq, _events), do: new(nil, nil)
+
+  @doc """
+  Whether an ordered batch crosses a checkpoint/live ownership boundary.
+
+  A current call's retirement or replacement requires an atomic snapshot before
+  ANY of this batch is rendered. Inspect every activity event, not just the final
+  call id: a batch can retire one call and start another. No text, turn, message
+  index, tool result or yield is evidence of checkpoint adoption.
+  """
+  def checkpoint_transition?(%__MODULE__{} = state, events) when is_list(events) do
+    events
+    |> Enum.reduce_while(current_call_id(state), fn
+      {:activity, %{phase: phase, current_call: call}}, previous when phase in @phases ->
+        next = if is_map(call), do: Map.get(call, :id), else: nil
+
+        if is_binary(previous) and next != previous do
+          {:halt, :transition}
+        else
+          {:cont, next}
+        end
+
+      _event, previous ->
+        {:cont, previous}
+    end)
+    |> Kernel.==(:transition)
+  end
+
+  def checkpoint_transition?(_state, _events), do: false
+
+  @doc "The authoritative live call id, never a checkpoint-message identity."
+  def current_call_id(%__MODULE__{projections: [%{identity: %{id: id}}]}), do: id
+  def current_call_id(_state), do: nil
 
   @doc "True only for a nonterminal running/cancelling lifecycle, not an activity guess."
   def active?(%__MODULE__{finished: false, phase: phase}),
@@ -265,26 +299,6 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
 
   defp omission_key(:response), do: :omitted_response_bytes
   defp omission_key(:thinking), do: :omitted_thinking_bytes
-
-  @doc "Reads explicit identity only; checkpoint messages currently carry no core call identity."
-  def message_identity(value) when is_map(value) do
-    Enum.reduce([:turn, :message_index, :id], %{}, fn key, acc ->
-      candidate = field(value, key)
-
-      cond do
-        key in [:turn, :message_index] and not is_nil(number(candidate)) ->
-          Map.put(acc, key, candidate)
-
-        key == :id and (is_binary(candidate) or is_integer(candidate)) and candidate != "" ->
-          Map.put(acc, key, candidate)
-
-        true ->
-          acc
-      end
-    end)
-  end
-
-  def message_identity(_value), do: %{}
 
   defp has_field?(value, key), do: Map.has_key?(value, key) or Map.has_key?(value, to_string(key))
 
