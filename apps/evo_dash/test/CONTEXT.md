@@ -272,9 +272,11 @@ Standalone pure/render checks and individually green helper directories do not e
 
 ## Known Issues
 
-Mounted Assistant lifecycle coverage requires a vanished session to settle as `:ended`, retaining a cached transcript read-only or rendering the empty session-ended state.
-A silent finished delta must request an authoritative final Watch snapshot rather than an unscoped history result.
-These lifecycle contracts and their current source gaps are documented in `evo_dash_web/live/CONTEXT.md` and `evo_dash_web/live/home_live/CONTEXT.md`.
+Mounted Assistant recovery coverage uses real missing-session Watch delegates for empty/cached ended states, preserving per-message reasoning and read-only cached transcripts.
+Uncertain timeout, actual buffer overflow and monitored registration-worker death remain non-ended with a coherent unavailable surface, and the rendered Retry adopts a fresh Watch snapshot and newer deltas.
+These tests remain synchronous with the mounted Assistant suite's shared ChatHistory and runner-seam ownership.
+A silent finished delta must request an authoritative final Watch snapshot rather than an unscoped history result; this mounted regression currently remains a source blocker.
+Detailed lifecycle contracts and recovery fixtures belong to `evo_dash_web/live/CONTEXT.md` and `evo_dash_web/live/home_live/CONTEXT.md`.
 `evo_dash_web/live/agents_live_test.exs` — a NEGATIVE `tasks_reload_pending` sample is a claim about GLOBAL quiet, so it lives in the `async: false` `live/agents_live_task_broadcast_test.exs` (forcing global: the shared `"tasks"` PubSub topic every mounted page subscribes to); the 40 ms window is the detection mechanism and must never be widened to hide a re-arm, while the positive broadcast shapes stay in the async module.
 `evo_dash_web/live/agents_live_test.exs` — `send_agent_message` resolves the call-time `:agents_send_message_runner` seam (default `&EvoDash.NodeContext.send_user_message/3`); exactly ONE test drives the real delegate (gated on `EvoGit.AgentScheduler.paused?/0` readiness, retried through `submit_until_pending_hint/3`, asserting the persisted `ControlPlane.pending_messages/1` queue and containing its throttled `{:agents_updated, node}` via `drain_agents_bulk_signal/1`, a throttle-flush proof rather than a sleep) and the rest pin the optimistic bookkeeping through the seam.
 A worker or scheduler call that TIMES OUT is not the core's answer: retry helpers key on the `{:exit, {:timeout` flash text, and the stalled-scheduler failure state (failure flash, no optimistic entry, empty pending queue) is pinned separately.
