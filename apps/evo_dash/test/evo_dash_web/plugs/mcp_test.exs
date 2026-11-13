@@ -32,6 +32,11 @@ defmodule EvoDashWeb.MCPTest do
     assert mode["description"] =~ "evolve/simple"
     assert mode["description"] =~ "genesis/new"
     assert mode["description"] =~ "genesis/existing"
+
+    persistent_state = start["inputSchema"]["properties"]["persistent_state"]
+    assert persistent_state["type"] == "boolean"
+    assert persistent_state["default"] == true
+    assert persistent_state["description"] =~ "persistence"
   end
 
   test "gets existing task errors as tool results and rejects malformed arguments" do

@@ -996,8 +996,16 @@ defmodule EvoDash.NodeContext do
   @doc """
   Starts a task on the given node.
 
-  Delegates to `EvoGit.RemoteNode.start_task/3`. Returns `{:ok, task}` on success
-  or `{:error, reason}` on failure.
+  Delegates to `EvoGit.RemoteNode.start_task/3` — the opts keyword is forwarded
+  to the node's `EvoGit.TaskRegistry.start_task/2` UNCHANGED (a direct call for
+  the local node, `:erpc` for a remote one; there is NO opt whitelist at the RPC
+  boundary). Known task opts: `:path` (absolute before enqueue), `:mode` (a
+  STRING), `:starting_commit`, `:node_path`, `:archive`, `:quality_level`,
+  `:session_mode`, `:foreign_repos`, `:attachments`, `:agent`, `:model_spec` and
+  `:persistent_state` (boolean, absent → the core default `true`; `false`
+  disables agent-state persistence for that task).
+
+  Returns `{:ok, task}` on success or `{:error, reason}` on failure.
   """
   @spec start_task(node(), atom(), keyword()) :: {:ok, map()} | {:error, term()}
   def start_task(node, task_type, opts) do
