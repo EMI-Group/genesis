@@ -8,9 +8,9 @@ defmodule EvoGit.Agent.Stream.Watchers do
   monitor on a remote pid is a cross-node signal) is reaped by the session's own `:DOWN` with no
   bookkeeping process at all.
 
-  A watcher is what opens the streaming gate: `watching?/1` is the same boolean the sink consults
-  before installing any `ReqLLM.StreamResponse.process_stream/2` callback, so an unwatched session
-  pays nothing.
+  A watcher opens the publication gate: `watching?/1` controls broadcasts, not capture.
+  Installed sinks capture current-call activity even without watchers, so a later snapshot
+  can include the complete in-flight call without retaining a replay buffer.
 
   ## Re-registration and stale downs
 
@@ -76,7 +76,7 @@ defmodule EvoGit.Agent.Stream.Watchers do
     Map.get(watchers, pid) == ref
   end
 
-  @doc "Whether ANY consumer watches — the streaming gate (zero watchers is the zero-cost path)."
+  @doc "Whether any consumer watches — the publication gate, independent of capture."
   @spec watching?(t()) :: boolean()
   def watching?(watchers) when is_map(watchers), do: map_size(watchers) > 0
 
