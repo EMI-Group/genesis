@@ -102,6 +102,15 @@ For the existing identity-free stream, `{:turn, map}` records accounting and mar
 Unknown/malformed events are ignored, a newer accepted batch still advances its watermark, atom/string-key map reads are tolerated and the reducer does no I/O, process work, gettext or checkpoint text extraction through a competing `ContentText` implementation.
 There are no retention caps in this raw inspector reducer, so the page owns any render/retention policy and must not treat it as a bounded Assistant transcript.
 
+## Inspector StreamWatch Lifecycle
+`StreamWatch.attach(socket, agent_id)` subscribes in the connected LiveView process and asynchronously registers that same LiveView pid through one serialized, consumer-monitored worker.
+Forward `{:inspector_stream_ready, node, token, agent_id, result}` to `StreamWatch.ready/5` and `{:agent_delta, agent_id, seq, events}` to `StreamWatch.push/4`, then render `socket.assigns.inspector_stream.state` as the `RuntimeStream` projection.
+`StreamWatch.active?(socket, agent_id)` includes snapshot-pending watches and excludes errors, allowing the page to suppress message-count-triggered history fetches during a healthy attachment.
+`StreamWatch.detach/1` clears the render state and consumer-local subscription immediately, with asynchronous serialized unregister on selection, node or lifecycle teardown.
+Keep `inspector_stream_token` and private `inspector_stream_worker` bookkeeping across page resets, since tokens must remain monotonic and the same worker orders rapid A-to-B-to-A registration changes.
+Pre-snapshot deltas are replayed only above the snapshot watermark, buffered up to 128 batches or 1 MiB, and overflow or supervisor-start failures produce explicit watch errors instead of silent loss or stuck loading.
+Runner seams are `:agents_watch_runner` and `:agents_unwatch_runner`, both `(node, agent_id, liveview_pid)`, defaulting to the corresponding `NodeContext` watcher functions.
+The worker performs RPC through `SafeCall`, cleans up after consumer death, and uses no polling; unexpected worker death after startup is not currently surfaced to the page and delta messages have no publisher-node stamp.
 ## Inspector Streaming Integration Constraints
 
 The existing inspector history uses checkpointed session reads rather than a selected-agent delta watch; adding live chunks requires a consumer-local subscription plus asynchronous watcher registration using the LiveView pid, with agent/node/generation guards and explicit detach cleanup.
