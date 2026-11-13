@@ -79,6 +79,7 @@ Timestamps are `%DateTime{}` (ISO8601 second precision, UTC) or `nil`.
 - `repo/1` deliberately uses `:persistent_term` instead of a `GenServer.call` — a call would queue behind pending cast checkpoints and defeat the off-write-path read design.
 - A binary SQLite parameter is stored as TEXT when its bytes are valid UTF-8 and as BLOB otherwise; both round-trip unchanged, so `term_to_binary` payloads can be bound directly (verified end-to-end).
 - The server is started by `EvoGit.Application` immediately after `{EvoGit.Store, …}` and before `EvoGit.TaskRegistry`.
+- `EvoGit.TaskRegistry` is the one production caller of `delete_task/2`: the `delete_task/1` cast and `clear_finished_tasks/0` cascade to it after a successful task-row delete (best-effort, logged at `:warning` on failure; retention pruning is the backstop).
 
 ## Test Strategy
 
