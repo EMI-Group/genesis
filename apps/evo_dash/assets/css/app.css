@@ -2743,6 +2743,53 @@ details.capsule-sub[open] > .capsule-list {
   overscroll-behavior: contain;
   scroll-behavior: auto;
 }
+/* === /agents inspector activity (opt-in markup + InspectorMessages hook) === */
+/* Thinking labels need no child spans: a faint accent wash moves behind the
+   existing label without changing its text color, dimensions or accessibility.
+   Only active LLM thinking labels should carry this class. */
+.inspector-thinking {
+  background-image: linear-gradient(100deg,
+    transparent 25%,
+    color-mix(in oklab, var(--color-primary-standalone) 12%, transparent) 50%,
+    transparent 75%);
+  background-size: 200% 100%;
+  animation: inspector-thinking-shimmer 2.4s ease-in-out infinite;
+}
+@keyframes inspector-thinking-shimmer {
+  0%, 100% { background-position: 100% 0; }
+  50% { background-position: 0 0; }
+}
+
+/* The markup supplies the cursor glyph; never generate text or reserve space
+   here. Keep it faintly visible even at the quiet end of the blink. */
+.inspector-stream-cursor {
+  color: var(--color-primary-standalone);
+  animation: inspector-cursor-blink 1.2s ease-in-out infinite;
+}
+@keyframes inspector-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* InspectorMessages adds this ONLY to genuinely new message rows, not initial
+   history or streamed patches. No fill mode: completed rows retain no transform
+   or stacking context. Never animate layout, height or the scroll container;
+   AgentHistoryAutoScroll above remains the sole, instant scroll owner. */
+.inspector-message-enter {
+  animation: inspector-message-in 180ms ease-out;
+}
+@keyframes inspector-message-in {
+  from { opacity: 0.55; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .inspector-thinking,
+  .inspector-stream-cursor,
+  .inspector-message-enter {
+    animation: none;
+  }
+}
+
 /* === Modal dialogs (`<dialog class="modal">`) === */
 /* DaisyUI's `.modal` (fixed grid, `[open]` scrim, entrance transition) and
    `.modal-box` (centered card, theme tokens) already cover the look in BOTH

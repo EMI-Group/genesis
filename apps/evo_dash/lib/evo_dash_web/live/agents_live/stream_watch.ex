@@ -5,7 +5,8 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
   Call `attach/2` and `detach/1` in the LiveView process: PubSub subscriptions
   belong to that process, not to a loader. Forward
   `{:inspector_stream_ready, node, token, id, result}` to `ready/5` and
-  `{:agent_delta, id, seq, events}` to `push/4`. Render the reducer at
+  `{:agent_delta, id, seq, events}` to `push/4`, and worker monitor
+  `{:DOWN, ref, :process, pid, reason}` to `down/4`. Render the reducer at
   `socket.assigns.inspector_stream.state`; the original snapshot remains at
   `.snapshot`. `active?/2` includes snapshot-pending watches, but not failures,
   so the page can suppress checkpoint-history fetches during attachment.
@@ -48,7 +49,8 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
     target_node = socket.assigns[:current_node] || node()
 
     cond do
-      not connected?(socket) or not (is_integer(agent_id) and agent_id > 0) ->
+      not connected?(socket) or pending_remote?(socket) or
+          not (is_integer(agent_id) and agent_id > 0) ->
         socket
 
       active?(socket, agent_id) and socket.assigns.inspector_stream.node == target_node ->
@@ -75,7 +77,6 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
         case NodeContext.subscribe_agent_deltas(agent_id) do
           :ok -> start_watch(socket, stream)
           {:error, reason} -> fail(socket, {:subscribe_failed, reason})
-          other -> fail(socket, {:subscribe_failed, other})
         end
     end
   end
@@ -94,11 +95,20 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
 
   @doc "Applies a current snapshot, or cleans up an obsolete successful registration."
   def ready(socket, target_node, token, agent_id, result) do
+    if target_node == (socket.assigns[:current_node] || node()) and
+         not pending_remote?(socket) do
+      apply_ready(socket, target_node, token, agent_id, result)
+    else
+      socket
+    end
+  end
+
+  defp apply_ready(socket, target_node, token, agent_id, result) do
     case socket.assigns[:inspector_stream] do
       %{node: ^target_node, token: ^token, agent_id: ^agent_id, error: nil, snapshot: nil} =
           stream ->
         case snapshot_result(result) do
-          {:ok, snapshot, seq} ->
+          {:ok, snapshot, seq} when snapshot.agent_id in [nil, agent_id] ->
             state = RuntimeStream.seed(stream.state, snapshot, seq)
 
             {state, seq} =
@@ -121,6 +131,9 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
               }
             )
 
+          {:ok, _snapshot, _seq} ->
+            fail(socket, :snapshot_agent_mismatch)
+
           {:error, reason} ->
             fail(socket, reason)
         end
@@ -138,7 +151,16 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
   end
 
   @doc "Buffers pre-snapshot batches and applies only newer batches after seeding."
-  def push(socket, agent_id, seq, events) when is_integer(seq) and is_list(events) do
+  def push(socket, agent_id, seq, events)
+      when is_integer(seq) and seq >= 0 and is_list(events) do
+    if active?(socket, agent_id),
+      do: apply_push(socket, agent_id, seq, events),
+      else: socket
+  end
+
+  def push(socket, _agent_id, _seq, _events), do: socket
+
+  defp apply_push(socket, agent_id, seq, events) do
     case socket.assigns[:inspector_stream] do
       %{agent_id: ^agent_id, error: nil, snapshot: nil} = stream ->
         bytes = stream.buffer_bytes + :erlang.external_size({seq, events})
@@ -170,15 +192,38 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
     end
   end
 
-  def push(socket, _agent_id, _seq, _events), do: socket
-
   @doc "True for the selected healthy watch, including its snapshot-pending interval."
   def active?(socket, agent_id) do
     case socket.assigns[:inspector_stream] do
-      %{agent_id: ^agent_id, error: nil} -> true
-      _ -> false
+      %{agent_id: ^agent_id, node: target_node, error: nil} ->
+        target_node == (socket.assigns[:current_node] || node()) and not pending_remote?(socket)
+
+      _ ->
+        false
     end
   end
+
+  @doc """
+  Handles a worker monitor DOWN; forward unmatched DOWN messages here from the page.
+
+  Matching worker death fails a pending or established watch explicitly, clears
+  its local subscription and permits an attach retry. Other monitors are inert.
+  """
+  def down(socket, ref, pid, reason) do
+    if socket.assigns[:inspector_stream_worker_monitor] == ref and
+         socket.assigns[:inspector_stream_worker] == pid do
+      socket
+      |> fail({:watch_worker_down, reason})
+      |> assign(inspector_stream_worker: nil, inspector_stream_worker_monitor: nil)
+    else
+      socket
+    end
+  end
+
+  defp pending_remote?(socket),
+    do:
+      socket.assigns[:current_node_id] != nil and
+        (socket.assigns[:current_node] || node()) == node()
 
   defp start_watch(socket, stream) do
     case ensure_worker(socket) do
@@ -239,10 +284,23 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
              })
            end)
          end) do
-      {:ok, {:ok, pid}} -> {:ok, assign(socket, inspector_stream_worker: pid)}
-      {:ok, {:error, reason}} -> {:error, reason, socket}
-      {:error, reason} -> {:error, reason, socket}
-      other -> {:error, other, socket}
+      {:ok, {:ok, pid}} ->
+        monitor = Process.monitor(pid)
+
+        {:ok,
+         assign(socket,
+           inspector_stream_worker: pid,
+           inspector_stream_worker_monitor: monitor
+         )}
+
+      {:ok, {:error, reason}} ->
+        {:error, reason, socket}
+
+      {:error, reason} ->
+        {:error, reason, socket}
+
+      other ->
+        {:error, other, socket}
     end
   end
 
@@ -283,10 +341,10 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
   end
 
   defp snapshot_result({:ok, {:ok, %Snapshot{} = snapshot, seq}})
-       when is_integer(seq),
+       when is_integer(seq) and seq >= 0,
        do: {:ok, snapshot, seq}
 
-  defp snapshot_result({:ok, %Snapshot{} = snapshot, seq}) when is_integer(seq),
+  defp snapshot_result({:ok, %Snapshot{} = snapshot, seq}) when is_integer(seq) and seq >= 0,
     do: {:ok, snapshot, seq}
 
   defp snapshot_result({:ok, {:error, reason}}), do: {:error, reason}
