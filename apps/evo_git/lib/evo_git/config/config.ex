@@ -578,8 +578,9 @@ defmodule EvoGit.Config do
   Returns `%{}` if the file is not found or cannot be parsed.
 
   The map comes from `EvoGit.Config.Cache` — no `File.stat` and no read on
-  every call. The snapshot is refreshed by `EvoGit.Config.Cache.reload/1`
-  (a save, or a directory change observed by `EvoGit.Config.Watcher`).
+  every call. A save raises `EvoGit.Config.Watcher`'s config-changed event,
+  which runs the same reload as a watched file event and falls back to a
+  guarded reload when no watcher is running (synchronous either way).
   """
   @spec user_config() :: map()
   def user_config do
@@ -614,6 +615,10 @@ defmodule EvoGit.Config do
   Atom keys are automatically converted to strings for TOML serialization.
   Validates the config against the schema before writing.
 
+  A save raises `EvoGit.Config.Watcher`'s config-changed event, which runs the
+  same reload as a watched file event and falls back to a guarded reload when
+  no watcher is running (synchronous either way).
+
   Returns `:ok` on success, `{:error, reason}` on failure.
   `reason` can be a list of `EvoGit.Config.Schema.ValidationError` structs
   on validation failure, or a filesystem error term.
@@ -634,9 +639,11 @@ defmodule EvoGit.Config do
              string_config = stringify_keys(config),
              {:ok, toml} <- TomlElixir.encode(string_config),
              :ok <- File.write(path, toml) do
-          # Synchronous reload so the caller (and the settings page via
-          # `RemoteAPI.save_user_config/1`) sees the new values immediately.
-          EvoGit.Config.Cache.reload(dir: dir)
+          # Synchronous refresh so the caller (and the settings page via
+          # `RemoteAPI.save_user_config/1`) sees the new values immediately:
+          # the watcher's config-changed event runs the same reload as a file
+          # event, falling back to a guarded reload when no watcher runs.
+          EvoGit.Config.Watcher.notify_change(dir)
           :ok
         end
     end
@@ -1013,6 +1020,10 @@ defmodule EvoGit.Config do
 
   Creates the credentials file if it doesn't exist yet.
 
+  A save raises `EvoGit.Config.Watcher`'s config-changed event, which runs the
+  same reload as a watched file event and falls back to a guarded reload when
+  no watcher is running (synchronous either way).
+
   Returns `:ok` on success, `{:error, reason}` on failure.
   """
   @spec save_credentials(map()) :: :ok | {:error, term()}
@@ -1043,9 +1054,11 @@ defmodule EvoGit.Config do
          {:ok, toml} <- TomlElixir.encode(string_creds),
          {:ok, contents} <- ensure_trailing_newline(toml),
          :ok <- File.write(path, contents) do
-      # Synchronous reload so the caller sees the merged credentials straight
-      # away (the snapshot's build also re-applies the ReqLLM key side effects).
-      EvoGit.Config.Cache.reload(dir: dir)
+      # Synchronous refresh so the caller sees the merged credentials straight
+      # away (the snapshot's build also re-applies the ReqLLM key side
+      # effects): the watcher's config-changed event runs the same reload as a
+      # file event, falling back to a guarded reload when no watcher runs.
+      EvoGit.Config.Watcher.notify_change(dir)
       :ok
     else
       {:error, reason} -> {:error, reason}
