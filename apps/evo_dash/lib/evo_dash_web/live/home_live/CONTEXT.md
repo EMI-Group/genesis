@@ -236,6 +236,9 @@ Enter submits through a server-maintained Shift latch, Shift+Enter keeps the new
 ## Constraints
 
 - No `try/rescue` around config/core loading; `{:error, …}` tuples from `NodeContext` are the failure channel.
+- Config/model-selection state is loaded ONLY by `ModelSelection.assign_model_select/1` from `handle_params/3` (`home_live.ex:520`), i.e. on mount, every `push_patch`/`push_navigate` (session adoption, New chat, node switch, connection-transition patch) and never on a timer; there is no refresh event, so an existing cached bundle (`model_snapshot`, `model_selection_bundle`, `provider_profiles`, `model_selections`, `model_selection_enabled`) stays until the next param change.
+- The page subscribes to `"tasks"`, `"agents"` and `"approvals"` only (`home_live.ex:210-212`) plus `"agent:<id>"` via `Watch` — never `"config"` or `"scheduler_config"`, so a config reload broadcast does not reach it.
+- No code in this subtree reads `config.toml`/`credentials.toml` or computes config paths; the only file reads are user attachments (`home_live.ex:823`, `:849`).
 - Every new user-facing string is `gettext`-wrapped; Chinese comments only for short/ambiguous labels; never run `mix gettext.extract`/`merge`/`translate` during feature work.
 - `?session=` parses with `Integer.parse/1` + a positive guard; no `String.to_atom/1` on client input.
 - Never block the LiveView on a cross-node call; every async load carries a monotonic seq + node stale guard; no polling.
