@@ -14,13 +14,11 @@ defmodule EvoDashWeb.HomeLive.Watch do
       `EvoDash.TaskSupervisor` child with the LIVEWIEW pid as the consumer (the
       session `Process.monitor/1`s that pid, so it reaps a dead page by itself).
 
-  That split is why the page drops every delta until the snapshot lands: the
-  page keeps `chat_stream: %{agent_id, node, delta}` with `delta: nil` while the
-  registration is in flight, and `handle_info({:agent_delta, ...})` only applies
-  a batch once `delta` is a `%Delta{}` with an integer `seq`. A delta published
-  in the gap between the subscribe and the snapshot is not lost — it is covered
-  by the snapshot's `seq` (`EvoGit.Agent.Stream.stale?/2`), which is the ONLY
-  reconciliation rule of the contract (no replay buffer, no poll loop).
+  The snapshot is a consistent cut of checkpoint history, lifecycle `phase`, live
+  `activity` and `seq`. `snapshot_result/3` builds a complete display surface from
+  that cut, including captured text/thinking from a call that began before attach.
+  The page must buffer pre-seed deliveries and replay only sequences newer than
+  the snapshot: capture can precede delivery of the registration result.
 
   ## Runner seams (resolved at spawn time)
 
@@ -39,7 +37,7 @@ defmodule EvoDashWeb.HomeLive.Watch do
 
   alias EvoGit.Agent.Stream.Snapshot
   alias EvoDash.{NodeContext, SafeCall, TaskSupervisor}
-  alias EvoDashWeb.HomeLive.Delta
+  alias EvoDashWeb.HomeLive.{Delta, Messages}
 
   @watch_runner_key :home_agent_watch_runner
   @unwatch_runner_key :home_agent_unwatch_runner
@@ -130,13 +128,23 @@ defmodule EvoDashWeb.HomeLive.Watch do
   Accepts the runner's flat `{:ok, %EvoGit.Agent.Stream.Snapshot{}, seq}` — and
   the `EvoDash.SafeCall`-wrapped `{:ok, {:ok, %Snapshot{}, seq}}` the async
   registration task actually sends — and answers
-  `{:ok, %{snapshot:, delta:, meta:}}`, where the delta is seeded with the
-  snapshot's seq/turn and the meta carries its turn/token/usage accounting.
+  `{:ok, %{snapshot:, delta:, meta:, transcript:, thought_process:}}`. The display
+  surface is checkpoint history plus the current captured call, never a second
+  appended copy of either. The caller must install this surface atomically with
+  its delta baseline and apply `snapshot.phase` as the lifecycle authority.
   Every other shape (including an `{:error, reason}`) is `{:error, reason}`.
   Total: never raises.
   """
   @spec snapshot_result(term(), term(), node() | nil) ::
-          {:ok, %{snapshot: Snapshot.t(), delta: Delta.t(), meta: map()}} | {:error, term()}
+          {:ok,
+           %{
+             snapshot: Snapshot.t(),
+             delta: Delta.t(),
+             meta: map(),
+             transcript: list(),
+             thought_process: list()
+           }}
+          | {:error, term()}
   def snapshot_result(result, agent_id, node) do
     snapshot =
       case result do
@@ -162,7 +170,19 @@ defmodule EvoDashWeb.HomeLive.Watch do
           usage: snapshot.usage
       }
 
-      {:ok, %{snapshot: snapshot, delta: delta, meta: meta}}
+      %{transcript: transcript, entries: thoughts} = Messages.transcript(snapshot.messages)
+
+      surface =
+        Delta.apply_batch(delta, transcript, thoughts, meta, [{:activity, snapshot.activity}])
+
+      {:ok,
+       %{
+         snapshot: snapshot,
+         delta: surface.delta,
+         meta: surface.meta,
+         transcript: surface.transcript,
+         thought_process: surface.thought_process
+       }}
     else
       {:error, unwrap_error(result)}
     end
