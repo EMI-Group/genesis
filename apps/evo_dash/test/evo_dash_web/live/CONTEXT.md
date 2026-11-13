@@ -134,11 +134,19 @@ The module is synchronous because its global app-env runner seams overlap the ex
 It pins response/thinking separation, authoritative activity, no-thinking only after completed generation with explicit complete thinking capture, and stable per-message animation identities, attachment scope, disclosure/expansion and checkpoint-part identity gates.
 Incomplete, omitted-thinking, late-start, failed and cancelled captures never establish a no-thinking verdict.
 Run all scoped inspector tests with `mix test apps/evo_dash/test/evo_dash_web/live/agents_live apps/evo_dash/test/evo_dash_web/live/agents*_test.exs` from the umbrella root.
+The mounted inspector integration suite fabricates `%Snapshot{}` watch answers and manually broadcasts delta batches; it does not start a real core session or call real `Stream.watch`.
+Its activity fixtures include phase-only maps and atom values, while render fixtures use `in_flight` with `message_index`, `response`, `generation_complete` and `capture_coverage` rather than an activity-owned call identity.
+The mounted Assistant push-only suite similarly fabricates snapshot answers and publishes its own deltas; its in-flight preservation test seeds a bubble directly rather than obtaining a mid-call snapshot from the core.
+These suites establish dashboard transport/presentation behavior but do not establish producer/consumer compatibility for whole-replacement `%{phase:, current_call:}` activity, retry-attempt identity or completed-call checkpoint retirement.
+Real core-stream compatibility coverage must be synchronous, use a deterministic provider stream-callback seam with no network, retain actual Session/watch production, and await consumer plus session/exchange-worker shutdown before restoring global seams.
 
 ## Notes for Agents — Home chat suite (`home_live_test.exs`)
 
 The mounted `/assistant` suite is `async: false` and owns the process-global `EvoDash.ChatHistory`, `EvoDash.ActiveTasks`, the isolated Store/TaskRegistry pair and the per-test `:home_session_*` / `:approval_*` / `:source_*` app-env seams.
-Chat state is SEEDED (never driven by a real send) except ONE canonical real-send pin; interactive sessions, the approval strip/dialog flow and the genesis-source gate are documented in `./home_live/CONTEXT.md`.
+Most chat state is seeded, but three history/refetch regressions use real repo-less `EvoGit.Agent.Session` fixtures through the file-local `seed_scripted_session!/3` and top-of-file `ScriptedAgent` role.
+Those fixtures install per-session `exchange_opts[:llm_call]` and `:tool_batch`, checkpoint scripted tool-calling replies, then park the next LLM call; they exercise real session history, not provider stream callbacks or actual `Stream.watch` snapshot production.
+Their fixture code is private to `home_live_test.exs` and cannot be reused by another file without extracting a compiled support helper or defining an independent role/helper above that file's case module.
+Interactive sessions, the approval strip/dialog flow and the genesis-source gate are documented in `./home_live/CONTEXT.md`.
 
 ## Notes for Agents
 
