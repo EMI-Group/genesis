@@ -148,6 +148,19 @@ defmodule EvoGit.Application do
                Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir()),
                "tasks.sqlite"
              )},
+          # Durable per-run agent state in its OWN SQLite database beside the
+          # task store (`agent_state.sqlite`), so a crashed agent run's
+          # conversation + scalar fields stay recoverable. Owns its own unnamed
+          # dynamic `EvoGit.Repo` instance and runs its own migrations; boot is
+          # fatal on a broken/unwritable file. Started AFTER the task store and
+          # BEFORE TaskRegistry so every later reader finds it up. The data dir
+          # resolves exactly like `tasks.sqlite` above.
+          {EvoGit.AgentState,
+           database:
+             Path.join(
+               Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir()),
+               "agent_state.sqlite"
+             )},
           # Periodic, best-effort SQLite maintenance (`PRAGMA optimize`) for the
           # task store — one pass every 60 minutes, no tick at boot (the store's
           # boot path already optimized on the migrated connection). Starts AFTER

@@ -587,8 +587,11 @@ defmodule EvoGit.TaskRegistry do
         # not enqueue work, and the stored opts must match the admitted selection.
         # `:session_mode` is admitted the same way (non-raising — a raise here
         # would kill the registry); an invalid value never enqueues a task.
+        # `:persistent_state` is admitted the same way: it turns durable
+        # per-run agent-state checkpoints on for this task.
         with {:ok, opts} <- RuntimeOpts.admit_model_selection(opts, EvoGit.Config.resolve()),
-             {:ok, opts} <- RuntimeOpts.admit_session_mode(opts) do
+             {:ok, opts} <- RuntimeOpts.admit_session_mode(opts),
+             {:ok, opts} <- RuntimeOpts.admit_persistent_state(opts) do
           task_ref =
             Task.Supervisor.async_nolink(
               EvoGit.TaskSupervisor,
