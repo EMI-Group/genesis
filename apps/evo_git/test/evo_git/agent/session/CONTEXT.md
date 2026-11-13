@@ -40,6 +40,16 @@ Zero watchers suppress public buffering, timers and sequence consumption but not
 Running graceful cancellation preserves current activity and the worker rather than behaving like force cancellation.
 Tool declarations, including streamed nil-id declarations, are not execution-start evidence and must not independently set the `:tools` activity phase.
 
+## Integration Fixture Pointers
+`activity_projection_test.exs:279-352` provides private `parked_session/1`, `run/2`, `begin_call/2` and `pending_cut/3` helpers with explicit worker commands and same-worker `Session.inspect/2` ordering barriers.
+Its driver reports `{:projection_worker, worker, context}`, accepts `{:projection_command, ref, fun}` and replies `{:projection_ack, ref, result}`, or accepts `{:reply, text}` to yield.
+`activity_lifecycle_test.exs:255-333` provides private `start_activity/2`, `drive_call/3`, `barrier/0` and `capture/3`, with `{:activity_call, worker, call, context, callbacks}` readiness, `{:capture, text, thinking}` / `{:captured, worker}` acknowledgements and explicit reply/rejection/tool gates.
+Its exact yield/resume case at lines 97-162 asserts `{:agent_session_yield, id, pid, text}`, worker `:DOWN`, idle snapshot/history, `Session.start_input(pid, text, :queue)`, `{:agent_session_resumed, id, pid}`, fresh worker/call, stable cache key and a second exact yield.
+`interactive_test.exs:536-575` constructs a repo-less dispatch keyword list with `agent_id`, `depth`, `repo_root`, `repo_id`, `worktree_path`, `retries`, `spec`, `meta`, `repo_less`, `repo_less_repo_path`, `notify`, `scheduler` and `exchange_opts`, passing the latter through after deleting its test-only `:agent_module` selector.
+Its registration row at lines 496-517 carries `llm_model: nil`, a legacy pool `model_id`, `llm_context_window: 200_000` and `llm_generation_params: [temperature: 0.2, provider_options: [prompt_cache_key: key]]`, so it is a scripted fixture rather than a working real-provider request setup.
+No file in this node configures `stream_start`; the imported `StreamCase` implementation and real-provider model overrides must be checked in the shared support node before adapting this fixture to actual LLMPrompting.
+`ActivityLifecycleTest.start_activity/2` force-cancels and monitors the session during teardown to reap its parked worker, whereas the older interactive `start_session/1` helper only kills the session as a last resort.
+
 ## Routing Table
 There are no child directories.
 Pure Activity/Sink, watcher gating and general stream transport tests belong to sibling `../stream/` (sibling — read-only, escalate writes to parent).
