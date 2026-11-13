@@ -96,6 +96,11 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
   worker's `{:llm_blocked, pid}` notice, the monitor `:DOWN`, or a bounded poll
   of `EvoGit.AgentState.load/3`. `Process.sleep/1` appears only as the interval
   INSIDE those bounded polls, never as an assertion.
+
+  Session API calls (`inspect/2`, `history/2`) are bounded RETRIES, never a
+  single tight call: a late answer on a saturated host is a VM-scheduling
+  measurement, not a session fact, so a fixed short timeout would fail this file
+  on a healthy, idle session while proving nothing about the code under test.
   """
 
   use ExUnit.Case, async: true
@@ -195,7 +200,7 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
 
       # A yield parks the session: no terminal fact, an :awaiting_input phase.
       assert await_phase(pid, :awaiting_input) == true
-      assert {:ok, %{phase: :awaiting_input}} = Session.inspect(pid, 500)
+      assert_phase(pid, :awaiting_input, "yield")
 
       AgentState.flush()
       assert {:ok, %Record{} = record} = AgentState.load(task_id, agent_id)
@@ -275,7 +280,7 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
       # is still the freshly built [system, user] pair and no checkpoint of this
       # run has been written yet.
       assert_receive {:llm_blocked, worker}, 5_000
-      own_messages = Session.history(pid, 500)
+      own_messages = await_history(pid)
       assert length(own_messages) == 2
 
       # Seed a DIVERGENT transcript into the SAME row, from the test process
@@ -294,9 +299,12 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
       # A resync naming a DIFFERENT identity is ignored by the session's
       # own-task/own-agent guard: the divergent row must stay untouched.
       send(pid, {:agent_state_resync, task_id, 999_999})
-      # `inspect/2` is a call from THIS process, so signal ordering guarantees the
-      # info message above has already been handled when its reply arrives.
-      assert {:ok, %{phase: :running}} = Session.inspect(pid, 500)
+      # A successful `inspect/2` reply is a call from THIS process, so signal
+      # ordering guarantees the info message above has already been handled when
+      # it arrives; the bounded retry only absorbs a busy VM (see
+      # `assert_phase/3`) — it can never turn "the session handled the resync"
+      # into an unchecked assumption.
+      assert_phase(pid, :running, "ignored resync")
 
       AgentState.flush()
       assert {:ok, %Record{} = untouched} = AgentState.load(task_id, agent_id)
@@ -306,7 +314,7 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
       # The real gap report is answered with ONE FULL rewrite of the session's own
       # transcript (never an append on top of the store's divergent copy).
       send(pid, {:agent_state_resync, task_id, agent_id})
-      assert {:ok, %{phase: :running}} = Session.inspect(pid, 500)
+      assert_phase(pid, :running, "real resync")
 
       assert {:ok, %Record{} = healed} =
                await_record(task_id, agent_id, fn record ->
@@ -315,7 +323,7 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
 
       # The rebuilt conversation IS the session's current transcript, byte for byte.
       assert healed.messages == own_messages
-      assert healed.messages == Session.history(pid, 500)
+      assert healed.messages == await_history(pid)
 
       # Let the blocked turn finish so no worker outlives the test.
       send(worker, :release)
@@ -445,6 +453,11 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
   # retry) return immediately, so a released run always terminates promptly.
   # `test_pid` is captured by the caller IN the test process (`self()`), because
   # the seam itself runs inside the exchange worker.
+  #
+  # The `after` clause is a SAFETY NET, never the test's timing: it must stay far
+  # above every bounded wait in the file, because a turn that ends on its own
+  # stops the session and would fail assertions that mean "still running on a
+  # loaded VM".
   defp blocking_llm_call(test_pid) do
     fn context, _tools, _params, _agent_id, _retries ->
       unless Process.get(:persistence_session_released) do
@@ -453,7 +466,7 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
         receive do
           :release -> Process.put(:persistence_session_released, true)
         after
-          5_000 -> Process.put(:persistence_session_released, true)
+          30_000 -> Process.put(:persistence_session_released, true)
         end
       end
 
@@ -527,6 +540,60 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
         else
           false
         end
+    end
+  end
+
+  # The same phase assertion, but FAILING (with the last answer) instead of
+  # returning a boolean.
+  #
+  # The retry is not a weakened assertion — it is the fix for a saturated host:
+  # a single tight `inspect/2` call timeout is a VM-scheduling measurement, not a
+  # session fact, and a healthy, idle session answers a queued `:inspect` call
+  # late simply because it was not scheduled yet. Every attempt that DOES answer
+  # keeps the barrier intact, because `send/2` from this process followed by this
+  # call means the session handled everything sent before it.
+  defp assert_phase(pid, phase, label, timeout \\ 5_000) do
+    do_assert_phase(pid, phase, label, deadline(timeout))
+  end
+
+  defp do_assert_phase(pid, phase, label, deadline) do
+    case Session.inspect(pid, 500) do
+      {:ok, %{phase: ^phase}} ->
+        :ok
+
+      other ->
+        if remaining(deadline) > 0 do
+          Process.sleep(10)
+          do_assert_phase(pid, phase, label, deadline)
+        else
+          flunk(
+            "#{label}: the session never reported phase #{inspect(phase)} " <>
+              "(last answer: #{inspect(other)}, alive?: #{Process.alive?(pid)})"
+          )
+        end
+    end
+  end
+
+  # `history/2` answers `[]` for a gone session AND for a call that timed out, so
+  # a bounded retry distinguishes "not scheduled yet" from "gone" instead of
+  # failing on one tight call. The 5 s budget still lets a dead session fail the
+  # caller's own assertion instead of hanging the test.
+  defp await_history(pid, timeout \\ 5_000) do
+    do_await_history(pid, deadline(timeout))
+  end
+
+  defp do_await_history(pid, deadline) do
+    case Session.history(pid, 500) do
+      [] ->
+        if remaining(deadline) > 0 do
+          Process.sleep(10)
+          do_await_history(pid, deadline)
+        else
+          []
+        end
+
+      messages ->
+        messages
     end
   end
 
