@@ -29,6 +29,9 @@ The parent `../CONTEXT.md` and `../../CONTEXT.md` own the cross-cutting async-sa
 | `llm_catalog_test.exs` | `LLMCatalogTest` | `true` | Static catalog providers/models, credential keys, auth modes, endpoints and variants |
 | `llm_generation_params_test.exs` | `LLMGenerationParamsTest` | `false` | Provider-aware generation/OAuth options, constraints and metadata seam |
 | `version_state_test.exs` | `VersionStateTest` | `true` | Version-state TOML, path-aware cache, upgrade and onboarding detection |
+| `cache_test.exs` | `CacheTest` | `true` | RAM snapshot contract: one snapshot per config dir, disk-free reads, generation bumps only on a content change, save-path refresh, per-dir isolation, `invalidate/1` rebuilds and the `"config"` broadcast filtered on the test's own dir |
+| `watcher_test.exs` | `WatcherTest` | `true` | Real directory watch: a `config.toml` edit refreshes the snapshot with no explicit reload, an unrelated file write is ignored, and an `agents.toml` write leaves the watcher alive (`@moduletag skip:` when the `file_system` backend is unavailable) |
+| `schema/llm_cache_identity_test.exs` | `Schema.LLMCacheIdentityTest` | `true` | `Schema.LLM.with_cache_identity/3` provider-gated prompt-cache/routing identity: `prompt_cache_key` always, plus `session_id` for `:openai_codex`, and an explicit account `provider_options` value always winning |
 | `reload_event_test.exs` | `ReloadEventTest` | `true` | Config-refresh event with NO answering watcher: an absent, unregistered, dead or unresponsive target falls back to the SAME guarded snapshot reload synchronously, exactly one generation bump per content change, bounded by the call timeout |
 | `reload_event_test.exs` | `ReloadEventWatchTest` | `true` | Config-refresh event through a LIVE watcher: a save raises ONE event whose own file write is a debounce no-op, an explicit `notify_change/2` refreshes synchronously, and a watcher on another dir still refreshes the explicitly requested dir (`@moduletag skip:` when the `file_system` backend is unavailable) |
 
@@ -63,9 +66,12 @@ Duplicate effort errors include the duplicate element's index, context-window va
 There is no global `[llm] oauth_file` schema key; OAuth files are per account/profile.
 `Schema.all_schemas/0` has exactly 106 entries and its LLM category has exactly 14, so adding/removing descriptors requires updating both count assertions.
 `Config.__atomize_enum_values__/1` remains a hardcoded per-key-path normalization list rather than schema-derived behavior.
+Config freshness has ONE reload implementation: the watcher's debounced file event, the save event `EvoGit.Config.Watcher.notify_change/2` routes into the watcher, and the bounded fallback that same function runs when no watcher answers all call `EvoGit.Config.Cache.reload_safely/1`, so one content change bumps the generation exactly once.
+`EvoGit.Config.Watcher.notify_change/2` is total and bounded: a `nil`, unregistered, dead or timed-out target falls back to the caller-side guarded reload and still returns `:ok`, so a save never fails, crashes or indefinitely blocks on the watcher.
 The `[tmp]` enum is `[:system, :custom, :per_repo]`, with rejected values reported at `[:tmp, :mode]` under the corresponding `{:in, ...}` rule.
 
 ## Test Inventory
 This node contains 395 tests across sixteen modules.
+Those sixteen modules live in fifteen files, because `reload_event_test.exs` holds both the fallback module and the live-watcher module.
 Per-file counts are schema 122, provider normalization/enumeration 14, provider resolution 21, provider validation 12, config health 3, Ecto validation 48, generation parameters 66, catalog 40, version state 15, context window 12, tmp schema 7, config cache 11, config watcher 3, LLM cache identity 14 and reload event 7 (4 fallback cases plus 3 live-watcher cases that skip when the `file_system` backend is unavailable).
 Run the complete node with `mix test apps/evo_git/test/evo_git/config` from the umbrella root.
