@@ -107,7 +107,12 @@ defmodule EvoDashWeb.HomeLive.LiveCall do
             thinking: call.thinking,
             text_in_turn: call.text != ""
         },
-        transcript: transcript,
+        transcript:
+          Transcript.put_reasoning(
+            transcript,
+            id,
+            Enum.filter(thoughts, &(thought_id(&1) == call.id))
+          ),
         thought_process: thoughts
     }
   end

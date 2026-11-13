@@ -185,11 +185,15 @@ defmodule EvoDashWeb.HomeLive.Delta do
   end
 
   defp apply_event({:text, chunk}, acc) when is_binary(chunk) and chunk != "" do
+    transcript = Transcript.append_streaming_text(acc.transcript, chunk)
+    id = streaming_id(transcript)
+
     %{
       acc
-      | delta: %{acc.delta | text_in_turn: true},
-        transcript: Transcript.append_streaming_text(acc.transcript, chunk)
+      | delta: %{acc.delta | text_in_turn: true, call_entry_id: id},
+        transcript: transcript
     }
+    |> retain_thinking()
   end
 
   defp apply_event({:thinking, chunk}, acc) when is_binary(chunk) and chunk != "" do
@@ -201,6 +205,7 @@ defmodule EvoDashWeb.HomeLive.Delta do
       | delta: delta,
         thought_process: upsert_thinking(acc.thought_process, delta.turn, thinking)
     }
+    |> retain_thinking()
   end
 
   # The bubble stays OPEN here: text arriving after a tool call belongs to the
@@ -222,6 +227,9 @@ defmodule EvoDashWeb.HomeLive.Delta do
     delta = %{
       acc.delta
       | turn: turn_number(info, acc.delta.turn),
+        call_entry_id:
+          streaming_id(acc.transcript) ||
+            if(acc.delta.text_in_turn, do: acc.delta.call_entry_id),
         thinking: "",
         text_in_closed_turn: acc.delta.text_in_turn == true,
         text_in_turn: false
@@ -266,7 +274,28 @@ defmodule EvoDashWeb.HomeLive.Delta do
 
   defp apply_event(_event, acc), do: acc
 
+  defp streaming_id(transcript) do
+    transcript
+    |> Transcript.normalize()
+    |> Enum.reverse()
+    |> Enum.find_value(fn entry -> if entry.streaming and entry.text != "", do: entry.id end)
+  end
+
   # --- thinking ---
+
+  defp retain_thinking(%{delta: %{text_in_turn: false}} = acc), do: acc
+
+  defp retain_thinking(acc) do
+    thoughts =
+      if acc.delta.thinking == "",
+        do: [],
+        else: [LiveCall.thinking_entry(acc.delta.turn, acc.delta.thinking)]
+
+    %{
+      acc
+      | transcript: Transcript.put_reasoning(acc.transcript, acc.delta.call_entry_id, thoughts)
+    }
+  end
 
   defp upsert_thinking(thought_process, turn, text) do
     entries = if is_list(thought_process), do: thought_process, else: []

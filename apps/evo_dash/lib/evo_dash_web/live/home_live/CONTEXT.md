@@ -20,7 +20,7 @@ When interactive sessions are unavailable on the node, the page falls back to th
 - `transcript.ex` → `EvoDashWeb.HomeLive.Transcript` — transcript model, normalization/caps, per-message reasoning, streaming bubbles (`append_streaming_text/2`, `finalize_streaming/1`, `close_streaming/1` — a non-empty bubble is finalized, an empty placeholder dropped), `:tool` entries (`tool_entry/4`, `put_tool_status/3`), bounded preamble
 - `delta.ex` → `EvoDashWeb.HomeLive.Delta` — the PURE, TOTAL delta reducer (`new/3`, `seed/3`, `meta/0`, `apply_batch/5`, `streamed_text?/1`); one assistant bubble per turn accumulated across tool calls; no processes, no side effects
 - `live_call.ex` → `EvoDashWeb.HomeLive.LiveCall` — call-id-keyed display projection of whole `:activity` replacements and appended chunks, with one live answer/reasoning entry, failed-attempt removal on retry and committed-output preservation on checkpoint retirement
-- `watch.ex` → `EvoDashWeb.HomeLive.Watch` — the watch lifecycle: `attach/1` (LiveView-process subscription + supervised watcher registration whose snapshot seeds the delta), `detach/1`, `snapshot_result/3`, `stream_active?/1`
+- `watch.ex` → `EvoDashWeb.HomeLive.Watch` — consumer-local subscription, one consumer-monitored serial registration worker, generation-guarded `ready/5`, buffered `push/4`, worker `down/4`, atomic display-surface `snapshot_result/3` and history-ownership `stream_active?/1`.
 - `chat_state.ex` → `EvoDashWeb.HomeLive.ChatState` — persisted per-chat shape (`build/1`, `persist/1`, `restore/1`) over `EvoDash.ChatHistory`
 - `messages.ex` → `EvoDashWeb.HomeLive.Messages` — ReqLLM history → per-message display text (`message_text/1`, thinking parts excluded) and thought-process entries (`to_entries/1`, total), plus `transcript/1`, the ONE shared builder (`%{transcript:, entries:}`) both the history read and the watch snapshot seed through: `entries` is the raw thought-process projection and `transcript` the ordered display bubbles produced by `DisplayMessages.bubbles/1`
 - `display_messages.ex` → `EvoDashWeb.HomeLive.DisplayMessages` — the chat-transcript projection rule (`bubbles/1`, `bubble/1`, `user_authored?/1`): `[{:user | :assistant, text}]` in chronological order, skipping `:system`/`:tool` messages and every user-role turn the harness injected (the `<context>` block, the turn-0 wrapper's `<objective>` body is unwrapped and shown, `metadata[:checkpoint]`, the runtime-context refresh, `[NOTICE]`/`[WARNING]`/`[URGENT]` notices, the turn-budget grace warning, the graceful-cancel save-work message); the core's `metadata[:user_authored]` marker is authoritative when present and the shape heuristics are the fallback
@@ -80,7 +80,7 @@ Stop is separate and stays distinct: `NodeContext.cancel_task/2` (graceful cance
 `handle_params/3` with `?session=<id>`: sets `session_id`, `current_session_id`, `chat_id = session_id`, `session_mode: :interactive`, clears per-chat refs (`chat_task_id`, `chat_task_status`, `agent_message_count`, queued echoes), and restores the cached transcript from `ChatHistory.get_state(session_id)` through `ChatState.restore/1` (total — garbage degrades to defaults).
 ONE supervised attach task per (seq, node, session) gathers `list_agents/1` + `list_awaiting_input/1` + `get_agent_history/2` and returns `SessionActions.load_attach/2`'s bare map `%{summary:, awaiting?:, history:}` (no `{:ok, _}` tag — `EvoDash.SafeCall.run/1` wraps it, which is why `apply_attach/2` matches `{:ok, %{…}}`).
 Apply only when the `session_attach_seq` is current, the node matches and the `session_id` matches.
-A non-empty history REPLACES the cached transcript (`Messages.transcript/1`, whose entries half comes from `Messages.to_entries/1`); the phase comes from the summary / awaiting list.
+A non-empty independent attach history replaces the cached transcript through `Messages.transcript/1` only when no watch owns the surface and the captured `stream_attach_seq` still matches; its phase then comes from the summary / awaiting list.
 An EMPTY history never wipes a non-empty cached transcript: `apply_history/3` keeps the cached transcript and its thought process (rendered read-only) instead of assigning `[]`.
 A first-ever attach with no cache keeps the empty transcript.
 Session gone (no summary, not awaiting) with an empty cache → the ended-session empty state (`HomeLive.ChatMessages.session_ended_state/1`, `#chat-session-ended`), composer disabled, New chat affordance.
@@ -170,11 +170,12 @@ The attach menu sits OUTSIDE `#chat-form`, and the textarea is NOT `phx-update="
 
 ## Reasoning retention
 
-Reasoning is NOT attached per transcript entry today: `Transcript.put_reasoning/3` exists and is unit-tested but has NO production call site, and `AssistantMessage.assistant_message/1` never reads an entry's `:reasoning`.
-The rendered thought process is ONE global `@thought_process` assign — the full `Messages.to_entries/1` list of the last `get_agent_history/2` read, rewritten wholesale by `apply_history/3` and cleared only by `reset_chat/1` — passed ONLY to the LAST assistant entry (`ChatMessages.message_list/1`), so earlier assistant entries render no thought section.
-Entries built by `Transcript.entry/3` do always carry `reasoning: []`, and `Transcript.normalize/1` preserves an existing `:reasoning` key, so the field is dormant scaffolding for a future per-message migration, not a live path.
-`ChatState` persists `thought_process` verbatim and rebuilds it through `normalize_thought_process/1` on restore (`%{turn, timestamp, type, data}`, with `data` kept verbatim).
-The delta path reuses that one buffer: `{:thinking, chunk}` accumulates into a SINGLE upserted entry (`type: "assistant"`, `data.metadata.thinking == true`, `data.reasoning_details: [%{text:, type: "thinking"}]`) for the current turn, so the collapsible section grows live and never shows the same text as the bubble (`Messages.message_text/1` excludes `:thinking` parts).
+Reasoning belongs to each transcript entry's `:reasoning` list, preserved by `Transcript.normalize/1` and `ChatState` restore.
+`Messages.transcript/1` attaches each reply's own history projection, including preceding assistant/tool-only entries since the previous bubble, bounded to 40 entries and reset on an authored user message.
+`LiveCall` replaces the current bubble's reasoning from its call-id-keyed complete thinking projection, while legacy text/thinking deltas attach their current-turn bucket through `Transcript.put_reasoning/3`.
+`ChatMessages.message_list/1` passes each assistant entry's reasoning to `AssistantMessage`, so completed replies retain their own Thought process section instead of borrowing the last global buffer.
+The global `thought_process` remains a reducer/history output but is not the presentation authority; callers that update a transcript without adopting `Messages.transcript/1` must explicitly attach the corresponding reasoning.
+Whole activity replacement overwrites captured prefixes, retry removes the failed call's answer and thinking, and checkpoint retirement preserves the committed entry's reasoning.
 
 ## Async contract (message tags + stale guards)
 
@@ -219,8 +220,8 @@ Live per-chunk deltas ARE consumed: a mounted `?session=<id>` page holds one `%D
 `EvoDashWeb.HomeLive.Delta.apply_batch/5` keeps ONE assistant bubble per turn: it accumulates EVERY text segment of that turn across tool calls into the same entry and closes it only at a turn boundary (`{:turn, info}`, `{:yield, text}`, `{:finished, status}`), where `EvoDashWeb.HomeLive.Transcript.close_streaming/1` DROPS a bubble that never received text.
 `{:tool_call, id, name}` appends the `:running` `:tool` row without finalizing the bubble, so text arriving after a tool call continues the same bubble and a thinking/tool-only turn renders no bubble at all.
 `Delta.streamed_text?/1` is the per-turn streamed-text flag (`text_in_turn` for the open turn, `text_in_closed_turn` for the turn closed last).
-A delta arriving before the snapshot lands is dropped — `chat_stream.delta` is `nil` until then — and a delta covered by the snapshot (`seq <= snapshot.seq`, `EvoGit.Agent.Stream.stale?/2`) is dropped too; the snapshot is the ONLY resync (no replay buffer, no poll loop, never a full-context broadcast).
-A `{:chat_stream_ready, …}` result never rebuilds the transcript while an in-flight streaming assistant bubble exists: it then only seeds the delta baseline, `chat_stream_meta` and `agent_message_count` from the snapshot, because `apply_history/3` would discard the text still streaming into that bubble.
+Batches arriving before the snapshot lands are buffered by Watch and replayed in arrival order only when newer than the snapshot; covered batches (`seq <= snapshot.seq`) are ignored.
+A matching `{:chat_stream_ready, …}` result atomically installs Watch's hydrated transcript, thought process, metadata and sequence baseline, applies `snapshot.phase`, then folds replayed outcomes; the snapshot remains the only resync, with no polling or independent history overwrite.
 A `{:finished, status}` whose delta has no answer text reconciles exactly ONCE through the existing async history fetch, guarded by `chat_fetch_seq` + node + agent id.
 The core captures current-call text/thinking unconditionally, including before any watcher attaches, and `Watch.snapshot_result/3` includes that captured prefix in its returned display surface.
 A history reply that lands when no writer is left (`chat_status` `:ended` or `:idle`) is finalized by `finalize_bubble/1`, so it never stays `streaming: true`.
@@ -257,9 +258,9 @@ With `:unknown`, the shape heuristics decide: the turn-0 wrapper is unwrapped so
 ## Mounted integration assertion boundaries
 `ChatMessages.message_list/1` wraps every transcript row in `#chat-entry-<entry.id>`, and `Transcript.entry/3` generates unique-integer string ids, so history rebuilds do not preserve row ids across remounts.
 A streamed assistant answer has `.help-caret`, while a finalized answer exposes `button[id^="assistant-copy-"][data-content]` and ordinarily `.md-content`; scope answer assertions outside the Thought process details because history-derived thought entries can repeat the answer text.
-`Watch.snapshot_result/3` seeds only sequence and turn through `Delta.seed/3`; the current Delta struct has no `current_call` or in-flight snapshot projection, so a late attach cannot be assumed to display already-emitted in-flight chunks from the snapshot alone.
+`Watch.snapshot_result/3` combines checkpoint messages with complete captured `snapshot.activity` through Delta, including already-emitted current-call answer and thinking prefixes.
 `Delta` ignores unknown events, so consumers must implement any richer core event vocabulary explicitly rather than assuming it is rendered here.
-`Delta` closes a streaming bubble on `:turn`, and `:yield` then calls `Transcript.finalize_assistant/2`, which appends an assistant entry when no streaming entry remains; a separate turn-close followed by yield can therefore duplicate the final answer.
+`Delta` retains the streamed bubble's entry id across a turn boundary, so a subsequent authoritative yield updates that reply rather than appending a duplicate answer.
 
 ## Watch/Delta reuse constraints
 
@@ -269,15 +270,17 @@ The parent page must atomically install that surface and its sequence baseline, 
 A current call is keyed by its fresh attempt id, whole activity replacements overwrite its prefixes, chunks append, `:retry_wait` removes failed-attempt output and idle checkpoint retirement preserves the committed answer.
 `Delta.apply_batch/5` never advances `delta.seq` or rejects stale batches, so every consumer must perform sequence gating and update the accepted sequence outside the reducer.
 The live tool events carry only call id/name and result status, so Delta cannot reconstruct tool arguments, result bodies, raw history roles or session phase for a full inspector.
-`Watch.attach/1` ignores the return of `Task.Supervisor.start_child/2`, so a supervisor-start error produces no ready message and leaves the stream unseeded.
-`Watch.detach/1` neither cancels an in-flight registration worker nor sequences unregister after it, so a late registration can outlive a detach until the consumer pid dies or an explicit later unregister succeeds.
-`Watch.detach_other/2` compares agent id only, not node, and same-agent attach resets the seeded delta to nil without unregistering.
-The Watch module drops pre-seed deltas rather than buffering them; snapshot seq only covers events emitted through the snapshot capture, so events emitted after capture but processed before its result need special attention in another consumer.
+`Watch.ready/5` admits only the current node/session/generation result and returns `{:ok, socket, surface}`, with the atomic checkpoint/activity surface followed by arrival-ordered buffered batches strictly above its sequence.
+`Watch.push/4` returns `{:buffered, socket}` before seeding, `{:ok, socket, surface}` for a newer seeded batch, or `{:ignored, socket}` for obsolete scope or sequence.
+Both APIs return `{:error, socket, reason}` on failure, retain the failed watch's history ownership and expose the reason at `chat_stream.error` rather than silently falling back to an independent history read.
+The parent installs returned `transcript`, `thought_process` and `meta` with the returned socket in the same callback, applies `surface.snapshot.phase` before replayed `surface.outcome` on ready, and forwards worker `:DOWN` messages to `Watch.down/4`.
+`stream_active?/1` includes pending and failed watches in the current scope, so independent attach/history results cannot overwrite either their display surface or phase; independent reads must additionally capture `stream_attach_seq` and reject results after it changes, even following detach.
+Registration-time buffers cap at 128 batches or 1 MiB and overflow is an explicit failure requiring reattachment, not silent event loss.
+The worker serializes every register/unregister command, including detach during a blocked registration, and monitors the consumer to clean up after its death.
+Healthy same-scope attaches are no-ops; scope identity includes both node and agent, detach advances the generation, and worker-start failures settle as `{:watch_start_failed, reason}`.
+Cleanup RPC failures are logged without automatic retries, and unexpected worker death fails the watch explicitly while the core's own consumer monitor remains its final reaper.
 
-## Known Issues
-
-- The parent `home_live.ex` snapshot handler still reads only `snapshot`, `delta` and `meta`, so it must consume Watch's returned `transcript`/`thought_process` together before captured late-attach prefixes render correctly.
-- The parent drops pre-seed batches and its separate attach/history loader can overwrite a newer watch surface; those handlers require a shared watch-generation guard, buffering/replay above snapshot seq and lifecycle application from `snapshot.phase`.
+## Presentation and test notes
 
 - The assistant message's `status_label/1` (`assistant_message.ex`) renders `:awaiting_input` as the gettext label "Awaiting input"; the badge and dot colours come from `EvoDashWeb.Helpers.task_status_badge/1` / `task_status_dot_class/1` (the violet idle-session family).
 - `home_live_test.exs`'s `:reflect` assertions exercise the fallback path only, because its fixture configures `model_profiles: []` (so `start_session` answers `:llm_not_configured`).
