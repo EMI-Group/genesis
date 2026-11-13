@@ -252,6 +252,16 @@ With `:unknown`, the shape heuristics decide: the turn-0 wrapper is unwrapped so
 `Messages.transcript/1` is the SINGLE builder for both the history read (`apply_history/3`) and the watch snapshot (`{:chat_stream_ready, …}`), so the projection also governs every attach/reattach and the persisted `ChatState` transcript.
 `bubbles/1` is total — nil or garbage input yields `[]` and it never raises.
 
+## Watch/Delta reuse constraints
+
+`Watch.snapshot_result/3` accepts only `%EvoGit.Agent.Stream.Snapshot{}` inside the flat registration answer or its SafeCall wrapper, consumes `turn`, `total_tokens`, `usage` and the returned seq, and does not itself apply history or phase.
+`Delta.apply_batch/5` never advances `delta.seq` or rejects stale batches, so every consumer must perform sequence gating and update the accepted sequence outside the reducer.
+The live tool events carry only call id/name and result status, so Delta cannot reconstruct tool arguments, result bodies, raw history roles or session phase for a full inspector.
+`Watch.attach/1` ignores the return of `Task.Supervisor.start_child/2`, so a supervisor-start error produces no ready message and leaves the stream unseeded.
+`Watch.detach/1` neither cancels an in-flight registration worker nor sequences unregister after it, so a late registration can outlive a detach until the consumer pid dies or an explicit later unregister succeeds.
+`Watch.detach_other/2` compares agent id only, not node, and same-agent attach resets the seeded delta to nil without unregistering.
+The Watch module drops pre-seed deltas rather than buffering them; snapshot seq only covers events emitted through the snapshot capture, so events emitted after capture but processed before its result need special attention in another consumer.
+
 ## Known Issues
 
 - The assistant message's `status_label/1` (`assistant_message.ex`) renders `:awaiting_input` as the gettext label "Awaiting input"; the badge and dot colours come from `EvoDashWeb.Helpers.task_status_badge/1` / `task_status_dot_class/1` (the violet idle-session family).
