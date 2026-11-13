@@ -210,11 +210,9 @@ Worker-death coverage blocks the real registration runner, exposes its pid, moni
 All recovery consumers and workers are monitored through teardown before app-global runner seams are restored, and no fixed sleeps establish recovery.
 Snapshot-ready coverage reconstructs checkpoint history and captured current-call prefixes atomically and replays a buffered suffix exactly once.
 Per-answer reasoning disclosures contain assistant/tool entries rather than harness system/user messages, while the complete raw context remains available in `thought_process`.
-The helper and real producer/consumer suites pass together (263 tests, seed 0).
 The mounted session-list row-patch fixture supplies a scoped authoritative `:awaiting_input` Watch snapshot matching its synthetic parked attach answer and awaits both results before asserting exact `:idle` status, one attach and no new task.
 The real vanished-session tests retain default watch registration against unique missing ids rather than inheriting that synthetic fixture.
-The silent-finished source blocker remains: the source does not request an authoritative final snapshot after a silent finished delta.
-The silent-finish test retains its meaningful exactly-once atomic reconciliation assertion without substituting independent history reads.
+The mounted silent-finish regression pins exactly-once atomic reconciliation via an authoritative final Watch snapshot after a finished delta without streamed text, never independent legacy history reads.
 
 ## Notes for Agents — running these suites
 
