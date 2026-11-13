@@ -74,6 +74,8 @@ defmodule EvoDashWeb.HomeLive do
 
   @impl true
   def render(assigns) do
+    assigns = assign(assigns, :stream_error, Watch.failure(assigns))
+
     ~H"""
     <EvoDashWeb.Layouts.app
       flash={@flash}
@@ -124,6 +126,25 @@ defmodule EvoDashWeb.HomeLive do
           <%= if SourceGate.blocked?(assigns) do %>
             <.source_gate source_busy={@source_busy} current_node_id={@current_node_id} />
           <% end %>
+          <div
+            :if={@stream_error != nil and @stream_error != {:not_found, :session_not_found}}
+            id="chat-stream-error"
+            role="alert"
+            class="shrink-0 flex items-center gap-2 px-3 py-2 text-xs text-warning sm:px-4"
+          >
+            <span class="flex-1">
+              {gettext(
+                "Live updates are unavailable. The conversation may still be running. Retry to reconnect."
+              )}
+            </span>
+            <button
+              type="button"
+              phx-click="retry_chat_stream"
+              class="btn btn-ghost btn-xs"
+            >
+              {gettext("Retry")}
+            </button>
+          </div>
           <!-- Messages container (the AgentHistoryAutoScroll hook scrolls this element) -->
           <div
             id="chat-messages"
@@ -339,7 +360,7 @@ defmodule EvoDashWeb.HomeLive do
   calls this for a freshly started session (whose URL push short-circuits
   `resolve_session/2`, so `reattach_session/2` never runs for it).
   """
-  def attach_stream(socket), do: Watch.attach(socket)
+  def attach_stream(socket), do: socket |> Watch.attach() |> settle_watch_failure()
 
   # `ChatState.restore/1` already whitelists the stored status; this defensive
   defp restore_status(status)
@@ -626,6 +647,14 @@ defmodule EvoDashWeb.HomeLive do
     else
       SourceGate.spawn_clone(self(), socket.assigns[:current_node] || node())
       {:noreply, assign(socket, source_busy: :clone)}
+    end
+  end
+
+  def handle_event("retry_chat_stream", _params, socket) do
+    if Watch.failure(socket.assigns) != nil do
+      {:noreply, attach_stream(socket)}
+    else
+      {:noreply, socket}
     end
   end
 
@@ -1194,7 +1223,7 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   def handle_info({:DOWN, ref, :process, pid, reason}, socket) do
-    {:noreply, Watch.down(socket, ref, pid, reason)}
+    {:noreply, socket |> Watch.down(ref, pid, reason) |> settle_watch_failure()}
   end
 
   def handle_info(_msg, socket) do
@@ -1231,8 +1260,30 @@ defmodule EvoDashWeb.HomeLive do
     |> ChatState.persist()
   end
 
-  defp apply_watch_result({:error, socket, _reason}), do: socket
+  defp apply_watch_result({:error, socket, _reason}), do: settle_watch_failure(socket)
   defp apply_watch_result({_status, socket}), do: socket
+
+  defp settle_watch_failure(socket) do
+    # Only the registry's absent-session verdict proves the session has ended.
+    # Other :not_found reasons include timeout, unsupported watch and missing
+    # PubSub: keep the last coherent surface/phase and offer explicit reattach.
+    # Failed ownership stays intact, so an independent attach cannot resurrect
+    # the session or replace cached text/reasoning, in either arrival order.
+    case Watch.failure(socket.assigns) do
+      {:not_found, :session_not_found} ->
+        socket
+        |> assign(
+          chat_status: :ended,
+          chat_task_status: nil,
+          queued_echoes: [],
+          transcript: Transcript.finalize_streaming(socket.assigns[:transcript])
+        )
+        |> ChatState.persist()
+
+      _ ->
+        socket
+    end
+  end
 
   defp apply_stream_phase(socket, :awaiting_input), do: fold_stream_outcome(socket, :yield)
 

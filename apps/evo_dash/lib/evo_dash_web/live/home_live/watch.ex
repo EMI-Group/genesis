@@ -258,6 +258,13 @@ defmodule EvoDashWeb.HomeLive.Watch do
     end
   end
 
+  @doc "The current scope's watch failure, retained without surrendering history ownership."
+  def failure(assigns) do
+    if stream_active?(%{assigns: assigns}) do
+      assigns.chat_stream.error
+    end
+  end
+
   @doc "Settles an unexpected registration-worker death; forward its monitor DOWN."
   def down(socket, ref, pid, reason) do
     if ref == socket.assigns[:chat_stream_worker_monitor] and
