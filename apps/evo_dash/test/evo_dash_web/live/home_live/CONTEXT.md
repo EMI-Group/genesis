@@ -95,6 +95,9 @@ Independent attach answers supply task identity only while Watch owns the displa
 That verdict sets `chat_status: :ended` while preserving cached transcript and `thought_process`: a NON-EMPTY cache renders read-only with no streaming caret, composer disabled, New chat enabled and no ended-session empty state; an EMPTY cache renders `#chat-session-ended` ("This session has ended." plus a `phx-click="new_chat"` affordance) instead of the greeting or suggestions.
 Uncertain timeout, startup, overflow or registration-worker death keeps the live session unavailable with its cache preserved and Retry offered, not ended; there is no automatic rewatch, and explicit Retry starts a new watch attempt.
 A NON-EMPTY authoritative fetched history replaces the cached transcript and reasoning.
+Its mounted fixture advertises the same running session through the sidebar list, attach identity and authoritative Watch snapshot, rather than returning an empty live roster that can preserve an ended cached sidebar title.
+Watch is held until the sidebar load and attach identity settle, positively preserving the cached body before release and retaining exact transcript, reasoning and whole-page replacement assertions afterwards.
+The consumer and serial watch worker are monitored through teardown before restoring the app-global runner seams.
 
 ### Mounted watch recovery coverage (`../home_live_test.exs`)
 Vanished-session tests use unique nonexistent ids and default NodeContext/core watch registration, positively awaiting `:ended` rather than fabricating not-found answers.

@@ -5093,7 +5093,23 @@ defmodule EvoDashWeb.HomeLiveTest do
       session_id = 6_505
       attach_calls = :counters.new(1, [:atomics])
       start_calls = :counters.new(1, [:atomics])
-      install_session_seam(:home_session_list_runner, fn _node -> {[], []} end)
+
+      # The sidebar loader is independent of Watch. Advertising no live session
+      # here would freeze a cached "Ended" row titled "stale cached line" if the
+      # list loads before Watch replaces the transcript. All three fixtures must
+      # describe the same running session, including its live sidebar title.
+      install_session_seam(:home_session_list_runner, fn _node ->
+        {[
+           %{
+             id: session_id,
+             status: :running,
+             agent_module: EvoGit.Agents.SelfReflective,
+             parent_id: nil,
+             objective: "live transcript line"
+           }
+         ], []}
+      end)
+
       install_session_seam(:source_availability_runner, fn -> true end)
 
       install_session_seam(:home_session_start_runner, fn _node, _opts ->
@@ -5101,7 +5117,16 @@ defmodule EvoDashWeb.HomeLiveTest do
         {:ok, 1}
       end)
 
-      install_snapshot_fixture(session_id, attach_history("live transcript line"), :running)
+      # Keep the cache observable until both independent mount loaders settle.
+      install_session_seam(:home_agent_watch_runner, fn _node, ^session_id, consumer ->
+        send(test_pid, {:watch_pending, self()})
+
+        await_snapshot_release(consumer, fn ->
+          snapshot_answer(7, attach_history("live transcript line"), phase: :running).(session_id)
+        end)
+      end)
+
+      install_session_seam(:home_agent_unwatch_runner, fn _node, _id, _consumer -> :ok end)
 
       install_session_seam(
         :home_session_attach_runner,
@@ -5120,9 +5145,24 @@ defmodule EvoDashWeb.HomeLiveTest do
       )
 
       {:ok, view, html} = live(conn, "/assistant?session=#{session_id}")
+      monitor_watch_cleanup(view)
       assert html =~ "stale cached line"
 
       assert_receive {:attach_called, _node, ^session_id, _pid}, 5_000
+      assert_receive {:watch_pending, watch_pid}, @async_wait_budget_ms
+      await_attach_settled(view, session_id)
+
+      wait_until(fn ->
+        a = assigns(view)
+        a.session_list_loading == false and a.session_list_seq >= 1
+      end)
+
+      # Exercise the formerly racy ordering: sidebar and identity arrive while
+      # Watch is held, so only the conversation body still contains the cache.
+      assert session_row_html(render(view), session_id) |> Floki.text() =~ "live transcript line"
+      assert Enum.any?(assigns(view).transcript, &(&1.text == "stale cached line"))
+      send(watch_pid, :release)
+      await_stream_seeded(view, 7)
       wait_until(fn -> assigns(view).chat_status == :running end)
 
       a = assigns(view)
