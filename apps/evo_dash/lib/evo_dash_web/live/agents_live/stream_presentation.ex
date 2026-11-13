@@ -11,8 +11,8 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
   Activity comes ONLY from the authoritative phase, never lifecycle, chunks or
   tool announcements. Missing activity is unknown, not idle. Empty thinking is
   reported only after successful generation with complete source capture and
-  no omitted thinking. The checkpoint predicate remains a safe always-false
-  API for the parent template: core checkpoint messages have no call identity.
+  no omitted thinking. Atomic snapshot handoff belongs to StreamWatch; checkpoint
+  parts are never suppressed by guessed overlap with live excerpts.
   """
 
   alias EvoDashWeb.AgentsLive.{RuntimeStream, StreamLimits}
@@ -89,16 +89,6 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
     end
   end
 
-  @doc """
-  Safe parent-template compatibility boundary: no checkpoint part is suppressed.
-
-  Core call ids identify live attempts only; checkpoint messages currently carry
-  neither those ids nor a coverage watermark. Matching content, turn numbers or
-  local ordinals cannot establish coverage, even when a caller supplies metadata.
-  """
-  @spec checkpoint_part_covered?(term(), term(), term(), term()) :: boolean()
-  def checkpoint_part_covered?(_state, _identity, _part, _value), do: false
-
   @doc "True only for a RuntimeStream owned by the exact selected agent and viewed node."
   def owned?(%RuntimeStream{agent_id: id, node: target}, id, target), do: true
   def owned?(_state, _id, _target), do: false
@@ -109,7 +99,7 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
     tools = list(field(projection, :tool_calls))
 
     %{
-      identity: RuntimeStream.message_identity(field(projection, :identity)),
+      identity: call_identity(field(projection, :identity)),
       capture_coverage: field(projection, :capture_coverage),
       generation_complete: field(projection, :generation_complete) == true,
       message_index: field(projection, :message_index),
@@ -127,6 +117,9 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
       omitted_tools: count(field(projection, :omitted_tools)) + max(length(tools) - @max_tools, 0)
     }
   end
+
+  defp call_identity(%{id: id}) when is_binary(id), do: %{id: id}
+  defp call_identity(_value), do: %{}
 
   defp tool(value) do
     {name, omitted_name} =

@@ -97,10 +97,12 @@ Generation completion follows only `:llm_complete` or `:tools`, never turn accou
 Yield updates lifecycle/status to `:awaiting_input` without treating its checkpoint response text as another live replacement, and finish freezes later events without asserting successful generation.
 `active?/1` means only a nonterminal running/cancelling lifecycle and is not a model/tool execution guess.
 Seed preserves agent/node ownership and raw checkpoint messages, rejects an explicitly foreign agent, and uses an explicit nonnegative seq before the embedded seq before zero.
+Atomic reseeding preserves the local DOM ordinal and same-call tool descriptors, but replaces response/thinking from the snapshot's complete prefix rather than appending it.
+`current_call_id/1` reads only the live call id and `checkpoint_transition?/2` scans every ordered activity replacement in a batch for retirement or replacement of an existing call, even when a later event starts another call in the same batch.
 Batch admission rejects stale/invalid seq, foreign agent and post-finish events, while unknown events are inert and an accepted newer batch still advances the watermark.
 Snapshot admission, node guards and watch-generation guards belong to StreamWatch rather than this reducer.
 The obsolete top-level in-flight, message-start, flattened activity identity and caller-owned capture-coverage protocols are not consumed.
-`message_identity/1` remains a total map-only explicit identity reader for the parent template, not an inference from text, row order or turn accounting.
+No checkpoint-message identity reader or content/turn/index-based suppression API is exposed.
 `StreamLimits` exposes the existing upper budgets of 12 projections, 48_000 bytes independently per response/thinking prefix, 20 tool descriptors and 1_024 bytes per tool name; the current-call policy is tighter at one projection.
 UTF-8-safe prefix slices are copied, and bounded appends never concatenate an unbounded incoming chunk first.
 Once bytes are omitted, later chunks are counted rather than inserted after a missing UTF-8 boundary; an authoritative replacement recomputes missing bytes from its full value rather than double-counting retransmitted omissions.
@@ -111,12 +113,21 @@ Checkpoint messages and opaque protocol identities are not truncated by the exce
 ## Inspector StreamWatch Lifecycle
 `StreamWatch.attach(socket, agent_id)` subscribes in the connected LiveView process and asynchronously registers that same LiveView pid through one serialized, consumer-monitored worker.
 Forward `{:inspector_stream_ready, node, token, agent_id, result}` to `StreamWatch.ready/5` and `{:agent_delta, agent_id, seq, events}` to `StreamWatch.push/4`, then render `socket.assigns.inspector_stream.state` as the `RuntimeStream` projection.
-`StreamWatch.active?(socket, agent_id)` includes snapshot-pending watches and excludes errors, allowing the page to suppress message-count-triggered history fetches during a healthy attachment.
+`active?/2` includes initial snapshot-pending and reconciling watches and excludes errors, allowing the page to suppress independent whole-history reads while watched.
+The rendered checkpoint source is exclusively `inspector_stream.state.messages`, atomically seeded with live activity from `inspector_stream.snapshot`.
+`reconcile/1` coalesces explicit refreshes while a request is outstanding and retains the old coherent checkpoint/live pair while buffering every newer delta.
+A batch retiring or replacing the existing current call automatically starts reconciliation BEFORE applying any event in that batch, so checkpoint adoption never mixes with an obsolete live excerpt.
+Forward `{:inspector_stream_reconciled, node, token, agent_id, request, result}` to `reconciled/6`, whose guards require the viewed node, watch token, agent id and current outstanding request.
+Reconciliation reuses the SAME idempotent watcher-registration runner and serial worker without unregistering between snapshots, preserving the live subscription.
+An admitted snapshot replaces checkpoint messages and activity together, and buffered batches replay only above its authoritative sequence.
+Replay crossing another ownership boundary freezes that entire batch and starts another coalesced snapshot request rather than rendering an inconsistent pair.
+The stream fields `snapshot_request`, `reconciling` and `required_seq` distinguish the outstanding request and its minimum watermark from the rendered `seq`.
+A snapshot before its triggering boundary, RPC failure or buffer overflow visibly fails the watch while preserving the last coherent rendered pair and requires explicit reattachment; there are no automatic error retries.
 `StreamWatch.detach/1` clears the render state and consumer-local subscription immediately, with asynchronous serialized unregister on selection, node or lifecycle teardown.
 Keep `inspector_stream_token`, private `inspector_stream_worker` and `inspector_stream_worker_monitor` bookkeeping across page resets, since tokens must remain monotonic and the same worker orders rapid A-to-B-to-A registration changes.
 Forward worker `{:DOWN, ref, :process, pid, reason}` messages to `StreamWatch.down/4` after handling other page-owned monitors; matching death explicitly fails the watch, unsubscribes and allows a retry while unrelated monitors are inert.
 Pending remote contexts cannot attach locally, readiness and push application require the current viewed node, negative sequence watermarks are rejected, and a snapshot explicitly naming another agent fails the watch.
-Pre-snapshot deltas are replayed only above the snapshot watermark, buffered up to 128 batches or 1 MiB, and overflow or supervisor-start failures produce explicit watch errors instead of silent loss or stuck loading.
+Initial attachment and reconciliation deltas buffer up to 128 ordered batches or 1 MiB, duplicate/stale batches consume no capacity, and overflow or supervisor-start failures produce explicit watch errors instead of silent loss or stuck loading.
 Runner seams are `:agents_watch_runner` and `:agents_unwatch_runner`, both `(node, agent_id, liveview_pid)`, defaulting to the corresponding `NodeContext` watcher functions.
 The worker performs RPC through `SafeCall`, cleans up after consumer death, and uses no polling; delta messages have no publisher-node stamp.
 
@@ -127,8 +138,8 @@ Grapheme omission fields describe render-stage loss, while byte omission fields 
 Activity labels cover every core phase: generating, waiting for model capacity, response generated, waiting to retry, executing tools and idle; absent/unknown activity is unavailable.
 `thinking_status/1` returns `:none` only for generation-complete, completely captured, empty, unomitted thinking, and StreamPanel renders exactly `gettext("No thinking content available")` for that case.
 Missing thinking in malformed call data remains partial capture, and no lifecycle, accounting or caller-supplied flag upgrades it.
-`checkpoint_part_covered?/4` remains a compiling parent-template API that always returns false because checkpoint messages have no core call id or coverage watermark.
-`RuntimeStream.message_identity/1` remains available for the parent metadata reader, but fabricated row/turn/content matches never suppress checkpoint response or thinking.
+Checkpoint messages have no core call id or coverage watermark, and no checkpoint-part suppression predicate is exposed.
+Atomic checkpoint/live ownership is established only by StreamWatch snapshot reconciliation, never fabricated row/turn/content matches.
 `owned?/3` checks exact selected-agent and viewed-node ownership.
 `StreamPanel.stream_panel/1` escapes bounded content, shows all byte/tool omissions and exposes the parent-owned `retry_inspector_stream` event on transport errors.
 The skeleton shimmer and cursor pulse run only for authoritative unfinished LLM generation, respect reduced motion and use stable local message ordinals for animation keys.
@@ -136,29 +147,30 @@ Live excerpts are temporary current-call detail rather than a separate growing t
 
 ## Inspector Streaming Integration & Core Constraints
 
-`agents_live.ex` attaches the selected connected agent through `StreamWatch`, forwards ready/delta/worker-monitor messages in the LiveView consumer process and renders `StreamPanel` alongside checkpoint history in `agents_live.html.heex`.
-Selection close/removal, node or target changes and termination detach the watch; serial worker bookkeeping and monotonic watch/history counters survive scope resets.
-A healthy watch, including its snapshot-pending interval, suppresses message-count-triggered whole-history reads.
-The snapshot seeds checkpoint history once, while tool results, yield and finish request coalesced asynchronous checkpoint-detail reconciliation.
-A successful history fetch drains at most one pending follow-up; a failed fetch or loader startup clears pending/loading state and exposes checkpoint-history Retry without automatic error retries or polling.
-History results use `{:agent_history_loaded, agent_id, node, history_seq, watch_token, result, modal_index}` and require matching selection, node, sequence and watch token; unscoped five-element results are ignored.
-The template's checkpoint predicate is deliberately non-suppressing; core activity retirement, not guessed history overlap, removes obsolete live excerpts.
+The parent page currently seeds checkpoint history on initial readiness and requests independent history reads on tool results, yield and finish, so it must adopt the atomic reconciliation integration described below before watched rendering is duplicate-free.
+Support owns reconciliation requests, snapshot admission and buffered replay, while the parent owns projecting the admitted state's raw messages into checkpoint rows in the SAME callback as the live-state update.
+Watch tokens and serialized worker bookkeeping must survive scope resets, and healthy snapshot-pending/reconciling watches must suppress independent history reads.
+The parent must remove checkpoint-part suppression branches and render admitted checkpoint parts unchanged.
 The stable `agent-history-<id>` root uses `InspectorMessages`, with `data-inspector-scope` binding node/target/selection/watch/snapshot scope and stable `data-inspector-message` row markers without changing existing DOM ids.
 Only newly keyed rows animate, reduced motion is respected and history scrolling stays instant.
 
 Core transport and snapshot contracts live in `apps/evo_git/lib/evo_git/agent/stream/CONTEXT.md` and lifecycle/activity limitations in `apps/evo_git/lib/evo_git/agent/session/CONTEXT.md`.
 The core snapshot includes session-owned `activity: %{phase:, current_call: nil | %{id:, turn:, attempt:, text:, thinking:}}`, and ordered `{:activity, projection}` events replace that projection while ordinary text/thinking events append to its current call.
+The core snapshot atomically captures checkpoint `messages`, complete accumulated `activity` and its authoritative `seq`, and a completed current call remains available until atomic checkpoint retirement.
 Core phases are `:idle`, `:llm_waiting`, `:llm`, `:llm_complete`, `:retry_wait` and `:tools`, and activity capture continues without watchers; watch and snapshot flush pending events before returning the authoritative sequence.
 The inspector adopts `activity.current_call` from snapshots and replacements and appends only strictly newer chunks through the existing StreamWatch buffering/sequence admission.
 Fresh core call ids separate retry attempts, and nil current-call retirement clears obsolete live excerpts without modifying raw checkpoint history.
 
 ## Integration Follow-up Outside This Node
 
-The parent page still requests checkpoint history on tool results, yield and finish rather than authoritative current-call retirement/replacement, so a retirement needs an additional parent-owned coalesced reconciliation trigger.
-Independent history RPC results can arrive before the stream batch retiring their call, transiently displaying checkpoint content alongside the live excerpt; duplicate-free atomic handoff requires parent-owned sequence-consistent snapshot reconciliation with buffering/replay, not inferred checkpoint identity or text matching.
-Core turn and yield events precede checkpoint adoption, so a history read triggered by either may legitimately return older messages while activity retains the complete response.
-The parent template's dormant `inspector_live_part?/3` suppression branches generate compiler unreachable-condition warnings because this node's compatibility predicate is always false; the parent should remove the conditional placeholder and response/thinking guards, then delete the unused helper and aliases.
-Existing sibling inspector tests still use synthetic `in_flight`, flattened activity identities and `message_start` fixtures and need migration to real activity projections before their assertions validate this contract.
+The parent must forward `{:inspector_stream_reconciled, node, token, id, request, result}` to `StreamWatch.reconciled/6` and synchronize selected checkpoint rows from the resulting `state.messages` whenever the admitted snapshot changes, including after `ready/5` and `push/4` buffered replay.
+While StreamWatch owns a snapshot, independent history RPC results must never replace its checkpoint rows, even on watch errors, because failures intentionally retain the last coherent checkpoint/live pair.
+Explicit watched history Retry or full-message refresh must use `StreamWatch.reconcile/1` and project the admitted snapshot, with unwatchable agents retaining the separate scoped history-RPC fallback.
+Tool-result/yield/finish refreshes may request a coalesced snapshot, but turn/yield precede adoption and cannot replace the automatic retirement/replacement trigger.
+Remove the parent's `inspector_live_part?/3` helper, its RuntimeStream/StreamPresentation aliases if otherwise unused, the template's conditional response placeholder and response/thinking suppression guards, because `RuntimeStream.message_identity/1` and `StreamPresentation.checkpoint_part_covered?/4` are not supported APIs.
+Existing sibling inspector tests use synthetic `in_flight`, flattened activity identities, `message_start` and bare chunks without current calls and must migrate to real activity projections.
+Hand-built StreamWatch fixtures must include `snapshot_request: 0`, `reconciling: false` and `required_seq: 0`, preserve real snapshot agent ids, and account for duplicate/stale batches not consuming buffer capacity.
+Support reconciliation coverage must exercise atomic retirement/replacement, replay crossing multiple boundaries, pre-adoption snapshots, stale node/token/request/watermark results, coalescing, error preservation, bounded buffers and serial worker lifecycle races.
 All six core phases have truthful presentation labels, and successful empty-thinking notices require complete binary capture plus `:llm_complete` or `:tools`.
 Current deltas expose text/thinking chunks and tool id/name/status but not tool arguments, result bodies or full history-message changes.
 There is no checkpoint-message call identity or checkpoint-coverage watermark, so checkpoint suppression and historical excerpt reconciliation by guessed turn/content are unsupported.

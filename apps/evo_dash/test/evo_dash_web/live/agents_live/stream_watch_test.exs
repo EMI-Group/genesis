@@ -3,7 +3,8 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
 
   alias EvoDashWeb.AgentsLive.{RuntimeStream, StreamWatch}
   alias EvoGit.Agent.Stream
-  alias EvoGit.Agent.Stream.Snapshot
+  alias EvoGit.Agent.State
+  alias EvoGit.Agent.Stream.{Activity, Snapshot}
 
   @timeout 30_000
 
@@ -39,6 +40,13 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
 
   defp snapshot(id, seq \\ 5), do: %Snapshot{agent_id: id, seq: seq, phase: :running}
 
+  defp call_snapshot(id, seq, overrides \\ []) do
+    call =
+      Map.merge(%{id: "call-1", turn: 1, attempt: 1, text: "", thinking: ""}, Map.new(overrides))
+
+    %{snapshot(id, seq) | activity: %{phase: :llm, current_call: call}}
+  end
+
   defp ready(socket, result) do
     stream = socket.assigns.inspector_stream
     StreamWatch.ready(socket, stream.node, stream.token, stream.agent_id, result)
@@ -66,14 +74,20 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
       assert length(buffered.assigns.inspector_stream.pending) == 7
       assert buffered.assigns.inspector_stream.buffer_bytes > 0
       assert buffered.assigns.inspector_stream.state.response == ""
-      snap = snapshot(id)
+      snap = call_snapshot(id, 5, text: "snapshot ", thinking: "saved ")
       seeded = ready(buffered, {:ok, {:ok, snap, 5}})
       stream = seeded.assigns.inspector_stream
       assert stream.snapshot === snap
       assert stream.seq == 9
       assert stream.state.seq == 9
-      assert stream.state.response == "new tail"
-      assert stream.state.thinking == "reason"
+      assert stream.state.response == "snapshot new tail"
+      assert stream.state.thinking == "saved reason"
+      assert stream.state.phase == :running
+      assert stream.state.activity == :llm
+
+      assert [%{identity: %{id: "call-1"}, turn: 1, attempt: 1, capture_coverage: :complete}] =
+               stream.state.projections
+
       assert stream.pending == []
       assert stream.buffer_bytes == 0
       assert stream.error == nil
@@ -82,7 +96,138 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
       assert StreamWatch.push(seeded, id, 9, [{:text, "duplicate"}]) === seeded
       assert StreamWatch.push(seeded, id, 8, [{:text, "late"}]) === seeded
       newer = StreamWatch.push(seeded, id, 10, [{:text, "!"}])
-      assert newer.assigns.inspector_stream.state.response == "new tail!"
+      assert newer.assigns.inspector_stream.state.response == "snapshot new tail!"
+    end
+
+    test "core activity snapshot and buffered replacements keep one call through generation and tools" do
+      id = unique_id()
+      checkpoint = [%{role: :user, content: "objective"}]
+      {activity, _} = Activity.apply(Activity.new(), {:start_call, "core-call", 3, 1})
+      {activity, _} = Activity.apply(activity, {:call_phase, "core-call", :llm})
+      {activity, _} = Activity.apply(activity, {:chunk, "core-call", :text, "before"})
+      {activity, _} = Activity.apply(activity, {:chunk, "core-call", :thinking, "reason"})
+
+      snap =
+        Snapshot.from(
+          %State{
+            agent_id: id,
+            agent_module: EvoGit.Agents.SelfReflective,
+            depth: 0,
+            node_path: "./",
+            event_seq: 5,
+            turn: 3,
+            context: %{messages: checkpoint}
+          },
+          :running,
+          activity: activity
+        )
+
+      {activity, chunks} = Activity.apply(activity, {:chunk, "core-call", :text, " after"})
+      {activity, completed} = Activity.apply(activity, {:call_phase, "core-call", :llm_complete})
+      {_activity, tools} = Activity.apply(activity, {:call_phase, "core-call", :tools})
+
+      # The snapshot already contains pre-attachment chunks; later full activity
+      # contains the replayed chunk too and must replace rather than concatenate it.
+      buffered =
+        socket(id)
+        |> StreamWatch.push(id, 5, [{:text, "before"}, {:thinking, "reason"}])
+        |> StreamWatch.push(id, 6, chunks)
+        |> StreamWatch.push(id, 7, completed)
+        |> StreamWatch.push(id, 7, completed)
+        |> StreamWatch.push(id, 8, tools ++ [{:tool_call, "tool-1", "read"}])
+        |> StreamWatch.push(id, 9, [{:tool_result, "tool-1", :ok}])
+
+      seeded = ready(buffered, {:ok, {:ok, snap, 5}})
+      stream = seeded.assigns.inspector_stream
+      assert stream.snapshot === snap
+      assert stream.seq == 9
+      assert stream.pending == []
+      assert stream.buffer_bytes == 0
+      assert stream.state.messages === checkpoint
+      assert stream.state.phase == :running
+      assert RuntimeStream.active?(stream.state)
+      assert stream.state.activity == :tools
+      assert stream.state.response == "before after"
+      assert stream.state.thinking == "reason"
+
+      assert [
+               %{
+                 identity: %{id: "core-call"},
+                 turn: 3,
+                 attempt: 1,
+                 generation_complete: true,
+                 capture_coverage: :complete,
+                 tool_calls: [%{id: "tool-1", name: "read", status: :ok}]
+               }
+             ] = stream.state.projections
+
+      assert StreamWatch.push(seeded, id, 8, tools) === seeded
+      assert ready(seeded, {:ok, snap, 5}) === seeded
+    end
+
+    test "core retry identity replaces the failed attempt and nil retirement survives checkpoint reattach" do
+      id = unique_id()
+      {activity, _} = Activity.apply(Activity.new(), {:start_call, "attempt-1", 2, 1})
+      {activity, _} = Activity.apply(activity, {:call_phase, "attempt-1", :llm})
+      {activity, _} = Activity.apply(activity, {:chunk, "attempt-1", :text, "failed prefix"})
+      snap = %{snapshot(id) | activity: activity}
+      established = ready(socket(id), {:ok, snap, 5})
+      assert established.assigns.inspector_stream.state.response == "failed prefix"
+
+      {activity, retry_wait} = Activity.apply(activity, {:call_phase, "attempt-1", :retry_wait})
+      waiting = StreamWatch.push(established, id, 6, retry_wait)
+      assert waiting.assigns.inspector_stream.state.activity == :retry_wait
+      assert waiting.assigns.inspector_stream.state.response == ""
+      assert waiting.assigns.inspector_stream.state.projections == []
+      assert waiting.assigns.inspector_stream.state.phase == :running
+
+      {activity, start} = Activity.apply(activity, {:start_call, "attempt-2", 2, 2})
+      restarted = StreamWatch.push(waiting, id, 7, start)
+      assert restarted.assigns.inspector_stream.state.activity == :llm_waiting
+
+      assert [%{identity: %{id: "attempt-2"}, turn: 2, attempt: 2}] =
+               restarted.assigns.inspector_stream.state.projections
+
+      {activity, generating} = Activity.apply(activity, {:call_phase, "attempt-2", :llm})
+      {activity, chunks} = Activity.apply(activity, {:chunk, "attempt-2", :text, "success"})
+      {_activity, completed} = Activity.apply(activity, {:call_phase, "attempt-2", :llm_complete})
+
+      completed_socket =
+        restarted
+        |> StreamWatch.push(id, 8, generating ++ chunks)
+        |> StreamWatch.push(id, 9, completed)
+
+      assert completed_socket.assigns.inspector_stream.state.response == "success"
+
+      assert [%{identity: %{id: "attempt-2"}, generation_complete: true}] =
+               completed_socket.assigns.inspector_stream.state.projections
+
+      {idle, retired} = Activity.apply(activity, :reset)
+      retired_socket = StreamWatch.push(completed_socket, id, 10, retired)
+      assert retired_socket.assigns.inspector_stream.state.activity == :idle
+      assert retired_socket.assigns.inspector_stream.state.projections == []
+      assert retired_socket.assigns.inspector_stream.state.response == ""
+      assert retired_socket.assigns.inspector_stream.state.thinking == ""
+      assert retired_socket.assigns.inspector_stream.state.tool_calls == []
+
+      # Chunks without a current call cannot resurrect retired content.
+      late = StreamWatch.push(retired_socket, id, 11, [{:text, "orphan"}, {:thinking, "orphan"}])
+      assert late.assigns.inspector_stream.state.projections == []
+
+      checkpoint = [%{role: :assistant, content: "success"}]
+      current = %{snapshot(id, 12) | messages: checkpoint, activity: idle}
+      reattached = late |> StreamWatch.detach() |> StreamWatch.attach(id)
+      assert_receive {:desired, 5, nil}, @timeout
+      assert_receive {:desired, 6, nil}, @timeout
+      assert_receive {:desired, 7, %{id: ^id, token: 7}}, @timeout
+      recovered = ready(reattached, {:ok, current, 12})
+      assert recovered.assigns.inspector_stream.state.messages === checkpoint
+      assert recovered.assigns.inspector_stream.state.projections == []
+      assert recovered.assigns.inspector_stream.state.response == ""
+      assert StreamWatch.push(recovered, id, 9, completed) === recovered
+      assert ready(recovered, {:ok, current, 12}) === recovered
+      StreamWatch.detach(recovered)
+      assert_receive {:desired, 8, nil}, @timeout
     end
 
     test "rejects foreign agents and malformed deltas before and after snapshot" do
@@ -162,7 +307,7 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
       assert retried.assigns.inspector_stream.pending == []
       assert retried.assigns.inspector_stream.seq == nil
 
-      recovered = ready(retried, {:ok, snapshot(id, 2), 2})
+      recovered = ready(retried, {:ok, call_snapshot(id, 2), 2})
       assert recovered.assigns.inspector_stream.seq == 2
       assert recovered.assigns.inspector_stream.state.seq == 2
       assert recovered.assigns.inspector_stream.error == nil
@@ -177,7 +322,7 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
     test "failed attachment preserves the last checkpoint until retry replaces it, never appends" do
       id = unique_id()
       checkpoint = [%{role: :assistant, content: "checkpoint"}]
-      original = %{snapshot(id, 5) | messages: checkpoint}
+      original = %{call_snapshot(id, 5) | messages: checkpoint}
       established = ready(socket(id), {:ok, original, 5})
 
       live =
@@ -211,7 +356,7 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
       refute_receive {:cleanup, _}, 0
 
       replacement = [%{role: :assistant, content: "new checkpoint", reasoning: "saved thought"}]
-      current = %{snapshot(id, 8) | messages: replacement}
+      current = %{call_snapshot(id, 8, id: "call-2", turn: 2) | messages: replacement}
 
       recovered =
         retried
@@ -224,7 +369,13 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
       assert recovered.assigns.inspector_stream.state.response == "new tail"
       assert recovered.assigns.inspector_stream.state.thinking == ""
 
-      assert [%{capture_coverage: :partial, generation_complete: false}] =
+      assert [
+               %{
+                 identity: %{id: "call-2"},
+                 capture_coverage: :complete,
+                 generation_complete: false
+               }
+             ] =
                recovered.assigns.inspector_stream.state.projections
 
       assert recovered.assigns.inspector_stream.seq == 9
@@ -236,7 +387,7 @@ defmodule EvoDashWeb.AgentsLive.StreamWatchTest do
 
     test "explicit registration watermark wins and obsolete or duplicate snapshots never replace it" do
       id = unique_id()
-      seeded = ready(socket(id), {:ok, {:ok, snapshot(id, 50), 5}})
+      seeded = ready(socket(id), {:ok, {:ok, call_snapshot(id, 50), 5}})
       assert seeded.assigns.inspector_stream.seq == 5
       assert seeded.assigns.inspector_stream.state.seq == 5
       live = StreamWatch.push(seeded, id, 6, [{:text, "keep"}])

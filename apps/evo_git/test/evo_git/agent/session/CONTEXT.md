@@ -32,6 +32,9 @@ A resumed worker sees newly drained user input before the public checkpoint tran
 
 ## Deterministic Activity Seams
 Production session activity is separate from `%State{}` and the summary row, so activity assertions use `Agent.Stream.watch/1` or `snapshot/1` rather than `Session.inspect/2` or `Summary.read/1` alone.
+The retained running shape is `%{phase: :llm, current_call: %{id: id, turn: turn, attempt: attempt, text: text, thinking: thinking}}`, accessed as `snapshot.activity.current_call`, and idle activity is exactly `%{phase: :idle, current_call: nil}`.
+`activity_lifecycle_test.exs:109-123` orders exact yield notification and worker `:DOWN` before snapshot assertions for `:awaiting_input`, idle activity, checkpointed reply/history, `data.worker == nil` and `Batcher.new()`.
+No own-level test calls `unwatch` or unmounts a LiveView, so watcher removal after dashboard unmount must be established in the consumer or sibling stream tests rather than inferred from these fixtures.
 The activity suites reuse `EvoGit.Agent.StreamCase` from `test/support/stream_case.ex` with direct session startup and forwarded per-dispatch `exchange_opts`, avoiding network and app-env mutations.
 Activity is emitted through actual worker-local `Stream.Sink` call-start and callback APIs rather than only the harness driver's legacy `Sink.emit/1` path.
 An emitter synchronizes with the session by calling `Session.inspect/2` from that same worker before acknowledging the test, because a worker-to-test notice alone does not order a later test-to-session snapshot against activity messages.
@@ -39,6 +42,18 @@ Exact yield notices and explicit worker release messages provide deterministic o
 Zero watchers suppress public buffering, timers and sequence consumption but not retained partial activity or chunk interruption.
 Running graceful cancellation preserves current activity and the worker rather than behaving like force cancellation.
 Tool declarations, including streamed nil-id declarations, are not execution-start evidence and must not independently set the `:tools` activity phase.
+
+## Integration Fixture Pointers
+`activity_projection_test.exs:279-352` provides private `parked_session/1`, `run/2`, `begin_call/2` and `pending_cut/3` helpers with explicit worker commands and same-worker `Session.inspect/2` ordering barriers.
+Its driver reports `{:projection_worker, worker, context}`, accepts `{:projection_command, ref, fun}` and replies `{:projection_ack, ref, result}`, or accepts `{:reply, text}` to yield.
+`activity_lifecycle_test.exs:255-333` provides private `start_activity/2`, `drive_call/3`, `barrier/0` and `capture/3`, with `{:activity_call, worker, call, context, callbacks}` readiness, `{:capture, text, thinking}` / `{:captured, worker}` acknowledgements and explicit reply/rejection/tool gates.
+Its exact yield/resume case at lines 97-162 asserts `{:agent_session_yield, id, pid, text}`, worker `:DOWN`, idle snapshot/history, `Session.start_input(pid, text, :queue)`, `{:agent_session_resumed, id, pid}`, fresh worker/call, stable cache key and a second exact yield.
+`interactive_test.exs:536-575` constructs a repo-less dispatch keyword list with `agent_id`, `depth`, `repo_root`, `repo_id`, `worktree_path`, `retries`, `spec`, `meta`, `repo_less`, `repo_less_repo_path`, `notify`, `scheduler` and `exchange_opts`, passing the latter through after deleting its test-only `:agent_module` selector.
+Its registration row at lines 496-517 carries `llm_model: nil`, a legacy pool `model_id`, `llm_context_window: 200_000` and `llm_generation_params: [temperature: 0.2, provider_options: [prompt_cache_key: key]]`, so it is a scripted fixture rather than a working real-provider request setup.
+No test source in this node mentions `stream_start` or `stream_start: nil`, so these tests do not establish that disabling a stream-start seam is necessary for actual LLMPrompting integration.
+`activity_lifecycle_test.exs:260-262` explicitly calls `Sink.start_call(0)`, `Sink.call_phase(call, :llm)` and `Sink.stream_opts()` inside its scripted LLM, while `activity_projection_test.exs:321-324` additionally calls `Sink.start_turn(turn)` before `Sink.start_call(1)`.
+Both activity suites import `EvoGit.Agent.StreamCase`, so its out-of-node `test/support/stream_case.ex` implementation must be checked for implicit `stream_start` defaults and dispatch option merging before adapting these fixtures to actual LLMPrompting.
+`ActivityLifecycleTest.start_activity/2` force-cancels and monitors the session during teardown to reap its parked worker, whereas the older interactive `start_session/1` helper only kills the session as a last resort.
 
 ## Routing Table
 There are no child directories.

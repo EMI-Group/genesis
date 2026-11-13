@@ -80,6 +80,18 @@ The lifecycle cancel scenario scripts a `noop` despite an empty role tool list a
 The lifecycle crash test raises from the LLM seam and asserts a new session pid and incremented scheduler retry counter (`session_lifecycle_integration_test.exs:139-195`), not provider-request retry/backoff or per-attempt stream activity.
 These fixtures return complete `ReqLLM.Response` values and never emit provider chunks, so passing them does not establish production LLM text/thinking streaming, watcher gates or retry-event publication.
 The repo-backed invariants lease test performs a second create with the test process as owner and has no explicit drain for that second lease (`session_runtime_invariants_test.exs:401-409`), so new fixtures should terminate and await a separate owner before deleting their repo rather than copying that teardown shape.
+## Reusable Interactive Session Fixture Boundaries
+`session_api_test.exs:71-103` configures the real scheduler with legacy `model_profiles: [%{id: "default", model: "test:model", concurrency: 1}]` and `llm_model: "test:model"`, saving only those two keys and the global LLM seam.
+Its teardown restores profiles and only restores a non-nil original `llm_model`, so it is not an exact whole-state restoration template for canonical provider selections or an originally nil model.
+`provider_scheduler_api_test.exs:11-24` supplies the exact-state alternative: isolate the calling process's config directory, suspend `PeakHourEngine`, snapshot `:sys.get_state(AgentScheduler)`, install `State.from_config(config)`, and restore the snapshot before resuming the engine.
+That alternative requires serialized ownership of the global scheduler and draining every test-created session before restoring the snapshot.
+Canonical runtime reload is exercised through `AgentScheduler.update_config(ModelSelection.config_opts(config))` at `provider_scheduler_api_test.exs:167`, not a bare legacy profile replacement.
+`session_api_test.exs:179-198` starts a repo-less interactive role through `AgentScheduler.start_session(agent_module: StubAgent, objective: text, repo_less: true, task_id: unique_id)` without creating a TaskRegistry task row, and registers task-agent force-kill cleanup.
+The stub's `session_mode/0` returns `:interactive`; its scripted full responses prove yield/resume/close on one pid, not real provider SSE, late subscription, dashboard mount or remount.
+The direct-session invariants fixture passes engine overrides only in `exchange_opts`, whereas top-level `scheduler: self()` is the terminal-result recipient rather than the engine scheduler callback.
+For real-LLM/SSE coverage do not copy `exchange_opts[:llm_call]` or the global `:agent_exchange_llm_call` override, because either bypasses the actual producer.
+Direct-session teardown in `session_runtime_invariants_test.exs:482-495` unlinks, monitors and registers a fallback kill, but does not await that kill in `on_exit`, so stronger mounted integration cleanup should await termination before removing rows or restoring global configuration.
+
 ## Notes for Agents
 
 - `pubsub_test.exs` drives the throttle debounce SYNCHRONOUSLY: the `:schedule` casts are FIFO-ordered ahead of a `:sys.get_state/1`, so after N casts the state already holds the ONE pending timer ref; the test cancels that ref and delivers the `:flush` itself, then pins `:sys.get_state(Throttle) == nil` and a short (25 ms) no-duplicate probe — three casts still yield exactly one `{:agents_updated, node}`.

@@ -12,7 +12,7 @@ Stateful AgentsLive page integration tests live in `../agents_live_test.exs` (pa
 
 | File | Module | Covers |
 |------|--------|--------|
-| `runtime_stream_test.exs` | `EvoDashWeb.AgentsLive.RuntimeStreamTest` | Pure `new/2`, `seed/3`, `apply_batch/4`, `active?/1` and `message_identity/1` contracts: checkpoint fidelity, resync replacement, optional string-keyed in-flight data, explicit/snapshot seq precedence, wrong-agent snapshot and stale/malformed delta rejection, independent activity/text/thinking, explicit identity, capture coverage versus generation/lifecycle completion, cross-projection tool results, yield replacement, terminal freezing and defensive defaults. |
+| `runtime_stream_test.exs` | `EvoDashWeb.AgentsLive.RuntimeStreamTest` | Pure `new/2`, `seed/3`, `apply_batch/4`, `active?/1` and `message_identity/1` contracts: nested current-call snapshots, full activity replacement, appended text/thinking, retry identity, nil retirement, checkpoint fidelity, lifecycle independence, explicit/snapshot seq precedence, stale/foreign rejection, terminal freezing, defensive defaults and retention bounds. |
 | `stream_watch_test.exs` | `EvoDashWeb.AgentsLive.StreamWatchTest` | Async hand-built socket contracts: arrival-order replay strictly above the registration watermark, duplicate/out-of-order delta and duplicate snapshot rejection, stale node/token/agent ready guards, mismatched snapshot-agent rejection before watermark adoption, malformed/error results, 128-batch and 1 MiB pre-snapshot buffer failure, pending-remote guards, worker-DOWN failure, explicit attach retry with checkpoint replacement, consumer-local subscription cleanup, idempotent attach and monotonic A-to-B-to-A desired commands. |
 | `optimistic_messages_test.exs` | `EvoDashWeb.AgentsLive.OptimisticMessagesTest` | `EvoDashWeb.AgentsLive.OptimisticMessages` — optimistic user-message append/merge/latest-turn helpers plus the terminal `prune/4` bookkeeping (queue-UNKNOWN vs KNOWN keep/drop decisions, still-queued-wins-over-history, KNOWN-drained drop when context compression removed the real user entry, first-match consumption, `"USER"` legacy type, `%{text: ...}` queue shapes, key deletion, totality on garbage). |
 | `tool_call_display_test.exs` | `EvoDashWeb.AgentsLive.ToolCallDisplayTest` | `EvoDashWeb.AgentsLive.ToolCallDisplay` — the tool-call rendering contract: `display/1` compact-mode truncation (shell `Command` row capped at 200 chars + `"…"`), `display/2 mode: :full` uncapped, the mode fallback (unknown `:mode` / `nil` / non-keyword opts → compact), and `display/2` totality on `nil` + `%{}`. Fixtures are real `%ReqLLM.ToolCall{}` structs (`run_bash` with a JSON `command`, plus the model-facing aliases in the alias describe). An `alias-aware names (model-facing -> previous rendering)` describe pins the alias spine: `read`/`edit`/`write` render exactly as the historical `read_file`/`edit_file`/`write_file` inline calls did, `bash` (and capitalized `Bash`) is a "Shell call" with a `Command` row, `web_search` renders the historical `search_web` inline label, `rg`/`glob` keep their own names, a legacy `read_file` call still labels `read_file`, an unknown/custom tool name passes through unchanged, the accepted subagent alias spellings (`subagent_manager`, `subagent`, `task`) render structured subagent rows, and a non-binary name falls back to `"unknown"`. |
@@ -34,16 +34,16 @@ Stateful AgentsLive page integration tests live in `../agents_live_test.exs` (pa
 ## Inspector Stream Coverage Boundaries
 
 The tests execute production reducers and transport helpers, never a copied reducer or replacement implementation.
-The two stream suites construct every snapshot and event locally and never start a real core session, so they establish consumer behavior rather than producer/consumer wire compatibility.
-`runtime_stream_test.exs` uses synthetic top-level `in_flight`, `message_start`, explicit `capture_coverage` and activity-root identity fixtures, with no nested `activity.current_call` or attempt-identity fixture.
-`stream_watch_test.exs` uses lifecycle-only `%Snapshot{agent_id:, seq:, phase: :running}` fixtures and a self-pid worker-command capture boundary; actual PubSub dispatch checks subscription ownership but not core-generated deltas.
-Real-core coverage is needed for mid-call attachment before any watcher existed, whole-activity replacement versus appended chunks, retry attempt identity, completed-call retention through tools and retirement into checkpoint history.
-`RuntimeStream` keeps raw checkpoint messages untouched and separate from live projections; `seed/3` replaces live state while the transport owns node/token guards and snapshot admission.
-`runtime_stream_test.exs` pins explicit `capture_coverage` separately from `complete` and `generation_complete`, because lifecycle finish or empty captured thinking alone never proves that no thinking was generated.
-An early explicit message start proves source capture, an activity identity alone does not, and a late repeated start cannot upgrade partial capture after chunks or completed generation.
-Complete in-flight snapshot capture requires the explicit coverage assertion plus binary response/text and thinking fields, with empty thinking supplied explicitly.
-The reducer suite retains independent response/thinking byte budgets, exact-boundary and UTF-8-safe copied-prefix assertions, cumulative omissions across chunks and yield replacement, newest-projection eviction counts, bounded tool descriptors/names and uncapped checkpoint fidelity.
-Capture coverage remains source metadata despite retention loss, so omission counters independently forbid claiming wholly retained content or absent thinking.
+The stream suites never start a real core session, so Session/provider callback behavior remains outside this node's coverage.
+`runtime_stream_test.exs` uses nested `activity.current_call` maps with `id`, `turn`, `attempt`, `text` and `thinking`, including optional string-keyed snapshots.
+`Snapshot.phase` describes session lifecycle independently from activity phases `:idle`, `:llm_waiting`, `:llm`, `:llm_complete`, `:retry_wait` and `:tools`.
+An activity event replaces the whole activity and current call, text/thinking events append to that call, a new attempt replaces prior excerpts and nil current call retires the projection.
+`stream_watch_test.exs` includes compatibility coverage through public core `Activity.apply/2` and `Snapshot.from/3`, then feeds those snapshots/events through production consumer helpers.
+Its self-pid worker-command capture boundary and consumer-local PubSub checks establish subscription ownership, not actual core watch registration or provider callback delivery.
+Real-session coverage is still needed for mid-call attachment before any watcher existed and actual completed-call checkpoint retirement.
+`RuntimeStream` keeps raw checkpoint messages untouched and separate from the current live projection; `seed/3` replaces checkpoint history without duplication while the transport owns node/token guards and snapshot admission.
+These helper suites make no guessed historical checkpoint-part suppression assertions.
+The reducer suite retains independent response/thinking byte budgets, exact-boundary and UTF-8-safe copied-prefix assertions, cumulative omissions, bounded tool descriptors/names and uncapped checkpoint fidelity.
 These reducer contracts do not assert a UI no-thinking label; production presentation and mounted page/component suites own that display contract.
 The actual serialized watch/unwatch worker, consumer-death cleanup and blocked-RPC A-to-B-to-A race are exercised by the parent `../agents_stream_watch_lifecycle_test.exs`, not this child's command-capture fixture.
 Those synchronous worker tests own BEAM-global `:agents_watch_runner` and `:agents_unwatch_runner` seams; this child's async tests never replace them.
@@ -52,11 +52,11 @@ A snapshot explicitly naming another agent fails with `:snapshot_agent_mismatch`
 A duplicate ready result cannot replace an established snapshot even when its seq is newer; the registration watermark takes precedence over the snapshot's embedded seq.
 Matching worker death preserves the last checkpoint and excerpts with a visible error, ignores later deltas/results, and allows a fresh attachment to replace rather than append checkpoint history.
 The helper retry fixture reinstalls only its worker-command capture pid after `down/4` clears worker ownership; it does not spawn a replacement worker or claim RPC ordering coverage.
-Page/template integration exists in `AgentsLive`, with live excerpts separate from checkpoint history and conservative identity/coverage-aware checkpoint-part suppression.
+Page/template integration exists in `AgentsLive`, with live excerpts separate from checkpoint history; presentation and checkpoint-part rendering are owned outside this child.
 Checkpoint reconciliation load failure and its page-owned retry are private `AgentsLive` behavior, not a `RuntimeStream` or `StreamWatch` API; mounted page tests outside this child own those assertions.
 The transport's error/reattach snapshot replacement test is not evidence for successful page-level checkpoint reconciliation.
 Deltas have no publisher-node or attachment-token field, so old same-agent deltas across node switches cannot be distinguished by these helpers.
-Snapshot-plus-sequence replay cannot recover pre-attachment chunks absent from the core's snapshot, and partial capture remains partial after generation completion.
+Snapshot-plus-sequence replay cannot recover pre-attachment chunks absent from the core's snapshot.
 Run the scoped tests with `mix test apps/evo_dash/test/evo_dash_web/live/agents_live` from the umbrella root.
 
 ## Page-Level Commit-History Contracts (owned by `../agents_live_test.exs`)

@@ -7,14 +7,18 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
   `{:inspector_stream_ready, node, token, id, result}` to `ready/5` and
   `{:agent_delta, id, seq, events}` to `push/4`, and worker monitor
   `{:DOWN, ref, :process, pid, reason}` to `down/4`. Render the reducer at
-  `socket.assigns.inspector_stream.state`; the original snapshot remains at
-  `.snapshot`. `active?/2` includes snapshot-pending watches, but not failures,
-  so the page can suppress checkpoint-history fetches during attachment.
+  `socket.assigns.inspector_stream.state`; its `messages` are the ONLY checkpoint
+  source while watched. The admitted atomic snapshot remains at `.snapshot`.
+  Forward `{:inspector_stream_reconciled, node, token, id, request, result}` to
+  `reconciled/6` and project checkpoint messages from the updated state in that
+  SAME LiveView callback. Independent history results must not overwrite them.
+  `active?/2` includes snapshot-pending and reconciling watches, but not failures.
 
   `inspector_stream` is nil when detached, otherwise a map with `agent_id`,
-  `node`, `token`, `snapshot`, `seq`, `pending` (arrival-ordered batches),
-  `error`, `state` and `buffer_bytes`. Tokens never reset. A failed attachment
-  remains visible with an error and can be retried by calling `attach/2`.
+  `node`, `token`, `snapshot`, `seq`, `snapshot_request`, `reconciling`,
+  `required_seq`, `pending` (arrival-ordered batches), `error`, `state` and
+  `buffer_bytes`. Tokens never reset. A failed attachment remains visible with
+  an error and can be retried by calling `attach/2`.
 
   One supervised, consumer-monitored serial worker owns ALL register/unregister
   calls for this LiveView. Selection changes update its desired target without
@@ -27,9 +31,17 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
   `detach/1` also works from `terminate/2` as best-effort cleanup. The worker
   monitors the consumer, and core sessions independently monitor that same pid.
   No poll or repeating timer is used. Cleanup errors are logged, not retried.
-  Transport cannot repair deltas absent from the core snapshot's in-flight
-  projection; replay is strictly seq > snapshot seq. Buffer overflow fails the
-  watch explicitly instead of silently dropping potentially essential deltas.
+
+  A retirement/replacement batch is held back in its entirety while `reconcile/1`
+  requests a fresh atomic snapshot through the SAME idempotent watch runner and
+  serial worker (no unsubscribe/register gap). Snapshot messages AND activity
+  replace the rendered pair together, followed only by buffered seq > snapshot
+  seq. If replay crosses another boundary it requests another snapshot instead
+  of mixing new checkpoint history with an obsolete excerpt. Turn/yield/tool
+  events alone never prove adoption. Explicit refreshes coalesce with an active
+  request. Buffers cap at 128 batches / 1 MiB; overflow, stale snapshots and RPC
+  failures fail visibly, preserve the last coherent rendered pair, and require
+  explicit reattachment rather than silent loss or automatic error retries.
   """
 
   import Phoenix.Component, only: [assign: 2]
@@ -66,6 +78,9 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
           token: token,
           snapshot: nil,
           seq: nil,
+          snapshot_request: 0,
+          reconciling: false,
+          required_seq: 0,
           pending: [],
           buffer_bytes: 0,
           error: nil,
@@ -107,36 +122,7 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
     case socket.assigns[:inspector_stream] do
       %{node: ^target_node, token: ^token, agent_id: ^agent_id, error: nil, snapshot: nil} =
           stream ->
-        case snapshot_result(result) do
-          {:ok, snapshot, seq} when snapshot.agent_id in [nil, agent_id] ->
-            state = RuntimeStream.seed(stream.state, snapshot, seq)
-
-            {state, seq} =
-              Enum.reduce(stream.pending, {state, seq}, fn {batch_seq, events}, {state, seq} ->
-                if batch_seq > seq do
-                  {RuntimeStream.apply_batch(state, agent_id, batch_seq, events), batch_seq}
-                else
-                  {state, seq}
-                end
-              end)
-
-            assign(socket,
-              inspector_stream: %{
-                stream
-                | snapshot: snapshot,
-                  state: state,
-                  seq: seq,
-                  pending: [],
-                  buffer_bytes: 0
-              }
-            )
-
-          {:ok, _snapshot, _seq} ->
-            fail(socket, :snapshot_agent_mismatch)
-
-          {:error, reason} ->
-            fail(socket, reason)
-        end
+        adopt_snapshot(socket, stream, result)
 
       _ ->
         # The worker also reconciles obsolete operations before registering its
@@ -150,7 +136,94 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
     end
   end
 
-  @doc "Buffers pre-snapshot batches and applies only newer batches after seeding."
+  @doc """
+  Requests an atomic checkpoint/activity snapshot without unregistering the watch.
+
+  Requests coalesce while one is outstanding. The old checkpoint/live pair stays
+  rendered and all newer deltas buffer until `reconciled/6` admits the snapshot.
+  Use this for explicit checkpoint refreshes (including a full-message modal),
+  not an independent history RPC. Retirement/replacement invokes it automatically.
+  """
+  def reconcile(socket) do
+    case socket.assigns[:inspector_stream] do
+      %{snapshot: %Snapshot{}, reconciling: false, error: nil} = stream ->
+        if active?(socket, stream.agent_id) do
+          request = stream.snapshot_request + 1
+          command(socket, {:reconcile, stream.token, request})
+
+          assign(socket,
+            inspector_stream: %{
+              stream
+              | snapshot_request: request,
+                reconciling: true,
+                required_seq: stream.seq
+            }
+          )
+        else
+          socket
+        end
+
+      _ ->
+        socket
+    end
+  end
+
+  @doc "Admits only the current watch's outstanding atomic reconciliation result."
+  def reconciled(socket, target_node, token, agent_id, request, result) do
+    case socket.assigns[:inspector_stream] do
+      %{
+        node: ^target_node,
+        token: ^token,
+        agent_id: ^agent_id,
+        snapshot_request: ^request,
+        reconciling: true,
+        error: nil
+      } = stream ->
+        if active?(socket, agent_id), do: adopt_snapshot(socket, stream, result), else: socket
+
+      _ ->
+        socket
+    end
+  end
+
+  defp adopt_snapshot(socket, stream, result) do
+    case snapshot_result(result) do
+      {:ok, snapshot, seq} when snapshot.agent_id == stream.agent_id ->
+        if seq >= stream.required_seq do
+          pending = stream.pending
+          state = RuntimeStream.seed(stream.state, snapshot, seq)
+
+          socket =
+            assign(socket,
+              inspector_stream: %{
+                stream
+                | snapshot: snapshot,
+                  state: state,
+                  seq: seq,
+                  reconciling: false,
+                  pending: [],
+                  buffer_bytes: 0
+              }
+            )
+
+          # Replaying may encounter ANOTHER ownership boundary after this
+          # snapshot. Freeze at that batch and request the next atomic pair.
+          Enum.reduce(pending, socket, fn {batch_seq, events}, socket ->
+            apply_push(socket, stream.agent_id, batch_seq, events)
+          end)
+        else
+          fail(socket, {:snapshot_before_boundary, seq, stream.required_seq})
+        end
+
+      {:ok, _snapshot, _seq} ->
+        fail(socket, :snapshot_agent_mismatch)
+
+      {:error, reason} ->
+        fail(socket, reason)
+    end
+  end
+
+  @doc "Buffers snapshot-pending batches; freezes ownership boundaries until atomic reconciliation."
   def push(socket, agent_id, seq, events)
       when is_integer(seq) and seq >= 0 and is_list(events) do
     if active?(socket, agent_id),
@@ -162,33 +235,60 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
 
   defp apply_push(socket, agent_id, seq, events) do
     case socket.assigns[:inspector_stream] do
-      %{agent_id: ^agent_id, error: nil, snapshot: nil} = stream ->
-        bytes = stream.buffer_bytes + :erlang.external_size({seq, events})
+      %{agent_id: ^agent_id, error: nil, seq: old_seq}
+      when is_integer(old_seq) and seq <= old_seq ->
+        socket
 
-        if length(stream.pending) >= @max_pending_batches or bytes > @max_pending_bytes do
-          fail(socket, :pre_snapshot_buffer_overflow)
+      %{agent_id: ^agent_id, error: nil, snapshot: nil} = stream ->
+        buffer(socket, stream, seq, events)
+
+      %{agent_id: ^agent_id, error: nil, reconciling: true} = stream ->
+        buffer(socket, stream, seq, events)
+
+      %{agent_id: ^agent_id, error: nil} = stream ->
+        if RuntimeStream.checkpoint_transition?(stream.state, events) do
+          socket = reconcile(socket)
+          stream = %{socket.assigns.inspector_stream | required_seq: seq}
+          buffer(socket, stream, seq, events)
         else
           assign(socket,
             inspector_stream: %{
               stream
-              | pending: stream.pending ++ [{seq, events}],
-                buffer_bytes: bytes
+              | state: RuntimeStream.apply_batch(stream.state, agent_id, seq, events),
+                seq: seq
             }
           )
         end
 
-      %{agent_id: ^agent_id, error: nil, seq: old_seq} = stream
-      when is_integer(old_seq) and seq > old_seq ->
+      _ ->
+        socket
+    end
+  end
+
+  defp buffer(socket, stream, seq, events) do
+    # PubSub batches are ordered. Re-deliveries do not consume buffer capacity.
+    last_seq =
+      case List.last(stream.pending) do
+        {last_seq, _} -> last_seq
+        nil -> stream.seq
+      end
+
+    if is_integer(last_seq) and seq <= last_seq do
+      socket
+    else
+      bytes = stream.buffer_bytes + :erlang.external_size({seq, events})
+
+      if length(stream.pending) >= @max_pending_batches or bytes > @max_pending_bytes do
+        fail(socket, :snapshot_buffer_overflow)
+      else
         assign(socket,
           inspector_stream: %{
             stream
-            | state: RuntimeStream.apply_batch(stream.state, agent_id, seq, events),
-              seq: seq
+            | pending: stream.pending ++ [{seq, events}],
+              buffer_bytes: bytes
           }
         )
-
-      _ ->
-        socket
+      end
     end
   end
 
@@ -232,6 +332,7 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
           node: stream.node,
           id: stream.agent_id,
           token: stream.token,
+          snapshot_request: 0,
           watch:
             Application.get_env(
               :evo_dash,
@@ -318,7 +419,13 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
         command(socket, {:desired, stream.token, nil})
 
         assign(socket,
-          inspector_stream: %{stream | error: reason, pending: [], buffer_bytes: 0}
+          inspector_stream: %{
+            stream
+            | error: reason,
+              reconciling: false,
+              pending: [],
+              buffer_bytes: 0
+          }
         )
 
       _ ->
@@ -364,25 +471,30 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
         cond do
           state.registered != nil and
               (registered_target != desired_target or
-                 (state.failed and state.attempted == desired_token(state))) ->
+                 (state.failed and state.attempted == desired_request(state))) ->
             unwatch(state.registered, state.consumer)
             worker(%{state | registered: nil})
 
-          state.desired != nil and state.attempted != desired_token(state) ->
+          state.desired != nil and state.attempted != desired_request(state) ->
             desired = state.desired
 
             result =
               SafeCall.run(fn -> desired.watch.(desired.node, desired.id, state.consumer) end)
 
-            send(
-              state.consumer,
-              {:inspector_stream_ready, desired.node, desired.token, desired.id, result}
-            )
+            message =
+              if desired.snapshot_request == 0 do
+                {:inspector_stream_ready, desired.node, desired.token, desired.id, result}
+              else
+                {:inspector_stream_reconciled, desired.node, desired.token, desired.id,
+                 desired.snapshot_request, result}
+              end
+
+            send(state.consumer, message)
 
             worker(%{
               state
               | registered: desired,
-                attempted: desired.token,
+                attempted: desired_request(state),
                 failed: not match?({:ok, _, _}, snapshot_result(result))
             })
 
@@ -437,6 +549,17 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
     if state.stopping, do: state, else: %{state | desired: desired, token: token}
   end
 
+  defp worker_message(state, {:reconcile, token, request}) do
+    case state.desired do
+      %{token: ^token, snapshot_request: previous} = desired
+      when request > previous and not state.stopping ->
+        %{state | desired: %{desired | snapshot_request: request}}
+
+      _ ->
+        state
+    end
+  end
+
   defp worker_message(state, {:cleanup, target}) do
     %{state | cleanup: MapSet.put(state.cleanup, target)}
   end
@@ -461,6 +584,6 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
 
   defp target(nil), do: nil
   defp target(registration), do: {registration.node, registration.id}
-  defp desired_token(%{desired: nil}), do: nil
-  defp desired_token(state), do: state.desired.token
+  defp desired_request(%{desired: nil}), do: nil
+  defp desired_request(state), do: {state.desired.token, state.desired.snapshot_request}
 end

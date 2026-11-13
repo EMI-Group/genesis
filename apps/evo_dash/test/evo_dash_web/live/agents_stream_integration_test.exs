@@ -15,6 +15,11 @@ end
 
 # The fixture module is defined before the case module so it is available even
 # when this file is loaded on its own.
+# This synthetic transport suite intentionally keeps five cohesive mounted state
+# machines together; the reference-scoped runner/teardown helpers account for its
+# length and let each scenario reuse one mount without timing-based waits.
+# Snapshots and batches match the core contract, but do not replace real Session
+# producer/consumer integration coverage.
 defmodule EvoDashWeb.AgentsStreamIntegrationTest do
   # These BEAM-global app-env seams overlap the async AgentsLiveTest loaders:
   # :agents_list_runner, :agents_config_runner and :agents_history_runner.
@@ -86,12 +91,12 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     await_snapshot(view, 4)
 
     assert has_element?(view, "#agent-detail-#{id}", "Checkpoint question")
-    assert text(view, "#inspector-activity") == "Activity unavailable"
+    assert text(view, "#inspector-activity") == "Idle"
+    assert assigns(view).inspector_stream.snapshot.phase == :running
     refute has_element?(view, "#inspector-thinking")
 
     delta(view, id, 5, [
-      {:message_start, %{turn: 1, message_index: 1}},
-      {:activity, %{phase: :llm}},
+      {:activity, activity(:llm, call())},
       {:thinking, "Compare the alternatives."},
       {:text, "The answer is "}
     ])
@@ -100,9 +105,10 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     assert has_element?(view, "#inspector-thinking[role='status']")
     assert has_element?(view, "#inspector-stream-cursor")
     assert text(view, "#inspector-stream details pre") == "Compare the alternatives."
-    assert text(view, "#inspector-live-message-1 div pre") == "The answer is"
+    assert text(view, "#inspector-live-message-0 div pre") == "The answer is"
 
-    # Neither a tool announcement nor a completed LLM turn is a tool-phase fact.
+    # Accounting and announcements do not override activity. Only an explicit
+    # successful-generation replacement stops the generation indicators.
     delta(view, id, 6, [
       {:text, "42."},
       {:turn, %{turn: 1}},
@@ -111,13 +117,37 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
 
     assert text(view, "#inspector-activity") == "Generating response"
     assert has_element?(view, "#inspector-stream li", "Announced")
+    assert has_element?(view, "#inspector-stream-cursor")
+    assert has_element?(view, "#inspector-thinking")
+
+    complete = call("The answer is 42.", "Compare the alternatives.")
+    delta(view, id, 7, [{:activity, activity(:llm_complete, complete)}])
+    assert text(view, "#inspector-activity") == "Response generated"
     refute has_element?(view, "#inspector-stream-cursor")
     refute has_element?(view, "#inspector-thinking")
 
-    delta(view, id, 7, [{:activity, %{phase: :tools}}])
+    delta(view, id, 8, [{:activity, activity(:tools, complete)}])
     assert text(view, "#inspector-activity") == "Executing tools"
     assert text(view, "#inspector-stream details pre") == "Compare the alternatives."
-    assert text(view, "#inspector-live-message-1 div pre") == "The answer is 42."
+    assert text(view, "#inspector-live-message-0 div pre") == "The answer is 42."
+    assert length(elements(view, "#inspector-stream article")) == 1
+    assert history_calls(view) == 0
+
+    delta(view, id, 9, [{:activity, activity(:retry_wait, complete)}])
+    assert text(view, "#inspector-activity") == "Waiting to retry"
+    assert text(view, "#inspector-live-message-0 div pre") == "The answer is 42."
+    retry = call("", "", 1, 2)
+    delta(view, id, 10, [{:activity, activity(:llm_waiting, retry)}])
+    assert text(view, "#inspector-activity") == "Waiting for model capacity"
+    refute has_element?(view, "#inspector-live-message-0")
+    refute text(view, "#inspector-stream") =~ "The answer is 42."
+    delta(view, id, 11, [{:activity, activity(:llm, retry)}, {:text, "Retry answer"}])
+    assert text(view, "#inspector-live-message-1 div pre") == "Retry answer"
+    assert has_element?(view, "#inspector-thinking")
+    delta(view, id, 12, [{:activity, activity(:idle, nil)}])
+    assert text(view, "#inspector-activity") == "Idle"
+    refute has_element?(view, "#inspector-stream article")
+    assert assigns(view).inspector_stream.state.phase == :running
     assert history_calls(view) == 0
   end
 
@@ -131,15 +161,30 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     watch = watch_request(view, id)
     assert has_element?(view, "#inspector-stream", "Connecting to live updates…")
 
-    delta(view, id, 9, [{:text, "Already checkpointed"}])
-    delta(view, id, 11, [{:thinking, "Observed reasoning"}, {:text, "Live suffix"}])
+    delta(view, id, 9, [{:activity, activity(:llm, call("Already checkpointed"))}])
+
+    delta(view, id, 11, [
+      {:activity, activity(:llm, call("Live", "Observed reasoning"))},
+      {:text, " suffix"}
+    ])
+
     delta(view, id, 11, [{:text, "DUPLICATE"}])
     delta(view, id, 10, [{:text, "STALE"}])
     assert length(assigns(view).inspector_stream.pending) == 4
 
     update_count(view, id, 8)
     assert history_calls(view) == 0
-    reply(watch, snapshot(id, 10, [message(:assistant, "Snapshot response")]))
+
+    reply(
+      watch,
+      snapshot(
+        id,
+        10,
+        [message(:assistant, "Snapshot response")],
+        activity(:llm, call("Snapshot prefix", "Snapshot thought"))
+      )
+    )
+
     await_snapshot(view, 11)
 
     assert assigns(view).inspector_stream.pending == []
@@ -172,24 +217,28 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     reply(watch_request(view, id), snapshot(id, 0))
     await_snapshot(view, 0)
 
-    # Attach mid-generation: no message_start or complete in-flight capture.
-    delta(view, id, 1, [{:activity, :llm}, {:text, "Partial capture response"}])
-    delta(view, id, 2, [{:turn, %{turn: 1}}])
+    # Deliberately incomplete producer capture cannot establish absence, even
+    # when the authoritative phase says successful generation has completed.
+    partial_call = call("Partial capture response") |> Map.delete(:thinking)
+    delta(view, id, 1, [{:activity, activity(:llm, partial_call)}])
+    delta(view, id, 2, [{:activity, activity(:llm_complete, partial_call)}])
     assert has_element?(view, "#inspector-stream", "Partial capture response")
     refute text(view, "#inspector-stream") =~ "No thinking content available"
     assert [partial] = assigns(view).inspector_stream.state.projections
     assert partial.generation_complete
     assert partial.capture_coverage == :partial
 
-    # Contrast with a message whose start and entire generation were observed.
-    delta(view, id, 3, [
-      {:message_start, %{turn: 2, message_index: 2}},
-      {:text, "Fully observed response"},
-      {:turn, %{turn: 2}}
-    ])
+    # A fresh call replaces rather than retains the partial attempt. Explicit
+    # empty thinking in a complete replacement proves absence only on success.
+    complete_call = call("Fully observed response", "", 2)
+    delta(view, id, 3, [{:activity, activity(:llm, complete_call)}])
+    refute text(view, "#inspector-stream") =~ "No thinking content available"
+    delta(view, id, 4, [{:activity, activity(:llm_complete, complete_call)}])
 
-    refute text(view, "#inspector-live-message-0") =~ "No thinking content available"
-    assert text(view, "#inspector-live-message-2") =~ "No thinking content available"
+    refute has_element?(view, "#inspector-live-message-0")
+    assert text(view, "#inspector-live-message-1") =~ "No thinking content available"
+    assert text(view, "#inspector-live-message-1 div pre") == "Fully observed response"
+    assert length(elements(view, "#inspector-stream article")) == 1
   end
 
   test "selection, close and actual node patches clean up the consumer subscription", %{
@@ -201,7 +250,7 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     reply(watch_request(view, id), snapshot(id, 1))
     await_snapshot(view, 1)
     old = assigns(view).inspector_stream
-    delta(view, id, 2, [{:text, "First agent excerpt"}])
+    delta(view, id, 2, [{:activity, activity(:llm, call("First agent excerpt"))}])
 
     select(view, id + 1)
     local = node()
@@ -212,7 +261,7 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     assert assigns(view).selected_agent_id == id + 1
     refute render(view) =~ "First agent excerpt"
 
-    send(view.pid, {:agent_delta, id, 100, [{:text, "Obsolete delta"}]})
+    send(view.pid, {:agent_delta, id, 100, [{:activity, activity(:llm, call("Obsolete delta"))}]})
     send(view.pid, {:inspector_stream_ready, local, old.token, id, snapshot(id, 100)})
     assert assigns(view).inspector_stream.agent_id == id + 1
     assert assigns(view).inspector_stream.seq == 3
@@ -223,7 +272,7 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     assert_receive {:unwatch, ^local, ^other, ^consumer}, @budget
     assert assigns(view).inspector_stream == nil
     refute has_element?(view, "#inspector-stream")
-    delta(view, id + 1, 4, [{:text, "Unsubscribed"}])
+    delta(view, id + 1, 4, [{:activity, activity(:llm, call("Unsubscribed"))}])
     assert assigns(view).inspector_stream == nil
 
     select(view, id)
@@ -248,7 +297,7 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     refute has_element?(view, "#inspector-stream")
 
     send(view.pid, {:inspector_stream_ready, local, token, id, snapshot(id, 50)})
-    delta(view, id, 51, [{:text, "Previous node excerpt"}])
+    delta(view, id, 51, [{:activity, activity(:llm, call("Previous node excerpt"))}])
     assert assigns(view).inspector_stream == nil
     refute render(view) =~ "Previous node excerpt"
 
@@ -296,9 +345,7 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     await_snapshot(view, 1)
 
     delta(view, id, 2, [
-      {:activity, :tools},
-      {:thinking, "Live reasoning stays"},
-      {:text, "Live response stays"},
+      {:activity, activity(:tools, call("Live response stays", "Live reasoning stays"))},
       {:tool_call, "call-1", "read"}
     ])
 
@@ -327,8 +374,8 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     assert assigns(view).history_loading_agent_id == id
 
     answer = %{
-      message(:assistant, "Authoritative answer")
-      | reasoning_details: [%{text: "Authoritative thinking"}]
+      message(:assistant, "Live response stays")
+      | reasoning_details: [%{text: "Live reasoning stays"}]
     }
 
     checkpoint = initial ++ [answer, message(:tool, "Authoritative tool output")]
@@ -341,17 +388,31 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     assert history_content(view, id) == [
              "System checkpoint",
              "Original question",
-             "Authoritative answer",
+             "Live response stays",
              "Authoritative tool output"
            ]
 
     entries = Enum.find(assigns(view).agents, &(&1.id == id)).history
     assert Enum.map(entries, & &1.type) == ["system", "user", "assistant", "tool"]
-    assert Enum.at(entries, 2).data.reasoning_details == [%{text: "Authoritative thinking"}]
-    assert has_element?(view, "#agent-detail-#{id}", "Authoritative answer")
-    assert has_element?(view, "#agent-detail-#{id}", "Authoritative thinking")
-    assert has_element?(view, "#agent-detail-#{id}", "Authoritative tool output")
+    assert Enum.at(entries, 2).data.reasoning_details == [%{text: "Live reasoning stays"}]
+    # Matching checkpoint content is not permission to suppress either part.
+    row = "#agent-history-entry-#{id}-2"
+    assert text(view, "#{row} .inspector-thinking .whitespace-pre-wrap") == "Live reasoning stays"
+    assert text(view, "#{row} .text-sm") =~ "Live response stays"
     assert text(view, "#inspector-stream details pre") == "Live reasoning stays"
+
+    # Explicit producer retirement is the duplicate-free checkpoint boundary.
+    delta(view, id, 5, [{:activity, activity(:idle, nil)}])
+    refute has_element?(view, "#inspector-stream article")
+    assert text(view, "#{row} .inspector-thinking .whitespace-pre-wrap") == "Live reasoning stays"
+    assert text(view, "#{row} .text-sm") =~ "Live response stays"
+    assert has_element?(view, "#agent-detail-#{id}", "Authoritative tool output")
+    assert length(elements(view, row)) == 1
+    assert length(elements(view, "#{row} .inspector-thinking")) == 1
+    assert length(elements(view, "#{row} .text-sm")) == 1
+    assert assigns(view).inspector_stream.state.projections == []
+    assert assigns(view).inspector_stream.state.response == ""
+    assert assigns(view).inspector_stream.state.thinking == ""
     assert history_calls(view) == 2
   end
 
@@ -420,8 +481,16 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
 
   defp select(view, id), do: view |> element("#agent-card-#{id}") |> render_click()
 
-  defp snapshot(id, seq, messages \\ []) do
-    {:ok, %Snapshot{agent_id: id, seq: seq, phase: :running, messages: messages}, seq}
+  defp snapshot(id, seq, messages \\ [], activity \\ activity(:idle, nil)) do
+    {:ok,
+     %Snapshot{agent_id: id, seq: seq, phase: :running, messages: messages, activity: activity},
+     seq}
+  end
+
+  defp activity(phase, call), do: %{phase: phase, current_call: call}
+
+  defp call(text \\ "", thinking \\ "", turn \\ 1, attempt \\ 1) do
+    %{id: "call-#{turn}-#{attempt}", turn: turn, attempt: attempt, text: text, thinking: thinking}
   end
 
   defp message(role, text) do
@@ -491,6 +560,9 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     |> Floki.text()
     |> String.trim()
   end
+
+  defp elements(view, selector),
+    do: view |> render() |> Floki.parse_document!() |> Floki.find(selector)
 
   defp assigns(view), do: :sys.get_state(view.pid, @budget).socket.assigns
 
