@@ -25,6 +25,15 @@ Its inline InteractiveAgent and OneshotAgent roles are defined before the templa
 `start_session/1`, `dispatch_ctx/3`, `driver_llm_call/1`, `response/2`, `collect_deltas/3`, pending-message helpers and bounded event waits are shared infrastructure, not a second session implementation.
 Local custom LLM seams may invoke the real installed Sink callbacks while keeping the worker parked.
 
+## Reusable Session Fixture Calls
+Every real-session fixture in this node calls `start_session(dispatch_ctx(agent_id, tmp_dir, llm_call: seam))` and receives `{:ok, session_pid, ref}`; no test here calls `start_stream` or supplies a `stream_start` option.
+The default seam is `driver_llm_call(self())`, which announces `{:llm_call, worker, context}` and accepts `{:reply, text}`, `{:emit, events, final_reply}` or `{:emit_waves, waves, final_reply}`; `:next_wave` releases a held wave.
+`await_yield(session_pid, final_reply)` synchronizes parked replies, and `Session.start_input(session_pid, text, :queue)` starts another exchange on the same session with a new worker.
+Custom seams are wrapped in `scripted_llm_call(fn context, tools, params, agent_id, retries -> ... end)` and passed as `llm_call:` to `dispatch_ctx/3`; the actual helper's `exchange_opts` construction and teardown implementation belong to `test/support/stream_case.ex`, outside this node.
+`gate_test.exs:48-141` is the real callback late-attach recipe: await `{:callbacks_ready, worker, opts, call_id}`, send `:capture`, await `{:callbacks_captured, worker}`, wait for the captured snapshot, attach with `Stream.watch/1` at seq zero, then send `:finish` and await yield.
+`activity_snapshot_test.exs:108-147` queues `{:pending_cut, token, command, chunks}` into the real worker while the session is suspended, awaits `{:cut_queued, token}`, resumes unconditionally in `after`, and awaits `{:cut_reply, token, reply}`.
+Explicit own-level teardown kills extra consumers in `on_exit`, unregisters extra fixture-agent rows/directories, and force-cancels sessions in the gone-target cases; the common session cleanup is delegated to StreamCase.
+
 ## Constraints
 All modules are `async: true` except `inspection_test.exs`, whose table-wide reads of the app-global scheduler ETS tables force serialization and are documented in-file.
 Session fixtures write only their unique scheduler rows, delete only those rows and assert on their own agent topic.
