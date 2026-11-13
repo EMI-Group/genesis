@@ -38,7 +38,7 @@ All four modules are `use ExUnit.Case, async: true` with `@moduletag :tmp_dir`.
 
 ### agent_state_retention_test.exs — retention + deletes
 - Every case starts its server with an EXPLICIT `retention_days: 7` start option (never an app-env mutation, so the module stays `async: true`) and produces expiry by BACKDATING the stored ISO8601 timestamps through the store's own dynamic repo — no clock seam, no sleeping.
-- `mark_completed/3` stamps `status == "completed"` plus a `completed_at` `%DateTime{}` in the past and KEEPS the row, messages and counts for later recovery.
+- `mark_completed/3` stamps `status == "completed"` plus a `completed_at` `%DateTime{}` set at completion time and KEEPS the row, messages and counts for later recovery.
 - `prune/1` deletes exactly the expired runs plus their chunks: completed 10 days ago expires, a never-completed run whose `updated_at` is 20 days old expires, while a recently-completed run and a recently-touched run survive; the deleted count is returned and chunk rows are removed per `(task_id, agent_id)`.
 - A row touched inside the window is never pruned even when `completed_at` is 10 days old, because the prune additionally requires `updated_at < completed_before`.
 - A second `prune/1` answers `{:ok, 0}` (idempotent).
