@@ -5468,6 +5468,22 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
   end
 
+  # The core announces a fresh LLM attempt before emitting its chunks. An idle
+  # snapshot has no current call, so bare text/thinking chunks are not actionable.
+  defp call_started(agent_id) do
+    {:activity,
+     %{
+       phase: :llm,
+       current_call: %{
+         id: "#{agent_id}-attempt-0",
+         turn: 0,
+         attempt: 0,
+         text: "",
+         thinking: ""
+       }
+     }}
+  end
+
   defp broadcast_delta(agent_id, seq, batch) do
     Phoenix.PubSub.broadcast(
       EvoGit.PubSub,
@@ -5516,7 +5532,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # Only the SUBSCRIBER receives this: the LiveView itself subscribed (the
       # watcher registration task did not), which is what proves the
       # consumer-local half of the attach.
-      broadcast_delta(session_id, 8, [{:text, "streamed line"}])
+      broadcast_delta(session_id, 8, [call_started(session_id), {:text, "streamed line"}])
 
       wait_until(fn ->
         a = assigns(view)
@@ -5546,8 +5562,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       # HTML comments (e.g. “stale-guarded by …”) into every page's shell, so a
       # single-word marker would match the shell instead of the transcript.
       stale_marker = "stale delta payload"
-      broadcast_delta(session_id, 7, [{:text, stale_marker}])
-      broadcast_delta(session_id, 3, [{:text, stale_marker}])
+      broadcast_delta(session_id, 7, [call_started(session_id), {:text, stale_marker}])
+      broadcast_delta(session_id, 3, [call_started(session_id), {:text, stale_marker}])
       html = render(view)
 
       refute html =~ stale_marker
@@ -5555,11 +5571,19 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).chat_stream.delta.seq == 7
 
       # ...while a genuinely newer seq IS applied on the SAME page.
-      broadcast_delta(session_id, 8, [{:text, "fresh"}])
+      broadcast_delta(session_id, 8, [call_started(session_id), {:text, "fresh"}])
       wait_until(fn -> assigns(view).chat_stream.delta.seq == 8 end)
 
       assert render(view) =~ "fresh"
       refute render(view) =~ stale_marker
+
+      # A replay of an already-applied chunk would duplicate text if the seq
+      # guard failed, even though the call identity itself is unchanged.
+      transcript_after = assigns(view).transcript
+      broadcast_delta(session_id, 8, [{:text, "fresh"}])
+      render(view)
+      assert assigns(view).transcript == transcript_after
+      assert assigns(view).chat_stream.delta.seq == 8
     end
 
     test "a delta for another agent is dropped", %{conn: conn} do
@@ -5572,7 +5596,14 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
       await_stream_seeded(view, 7)
 
-      broadcast_delta(session_id + 100, 99, [{:text, "foreign"}])
+      # Deliver on the subscribed topic with the WRONG payload identity: merely
+      # publishing to another topic would test PubSub routing, not this guard.
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "agent:#{session_id}",
+        {:agent_delta, session_id + 100, 99, [call_started(session_id + 100), {:text, "foreign"}]}
+      )
+
       html = render(view)
 
       refute html =~ "foreign"
@@ -5580,7 +5611,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       # The page IS attached — its OWN agent's delta applies — so the drop above
       # was the agent match, not a dead stream.
-      broadcast_delta(session_id, 8, [{:text, "own line"}])
+      broadcast_delta(session_id, 8, [call_started(session_id), {:text, "own line"}])
       wait_until(fn -> assigns(view).chat_stream.delta.seq == 8 end)
 
       html = render(view)
@@ -5625,12 +5656,20 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
       await_stream_seeded(view, 7)
 
-      broadcast_delta(session_id, 8, [{:thinking, "pondering"}, {:tool_call, "call-1", "bash"}])
+      broadcast_delta(session_id, 8, [
+        call_started(session_id),
+        {:thinking, "pondering"},
+        {:tool_call, "call-1", "bash"}
+      ])
 
       wait_until(fn -> Enum.any?(assigns(view).transcript, &(&1.role == :tool)) end)
       wait_until(fn -> inspect(assigns(view).thought_process) =~ "pondering" end)
 
       assert render(view) =~ "bash"
+      assert [thought] = assigns(view).thought_process
+      assert thought.data.metadata == %{thinking: true, call_id: "#{session_id}-attempt-0"}
+      assert [%{text: "pondering", type: "thinking"}] = thought.data.reasoning_details
+      assert Enum.filter(assigns(view).transcript, &(&1.role == :assistant)) == []
 
       broadcast_delta(session_id, 9, [{:tool_result, "call-1", :ok}])
 
@@ -5656,7 +5695,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       # A streaming assistant bubble must exist for the meta line to render
       # (it rides the transcript's LAST assistant entry).
-      broadcast_delta(session_id, 8, [{:text, "partial"}])
+      broadcast_delta(session_id, 8, [call_started(session_id), {:text, "partial"}])
       wait_until(fn -> Enum.any?(assigns(view).transcript, &(&1.role == :assistant)) end)
 
       broadcast_delta(
@@ -5686,7 +5725,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       await_attach_settled(view, session_id)
       await_stream_seeded(view, 7)
 
-      broadcast_delta(session_id, 8, [{:text, "partial"}])
+      broadcast_delta(session_id, 8, [call_started(session_id), {:text, "partial"}])
 
       wait_until(fn ->
         case List.last(assigns(view).transcript) do
@@ -5724,7 +5763,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       await_attach_settled(view, session_id)
       await_stream_seeded(view, 7)
 
-      broadcast_delta(session_id, 8, [{:text, "partial"}])
+      broadcast_delta(session_id, 8, [call_started(session_id), {:text, "partial"}])
       wait_until(fn -> Enum.any?(assigns(view).transcript, &Map.get(&1, :streaming)) end)
 
       broadcast_delta(session_id, 9, [{:finished, :failed}])
@@ -5791,7 +5830,12 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
       await_stream_seeded(view, 7)
 
-      broadcast_delta(session_id, 8, [{:text, "first"}, {:tool_call, "c1", "bash"}])
+      broadcast_delta(session_id, 8, [
+        call_started(session_id),
+        {:text, "first"},
+        {:tool_call, "c1", "bash"}
+      ])
+
       wait_until(fn -> Enum.any?(assigns(view).transcript, &(&1.role == :tool)) end)
 
       broadcast_delta(session_id, 9, [{:text, " second"}, {:tool_result, "c1", :ok}])
@@ -5825,7 +5869,11 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert_receive {:agent_watched, _node, ^session_id, _watcher}, 5_000
       await_stream_seeded(view, 7)
 
-      broadcast_delta(session_id, 8, [{:thinking, "pondering"}, {:turn, %{turn: 1}}])
+      broadcast_delta(session_id, 8, [
+        call_started(session_id),
+        {:thinking, "pondering"},
+        {:turn, %{turn: 1}}
+      ])
 
       wait_until(fn ->
         assigns(view).chat_stream.delta.seq == 8 and
@@ -5927,7 +5975,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         []
       end)
 
-      broadcast_delta(session_id, 8, [{:text, "streamed"}])
+      broadcast_delta(session_id, 8, [call_started(session_id), {:text, "streamed"}])
       wait_until(fn -> Enum.any?(assigns(view).transcript, &(&1.text == "streamed")) end)
 
       broadcast_delta(session_id, 9, [{:turn, %{turn: 1}}])
