@@ -203,7 +203,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
     assert text(view, "#inspector-stream details pre") == "Inspector thought prefix plus suffix"
     assert length(elements(view, "#inspector-stream article")) == 1
     Provider.finish(ctx.provider, socket)
-    assert_yield(session)
+    assert_yield(session, "Inspector answer prefix plus suffix")
 
     assert Session.history(session.pid)
            |> Enum.filter(&(&1.role == :assistant))
@@ -281,7 +281,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
     await_answers(view, ["First answer prefix plus suffix"], :streaming)
     assert_thoughts(view, ["First thought prefix plus suffix"])
     Provider.finish(ctx.provider, socket)
-    assert_yield(session)
+    assert_yield(session, "First answer prefix plus suffix")
     await(fn -> assigns(view).chat_status == :idle end)
     assert answers(view) == ["First answer prefix plus suffix"]
     assert_thoughts(view, ["First thought prefix plus suffix"])
@@ -305,7 +305,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
     refute second.activity.current_call.id == prefix.activity.current_call.id
     await_answers(remount, ["First answer prefix plus suffix", "Second answer"], :streaming)
     Provider.finish(ctx.provider, second_socket)
-    assert_yield(session)
+    assert_yield(session, "Second answer")
     await(fn -> assigns(remount).chat_status == :idle end)
     assert answers(remount) == ["First answer prefix plus suffix", "Second answer"]
     assert_thoughts(remount, ["First thought prefix plus suffix", "Second thought"])
@@ -331,7 +331,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
     await_call(session, "Completed answer", "Completed thought")
     assert watchers(session) == %{}
     Provider.finish(ctx.provider, socket)
-    assert_yield(session)
+    assert_yield(session, "Completed answer")
 
     first = mount_assistant(ctx.conn, session)
     await(fn -> answers(first) == ["Completed answer"] end)
@@ -353,7 +353,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
     await_call(session, "Follow-up answer", "Follow-up thought")
     await_answers(second, ["Completed answer", "Follow-up answer"], :streaming)
     Provider.finish(ctx.provider, next_socket)
-    assert_yield(session)
+    assert_yield(session, "Follow-up answer")
     await(fn -> assigns(second).chat_status == :idle end)
     assert answers(second) == ["Completed answer", "Follow-up answer"]
     assert_thoughts(second, ["Completed thought", "Follow-up thought"])
@@ -383,7 +383,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
       Provider.write(socket, %{content: answer})
       await_call(session, answer, thought)
       Provider.finish(ctx.provider, socket)
-      assert_yield(session)
+      assert_yield(session, answer)
       assert watchers(session) == %{}
     end
 
@@ -529,7 +529,9 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
     snapshot
   end
 
-  defp assert_yield(session) do
+  defp assert_yield(%{id: id, pid: pid} = session, expected_answer) do
+    assert_receive {:agent_session_yield, ^id, ^pid, ^expected_answer}, @budget
+
     await(fn ->
       case Stream.snapshot(session.pid) do
         {:ok, %{phase: :awaiting_input, activity: %{phase: :idle, current_call: nil}}, _} -> true
