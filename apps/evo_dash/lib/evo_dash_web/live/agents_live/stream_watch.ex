@@ -12,10 +12,13 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
   Forward `{:inspector_stream_reconciled, node, token, id, request, result}` to
   `reconciled/6` and project checkpoint messages from the updated state in that
   SAME LiveView callback. Independent history results must not overwrite them.
-  `active?/2` includes snapshot-pending and reconciling watches, but not failures.
+  Forward `{:agent_stream_closed, id, snapshot, seq}` to `closed/4` and project
+  its final checkpoint in that SAME callback, even after finish/removal events.
+  `owns?/2` includes failed/pending/terminal selected watches; `terminal?/2`
+  identifies an admitted final handoff, while `active?/2` excludes it.
 
   `inspector_stream` is nil when detached, otherwise a map with `agent_id`,
-  `node`, `token`, `snapshot`, `seq`, `snapshot_request`, `reconciling`,
+  `node`, `target_id`, `token`, `closed`, `snapshot`, `seq`, `snapshot_request`, `reconciling`,
   `required_seq`, `pending` (arrival-ordered batches), `error`, `state` and
   `buffer_bytes`. Tokens never reset. A failed attachment remains visible with
   an error and can be retried by calling `attach/2`.
@@ -65,7 +68,8 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
           not (is_integer(agent_id) and agent_id > 0) ->
         socket
 
-      active?(socket, agent_id) and socket.assigns.inspector_stream.node == target_node ->
+      (active?(socket, agent_id) or terminal?(socket, agent_id)) and
+          socket.assigns.inspector_stream.node == target_node ->
         socket
 
       true ->
@@ -75,7 +79,9 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
         stream = %{
           agent_id: agent_id,
           node: target_node,
+          target_id: socket.assigns[:current_node_id],
           token: token,
+          closed: false,
           snapshot: nil,
           seq: nil,
           snapshot_request: 0,
@@ -292,11 +298,87 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
     end
   end
 
-  @doc "True for the selected healthy watch, including its snapshot-pending interval."
+  @doc """
+  Atomically admits the selected watch's final direct terminal handoff.
+
+  Forward `{:agent_stream_closed, id, snapshot, seq}` here even after a finished
+  delta or summary removal. Keep the selected watch until explicit deselection:
+  neither terminal summaries nor removal are a reason to detach it. This path
+  can recover a pending/failed snapshot request, but never another selection or
+  node scope. A terminal handoff seals the pair against late RPCs and deltas.
+  """
+  def closed(
+        socket,
+        agent_id,
+        %Snapshot{agent_id: agent_id, phase: :done, seq: seq} = snapshot,
+        seq
+      )
+      when is_integer(seq) and seq >= 0 do
+    if owns?(socket, agent_id) and not terminal?(socket, agent_id) do
+      stream = socket.assigns.inspector_stream
+
+      pending_seq =
+        case List.last(stream.pending) do
+          {pending_seq, _events} -> pending_seq
+          nil -> 0
+        end
+
+      watermark = max(max(stream.seq || 0, stream.required_seq), pending_seq)
+
+      if seq >= watermark do
+        NodeContext.unsubscribe_agent_deltas(agent_id)
+        command(socket, {:desired, stream.token, nil})
+
+        assign(socket,
+          inspector_stream:
+            Map.merge(stream, %{
+              snapshot: snapshot,
+              state: RuntimeStream.seed(stream.state, snapshot, seq),
+              seq: seq,
+              closed: true,
+              error: nil,
+              reconciling: false,
+              pending: [],
+              buffer_bytes: 0
+            })
+        )
+      else
+        socket
+      end
+    else
+      socket
+    end
+  end
+
+  def closed(socket, _agent_id, _snapshot, _seq), do: socket
+
+  @doc "Selected scope ownership, including pending, failed and terminal watches."
+  def owns?(socket, agent_id) do
+    case socket.assigns[:inspector_stream] do
+      %{agent_id: ^agent_id, node: target_node, token: token} = stream ->
+        socket.assigns[:selected_agent_id] == agent_id and
+          socket.assigns[:inspector_stream_token] == token and
+          target_node == (socket.assigns[:current_node] || node()) and
+          Map.get(stream, :target_id, socket.assigns[:current_node_id]) ==
+            socket.assigns[:current_node_id] and not pending_remote?(socket)
+
+      _ ->
+        false
+    end
+  end
+
+  @doc "True when the selected watch owns an admitted final transcript (not just a finished delta)."
+  def terminal?(socket, agent_id) do
+    owns?(socket, agent_id) and Map.get(socket.assigns.inspector_stream, :closed, false)
+  end
+
+  @doc "True for the selected healthy live watch, including its snapshot-pending interval."
   def active?(socket, agent_id) do
     case socket.assigns[:inspector_stream] do
-      %{agent_id: ^agent_id, node: target_node, error: nil} ->
-        target_node == (socket.assigns[:current_node] || node()) and not pending_remote?(socket)
+      %{agent_id: ^agent_id, node: target_node, error: nil} = stream ->
+        target_node == (socket.assigns[:current_node] || node()) and not pending_remote?(socket) and
+          Map.get(stream, :target_id, socket.assigns[:current_node_id]) ==
+            socket.assigns[:current_node_id] and not Map.get(stream, :closed, false)
 
       _ ->
         false
@@ -414,6 +496,9 @@ defmodule EvoDashWeb.AgentsLive.StreamWatch do
 
   defp fail(socket, reason) do
     case socket.assigns[:inspector_stream] do
+      %{closed: true} ->
+        socket
+
       %{} = stream ->
         NodeContext.unsubscribe_agent_deltas(stream.agent_id)
         command(socket, {:desired, stream.token, nil})

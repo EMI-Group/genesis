@@ -3,8 +3,9 @@ defmodule EvoDashWeb.HomeLive.Watch do
   Consumer-local subscription and serial, supervised registration for Assistant.
 
   Forward `{:chat_stream_ready, node, token, id, result}` to `ready/5`, deltas
-  to `push/4`, and worker `:DOWN` messages to `down/4` in the LiveView process.
-  `ready/5` and `push/4` return `{:ok, socket, surface}`, `{:ignored, socket}`,
+  to `push/4`, terminal `{:agent_stream_closed, id, snapshot, seq}` handoffs to
+  `closed/4`, and worker `:DOWN` messages to `down/4` in the LiveView process.
+  `ready/5`, `push/4` and `closed/4` return `{:ok, socket, surface}`, `{:ignored, socket}`,
   `{:buffered, socket}` or `{:error, socket, reason}`. Install the returned
   `transcript`, `thought_process` and `meta` in the SAME callback as the returned
   socket. On ready, apply `surface.snapshot.phase` FIRST, then the replayed
@@ -58,12 +59,14 @@ defmodule EvoDashWeb.HomeLive.Watch do
         stream = %{
           agent_id: id,
           node: target_node,
+          target_id: socket.assigns[:current_node_id],
           token: token,
           delta: nil,
           snapshot: nil,
           pending: [],
           buffer_bytes: 0,
           final_resync: nil,
+          closed_seq: nil,
           terminal_outcome: nil,
           required_seq: 0,
           error: nil
@@ -100,6 +103,9 @@ defmodule EvoDashWeb.HomeLive.Watch do
   @doc "Admits the current atomic snapshot and replays only newer buffered batches."
   def ready(socket, target_node, token, id, result) do
     case socket.assigns[:chat_stream] do
+      %{closed_seq: seq} when is_integer(seq) ->
+        {:ignored, socket}
+
       %{node: ^target_node, token: ^token, agent_id: ^id, error: nil} = stream
       when stream.delta == nil or stream.final_resync == :pending ->
         if stream_active?(socket) do
@@ -151,6 +157,9 @@ defmodule EvoDashWeb.HomeLive.Watch do
   @doc "Buffers during registration, otherwise applies a strictly newer batch."
   def push(socket, id, seq, events) when is_integer(seq) and seq >= 0 and is_list(events) do
     case socket.assigns[:chat_stream] do
+      %{closed_seq: closed_seq} when is_integer(closed_seq) ->
+        {:ignored, socket}
+
       %{agent_id: ^id, error: nil} = stream ->
         if stream_active?(socket) do
           case stream.delta do
@@ -198,6 +207,73 @@ defmodule EvoDashWeb.HomeLive.Watch do
   end
 
   def push(socket, _id, _seq, _events), do: {:ignored, socket}
+
+  @doc """
+  Admits the authoritative final cut delivered directly by the watched session.
+
+  This may precede registration's reply or follow a failed final resync. It
+  replaces the whole display surface, never appends or guesses message identity.
+  Equal sequence is intentional: the final messages can checkpoint at the same
+  watermark as an already applied finish batch. Once admitted, no late delta,
+  registration reply or worker failure can replace this terminal cut.
+
+  The returned snapshot retains the core's terminal status fields verbatim;
+  the page must apply that status alongside `snapshot.phase` and the surface.
+  """
+  def closed(socket, id, %Snapshot{agent_id: id, phase: :done, seq: seq} = snapshot, seq)
+      when is_integer(seq) and seq >= 0 do
+    case socket.assigns[:chat_stream] do
+      %{closed_seq: closed_seq} when is_integer(closed_seq) ->
+        {:ignored, socket}
+
+      %{agent_id: ^id} = stream ->
+        if stream_active?(socket) and stream.token == socket.assigns[:stream_attach_seq] and
+             seq >= observed_seq(stream) do
+          {:ok, surface} = snapshot_result({:ok, snapshot, seq}, id, stream.node)
+
+          surface =
+            surface
+            |> Map.put(:outcome, nil)
+            |> Map.update!(:transcript, &Transcript.close_streaming/1)
+
+          token = next_token(socket)
+
+          stream =
+            Map.merge(stream, %{
+              token: token,
+              delta: surface.delta,
+              snapshot: snapshot,
+              pending: [],
+              buffer_bytes: 0,
+              final_resync: :done,
+              closed_seq: seq,
+              terminal_outcome: nil,
+              required_seq: seq,
+              error: nil
+            })
+
+          NodeContext.unsubscribe_agent_deltas(id)
+          command(socket, :unregister)
+          socket = assign(socket, chat_stream: stream, stream_attach_seq: token)
+          {:ok, socket, surface}
+        else
+          {:ignored, socket}
+        end
+
+      _ ->
+        {:ignored, socket}
+    end
+  end
+
+  def closed(socket, _id, _snapshot, _seq), do: {:ignored, socket}
+
+  defp observed_seq(stream) do
+    previous = if match?(%Delta{}, stream.delta), do: stream.delta.seq, else: 0
+
+    Enum.reduce(stream.pending, max(previous, stream.required_seq), fn {seq, _events}, latest ->
+      max(seq, latest)
+    end)
+  end
 
   # A silent finish retires the live call without its answer. Re-register through
   # the same worker for ONE authoritative cut, with no unsubscribe gap or history
@@ -304,13 +380,23 @@ defmodule EvoDashWeb.HomeLive.Watch do
   @doc "True while this scope owns history, including registration and failed watches."
   def stream_active?(socket) do
     case socket.assigns[:chat_stream] do
-      %{agent_id: id, node: target_node} ->
+      %{agent_id: id, node: target_node} = stream ->
         id == socket.assigns[:session_id] and
           target_node == (socket.assigns[:current_node] || node()) and
+          Map.get(stream, :target_id, socket.assigns[:current_node_id]) ==
+            socket.assigns[:current_node_id] and
           not pending_remote?(socket)
 
       _ ->
         false
+    end
+  end
+
+  @doc "True when the current scope owns an admitted terminal handoff."
+  def closed?(socket) do
+    case socket.assigns[:chat_stream] do
+      %{closed_seq: seq} when is_integer(seq) -> stream_active?(socket)
+      _ -> false
     end
   end
 
@@ -335,10 +421,22 @@ defmodule EvoDashWeb.HomeLive.Watch do
 
   defp fail(socket, reason) do
     case socket.assigns[:chat_stream] do
+      %{closed_seq: seq} when is_integer(seq) ->
+        socket
+
       %{} = stream ->
         NodeContext.unsubscribe_agent_deltas(stream.agent_id)
         command(socket, :unregister)
-        assign(socket, chat_stream: %{stream | error: reason, pending: [], buffer_bytes: 0})
+
+        assign(socket,
+          chat_stream: %{
+            stream
+            | error: reason,
+              required_seq: observed_seq(stream),
+              pending: [],
+              buffer_bytes: 0
+          }
+        )
 
       _ ->
         socket
