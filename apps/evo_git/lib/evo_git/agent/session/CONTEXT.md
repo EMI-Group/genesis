@@ -48,7 +48,8 @@ The only per-turn publication is the `:checkpoint` event → `Summary.publish/3`
 
 ## Phases, Events and Commands (yield/finish split)
 
-The `:gen_statem` uses `callback_mode: :handle_event_function` and its state name IS the phase: `:starting | :running | :awaiting_input | :cancelling | :finalizing | :done` (`data.phase` is kept in sync on every transition because `inspect/2` surfaces it).
+The `:gen_statem` uses `callback_mode: :handle_event_function` and its state name IS the lifecycle phase: `:starting | :running | :awaiting_input | :cancelling | :finalizing | :done`.
+`inspect/2` exposes that live phase separately from the last checkpointed `%State{}`; `state.phase` is not re-stamped on cancellation or finalization and must not be treated as live phase truth.
 Internal data is a plain map `%{state:, worker:, finalizer:, start_task:, start_timers:, last_yield_text:, notify_pid:, dispatch_ctx:, tmpdir:, result:, phase:, last_published_turn:, watchers:, event_seq:, batcher:}`, where `notify_pid` is the normalized `{pid, tag} | nil` close sink (`init/1` maps `{pid, tag}` as-is, a bare `pid` to `{pid, nil}`, anything else to `nil`); `start_task` is the `:starting` phase's ONE durable-setup `%Task{}` and `start_timers` its `{slow_warn_ref, stall_ref}` pair (cleared as soon as the task replies, so a later `:DOWN`/timer for it is stale by construction); `watchers` (`%{consumer_pid => monitor_ref}`), `event_seq` and `batcher` are SESSION-authoritative streaming state that no worker state copy may override; the worker ref is the ONLY identity that can deliver an outcome (`current_worker?/2`), the start task ref the only one that can finish `:starting` (`current_start_ref?/2`), and the finalizer handle the only one that can deliver a finalization.
 
 Transition table (as implemented):
@@ -140,6 +141,16 @@ The worker's per-chunk `Sink` callback consumes that message exactly once (`Sink
 DEGRADATION (documented, never a silent loss): the chunk-level halt needs an installed stream callback, and `Sink.stream_opts/0` is `[]` while no watcher is registered, so with ZERO watchers `:interrupt` cannot pre-empt the in-flight turn and is applied at the NEXT turn boundary instead.
 That fallback stays race-free, because the message travels exactly once through the pending-message transport — it is therefore never lost and never delivered twice.
 A `{:evogit_interrupt, _ref}` that arrives after the last chunk of a turn (or while no watcher exists) stays unread in that SHORT-LIVED worker's mailbox and dies with the process; the next exchange runs in a NEW worker (and `Sink.install/2` sweeps the mailbox anyway), so one request can never abort two turns.
+
+## Inspector Snapshot Limitations
+
+`Stream.Snapshot` currently contains exactly `agent_id`, lifecycle `phase`, `seq`, `turn`, `total_tokens`, `usage`, `messages`, `mode`, `model_spec` and `compression_count`, with no in-flight response, active-tool list or runtime-activity phase.
+`history/2` and snapshot `messages` expose the last checkpointed conversation, not the currently streaming assistant response or in-progress tool batch.
+The delta handler only buffers events for broadcast and never folds text, thinking or tool events into snapshot state, so a mid-turn attachment or resnapshot cannot recover already-flushed fragments even though its `seq` includes those flushes.
+Watch and snapshot calls neither flush the batcher nor reconcile its events with checkpointed history, so a pending batch can also overlap a newer checkpoint's messages.
+The session's lifecycle phase does not distinguish thinking, generating, executing tools, waiting for slots or waiting for subagents, and the session emits no lifecycle delta on yield/resume/cancel/finalization itself.
+An interactive close finalizes through `Session.Finalize` rather than the exchange engine, so session shutdown cannot be inferred solely from the exchange's `{:finished, status}` delta.
+Adding an explicit inspector runtime-activity contract requires session-owned snapshot state distinct from lifecycle phase and restamped independently of worker checkpoints, plus ordered runtime transition events from the worker and terminal session paths.
 
 ## Snapshot-Only Reads (no polling)
 
