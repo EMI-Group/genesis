@@ -151,6 +151,14 @@ The core snapshot includes session-owned `activity: %{phase:, current_call: nil 
 Core phases are `:idle`, `:llm_waiting`, `:llm`, `:llm_complete`, `:retry_wait` and `:tools`, and activity capture continues without watchers; watch and snapshot flush pending events before returning the authoritative sequence.
 The inspector adopts `activity.current_call` from snapshots and replacements and appends only strictly newer chunks through the existing StreamWatch buffering/sequence admission.
 Fresh core call ids separate retry attempts, and nil current-call retirement clears obsolete live excerpts without modifying raw checkpoint history.
+
+## Integration Follow-up Outside This Node
+
+The parent page still requests checkpoint history on tool results, yield and finish rather than authoritative current-call retirement/replacement, so a retirement needs an additional parent-owned coalesced reconciliation trigger.
+Independent history RPC results can arrive before the stream batch retiring their call, transiently displaying checkpoint content alongside the live excerpt; duplicate-free atomic handoff requires parent-owned sequence-consistent snapshot reconciliation with buffering/replay, not inferred checkpoint identity or text matching.
+Core turn and yield events precede checkpoint adoption, so a history read triggered by either may legitimately return older messages while activity retains the complete response.
+The parent template's dormant `inspector_live_part?/3` suppression branches generate compiler unreachable-condition warnings because this node's compatibility predicate is always false; the parent should remove the conditional placeholder and response/thinking guards, then delete the unused helper and aliases.
+Existing sibling inspector tests still use synthetic `in_flight`, flattened activity identities and `message_start` fixtures and need migration to real activity projections before their assertions validate this contract.
 All six core phases have truthful presentation labels, and successful empty-thinking notices require complete binary capture plus `:llm_complete` or `:tools`.
 Current deltas expose text/thinking chunks and tool id/name/status but not tool arguments, result bodies or full history-message changes.
 There is no checkpoint-message call identity or checkpoint-coverage watermark, so checkpoint suppression and historical excerpt reconciliation by guessed turn/content are unsupported.
