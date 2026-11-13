@@ -68,18 +68,18 @@ defmodule EvoDashWeb.AgentsLive.StreamPanel do
         <div class="text-xs text-base-content/70">
           {gettext("Turn %{turn}", turn: message.turn || 0)}
         </div>
-        <details :if={message.thinking != ""}>
+        <details :if={message.thinking != "" or message.omitted_thinking_bytes > 0}>
           <summary class="cursor-pointer text-xs font-medium">{gettext("Thinking")}</summary>
           <pre class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">{message.thinking}</pre>
-          <.omission count={message.omitted_thinking} />
+          <.omission count={message.omitted_thinking_bytes} />
         </details>
         <p :if={message.thinking_status == :none} class="text-xs text-base-content/60">
           {gettext("No thinking content available")}
         </p>
-        <div :if={message.response != ""}>
+        <div :if={message.response != "" or message.omitted_response_bytes > 0}>
           <div class="text-xs font-medium">{gettext("Response")}</div>
           <pre class="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm">{message.response}</pre>
-          <.omission count={message.omitted_response} />
+          <.omission count={message.omitted_response_bytes} />
         </div>
         <span
           :if={message.active}
@@ -90,6 +90,7 @@ defmodule EvoDashWeb.AgentsLive.StreamPanel do
         <ul :if={message.tool_calls != []} class="space-y-1 text-xs">
           <li :for={tool <- message.tool_calls} class="flex min-w-0 gap-2">
             <span class="min-w-0 truncate font-mono">{tool.name}</span>
+            <.omission count={tool.omitted_name_bytes} />
             <span class="shrink-0 text-base-content/70">{tool_label(tool.status)}</span>
           </li>
         </ul>
@@ -106,7 +107,7 @@ defmodule EvoDashWeb.AgentsLive.StreamPanel do
   defp omission(assigns) do
     ~H"""
     <p :if={@count > 0} class="text-xs text-base-content/70">
-      {gettext("%{count} characters omitted from this preview.", count: @count)}
+      {gettext("%{count} bytes omitted from this live excerpt.", count: @count)}
     </p>
     """
   end

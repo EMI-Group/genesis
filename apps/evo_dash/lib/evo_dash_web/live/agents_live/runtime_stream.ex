@@ -37,12 +37,28 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
   Seed replaces all previous live projections so a resync cannot concatenate
   old chunks into a new checkpoint.
 
+  Live projections are bounded excerpts: `max_projections/0` newest messages,
+  `max_text_bytes/0` bytes independently per response/thinking prefix, and
+  `max_tools/0` descriptors with `max_tool_name_bytes/0` name bytes each.
+  `omitted_messages` counts evicted projections; each retained projection has
+  cumulative `omitted_response_bytes`, `omitted_thinking_bytes`, `omitted_tools`.
+  Yield replacement omissions add to the counters, not erase previous loss.
+  Text slices are copied and UTF-8-safe. Capture coverage describes source
+  observation, not retention: omissions separately forbid checkpoint suppression.
+  Raw checkpoint `messages` and explicit identities are never truncated.
+
   A snapshot without in-flight coverage can omit already flushed chunks.
   This reducer does not pretend that attachment is lossless or deduplicate
   projections against checkpoint history.
   """
 
   alias EvoGit.Agent.Stream
+  alias EvoDashWeb.AgentsLive.StreamLimits
+
+  defdelegate max_projections(), to: StreamLimits
+  defdelegate max_text_bytes(), to: StreamLimits
+  defdelegate max_tools(), to: StreamLimits
+  defdelegate max_tool_name_bytes(), to: StreamLimits
 
   @type projection :: %{
           identity: map(),
@@ -54,7 +70,10 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
           complete: boolean(),
           generation_complete: boolean(),
           capture_coverage: :complete | :partial,
-          chunks_seen: boolean()
+          chunks_seen: boolean(),
+          omitted_response_bytes: non_neg_integer(),
+          omitted_thinking_bytes: non_neg_integer(),
+          omitted_tools: non_neg_integer()
         }
   @type t :: %__MODULE__{
           agent_id: term(),
@@ -68,6 +87,7 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
           thinking: binary(),
           tool_calls: [map()],
           projections: [projection()],
+          omitted_messages: non_neg_integer(),
           message_index: non_neg_integer() | nil,
           finished: boolean(),
           status: atom() | nil
@@ -84,6 +104,7 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
             thinking: "",
             tool_calls: [],
             projections: [],
+            omitted_messages: 0,
             message_index: nil,
             finished: false,
             status: nil
@@ -169,15 +190,15 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
          else: :partial
 
     update_current(state, fn message ->
-      %{
-        message
-        | response: text(response),
-          thinking: text(thinking),
-          capture_coverage: coverage,
-          chunks_seen: response not in [nil, ""] or thinking not in [nil, ""],
-          generation_complete: field(flight, :generation_complete) == true,
-          complete: field(flight, :generation_complete) == true
-      }
+      message
+      |> replace_text(:response, text(response))
+      |> replace_text(:thinking, text(thinking))
+      |> Map.merge(%{
+        capture_coverage: coverage,
+        chunks_seen: response not in [nil, ""] or thinking not in [nil, ""],
+        generation_complete: field(flight, :generation_complete) == true,
+        complete: field(flight, :generation_complete) == true
+      })
     end)
   end
 
@@ -192,8 +213,14 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
     key = if kind == :text, do: :response, else: :thinking
 
     update_current(state, fn message ->
+      {excerpt, omitted} =
+        if Map.fetch!(message, omission_key(key)) > 0,
+          do: {Map.fetch!(message, key), byte_size(chunk)},
+          else: StreamLimits.append(Map.fetch!(message, key), chunk)
+
       message
-      |> Map.update!(key, fn previous -> previous <> chunk end)
+      |> Map.put(key, excerpt)
+      |> Map.update!(omission_key(key), &(&1 + omitted))
       |> Map.put(:chunks_seen, true)
     end)
   end
@@ -228,7 +255,8 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
     state = ensure_message(state, false)
 
     update_current(state, fn message ->
-      %{message | tool_calls: announce_tool(message.tool_calls, id, name)}
+      {tools, omitted} = announce_tool(message.tool_calls, id, name)
+      %{message | tool_calls: tools, omitted_tools: message.omitted_tools + omitted}
     end)
   end
 
@@ -262,7 +290,7 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
       else
         state
         |> ensure_message(false)
-        |> update_current(fn message -> %{message | response: value} end)
+        |> update_current(&replace_text(&1, :response, value))
       end
 
     state = update_current(state, &%{&1 | generation_complete: true})
@@ -303,10 +331,21 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
           complete: false,
           generation_complete: false,
           capture_coverage: :partial,
-          chunks_seen: false
+          chunks_seen: false,
+          omitted_response_bytes: 0,
+          omitted_thinking_bytes: 0,
+          omitted_tools: 0
         }
 
-        sync(%{state | projections: state.projections ++ [message], turn: turn})
+        projections = state.projections ++ [message]
+        dropped = max(length(projections) - max_projections(), 0)
+
+        sync(%{
+          state
+          | projections: Enum.take(projections, -max_projections()),
+            omitted_messages: state.omitted_messages + dropped,
+            turn: turn
+        })
     end
   end
 
@@ -345,12 +384,33 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
         (not is_nil(id) and tool.id == id) or (is_nil(tool.id) and tool.name == name)
       end)
 
-    if is_nil(index) do
-      tools ++ [%{id: id, name: name, status: :announced}]
-    else
-      List.update_at(tools, index, fn tool -> %{tool | id: id || tool.id, name: name} end)
+    {name, omitted_name_bytes} = StreamLimits.preview(name, max_tool_name_bytes())
+
+    cond do
+      not is_nil(index) ->
+        {List.update_at(tools, index, fn tool ->
+           %{tool | id: id || tool.id, name: name, omitted_name_bytes: omitted_name_bytes}
+         end), 0}
+
+      length(tools) < max_tools() ->
+        {tools ++
+           [%{id: id, name: name, status: :announced, omitted_name_bytes: omitted_name_bytes}], 0}
+
+      true ->
+        {tools, 1}
     end
   end
+
+  defp replace_text(message, key, value) do
+    {excerpt, omitted} = StreamLimits.preview(value, max_text_bytes())
+
+    message
+    |> Map.put(key, excerpt)
+    |> Map.update!(omission_key(key), &(&1 + omitted))
+  end
+
+  defp omission_key(:response), do: :omitted_response_bytes
+  defp omission_key(:thinking), do: :omitted_thinking_bytes
 
   @doc "Normalizes explicit stream/checkpoint message identity, never a local row ordinal."
   def message_identity(value) when is_integer(value) and value >= 0, do: %{message_index: value}

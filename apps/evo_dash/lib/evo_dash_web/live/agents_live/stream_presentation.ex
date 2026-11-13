@@ -4,8 +4,11 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
 
   This does not merge live excerpts into checkpoint history: today's core does
   not supply a transcript-coverage watermark, so doing so would risk duplication
-  or loss. Raw reducer content remains unchanged. Every omitted character,
-  projection and tool has an explicit count in the returned view.
+  or loss. Reducer excerpts remain unchanged, and every omitted byte,
+  projection and tool has an explicit count in the returned view. Legacy
+  `omitted_response`/`omitted_thinking` count render-stage graphemes only;
+  `omitted_response_bytes`/`omitted_thinking_bytes` include retention AND render
+  omissions. Message/tool omissions likewise include reducer retention counts.
 
   Activity comes ONLY from the authoritative activity field, never lifecycle,
   thinking chunks, tool announcements or tool results. Missing activity is
@@ -16,16 +19,25 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
   predicate over only wholly rendered parts, never bounded-prefix equality.
   """
 
-  alias EvoDashWeb.AgentsLive.RuntimeStream
+  alias EvoDashWeb.AgentsLive.{RuntimeStream, StreamLimits}
 
   @max_messages 12
   @max_characters 12_000
   @max_tools 20
 
+  @doc "Maximum messages rendered, also the reducer's live retention limit."
+  def max_messages, do: min(@max_messages, StreamLimits.max_projections())
+
+  @doc "Maximum graphemes displayed per response/thinking excerpt."
+  def max_characters, do: @max_characters
+
+  @doc "Maximum tools displayed per live message."
+  def max_tools, do: @max_tools
+
   @doc "Builds a bounded render model without changing raw state or interpreting checkpoint messages."
   def build(state) do
     projections = list(field(state, :projections))
-    retained = Enum.take(projections, -@max_messages)
+    retained = Enum.take(projections, -max_messages())
     generating = activity(field(state, :activity)) == :llm and field(state, :finished) != true
 
     messages =
@@ -46,7 +58,8 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
       status: field(state, :status),
       finished: field(state, :finished) == true,
       messages: messages,
-      omitted_messages: max(length(projections) - length(retained), 0)
+      omitted_messages:
+        count(field(state, :omitted_messages)) + max(length(projections) - length(retained), 0)
     }
   end
 
@@ -72,6 +85,7 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
 
     cond do
       text(field(projection, :thinking)) != "" -> :present
+      count(field(projection, :omitted_thinking_bytes)) > 0 -> :unavailable
       field(projection, :generation_complete) != true -> :pending
       coverage == :complete -> :none
       true -> :unavailable
@@ -97,7 +111,7 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
       Enum.any?(build(state).messages, fn message ->
         message.identity == identity and message.capture_coverage == :complete and
           message.generation_complete and Map.get(message, omission_key) == 0 and
-          Map.get(message, part) == value
+          Map.get(message, byte_omission_key(part)) == 0 and Map.get(message, part) == value
       end)
     else
       false
@@ -111,8 +125,8 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
   def owned?(_state, _id, _target), do: false
 
   defp message(projection) do
-    {response, omitted_response} = preview(field(projection, :response))
-    {thinking, omitted_thinking} = preview(field(projection, :thinking))
+    {response, omitted_response, response_bytes} = preview(field(projection, :response))
+    {thinking, omitted_thinking, thinking_bytes} = preview(field(projection, :thinking))
     tools = list(field(projection, :tool_calls))
 
     %{
@@ -127,17 +141,21 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
       thinking_status: thinking_status(projection),
       omitted_response: omitted_response,
       omitted_thinking: omitted_thinking,
+      omitted_response_bytes: count(field(projection, :omitted_response_bytes)) + response_bytes,
+      omitted_thinking_bytes: count(field(projection, :omitted_thinking_bytes)) + thinking_bytes,
       tool_calls: tools |> Enum.take(@max_tools) |> Enum.map(&tool/1),
-      omitted_tools: max(length(tools) - @max_tools, 0)
+      omitted_tools: count(field(projection, :omitted_tools)) + max(length(tools) - @max_tools, 0)
     }
   end
 
   defp tool(value) do
-    {name, omitted_name} = preview(field(value, :name))
+    {name, omitted_name} =
+      StreamLimits.preview(text(field(value, :name)), StreamLimits.max_tool_name_bytes())
 
     %{
       name: name,
-      omitted_name: omitted_name,
+      omitted_name: max(String.length(text(field(value, :name))) - String.length(name), 0),
+      omitted_name_bytes: count(field(value, :omitted_name_bytes)) + omitted_name,
       status: tool_status(field(value, :status))
     }
   end
@@ -147,9 +165,17 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
 
   defp preview(value) do
     value = text(value)
-    length = String.length(value)
-    {String.slice(value, 0, @max_characters), max(length - @max_characters, 0)}
+    {bounded, _omitted} = StreamLimits.preview(value, StreamLimits.max_text_bytes())
+    preview = bounded |> String.slice(0, @max_characters) |> :binary.copy()
+
+    {preview, max(String.length(value) - String.length(preview), 0),
+     byte_size(value) - byte_size(preview)}
   end
+
+  defp byte_omission_key(:response), do: :omitted_response_bytes
+  defp byte_omission_key(:thinking), do: :omitted_thinking_bytes
+  defp count(value) when is_integer(value) and value >= 0, do: value
+  defp count(_value), do: 0
 
   defp field(value, key) when is_map(value),
     do: Map.get(value, key, Map.get(value, to_string(key)))

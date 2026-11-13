@@ -105,7 +105,14 @@ Explicit optional `{:message_start, identity}` accepts a map with nonnegative `t
 For the existing identity-free stream, `{:turn, map}` records accounting and marks the current projection complete WITHOUT clearing response/thinking/tools, and only the next text/thinking chunk opens a new projection while intervening tool events stay with the previous message.
 `{:yield, text}` treats nonempty text as the current complete response, preserves thinking and tools, completes that projection and sets lifecycle/status to `:awaiting_input` with activity nil; `{:finished, status}` completes the projection, sets phase `:finished`, records status and clears activity.
 Unknown/malformed events are ignored, a newer accepted batch still advances its watermark, atom/string-key map reads are tolerated and the reducer does no I/O, process work, gettext or checkpoint text extraction through a competing `ContentText` implementation.
-There are no retention caps in this raw inspector reducer, so the page owns any render/retention policy and must not treat it as a bounded Assistant transcript.
+The reducer is a bounded live-excerpt cache, not a lossless transcript: `StreamLimits` (also delegated by `RuntimeStream`) exposes `max_projections/0` = 12, `max_text_bytes/0` = 48_000 independently for response AND thinking, `max_tools/0` = 20 and `max_tool_name_bytes/0` = 1_024.
+It retains the newest 12 projections and the first UTF-8-safe text prefix per part, copies retained binary slices to avoid pinning large incoming binaries, and never concatenates an unbounded incoming chunk before applying the byte limit.
+Once a part omits bytes, later chunks are counted but not appended, so a UTF-8 boundary cannot introduce a gap into the retained prefix.
+Each projection carries cumulative nonnegative `omitted_response_bytes`, `omitted_thinking_bytes` and `omitted_tools`; the state carries cumulative `omitted_messages` for evicted projections, reset by seed/resync.
+Byte counters count discarded incoming bytes within a retained projection, including replacement yield payloads, so repeated replacement payloads can contribute again; counts belonging to evicted projections are summarized by the omitted-message count, not kept as unbounded tombstones.
+Tool retention keeps the first 20 descriptors, counts later unretained announcements (not unique tool ids) and still updates results for retained descriptors; retained names carry `omitted_name_bytes` and opaque ids/status remain protocol metadata rather than excerpt text.
+Source `capture_coverage` and explicit identity remain unchanged by retention, but complete capture never implies complete retained content; omission counters independently forbid checkpoint suppression and omitted thinking never proves absence.
+Raw checkpoint `messages` is unchanged and uncapped by this helper policy; attachment snapshots and protocol metadata are not covered by the live-text byte budget.
 
 ## Inspector StreamWatch Lifecycle
 `StreamWatch.attach(socket, agent_id)` subscribes in the connected LiveView process and asynchronously registers that same LiveView pid through one serialized, consumer-monitored worker.
@@ -121,7 +128,10 @@ The worker performs RPC through `SafeCall`, cleans up after consumer death, and 
 
 ## Inspector Stream Presentation
 `StreamPresentation.build/1` is the pure bounded render model over `RuntimeStream`, retaining the last 12 live projections, the first 12,000 graphemes of response and thinking separately, and at most 20 tool descriptors per projection with explicit omission counts.
-The raw reducer remains unchanged and unbounded, so rendering limits are not transcript-retention limits and do not silently delete captured content.
+The reducer retains bounded excerpts and the presentation applies a second display cap without mutating them; checkpoint history remains unchanged.
+`StreamPresentation.max_messages/0`, `max_characters/0` and `max_tools/0` expose the render limits (12 messages, 12_000 graphemes per part and 20 tools).
+Existing `omitted_response`/`omitted_thinking` fields remain render-stage grapheme counts, while new `omitted_response_bytes`/`omitted_thinking_bytes` sum reducer omissions and bytes excluded by rendering, and `omitted_messages`/`omitted_tools` include both retention and rendering omissions.
+The panel displays total byte omissions for each part even if its retained text is empty, name byte omissions and aggregate message/tool omissions; a truncated part always fails `checkpoint_part_covered?/4`, and omitted thinking can never return `:none` even with an explicit complete-coverage override.
 `StreamPresentation.activity/1` reads only authoritative activity (`:llm`, `:tool`/`:tools`, `:idle`, `:waiting`), with missing or unknown activity rendered as unavailable rather than inferred from chunks, lifecycle or announcements.
 `thinking_status/2` reports `:present`, `:pending`, `:unavailable` or `:none`; its default reads the reducer's per-message `capture_coverage`, while an explicit second argument remains a caller-owned coverage override.
 Only completed generation with complete capture and empty thinking returns `:none`, and `StreamPanel` renders exactly `gettext("No thinking content available")` for that case.
