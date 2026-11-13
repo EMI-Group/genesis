@@ -252,6 +252,13 @@ With `:unknown`, the shape heuristics decide: the turn-0 wrapper is unwrapped so
 `Messages.transcript/1` is the SINGLE builder for both the history read (`apply_history/3`) and the watch snapshot (`{:chat_stream_ready, …}`), so the projection also governs every attach/reattach and the persisted `ChatState` transcript.
 `bubbles/1` is total — nil or garbage input yields `[]` and it never raises.
 
+## Mounted integration assertion boundaries
+`ChatMessages.message_list/1` wraps every transcript row in `#chat-entry-<entry.id>`, and `Transcript.entry/3` generates unique-integer string ids, so history rebuilds do not preserve row ids across remounts.
+A streamed assistant answer has `.help-caret`, while a finalized answer exposes `button[id^="assistant-copy-"][data-content]` and ordinarily `.md-content`; scope answer assertions outside the Thought process details because history-derived thought entries can repeat the answer text.
+`Watch.snapshot_result/3` seeds only sequence and turn through `Delta.seed/3`; the current Delta struct has no `current_call` or in-flight snapshot projection, so a late attach cannot be assumed to display already-emitted in-flight chunks from the snapshot alone.
+`Delta` ignores unknown events, so consumers must implement any richer core event vocabulary explicitly rather than assuming it is rendered here.
+`Delta` closes a streaming bubble on `:turn`, and `:yield` then calls `Transcript.finalize_assistant/2`, which appends an assistant entry when no streaming entry remains; a separate turn-close followed by yield can therefore duplicate the final answer.
+
 ## Watch/Delta reuse constraints
 
 `Watch.snapshot_result/3` accepts only `%EvoGit.Agent.Stream.Snapshot{}` inside the flat registration answer or its SafeCall wrapper, consumes `turn`, `total_tokens`, `usage` and the returned seq, and does not itself apply history or phase.
