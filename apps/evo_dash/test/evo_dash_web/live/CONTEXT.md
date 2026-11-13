@@ -24,7 +24,7 @@ No page or unit suite writes the config dir BEAM-globally: it is isolated per pr
 - `./real_stream_consumers_test.exs` → synchronous real producer-to-mounted inspector and Assistant regressions using actual SelfReflective Sessions, default attach/watch registration and gated loopback SSE decoded by ReqLLM, with a cohesive file-local TCP fixture above the case module.
   These tests assert unwatched-prefix snapshot capture, suffix uniqueness, nested call identity, yield retirement, actual unmount/remount and per-answer thinking retention without stale carets, and retain strong failures when the source consumer cannot honor the producer contract.
   Teardown monitors consumers, their supervised watch/load workers, Session/exchange/ReqLLM descendants and the SSE acceptor before restoring scheduler pools and shared ChatHistory state.
-- `./agents_stream_integration_test.exs` → five synchronous mounted inspector-stream integration tests covering watch/snapshot/delta delivery, activity, cleanup, no watched history-count refetch and checkpoint failure/retry.
+- `./agents_stream_integration_test.exs` → synchronous mounted inspector-stream integration tests covering watch/snapshot/delta delivery, activity, cleanup, no watched history-count refetch and atomic checkpoint failure/retry.
 - `./agents_stream_render_test.exs` → fourteen async public page-render contracts for stream presentation, capture-aware no-thinking verdicts and per-message animation API/scope.
 - `./agents_stream_watch_lifecycle_test.exs` → seven synchronous real `StreamWatch` worker lifecycle tests using an isolated spawned consumer and a connected hand-built socket, not a mounted page.
   The forcing globals are the BEAM-global `:agents_watch_runner` / `:agents_unwatch_runner` seams, snapshotted and restored only after the consumer and its supervised workers have exited.
@@ -131,18 +131,20 @@ Error results, exits, exceptions and malformed registration results must clean u
 Negative RPC probes occur only after the worker's terminal DOWN, not after an arbitrary quiet window, and teardown owner monitors release blocked test runners even when an assertion fails.
 The child async `agents_live/stream_watch_test.exs` covers pure snapshot/replay and worker-command boundaries, not real RPC ordering or consumer-death cleanup.
 `agents_stream_integration_test.exs` covers the mounted `/agents` inspector-stream path through actual selection/watch seams, buffered snapshot replay, stale/duplicate/foreign deltas, authoritative LLM/tools phases, and suppression of message-count history refetch while watched.
-Its five mounted tests also pin selection/close/local-to-remote URL-patch cleanup and checkpoint reconciliation failure with retained content and explicit retry.
+Its mounted tests also pin selection/close/local-to-remote URL-patch cleanup and atomic checkpoint reconciliation failure with retained content and explicit retry.
 The module is synchronous because its global app-env runner seams overlap the existing async page suites, and monitored consumer/worker teardown completes before those seams are restored.
 `agents_stream_render_test.exs` has fourteen async tests exercising the public `AgentsLive.render/1` without mounting or mutating global state.
 It pins response/thinking separation, authoritative activity, no-thinking only after completed generation with explicit complete thinking capture, and stable per-message animation identities, attachment scope, disclosure/expansion and checkpoint-part identity gates.
 Incomplete, omitted-thinking, late-start, failed and cancelled captures never establish a no-thinking verdict.
 Run all scoped inspector tests with `mix test apps/evo_dash/test/evo_dash_web/live/agents_live apps/evo_dash/test/evo_dash_web/live/agents*_test.exs` from the umbrella root.
 The mounted inspector integration suite fabricates `%Snapshot{}` watch answers and manually broadcasts delta batches; it does not start a real core session or call real `Stream.watch`.
-Its activity fixtures include phase-only maps and atom values, while render fixtures use `in_flight` with `message_index`, `response`, `generation_complete` and `capture_coverage` rather than an activity-owned call identity.
-The mounted Assistant push-only suite similarly fabricates snapshot answers and publishes its own deltas; its in-flight preservation test seeds a bubble directly rather than obtaining a mid-call snapshot from the core.
-These suites establish dashboard transport/presentation behavior but do not establish producer/consumer compatibility for whole-replacement `%{phase:, current_call:}` activity, retry-attempt identity or completed-call checkpoint retirement.
-`real_stream_consumers_test.exs` supplies the real core-stream compatibility boundary synchronously through gated loopback SSE and ReqLLM decoding, retaining actual SelfReflective Session/watch production rather than a provider callback override.
-Its independent scenarios expose late-attach snapshot seeding, live-yield duplicate replay and restored per-answer thinking failures without weakening the consumer contracts.
+The inspector fixtures initialize actual watch state and use watch-owned atomic snapshots for history/checkpoint reconciliation, filtering buffered deltas against the snapshot sequence and coalescing refreshes without compatibility fields or the removed historical `message_identity/1` API.
+`agents_live_test.exs` uses `%Snapshot{}` watch answers for selected-agent history, preserves optimistic-message compression assertions, and verifies message-count events cannot independently refetch watched history.
+The mounted Assistant push-only suite fabricates snapshot answers and publishes its own deltas with valid `activity.current_call` identity before text/thinking, retaining exact thinking, stale replay and foreign-agent rejection assertions.
+The synthetic suites establish dashboard transport/presentation behavior; real producer compatibility is exercised separately through actual Sessions.
+`real_stream_consumers_test.exs` supplies that real core-stream boundary synchronously through gated loopback SSE and ReqLLM decoding, retaining actual SelfReflective Session/watch production rather than a provider callback override.
+Its seven scenarios cover late attachment, inspector retirement/checkpoint reconciliation, real `read` tool success/error and ordered tool history, HTTP 503 retry with a fresh call id, truncated-SSE retry clearing abandoned text/thinking, actual remounts and per-answer thinking retention.
+The cohesive file-local TCP fixture and its tests remain below 1000 lines.
 All consumer, Session/exchange-worker and provider cleanup completes before restoring the forcing globals.
 
 ## Notes for Agents — Home chat suite (`home_live_test.exs`)
@@ -197,6 +199,14 @@ Live-page deltas:
   The mounted-only config-dir proof runs sync because async Projects tests own the global `:projects_async_load_runner`.
 - **`agents_live_test.exs` is `async: true`**: it seeds the global `:evogit_sched_meta` / `:evogit_agent_summary` rows under a UNIQUE per-test agent id (`System.unique_integer([:positive]) + 10_000_000`, via `agent_id/0` reading the process dictionary), so no two concurrent modules collide.
 - **`agents_live_test.exs` fixed waits (by design, seam-less)**: THREE `Process.sleep(250)` sites, each followed by `flush_agent_events(view)` to keep a real core write's THROTTLED `{:agents_updated, node}` bulk signal (core `@throttle_ms` ≈ 200 ms) on THIS socket; plus one sampled negative poll with a 40 ms deadline (4× the 10 ms debounce seam) asserting `tasks_reload_pending` never becomes true. The duplicated page load is freed with a shared `:atomics` release latch (`await_latch/2`, 5 s non-raising fallback).
+
+## Known Issues — real Assistant stream consumer
+
+Focused inspector/Assistant validation passes 662 of 665 cases, and the full dashboard suite passes 2696 of 2699 cases (2 doctests and 2697 tests), with the same three `real_stream_consumers_test.exs` Assistant failures.
+Late attachment captures the in-flight text/thinking prefix in Delta state but fails to render an assistant transcript entry.
+After follow-up, the completed answer loses its thinking disclosure, and restoring two completed answers loses the earlier answer's thinking disclosure.
+The duplicate-follow-up and no-caret assertions remain strong; the currently reached failure is thinking retention rather than duplicate text.
+The inspector and all three real tool/retry scenarios pass collectively, and the Assistant failures also reproduce in standalone real-stream runs.
 
 ## Notes for Agents — running these suites
 
