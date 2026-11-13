@@ -410,6 +410,8 @@ defmodule EvoGit.SystemCheckTest do
       # the invalid selection rather than test an unrelated account successfully.
       assert {:ok, toml} = config |> EvoGit.Config.__stringify_keys__() |> TomlElixir.encode()
       File.write!(EvoGit.Config.config_path(), toml)
+      # A direct disk write only reaches the readers through a reload event.
+      EvoGit.Config.Cache.reload()
 
       assert {:error, message} = SystemCheck.llm_test()
       assert message =~ "provider_profile_not_found"

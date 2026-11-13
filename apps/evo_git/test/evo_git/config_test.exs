@@ -1681,6 +1681,10 @@ defmodule EvoGit.ConfigTest do
         "GENESIS_CONFIG_ACCOUNT_B = \"file-account-b-secret\"\n"
       )
 
+      # Config reads are RAM-snapshot backed: a direct disk write only becomes
+      # visible through the same event a save or the directory watcher emits.
+      EvoGit.Config.Cache.reload()
+
       assert {:ok, from_file} =
                EvoGit.Config.Schema.resolve_model_spec(Config.resolve(), "account-b")
 
