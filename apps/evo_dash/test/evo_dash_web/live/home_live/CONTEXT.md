@@ -91,10 +91,20 @@ The remote-node negative `refute_receive :availability_runner_called, 50` is bac
 ### Interactive session reattach (`/assistant?session=<agent_id>`)
 A reattached session is driven through the call-time `:home_session_attach_runner` (`counting_attach_runner/4` with `:counters` as the drain-proof "exactly one attach" witness) and `:home_session_start_runner` (absent ⇒ no task started).
 The cached chat is seeded with `seed_cached_chat/3` (transcript plus optional `thought_process`), while authoritative Watch snapshots supply messages and lifecycle (`:awaiting_input` → writable `:idle`, `:running` → running).
-Independent attach answers supply task identity only while Watch owns the display, and `gone_attach/0` pairs with a real-shaped `{:error, {:not_found, :session_not_found}}` watch failure.
-A vanished session with a NON-EMPTY cached conversation keeps that transcript AND its `thought_process` (an empty fetched history never wipes the cache), settles at `chat_status: :ended` and renders read-only: no assistant streaming bubble (`.help-caret` absent), composer disabled, no ended-session empty state, New chat enabled, exactly one attach and no task row.
-A vanished session with an EMPTY cache renders `#chat-session-ended` ("This session has ended." plus a `phx-click="new_chat"` affordance) instead of the greeting, so no suggestion chip is rendered, and the header's New chat stays enabled.
-A NON-EMPTY fetched history always wins: the cached transcript and reasoning are replaced by the fetched entries.
+Independent attach answers supply task identity only while Watch owns the display; empty fetched attach history alone does not prove disappearance, but the exact Watch verdict `{:error, {:not_found, :session_not_found}}` does.
+That verdict sets `chat_status: :ended` while preserving cached transcript and `thought_process`: a NON-EMPTY cache renders read-only with no streaming caret, composer disabled, New chat enabled and no ended-session empty state; an EMPTY cache renders `#chat-session-ended` ("This session has ended." plus a `phx-click="new_chat"` affordance) instead of the greeting or suggestions.
+Uncertain timeout, startup, overflow or registration-worker death keeps the live session unavailable with its cache preserved and Retry offered, not ended; there is no automatic rewatch, and explicit Retry starts a new watch attempt.
+A NON-EMPTY authoritative fetched history replaces the cached transcript and reasoning.
+
+### Mounted recovery test handoff (`../home_live_test.exs`)
+Existing vanished-session tests use `install_gone_watch_fixture/0` for synthetic not-found coverage, not a real missing-session lookup.
+Meaningful real-missing coverage should leave default watch/unwatch unoverridden and use a unique nonexistent session id; attach may retain `counting_attach_runner/4` plus `gone_attach/0` to isolate the Watch verdict and assert exactly one attach with no task row.
+A cached transcript fixture must put `cached_thoughts` in the assistant entry's `reasoning` as well as global `thought_process` to pin the rendered disclosure, not merely retained assigns.
+Mounted uncertain-failure/retry and actual registration-worker-death tests are absent; the sibling owner should use counted watch attempts and assert live-unavailable state, cache preservation, no ended state and no automatic rewatch.
+Click the real rendered Retry control (the sibling owner must verify its event name), then deliver a successful authoritative snapshot and newer delta, asserting no new task/session and no independent history fallback.
+Reuse `install_session_seam/2` for snapshot-restored seams and `install_watch_seams/3`, `snapshot_answer/3` and `await_stream_seeded/2` for retry fixtures.
+For worker death, expose runner `self()` separately from the consumer pid, monitor and kill the actual blocked registration worker and await its DOWN rather than injecting a fabricated DOWN.
+Await all consumer/worker teardown before restoring seams; these recommendations belong to the sibling mounted suite, not a helper Watch lifecycle suite here.
 
 ### Push-only delta streaming coverage
 `delta_test.exs` pins the pure reducer `EvoDashWeb.HomeLive.Delta` (`new/3`, `seed/3`, `apply_batch/5`), including text/thinking/tool/turn/yield/finished folding, the 8 000-grapheme and 40-thought caps, and malformed-batch totality.
@@ -117,4 +127,4 @@ The `describe "push-only delta streaming"` block of `../home_live_test.exs` moun
 The page boundary is `EvoDashWeb.HomeLive.Watch` over `EvoDash.NodeContext.subscribe_agent_deltas/1`, `unsubscribe_agent_deltas/1`, `register_agent_watcher/3` and `unregister_agent_watcher/3`.
 Independent `{:chat_history_loaded, node, history_seq, agent_id, stream_attach_seq, messages}` fixtures carry both generations and agent identity, with mounted rejection assertions for unscoped, stale-history, wrong-agent, obsolete-watch and foreign-node replies.
 Snapshot-ready coverage atomically captures checkpoint history plus the current call's prefix and replays a buffered suffix exactly once, rather than preserving an arbitrary pre-watch bubble.
-The silent-finish regression expects one authoritative snapshot resync and explicitly rejects independent legacy history reads.
+Silent finish uses one authoritative snapshot resync rather than an independent legacy history read; the mounted silent-finish regression pins that boundary.
