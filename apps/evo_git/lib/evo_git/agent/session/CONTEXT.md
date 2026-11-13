@@ -111,6 +111,14 @@ Every terminal transition ends in `finalize/1`: publish the final summary, deliv
 A second `close/2` (or a `close/2` on a still-finalizing session) answers `{:error, :finished}` (or `{:error, :not_found}` once the pid is gone); nothing is finalized twice.
 Graceful cancel while idle is immediate: nothing needs saving but the transcript (which is KEPT), so the summary moves to `:cancelling` and the finalizer runs with the last yielded text — the task registry maps that to `:cancelled` with the result preserved.
 
+## Durable State (per-agent persistence)
+`EvoGit.Agent.Session.Persistence` is the ONE module knowing both `%EvoGit.Agent.State{}` and `EvoGit.AgentState`, and every one of its functions is total: a durable-state fault never crashes an agent run.
+The checkpoint hook is `publish_checkpoint/2`: inside its advancing-boundary branch it captures the PREVIOUSLY adopted state (`old_state = data.state`), adopts the worker's copy, then calls `Persistence.checkpoint(old_state, state)` — a list comparison plus ONE `EvoGit.AgentState.checkpoint/4` cast, with NO serialization in the session process (the baseline lives in the session's process dictionary, whose lifetime is the run's).
+The four rules are: append the new tail when the old message list is a prefix of the new one AND `compression_count` is unchanged AND a persisted baseline exists; REWRITE the full list in every other case (including the run's first checkpoint); an empty tail casts NOTHING; and `persistent_state: false` is fully inert (no cast, no encoding, no database touch, no process-dictionary write).
+The entry carries `owner: self()` (the session pid) and a small fixed fields map, so a store-reported continuity gap arrives as `{:agent_state_resync, task_id, agent_id}` in ANY phase and is answered with ONE full `:rewrite` (`Persistence.resync/1`) — never an append; a message for another/unset identity is logged and ignored.
+`Setup.build_initial_state/3` restores a crashed run's conversation only when the dispatch ctx carries `restore_agent_state: true` (a CRASH RETRY of the SAME agent_id) and the flag is on: the restored transcript is authoritative while identity/worktree/paths/model selection/phase stay fresh, and a missing/corrupt/unavailable row logs at `:info` and keeps the fresh state.
+`Persistence.complete/1` runs from `finalize/1` ONLY — the normal terminal delivery — never from `to_awaiting_input/3` (a parked interactive session is still resumable) and never from the force-cancel path.
+
 ## Terminal Delivery Contract
 
 `finalize/1` sends exactly ONE `{:agent_session_result, agent_id, self(), result}` to the dispatch context's `:scheduler` pid (`Dispatch.do_try_dispatch/4` sets it to the scheduler that started the session), falling back to `Process.whereis(EvoGit.AgentScheduler)` and skipped silently when neither exists, then notifies the dispatch context's normalized `:notify` `{pid, tag}` sink (when present and alive) with `{:agent_session_closed, tag || agent_id, result}` — a bare notify pid normalizes to `{pid, nil}` so the payload is the agent id — and THEN returns `{:stop, :normal, data}`.
@@ -219,7 +227,8 @@ An unwatched worker still captures live activity and supports chunk-level interr
 
 ## Routing Table
 
-- `./setup.ex` → `EvoGit.Agent.Session.Setup` (the four functions above, incl. `resolve_session_mode/3`).
+- `./setup.ex` → `EvoGit.Agent.Session.Setup` (the four functions above, incl. `resolve_session_mode/3` and the crash-retry `restore` step of `build_initial_state/3`).
+- `./persistence.ex` → `EvoGit.Agent.Session.Persistence`, the ONE module knowing BOTH `%EvoGit.Agent.State{}` and `EvoGit.AgentState` (`checkpoint/2`, `restore/3`, `resync/1`, `complete/1`) — durable-state contract below.
 - `./input.ex` → `EvoGit.Agent.Session.Input` (the pure input policy + resume transformation).
 - `./finalize.ex` → `EvoGit.Agent.Session.Finalize` (the monitored finalizer: process context, `Completion.Builder.finalize/2` containment, `{:session_finalized, …}`).
 - `./outcome.ex` → `EvoGit.Agent.Session.Outcome` (the pure phase/mode/outcome verdict table).

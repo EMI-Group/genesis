@@ -193,6 +193,7 @@ defmodule EvoGit.Agent.Session do
   alias EvoGit.Agent.Session.Finalize
   alias EvoGit.Agent.Session.Input
   alias EvoGit.Agent.Session.Outcome
+  alias EvoGit.Agent.Session.Persistence
   alias EvoGit.Agent.Session.Registry, as: SessionRegistry
   alias EvoGit.Agent.Session.Setup
   alias EvoGit.Agent.Session.Summary
@@ -634,6 +635,25 @@ defmodule EvoGit.Agent.Session do
     {:keep_state, data}
   end
 
+  # The durable store reported a continuity GAP (our append's `base_seq` did not line up with what
+  # it holds), so it wrote nothing. A reported gap is ALWAYS answered with a full `:rewrite` of
+  # the current transcript, NEVER an append — the store's copy is what cannot be trusted. The
+  # store sends this asynchronously and it is legitimate in ANY phase, so there is no phase guard;
+  # a message for another/unset identity is ignored.
+  def handle_event(:info, {:agent_state_resync, task_id, agent_id}, phase, data) do
+    case data.state do
+      %State{task_id: state_task_id, agent_id: state_agent_id} = state
+      when not is_nil(task_id) and not is_nil(agent_id) and state_task_id == task_id and
+             state_agent_id == agent_id ->
+        Persistence.resync(state)
+        {:keep_state, data}
+
+      _other ->
+        log_ignored(phase, data, {:agent_state_resync, task_id, agent_id})
+        {:keep_state, data}
+    end
+  end
+
   def handle_event(:info, msg, phase, data) do
     # Anything outside this session's contract (a stray cast/plain send) lands
     # here: logged at debug and ignored, so it can never be mistaken for a real
@@ -887,6 +907,8 @@ defmodule EvoGit.Agent.Session do
       task_id: Map.get(meta, :task_id),
       parent_id: row.parent_id,
       archive: row.archive,
+      persistent_state: Keyword.get(ctx, :persistent_state, true),
+      restore_agent_state: Keyword.get(ctx, :restore_agent_state) == true,
       foreign_repos: row.foreign_repos,
       repo_notes: row.repo_notes,
       max_turns: row.max_turns,
@@ -983,6 +1005,10 @@ defmodule EvoGit.Agent.Session do
     # Worker messages are ordered. Only an advancing boundary may replace the transcript:
     # a duplicate/older checkpoint must not erase a newer call's phase or partial content.
     if state.turn > data.state.turn do
+      # The previously ADOPTED state is the durable baseline's comparison point, so it is
+      # captured before adoption. Classification (append vs rewrite) happens HERE — one list
+      # comparison plus ONE cast — and never encodes/serializes in the session process.
+      old_state = data.state
       data = %{data | state: adopt_state(data, state)}
 
       data =
@@ -990,6 +1016,8 @@ defmodule EvoGit.Agent.Session do
           %{turn: turn} when turn >= state.turn -> data
           _other -> reset_activity(data)
         end
+
+      Persistence.checkpoint(old_state, state)
 
       # Coalesced: at most ONE summary write per turn, never one per chunk.
       Summary.publish(agent_id(data), state)
@@ -1199,6 +1227,7 @@ defmodule EvoGit.Agent.Session do
     end
 
     publish_final(data)
+    maybe_mark_completed(data)
     deliver_result(data)
     notify_closed(data)
 
@@ -1224,6 +1253,11 @@ defmodule EvoGit.Agent.Session do
 
   # A start failure can happen before any state exists: there is nothing to merge onto the row.
   defp publish_final(_data), do: :ok
+
+  # The durable run is complete. ONLY this ONE terminal delivery marks it: an interactive session
+  # parked in `:awaiting_input` is still resumable, and a force-killed session never reaches here.
+  defp maybe_mark_completed(%{state: %State{} = state}), do: Persistence.complete(state)
+  defp maybe_mark_completed(_data), do: :ok
 
   defp final_extra(%{result: {:ok, %Result{commit_sha: sha}}} = _data) when is_binary(sha) do
     [status: :done, current_commit: sha]

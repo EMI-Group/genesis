@@ -39,7 +39,7 @@ defmodule EvoGit.Agent.State do
 
   `agent_id`, `agent_module`, `task_id`, `depth`, `parent_id`, `node_path`,
   `context_node`, `repo_id`, `repo_root`, `repo_less`, `custom_agent_id`,
-  `mode`, `archive`, `worktree`.
+  `mode`, `archive`, `persistent_state`, `worktree`.
 
   Who this agent is and where it runs. The session installs the derived
   process-dictionary projection of these fields at exchange start (the struct
@@ -98,6 +98,7 @@ defmodule EvoGit.Agent.State do
   - `custom_agent_id` — the custom agent definition's id when this agent was created from `<config_dir>/agents.toml`, else `nil`
   - `mode` — `:oneshot` (today's agents) or `:interactive` (opt-in sessions); decides only what a tool-free reply means
   - `archive` — whether task archiving is enabled for this agent (writes git refs + a `task_agent_archives` row on completion)
+  - `persistent_state` — per-agent durable-state flag: when true, every turn checkpoints this run's conversation/scalars into `EvoGit.AgentState` so a crashed run can be restored; the STRUCT default is `false` so hand-built/unit-test states never write, while the runtime always sets the task value (task opt `:persistent_state`, default `true`).
   - `worktree` — the agent's git worktree PATH, or `nil` for a repo-less agent / before the worktree is created. The worktree lease joins this field in a later phase; the worktree's lifetime is the session's lifetime.
   - `context` — the LLM conversation context (`ReqLLM.Context.t()`)
   - `turn` — current turn number in the agent loop (starts at 0)
@@ -164,6 +165,7 @@ defmodule EvoGit.Agent.State do
     custom_agent_id: nil,
     mode: :oneshot,
     archive: false,
+    persistent_state: false,
     worktree: nil,
     # conversation
     repo_path: nil,
@@ -229,6 +231,7 @@ defmodule EvoGit.Agent.State do
           custom_agent_id: String.t() | nil,
           mode: mode(),
           archive: boolean(),
+          persistent_state: boolean(),
           worktree: String.t() | nil,
           # conversation
           context: ReqLLM.Context.t(),
