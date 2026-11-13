@@ -1,7 +1,6 @@
 defmodule EvoGit.Config.Watcher do
   @moduledoc """
-  Watches the Genesis config directory and refreshes `EvoGit.Config.Cache` when
-  the config files change.
+  Owns "config changed → refresh `EvoGit.Config.Cache`".
 
   Config is read from RAM (see `EvoGit.Config.Cache`), so an external edit —
   a hand-edited `~/.config/genesis/config.toml`, a remote-node write, an
@@ -10,6 +9,13 @@ defmodule EvoGit.Config.Watcher do
   `config.toml`/`credentials.toml` event, schedules ONE debounced reload
   (~150 ms, coalesced) of the directory snapshot; an `agents.toml` event
   refreshes the custom-agent cache (`EvoGit.CustomAgents.reload/0`).
+
+  The debounced file-event reload and the save event `notify_change/2` — which
+  `EvoGit.Config.save_user_config/1` and `save_credentials/1` raise — converge
+  on ONE handler, so both paths share a single snapshot-reload implementation.
+  `notify_change/2` is total and bounded: it falls back to that same reload
+  when no watcher is registered, and a dead, slow or absent watcher never
+  fails or indefinitely blocks a save.
 
   The watcher is a convenience, never a requirement: when the backend is
   unavailable (no `inotify-tools`, watch limit, a missing directory) it logs
@@ -22,6 +28,7 @@ defmodule EvoGit.Config.Watcher do
   require Logger
 
   @debounce_ms 150
+  @call_timeout 5_000
   @config_filename "config.toml"
   @credentials_filename "credentials.toml"
   @agents_filename "agents.toml"
@@ -41,6 +48,46 @@ defmodule EvoGit.Config.Watcher do
     gen_opts = if name, do: [name: name], else: []
 
     GenServer.start_link(__MODULE__, dir, gen_opts)
+  end
+
+  @doc """
+  Raises the config-changed event for a save: synchronous and TOTAL.
+
+  `dir` is resolved IN THE CALLER (never inside the watcher) and is always the
+  explicitly requested directory, even when a running watcher watches a
+  different one. A running watcher refreshes that directory through its own
+  `handle_call/3` handler; when the target is `nil`, unregistered or the call
+  exits (`:noproc`, `:timeout`, `:shutdown`, …) this returns `:ok` after
+  running the SAME total reload the watcher's own event would run — so a dead,
+  slow or absent watcher never fails, crashes or indefinitely blocks a save.
+
+  Options:
+    * `:watcher` — the registration to route through (default
+      `EvoGit.Config.Watcher`); `nil` or an unregistered name falls back
+    * `:timeout` — the bounded `GenServer.call/3` timeout (default 5_000 ms)
+  """
+  @spec notify_change(String.t() | nil, keyword()) :: :ok
+  def notify_change(dir \\ nil, opts \\ []) do
+    dir = dir || EvoGit.Config.config_dir()
+    opts = if is_list(opts), do: opts, else: []
+    watcher = Keyword.get(opts, :watcher, __MODULE__)
+    timeout = Keyword.get(opts, :timeout, @call_timeout)
+
+    case resolve_target(watcher) do
+      nil ->
+        refresh(dir)
+        :ok
+
+      target ->
+        case call_refresh(target, dir, timeout) do
+          :ok ->
+            :ok
+
+          _other ->
+            refresh(dir)
+            :ok
+        end
+    end
   end
 
   @impl true
@@ -65,6 +112,15 @@ defmodule EvoGit.Config.Watcher do
     end
   end
 
+  # The save event (`notify_change/2`) — the same refresh a file event runs.
+  @impl true
+  def handle_call({:config_changed, dir}, _from, state) do
+    refresh(dir)
+    {:reply, :ok, state}
+  end
+
+  def handle_call(_request, _from, state), do: {:reply, {:error, :unknown_request}, state}
+
   @impl true
   def handle_info({:file_event, pid, {path, _events}}, %{worker: pid} = state) do
     on_change(state, path)
@@ -83,7 +139,7 @@ defmodule EvoGit.Config.Watcher do
   def handle_info({:file_event, _pid, _event}, state), do: {:noreply, state}
 
   def handle_info(:reload, state) do
-    reload_snapshot(state.dir)
+    refresh(state.dir)
     {:noreply, %{state | timer: nil}}
   end
 
@@ -111,14 +167,32 @@ defmodule EvoGit.Config.Watcher do
     %{state | timer: Process.send_after(self(), :reload, @debounce_ms)}
   end
 
-  defp reload_snapshot(dir) do
-    EvoGit.Config.Cache.reload(dir: dir)
+  # The ONE snapshot reload: the debounced file event, the save event's
+  # `handle_call/3` and `notify_change/2`'s fallback all converge here.
+  defp refresh(dir), do: EvoGit.Config.Cache.reload_safely(dir: dir)
+
+  defp resolve_target(nil), do: nil
+  defp resolve_target(pid) when is_pid(pid), do: pid
+  defp resolve_target(name) when is_atom(name), do: Process.whereis(name)
+  defp resolve_target(_other), do: nil
+
+  # Any failure of the bounded call — a dead/restarting watcher (`:noproc`,
+  # `:shutdown`), a slow one (`:timeout`) or an unexpected reply — is answered
+  # by the caller's fallback, never propagated into the saving process.
+  defp call_refresh(target, dir, timeout) do
+    GenServer.call(target, {:config_changed, dir}, timeout)
   rescue
     error ->
-      Logger.warning("Failed to reload config for #{dir}: #{inspect(error)}")
+      Logger.debug("Config watcher call failed for #{dir}: #{inspect(error)}; reloading directly")
+
+      :error
   catch
     kind, reason ->
-      Logger.warning("Failed to reload config for #{dir}: #{inspect({kind, reason})}")
+      Logger.debug(
+        "Config watcher call failed for #{dir}: #{inspect({kind, reason})}; reloading directly"
+      )
+
+      :error
   end
 
   defp reload_custom_agents do

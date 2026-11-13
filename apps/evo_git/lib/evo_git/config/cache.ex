@@ -9,12 +9,20 @@ defmodule EvoGit.Config.Cache do
   `:persistent_term` under `{EvoGit.Config.Cache, dir}`, so a read is a plain
   term lookup with ZERO file I/O.
 
-  Freshness is event-driven, never polled: a save (`EvoGit.Config.save_user_config/1`,
-  `save_credentials/1`) reloads synchronously, and `EvoGit.Config.Watcher`
-  reloads when the directory reports a change. A reload replaces the snapshot
-  only when the raw bytes' fingerprint changed, and bumps the snapshot
-  `generation`, broadcasting `{:config_reloaded, node, dir, generation}` on the
-  `"config"` PubSub topic (best-effort — a not-started PubSub is skipped).
+  Freshness is event-driven, never polled. `EvoGit.Config.Watcher` is the
+  single owner of "config changed → refresh snapshot": it performs the debounced
+  reload for a watched file event, and every save
+  (`EvoGit.Config.save_user_config/1`, `save_credentials/1`) raises the SAME
+  event through `EvoGit.Config.Watcher.notify_change/1`, which falls back to a
+  guarded reload when no watcher is registered. An explicit
+  `EvoGit.Config.Cache.reload/0,1` (e.g.
+  `EvoGit.AgentScheduler.RemoteAPI.reload_config/0`) remains the forced
+  disk-read entry point, and `reload_safely/0,1` is its total variant.
+
+  A reload replaces the snapshot only when the raw bytes' fingerprint changed,
+  and bumps the snapshot `generation`, broadcasting
+  `{:config_reloaded, node, dir, generation}` on the `"config"` PubSub topic
+  (best-effort — a not-started PubSub is skipped).
 
   The config directory is resolved at CALL time in the calling process through
   `EvoGit.Config.config_dir/0`, so the default-inert per-process
@@ -93,6 +101,40 @@ defmodule EvoGit.Config.Cache do
 
       :missing ->
         store(Map.put(built, :generation, 1), dir)
+    end
+  end
+
+  @doc """
+  A TOTAL variant of `reload/0,1`: reloads the snapshot and never raises.
+
+  This is the ONLY place in the codebase that wraps a snapshot reload in
+  `rescue`/`catch` logging. `reload/0,1` stays raw, so a caller that wants a
+  failure to surface keeps it. A refresh triggered by an event (a save, a file
+  change) must never take the caller down, so it goes through here: a failure
+  is logged as ONE warning naming the directory and the snapshot is left
+  untouched, answering `:error`.
+
+  Returns the resulting snapshot, or `:error` when the reload failed.
+  """
+  @spec reload_safely() :: snapshot() | :error
+  def reload_safely, do: reload_safely([])
+
+  @spec reload_safely(String.t() | keyword()) :: snapshot() | :error
+  def reload_safely(dir) when is_binary(dir), do: reload_safely(dir: dir)
+
+  def reload_safely(opts) when is_list(opts) do
+    dir = Keyword.get(opts, :dir) || EvoGit.Config.config_dir()
+
+    try do
+      reload(opts)
+    rescue
+      error ->
+        Logger.warning("Failed to reload config for #{dir}: #{inspect(error)}")
+        :error
+    catch
+      kind, reason ->
+        Logger.warning("Failed to reload config for #{dir}: #{inspect({kind, reason})}")
+        :error
     end
   end
 
