@@ -18,6 +18,7 @@ defmodule EvoGit.Agent.Stream.Snapshot do
   """
 
   alias EvoGit.Agent.State
+  alias EvoGit.Agent.Stream.Activity
 
   @type t :: %__MODULE__{
           agent_id: term(),
@@ -29,7 +30,8 @@ defmodule EvoGit.Agent.Stream.Snapshot do
           messages: [ReqLLM.Message.t()],
           mode: State.mode() | nil,
           model_spec: map() | nil,
-          compression_count: non_neg_integer()
+          compression_count: non_neg_integer(),
+          activity: Activity.t()
         }
 
   defstruct agent_id: nil,
@@ -41,7 +43,8 @@ defmodule EvoGit.Agent.Stream.Snapshot do
             messages: [],
             mode: nil,
             model_spec: nil,
-            compression_count: 0
+            compression_count: 0,
+            activity: Activity.new()
 
   @doc """
   Builds the snapshot of `state` for the session `phase` it is being reported in.
@@ -49,9 +52,11 @@ defmodule EvoGit.Agent.Stream.Snapshot do
   The session only ever calls this with a real `%State{}` (a snapshot of a session that has not
   checkpointed yet is not offered), so no raising guard is added for impossible input. A state
   whose context is not a list of messages yields `[]` rather than leaking the raw term.
+  The `:activity` option is the session's current live projection, defaulting to idle.
+  The session must settle pending public events before choosing the snapshot sequence.
   """
-  @spec from(State.t(), State.phase()) :: t()
-  def from(%State{} = state, phase) do
+  @spec from(State.t(), State.phase(), keyword()) :: t()
+  def from(%State{} = state, phase, opts \\ []) do
     %__MODULE__{
       agent_id: state.agent_id,
       phase: phase,
@@ -62,7 +67,8 @@ defmodule EvoGit.Agent.Stream.Snapshot do
       messages: messages(state),
       mode: state.mode,
       model_spec: state.model_spec,
-      compression_count: state.compression_count
+      compression_count: state.compression_count,
+      activity: Keyword.get(opts, :activity, Activity.new())
     }
   end
 

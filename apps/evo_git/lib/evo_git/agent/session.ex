@@ -63,11 +63,12 @@ defmodule EvoGit.Agent.Session do
 
   A `:yield` in `:running` interactive mode parks the session in `:awaiting_input`, which means the
   session KEEPS the conversation (`%State{}` incl. the whole `%ReqLLM.Context{}`), the worktree, the
-  agent id and the `prompt_cache_key`, and RELEASES the worker, every timer and every LLM/tool slot.
+  agent id and the `prompt_cache_key`, and RELEASES the worker and every LLM/tool slot.
 
   ## Idle contract (`:awaiting_input`)
 
-  An idle session holds NO worker task, NO timer and NO LLM or tool slot.
+  An idle session holds NO worker task and NO LLM or tool slot; only a pending ~75 ms delta flush
+  may briefly remain to publish the yield/reset boundary, never an idle-lifetime timer.
   It owns only: its state struct (conversation + worktree path + agent identity), its registry
   entry and the `:evogit_agent_summary` row (status `:awaiting_input`).
   There is deliberately NO idle TTL: an interactive session is closed EXPLICITLY
@@ -103,11 +104,15 @@ defmodule EvoGit.Agent.Session do
   A watch is accepted in `:running`, `:cancelling` and `:awaiting_input` (the phases that own a
   state); `:starting` has none to snapshot yet and `:finalizing`/`:done` are on their way out, so
   both refuse with `{:error, {:bad_state, phase}}`.
-  The snapshot's `seq` is SESSION-authoritative, so a consumer reconciles with
-  `EvoGit.Agent.Stream.stale?/2` and resyncs with a fresh snapshot only.
+  The snapshot's `seq` is SESSION-authoritative: watch/snapshot flush the pending batch before
+  replying, so consumers discard every delta at or below that cut without duplicating content.
+  The installed worker sink captures chunks independently of watchers, retaining only the
+  current call's text/thinking in `Snapshot.activity`; stale workers cannot update activity or
+  checkpoint state. The additive activity shape and public event contract live in
+  `stream/CONTEXT.md`.
   `EvoGit.Agent.Stream.Sink.emit/1` sends `{:delta, events}` in; the session publishes ONE
   `{:agent_delta, agent_id, seq, events}` broadcast per ~75 ms window, and with ZERO watchers the
-  events are dropped on arrival (no buffer, no timer, no broadcast).
+  public events are dropped on arrival (no buffer, no timer, no broadcast).
   The consumer monitors are the only bookkeeping: a watcher's `:DOWN` removes its entry and is
   never mistaken for a dead worker or finalizer.
 
@@ -116,11 +121,8 @@ defmodule EvoGit.Agent.Session do
   `start_input/3` accepts `:queue` (append and drain at the next turn boundary) or `:interrupt`.
   An interrupt APPENDS the same way AND sends the running worker `{:evogit_interrupt, ref}`, whose
   next chunk callback raises, so the in-flight stream ends and the message is injected at once.
-  That chunk-level halt REQUIRES an installed stream callback: `Sink.stream_opts/0` is non-empty
-  only while at least ONE watcher is registered.
-  With zero watchers there is nothing to pre-empt, so the interrupt degrades to the
-  next-turn-boundary semantics — the message is still delivered exactly once through the settled
-  transport and is never lost, it just cannot shorten the turn already in flight.
+  The installed sink supplies chunk callbacks even without watchers, so interrupts can pre-empt
+  unwatched streams too; publication and snapshot capture do not change input delivery semantics.
 
   ## Terminal delivery contract
 
@@ -196,6 +198,7 @@ defmodule EvoGit.Agent.Session do
   alias EvoGit.Agent.Session.Summary
   alias EvoGit.Agent.Session.Worker
   alias EvoGit.Agent.State
+  alias EvoGit.Agent.Stream.Activity
   alias EvoGit.Agent.Stream.Batcher
   alias EvoGit.Agent.Stream.Snapshot
   alias EvoGit.Agent.Stream.Watchers
@@ -322,11 +325,11 @@ defmodule EvoGit.Agent.Session do
   def identity(_other, _timeout), do: :error
 
   @doc """
-  Whether any consumer is watching this session — the streaming gate — FAIL-CLOSED.
+  Whether any consumer is watching this session — the publication gate — FAIL-CLOSED.
 
   `false` when the session is gone, did not answer within `timeout`, or answered with anything
-  other than `true`. An emitter that reads `false` installs NO streaming callbacks at all, so the
-  unwatched LLM path carries no streaming overhead; guessing `true` here would re-introduce it.
+  other than `true`. The installed worker sink still supplies chunk callbacks for live activity
+  capture and interrupts without watchers; only public delta publication is watcher-gated.
   """
   @spec watching?(dispatch_target(), timeout()) :: boolean()
   def watching?(target, timeout \\ @call_timeout) do
@@ -381,8 +384,7 @@ defmodule EvoGit.Agent.Session do
   * no such session — `{:error, :not_found}`.
 
   `mode` is `:queue` or `:interrupt`; `:interrupt` on a `:running` exchange also halts the stream
-  in flight so the message is injected at once (see the moduledoc — that needs a watcher, else it
-  degrades to the next turn boundary).
+  in flight at the next chunk callback so the message is injected at once, even without watchers.
   """
   @spec start_input(dispatch_target(), String.t() | map(), :queue | :interrupt) ::
           :ok | {:error, :not_found | :finished | {:bad_state, phase()}}
@@ -449,6 +451,7 @@ defmodule EvoGit.Agent.Session do
       # buffer. The engine never sets them; they are re-stamped onto every adopted `%State{}`.
       watchers: %{},
       event_seq: 0,
+      activity: Activity.new(),
       batcher: Batcher.new()
     }
 
@@ -466,9 +469,24 @@ defmodule EvoGit.Agent.Session do
     {:keep_state, start_binding(data)}
   end
 
-  def handle_event(:info, {:checkpoint, %State{} = state}, phase, data)
+  def handle_event(:info, {:checkpoint, pid, %State{} = state}, phase, data)
       when phase in [:running, :cancelling] do
-    {:keep_state, publish_checkpoint(data, state)}
+    if current_worker?(data, pid) do
+      {:keep_state, publish_checkpoint(data, state)}
+    else
+      log_ignored(phase, data, {:stale_checkpoint, pid})
+      {:keep_state, data}
+    end
+  end
+
+  def handle_event(:info, {:activity, pid, event}, phase, data)
+      when phase in [:running, :cancelling] do
+    if current_worker?(data, pid) do
+      {:keep_state, apply_activity(data, event)}
+    else
+      log_ignored(phase, data, {:stale_activity, pid})
+      {:keep_state, data}
+    end
   end
 
   def handle_event(:info, {:exchange_finished, pid, outcome}, phase, data) do
@@ -501,13 +519,7 @@ defmodule EvoGit.Agent.Session do
   end
 
   def handle_event(:info, {:delta, events}, phase, data) when phase in [:running, :cancelling] do
-    if Watchers.watching?(data.watchers) do
-      batcher = data.batcher |> Batcher.push(events) |> schedule_flush()
-      {:keep_state, %{data | batcher: batcher}}
-    else
-      # ZERO WATCHERS: dropped on arrival — no buffer, no timer, no broadcast (the zero-cost path).
-      {:keep_state, data}
-    end
+    {:keep_state, buffer_events(data, events)}
   end
 
   # A delta outside a running exchange has no flush point and no watcher: ignored, not buffered.
@@ -557,10 +569,10 @@ defmodule EvoGit.Agent.Session do
       current_worker?(data, pid) and reason in [:normal, :shutdown] ->
         # The worker ended WITHOUT reporting an outcome: nothing to finalize, so this run simply
         # ends. (An abnormal exit below is what the scheduler's crash/retry path must see.)
-        {:stop, :normal, data}
+        {:stop, :normal, data |> reset_activity() |> flush_deltas()}
 
       current_worker?(data, pid) ->
-        {:stop, reason, data}
+        {:stop, reason, data |> reset_activity() |> flush_deltas()}
 
       true ->
         log_ignored(phase, data, {:stale_down, pid, reason})
@@ -648,6 +660,7 @@ defmodule EvoGit.Agent.Session do
   def handle_event({:call, from}, {:watch, consumer_pid}, phase, %{state: %State{}} = data)
       when is_pid(consumer_pid) and phase in [:running, :cancelling, :awaiting_input] do
     data = %{data | watchers: Watchers.register(data.watchers, consumer_pid)}
+    data = flush_deltas(data)
     {:keep_state, data, [{:reply, from, snapshot_reply(data, phase)}]}
   end
 
@@ -668,6 +681,7 @@ defmodule EvoGit.Agent.Session do
 
   def handle_event({:call, from}, {:snapshot}, phase, %{state: %State{}} = data)
       when phase in [:running, :cancelling, :awaiting_input] do
+    data = flush_deltas(data)
     {:keep_state, data, [{:reply, from, snapshot_reply(data, phase)}]}
   end
 
@@ -751,7 +765,7 @@ defmodule EvoGit.Agent.Session do
     Finalize.stop(data.finalizer)
 
     # Flush BEFORE the stop; no result delivery, because a force-killed run has no outcome.
-    data = flush_deltas(data)
+    data = data |> reset_activity() |> flush_deltas()
 
     {:stop_and_reply, :shutdown, [{:reply, from, :ok}], data}
   end
@@ -965,16 +979,22 @@ defmodule EvoGit.Agent.Session do
   # --- running ---
 
   defp publish_checkpoint(data, %State{} = state) do
-    # Re-stamp the session-authoritative fields: a checkpoint can never roll streaming state back.
-    data = %{data | state: adopt_state(data, state)}
+    # Worker messages are ordered. Only an advancing boundary may replace the transcript:
+    # a duplicate/older checkpoint must not erase a newer call's phase or partial content.
+    if state.turn > data.state.turn do
+      data = %{data | state: adopt_state(data, state)}
 
-    # Coalesced: at most ONE summary write per turn, never one per chunk, and `context` is
-    # preserved by `Summary`'s merge-onto-the-existing-row behaviour.
-    if data.last_published_turn == state.turn do
-      data
-    else
+      data =
+        case data.activity.current_call do
+          %{turn: turn} when turn >= state.turn -> data
+          _other -> reset_activity(data)
+        end
+
+      # Coalesced: at most ONE summary write per turn, never one per chunk.
       Summary.publish(agent_id(data), state)
       %{data | last_published_turn: state.turn}
+    else
+      data
     end
   end
 
@@ -985,8 +1005,33 @@ defmodule EvoGit.Agent.Session do
 
   # Session-authoritative `seq` and the LIVE gen_statem phase, never the state's boundary copies.
   defp snapshot_reply(%{state: %State{} = state} = data, phase) do
-    snapshot = %{Snapshot.from(state, phase) | seq: data.event_seq, phase: phase}
+    snapshot = %{
+      Snapshot.from(state, phase, activity: data.activity)
+      | seq: data.event_seq,
+        phase: phase
+    }
+
     {:ok, snapshot, data.event_seq}
+  end
+
+  # Capture is independent of publication: an unwatched call still has a complete snapshot,
+  # but consumes no batch buffer, timer or sequence number.
+  defp apply_activity(data, event) do
+    {activity, events} = Activity.apply(data.activity, event)
+    buffer_events(%{data | activity: activity}, events)
+  end
+
+  defp reset_activity(data) do
+    if data.activity == Activity.new(), do: data, else: apply_activity(data, :reset)
+  end
+
+  defp buffer_events(data, events) do
+    if Watchers.watching?(data.watchers) do
+      batcher = data.batcher |> Batcher.push(events) |> schedule_flush()
+      %{data | batcher: batcher}
+    else
+      data
+    end
   end
 
   # At most ONE pending timer, on the batcher's clock; an empty buffer never schedules one.
@@ -1034,6 +1079,7 @@ defmodule EvoGit.Agent.Session do
   defp resume(data, message, from) do
     case append_input(data, message) do
       :ok ->
+        data = reset_activity(data)
         state = Input.resume_state(data.state)
 
         Summary.publish(agent_id(data), state, status: :running)
@@ -1058,9 +1104,9 @@ defmodule EvoGit.Agent.Session do
   # --- outcomes ---
 
   defp handle_outcome(phase, data, outcome) do
-    # Every exit from `:running`/`:cancelling` passes here (a yield parks via
-    # `to_awaiting_input/3`), so the pending batch is drained FIRST and idle keeps no timer.
-    data = flush_deltas(data)
+    # Transcript adoption and live-call retirement happen in this ONE session event.
+    # An idle session may retain only the batcher's bounded pending reset, never call content.
+    data = reset_activity(data)
 
     case Outcome.classify(phase, state_mode(data), outcome) do
       {:idle, %State{} = state, text} ->
@@ -1092,7 +1138,7 @@ defmodule EvoGit.Agent.Session do
     end
   end
 
-  # IDLE: park in `:awaiting_input` holding NOTHING — no worker, no timer, no slot.
+  # IDLE: no worker or slot; only the bounded pending yield/reset batch may still flush.
   defp to_awaiting_input(data, %State{} = state, text) do
     state = %{adopt_state(data, state) | phase: :awaiting_input}
 
@@ -1123,6 +1169,7 @@ defmodule EvoGit.Agent.Session do
   # Starts the MONITORED finalizer process for a yield text and moves the session into
   # `:finalizing`. The owner never blocks on the finalizer's git/archive work.
   defp start_finalizer(data, text) do
+    data = reset_activity(data)
     finalizer = Finalize.start(self(), data.state, data.tmpdir, text)
     %{data | finalizer: finalizer, phase: :finalizing}
   end
@@ -1131,7 +1178,7 @@ defmodule EvoGit.Agent.Session do
   # failure, unexpected-outcome, close and finalizer paths).
   defp finalize(data) do
     # Exit flush: published BEFORE the terminal transition, so no tail of a turn is lost.
-    data = %{flush_deltas(data) | phase: :finalizing}
+    data = %{(data |> reset_activity() |> flush_deltas()) | phase: :finalizing}
 
     publish_final(data)
     deliver_result(data)
@@ -1144,7 +1191,7 @@ defmodule EvoGit.Agent.Session do
   @impl :gen_statem
   def terminate(_reason, _phase, data) do
     try do
-      flush_deltas(data)
+      data |> reset_activity() |> flush_deltas()
       shutdown_start(data)
     catch
       _kind, _reason -> :ok

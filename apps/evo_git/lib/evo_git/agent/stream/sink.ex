@@ -1,113 +1,122 @@
 defmodule EvoGit.Agent.Stream.Sink do
   @moduledoc """
-  The worker-process-local, DEFAULT-INERT emitter of live deltas.
+  The worker-process-local, default-inert emitter of live activity and deltas.
 
-  The exchange worker installs this sink at the start of a run and the LLM call path asks it for
-  the `ReqLLM.StreamResponse.process_stream/2` callbacks. Two properties keep the unwatched path
-  byte-identical to the pre-streaming runtime:
+  Installed sinks capture every LLM attempt, even without watchers, so the session can
+  project the complete current call for a later snapshot. Publication remains watcher-gated
+  in the session; no replay is retained. Without a sink, callbacks and emissions are inert.
 
-    * `stream_opts/0` returns `[]` unless the sink is installed AND the session reports a live
-      watcher — so an unwatched turn passes no callbacks at all and ReqLLM does no extra work;
-    * `emit/1` is a no-op when nothing is installed (or when the normalized batch is empty), so a
-      stray call can never send a message.
-
-  ## The session gate
-
-  The gate is `EvoGit.Agent.Session.watching?/2` — the session's own watcher count, which no
-  `Registry` or `Phoenix.PubSub` can answer (`Registry.register/2` only registers the CALLING
-  process and PubSub exposes no subscriber count). It is checked ONCE per `stream_opts/0`
-  invocation, i.e. exactly once per LLM attempt, which is the specified cadence: a watcher that
-  attaches mid-attempt is served from the next attempt's batch on (and from a snapshot).
-
-  ## Process dictionary (process-local, NEVER persisted)
-
-  The sink lives in the WORKER process (the exchange worker, one per agent at a time), never in
-  the state, never on disk and never across a process boundary:
-
-  | Key                        | Value                | Meaning                                    |
-  |----------------------------|----------------------|--------------------------------------------|
-  | `:evogit_stream_session`   | `pid()`              | the session that receives `{:delta, …}`    |
-  | `:evogit_stream_agent_id`  | `term()`             | the agent id the deltas belong to          |
-
-  ## Deltas
-
-  `emit/1` sends `{:delta, events}` to the session with the events ALWAYS a list (normalized via
-  `EvoGit.Agent.Stream.normalize_batch/1`), so the session can append them to its batcher without
-  caring which shape an emitter preferred.
-
-  A tool-call chunk carries no call id (ReqLLM reconstructs ids from the fully accumulated
-  response), so `:on_tool_call` emits `{:tool_call, nil, name}`. The id-bearing
-  `{:tool_call, id, name}` is emitted later, from the tool-dispatch side.
+  Activity messages are `{:activity, worker_pid, event}`. Callback closures capture the
+  session, worker and call identity when installed, rather than reading a later attempt's
+  process dictionary. Legacy deltas retain `{:delta, events}` for session compatibility.
+  Streamed tool declarations still have no tool-call id (`{:tool_call, nil, name}`).
   """
 
-  alias EvoGit.Agent.Session
   alias EvoGit.Agent.Stream
   alias EvoGit.Agent.Stream.Interrupted
 
   @session_key :evogit_stream_session
   @agent_id_key :evogit_stream_agent_id
+  @turn_key :evogit_stream_turn
+  @call_key :evogit_stream_call
 
-  @doc """
-  Installs the sink in the CALLING process: deltas go to `session_pid` for `agent_id`.
-
-  Two process-dictionary writes (no message, no registration) plus a mailbox sweep of any stale
-  interrupt, so an installed-but-unwatched run still costs nothing.
-  """
+  @doc "Installs the sink in the calling worker and clears stale interrupts and call identity."
   @spec install(pid(), term()) :: :ok
   def install(session_pid, agent_id) when is_pid(session_pid) do
     Process.put(@session_key, session_pid)
     Process.put(@agent_id_key, agent_id)
+    Process.delete(@turn_key)
+    Process.delete(@call_key)
 
-    # WHY: the interrupt is delivered to the per-exchange worker process, so one received after
-    # that worker's last stream (or sent around install time) would still be sitting in the
-    # mailbox and pre-empt the FIRST stream of the next exchange. Starting an exchange is the one
-    # moment where any pending interrupt is by definition stale.
+    # WHY: an interrupt left over from an earlier exchange must not pre-empt this one.
     clear_interrupt()
-
     :ok
   end
 
-  @doc "Removes the sink from the CALLING process (idempotent)."
+  @doc "Removes the sink from the calling process (idempotent)."
   @spec uninstall() :: :ok
   def uninstall do
     Process.delete(@session_key)
     Process.delete(@agent_id_key)
+    Process.delete(@turn_key)
+    Process.delete(@call_key)
     :ok
   end
 
-  @doc "Whether the CALLING process has an installed sink."
+  @doc "Whether the calling process has an installed sink."
   @spec installed?() :: boolean()
   def installed?, do: is_pid(Process.get(@session_key))
 
-  @doc """
-  The `process_stream/2` callbacks for one LLM attempt, or `[]` when the sink is inert.
+  @doc "Starts a turn and resets its live activity."
+  @spec start_turn(non_neg_integer()) :: :ok
+  def start_turn(turn) do
+    if installed?(), do: Process.put(@turn_key, turn)
+    reset()
+  end
 
-  `[]` covers both "not installed" (a direct/test process) and "no live watcher" (the session
-  gate is closed), so an unwatched turn installs no callbacks whatsoever.
-  """
+  @doc "Starts an LLM attempt with a fresh string identity and returns that identity."
+  @spec start_call(non_neg_integer()) :: String.t()
+  def start_call(attempt) do
+    id = Integer.to_string(System.unique_integer([:positive, :monotonic]))
+
+    if installed?() do
+      Process.put(@call_key, id)
+      activity({:start_call, id, Process.get(@turn_key, 0), attempt})
+    end
+
+    id
+  end
+
+  @doc "Changes the phase of the identified call; stale identities are ignored by the projection."
+  @spec call_phase(String.t(), EvoGit.Agent.Stream.Activity.phase()) :: :ok
+  def call_phase(id, phase) do
+    if Process.get(@call_key) == id and phase in [:idle, :retry_wait] do
+      Process.delete(@call_key)
+    end
+
+    activity({:call_phase, id, phase})
+  end
+
+  @doc "Changes the activity phase, preserving the current call except on idle."
+  @spec phase(EvoGit.Agent.Stream.Activity.phase()) :: :ok
+  def phase(phase) do
+    if phase == :idle, do: Process.delete(@call_key)
+    activity({:phase, phase})
+  end
+
+  @doc "Resets activity to idle with no current call."
+  @spec reset() :: :ok
+  def reset do
+    Process.delete(@call_key)
+    activity(:reset)
+  end
+
+  @doc "LLM stream callbacks whenever a sink exists, independent of watcher count."
   @spec stream_opts() :: keyword()
   def stream_opts do
-    with session_pid when is_pid(session_pid) <- Process.get(@session_key),
-         true <- watching?(session_pid) do
-      [
-        on_result: &on_result/1,
-        on_thinking: &on_thinking/1,
-        on_tool_call: &on_tool_call/1,
-        on_chunk: &on_chunk/1
-      ]
-    else
-      _other -> []
+    case Process.get(@session_key) do
+      session when is_pid(session) ->
+        worker = self()
+        id = Process.get(@call_key)
+
+        [
+          on_result: fn chunk -> send_activity(session, worker, {:chunk, id, :text, chunk}) end,
+          on_thinking: fn chunk ->
+            send_activity(session, worker, {:chunk, id, :thinking, chunk})
+          end,
+          on_tool_call: fn chunk ->
+            send(session, {:delta, [{:tool_call, nil, chunk.name}]})
+            :ok
+          end,
+          on_chunk: &on_chunk/1
+        ]
+
+      _other ->
+        []
     end
   end
 
-  @doc """
-  Sends a delta (or a list of deltas) to the session.
-
-  A no-op when the sink is not installed, and a no-op when the normalized batch is EMPTY — a
-  tool-free turn emits nothing, so the session's mailbox never receives a pointless `{:delta, []}`.
-  Never raises: the argument is normalized first, so the session always receives a non-empty list of
-  events.
-  """
+  @doc "Sends a non-empty normalized legacy delta batch; inert without an installed sink."
   @spec emit(term()) :: :ok
   def emit(event_or_list) do
     events = Stream.normalize_batch(event_or_list)
@@ -120,13 +129,7 @@ defmodule EvoGit.Agent.Stream.Sink do
     :ok
   end
 
-  @doc """
-  Whether an interrupt was requested for the CALLING process.
-
-  A non-blocking mailbox peek at the documented `{:evogit_interrupt, _ref}` message: when it is
-  present it is CONSUMED (so an interrupt is honoured exactly once) and `true` is returned. Never
-  blocks and never raises.
-  """
+  @doc "Consumes an interrupt for the calling process without blocking."
   @spec interrupt_requested?() :: boolean()
   def interrupt_requested? do
     receive do
@@ -136,12 +139,7 @@ defmodule EvoGit.Agent.Stream.Sink do
     end
   end
 
-  @doc """
-  Drops a stale `{:evogit_interrupt, _ref}` from the CALLING process's mailbox.
-
-  Total and idempotent: called when a new exchange starts (or after an interrupt was handled), so
-  an interrupt sent between exchanges cannot abort the next stream.
-  """
+  @doc "Drops stale interrupts from the calling process's mailbox (idempotent)."
   @spec clear_interrupt() :: :ok
   def clear_interrupt do
     receive do
@@ -151,21 +149,21 @@ defmodule EvoGit.Agent.Stream.Sink do
     end
   end
 
-  # The gate is consulted once per `stream_opts/0` call, i.e. once per LLM attempt.
-  defp watching?(session_pid), do: Session.watching?(session_pid)
+  defp activity(event) do
+    case Process.get(@session_key) do
+      session when is_pid(session) -> send_activity(session, self(), event)
+      _other -> :ok
+    end
+  end
 
-  defp on_result(chunk), do: emit({:text, chunk})
+  defp send_activity(session, worker, event) do
+    send(session, {:activity, worker, event})
+    :ok
+  end
 
-  defp on_thinking(chunk), do: emit({:thinking, chunk})
-
-  # A stream chunk carries no call id (see the moduledoc), so the id slot is `nil`.
-  defp on_tool_call(chunk), do: emit({:tool_call, nil, chunk.name})
-
-  # The per-chunk interrupt check: raising here is how an interrupt pre-empts a stream, because
-  # `ReqLLM.StreamResponse.process_stream/2` rescues the raise and returns `{:error, %Interrupted{}}`.
+  # ReqLLM rescues this raise and returns {:error, %Interrupted{}} to pre-empt the attempt.
   defp on_chunk(_chunk) do
     if interrupt_requested?(), do: raise(Interrupted, reason: :interrupted)
-
     :ok
   end
 end
