@@ -139,21 +139,33 @@ Partial or aborted capture renders no missing-thinking notice, and lifecycle com
 The bounded message view exposes identity, capture coverage and generation completion alongside omission counts.
 `checkpoint_part_covered?(state, checkpoint_identity, :response | :thinking, full_value)` returns true only for a retained, completely captured, generation-complete projection with exactly matching explicit identity, exact nonempty whole content and zero omitted characters for that part.
 The identity must contain a backend id or message_index and come from the checkpoint's authoritative stream identity, never a local row ordinal, inferred turn or content match.
-The parent must replace its bounded-prefix equality suppression with this predicate, or suppress nothing until checkpoint identity exists; this helper does not itself alter parent checkpoint rendering.
+The page/template uses this predicate with `RuntimeStream.message_identity/1` from checkpoint message metadata to suppress only an individually covered response or thinking part at render time.
+Missing checkpoint identity preserves the original part; local row ordinals, inferred turns and bounded-prefix equality never establish coverage, and raw history, tool details and full-message modals remain unchanged.
 `StreamPresentation.owned?/3` checks exact RuntimeStream agent/node ownership for parent render guards.
 `StreamPanel.stream_panel/1` accepts the `StreamWatch` assign as `stream`, shows separate bounded live excerpts with truthful activity/tool announcement labels, escapes content, and emits the parent-owned `retry_inspector_stream` event on transport failure.
 `#inspector-thinking` uses the existing skeleton shimmer and `#inspector-stream-cursor` uses a pulse only for authoritative LLM activity on an unfinished current projection (or the shimmer while awaiting its first projection), never lifecycle status or chunk presence.
 Both animations respect reduced-motion utilities, and every live article carries a stable `data-inspector-message="live-<message_index>"` marker inside the parent's scoped InspectorMessages root.
-The panel intentionally does not merge excerpts with checkpoint history or promise duplicate-free/lossless attachment without core identity and coverage metadata.
+The panel keeps bounded live excerpts separate from checkpoint history; attachment/resync limitations are documented below.
 
-## Inspector Streaming Integration Constraints
+## Inspector Streaming Integration & Core Constraints
 
-The existing inspector history uses checkpointed session reads rather than a selected-agent delta watch; adding live chunks requires a consumer-local subscription plus asynchronous watcher registration using the LiveView pid, with agent/node/generation guards and explicit detach cleanup.
-Core transport and snapshot contracts live in `apps/evo_git/lib/evo_git/agent/stream/CONTEXT.md`, lifecycle/activity limitations in `apps/evo_git/lib/evo_git/agent/session/CONTEXT.md`, and the existing Assistant consumer pattern in `../home_live/CONTEXT.md`.
-The current snapshot has checkpointed messages and a broadcast sequence watermark but no in-flight projection, so snapshot-plus-stale-sequence filtering alone cannot guarantee lossless, duplicate-free mid-turn attachment.
+`agents_live.ex` attaches the selected connected agent through `StreamWatch`, forwards ready/delta/worker-monitor messages in the LiveView consumer process and renders `StreamPanel` alongside checkpoint history in `agents_live.html.heex`.
+Selection close/removal, node or target changes and termination detach the watch; serial worker bookkeeping and monotonic watch/history counters survive scope resets.
+A healthy watch, including its snapshot-pending interval, suppresses message-count-triggered whole-history reads.
+The snapshot seeds checkpoint history once, while tool results, yield and finish request coalesced asynchronous checkpoint-detail reconciliation.
+A successful history fetch drains at most one pending follow-up; a failed fetch or loader startup clears pending/loading state and exposes checkpoint-history Retry without automatic error retries or polling.
+History results use `{:agent_history_loaded, agent_id, node, history_seq, watch_token, result, modal_index}` and require matching selection, node, sequence and watch token; unscoped five-element results are ignored.
+The template's part-level overlap predicate is documented under Inspector Stream Presentation; checkpoint reconciliation does not reset live excerpts.
+The stable `agent-history-<id>` root uses `InspectorMessages`, with `data-inspector-scope` binding node/target/selection/watch/snapshot scope and stable `data-inspector-message` row markers without changing existing DOM ids.
+Only newly keyed rows animate, reduced motion is respected and history scrolling stays instant.
+
+Core transport and snapshot contracts live in `apps/evo_git/lib/evo_git/agent/stream/CONTEXT.md` and lifecycle/activity limitations in `apps/evo_git/lib/evo_git/agent/session/CONTEXT.md`.
+The current core snapshot has checkpointed messages and a broadcast sequence watermark but no in-flight coverage, so snapshot-plus-stale-sequence filtering alone cannot guarantee lossless, duplicate-free mid-turn attachment.
+Atomic replacement of obsolete live excerpts requires a sequence-consistent snapshot with complete in-flight text/thinking coverage or an explicit checkpoint coverage watermark, plus consumer-side buffering/replay of newer deltas; history-only reconciliation cannot safely reset excerpts or repair missing chunks.
 Current deltas expose text/thinking chunks and tool id/name/status but not tool arguments, result bodies or full history-message changes, and lifecycle phase does not distinguish thinking/generating/tool execution/waits.
-Assistant `Watch` supplies the transport pattern, but its capped bubble-oriented `Delta` reducer is not a lossless inspector history model.
-An explicit inspector activity indicator needs a separate session-owned runtime-activity contract in snapshot and ordered deltas, including exhaustive session-owned terminal transitions; reliable transcript resync additionally needs a checkpoint-reconciled in-flight projection.
+The inspector accepts optional authoritative activity, identity and coverage metadata as documented above, but this consumer support does not guarantee that the core publishes it.
+Truthful activity requires a session-owned runtime-activity contract in snapshot and ordered deltas, including exhaustive terminal transitions; absent metadata stays unavailable rather than being inferred.
+The inspector uses its own bounded `RuntimeStream` reducer rather than the Assistant's capped bubble-oriented `Delta` reducer (`../home_live/CONTEXT.md`), and neither is a lossless history model.
 
 ## Send-Message Flow (in `agents_live.ex` + `agents_live.html.heex`)
 
@@ -164,11 +176,11 @@ An explicit inspector activity indicator needs a separate session-owned runtime-
 
 ## Agent-detail Panel (right column)
 
-The right column renders `#agent-detail-<id>` for the selected agent — a pure read of `@agents` (`Enum.find/2` on `@selected_agent_id`) with no async work of its own.
+The right column renders `#agent-detail-<id>` from the selected row in `@agents` (`Enum.find/2` on `@selected_agent_id`); selected-agent watch and checkpoint-history loads run asynchronously under the integration contract above.
 Header: the `task_local_id`/`id` title, the status badge (`Helpers.agent_status_bg/1` + icon/label/uppercased label), the Send Message button (only for a `:running`/`:waiting`/`:pending`/`:blocked` agent) and Close.
 Identity and spec grid: Agent Module, Model (`agent.model_label || gettext("N/A")` — the `EvoDashWeb.ModelLabel` derivation), Context Path, Objective (first 150 chars + the full-objective modal), Worktree, Task ID/Depth/Retries, Base/Current Commit chips and Parent/Children links.
 The collapsible "Token and Cost" section (`toggle_usage`): Input/Output/Total Tokens, Cached Tokens + Cache Hit Rate, the Context tile (`ContextMeter.build/1` meter) and Input/Output/Total Cost plus the cost-estimate notice.
-The "Chat History / Session Memory" panel (`#agent-history-<id>`, fed by `OptimisticMessages.merge/2`) follows it and ends the panel.
+The "Chat History / Session Memory" panel (`#agent-history-<id>`) follows it, rendering separate live excerpts through `StreamPanel` and checkpoint history fed by `OptimisticMessages.merge/2` with the identity/coverage overlap guard above.
 Empty states: `gettext("Select an agent to view details")` with no selection, `gettext("Agent not found")` for a stale id.
 The page subscribes to the `"agents"` PubSub topic for its tree/detail updates — see the Agent Event Contract below.
 
