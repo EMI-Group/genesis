@@ -29,10 +29,9 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
       baseline and leaves `Setup.build_initial_state/3`'s fresh state alone;
     * the first checkpoint of a run is a FULL `:rewrite` (one chunk);
     * a genuine prefix extension is an `:append` (tail only: `+1` chunk);
-    * a store-level `:append` with an empty tail only UPSERTs the scalar fields,
-      while `Persistence.checkpoint/2` classifies an IDENTICAL list as `:skip`
-      and therefore issues NO cast at all (a behavioural gap, documented on the
-      test that pins it);
+    * an UNCHANGED list is an `:append` with an EMPTY tail — the store UPSERTs
+      the scalar fields and adds NO chunk row, so `turn`/`usage`/`total_tokens`/
+      `current_commit` still track the run;
     * a compression, and any structural divergence (non-prefix with the same
       compression count), is a `:rewrite` of the full list (back to ONE chunk);
     * a store/session continuity GAP answers `{:agent_state_resync, …}` and
@@ -392,7 +391,7 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
       assert record.messages == msgs(3)
     end
 
-    test "Persistence.checkpoint/2 with an IDENTICAL list classifies as :skip (no cast)" do
+    test "an IDENTICAL list still appends: empty tail ⇒ scalar-only UPSERT (no chunk)" do
       task_id = unique_task_id()
       agent_id = unique_agent_id()
       messages = msgs(3)
@@ -400,20 +399,31 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
       seed!(task_id, agent_id, messages, turn: 1)
       assert baseline(task_id, agent_id) == 3
 
-      # OBSERVED CONTRACT (a behavioural gap vs "the scalar turn is still
-      # updated"): `classify/6` returns `:skip` for an empty tail, so NO cast is
-      # issued and the stored scalar `turn` does NOT advance.
+      # The transcript did not change, but the RUN advanced (a tool-only or
+      # no-message turn). The checkpoint must still reach the row, or a
+      # crash-restored run resumes with stale turn/usage/tokens/commit.
       assert :ok =
                Persistence.checkpoint(
                  run_state(task_id, agent_id, messages, turn: 1),
-                 run_state(task_id, agent_id, messages, turn: 2)
+                 run_state(task_id, agent_id, messages,
+                   turn: 2,
+                   usage: %Usage{input_tokens: 120, output_tokens: 30, total_tokens: 150},
+                   total_tokens: 150,
+                   current_commit: "abc123"
+                 )
                )
 
       record = load!(task_id, agent_id)
 
+      # No new chunk row and no message growth — but every scalar followed.
       assert record.message_count == 3
       assert record.chunk_count == 1
-      assert record.fields[:turn] == 1
+      assert record.messages == messages
+      assert record.fields[:turn] == 2
+      assert record.fields[:total_tokens] == 150
+      assert record.fields[:usage]["input_tokens"] == 120
+      assert record.fields[:usage]["output_tokens"] == 30
+      assert record.fields[:current_commit] == "abc123"
       assert baseline(task_id, agent_id) == 3
     end
   end

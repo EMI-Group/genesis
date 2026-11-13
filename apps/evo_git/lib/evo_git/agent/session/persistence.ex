@@ -41,6 +41,11 @@ defmodule EvoGit.Agent.Session.Persistence do
   not change; every other case (a compression, a rewritten transcript, a
   shorter/different list) is a `:rewrite` of the full list.
 
+  An UNCHANGED transcript is still an `:append`, with an EMPTY tail: the store
+  then performs the scalar UPSERT alone (unchanged `message_count` and
+  `chunk_count`, no chunk row), so a turn/usage/`current_commit` change after a
+  tool-only turn still advances the row's scalars instead of being dropped.
+
   ## The restored transcript is authoritative
 
   `restore/3` merges ONLY conversation state onto a freshly built `%State{}`:
@@ -107,8 +112,8 @@ defmodule EvoGit.Agent.Session.Persistence do
 
   @doc """
   Persists ONE turn boundary: classifies the change between the previously
-  adopted `old_state` and the worker's `new_state`, then issues at most ONE
-  checkpoint cast.
+  adopted `old_state` and the worker's `new_state`, then issues ONE checkpoint
+  cast (a scalar-only append when the transcript did not change).
 
   Fully INERT (no cast, no encoding, no database touch, no process-dictionary
   write) unless `new_state.persistent_state == true`, so the struct default
@@ -222,9 +227,6 @@ defmodule EvoGit.Agent.Session.Persistence do
     new_messages = messages(new_state)
 
     case classify(old_state, new_state, old_messages, new_messages, task_id, agent_id) do
-      :skip ->
-        :ok
-
       {:append, base_seq, tail} ->
         cast(task_id, agent_id, :append, base_seq, tail, new_state)
         put_baseline(task_id, agent_id, base_seq + length(tail))
@@ -238,7 +240,8 @@ defmodule EvoGit.Agent.Session.Persistence do
   end
 
   # append when a baseline exists, compression has not fired and the previously
-  # adopted list is a PREFIX of the new one; rewrite in every other case.
+  # adopted list is a PREFIX of the new one (an EMPTY tail included: that is the
+  # scalar-only append); rewrite in every other case.
   defp classify(old_state, new_state, old_messages, new_messages, task_id, agent_id) do
     cond do
       is_nil(get_baseline(task_id, agent_id)) ->
@@ -251,8 +254,7 @@ defmodule EvoGit.Agent.Session.Persistence do
         {:rewrite, nil, new_messages}
 
       true ->
-        tail = Enum.drop(new_messages, length(old_messages))
-        if tail == [], do: :skip, else: {:append, length(old_messages), tail}
+        {:append, length(old_messages), Enum.drop(new_messages, length(old_messages))}
     end
   end
 
