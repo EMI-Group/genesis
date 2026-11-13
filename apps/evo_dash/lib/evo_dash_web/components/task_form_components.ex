@@ -135,6 +135,9 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:show_advanced, :boolean, default: false)
   attr(:disabled, :boolean, default: false)
   attr(:archive, :boolean, default: false)
+  # INERT, exactly like :archive — never read in this component's HEEx; the
+  # visual control lives only in task_options_tab/1, the assign is the truth.
+  attr(:persist_agent_state?, :boolean, default: true)
   attr(:provider_profiles, :list, default: [])
   attr(:model_selections, :list, default: [])
   attr(:model_spec, :map, default: %{})
@@ -951,6 +954,9 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:starting_commit, :string, default: "")
   attr(:resume_from, :string, default: "")
   attr(:archive, :boolean, default: false)
+  # Persist agent state (default ON) — server-assign-driven, see
+  # persist_agent_state_toggle/1.
+  attr(:persist_agent_state?, :boolean, default: true)
   attr(:build_systems, :list, default: [])
   attr(:selected_build_system, :string, default: nil)
   attr(:disabled, :boolean, default: false)
@@ -1060,7 +1066,50 @@ defmodule EvoDashWeb.TaskFormComponents do
           </span>
         </div>
       </label>
+      <%!-- Persist agent state toggle (all modes) --%>
+      <.persist_agent_state_toggle persist_agent_state?={@persist_agent_state?} />
     </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # persist_agent_state_toggle/1 — "Task Options" tab control next to the
+  # Archive toggle, rendered for ALL modes.
+  #
+  # The checkbox deliberately carries NO `name` attribute and NO `form=`
+  # association, and that is load-bearing: `<.form id="task-form"
+  # phx-submit="task_submit">` has NO `phx-change`, and task_options_tab/1
+  # renders OUTSIDE that form, so form params are an unreliable channel. The
+  # ASSIGN is the single source of truth: each `phx-click` sends
+  # `%{"value" => "true"}` when the checkbox ends up CHECKED and omits the
+  # `"value"` key when it ends up UNCHECKED; the server toggles the assign and
+  # the submit reads the assign (LaunchOptions.put_persistent_state/2).
+  # ---------------------------------------------------------------------------
+  attr(:persist_agent_state?, :boolean, default: true)
+
+  def persist_agent_state_toggle(assigns) do
+    ~H"""
+    <label
+      class="flex items-center gap-3 cursor-pointer bg-base-200/40 rounded-lg p-2.5 border border-base-200"
+      title={gettext("Save agent state so work survives a restart")}
+    >
+      <input
+        id="persist-agent-state-toggle"
+        type="checkbox"
+        class="toggle toggle-sm toggle-primary"
+        checked={@persist_agent_state?}
+        phx-click="toggle_persist_agent_state"
+      />
+      <div class="flex-1">
+        <%!-- zh_CN: agent → "代理", persist → "持久化", state → "状态" --%>
+        <span class="text-sm font-medium block">{gettext("Persist agent state")}</span>
+        <span class="text-xs text-base-content/70">
+          {gettext(
+            "Save agent checkpoints so work survives a restart; turn off to skip persistence writes"
+          )}
+        </span>
+      </div>
+    </label>
     """
   end
 

@@ -471,6 +471,25 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     Map.has_key?(opts, :quality_level) or Map.has_key?(opts, "quality_level")
   end
 
+  # The persist-agent-state opt is always sent explicitly
+  # (`:persistent_state`, boolean). `:persistent_state` is not in
+  # `EvoGit.Store.Codec`'s known-opt whitelist, so read BOTH the atom and the
+  # string key — a `Map.get/3`-OR chain would lose `false`, hence the
+  # `Map.fetch/2` + `has_key?` pair.
+  def persistent_state_opt(task) do
+    opts = Map.new(task.opts || [])
+
+    case Map.fetch(opts, :persistent_state) do
+      {:ok, value} -> value
+      :error -> Map.get(opts, "persistent_state")
+    end
+  end
+
+  def has_persistent_state_opt?(task) do
+    opts = Map.new(task.opts || [])
+    Map.has_key?(opts, :persistent_state) or Map.has_key?(opts, "persistent_state")
+  end
+
   # The active segment of the speed ↔ quality control is the button whose
   # aria-pressed is "true" and whose class carries capsule-stop-active
   # (fused-capsule markup; component-side contract in
@@ -5206,6 +5225,52 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     # Both non-default levels thread their STRING into the task opts on ONE
     # mount (formerly one test per level — byte-identical apart from the value).
   end
+
+  # Persist agent state (default ON) — the Task Options tab toggle
+  # (#persist-agent-state-toggle). The checkbox carries NO name/form
+  # association, so the assign is the single source of truth: a click that
+  # leaves it CHECKED sends %{"value" => "true"}, an UNCHECKED click omits the
+  # key entirely. The submit threading itself lives in `LaunchOptions` and is
+  # asserted by the real launches in the sync module.
+  describe "persist agent state toggle" do
+    setup do
+      clear_projects()
+      :ok
+    end
+
+    test "the assign defaults to true on mount", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      assert assigns(view)[:persist_agent_state?] == true
+    end
+
+    test "a click that unchecks it clears the assign, a value=true click sets it", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      # Unchecked semantics: no "value" key in the params.
+      render_click(view, "toggle_persist_agent_state", %{})
+      assert assigns(view)[:persist_agent_state?] == false
+
+      render_click(view, "toggle_persist_agent_state", %{"value" => "true"})
+      assert assigns(view)[:persist_agent_state?] == true
+    end
+
+    test "restore_state applies an explicit false and leaves the default alone without the key",
+         %{
+           conn: conn
+         } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      # No persisted key → the mount-time default (ON) stays.
+      render_change(view, "restore_state", %{"task_prompt" => "hello"})
+      assert assigns(view)[:persist_agent_state?] == true
+
+      render_change(view, "restore_state", %{"persist_agent_state?" => "false"})
+      assert assigns(view)[:persist_agent_state?] == false
+    end
+  end
 end
 
 defmodule EvoDashWeb.ProjectsLiveSyncTest do
@@ -5615,6 +5680,67 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       assert opt(task, :objective) == "build me a thing"
       assert opt(task, :node_path) == "./nonexistent-dir"
       assert opt(task, :path) == tmp_dir
+    end
+  end
+
+  # Persist agent state reaches the task opts through `LaunchOptions`, which
+  # always puts `:persistent_state` EXPLICITLY (never omits it) so the opt stays
+  # self-describing: `true` by default, `false` after the Task Options toggle is
+  # switched off. Both directions are proven by a real launch.
+  describe "persist agent state opt threading" do
+    setup do
+      clear_projects()
+      :ok
+    end
+
+    test "an untouched submit carries persistent_state: true", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      open_project!(view, tmp_dir)
+      await_async_loads(view)
+      # A real git repo so the doomed wrapper dies at node-path validation
+      # rather than spawning an agent (see make_git_repo!/1).
+      make_git_repo!(tmp_dir)
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task = EvoGit.TaskRegistry.get_task(cleanup_launched_task(html))
+      assert has_persistent_state_opt?(task)
+      assert persistent_state_opt(task) == true
+    end
+
+    test "toggling the control off before submitting carries persistent_state: false", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      open_project!(view, tmp_dir)
+      await_async_loads(view)
+      make_git_repo!(tmp_dir)
+      # Unchecked-click semantics: no "value" key in the params.
+      render_click(view, "toggle_persist_agent_state", %{})
+      assert assigns(view)[:persist_agent_state?] == false
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task = EvoGit.TaskRegistry.get_task(cleanup_launched_task(html))
+      assert has_persistent_state_opt?(task)
+      assert persistent_state_opt(task) == false
     end
   end
 

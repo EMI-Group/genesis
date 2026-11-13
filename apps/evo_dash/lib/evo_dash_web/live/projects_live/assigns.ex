@@ -38,6 +38,7 @@ defmodule EvoDashWeb.ProjectsLive.Assigns do
       task_starting_commit: "",
       task_resume_from: "",
       task_archive: false,
+      persist_agent_state?: true,
       task_build_system: nil,
       show_advanced: false
     )

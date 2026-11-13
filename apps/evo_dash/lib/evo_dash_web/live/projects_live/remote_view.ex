@@ -48,6 +48,9 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
   attr(:task_starting_commit, :string, default: "")
   attr(:task_resume_from, :string, default: "")
   attr(:task_archive, :boolean, default: false)
+  # Persist agent state (default ON) — forwarded to task_options_tab/1, the
+  # only render site of that component for BOTH local and remote views.
+  attr(:persist_agent_state?, :boolean, default: true)
   attr(:build_systems, :list, default: [])
   attr(:task_build_system, :string, default: nil)
   attr(:project_config, :map, default: nil)
@@ -204,6 +207,7 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
                 starting_commit={@task_starting_commit}
                 resume_from={@task_resume_from}
                 archive={@task_archive}
+                persist_agent_state?={@persist_agent_state?}
                 build_systems={@build_systems}
                 selected_build_system={@task_build_system}
                 disabled={@disabled}

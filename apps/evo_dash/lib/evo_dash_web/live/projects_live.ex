@@ -192,6 +192,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     task_starting_commit={@task_starting_commit}
                     task_resume_from={@task_resume_from}
                     task_archive={@task_archive}
+                    persist_agent_state?={@persist_agent_state?}
                     build_systems={@build_systems}
                     task_build_system={@task_build_system}
                     project_config={@project_config}
@@ -227,6 +228,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     show_advanced={@show_advanced}
                     disabled={is_nil(@active_project)}
                     archive={@task_archive}
+                    persist_agent_state?={@persist_agent_state?}
                     provider_profiles={@provider_profiles}
                     model_selections={@model_selections}
                     model_spec={@selected_model_spec}
@@ -333,6 +335,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     task_starting_commit={@task_starting_commit}
                     task_resume_from={@task_resume_from}
                     task_archive={@task_archive}
+                    persist_agent_state?={@persist_agent_state?}
                     build_systems={@build_systems}
                     task_build_system={@task_build_system}
                     project_config={@project_config}
@@ -384,6 +387,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     show_advanced={@show_advanced}
                     disabled={is_nil(@active_project)}
                     archive={@task_archive}
+                    persist_agent_state?={@persist_agent_state?}
                     provider_profiles={@provider_profiles}
                     model_selections={@model_selections}
                     model_spec={@selected_model_spec}
@@ -1143,6 +1147,17 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   def handle_event("select_quality_level", _params, socket), do: {:noreply, socket}
+  # Persist-agent-state toggle (Task Options tab). The checkbox carries no
+  # `name`/`form` association, so the assign is the single source of truth: a
+  # click on a CHECKED checkbox sends `%{"value" => "true"}` while an
+  # UNCHECKED click omits the `"value"` key entirely.
+  @impl true
+  def handle_event("toggle_persist_agent_state", params, socket) do
+    {:noreply,
+     socket
+     |> assign(:persist_agent_state?, params["value"] == "true")
+     |> StatePersistence.maybe_persist_state()}
+  end
 
   # --- GitHub Issues Events ---
   #
@@ -1231,6 +1246,7 @@ defmodule EvoDashWeb.ProjectsLive do
         |> StatePersistence.maybe_restore_assign(:task_prompt, params["task_prompt"])
         |> StatePersistence.maybe_restore_show_project_settings(params["show_project_settings"])
         |> StatePersistence.maybe_restore_task_archive(params["task_archive"])
+        |> StatePersistence.maybe_restore_persist_agent_state(params["persist_agent_state?"])
         |> StatePersistence.maybe_restore_show_advanced(params["show_advanced"])
         |> StatePersistence.maybe_restore_model_selection(params)
         |> StatePersistence.maybe_restore_assign(:selected_agent_id, params["selected_agent_id"])
