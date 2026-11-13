@@ -196,6 +196,7 @@ defmodule EvoGit.Agent.Session do
   alias EvoGit.Agent.Session.Registry, as: SessionRegistry
   alias EvoGit.Agent.Session.Setup
   alias EvoGit.Agent.Session.Summary
+  alias EvoGit.Agent.Session.TerminalHandoff
   alias EvoGit.Agent.Session.Worker
   alias EvoGit.Agent.State
   alias EvoGit.Agent.Stream.Activity
@@ -1179,6 +1180,23 @@ defmodule EvoGit.Agent.Session do
   defp finalize(data) do
     # Exit flush: published BEFORE the terminal transition, so no tail of a turn is lost.
     data = %{(data |> reset_activity() |> flush_deltas()) | phase: :finalizing}
+
+    # Allocate the full transcript only for registered watchers, at the post-flush sequence cut.
+    case data do
+      %{state: %State{} = state, watchers: watchers} when map_size(watchers) > 0 ->
+        snapshot = %{
+          Snapshot.from(state, :done,
+            activity: data.activity,
+            status: Keyword.fetch!(final_extra(data), :status)
+          )
+          | seq: data.event_seq
+        }
+
+        TerminalHandoff.deliver(watchers, snapshot)
+
+      _ ->
+        :ok
+    end
 
     publish_final(data)
     deliver_result(data)
