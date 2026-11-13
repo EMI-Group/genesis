@@ -55,7 +55,7 @@ defmodule EvoGit.CustomAgents.ModelSelector do
   prevent the scheduler from starting (dispatch sees `{:error, ...}` and falls
   back to the default model with a log warning). The compiled script is cached
   in `:persistent_term`, keyed by `{__MODULE__, :cache, path}` and storing
-  `{mtime, size, entry}`, mirroring `EvoGit.Config.cached_file_read/2`: every
+  `{mtime, size, entry}`, stat-validated: every
   call stats `agents.toml` and reuses the cache only when both mtime and size
   match, so external edits are picked up automatically. This makes the
   per-spawn dispatch cost exactly one `File.stat` + one `:persistent_term.get`
@@ -272,7 +272,7 @@ defmodule EvoGit.CustomAgents.ModelSelector do
     Map.get(selection, key, Map.get(selection, Atom.to_string(key)))
   end
 
-  # --- Caching (stat-validated, mirroring EvoGit.Config.cached_file_read/2) ---
+  # --- Caching (stat-validated: mtime + size) ---
 
   defp cache_key(path), do: {__MODULE__, :cache, path}
 

@@ -1489,6 +1489,8 @@ defmodule EvoGit.RemoteConnectionTest do
         config_dir = EvoGit.Config.config_dir()
         File.mkdir_p!(config_dir)
         File.write!(Path.join(config_dir, "config.toml"), "[node]\ncookie = \"#{cookie}\"\n")
+        # Config reads come from the RAM snapshot; a direct write needs the reload.
+        EvoGit.Config.Cache.reload(dir: config_dir)
       end
 
       # Like write_test_config_cookie/1 but additionally carries an
@@ -1515,6 +1517,8 @@ defmodule EvoGit.RemoteConnectionTest do
           model = "deepseek-chat"
           """
         )
+
+        EvoGit.Config.Cache.reload(dir: config_dir)
       end
 
       # Extracts the value of the first `accent_color = "..."` line.

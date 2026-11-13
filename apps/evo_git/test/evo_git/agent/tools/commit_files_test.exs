@@ -177,9 +177,10 @@ defmodule EvoGit.Agent.Tools.CommitFilesTest do
 
   test "omits the co-author trailer when no config exists", %{repo: repo} do
     # There is NO config.toml — the schema default (false) applies. Deleting via
-    # save_user_config would be a no-op; remove the file directly so the cached
-    # read falls back to the defaults.
+    # save_user_config would be a no-op; remove the file directly and reload the
+    # snapshot from disk (the same event a save or the watcher emits).
     File.rm(EvoGit.Config.config_path())
+    EvoGit.Config.Cache.reload()
     assert EvoGit.Config.resolve([:git, :co_authored_by_enabled]) == false
 
     File.write!(Path.join(repo, "default-trailer.txt"), "x\n")

@@ -176,34 +176,110 @@ defmodule EvoGit.Config do
 
   Runtime overrides are NOT included here — those are managed by
   `AgentScheduler` and applied at the scheduler level.
+
+  The value comes from the RAM snapshot in `EvoGit.Config.Cache` (built by
+  `build_snapshot/1`), so this performs NO file I/O and NO schema validation;
+  validation runs once per snapshot build and its errors ride along in the
+  snapshot.
   """
   @spec resolve() :: map()
   def resolve do
-    config =
+    EvoGit.Config.Cache.get().resolved
+  end
+
+  @doc false
+  # Builds one complete config snapshot for `dir` from disk. This is the ONLY
+  # place that reads `config.toml`/`credentials.toml`; `EvoGit.Config.Cache`
+  # stores the result and every reader (including `resolve/0`) is a term
+  # lookup afterwards.
+  #
+  # Deliberately does NOT call `resolve/0,1` (that would recurse through the
+  # cache). ReqLLM credential side effects run here — on a build only, never on
+  # a cache hit.
+  @spec build_snapshot(String.t()) :: map()
+  def build_snapshot(dir) when is_binary(dir) do
+    config_path = Path.join(dir, @config_filename)
+    credentials_path = Path.join(dir, @credentials_filename)
+
+    config_bytes = read_raw_file(config_path)
+    credentials_bytes = read_raw_file(credentials_path)
+
+    user_config = decode_raw_file(config_bytes, config_path, "config")
+
+    credentials =
+      load_credentials(decode_raw_file(credentials_bytes, credentials_path, "credentials"))
+
+    resolved =
       defaults()
-      |> deep_merge(atomize_keys(user_config()))
+      |> deep_merge(atomize_keys(user_config))
       |> atomize_enum_values()
       |> migrate_llm_models()
 
-    case EvoGit.Config.Schema.validate(config) do
-      {:ok, _validated} ->
-        Process.delete(:evo_git_config_validation_errors)
+    validation_errors =
+      case EvoGit.Config.Schema.validate(resolved) do
+        {:ok, _validated} ->
+          []
 
-      {:error, errors} ->
-        Process.put(:evo_git_config_validation_errors, errors)
+        {:error, errors} ->
+          Enum.each(errors, fn err ->
+            kp = Map.get(err, :key_path, [])
+            msg = Map.get(err, :message, "unknown error")
+            val = Map.get(err, :value, nil)
 
-        Enum.each(errors, fn err ->
-          kp = Map.get(err, :key_path, [])
-          msg = Map.get(err, :message, "unknown error")
-          val = Map.get(err, :value, nil)
+            Logger.warning(
+              "Config validation error at #{inspect(kp)}: #{msg} (got: #{inspect(val)})"
+            )
+          end)
 
-          Logger.warning(
-            "Config validation error at #{inspect(kp)}: #{msg} (got: #{inspect(val)})"
-          )
-        end)
+          errors
+      end
+
+    %{
+      dir: dir,
+      user_config: user_config,
+      credentials: credentials,
+      resolved: resolved,
+      validation_errors: validation_errors,
+      generation: 1,
+      fingerprint: :erlang.phash2({config_bytes, credentials_bytes})
+    }
+  end
+
+  # Raw bytes of a config file, or `:missing` when it is absent/unreadable.
+  # A missing file is NOT an error: the old read path silently yielded `%{}`
+  # without logging, and that behaviour is preserved.
+  defp read_raw_file(path) do
+    case File.read(path) do
+      {:ok, contents} -> contents
+      {:error, _reason} -> :missing
     end
+  end
 
-    config
+  defp decode_raw_file(:missing, _path, _description), do: %{}
+
+  defp decode_raw_file(contents, path, description) when is_binary(contents) do
+    case TomlElixir.decode(contents) do
+      {:ok, data} ->
+        data
+
+      {:error, reason} ->
+        Logger.warning("Failed to parse #{description} at #{path}: #{inspect(reason)}")
+        %{}
+    end
+  end
+
+  # Credentials carry a side effect: every non-empty binary value is also put
+  # into ReqLLM's key store so it is usable in this BEAM immediately.
+  defp load_credentials(creds) when is_map(creds) do
+    Enum.each(creds, fn {key, value} ->
+      if is_binary(value) and value != "" do
+        if key_atom = credential_key_to_reqllm_key(key) do
+          ReqLLM.put_key(key_atom, value)
+        end
+      end
+    end)
+
+    creds
   end
 
   defp atomize_enum_values(config) when is_map(config) do
@@ -497,18 +573,17 @@ defmodule EvoGit.Config do
   end
 
   @doc """
-  Reads and returns the parsed user config TOML file.
+  Returns the parsed user config TOML file from the RAM snapshot.
 
   Returns `%{}` if the file is not found or cannot be parsed.
 
-  The parsed map is cached in `:persistent_term` keyed by file path and
-  validated against `File.stat` mtime+size on every call, so external edits
-  to `config.toml` are picked up automatically. See `cached_file_read/2`.
+  The map comes from `EvoGit.Config.Cache` — no `File.stat` and no read on
+  every call. The snapshot is refreshed by `EvoGit.Config.Cache.reload/1`
+  (a save, or a directory change observed by `EvoGit.Config.Watcher`).
   """
   @spec user_config() :: map()
   def user_config do
-    path = config_path()
-    cached_file_read(path, fn -> read_toml_file(path, %{}, description: "config") end)
+    EvoGit.Config.Cache.get().user_config
   end
 
   @doc false
@@ -559,10 +634,9 @@ defmodule EvoGit.Config do
              string_config = stringify_keys(config),
              {:ok, toml} <- TomlElixir.encode(string_config),
              :ok <- File.write(path, toml) do
-          # Explicit invalidation: the mtime+size check would eventually
-          # catch the rewrite, but erasing now covers coarse-mtime
-          # filesystems and same-second same-size rewrites.
-          invalidate_file_cache(path)
+          # Synchronous reload so the caller (and the settings page via
+          # `RemoteAPI.save_user_config/1`) sees the new values immediately.
+          EvoGit.Config.Cache.reload(dir: dir)
           :ok
         end
     end
@@ -658,7 +732,7 @@ defmodule EvoGit.Config do
   - `:warnings` — list of human-readable warning messages for missing values
   - `:ok?` — boolean, true if all critical config is present and validation succeeds
   - `:validation_errors` — list of `EvoGit.Config.Schema.ValidationError` structs from
-    this invocation's initial `resolve/0` call, or empty list if none
+    the current config snapshot, or empty list if none
 
   The `:api_key` check is OAuth-aware: it passes when an API key is configured
   OR when at least one configured model profile authenticates through a
@@ -679,9 +753,9 @@ defmodule EvoGit.Config do
           validation_errors: [EvoGit.Config.Schema.ValidationError.t()]
         }
   def config_status do
-    resolved = resolve()
-    # Later health checks may resolve again and overwrite the process-local errors.
-    validation_errors = Process.get(:evo_git_config_validation_errors, [])
+    snapshot = EvoGit.Config.Cache.get()
+    resolved = snapshot.resolved
+    validation_errors = snapshot.validation_errors
     profiles = EvoGit.Config.Schema.model_profiles(resolved)
 
     checks = [
@@ -894,34 +968,18 @@ defmodule EvoGit.Config do
   end
 
   @doc """
-  Reads and returns the parsed credentials TOML file.
+  Returns the parsed credentials TOML file from the RAM snapshot.
 
   Returns `%{}` if the file is not found or cannot be parsed.
 
-  Cached like `user_config/0` (persistent_term + `File.stat` mtime/size
-  validation). The ReqLLM `put_key` side effects in `read_credentials_file/1`
-  run only on an actual file read (cache miss) — on a cache hit the keys were
-  already loaded at first read, and `save_credentials/1` sets them explicitly.
+  Cached in `EvoGit.Config.Cache` for the config directory. The ReqLLM
+  `put_key/2` side effects run only on an actual snapshot BUILD (cold miss or
+  reload), never on a cache hit; the keys were already loaded at build time,
+  and `save_credentials/1` sets them explicitly.
   """
   @spec credentials() :: map()
   def credentials do
-    path = credentials_path()
-    cached_file_read(path, fn -> read_credentials_file(path) end)
-  end
-
-  defp read_credentials_file(path) when is_binary(path) do
-    creds = read_toml_file(path, %{}, description: "credentials")
-
-    Enum.each(creds, fn {key, value} ->
-      if is_binary(value) and value != "" do
-        # Set via ReqLLM for immediate in-process effect.
-        if key_atom = credential_key_to_reqllm_key(key) do
-          ReqLLM.put_key(key_atom, value)
-        end
-      end
-    end)
-
-    creds
+    EvoGit.Config.Cache.get().credentials
   end
 
   @doc """
@@ -985,7 +1043,9 @@ defmodule EvoGit.Config do
          {:ok, toml} <- TomlElixir.encode(string_creds),
          {:ok, contents} <- ensure_trailing_newline(toml),
          :ok <- File.write(path, contents) do
-      invalidate_file_cache(path)
+      # Synchronous reload so the caller sees the merged credentials straight
+      # away (the snapshot's build also re-applies the ReqLLM key side effects).
+      EvoGit.Config.Cache.reload(dir: dir)
       :ok
     else
       {:error, reason} -> {:error, reason}
@@ -1159,44 +1219,4 @@ defmodule EvoGit.Config do
   end
 
   defp atomize_keys(value), do: value
-
-  # --- File Caching (config.toml / credentials.toml) ---
-
-  # Caches the parsed content of a config file in `:persistent_term`, keyed by
-  # file path, storing `{mtime, size, parsed_map}`. Every call stats the file
-  # (cheap) and only reuses the cache entry when BOTH mtime and size match, so
-  # external edits are picked up automatically. Cache misses run `reader` (the
-  # read + TOML-decode step) and store its result — including the
-  # default-on-parse-failure case, so a corrupt-file warning is not re-emitted
-  # on every call until the file changes.
-  #
-  # Only `user_config/0` and `credentials/0` use this. `read_toml_file/3` is
-  # deliberately NOT cached here — it is also used for `genesis.toml` and
-  # `remote_connections.toml`, which must stay fresh.
-  defp cached_file_read(path, reader) when is_binary(path) do
-    case File.stat(path) do
-      {:ok, stat} ->
-        case :persistent_term.get(file_cache_key(path), :not_cached) do
-          {mtime, size, parsed} when mtime == stat.mtime and size == stat.size ->
-            parsed
-
-          _ ->
-            parsed = reader.()
-            :persistent_term.put(file_cache_key(path), {stat.mtime, stat.size, parsed})
-            parsed
-        end
-
-      {:error, _} ->
-        # Missing or unreadable file — same result as the old File.exists? gate.
-        %{}
-    end
-  end
-
-  defp file_cache_key(path) when is_binary(path) do
-    {__MODULE__, :file_cache, path}
-  end
-
-  defp invalidate_file_cache(path) when is_binary(path) do
-    :persistent_term.erase(file_cache_key(path))
-  end
 end

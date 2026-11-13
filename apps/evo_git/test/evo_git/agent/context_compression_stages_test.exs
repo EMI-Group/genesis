@@ -487,6 +487,9 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
 
   defp write_config!(config_dir, contents) do
     File.write!(Path.join(config_dir, "config.toml"), contents)
+    # Config reads come from the RAM snapshot: a direct disk write is visible
+    # only after the reload event a save or the directory watcher emits.
+    EvoGit.Config.Cache.reload(dir: config_dir)
   end
 
   setup do

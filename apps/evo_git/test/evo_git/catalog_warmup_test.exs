@@ -105,6 +105,8 @@ defmodule EvoGit.CatalogWarmupTest do
     dir = Path.join(ConfigDir.isolate!("evogit_catalog_warmup"), "genesis")
     File.mkdir_p!(dir)
     File.write!(Path.join(dir, "config.toml"), toml)
+    # Config reads come from the RAM snapshot; a direct write needs the reload.
+    EvoGit.Config.Cache.reload(dir: dir)
   end
 
   defp restore_seam(nil), do: Application.delete_env(:evo_git, @seam)

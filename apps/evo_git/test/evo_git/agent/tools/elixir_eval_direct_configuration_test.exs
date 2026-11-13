@@ -73,6 +73,8 @@ defmodule EvoGit.Agent.Tools.ElixirEval.DirectConfigurationTest do
     mode = "disabled"
     """)
 
+    # Config reads come from the RAM snapshot; a direct write needs the reload.
+    EvoGit.Config.Cache.reload()
     disk = Config.resolve()
     assert :ok = RemoteAPI.reload_config()
     assert :ok = AgentScheduler.resume()

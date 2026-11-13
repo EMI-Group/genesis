@@ -30,6 +30,14 @@ defmodule EvoGit.ConfigTest do
     :ok
   end
 
+  # Every raw config.toml write goes through ONE helper: the read path is a RAM
+  # snapshot (`EvoGit.Config.Cache`), so a direct disk write only becomes
+  # visible after the reload event a save or the directory watcher emits.
+  defp write_config!(contents) do
+    File.write!(Config.config_path(), contents)
+    EvoGit.Config.Cache.reload()
+  end
+
   describe "defaults/0" do
     test "returns a map with scheduler defaults" do
       defaults = Config.defaults()
@@ -965,7 +973,7 @@ defmodule EvoGit.ConfigTest do
     end
 
     test "map-form model with provider/id/base_url passes the gate (ok?: true)" do
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
 
       [[llm.models]]
@@ -996,7 +1004,7 @@ defmodule EvoGit.ConfigTest do
     end
 
     test "binary-string model still passes the gate (unchanged behavior)" do
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
 
       [[llm.models]]
@@ -1014,7 +1022,7 @@ defmodule EvoGit.ConfigTest do
 
     @tag capture_log: true
     test "profile with no model still reports :llm_model missing" do
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
 
       [[llm.models]]
@@ -1026,7 +1034,7 @@ defmodule EvoGit.ConfigTest do
     end
 
     test "profile with empty-string model still reports :llm_model missing" do
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
 
       [[llm.models]]
@@ -1040,7 +1048,7 @@ defmodule EvoGit.ConfigTest do
 
     @tag capture_log: true
     test "profile with empty-map model still reports :llm_model missing" do
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
 
       [[llm.models]]
@@ -1135,7 +1143,7 @@ defmodule EvoGit.ConfigTest do
 
       # The managed file is a PER-PROFILE setting (there is no global
       # `[llm] oauth_file` key).
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
 
       [[llm.models]]
@@ -1162,7 +1170,7 @@ defmodule EvoGit.ConfigTest do
 
       # No auth_mode: the OAuth-only provider is auto-detected. The managed
       # file is a PER-PROFILE setting.
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
 
       [[llm.models]]
@@ -1182,7 +1190,7 @@ defmodule EvoGit.ConfigTest do
       reqllm_key_cleanup()
       auth_file = Path.join(Config.config_dir(), "absent-auth.json")
 
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
 
       [[llm.models]]
@@ -1207,7 +1215,7 @@ defmodule EvoGit.ConfigTest do
       reqllm_key_cleanup()
       auth_file = Path.join(Config.config_dir(), "absent-claude-auth.json")
 
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
 
       [[llm.models]]
@@ -1231,7 +1239,7 @@ defmodule EvoGit.ConfigTest do
       codex_file = Path.join(Config.config_dir(), "absent-codex-auth.json")
       claude_file = Path.join(Config.config_dir(), "absent-claude-auth.json")
 
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
 
       [[llm.models]]
@@ -1259,7 +1267,7 @@ defmodule EvoGit.ConfigTest do
       reqllm_key_cleanup()
       ReqLLM.put_key(:openai_api_key, "sk-test")
 
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
 
       [[llm.models]]
@@ -1319,7 +1327,7 @@ defmodule EvoGit.ConfigTest do
         })
       )
 
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
       default_provider_profile = "blocked-account"
 
@@ -1367,7 +1375,7 @@ defmodule EvoGit.ConfigTest do
     test "no OAuth profile keeps the generic API-key warning byte-identical" do
       reqllm_key_cleanup()
 
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
 
       [[llm.models]]
@@ -1384,7 +1392,7 @@ defmodule EvoGit.ConfigTest do
     test "no configured model profile keeps the generic API-key warning" do
       reqllm_key_cleanup()
 
-      File.write!(Config.config_path(), """
+      write_config!("""
       [llm]
       """)
 
@@ -1681,6 +1689,10 @@ defmodule EvoGit.ConfigTest do
         "GENESIS_CONFIG_ACCOUNT_B = \"file-account-b-secret\"\n"
       )
 
+      # Config reads are RAM-snapshot backed: a direct disk write only becomes
+      # visible through the same event a save or the directory watcher emits.
+      EvoGit.Config.Cache.reload()
+
       assert {:ok, from_file} =
                EvoGit.Config.Schema.resolve_model_spec(Config.resolve(), "account-b")
 
@@ -1720,7 +1732,7 @@ defmodule EvoGit.ConfigTest do
     end
 
     test "is true with enabled = true and a non-empty command" do
-      File.write!(Config.config_path(), """
+      write_config!("""
       [lsp]
       enabled = true
       command = "lexical"
@@ -1730,7 +1742,7 @@ defmodule EvoGit.ConfigTest do
     end
 
     test "accepts the string form enabled = \"true\"" do
-      File.write!(Config.config_path(), """
+      write_config!("""
       [lsp]
       enabled = "true"
       command = "lexical"
@@ -1740,7 +1752,7 @@ defmodule EvoGit.ConfigTest do
     end
 
     test "is false when enabled = true but the command is an empty string" do
-      File.write!(Config.config_path(), """
+      write_config!("""
       [lsp]
       enabled = true
       command = ""
@@ -1750,7 +1762,7 @@ defmodule EvoGit.ConfigTest do
     end
 
     test "is false when enabled = true but the command is blank whitespace" do
-      File.write!(Config.config_path(), """
+      write_config!("""
       [lsp]
       enabled = true
       command = "   "
@@ -1760,7 +1772,7 @@ defmodule EvoGit.ConfigTest do
     end
 
     test "is false when enabled = true but the command is absent" do
-      File.write!(Config.config_path(), """
+      write_config!("""
       [lsp]
       enabled = true
       """)
@@ -1769,7 +1781,7 @@ defmodule EvoGit.ConfigTest do
     end
 
     test "is false when enabled = false even with a command present" do
-      File.write!(Config.config_path(), """
+      write_config!("""
       [lsp]
       enabled = false
       command = "lexical"

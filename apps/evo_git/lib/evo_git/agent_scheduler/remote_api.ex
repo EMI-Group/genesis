@@ -175,7 +175,9 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   Re-reads the config file from disk and applies the relevant settings to
   the running AgentScheduler.
 
-  Calls `EvoGit.Config.resolve/0` to get a fresh config from disk, extracts
+  Calls `EvoGit.Config.Cache.reload/1` to FORCE a fresh disk read (config is
+  otherwise served from the RAM snapshot), then `EvoGit.Config.resolve/0`,
+  and extracts
   scheduler-relevant keys (model profiles, concurrency limits, retry/turn
   settings, sandbox configuration), and delegates to
   `EvoGit.AgentScheduler.update_config/1` to apply them.
@@ -187,6 +189,9 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   """
   @spec reload_config() :: :ok | {:error, String.t()}
   def reload_config do
+    # Config reads are served from the RAM snapshot, so an explicit reload must
+    # refresh the snapshot first or it would re-apply values already in RAM.
+    EvoGit.Config.Cache.reload()
     config = EvoGit.Config.resolve()
     opts = build_reload_opts(config)
     EvoGit.AgentScheduler.update_config(opts)
