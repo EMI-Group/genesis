@@ -181,6 +181,11 @@ defmodule EvoGit.Config.Watcher do
   # by the caller's fallback, never propagated into the saving process.
   defp call_refresh(target, dir, timeout) do
     GenServer.call(target, {:config_changed, dir}, timeout)
+  rescue
+    error ->
+      Logger.debug("Config watcher call failed for #{dir}: #{inspect(error)}; reloading directly")
+
+      :error
   catch
     kind, reason ->
       Logger.debug(
