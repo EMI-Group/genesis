@@ -21,6 +21,8 @@ No page or unit suite writes the config dir BEAM-globally: it is isolated per pr
 - `./tasks_live_test.exs` (86, `async: false`) → cross-project task list: search/filter, pagination, cancel/force-kill modals, `:cancelling` display, debounced reloads, exit-safe page loads, lazy per-card detail + archive, server-side `session_mode` filter.
 - `./agents_live_test.exs` (70, `async: true`) → agent tree (node-aware async loads, push-driven refresh), the left-panel view switcher + TEMPORAL commit-history view, the compression threshold, the context meter and `LoadData`.
 - `./agents_live/` → `commit_graph_test.exs` (63), `commit_graph_refresh_test.exs` (11), `context_meter_test.exs` (13) and `tool_call_display_test.exs` (10) — `./agents_live/CONTEXT.md`.
+- `./agents_stream_integration_test.exs` → five synchronous mounted inspector-stream integration tests covering watch/snapshot/delta delivery, activity, cleanup, no watched history-count refetch and checkpoint failure/retry.
+- `./agents_stream_render_test.exs` → fourteen async public page-render contracts for stream presentation, capture-aware no-thinking verdicts and per-message animation API/scope.
 - `./agents_stream_watch_lifecycle_test.exs` → seven synchronous real `StreamWatch` worker lifecycle tests using an isolated spawned consumer and a connected hand-built socket, not a mounted page.
   The forcing globals are the BEAM-global `:agents_watch_runner` / `:agents_unwatch_runner` seams, snapshotted and restored only after the consumer and its supervised workers have exited.
 - `./processes_live_test.exs` (23, `async: false` `EvoDashWeb.ProcessesLiveTest`) → the managed-process `/processes` page: status/kind/free-text/agent-id/task-id URL filters, the five node-tagged `"processes"` PubSub events applied without refetching, pause/resume, the reason-required Terminate/Kill modal, control-error flashes, the load-error + Retry state, and row expansion with the control log.
@@ -125,8 +127,13 @@ Consumer death is covered both after registration and while registration is bloc
 Error results, exits, exceptions and malformed registration results must clean up and permit retry on the same worker; failed unregister logs once without retrying or blocking the next selection.
 Negative RPC probes occur only after the worker's terminal DOWN, not after an arbitrary quiet window, and teardown owner monitors release blocked test runners even when an assertion fails.
 The child async `agents_live/stream_watch_test.exs` covers pure snapshot/replay and worker-command boundaries, not real RPC ordering or consumer-death cleanup.
-Integration gap: `agents_live.ex` does not yet wire `RuntimeStream` / `StreamWatch` into the actual `/agents` page, and stream projection components are not yet available.
-These helper lifecycle tests and the existing checkpoint-history page suite do not establish mounted inspector-stream behavior; add real page/component coverage when that wiring exists, never skipped tests or page expectations for unavailable integration.
+`agents_stream_integration_test.exs` covers the mounted `/agents` inspector-stream path through actual selection/watch seams, buffered snapshot replay, stale/duplicate/foreign deltas, authoritative LLM/tools phases, and suppression of message-count history refetch while watched.
+Its five mounted tests also pin selection/close/local-to-remote URL-patch cleanup and checkpoint reconciliation failure with retained content and explicit retry.
+The module is synchronous because its global app-env runner seams overlap the existing async page suites, and monitored consumer/worker teardown completes before those seams are restored.
+`agents_stream_render_test.exs` has fourteen async tests exercising the public `AgentsLive.render/1` without mounting or mutating global state.
+It pins response/thinking separation, authoritative activity, no-thinking only after completed generation with explicit complete thinking capture, and stable per-message animation identities, attachment scope, disclosure/expansion and checkpoint-part identity gates.
+Incomplete, omitted-thinking, late-start, failed and cancelled captures never establish a no-thinking verdict.
+Run all scoped inspector tests with `mix test apps/evo_dash/test/evo_dash_web/live/agents_live apps/evo_dash/test/evo_dash_web/live/agents*_test.exs` from the umbrella root.
 
 ## Notes for Agents — Home chat suite (`home_live_test.exs`)
 
