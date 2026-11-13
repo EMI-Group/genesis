@@ -270,12 +270,10 @@ The test helper `install_remote_activation_fixture!/2` supplies target-owned fix
 The positive mounted config-directory proof runs synchronously because async Projects tests replace the global `:projects_async_load_runner`, which can bypass its real configuration load; the two non-mounted proofs remain async.
 Standalone pure/render checks and individually green helper directories do not establish collective mounted-suite success.
 
-## Known Issues
+## Lifecycle and asynchronous test contracts
 
-Mounted Assistant recovery coverage uses real missing-session Watch delegates for empty/cached ended states, preserving per-message reasoning and read-only cached transcripts.
-Uncertain timeout, actual buffer overflow and monitored registration-worker death remain non-ended with a coherent unavailable surface, and the rendered Retry adopts a fresh Watch snapshot and newer deltas.
-These tests remain synchronous with the mounted Assistant suite's shared ChatHistory and runner-seam ownership.
-A silent finished delta must request an authoritative final Watch snapshot rather than an unscoped history result; this mounted regression currently remains a source blocker.
+Mounted Assistant recovery coverage pins real missing-session ended states, retryable Watch failures and exactly-once atomic silent-finish reconciliation through an authoritative final Watch snapshot, never an unscoped history result.
+These tests are synchronous because of the mounted Assistant suite's shared ChatHistory and runner-seam ownership.
 Detailed lifecycle contracts and recovery fixtures belong to `evo_dash_web/live/CONTEXT.md` and `evo_dash_web/live/home_live/CONTEXT.md`.
 `evo_dash_web/live/agents_live_test.exs` — a NEGATIVE `tasks_reload_pending` sample is a claim about GLOBAL quiet, so it lives in the `async: false` `live/agents_live_task_broadcast_test.exs` (forcing global: the shared `"tasks"` PubSub topic every mounted page subscribes to); the 40 ms window is the detection mechanism and must never be widened to hide a re-arm, while the positive broadcast shapes stay in the async module.
 `evo_dash_web/live/agents_live_test.exs` — `send_agent_message` resolves the call-time `:agents_send_message_runner` seam (default `&EvoDash.NodeContext.send_user_message/3`); exactly ONE test drives the real delegate (gated on `EvoGit.AgentScheduler.paused?/0` readiness, retried through `submit_until_pending_hint/3`, asserting the persisted `ControlPlane.pending_messages/1` queue and containing its throttled `{:agents_updated, node}` via `drain_agents_bulk_signal/1`, a throttle-flush proof rather than a sleep) and the rest pin the optimistic bookkeeping through the seam.
