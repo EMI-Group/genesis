@@ -120,6 +120,8 @@ defmodule EvoGit.TaskRegistry.TaskTmpdirReclaimTest do
     # config.toml lives at <xdg>/genesis/config.toml.
     File.mkdir_p!(EvoGit.Config.config_dir())
     File.write!(EvoGit.Config.config_path(), "[tmp]\nmode = \"per_repo\"\n")
+    # Config reads come from the RAM snapshot; a direct write needs the reload.
+    EvoGit.Config.Cache.reload()
 
     on_exit(fn ->
       if original_xdg do

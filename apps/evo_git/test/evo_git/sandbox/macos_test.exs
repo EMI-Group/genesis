@@ -111,6 +111,8 @@ defmodule EvoGit.Sandbox.MacOSTest do
     File.mkdir_p!(genesis_dir)
     config_path = Path.join(genesis_dir, "config.toml")
     File.write!(config_path, "[sandbox]\nwrite_paths = #{inspect(paths)}\n")
+    # Config reads come from the RAM snapshot; a direct write needs the reload.
+    EvoGit.Config.Cache.reload()
 
     on_exit(fn -> File.rm_rf!(genesis_dir) end)
 
@@ -844,6 +846,7 @@ defmodule EvoGit.Sandbox.MacOSTest do
       genesis_dir = Path.join(System.get_env("XDG_CONFIG_HOME"), "genesis")
       File.mkdir_p!(genesis_dir)
       File.write!(Path.join(genesis_dir, "config.toml"), "[sandbox]\nmode = \"disabled\"\n")
+      EvoGit.Config.Cache.reload()
       on_exit(fn -> File.rm_rf!(genesis_dir) end)
       :ok
     end

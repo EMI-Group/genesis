@@ -249,6 +249,7 @@ defmodule EvoGit.Agent.Compression.ProviderProfileTest do
     test "an explicit compression trigger preserves the selected model's window for both budgets",
          %{config_dir: dir, metadata_ref: ref} do
       File.write!(Path.join(dir, "config.toml"), "[llm]\ncompression_threshold_tokens = 45000\n")
+      EvoGit.Config.Cache.reload(dir: dir)
       resolved = resolve!(config(), %{provider_profile_id: "work", model: "compact"})
       info = Threshold.for_model(resolved.model_spec, context_window: resolved.context_window)
 

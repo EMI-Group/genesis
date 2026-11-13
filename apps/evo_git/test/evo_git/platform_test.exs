@@ -450,6 +450,8 @@ defmodule EvoGit.PlatformTest do
 
       if contents != "" do
         File.write!(Path.join([tmp_xdg, "genesis", "config.toml"]), contents)
+        # Config reads come from the RAM snapshot; a direct write needs the reload.
+        EvoGit.Config.Cache.reload(dir: Path.join(tmp_xdg, "genesis"))
       end
 
       System.put_env("XDG_CONFIG_HOME", tmp_xdg)
