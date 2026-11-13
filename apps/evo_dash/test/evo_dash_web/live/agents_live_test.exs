@@ -2,8 +2,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # async: true — the scheduler ETS tables this file seeds
   # (:evogit_sched_meta / :evogit_agent_summary) are shared across the whole
   # cohort, so each test seeds its agent under a UNIQUE id (see `agent_id/0`)
-  # instead of a fixed literal. The `:agents_*` runner app-env seams are used
-  # by NO other module, and the one real core write (send_agent_message)
+  # instead of a fixed literal. The `:agents_*` runner app-env seams are not
+  # driven by other ASYNC modules (stream transport suites own them in sync
+  # modules), and the one real core write (send_agent_message)
   # contains its own broadcast: its transport is stubbable through the
   # `:agents_send_message_runner` call-time seam, and the SINGLE test that
   # deliberately drives the real scheduler write contains and drains the bulk
@@ -15,6 +16,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
   alias EvoDashWeb.AgentsLive.LoadData
   alias EvoDashWeb.AgentsLive.ThresholdCache
   alias EvoDashWeb.Helpers
+  alias EvoGit.Agent.Stream.Snapshot
   alias EvoGit.AgentSpec
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
@@ -46,6 +48,21 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # impossible in practice while staying unique per test.
     agent_id = System.unique_integer([:positive]) + 10_000_000
     Process.put(:agents_live_test_agent_id, agent_id)
+
+    # Seed the selected live watch, not an independent history RPC. Even an
+    # ETS-only summary has a synthetic atomic checkpoint in this page suite.
+    install_snapshot_runner(fn _node, _id -> [] end)
+    Application.put_env(:evo_dash, :agents_unwatch_runner, fn _, _, _ -> :ok end)
+    history_reads = :atomics.new(1, [])
+    Process.put(:agents_live_history_reads, history_reads)
+
+    Application.put_env(:evo_dash, :agents_history_runner, fn _, _ ->
+      :atomics.add(history_reads, 1, 1)
+      []
+    end)
+
+    # Registered first so it runs after the consumer/worker teardown callbacks.
+    on_exit(:agents_runner_cleanup, &clear_agents_env/0)
 
     # ActiveTasks is a process-less public ETS table shared by the whole run.
     # This module is `async: true`, so clear ONLY the local `{nil, node()}`
@@ -83,8 +100,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
         await_latch(latch)
         {:ok, %{}}
       end)
-
-      on_exit(&clear_agents_env/0)
 
       {:ok, view, _html} = live(conn, ~p"/agents")
 
@@ -235,25 +250,24 @@ defmodule EvoDashWeb.AgentsLiveTest do
   end
 
   describe "history fetch gating" do
-    # The HistoryGate suppresses full-history re-transfers while an agent's
-    # :message_count is unchanged (see EvoDashWeb.AgentsLive.HistoryGate).
+    # Live selections own history through atomic snapshots, never a count-
+    # driven copy loop (HistoryGate remains the independent fallback's gate).
 
-    test "re-fetches history only when the message count moved", %{conn: conn} do
-      # The summary row carries only the CONVERSATION SIZE now (the transcript
-      # lives in the live agent session), and the seam below supplies the
-      # transcript — so `:message_count` alone drives the history gate.
+    test "summary refreshes never replace watch-owned history, even when the count moved", %{
+      conn: conn
+    } do
+      # The summary owns counts; the atomic watch owns checkpoint history.
       seed_agent(agent_id(), [
         %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
       ])
 
       counter = start_history_counter()
-      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
-      on_exit(&clear_agents_env/0)
+      install_snapshot_runner(counting_history_runner(counter))
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
 
-      # First selection fetches history (the gate has no last-seen entry).
+      # First selection registers a watch and adopts its atomic snapshot.
       view |> element("#agent-card-#{agent_id()}") |> render_click()
       wait_until(fn -> render(view) =~ "fake message 1" end)
       assert Agent.get(counter, & &1) == 1
@@ -265,16 +279,24 @@ defmodule EvoDashWeb.AgentsLiveTest do
       flush_agent_events(view)
       wait_until(fn -> render(view) =~ "WAITING" end)
 
-      # The refresh applied but the count is unchanged — the carried history is
-      # kept and the gate suppresses a re-fetch.
+      # The refresh applied but cannot replace the watch's checkpoint.
       assert Agent.get(counter, & &1) == 1
 
-      # The conversation grows (2 messages) — the next refresh must drop the
-      # carried history and re-fetch for the selected agent.
+      # A growing summary must not initiate an independent history read or a
+      # watch resnapshot; only an explicit checkpoint refresh adopts a new pair.
       update_agent_message_count(agent_id(), 2)
 
       send(view.pid, {:agents_updated, node()})
       flush_agent_events(view)
+
+      wait_until(fn ->
+        Enum.find(assigns(view).agents, &(&1.id == agent_id())).message_count == 2
+      end)
+
+      assert Agent.get(counter, & &1) == 1
+      assert render(view) =~ "fake message 1"
+      refute render(view) =~ "fake message 2"
+      refresh_checkpoint(view)
       wait_until(fn -> render(view) =~ "Turn 2" end)
 
       assert Agent.get(counter, & &1) == 2
@@ -282,15 +304,14 @@ defmodule EvoDashWeb.AgentsLiveTest do
   end
 
   describe "incremental history refresh (panel stays mounted)" do
-    test "a batched message-count update keeps the mounted entries and appends the new tail (never blanked)",
+    test "an atomic checkpoint refresh keeps the mounted entries and appends the new tail (never blanked)",
          %{conn: conn} do
       seed_agent(agent_id(), [
         %ReqLLM.Message{role: :user, content: [%{text: "seed"}], metadata: %{turn: 0}}
       ])
 
       test_pid = self()
-      Application.put_env(:evo_dash, :agents_history_runner, blocking_history_runner(test_pid))
-      on_exit(&clear_agents_env/0)
+      install_snapshot_runner(blocking_history_runner(test_pid))
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
@@ -318,7 +339,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
       send(view.pid, {:agents_updated, node()})
       flush_agent_events(view)
 
+      render_click(view, "retry_inspector_history")
       assert_receive {:history_fetch_called, second_task}, @async_wait_budget_ms
+      assert assigns(view).inspector_stream.reconciling
       mid_flight = render(view)
       assert mid_flight =~ "first entry"
       refute mid_flight =~ "Loading history"
@@ -347,6 +370,21 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert final =~ "second entry"
       assert final =~ ~s{id="agent-history-entry-#{agent_id()}-0"}
       assert final =~ ~s{id="agent-history-entry-#{agent_id()}-1"}
+
+      # A replay at/below the adopted watermark cannot append content to the
+      # newly reconciled checkpoint or duplicate its already-rendered entries.
+      seq = assigns(view).inspector_stream.seq
+      send(view.pid, {:agent_delta, agent_id(), seq, [{:text, "STALE REPLAY"}]})
+      send(view.pid, {:agent_delta, agent_id(), seq - 1, [{:text, "OLDER REPLAY"}]})
+      html = render(view)
+      refute html =~ "STALE REPLAY"
+      refute html =~ "OLDER REPLAY"
+
+      assert length(
+               Floki.find(Floki.parse_document!(html), "#agent-history-entry-#{agent_id()}-1")
+             ) == 1
+
+      assert :atomics.get(Process.get(:agents_live_history_reads), 1) == 0
     end
 
     test "a diverging refetch (compression/rewrite) still updates the panel", %{conn: conn} do
@@ -367,8 +405,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
           ]
         ])
 
-      Application.put_env(:evo_dash, :agents_history_runner, queued_history_runner(queue))
-      on_exit(&clear_agents_env/0)
+      install_snapshot_runner(queued_history_runner(queue))
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
@@ -380,6 +417,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       send(view.pid, {:agents_updated, node()})
       flush_agent_events(view)
+      assert render(view) =~ "old entry"
+      refresh_checkpoint(view)
 
       wait_until(fn -> render(view) =~ "new entry B" end)
 
@@ -396,7 +435,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # the previous node can still be found in @agents — but the gate has NO
       # entry for it (it was reset), so its history must NOT be carried into the
       # newly-applied (new node's) rows.
-      Application.put_env(:evo_dash, :agents_history_runner, fn _node, _agent_id ->
+      install_snapshot_runner(fn _node, _agent_id ->
         [
           %ReqLLM.Message{
             role: :user,
@@ -405,8 +444,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
           }
         ]
       end)
-
-      on_exit(&clear_agents_env/0)
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
@@ -515,8 +552,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
         [summary_agent(id: id), summary_agent(id: 2, objective: "from refresh")]
       end)
 
-      on_exit(&clear_agents_env/0)
-
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
 
@@ -536,8 +571,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
       Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
         {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
       end)
-
-      on_exit(&clear_agents_env/0)
 
       seed_agent(agent_id(), [])
 
@@ -640,19 +673,16 @@ defmodule EvoDashWeb.AgentsLiveTest do
   end
 
   describe "agent_updated message_count gating" do
-    # The {:agent_updated, id, changed_fields, node} broadcast carries
-    # :message_count whenever the agent's context changed (the contract).
-    # The selected-agent history refetch is gated on it via HistoryGate:
-    # fetch only when the count moved vs the gate's last-seen entry.
-
-    test "refetches selected history only when message_count moved on", %{conn: conn} do
+    # Summary message counts update the row, never the watch-owned checkpoint.
+    test "keeps selected watch history until an atomic refresh despite message_count changes", %{
+      conn: conn
+    } do
       seed_agent(agent_id(), [
         %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
       ])
 
       counter = start_history_counter()
-      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
-      on_exit(&clear_agents_env/0)
+      install_snapshot_runner(counting_history_runner(counter))
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
@@ -677,9 +707,13 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert render(view) =~ "WAITING"
       assert Agent.get(counter, & &1) == 1
 
-      # ── (3) MOVED count: the refetch fires and the tail renders ─────────
+      # ── (3) MOVED count: still no checkpoint copy loop ─────────────────
       send(view.pid, {:agent_updated, agent_id(), [message_count: 2], node()})
       flush_agent_events(view)
+      assert Enum.find(assigns(view).agents, &(&1.id == agent_id())).message_count == 2
+      assert Agent.get(counter, & &1) == 1
+      refute render(view) =~ "fake message 2"
+      refresh_checkpoint(view)
 
       wait_until(fn -> Agent.get(counter, & &1) == 2 end)
       assert render(view) =~ "fake message 2"
@@ -711,7 +745,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
         [summary_agent(id: id)]
       end)
 
-      on_exit(&clear_agents_env/0)
       seed_agent(agent_id(), [])
 
       {:ok, view, _html} = live(conn, ~p"/agents")
@@ -879,15 +912,14 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert Enum.find(state.agents, &(&1.id == agent_id())).status == :running
     end
 
-    test "a burst refetches the selected agent's history at most once — and never without :message_count",
+    test "a burst updates the selected summary without refetching watch-owned history",
          %{conn: conn} do
       seed_agent(agent_id(), [
         %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
       ])
 
       counter = start_history_counter()
-      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
-      on_exit(&clear_agents_env/0)
+      install_snapshot_runner(counting_history_runner(counter))
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
@@ -915,21 +947,22 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert assigns(view)[:history_loading_agent_id] == nil
       assert Agent.get(counter, & &1) == before
 
-      # ── Three rapid context-growth updates for the SELECTED agent — each
-      # carries :message_count (the contract). The flush must refetch ONCE for
-      # the whole burst, not once per event.
+      # Three rapid summary updates coalesce, but cannot replace the atomic
+      # checkpoint or request another snapshot merely because a count moved.
       send(view.pid, {:agent_updated, agent_id(), [message_count: 2, status: :waiting], node()})
       send(view.pid, {:agent_updated, agent_id(), [message_count: 3], node()})
       send(view.pid, {:agent_updated, agent_id(), [message_count: 4], node()})
 
       flush_agent_events(view)
 
-      # refetch_selected_history/1 has no other caller and the buffer is now
-      # drained with no flush timer armed, so a second fetch is structurally
-      # impossible (no timing window needed).
-      wait_until(fn -> Agent.get(counter, & &1) >= before + 1 end)
+      assert Enum.find(assigns(view).agents, &(&1.id == agent_id())).message_count == 4
       assert assigns(view)[:pending_agent_events] == []
       refute assigns(view)[:agent_flush_scheduled]
+      assert Agent.get(counter, & &1) == before
+      assert :atomics.get(Process.get(:agents_live_history_reads), 1) == 0
+      assert render(view) =~ "fake message 1"
+      refute render(view) =~ "fake message 2"
+      refresh_checkpoint(view)
       assert Agent.get(counter, & &1) == before + 1
     end
 
@@ -1017,8 +1050,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
         {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
       end)
 
-      on_exit(&clear_agents_env/0)
-
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
 
@@ -1049,8 +1080,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
       Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
         {:ok, %{llm: %{compression_threshold_tokens: nil}}}
       end)
-
-      on_exit(&clear_agents_env/0)
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
@@ -1590,6 +1619,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       # Select the agent to open its detail panel (renders the chat history).
       view |> element("#agent-card-#{agent_id()}") |> render_click()
+      wait_until(fn -> assigns(view).inspector_stream.snapshot != nil end)
       # Open the send-message modal for the running agent.
       view |> element("button[phx-click='open_send_message']") |> render_click()
 
@@ -1667,6 +1697,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       flush_agents_load(view)
 
       view |> element("#agent-card-#{agent_id()}") |> render_click()
+      wait_until(fn -> assigns(view).inspector_stream.snapshot != nil end)
       view |> element("button[phx-click='open_send_message']") |> render_click()
 
       html =
@@ -1767,10 +1798,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # REAL end-to-end write path stays pinned by
       # "successfully sent message appears optimistically..." above.
       stub_send_message()
-      # The transcript lives ONLY in the live session — the seeded summary row
-      # carries just the message count — so the session's side of each turn
-      # boundary is played through the :agents_history_runner seam: `history`
-      # holds what the next fetch returns.
+      # The transcript belongs to atomic watch snapshots; swap the fixture
+      # before explicitly reconciling the checkpoint below.
       history = install_swappable_history([])
 
       {:ok, view, _html} = live(conn, ~p"/agents")
@@ -1778,6 +1807,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       # Select the agent to open its detail panel (renders the chat history).
       view |> element("#agent-card-#{agent_id()}") |> render_click()
+      wait_until(fn -> assigns(view).inspector_stream.snapshot != nil end)
       # Open the send-message modal for the running agent.
       view |> element("button[phx-click='open_send_message']") |> render_click()
 
@@ -1810,7 +1840,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       )
 
       flush_agent_events(view)
-      # The refetch the moved message count triggers renders the real entry.
+      refresh_checkpoint(view)
+      # The atomic snapshot now renders the real, drained entry.
       html = wait_for_text(view, "Turn 1")
 
       # Drained: the pending hint is gone for good and the optimistic bookkeeping
@@ -1839,6 +1870,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       )
 
       flush_agent_events(view)
+      refresh_checkpoint(view)
       html = wait_for_text(view, "summary")
 
       # No pending ghost resurfaced.
@@ -1853,9 +1885,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # CORE QUEUE's authority over the optimistic entry, replayed through the
       # synthetic `:agent_updated` broadcast below — not the send's transport.
       stub_send_message()
-      # The transcript lives ONLY in the live session — the seeded summary row
-      # carries just the message count — so the session's side is played through
-      # the :agents_history_runner seam.
+      # The seeded summary carries only the count; the watch supplies history.
       install_history([
         %ReqLLM.Message{
           role: :user,
@@ -1868,6 +1898,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       flush_agents_load(view)
 
       view |> element("#agent-card-#{agent_id()}") |> render_click()
+      wait_until(fn -> assigns(view).inspector_stream.snapshot != nil end)
       view |> element("button[phx-click='open_send_message']") |> render_click()
 
       html =
@@ -1889,6 +1920,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       )
 
       flush_agent_events(view)
+      refresh_checkpoint(view)
       html = wait_for_text(view, "some other real message")
 
       # Still pending: the hint survives and the optimistic bookkeeping is kept.
@@ -1999,8 +2031,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
       Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
         {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
       end)
-
-      on_exit(&clear_agents_env/0)
 
       assert {:ok, %{agents: [agent], config_status: _, threshold_cache: cache}} =
                LoadData.load(node(), nil)
@@ -3400,15 +3430,34 @@ defmodule EvoDashWeb.AgentsLiveTest do
     tree |> Floki.find(selector) |> Floki.text() |> String.trim()
   end
 
-  # Delegates to the shared flush helper (EvoDashWeb.TestHelpers.flush_loading/4).
-  defp flush_agents_load(view, timeout \\ @async_wait_budget_ms),
-    do:
-      EvoDashWeb.TestHelpers.flush_loading(
-        view,
-        "Loading agents…",
-        "timed out waiting for the async agents load to finish",
-        timeout
-      )
+  # Drain the real serial watch worker before removing call-time runner seams.
+  # A consumer can still be watched when the LiveView test proxy stops it.
+  defp flush_agents_load(view, timeout \\ @async_wait_budget_ms) do
+    on_exit({:agents_consumer, view.pid}, fn -> stop_inspector(view) end)
+
+    EvoDashWeb.TestHelpers.flush_loading(
+      view,
+      "Loading agents…",
+      "timed out waiting for the async agents load to finish",
+      timeout
+    )
+  end
+
+  defp stop_inspector(view) do
+    workers = view_async_task_pids(view.pid)
+    monitors = Enum.map(workers, &Process.monitor/1)
+
+    # Teardown only: the test proxy may stop the view before this lookup.
+    try do
+      if Process.alive?(view.pid), do: GenServer.stop(view.pid, :normal, @assigns_timeout_ms)
+    catch
+      :exit, {:noproc, _} -> :ok
+    end
+
+    Enum.each(monitors, fn ref ->
+      assert_receive {:DOWN, ^ref, :process, _, _}, @async_wait_budget_ms
+    end)
+  end
 
   # Triggers the AgentsLive coalescing flush directly (bypassing the
   # trailing-edge timer). The LiveView processes its mailbox in FIFO order,
@@ -3616,6 +3665,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
     for key <- [
           :agents_list_runner,
           :agents_history_runner,
+          :agents_watch_runner,
+          :agents_unwatch_runner,
           :agents_config_runner,
           :agents_commit_graph_runner,
           :agents_send_message_runner
@@ -3648,7 +3699,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # `"agents"` broadcast is emitted. Only this file drives that seam.
   defp stub_send_message(responder \\ fn _node, _agent_id, _message -> {:ok, :ok} end) do
     Application.put_env(:evo_dash, :agents_send_message_runner, responder)
-    on_exit(&clear_agents_env/0)
     :ok
   end
 
@@ -3715,14 +3765,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
 
     Application.put_env(:evo_dash, :agents_commit_graph_runner, stub)
-    on_exit(&clear_agents_env/0)
   end
 
   # Installs an :agents_list_runner stub returning the given crafted summaries
   # (build them with the existing summary_agent/1 helper).
   defp install_agents(summaries) when is_list(summaries) do
     Application.put_env(:evo_dash, :agents_list_runner, fn _node -> summaries end)
-    on_exit(&clear_agents_env/0)
   end
 
   # The text of the detail panel's "Model" cell: the <code> inside the wrapper
@@ -3915,11 +3963,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
-  # Moves a seeded agent's conversation SIZE in ETS. The `:evogit_agent_summary`
-  # row is a summary-only read model with no conversation (the transcript lives
-  # in the live agent session), so `:message_count` is what the history gate
-  # compares — the transcript itself is injected through the
-  # `:agents_history_runner` seam (see install_history/1).
+  # Moves a seeded summary's conversation SIZE in ETS; this never transfers
+  # checkpoint history, which comes only from the atomic snapshot fixture.
   defp update_agent_message_count(id, count) do
     case :ets.lookup(:evogit_agent_summary, id) do
       [{^id, state}] ->
@@ -3930,27 +3975,50 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
-  # Installs the `:agents_history_runner` seam with a FIXED transcript —
-  # the seeded summary row carries no conversation, so the panel's chat history
-  # comes from here instead. The seam is resolved at spawn time inside the
-  # AgentsLive fetch task, and every test owns it exclusively.
+  # Supply the core's atomic watch envelope; each successful registration or
+  # reconciliation gets a monotonic watermark and the complete checkpoint.
+  # The serial production watch worker still owns registration and teardown.
+  defp install_snapshot_runner(messages_runner) do
+    watermark = :atomics.new(1, [])
+
+    Application.put_env(:evo_dash, :agents_watch_runner, fn target, id, _consumer ->
+      messages = messages_runner.(target, id)
+      seq = :atomics.add_get(watermark, 1, 1)
+
+      {:ok,
+       %Snapshot{
+         agent_id: id,
+         seq: seq,
+         phase: :running,
+         messages: messages,
+         activity: %{phase: :idle, current_call: nil}
+       }, seq}
+    end)
+  end
+
+  defp refresh_checkpoint(view) do
+    wait_until(fn -> assigns(view).inspector_stream.snapshot != nil end)
+    render_click(view, "retry_inspector_history")
+    wait_until(fn -> not assigns(view).inspector_stream.reconciling end)
+    assert :atomics.get(Process.get(:agents_live_history_reads), 1) == 0
+    render(view)
+  end
+
+  # Installs a fixed checkpoint transcript for the selected live watch.
   defp install_history(messages) do
-    Application.put_env(:evo_dash, :agents_history_runner, fn _node, _agent_id -> messages end)
-    on_exit(&clear_agents_env/0)
+    install_snapshot_runner(fn _node, _agent_id -> messages end)
     :ok
   end
 
-  # The SWAPPABLE variant: the returned Agent holds the transcript the next
-  # fetch returns, so a test can play the session's side of a turn boundary
-  # (`Agent.update/2`) before moving the agent's `:message_count`.
+  # Swap the complete checkpoint returned by the next atomic watch snapshot.
+  # Summary-count broadcasts alone never request this new checkpoint.
   defp install_swappable_history(messages) do
     history = start_supervised!({Agent, fn -> messages end})
 
-    Application.put_env(:evo_dash, :agents_history_runner, fn _node, _agent_id ->
+    install_snapshot_runner(fn _node, _agent_id ->
       Agent.get(history, & &1)
     end)
 
-    on_exit(&clear_agents_env/0)
     history
   end
 
@@ -4040,9 +4108,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
     )
   end
 
-  # A counter-backed :agents_history_runner fake. Each call returns one more
+  # A counter-backed checkpoint fixture. Each snapshot returns one more
   # message than the last (call N returns N messages with turns 1..N), so the
-  # display text reveals how many times history was fetched. MUST return
+  # display text reveals how many atomic snapshots were requested. MUST return
   # %ReqLLM.Message{} structs — the display path pattern-matches structs.
   defp counting_history_runner(counter) do
     fn _node, _agent_id ->
@@ -4069,7 +4137,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       receive do
         {:history_release, messages} -> messages
       after
-        5_000 -> []
+        @async_wait_budget_ms -> flunk("timed out waiting to release the atomic snapshot fixture")
       end
     end
   end
