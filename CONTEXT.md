@@ -298,8 +298,8 @@ Details: `desktop/src-tauri/CONTEXT.md` + `.github/workflows/CONTEXT.md` + `apps
 
 A root `flake.nix` supports NixOS local builds: `nix develop` (Erlang/OTP 29, Elixir 1.20, Rust, webkitgtk-4.1) and `nix build .#desktop` (the Tauri binary resolves the backend release via `sidecar_path::resolve_launcher`, the wrapper puts the GTK/WebKit/tray stack on `LD_LIBRARY_PATH`, and `genesis.nix` bakes a deterministic `releases/COOKIE`).
 **Design decisions**: no `cargoHash` (Rust deps vendored from `desktop/src-tauri/Cargo.lock`); both derivations read `VERSION`; the manual hashes live in `genesis.nix`.
-Build gotchas (tauri-build `bundle.resources` validation, the `checkPhase`/`postBuild` chmod workaround, the tray icon's writable `XDG_RUNTIME_DIR`) and the manual release-time `nix run .#desktop-smoke`: `nix/CONTEXT.md`.
-Details: `nix/CONTEXT.md` + `desktop/CONTEXT.md`.
+Build gotchas (tauri-build `bundle.resources` validation, the `checkPhase`/`postBuild` chmod workaround, the tray icon's writable `XDG_RUNTIME_DIR`) and the release-time `nix run .#desktop-smoke`: `nix/CONTEXT.md` + `desktop/CONTEXT.md`.
+EGL is resolved from the flake's own `mesa` (`__EGL_VENDOR_LIBRARY_DIRS`), never the host's `/run/opengl-driver` — see `nix/CONTEXT.md` → "EGL / Mesa".
 ### Research Notes: PDF/DOCX → Plain Text Extraction (for LLM objective prompts)
 
 **Status: plain-text, `.docx` and `.pdf` are IMPLEMENTED** as a FRONTEND feature in `EvoDash.AttachedFile` (`ex_pdf` a plain Hex dep of `:evo_dash`; password-protected → `{:invalid, …}`, image-only → `{:empty, …}`, no OCR), and the core `:evo_git` has NO prompt-file reader: conversion happens only on the LOCAL node, so the objective stays a `String.t()` end-to-end.

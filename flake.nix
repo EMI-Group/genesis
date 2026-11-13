@@ -46,6 +46,7 @@
         tauriRuntimeDeps = lib.optionals pkgs.stdenv.isLinux [
           pkgs.dconf # GSettings backend (required by GTK at runtime)
           pkgs.hicolor-icon-theme # icon theme needed by app bundles
+          pkgs.mesa # the flake's own EGL vendor (see __EGL_VENDOR_LIBRARY_DIRS)
         ];
 
         # ── Manual desktop start-up smoke test ──────────────────────
@@ -91,7 +92,8 @@
           src = self;
           inherit (pkgs) rustPlatform makeWrapper pkg-config openssl file
             webkitgtk_4_1 gtk3 glib glib-networking librsvg
-            libayatana-appindicator libsoup_3 xdo wrapGAppsHook3;
+            libayatana-appindicator libsoup_3 xdo wrapGAppsHook3
+            mesa libglvnd;
           beamPackages = beamPkgs;
         };
 
@@ -150,6 +152,13 @@
               export GIO_EXTRA_MODULES="${pkgs.glib-networking}/lib/gio/modules:${pkgs.dconf}/lib/gio/modules"
               # Work around WebKit rendering issues under certain compositors.
               export WEBKIT_DISABLE_DMABUF_RENDERER=1
+              # The shell must resolve EGL from the flake's OWN mesa: libglvnd's
+              # compiled-in vendor dir list starts with the host's
+              # /run/opengl-driver/share/glvnd/egl_vendor.d, and a host mesa built
+              # against a newer glibc than this shell's pin fails to dlopen
+              # (GLIBC_2.4x not found) → WebKit aborts with
+              # "Could not create default EGL display: EGL_BAD_PARAMETER".
+              export __EGL_VENDOR_LIBRARY_DIRS="${pkgs.mesa}/share/glvnd/egl_vendor.d"
             ''}
 
             echo ""

@@ -37,6 +37,9 @@
   libayatana-appindicator,
   libsoup_3,
   xdo,
+  # EGL: the vendor mesa the app must use instead of the host's
+  mesa,
+  libglvnd,
   # Runtime helpers for the wrapper (Linux)
   wrapGAppsHook3,
 }:
@@ -144,6 +147,8 @@ stdenv.mkDerivation {
     libsoup_3
     webkitgtk_4_1
     libayatana-appindicator
+    mesa
+    libglvnd
   ];
 
   dontUnpack = true;
@@ -164,6 +169,19 @@ stdenv.mkDerivation {
     # (tray-icon dlopens libayatana-appindicator, wry dlopens WebKitGTK,
     # librsvg provides the SVG pixbuf loader) — on minimal NixOS systems
     # they are not reachable otherwise.
+    #
+    # __EGL_VENDOR_LIBRARY_DIRS OVERRIDES the vendor dirs libglvnd was
+    # compiled with (host `/run/opengl-driver/share/glvnd/egl_vendor.d`,
+    # `/etc/glvnd/egl_vendor.d`, `/usr/share/glvnd/egl_vendor.d`). On a NixOS
+    # host those point at a mesa built against the host's own glibc, which can
+    # be NEWER than this package's glibc pin; dlopen of libEGL_mesa.so.0 then
+    # fails with "version `GLIBC_2.4x' not found", glvnd finds no usable EGL
+    # vendor, eglGetDisplay returns EGL_NO_DISPLAY and WebKitWebProcess aborts
+    # with "Could not create default EGL display: EGL_BAD_PARAMETER" (blank
+    # window, dashboard never loads). Pointing glvnd at the mesa this package
+    # was built with keeps the EGL stack glibc-consistent, and on non-NixOS
+    # hosts (where /run/opengl-driver does not exist) it is simply the only
+    # vendor dir. No EGL_PLATFORM or WebKit workaround is set: none is needed.
     makeWrapper $out/lib/genesis-desktop/genesis-desktop \
                 $out/bin/genesis-desktop \
       --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath (
@@ -176,8 +194,11 @@ stdenv.mkDerivation {
           libsoup_3
           webkitgtk_4_1
           libayatana-appindicator
+          mesa
+          libglvnd
         ]
-      )}"
+      )}" \
+      --set-default __EGL_VENDOR_LIBRARY_DIRS "${mesa}/share/glvnd/egl_vendor.d"
   '';
 
   meta = with lib; {
