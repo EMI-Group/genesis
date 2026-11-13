@@ -10,8 +10,9 @@ defmodule EvoGit.Agent.Session.Worker do
   pid as `:evogit_agent_pid` (D7), runs the exchange, and reports the exchange
   back with exactly two messages:
 
-    * `{:checkpoint, %EvoGit.Agent.State{}}` — one per turn, so the session can
-      publish a coalesced summary;
+    * `{:checkpoint, self(), %EvoGit.Agent.State{}}` — one per turn, so the
+      session can reject stale workers before adopting state or publishing a
+      coalesced summary;
     * `{:exchange_finished, self(), outcome}` — the terminal outcome value,
       verbatim: `{:yield, %State{}, text}` (an interactive agent's tool-free
       reply, already refreshed against the post-fallback worktree HEAD),
@@ -74,7 +75,12 @@ defmodule EvoGit.Agent.Session.Worker do
     # reach every emitter without changing a single public arity.
     Sink.install(session_pid, state.agent_id)
 
-    checkpoint = fn %State{} = checkpointed -> send(session_pid, {:checkpoint, checkpointed}) end
+    # Checkpoints and terminal outcomes share the same worker identity: a late
+    # checkpoint must never overwrite the state of a resumed exchange.
+    checkpoint = fn %State{} = checkpointed ->
+      send(session_pid, {:checkpoint, self(), checkpointed})
+    end
+
     exchange_opts = [checkpoint: checkpoint] ++ Keyword.delete(opts, :tmpdir)
 
     outcome =
