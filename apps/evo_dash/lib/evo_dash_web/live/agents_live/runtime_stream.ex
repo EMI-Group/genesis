@@ -74,6 +74,11 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
       }
 
       seeded = replace_activity(seeded, field(snapshot, :activity))
+
+      # A snapshot is authoritative even when its activity is missing or malformed.
+      # Old projections are carried only so a valid same-call replacement can
+      # retain tool descriptors and its DOM ordinal, never as fallback content.
+      seeded = if is_nil(seeded.activity), do: retire(seeded), else: seeded
       if finished, do: complete_current(seeded), else: seeded
     else
       state
