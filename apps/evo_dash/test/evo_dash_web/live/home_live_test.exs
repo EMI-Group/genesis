@@ -2908,6 +2908,36 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   defp dialog_open?(html), do: present?(html, "#approval-dialog")
 
+  defp approval_notification_host(html) do
+    [host] = html |> Floki.parse_document!() |> Floki.find("#assistant-notifications")
+    [ids] = Floki.attribute(host, "data-approval-request-ids")
+
+    %{
+      scope: List.first(Floki.attribute(host, "data-approval-scope")),
+      request_ids: Jason.decode!(ids)
+    }
+  end
+
+  defp assert_approval_notification(view, request_id) do
+    host = approval_notification_host(render(view))
+    assert is_binary(host.scope) and host.scope != ""
+    assert request_id in host.request_ids
+    request_tag = :crypto.hash(:sha256, request_id) |> Base.url_encode64(padding: false)
+
+    assert_push_event(view, "task_notification", payload, @async_wait_budget_ms)
+
+    # The entire payload is generic: no code, command, arguments, target or credentials.
+    assert payload == %{
+             title: "Approval needed",
+             body: "Genesis is waiting for your approval.",
+             request_id: request_id,
+             scope: host.scope,
+             tag: "genesis-approval:#{host.scope}:#{request_tag}"
+           }
+
+    payload
+  end
+
   # Sends a raw page message and returns the HTML rendered AFTER the page has
   # applied it. `assigns/1` is a direct `:sys.get_state/2` round-trip from THIS
   # process, so per-sender ordering guarantees the `send/2` above is processed
@@ -3408,6 +3438,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       old_chat = assigns(view).chat_id
       seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
       html = send_and_render(view, {:approval_requested, eval_request()})
+      old_host = approval_notification_host(html)
+      assert old_host.request_ids == ["eval-1"]
       assert dialog_open?(html)
       view |> element(approval_button("eval-1", "approve")) |> render_click()
 
@@ -3428,6 +3460,18 @@ defmodule EvoDashWeb.HomeLiveTest do
       html = render(view)
       refute dialog_open?(html)
       assert approval_strip_count(html) == ""
+      new_host = approval_notification_host(html)
+      assert new_host.request_ids == []
+      refute new_host.scope == old_host.scope
+
+      html =
+        render_click(view, "review_approval_notification", %{
+          "request_id" => "eval-1",
+          "scope" => old_host.scope
+        })
+
+      refute dialog_open?(html)
+      assert assigns(view).approval_responses == %{}
 
       monitor = Process.monitor(worker)
       send(worker, {:respond, {:error, :old_scope_failure}})
@@ -3478,7 +3522,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # (the recovery result is already applied, so this window cannot hide it).
       assert approval_strip_count(html) == "2"
       assert present?(html, ~s(#approval-status-bar button[phx-click="open_approval_dialog"]))
-      refute_push_event(view, "task_notification", %{tag: "genesis-approval"}, 50)
+      refute_push_event(view, "task_notification", %{}, 50)
 
       # A RECOVERY snapshot never opens the dialog on its own: Review does.
       assert assigns(view).approval_dialog_open == false
@@ -3849,18 +3893,137 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute dialog_open?(html)
     end
 
-    test "a new live request raises a browser notification", %{conn: conn} do
+    test "live notifications are private, novel and suppressed for duplicates and resolved replays",
+         %{
+           conn: conn
+         } do
       {:ok, view, _html} = live(conn, "/assistant")
       seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+      request = eval_request()
+      send_and_render(view, {:approval_requested, request})
+      payload = assert_approval_notification(view, request.request_id)
 
+      render_click(view, "dialog_closed")
+      html = send_and_render(view, {:approval_requested, request})
+      assert approval_strip_count(html) == "1"
+      refute dialog_open?(html)
+      refute_push_event(view, "task_notification", %{}, 0)
+
+      html = send_and_render(view, {:approval_requested, l2_request()})
+      second = assert_approval_notification(view, "req-1")
+      assert second.scope == payload.scope
+      refute second.tag == payload.tag
+
+      assert approval_notification_host(html) == %{
+               scope: payload.scope,
+               request_ids: ["req-1", "eval-1"]
+             }
+
+      html = send_and_render(view, {:approval_resolved, "eval-1", :deny, node()})
+      assert approval_notification_host(html) == %{scope: payload.scope, request_ids: ["req-1"]}
+      render_click(view, "dialog_closed")
+      html = send_and_render(view, {:approval_requested, request})
+      assert approval_notification_host(html).request_ids == ["req-1"]
+      refute dialog_open?(html)
+      refute_push_event(view, "task_notification", %{}, 0)
+    end
+
+    test "notification review selects the exact pending request without authorizing or falling back",
+         %{
+           conn: conn
+         } do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :approval_responder, fn source, id, decision ->
+        send(test_pid, {:unexpected_notification_authorization, source, id, decision})
+        :ok
+      end)
+
+      {:ok, view, _html} = live(conn, "/assistant")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+      send_and_render(view, {:approval_requested, eval_request()})
+      payload = assert_approval_notification(view, "eval-1")
       send_and_render(view, {:approval_requested, l2_request()})
+      assert_approval_notification(view, "req-1")
+      render_click(view, "dialog_closed")
 
-      assert_push_event(
+      html =
+        render_click(view, "review_approval_notification", %{
+          "request_id" => payload.request_id,
+          "scope" => payload.scope,
+          "decision" => "approve"
+        })
+
+      assert dialog_open?(html)
+      assert approval_position(html) == "2 of 2"
+      assert present?(html, approval_button("eval-1", "approve"))
+
+      assert html |> Floki.parse_document!() |> Floki.find("pre code") |> Floki.text() ==
+               eval_request().code
+
+      assert assigns(view).approval_responses == %{}
+      assert length(assigns(view).pending_approvals) == 2
+
+      send_and_render(view, {:approval_resolved, "eval-1", :deny, node()})
+
+      send_and_render(
         view,
-        "task_notification",
-        %{tag: "genesis-approval"},
-        @async_wait_budget_ms
+        {:approval_requested, eval_request(request_id: "foreign", node: :foreign@node)}
       )
+
+      render_click(view, "dialog_closed")
+
+      for params <- [
+            %{},
+            %{"request_id" => nil},
+            %{"request_id" => 1},
+            %{"request_id" => ["req-1"]},
+            %{"request_id" => %{"id" => "req-1"}},
+            %{"request_id" => ""},
+            %{"request_id" => "forged"},
+            %{"request_id" => "foreign"},
+            %{"request_id" => "eval-1", "scope" => payload.scope}
+          ] do
+        html = render_click(view, "review_approval_notification", params)
+        refute dialog_open?(html)
+        assert assigns(view).approval_dialog_open == false
+        assert assigns(view).approval_responses == %{}
+        assert approval_notification_host(html).request_ids == ["req-1"]
+      end
+
+      # No responder task may even be dispatched by a notification click.
+      assert assigns(view).approval_responses == %{}
+      refute_receive {:unexpected_notification_authorization, _, _, _}, 50
+    end
+
+    test "notification review rejects stale, foreign and malformed browser scopes", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/assistant")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+      send_and_render(view, {:approval_requested, l2_request()})
+      payload = assert_approval_notification(view, "req-1")
+      seed_chat_state(view, %{chat_status: :idle})
+      render_click(view, "new_chat")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t2", chat_agent_id: 2002})
+      send_and_render(view, {:approval_requested, l2_request(task_id: "t2")})
+      current = assert_approval_notification(view, "req-1")
+      refute current.scope == payload.scope
+      refute current.tag == payload.tag
+      render_click(view, "dialog_closed")
+
+      # Even reusing an exact pending id cannot make a previous chat's click current.
+      for scope <- [payload.scope, "foreign-scope", nil, 1, %{}, [current.scope]] do
+        html =
+          render_click(view, "review_approval_notification", %{
+            "request_id" => "req-1",
+            "scope" => scope
+          })
+
+        assert assigns(view).approval_dialog_open == false,
+               "notification review accepted an invalid captured browser scope: #{inspect(scope)}"
+
+        refute dialog_open?(html)
+        assert assigns(view).approval_responses == %{}
+      end
     end
 
     test "requests this chat does not own never raise a browser notification", %{conn: conn} do
@@ -3877,7 +4040,7 @@ defmodule EvoDashWeb.HomeLiveTest do
           ] do
         send_and_render(view, {:approval_requested, request})
 
-        refute_push_event(view, "task_notification", %{tag: "genesis-approval"}, 50)
+        refute_push_event(view, "task_notification", %{}, 50)
       end
 
       assert assigns(view).pending_approvals == []
@@ -3886,12 +4049,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # The gate is per request: the next OWNED request notifies normally.
       send_and_render(view, {:approval_requested, l2_request()})
 
-      assert_push_event(
-        view,
-        "task_notification",
-        %{tag: "genesis-approval"},
-        @async_wait_budget_ms
-      )
+      assert_approval_notification(view, "req-1")
     end
 
     # A task-LESS interactive session (the repo-less `/assistant` root) has a
@@ -3930,12 +4088,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert html |> Floki.parse_document!() |> Floki.find("pre code") |> Floki.text() ==
                request.code
 
-      assert_push_event(
-        view,
-        "task_notification",
-        %{tag: "genesis-approval"},
-        @async_wait_budget_ms
-      )
+      notification = assert_approval_notification(view, "eval-1")
 
       # Approve travels to the responder with (chat node, request id, decision).
       view |> element(approval_button("eval-1", "approve")) |> render_click()
@@ -3952,6 +4105,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # card even while the response is still in flight.
       html = send_and_render(view, {:approval_resolved, "eval-1", :approve, node()})
 
+      assert approval_notification_host(html) == %{scope: notification.scope, request_ids: []}
       assert assigns(view).pending_approvals == []
       assert assigns(view).approval_dialog_open == false
       assert assigns(view).approval_dialog_index == 0
@@ -3998,7 +4152,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         assert approval_strip_count(html) == ""
         refute dialog_open?(html)
         refute html =~ "Genesis is waiting for your approval"
-        refute_push_event(view, "task_notification", %{tag: "genesis-approval"}, 50)
+        refute_push_event(view, "task_notification", %{}, 50)
       end
     end
 
@@ -4045,7 +4199,16 @@ defmodule EvoDashWeb.HomeLiveTest do
       # the exact code is there.
       assert assigns(view).approval_dialog_open == false
       refute dialog_open?(html)
-      refute_push_event(view, "task_notification", %{tag: "genesis-approval"}, 50)
+      refute_push_event(view, "task_notification", %{}, 50)
+      host = approval_notification_host(html)
+      assert host.request_ids == [request.request_id]
+      assert is_binary(host.scope) and host.scope != ""
+
+      # A later live replay of a recovered id is not a novel notification either.
+      html = send_and_render(view, {:approval_requested, request})
+      assert approval_notification_host(html) == host
+      refute dialog_open?(html)
+      refute_push_event(view, "task_notification", %{}, 0)
 
       html =
         view
