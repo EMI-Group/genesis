@@ -135,11 +135,14 @@ The privacy-safe payload contains generic gettext `title`/`body`, the string `re
 These notification APIs are the integration contract for page wiring in the sibling `../home_live.ex` and browser assets.
 `notification_host/1` returns `%{scope:, request_ids:}` for the visible `#assistant-notifications` wrapper around the fixed-height approval bar; bind `data-approval-scope` to `scope` and `data-approval-request-ids` to `Jason.encode!(request_ids)` rather than exposing requests.
 `notification_host_json/1` encodes that WHOLE metadata object, not the ids-only attribute value.
-The browser's `review_approval_notification` event carries `%{request_id: string}`; page wiring uses `dialog_index/2` to validate exact CURRENTLY pending ownership and select its index, treating nil as a no-op and never calling `respond/3`.
-`dialog_index/3` additionally validates a captured opaque scope when supplied, while `notification_scope?/2` supports browser scope reconciliation.
+The host supplies gettext `data-notification-label-{unsupported,denied,default,granted,requesting,error}` labels for all six browser permission/delivery states.
+The browser's `review_approval_notification` event requires `%{request_id: string, scope: string}`; page wiring uses `dialog_index/3` to validate the captured opaque scope AND exact CURRENTLY pending ownership before selecting its index, treating nil as a no-op and never calling `respond/3`.
+Missing, malformed or stale scopes fail closed even when a different chat reuses the same pending request id, while `notification_scope?/2` supports browser scope reconciliation.
 Review and dismissal confer no authorization; `respond/3` independently rechecks owned pending id, decision whitelist and busy state, and resolved-id tombstones prevent snapshot or broadcast resurrection.
 A resolved request (`{:approval_resolved, …}`) re-syncs the dialog index through `sync_approval_dialog/1`.
-The dialog is accessibly named/described, gives safe autofocus to Close rather than Allow, announces busy consent submission, and accepts optional `approval_error` for an honest retry message.
+The dialog is accessibly named/described and initially focuses its static heading (`data-dialog-title`, `data-dialog-initial-focus`, `tabindex="-1"`, `autofocus`), never a decision button.
+Its `data-dialog-return-focus="approval-review-button"` matches the strip's Review button ID, and Close uses `data-dialog-dismiss` without `phx-click` or autofocus so the hook reports dismissal exactly once.
+It announces busy consent submission and accepts optional `approval_error` for an honest retry message.
 `ApprovalWorkflow.approval_responses` maps request ids to response sequence tokens only, not decisions or execution outcomes, and `responded/3` treats `{:ok, :ok}` as a response acknowledgement and `{:ok, {:error, :not_found}}` as already resolved.
 Neither acknowledgement proves that an approved evaluation executed successfully, and this subtree has no request-id-to-tool-call execution correlation.
 The live `Delta` tool-result projection receives only call id and coarse status, rendering Running/Done/Failed/Timed out through `AssistantMessage.tool_entry/1`, while complete result text is available only in checkpoint history's Thought process projection.
@@ -167,9 +170,10 @@ CSS invariants live in `assets/css/app.css`: `#chat-messages` keeps `overflow-an
 ## DialogModal hook contract (page-level dependency)
 
 `phx-hook="DialogModal"` is mounted ON the `<dialog>` element.
-`mounted/0` opens it with `showModal()` only when that function exists and the dialog is not already open, and installs a `close` listener that pushes `dialog_closed` EXACTLY once per user dismissal (ESC or backdrop close, latched).
-`updated/0` re-asserts the modal unless the user dismissed it, so a re-render never re-summon a dismissed dialog; an optional `push_event("dialog_open", %{})` clears the latch and re-shows it.
-`destroyed/0` removes its listener BEFORE closing, so a server-driven unmount reports nothing to the server.
+`mounted/0` opens the dialog with `showModal()` when available, otherwise exposes an honestly nonmodal visible fallback, and focuses static review content rather than Allow/Deny.
+Escape, backdrop and `data-dialog-dismiss` controls report `dialog_closed` EXACTLY once per user dismissal through the hook's latch, never denial or authorization.
+`updated/0` preserves focus and re-asserts the modal unless dismissed; optional `push_event("dialog_open", %{})` clears the latch and re-shows it.
+`destroyed/0` removes its listeners BEFORE closing so a server-driven unmount reports nothing, then restores viable explicit return focus or prior focus without stealing focus already outside.
 
 ## Attachments
 

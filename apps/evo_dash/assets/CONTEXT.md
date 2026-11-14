@@ -95,7 +95,7 @@ The matching keyframes / view-visibility rules live in the `css/app.css` `Fused 
 - **BrowserNotifications** (`js/browser_notifications.js`, registered in `app.js`) serves Projects terminal notifications and Assistant approval notifications through `task_notification`.
 Permission requires an explicit `[data-enable-notifications]` gesture; focus, visibility and patch events refresh permission, and `[data-notification-status]` uses host-supplied localized labels.
 Delivery remains hidden-or-unfocused only, with honest unsupported/denied/error fallback.
-Assistant hosts provide `data-approval-scope` and `data-approval-request-ids` JSON; an optional payload `request_id` is revalidated against captured/current scope and pending IDs before activation pushes only `review_approval_notification` with `{request_id}`.
+Assistant hosts provide `data-approval-scope` and `data-approval-request-ids` JSON; an optional payload `request_id` requires a captured payload `scope`, both revalidated against the current host scope and pending IDs at delivery AND click before activation pushes only `review_approval_notification` with `{request_id, scope}`.
 Resolution, scope changes, disconnect and teardown close retained notifications; Projects notifications need no approval metadata and never emit review events.
 Approval payloads must contain privacy-safe generic text, never exact code or secrets; there is no service worker, background delivery or notification authorization action.
 Full host attributes, label names and lifecycle contracts live in `js/CONTEXT.md`.

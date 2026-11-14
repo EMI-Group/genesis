@@ -99,7 +99,19 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialogRenderTest do
 
       assert attr(dom, "dialog", "data-request-id") == ["eval-<request>&1"]
       assert text(dom, "dialog header p") == "Approval required"
-      assert attr(dom, "button[phx-click='dialog_closed']", "aria-label") == ["Close"]
+      assert attr(dom, "button[data-dialog-dismiss]", "aria-label") == ["Close"]
+      assert Floki.find(dom, "button[data-dialog-dismiss][phx-click]") == []
+      assert Floki.find(dom, "[phx-click='dialog_closed']") == []
+      assert Floki.find(dom, "[autofocus]") == Floki.find(dom, "h2#approval-dialog-title")
+
+      assert length(
+               Floki.find(dom, "h2[data-dialog-title][data-dialog-initial-focus][tabindex='-1']")
+             ) == 1
+
+      [return_id] = attr(dom, "dialog", "data-dialog-return-focus")
+
+      assert attr(bar(pending_approvals: [request()]), "##{return_id}", "phx-click") ==
+               ["open_approval_dialog"]
 
       # The native dialog is closed by its own backdrop form, which the page's
       # DialogModal hook turns back into `approval_dialog_open: false`.

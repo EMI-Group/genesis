@@ -117,8 +117,7 @@ const BrowserNotifications = {
     if (!this._alive) return;
     this._refresh();
     if (!this._shouldNotify() || !payload || typeof payload.title !== "string" || !payload.title.trim()) return;
-    const {title, body, tag, request_id: requestId} = payload;
-    const scope = this._approvalScope();
+    const {title, body, tag, request_id: requestId, scope} = payload;
     // A supplied approval identity must be valid NOW, not just on click.
     if (requestId !== undefined && (typeof requestId !== "string" || !requestId.trim() || !this._currentApproval(requestId, scope))) return;
     const options = {body: typeof body === "string" ? body : "", icon: "/favicon.ico"};
@@ -150,7 +149,7 @@ const BrowserNotifications = {
       if (!this._alive || !this._notifications.has(notification)) return;
       try { window.focus(); } catch (_) { /* Browser may refuse focus. */ }
       if (requestId && this._currentApproval(requestId, scope)) {
-        this.pushEvent("review_approval_notification", {request_id: requestId});
+        this.pushEvent("review_approval_notification", {request_id: requestId, scope});
       }
       this._close(notification);
     };

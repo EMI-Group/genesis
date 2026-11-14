@@ -445,6 +445,20 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert page_heading(html) == "Genesis Assistant"
       assert html =~ "Start a conversation"
 
+      # Match the hook's exact localized label contract for every browser state.
+      host = html |> Floki.parse_document!() |> Floki.find("#assistant-notifications")
+
+      for {status, label} <- [
+            {"unsupported", "Notifications unavailable"},
+            {"default", "Notifications not enabled"},
+            {"denied", "Notifications blocked"},
+            {"granted", "Notifications enabled"},
+            {"requesting", "Requesting notification permission…"},
+            {"error", "Notifications failed — review approvals here"}
+          ] do
+        assert Floki.attribute(host, "data-notification-label-#{status}") == [label]
+      end
+
       # The message input and Send button are present and ENABLED on idle
       # (chat_status == :idle → disabled={false} → attribute omitted).
       assert present?(html, ~s(textarea[name="message"]))
@@ -3722,10 +3736,9 @@ defmodule EvoDashWeb.HomeLiveTest do
       html = send_and_render(view, {:approval_requested, l2_request()})
       assert dialog_open?(html)
 
-      html =
-        view
-        |> element(~s(#approval-dialog button[phx-click="dialog_closed"]))
-        |> render_click()
+      # The hook owns the marked Close button and reports exactly one dismissal.
+      assert present?(html, "#approval-dialog button[data-dialog-dismiss]")
+      html = render_click(view, "dialog_closed")
 
       refute dialog_open?(html)
       assert assigns(view).approval_dialog_open == false
@@ -3975,13 +3988,14 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       for params <- [
             %{},
-            %{"request_id" => nil},
-            %{"request_id" => 1},
-            %{"request_id" => ["req-1"]},
-            %{"request_id" => %{"id" => "req-1"}},
-            %{"request_id" => ""},
-            %{"request_id" => "forged"},
-            %{"request_id" => "foreign"},
+            %{"request_id" => nil, "scope" => payload.scope},
+            %{"request_id" => 1, "scope" => payload.scope},
+            %{"request_id" => ["req-1"], "scope" => payload.scope},
+            %{"request_id" => %{"id" => "req-1"}, "scope" => payload.scope},
+            %{"request_id" => "", "scope" => payload.scope},
+            %{"request_id" => "forged", "scope" => payload.scope},
+            %{"request_id" => "foreign", "scope" => payload.scope},
+            %{"request_id" => "req-1"},
             %{"request_id" => "eval-1", "scope" => payload.scope}
           ] do
         html = render_click(view, "review_approval_notification", params)
@@ -4024,6 +4038,15 @@ defmodule EvoDashWeb.HomeLiveTest do
         refute dialog_open?(html)
         assert assigns(view).approval_responses == %{}
       end
+
+      html =
+        render_click(view, "review_approval_notification", %{
+          "request_id" => current.request_id,
+          "scope" => current.scope
+        })
+
+      assert dialog_open?(html)
+      assert assigns(view).approval_responses == %{}
     end
 
     test "requests this chat does not own never raise a browser notification", %{conn: conn} do

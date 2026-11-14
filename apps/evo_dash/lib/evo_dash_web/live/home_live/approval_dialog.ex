@@ -63,6 +63,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
           {length(@pending_approvals)}
         </span>
         <button
+          id="approval-review-button"
           type="button"
           phx-click="open_approval_dialog"
           class="btn btn-warning btn-xs shrink-0"
@@ -140,6 +141,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
         aria-modal="true"
         aria-busy={to_string(@busy)}
         data-request-id={request_id(@request)}
+        data-dialog-return-focus="approval-review-button"
       >
         <div class="modal-box w-11/12 max-w-2xl overflow-hidden p-0">
           <header class="flex items-start gap-3 border-b border-base-300 px-5 py-3.5">
@@ -150,7 +152,14 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
               <p class="text-[11px] font-semibold uppercase tracking-wide text-base-content/50">
                 {gettext("Approval required")}
               </p>
-              <h2 id="approval-dialog-title" class="mt-0.5 text-base font-semibold leading-snug">
+              <h2
+                id="approval-dialog-title"
+                data-dialog-title
+                data-dialog-initial-focus
+                tabindex="-1"
+                autofocus
+                class="mt-0.5 text-base font-semibold leading-snug"
+              >
                 {title_text(@request)}
               </h2>
             </div>
@@ -161,8 +170,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
             <% end %>
             <button
               type="button"
-              phx-click="dialog_closed"
-              autofocus
+              data-dialog-dismiss
               aria-label={gettext("Close")}
               title={gettext("Close")}
               class="btn btn-ghost btn-sm btn-square shrink-0"

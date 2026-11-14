@@ -54,7 +54,7 @@ function mount({permission = 'granted', supported = true, hidden = true, focused
   return {
     hook, el, window, document, Notification, notifications, pushed, status, button, events,
     requests: () => requests, focuses: () => focuses,
-    notify(payload = {title: 'Approval', body: 'Review in Genesis', request_id: 'req-1', tag: 'approval'}) {
+    notify(payload = {title: 'Approval', body: 'Review in Genesis', request_id: 'req-1', scope, tag: 'approval'}) {
       events.get('task_notification')?.(payload);
     },
     enable(inside = true) {
@@ -150,7 +150,7 @@ test('approval click only focuses and requests review of a currently pending sam
   const notification = page.notifications[0];
   assert.equal(notification.options.tag, 'approval');
   notification.onclick();
-  assert.deepEqual(page.pushed, [{name: 'review_approval_notification', payload: {request_id: 'req-1'}}]);
+  assert.deepEqual(page.pushed, [{name: 'review_approval_notification', payload: {request_id: 'req-1', scope: 'local:session-1'}}]);
   assert.equal(page.focuses(), 1);
   assert.equal(notification.closed, true);
   assert.equal(notification.onclick, null);
@@ -169,10 +169,34 @@ test('malformed/missing metadata or request ids fail closed, never become termin
     assert.equal(page.notifications.length, 0);
   }
   const page = mount();
-  for (const id of [null, 1, '', ' ', 'not-pending', {}]) page.notify({title: 'Approval', request_id: id});
+  for (const id of [null, 1, '', ' ', 'not-pending', {}]) page.notify({title: 'Approval', request_id: id, scope: 'local:session-1'});
   page.el.dataset.approvalRequestIds = 'not JSON';
   page.notify();
   assert.equal(page.notifications.length, 0);
+});
+
+test('delivery rejects missing/malformed payload scopes and stale payloads after same-id reuse', () => {
+  const page = mount();
+  for (const scope of [undefined, null, '', ' ', 1, {}, ['local:session-1'], 'foreign']) {
+    page.notify({title: 'Approval', request_id: 'req-1', scope});
+  }
+  assert.equal(page.notifications.length, 0);
+
+  const stalePayload = {title: 'Approval', request_id: 'req-1', scope: 'local:session-1'};
+  page.notify(stalePayload);
+  const staleClick = page.notifications[0].onclick;
+  // The same request id in a different chat must not adopt the host's new scope.
+  page.el.dataset.approvalScope = 'local:session-2';
+  page.notify(stalePayload);
+  assert.equal(page.notifications.length, 1);
+  assert.equal(page.notifications[0].closed, true);
+  staleClick();
+  assert.deepEqual(page.pushed, []);
+
+  page.notify({...stalePayload, scope: 'local:session-2'});
+  page.notifications[1].onclick();
+  assert.deepEqual(page.pushed, [{name: 'review_approval_notification',
+    payload: {request_id: 'req-1', scope: 'local:session-2'}}]);
 });
 
 test('click revalidates live metadata even before a LiveView updated callback', () => {
@@ -191,7 +215,7 @@ test('click revalidates live metadata even before a LiveView updated callback', 
 test('resolution closes affected notifications; scope changes close all and invalidate saved callbacks', () => {
   const page = mount({ids: ['req-1', 'req-2']});
   page.notify();
-  page.notify({title: 'Other approval', request_id: 'req-2'});
+  page.notify({title: 'Other approval', request_id: 'req-2', scope: 'local:session-1'});
   const staleClick = page.notifications[0].onclick;
   page.el.dataset.approvalRequestIds = '["req-2"]';
   page.hook.updated();

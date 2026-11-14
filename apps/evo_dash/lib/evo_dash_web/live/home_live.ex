@@ -188,10 +188,12 @@ defmodule EvoDashWeb.HomeLive do
             class="flex h-10 shrink-0 items-center"
             data-approval-request-ids={Jason.encode!(@approval_host.request_ids)}
             data-approval-scope={@approval_host.scope}
-            data-notification-unsupported={gettext("Notifications unavailable")}
-            data-notification-default={gettext("Notifications not enabled")}
-            data-notification-denied={gettext("Notifications blocked")}
-            data-notification-granted={gettext("Notifications enabled")}
+            data-notification-label-unsupported={gettext("Notifications unavailable")}
+            data-notification-label-default={gettext("Notifications not enabled")}
+            data-notification-label-denied={gettext("Notifications blocked")}
+            data-notification-label-granted={gettext("Notifications enabled")}
+            data-notification-label-requesting={gettext("Requesting notification permission…")}
+            data-notification-label-error={gettext("Notifications failed — review approvals here")}
           >
             <div class="min-w-0 flex-1">
               {EvoDashWeb.HomeLive.ApprovalDialog.approval_bar(assigns)}
@@ -787,10 +789,14 @@ defmodule EvoDashWeb.HomeLive do
     {:noreply, recover_approvals(socket)}
   end
 
-  def handle_event("review_approval_notification", %{"request_id" => request_id}, socket) do
-    # Notification clicks only select an exact currently owned pending request;
-    # they never authorize a decision or fall back to another approval.
-    case ApprovalWorkflow.dialog_index(socket.assigns, request_id) do
+  def handle_event(
+        "review_approval_notification",
+        %{"request_id" => request_id, "scope" => scope},
+        socket
+      ) do
+    # Notification clicks must match the captured chat scope as well as the exact
+    # currently owned pending request; they never authorize or select a fallback.
+    case ApprovalWorkflow.dialog_index(socket.assigns, request_id, scope) do
       index when is_integer(index) ->
         {:noreply, assign(socket, approval_dialog_open: true, approval_dialog_index: index)}
 
