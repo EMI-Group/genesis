@@ -41,6 +41,13 @@ The capsule animation rules are unlayered author CSS so they beat DaisyUI's laye
 Source ORDER is load-bearing in the capsule panel pair: the `[open]` and `[data-capsule-state="closing"]` rules have equal specificity and the closing rule must stay second.
 `@media (prefers-reduced-motion: reduce)` disables the panel open AND close, the view switching and the submenu with `animation: none !important` (the hook itself also short-circuits its animated close).
 
+## Known Issues — Motion Coverage
+The reduced-motion guards are selector-specific rather than global, and `html` still requests smooth scrolling under reduced motion although both transcript scrollers explicitly stay instant.
+The broad reduced-motion block precedes the equal-specificity `.no-project-overlay` and `.dashboard-topbar[data-no-project="true"]` animation declarations, so those later declarations override its `animation: none`.
+`.task-card-active`, `.node-switch-fade`, the project-palette entrances and `.file-manual-input-wrap` have no matching reduced-motion animation override.
+The legacy `.agent-history-scroll > .divide-y > div` rule animates every matching row with a 300ms 8px slide, lacks a reduced-motion override, and has higher specificity than `.inspector-message-enter` if a row matches both selectors.
+The Assistant `.help-caret` fades fully out at its midpoint over a repeating 1.1s cycle, whereas the inspector cursor retains 0.4 opacity; both explicitly disable their animations under reduced motion.
+
 ## Validation
 Run `mix tailwind evo_dash` from the repository root to compile the CSS and `git diff --check` for whitespace checks.
 For browser review, check `/assistant` in light/dark themes at narrow and desktop widths, long URLs, code/tables, nested lists, RTL quotes, multiline composer, keyboard focus and reduced motion.
