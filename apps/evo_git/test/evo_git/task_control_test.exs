@@ -273,6 +273,154 @@ defmodule EvoGit.TaskControlTest do
     TaskRegistry.cancel_task(id3)
   end
 
+  describe "pause/1" do
+    test "accepts a running task and reports its SAVED pause state" do
+      id = unique_id("pause-ok")
+      seed_pause_row!(id, :running)
+      clear_pause_marker!(id)
+
+      assert {:ok, %{task_id: ^id, status: "pausing", pause_kind: nil}} =
+               TaskControl.pause(%{"task_id" => id})
+
+      assert TaskRegistry.get_task(id).status == :pausing
+
+      # Idempotent on a `:pausing` row, and a pause is never reported as a
+      # cancellation or as a finished task.
+      assert {:ok, again} = TaskControl.pause(%{"task_id" => id})
+      assert again.status == "pausing"
+      refute Map.has_key?(again, :cancel_requested)
+    end
+
+    test "reports the :clean pause kind of an already paused row" do
+      id = unique_id("pause-paused")
+      seed_pause_row!(id, :paused, pause_kind: :clean, lease_expires_at: nil)
+
+      assert {:ok, %{task_id: ^id, status: "paused", pause_kind: "clean"}} =
+               TaskControl.pause(%{"task_id" => id})
+    end
+
+    test "refuses interactive sessions, non-durable tasks and non-running tasks" do
+      interactive = unique_id("pause-interactive")
+
+      seed_pause_row!(interactive, :running,
+        session_mode: "interactive",
+        opts: [path: "/tmp/project", objective: "hello", session_mode: "interactive"]
+      )
+
+      assert {:error, %{code: "not_pausable", message: message}} =
+               TaskControl.pause(%{"task_id" => interactive})
+
+      assert message =~ "interactive"
+
+      waiting = unique_id("pause-waiting")
+      seed_pause_row!(waiting, :awaiting_input)
+      assert {:error, %{code: "not_pausable"}} = TaskControl.pause(%{"task_id" => waiting})
+
+      non_durable = unique_id("pause-non-durable")
+
+      seed_pause_row!(non_durable, :running,
+        opts: [path: "/tmp/project", objective: "hello", persistent_state: false]
+      )
+
+      assert {:error, %{code: "not_resumable", message: message}} =
+               TaskControl.pause(%{"task_id" => non_durable})
+
+      assert message =~ "Durable agent state"
+
+      for status <- [:pending, :completed, :cancelled] do
+        id = unique_id("pause-#{status}")
+        seed_pause_row!(id, status)
+        assert {:error, %{code: "not_running"}} = TaskControl.pause(%{"task_id" => id})
+      end
+
+      # Every refusal left its row exactly as it was.
+      assert TaskRegistry.get_task(interactive).status == :running
+      assert TaskRegistry.get_task(non_durable).status == :running
+      assert TaskRegistry.get_task(waiting).status == :awaiting_input
+    end
+
+    test "an unknown task is not_found and a malformed request is refused" do
+      assert {:error, %{code: "not_found"}} =
+               TaskControl.pause(%{"task_id" => unique_id("pause-missing")})
+
+      assert {:error, %{code: "invalid_arguments"}} = TaskControl.pause(%{"task_id" => ""})
+
+      assert {:error, %{code: "invalid_arguments"}} =
+               TaskControl.pause(%{"task_id" => "x", "f" => 1})
+    end
+  end
+
+  describe "resume/1" do
+    test "resumes a paused task in place and reports the running state" do
+      id = unique_id("resume-ok")
+      seed_pause_row!(id, :paused, pause_kind: :clean, lease_expires_at: nil)
+      seed_durable_run!(id)
+      start_registry_with_spawn_seam!(self())
+
+      assert {:ok, %{task_id: ^id, status: "running", pause_kind: nil}} =
+               TaskControl.resume(%{"task_id" => id})
+
+      kill_wrapper_on_exit!(id)
+
+      assert_receive {:wrapper_spawned, :evolve, spawn_opts, ^id, _server}, 1_000
+      assert Keyword.get(spawn_opts, :resume_kind) == :clean_pause
+
+      task = TaskRegistry.get_task(id)
+      assert task.status == :running
+      assert task.pause_kind == nil
+      assert task.finished_at == nil
+    end
+
+    test "refuses a task that is not paused" do
+      id = unique_id("resume-not-paused")
+      seed_pause_row!(id, :running)
+
+      assert {:error, %{code: "not_paused", message: message}} =
+               TaskControl.resume(%{"task_id" => id})
+
+      assert message =~ "not paused"
+      assert TaskRegistry.get_task(id).status == :running
+    end
+
+    test "a paused task with no durable run is not_resumable" do
+      id = unique_id("resume-no-state")
+      seed_pause_row!(id, :paused, pause_kind: :clean, lease_expires_at: nil)
+      start_registry_with_spawn_seam!(self())
+
+      assert {:error, %{code: "not_resumable"}} = TaskControl.resume(%{"task_id" => id})
+      assert TaskRegistry.get_task(id).status == :paused
+      refute_receive {:wrapper_spawned, _, _, _, _}, 0
+    end
+
+    test "an admission failure is reported as resume_failed" do
+      id = unique_id("resume-bad-opts")
+
+      seed_pause_row!(id, :paused,
+        pause_kind: :clean,
+        lease_expires_at: nil,
+        opts: [path: "/tmp/project", objective: "hello", persistent_state: "yes"]
+      )
+
+      seed_durable_run!(id)
+      start_registry_with_spawn_seam!(self())
+
+      assert {:error, %{code: "resume_failed", message: message}} =
+               TaskControl.resume(%{"task_id" => id})
+
+      assert message =~ "invalid_persistent_state"
+      assert TaskRegistry.get_task(id).status == :paused
+      refute_receive {:wrapper_spawned, _, _, _, _}, 0
+    end
+
+    test "an unknown task is not_found and a malformed request is refused" do
+      assert {:error, %{code: "not_found"}} =
+               TaskControl.resume(%{"task_id" => unique_id("resume-missing")})
+
+      assert {:error, %{code: "invalid_arguments"}} = TaskControl.resume(%{"task_id" => ""})
+      assert {:error, %{code: "invalid_arguments"}} = TaskControl.resume(%{})
+    end
+  end
+
   defp seed!(id, status, path, result) do
     :ok =
       EvoGit.Store.put_task(store(), %TaskInfo{
@@ -284,6 +432,97 @@ defmodule EvoGit.TaskControlTest do
         started_at: DateTime.utc_now(),
         result: result
       })
+  end
+
+  ## Pause/resume helpers — the same isolated-store shapes as the cancellation
+  ## tests, plus the durable run a resume restores and the registry's wrapper
+  ## spawn seam (so no real runtime is started).
+
+  defp unique_id(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
+
+  defp seed_pause_row!(id, status, extra \\ []) do
+    :ok =
+      EvoGit.Store.put_task(store(), %TaskInfo{
+        id: id,
+        type: :evolve,
+        status: status,
+        project_path: "/tmp/project",
+        opts: Keyword.get(extra, :opts, path: "/tmp/project", objective: "hello"),
+        started_at: DateTime.utc_now(),
+        session_mode: Keyword.get(extra, :session_mode, "oneshot"),
+        pause_kind: Keyword.get(extra, :pause_kind),
+        lease_expires_at: Keyword.get(extra, :lease_expires_at, System.system_time(:second) + 300)
+      })
+  end
+
+  # ONE durable root run through the app-booted agent-state server (the server
+  # the registry resolves), so `EvoGit.AgentState.root_agent_ids/1` is non-empty.
+  defp seed_durable_run!(task_id, agent_id \\ 1) do
+    on_exit(fn -> EvoGit.AgentState.delete_task(task_id) end)
+
+    :ok =
+      EvoGit.AgentState.checkpoint(task_id, agent_id, %{
+        kind: :rewrite,
+        messages: [
+          %ReqLLM.Message{
+            role: :user,
+            content: [ReqLLM.Message.ContentPart.text("paused run #{task_id}")]
+          }
+        ],
+        fields: %{phase: "paused"}
+      })
+
+    :ok = EvoGit.AgentState.flush()
+    assert {:ok, _record} = EvoGit.AgentState.load(task_id, agent_id)
+    :ok
+  end
+
+  # A pause flags the task in the APP-GLOBAL scheduler, so the marker is cleared
+  # for this test's own (unique) task id.
+  defp clear_pause_marker!(task_id) do
+    on_exit(fn -> EvoGit.AgentScheduler.clear_task_pause(task_id) end)
+    :ok
+  end
+
+  # Starts a SECOND isolated registry over this test's store whose wrapper spawn
+  # is the `:wrapper_spawn_fun` seam: it reports the spawn and returns a fake
+  # (alive) `%Task{}` instead of running a real runtime.
+  defp start_registry_with_spawn_seam!(test_pid) do
+    unique = System.unique_integer([:positive])
+    name = :"evogit_test_task_control_registry_#{unique}"
+
+    spawn_fun = fn task_type, spawn_opts, task_id, server ->
+      pid = spawn(fn -> Process.sleep(:infinity) end)
+      send(test_pid, {:wrapper_spawned, task_type, spawn_opts, task_id, server})
+
+      %Task{
+        pid: pid,
+        ref: make_ref(),
+        owner: test_pid,
+        mfa: {EvoGit.TaskRegistry.TaskExecutor, :execute_task, [task_type, spawn_opts, task_id]}
+      }
+    end
+
+    start_supervised!(
+      Supervisor.child_spec(
+        {TaskRegistry,
+         task_store: store(),
+         data_dir: System.tmp_dir!(),
+         name: name,
+         wrapper_spawn_fun: spawn_fun},
+        id: name
+      )
+    )
+
+    Process.put(:evogit_task_registry_server, name)
+    name
+  end
+
+  # The seam's fake wrapper pid is not linked, so the test kills it itself.
+  defp kill_wrapper_on_exit!(task_id) do
+    pid = :sys.get_state(TaskRegistry.server()).task_refs[task_id].pid
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
+    :ok
   end
 end
 

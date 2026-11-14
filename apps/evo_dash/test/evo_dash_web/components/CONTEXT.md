@@ -133,7 +133,7 @@ Every test builds a marker-bearing oversized blob, renders the component, and as
 - `task_card/1 — best-effort cost notice` (2) — `Helpers.cost_estimate_notice/1` renders at the card's cost display.
 - `Archive accessors — the paged archive envelope` (4) + `task_card/1 — paged archive pass-through` (2) — the per-card archive accessors and their render wiring.
 - `task_card/1 — :awaiting_input session panel` (4) — the reply box + Close-session action render only for an idle session whose agent id is known.
-- `task_card/1 — pause / resume` — the button matrix (Pause `[:running, :pausing]` disabled with the `Pausing…` spinner while draining, Resume `:paused` direct for `:clean` / `phx-confirm` for `:dirty`, `action_busy` disabling both, force-kill range widened to `[:running, :awaiting_input, :cancelling, :pausing, :paused]`, no Review button), the clean info strip and the `:dirty` warning strip with the subagents caveat, and the `Pausing…`/`Paused` labels with `:paused` never pulsing.
+- `task_card/1 — pause / resume` — the button matrix (Pause `[:running, :pausing]` disabled with the `Pausing…` spinner while draining, and HIDDEN for `session_mode: "interactive"` because the core answers `{:error, :not_pausable}`, with an absent `session_mode` still offering it; Resume `:paused` direct for `:clean` / `phx-confirm` for `:dirty` and never `session_mode`-gated, `action_busy` disabling both, force-kill range widened to `[:running, :awaiting_input, :cancelling, :pausing, :paused]`, no Review button), the clean info strip and the `:dirty` warning strip with the subagents caveat, and the `Pausing…`/`Paused` labels with `:paused` never pulsing.
 
 ## `setting_card_test.exs` (3 describes / 18 tests)
 

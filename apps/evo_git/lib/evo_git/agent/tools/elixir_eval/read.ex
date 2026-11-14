@@ -39,6 +39,21 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Write do
   def start_task(type, options), do: Broker.call(:start_task, [type, options])
   def cancel_task(id), do: Broker.call(:cancel_task, [id])
   def force_kill_task(id), do: Broker.call(:force_kill_task, [id])
+
+  @doc """
+  Requests a task-LEVEL pause: the task drains at its next turn boundary and
+  rests as `:pausing` then `:paused`, resumable IN PLACE. Interactive-session and
+  non-durable tasks are refused. Effects are not rolled back on timeout.
+  """
+  def pause_task(id), do: Broker.call(:pause_task, [id])
+
+  @doc """
+  Resumes a `:paused` task in place (the same task id is re-enqueued from its
+  durable run state); any other status is refused. Effects are not rolled back
+  on timeout.
+  """
+  def resume_task(id), do: Broker.call(:resume_task, [id])
+
   def delete_task(id), do: Broker.call(:delete_task, [id])
   def guide(message), do: guide(message, %{})
   def guide(message, options), do: Broker.call(:guide, [message, options])

@@ -42,6 +42,8 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
             :start_task,
             :cancel_task,
             :force_kill_task,
+            :pause_task,
+            :resume_task,
             :delete_task,
             :guide,
             :update_scheduler_config
@@ -62,6 +64,17 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   # registry's killable set (`:running`, `:awaiting_input`, `:cancelling`, plus the
   # two task-pause statuses `:pausing`/`:paused`).
   def force_kill_statuses, do: EvoGit.TaskRegistry.killable_statuses()
+  @doc false
+  # Task statuses the `pause_task` facade admits: the running task a pause is
+  # requested FROM, plus the two idempotent outcomes (`:pausing`/`:paused`, where
+  # the registry answers `:ok` without writing). An idle `:awaiting_input`
+  # interactive session is deliberately NOT here — the registry refuses it
+  # `:not_pausable`, because it has no resumable one-shot run.
+  def pause_statuses, do: [:running, :pausing, :paused]
+  @doc false
+  # Task statuses the `resume_task` facade admits: exactly the `:paused` resting
+  # state the registry re-enqueues in place (`:not_paused` for anything else).
+  def resume_statuses, do: [:paused]
 
   # This is an explicit handoff by the ORIGINAL tool, not re-authorization of
   # an unlinked guardian as if it were a tool. Keep context.tool_pid unchanged.
@@ -404,11 +417,13 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   end
 
   defp execute(operation, [id], context, :facade)
-       when operation in [:cancel_task, :force_kill_task, :delete_task] do
+       when operation in [:cancel_task, :force_kill_task, :delete_task, :pause_task, :resume_task] do
     allowed =
       case operation do
         :cancel_task -> cancel_statuses()
         :force_kill_task -> force_kill_statuses()
+        :pause_task -> pause_statuses()
+        :resume_task -> resume_statuses()
         :delete_task -> [:completed, :failed, :cancelled]
       end
 

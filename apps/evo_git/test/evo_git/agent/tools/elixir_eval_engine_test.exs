@@ -111,6 +111,28 @@ defmodule EvoGit.Agent.Tools.ElixirEval.EngineTest do
       assert Store.get_task(ctx.store, target.id).status == :cancelled
     end
 
+    test "the write facade pauses a running task, and resume is paused-only", ctx do
+      target = seed_task(ctx, :running)
+      on_exit(fn -> EvoGit.AgentScheduler.clear_task_pause(target.id) end)
+      code = "#{@write}.pause_task(#{inspect(target.id)})"
+
+      assert evaluate(ctx.fixture, code, :read) == {:error, @restricted}
+      assert Store.get_task(ctx.store, target.id).status == :running
+
+      assert {:ok, output} = evaluate(ctx.fixture, code, :write)
+      assert output =~ "status: :requested"
+      assert output =~ target.id
+      assert Store.get_task(ctx.store, target.id).status == :pausing
+
+      # A `:pausing` task is not resumable, so the sibling facade refuses it
+      # without touching the row.
+      assert {:ok, refused} =
+               evaluate(ctx.fixture, "#{@write}.resume_task(#{inspect(target.id)})", :write)
+
+      assert refused =~ "Task action requires a different, existing task in an allowed state."
+      assert Store.get_task(ctx.store, target.id).status == :pausing
+    end
+
     test "write retains Read access but cannot mutate its own authority task", ctx do
       code = """
       current = #{@read}.get_task(#{inspect(ctx.fixture.task_id)})

@@ -24,7 +24,7 @@ defmodule EvoDashWeb.MCPTest do
     tools = rpc("tools/list")["result"]["tools"]
 
     assert Enum.sort(Enum.map(tools, & &1["name"])) ==
-             ~w(genesis_cancel_task genesis_check genesis_get_result genesis_get_task genesis_list_models genesis_list_tasks genesis_reload_config genesis_send_message genesis_start_task)
+             ~w(genesis_cancel_task genesis_check genesis_get_result genesis_get_task genesis_list_models genesis_list_tasks genesis_pause_task genesis_reload_config genesis_resume_task genesis_send_message genesis_start_task)
 
     assert Enum.all?(tools, &(&1["inputSchema"]["type"] == "object"))
     start = Enum.find(tools, &(&1["name"] == "genesis_start_task"))
@@ -37,6 +37,47 @@ defmodule EvoDashWeb.MCPTest do
     assert persistent_state["type"] == "boolean"
     assert persistent_state["default"] == true
     assert persistent_state["description"] =~ "persistence"
+  end
+
+  # Pause / resume are ADVERTISED here, never invoked: their action atoms
+  # dispatch dynamically to the core's `EvoGit.TaskControl.pause/1` /
+  # `resume/1`, which is a separate workstream. The contract under test is the
+  # tool surface an MCP client discovers (name, schema, required args, write
+  # annotations), not the core's pause implementation.
+  test "advertises the task pause/resume operator tools" do
+    tools = rpc("tools/list")["result"]["tools"]
+
+    for {name, required_phrase} <- [
+          {"genesis_pause_task", "next turn boundary"},
+          {"genesis_resume_task", "durable checkpoint"}
+        ] do
+      tool = Enum.find(tools, &(&1["name"] == name))
+      assert tool, "expected #{name} to be advertised in tools/list"
+      assert tool["description"] =~ required_phrase
+
+      assert tool["inputSchema"] == %{
+               "type" => "object",
+               "properties" => %{
+                 "task_id" => %{
+                   "type" => "string",
+                   "description" => "Task ID returned by Genesis."
+                 }
+               },
+               "required" => ["task_id"],
+               "additionalProperties" => false
+             }
+
+      # A pause/resume mutates the queue, so it is never advertised read-only.
+      assert tool["annotations"]["readOnlyHint"] == false
+      assert tool["annotations"]["destructiveHint"] == true
+    end
+
+    pause = Enum.find(tools, &(&1["name"] == "genesis_pause_task"))
+    assert pause["description"] =~ "non-interactive tasks with durable agent state"
+    assert pause["description"] =~ "not proof that every agent has stopped"
+
+    resume = Enum.find(tools, &(&1["name"] == "genesis_resume_task"))
+    assert resume["description"] =~ "after a restart (dirty)"
   end
 
   test "gets existing task errors as tool results and rejects malformed arguments" do
