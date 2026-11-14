@@ -282,11 +282,13 @@ The scalar/rule validator beneath the DSL is **Ecto-backed, but Ecto is a VALIDA
 ## Direct API Admission and Persistence Boundaries
 `EvoGit.Config` lives in this directory's `config.ex`, not in the parent directory.
 `Schema.all_schemas/0`, `schemas_by_category/0`, `defaults/0`, and `validate/1` are real public APIs in `schema.ex`; `Schema.effective_model_profiles/1` supplies the runtime's legacy-profile fallback.
-The Assistant evaluator admits direct `Config.resolve/0,1` reads and, only in approved tier-2 write calls, `Config.save_user_config/1`, `EvoGit.AgentScheduler.RemoteAPI.reload_config/0` and `EvoGit.AgentScheduler.update_config/1` through explicit exact-MFA lists, never namespace grants.
+The Assistant evaluator admits direct `Config.resolve/0,1`, `list_settings/0`, `show/0,1`, `user_config/0` and `config_path/0` reads in read and write tiers through explicit exact-MFA lists, never namespace grants.
+Only approved tier-2 write calls additionally admit `Config.update/1`, `save_user_config/1`, `EvoGit.AgentScheduler.RemoteAPI.reload_config/0` and `EvoGit.AgentScheduler.update_config/1`.
 These calls retain actual arguments and return values rather than facade projections; the full admission and execution contract belongs to `../agent/tools/elixir_eval/CONTEXT.md`.
 The permission model protects against accidental self-corruption rather than malicious attackers: read/write remain Dune-interpreted with bounded execution and authorization checks, while separately and explicitly approved sudo is unrestricted native evaluation with full VM authority, not an automatic escalation from write.
-`Config.resolve/0,1` and `user_config/0` return unredacted data, including node cookies, model `extra`/`provider_options`, endpoint credentials and arbitrary unknown TOML keys; admitted direct reads are not required to be projected or secret-safe, and output caps do not redact secrets.
-`Config.resolve/0,1` reads defaults plus user configuration, not live scheduler runtime overrides.
+`Config.resolve/0,1`, `show/0,1` and `user_config/0` return unredacted data, including node cookies, model `extra`/`provider_options`, endpoint credentials and arbitrary unknown TOML keys; admitted direct reads are not required to be projected or secret-safe, and output caps do not redact secrets.
+`Config.resolve/0,1` and `show/0,1` read defaults plus user configuration, not live scheduler runtime overrides.
+`Config.list_settings/0` discovers supported settings, `user_config/0` reads persisted overrides without defaults from the snapshot, and `config_path/0` returns the config.toml location.
 `Config.config_status/0` returns `missing`, `warnings`, `ok?`, and `validation_errors`, but loads credentials into ReqLLM and may lazily import OAuth credentials into a managed file; its validation errors include original values and messages with inspected values.
 `config_status/0` takes `resolved` and `validation_errors` from ONE `EvoGit.Config.Cache.get/0` snapshot value, so the errors it returns are exactly the ones that resolved map was validated with.
 There is no process-dictionary validation-error propagation: `resolve/0` is a plain snapshot read and writes nothing anywhere.
@@ -294,13 +296,15 @@ The snapshot is a RAM value, not a global/latest-status cache: a later `config_s
 `config_status/0` does not guarantee a transactionally consistent disk/config-path snapshot across its nested health reads (an in-flight `Cache.reload/1` may swap the snapshot between them).
 `:ok?` requires both no missing critical settings and an empty validation-error snapshot; `missing` and `warnings` remain presence/credential diagnostics and do not include validation values or credentials.
 `Config.resolve/0` also logs invalid values verbatim, and neither its logging nor `Schema.ValidationError` provides redaction.
-Public visibility alone does not grant evaluator access: `user_config/0`, `config_status/0`, `read_toml_file/2,3`, credential helpers and schema APIs remain unlisted.
+Public visibility alone does not grant evaluator access: `config_status/0`, `read_toml_file/2,3`, credential helpers and schema APIs remain unlisted.
 `Config.read_toml_file/2,3` reads any supplied file path despite `@doc false`, and `Config.credential_key_to_reqllm_key/1` calls `String.to_atom/1` for arbitrary suffixed input.
 `Config.save_user_config/1` validates the supplied map then REPLACES the entire config file; it is not a patch or merge API, it reloads the snapshot synchronously, and it performs no scheduler reload or PubSub `"config"` broadcast on its own behalf.
-For a targeted persistent change, resolve the full map, update only intended fields and save it in the same approved write call, preserving unrelated keys; saving a resolved map also materializes defaults.
+For a targeted persistent change, prefer approved `Config.update/1`: it patches the snapshot's parsed user map, preserves unrelated settings and validates with defaults without materializing those defaults in persistence.
+`Config.update/1` delegates persistence and synchronous snapshot refresh to `save_user_config/1`; neither API applies scheduler runtime state.
+`save_user_config/1` remains the replacement API: supply the intended whole user map, and note that saving a resolved map also materializes defaults.
 That save uses plain `File.write/2` with no atomic rename, lock, rollback or chmod, drops nil map entries and mirrored flat LLM fields, and reloads the config snapshot only after a successful write.
-Avoid concurrent edits because read-modify-save is not atomic and can overwrite another writer's changes.
-After a successful save, explicitly call `RemoteAPI.reload_config/0` and inspect its result to apply reloadable scheduler settings; save success does not imply reload success, and boot-only settings still require restart.
+Avoid concurrent edits because both the partial update and replacement read-modify-save paths are non-atomic and can overwrite another writer's changes.
+After a successful `update/1` or `save_user_config/1`, explicitly call the shared `EvoGit.AgentScheduler.RemoteAPI.reload_config/0` boundary and inspect its result to apply reloadable scheduler settings; persistence success does not imply reload success, and boot-only settings still require restart.
 `AgentScheduler.update_config/1` is a separate runtime-only mutation, not config persistence; it can be overwritten by a reload or restart.
 `Schema.validate/1` walks atom-keyed schema paths, skips missing/nil/non-map intermediates and preserves unknown keys, so string-keyed top-level maps and malformed intermediate sections can bypass validation.
 Model-profile validation checks id/model, atom-keyed provider-options container and optional peak/context/auth fields, but does not validate per-profile concurrency or generation-parameter ranges.
