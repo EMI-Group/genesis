@@ -340,6 +340,92 @@ defmodule EvoGit.AgentState.Store do
     end
   end
 
+  ## Pause commit / resume roster
+
+  @doc """
+  Persists (or, with `nil`, clears) one run's `pause_commit` — the git commit
+  sha of the worktree checkpoint that agent made when it paused.
+
+  A SMALL SCALAR UPDATE that touches the `pause_commit` column ALONE: the
+  message chunks, `message_count`, `chunk_count` and every other scalar are
+  left exactly as they were, so this can never be mistaken for a conversation
+  write by `checkpoint/4`'s append/rewrite continuity rule. It runs in the
+  caller's transaction-free path and is serialized with the checkpoint writes
+  by the server process that calls it.
+
+  Answers `{:error, :not_found}` when no row exists for `(task_id, agent_id)` —
+  a pause marker is never the reason a run's row comes into existence (that
+  would fabricate an empty conversation).
+  """
+  @spec put_pause_commit(pid(), String.t(), integer(), String.t() | nil) ::
+          :ok | {:error, term()}
+  def put_pause_commit(repo, task_id, agent_id, sha) do
+    total(repo, fn ->
+      sql = "UPDATE #{@states} SET pause_commit = ? WHERE task_id = ? AND agent_id = ?"
+
+      case query(sql, [sha, task_id, agent_id]) do
+        {:ok, %{num_rows: 0}} -> {:error, :not_found}
+        {:ok, _result} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    end)
+  end
+
+  @doc """
+  One run's persisted `pause_commit`, or `nil`. Total.
+  """
+  @spec pause_commit(pid(), String.t(), integer()) :: String.t() | nil
+  def pause_commit(repo, task_id, agent_id) do
+    case total(repo, fn ->
+           case query(
+                  "SELECT pause_commit FROM #{@states} WHERE task_id = ? AND agent_id = ? LIMIT 1",
+                  [task_id, agent_id]
+                ) do
+             {:ok, %{rows: [[value]]}} -> value
+             _other -> nil
+           end
+         end) do
+      value when is_binary(value) -> value
+      _other -> nil
+    end
+  end
+
+  @doc """
+  Whether ANY durable run row exists for `task_id` — a cheap
+  `SELECT 1 … LIMIT 1` with no decode and no chunk read. Total (`false` on a
+  missing store, an error or no rows).
+  """
+  @spec resumable?(pid(), String.t()) :: boolean()
+  def resumable?(repo, task_id) do
+    total(repo, fn ->
+      case query("SELECT 1 FROM #{@states} WHERE task_id = ? LIMIT 1", [task_id]) do
+        {:ok, %{rows: [_first | _rest]}} -> true
+        _other -> false
+      end
+    end) == true
+  end
+
+  @doc """
+  The `agent_id`s of `task_id` whose row has `parent_id IS NULL` (its root
+  agents), ascending. Total (`[]` on a missing store, an error or no rows).
+  """
+  @spec root_agent_ids(pid(), String.t()) :: [integer()]
+  def root_agent_ids(repo, task_id) do
+    case total(repo, fn ->
+           case query(
+                  "SELECT agent_id FROM #{@states} " <>
+                    "WHERE task_id = ? AND parent_id IS NULL ORDER BY agent_id ASC",
+                  [task_id]
+                ) do
+             {:ok, %{rows: rows}} -> Enum.map(rows, fn [agent_id] -> agent_id end)
+             _other -> []
+           end
+         end) do
+      ids when is_list(ids) -> ids
+      _other -> []
+    end
+  end
+
   ## Retention
 
   @doc """

@@ -101,6 +101,19 @@ defmodule EvoGit.AgentState.Server do
     {:reply, :ok, state}
   end
 
+  def handle_call({:put_pause_commit, task_id, agent_id, sha}, _from, state) do
+    # Serialized with every checkpoint CAST in this same mailbox: a pause
+    # marker can never reorder against, or race, a conversation write.
+    {:reply, Store.put_pause_commit(state.repo, task_id, agent_id, sha), state}
+  end
+
+  def handle_call(:sync, _from, state) do
+    # The durability barrier: OTP processes this call only after every earlier
+    # checkpoint cast has been handled (and committed), so replying here means
+    # those checkpoints ARE durable. Never a cast, never a fire-and-forget.
+    {:reply, :ok, state}
+  end
+
   def handle_call(:prune, _from, state) do
     reply =
       case Store.prune(state.repo, state.retention_days) do

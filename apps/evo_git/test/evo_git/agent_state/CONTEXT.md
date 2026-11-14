@@ -12,9 +12,10 @@ Production contract (API, storage model, field list, corruption/retention rules)
 | `agent_state_faults_test.exs` | `EvoGit.AgentStateFaultsTest` | 10 | fault paths: `:not_found`, four corruption shapes, stopped server, `server/0` seam, absent target, malformed entries |
 | `agent_state_retention_test.exs` | `EvoGit.AgentStateRetentionTest` | 6 | `mark_completed/3`, `prune/1` expiry rules, prune idempotence, `delete/3`, `delete_task/2` |
 | `retention_test.exs` | `EvoGit.AgentState.RetentionTest` | 13 | pure `EvoGit.AgentState.Retention` math — no DB, no clock read, no app-env mutation |
-| `agent_state_migration_test.exs` | `EvoGit.AgentState.MigrationTest` | 4 | the REAL migration chain on a fresh temp dir: applied versions `[1, 2]`, exactly one nullable `TEXT` `pending_tool_batch` column, a checkpointed `EvoGit.Agent.ToolBatch` marker as non-null JSON (direct `SELECT`) that `load/3` + `normalize/1` round-trips, `nil` clearing it, and a second boot / forced version-2 re-run staying idempotent with the data intact |
+| `agent_state_migration_test.exs` | `EvoGit.AgentState.MigrationTest` | 5 | the REAL migration chain on a fresh temp dir: applied versions `[1, 2, 3]`, exactly one nullable `TEXT` `pending_tool_batch` column plus exactly one nullable `TEXT` `pause_commit` column, a checkpointed `EvoGit.Agent.ToolBatch` marker as non-null JSON (direct `SELECT`) that `load/3` + `normalize/1` round-trips, `nil` clearing it, and a second boot / forced version-2-and-3 re-run staying idempotent with the data intact |
+| `agent_state_pause_test.exs` | `EvoGit.AgentState.PauseTest` | 8 | task-level pause/resume facts: `put_pause_commit/3,4` round-trip/replace/clear (direct `SELECT`), `{:error, :not_found}` with no row created, the write touching ONLY `pause_commit` (counts, chunks and append continuity untouched), `pause_commit/2,3`, `resumable?/1,2`, `root_agent_ids/1,2`, the inert no-store shapes, and `flush/1` as a synchronous durability barrier (explicit `:sync` call plus read-back with no sleeping) |
 
-All five modules are `use ExUnit.Case, async: true` with `@moduletag :tmp_dir`.
+All six modules are `use ExUnit.Case, async: true` with `@moduletag :tmp_dir`.
 
 ## Per-File Coverage
 
@@ -45,6 +46,15 @@ All five modules are `use ExUnit.Case, async: true` with `@moduletag :tmp_dir`.
 - A second `prune/1` answers `{:ok, 0}` (idempotent).
 - `delete/3` removes one run's row and chunks and leaves its siblings alone, and deleting an absent run is still `:ok`.
 - `delete_task/2` removes every run of one task and all its chunks while another task's runs survive, and deleting an absent task is still `:ok`.
+
+### agent_state_pause_test.exs — task-level pause/resume facts
+- `put_pause_commit/3,4` round-trips a sha, a second put replaces it and `nil` clears it — asserted through the API AND a direct `SELECT pause_commit`.
+- A run with no row answers `{:error, :not_found}` and reads `nil`, and NO row is created (a pause marker never fabricates an empty conversation).
+- The write touches ONLY `pause_commit`: `message_count`/`chunk_count` and the chunk rows are unchanged, the loaded record still holds its message + earlier scalars, the marker is visible as `record.fields[:pause_commit]`, and an `:append` at the PRE-pause `base_seq` is still accepted — so the continuity rule never sees a pause as a conversation write.
+- `resumable?/1,2` is `true` once any durable run exists for the task (a scalar-only, message-less row included), `false` for an unknown task and `false` again after `delete_task`.
+- `root_agent_ids/1,2` returns only `parent_id IS NULL` rows, ascending (created out of order so the ordering is a real assertion), never leaks another task's roots, includes a row whose `parent_id` was never supplied, and answers `[]` for an unknown task.
+- `flush/1` is proven a SYNCHRONOUS barrier: the server answers `:sync` to an explicit `GenServer.call`, and a cast checkpoint plus a queued `put_pause_commit` are readable from a fresh `load/3` immediately after `flush/1` (or `flush(agent_id)` through the process-dictionary seam) returns — no `Process.sleep`, no retry.
+- With no store (an unregistered name) every new function stays inert: `{:error, :not_persistent_state_disabled}`, `nil`, `false`, `[]`, `:ok` — and the same calls succeed against a live store, so the inert shape is pinned rather than an unusable API.
 
 ### retention_test.exs — pure retention math
 - `default_days/0` is 7 and `default_prune_interval/0` is 3_600_000 ms.

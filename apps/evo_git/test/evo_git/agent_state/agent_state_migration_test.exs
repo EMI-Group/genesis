@@ -1,16 +1,18 @@
 defmodule EvoGit.AgentState.MigrationTest do
   @moduledoc """
-  End-to-end durability of the `agent_states.pending_tool_batch` column — the
-  in-flight tool-batch marker a resumed run reads after a crash.
+  End-to-end durability of the `agent_states` marker columns a resumed run
+  reads after a crash: `pending_tool_batch` (the in-flight tool-batch marker,
+  version 2) and `pause_commit` (the paused worktree checkpoint sha, version 3).
 
   Every test starts its OWN unnamed `EvoGit.AgentState` server on its own temp
   SQLite file, so the schema comes from the REAL migration chain
   (`EvoGit.AgentState.Boot.start_dynamic/2` → `000001_create_agent_state` then
-  `000002_add_pending_tool_batch`). No test hand-writes `CREATE TABLE`, which is
-  what makes the assertions meaningful: if `000002` did not exist (or its
-  `ALTER` were skipped), every read here would fail on an unknown column.
+  `000002_add_pending_tool_batch` then `000003_add_pause_commit`). No test
+  hand-writes `CREATE TABLE`, which is what makes the assertions meaningful: if
+  a later migration did not exist (or its `ALTER` were skipped), every read
+  here would fail on an unknown column.
 
-  The column is asserted through a DIRECT `SELECT`, never only through
+  The columns are asserted through a DIRECT `SELECT`, never only through
   `load/3`: a silently skipped column would surface as a `nil` field and could
   pass a weaker test.
 
@@ -32,6 +34,7 @@ defmodule EvoGit.AgentState.MigrationTest do
   @task_id "task_pending_tool_batch"
   @agent_id 7
   @column {"pending_tool_batch", "TEXT", 0, 0}
+  @pause_column {"pause_commit", "TEXT", 0, 0}
 
   ## Isolation / introspection helpers
 
@@ -117,7 +120,7 @@ defmodule EvoGit.AgentState.MigrationTest do
     } do
       pid = start_store!(tmp_dir, :migration_shape)
 
-      assert applied_versions!(pid) == [1, 2]
+      assert applied_versions!(pid) == [1, 2, 3]
 
       columns = state_columns!(pid)
       assert @column in columns
@@ -130,6 +133,26 @@ defmodule EvoGit.AgentState.MigrationTest do
       names = Enum.map(columns, &elem(&1, 0))
       assert "message_count" in names
       assert "completed_at" in names
+    end
+  end
+
+  ## (a) The pause marker column
+
+  describe "migration 000003" do
+    test "the real boot path adds pause_commit as one nullable TEXT column", %{
+      tmp_dir: tmp_dir
+    } do
+      pid = start_store!(tmp_dir, :migration_pause_shape)
+
+      assert applied_versions!(pid) == [1, 2, 3]
+
+      columns = state_columns!(pid)
+      assert @pause_column in columns
+      assert Enum.count(columns, fn {name, _t, _n, _p} -> name == "pause_commit" end) == 1
+
+      # The version-2 column is still exactly as it was: the new migration
+      # appends a column and touches nothing else.
+      assert @column in columns
     end
   end
 
@@ -211,23 +234,27 @@ defmodule EvoGit.AgentState.MigrationTest do
       assert is_binary(raw_marker!(first))
       :ok = stop_supervised(:migration_first)
 
-      # A SECOND boot over the SAME file: version 2 is already stamped, so the
-      # chain must apply nothing and the stored row must survive untouched.
+      # A SECOND boot over the SAME file: versions 2 and 3 are already stamped,
+      # so the chain must apply nothing and the stored row must survive
+      # untouched.
       second = start_store!(tmp_dir, :migration_second)
 
-      assert applied_versions!(second) == [1, 2]
+      assert applied_versions!(second) == [1, 2, 3]
       assert Enum.count(state_columns!(second), &(elem(&1, 0) == "pending_tool_batch")) == 1
+      assert Enum.count(state_columns!(second), &(elem(&1, 0) == "pause_commit")) == 1
       assert {:ok, record} = AgentState.load(@task_id, @agent_id, store: second)
       assert ToolBatch.normalize(record.fields[:pending_tool_batch]) == batch
 
-      # Force version 2 to re-apply on the SAME database: the probe guard turns
-      # the ALTER into a no-op (an unguarded re-run fails with
-      # "duplicate column name") and the marker row is left alone.
+      # Force versions 2 and 3 to re-apply on the SAME database: the probe guard
+      # turns each ALTER into a no-op (an unguarded re-run fails with
+      # "duplicate column name") and the stored rows are left alone.
       sql!(second, "DELETE FROM schema_migrations WHERE version = ?", [2])
+      sql!(second, "DELETE FROM schema_migrations WHERE version = ?", [3])
       assert is_list(Boot.run_migrations(AgentState.repo(second)))
 
-      assert applied_versions!(second) == [1, 2]
+      assert applied_versions!(second) == [1, 2, 3]
       assert Enum.count(state_columns!(second), &(elem(&1, 0) == "pending_tool_batch")) == 1
+      assert Enum.count(state_columns!(second), &(elem(&1, 0) == "pause_commit")) == 1
       assert {:ok, reloaded} = AgentState.load(@task_id, @agent_id, store: second)
       assert ToolBatch.normalize(reloaded.fields[:pending_tool_batch]) == batch
     end

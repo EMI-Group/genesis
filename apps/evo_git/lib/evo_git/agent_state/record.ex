@@ -80,7 +80,11 @@ defmodule EvoGit.AgentState.Record do
     {:phase, "phase", :text},
     {:pending_inputs, "pending_inputs", :json},
     {:pending_tool_batch, "pending_tool_batch", :json},
-    {:status, "status", :text}
+    {:status, "status", :text},
+    # Written ONLY by `EvoGit.AgentState.Store.put_pause_commit/4` (the sha of
+    # the worktree checkpoint an agent made when it paused); readable through
+    # `record.fields[:pause_commit]` like the other scalar fields.
+    {:pause_commit, "pause_commit", :text}
   ]
 
   @doc "The `{field_key, column, type}` specs, in deterministic column order."

@@ -32,17 +32,40 @@ defmodule EvoGit.AgentState do
   `:model_id_locked`, `:prompt_cache_key`, `:llm_model`,
   `:llm_context_window`, `:turn`, `:usage`, `:total_tokens`,
   `:compression_count`, `:current_commit`, `:phase`, `:pending_inputs`,
-  `:status`. Only the supplied keys are written; unknown keys are ignored.
+  `:status`, `:pause_commit`. Only the supplied keys are written; unknown keys
+  are ignored.
 
   Every function is TOTAL: a dead/absent server, a malformed entry or a store
   fault degrades to `:ok` / `{:error, :store_unavailable}` and never crashes
   the agent run or the reader.
+
+  ## Task-level pause/resume
+
+  A task-level pause needs three durable facts, all owned here:
+
+    * `pause_commit/2,3` — the git commit sha of the worktree checkpoint the
+      agent made when it paused (written by `put_pause_commit/3,4`), so a later
+      resume starts from exactly that commit;
+    * `resumable?/1,2` — whether the task has ANY durable run row at all;
+    * `root_agent_ids/1,2` — which of those runs are ROOT agents
+      (`parent_id IS NULL`).
+
+  `flush/1` is the durability barrier the pause path calls immediately before it
+  delivers a paused outcome: it is a synchronous `GenServer.call` round-trip
+  through the single serialized writer, so when it returns every earlier
+  checkpoint cast (for every agent) is committed. It is NOT a cast.
   """
 
   alias EvoGit.AgentState.{Server, Store}
 
   @default_server Server
   @call_timeout 15_000
+
+  @typedoc """
+  A task id: the task store's 16-hex-character STRING id, or an integer id for
+  callers that model tasks numerically.
+  """
+  @type task_id :: String.t() | pos_integer()
 
   @doc """
   Starts the agent-state server.
@@ -122,15 +145,27 @@ defmodule EvoGit.AgentState do
   Flushes the writer: returns once every checkpoint cast enqueued BEFORE this
   call has been persisted.
 
-  A read-your-writes barrier for callers that checkpoint and then `load/3`/
-  `prune/1` in the same process — a plain read deliberately does NOT queue
-  behind the writer (see `load/3`). Total: `:ok` even when the server is
-  absent/dead. Accepts `store:` opts or a server pid.
+  A REAL synchronous durability barrier — a `GenServer.call` round-trip through
+  the single serialized writer, never a cast — so when it returns, "the
+  checkpoint is durable" is true. The writer is serialized for ALL agents, so
+  flushing for one agent also commits every other agent's pending checkpoint.
+  This is the pause path's barrier: it is called immediately before a paused
+  outcome is delivered.
+
+  Also the read-your-writes barrier for callers that checkpoint and then
+  `load/3`/`prune/1` in the same process — a plain read deliberately does NOT
+  queue behind the writer (see `load/3`). Total: `:ok` even when the server is
+  absent/dead. Accepts `store:` opts, a server pid, or an agent id.
   """
-  @spec flush(keyword() | pid() | nil) :: :ok
+  @spec flush(keyword() | pid() | integer() | nil) :: :ok
   def flush(opts \\ [])
 
   def flush(opts) when is_list(opts), do: flush(target(opts))
+
+  # An agent id is accepted because the caller that pauses an agent holds one:
+  # the writer is a SINGLE serialized process, so this is the same barrier as
+  # flushing the server (the agent's checkpoint casts are ordered before it).
+  def flush(agent_id) when is_integer(agent_id), do: flush(target([]))
 
   def flush(server) when is_pid(server) do
     _ = safe_call(server, :sync)
@@ -138,6 +173,74 @@ defmodule EvoGit.AgentState do
   end
 
   def flush(_none), do: :ok
+
+  @doc """
+  Persists (or, with `nil`, clears) one run's `pause_commit`: the git commit
+  sha of the worktree checkpoint that agent made when it paused at a turn
+  boundary.
+
+  Goes through the SAME single serialized writer as every checkpoint (one
+  `GenServer.call`, so it can neither race nor reorder against a concurrent
+  checkpoint) but issues a SMALL SCALAR UPDATE of the `pause_commit` column
+  alone — message chunks, `message_count`/`chunk_count` and every other scalar
+  are untouched, so the append/rewrite continuity rule never sees a pause as a
+  conversation write.
+
+  Answers `{:error, :not_found}` when no durable row exists for
+  `(task_id, agent_id)` (e.g. `:persistent_state` was off for that task) and
+  `{:error, :not_persistent_state_disabled}` when the store is not running.
+  Total.
+  """
+  @spec put_pause_commit(task_id(), pos_integer(), String.t() | nil, keyword()) ::
+          :ok | {:error, term()}
+  def put_pause_commit(task_id, agent_id, sha, opts \\ []) do
+    case call(opts, {:put_pause_commit, task_id, agent_id, sha}) do
+      :ok -> :ok
+      {:error, _reason} = error -> error
+      :error -> {:error, :not_persistent_state_disabled}
+      _other -> {:error, :store_unavailable}
+    end
+  end
+
+  @doc """
+  One run's persisted `pause_commit` sha, or `nil`.
+
+  Total: `nil` on a missing row, a missing/dead store and any error.
+  """
+  @spec pause_commit(task_id(), pos_integer(), keyword()) :: String.t() | nil
+  def pause_commit(task_id, agent_id, opts \\ []) do
+    case repo(target(opts)) do
+      nil -> nil
+      repo -> Store.pause_commit(repo, task_id, agent_id)
+    end
+  end
+
+  @doc """
+  Whether the task has ANY durable run row — the cheap gate a resume checks
+  before it asks `root_agent_ids/1,2` for the runs to restore.
+
+  Total: `false` on a missing/dead store, an error and no rows.
+  """
+  @spec resumable?(task_id(), keyword()) :: boolean()
+  def resumable?(task_id, opts \\ []) do
+    case repo(target(opts)) do
+      nil -> false
+      repo -> Store.resumable?(repo, task_id)
+    end
+  end
+
+  @doc """
+  The task's ROOT agent ids (`parent_id IS NULL`), ascending.
+
+  Total: `[]` on a missing/dead store, an error and no rows.
+  """
+  @spec root_agent_ids(task_id(), keyword()) :: [pos_integer()]
+  def root_agent_ids(task_id, opts \\ []) do
+    case repo(target(opts)) do
+      nil -> []
+      repo -> Store.root_agent_ids(repo, task_id)
+    end
+  end
 
   @doc """
   Loads one run's persisted state.
