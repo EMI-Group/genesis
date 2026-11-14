@@ -825,6 +825,31 @@ defmodule EvoGit.RemoteNode do
   defnode(EvoGit.AgentScheduler.RemoteAPI.force_kill_task(task_id))
 
   @doc """
+  Requests a TASK-LEVEL PAUSE on the given node: the task moves to `:pausing`,
+  its agents stop at their next turn boundary and it parks in `:paused` once the
+  drain completes. A task already `:pausing`/`:paused` is idempotent `:ok`.
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.pause_task/1`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`.
+  Returns `:ok` on success or `{:error, reason}` on failure (including RPC
+  failures such as node down or timeout).
+  """
+  @spec pause_task(node(), String.t()) :: :ok | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.pause_task(task_id))
+
+  @doc """
+  Resumes a `:paused` task on the given node, re-enqueuing the SAME task id with
+  a `resume_kind` so each agent restores its durable conversation.
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.resume_task/1`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`.
+  Returns `:ok` on success or `{:error, reason}` on failure (including RPC
+  failures such as node down or timeout).
+  """
+  @spec resume_task(node(), String.t()) :: :ok | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.resume_task(task_id))
+
+  @doc """
   Deletes a task on the given node.
 
   On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.delete_task/1` directly.

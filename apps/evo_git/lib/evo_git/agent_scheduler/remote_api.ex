@@ -719,6 +719,37 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
+  Requests a TASK-LEVEL PAUSE by id: the task moves to `:pausing`, every agent
+  of the task is flagged to stop at its next turn boundary, and the task parks
+  in `:paused` (with `pause_kind: :clean`) once the drain completes. A task that
+  is already `:pausing`/`:paused` is idempotent `:ok`.
+  Delegates to `EvoGit.TaskRegistry.pause_task/1` (a `GenServer.call`).
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+  Returns `:ok` on success or `{:error, reason}` (`:not_found`, `:not_pausable`
+  for an interactive/awaiting-input task, `:not_resumable` without durable agent
+  state, `:not_running` for any other status).
+  """
+  @spec pause_task(String.t()) :: :ok | {:error, term()}
+  def pause_task(task_id) do
+    EvoGit.TaskRegistry.pause_task(task_id)
+  end
+
+  @doc """
+  Resumes a `:paused` task IN PLACE: the SAME task id is re-enqueued with a
+  fresh lease and a `resume_kind` (`:clean_pause`/`:dirty_pause`) so each agent
+  restores its durable conversation; `opts`/`started_at`/`commit_sha`/`result`/
+  `usage` are untouched (usage accumulates).
+  Delegates to `EvoGit.TaskRegistry.resume_task/1` (a `GenServer.call`).
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+  Returns `:ok` on success or `{:error, reason}` (`:not_found`, `:not_paused`,
+  the admission reason, or `:not_resumable`).
+  """
+  @spec resume_task(String.t()) :: :ok | {:error, term()}
+  def resume_task(task_id) do
+    EvoGit.TaskRegistry.resume_task(task_id)
+  end
+
+  @doc """
   Deletes a task by id.
 
   Delegates to `EvoGit.TaskRegistry.delete_task/1` (a `GenServer.cast`). This
