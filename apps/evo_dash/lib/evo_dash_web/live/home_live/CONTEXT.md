@@ -29,6 +29,7 @@ When interactive sessions are unavailable on the node, the page falls back to th
 - `approval_workflow.ex` → `EvoDashWeb.HomeLive.ApprovalWorkflow` — ephemeral approval request state, session scoping, off-process recovery, response routing
 - `approval_dialog.ex` → `EvoDashWeb.HomeLive.ApprovalDialog` — the two PURELY PRESENTATIONAL approval surfaces: the fixed-height status strip (`approval_bar/1`) and the single-request modal (`approval_dialog/1`)
 - `assistant_message.ex` / `user_message.ex` / `chat_messages.ex` → chat surface rendering: message bubbles plus the two EMPTY states (`empty_state/1` greeting with the four suggestion chips, `session_ended_state/1` ended session)
+- `execution_indicator.ex` → `ExecutionIndicator.execution_indicator/1`, the fixed-row textual execution phase, and shared pure `state/1` / `tool_state/1` presentation.
 - `source_gate.ex` → the "Genesis source not downloaded yet" gate
 
 ## Session model
@@ -129,12 +130,29 @@ The request's OWN optional `:warning` is rendered for ANY tier in `#approval-req
 Page assigns `approval_dialog_open` / `approval_dialog_index` are LOCAL VIEW state (never persisted), kept sane by `pending_approvals/1`, `auto_open_approval_dialog/1` (sync when already open, else open), `open_approval_dialog/1`, `sync_approval_dialog/1`, `step_approval_dialog/2` (clamps the current index first, then wraps with `integer_mod/2`) and `clamp_dialog_index/2` (clamps into `0..count-1`); an empty pending list closes the dialog and zeroes the index.
 EVERY path that mutates `pending_approvals` — a response success/not-found, a recovery snapshot apply, and either resolution broadcast — runs `sync_approval_dialog/1`, so an emptied list always closes the dialog and a shorter one always clamps the cursor.
 Events: `open_approval_dialog`, `dialog_closed`, `prev_approval`, `next_approval`, `retry_approvals`, `approval_response`.
-On `{:approval_requested, request}` (a genuinely NEW live request, never a recovery snapshot) the page auto-opens the dialog when it is not already open and — only when `ApprovalWorkflow.own_request?/2` accepts the request — pushes `task_notification` with `%{title: gettext("Approval needed"), body: gettext("Genesis is waiting for your approval."), tag: "genesis-approval"}` to the hidden `#assistant-notifications` host (`phx-hook="BrowserNotifications"`); a request this chat ignores never notifies.
+`ApprovalWorkflow.requested_with_notification/2` returns `{socket, payload_or_nil}` and is the live-arrival admission boundary; only first owned live arrivals produce a payload, while duplicates, recovered requests and resolved-id replays do not notify.
+The privacy-safe payload contains generic gettext `title`/`body`, the string `request_id`, an opaque `scope` and a stable request-scoped `tag`, never code, commands, credentials or evaluator targets.
+These notification APIs are the integration contract for page wiring in the sibling `../home_live.ex` and browser assets.
+`notification_host/1` returns `%{scope:, request_ids:}` for the visible `#assistant-notifications` wrapper around the fixed-height approval bar; bind `data-approval-scope` to `scope` and `data-approval-request-ids` to `Jason.encode!(request_ids)` rather than exposing requests.
+`notification_host_json/1` encodes that WHOLE metadata object, not the ids-only attribute value.
+The browser's `review_approval_notification` event carries `%{request_id: string}`; page wiring uses `dialog_index/2` to validate exact CURRENTLY pending ownership and select its index, treating nil as a no-op and never calling `respond/3`.
+`dialog_index/3` additionally validates a captured opaque scope when supplied, while `notification_scope?/2` supports browser scope reconciliation.
+Review and dismissal confer no authorization; `respond/3` independently rechecks owned pending id, decision whitelist and busy state, and resolved-id tombstones prevent snapshot or broadcast resurrection.
 A resolved request (`{:approval_resolved, …}`) re-syncs the dialog index through `sync_approval_dialog/1`.
+The dialog is accessibly named/described, gives safe autofocus to Close rather than Allow, announces busy consent submission, and accepts optional `approval_error` for an honest retry message.
 `ApprovalWorkflow.approval_responses` maps request ids to response sequence tokens only, not decisions or execution outcomes, and `responded/3` treats `{:ok, :ok}` as a response acknowledgement and `{:ok, {:error, :not_found}}` as already resolved.
 Neither acknowledgement proves that an approved evaluation executed successfully, and this subtree has no request-id-to-tool-call execution correlation.
 The live `Delta` tool-result projection receives only call id and coarse status, rendering Running/Done/Failed/Timed out through `AssistantMessage.tool_entry/1`, while complete result text is available only in checkpoint history's Thought process projection.
 `Messages.transcript/1` deliberately omits raw tool messages from top-level bubbles, so snapshot replacement can remove live informational tool rows rather than preserve an execution audit trail.
+
+## Execution presentation
+
+`ExecutionIndicator.execution_indicator/1` takes `chat_status`, `chat_task_status`, `chat_stream` and optional `pending_approval_count` from actual pending requests, and belongs beside the interrupt button inside the existing fixed-height status row.
+It reads only `chat_stream.delta.activity.phase` and `chat_stream.error`, never streamed answer/thinking text, tool arguments/results or approval acknowledgements.
+Lifecycle and watch errors outrank cached activity; absent activity means Working, stream failure means Live updates unavailable rather than execution failed, and unknown tool outcomes say Status unavailable rather than Done.
+Its stable `#assistant-execution-status` is a polite atomic phase-only live region, while shared tool rows explicitly disable live announcements.
+Both surfaces expose `.assistant-execution-indicator` / `.assistant-execution-dot` plus `data-state` / `data-busy` for asset-owned styling, without adding layout rows or changing push-only scrolling.
+Pure `state/1` and `tool_state/1` expose `%{state:, label:, busy?:, tone:}`; busy means active processing rather than waiting for a slot, approval or retry.
 
 ## Layout stability & scrolling
 
