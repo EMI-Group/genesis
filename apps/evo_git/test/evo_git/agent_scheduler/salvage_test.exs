@@ -19,7 +19,6 @@ defmodule EvoGit.AgentScheduler.SalvageTest do
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
-  import ExUnit.CaptureLog
 
   @agent_id_base 9_970_000
 
@@ -29,10 +28,8 @@ defmodule EvoGit.AgentScheduler.SalvageTest do
     # needed.
     use EvoGit.Agent
 
-    @impl true
     def system_prompt, do: "salvage test"
 
-    @impl true
     def available_tools, do: []
   end
 
@@ -354,7 +351,7 @@ defmodule EvoGit.AgentScheduler.SalvageTest do
     }
   end
 
-  defp register_agent(agent_id, tmp_dir, base_sha, opts \\ []) do
+  defp register_agent(agent_id, tmp_dir, base_sha, opts) do
     task_number = Keyword.get(opts, :task_number, 1)
     task_local_id = Keyword.get(opts, :task_local_id, 1)
 
@@ -473,7 +470,7 @@ defmodule EvoGit.AgentScheduler.SalvageTest do
   defp restore_app_env(key, nil), do: Application.delete_env(:evo_git, key)
   defp restore_app_env(key, value), do: Application.put_env(:evo_git, key, value)
 
-  defp wait_until(fun, timeout \\ 30_000) do
+  defp wait_until(fun, timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_wait_until(fun, deadline, 1)
   end

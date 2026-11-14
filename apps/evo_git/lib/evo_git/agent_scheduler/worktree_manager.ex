@@ -491,9 +491,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
           state
 
         {:error, why} ->
-          Logger.warning(
-            "WorktreeManager: salvage for agent #{agent_id} failed: #{inspect(why)}"
-          )
+          Logger.warning("WorktreeManager: salvage for agent #{agent_id} failed: #{inspect(why)}")
 
           state
       end

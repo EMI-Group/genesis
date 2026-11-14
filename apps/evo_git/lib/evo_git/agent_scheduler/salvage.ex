@@ -211,9 +211,7 @@ defmodule EvoGit.AgentScheduler.Salvage do
         true
 
       {:error, reason} ->
-        Logger.warning(
-          "Salvage: failed to anchor #{ref_name} at #{sha}: #{inspect(reason)}"
-        )
+        Logger.warning("Salvage: failed to anchor #{ref_name} at #{sha}: #{inspect(reason)}")
 
         true
     end
