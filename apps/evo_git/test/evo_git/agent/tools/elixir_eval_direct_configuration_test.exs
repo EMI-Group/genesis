@@ -273,12 +273,111 @@ defmodule EvoGit.Agent.Tools.ElixirEval.DirectConfigurationTest do
     end
   end
 
+  test "operator config reads retain complete real values and all supported show paths", ctx do
+    settings = Config.list_settings()
+    assert settings != []
+    assert Enum.any?(settings, &(&1.key_path == [:scheduler, :max_turns]))
+
+    # Compare the complete key inventory and one complete schema entry inside
+    # Dune, rather than letting the printed discovery list hit the output cap.
+    paths = Enum.map(settings, & &1.key_path)
+    setting = Enum.find(settings, &(&1.key_path == [:scheduler, :max_turns]))
+
+    code = """
+    settings = EvoGit.Config.list_settings()
+    {Enum.map(settings, fn setting -> setting.key_path end) == #{inspect(paths, limit: :infinity)} and
+       Enum.find(settings, fn setting -> setting.key_path == [:scheduler, :max_turns] end) == #{inspect(setting, limit: :infinity)},
+     EvoGit.Config.show() == EvoGit.Config.resolve(),
+     EvoGit.Config.show(:scheduler) == EvoGit.Config.resolve(:scheduler),
+     EvoGit.Config.show("scheduler.max_turns"),
+     EvoGit.Config.show([:scheduler, "max_turns"]),
+     EvoGit.Config.show("scheduler.not_a_setting"),
+     EvoGit.Config.show([]),
+     EvoGit.Config.user_config(), EvoGit.Config.config_path()}
+    """
+
+    assert read(ctx, code) ==
+             result(
+               {true, true, true, 73, 73, {:error, {:unknown_setting, ["not_a_setting"]}},
+                {:error, :invalid_path}, Config.user_config(), ctx.path}
+             )
+
+    refute Map.has_key?(Config.user_config(), "llm")
+    assert AgentScheduler.get_config(:max_turns) == 211
+    assert File.read!(ctx.path) === ctx.bytes
+    assert_no_approval(ctx)
+  end
+
+  test "partial update waits for exact-code approval, preserves overrides and never reloads runtime",
+       ctx do
+    original = Config.user_config()
+    runtime = :sys.get_state(AgentScheduler) |> Map.take(@restored_fields)
+
+    code =
+      "  # partial operator patch: 中文\nEvoGit.Config.update(%{scheduler: %{max_turns: 337}})\n  "
+
+    handle = start(ctx, code, "write")
+    request = await_request(ctx, code)
+    assert File.read!(ctx.path) === ctx.bytes
+    assert Config.user_config() == original
+    assert :ok = CommandApproval.respond(request.request_id, :approve)
+    assert Fixture.await(handle) == "Result: :ok"
+    assert_resolved(request, :approve)
+    assert {:error, :not_found} = CommandApproval.respond(request.request_id, :approve)
+
+    expected = put_in(original, ["scheduler", "max_turns"], 337)
+    assert Config.user_config() == expected
+    assert Config.show("scheduler.max_turns") == 337
+    assert read(ctx, "EvoGit.Config.user_config()") == result(expected)
+    assert :sys.get_state(AgentScheduler) |> Map.take(@restored_fields) == runtime
+    {:ok, saved} = TomlElixir.decode(File.read!(ctx.path))
+    assert saved == expected
+    assert_no_approval(ctx)
+  end
+
+  test "denial and stale authority cannot execute an exact-approved partial update", ctx do
+    code = "EvoGit.Config.update(%{scheduler: %{max_turns: 999}})"
+
+    for decision <- [:deny, :approve] do
+      handle = start(ctx, code, "write")
+      request = await_request(ctx, code)
+      assert File.read!(ctx.path) === ctx.bytes
+
+      if decision == :approve, do: Fixture.set_cancel(ctx.fixture, true)
+      assert :ok = CommandApproval.respond(request.request_id, decision)
+
+      expected =
+        if decision == :deny,
+          do: "Error: Elixir evaluation denied by the user; code was not executed.",
+          else:
+            "Error: Elixir evaluation requires a live root reflective assistant on the local node."
+
+      assert Fixture.await(handle) == expected
+      assert_resolved(request, decision)
+      assert {:error, :not_found} = CommandApproval.respond(request.request_id, :approve)
+      assert File.read!(ctx.path) === ctx.bytes
+      assert Config.show("scheduler.max_turns") == 73
+      assert AgentScheduler.get_config(:max_turns) == 211
+      assert_no_approval(ctx)
+    end
+  end
+
+  test "invalid partial update returns its real API error after approval without writing", ctx do
+    assert approved(ctx, "EvoGit.Config.update(%{not_an_operator_setting: 1})") ==
+             result({:error, {:unknown_setting, ["not_an_operator_setting"]}})
+
+    assert approved(ctx, "EvoGit.Config.update([])") == result({:error, :invalid_patch})
+    assert File.read!(ctx.path) === ctx.bytes
+    assert AgentScheduler.get_config(:max_turns) == 211
+  end
+
   defp mutation_codes do
     [
       "EvoGit.AgentScheduler.update_config(max_turns: 999)",
       "EvoGit.AgentScheduler.pause()",
       "EvoGit.AgentScheduler.resume()",
       "EvoGit.Config.save_user_config(put_in(EvoGit.Config.resolve(), [:scheduler, :max_turns], 999))",
+      "EvoGit.Config.update(%{scheduler: %{max_turns: 999}})",
       "EvoGit.AgentScheduler.RemoteAPI.reload_config()"
     ]
   end
