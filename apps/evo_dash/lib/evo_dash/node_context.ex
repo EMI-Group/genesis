@@ -720,10 +720,11 @@ defmodule EvoDash.NodeContext do
   Delegates to `EvoGit.RemoteNode.list_tasks_page/2`. Returns
   `%{rows: [map()], total: non_neg_integer()}`, degrading to
   `%{rows: [], total: 0}` if the store/remote call fails.
-  This is the summary projection: each row carries the 16 summary keys only
+  This is the summary projection: each row carries the 18 summary keys only
   (`id`, `status`, `review_status`, `started_at`, `finished_at`, `type`,
   `project_path`, `opts`, `branch_name`, `model_id`, `agent_count`, `base_sha`,
-  `commit_sha`, `lease_expires_at`, `updated_at`, `error`) — the heavy blobs
+  `commit_sha`, `lease_expires_at`, `updated_at`, `error`, `session_mode`,
+  `pause_kind`) — the heavy blobs
   (`result`, `usage`, `logs`, `archive_metadata`) are never transferred, unlike
   `list_tasks_paginated/2` which returns full `%EvoGit.TaskInfo{}` rows.
   `opts` accepts `:limit` (default 25, capped at 50), `:offset` and the filter
@@ -781,6 +782,43 @@ defmodule EvoDash.NodeContext do
   @spec force_kill_task(node(), String.t()) :: :ok | {:error, term()}
   def force_kill_task(node, task_id) do
     EvoGit.RemoteNode.force_kill_task(node, task_id)
+  end
+
+  @doc """
+  Pauses a task on the given node at the next turn boundary.
+
+  Delegates to `EvoGit.RemoteNode.pause_task/2`. The task moves to `:pausing`
+  and every agent of the task drains at its NEXT TURN BOUNDARY — an in-flight
+  tool call is never interrupted — then the task parks in `:paused`, which is
+  NON-TERMINAL and resumable through `resume_task/2`. Returns `:ok` on success
+  (a task that is already `:pausing`/`:paused` is idempotent `:ok`) or
+  `{:error, reason}`; the documented reasons are `:not_found` (unknown task),
+  `:not_running` (a `:pending`/`:finalizing`/`:cancelling`/terminal task),
+  `:not_pausable` (an interactive session), `:not_resumable` (no durable agent
+  state to restore) and `:scheduler_unavailable` (the scheduler is down, so the
+  row is reverted to `:running`), letting callers render the refusal precisely.
+  """
+  @spec pause_task(node(), String.t()) :: :ok | {:error, term()}
+  def pause_task(node, task_id) do
+    EvoGit.RemoteNode.pause_task(node, task_id)
+  end
+
+  @doc """
+  Resumes a paused task on the given node.
+
+  Delegates to `EvoGit.RemoteNode.resume_task/2`. The SAME task id is
+  re-enqueued with its persisted opts and a fresh lease, each agent restoring
+  its durable conversation, so the task's `started_at`, `opts`, `commit_sha`,
+  `result` and accumulated `usage` are preserved. Returns `:ok` on success or
+  `{:error, reason}`; the documented reasons are `:not_found` (unknown task),
+  `:not_paused` (the task is not in `:paused`), `:not_resumable` (no durable run
+  to restore), the start-time admission errors (model selection, session mode,
+  persistent state — the row stays `:paused`) and `:scheduler_unavailable` when
+  the scheduler is down.
+  """
+  @spec resume_task(node(), String.t()) :: :ok | {:error, term()}
+  def resume_task(node, task_id) do
+    EvoGit.RemoteNode.resume_task(node, task_id)
   end
 
   @doc """

@@ -36,7 +36,7 @@ defmodule EvoDash.MCP.Tools do
        }
      }, ["path", "objective"], false},
     {"genesis_get_task", :get,
-     "Read saved task status, bounded scheduler observations and saved results. Full objectives are opt-in. Running is not completed; reports are not independent verification.",
+     "Read saved task status, bounded scheduler observations and saved results. Full objectives are opt-in. Running is not completed; a pausing or paused task is not completed either. Reports are not independent verification.",
      %{
        task_id: @id,
        since: %{
@@ -55,7 +55,7 @@ defmodule EvoDash.MCP.Tools do
        offset: %{type: "integer", minimum: 0, maximum: 1_000_000, default: 0},
        status: %{
          type: "string",
-         enum: ~w(pending running finalizing completed failed cancelled cancelling)
+         enum: ~w(pending running pausing paused finalizing completed failed cancelled cancelling)
        },
        search: %{type: "string", description: "Search task goals, IDs and project paths."}
      }, [], true},
