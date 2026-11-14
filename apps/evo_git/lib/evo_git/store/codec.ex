@@ -59,7 +59,7 @@ defmodule EvoGit.Store.Codec do
 
   alias EvoGit.TaskInfo
 
-  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error session_mode)
+  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error session_mode pause_kind)
 
   @usage_fields [
     :input_tokens,
@@ -124,7 +124,8 @@ defmodule EvoGit.Store.Codec do
       task.project_path || extract_project_path(task.opts),
       task.branch_name || extract_branch_name(task.result),
       encode_error(task.error),
-      task_session_mode(task)
+      task_session_mode(task),
+      encode_pause_kind(task.pause_kind)
     ]
   end
 
@@ -169,7 +170,8 @@ defmodule EvoGit.Store.Codec do
       project_path,
       branch_name,
       error,
-      session_mode
+      session_mode,
+      pause_kind
     ] = row
 
     %TaskInfo{
@@ -192,7 +194,8 @@ defmodule EvoGit.Store.Codec do
       model_id: model_id,
       project_path: project_path,
       branch_name: branch_name,
-      session_mode: decode_session_mode(session_mode)
+      session_mode: decode_session_mode(session_mode),
+      pause_kind: decode_pause_kind(pause_kind)
     }
   end
 
@@ -219,7 +222,9 @@ defmodule EvoGit.Store.Codec do
   # The complete set of known atom values across the three atom fields:
   #   * type — :genesis, :evolve, :extract_skills, :reflect (repo-less)
   #   * status — the `tasks.status` value set (see `@known_statuses`), which
-  #     includes the NON-TERMINAL `:awaiting_input` of an interactive session
+  #     includes the NON-TERMINAL `:awaiting_input` of an interactive session,
+  #     the NON-TERMINAL `:pausing`/`:paused` pair of a paused task (see
+  #     `EvoGit.Store.Types.Status`)
   #   * review_status — :open, :merged, :rejected, :continued, :ignored, :no_changes
   #
   # Using String.to_atom/1 is SAFE here because the set is closed, bounded, and
@@ -235,7 +240,7 @@ defmodule EvoGit.Store.Codec do
   # (`test/evo_git/store/store_invariants_test.exs`) fails when a status is
   # added there without being added to `@known_atoms` here.
   @known_types ~w(genesis evolve extract_skills reflect)a
-  @known_statuses ~w(pending running awaiting_input finalizing completed failed cancelled cancelling)a
+  @known_statuses ~w(pending running pausing paused awaiting_input finalizing completed failed cancelled cancelling)a
   @known_review_statuses ~w(open merged rejected continued ignored no_changes)a
   @known_atoms @known_types ++ @known_statuses ++ @known_review_statuses
   @known_atom_strings MapSet.new(@known_atoms, &Atom.to_string/1)
@@ -422,6 +427,86 @@ defmodule EvoGit.Store.Codec do
     do: Map.get(opts, :session_mode) || Map.get(opts, "session_mode")
 
   defp session_mode_from_opts(_other), do: nil
+
+  # --- pause_kind ---
+  # `tasks.pause_kind` is a SHORT plain-TEXT column holding HOW a task is
+  # paused: `"clean"` (the agents stopped at a turn boundary with nothing
+  # uncommitted) or `"dirty"` (the save-work commit still had to run / the
+  # worktree was left mid-flight). It is a PERSISTED TASK FACT whose `NULL`
+  # means exactly "this task is not paused" — there is deliberately NO default
+  # value, unlike `session_mode`: a non-paused task has no kind at all.
+  #
+  # Both directions are TOTAL and NEVER raise: `decode_pause_kind/1` maps a
+  # NULL, an empty value, an unknown spelling and a non-text cell to `nil`
+  # (logging the non-empty unknown ones), and `encode_pause_kind/1` maps
+  # anything it does not recognize to `nil` as well — so a hand-edited row or a
+  # stale struct can neither crash a read nor make a task claim to be paused.
+  @pause_kinds ~w(clean dirty)
+
+  @doc "The `tasks.pause_kind` values this Codec recognizes (`nil` = not paused)."
+  @spec pause_kinds() :: [String.t()]
+  def pause_kinds, do: @pause_kinds
+
+  @doc """
+  Encodes a `pause_kind` value for storage — TOTAL, never raises.
+
+  Accepts the canonical kinds, their atoms (round-trip safety for a decoded
+  value) and nil; everything else becomes `nil` (the "not paused" value).
+  """
+  @spec encode_pause_kind(nil | atom() | String.t() | term()) :: String.t() | nil
+  def encode_pause_kind(nil), do: nil
+
+  def encode_pause_kind(kind) when is_atom(kind) do
+    kind |> Atom.to_string() |> encode_pause_kind()
+  end
+
+  def encode_pause_kind(kind) when is_binary(kind) do
+    if kind in @pause_kinds do
+      kind
+    else
+      Logger.warning(
+        "Codec: unrecognized task pause_kind #{inspect(kind)} — storing NULL (not paused)"
+      )
+
+      nil
+    end
+  end
+
+  def encode_pause_kind(other) do
+    Logger.warning(
+      "Codec: non-text task pause_kind #{inspect(other)} — storing NULL (not paused)"
+    )
+
+    nil
+  end
+
+  @doc """
+  Decodes a stored `pause_kind` value — TOTAL, never raises.
+
+  `nil` (a row written before the column existed, or a task that is not
+  paused), an empty value, an unknown spelling and a non-text cell all decode
+  to `nil`; an unknown non-empty value is logged so a typo does not disappear
+  silently.
+  """
+  @spec decode_pause_kind(nil | String.t() | term()) :: :clean | :dirty | nil
+  def decode_pause_kind(nil), do: nil
+  def decode_pause_kind(""), do: nil
+  def decode_pause_kind("clean"), do: :clean
+  def decode_pause_kind("dirty"), do: :dirty
+
+  def decode_pause_kind(kind) when is_binary(kind) do
+    Logger.warning(
+      "Codec: unrecognized task pause_kind in DB: #{inspect(kind)} — reading it as nil"
+    )
+
+    nil
+  end
+
+  def decode_pause_kind(other) do
+    Logger.warning("Codec: non-text task pause_kind in DB: #{inspect(other)} — reading it as nil")
+
+    nil
+  end
 
   # --- DateTime ---
   @doc """

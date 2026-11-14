@@ -7,8 +7,8 @@ defmodule EvoGit.Store.Operations.PagesTest do
   Pinned contracts:
 
     * `select_tasks_page/2` returns EXACTLY `%{rows: [summary], total: n}`; each
-      row is the canonical 17-key summary projection (no `result`, `logs` or
-      `usage` key) — a multi-megabyte `result` row costs the same as an empty
+      row is the canonical 18-key summary projection (no `result`, `logs` or
+      `usage` key; `pause_kind` is included and is `nil` for an unpaused row) — a multi-megabyte `result` row costs the same as an empty
       one;
     * filter parity with `Operations.Tasks.safe_select_paginated_tasks/2`: the
       same rows, in the same `started_at DESC` order, with the same total, for
@@ -62,7 +62,8 @@ defmodule EvoGit.Store.Operations.PagesTest do
     :lease_expires_at,
     :updated_at,
     :error,
-    :session_mode
+    :session_mode,
+    :pause_kind
   ]
 
   @base_started ~U[2026-01-01 00:00:00.000Z]
@@ -145,7 +146,7 @@ defmodule EvoGit.Store.Operations.PagesTest do
   # ── Projection + totals ─────────────────────────────────────────────────
 
   describe "select_tasks_page/2 — return shape" do
-    test "returns exactly %{rows, total} with 17-key summary rows" do
+    test "returns exactly %{rows, total} with 18-key summary rows" do
       repo = start_repo!(:shape)
 
       for i <- 0..2, do: put_timed!(repo, "page-#{i}", i)
@@ -666,6 +667,93 @@ defmodule EvoGit.Store.Operations.PagesTest do
       end)
     after
       :telemetry.detach(handler_id)
+    end
+  end
+
+  # ── tasks.pause_kind + the pause statuses ─────────────────────────────────
+  describe "pause_kind and the pause statuses" do
+    test "put_task/get_task round-trips :clean, :dirty and nil" do
+      repo = start_repo!(:pause_roundtrip)
+
+      for {id, kind} <- [{"pk-clean", :clean}, {"pk-dirty", :dirty}, {"pk-none", nil}] do
+        put!(repo, %TaskInfo{
+          id: id,
+          type: :evolve,
+          status: :paused,
+          opts: [path: "/pages/pause", objective: "pause kind #{id}"],
+          started_at: @base_started,
+          pause_kind: kind
+        })
+
+        assert %TaskInfo{pause_kind: ^kind} = Tasks.get_task(repo, id)
+      end
+    end
+
+    test "the summary page carries pause_kind (:clean / :dirty / nil)" do
+      repo = start_repo!(:pause_page)
+
+      put_timed!(repo, "pk-page-none", 0)
+      put_timed!(repo, "pk-page-clean", 1, status: :paused, pause_kind: :clean)
+      put_timed!(repo, "pk-page-dirty", 2, status: :paused, pause_kind: :dirty)
+
+      %{rows: rows, total: 3} = Pages.select_tasks_page(repo, [])
+      by_id = Map.new(rows, &{&1.id, &1})
+
+      assert by_id["pk-page-none"].pause_kind == nil
+      assert by_id["pk-page-clean"].pause_kind == :clean
+      assert by_id["pk-page-dirty"].pause_kind == :dirty
+
+      # …and the legacy summary projection reports the same thing.
+      summaries =
+        EvoGit.Store.Operations.Summaries.select_tasks_summary(repo, [], nil)
+        |> Map.new(&{&1.id, &1})
+
+      assert summaries["pk-page-clean"].pause_kind == :clean
+      assert summaries["pk-page-dirty"].pause_kind == :dirty
+      assert summaries["pk-page-none"].pause_kind == nil
+    end
+
+    test "a :pausing / :paused status decodes to itself, never to nil or :pending" do
+      repo = start_repo!(:pause_statuses)
+
+      for {id, status} <- [{"pausing-row", :pausing}, {"paused-row", :paused}] do
+        put!(repo, %TaskInfo{
+          id: id,
+          type: :evolve,
+          status: status,
+          opts: [path: "/pages/pause", objective: "pause status #{id}"],
+          started_at: @base_started,
+          pause_kind: :dirty
+        })
+
+        assert %TaskInfo{status: ^status, pause_kind: :dirty} = Tasks.get_task(repo, id)
+        [lite] = Pages.select_tasks_page(repo, status: Atom.to_string(status)).rows
+        assert lite.status == status
+      end
+    end
+
+    test "an unknown stored pause_kind decodes to nil instead of raising" do
+      repo = start_repo!(:pause_garbage)
+      put_timed!(repo, "pk-garbage", 0)
+
+      query_rows(repo, "UPDATE tasks SET pause_kind = ?1 WHERE id = ?2", [
+        "sideways",
+        "pk-garbage"
+      ])
+
+      assert %TaskInfo{pause_kind: nil} = Tasks.get_task(repo, "pk-garbage")
+      [row] = Pages.select_tasks_page(repo, []).rows
+      assert row.pause_kind == nil
+      assert EvoGit.Store.Codec.decode_pause_kind("sideways") == nil
+      assert EvoGit.Store.Codec.decode_pause_kind("") == nil
+    end
+
+    test "re-running the migration chain is a probe-guarded no-op" do
+      repo = start_repo!(:pause_migration_noop)
+      # Version 9 (`task_pause_kind`) is probe-guarded: the baseline already
+      # created the column, so re-running the chain applies and changes nothing.
+      assert Boot.run_migrations(repo) == []
+      assert Boot.run_migrations(repo) == []
     end
   end
 

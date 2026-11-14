@@ -6,10 +6,12 @@ defmodule EvoGit.Store.Operations.SummariesTest do
   Pinned contracts (mirror of the raw store's `@summary_columns` handlers in
   `store.ex` — zero consumer changes allowed):
 
-    * EXACT 17-key map shape on every row: id, status, review_status,
+    * EXACT 18-key map shape on every row: id, status, review_status,
       started_at, finished_at, type, project_path, opts, branch_name, model_id,
       agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error,
-      session_mode
+      session_mode, pause_kind
+    * `pause_kind` decodes to `:clean` / `:dirty` for a paused task and `nil`
+      for every task that is not paused
     * `updated_at` is the RAW stored ISO string, byte-identical (a typed
       DateTime select would round-trip the spelling)
     * `result` is NEVER selected — a huge/corrupt `result` column does not
@@ -54,7 +56,8 @@ defmodule EvoGit.Store.Operations.SummariesTest do
     :lease_expires_at,
     :updated_at,
     :error,
-    :session_mode
+    :session_mode,
+    :pause_kind
   ]
 
   # The raw fixed-precision (24-char) ISO string seeded for the byte-identical
@@ -197,10 +200,10 @@ defmodule EvoGit.Store.Operations.SummariesTest do
 
   defp ids(summaries), do: Enum.map(summaries, & &1.id)
 
-  # ── 17-key projection shape ──────────────────────────────────────────────
+  # ── 18-key projection shape ──────────────────────────────────────────────
 
   describe "projection shape" do
-    test "every row carries EXACTLY the 17 summary keys (no result, no extras)" do
+    test "every row carries EXACTLY the 18 summary keys (no result, no extras)" do
       pid = start_repo!(:shape)
       seeded = insert_task!(pid, id: "t16", error: nil)
 

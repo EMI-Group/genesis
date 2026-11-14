@@ -80,8 +80,8 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
   #
   # v0.14.1 shipped exactly the six migrations BELOW version 7, so a real
   # v0.14.1 `schema_migrations` carries these rows and Ecto never re-runs them:
-  # the ONLY pending work on such a database is `…00007_vct_mounts` plus
-  # `…00008_session_mode`.
+  # the ONLY pending work on such a database is `…00007_vct_mounts`,
+  # `…00008_session_mode` and `…00009_task_pause_kind`.
   @released_versions [
     20_260_815_000_001,
     20_260_815_000_002,
@@ -93,6 +93,7 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
 
   @vct_version 20_260_815_000_007
   @session_mode_version 20_260_815_000_008
+  @pause_kind_version 20_260_815_000_009
 
   # The `tasks` table v0.14.1 shipped: the 19 pre-`session_mode` columns in
   # canonical order (`…00001` created it that way and `…00005` had already
@@ -318,12 +319,13 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
 
       pid = start_repo!(path)
 
-      # EXACTLY two migrations are pending: the VCT one, then the
-      # `session_mode` adoption.
-      assert Boot.run_migrations(pid) == [@vct_version, @session_mode_version]
+      # EXACTLY three migrations are pending: the VCT one, the `session_mode`
+      # adoption, then the `pause_kind` adoption.
+      assert Boot.run_migrations(pid) ==
+               [@vct_version, @session_mode_version, @pause_kind_version]
 
       assert migration_versions(pid) ==
-               @released_versions ++ [@vct_version, @session_mode_version]
+               @released_versions ++ [@vct_version, @session_mode_version, @pause_kind_version]
 
       # The SAME fan-out rules the pre-Ecto fixture pins: newest first, `-N`
       # suffixes on collisions, stored display names preserved, NULL
@@ -337,8 +339,9 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
 
       # Nothing else moved: the released `tasks`/archive shapes and the final
       # six-index set are exactly what v0.14.1 already had, plus the
-      # `session_mode` column ALTERs appended at the tail.
-      assert column_names(pid, "tasks") == @released_task_columns ++ ["session_mode"]
+      # `session_mode` / `pause_kind` column ALTERs appended at the tail.
+      assert column_names(pid, "tasks") ==
+               @released_task_columns ++ ["session_mode", "pause_kind"]
 
       assert index_names(pid, "tasks") ==
                Enum.sort(Enum.map(@released_task_indexes, &elem(&1, 0)))
@@ -363,15 +366,16 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
 
       # The majority of real users: nothing to carry over, so version 7 still
       # creates the table, drops the empty legacy one and stamps itself (and
-      # version 8 stamps itself too).
-      assert Boot.run_migrations(pid) == [@vct_version, @session_mode_version]
+      # versions 8 and 9 stamp themselves too).
+      assert Boot.run_migrations(pid) ==
+               [@vct_version, @session_mode_version, @pause_kind_version]
 
       assert mount_rows(pid) == []
       refute "projects" in table_names(pid)
       assert column_names(pid, "vct_mounts") == @mount_columns
 
       assert migration_versions(pid) ==
-               @released_versions ++ [@vct_version, @session_mode_version]
+               @released_versions ++ [@vct_version, @session_mode_version, @pause_kind_version]
     end
 
     test "an unreadable legacy projects table ABORTS the migration and survives", %{root: root} do

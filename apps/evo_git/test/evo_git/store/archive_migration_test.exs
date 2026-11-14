@@ -92,6 +92,7 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
   @prune_index_version 20_260_815_000_006
   @vct_mounts_version 20_260_815_000_007
   @session_mode_version 20_260_815_000_008
+  @pause_kind_version 20_260_815_000_009
 
   # The whole shipped chain, ascending exactly as `schema_migrations` reports it.
   @migration_versions [
@@ -102,7 +103,8 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     @archive_version,
     @prune_index_version,
     @vct_mounts_version,
-    @session_mode_version
+    @session_mode_version,
+    @pause_kind_version
   ]
 
   # The pre-release 20-column `tasks` DDL — the state a database upgraded from a
@@ -218,13 +220,14 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     [22, "completed_at", "TEXT", 0, nil, 0]
   ]
 
-  # The LIVE 20 `tasks` columns — the shape after the archive migration drops
-  # `archive_metadata` (or never had it) AND `20260815000008_session_mode`
-  # appends `session_mode`: SQLite ALTERs only append, so it lands after
-  # `updated_at` on these fixture shapes.
+  # The LIVE 21 `tasks` columns — the shape after the archive migration drops
+  # `archive_metadata` (or never had it) AND `20260815000008_session_mode` /
+  # `20260815000009_task_pause_kind` append `session_mode` and `pause_kind`:
+  # SQLite ALTERs only append, so they land after `updated_at` on these fixture
+  # shapes.
   @live_task_columns ~w(id type status opts started_at finished_at logs result review_status
                         usage agent_count base_sha commit_sha lease_expires_at model_id
-                        project_path branch_name error updated_at session_mode)
+                        project_path branch_name error updated_at session_mode pause_kind)
 
   setup do
     # pid + wall-clock ms on top of the per-BEAM unique integer: a counter
@@ -262,7 +265,10 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
 
       # Version 8 is left pending too, so the tail column this test asserts is
       # actually appended by the chain (6/7 stay stamped — see the moduledoc).
-      create_db!(path, [@archive_version, @session_mode_version], tasks_ddl: @live_tasks_ddl)
+      create_db!(path, [@archive_version, @session_mode_version, @pause_kind_version],
+        tasks_ddl: @live_tasks_ddl
+      )
+
       insert_rows!(path, [[id: "task-fresh", result: ~S({"__result_tag__":"ok","data":{}})]])
       before = data_snapshot!(path)
 
@@ -425,7 +431,7 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
       path = Path.join(root, "drop_column.sqlite")
       # Version 8 is left pending too, so `session_mode` arrives as SQLite's
       # appended tail column on the way through.
-      create_db!(path, [@archive_version, @session_mode_version])
+      create_db!(path, [@archive_version, @session_mode_version, @pause_kind_version])
       seed_archives!(path)
 
       assert "archive_metadata" in column_names!(path)

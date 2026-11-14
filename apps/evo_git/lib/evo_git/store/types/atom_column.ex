@@ -69,13 +69,22 @@ defmodule EvoGit.Store.Types.Status do
 
   Documented value set (`%TaskInfo{}` status), declared ONCE in `statuses/0`:
 
-    `:pending` · `:running` · `:awaiting_input` · `:finalizing` ·
-    `:completed` · `:failed` · `:cancelled` · `:cancelling`
+    `:pending` · `:running` · `:pausing` · `:paused` · `:awaiting_input` ·
+    `:finalizing` · `:completed` · `:failed` · `:cancelled` · `:cancelling`
 
   `:awaiting_input` is the NON-TERMINAL status of an idle interactive session:
   it is not finished (cleanup must never delete it) and its lease is still
   renewable (the wrapper is alive), so both liveness lists in
   `EvoGit.Store.Operations.Lightweight` include it.
+
+  `:pausing` is a pause request DRAINING the task's agents: the wrapper is
+  alive and its lease is renewed, so it is a live status in both liveness
+  lists — but it is not the resting state, `finished_at` is still nil.
+
+  `:paused` is the non-terminal RESTING state: there is no lease and no
+  wrapper (`finished_at` stays nil), the task is resumable, and it must survive
+  `clear_finished_tasks` — so it is live for cleanup but deliberately absent
+  from the lease set (nothing owns it while it rests).
 
   `statuses/0` is the single source of truth for "every status the registry
   can persist"; `Codec.known_statuses/0` must remain a superset (pinned by
@@ -94,6 +103,8 @@ defmodule EvoGit.Store.Types.Status do
   @statuses [
     :pending,
     :running,
+    :pausing,
+    :paused,
     :awaiting_input,
     :finalizing,
     :completed,

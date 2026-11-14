@@ -60,12 +60,15 @@ defmodule EvoGit.Store.StoreInvariantsTest do
 
   # The REAL `tasks.status` values the registry persists, enumerated by hand so
   # this is a check, not a tautology: `:pending` (create), `:running` (start),
-  # `:finalizing` (`Runtime.Helpers.notify_finalizing/1`), `:cancelling`
-  # (graceful cancel), `:completed` / `:failed` / `:cancelled` (terminal
-  # mappings).
+  # `:pausing` (a pause request is draining the agents), `:paused` (the resting
+  # state of a paused task), `:finalizing` (`Runtime.Helpers.notify_finalizing/1`),
+  # `:cancelling` (graceful cancel), `:completed` / `:failed` / `:cancelled`
+  # (terminal mappings), `:awaiting_input` (interactive yield).
   @persisted_statuses [
     :pending,
     :running,
+    :pausing,
+    :paused,
     :finalizing,
     :completed,
     :failed,

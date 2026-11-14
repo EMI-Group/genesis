@@ -59,23 +59,36 @@ defmodule EvoGit.Store.Operations.Lightweight do
   # session is NON-TERMINAL: it is waiting for its next message, not done, and
   # cleanup must never delete it (its worktree, transcript and lease stay live
   # until it is explicitly closed, cancelled or force-killed). `:finalizing` IS
-  # finished (terminal-ish cleanup target). Mirrors the old literal `NOT IN`
-  # pushdown.
-  @live_statuses ["running", "pending", "awaiting_input", "cancelling"]
+  # finished (terminal-ish cleanup target).
+  #
+  # The pause pair is live for cleanup for the same reason `:awaiting_input`
+  # is: `:pausing` is a pause request still DRAINING its agents (the work is in
+  # flight), and `:paused` is the non-terminal RESTING state — a paused task
+  # keeps its row, result and resumable state and has `finished_at` nil, so
+  # `clear_finished_tasks` must never delete it. Mirrors the old literal
+  # `NOT IN` pushdown.
+  @live_statuses ["running", "pending", "pausing", "paused", "awaiting_input", "cancelling"]
 
   # Lease/reconciliation set: `:cancelling` is included so startup
   # reconciliation can mark orphaned cancelling tasks `:cancelled`, mirroring
   # the `:finalizing` → `:failed` reconciliation. `:awaiting_input` is included
   # because an idle session still holds a live wrapper whose lease is renewed —
   # and a session whose wrapper is GONE must be reconciled on boot rather than
-  # left waiting forever. Mirrors the old literal `IN` pushdown.
-  @lease_statuses ["running", "awaiting_input", "finalizing", "cancelling"]
+  # left waiting forever.
+  #
+  # `:pausing` is included because a pause request still has a LIVE WRAPPER
+  # that renews the lease and must be reconciled if that wrapper disappears.
+  # `:paused` is deliberately EXCLUDED: the resting state has no lease and no
+  # wrapper by definition, so it is not a lease-bearing status — including it
+  # would make every paused task look like a leaked lease row. Mirrors the old
+  # literal `IN` pushdown.
+  @lease_statuses ["running", "pausing", "awaiting_input", "finalizing", "cancelling"]
 
   # The statuses that are NOT finished — the `NOT IN` set behind
   # `select_finished_task_ids/1`, i.e. exactly the rows `clear_finished_tasks`
-  # never deletes. Exposed for the table-driven status-admission test, which
-  # asserts every status list containing "running" also contains
-  # "awaiting_input".
+  # never deletes (a PAUSED task is one of them). Exposed for the table-driven
+  # status-admission test, which asserts every status list containing "running"
+  # also contains "awaiting_input".
   @doc false
   @spec live_statuses() :: [String.t()]
   def live_statuses, do: @live_statuses
@@ -107,12 +120,14 @@ defmodule EvoGit.Store.Operations.Lightweight do
 
   @doc """
   Returns the ids of all FINISHED tasks — every status outside
-  `live_statuses/0`, so `:awaiting_input` (an idle session) is never returned
-  and can never be deleted by cleanup.
+  `live_statuses/0`, so `:awaiting_input` (an idle session) and `:pausing`/
+  `:paused` (a pausing or resting paused task) are never returned and can never
+  be deleted by cleanup.
 
   Port of the `:select_finished_task_ids` handler. Raw id strings, no decode;
   the status filter is pushed into SQL as the literal
-  `status NOT IN ('running', 'pending', 'awaiting_input', 'cancelling')`.
+  `status NOT IN ('running', 'pending', 'pausing', 'paused', 'awaiting_input',
+  'cancelling')`.
   """
   @spec select_finished_task_ids(pid()) :: [String.t()]
   def select_finished_task_ids(repo) when is_pid(repo) do
@@ -159,16 +174,18 @@ defmodule EvoGit.Store.Operations.Lightweight do
   end
 
   @doc """
-  Returns lightweight lease info for running/awaiting_input/finalizing/
-  cancelling tasks: `%{id, status, lease_expires_at}`.
+  Returns lightweight lease info for running/pausing/awaiting_input/
+  finalizing/cancelling tasks: `%{id, status, lease_expires_at}`.
 
   Port of the `:select_running_lease_info` handler. Only the `status` field is
   decoded (a lightweight atom via `Codec.decode_atom/1`); `lease_expires_at`
   is the raw unix-ms INTEGER. The status filter is pushed into SQL as the
-  literal `status IN ('running', 'awaiting_input', 'finalizing', 'cancelling')`
-  — `:cancelling` is included so startup reconciliation can resolve orphaned
-  cancelling tasks, and `:awaiting_input` so an idle session whose wrapper is
-  gone is reconciled instead of waiting forever.
+  literal `status IN ('running', 'pausing', 'awaiting_input', 'finalizing',
+  'cancelling')` — `:cancelling` is included so startup reconciliation can
+  resolve orphaned cancelling tasks, `:awaiting_input` so an idle session whose
+  wrapper is gone is reconciled instead of waiting forever, and `:pausing` so a
+  pause that is still draining is reconciled too. `:paused` is deliberately
+  ABSENT: the resting state has no lease and no wrapper to reconcile.
   """
   @spec select_running_lease_info(pid()) :: [
           %{id: String.t(), status: atom() | nil, lease_expires_at: integer() | nil}
