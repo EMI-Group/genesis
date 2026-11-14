@@ -510,6 +510,12 @@ defmodule EvoGit.Agent.ToolDispatch do
         end
       end
     else
+      # The durable IN-FLIGHT marker (and its pre-batch checkpoint) lands here,
+      # BEFORE any tool runs: a crash in the middle of this batch then leaves the
+      # assistant `tool_calls` message plus the marker in durable state, which is
+      # what `EvoGit.Agent.Resume` repairs on the retry.
+      state = begin_tool_batch(state, tool_calls, subagent_modules, opts)
+
       case process_tool_calls(tool_calls, state, subagent_modules, opts) do
         {:continue, tool_responses, subagent_usage} ->
           continue_after_tools(
@@ -523,8 +529,44 @@ defmodule EvoGit.Agent.ToolDispatch do
           )
 
         {:error, :protocol_violation} ->
-          handle_protocol_violation(state, loop_fn, trigger_recovery_fn)
+          handle_protocol_violation(
+            EvoGit.Agent.Resume.clear_marker(state),
+            loop_fn,
+            trigger_recovery_fn
+          )
       end
+    end
+  end
+
+  # Opens the in-flight batch: ONE marker write plus ONE checkpoint that makes the
+  # assistant `tool_calls` message + the marker durable BEFORE the batch executes.
+  # `state.turn` was incremented by `advance_turn_context/2` above, so the
+  # session's adoption guard accepts that checkpoint.
+  #
+  # INERT unless durable state is enabled: `persistent_state: false` writes no
+  # marker and fires no checkpoint (the opt-out costs nothing at all). An empty
+  # call list is never "executing", so it opens nothing either.
+  defp begin_tool_batch(
+         %State{persistent_state: true} = state,
+         [_ | _] = tool_calls,
+         subagent_modules,
+         opts
+       ) do
+    batch = EvoGit.Agent.ToolBatch.build(tool_calls, state.turn, subagent_modules)
+    state = %{state | pending_tool_batch: batch}
+    checkpoint_now(state, opts)
+    state
+  end
+
+  defp begin_tool_batch(%State{} = state, _tool_calls, _subagent_modules, _opts), do: state
+
+  # The pre-batch half of the SAME `:checkpoint` seam the exchange fires at the
+  # turn boundary (`EvoGit.Agent.Exchange.Seams`): production sends the state to
+  # the session, an un-seamed run is a no-op, and the return value is discarded.
+  defp checkpoint_now(%State{} = state, opts) do
+    case Seams.from_opts(opts).checkpoint do
+      seam when is_function(seam, 1) -> seam.(state)
+      _none -> :ok
     end
   end
 
@@ -696,6 +738,11 @@ defmodule EvoGit.Agent.ToolDispatch do
           sha when is_binary(sha) -> %{state | current_commit: sha}
           _ -> state
         end
+
+      # The batch is fully executed and its results are in the transcript: the
+      # in-flight marker clears in the SAME state the engine checkpoints at this
+      # turn boundary, so a resumed run can never see a completed batch as live.
+      state = EvoGit.Agent.Resume.clear_marker(state)
 
       # No ETS write-through: the updated context and accumulated usage ride the
       # returned state, and the engine publishes it at the turn boundary.

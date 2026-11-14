@@ -88,6 +88,13 @@ defmodule EvoGit.Agent.Exchange do
       # order-independent and the app-env default is read at call time).
       seams = Seams.from_opts(opts)
 
+      # Crash-resume repair runs ONCE, here — before the loop, so the very first
+      # LLM call of a resumed run already sees a provider-valid transcript and
+      # the `[RESUME]` notice. It is a no-op for every run that is not a crash
+      # retry (`EvoGit.Agent.Resume.crash_retry?/1`), and it never touches the
+      # system message or the first user message (prompt-cache prefix).
+      state = EvoGit.Agent.Resume.apply(state)
+
       case loop(state, opts, seams) do
         # A TERMINAL turn never reaches the recursive loop, so its state is
         # checkpointed here — the single place the terminal state is observable.
@@ -96,12 +103,12 @@ defmodule EvoGit.Agent.Exchange do
         # is terminal for THIS exchange and is checkpointed the same way, then
         # returned verbatim.
         {:finish, %State{} = final_state, _result} = outcome ->
-          checkpoint(final_state, seams)
+          checkpoint(terminal_state(final_state), seams)
           emit_finished(:completed)
           outcome
 
         {:yield, %State{} = final_state, _text} = outcome ->
-          checkpoint(final_state, seams)
+          checkpoint(terminal_state(final_state), seams)
           outcome
 
         {:error, _reason} = error ->
@@ -124,6 +131,12 @@ defmodule EvoGit.Agent.Exchange do
   # `Sink.emit/1` is a no-op when nothing is installed, so an unwatched exchange
   # stays behaviourally identical.
   defp emit_finished(status), do: Sink.emit({:finished, status})
+
+  # A TERMINAL state never carries the in-flight batch marker: a `:finish`/`:yield`
+  # comes from a tool-free completion turn, so the marker is already nil, and this
+  # normalisation makes that an invariant of the durable row instead of a
+  # coincidence.
+  defp terminal_state(%State{} = state), do: EvoGit.Agent.Resume.clear_marker(state)
 
   # The ONE `:checkpoint` call site shared by both turn paths: called once per
   # turn AFTER that turn's state update, with the seam's return value DISCARDED

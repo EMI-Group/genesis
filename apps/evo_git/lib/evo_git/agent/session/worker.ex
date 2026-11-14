@@ -64,6 +64,13 @@ defmodule EvoGit.Agent.Session.Worker do
   @spec run(State.t(), pid(), keyword()) :: :ok
   def run(%State{} = state, session_pid, opts \\ []) when is_pid(session_pid) do
     tmpdir = Keyword.get(opts, :tmpdir)
+    # CONTAINMENT: the session starts this worker with `async_nolink`, so a crashed SESSION leaves
+    # the worker — and the tool call it may be blocked on — running against a worktree that is
+    # already being reclaimed. The watchdog below is the worker's own monitor of its owner: on
+    # `:DOWN` it exits the worker at once (a kill, so the `after` fallback correctly does NOT run a
+    # commit against a reclaimed worktree). It exits by itself when the worker ends first, so a
+    # normal `:finish`/`:yield` path is untouched.
+    start_session_watchdog(session_pid)
 
     # The SESSION is the owner: the worker is short-lived and owns nothing
     # durable, so anything bound to the owner pid must outlive this task (D7).
@@ -108,6 +115,29 @@ defmodule EvoGit.Agent.Session.Worker do
       end
 
     send(session_pid, {:exchange_finished, self(), refresh(outcome)})
+    :ok
+  end
+
+  # Monitors the SESSION from a throwaway process. It watches BOTH pids, so whichever ends first
+  # settles it: the worker's own exit drops the monitor (no leak), the session's death exits the
+  # worker with `:kill` (untrappable, so no `after` block runs a commit against a reclaimed
+  # worktree and no tool keeps executing).
+  defp start_session_watchdog(session_pid) do
+    worker = self()
+
+    spawn(fn ->
+      session_ref = Process.monitor(session_pid)
+      worker_ref = Process.monitor(worker)
+
+      receive do
+        {:DOWN, ^worker_ref, :process, ^worker, _reason} ->
+          Process.demonitor(session_ref, [:flush])
+
+        {:DOWN, ^session_ref, :process, ^session_pid, _reason} ->
+          Process.exit(worker, :kill)
+      end
+    end)
+
     :ok
   end
 

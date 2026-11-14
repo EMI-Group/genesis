@@ -23,6 +23,8 @@ defmodule EvoGit.AgentState.Store do
   chunk/row count, a missing row and a dead store all answer an error tuple.
   """
 
+  require Logger
+
   alias EvoGit.AgentState.Record
   alias EvoGit.Store.RepoScope
 
@@ -124,9 +126,53 @@ defmodule EvoGit.AgentState.Store do
   end
 
   defp upsert_state!(task_id, agent_id, fields, message_count, chunk_count, now) do
-    columns = Record.encode_fields(fields)
+    columns = only_existing(Record.encode_fields(fields), &elem(&1, 0))
     {sql, params} = upsert_sql(task_id, agent_id, columns, message_count, chunk_count, now)
     run!(sql, params)
+  end
+
+  # BOTH the writer and the reader use the columns this DATABASE actually has,
+  # and log once when the schema lags the code. A lagging schema is a real
+  # deployment state (`agent_state.sqlite` is a separate user file that only
+  # `Boot.start_dynamic/2` migrates), and the difference between the two
+  # outcomes is large: skipping ONE optional scalar merely leaves that field
+  # non-durable, while referencing an unknown column fails EVERY checkpoint
+  # (which also aborts the message chunk, leaving a continuity gap) and EVERY
+  # load (so no run could ever be restored). `nil` = "the column set is unknown"
+  # (the PRAGMA itself failed) — the caller then keeps its declared columns and
+  # behaviour is exactly pre-guard.
+  defp only_existing(items, name_fun) do
+    case state_columns() do
+      nil ->
+        items
+
+      existing ->
+        {kept, missing} =
+          Enum.split_with(items, fn item -> MapSet.member?(existing, name_fun.(item)) end)
+
+        if missing != [], do: warn_missing_columns(missing, name_fun)
+        kept
+    end
+  end
+
+  defp state_columns do
+    case query("PRAGMA table_info(#{@states})", []) do
+      {:ok, %{rows: rows}} -> MapSet.new(rows, fn [_cid, name | _rest] -> name end)
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp warn_missing_columns(missing, name_fun) do
+    key = {__MODULE__, :missing_columns_warned}
+
+    unless Process.get(key) do
+      Process.put(key, true)
+
+      Logger.warning(
+        "[AgentState] #{@states} is missing #{Enum.map_join(missing, ", ", name_fun)}; " <>
+          "those fields are neither written nor read (apply the pending agent_state migrations)"
+      )
+    end
   end
 
   # Only the SUPPLIED columns are updated on conflict, so a checkpoint never
@@ -196,7 +242,7 @@ defmodule EvoGit.AgentState.Store do
 
   defp fetch_state(task_id, agent_id) do
     sql =
-      "SELECT #{Enum.join(Record.all_columns(), ", ")} FROM #{@states} " <>
+      "SELECT #{Enum.join(only_existing(Record.all_columns(), & &1), ", ")} FROM #{@states} " <>
         "WHERE task_id = ? AND agent_id = ?"
 
     case query(sql, [task_id, agent_id]) do

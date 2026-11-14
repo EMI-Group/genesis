@@ -440,7 +440,8 @@ defmodule EvoGit.Agent.Session.Setup do
         phase: :running
       }
 
-      {:ok, maybe_restore_state(state, ctx)}
+      {state, restored?} = maybe_restore_state(state, ctx)
+      {:ok, %{state | resume_info: resume_info(ctx, restored?)}}
     end
   end
 
@@ -451,6 +452,7 @@ defmodule EvoGit.Agent.Session.Setup do
   # belong to THIS run and to its re-created worktree. A missing/corrupt/
   # unavailable row simply leaves the fresh state untouched: durable state is an
   # optimisation, never a prerequisite for running.
+  @spec maybe_restore_state(%State{}, keyword()) :: {%State{}, boolean() | nil}
   defp maybe_restore_state(%State{} = state, ctx) do
     task_id = get_field(ctx, :task_id)
 
@@ -458,7 +460,7 @@ defmodule EvoGit.Agent.Session.Setup do
          is_binary(task_id) do
       case Persistence.restore(state, task_id, state.agent_id) do
         %State{} = restored ->
-          restored
+          {restored, true}
 
         {:error, reason} ->
           Logger.info(
@@ -466,11 +468,29 @@ defmodule EvoGit.Agent.Session.Setup do
               "starting fresh"
           )
 
-          state
+          {state, false}
       end
     else
-      state
+      {state, nil}
     end
+  end
+
+  # TRANSIENT crash-resume provenance (never persisted — it describes THIS
+  # dispatch, not the conversation): `EvoGit.Agent.Resume` is its only consumer.
+  # `nil` means "not a crash retry", so no repair and no notice ever run for a
+  # fresh run. Every fact except `restore_agent_state`/`restored` comes from the
+  # scheduler's retry plumbing, so an absent key is NORMAL (`nil`) and each
+  # notice sentence degrades to silence rather than inventing a fact.
+  defp resume_info(_ctx, nil), do: nil
+
+  defp resume_info(ctx, restored?) do
+    %{
+      restore_agent_state: true,
+      restored: restored?,
+      retries: get_field(ctx, :retries),
+      retry_reason: get_field(ctx, :retry_reason),
+      worktree_resume_from: get_field(ctx, :worktree_resume_from)
+    }
   end
 
   # --- mode resolution ---

@@ -365,6 +365,15 @@ defmodule EvoGit.Agent.Tools do
   end
 
   @doc """
+  `true` when `tool_name` is a WRITE tool of this write set (the name-only
+  classification `write_tool?/1` performs), exposed for the in-flight tool-batch
+  classifier (`EvoGit.Agent.ToolBatch`) so the class set has exactly ONE source
+  of truth. Alias-aware and total: an unknown/non-binary name is never a write.
+  """
+  @spec write_tool_name?(term()) :: boolean()
+  def write_tool_name?(tool_name), do: write_tool?(tool_name)
+
+  @doc """
   `true` when this tool CALL is a WRITE capability — what the two dispatch write
   guards (`maybe_block_repo_less/5`, `maybe_block_read_only_foreign_repo/5`)
   consult.
