@@ -20,6 +20,7 @@ defmodule EvoGit.TaskRegistry do
   alias EvoGit.TaskRegistry.Cleanup
   alias EvoGit.TaskRegistry.Diagnostics
   alias EvoGit.TaskRegistry.Lease
+  alias EvoGit.TaskRegistry.Pause
   alias EvoGit.TaskRegistry.ReadOffload
   alias EvoGit.TaskRegistry.RuntimeOpts
   alias EvoGit.TaskRegistry.StoreGuard
@@ -61,34 +62,61 @@ defmodule EvoGit.TaskRegistry do
 
   # Statuses after which a task never transitions again, except the still
   # allowed terminal → `:completed` (see the stale-terminal guard in
-  # handle_update_status/6).
+  # handle_update_status/6). `:paused` is NOT terminal: the task rests with no
+  # wrapper, keeps `finished_at` nil and stays resumable (``docs/task-pause.md``).
   @terminal_statuses [:completed, :failed, :cancelled]
 
   # `force_kill_task/1` acts on these: the live agents and the wrapper are
   # brutal-killed and the row is persisted `:failed` with no result. An idle
-  # `:awaiting_input` session is killable exactly like a running task.
-  @killable_statuses [:running, :awaiting_input, :cancelling]
+  # `:awaiting_input` session is killable exactly like a running task, and so are
+  # BOTH pause states: `:pausing` still has agents (the drain must be abortable)
+  # and `:paused` has no wrapper at all (the "no live process" arm handles it).
+  @killable_statuses [:running, :awaiting_input, :cancelling, :pausing, :paused]
 
   # Statuses `cancel_task/1` accepts. `:running` is cancelled gracefully through
   # the `:cancelling` state; an idle `:awaiting_input` session — which has
-  # nothing to save but its transcript — is cancelled immediately.
-  @gracefully_cancellable_statuses [:running, :awaiting_input]
+  # nothing to save but its transcript — is cancelled immediately
+  # (`cancel_awaiting_input_session/2`), and so is a `:paused` task, whose run is
+  # already stopped and merely needs the resting row retired. `:pausing` is
+  # admitted for the SAME admission surfaces (the Assistant's cancel facade reads
+  # this set), while the handler itself ABANDONS the pause first and then runs the
+  # `:running` arm (a cancel that arrives while `:pausing` wins — the pause must
+  # never be re-introduced).
+  @gracefully_cancellable_statuses [:running, :awaiting_input, :pausing, :paused]
 
   # `start_task/2` refuses a task id already in one of these statuses. A waiting
   # session owns its id: restarting it would run a second session over the same
-  # row, so the id is unstartable until the session ends.
-  @unstartable_statuses [:cancelled, :cancelling, :awaiting_input]
+  # row, so the id is unstartable until the session ends. Both pause states are
+  # listed for the same reason: a paused (or draining) row owns its id and is
+  # resumed IN PLACE by `resume_task/1` — `start_task/2` mints a FRESH id and must
+  # never take over a paused row (it would reset the archive roster and lose the
+  # paused run's report).
+  @unstartable_statuses [:cancelled, :cancelling, :awaiting_input, :pausing, :paused]
 
   # A `{:task_updated, id, :finalizing, node}` broadcast is ignored for these
   # (the row is already terminal or mid-graceful-cancel). `:awaiting_input` is
   # deliberately ABSENT: closing an idle session legitimately moves it through
-  # `:finalizing`.
-  @finalizing_ignored_statuses [:completed, :cancelled, :cancelling]
+  # `:finalizing`. `:pausing`/`:paused` are listed because a pause is NOT a
+  # finalization: adopting `:finalizing` would clobber the pause bookkeeping (and
+  # the watchdog would later fail a task that is merely resting).
+  @finalizing_ignored_statuses [:completed, :cancelled, :cancelling, :pausing, :paused]
 
   # "A live task whose wrapper exists" — the in-flight set. This is NOT the
   # busy set: an idle `:awaiting_input` session holds no LLM slot, no tool slot
   # and no worker, so an update/idle gate must never count it as busy.
-  @active_statuses [:running, :pending, :finalizing, :cancelling, :awaiting_input]
+  # `:pausing` is live (its wrapper is alive and draining); `:paused` is
+  # NON-terminal and must stay visible as an active task in the UI, but it has no
+  # wrapper and no lease — which is why the lease sets exclude it while these
+  # liveness sets include it.
+  @active_statuses [
+    :running,
+    :pending,
+    :finalizing,
+    :cancelling,
+    :awaiting_input,
+    :pausing,
+    :paused
+  ]
 
   @doc false
   # Terminal statuses — no further transition (except terminal → `:completed`).
@@ -100,7 +128,7 @@ defmodule EvoGit.TaskRegistry do
 
   @doc false
   # Statuses `cancel_task/1` accepts (graceful `:cancelling`, or immediate for a
-  # waiting session).
+  # waiting session / a paused task).
   def gracefully_cancellable_statuses, do: @gracefully_cancellable_statuses
 
   @doc false
@@ -113,8 +141,15 @@ defmodule EvoGit.TaskRegistry do
   def finalizing_ignored_statuses, do: @finalizing_ignored_statuses
 
   @doc false
-  # Live statuses — a wrapper exists on this node. Never the busy set.
+  # Live statuses — a wrapper exists on this node (plus the paused resting state,
+  # which is live for the UI but owns no wrapper/lease). Never the busy set.
   def active_statuses, do: @active_statuses
+
+  @doc false
+  # The lease duration (seconds) a live task's expiry is computed from. Exposed
+  # so `EvoGit.TaskRegistry.Pause.resume/4` can write a FRESH lease without
+  # duplicating the value.
+  def lease_duration, do: @lease_duration
 
   ## Client API
 
@@ -328,6 +363,71 @@ defmodule EvoGit.TaskRegistry do
     GenServer.call(server(), {:force_kill_task, task_id}, @call_timeout)
   end
 
+  @doc """
+  Requests a TASK-LEVEL PAUSE for a running task by id (`docs/task-pause.md`).
+
+  - `:running` → the row is written `:pausing` (broadcast to the dashboard
+    immediately after the persist) and
+    `EvoGit.AgentScheduler.begin_task_pause/1` flags every agent of the task, so
+    each one stops at its NEXT TURN BOUNDARY — never mid-tool — after
+    checkpointing its conversation and committing its worktree. When the root
+    agent reports `{:paused, info}` the row becomes `:paused` with
+    `pause_kind: :clean`, the lease cleared and `finished_at` nil, and the
+    task's `result`/`usage`/archive are preserved (see `pause_task` on the
+    wrapper-result path in `handle_wrapper_result/3`).
+  - `:pausing`/`:paused` → `:ok` (IDEMPOTENT: no write, no scheduler call, no
+    broadcast).
+  - `:awaiting_input` (or any interactive-session task) →
+    `{:error, :not_pausable}`: an interactive session has no resumable run.
+  - `:persistent_state` stored as `false` → `{:error, :not_resumable}`: with no
+    durable agent state there is nothing to resume, so pausing would be a lie.
+  - Any other status (`:pending`, `:finalizing`, `:cancelling`, terminal) →
+    `{:error, :not_running}`.
+  - An unknown task → `{:error, :not_found}` (an unreadable status is
+    `:not_running`, never `:not_found`).
+
+  A scheduler that is DOWN (or a call that times out) reverts the row to
+  `:running` and answers `{:error, :scheduler_unavailable}` — a pause must never
+  leave a row stuck in `:pausing` with no agents to drain.
+
+  Returns `:ok` on success (including the idempotent case) or `{:error, reason}`.
+  The validation/persistence itself lives in `EvoGit.TaskRegistry.Pause`.
+  """
+  def pause_task(task_id) do
+    GenServer.call(server(), {:pause_task, task_id}, @call_timeout)
+  end
+
+  @doc """
+  RESUMES a paused task IN PLACE: the SAME task id is re-enqueued with its
+  PERSISTED opts (`docs/task-pause.md`) — no fresh id, no `start_task/2`.
+
+  Accepts `:paused` ONLY (`{:error, :not_paused}` otherwise, `{:error,
+  :not_found}` for an unknown task). On the successful transition the row is
+  written `status: :running`, `finished_at: nil`, `error: nil`,
+  `pause_kind: nil` and a FRESH lease (TARGETED columns only — `started_at`,
+  `opts`, `commit_sha`, `result`, `usage`, `review_status`, `branch_name` and
+  `base_sha` are untouched, so a resumed run's report and usage ACCUMULATE), the
+  stale scheduler pause marker is cleared, a wrapper is spawned for the same task
+  id exactly like `start_task/2` does, and `{:task_updated, task_id, :running,
+  node()}` is broadcast after the write.
+
+  The spawn opts carry `resume_kind: :clean_pause` for a `:clean` (or legacy
+  `nil`) paused row and `:dirty_pause` for a `:dirty` one, which
+  `EvoGit.TaskRegistry.RuntimeOpts.build_common_runtime_opts/3` forwards to the
+  runtime so the agent restores its conversation and narrates/repairs
+  accordingly.
+
+  Admission re-runs the SAME gates as `start_task/2` (model selection against the
+  current config, `:session_mode`, `:persistent_state`); a failure answers that
+  `{:error, reason}` and leaves the row `:paused`. A row with no durable run
+  (`EvoGit.AgentState.root_agent_ids/1 == []`) is `{:error, :not_resumable}`.
+
+  Returns `:ok` on success or `{:error, reason}`.
+  """
+  def resume_task(task_id) do
+    GenServer.call(server(), {:resume_task, task_id}, @call_timeout)
+  end
+
   def update_task_status(task_id, status, result \\ nil, opts \\ []) do
     GenServer.cast(server(), {:update_status, task_id, status, result, opts})
   end
@@ -471,22 +571,36 @@ defmodule EvoGit.TaskRegistry do
       task_store: task_store,
       task_refs: %{},
       read_offloads: ReadOffload.new(),
-      server_name: server_name
+      server_name: server_name,
+      # Call-time seam for `Pause.resume/4`'s wrapper spawn: `nil` (production and
+      # every existing caller) is the byte-identical
+      # `Task.Supervisor.async_nolink/4` call `start_task/2` makes; a 4-arity fun
+      # replaces it so a test can assert the propagated `:resume_kind` without
+      # running a real runtime. Per-instance (an init option, not app env), so it
+      # can never leak into a concurrently running test.
+      wrapper_spawn_fun: Keyword.get(opts, :wrapper_spawn_fun)
     }
 
-    # Startup reconciliation for orphaned :finalizing, :cancelling and
-    # :awaiting_input tasks. A task that was mid-finalization when the runtime
-    # died (e.g. slow git calls in merge_and_report/3 hanging while the app is
-    # killed) can never reach a terminal status in-process: the {ref, result}
+    # Startup reconciliation for orphaned :finalizing, :cancelling, :awaiting_input,
+    # :running and :pausing tasks. A task that was mid-finalization when the
+    # runtime died (e.g. slow git calls in merge_and_report/3 hanging while the
+    # app is killed) can never reach a terminal status in-process: the {ref, result}
     # and {:DOWN, ...} handlers key off task_refs, which is empty after restart.
     # Likewise a task that was mid-graceful-cancel when the runtime died must
     # resolve to :cancelled, not stay :cancelling forever, and an idle
     # interactive session (:awaiting_input) is in-memory only — its wrapper died
     # with the previous BEAM, so it can never resume and resolves to :failed.
     # Mark such tasks synchronously here (NOT via the async update_task_status/4
-    # cast, which would race callers). :running tasks are deliberately left
-    # alone — the one-shot :lease_sweep handles orphaned owners after the lease
-    # duration.
+    # cast, which would race callers).
+    #
+    # TASK PAUSE — a RESUMABLE live row (`:persistent_state` on AND durable agent
+    # state present, `Pause.pause_kind_for_restart/2`) has no wrapper after a
+    # restart, so it becomes a DIRTY PAUSE (`:paused` + `pause_kind: :dirty`,
+    # `finished_at` nil, lease cleared, result/usage untouched) instead of
+    # `:failed`. This arm owns `:running` (which otherwise keeps today's "leave it
+    # to the one-shot :lease_sweep" behaviour) AND `:pausing` (a drain that was
+    # interrupted by the restart) — a NON-resumable row falls through to today's
+    # behaviour in both cases (the sweep maps its expired lease to `:failed`).
     state =
       safe_store_read(
         "init select_running_lease_info",
@@ -533,6 +647,9 @@ defmodule EvoGit.TaskRegistry do
               [error: Diagnostics.failure_error(:restart, :startup_reconcile, message)],
               {:startup_reconcile, :awaiting_input}
             )
+
+          status when status in [:running, :pausing] ->
+            reconcile_paused(acc, task_id, status)
 
           _ ->
             acc
@@ -735,65 +852,27 @@ defmodule EvoGit.TaskRegistry do
 
                 Task.shutdown(task_ref, :brutal_kill)
 
-                # Clear the graceful-cancel marker (the task is now terminally
-                # :failed via this direct write, bypassing
-                # handle_update_status's cleanup hook).
+                # Pause + graceful-cancel teardown: this direct terminal write
+                # bypasses `handle_update_status/6`, so BOTH markers must be
+                # cleared here — a force-killed task must not leave the scheduler
+                # believing a pause is still draining (and, for a `:pausing` row,
+                # no agent keeps honouring a pause only to be killed anyway).
+                Pause.abandon(task_id)
                 clear_cancelling_marker(task_id)
 
-                # Targeted write — only the changed columns. A :running task's
-                # result is always nil (results are written only on terminal
-                # transitions), so writing result: nil preserves the old
-                # put_task semantics. `ref` is runtime-only and never persisted.
-                # A force-killed task is persisted as :failed (never :cancelled)
-                # — "cancelled" means ONLY graceful cancellation. On disk-full
-                # the in-memory cleanup still happens (task_refs deleted, marker
-                # cleared) and {:error, :disk_full} is returned.
-                reply =
-                  case safe_store_write("force_kill_task update_task_columns", fn ->
-                         EvoGit.Store.update_task_columns(state.task_store, task_id,
-                           status: :failed,
-                           finished_at: DateTime.utc_now(),
-                           lease_expires_at: nil,
-                           result: nil,
-                           error:
-                             Diagnostics.failure_error(
-                               :force_kill,
-                               :force_kill_task,
-                               "Task force-killed by user"
-                             )
-                         )
-                       end) do
-                    :ok ->
-                      :ok
-
-                    {:error, :disk_full} ->
-                      Logger.warning(
-                        "TaskRegistry: disk full — force-killed task #{task_id} " <>
-                          "could not be persisted as :failed"
-                      )
-
-                      {:error, :disk_full}
-
-                    {:error, :store_unavailable} ->
-                      # StoreGuard already logged it — the in-memory cleanup below
-                      # still runs; the row keeps its previous status.
-                      {:error, :store_unavailable}
-                  end
-
-                state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
-
-                # Direct terminal write (:failed) — bypasses
-                # handle_update_status/6, so reclaim the tmpdir here too. The
-                # task is gone in-memory regardless of disk-full retryability.
-                reclaim_task_tmpdir(state, task_id)
-
-                {reply, state}
+                force_kill_write(state, task_id)
               else
-                {{:error, :not_running}, state}
+                # A wrapper ref whose process already died has nothing to stop;
+                # only a PAUSED row is still killable in that shape (a paused
+                # task legitimately has no live wrapper).
+                force_kill_without_wrapper(state, task_id, status)
               end
 
             nil ->
-              {{:error, :not_running}, state}
+              # No wrapper at all: a `:paused` task ALWAYS looks like this (its
+              # wrapper ended when the drain completed), so the kill must work
+              # from this arm too.
+              force_kill_without_wrapper(state, task_id, status)
           end
 
         nil ->
@@ -876,33 +955,24 @@ defmodule EvoGit.TaskRegistry do
             end
 
           :running ->
-            # 1. Transition to :cancelling via the normal status-update path so
-            #    handle_update_status broadcasts {:task_updated, task_id,
-            #    :cancelling, node()} (dashboard sees the change immediately).
-            #    :cancelling is NON-terminal, so finished_at stays
-            #    nil, the lease stays valid, and the task_refs entry stays. The
-            #    returned state is discarded (unchanged for non-terminal).
-            handle_update_status(state, task_id, :cancelling, nil, [], {:cancel_request, nil})
+            request_graceful_cancel(state, task_id)
 
-            # 2. Notify the scheduler: append the cancel message + set
-            #    cancel_requested for every agent of the task, and register the
-            #    task in the cancelling marker (blocks new root agents and puts
-            #    late registrations into grace).
-            #
-            # Justified catch :exit — cross-GenServer boundary (TaskRegistry →
-            # AgentScheduler). If the scheduler is down, the graceful path can't
-            # proceed; the task is left :cancelling (a subsequent force_kill or
-            # restart reconciliation resolves it).
-            try do
-              EvoGit.AgentScheduler.begin_graceful_cancel(task_id)
-            catch
-              :exit, reason ->
-                Logger.warning(
-                  "TaskRegistry: AgentScheduler begin_graceful_cancel failed (exit): #{inspect(reason)}"
-                )
-            end
+          :pausing ->
+            # A pause that is still DRAINING loses to a cancel. Abandon the pause
+            # FIRST (task marker + every agent's `pause_requested` flag, so no
+            # agent keeps walking to a pause), then proceed EXACTLY like
+            # `:running`: the wrapper is still alive and honours the cancel.
+            # Nothing in the registry re-introduces a pause afterwards — every
+            # pause entry point (`Pause.pause/2`) refuses anything but `:running`.
+            Pause.abandon(task_id)
+            request_graceful_cancel(state, task_id)
 
-            :ok
+          :paused ->
+            # A PAUSED task has NO wrapper and NO agents to ask, so it is the
+            # second IMMEDIATE arm (`:pending`-like): write `:cancelled` straight
+            # away with `finished_at` set, the lease cleared and `pause_kind`
+            # dropped, and broadcast only on the successful write.
+            cancel_paused_task(state, task_id)
 
           :cancelling ->
             # Idempotent — a graceful cancel is already in flight. Do NOT re-send
@@ -928,6 +998,52 @@ defmodule EvoGit.TaskRegistry do
         end
 
       {:reply, result, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:pause_task, task_id}, _from, state) do
+    # Thin handler: `Pause.pause/2` validates and persists, this process owns the
+    # persist-THEN-broadcast sequencing. ONLY a real transition is broadcast — the
+    # idempotent (`{:ok, :already_pausing | :already_paused}`) and refused answers
+    # write nothing.
+    case Pause.pause(state.task_store, task_id) do
+      {:ok, :pausing} ->
+        Phoenix.PubSub.broadcast(
+          EvoGit.PubSub,
+          "tasks",
+          {:task_updated, task_id, :pausing, node()}
+        )
+
+        {:reply, :ok, state}
+
+      {:ok, _already_pausing_or_paused} ->
+        {:reply, :ok, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:resume_task, task_id}, _from, state) do
+    # Thin handler: `Pause.resume/4` validates, clears the stale scheduler pause
+    # and spawns the wrapper; tracking the ref here is what makes the existing
+    # `{ref, result}` / `:DOWN` handlers work unchanged for a resumed run.
+    case Pause.resume(state.task_store, task_id, state.server_name, state.wrapper_spawn_fun) do
+      {:ok, task_ref} ->
+        state = %{state | task_refs: Map.put(state.task_refs, task_id, task_ref)}
+
+        Phoenix.PubSub.broadcast(
+          EvoGit.PubSub,
+          "tasks",
+          {:task_updated, task_id, :running, node()}
+        )
+
+        {:reply, :ok, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -1297,6 +1413,221 @@ defmodule EvoGit.TaskRegistry do
     state
   end
 
+  # --- Force-kill write helpers (shared by every force-kill arm) ---
+
+  # The NON-resumable sweep outcome (today's behaviour, unchanged): a leaked
+  # live row whose owning instance is gone and whose state cannot be resumed is
+  # marked `:failed` with the `:lease_expired` payload.
+  defp sweep_fail_task(state, id, lease, changed, failed_ids, paused_ids) do
+    Diagnostics.log_failed_transition(id, :lease_sweep, :running,
+      result: "Lease expired; owning instance no longer renewing",
+      extra: [lease_expires_at: inspect(lease)]
+    )
+
+    # Full decode only for this specific task (to build the write-back
+    # struct) — there should be very few of these (0-1 in normal use).
+    case task_get(state, id) do
+      %TaskInfo{} = task ->
+        message = "Lease expired; owning instance no longer renewing"
+
+        updated = %{
+          task
+          | status: :failed,
+            lease_expires_at: nil,
+            finished_at: DateTime.utc_now(),
+            result: message,
+            error: Diagnostics.failure_error(:lease_expired, :lease_sweep, message)
+        }
+
+        case safe_store_write("lease_sweep put_task", fn ->
+               EvoGit.Store.put_task(state.task_store, updated)
+             end) do
+          :ok ->
+            # Direct terminal write (:failed) — bypasses
+            # handle_update_status/6, so reclaim the tmpdir here too. The
+            # task struct is already in hand, so read the path locally.
+            EvoGit.TaskTmpdir.reclaim(id, task_repo_path(task))
+
+            # Teardown consistency: the wrapper is gone, so no scheduler pause
+            # may survive the row.
+            Pause.abandon(id)
+
+            {true, [id | failed_ids], paused_ids}
+
+          {:error, :disk_full} ->
+            # The sweep result is still "changed" (in-memory state and
+            # diagnostics updated) — log and continue, but the row was
+            # not persisted so no broadcast fires for it.
+            Logger.warning(
+              "TaskRegistry: disk full — lease-expired task #{id} could not be " <>
+                "persisted as :failed"
+            )
+
+            {true, failed_ids, paused_ids}
+
+          {:error, :store_unavailable} ->
+            # Same in-memory outcome as disk-full (StoreGuard logged it).
+            {true, failed_ids, paused_ids}
+        end
+
+      nil ->
+        {changed, failed_ids, paused_ids}
+    end
+  end
+
+  # Steps 1–2 of a graceful cancel for a LIVE wrapper (`:running`, and a
+  # still-draining `:pausing` after its pause is abandoned).
+  defp request_graceful_cancel(state, task_id) do
+    # 1. Transition to :cancelling via the normal status-update path so
+    #    handle_update_status broadcasts {:task_updated, task_id,
+    #    :cancelling, node()} (dashboard sees the change immediately).
+    #    :cancelling is NON-terminal, so finished_at stays
+    #    nil, the lease stays valid, and the task_refs entry stays. The
+    #    returned state is discarded (unchanged for non-terminal).
+    handle_update_status(state, task_id, :cancelling, nil, [], {:cancel_request, nil})
+
+    # 2. Notify the scheduler: append the cancel message + set
+    #    cancel_requested for every agent of the task, and register the
+    #    task in the cancelling marker (blocks new root agents and puts
+    #    late registrations into grace).
+    #
+    # Justified catch :exit — cross-GenServer boundary (TaskRegistry →
+    # AgentScheduler). If the scheduler is down, the graceful path can't
+    # proceed; the task is left :cancelling (a subsequent force_kill or
+    # restart reconciliation resolves it).
+    try do
+      EvoGit.AgentScheduler.begin_graceful_cancel(task_id)
+    catch
+      :exit, reason ->
+        Logger.warning(
+          "TaskRegistry: AgentScheduler begin_graceful_cancel failed (exit): #{inspect(reason)}"
+        )
+    end
+
+    :ok
+  end
+
+  # CANCEL of a `:paused` task — the second IMMEDIATE arm, mirroring `:pending`.
+  # There is no wrapper and no agent to ask, so the row is written `:cancelled`
+  # directly: `finished_at` set, the lease cleared (it has none anyway) and
+  # `pause_kind` dropped so a cancelled task is never mistaken for a resumable
+  # one. No `result:` key — a cancel never clobbers a preserved result/usage.
+  defp cancel_paused_task(state, task_id) do
+    # Best-effort pause teardown (the marker may still be set, the agent flags
+    # ended with the sessions).
+    Pause.abandon(task_id)
+
+    reply =
+      case safe_store_write("cancel_task paused update_task_columns", fn ->
+             EvoGit.Store.update_task_columns(state.task_store, task_id,
+               status: :cancelled,
+               finished_at: DateTime.utc_now(),
+               lease_expires_at: nil,
+               pause_kind: nil
+             )
+           end) do
+        :ok ->
+          :ok
+
+        {:error, :disk_full} ->
+          Logger.warning(
+            "TaskRegistry: disk full — paused task #{task_id} could not be marked :cancelled"
+          )
+
+          {:error, :disk_full}
+
+        {:error, :store_unavailable} ->
+          # StoreGuard already logged it; the row keeps :paused, so return the
+          # degraded error like disk-full (a later cancel retry would work).
+          {:error, :store_unavailable}
+      end
+
+    # Direct terminal write (:cancelled) — bypasses handle_update_status/6, so
+    # the in-memory cleanup happens here: the ref (absent for a paused row) is
+    # dropped either way, the graceful-cancel marker cleared and the managed
+    # tmpdir reclaimed.
+    state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
+    clear_cancelling_marker(task_id)
+    reclaim_task_tmpdir(state, task_id)
+
+    if reply == :ok do
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, task_id, :cancelled, node()}
+      )
+    end
+
+    reply
+  end
+
+  # The targeted `:failed` write shared by every force-kill arm. A :running
+  # task's result is always nil (results are written only on terminal
+  # transitions), so writing `result: nil` preserves the old put_task semantics.
+  # `ref` is runtime-only and never persisted. A force-killed task is persisted
+  # as :failed (never :cancelled) — "cancelled" means ONLY graceful
+  # cancellation — and `pause_kind: nil` drops a pause classification so a
+  # killed task can never look resumable. On disk-full the in-memory cleanup
+  # still happens (task_refs deleted, markers cleared) and
+  # `{:error, :disk_full}` is returned.
+  defp force_kill_write(state, task_id) do
+    reply =
+      case safe_store_write("force_kill_task update_task_columns", fn ->
+             EvoGit.Store.update_task_columns(state.task_store, task_id,
+               status: :failed,
+               finished_at: DateTime.utc_now(),
+               lease_expires_at: nil,
+               result: nil,
+               pause_kind: nil,
+               error:
+                 Diagnostics.failure_error(
+                   :force_kill,
+                   :force_kill_task,
+                   "Task force-killed by user"
+                 )
+             )
+           end) do
+        :ok ->
+          :ok
+
+        {:error, :disk_full} ->
+          Logger.warning(
+            "TaskRegistry: disk full — force-killed task #{task_id} " <>
+              "could not be persisted as :failed"
+          )
+
+          {:error, :disk_full}
+
+        {:error, :store_unavailable} ->
+          # StoreGuard already logged it — the in-memory cleanup below
+          # still runs; the row keeps its previous status.
+          {:error, :store_unavailable}
+      end
+
+    state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
+
+    # Direct terminal write (:failed) — bypasses
+    # handle_update_status/6, so reclaim the tmpdir here too. The
+    # task is gone in-memory regardless of disk-full retryability.
+    reclaim_task_tmpdir(state, task_id)
+
+    {reply, state}
+  end
+
+  # FORCE KILL with no live wrapper to stop. A `:paused` task ALWAYS has this
+  # shape (no task_refs entry — the wrapper ended when the drain completed) and a
+  # `:pausing` one can lose its wrapper to a crash, so both are killable here;
+  # any other status keeps today's `{:error, :not_running}`.
+  defp force_kill_without_wrapper(state, task_id, status) when status in [:pausing, :paused] do
+    # Same teardown as the live arm: no scheduler pause may survive the kill.
+    Pause.abandon(task_id)
+    clear_cancelling_marker(task_id)
+
+    force_kill_write(state, task_id)
+  end
+
+  defp force_kill_without_wrapper(state, _task_id, _status), do: {{:error, :not_running}, state}
+
   # --- TaskStore Read Helpers ---
 
   defp task_get(state, task_id) do
@@ -1337,6 +1668,80 @@ defmodule EvoGit.TaskRegistry do
     end
 
     :ok
+  end
+
+  # --- Task-level pause: restart mapping ---
+  #
+  # BOTH restart paths classify a wrapper-less `:running`/`:pausing` row through
+  # `EvoGit.TaskRegistry.Pause` (the ONE resumability classifier) and land a
+  # RESUMABLE one in the DIRTY PAUSE resting state instead of today's `:failed`:
+  # `status: :paused`, `pause_kind: :dirty`, `finished_at` nil and NO lease, with
+  # `result`/`usage`/archive untouched (a TARGETED write — never a full
+  # `put_task`, which would re-encode the heavy JSON columns and could clobber a
+  # preserved result).
+  #
+  # A NON-resumable row is left completely alone here, so `init/1` keeps today's
+  # behaviour for it (`:running` → the one-shot `:lease_sweep` after the lease
+  # duration; `:pausing` likewise) and the sweep keeps mapping it to `:failed`
+  # with the `:lease_expired` payload.
+  #
+  # Path split: `init/1` handles the rows present AT BOOT (there is no wrapper on
+  # a fresh BEAM, so no lease check is needed), the sweep handles the rows that
+  # become owner-less LATER (`Lease.leaked?/3`: not owned + expired lease).
+  # Returns `:paused` only when the write succeeded — the caller broadcasts the
+  # transition exactly once, AFTER the persist.
+  defp orphan_to_dirty_pause(state, task_id) do
+    case Pause.pause_kind_for_restart(state.task_store, task_id) do
+      :dirty ->
+        case safe_store_write("restart dirty pause update_task_columns", fn ->
+               EvoGit.Store.update_task_columns(state.task_store, task_id,
+                 status: :paused,
+                 pause_kind: :dirty,
+                 finished_at: nil,
+                 lease_expires_at: nil
+               )
+             end) do
+          :ok ->
+            :paused
+
+          {:error, :disk_full} ->
+            Logger.warning(
+              "TaskRegistry: disk full — resumable task #{task_id} could not be " <>
+                "persisted as a dirty pause"
+            )
+
+            :unchanged
+
+          {:error, :store_unavailable} ->
+            # StoreGuard already logged it; the row keeps its live status.
+            :unchanged
+        end
+
+      nil ->
+        :unchanged
+    end
+  end
+
+  # `init/1` reconciliation arm for a live, wrapper-less row at boot.
+  defp reconcile_paused(state, task_id, status) do
+    case orphan_to_dirty_pause(state, task_id) do
+      :paused ->
+        Logger.info(
+          "TaskRegistry: Task #{task_id} (was #{inspect(status)}) reconciled to a DIRTY PAUSE " <>
+            "after restart — resumable from durable agent state"
+        )
+
+        Phoenix.PubSub.broadcast(
+          EvoGit.PubSub,
+          "tasks",
+          {:task_updated, task_id, :paused, node()}
+        )
+
+        state
+
+      :unchanged ->
+        state
+    end
   end
 
   # --- Shared Private Helpers ---
@@ -1964,79 +2369,53 @@ defmodule EvoGit.TaskRegistry do
     # decoded, avoiding the full struct decode for every task in the table.
     # We only need to task_get (full decode) for the very few tasks (usually
     # 0-1) that actually need to be marked :failed.
-    {changed, failed_ids} =
+    {changed, failed_ids, paused_ids} =
       safe_store_read("lease_sweep select_running_lease_info", [], fn ->
         EvoGit.Store.select_running_lease_info(state.task_store)
       end)
       |> Enum.filter(fn %{id: id, status: status, lease_expires_at: lease} ->
         # `Lease.leaked?/3` is the ONE leak classification (the same module the
         # heartbeat's `lease_renewable?/1` lives in): leaked means a KNOWN
-        # `:running` row, not owned by this instance, with an expired/missing
-        # lease. `{:unknown, raw}` is NEVER leaked — the row exists, its status
-        # is merely unreadable, so a spelling must never fail a live task.
+        # `:running`/`:pausing` row, not owned by this instance, with an
+        # expired/missing lease. `{:unknown, raw}` is NEVER leaked — the row
+        # exists, its status is merely unreadable, so a spelling must never fail
+        # a live task. A `:paused` row is never leaked either (no lease, no
+        # wrapper): it is this sweep's OUTPUT, never its input.
         #
         # Defence-in-depth: `Store.select_running_lease_info/1` already pushes
-        # `status IN ('running','finalizing','cancelling')` into SQL, so an
-        # unreadable status text cannot even reach this filter; the classifier
-        # stays the single source of truth rather than an inline re-derivation.
+        # `status IN ('running','pausing','finalizing','cancelling')` into SQL,
+        # so an unreadable status text cannot even reach this filter; the
+        # classifier stays the single source of truth rather than an inline
+        # re-derivation.
         Lease.leaked?(status, MapSet.member?(owned_ids, id), lease)
       end)
-      |> Enum.reduce({false, []}, fn %{id: id, lease_expires_at: lease}, {changed, failed_ids} ->
-        if Lease.sched_meta_has_active_agents?(id) do
-          # Same VM, agents still active — skip (handled by :recheck_task)
-          {changed, failed_ids}
-        else
-          Diagnostics.log_failed_transition(id, :lease_sweep, :running,
-            result: "Lease expired; owning instance no longer renewing",
-            extra: [lease_expires_at: inspect(lease)]
-          )
+      |> Enum.reduce({false, [], []}, fn
+        %{id: id, lease_expires_at: lease}, {changed, failed_ids, paused_ids} ->
+          if Lease.sched_meta_has_active_agents?(id) do
+            # Same VM, agents still active — skip (handled by :recheck_task)
+            {changed, failed_ids, paused_ids}
+          else
+            # TASK PAUSE first: a RESUMABLE orphan (durable agent state present)
+            # becomes a DIRTY PAUSE — the wrapper-less row parks in `:paused` with
+            # `pause_kind: :dirty`, `finished_at` nil and no lease, its
+            # result/usage untouched, and the caller broadcasts `:paused` once
+            # after the persist. A NON-resumable row keeps today's
+            # `:lease_expired` → `:failed`.
+            case orphan_to_dirty_pause(state, id) do
+              :paused ->
+                Logger.info(
+                  "TaskRegistry: lease-expired task #{id} parked as a DIRTY PAUSE — resumable from durable agent state"
+                )
 
-          # Full decode only for this specific task (to build the write-back
-          # struct) — there should be very few of these (0-1 in normal use).
-          case task_get(state, id) do
-            %TaskInfo{} = task ->
-              message = "Lease expired; owning instance no longer renewing"
+                # Teardown consistency: no scheduler pause may survive the row.
+                Pause.abandon(id)
 
-              updated = %{
-                task
-                | status: :failed,
-                  lease_expires_at: nil,
-                  finished_at: DateTime.utc_now(),
-                  result: message,
-                  error: Diagnostics.failure_error(:lease_expired, :lease_sweep, message)
-              }
+                {true, failed_ids, [id | paused_ids]}
 
-              case safe_store_write("lease_sweep put_task", fn ->
-                     EvoGit.Store.put_task(state.task_store, updated)
-                   end) do
-                :ok ->
-                  # Direct terminal write (:failed) — bypasses
-                  # handle_update_status/6, so reclaim the tmpdir here too. The
-                  # task struct is already in hand, so read the path locally.
-                  EvoGit.TaskTmpdir.reclaim(id, task_repo_path(task))
-
-                  {true, [id | failed_ids]}
-
-                {:error, :disk_full} ->
-                  # The sweep result is still "changed" (in-memory state and
-                  # diagnostics updated) — log and continue, but the row was
-                  # not persisted so no broadcast fires for it.
-                  Logger.warning(
-                    "TaskRegistry: disk full — lease-expired task #{id} could not be " <>
-                      "persisted as :failed"
-                  )
-
-                  {true, failed_ids}
-
-                {:error, :store_unavailable} ->
-                  # Same in-memory outcome as disk-full (StoreGuard logged it).
-                  {true, failed_ids}
-              end
-
-            nil ->
-              {changed, failed_ids}
+              :unchanged ->
+                sweep_fail_task(state, id, lease, changed, failed_ids, paused_ids)
+            end
           end
-        end
       end)
 
     if changed do
@@ -2046,9 +2425,13 @@ defmodule EvoGit.TaskRegistry do
     end
 
     # One event per successfully-persisted sweep — the dashboard needs the id
-    # to attribute the :failed status to the specific task.
+    # to attribute the :failed/:paused status to the specific task.
     Enum.each(failed_ids, fn id ->
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, id, :failed, node()})
+    end)
+
+    Enum.each(paused_ids, fn id ->
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, id, :paused, node()})
     end)
 
     {:noreply, state}
@@ -2112,139 +2495,311 @@ defmodule EvoGit.TaskRegistry do
 
   # The task WRAPPER's result message — `Task.Supervisor.async_nolink/4` sends
   # `{ref, result}` to the wrapper's owner (this registry). Maps it to the
-  # task's terminal status.
+  # task's terminal status, or — for `{:paused, info}` — to the PAUSED RESTING
+  # STATE (see `persist_paused/3`).
   defp handle_wrapper_result(ref, result, state) do
     # Search the in-memory task_refs map for the matching task reference
     task_id = task_id_for_ref(state, ref)
 
-    if task_id do
-      # Map the wrapper result to a terminal status. For :failed the arm ALSO
-      # builds the persisted error payload (same arm → the reason and its human
-      # message stay in lockstep): {:error, reason} records kind :error,
-      # {:exit, reason} records kind :exit, and any other shape records
-      # kind :error with an "unexpected result shape" message.
-      {status, error} =
+    state =
+      if task_id do
         case result do
-          {:ok, _} ->
-            {:completed, nil}
+          # TASK-LEVEL PAUSE: the drain completed, so the wrapper reported a
+          # pause instead of a `%Result{}`. The task parks in `:paused`; a paused
+          # task is NOT finished (`finished_at` stays nil) and has no lease.
+          {:paused, info} ->
+            persist_paused(state, task_id, info)
 
-          {:error, reason} ->
-            Logger.warning("TaskRegistry: Task #{task_id} returned error: #{inspect(reason)}")
-            message = "Task failed: #{inspect(reason)}"
-
-            {:failed,
-             Diagnostics.failure_error(:error, :result_handler, message, stacktrace_lines())}
-
-          {:exit, reason} ->
-            Logger.warning("TaskRegistry: Task #{task_id} exited: #{inspect(reason)}")
-            message = "Task exited: #{inspect(reason)}"
-
-            {:failed,
-             Diagnostics.failure_error(:exit, :result_handler, message, stacktrace_lines())}
-
-          other ->
-            Logger.warning(
-              "TaskRegistry: Task #{task_id} returned unexpected result shape: #{inspect(other)}"
-            )
-
-            message = "Task returned unexpected result shape: #{inspect(other)}"
-
-            {:failed,
-             Diagnostics.failure_error(:error, :result_handler, message, stacktrace_lines())}
+          # STRAGGLER GUARD — see `pause_settled?/2`: once the task is
+          # `:pausing`/`:paused`, NO late result may resurrect it.
+          _ ->
+            if pause_settled?(state, task_id) do
+              discard_paused_result(state, task_id, result)
+            else
+              persist_wrapper_result(state, task_id, result)
+            end
         end
-
-      # Log the failed transition with the result value and current stacktrace.
-      if status == :failed do
-        Diagnostics.log_failed_transition(
-          task_id,
-          :result_handler,
-          prev_status(state, task_id),
-          result: result
+      else
+        # The result cannot be persisted — no matching in-memory task_refs entry
+        # (e.g. the registry restarted after the wrapper finished, wiping the
+        # refs, or the message is stale). Leave a trail so stranded tasks are
+        # attributable instead of failing silently.
+        Logger.warning(
+          "TaskRegistry: received task result for unknown ref #{inspect(ref)} — " <>
+            "no matching task_refs entry (registry restarted?); result dropped"
         )
+
+        state
       end
-
-      Logger.info(
-        "TaskRegistry: Task #{task_id} wrapper returned — persisting terminal status #{inspect(status)}"
-      )
-
-      update_task_status_with_caller(task_id, status, result,
-        usage: result_field(result, :usage, &match?(%EvoGit.Agent.Usage{}, &1)),
-        agent_count: result_field(result, :agent_count, &is_integer/1),
-        commit_sha: result_field(result, :commit_sha, &is_binary/1),
-        error: error
-      )
-    else
-      # The result cannot be persisted — no matching in-memory task_refs entry
-      # (e.g. the registry restarted after the wrapper finished, wiping the
-      # refs, or the message is stale). Leave a trail so stranded tasks are
-      # attributable instead of failing silently.
-      Logger.warning(
-        "TaskRegistry: received task result for unknown ref #{inspect(ref)} — " <>
-          "no matching task_refs entry (registry restarted?); result dropped"
-      )
-    end
 
     Process.demonitor(ref, [:flush])
 
     {:noreply, state}
   end
 
+  # Maps a real wrapper result to the task's terminal status (today's behaviour,
+  # unchanged). Returns state untouched — the state cleanup happens in
+  # `handle_update_status/6` for a terminal status.
+  defp persist_wrapper_result(state, task_id, result) do
+    # Map the wrapper result to a terminal status. For :failed the arm ALSO
+    # builds the persisted error payload (same arm → the reason and its human
+    # message stay in lockstep): {:error, reason} records kind :error,
+    # {:exit, reason} records kind :exit, and any other shape records
+    # kind :error with an "unexpected result shape" message.
+    {status, error} =
+      case result do
+        {:ok, _} ->
+          {:completed, nil}
+
+        {:error, reason} ->
+          Logger.warning("TaskRegistry: Task #{task_id} returned error: #{inspect(reason)}")
+          message = "Task failed: #{inspect(reason)}"
+
+          {:failed,
+           Diagnostics.failure_error(:error, :result_handler, message, stacktrace_lines())}
+
+        {:exit, reason} ->
+          Logger.warning("TaskRegistry: Task #{task_id} exited: #{inspect(reason)}")
+          message = "Task exited: #{inspect(reason)}"
+
+          {:failed,
+           Diagnostics.failure_error(:exit, :result_handler, message, stacktrace_lines())}
+
+        other ->
+          Logger.warning(
+            "TaskRegistry: Task #{task_id} returned unexpected result shape: #{inspect(other)}"
+          )
+
+          message = "Task returned unexpected result shape: #{inspect(other)}"
+
+          {:failed,
+           Diagnostics.failure_error(:error, :result_handler, message, stacktrace_lines())}
+      end
+
+    # Log the failed transition with the result value and current stacktrace.
+    if status == :failed do
+      Diagnostics.log_failed_transition(
+        task_id,
+        :result_handler,
+        prev_status(state, task_id),
+        result: result
+      )
+    end
+
+    Logger.info(
+      "TaskRegistry: Task #{task_id} wrapper returned — persisting terminal status #{inspect(status)}"
+    )
+
+    update_task_status_with_caller(task_id, status, result,
+      usage: result_field(result, :usage, &match?(%EvoGit.Agent.Usage{}, &1)),
+      agent_count: result_field(result, :agent_count, &is_integer/1),
+      commit_sha: result_field(result, :commit_sha, &is_binary/1),
+      error: error
+    )
+
+    state
+  end
+
+  # --- Task-level pause: wrapper result handling ---
+
+  # The wrapper reported `{:paused, info}`: the drain completed and the task
+  # parks in the PAUSED RESTING STATE.
+  #
+  # A TARGETED write (never a full `put_task`) — `result`, `usage`, `commit_sha`,
+  # `branch_name`, `started_at` and `opts` are left byte-identical, which is what
+  # makes a later resume ACCUMULATE usage and keep the same report. `finished_at`
+  # is written NIL: a paused task is not finished, and the dashboard must not
+  # date it. `pause_kind: :clean` records that the agents stopped at a turn
+  # boundary (no in-flight tool batch to repair), which the resume turns into
+  # `resume_kind: :clean_pause`.
+  #
+  # WHY ONE RESULT IS ENOUGH for a multi-agent drain: the scheduler orders the
+  # drain — the ROOT agent only reports `{:paused, info}` once its children have
+  # paused, so this single wrapper result closes the whole task.
+  defp persist_paused(state, task_id, _info) do
+    case safe_store_read("paused wrapper result select_task_update_info", nil, fn ->
+           EvoGit.Store.select_task_update_info(state.task_store, task_id)
+         end) do
+      %{status: status} when status in [:pausing, :running] ->
+        write_paused(state, task_id)
+
+      %{status: :cancelling} ->
+        # A cancel that arrived while the drain was in flight WINS (the pause was
+        # abandoned scheduler-side). The wrapper is gone, so resolve the row the
+        # way the cancellation model does: the normal status path force-maps a
+        # terminal phase of a `:cancelling` task to `:cancelled` and runs the
+        # usual teardown (markers, tmpdir, task_refs).
+        Logger.info(
+          "TaskRegistry: Task #{task_id} reported a PAUSE while :cancelling — the cancel wins"
+        )
+
+        update_task_status_with_caller(task_id, :cancelled, nil, [])
+        state
+
+      %{status: :paused} ->
+        # Already parked (a duplicated result, or a restart reconciled the row
+        # while the wrapper was still finishing): nothing to persist or
+        # broadcast.
+        finish_paused_bookkeeping(state, task_id)
+
+      %{status: status} ->
+        # Terminal / `:awaiting_input` — the pause lost a race; never overwrite a
+        # resolved row with `:paused`.
+        Logger.info(
+          "TaskRegistry: discarding PAUSE report for task #{task_id} in status #{inspect(status)}"
+        )
+
+        %{state | task_refs: Map.delete(state.task_refs, task_id)}
+
+      nil ->
+        %{state | task_refs: Map.delete(state.task_refs, task_id)}
+    end
+  end
+
+  defp write_paused(state, task_id) do
+    case safe_store_write("paused wrapper result update_task_columns", fn ->
+           EvoGit.Store.update_task_columns(state.task_store, task_id,
+             status: :paused,
+             pause_kind: :clean,
+             finished_at: nil,
+             lease_expires_at: nil
+           )
+         end) do
+      :ok ->
+        Logger.info(
+          "TaskRegistry: Task #{task_id} PAUSED (clean checkpoint) — resume re-enqueues the same id"
+        )
+
+        Phoenix.PubSub.broadcast(
+          EvoGit.PubSub,
+          "tasks",
+          {:task_updated, task_id, :paused, node()}
+        )
+
+        finish_paused_bookkeeping(state, task_id)
+
+      {:error, :disk_full} ->
+        # The paused write is lost, so no broadcast fires; the row keeps
+        # `:pausing` with no wrapper and the lease sweep turns it into a DIRTY
+        # PAUSE once the lease expires (degraded, never stuck in a live status).
+        Logger.warning(
+          "TaskRegistry: disk full — paused task #{task_id} could not be persisted as :paused"
+        )
+
+        %{state | task_refs: Map.delete(state.task_refs, task_id)}
+
+      {:error, :store_unavailable} ->
+        # StoreGuard already logged it; same degraded path as disk-full.
+        %{state | task_refs: Map.delete(state.task_refs, task_id)}
+    end
+  end
+
+  # Shared in-memory cleanup of the paused transition: the wrapper is done (drop
+  # its ref exactly like a terminal result) and the scheduler pause marker/flags
+  # are cleared — the drain is over, so nothing may keep honouring a pause.
+  defp finish_paused_bookkeeping(state, task_id) do
+    Pause.abandon(task_id)
+    %{state | task_refs: Map.delete(state.task_refs, task_id)}
+  end
+
+  # The STRAGGLER GUARD: `true` when the row is already `:pausing`/`:paused`, i.e.
+  # a late `{:ok, %Result{}}` / `{:error, _}` from a wrapper (or a `:DOWN`) must be
+  # DISCARDED. A straggler must never resurrect a paused task, flip it to
+  # `:completed`/`:failed`, or clobber the result/usage a later resume relies on.
+  defp pause_settled?(state, task_id) do
+    case safe_store_read("pause straggler select_task_update_info", nil, fn ->
+           EvoGit.Store.select_task_update_info(state.task_store, task_id)
+         end) do
+      %{status: status} when status in [:pausing, :paused] -> true
+      _ -> false
+    end
+  end
+
+  defp discard_paused_result(state, task_id, result) do
+    Logger.info(
+      "TaskRegistry: discarding #{inspect(result_shape(result))} wrapper result for task " <>
+        "#{task_id} — the task is pausing/paused, so a straggler never changes it"
+    )
+
+    %{state | task_refs: Map.delete(state.task_refs, task_id)}
+  end
+
+  # A compact, log-safe shape (a `%Result{}` or a long reason must never be
+  # dumped into the log).
+  defp result_shape({:ok, %module{}}), do: {:ok, module}
+  defp result_shape({:ok, _other}), do: {:ok, :value}
+  defp result_shape({:error, _reason}), do: :error
+  defp result_shape(_other), do: :other
+
   # The task WRAPPER's `:DOWN`.
   defp handle_wrapper_down(ref, pid, reason, state) do
     task_id = task_id_for_ref(state, ref)
 
-    if task_id do
-      case reason do
-        :normal ->
-          # Normal completion via :DOWN (task returned a result and exited cleanly).
-          # The {ref, result} handler should have already processed this, but handle
-          # the edge case where {ref, result} was somehow missed.
-          update_task_status(task_id, :completed)
+    cond do
+      task_id == nil ->
+        # No matching in-memory task_refs entry (e.g. the registry restarted after
+        # the wrapper exited, wiping the refs). Leave a trail so a lost result is
+        # attributable instead of being a silent no-op.
+        Logger.warning(
+          "TaskRegistry: received :DOWN for unknown ref #{inspect(ref)} (pid #{inspect(pid)}, " <>
+            "reason #{inspect(reason)}) — no matching task_refs entry; ignoring"
+        )
 
-        reason ->
-          Logger.warning(
-            "TaskRegistry: Task #{task_id} wrapper process #{inspect(pid)} exited abnormally: #{inspect(reason)}. " <>
-              "Checking if AgentScheduler still has active agents before marking as failed."
+        {:noreply, state}
+
+      # STRAGGLER GUARD (same rule as the wrapper result): a `:pausing`/`:paused`
+      # task is never flipped to `:completed`/`:failed` by a wrapper that died
+      # after the drain.
+      pause_settled?(state, task_id) ->
+        {:noreply, discard_paused_result(state, task_id, {:down, reason})}
+
+      true ->
+        do_handle_wrapper_down(task_id, pid, reason, state)
+        {:noreply, state}
+    end
+  end
+
+  defp do_handle_wrapper_down(task_id, pid, reason, state) do
+    case reason do
+      :normal ->
+        # Normal completion via :DOWN (task returned a result and exited cleanly).
+        # The {ref, result} handler should have already processed this, but handle
+        # the edge case where {ref, result} was somehow missed.
+        update_task_status(task_id, :completed)
+
+      reason ->
+        Logger.warning(
+          "TaskRegistry: Task #{task_id} wrapper process #{inspect(pid)} exited abnormally: #{inspect(reason)}. " <>
+            "Checking if AgentScheduler still has active agents before marking as failed."
+        )
+
+        # Check if the AgentScheduler still has active agents for this task.
+        # If so, the wrapper crashed but the real work is still ongoing — do NOT
+        # mark as failed. The task will complete normally when the scheduler
+        # eventually finishes and the result arrives via a different mechanism.
+        if Lease.sched_meta_has_active_agents?(task_id) do
+          Logger.info(
+            "TaskRegistry: Task #{task_id} still has active agents in AgentScheduler — keeping as :running despite wrapper crash"
           )
 
-          # Check if the AgentScheduler still has active agents for this task.
-          # If so, the wrapper crashed but the real work is still ongoing — do NOT
-          # mark as failed. The task will complete normally when the scheduler
-          # eventually finishes and the result arrives via a different mechanism.
-          if Lease.sched_meta_has_active_agents?(task_id) do
-            Logger.info(
-              "TaskRegistry: Task #{task_id} still has active agents in AgentScheduler — keeping as :running despite wrapper crash"
-            )
+          # Do NOT update status — leave as :running
+        else
+          # No active agents — genuine failure
+          Diagnostics.log_failed_transition(task_id, :down_handler, prev_status(state, task_id),
+            result: "Task process exited: #{inspect(reason)}",
+            extra: [
+              pid: inspect(pid),
+              exit_reason: inspect(reason),
+              sched_meta_has_active_agents: false
+            ]
+          )
 
-            # Do NOT update status — leave as :running
-          else
-            # No active agents — genuine failure
-            Diagnostics.log_failed_transition(task_id, :down_handler, prev_status(state, task_id),
-              result: "Task process exited: #{inspect(reason)}",
-              extra: [
-                pid: inspect(pid),
-                exit_reason: inspect(reason),
-                sched_meta_has_active_agents: false
-              ]
-            )
+          message = "Task process exited: #{inspect(reason)}"
 
-            message = "Task process exited: #{inspect(reason)}"
-
-            update_task_status_with_caller(task_id, :failed, message,
-              error: Diagnostics.failure_error(:down, :down_handler, message, stacktrace_lines())
-            )
-          end
-      end
-    else
-      # No matching in-memory task_refs entry (e.g. the registry restarted after
-      # the wrapper exited, wiping the refs). Leave a trail so a lost result is
-      # attributable instead of being a silent no-op.
-      Logger.warning(
-        "TaskRegistry: received :DOWN for unknown ref #{inspect(ref)} (pid #{inspect(pid)}, " <>
-          "reason #{inspect(reason)}) — no matching task_refs entry; ignoring"
-      )
+          update_task_status_with_caller(task_id, :failed, message,
+            error: Diagnostics.failure_error(:down, :down_handler, message, stacktrace_lines())
+          )
+        end
     end
-
-    {:noreply, state}
   end
 end

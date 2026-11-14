@@ -205,6 +205,15 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
     # default so every downstream path is unchanged when unset.
     quality_level = EvoGit.QualityLevel.normalize(Keyword.get(opts, :quality_level))
 
+    # Task-level PAUSE resume narration selector (`:clean_pause | :dirty_pause`).
+    # `EvoGit.TaskRegistry.Pause.resume/4` puts it on the SPAWN opts only (the
+    # persisted task opts are never mutated), and only for a resumed run: the key
+    # is OMITTED whenever it is absent or not one of the two known kinds, so a
+    # normal run's runtime opts stay byte-identical. `EvoGit.Runtime.Helpers`
+    # forwards it into the agent spec, which turns it into the dispatch ctx
+    # `resume_kind` (`:restore_agent_state` + the resume narration/repair).
+    resume_kind = Keyword.get(opts, :resume_kind)
+
     runtime_opts =
       runtime_opts
       |> put_if(:node_path, node_path)
@@ -217,6 +226,9 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
       |> put_if(:attachments, attachments, fn value -> value not in [nil, []] end)
       |> put_if(:quality_level, quality_level, fn value -> value != "balanced" end)
       |> put_if(:session_mode, session_mode, fn value -> value != "oneshot" end)
+      |> put_if(:resume_kind, resume_kind, fn value ->
+        value in [:clean_pause, :dirty_pause]
+      end)
 
     {nil, runtime_opts}
   end
