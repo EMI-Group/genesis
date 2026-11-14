@@ -7,7 +7,7 @@ const vm = require('node:vm');
 // Exercise the actual inline hook without importing the browser-only app bundle.
 const app = readFileSync(`${__dirname}/app.js`, 'utf8');
 const hookSource = app.slice(app.indexOf('const StatePersistence = {'),
-  app.indexOf('// BrowserNotifications hook:'));
+  app.indexOf('// ClipboardCopy hook:'));
 
 function mount({state, node = 'local', legacyModel} = {}) {
   let saved = state === undefined ? null : JSON.stringify(state);

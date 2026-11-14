@@ -68,6 +68,8 @@ import DiffViewer from "./hooks/diff_viewer.js"
 import CommitGraph from "./hooks/commit_graph.js"
 import CapsulePanel from "./hooks/capsule_panel.js"
 import InspectorMessages from "./hooks/inspector_messages.js"
+import BrowserNotifications from "./browser_notifications.js"
+import DialogModal from "./dialog_modal.js"
 // Compute the longest common prefix among an array of strings
 function longestCommonPrefix(strings) {
   if (strings.length === 0) return "";
@@ -611,83 +613,6 @@ const StatePersistence = {
         persistFormState();
       }
     });
-  }
-};
-
-// BrowserNotifications hook: native OS notifications for terminal tasks and
-// pending Assistant approvals.
-//
-// Payload contract (server → client, `push_event(socket, "task_notification", …)`):
-//   %{title: String.t(), body: String.t(), tag?: String.t()}
-// `title` and `body` are required; `tag` is OPTIONAL and only used for dedupe
-// (a repeating approval replaces its previous notification instead of stacking
-// another one). The SAME event serves the existing terminal-task notifications
-// (no tag) and the Assistant approval notifications (tag = approval identity).
-//
-// Rules:
-//   * permission is requested ONCE on mount — never throws when the API is
-//     absent (desktop WebView, headless server, plain HTTP origins);
-//   * a notification is shown ONLY while the user cannot see the page
-//     (document hidden OR window unfocused) — someone looking at the dashboard
-//     is never notified about it;
-//   * clicking a notification focuses the window and closes it;
-//   * anything unsupported/denied is a silent no-op (no console noise).
-const BrowserNotifications = {
-  mounted() {
-    this._supported = typeof Notification === "function";
-    this._permission = this._supported ? Notification.permission : "denied";
-
-    if (this._supported && this._permission === "default") {
-      // Some embedded webviews expose Notification but not requestPermission,
-      // and others reject the promise: either way notifications just stay off.
-      try {
-        const result = Notification.requestPermission();
-        if (result && typeof result.then === "function") {
-          result.then(perm => { this._permission = perm; }).catch(() => {});
-        }
-      } catch (e) {
-        this._permission = "denied";
-      }
-    }
-
-    this.handleEvent("task_notification", payload => this._notify(payload));
-  },
-
-  // Only notify when the page is not being looked at.
-  _shouldNotify() {
-    if (!this._supported || this._permission !== "granted") return false;
-    const hidden = typeof document.hidden === "boolean"
-      ? document.hidden
-      : document.visibilityState === "hidden";
-    if (hidden) return true;
-    // No focus API → assume the user is looking (never spam).
-    return typeof document.hasFocus === "function" ? !document.hasFocus() : false;
-  },
-
-  _notify(payload) {
-    if (!this._shouldNotify()) return;
-    const {title, body, tag} = payload || {};
-    if (!title) return;
-
-    const options = {body: body || "", icon: "/favicon.ico"};
-    if (tag) {
-      options.tag = tag;
-      // renotify is only meaningful with a tag; browsers without support ignore it.
-      options.renotify = true;
-    }
-
-    let notification;
-    try {
-      notification = new Notification(title, options);
-    } catch (e) {
-      // Some webviews expose the constructor but refuse to instantiate it.
-      return;
-    }
-
-    notification.onclick = () => {
-      try { window.focus(); } catch (e) {}
-      try { notification.close(); } catch (e) {}
-    };
   }
 };
 
@@ -1314,69 +1239,6 @@ const Guide = {
       setTimeout(() => target.classList.remove("guide-highlight"), 3000);
     };
     tryHighlight();
-  }
-};
-
-// DialogModal hook: opens/closes <dialog class="modal"> elements in the
-// browser's top layer, immune to parent CSS containing blocks (backdrop-filter,
-// transform, etc.). Pushes "dialog_closed" when the dialog is dismissed via ESC
-// or backdrop click so the server can sync state.
-//
-// Contract:
-//   * open with showModal() only when the element is not already open (a plain
-//     showModal() on an open dialog throws InvalidStateError) and only when the
-//     API exists (older/embedded engines may not implement it);
-//   * a user dismissal fires ONE "close" event — a per-instance latch keeps the
-//     push to exactly one "dialog_closed" even if the event repeats;
-//   * destroyed() removes the listener BEFORE closing, so the server unmounting
-//     an open dialog (which must release the top layer) reports nothing;
-//   * updated() re-asserts the modal state after a LiveView patch, because
-//     morphdom can strip the `open` attribute the browser set — but never after
-//     the user dismissed it (the server owns the reopen by re-mounting);
-//   * a server that KEEPS the same dialog element mounted can reopen it with
-//     `push_event(socket, "dialog_open", %{})`, which clears the dismissal latch.
-const DialogModal = {
-  mounted() {
-    this._closed = false;
-    this._openModal();
-
-    this._onClose = () => {
-      if (this._closed) return;
-      this._closed = true;
-      this.pushEvent("dialog_closed", {});
-    };
-    this.el.addEventListener("close", this._onClose);
-
-    this.handleEvent("dialog_open", () => {
-      this._closed = false;
-      this._openModal();
-    });
-  },
-
-  updated() {
-    if (!this._closed) this._openModal();
-  },
-
-  destroyed() {
-    if (this._onClose) {
-      this.el.removeEventListener("close", this._onClose);
-      this._onClose = null;
-    }
-    // If the dialog is still open when destroyed (e.g., server toggle while
-    // modal is showing), close it so the top layer is released. The listener is
-    // already gone, so this teardown is never reported as a user dismissal.
-    if (this.el.open && typeof this.el.close === "function") {
-      this.el.close();
-    }
-  },
-
-  _openModal() {
-    if (typeof this.el.showModal !== "function" || this.el.open) return;
-    try {
-      this.el.showModal();
-    } catch (e) {
-      // Already promoted to the top layer by another path — nothing to do.
-    }
   }
 };
 
