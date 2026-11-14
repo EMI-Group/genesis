@@ -716,7 +716,8 @@ button, a, input, textarea, select, summary,
   animation: history-appear 0.3s ease-out both;
 }
 
-/* New chat history entry animation */
+/* Legacy non-Assistant history entrances. Assistant history must stay still on
+   restore and streamed patches; its execution dot/cursor are the only motion. */
 @keyframes history-entry-appear {
   from {
     opacity: 0;
@@ -728,8 +729,14 @@ button, a, input, textarea, select, summary,
   }
 }
 
-.agent-history-scroll > .divide-y > div {
+.agent-history-scroll:where(:not(#chat-messages, #chat-messages *)) > .divide-y > div {
   animation: history-entry-appear 0.3s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-history-scroll:where(:not(#chat-messages, #chat-messages *)) > .divide-y > div {
+    animation: none;
+  }
 }
 
 /* Agent card running shimmer */
@@ -2916,12 +2923,38 @@ dialog.modal .modal-box :not(pre) > code {
     padding: 0.4em 0.6em;
   }
 }
+/* Pending/running activity is opt-in markup, never inferred from empty text.
+   Keep the readable status label static; only the decorative dot breathes.
+   No generated content, shimmer, transform, or transcript entrance animation. */
+#chat-messages .assistant-execution-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--color-base-content);
+}
+#chat-messages .assistant-execution-dot {
+  flex: 0 0 0.375rem;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background-color: var(--color-primary-standalone);
+  opacity: 1;
+  animation: assistant-execution-breathe 2s ease-in-out infinite;
+}
+@keyframes assistant-execution-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
 @keyframes help-blink {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+  50% { opacity: 0.4; }
 }
-.help-caret { animation: help-blink 1.1s ease-in-out infinite; }
+.help-caret { animation: help-blink 1.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
   .help-composer { transition: none; }
-  .help-caret { animation: none; }
+  .help-caret,
+  #chat-messages .assistant-execution-dot {
+    animation: none;
+    opacity: 1;
+  }
 }

@@ -6,6 +6,12 @@
 ## API Surface
 The file contains DaisyUI light/dark themes, accent fill/standalone role tokens, shared component styles, Markdown, responsive input layout, and a final Genesis Assistant chat section.
 The Assistant section scopes reading rhythm, quiet headings/quotes, code sizing and narrow-screen spacing to `#chat-messages .md-content`, and styles the column `.help-composer` (textarea row above a `.help-composer-controls` bar holding the picker left and Send/Stop right) plus `.help-caret` without changing layout or hook contracts.
+Inside `#chat-messages`, `.assistant-execution-indicator` is an inline-flex status row with a static base-content label and `.assistant-execution-dot` is a fixed 0.375rem standalone-accent decorative dot.
+The dot alone breathes between opacity 1 and 0.45 over 2s; `.help-caret` remains visible at opacity 0.4 at its quietest over 1.4s.
+Both animations change opacity only, and reduced motion disables them with explicit opacity 1, preserving the label, dot and caret without layout or height animation.
+Markup integration must opt into these classes only for pending/running execution, supply the real readable status label and an `aria-hidden="true"` dot, and retain the existing reserved-height status/footer slot rather than infer execution from empty response text.
+CSS supplies no status text or lifecycle detection, and changes require no new JS hook.
+The legacy history entrance selector excludes both `#chat-messages` itself and nested Assistant scrollers with `:where(:not(#chat-messages, #chat-messages *))`, preserving its original specificity and non-Assistant animation while disabling it under reduced motion.
 Shared Markdown guards wrap long prose and constrain code/table width while preserving horizontal scrolling.
 The fused capsule rules (`.capsule-stop` / `.capsule-item` / `.capsule-stop-active`) add only resting alpha plus hover/active states; capsule LAYOUT stays on the markup's Tailwind utilities.
 The capsule animation rules add `@keyframes capsule-panel-in` (140ms entrance) / `capsule-panel-out` (130ms, `forwards`) driving only `opacity` + `transform`, plus `transform-origin: bottom` on `.capsule-panel` so the panel grows out of its trigger edge.
@@ -45,12 +51,14 @@ Source ORDER is load-bearing in the capsule panel pair: the `[open]` and `[data-
 The reduced-motion guards are selector-specific rather than global, and `html` still requests smooth scrolling under reduced motion although both transcript scrollers explicitly stay instant.
 The broad reduced-motion block precedes the equal-specificity `.no-project-overlay` and `.dashboard-topbar[data-no-project="true"]` animation declarations, so those later declarations override its `animation: none`.
 `.task-card-active`, `.node-switch-fade`, the project-palette entrances and `.file-manual-input-wrap` have no matching reduced-motion animation override.
-The legacy `.agent-history-scroll > .divide-y > div` rule animates every matching row with a 300ms 8px slide, lacks a reduced-motion override, and has higher specificity than `.inspector-message-enter` if a row matches both selectors.
-The Assistant `.help-caret` fades fully out at its midpoint over a repeating 1.1s cycle, whereas the inspector cursor retains 0.4 opacity; both explicitly disable their animations under reduced motion.
+The non-Assistant legacy history rule still animates every matching row with a 300ms 8px slide and has higher specificity than `.inspector-message-enter` if a row matches both selectors.
 
 ## Validation
+Run `node --test apps/evo_dash/assets/css/assistant_motion.test.cjs` from the repository root for focused source contracts covering opacity-only motion, visible reduced-motion fallbacks, native-dialog transition guards, history exclusions and instant-scroll invariants.
+This dependency-free Node suite is not part of `mix test` or the existing JS-only globs; include `apps/evo_dash/assets/css/*.test.cjs` in any aggregate asset-test command alongside `apps/evo_dash/assets/js/*.test.cjs apps/evo_dash/assets/js/hooks/*.test.cjs`.
 Run `mix tailwind evo_dash` from the repository root to compile the CSS and `git diff --check` for whitespace checks.
-For browser review, check `/assistant` in light/dark themes at narrow and desktop widths, long URLs, code/tables, nested lists, RTL quotes, multiline composer, keyboard focus and reduced motion.
+For browser review, check `/assistant` in light/dark themes at narrow and desktop widths, pending/running/restored/ended turns, long URLs, code/tables, nested lists, RTL quotes, multiline composer, keyboard focus and reduced motion.
+Verify the indicator appears only while execution is pending/running, labels remain legible, restored history never enters, and streamed updates do not move the composer or animate scrolling.
 Build and source assertions do not substitute for browser visual validation.
 
 ## Routing Table
