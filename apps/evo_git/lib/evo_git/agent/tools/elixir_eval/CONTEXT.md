@@ -98,8 +98,8 @@ Worker loss cancels a pending operation, and broker termination cancels its pend
 
 ## Exact Direct API Admission
 `DirectAPI` is the shared literal four-field MFA/tier registry, fixed native-call generator and help source; both allowlists consult it before any EvoGit fallback.
-Read and write tiers admit exactly `EvoGit.TaskRegistry.list_tasks_page/0,1`, `get_task_lite/1`, `get_task/1`, `EvoGit.AgentScheduler.RemoteAPI.list_agents/0`, `EvoGit.AgentScheduler.get_config/1`, `paused?/0`, `get_llm_slot_status/0` and `EvoGit.Config.resolve/0,1` in addition to the compatible facades.
-Only write tier additionally admits `EvoGit.TaskRegistry.start_task/2`, `cancel_task/1`, `force_kill_task/1`, `pause_task/1`, `resume_task/1`, `delete_task/1`, `EvoGit.AgentScheduler.update_config/1`, `pause/0`, `resume/0`, `EvoGit.Config.save_user_config/1` and `EvoGit.AgentScheduler.RemoteAPI.reload_config/0`.
+Read and write tiers admit exactly `EvoGit.TaskRegistry.list_tasks_page/0,1`, `get_task_lite/1`, `get_task/1`, `EvoGit.AgentScheduler.RemoteAPI.list_agents/0`, `EvoGit.AgentScheduler.get_config/1`, `paused?/0`, `get_llm_slot_status/0`, `EvoGit.Config.resolve/0,1`, `list_settings/0`, `show/0,1`, `user_config/0`, `config_path/0`, `EvoGit.VCT.projects/0,1` and `search/1,2` in addition to the compatible facades.
+Only write tier additionally admits `EvoGit.TaskRegistry.start_task/2`, `cancel_task/1`, `force_kill_task/1`, `pause_task/1`, `resume_task/1`, `delete_task/1`, `EvoGit.AgentScheduler.update_config/1`, `pause/0`, `resume/0`, `EvoGit.Config.save_user_config/1`, `update/1` and `EvoGit.AgentScheduler.RemoteAPI.reload_config/0`.
 Unlisted functions and wrong arities on listed modules are denied in both tiers, as are arbitrary EvoGit modules and direct access to broker/adapter internals; refusal never auto-escalates.
 Generated Dune shims send literal MFA tokens to the authenticated broker, which independently checks exact admission, tier and arity before invoking the actual public function with unchanged arguments.
 The trusted runtime task installs the captured TaskRegistry routing seam so actual TaskRegistry clients use the authenticated registry, not an evaluator-supplied destination.
@@ -112,10 +112,12 @@ The control wrappers (`start_task/2`, `cancel_task/1`, `force_kill_task/1`, `pau
 `State.from_model_profiles/1,2` retains incoming profile maps and a raw `:llm_generation_params` override VERBATIM, so an admitted `get_config/1` read of those fields is not a redacted inspection surface.
 Direct start returns the actual `{:ok, TaskInfo}` or API error, while enqueue is not execution success and delete's `:ok` still acknowledges only a queued cast, not persistence.
 `get_config/1` preserves all actual key semantics, including nonscalar values and nil for unknown keys; `Config.resolve/1` accepts the real atom key or key-path list without a direct-specific key restriction.
-`Config.resolve/0` returns normalized defaults plus user configuration, not live scheduler runtime overrides, and resolve/1 reads that same resolved configuration.
+`Config.resolve/0` and `show/0,1` return normalized defaults plus persisted user configuration, not live scheduler runtime overrides, and resolve/1 reads that same resolved snapshot.
+`Config.list_settings/0` discovers supported settings, `user_config/0` returns persisted overrides without defaults and `config_path/0` returns the config.toml location; reads are unchanged and unredacted.
 Direct `update_config/1` uses the actual option and return contract and remains runtime-only; pause/resume retain their separate scheduler transitions and turn caps affect future agent registrations.
-`Config.save_user_config/1` validates, replaces the whole config.toml rather than patching, invalidates the read cache and returns actual `:ok` or `{:error, reason}`, without reloading the scheduler.
-Preserve other settings by reading the full configuration, modifying only intended fields and saving the full map in the same approved call; saving a resolved map also materializes defaults.
+`Config.update/1` validates a nested partial persisted patch, normalizes schema keys without creating input-derived atoms, preserves unrelated user settings and returns actual `:ok` or `{:error, reason}` without reloading scheduler runtime state.
+`Config.save_user_config/1` validates, replaces the whole config.toml rather than patching, refreshes the persisted-config read snapshot and returns actual `:ok` or `{:error, reason}`, without reloading the scheduler.
+Prefer `update/1` for partial changes; when using whole-file save, preserve unrelated settings and remember that saving a resolved map also materializes defaults.
 Avoid concurrent editing because read-modify-save is not atomic and can overwrite another writer's changes.
 Explicitly call `RemoteAPI.reload_config/0` after a successful save to apply reloadable scheduler settings and inspect its actual result; save success does not imply reload success.
 Boot-only settings such as node/distribution configuration require a restart, not just reload.
@@ -123,14 +125,19 @@ Direct operations retain broker authorization/lifecycle checks, request/read/wri
 Direct reads charge one read and one accounting row per invocation, without facade collection-size bounds; task/configuration return values may contain sensitive data, and output caps are not redaction.
 Unexpected raised/thrown/exited failures still pass through the broker's generic error boundary, and neither timeout nor lost authority rolls back committed side effects.
 Compatible Read/Write facades retain their existing projections, validators, self-target policies, quota accounting and one-second runtime calls unchanged.
-`RemoteAPI.save_user_config/1`, Config.user_config/0, schema/defaults APIs and all other unlisted MFAs remain excluded.
+`RemoteAPI.save_user_config/1`, schema/defaults introspection APIs and all other unlisted MFAs remain excluded.
 
-## Operator Configuration and Project Discovery Gaps
-The direct configuration surface admits only `Config.resolve/0,1`, `Config.save_user_config/1`, `AgentScheduler.get_config/1`, `update_config/1`, scheduler pause/resume and `RemoteAPI.reload_config/0`, not `Config.user_config/0`, config paths, schema/default introspection or `AgentScheduler.get_config/0`.
-No direct VCT/project-list MFA or `Read` project-list facade is admitted, and the broker has no project-list operation, so ordinary read/write evaluation cannot discover the user's mounted projects through runtime APIs.
-`Read.configuration_status/0` exposes only five live scheduler scalars, while `Read.model_profiles/0` returns at most 100 legacy-shaped id/model/concurrency entries without a truncation indicator or canonical provider-account/model inventory.
-There is no persisted-config listing/showing/patching convenience facade; callers must use direct resolved-config reads and whole-file read-modify-save, which can materialize defaults and overwrite concurrent edits.
-Any added project facade must be wired through facade exact-MFA admission, Dune Base names, broker read accounting and a bounded projection, and any added direct project API must enter `DirectAPI.entries/0` so shims, broker admission and help stay aligned.
+## Operator Configuration and Project Discovery
+`DirectAPI.entries/0` is the single source for config/project exact-MFA admission, generated shims, broker accounting and shared help recipes; neither addition grants an entire module or another arity.
+The direct configuration surface admits `Config.resolve/0,1`, `list_settings/0`, `show/0,1`, `user_config/0`, `config_path/0`, approved `update/1` and `save_user_config/1`, plus existing scheduler runtime controls and explicit reload, but not `AgentScheduler.get_config/0` or arbitrary schema/default introspection.
+`DirectAPI.help/0` teaches list/show/update and VCT projects/search recipes, the persisted-snapshot versus live-runtime distinction, explicit reload/restart requirements and unredacted reads whose output cap is not a confidentiality boundary.
+`EvoGit.VCT.projects/0,1` returns real project Mount structs newest first with an optional keyword `:limit`, and `search/1,2` applies a case-insensitive substring match over display name, OS path and VCT point with the same optional limit.
+A blank search matches all project mounts, a nonbinary query matches none, reserved system mounts are excluded and recorded OS paths need not exist.
+The list is node-local, not a filesystem inventory, and `[]` can also be the API's degraded answer when VCT is unavailable.
+No VCT mutation is admitted, and these direct reads charge one read/accounting row per invocation without adding facade projection or collection bounds.
+The generated Base allowlists derive VCT module/alias atoms and the new function-name atoms from the literal DirectAPI entries at compile time, preserving the boot-safe wrapper on_load and runtime parse-chokepoint rules without input-derived atom creation.
+`Read.configuration_status/0` still exposes only five live scheduler scalars, while `Read.model_profiles/0` returns at most 100 legacy-shaped id/model/concurrency entries without a truncation indicator or canonical provider-account/model inventory.
+There is no separate project or persisted-config convenience facade; direct reads retain actual values, API errors and existing broker authority/quota/approval boundaries.
 
 ## Capabilities, Quotas and Mutations
 Read exposes `help/0`, `system_info/0`, `list_tasks/0,1`, `get_task/1`, `list_agents/0`, `scheduler_status/0`, `model_profiles/0` and `configuration_status/0` through the broker.
