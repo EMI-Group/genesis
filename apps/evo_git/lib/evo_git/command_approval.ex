@@ -47,8 +47,9 @@ defmodule EvoGit.CommandApproval do
     PubSub topic; when a task that owns pending requests (matched by the
     `task_id` each request carries) transitions to `:cancelling`, to the
     interactive-session yield `:awaiting_input` (alive, but no exchange is
-    running) or to a terminal state, its pending requests are auto-resolved as
-    `:denied`, so a graceful Stop/cancel never stalls on an approval wait.
+    running), to a task pause (`:pausing`/`:paused`, likewise no live exchange)
+    or to a terminal state, its pending requests are auto-resolved as
+    `:denied`, so a graceful Stop/cancel/pause never stalls on an approval wait.
   - **Caller death** — waiting callers are monitored; if one dies (e.g. its
     tool-task timeout fired first), its pending request is cleaned up and
     resolved `:timed_out` (never a crash).
@@ -98,13 +99,31 @@ defmodule EvoGit.CommandApproval do
   # `:cancelling` is included so a graceful cancel never stalls on approvals;
   # terminal states mean the owning reflect agent is gone. `:awaiting_input` is
   # the interactive-session yield: the task is alive but no exchange is running,
-  # so it is not actively running for approval purposes either.
-  @denying_task_statuses [:awaiting_input, :cancelling, :completed, :failed, :cancelled]
+  # so it is not actively running for approval purposes either. `:pausing` and
+  # `:paused` mean the task is winding down to (or resting in) a durable stop
+  # with NO live exchange, so nothing may be approved on its behalf.
+  @denying_task_statuses [
+    :awaiting_input,
+    :pausing,
+    :paused,
+    :cancelling,
+    :completed,
+    :failed,
+    :cancelled
+  ]
 
   # Task statuses whose evaluation requests are admitted at registration: a
   # live, non-terminal task. `:awaiting_input` counts — a session between
-  # exchanges is still alive, exactly like `:running`.
-  @eval_active_task_statuses [:pending, :running, :awaiting_input, :finalizing]
+  # exchanges is still alive, exactly like `:running` — and so do `:pausing` and
+  # `:paused`, which are non-terminal and resumable rather than dead.
+  @eval_active_task_statuses [
+    :pending,
+    :running,
+    :awaiting_input,
+    :pausing,
+    :paused,
+    :finalizing
+  ]
 
   # --- Public API ------------------------------------------------------------
 
@@ -155,7 +174,8 @@ defmodule EvoGit.CommandApproval do
 
   When `task_id` is known, a bounded `EvoGit.TaskRegistry.get_task_lite/1` read
   runs in the CALLER before registration. A live task row admits
-  `:pending`/`:running`/`:awaiting_input`/`:finalizing`; a terminal, unavailable
+  `:pending`/`:running`/`:awaiting_input`/`:pausing`/`:paused`/`:finalizing`; a
+  terminal, unavailable
   or unknown-row task id is denied UNLESS it is the live dashboard `/assistant`
   interactive-root session shape, decided by
   `EvoGit.AgentScheduler.InteractiveRoot.live?/3` on the paired agent identity.

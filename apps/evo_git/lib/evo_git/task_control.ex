@@ -12,6 +12,19 @@ defmodule EvoGit.TaskControl do
   @terminal [:completed, :failed, :cancelled]
   @start_keys ~w(path objective task_type mode resume_from model_id persistent_state)
 
+  # The caller-facing FILTER vocabulary for `list/1` (`"all"` plus one value per
+  # persisted task status, so a paused task is listable/filterable like any
+  # other). `:pausing` and `:paused` are task-level statuses and belong here;
+  # this is a QUERY vocabulary, not a liveness/admission set (see the exemption
+  # recorded in `test/evo_git/status_admission_totality_test.exs`).
+  @status_filters ~w(all pending running pausing paused finalizing completed failed cancelled cancelling)
+
+  @doc false
+  # The `list/1` status filter vocabulary (STRING values, `"all"` first).
+  # Exposed for the table-driven status-admission totality test.
+  @spec status_filters() :: [String.t()]
+  def status_filters, do: @status_filters
+
   def check(args) do
     with :ok <- keys(args, ~w(path)),
          {:ok, path} <- optional_path(args) do
@@ -256,7 +269,7 @@ defmodule EvoGit.TaskControl do
   end
 
   defp status_filter(args) do
-    if Map.get(args, "status", "all") in ~w(all pending running finalizing completed failed cancelled cancelling),
+    if Map.get(args, "status", "all") in @status_filters,
       do: :ok,
       else: error("invalid_arguments", "Unknown task status.")
   end

@@ -59,7 +59,8 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
 
   @doc false
   # Task statuses the `force_kill_task` facade admits: exactly the task
-  # registry's killable set (`:running`, `:awaiting_input`, `:cancelling`).
+  # registry's killable set (`:running`, `:awaiting_input`, `:cancelling`, plus the
+  # two task-pause statuses `:pausing`/`:paused`).
   def force_kill_statuses, do: EvoGit.TaskRegistry.killable_statuses()
 
   # This is an explicit handoff by the ORIGINAL tool, not re-authorization of

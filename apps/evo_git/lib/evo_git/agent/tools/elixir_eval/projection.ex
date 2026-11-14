@@ -1,10 +1,15 @@
 defmodule EvoGit.Agent.Tools.ElixirEval.Projection do
   @moduledoc false
 
+  # TASK statuses. `:pausing` (a pause is draining the task) and `:paused` (its
+  # non-terminal resting state) are task-level only; the AGENT-level list below
+  # deliberately never carries them.
   @statuses [
     :pending,
     :running,
     :awaiting_input,
+    :pausing,
+    :paused,
     :finalizing,
     :cancelling,
     :completed,

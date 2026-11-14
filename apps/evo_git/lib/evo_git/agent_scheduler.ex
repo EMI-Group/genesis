@@ -1020,7 +1020,13 @@ defmodule EvoGit.AgentScheduler do
       # rows from a previous run sharing this task_id (e.g. a crash before the
       # task completed) must not leak into this run. Best-effort: a store
       # failure must never kill the scheduler.
-      reset_task_archives(task_id)
+      #
+      # A TASK-PAUSE RESUME is the ONE exception (`maybe_reset_task_archives/2`):
+      # it re-enqueues the SAME task id, so the rows already there are the
+      # PAUSED run's per-agent roster — the durable half of its report — and
+      # deleting them would wipe it. Its own completions then UPSERT onto that
+      # roster (see `store/CONTEXT.md`), so nothing is duplicated.
+      maybe_reset_task_archives(task_id, spec)
 
       repo_root = Dispatch.resolve_agent_repo_root(spec, state)
       task_number = Dispatch.next_task_number(repo_root)
@@ -1602,6 +1608,31 @@ defmodule EvoGit.AgentScheduler do
 
           {:reply, {:ok, agent_id}, state}
       end
+    end
+  end
+
+  # The archive-reset admission for a ROOT spawn. A plain task start clears the
+  # task's leftover archive rows (`reset_task_archives/1`), but a TASK-PAUSE
+  # RESUME carries `:resume_kind` (`:clean_pause | :dirty_pause`, see
+  # `docs/task-pause.md` §6) — it re-runs the SAME task id, so those rows are the
+  # paused run's own roster and must SURVIVE: the resumed run's completions
+  # upsert their own rows on top (`task_agent_archives` is keyed
+  # `(task_id, agent_id)`), leaving the paused agents' reports intact.
+  # Any other run takes the byte-identical reset path.
+  @pause_resume_kinds [:clean_pause, :dirty_pause]
+
+  defp maybe_reset_task_archives(task_id, %AgentSpec{} = spec) do
+    case Keyword.get(spec.opts || [], :resume_kind) do
+      kind when kind in @pause_resume_kinds ->
+        Logger.debug(
+          "AgentScheduler: keeping the archive roster of task #{inspect(task_id)} " <>
+            "for a #{inspect(kind)} resume"
+        )
+
+        :ok
+
+      _not_a_pause_resume ->
+        reset_task_archives(task_id)
     end
   end
 

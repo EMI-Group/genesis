@@ -40,9 +40,10 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
   ## The deliberate exemptions
 
   `@exempt_lists` pins any set that admits `:running` but DELIBERATELY not
-  `:awaiting_input`, each with its reason; there is no such set today, so the
-  pairing rule currently applies to every `:running`-bearing list without
-  exception.
+  `:awaiting_input`, each with its reason. There is ONE: the Assistant's
+  `TaskControl.status_filters/0`, which is a caller-facing FILTER VOCABULARY
+  (it defaults to `"all"`, so every row is listable without naming a status),
+  not a liveness admission set.
 
   `@pinned_absences` pins the one set whose ABSENCE of `:awaiting_input` is
   intentional without being a live-session set:
@@ -59,6 +60,35 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
   in `SchedMeta.idle_statuses/0`, which is `[:awaiting_input]` and never
   `:blocked`.
 
+  ## The TASK-PAUSE pairing (`docs/task-pause.md` §7)
+
+  A task-level pause adds two NON-terminal statuses: `:pausing` (a pause
+  request is draining the task's agents — wrapper alive, lease renewed) and
+  `:paused` (the resting state — no wrapper, no lease, resumable, `finished_at`
+  nil). The second pairing rule therefore holds over the SAME `@lists` table: a
+  set that admits `:running` must admit `:pausing`, and a set that admits
+  `:awaiting_input` must admit `:paused`.
+
+  The deliberate absences are pinned by table:
+
+    * `@agent_level_lists` — the AGENT-level sets (`SchedMeta`'s
+      status/phase/live/idle/cancel-reachable enumerations,
+      `InteractiveRoot.accepted_statuses/0`,
+      `Authorization.accepted_agent_statuses/0`,
+      `Projection.agent_statuses/0`) admit NEITHER new status: a pause moves the
+      TASK row and flags agents through the control plane, never an agent's own
+      status;
+    * `@paused_lease_lists` — `Lease.renewed_statuses/0`,
+      `Lease.leaked_statuses/0` and `Lightweight.lease_statuses/0` admit
+      `:pausing` (a draining task still has a live wrapper, so its lease keeps
+      being renewed and it may still be swept if that wrapper dies) but NEVER
+      `:paused` (the resting row has no wrapper and no heartbeat, so listing it
+      would make every paused task look like a leaked lease row).
+
+  Both new statuses are also pinned NON-terminal and self-decoding
+  (`TaskRegistry.terminal_statuses/0`, `Codec.known_statuses/0`,
+  `Types.Status.statuses/0`).
+
   Every accessor below is a PURE function over module attributes, so nothing
   here mutates BEAM-global state and the module runs `async: true`.
   """
@@ -73,11 +103,14 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
   alias EvoGit.Store.Codec
   alias EvoGit.Store.Operations.Lightweight
   alias EvoGit.Store.Types.Status
+  alias EvoGit.TaskControl
   alias EvoGit.TaskRegistry
   alias EvoGit.TaskRegistry.Lease
 
   @running :running
   @awaiting_input :awaiting_input
+  @pausing :pausing
+  @paused :paused
 
   # {label, {module, function}, :atom | :string, :running | :not_running}
   #
@@ -135,7 +168,12 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
     {"AgentScheduler.SchedMeta.cancel_reachable_statuses/0",
      {SchedMeta, :cancel_reachable_statuses}, :atom, :running},
     {"AgentScheduler.InteractiveRoot.accepted_statuses/0",
-     {EvoGit.AgentScheduler.InteractiveRoot, :accepted_statuses}, :atom, :running}
+     {EvoGit.AgentScheduler.InteractiveRoot, :accepted_statuses}, :atom, :running},
+    # The Assistant's `list` facade FILTER vocabulary (STRING values, `"all"`
+    # first): it names every persisted status a caller may filter by, so a
+    # paused task is listable. It is a QUERY vocabulary, not a liveness set —
+    # pinned in `@exempt_lists` below.
+    {"TaskControl.status_filters/0", {TaskControl, :status_filters}, :string, :running}
   ]
 
   # {label, {module, function}, :atom | :string, reason} — a list that admits
@@ -143,7 +181,17 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
   # (every running-bearing list pairs them); the mechanism exists so a future
   # intentional asymmetry is pinned WITH its reason instead of silently
   # weakening the sweep below.
-  @exempt_lists []
+  #
+  # The ONE entry is a filter VOCABULARY, not an admission set: `list/1`
+  # defaults to `"all"`, so every row (an idle `:awaiting_input` session
+  # included) is listable without naming its status. It gains the pause values
+  # because they are persisted statuses, which is the only rule it follows.
+  @exempt_lists [
+    {"TaskControl.status_filters/0", {TaskControl, :status_filters}, :string,
+     "a caller-facing filter VOCABULARY, not a liveness/admission set: the " <>
+       "filter defaults to \"all\", so an :awaiting_input row is listable " <>
+       "without a dedicated value"}
+  ]
 
   # The pinned "absence is deliberate" sets that are not running-bearing live
   # sets but would otherwise look like a forgotten admission.
@@ -153,6 +201,63 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
      "closing an idle session legitimately moves it through :finalizing, so ONLY " <>
        "already-terminal / mid-graceful-cancel rows ignore that broadcast"}
   ]
+
+  # ── the TASK-PAUSE pairing (`docs/task-pause.md` §7) ───────────────────────
+  #
+  # `:pausing` (a pause request is draining the task's agents — non-terminal,
+  # wrapper alive) must follow `:running` in every TASK-level admission set, and
+  # `:paused` (the non-terminal resting state — no wrapper, no lease, resumable)
+  # must follow `:awaiting_input`. Where an absence is deliberate it is pinned
+  # below WITH its reason.
+
+  @agent_level_reason "agent-level, not task-level: a task pause is a TASK status and " <>
+                        "never appears in an AGENT status/phase set"
+
+  # {label, {module, function}, :atom | :string} — AGENT-level sets. They admit
+  # `:running` and `:awaiting_input` (AGENT statuses) and must admit NEITHER new
+  # status: `begin_task_pause/1` flags agents through the control plane and moves
+  # the TASK row, never an agent's own status.
+  @agent_level_lists [
+    {"AgentScheduler.SchedMeta.statuses/0", {SchedMeta, :statuses}, :atom},
+    {"AgentScheduler.SchedMeta.phases/0", {SchedMeta, :phases}, :atom},
+    {"AgentScheduler.SchedMeta.live_statuses/0", {SchedMeta, :live_statuses}, :atom},
+    {"AgentScheduler.SchedMeta.idle_statuses/0", {SchedMeta, :idle_statuses}, :atom},
+    {"AgentScheduler.SchedMeta.cancel_reachable_statuses/0",
+     {SchedMeta, :cancel_reachable_statuses}, :atom},
+    {"AgentScheduler.InteractiveRoot.accepted_statuses/0",
+     {EvoGit.AgentScheduler.InteractiveRoot, :accepted_statuses}, :atom},
+    {"Agent.Tools.ElixirEval.Authorization.accepted_agent_statuses/0",
+     {Authorization, :accepted_agent_statuses}, :atom},
+    {"Agent.Tools.ElixirEval.Projection.agent_statuses/0", {Projection, :agent_statuses}, :atom}
+  ]
+
+  # {label, {module, function}, :atom | :string, reason} — sets that admit
+  # `:running` but DELIBERATELY not `:pausing`. The AGENT-level sets only: no
+  # TASK-level set is exempt from this implication.
+  @pause_exempt_lists Enum.map(@agent_level_lists, fn {label, mfa, kind} ->
+                        {label, mfa, kind, @agent_level_reason}
+                      end)
+
+  # {label, {module, function}, :atom | :string} — the LEASE sets. They admit
+  # `:pausing` (a mid-drain task still has a LIVE WRAPPER, so its lease keeps
+  # being renewed and it may still be swept when that wrapper dies) but NEVER
+  # `:paused`: the resting state has no wrapper and no heartbeat, so listing it
+  # would make every paused task look like a leaked lease row.
+  @paused_lease_lists [
+    {"TaskRegistry.Lease.renewed_statuses/0", {Lease, :renewed_statuses}, :atom},
+    {"TaskRegistry.Lease.leaked_statuses/0", {Lease, :leaked_statuses}, :atom},
+    {"Store.Operations.Lightweight.lease_statuses/0", {Lightweight, :lease_statuses}, :string}
+  ]
+
+  # {label, {module, function}, :atom | :string, reason} — sets that admit
+  # `:awaiting_input` but DELIBERATELY not `:paused`: the AGENT-level sets (a
+  # task pause is not an agent status) and the LEASE sets (a paused row never
+  # holds a lease).
+  @paused_exempt_lists Enum.map(@pause_exempt_lists, & &1) ++
+                         Enum.map(@paused_lease_lists, fn {label, mfa, kind} ->
+                           {label, mfa, kind,
+                            "a paused row never holds a lease: no wrapper, no heartbeat"}
+                         end)
 
   describe "status-list totality (:running ⇒ :awaiting_input)" do
     test "every exposed list that admits :running also admits :awaiting_input" do
@@ -292,6 +397,114 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
     end
   end
 
+  describe "task-pause pairing (:running ⇒ :pausing, :awaiting_input ⇒ :paused)" do
+    test "every list that admits :running also admits :pausing" do
+      for {label, {module, function}, kind, _category} <- @lists,
+          not pause_exempt?(label) do
+        statuses = assert_list!(label, module, function)
+
+        if marker(kind, @running) in statuses do
+          assert marker(kind, @pausing) in statuses,
+                 "#{label} admits #{inspect(marker(kind, @running))} but NOT " <>
+                   "#{inspect(marker(kind, @pausing))}. A pause request must be " <>
+                   "admitted wherever a running task is, so the drain can be " <>
+                   "observed, listed, cancelled and force-killed; either add it " <>
+                   "to this list or pin it in @pause_exempt_lists with a reason.\n" <>
+                   "Got: #{inspect(statuses)}"
+        end
+      end
+    end
+
+    test "every list that admits :awaiting_input also admits :paused" do
+      for {label, {module, function}, kind, _category} <- @lists,
+          not paused_exempt?(label) do
+        statuses = assert_list!(label, module, function)
+
+        if marker(kind, @awaiting_input) in statuses do
+          assert marker(kind, @paused) in statuses,
+                 "#{label} admits #{inspect(marker(kind, @awaiting_input))} but NOT " <>
+                   "#{inspect(marker(kind, @paused))}. A paused task is the " <>
+                   "non-terminal resting counterpart of an idle session (alive, " <>
+                   "resumable, never `finished`); either add it to this list or " <>
+                   "pin it in @paused_exempt_lists with a reason.\n" <>
+                   "Got: #{inspect(statuses)}"
+        end
+      end
+    end
+
+    test "the pause sweep is not vacuous — the task-level sets admit both" do
+      for label <- [
+            "TaskRegistry.killable_statuses/0",
+            "TaskRegistry.gracefully_cancellable_statuses/0",
+            "TaskRegistry.active_statuses/0",
+            "Store.Operations.Lightweight.live_statuses/0",
+            "Store.Codec.known_statuses/0",
+            "Store.Types.Status.statuses/0",
+            "CommandApproval.denying_task_statuses/0",
+            "CommandApproval.eval_active_task_statuses/0",
+            "Agent.Tools.ElixirEval.Authorization.accepted_agent_task_statuses/0",
+            "Agent.Tools.ElixirEval.Projection.statuses/0",
+            "TaskControl.status_filters/0"
+          ] do
+        {kind, statuses} = statuses_for!(label)
+        assert marker(kind, @pausing) in statuses, "#{label} must admit :pausing"
+        assert marker(kind, @paused) in statuses, "#{label} must admit :paused"
+      end
+    end
+
+    test "each pinned absence really lacks the status it is excused from" do
+      for {label, {module, function}, kind, reason} <- @pause_exempt_lists do
+        statuses = assert_list!(label, module, function)
+
+        refute marker(kind, @pausing) in statuses,
+               "#{label} is pinned as a deliberate absence of :pausing (#{reason}); " <>
+                 "delete the pin if the change is intended"
+      end
+
+      for {label, {module, function}, kind, reason} <- @paused_exempt_lists do
+        statuses = assert_list!(label, module, function)
+
+        refute marker(kind, @paused) in statuses,
+               "#{label} is pinned as a deliberate absence of :paused (#{reason}); " <>
+                 "delete the pin if the change is intended"
+      end
+    end
+
+    test "the AGENT-level sets admit neither new status (a task pause is not an agent status)" do
+      for {label, {module, function}, kind} <- @agent_level_lists do
+        statuses = assert_list!(label, module, function)
+
+        refute marker(kind, @pausing) in statuses, "#{label}: #{@agent_level_reason}"
+        refute marker(kind, @paused) in statuses, "#{label}: #{@agent_level_reason}"
+      end
+    end
+
+    test "the LEASE sets admit :pausing but never :paused" do
+      for {label, {module, function}, kind} <- @paused_lease_lists do
+        statuses = assert_list!(label, module, function)
+
+        assert marker(kind, @pausing) in statuses,
+               "#{label} must admit :pausing — a draining task still has a live wrapper"
+
+        refute marker(kind, @paused) in statuses,
+               "#{label} must NOT admit :paused — a paused row holds no lease"
+      end
+    end
+
+    test ":pausing/:paused are non-terminal and each decodes to itself" do
+      for status <- [@pausing, @paused] do
+        refute status in TaskRegistry.terminal_statuses(),
+               "#{inspect(status)} is a NON-terminal resting/draining status"
+
+        assert status in Codec.known_statuses(),
+               "#{inspect(status)} must decode to itself, never to nil/:pending"
+
+        assert status in Status.statuses(),
+               "#{inspect(status)} must be a persistable tasks.status value"
+      end
+    end
+  end
+
   # ── Helpers ───────────────────────────────────────────────────────────────
 
   defp assert_list!(label, module, function) do
@@ -318,6 +531,12 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
 
   defp exempt?(label),
     do: Enum.any?(@exempt_lists, fn {row_label, _, _, _} -> row_label == label end)
+
+  defp pause_exempt?(label),
+    do: Enum.any?(@pause_exempt_lists, fn {row_label, _, _, _} -> row_label == label end)
+
+  defp paused_exempt?(label),
+    do: Enum.any?(@paused_exempt_lists, fn {row_label, _, _, _} -> row_label == label end)
 
   # The same status in the spelling that list carries: atom lists compare
   # atoms, the store's SQL projections compare the TEXT spelling.
