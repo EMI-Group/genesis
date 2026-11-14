@@ -28,7 +28,11 @@ defmodule EvoGit.TaskRegistry.UnknownStatusLivenessTest do
   alias EvoGit.TaskRegistry.Lease
 
   # A status text that is deliberately NOT in `Store.Codec.known_statuses/0`.
-  @raw_status "paused"
+  # Deliberately a status NO code path writes: it must stay unreadable so the
+  # {:unknown, raw} arms are exercised. ("paused" used to serve here — it is a
+  # KNOWN task status since task-level pause shipped, so it can no longer stand
+  # in for an unrecognized spelling.)
+  @raw_status "hibernating"
 
   describe "Lease classification of an unrecognized persisted status" do
     test "lease_renewable?/1 renews it and leaked?/3 never leaks it" do

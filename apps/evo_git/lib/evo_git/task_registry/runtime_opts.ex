@@ -90,11 +90,37 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
   """
   @spec admit_session_mode(keyword()) :: {:ok, keyword()} | {:error, :invalid_session_mode}
   def admit_session_mode(opts) do
-    case Keyword.fetch(opts, :session_mode) do
+    case fetch_session_mode(opts) do
       :error -> {:ok, opts}
-      {:ok, mode} when mode in @session_modes -> {:ok, Keyword.put(opts, :session_mode, mode)}
+      {:ok, mode} when mode in @session_modes -> {:ok, put_session_mode(opts, mode)}
       {:ok, _other} -> {:error, :invalid_session_mode}
     end
+  end
+
+  # `:session_mode` is a STRING-keyed persisted opt (`EvoGit.Store.Codec`'s
+  # `@string_opt_keys`), so the DECODED opts a resume reads carry
+  # `{"session_mode", value}` while a caller handing `start_task/2` raw opts
+  # carries the atom key. Both are admitted — matching only the atom spelling
+  # would let a decoded row's invalid value straight through.
+  defp fetch_session_mode(opts) do
+    case Keyword.fetch(opts, :session_mode) do
+      {:ok, mode} ->
+        {:ok, mode}
+
+      :error ->
+        case List.keyfind(opts, "session_mode", 0) do
+          {_key, mode} -> {:ok, mode}
+          nil -> :error
+        end
+    end
+  end
+
+  # Rewrites the spelling that was actually present, so an admitted decoded row
+  # never carries the same key twice.
+  defp put_session_mode(opts, mode) do
+    if List.keymember?(opts, "session_mode", 0),
+      do: List.keyreplace(opts, "session_mode", 0, {"session_mode", mode}),
+      else: Keyword.put(opts, :session_mode, mode)
   end
 
   ## Per-agent persistent state (`:persistent_state`)
