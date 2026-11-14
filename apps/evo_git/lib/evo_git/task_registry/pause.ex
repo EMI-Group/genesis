@@ -393,8 +393,18 @@ defmodule EvoGit.TaskRegistry.Pause do
 
   ## Option classification (non-raising — these run inside the registry)
 
-  defp interactive?(opts) when is_list(opts),
-    do: Keyword.get(opts, :session_mode) == "interactive"
+  # `:session_mode` is a STRING-keyed persisted opt (`EvoGit.Store.Codec`'s
+  # `@string_opt_keys`), and this classifier only ever sees a DECODED row — so
+  # the string spelling is the one that actually arrives here. Both are accepted:
+  # the atom form is what a caller hands `start_task/2`, the string form is what
+  # the store decodes it back to, and matching only the atom key silently
+  # admitted a pause for an interactive run.
+  defp interactive?(opts) when is_list(opts) do
+    Enum.find_value(opts, false, fn
+      {key, value} when key in [:session_mode, "session_mode"] -> value == "interactive"
+      _other -> nil
+    end)
+  end
 
   defp interactive?(_opts), do: false
 

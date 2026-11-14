@@ -345,20 +345,21 @@ defmodule EvoGit.TaskRegistry.AwaitingInputTest do
       # session legitimately moves it to :finalizing.
       sets = [
         {:killable_statuses, TaskRegistry.killable_statuses(),
-         [:running, :awaiting_input, :cancelling], :total},
+         [:running, :awaiting_input, :cancelling, :pausing, :paused], :total},
         {:gracefully_cancellable_statuses, TaskRegistry.gracefully_cancellable_statuses(),
-         [:running, :awaiting_input], :total},
+         [:running, :awaiting_input, :pausing, :paused], :total},
         {:unstartable_statuses, TaskRegistry.unstartable_statuses(),
-         [:cancelled, :cancelling, :awaiting_input], :total},
+         [:cancelled, :cancelling, :awaiting_input, :pausing, :paused], :total},
         {:active_statuses, TaskRegistry.active_statuses(),
-         [:running, :pending, :finalizing, :cancelling, :awaiting_input], :total},
+         [:running, :pending, :finalizing, :cancelling, :awaiting_input, :pausing, :paused],
+         :total},
         {:terminal_statuses, TaskRegistry.terminal_statuses(), [:completed, :failed, :cancelled],
          :total},
         {:finalizing_ignored_statuses, TaskRegistry.finalizing_ignored_statuses(),
-         [:completed, :cancelled, :cancelling], :exempt},
+         [:completed, :cancelled, :cancelling, :pausing, :paused], :exempt},
         {:renewed_statuses, Lease.renewed_statuses(),
-         [:running, :pending, :cancelling, :awaiting_input], :total},
-        {:leaked_statuses, Lease.leaked_statuses(), [:running, :awaiting_input], :total}
+         [:running, :pending, :cancelling, :awaiting_input, :pausing], :total},
+        {:leaked_statuses, Lease.leaked_statuses(), [:running, :awaiting_input, :pausing], :total}
       ]
 
       for {name, actual, expected, rule} <- sets do

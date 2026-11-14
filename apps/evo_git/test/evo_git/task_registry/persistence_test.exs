@@ -802,7 +802,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
              |> Enum.map(& &1.id) == [a1]
     end
 
-    test "list_tasks_changed_since/1 returns only newer rows with the 17-key projection",
+    test "list_tasks_changed_since/1 returns only newer rows with the 18-key projection",
          %{sqlite_path: sqlite_path} do
       unique = System.unique_integer([:positive])
       t1 = "changed_a_#{unique}"
@@ -834,7 +834,9 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # Future since → nothing.
       assert TaskRegistry.list_tasks_changed_since("2099-01-01T00:00:00.000Z") == []
 
-      # 17-key projection; updated_at passed through as the raw ISO string.
+      # 18-key projection (the pause release added `pause_kind`, so a changed
+      # row can be rendered as paused); updated_at passed through as the raw ISO
+      # string.
       [row] = TaskRegistry.list_tasks_changed_since("2024-01-02T00:00:00.000Z")
 
       expected_keys =
@@ -855,7 +857,8 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
           :lease_expires_at,
           :updated_at,
           :error,
-          :session_mode
+          :session_mode,
+          :pause_kind
         ]
         |> Enum.sort()
 
@@ -1547,6 +1550,194 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
                TaskRegistry.force_kill_task(
                  "forcekill_missing_#{System.unique_integer([:positive])}"
                )
+    end
+  end
+
+  # TASK PAUSE × the cancel / force-kill / start machinery. The pause PROTOCOL
+  # itself (validation, the `{:paused, info}` drain result, resume, restart
+  # mapping) is pinned in `pause_test.exs`; what lives here is the interaction
+  # with the app-global cancel/force-kill paths this module already exercises.
+  describe "task pause: cancel / force kill interaction" do
+    test "cancel of a :pausing task abandons the pause and then cancels like :running" do
+      unique = System.unique_integer([:positive])
+      task_id = "pause_cancel_draining_#{unique}"
+      agent_id = System.unique_integer([:positive])
+
+      :ok =
+        EvoGit.Store.put_task(store(), %TaskInfo{
+          id: task_id,
+          type: :evolve,
+          status: :pausing,
+          opts: [path: "/tmp/test", mode: "simple", persistent_state: true],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil,
+          lease_expires_at: System.system_time(:second) + 300
+        })
+
+      # The drain in flight: scheduler pause marker set + one live agent.
+      :ok = EvoGit.AgentScheduler.ControlPlane.mark_task_pausing(task_id)
+      assert EvoGit.AgentScheduler.ControlPlane.task_pausing?(task_id)
+
+      :ets.insert(:evogit_sched_meta, {agent_id, cancel_test_sched_meta(agent_id, task_id)})
+      :ets.insert(:evogit_agent_summary, {agent_id, cancel_test_agent_state()})
+
+      on_exit(fn ->
+        :ets.delete(:evogit_sched_meta, agent_id)
+        :ets.delete(:evogit_agent_summary, agent_id)
+        EvoGit.AgentScheduler.ControlPlane.delete(agent_id)
+        :ets.delete(:evogit_cancelling_tasks, task_id)
+      end)
+
+      assert :ok = TaskRegistry.cancel_task(task_id)
+
+      # A cancel that arrives mid-drain WINS: the pause is abandoned first…
+      refute EvoGit.AgentScheduler.ControlPlane.task_pausing?(task_id),
+             "cancel must abandon the pause (no agent may keep walking to it)"
+
+      # …and the task then cancels exactly like a :running one.
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.status == :cancelling
+      assert fetched.finished_at == nil
+      assert :ets.member(:evogit_cancelling_tasks, task_id)
+      assert EvoGit.AgentScheduler.Store.cancel_requested?(agent_id) == true
+    end
+
+    test "cancel of a :paused task cancels IMMEDIATELY (:cancelled, finished_at set)" do
+      unique = System.unique_integer([:positive])
+      task_id = "pause_cancel_resting_#{unique}"
+
+      :ok =
+        EvoGit.Store.put_task(store(), %TaskInfo{
+          id: task_id,
+          type: :evolve,
+          status: :paused,
+          opts: [path: "/tmp/test", mode: "simple", persistent_state: true],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: "paused report",
+          pause_kind: :clean,
+          lease_expires_at: nil
+        })
+
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+      drain_tasks_mailbox()
+
+      # No wrapper, no agents: there is nobody to ask, so it is the second
+      # IMMEDIATE arm (like :pending) — never :cancelling.
+      assert :ok = TaskRegistry.cancel_task(task_id)
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.status == :cancelled
+      assert fetched.finished_at != nil
+      assert fetched.pause_kind == nil, "a cancelled task is never mistaken for a resumable one"
+      assert fetched.result == "paused report", "a cancel must not clobber the preserved result"
+      assert fetched.lease_expires_at == nil
+
+      assert_receive {:task_updated, ^task_id, :cancelled, _node}, 1_000
+      refute_receive {:task_updated, ^task_id, :cancelling, _node}, 0
+    end
+
+    test "force_kill_task works from :pausing with NO wrapper/task_refs entry" do
+      unique = System.unique_integer([:positive])
+      task_id = "pause_forcekill_draining_#{unique}"
+
+      :ok =
+        EvoGit.Store.put_task(store(), %TaskInfo{
+          id: task_id,
+          type: :evolve,
+          status: :pausing,
+          opts: [path: "/tmp/test", mode: "simple", persistent_state: true],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil,
+          lease_expires_at: System.system_time(:second) + 300
+        })
+
+      :ok = EvoGit.AgentScheduler.ControlPlane.mark_task_pausing(task_id)
+      on_exit(fn -> EvoGit.AgentScheduler.ControlPlane.clear_task_pausing(task_id) end)
+
+      assert :ok = TaskRegistry.force_kill_task(task_id)
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.status == :failed, "a force-killed task is :failed, never :cancelled"
+      assert fetched.finished_at != nil
+      assert fetched.result == nil
+      assert fetched.error.kind == :force_kill
+      refute EvoGit.AgentScheduler.ControlPlane.task_pausing?(task_id)
+    end
+
+    test "force_kill_task works from :paused with no wrapper (the normal paused shape)" do
+      unique = System.unique_integer([:positive])
+      task_id = "pause_forcekill_resting_#{unique}"
+
+      :ok =
+        EvoGit.Store.put_task(store(), %TaskInfo{
+          id: task_id,
+          type: :evolve,
+          status: :paused,
+          opts: [path: "/tmp/test", mode: "simple", persistent_state: true],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: "paused report",
+          pause_kind: :dirty,
+          lease_expires_at: nil
+        })
+
+      assert :ok = TaskRegistry.force_kill_task(task_id)
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.status == :failed
+      assert fetched.finished_at != nil
+      # Force kill nil's the result (review semantics) and drops the pause kind.
+      assert fetched.result == nil
+      assert fetched.error.kind == :force_kill
+      assert %{task_refs: task_refs} = :sys.get_state(TaskRegistry.server())
+      refute Map.has_key?(task_refs, task_id)
+    end
+
+    test "start_task refuses a :pausing and a :paused task id" do
+      unique = System.unique_integer([:positive])
+      state = :sys.get_state(TaskRegistry.server())
+
+      for {status, idx} <- Enum.with_index([:pausing, :paused]) do
+        task_id = "pause_start_guard_#{unique}_#{idx}"
+
+        :ok =
+          EvoGit.Store.put_task(store(), %TaskInfo{
+            id: task_id,
+            type: :evolve,
+            status: status,
+            opts: [path: "/tmp/test", mode: "simple"],
+            ref: nil,
+            started_at: DateTime.utc_now(),
+            finished_at: nil,
+            logs: [],
+            result: nil
+          })
+
+        # A paused (or draining) row OWNS its id: `start_task/2` mints a fresh id,
+        # so only a direct `{:start_task, id, ...}` call can reach this guard —
+        # and it must never take the row over (that would reset the archive
+        # roster and lose the paused run).
+        assert {:reply, {:error, :cancelled}, ^state} =
+                 TaskRegistry.handle_call(
+                   {:start_task, task_id, :evolve, [path: "/tmp/test", mode: "simple"]},
+                   {self(), make_ref()},
+                   state
+                 )
+
+        # The row is untouched by the refusal.
+        assert EvoGit.Store.get_task(store(), task_id).status == status
+      end
     end
   end
 
