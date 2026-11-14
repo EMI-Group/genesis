@@ -276,6 +276,112 @@ defmodule EvoGit.Agent.ResumeTest do
     end
   end
 
+  describe "task-level pause resume narration" do
+    test "a CLEAN pause restores the transcript with NO repair and one neutral notice" do
+      # A clean pause stops at a TURN BOUNDARY, so nothing is dangling and no
+      # batch is in flight — the transcript is exactly what the pause left.
+      messages = [
+        message(:system, "sys prompt"),
+        message(:user, @objective),
+        message(:assistant, "working")
+      ]
+
+      state = state(messages, batch: nil, resume_info: clean_pause_info())
+
+      # The contract this narration rests on: a clean pause has nothing to
+      # repair by construction.
+      assert Resume.dangling(state) == :none
+      assert ToolBatch.calls(state.pending_tool_batch) == []
+
+      resumed = Resume.apply(state, reattach_fun: deny_reattach(self()))
+
+      # Prefix invariant: system + first user message stay BYTE-IDENTICAL.
+      assert Enum.take(resumed.context.messages, 2) == Enum.take(messages, 2)
+
+      # NO synthetic tool result: exactly ONE message was appended.
+      assert length(resumed.context.messages) == length(messages) + 1
+      refute Enum.any?(resumed.context.messages, &(&1.role == :tool))
+
+      notice = List.last(resumed.context.messages)
+      text = text_of(notice)
+
+      # One neutral notice — never `[RESUME]`, never repair/inconsistency wording.
+      assert notice.role == :user
+      assert notice.metadata[:resume_notice] == true
+      assert notice.metadata[:user_authored] == nil
+      refute text =~ "[RESUME]"
+      refute text =~ "repair"
+      refute text =~ "inconsistent"
+      refute text =~ "Interrupted tool calls"
+
+      # It states the pause/resume, the untouched worktree and the subagent
+      # limit, and claims no interruption.
+      assert text =~ "paused this task and has now resumed it"
+      assert text =~ "worktree is exactly as it was left"
+      assert text =~ "No tool call was interrupted"
+      assert text =~ "Subagents are NOT resumable after a restart"
+
+      # Exactly ONE such notice in the whole transcript.
+      assert Enum.count(resumed.context.messages, &(&1.role == :user and text_of(&1) =~ "paused")) ==
+               1
+
+      # The marker is cleared and the re-attach was never needed.
+      assert resumed.pending_tool_batch == nil
+      refute_received {:reattach, _agent_id, _count}
+    end
+
+    test "a clean pause with NOTHING appended is still untouched when a notice exists" do
+      state =
+        state(conversation([]) |> List.delete_at(-1), batch: nil, resume_info: clean_pause_info())
+
+      once = Resume.apply(state)
+      twice = Resume.apply(once)
+
+      assert twice == once
+
+      assert Enum.count(twice.context.messages, &(&1.role == :user and text_of(&1) =~ "paused")) ==
+               1
+    end
+
+    test "a clean pause whose restore failed never claims the conversation is intact" do
+      info = %{restore_agent_state: true, restored: false, resume_kind: :clean_pause}
+      state = state(conversation([]) |> List.delete_at(-1), batch: nil, resume_info: info)
+
+      text = state |> Resume.apply() |> then(&List.last(&1.context.messages)) |> text_of()
+
+      assert text =~ "could NOT be restored from durable state"
+      refute text =~ "repair"
+    end
+
+    test "a DIRTY pause keeps the crash repair and exactly ONE [RESUME] notice" do
+      calls = [tool_call("c0", "read"), tool_call("c1", "bash")]
+      info = Map.put(clean_pause_info(), :resume_kind, :dirty_pause)
+
+      resumed =
+        conversation(calls)
+        |> repair!(resume_info: info, reattach_fun: deny_reattach(self()))
+
+      messages = resumed.context.messages
+
+      # Prefix invariant.
+      assert Enum.take(messages, 2) == Enum.take(conversation(calls), 2)
+
+      # The repair DID run: one synthetic `:tool` message per unanswered call.
+      results = Enum.filter(messages, &(&1.role == :tool))
+      assert Enum.map(results, & &1.tool_call_id) == ["c0", "c1"]
+
+      notice = List.last(messages)
+      text = text_of(notice)
+
+      assert text =~ "[RESUME]"
+      assert text =~ "Interrupted tool calls: 2"
+      # A post-restart pause says so and still states the subagent limit.
+      assert text =~ "PAUSED when the host restarted"
+      assert text =~ "Subagents are NOT resumable after a restart"
+      assert Enum.count(messages, &(&1.role == :user and text_of(&1) =~ "[RESUME]")) == 1
+    end
+  end
+
   describe "inertness and idempotence" do
     test "a second apply adds nothing and issues no second re-attach" do
       test_pid = self()
@@ -578,6 +684,28 @@ defmodule EvoGit.Agent.ResumeTest do
   end
 
   ## Conversation / state builders
+
+  # The `resume_info` of a CLEAN pause resume as `Setup.build_initial_state/3`
+  # builds it from the dispatch ctx: a pause resume restores, has no retry and
+  # names the pause checkpoint the worktree was based on.
+  defp clean_pause_info do
+    %{
+      restore_agent_state: true,
+      restored: true,
+      resume_kind: :clean_pause,
+      retries: 0,
+      retry_reason: nil,
+      worktree_resume_from: "pause1234"
+    }
+  end
+
+  # A re-attach fun that must NOT be called; it records any call and degrades.
+  defp deny_reattach(test_pid) do
+    fn agent_id, count ->
+      send(test_pid, {:reattach, agent_id, count})
+      {:error, :no_pending_batch}
+    end
+  end
 
   defp repair!(messages, opts \\ []) do
     state = state(messages, opts)

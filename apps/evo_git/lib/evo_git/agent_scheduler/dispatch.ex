@@ -240,14 +240,16 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         "worker_T#{meta.task_number}_A#{task_local_id}"
       ])
 
-    # Crash-resume-after-a-tool-call: a crash RETRY may carry the sha of the
+    # Resume/retry decisions for THIS dispatch (see `resume_plan/5`): whether the
+    # durable conversation is restored, which resume kind applies, and the
+    # worktree base actually used. A crash RETRY may carry the sha of the
     # crashed run's SALVAGED work (recorded by `Lifecycle` from
-    # `WorktreeManager.salvage_for_retry/2`). Base the fresh worktree on it so
-    # the resumed agent finds the interrupted run's files instead of silently
-    # restarting from the task base. Rare (retries only) and bounded to one
-    # `git cat-file` check.
-    {spec, meta, worktree_resume_from} =
-      apply_crash_base(agent_id, spec, meta, agent_repo_root, retries)
+    # `WorktreeManager.salvage_for_retry/2`); a PAUSE RESUME carries the
+    # per-agent pause checkpoint instead (see `apply_resume_base/6`).
+    plan = resume_plan(agent_id, spec, meta, agent_repo_root, retries)
+    spec = plan.spec
+    meta = plan.meta
+    worktree_resume_from = plan.worktree_resume_from
 
     Store.put_sched_meta(agent_id, %{meta | worktree: worktree_path})
 
@@ -276,13 +278,13 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         session_mode: meta.mode,
         # `:persistent_state` is the TASK-WIDE durability flag (default `true`,
         # `false` opts the whole task — root plus descendants — out of durable
-        # per-agent checkpoints). `:restore_agent_state` is set only on a crash
-        # RETRY of the SAME `agent_id`, so the rebuilt session merges the
-        # persisted conversation onto its fresh dispatch (fresh worktree/repo
-        # path, same identity); a first attempt always starts clean.
-        persistent_state: Keyword.get(spec.opts, :persistent_state, true) != false,
-        restore_agent_state:
-          retries > 0 and Keyword.get(spec.opts, :persistent_state, true) != false,
+        # per-agent checkpoints). `:restore_agent_state` is set on a crash
+        # RETRY of the SAME `agent_id` AND on a task-level PAUSE RESUME, so the
+        # rebuilt session merges the persisted conversation onto its fresh
+        # dispatch (fresh worktree/repo path, same identity); a first attempt
+        # always starts clean.
+        persistent_state: plan.persistent_state,
+        restore_agent_state: plan.restore_agent_state,
         # Crash-resume-after-a-tool-call metadata (consumed by the agent-side
         # workstream; harmless when unused): the sha the retry worktree was
         # actually based on when it is NOT the task base (`nil` otherwise), and
@@ -291,6 +293,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         retry_reason: meta.crash_reason,
         scheduler: self()
       ]
+      |> put_resume_kind(plan.resume_kind)
       |> append_repo_less_ctx(spec, agent_repo_root)
       |> append_notify_ctx(spec)
 
@@ -325,17 +328,132 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     end
   end
 
-  # Rewrites the spec's worktree base for a crash RETRY when a VALID salvaged
-  # commit is recorded on the meta row (`Lifecycle` sets `crash_commit` from
-  # `WorktreeManager.salvage_for_retry/2`). Returns
-  # `{spec, meta, resume_from}` where `resume_from` is the salvaged sha ONLY
-  # when it is the base actually used, else `nil`.
+  # The resume/retry decisions a dispatch makes from `spec.opts` + the meta row.
+  #
+  # Returned map:
+  #
+  #   * `:spec` / `:meta` — the (possibly base-rewritten) inputs to persist and
+  #     dispatch;
+  #   * `:worktree_resume_from` — the sha the worktree is actually based on when
+  #     it is NOT the task base, else `nil`;
+  #   * `:persistent_state` — the TASK-WIDE durability flag (`spec.opts`,
+  #     default `true`, only an explicit `false` opts out);
+  #   * `:restore_agent_state` — `true` for a crash RETRY (`retries > 0`) OR a
+  #     task-level pause resume, and only while durability is on;
+  #   * `:resume_kind` — `:clean_pause | :dirty_pause` for a pause resume, `nil`
+  #     for every other run (`nil` = today's crash-retry semantics).
+  #
+  # Exposed (`@doc false`) so the pause-resume dispatch contract is testable
+  # without starting a session; `do_try_dispatch/4` is its only production
+  # caller.
+  @doc false
+  @spec resume_plan(
+          pos_integer(),
+          AgentSpec.t(),
+          SchedMeta.t(),
+          String.t() | nil,
+          non_neg_integer()
+        ) ::
+          %{
+            spec: AgentSpec.t(),
+            meta: SchedMeta.t(),
+            worktree_resume_from: String.t() | nil,
+            persistent_state: boolean(),
+            restore_agent_state: boolean(),
+            resume_kind: :clean_pause | :dirty_pause | nil
+          }
+  def resume_plan(agent_id, %AgentSpec{} = spec, %SchedMeta{} = meta, repo_root, retries) do
+    resume_kind = resume_kind(spec)
+
+    {spec, meta, worktree_resume_from} =
+      apply_resume_base(agent_id, spec, meta, repo_root, retries, resume_kind)
+
+    persistent_state = Keyword.get(spec.opts, :persistent_state, true) != false
+
+    %{
+      spec: spec,
+      meta: meta,
+      worktree_resume_from: worktree_resume_from,
+      persistent_state: persistent_state,
+      restore_agent_state: (retries > 0 or resume_kind != nil) and persistent_state,
+      resume_kind: resume_kind
+    }
+  end
+
+  # The two task-level PAUSE resume kinds (see `docs/task-pause.md` §6). Any
+  # other value — including an absent key — means "not a pause resume".
+  @pause_resume_kinds [:clean_pause, :dirty_pause]
+
+  defp resume_kind(spec) do
+    case Keyword.get(spec.opts, :resume_kind) do
+      kind when kind in @pause_resume_kinds -> kind
+      _other -> nil
+    end
+  end
+
+  # Only a pause resume contributes a `:resume_kind` ctx key; every other run's
+  # dispatch ctx stays exactly as it was.
+  defp put_resume_kind(ctx, nil), do: ctx
+  defp put_resume_kind(ctx, kind), do: Keyword.put(ctx, :resume_kind, kind)
+
+  # A pause resume resolves its worktree base WITHOUT the retry gate: the task
+  # was resumed from a durable checkpoint, not crashed and retried. For any
+  # other run the crash-retry rule is untouched.
+  defp apply_resume_base(agent_id, spec, meta, repo_root, retries, nil) do
+    apply_crash_base(agent_id, spec, meta, repo_root, retries)
+  end
+
+  defp apply_resume_base(agent_id, spec, meta, repo_root, _retries, _pause_kind) do
+    apply_crash_base(spec, meta, resume_base_sha(agent_id, meta, repo_root))
+  end
+
+  # `meta.crash_commit` WINS (a restart after the pause may have salvaged the
+  # paused worktree), and the per-agent PAUSE checkpoint is the fallback. Both
+  # candidates are VERIFIED with `git cat-file -e` before use; an unusable sha
+  # degrades to the task base (`nil`).
+  defp resume_base_sha(agent_id, meta, repo_root) do
+    [meta.crash_commit, pause_commit(meta, agent_id)]
+    |> Enum.find(fn sha ->
+      is_binary(sha) and sha != "" and Salvage.commit_exists?(repo_root, sha)
+    end)
+  end
+
+  # The pause checkpoint is recorded per (task, agent) in the durable agent
+  # state; a task id / agent id that cannot address a row (or a missing store)
+  # answers `nil`, which is exactly the degrade-to-task-base path.
+  defp pause_commit(%SchedMeta{task_id: task_id}, agent_id)
+       when is_binary(task_id) and is_integer(agent_id) do
+    EvoGit.AgentState.pause_commit(task_id, agent_id)
+  end
+
+  defp pause_commit(_meta, _agent_id), do: nil
+
+  # Rewrites the spec's worktree base when a VALID base commit is supplied
+  # (either the crash-retry rule below or a pause checkpoint resolved by
+  # `apply_resume_base/6`). Returns `{spec, meta, resume_from}` where
+  # `resume_from` is that sha ONLY when it is the base actually used, else
+  # `nil`. The task base stands whenever the sha is absent or unusable.
   #
   # The rewritten spec is persisted by the caller's single
   # `Store.put_sched_meta/2` write: `Worktrees.create_worktree/6` and
   # `assign_and_prepare_worktree/3` both read the base from
   # `meta.spec.phylo_node.current_commit`, so no new argument is threaded
   # through either of them.
+  defp apply_crash_base(spec, meta, nil), do: {spec, meta, nil}
+
+  defp apply_crash_base(spec, meta, sha) do
+    if match?(%EvoGit.Core.PhyloGraphNode{}, spec.phylo_node) do
+      updated_spec = %{spec | phylo_node: %{spec.phylo_node | current_commit: sha}}
+      {updated_spec, %{meta | spec: updated_spec}, sha}
+    else
+      {spec, meta, nil}
+    end
+  end
+
+  # The crash-RETRY rule: only a retry (`retries > 0`) may base its worktree on
+  # the SALVAGED commit recorded on the meta row (`Lifecycle` sets
+  # `crash_commit` from `WorktreeManager.salvage_for_retry/2`). Rare (retries
+  # only) and bounded to one `git cat-file` check.
   defp apply_crash_base(_agent_id, spec, meta, _repo_root, retries) when retries <= 0 do
     {spec, meta, nil}
   end
@@ -343,12 +461,9 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   defp apply_crash_base(_agent_id, spec, meta, repo_root, _retries) do
     sha = meta.crash_commit
 
-    if is_binary(sha) and match?(%EvoGit.Core.PhyloGraphNode{}, spec.phylo_node) and
-         Salvage.commit_exists?(repo_root, sha) do
-      updated_spec = %{spec | phylo_node: %{spec.phylo_node | current_commit: sha}}
-      {updated_spec, %{meta | spec: updated_spec}, sha}
+    if is_binary(sha) and Salvage.commit_exists?(repo_root, sha) do
+      apply_crash_base(spec, meta, sha)
     else
-      # No usable salvaged commit: the task base stands, exactly as before.
       {spec, meta, nil}
     end
   end

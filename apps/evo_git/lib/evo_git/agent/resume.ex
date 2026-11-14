@@ -1,16 +1,28 @@
 defmodule EvoGit.Agent.Resume do
   @moduledoc """
-  Crash-resume repair: make a restored transcript provider-valid and tell the
-  agent what happened.
+  Resume repair/narration: make a restored transcript provider-valid and tell
+  the agent what happened.
 
-  `apply/1` runs ONCE at the very top of `EvoGit.Agent.Exchange.run/2`, before
-  the loop, and ONLY for a genuine CRASH RETRY — `state.resume_info` says the
-  dispatch ctx carried `restore_agent_state: true` (see
+  `apply/1,2` runs ONCE at the very top of `EvoGit.Agent.Exchange.run/2`, before
+  the loop, and ONLY for a RESTORED RUN — `state.resume_info` says the dispatch
+  ctx carried `restore_agent_state: true` (see
   `EvoGit.Agent.Session.Setup.build_initial_state/3`) and durable state is
   enabled. Every other run (a fresh agent, a resume/merge follow-up, an
   interactive session) passes through untouched.
 
-  ## Two steps, both driven by transcript SHAPE
+  ## The resume KIND selects the narration (`resume_info[:resume_kind]`)
+
+    * `nil` — a CRASH RETRY (today's semantics, byte-identical): repair + ONE
+      `[RESUME]` notice.
+    * `:dirty_pause` — a task-level pause resumed after a host restart: the
+      SAME repair and ONE `[RESUME]` notice (it additionally states the pause
+      happened and that subagents are not resumable).
+    * `:clean_pause` — the user paused the task at a turn boundary and resumed
+      it: the conversation is restored with **NO repair** (nothing was
+      interrupted, so no `tool_calls` tail is dangling — see `dangling/1`) and
+      ONE neutral pause/resume notice instead of `[RESUME]` (`Resume.Notice`).
+
+  ## Two steps, both driven by transcript SHAPE (the repairing kinds)
 
   The in-flight marker (`state.pending_tool_batch`) supplies PROVENANCE (which
   turn, which calls, which classes); the transcript supplies the TRUTH (is a
@@ -55,6 +67,8 @@ defmodule EvoGit.Agent.Resume do
   # `apply/2` is the public option-taking entry point; Kernel's would clash.
   import Kernel, except: [apply: 2]
 
+  require Logger
+
   alias EvoGit.Agent.ContextBuilder
   alias EvoGit.Agent.Resume.Notice
   alias EvoGit.Agent.Resume.Reattach
@@ -66,16 +80,22 @@ defmodule EvoGit.Agent.Resume do
   @notice_key :resume_notice
 
   @doc """
-  Repairs and annotates a crash-resumed state; a no-op for every other state.
+  Repairs and annotates a resumed state; a no-op for every other state.
 
   Total: a malformed state/context returns the state unchanged.
   """
   @spec apply(State.t()) :: State.t()
   def apply(%State{} = state), do: apply(state, [])
+
   def apply(state), do: state
 
   @doc """
-  Repairs and annotates a crash-resumed state, with the resume-path options.
+  Repairs and annotates a resumed state, with the resume-path options.
+
+  A `:clean_pause` resume appends ONE neutral pause/resume notice and runs NO
+  repair (nothing was interrupted); every other resume kind (`nil` = crash
+  retry, `:dirty_pause` = post-restart pause) repairs the dangling tail and
+  appends ONE `[RESUME]` notice.
 
   Options:
 
@@ -88,21 +108,43 @@ defmodule EvoGit.Agent.Resume do
   """
   @spec apply(State.t(), keyword()) :: State.t()
   def apply(%State{} = state, opts) when is_list(opts) do
-    if crash_retry?(state) do
-      batch = ToolBatch.normalize(state.pending_tool_batch)
-      state = %{state | pending_tool_batch: batch}
-      state |> repair(batch, opts) |> annotate(batch) |> clear_marker()
-    else
-      state
+    cond do
+      not crash_retry?(state) ->
+        state
+
+      resume_kind(state) == :clean_pause ->
+        state |> annotate_pause() |> clear_marker()
+
+      true ->
+        batch = ToolBatch.normalize(state.pending_tool_batch)
+        state = %{state | pending_tool_batch: batch}
+        state |> repair(batch, opts) |> annotate(batch) |> clear_marker()
     end
   end
 
   def apply(state, _opts), do: state
 
   @doc """
-  True when this state is a CRASH RETRY: the durable restore was requested by the
-  dispatch ctx AND persistent state is enabled for the task.
+  The task-level PAUSE resume kind of this state: `:clean_pause` (paused by the
+  user at a turn boundary), `:dirty_pause` (paused by a host restart) or `nil`
+  (the crash-retry path, which never sets the key). Total.
+  """
+  @spec resume_kind(State.t()) :: :clean_pause | :dirty_pause | nil
+  def resume_kind(%State{resume_info: %{} = info}) do
+    case Map.get(info, :resume_kind) do
+      kind when kind in [:clean_pause, :dirty_pause] -> kind
+      _other -> nil
+    end
+  end
 
+  def resume_kind(_state), do: nil
+
+  @doc """
+  True when this state is a RESTORED RUN: the durable restore was requested by
+  the dispatch ctx AND persistent state is enabled for the task.
+
+  Both a crash retry and a task-level pause resume answer `true` — the resume
+  KIND (`resume_kind/1`) decides whether anything is repaired or only narrated.
   A `resume_info` map that is absent/malformed, a `restore_agent_state` that is
   not `true`, or `persistent_state: false` all answer `false`.
   """
@@ -258,6 +300,37 @@ defmodule EvoGit.Agent.Resume do
   defp agent_subagent_modules(_state), do: []
 
   ## Notice
+
+  # A CLEAN pause resume: the conversation is restored verbatim (no repair) and
+  # ONE neutral notice explains the pause. Nothing is asserted about files being
+  # inconsistent — nothing was interrupted. A durable-state anomaly (a dangling
+  # tail or an in-flight marker on a supposedly clean pause) is logged rather
+  # than silently repaired, because repairing would contradict the clean-pause
+  # contract; it points at the pause path, not at this node.
+  defp annotate_pause(%State{} = state) do
+    warn_on_clean_pause_anomaly(state)
+
+    if notice_present?(state.context) or not repair_target?(state) do
+      state
+    else
+      message =
+        state
+        |> Notice.pause_text()
+        |> ContextBuilder.build_injected_message(state.turn)
+        |> mark_notice()
+
+      %{state | context: ReqLLM.Context.append(state.context, message)}
+    end
+  end
+
+  defp warn_on_clean_pause_anomaly(%State{} = state) do
+    if dangling(state) != :none or ToolBatch.calls(state.pending_tool_batch) != [] do
+      Logger.warning(
+        "Agent #{inspect(state.agent_id)}: clean-pause resume found an in-flight tool batch " <>
+          "in the durable state; no repair is performed for a clean pause"
+      )
+    end
+  end
 
   defp annotate(%State{} = state, batch) do
     if notice_present?(state.context) or not repair_target?(state) do

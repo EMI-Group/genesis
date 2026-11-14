@@ -445,13 +445,13 @@ defmodule EvoGit.Agent.Session.Setup do
     end
   end
 
-  # A CRASH RETRY of the SAME agent_id asks the durable store to restore its
-  # conversation onto the freshly built state: the persisted transcript is
-  # AUTHORITATIVE (it replaces the `[system, user]` pair rebuilt from disk)
-  # while identity, worktree, paths, model selection and phase stay FRESH — they
-  # belong to THIS run and to its re-created worktree. A missing/corrupt/
-  # unavailable row simply leaves the fresh state untouched: durable state is an
-  # optimisation, never a prerequisite for running.
+  # A CRASH RETRY or a TASK-LEVEL PAUSE RESUME of the SAME agent_id asks the
+  # durable store to restore its conversation onto the freshly built state: the
+  # persisted transcript is AUTHORITATIVE (it replaces the `[system, user]` pair
+  # rebuilt from disk) while identity, worktree, paths, model selection and
+  # phase stay FRESH — they belong to THIS run and to its re-created worktree. A
+  # missing/corrupt/unavailable row simply leaves the fresh state untouched:
+  # durable state is an optimisation, never a prerequisite for running.
   @spec maybe_restore_state(%State{}, keyword()) :: {%State{}, boolean() | nil}
   defp maybe_restore_state(%State{} = state, ctx) do
     task_id = get_field(ctx, :task_id)
@@ -475,22 +475,40 @@ defmodule EvoGit.Agent.Session.Setup do
     end
   end
 
-  # TRANSIENT crash-resume provenance (never persisted — it describes THIS
-  # dispatch, not the conversation): `EvoGit.Agent.Resume` is its only consumer.
-  # `nil` means "not a crash retry", so no repair and no notice ever run for a
-  # fresh run. Every fact except `restore_agent_state`/`restored` comes from the
-  # scheduler's retry plumbing, so an absent key is NORMAL (`nil`) and each
-  # notice sentence degrades to silence rather than inventing a fact.
+  # TRANSIENT crash-resume / pause-resume provenance (never persisted — it
+  # describes THIS dispatch, not the conversation): `EvoGit.Agent.Resume` is its
+  # only consumer. `nil` means "not a resume", so no repair and no notice ever
+  # run for a fresh run. Every fact except `restore_agent_state`/`restored` comes
+  # from the scheduler's retry/resume plumbing, so an absent key is NORMAL
+  # (`nil`) and each notice sentence degrades to silence rather than inventing a
+  # fact.
+  #
+  # `:resume_kind` selects the narration: `nil` (the crash-retry path, which
+  # never sets the key) means the existing repair + `[RESUME]` notice;
+  # `:clean_pause` / `:dirty_pause` mean a TASK-LEVEL PAUSE RESUME (see
+  # `docs/task-pause.md` §6) — a clean pause restores the conversation with NO
+  # repair, a dirty pause keeps the crash-repair wording.
   defp resume_info(_ctx, nil), do: nil
 
   defp resume_info(ctx, restored?) do
     %{
       restore_agent_state: true,
       restored: restored?,
+      resume_kind: resume_kind(ctx),
       retries: get_field(ctx, :retries),
       retry_reason: get_field(ctx, :retry_reason),
       worktree_resume_from: get_field(ctx, :worktree_resume_from)
     }
+  end
+
+  # Only the two task-level pause kinds are carried; any other ctx value (a
+  # crash retry carries none) is `nil`, so narration can never be flipped by a
+  # malformed value.
+  defp resume_kind(ctx) do
+    case get_field(ctx, :resume_kind) do
+      kind when kind in [:clean_pause, :dirty_pause] -> kind
+      _other -> nil
+    end
   end
 
   # --- mode resolution ---
