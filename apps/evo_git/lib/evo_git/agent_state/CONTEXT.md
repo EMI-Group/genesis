@@ -35,11 +35,12 @@ Writes are serialized through ONE writer process; reads run in the caller agains
 - A mismatch (or a missing row while `base_seq > 0`) writes NOTHING and sends `{:agent_state_resync, task_id, agent_id}` to `owner` (a dead pid is a silent no-op).
 - `:rewrite` (post-compression) deletes the run's chunks and stores the whole list as ONE chunk at `seq = 0`.
 - Append chunk `seq` = the row's current `chunk_count`; an empty append tail inserts no chunk but still UPSERTs `fields` (and creates the row when absent).
-- `fields` keys: `:agent_module`, `:depth`, `:parent_id`, `:node_path`, `:repo_id`, `:repo_less`, `:repo_root`, `:custom_agent_id`, `:mode`, `:archive`, `:objective`, `:model_spec`, `:provider_profile_id`, `:model_id`, `:model_id_locked`, `:prompt_cache_key`, `:llm_model`, `:llm_context_window`, `:turn`, `:usage`, `:total_tokens`, `:compression_count`, `:current_commit`, `:phase`, `:pending_inputs`, `:status`.
+- `fields` keys: `:agent_module`, `:depth`, `:parent_id`, `:node_path`, `:repo_id`, `:repo_less`, `:repo_root`, `:custom_agent_id`, `:mode`, `:archive`, `:objective`, `:model_spec`, `:provider_profile_id`, `:model_id`, `:model_id_locked`, `:prompt_cache_key`, `:llm_model`, `:llm_context_window`, `:turn`, `:usage`, `:total_tokens`, `:compression_count`, `:current_commit`, `:phase`, `:pending_inputs`, `:pending_tool_batch`, `:status`.
 - Only SUPPLIED keys are written (an UPSERT never clobbers an earlier value with a default); unknown keys are ignored.
 
 `%EvoGit.AgentState.Record{}` fields: `:task_id`, `:agent_id`, `:fields`, `:messages`, `:message_count`, `:chunk_count`, `:format_version`, `:inserted_at`, `:updated_at`, `:completed_at`.
-`fields` is ATOM-keyed; text columns decode to strings, booleans to `true | false`, `:agent_module` to the module atom when loaded (else the stored string), and JSON columns (`:model_spec`, `:usage`, `:pending_inputs`) to Jason's native STRING-keyed shape.
+`fields` is ATOM-keyed; text columns decode to strings, booleans to `true | false`, `:agent_module` to the module atom when loaded (else the stored string), and JSON columns (`:model_spec`, `:usage`, `:pending_inputs`, `:pending_tool_batch`) to Jason's native STRING-keyed shape.
+`fields[:pending_tool_batch]` is the in-flight tool-batch marker (`EvoGit.Agent.ToolBatch`): plain JSON text in a nullable column, `nil` unless a batch is executing, and `EvoGit.Agent.ToolBatch.normalize/1` is the ONE place that turns a restored value back into the atom-keyed shape.
 Timestamps are `%DateTime{}` (ISO8601 second precision, UTC) or `nil`.
 
 ## Routing Table
@@ -56,6 +57,8 @@ Timestamps are `%DateTime{}` (ISO8601 second precision, UTC) or `nil`.
 
 - ONE unnamed dynamic `EvoGit.Repo` instance per server, started via `EvoGit.AgentState.Boot.start_dynamic/2` with `pool_size: 2`, `journal_mode: :wal`, `synchronous: :normal` plus `EvoGit.Repo.start_opts/0` tuning — never the canonical named repo, and `EvoGit.Repo.start_opts/0`/`defaults/0` are unchanged.
 - Migrations run on a single-connection boot repo which is then stopped and reopened at the final pool size (SQLite schema-laziness: pool connections must open an already-migrated file).
+- Migration chain: `000001_create_agent_state` is the ONE schema-creating step and `000002_add_pending_tool_batch` adds `agent_states.pending_tool_batch` behind a `PRAGMA table_info` probe, so a fresh boot and an existing data dir converge on the same schema.
+- Because that chain runs BEFORE the first read or write, the store writes `Record.encode_fields/1`'s columns and reads `Record.all_columns/0` directly: there is NO runtime schema probe, no per-checkpoint `PRAGMA` and no "missing column" warning path.
 - `EvoGit.AgentState.Boot` has its OWN `:global` lock id (`{:evo_git_agent_state_migrations, self()}`) and its OWN memoized `:persistent_term` migration source; it never calls `EvoGit.Store.Boot`.
 - Boot is FATAL on a broken/unwritable DB (`File.mkdir_p!`, `{:ok, repo} = ...` propagate out of `init/1`) — never a silent non-persisting server.
 - One checkpoint = one transaction: scalar-row UPSERT + (optional) single chunk INSERT. Message payloads are `:erlang.term_to_binary(messages, compressed: 6)`; JSON fields are Jason TEXT; booleans are 0/1.
@@ -63,8 +66,8 @@ Timestamps are `%DateTime{}` (ISO8601 second precision, UTC) or `nil`.
 
 ## Status & Unfinished-Run Queries
 
-`agent_states.status` is `TEXT NOT NULL DEFAULT 'running'` (migration `000001_create_agent_state.exs:37`) and surfaces ONLY as `Record.fields[:status]`; `mark_completed/3` is the one writer that sets it (`store.ex:284`), while every other value is whatever the checkpointing session supplied — a crashed run keeps the last supplied value (or the `'running'` default).
-There is NO query that selects rows by `status`, and NO unfinished/"recoverable run" listing API: the only non-terminal-row scan is `prune/1`'s retention `SELECT` (`store.ex:359-368`), which deletes and returns nothing to callers.
+`agent_states.status` is `TEXT NOT NULL DEFAULT 'running'` (migration `000001_create_agent_state.exs:37`) and surfaces ONLY as `Record.fields[:status]`; `mark_completed/3` is the one writer that sets it (`store.ex:288`), while every other value is whatever the checkpointing session supplied — a crashed run keeps the last supplied value (or the `'running'` default).
+There is NO query that selects rows by `status`, and NO unfinished/"recoverable run" listing API: the only non-terminal-row scan is `prune/1`'s retention `SELECT` (`store.ex:370`), which deletes and returns nothing to callers.
 The `agent_states_status_completed_at_index` index (migration `:58-60`) therefore has no query behind it today.
 `load/3` never filters on `status`/`completed_at`, so a completed or abandoned run loads exactly like a live one.
 A never-completed record is retained until `updated_at` is older than `2 × retention_days` (default 14 days) — the binding constraint of `prune/1`'s two windows — and is then deleted by the hourly prune pass.
@@ -105,3 +108,4 @@ The suite (`apps/evo_git/test/**`, owned by a higher-scope agent) must cover, wi
 8. `mark_completed` sets `status`/`completed_at` and keeps the row; `prune` with a tiny `:retention_days` deletes only expired runs (and their chunks) while a recent `updated_at` is never pruned; prune returns the deleted count.
 9. `delete` removes one run; `delete_task` removes every run of a task (chunks cascade explicitly).
 10. `server/0` honours the process-dictionary seam; `repo/1` returns `nil` after the server stops; a checkpoint with no server is a no-op `:ok`.
+11. Migration durability (`test/evo_git/agent_state/agent_state_migration_test.exs`): a server started on a fresh temp dir through the REAL boot/migration path has applied versions `[1, 2]` and exactly one nullable `TEXT` `pending_tool_batch` column; a checkpointed in-flight `EvoGit.Agent.ToolBatch` marker is non-null JSON in that column (asserted by a direct `SELECT`) and `ToolBatch.normalize/1` of the loaded value equals the input; a later checkpoint with `nil` clears the column; and a SECOND boot over the same data dir (plus a forced re-run of version 2) keeps the column, the applied versions and the stored marker intact.

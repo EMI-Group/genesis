@@ -12,8 +12,9 @@ Production contract (API, storage model, field list, corruption/retention rules)
 | `agent_state_faults_test.exs` | `EvoGit.AgentStateFaultsTest` | 10 | fault paths: `:not_found`, four corruption shapes, stopped server, `server/0` seam, absent target, malformed entries |
 | `agent_state_retention_test.exs` | `EvoGit.AgentStateRetentionTest` | 6 | `mark_completed/3`, `prune/1` expiry rules, prune idempotence, `delete/3`, `delete_task/2` |
 | `retention_test.exs` | `EvoGit.AgentState.RetentionTest` | 13 | pure `EvoGit.AgentState.Retention` math — no DB, no clock read, no app-env mutation |
+| `agent_state_migration_test.exs` | `EvoGit.AgentState.MigrationTest` | 4 | the REAL migration chain on a fresh temp dir: applied versions `[1, 2]`, exactly one nullable `TEXT` `pending_tool_batch` column, a checkpointed `EvoGit.Agent.ToolBatch` marker as non-null JSON (direct `SELECT`) that `load/3` + `normalize/1` round-trips, `nil` clearing it, and a second boot / forced version-2 re-run staying idempotent with the data intact |
 
-All four modules are `use ExUnit.Case, async: true` with `@moduletag :tmp_dir`.
+All five modules are `use ExUnit.Case, async: true` with `@moduletag :tmp_dir`.
 
 ## Per-File Coverage
 
