@@ -104,6 +104,7 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentScheduler.Slots
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
+  alias EvoGit.AgentScheduler.SubagentReattach
   alias EvoGit.AgentScheduler.Subagents
   alias EvoGit.AgentSpec
 
@@ -303,6 +304,76 @@ defmodule EvoGit.AgentScheduler do
     end
 
     GenServer.call(__MODULE__, {:spawn_sub_agents, parent_id, specs}, timeout)
+  end
+
+  @doc """
+  Re-attaches the RESUMED caller to a parent agent's pending subagent batch.
+
+  `spawn_sub_agents/2` blocks the parent's exchange worker inside a
+  `GenServer.call`. If that worker dies (a session crash the scheduler retries
+  under the SAME agent id), the batch itself survives on the parent's
+  `%SchedMeta{}` row, but the blocked caller is gone — nobody can receive the
+  children's results, and the retried parent would re-spawn duplicate children
+  at duplicate cost. This hands them to the retried parent instead.
+
+  `expected_count` is the number of subagent calls the caller believes it has in
+  flight; when given and different from the row's `total_sub_specs` the call is
+  refused with `{:error, :no_pending_batch}` and the batch is left untouched.
+
+  Returns `{:ok, results}` — one element per subagent spec, in the original
+  order, where a slot whose result can never arrive is
+  `{:error, :subagent_result_lost}` — or `{:error, :no_pending_batch}` when
+  there is no batch, the count does not match, or the batch has already been
+  handed out (it is delivered exactly once), or `{:error, :unavailable}` when
+  the scheduler is not running. Never raises.
+
+  ## Options
+
+    * `:timeout` — how long to wait for the still-running children, in
+      milliseconds (a positive integer). Defaults to the app env
+      `:agent_resume_reattach_timeout_ms`, else
+      `EvoGit.AgentScheduler.SubagentReattach.default_timeout_ms/0` (30
+      minutes). On expiry the still-missing slots are answered as
+      `{:error, :subagent_result_lost}` and the parent is left `:running` —
+      never stuck `:waiting`.
+
+  A fully resolved batch answers immediately; a partially resolved one installs
+  this caller as the parent's waiter, and the LAST in-flight child resumes the
+  parent through the ordinary `maybe_resume_parent → dispatch_ready_parent`
+  path. The batch lives only in the ETS row: a scheduler/BEAM restart loses it
+  and the missing slots then report `{:error, :subagent_result_lost}`.
+  """
+  @spec reattach_sub_agents(pos_integer(), non_neg_integer() | nil, keyword()) ::
+          SubagentReattach.reattach_reply()
+  def reattach_sub_agents(agent_id, expected_count \\ nil, opts \\ []) do
+    timeout = reattach_timeout(opts)
+
+    GenServer.call(
+      __MODULE__,
+      {:reattach_sub_agents, agent_id, expected_count, timeout},
+      :infinity
+    )
+  catch
+    # A nil/absent/dead/restarting scheduler must ANSWER, never raise into a
+    # resumed agent: `GenServer.call` exits `:noproc`/`:normal`/`:shutdown` here.
+    :exit, _reason -> {:error, :unavailable}
+  end
+
+  # `opts[:timeout]` -> the app env -> the module default, every level validated
+  # as a POSITIVE INTEGER at CALL time, so a bad env/config value can never
+  # install a zero/negative timer.
+  defp reattach_timeout(opts) do
+    configured = Application.get_env(:evo_git, :agent_resume_reattach_timeout_ms)
+
+    default =
+      if is_integer(configured) and configured > 0,
+        do: configured,
+        else: SubagentReattach.default_timeout_ms()
+
+    case Keyword.get(opts, :timeout) do
+      timeout when is_integer(timeout) and timeout > 0 -> timeout
+      _other -> default
+    end
   end
 
   @doc """
@@ -1122,6 +1193,18 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
+  # Re-attach half of crash-resume-after-a-tool-call: hand a parent's pending
+  # subagent batch to the RESUMED caller. Slot classification, the immediate
+  # answer and the waiter/timer install all live in `SubagentReattach`.
+  @impl true
+  def handle_call(
+        {:reattach_sub_agents, agent_id, expected_count, timeout},
+        from,
+        %State{} = state
+      ) do
+    SubagentReattach.handle_reattach(agent_id, expected_count, timeout, from, state)
+  end
+
   # --- LLM and Tool Slot Management (delegated to Slots module) ---
 
   @impl true
@@ -1257,6 +1340,14 @@ defmodule EvoGit.AgentScheduler do
     {:noreply, state, status_updates} = Slots.handle_retry_llm_waiting(state)
     Lifecycle.apply_status_updates(status_updates)
     {:noreply, state}
+  end
+
+  # A re-attach waiter's bounded timer popped: answer the batch with the
+  # still-missing slots reported as lost, so a resumed parent is never stuck
+  # `:waiting`. A timer whose waiter was already claimed does not match.
+  @impl true
+  def handle_info({:reattach_timeout, agent_id, token}, %State{} = state) do
+    SubagentReattach.handle_timeout(agent_id, token, state)
   end
 
   # Session process exited (monitor :DOWN).
