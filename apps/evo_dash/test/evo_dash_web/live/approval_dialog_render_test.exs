@@ -84,7 +84,20 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialogRenderTest do
     test "the dialog is the single-request modal the page mounts on demand" do
       dom = dialog(request())
 
-      assert Floki.find(dom, "dialog#approval-dialog.modal[phx-hook='DialogModal']") != []
+      assert length(Floki.find(dom, "dialog#approval-dialog.modal[phx-hook='DialogModal']")) == 1
+      assert attr(dom, "dialog", "aria-modal") == ["true"]
+      assert attr(dom, "dialog", "aria-labelledby") == ["approval-dialog-title"]
+
+      assert attr(dom, "dialog", "aria-describedby") == [
+               "approval-dialog-summary approval-dialog-permission"
+             ]
+
+      for id <- ["approval-dialog-title", "approval-dialog-summary", "approval-dialog-permission"] do
+        assert length(Floki.find(dom, "##{id}")) == 1
+        refute text(dom, "##{id}") == ""
+      end
+
+      assert attr(dom, "dialog", "data-request-id") == ["eval-<request>&1"]
       assert text(dom, "dialog header p") == "Approval required"
       assert attr(dom, "button[phx-click='dialog_closed']", "aria-label") == ["Close"]
 
@@ -98,12 +111,32 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialogRenderTest do
       assert Floki.find(dom, "button[phx-click='next_approval']") == []
     end
 
+    test "an empty queue renders no dialog or decision controls" do
+      dom = dialog([])
+
+      assert Floki.find(dom, "dialog, button, pre, form") == []
+      assert Floki.text(dom) |> String.trim() == ""
+    end
+
     test "several pending requests are stepped one at a time with honest bounds" do
       requests = [
-        request(%{request_id: "one"}),
-        request(%{request_id: "two"}),
-        request(%{request_id: "three"})
+        request(%{request_id: "one", code: "first_original()"}),
+        request(%{request_id: "two", tier: :sudo, code: "second_original()"}),
+        request(%{request_id: "three", code: "third_original()"})
       ]
+
+      for {selected, index} <- Enum.with_index(requests) do
+        dom = dialog(requests, approval_dialog_index: index)
+
+        assert attr(dom, "dialog", "data-request-id") == [selected.request_id]
+        assert dom |> Floki.find("pre code") |> Floki.text() == selected.code
+        assert length(Floki.find(dom, "pre code")) == 1
+        assert Floki.find(dom, "#approval-sudo-warning") != [] == (selected.tier == :sudo)
+
+        for other <- requests, other.request_id != selected.request_id do
+          refute Floki.text(dom) =~ other.code
+        end
+      end
 
       # First of three: "previous" is disabled, "next" is available.
       first = dialog(requests, approval_dialog_index: 0)
@@ -176,7 +209,28 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialogRenderTest do
           "\n  :last_line\nend\n\n"
 
       for tier <- [:write, :sudo] do
-        dom = dialog(request(%{tier: tier, code: code}))
+        original =
+          request(%{
+            request_id: "original-#{tier}-<>&",
+            tier: tier,
+            code: code,
+            # These unrelated fields are not presentation or decision authority.
+            source_node: :not_the_target@node,
+            supplied_code: "substituted_code()",
+            command: "legacy_command()",
+            args: "legacy_args"
+          })
+
+        dom = dialog(original)
+
+        assert_decisions(dom, original.request_id, false)
+        assert attr(dom, "dialog", "data-request-id") == [original.request_id]
+        assert Floki.find(dom, "input, textarea, select, [contenteditable]") == []
+        assert Floki.find(dom, "form[phx-submit]") == []
+
+        for decoy <- ["substituted_code()", "legacy_command()", "legacy_args", "not_the_target"] do
+          refute Floki.text(dom) =~ decoy
+        end
 
         # Do not trim or normalize: the approval must show precisely what runs.
         assert dom |> Floki.find("pre code") |> Floki.text() == code
@@ -288,6 +342,12 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialogRenderTest do
       # Rendered exactly once per dialog.
       assert length(String.split(Floki.text(write), warning)) == 2
       assert length(String.split(Floki.text(legacy), warning)) == 2
+
+      sudo = dialog(request(%{tier: :sudo, warning: warning}))
+      assert text(sudo, "#approval-request-warning") == warning
+      assert text(sudo, "#approval-sudo-warning") =~ "Unrestricted Elixir — no rollback"
+      assert length(String.split(Floki.text(sudo), warning)) == 2
+      assert_decisions(sudo, "eval-<request>&1", false)
     end
 
     test "absent or blank warnings add no block, and identical text is never duplicated" do
@@ -364,11 +424,40 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialogRenderTest do
           ] do
         dom = dialog(request, approval_responses: %{request.request_id => 1})
         assert_decisions(dom, request.request_id, true)
+        assert attr(dom, "dialog", "aria-busy") == ["true"]
+        assert text(dom, "#approval-dialog-busy[role='status']") == "Sending your decision…"
+
+        assert Floki.find(dom, "[aria-live='polite'][aria-atomic='true'] #approval-dialog-busy") !=
+                 []
       end
 
       # Another request's in-flight response never disables this one.
       dom = dialog(request(), approval_responses: %{"someone-else" => 1})
       assert_decisions(dom, "eval-<request>&1", false)
+      assert attr(dom, "dialog", "aria-busy") == ["false"]
+      assert Floki.find(dom, "#approval-dialog-busy") == []
+    end
+
+    test "a failed decision stays actionable and its error belongs only to the selected request" do
+      requests = [request(%{request_id: "failed"}), request(%{request_id: "other", tier: :sudo})]
+      opts = [approval_error: {:response, "failed", :timeout}]
+      failed = dialog(requests, opts)
+
+      assert text(failed, "#approval-dialog-response-error[role='alert']") ==
+               "Failed to respond (:timeout) — the request is still pending; try again."
+
+      assert Floki.find(
+               failed,
+               "[aria-live='polite'][aria-atomic='true'] #approval-dialog-response-error"
+             ) != []
+
+      assert_decisions(failed, "failed", false)
+      assert attr(failed, "dialog", "aria-busy") == ["false"]
+      assert Floki.find(failed, "#approval-dialog-busy") == []
+
+      other = dialog(requests, Keyword.put(opts, :approval_dialog_index, 1))
+      assert Floki.find(other, "#approval-dialog-response-error") == []
+      assert_decisions(other, "other", false)
     end
   end
 
