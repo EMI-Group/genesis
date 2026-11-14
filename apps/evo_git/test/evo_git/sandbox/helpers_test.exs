@@ -3,6 +3,10 @@ defmodule EvoGit.Sandbox.HelpersTest do
 
   alias EvoGit.Sandbox.Helpers
 
+  # Budget for the ONE bounded poll in this file (port-close observation); it
+  # only absorbs scheduling latency, the condition itself is asynchronous.
+  @port_close_timeout_ms 2_000
+
   describe "shell_escape/1" do
     test "wraps a simple argument in single quotes" do
       assert Helpers.shell_escape("hello") == "'hello'"
@@ -403,7 +407,13 @@ defmodule EvoGit.Sandbox.HelpersTest do
 
         # The child is still running, so the port is live and closes cleanly.
         assert Helpers.close_port(port) == :ok
-        refute Port.info(port)
+
+        # `Port.close/1` is a BIF whose unregistration is observed
+        # ASYNCHRONOUSLY: the port can still answer `Port.info/1` for a moment
+        # after the call returns, so a single immediate read flakes under load.
+        # Poll with a deadline instead — the pin is unchanged, the port must
+        # genuinely be closed (and `false` means the deadline expired).
+        assert wait_until(fn -> Port.info(port) == nil end, @port_close_timeout_ms)
 
         assert Helpers.wait_for_os_pid(port) == :undefined
       end
@@ -434,6 +444,28 @@ defmodule EvoGit.Sandbox.HelpersTest do
     @tag :skip
     test "port_env/1 → Port.open/2 charlist env contract (skipped: no bash)" do
       # Only reachable on a host without bash on PATH (CI always has bash).
+    end
+  end
+
+  # Bounded poll (deadline + short sleep loop, never a fixed sleep) for a
+  # condition the VM observes asynchronously: `true` when `fun` holds before
+  # the deadline, `false` once the budget is spent.
+  defp wait_until(fun, timeout_ms) when is_function(fun, 0) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_wait_until(fun, deadline)
+  end
+
+  defp do_wait_until(fun, deadline) do
+    cond do
+      fun.() ->
+        true
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        false
+
+      true ->
+        Process.sleep(5)
+        do_wait_until(fun, deadline)
     end
   end
 
