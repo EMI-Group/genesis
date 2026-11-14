@@ -185,6 +185,45 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     end
   end
 
+  @doc """
+  Commits the agent's CURRENT worktree state and anchors it for a TASK-LEVEL
+  PAUSE, without reclaiming anything.
+
+  This is the sibling of `salvage_for_retry/2` WITHOUT its
+  `Salvage.abnormal_exit?/1` gate: a pause is a CLEAN exit, so it must checkpoint
+  too. The commit is anchored under `refs/genesis/salvage/<branch>` (reusing
+  `EvoGit.AgentScheduler.Salvage.salvage/3` with the agent's `:branch_name`)
+  because reclaim deletes the agent branch right after the session stops, and an
+  unanchored commit would be unreachable — i.e. lost — exactly when the resume
+  needs it.
+
+  Answers:
+
+    * `{:ok, %{commit: sha, branch: branch_name}}` — the worktree checkpoint
+      commit. A CLEAN tree still yields its current HEAD sha (`:base_sha` is
+      deliberately NOT passed), so the resume base is always well defined;
+    * `{:ok, nil}` — nothing to checkpoint: the agent has no registered worktree
+      (repo-less, or a create still queued/in flight), it was already reclaimed,
+      the salvage failed, or the manager is down/wedged.
+
+  TOTAL by construction: never raises, never wedges the caller (the salvage
+  budget plus a small message-loop grace, answered `{:ok, nil}` on a call
+  timeout/exit), and NEVER reclaims the worktree — the session still owns it.
+  """
+  @spec checkpoint_for_pause(pos_integer()) ::
+          {:ok, %{commit: String.t(), branch: String.t() | nil}} | {:ok, nil}
+  def checkpoint_for_pause(agent_id) when is_integer(agent_id) do
+    timeout = Salvage.timeout_ms() + @salvage_call_grace_ms
+
+    try do
+      GenServer.call(__MODULE__, {:checkpoint_for_pause, agent_id}, timeout)
+    catch
+      :exit, _reason -> {:ok, nil}
+    end
+  end
+
+  def checkpoint_for_pause(_agent_id), do: {:ok, nil}
+
   # --- GenServer Callbacks ---
 
   @impl true
@@ -295,6 +334,36 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
       _other_status ->
         # Still queued/creating: no live worktree exists yet, so there is
         # nothing to salvage. The create pipeline owns its eventual cleanup.
+        {:reply, {:ok, nil}, state}
+    end
+  end
+
+  # Checkpoints the agent's CURRENT worktree for a TASK-LEVEL PAUSE without
+  # reclaiming anything (the session still owns the worktree). Unlike
+  # `:salvage_for_retry` there is no abnormal-exit gate: a pause is a CLEAN
+  # exit that must checkpoint too. `:base_sha` is deliberately NOT passed, so a
+  # clean tree still yields its current HEAD sha and the resume base is always
+  # well defined; the commit is anchored under `refs/genesis/salvage/<branch>`
+  # by `Salvage` because the reclaim that follows the pause session's stop
+  # deletes the agent branch.
+  def handle_call({:checkpoint_for_pause, agent_id}, _from, state) do
+    case Map.get(state.agents, agent_id) do
+      %{status: :live} = info ->
+        case Salvage.salvage(
+               info.worktree_path,
+               info.repo_root,
+               branch_name: info.branch_name
+             ) do
+          {:ok, sha} when is_binary(sha) ->
+            {:reply, {:ok, %{commit: sha, branch: info.branch_name}}, state}
+
+          _nothing_to_checkpoint_or_error ->
+            {:reply, {:ok, nil}, state}
+        end
+
+      _no_live_worktree ->
+        # Repo-less agent, or a worktree still queued/creating, or already
+        # reclaimed — there is nothing to checkpoint and nothing to reclaim.
         {:reply, {:ok, nil}, state}
     end
   end

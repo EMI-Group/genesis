@@ -3,13 +3,15 @@ defmodule EvoGit.Agent.Session.Outcome do
   The PURE outcome classification of `EvoGit.Agent.Session` — what an exchange outcome means for
   the session, given the phase it arrived in and the mode the agent runs in.
 
-  `EvoGit.Agent.Exchange.run/2` returns `{:yield, state, text}`, `{:finish, state, result}` or
-  `{:error, reason}`, and the SAME outcome can mean different things:
+  `EvoGit.Agent.Exchange.run/2` returns `{:yield, state, text}`,
+  `{:pause, state}`, `{:finish, state, result}` or `{:error, reason}`, and the
+  SAME outcome can mean different things:
 
   | phase | mode | outcome | verdict |
   |---|---|---|---|
   | `:running` | `:interactive` | `{:yield, state, text}` | `{:idle, state, text}` — non-terminal, `:awaiting_input` |
   | `:cancelling` | any | `{:yield, state, text}` | `{:finalize_yield, state, text}` — the cancel-grace report IS the terminal result |
+  | `:running` | any | `{:pause, state}` | `{:pause, state}` — the paused, resumable resting outcome |
   | `:running` / `:cancelling` | any | `{:finish, state, result}` | `{:finish, state, result}` — terminal success |
   | `:running` / `:cancelling` | any | `{:error, reason}` | `{:error, reason}` — terminal failure, delivered VERBATIM |
   | anything else | any | anything | `{:unexpected, outcome}` — LOUD, never a silent drop |
@@ -17,6 +19,13 @@ defmodule EvoGit.Agent.Session.Outcome do
   "Anything else" covers the two contract violations worth naming: a `:yield` from a ONE-SHOT
   agent (a role that must never yield) and any outcome arriving in a phase that has no exchange
   running at all (`:awaiting_input`, `:starting`, `:finalizing`, `:done`).
+
+  A pause in a phase other than `:running` is `{:unexpected, _}` and UNREACHABLE BY CONSTRUCTION:
+  the engine probes the pause flag only on the exchange loop's `:no_cancel` branch, so a
+  cancelling exchange always takes the cancel-grace path and never yields a pause; and once a
+  session leaves `:running` it owns no exchange worker that could deliver one (the session's own
+  `:DOWN` conversion is likewise gated on `:running`). The arm exists so a future wiring mistake
+  is LOUD instead of silently parking a cancelling/finalizing session.
 
   A yield whose text is not a binary is treated as unexpected too: a report that cannot be
   delivered as text would silently become an empty final report.
@@ -31,6 +40,7 @@ defmodule EvoGit.Agent.Session.Outcome do
   @type verdict ::
           {:idle, State.t(), String.t()}
           | {:finalize_yield, State.t(), String.t()}
+          | {:pause, State.t()}
           | {:finish, State.t(), Result.t()}
           | {:error, term()}
           | {:unexpected, term()}
@@ -49,6 +59,11 @@ defmodule EvoGit.Agent.Session.Outcome do
   def classify(:running, :interactive, {:yield, %State{} = state, text}) when is_binary(text) do
     {:idle, state, text}
   end
+
+  # A TASK-LEVEL PAUSE honoured by a RUNNING exchange (both modes): the run rests
+  # at a turn boundary and stays resumable. Any other phase is `:unexpected` (see
+  # the moduledoc for why that is unreachable by construction).
+  def classify(:running, _mode, {:pause, %State{} = state}), do: {:pause, state}
 
   def classify(phase, _mode, {:finish, %State{} = state, %Result{} = result})
       when phase in [:running, :cancelling] do

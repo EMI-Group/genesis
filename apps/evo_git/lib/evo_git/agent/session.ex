@@ -51,14 +51,18 @@ defmodule EvoGit.Agent.Session do
   a start task that dies without delivering a result (`:normal`/`:shutdown`) fails
   the session with `{:error, {:worktree_create_failed, {:down, reason}}}`.
 
-  ## Yield / finish split (`{@link EvoGit.Agent.Exchange}`)
+  ## Yield / finish / pause split (`{@link EvoGit.Agent.Exchange}`)
 
-  `EvoGit.Agent.Exchange.run/2` has exactly three outcomes: `{:yield, %State{}, text}`,
-  `{:finish, %State{}, %Result{}}` and `{:error, reason}`.
+  `EvoGit.Agent.Exchange.run/2` has exactly four outcomes: `{:yield, %State{}, text}`,
+  `{:pause, %State{}}`, `{:finish, %State{}, %Result{}}` and `{:error, reason}`.
   A `:yield` only happens in INTERACTIVE mode: the engine committed the pending worktree work and
   the reply text is the interim answer. A `:finish` is the terminal completion (the engine already
   ran `EvoGit.Agent.Completion.Builder.finalize/2`, so the completion side effects are written
   exactly ONCE, in the worker).
+  A `:pause` is a TASK-LEVEL PAUSE honoured at a turn boundary: a NON-TERMINAL resting outcome
+  with no completion side effects and no `%Result{}`. The engine already checkpointed the state
+  once, so the session only makes the pause durable (see "Pausing") and delivers the distinct
+  `{:paused, info}` result.
   The outcome → phase mapping is the PURE, documented table in `EvoGit.Agent.Session.Outcome`.
 
   A `:yield` in `:running` interactive mode parks the session in `:awaiting_input`, which means the
@@ -75,6 +79,32 @@ defmodule EvoGit.Agent.Session do
   (`close/2`, `cancel/2`) and never by a clock.
   The WORKTREE is owned by this process through the `WorktreeManager` monitor on the session pid,
   so it is reclaimed exactly once — when the session process stops — and never at a yield.
+
+  ## Pausing (task-level pause)
+
+  A pause is requested per agent by the scheduler (`EvoGit.AgentScheduler.ControlPlane`,
+  set by `begin_task_pause/1`) and reaches the session ONLY through the exchange engine, which
+  probes it at two TURN BOUNDARIES and never mid-batch
+  (`EvoGit.Agent.Exchange.pause_requested?/2` over the `:pause_requested?` seam kind): at the top
+  of the loop AFTER the cancel check (so cancel ALWAYS wins) and immediately after a fully
+  executed tool batch. In-flight tool calls are never interrupted — that is what makes a pause
+  clean.
+  An exchange worker ABORTED by the scheduler's pause slot purge (a queued slot waiter answered
+  `{:error, :paused}`) exits abnormally instead of returning `{:pause, _}`; the `:DOWN` handler
+  therefore converts an abnormal worker exit into a PAUSE when the flag is set (belt and braces),
+  using this session's last checkpointed `%State{}`. The pause flag wins over that abnormal exit;
+  every other `:DOWN` case is unchanged.
+  The durable work then runs in `EvoGit.Agent.Session.Pause`, a MONITORED short-lived process
+  exactly like the completion `Finalize` (so `inspect/2`, `history/2` and `cancel/2` stay
+  answerable): it re-installs the process context with THIS session as owner, reaps the agent's
+  live background jobs, makes a worktree checkpoint commit anchored under
+  `refs/genesis/salvage/<branch>`, persists it with `EvoGit.AgentState.put_pause_commit/3` and
+  then `EvoGit.AgentState.flush/1` before reporting `{:session_paused, pid, info}`.
+  The session delivers `{:paused, info}` (with `info = %{agent_id, task_id, checkpoint, branch,
+  reason: :task_pause}`) through the ONE terminal path, publishes the agent summary with status
+  `:done` (agent-level statuses have no `:paused`; the TASK row becomes `:paused`) and does NOT
+  mark the durable run complete, so a paused run stays resumable.
+  A strong force kill / any session stop stops the pause finalizer (`Pause.stop/1`).
 
   ## Resume is APPEND-ONLY
 
@@ -129,8 +159,8 @@ defmodule EvoGit.Agent.Session do
   Exactly ONE message leaves the session when it ends normally:
   `{:agent_session_result, agent_id, session_pid, result}` sent to the `:scheduler` pid carried
   in the dispatch context (falling back to the registered `EvoGit.AgentScheduler`), where `result`
-  is `{:ok, %EvoGit.Agent.Result{}}` for a finished exchange and the `{:error, reason}` term
-  VERBATIM for a failed one.
+  is `{:ok, %EvoGit.Agent.Result{}}` for a finished exchange, `{:paused, info}` for a task-level
+  pause, and the `{:error, reason}` term VERBATIM for a failed one.
   The message is sent BEFORE the process stops, which is safe because Erlang guarantees signal
   ordering between two processes: the result always arrives before the monitor `:DOWN`.
   The session NEVER replies to the caller that started it — the scheduler owns that `from` reply,
@@ -193,6 +223,7 @@ defmodule EvoGit.Agent.Session do
   alias EvoGit.Agent.Session.Finalize
   alias EvoGit.Agent.Session.Input
   alias EvoGit.Agent.Session.Outcome
+  alias EvoGit.Agent.Session.Pause
   alias EvoGit.Agent.Session.Persistence
   alias EvoGit.Agent.Session.Registry, as: SessionRegistry
   alias EvoGit.Agent.Session.Setup
@@ -436,6 +467,9 @@ defmodule EvoGit.Agent.Session do
       state: nil,
       worker: nil,
       finalizer: nil,
+      # The MONITORED pause finalizer (`EvoGit.Agent.Session.Pause`), mirroring `finalizer`: it
+      # makes a clean pause durable and reports `{:session_paused, pid, info}`.
+      pause_finalizer: nil,
       # The `:starting` phase's ONE durable-setup task plus its two diagnostic
       # timers (`{slow_warn_ref, stall_ref}`), all cleared as soon as it replies.
       start_task: nil,
@@ -520,6 +554,19 @@ defmodule EvoGit.Agent.Session do
     end
   end
 
+  def handle_event(:info, {:session_paused, pid, info}, _phase, data) do
+    cond do
+      Pause.current?(data.pause_finalizer, pid) ->
+        # Terminal delivery happens in `finalize/1` and only there: the pause finalizer only
+        # builds `info`, so a pause can never double-send.
+        finalize(%{data | pause_finalizer: nil, result: {:paused, info}})
+
+      true ->
+        log_ignored(data.phase, data, {:stale_session_paused, pid})
+        {:keep_state, data}
+    end
+  end
+
   def handle_event(:info, {:delta, events}, phase, data) when phase in [:running, :cancelling] do
     {:keep_state, buffer_events(data, events)}
   end
@@ -553,6 +600,17 @@ defmodule EvoGit.Agent.Session do
 
         finalize(%{data | finalizer: nil, result: {:error, {:finalize_crashed, {:down, reason}}}})
 
+      # The PAUSE finalizer owns the same "every raise/exit caught" contract, so reaching this arm
+      # means it was KILLED: answer the paused outcome with a nil checkpoint (the resume then falls
+      # back to the task base) instead of parking in `:finalizing` forever.
+      Pause.current?(data.pause_finalizer, pid) ->
+        Logger.warning(
+          "AgentSession #{Kernel.inspect(agent_id(data))}: pause finalizer died without a " <>
+            "result (#{Kernel.inspect(reason)})"
+        )
+
+        finalize(%{data | pause_finalizer: nil, result: {:paused, paused_info(data.state, nil)}})
+
       # The START task died without delivering its result. A `:normal`/`:shutdown` death is
       # "nothing to build a state from"; anything else is the setup failure the scheduler's
       # crash/retry path must see (an exception in the task is NEVER rescued).
@@ -574,7 +632,16 @@ defmodule EvoGit.Agent.Session do
         {:stop, :normal, data |> reset_activity() |> flush_deltas()}
 
       current_worker?(data, pid) ->
-        {:stop, reason, data |> reset_activity() |> flush_deltas()}
+        # BELT AND BRACES (pause precedence): an exchange ABORTED by the scheduler's pause slot
+        # purge exits abnormally (`{:error, :paused}` raises inside `with_llm_slot/2`) instead of
+        # returning `{:pause, _}`, so an abnormal worker exit with the pause flag set IS a pause —
+        # it must never surface as `:failed`/`:cancelled`. The flag wins over the exit reason; the
+        # session's own last checkpointed state is the pause base.
+        if pause_requested?(data) do
+          {:next_state, :finalizing, start_pause_finalizer(%{data | worker: nil})}
+        else
+          {:stop, reason, data |> reset_activity() |> flush_deltas()}
+        end
 
       true ->
         log_ignored(phase, data, {:stale_down, pid, reason})
@@ -784,6 +851,7 @@ defmodule EvoGit.Agent.Session do
     # force cancel during a slow worktree create answers at once instead of waiting for the create.
     shutdown_start(data)
     Finalize.stop(data.finalizer)
+    Pause.stop(data.pause_finalizer)
 
     # Flush BEFORE the stop; no result delivery, because a force-killed run has no outcome.
     data = data |> reset_activity() |> flush_deltas()
@@ -1190,6 +1258,13 @@ defmodule EvoGit.Agent.Session do
         data = %{data | state: adopt_state(data, state), worker: nil, last_yield_text: text}
         {:next_state, :finalizing, start_finalizer(data, text)}
 
+      {:pause, %State{} = state} ->
+        # A task-level pause honoured at a turn boundary: the engine already checkpointed the
+        # conversation ONCE, so the only work left is making the pause durable in the finalizer
+        # (never here) and then delivering `{:paused, info}` through `finalize/1`.
+        data = %{data | state: adopt_state(data, state), worker: nil}
+        {:next_state, :finalizing, start_pause_finalizer(data)}
+
       {:finish, %State{} = state, %Result{} = result} ->
         # The worker already refreshed the commit sha against the post-fallback worktree HEAD.
         state = adopt_state(data, state)
@@ -1247,6 +1322,44 @@ defmodule EvoGit.Agent.Session do
     %{data | finalizer: finalizer, phase: :finalizing}
   end
 
+  # Starts the MONITORED pause finalizer and moves the session into `:finalizing`. The owner never
+  # blocks on the checkpoint/persist/flush work, and the finalizer reports `{:session_paused, ...}`.
+  defp start_pause_finalizer(data) do
+    data = reset_activity(data)
+    pause_finalizer = Pause.start(self(), data.state, data.tmpdir)
+    %{data | pause_finalizer: pause_finalizer, phase: :finalizing}
+  end
+
+  # The ABORT of a queued LLM/tool slot waiter is not a semantic stop: an exchange worker killed by
+  # the scheduler's pause purge must land as a PAUSE, never as a crash (see the moduledoc). Probes
+  # the SAME seams the worker ran with, so the `:pause_requested?` seam is honoured here too, and it
+  # is TOTAL — an unusable probe reads as `false` and leaves the crash path untouched.
+  defp pause_requested?(%{state: %State{} = state} = data) do
+    data
+    |> exchange_opts()
+    |> EvoGit.Agent.Exchange.Seams.from_opts()
+    |> EvoGit.Agent.Exchange.pause_requested?(state)
+  rescue
+    _error -> false
+  catch
+    _kind, _reason -> false
+  end
+
+  defp pause_requested?(_data), do: false
+
+  defp exchange_opts(%{dispatch_ctx: ctx}) when is_list(ctx),
+    do: Keyword.get(ctx, :exchange_opts, [])
+
+  defp exchange_opts(_data), do: []
+
+  # The paused payload for the `:DOWN` paths that could not run the finalizer. Without a state there
+  # is no identity to report, so the pinned shape is preserved with nils.
+  defp paused_info(%State{} = state, checkpoint), do: Pause.info(state, checkpoint, nil)
+
+  defp paused_info(_state, checkpoint) do
+    %{agent_id: nil, task_id: nil, checkpoint: checkpoint, branch: nil, reason: :task_pause}
+  end
+
   # Terminal delivery, EXACTLY ONCE (one private function, one caller each for the success,
   # failure, unexpected-outcome, close and finalizer paths).
   defp finalize(data) do
@@ -1284,6 +1397,9 @@ defmodule EvoGit.Agent.Session do
     try do
       data |> reset_activity() |> flush_deltas()
       shutdown_start(data)
+      # A stop for ANY reason must not leave a pause finalizer making a checkpoint durable on a
+      # worktree that is about to be reclaimed.
+      Pause.stop(data.pause_finalizer)
       # Best-effort containment: a session that stops for ANY reason must not leave its exchange
       # worker (and the tool call it is blocked on) running against a worktree that is about to be
       # reclaimed. A normal completion/yield has already ended the worker, so this is a no-op there.
@@ -1303,12 +1419,24 @@ defmodule EvoGit.Agent.Session do
   defp publish_final(_data), do: :ok
 
   # The durable run is complete. ONLY this ONE terminal delivery marks it: an interactive session
-  # parked in `:awaiting_input` is still resumable, and a force-killed session never reaches here.
+  # parked in `:awaiting_input` is still resumable, a PAUSED run must stay resumable (its
+  # `pause_commit` marker is what the resume reads), and a force-killed session never reaches here.
+  defp maybe_mark_completed(%{result: {:paused, _info}}), do: :ok
   defp maybe_mark_completed(%{state: %State{} = state}), do: Persistence.complete(state)
   defp maybe_mark_completed(_data), do: :ok
 
   defp final_extra(%{result: {:ok, %Result{commit_sha: sha}}} = _data) when is_binary(sha) do
     [status: :done, current_commit: sha]
+  end
+
+  # A pause is NOT a failure and NOT a completion: the agent-level status stays `:done` (the
+  # agent-level vocabulary has no `:paused`; the TASK row is what becomes `:paused`), and the
+  # checkpoint sha is surfaced so an observer sees where the resume will start.
+  defp final_extra(%{result: {:paused, info}}) do
+    case Map.get(info, :checkpoint) do
+      sha when is_binary(sha) -> [status: :done, current_commit: sha]
+      _none -> [status: :done]
+    end
   end
 
   defp final_extra(%{result: {:error, _reason}}), do: [status: :failed]

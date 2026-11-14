@@ -16,7 +16,9 @@ defmodule EvoGit.Agent.Session.Worker do
     * `{:exchange_finished, self(), outcome}` — the terminal outcome value,
       verbatim: `{:yield, %State{}, text}` (an interactive agent's tool-free
       reply, already refreshed against the post-fallback worktree HEAD),
-      `{:finish, %State{}, %Result{}}` or `{:error, reason}`.
+      `{:pause, %State{}}` (a task-level pause honoured at a turn boundary, also
+      refreshed the same way), `{:finish, %State{}, %Result{}}` or
+      `{:error, reason}`.
 
   ## Live streaming
 
@@ -172,6 +174,12 @@ defmodule EvoGit.Agent.Session.Worker do
   # A failed exchange is delivered verbatim — never converted into a raise or a
   # success.
   defp refresh({:error, reason}), do: {:error, reason}
+
+  # A PAUSE is a resting outcome, not a completion: the `after` fallback above
+  # may have created the commit this pause checkpoints, so the state's recorded
+  # `current_commit` is re-read here exactly like a yield (same process, same
+  # `:repo_path`/`:repo_less` ownership). No result, no completion side effect.
+  defp refresh({:pause, %State{} = state}), do: {:pause, refresh_current_commit(state)}
 
   defp refresh_current_commit(%State{} = state) do
     case Runner.current_commit_sha() do

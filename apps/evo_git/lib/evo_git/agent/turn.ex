@@ -25,7 +25,9 @@ defmodule EvoGit.Agent.Turn do
   turn always ends in the engine's TERMINAL vocabulary — a continuing turn
   re-enters the loop through the `:loop` continuation, so it returns
   `{:yield, state, text}` (an interactive agent's tool-free reply),
-  `{:finish, state, %EvoGit.Agent.Result{}}` or `{:error, reason}`.
+  `{:finish, state, %EvoGit.Agent.Result{}}`, `{:pause, state}` (a task-level
+  pause honoured at the batch boundary, see
+  `EvoGit.Agent.ToolDispatch.continue_after_tools/7`) or `{:error, reason}`.
 
   ## Seams
 
@@ -58,6 +60,7 @@ defmodule EvoGit.Agent.Turn do
           keyword()
         ) ::
           {:yield, State.t(), String.t()}
+          | {:pause, State.t()}
           | {:finish, State.t(), EvoGit.Agent.Result.t()}
           | {:error, term()}
   def run(%State{} = state, cont, opts \\ []) do

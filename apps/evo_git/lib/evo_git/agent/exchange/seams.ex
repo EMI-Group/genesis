@@ -75,17 +75,23 @@ defmodule EvoGit.Agent.Exchange.Seams do
 
   ONE adapter for every scheduler CONTROL-PLANE interaction the loop performs.
   It carries only the input/control surface (`:drain_inputs`,
-  `:cancel_requested?`, `:clear_cancel`) — the conversation state itself is
-  owned by the session process and published through the `:checkpoint` seam, so
-  there is no per-turn ETS write-through anymore. A test seam is normally
-  `fn _kind, _payload, _state -> :ok end`. The kinds and their production
-  defaults (`default_scheduler/3`):
+  `:cancel_requested?`, `:clear_cancel`, `:pause_requested?`) — the conversation
+  state itself is owned by the session process and published through the
+  `:checkpoint` seam, so there is no per-turn ETS write-through anymore. A test
+  seam is normally `fn _kind, _payload, _state -> :ok end`. The kinds and their
+  production defaults (`default_scheduler/3`):
 
   | `kind` | `payload` | default implementation |
   |---|---|---|
   | `:drain_inputs` | ignored | `EvoGit.AgentScheduler.Store.drain_pending_user_messages(state.agent_id)` → `[String.t() \\| map()]` |
   | `:cancel_requested?` | ignored | `EvoGit.AgentScheduler.Store.cancel_requested?(state.agent_id)` → `boolean()` |
   | `:clear_cancel` | ignored | `EvoGit.AgentScheduler.Store.clear_cancel_requested(state.agent_id)` |
+  | `:pause_requested?` | the agent id | `EvoGit.AgentScheduler.ControlPlane.pause_requested?(agent_id)` → `boolean()` (TOTAL: any raise/exit — including a build without that accessor — reads as `false`) |
+
+  `:cancel_requested?` and `:pause_requested?` are read at CALL time and are
+  per-PROCESS safe (no app env, no shared pin), so two concurrent exchanges
+  never observe each other's flag. A pause is ALWAYS probed after the cancel
+  check, never beside it: cancel wins.
 
   ### `checkpoint` — arity 1
 
@@ -124,6 +130,7 @@ defmodule EvoGit.Agent.Exchange.Seams do
           :drain_inputs
           | :cancel_requested?
           | :clear_cancel
+          | :pause_requested?
 
   @type scheduler :: (scheduler_kind(), term(), State.t() -> term())
 
@@ -195,4 +202,34 @@ defmodule EvoGit.Agent.Exchange.Seams do
   def default_scheduler(:clear_cancel, _payload, %State{agent_id: agent_id}) do
     EvoGit.AgentScheduler.Store.clear_cancel_requested(agent_id)
   end
+
+  # The payload carries the agent id, and it is the authority; the state is only
+  # the fallback for a caller that passes none.
+  def default_scheduler(:pause_requested?, payload, %State{agent_id: agent_id}) do
+    default_pause_requested(pause_agent_id(payload, agent_id))
+  end
+
+  @doc """
+  The production `:pause_requested?` read: the scheduler control plane's
+  per-agent pause flag, `false` when it cannot be read.
+
+  TOTAL by construction — the accessor is resolved AT CALL TIME through
+  `apply/3` and every raise/exit (an unstarted table, an absent accessor in a
+  build that does not ship it yet, a dead scheduler) reads as `false`, so a
+  pause probe can never take an exchange down. The flag itself is per-agent
+  state in an app-owned ETS table, so this is per-PROCESS safe as well.
+  """
+  @spec default_pause_requested(pos_integer() | nil) :: boolean()
+  def default_pause_requested(agent_id) when is_integer(agent_id) do
+    apply(EvoGit.AgentScheduler.ControlPlane, :pause_requested?, [agent_id]) == true
+  rescue
+    _error -> false
+  catch
+    _kind, _reason -> false
+  end
+
+  def default_pause_requested(_agent_id), do: false
+
+  defp pause_agent_id(agent_id, _state_agent_id) when is_integer(agent_id), do: agent_id
+  defp pause_agent_id(_payload, state_agent_id), do: state_agent_id
 end

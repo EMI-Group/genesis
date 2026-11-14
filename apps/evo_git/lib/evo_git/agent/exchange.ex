@@ -16,11 +16,32 @@ defmodule EvoGit.Agent.Exchange do
       the session hands back, and the SESSION decides what happens next (wait for
       input, or close). No `%EvoGit.Agent.Result{}` is built and no completion
       side effect is written;
+    * `{:pause, %State{}}` — a TASK-LEVEL PAUSE was requested for this agent and
+      has been honoured at a turn boundary. A pause is a NON-TERMINAL RESTING
+      outcome, distinct from `{:ok, %Result{}}` and from `{:error, _}`: the
+      state is checkpointed exactly once (so the durable conversation and the
+      worktree are resumable), and NO completion side effect, NO report and NO
+      `%Result{}` is produced — the session turns it into a paused delivery;
     * `{:finish, %State{}, %EvoGit.Agent.Result{}}` — the run is complete (every
       `:oneshot` agent); the completion side effects were written exactly once by
       `EvoGit.Agent.Completion.Builder.finalize/2`;
     * `{:error, reason}` — the run failed (for example `:recovery_failed` or a
       terminal `{:llm_request_rejected, message}`).
+
+  ## Where a pause is honoured
+
+  The pause flag is probed at exactly TWO turn boundaries and NEVER mid-batch:
+
+    * the top of the loop, immediately AFTER the cancel check returns `:no_cancel`
+      and before the turn-limit check / `Turn.run/3` — this is the boundary that
+      catches a pause that arrived during an in-flight LLM call;
+    * right after a tool batch completed (results appended, the in-flight marker
+      cleared) and before the next loop step — see
+      `EvoGit.Agent.ToolDispatch.continue_after_tools/7`. In-flight tool calls are
+      never interrupted, which is what makes a pause clean.
+
+  Cancel ALWAYS wins: the pause is only probed on the `:no_cancel` branch, so an
+  agent that is both cancelling and pausing takes the cancel-grace path.
 
   The mode decides ONLY what a tool-free reply means; everything else in the
   loop is identical for both modes.
@@ -60,11 +81,15 @@ defmodule EvoGit.Agent.Exchange do
   alias EvoGit.Agent.Turn
 
   @typedoc """
-  The terminal outcome of one exchange: a yielded interactive turn, a finished
-  run (with its result), or an error that ends the run.
+  The terminal outcome of one exchange: a yielded interactive turn, a paused
+  (resting, resumable) run, a finished run (with its result), or an error that
+  ends the run.
   """
   @type outcome ::
-          {:yield, State.t(), String.t()} | {:finish, State.t(), Result.t()} | {:error, term()}
+          {:yield, State.t(), String.t()}
+          | {:pause, State.t()}
+          | {:finish, State.t(), Result.t()}
+          | {:error, term()}
 
   @doc """
   Runs ONE exchange over `state` until it yields a terminal outcome.
@@ -108,6 +133,16 @@ defmodule EvoGit.Agent.Exchange do
           outcome
 
         {:yield, %State{} = final_state, _text} = outcome ->
+          checkpoint(terminal_state(final_state), seams)
+          outcome
+
+        # A PAUSE is a resting, non-terminal outcome: the state is checkpointed
+        # here (exactly once, like `:finish`/`:yield`) so the durable row and the
+        # session's last adopted state describe the same boundary, and the value
+        # is returned verbatim. No `{:finished, _}` delta is emitted — a pause is
+        # not one of the stream's terminal statuses; the session's own terminal
+        # snapshot (from `finalize/1`) is the only end-of-run publication.
+        {:pause, %State{} = final_state} = outcome ->
           checkpoint(terminal_state(final_state), seams)
           outcome
 
@@ -159,6 +194,21 @@ defmodule EvoGit.Agent.Exchange do
 
   def scheduler(%Seams{scheduler: seam}, kind, payload, %State{} = state) do
     seam.(kind, payload, state)
+  end
+
+  @doc false
+  # Whether a TASK-LEVEL PAUSE is pending for this agent — the ONE pause probe of
+  # the engine, routed through the `:scheduler` seam's `:pause_requested?` kind
+  # (payload = the agent id; the production default reads
+  # `EvoGit.AgentScheduler.ControlPlane.pause_requested?/1` at call time and is
+  # total). Strictly `== true`, so an un-seamed/`nil`/`:ok` answer means "no
+  # pause" and an absent seam is byte-identical to production.
+  #
+  # Never raises: the seam itself is the only outside-world interaction, and its
+  # production default answers `false` on any failure.
+  @spec pause_requested?(Seams.t(), State.t()) :: boolean()
+  def pause_requested?(%Seams{} = seams, %State{agent_id: agent_id} = state) do
+    scheduler(seams, :pause_requested?, agent_id, state) == true
   end
 
   @doc false
@@ -223,12 +273,22 @@ defmodule EvoGit.Agent.Exchange do
         loop(grace_state, opts, seams)
 
       :no_cancel ->
-        cond do
-          EvoGit.Agent.trigger_turn_limit_recovery?(state) ->
-            trigger_recovery(state, turn_limit_reason(state), opts, seams)
+        # A TASK-LEVEL PAUSE is honoured HERE, and only on the `:no_cancel`
+        # branch: cancel always wins (an agent that is both cancelling and
+        # pausing takes the cancel-grace path above). The probe sits BEFORE the
+        # turn-limit check and the turn itself, so a pause that arrived during an
+        # in-flight LLM call is caught at the very next boundary and no further
+        # LLM call is made.
+        if pause_requested?(seams, state) do
+          {:pause, state}
+        else
+          cond do
+            EvoGit.Agent.trigger_turn_limit_recovery?(state) ->
+              trigger_recovery(state, turn_limit_reason(state), opts, seams)
 
-          true ->
-            Turn.run(state, continuations(opts, seams), opts)
+            true ->
+              Turn.run(state, continuations(opts, seams), opts)
+          end
         end
     end
   end

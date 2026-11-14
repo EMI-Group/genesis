@@ -674,7 +674,7 @@ defmodule EvoGit.Agent.ToolDispatch do
          %State{} = state,
          subagent_modules,
          loop_fn,
-         _opts
+         opts
        ) do
     if EvoGit.Agent.grace_period_continue_failed?(state) do
       {:error, :recovery_failed}
@@ -744,9 +744,19 @@ defmodule EvoGit.Agent.ToolDispatch do
       # turn boundary, so a resumed run can never see a completed batch as live.
       state = EvoGit.Agent.Resume.clear_marker(state)
 
-      # No ETS write-through: the updated context and accumulated usage ride the
-      # returned state, and the engine publishes it at the turn boundary.
-      loop_fn.(state)
+      # THE SECOND pause boundary (the first is the top of the exchange loop):
+      # the whole batch has completed, so a task-level pause requested WHILE it
+      # ran is honoured now — never mid-batch, which is what makes a pause clean.
+      # The returned `{:pause, state}` is the exchange's own outcome vocabulary
+      # (`EvoGit.Agent.Exchange`), threaded back through `Turn.run/3` unchanged;
+      # `loop_fn` is not called, so no further LLM call happens in this turn.
+      if EvoGit.Agent.Exchange.pause_requested?(Seams.from_opts(opts), state) do
+        {:pause, state}
+      else
+        # No ETS write-through: the updated context and accumulated usage ride the
+        # returned state, and the engine publishes it at the turn boundary.
+        loop_fn.(state)
+      end
     end
   end
 
