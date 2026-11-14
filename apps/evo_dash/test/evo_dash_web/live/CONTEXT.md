@@ -219,6 +219,14 @@ The mounted session-list row-patch fixture supplies a scoped authoritative `:awa
 The real vanished-session tests retain default watch registration against unique missing ids rather than inheriting that synthetic fixture.
 The mounted silent-finish regression pins exactly-once atomic reconciliation via an authoritative final Watch snapshot after a finished delta without streamed text, never independent legacy history reads.
 
+## Assistant approval notification and execution-indicator coverage
+
+`home_live_test.exs` pins request/scope-specific generic notification payloads, duplicate/recovery/resolved-replay suppression, exact pending-request review without authorization, host metadata after resolution/reset, and invalid request IDs and captured browser scopes.
+`approval_dialog_render_test.exs` pins selected-request code/authority isolation, exact-ID decision payloads, busy accessibility and request-scoped retryable failure feedback.
+Async `home_live/approval_workflow_review_test.exs` and `home_live/execution_indicator_test.exs` cover workflow admission and approval/tool/thinking/text precedence without mounted singleton ownership.
+The mounted stale-scope regression currently fails because `HomeLive.handle_event("review_approval_notification", ...)` ignores the captured browser scope and calls `ApprovalWorkflow.dialog_index/2` instead of scope-validating `/3`, allowing an old notification to open a new chat's pending request when its ID is reused.
+This test node contains no production fix for that source issue.
+
 ## Notes for Agents — running these suites
 
 Use `mix test apps/evo_dash/test` (or an explicit file path).
