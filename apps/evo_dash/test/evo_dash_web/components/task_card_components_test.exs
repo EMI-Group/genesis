@@ -847,6 +847,245 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
     end
   end
 
+  describe "task_card/1 — pause / resume" do
+    # Task-level pause/resume controls live in the card's action row, just
+    # before Cancel: Pause while the task is `:running`/`:pausing`, Resume for
+    # `:paused`. The `action_busy` attr (a map keyed by the STRING task id,
+    # value `:pause` | `:resume`) marks an async call in flight and disables
+    # BOTH of that task's buttons. The paused explainer is status-driven
+    # (`pause_kind` `:dirty` = restart-recovered → warning; `:clean`/nil →
+    # neutral) and needs NO LiveView round-trip.
+    test "Pause is offered only for :running/:pausing, Resume only for :paused" do
+      for status <- [:running, :pausing] do
+        tree = render_action_card(%{id: "t_pause", status: status}) |> parse()
+
+        assert [pause] = Floki.find(tree, "button[phx-click='open_pause_modal']")
+        assert Floki.attribute(pause, "phx-value-task_id") == ["t_pause"]
+        assert Floki.find(tree, "button[phx-click='resume_task']") == []
+      end
+
+      paused = render_action_card(%{id: "t_pause", status: :paused}) |> parse()
+      assert [resume] = Floki.find(paused, "button[phx-click='resume_task']")
+      assert Floki.attribute(resume, "phx-value-task_id") == ["t_pause"]
+      assert Floki.find(paused, "button[phx-click='open_pause_modal']") == []
+
+      for status <- [
+            :pending,
+            :finalizing,
+            :cancelling,
+            :awaiting_input,
+            :completed,
+            :failed,
+            :cancelled
+          ] do
+        tree = render_action_card(%{id: "t_other", status: status}) |> parse()
+
+        assert Floki.find(tree, "button[phx-click='open_pause_modal']") == []
+        assert Floki.find(tree, "button[phx-click='resume_task']") == []
+      end
+    end
+
+    test "Cancel stays unchanged — :pending/:running/:awaiting_input only, never a paused task" do
+      for status <- [:pending, :running, :awaiting_input] do
+        tree = render_action_card(%{id: "t_cancel", status: status}) |> parse()
+        assert [_] = Floki.find(tree, "button[phx-click='open_cancel_modal']")
+      end
+
+      for status <- [:pausing, :paused, :finalizing, :cancelling, :completed, :failed, :cancelled] do
+        tree = render_action_card(%{id: "t_cancel", status: status}) |> parse()
+        assert Floki.find(tree, "button[phx-click='open_cancel_modal']") == []
+      end
+    end
+
+    test "Force kill covers :pausing and :paused (Delete is unconditional)" do
+      for status <- [:running, :awaiting_input, :cancelling, :pausing, :paused] do
+        tree = render_action_card(%{id: "t_kill", status: status}) |> parse()
+
+        assert [_] = Floki.find(tree, "ul.menu button[phx-click='open_force_kill_modal']")
+        assert [_] = Floki.find(tree, "ul.menu button[phx-click='delete_task']")
+
+        assert tree |> Floki.find("li.menu-title") |> Floki.text() |> String.trim() ==
+                 "Danger zone"
+      end
+
+      # Terminal / not-yet-started statuses keep Delete and lose force kill.
+      for status <- [:pending, :completed, :failed, :cancelled] do
+        tree = render_action_card(%{id: "t_kill", status: status}) |> parse()
+
+        assert Floki.find(tree, "ul.menu button[phx-click='open_force_kill_modal']") == []
+        assert [_] = Floki.find(tree, "ul.menu button[phx-click='delete_task']")
+        refute Floki.text(tree) =~ "Danger zone"
+      end
+    end
+
+    test "the badge renders the Pausing…/Paused labels; :pausing pulses, :paused never does" do
+      pausing_html = render_action_card(%{id: "t_label", status: :pausing})
+      pausing_tree = parse(pausing_html)
+
+      assert pausing_tree |> Floki.find(".badge") |> Floki.text() =~ "Pausing…"
+      # Still draining work → pulses in the amber busy family (like :running).
+      assert pausing_html =~ "animate-ping"
+      assert pausing_html =~ "h-1 opacity-80 bg-warning"
+
+      paused_html = render_action_card(%{id: "t_label", status: :paused})
+      paused_tree = parse(paused_html)
+
+      assert paused_tree |> Floki.find(".badge") |> Floki.text() =~ "Paused"
+      assert paused_html =~ "h-1 opacity-80 bg-info"
+      # Nothing is running → no pulse, and no amber busy styling anywhere.
+      refute paused_html =~ "animate-ping"
+      refute paused_html =~ "bg-warning"
+    end
+
+    test "a :pausing card disables Pause, shows the spinner label and explains the wait" do
+      tree = render_action_card(%{id: "t_pausing", status: :pausing}) |> parse()
+
+      assert [pause] = Floki.find(tree, "button[phx-click='open_pause_modal']")
+      assert disabled?(pause)
+      assert Floki.text(pause) |> String.trim() == "Pausing…"
+
+      assert [spinner] = Floki.find(pause, "span.loading.loading-spinner")
+      assert "loading-xs" in class_list(spinner)
+
+      assert Floki.attribute(pause, "title") ==
+               ["The agent finishes its current tool call before stopping"]
+    end
+
+    test "the pause/resume buttons of a running/paused task are enabled when nothing is in flight" do
+      running = render_action_card(%{id: "t_idle", status: :running}) |> parse()
+      assert [pause] = Floki.find(running, "button[phx-click='open_pause_modal']")
+      refute disabled?(pause)
+      assert Floki.text(pause) |> String.trim() == "Pause"
+      assert Floki.find(pause, "span.loading.loading-spinner") == []
+
+      paused = render_action_card(%{id: "t_idle", status: :paused}) |> parse()
+      assert [resume] = Floki.find(paused, "button[phx-click='resume_task']")
+      refute disabled?(resume)
+      assert Floki.text(resume) |> String.trim() == "Resume"
+      assert Floki.find(resume, "span.loading.loading-spinner") == []
+    end
+
+    test "an in-flight :action_busy entry disables BOTH buttons and spins the matching one" do
+      # A pause call in flight on a still-:running task.
+      busy_pause =
+        render_action_card(%{id: "t_busy", status: :running}, action_busy: %{"t_busy" => :pause})
+        |> parse()
+
+      assert [pause] = Floki.find(busy_pause, "button[phx-click='open_pause_modal']")
+      assert disabled?(pause)
+      assert Floki.text(pause) |> String.trim() == "Pausing…"
+      assert [_] = Floki.find(pause, "span.loading.loading-spinner")
+
+      # ANY entry for the task also disables Resume — even a `:pause` one.
+      pause_entry =
+        render_action_card(%{id: "t_busy", status: :paused}, action_busy: %{"t_busy" => :pause})
+        |> parse()
+
+      assert [resume] = Floki.find(pause_entry, "button[phx-click='resume_task']")
+      assert disabled?(resume)
+      assert Floki.text(resume) |> String.trim() == "Resume"
+
+      # The matching `:resume` entry renders its spinner label.
+      resume_entry =
+        render_action_card(%{id: "t_busy", status: :paused}, action_busy: %{"t_busy" => :resume})
+        |> parse()
+
+      assert [resume] = Floki.find(resume_entry, "button[phx-click='resume_task']")
+      assert disabled?(resume)
+      assert Floki.text(resume) |> String.trim() == "Resuming…"
+      assert [_] = Floki.find(resume, "span.loading.loading-spinner")
+
+      # The markers are keyed by task id, so another task's entry is inert.
+      other =
+        render_action_card(%{id: "t_mine", status: :running}, action_busy: %{"t_other" => :pause})
+        |> parse()
+
+      assert [pause] = Floki.find(other, "button[phx-click='open_pause_modal']")
+      refute disabled?(pause)
+      assert Floki.text(pause) |> String.trim() == "Pause"
+    end
+
+    test "a clean pause shows the neutral explainer and resumes directly (no confirmation)" do
+      html = render_action_card(%{id: "t_clean", status: :paused, pause_kind: :clean})
+
+      assert html =~ "bg-info/5 border border-info/20"
+      assert html =~ "Paused by you — resume continues where it stopped."
+      refute html =~ "Resumed after a restart"
+      refute html =~ "Subagents from before the restart are not restored."
+
+      assert [resume] = html |> parse() |> Floki.find("button[phx-click='resume_task']")
+      assert Floki.attribute(resume, "phx-confirm") == []
+    end
+
+    test "a dirty pause warns about inconsistent state and confirms before resuming" do
+      html = render_action_card(%{id: "t_dirty", status: :paused, pause_kind: :dirty})
+
+      assert html =~ "bg-warning/10 border border-warning/20"
+
+      assert html =~
+               "Resumed after a restart: the last tool call may not have completed, so files and background jobs may be inconsistent. Resuming tells the agents so."
+
+      assert html =~ "Subagents from before the restart are not restored."
+      refute html =~ "Paused by you"
+
+      assert [resume] = html |> parse() |> Floki.find("button[phx-click='resume_task']")
+
+      assert Floki.attribute(resume, "phx-confirm") == [
+               "Resume anyway? The last tool call may not have completed, so files and background jobs may be inconsistent."
+             ]
+    end
+
+    test "a legacy paused row without a pause_kind key renders the neutral explainer" do
+      # `pause_kind` is read defensively (`Map.get/2`) — a row that predates the
+      # column (key absent entirely) must render the clean/neutral variant.
+      task = summary_map(%{id: "t_legacy", status: :paused})
+      refute Map.has_key?(task, :pause_kind)
+
+      html = render_component(&TaskCardComponents.task_card/1, task: task)
+
+      assert html =~ "Paused by you — resume continues where it stopped."
+      refute html =~ "Resumed after a restart"
+
+      assert [resume] = html |> parse() |> Floki.find("button[phx-click='resume_task']")
+      assert Floki.attribute(resume, "phx-confirm") == []
+    end
+
+    test "the explainer renders for no other status (even with a dirty pause_kind)" do
+      for status <- [
+            :pending,
+            :running,
+            :pausing,
+            :finalizing,
+            :cancelling,
+            :awaiting_input,
+            :completed,
+            :failed,
+            :cancelled
+          ] do
+        html = render_action_card(%{id: "t_other", status: status, pause_kind: :dirty})
+
+        refute html =~ "Paused by you"
+        refute html =~ "Resumed after a restart"
+        refute html =~ "Subagents from before the restart are not restored."
+      end
+    end
+
+    test "a paused or pausing task is never reviewable" do
+      for status <- [:pausing, :paused] do
+        html = render_action_card(%{id: "t_rev", status: status})
+
+        refute html =~ "/review/"
+        assert Floki.find(parse(html), "a[href*='/review/']") == []
+      end
+
+      # `show_review_button?/1` stays a :completed/:cancelled ALLOWLIST.
+      for status <- [:completed, :cancelled] do
+        html = render_action_card(%{id: "t_rev", status: status})
+        assert [_] = Floki.find(parse(html), "a[href*='/review/']")
+      end
+    end
+  end
+
   # Test-data builders — a minimal failed TaskInfo-shaped map (ATOM keys, the
   # post-Codec-decoded shape) and an error record map.
   defp failed_task(overrides \\ %{}) do
@@ -913,6 +1152,16 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       session_agent_id: session_agent_id
     )
   end
+
+  # Renders the COLLAPSED card from the summary-map shape plus extra attrs —
+  # the pause/resume tests pass `action_busy: %{task_id_string => :pause | :resume}`.
+  defp render_action_card(overrides, attrs \\ []) do
+    render_component(&TaskCardComponents.task_card/1, [task: summary_map(overrides)] ++ attrs)
+  end
+
+  # A boolean HTML attribute (`disabled`) renders without a value; Floki answers
+  # `[]` when the attribute is absent.
+  defp disabled?(node), do: node |> Floki.attribute("disabled") |> Enum.any?()
 
   # Floki's find/2 + attribute/2 require a parsed tree, not a raw binary.
   defp parse(html), do: Floki.parse_document!(html)

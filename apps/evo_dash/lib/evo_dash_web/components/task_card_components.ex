@@ -26,12 +26,16 @@ defmodule EvoDashWeb.TaskCardComponents do
 
   ## Card inputs — summary map + lazily-fetched detail
 
-  `task_card/1` is fed the lightweight 17-key task SUMMARY map
+  `task_card/1` is fed the lightweight 18-key task SUMMARY map
   (`id, status, review_status, started_at, finished_at, type, project_path,
   opts, branch_name, model_id, agent_count, base_sha, commit_sha,
-  lease_expires_at, updated_at, error, session_mode`). `session_mode` is the
-  root agent's driver mode (`"oneshot"` | `"interactive"`); hand-built maps may
-  lack it, so read it defensively (default `"oneshot"`). The summary
+  lease_expires_at, updated_at, error, session_mode, pause_kind`).
+  `session_mode` is the root agent's driver mode (`"oneshot"` |
+  `"interactive"`); hand-built maps may lack it, so read it defensively
+  (default `"oneshot"`). `pause_kind` is `:clean` (user paused; nothing
+  interrupted) | `:dirty` (brought back by a runtime restart; the last tool
+  batch may be half-executed) | `nil` (not paused), so it too is read
+  defensively (`Map.get/2`). The summary
   deliberately carries NO `result` / `usage` / `logs` / `archive_metadata` —
   those heavy payloads arrive through the `detail` attr (see below), so a big
   task blob never rides a task-list render.
@@ -78,6 +82,31 @@ defmodule EvoDashWeb.TaskCardComponents do
   implements both. The card does NOT implement the close confirmation modal
   (the LiveView owns it) and does NOT do optimistic echo: a sent message shows
   only once the server re-renders the session state.
+
+  ## Pause / resume (`:pausing`, `:paused`)
+
+  A task can be paused and later resumed, so the card carries task-level
+  controls plus a status-driven explainer:
+
+    * **Pause** (`phx-click="open_pause_modal"`, `phx-value-task_id`) — offered
+      while `@task.status in [:running, :pausing]`; disabled (spinner +
+      "Pausing…") while the pause drains or an async pause call for the task is
+      in flight;
+    * **Resume** (`phx-click="resume_task"`, `phx-value-task_id`) — offered only
+      for `:paused`, DIRECT for a `:clean` pause, `phx-confirm`-gated for a
+      `:dirty` one; disabled while an async resume is in flight;
+    * the `action_busy` attr (`%{task_id_string => :pause | :resume}`) marks an
+      in-flight async call: ANY entry for a task disables BOTH of its buttons
+      and the matching one renders the spinner label;
+    * **Force kill** stays available for `:pausing`/`:paused` (a draining or
+      stuck pause must always be killable), and Review never is (only
+      `:completed`/`:cancelled` are reviewable);
+    * a `:paused` card renders its explainer strip — amber warning for
+      `pause_kind: :dirty` (the last tool batch may be half-executed and
+      subagents are NOT restored), neutral info for `:clean`/nil.
+
+  `:pausing` is still work draining, so it pulses (amber, like `:running`);
+  `:paused` is at rest and never pulses.
 
   ## Why the preview helpers stay HERE
 
@@ -139,6 +168,12 @@ defmodule EvoDashWeb.TaskCardComponents do
   # status is `:awaiting_input`) the card renders the reply panel — see the
   # moduledoc's "Interactive sessions" section.
   attr(:session_agent_id, :any, default: nil)
+  # Async pause/resume in-flight markers, keyed by the STRING form of a task id
+  # with value `:pause` | `:resume` ("an async pause/resume call for that task
+  # is in flight"). An entry disables BOTH of that task's pause/resume buttons
+  # and the matching one renders its in-flight spinner label. The owning
+  # LiveView owns the map; the card only reads it.
+  attr(:action_busy, :map, default: %{})
 
   def task_card(assigns) do
     ~H"""
@@ -166,6 +201,9 @@ defmodule EvoDashWeb.TaskCardComponents do
          summary's opts are the authoritative source and the lazily-fetched full
          row is an equal-shaped fallback. nil = render no Model line at all. --%>
     <% model_label = ModelLabel.task_label(@task) || ModelLabel.task_label(lite) %>
+    <%!-- The in-flight pause/resume marker for THIS task (`:pause` | `:resume`
+         | nil) — read defensively so a nil/absent map never crashes the card. --%>
+    <% busy_action = action_busy(@action_busy, @task.id) %>
     <div class={[
       "bg-base-100 rounded-lg shadow-sm hover:shadow-md transition-shadow border border-base-200/60 relative z-10 group has-[[open]]:z-30",
       task_card_tint(@task)
@@ -204,8 +242,11 @@ defmodule EvoDashWeb.TaskCardComponents do
               task_status_badge(@task.status),
               "font-medium border-0 px-2.5 py-2 rounded-md"
             ]}>
-              <%!-- `:awaiting_input` (an idle live session) pulses too, in violet. --%>
-              <%= if @task.status in [:running, :cancelling, :awaiting_input] do %>
+              <%!-- `:awaiting_input` (an idle live session) pulses too, in violet.
+                   `:pausing` is still work draining (agents stop at the next turn
+                   boundary), so it pulses like `:running`; `:paused` is at rest
+                   and must NOT pulse. --%>
+              <%= if @task.status in [:running, :cancelling, :awaiting_input, :pausing] do %>
                 <span class="relative flex h-2.5 w-2.5 mr-2">
                   <span
                     class={[
@@ -234,6 +275,12 @@ defmodule EvoDashWeb.TaskCardComponents do
                   <span class="ml-1 text-xs font-normal text-base-content/60">
                     <%!-- zh_CN: 等待你的输入 --%>{gettext("(waiting for you)")}
                   </span>
+                <% @task.status == :pausing -> %>
+                  <%!-- zh_CN: Pausing… = 暂停中(等待当前工具调用结束);
+                       Paused = 已暂停(可恢复) --%>
+                  {gettext("Pausing…")}
+                <% @task.status == :paused -> %>
+                  {gettext("Paused")}
                 <% true -> %>
                   {@task.status}
               <% end %>
@@ -307,6 +354,39 @@ defmodule EvoDashWeb.TaskCardComponents do
           <% end %>
         <% end %>
 
+        <%!-- Paused explainer — status-driven (NO LiveView round-trip), full
+             width, rendered ONLY for a `:paused` task. `pause_kind` is read
+             defensively: `:dirty` = brought back by a runtime restart (the last
+             tool batch may be half-executed) → amber warning + the honest
+             subagents caveat; `:clean` or nil (a legacy row) → the neutral info
+             strip. --%>
+        <%= if Map.get(@task, :status) == :paused do %>
+          <%= if Map.get(@task, :pause_kind) == :dirty do %>
+            <%!-- zh_CN: dirty = 脏暂停（重启恢复，最后一次工具调用可能未完成）；
+                 clean = 干净暂停（用户暂停，没有中断任何工具调用） --%>
+            <div class="flex items-start gap-2 bg-warning/10 border border-warning/20 rounded-lg px-3 py-2 min-w-0">
+              <.icon name="hero-exclamation-triangle" class="size-4 text-warning shrink-0 mt-0.5" />
+              <div class="min-w-0">
+                <p class="text-xs font-medium text-warning">
+                  {gettext(
+                    "Resumed after a restart: the last tool call may not have completed, so files and background jobs may be inconsistent. Resuming tells the agents so."
+                  )}
+                </p>
+                <p class="text-xs text-warning/80 mt-0.5">
+                  {gettext("Subagents from before the restart are not restored.")}
+                </p>
+              </div>
+            </div>
+          <% else %>
+            <div class="flex items-center gap-2 bg-info/5 border border-info/20 rounded-lg px-3 py-2 min-w-0">
+              <.icon name="hero-pause-circle" class="size-4 text-info shrink-0" />
+              <span class="text-xs font-medium text-info">
+                {gettext("Paused by you — resume continues where it stopped.")}
+              </span>
+            </div>
+          <% end %>
+        <% end %>
+
         <!-- Bottom row: Time, Actions, Menu -->
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-base-200/60">
           <div class="flex items-center gap-4 text-xs font-medium text-base-content/70">
@@ -331,6 +411,48 @@ defmodule EvoDashWeb.TaskCardComponents do
           </div>
 
           <div class="flex items-center gap-2 sm:gap-3">
+            <%!-- Pause — a running task drains its agents at the next turn
+                 boundary (`:pausing`) and then rests in `:paused`. Disabled
+                 while the pause is draining or an async pause/resume call for
+                 this task is in flight. --%>
+            <%= if @task.status in [:running, :pausing] do %>
+              <button
+                class="btn btn-sm btn-outline border-base-300 hover:border-info hover:bg-info/10 hover:text-info rounded-md px-4"
+                phx-click="open_pause_modal"
+                phx-value-task_id={@task.id}
+                disabled={busy_action != nil or @task.status == :pausing}
+                title={gettext("The agent finishes its current tool call before stopping")}
+              >
+                <%= if busy_action == :pause or @task.status == :pausing do %>
+                  <span class="loading loading-spinner loading-xs mr-1"></span>
+                  {gettext("Pausing…")}
+                <% else %>
+                  <.icon name="hero-pause" class="size-4 mr-1" /> {gettext("Pause")}
+                <% end %>
+              </button>
+            <% end %>
+
+            <%!-- Resume — DIRECT for a `:clean` pause; a `:dirty` pause (brought
+                 back by a restart) asks for confirmation first, because the last
+                 tool call may not have completed. --%>
+            <%= if @task.status == :paused do %>
+              <button
+                class="btn btn-sm btn-primary rounded-md px-4 shadow-sm"
+                phx-click="resume_task"
+                phx-value-task_id={@task.id}
+                disabled={busy_action != nil}
+                phx-confirm={resume_confirm(@task)}
+                title={gettext("Resume this paused task where it stopped")}
+              >
+                <%= if busy_action == :resume do %>
+                  <span class="loading loading-spinner loading-xs mr-1"></span>
+                  {gettext("Resuming…")}
+                <% else %>
+                  <.icon name="hero-play" class="size-4 mr-1" /> {gettext("Resume")}
+                <% end %>
+              </button>
+            <% end %>
+
             <%!-- Graceful Cancel also covers an idle `:awaiting_input` session. --%>
             <%= if @task.status in [:pending, :running, :awaiting_input] do %>
               <button
@@ -375,7 +497,10 @@ defmodule EvoDashWeb.TaskCardComponents do
                 <.icon name="hero-ellipsis-vertical" class="size-4" />
               </summary>
               <ul class="menu menu-sm dropdown-content mt-1 z-50 p-2 shadow-lg bg-base-100 rounded-lg w-44 border border-base-200">
-                <%= if @task.status in [:running, :awaiting_input, :cancelling] do %>
+                <%!-- A paused or pausing task must ALWAYS be killable: `:pausing`
+                     has a live wrapper draining agents, `:paused` has no live
+                     wrapper but a stuck resume still needs an escalation. --%>
+                <%= if @task.status in [:running, :awaiting_input, :cancelling, :pausing, :paused] do %>
                   <li>
                     <button
                       class="text-error hover:bg-error/10 hover:text-error rounded-md"
@@ -848,6 +973,28 @@ defmodule EvoDashWeb.TaskCardComponents do
     </div>
     """
   end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers — pause / resume
+  # ---------------------------------------------------------------------------
+
+  # The in-flight pause/resume marker for `task_id` (`:pause` | `:resume` |
+  # nil). Keys are the STRING form of a task id; a non-map `action_busy` (nil,
+  # hand-built assigns) degrades to "nothing in flight" instead of raising.
+  defp action_busy(busy, task_id) when is_map(busy), do: Map.get(busy, to_string(task_id))
+  defp action_busy(_busy, _task_id), do: nil
+
+  # Resume is DIRECT for a clean pause; a dirty pause (brought back by a runtime
+  # restart, so the last tool batch may be half-executed) asks for confirmation
+  # so the warning is seen BEFORE the click lands. `nil` renders no attribute —
+  # `pause_kind` is read defensively for legacy rows.
+  defp resume_confirm(%{pause_kind: :dirty} = _task) do
+    gettext(
+      "Resume anyway? The last tool call may not have completed, so files and background jobs may be inconsistent."
+    )
+  end
+
+  defp resume_confirm(_task), do: nil
 
   # ---------------------------------------------------------------------------
   # Private helpers — accent color for task_card status bar
