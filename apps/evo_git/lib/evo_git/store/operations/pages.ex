@@ -14,11 +14,11 @@ defmodule EvoGit.Store.Operations.Pages do
 
   ## `select_tasks_page/2` — the summary page
 
-  Rows are the CANONICAL 17-key summary projection from
+  Rows are the CANONICAL 18-key summary projection from
   `EvoGit.Store.Operations.Summaries.summary_query/0` (id, status,
   review_status, started_at, finished_at, type, project_path, opts,
   branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at,
-  updated_at, error, session_mode) — `result`/`logs`/`usage` are NEVER selected, so a page
+  updated_at, error, session_mode, pause_kind) — `result`/`logs`/`usage` are NEVER selected, so a page
   costs the same whether a row holds 1 kB or 108 MB of `result`. Rows are
   sorted `ORDER BY started_at DESC` and the page is index-served
   (`idx_tasks_started_at`, or the matching composite when a filter pins a
@@ -81,7 +81,7 @@ defmodule EvoGit.Store.Operations.Pages do
   alias EvoGit.TaskInfo
 
   @doc """
-  Returns one page of the 17-key summary projection plus the filtered row
+  Returns one page of the 18-key summary projection plus the filtered row
   total: `%{rows: [summary_map], total: non_neg_integer}`.
 
   See the moduledoc for the projection, the filter/limit/offset contract and
@@ -163,7 +163,7 @@ defmodule EvoGit.Store.Operations.Pages do
 
   ## Private — lite detail read
 
-  # The 19 decode-relevant columns — everything `Operations.Tasks.get_task/2`
+  # The 20 decode-relevant columns — everything `Operations.Tasks.get_task/2`
   # decodes. Field list/order mirrors `Codec.task_columns/0` (which is the
   # positional contract `Codec.decode_task/1` expects, minus `updated_at`).
   defp lite_query(task_id) do
@@ -187,7 +187,8 @@ defmodule EvoGit.Store.Operations.Pages do
         project_path: t.project_path,
         branch_name: t.branch_name,
         error: t.error,
-        session_mode: t.session_mode
+        session_mode: t.session_mode,
+        pause_kind: t.pause_kind
       },
       where: t.id == ^task_id
     )
@@ -218,7 +219,8 @@ defmodule EvoGit.Store.Operations.Pages do
       row.project_path,
       row.branch_name,
       row.error,
-      row.session_mode
+      row.session_mode,
+      row.pause_kind
     ]
   end
 end

@@ -22,7 +22,8 @@ defmodule EvoGit.TaskInfo do
     model_id: nil,
     project_path: nil,
     branch_name: nil,
-    session_mode: "oneshot"
+    session_mode: "oneshot",
+    pause_kind: nil
   ]
 
   @type t :: %__MODULE__{
@@ -31,6 +32,8 @@ defmodule EvoGit.TaskInfo do
           status:
             :pending
             | :running
+            | :pausing
+            | :paused
             | :awaiting_input
             | :finalizing
             | :completed
@@ -53,6 +56,7 @@ defmodule EvoGit.TaskInfo do
           model_id: String.t() | nil,
           project_path: String.t() | nil,
           branch_name: String.t() | nil,
-          session_mode: String.t()
+          session_mode: String.t(),
+          pause_kind: :clean | :dirty | nil
         }
 end

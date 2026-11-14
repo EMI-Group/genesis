@@ -53,6 +53,7 @@ defmodule EvoGit.Store.Schemas.TaskRowRaw do
   | `branch_name`      | `:string`    | `:string`                       |
   | `error`            | `:string`    | `ErrorJson` (JSON TEXT)         |
   | `session_mode`     | `:string`    | `SessionMode` (mode TEXT)       |
+  | `pause_kind`       | `:string`    | `PauseKind` (kind TEXT, NULL = not paused) |
   | `updated_at`       | `:string`    | `TaskTimestampRaw` (ISO TEXT)   |
   """
 
@@ -83,11 +84,12 @@ defmodule EvoGit.Store.Schemas.TaskRowRaw do
     field(:branch_name, :string)
     field(:error, :string)
     field(:session_mode, :string)
+    field(:pause_kind, :string)
     field(:updated_at, :string)
   end
 
   @doc """
-  The 20 task-table column names (strings) in schema-declaration order —
+  The 21 task-table column names (strings) in schema-declaration order —
   identical to `EvoGit.Store.Schemas.TaskRow.columns/0` (the canonical column
   order; a database upgraded from a pre-`session_mode` release carries that
   column after `updated_at` instead, which is functionally irrelevant — every

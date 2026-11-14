@@ -43,7 +43,7 @@ defmodule EvoGit.Store.Operations.Tasks do
   ## put_task replace semantics
 
   ONE `Repo.transaction(..., mode: :immediate)` performing a `delete_all` by
-  id and then an `insert_all` of a FULL 19-key row (nils explicit; struct
+  id and then an `insert_all` of a FULL 20-key row (nils explicit; struct
   fields absent from the caller's struct default to nil). Re-putting a task
   therefore NULLs every column the new struct omits — parity with the old
   `INSERT OR REPLACE`. A changeset upsert (`on_conflict: :replace_all`) would
@@ -425,7 +425,7 @@ defmodule EvoGit.Store.Operations.Tasks do
   end
 
   # %TaskRowRaw{} → %TaskInfo{} via the Codec's positional-list decoder — the
-  # same 19-element `Codec.task_columns/0` order (deliberately WITHOUT
+  # same 20-element `Codec.task_columns/0` order (deliberately WITHOUT
   # `updated_at`, which the old SELECT over those columns never fetched
   # either). Identical to the existing get_task/to_task_info result: decode_task
   # itself applies the `status || :pending` and `ref: nil` fallbacks.
@@ -449,7 +449,8 @@ defmodule EvoGit.Store.Operations.Tasks do
       row.project_path,
       row.branch_name,
       row.error,
-      row.session_mode
+      row.session_mode,
+      row.pause_kind
     ])
   end
 
@@ -500,11 +501,12 @@ defmodule EvoGit.Store.Operations.Tasks do
   defp encode_column_value(:usage, value), do: Codec.encode_usage(value)
   defp encode_column_value(:opts, value), do: Codec.encode_opts(value)
   defp encode_column_value(:session_mode, value), do: Codec.encode_session_mode(value)
+  defp encode_column_value(:pause_kind, value), do: Codec.encode_pause_kind(value)
   defp encode_column_value(_col, value), do: value
 
   ## Private — row building (TaskInfo → insert map)
 
-  # The FULL 19-key insert row. Every key is EXPLICIT (nils included) so the
+  # The FULL 20-key insert row. Every key is EXPLICIT (nils included) so the
   # delete+insert replace NULLs columns the struct omits. Values are RUNTIME
   # values; Ecto dumps each through the schema's EvoGit.Store.Types.* field
   # type, which delegates to the Codec wire format — byte-identical to the old
@@ -530,6 +532,7 @@ defmodule EvoGit.Store.Operations.Tasks do
       branch_name: task.branch_name || branch_name_from_result(task.result),
       error: task.error,
       session_mode: Codec.task_session_mode(task),
+      pause_kind: Codec.encode_pause_kind(task.pause_kind),
       updated_at: DateTime.utc_now()
     }
   end
@@ -576,7 +579,8 @@ defmodule EvoGit.Store.Operations.Tasks do
       model_id: row.model_id,
       project_path: row.project_path,
       branch_name: row.branch_name,
-      session_mode: row.session_mode || Codec.default_session_mode()
+      session_mode: row.session_mode || Codec.default_session_mode(),
+      pause_kind: row.pause_kind
     }
   end
 

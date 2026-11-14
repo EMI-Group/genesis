@@ -41,10 +41,10 @@ defmodule EvoGit.Store.MaintenanceTest do
   # two index migrations, the archive table, the redundant-index prune and the
   # VCT mount table, and the `session_mode` adoption — so `schema_migrations`
   # holds 8 rows.
-  @migration_count 8
+  @migration_count 9
 
   # One schema-complete, CHECKPOINTED database built per module
-  # (`EvoGit.TestSupport.StoreTemplate`): a brand-new file plus the eight
+  # (`EvoGit.TestSupport.StoreTemplate`): a brand-new file plus the nine
   # migrations costs ~12 ms per boot, a byte copy of this template ~0.1 ms.
   # Every test still gets its own isolated file with the identical schema, so
   # the isolation semantics are unchanged. The `:template` context value is the

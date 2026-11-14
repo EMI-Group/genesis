@@ -72,8 +72,17 @@ defmodule EvoGit.Store.CoveringIndexTest do
   @finished_index "idx_tasks_finished_at_id"
   @migration_version 20_260_815_000_004
 
-  # Seed shape: a 10-status cycle repeated 150 times → 1 500 rows.
-  @status_cycle ~w(completed failed cancelled completed running pending finalizing completed failed cancelling)
+  # Seed shape: a 22-status cycle repeated ~68 times → 1 500 rows. TERMINAL
+  # statuses dominate on purpose: a real task store holds a handful of live rows
+  # next to every settled one, and a status cycle split evenly between live and
+  # terminal would let SQLite's cost model prefer a table SCAN for the
+  # `status IN (...)` lease read (its per-value estimate is the AVERAGE rows per
+  # status value, so an even split inflates the apparent match to ~2/3 of the
+  # table). The cycle still contains EVERY status the store can hold, including
+  # the pause pair.
+  @status_cycle ~w(completed failed cancelled completed failed cancelled completed failed cancelled
+                   completed failed cancelled completed failed cancelled completed running pending
+                   finalizing cancelling pausing paused)
   @cycle_length length(@status_cycle)
   @seed_rows 1_500
   # Terminal statuses — the only rows carrying a `finished_at` (mirroring the
@@ -353,11 +362,13 @@ defmodule EvoGit.Store.CoveringIndexTest do
       plan = plan_for!(pid, fn -> Lightweight.select_running_lease_info(pid) end)
 
       # Deliberately NOT given a dedicated covering index: on a real database
-      # this matches only the live tasks, and this synthetic seed is the only
-      # place where those are a large fraction of the table. The status seek
-      # rides the composite `(status, started_at)`. What must never come back is
-      # a full table scan.
-      assert plan =~ "SEARCH t0 USING INDEX idx_tasks_status_started_at"
+      # this matches only the live tasks. The status seek rides a
+      # status-leading composite — `(status, started_at)` or
+      # `(status, updated_at, id)`, whichever the planner prefers for this
+      # five-value IN list on a given seed; both are a seek on `status`, and the
+      # choice between two equally valid status-leading indexes is incidental.
+      # What must never come back is a full table scan.
+      assert plan =~ ~r/SEARCH t0 USING INDEX idx_tasks_status_(started_at|updated_at_id)/
       refute plan =~ ~r/\bSCAN t0\b/
     end
   end
@@ -498,7 +509,7 @@ defmodule EvoGit.Store.CoveringIndexTest do
 
       assert Enum.all?(
                all,
-               &(&1.status in ~w(completed failed cancelled running pending finalizing cancelling)a)
+               &(&1.status in ~w(completed failed cancelled running pending finalizing cancelling pausing paused)a)
              )
     end
 
@@ -510,12 +521,15 @@ defmodule EvoGit.Store.CoveringIndexTest do
     end
 
     test "select_running_lease_info/1 returns the live tasks only", %{pid: pid} do
-      expected = ids_with_statuses(~w(running finalizing cancelling))
+      # `pausing` is lease-bearing (its wrapper is still alive); `paused` is
+      # deliberately NOT — the resting state holds no lease.
+      expected = ids_with_statuses(~w(running finalizing cancelling pausing))
 
       rows = Lightweight.select_running_lease_info(pid)
 
       assert Enum.sort(Enum.map(rows, & &1.id)) == Enum.sort(expected)
-      assert Enum.all?(rows, &(&1.status in ~w(running finalizing cancelling)a))
+      assert Enum.all?(rows, &(&1.status in ~w(running finalizing cancelling pausing)a))
+      refute Enum.any?(rows, &(&1.status == :paused))
     end
 
     test "select_cleanup_info/1 returns every terminal row with a decoded finished_at", %{
