@@ -88,18 +88,106 @@ defmodule EvoDash.NodeContextTest do
     end
   end
 
+  describe "task pause/resume RPC delegates (local node, real paths)" do
+    # `pause_task/2` / `resume_task/2` are PURE delegations to
+    # `EvoGit.RemoteNode.pause_task/2` / `resume_task/2` — no local/remote
+    # split, no reshaping. Each case below pins one documented core answer, so
+    # a wrapper must hand it over VERBATIM (never mask it, never invent one).
+    #
+    # The happy-path transitions (`:running` → `:pausing` → `:paused`) are
+    # deliberately NOT driven here: they flag the app-global scheduler's task
+    # marker (`:evogit_sched_meta`) and broadcast on the shared "tasks" topic,
+    # which is exactly what this module's `async: true` contract forbids. The
+    # refusals below write nothing at all, and the idempotent `:ok` is
+    # documented as write-free and broadcast-free.
+
+    test "pause_task/2 returns {:error, :not_found} for a missing task" do
+      assert EvoDash.NodeContext.pause_task(node(), missing_id()) == {:error, :not_found}
+    end
+
+    test "resume_task/2 returns {:error, :not_found} for a missing task" do
+      assert EvoDash.NodeContext.resume_task(node(), missing_id()) == {:error, :not_found}
+    end
+
+    test "pause_task/2 passes the core refusals through verbatim" do
+      # `:pending` has no wrapper and no agents to drain.
+      pending = insert_fixture!(status: :pending)
+      assert EvoDash.NodeContext.pause_task(node(), pending) == {:error, :not_running}
+      assert EvoGit.Store.get_task_status(EvoGit.Store, pending) == :pending
+
+      # An interactive session is user-driven and has no resumable run.
+      awaiting = insert_fixture!(status: :awaiting_input)
+      assert EvoDash.NodeContext.pause_task(node(), awaiting) == {:error, :not_pausable}
+      assert EvoGit.Store.get_task_status(EvoGit.Store, awaiting) == :awaiting_input
+    end
+
+    test "pause_task/2 is the idempotent :ok for an already paused task" do
+      # The core answers `:ok` for `:pausing`/`:paused` WITHOUT writing, so this
+      # also pins that `:ok` passes through unchanged (not `{:ok, _}`).
+      id = insert_fixture!(status: :paused)
+
+      assert EvoDash.NodeContext.pause_task(node(), id) == :ok
+      assert EvoGit.Store.get_task_status(EvoGit.Store, id) == :paused
+    end
+
+    test "resume_task/2 passes the core refusals through verbatim" do
+      # Only a `:paused` row is resumable.
+      assert EvoDash.NodeContext.resume_task(node(), insert_fixture!(status: :running)) ==
+               {:error, :not_paused}
+
+      # A paused row with no durable agent state has nothing to restore.
+      assert EvoDash.NodeContext.resume_task(node(), insert_fixture!(status: :paused)) ==
+               {:error, :not_resumable}
+    end
+
+    test "the remote path routes through the RPC seam and surfaces its failure" do
+      # `missing_id/0` provably names no row in this store, so the LOCAL path
+      # answers `{:error, :not_found}`. Any unreachable node must therefore
+      # answer a TRANSPORT error instead — proof the call left through
+      # `EvoGit.RemoteNode`'s erpc branch and that its failure is surfaced
+      # rather than masked as success or as a local refusal.
+      #
+      # The exact transport shape depends on whether the LOCAL node is
+      # distributed (same split as the approval-response remote test below):
+      # non-distributed `:erpc.call` RAISES `{:erpc, :noconnection}`, normalized
+      # into `{:error, {:error, {:erpc, :noconnection}}}`; a distributed node
+      # fails with `:nodedown`. Both are error tuples — never a raise.
+      {pause_result, _log} =
+        with_log(fn ->
+          EvoDash.NodeContext.pause_task(:"nonexistent-node@nowhere", missing_id())
+        end)
+
+      {resume_result, _log} =
+        with_log(fn ->
+          EvoDash.NodeContext.resume_task(:"nonexistent-node@nowhere", missing_id())
+        end)
+
+      for result <- [pause_result, resume_result] do
+        refute result == {:error, :not_found}
+
+        if node() == :nonode@nohost do
+          assert result == {:error, {:error, {:erpc, :noconnection}}}
+        else
+          assert match?({:error, _reason}, result)
+        end
+      end
+    end
+  end
+
   describe "lightweight task reads (local node, real paths)" do
     # The summary/lite reads route through
     # `EvoGit.RemoteNode` → `RemoteAPI` → `EvoGit.TaskRegistry` → `EvoGit.Store`,
     # so they are served by the run-wide store with real rows. Each test pins
     # its own unique `project_path`, which keeps every count assertion exact.
-    # The exact summary projection: 17 keys, all of them scalar/lite. The 17th
+    # The exact summary projection: 18 keys, all of them scalar/lite. The 17th
     # (`session_mode`) is the task's driver mode — `"oneshot"` / `"interactive"`
-    # — decoded by the core through `Codec.decode_session_mode/1`.
+    # — decoded by the core through `Codec.decode_session_mode/1`; the 18th
+    # (`pause_kind`) is `:clean | :dirty | nil` — the paused task's resumability
+    # class, decoded by the core through `Codec.decode_pause_kind/1`.
     @summary_keys ~w(
       id status review_status started_at finished_at type project_path opts
       branch_name model_id agent_count base_sha commit_sha lease_expires_at
-      updated_at error session_mode
+      updated_at error session_mode pause_kind
     )a
     test "list_tasks_page/2 returns summary rows + the filtered total (no heavy blobs)" do
       project_path = unique_project_path()
@@ -111,7 +199,9 @@ defmodule EvoDash.NodeContextTest do
       assert row.id == id
       assert row.status == :completed
       assert row.project_path == project_path
-      # The 17-key projection: heavy blobs are never part of a summary row.
+      # A task that is not paused carries no pause class at all.
+      assert row.pause_kind == nil
+      # The 18-key projection: heavy blobs are never part of a summary row.
       assert Enum.sort(Map.keys(row)) == Enum.sort(@summary_keys)
       refute Map.has_key?(row, :result)
       refute Map.has_key?(row, :usage)
