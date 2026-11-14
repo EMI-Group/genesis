@@ -74,7 +74,10 @@ defmodule EvoDashWeb.HomeLive do
 
   @impl true
   def render(assigns) do
-    assigns = assign(assigns, :stream_error, Watch.failure(assigns))
+    assigns =
+      assigns
+      |> assign(:stream_error, Watch.failure(assigns))
+      |> assign(:approval_host, ApprovalWorkflow.notification_host(assigns))
 
     ~H"""
     <EvoDashWeb.Layouts.app
@@ -179,27 +182,62 @@ defmodule EvoDashWeb.HomeLive do
              historical cause of the chat "shaking" at the end of a turn).
              Decisions happen in the single-request dialog below, opened from
              the strip's Review button or automatically for a NEW live request. -->
-          {EvoDashWeb.HomeLive.ApprovalDialog.approval_bar(assigns)}
-          <%= if @approval_dialog_open do %>
-            {EvoDashWeb.HomeLive.ApprovalDialog.approval_dialog(assigns)}
-          <% end %>
-          <!-- Browser-notification sink for a genuinely new approval request:
-             the BrowserNotifications hook notifies only while the window is
-             hidden/unfocused and dedupes by tag. -->
           <div
             id="assistant-notifications"
             phx-hook="BrowserNotifications"
-            class="hidden"
-            aria-hidden="true"
+            class="flex h-10 shrink-0 items-center"
+            data-approval-request-ids={Jason.encode!(@approval_host.request_ids)}
+            data-approval-scope={@approval_host.scope}
+            data-notification-unsupported={gettext("Notifications unavailable")}
+            data-notification-default={gettext("Notifications not enabled")}
+            data-notification-denied={gettext("Notifications blocked")}
+            data-notification-granted={gettext("Notifications enabled")}
           >
+            <div class="min-w-0 flex-1">
+              {EvoDashWeb.HomeLive.ApprovalDialog.approval_bar(assigns)}
+            </div>
+            <!-- Permission is requested only by this explicit user control.
+               The end slot shares the approval strip's reserved height. -->
+            <div class="flex shrink-0 items-center gap-1 pr-3 sm:pr-4">
+              <button
+                type="button"
+                data-enable-notifications
+                class="btn btn-ghost btn-xs btn-square"
+                aria-label={gettext("Enable notifications")}
+                title={gettext("Enable notifications")}
+              >
+                <.icon name="hero-bell" class="size-3.5" />
+              </button>
+              <span
+                data-notification-status
+                role="status"
+                aria-label={gettext("Notification permission status")}
+                class="max-w-16 truncate text-[10px] text-base-content/60 sm:max-w-24"
+              >
+                {gettext("Notifications not enabled")}
+              </span>
+            </div>
           </div>
+          <%= if @approval_dialog_open do %>
+            {EvoDashWeb.HomeLive.ApprovalDialog.approval_dialog(assigns)}
+          <% end %>
           <!-- Interrupt affordance: sits with the composer while a turn runs.
              It NEVER halts a chunk — the draft is delivered at the next turn
              boundary (gettext("Send now (interrupt turn)")). The slot keeps a
              CONSTANT height so the affordance disappearing at the end of a turn
              cannot reflow the column. -->
-          <div class="shrink-0 flex h-7 items-center justify-end px-3 sm:px-4">
-            {EvoDashWeb.HomeLive.Composer.interrupt_button(assigns)}
+          <div class="shrink-0 flex h-7 items-center justify-between gap-2 px-3 sm:px-4">
+            <div class="min-w-0 flex-1">
+              <EvoDashWeb.HomeLive.ExecutionIndicator.execution_indicator
+                chat_status={@chat_status}
+                chat_task_status={@chat_task_status}
+                chat_stream={assigns[:chat_stream]}
+                pending_approval_count={length(@approval_host.request_ids)}
+              />
+            </div>
+            <div class="shrink-0">
+              {EvoDashWeb.HomeLive.Composer.interrupt_button(assigns)}
+            </div>
           </div>
           <!-- Composer: pinned bottom, outside the messages scroller. ONE form
              owns the textarea's `chat_input` draft handler, the pending
@@ -749,6 +787,20 @@ defmodule EvoDashWeb.HomeLive do
     {:noreply, recover_approvals(socket)}
   end
 
+  def handle_event("review_approval_notification", %{"request_id" => request_id}, socket) do
+    # Notification clicks only select an exact currently owned pending request;
+    # they never authorize a decision or fall back to another approval.
+    case ApprovalWorkflow.dialog_index(socket.assigns, request_id) do
+      index when is_integer(index) ->
+        {:noreply, assign(socket, approval_dialog_open: true, approval_dialog_index: index)}
+
+      nil ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("review_approval_notification", _params, socket), do: {:noreply, socket}
+
   def handle_event("open_approval_dialog", _params, socket) do
     {:noreply, open_approval_dialog(socket)}
   end
@@ -1017,24 +1069,15 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   def handle_info({:approval_requested, request}, socket) do
-    # A genuinely NEW live request (never a recovery snapshot) opens the review
-    # dialog when it is not already open and raises a native notification, so
-    # the user does not have to be looking at the tab to notice it. Both
-    # surfaces are gated on the SAME ownership predicate the workflow applies
-    # (ApprovalWorkflow.own_request?/2): a page that ignores a request for
-    # another task/agent/node must never notify about an approval it cannot
-    # act on.
-    socket = ApprovalWorkflow.requested(socket, request)
+    # Live-arrival admission is shared with notification generation: duplicates,
+    # recovered/resolved requests and foreign scopes must not open or notify.
+    {socket, notification} = ApprovalWorkflow.requested_with_notification(socket, request)
 
-    if ApprovalWorkflow.own_request?(socket.assigns, request) do
+    if notification do
       {:noreply,
        socket
        |> auto_open_approval_dialog()
-       |> push_event("task_notification", %{
-         title: gettext("Approval needed"),
-         body: gettext("Genesis is waiting for your approval."),
-         tag: "genesis-approval"
-       })}
+       |> push_event("task_notification", notification)}
     else
       {:noreply, socket}
     end
