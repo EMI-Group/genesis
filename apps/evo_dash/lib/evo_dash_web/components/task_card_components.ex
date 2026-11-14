@@ -89,9 +89,14 @@ defmodule EvoDashWeb.TaskCardComponents do
   controls plus a status-driven explainer:
 
     * **Pause** (`phx-click="open_pause_modal"`, `phx-value-task_id`) — offered
-      while `@task.status in [:running, :pausing]`; disabled (spinner +
+      while `@task.status in [:running, :pausing]` AND the root agent is a
+      one-shot driver (`session_mode != "interactive"`); disabled (spinner +
       "Pausing…") while the pause drains or an async pause call for the task is
-      in flight;
+      in flight. An INTERACTIVE-session task is never offered Pause: the core
+      refuses it (`{:error, :not_pausable}`), so the button would be dead UI.
+      `persistent_state` is NOT in the summary, so the card cannot gate on it —
+      a `persistent_state: false` task's `{:error, :not_resumable}` is covered
+      by the TasksLive flash line instead;
     * **Resume** (`phx-click="resume_task"`, `phx-value-task_id`) — offered only
       for `:paused`, DIRECT for a `:clean` pause, `phx-confirm`-gated for a
       `:dirty` one; disabled while an async resume is in flight;
@@ -412,10 +417,13 @@ defmodule EvoDashWeb.TaskCardComponents do
 
           <div class="flex items-center gap-2 sm:gap-3">
             <%!-- Pause — a running task drains its agents at the next turn
-                 boundary (`:pausing`) and then rests in `:paused`. Disabled
-                 while the pause is draining or an async pause/resume call for
-                 this task is in flight. --%>
-            <%= if @task.status in [:running, :pausing] do %>
+                 boundary (`:pausing`) and then rests in `:paused`. Offered ONLY
+                 for a one-shot run: the core refuses a pause for an
+                 INTERACTIVE-session task (`{:error, :not_pausable}`), so the
+                 button would never succeed. Disabled while the pause is
+                 draining or an async pause/resume call for this task is in
+                 flight. --%>
+            <%= if pause_offered?(@task) do %>
               <button
                 class="btn btn-sm btn-outline border-base-300 hover:border-info hover:bg-info/10 hover:text-info rounded-md px-4"
                 phx-click="open_pause_modal"
@@ -983,6 +991,18 @@ defmodule EvoDashWeb.TaskCardComponents do
   # hand-built assigns) degrades to "nothing in flight" instead of raising.
   defp action_busy(busy, task_id) when is_map(busy), do: Map.get(busy, to_string(task_id))
   defp action_busy(_busy, _task_id), do: nil
+
+  # Is the task in a status a pause could act on AND one the core will accept?
+  # `:running`/`:pausing` only, and never an INTERACTIVE-session task: the core
+  # refuses those with `{:error, :not_pausable}`, so rendering the control would
+  # offer an action that can never succeed. `session_mode` is read defensively
+  # (hand-built maps may lack it → `"oneshot"`). `persistent_state` is
+  # deliberately NOT consulted — the summary does not carry it, and the
+  # `:not_resumable` refusal is surfaced by the TasksLive flash line instead.
+  defp pause_offered?(%{status: status} = task) when status in [:running, :pausing],
+    do: Map.get(task, :session_mode, "oneshot") != "interactive"
+
+  defp pause_offered?(_task), do: false
 
   # Resume is DIRECT for a clean pause; a dirty pause (brought back by a runtime
   # restart, so the last tool batch may be half-executed) asks for confirmation

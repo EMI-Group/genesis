@@ -74,7 +74,13 @@ defmodule EvoDash.MCP.Tools do
      %{
        task_id: @id,
        force: %{type: "boolean", default: false}
-     }, ["task_id"], false}
+     }, ["task_id"], false},
+    {"genesis_pause_task", :pause,
+     "pause the task at the next turn boundary; the agent finishes its current tool call; only non-interactive tasks with durable agent state can be paused; returns request acceptance and the saved task state, not proof that every agent has stopped",
+     %{task_id: @id}, ["task_id"], false},
+    {"genesis_resume_task", :resume,
+     "resume a paused task from its durable checkpoint; a pause recorded after a restart (dirty) tells the agents their last tool call may be incomplete; same task id, work continues where it stopped",
+     %{task_id: @id}, ["task_id"], false}
   ]
 
   def list do

@@ -885,6 +885,74 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       end
     end
 
+    test "Pause is NOT offered for an interactive-session task (the core refuses it)" do
+      # The core answers `{:error, :not_pausable}` for an INTERACTIVE-session
+      # root, so rendering the control would offer an action that can never
+      # succeed. `session_mode` is read defensively (absent → "oneshot").
+      for status <- [:running, :pausing] do
+        tree =
+          render_action_card(%{id: "t_interactive", status: status, session_mode: "interactive"})
+          |> parse()
+
+        assert Floki.find(tree, "button[phx-click='open_pause_modal']") == []
+        # The rest of the action row is unaffected: the danger zone stays.
+        assert [_] = Floki.find(tree, "ul.menu button[phx-click='open_force_kill_modal']")
+      end
+
+      # An interactive `:running` card still offers Cancel.
+      running =
+        render_action_card(%{id: "t_interactive", status: :running, session_mode: "interactive"})
+        |> parse()
+
+      assert [_] = Floki.find(running, "button[phx-click='open_cancel_modal']")
+    end
+
+    test "Pause stays offered for a one-shot run, enabled while running and disabled while :pausing" do
+      running =
+        render_action_card(%{id: "t_oneshot", status: :running, session_mode: "oneshot"})
+        |> parse()
+
+      assert [pause] = Floki.find(running, "button[phx-click='open_pause_modal']")
+      refute disabled?(pause)
+      assert Floki.text(pause) |> String.trim() == "Pause"
+
+      pausing =
+        render_action_card(%{id: "t_oneshot", status: :pausing, session_mode: "oneshot"})
+        |> parse()
+
+      assert [pause] = Floki.find(pausing, "button[phx-click='open_pause_modal']")
+      assert disabled?(pause)
+      assert Floki.text(pause) |> String.trim() == "Pausing…"
+    end
+
+    test "a card without session_mode renders normally and still offers Pause" do
+      # Hand-built summary maps may lack `session_mode`; the card must not
+      # crash and must keep the pre-existing behavior (treated as one-shot).
+      html = render_action_card(%{id: "t_legacy", status: :running})
+      tree = parse(html)
+
+      assert [pause] = Floki.find(tree, "button[phx-click='open_pause_modal']")
+      refute disabled?(pause)
+      assert Floki.find(tree, "button[phx-click='open_cancel_modal']") != []
+      assert tree |> Floki.find(".badge") |> Floki.text() =~ "running"
+    end
+
+    test "Resume is not gated on session_mode" do
+      # A pause can only exist for a non-interactive run, so Resume needs no
+      # gate of its own — the control renders from the status alone.
+      for session_mode <- ["oneshot", "interactive", nil] do
+        task = %{id: "t_resume", status: :paused}
+        task = if session_mode, do: Map.put(task, :session_mode, session_mode), else: task
+
+        tree = render_action_card(task) |> parse()
+
+        assert [resume] = Floki.find(tree, "button[phx-click='resume_task']")
+        refute disabled?(resume)
+        assert Floki.text(resume) |> String.trim() == "Resume"
+        assert Floki.find(tree, "button[phx-click='open_pause_modal']") == []
+      end
+    end
+
     test "Cancel stays unchanged — :pending/:running/:awaiting_input only, never a paused task" do
       for status <- [:pending, :running, :awaiting_input] do
         tree = render_action_card(%{id: "t_cancel", status: status}) |> parse()
