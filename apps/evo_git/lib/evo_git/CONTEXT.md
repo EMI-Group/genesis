@@ -15,7 +15,8 @@ This file is the module-level API surface plus the cross-cutting contracts; each
 - `./vct.ex` + `./vct/` → the internal-only Virtual Context Tree mount store (`EvoGit.VCT` + `Path`/`Mount`/`Table`): a DB-backed `vct_mounts` project list capped by `max_projects/0`, RESERVED system mounts outside `vct:///projects/<name>` (host-declared through `:system_mounts` / `ensure_mount/3`), and the global context `<data_dir>/vct/CONTEXT.md` with its lazy git history — detail: `./vct/CONTEXT.md`; the global context stage of `ContextNode.build_context/2` routes through it
 - `./adapters/` → Git CLI adapter — all git operations go through this module
 - `./runtime/` → Genesis, Evolution, PR helpers, Skill Extraction
-- `./config/` → 3-level configuration resolver (defaults → user TOML → runtime overrides), schema, LLM catalog, platform detection, project config
+- `./config/` → Configuration snapshots, schema, LLM catalog and operator settings APIs: `EvoGit.Config.list_settings/0`, `show/0,1` and partial persisted `update/1` (no automatic scheduler reload), with normalization and patch contracts in `config/CONTEXT.md`.
+- `./agent/tools/elixir_eval/` → Assistant exact-MFA operator access to config discovery/showing, approved partial persisted updates and read-only `EvoGit.VCT.projects/0,1` / `search/1,2`; the generated help catalog and `./agents/self_reflective.ex` carry copy-ready recipes.
 - `./custom_agents/` → `EvoGit.CustomAgents` store + `ModelSelector` (agents.toml + per-agent model-selection script)
 - `./custom_tools/` → `EvoGit.CustomTools` + `.Tool` behaviour — user tools from `<config_dir>/tools/` (`.ex`/`.exs`/`.beam`)
 - `./sandbox/` → Multi-platform sandbox backends (Linux systemd-run, Linux bwrap, macOS sandbox-exec, passthrough)
