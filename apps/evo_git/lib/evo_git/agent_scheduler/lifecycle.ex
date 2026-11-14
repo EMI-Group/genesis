@@ -15,6 +15,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   alias EvoGit.AgentScheduler.Dispatch
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.Subagents
+  alias EvoGit.AgentScheduler.WorktreeManager
 
   # --- Close Waiters (EvoGit.AgentScheduler.await_close/2) ---
 
@@ -239,7 +240,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
     end)
 
     if retry?(state, meta) do
-      retry_agent(state, agent_id, meta)
+      retry_agent(state, agent_id, meta, reason)
     else
       failure_term = permanent_failure_term(meta, reason)
       log_permanent_failure(state, agent_id, reason, meta)
@@ -276,11 +277,29 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
     Logger.error("AgentScheduler: #{msg}")
   end
 
-  defp retry_agent(state, agent_id, meta) do
+  defp retry_agent(state, agent_id, meta, reason) do
     # On retry, just update retry count and status. The crashed agent's
     # worktree is reclaimed by WorktreeManager via its monitor; the retry's
     # session requests a FRESH worktree.
     #
+    # Crash-resume-after-a-tool-call: an ABNORMAL death skips the exchange
+    # worker's `try/after` auto-commit, so the crashed run's dirty work would be
+    # lost. `WorktreeManager.salvage_for_retry/2` (total — it answers
+    # `{:ok, nil}` for a down/wedged manager or nothing to preserve) salvages
+    # and reclaims the worktree NOW and hands back the preserved commit, which
+    # `Dispatch.do_try_dispatch/4` then uses as the retry worktree's base.
+    crash_commit = salvaged_commit(agent_id, reason)
+
+    # Re-read the row: the salvage call can block for up to its own budget, so
+    # writing the struct read BEFORE it could clobber anything written meanwhile
+    # (the scheduler is the only meta writer, but this stays correct even if
+    # that changes).
+    base_meta =
+      case Store.get_sched_meta(agent_id) do
+        {:ok, %SchedMeta{} = fresh} -> fresh
+        :error -> meta
+      end
+
     # The SAME `agent_id` is re-dispatched with `retries: meta.retries + 1`, so
     # `Dispatch.do_try_dispatch/4` emits `restore_agent_state: true` for this
     # rebuilt session (when the task's `:persistent_state` flag is not `false`):
@@ -288,11 +307,13 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
     # fresh dispatch. This does NOT change the retry policy — an INTERACTIVE
     # session is still never retried (see `retry?/2`).
     Store.put_sched_meta(agent_id, %{
-      meta
+      base_meta
       | retries: meta.retries + 1,
         status: :pending,
         session_pid: nil,
-        phase: nil
+        phase: nil,
+        crash_commit: crash_commit,
+        crash_reason: reason
     })
 
     # Reset the summary row's commit (the retry's session rebuilds its state
@@ -321,6 +342,17 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
     state = Dispatch.process_queue(state)
     {:noreply, state}
+  end
+
+  # The sha of the crashed run's salvaged work, or `nil`. `salvage_for_retry/2`
+  # is total by construction (it answers `{:ok, nil}` for a non-abnormal reason,
+  # a down/absent manager or a wedged call), so this cannot break crash
+  # handling.
+  defp salvaged_commit(agent_id, reason) do
+    case WorktreeManager.salvage_for_retry(agent_id, reason) do
+      {:ok, sha} when is_binary(sha) -> sha
+      _other -> nil
+    end
   end
 
   defp permanent_failure(state, agent_id, failure_term, meta) do

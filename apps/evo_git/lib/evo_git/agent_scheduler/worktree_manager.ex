@@ -33,7 +33,12 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     when it exits (for ANY reason — `:normal` completion or crash), its worktree
     is destroyed.
     Cleanup is identical for normal and abnormal exits — there is no reuse
-    semantics; every run gets a fresh worktree.
+    semantics; every run gets a fresh worktree. An ABNORMAL exit additionally
+    SALVAGES the crashed run's dirty work first (`EvoGit.AgentScheduler.Salvage`
+    commits it and anchors the commit under `refs/genesis/salvage/<branch>`) and
+    retains its sha in memory (newest 64 entries per manager process, lost on
+    any restart) for `salvage_for_retry/2` to hand to the crash retry.
+    `:normal`/`:shutdown`/`{:shutdown, _}` skip salvage entirely.
   - Deferred cleanup for agents that die while their create task is still in
     flight (the cleanup runs when the create finishes); an agent that dies
     while its create request is still QUEUED is dropped from the admission
@@ -70,10 +75,22 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   use GenServer
   require Logger
   alias EvoGit.Adapters.Git
+  alias EvoGit.AgentScheduler.Salvage
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.WorktreeRetry
   alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.BackgroundJobs
+
+  # How many salvaged crashed-run shas to retain (newest first; the oldest is
+  # dropped past this bound). Retention is IN-MEMORY ONLY — it is lost on a
+  # WorktreeManager or BEAM restart, in which case the retry falls back to the
+  # task base exactly as before salvage existed.
+  @salvaged_max_entries 64
+
+  # Grace added on top of the salvage budget for the `salvage_for_retry/2`
+  # GenServer call, so the caller's own hard bound is the SALVAGE bound plus a
+  # small margin for the manager's message loop.
+  @salvage_call_grace_ms 5_000
 
   # The session's create request must NEVER be aborted by a timeout, so the
   # caller waits forever and the create pipeline is responsible for always
@@ -131,6 +148,43 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     )
   end
 
+  @doc """
+  Salvages (and reclaims) a crashed agent's worktree and answers the sha of the
+  preserved state, so a crash retry can base its fresh worktree on it.
+
+  Called by `EvoGit.AgentScheduler.Lifecycle` BEFORE re-dispatching a crashed
+  one-shot agent. Three outcomes:
+
+    * a NON-abnormal reason (`:normal`, `:shutdown`, `{:shutdown, _}`) — answers
+      `{:ok, nil}` immediately; no salvage, nothing retained.
+    * the agent is still registered `:live` — salvages NOW (committing the
+      crashed run's dirty state and anchoring it under
+      `refs/genesis/salvage/<branch>`), then destroys/reclaims the worktree and
+      drops the registration + monitor, so the later `:DOWN` for that monitor
+      ref is stale and ignored. Deterministic when the scheduler asks BEFORE
+      its own `:DOWN` handling.
+    * the agent was already reclaimed by its `:DOWN` — answers the sha retained
+      by that handling (and drops the entry).
+
+  Always `{:ok, sha | nil}`: a call timeout/exit (a downed or wedged manager) is
+  caught and answered `{:ok, nil}`, so crash handling is never wedged or crashed
+  by a worktree problem.
+  """
+  @spec salvage_for_retry(pos_integer(), term()) :: {:ok, String.t() | nil}
+  def salvage_for_retry(agent_id, reason) do
+    if Salvage.abnormal_exit?(reason) do
+      timeout = Salvage.timeout_ms() + @salvage_call_grace_ms
+
+      try do
+        GenServer.call(__MODULE__, {:salvage_for_retry, agent_id, reason}, timeout)
+      catch
+        :exit, _reason -> {:ok, nil}
+      end
+    else
+      {:ok, nil}
+    end
+  end
+
   # --- GenServer Callbacks ---
 
   @impl true
@@ -157,7 +211,13 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
       create_monitors: %{},
       # FIFO admission queue of {agent_id, repo_root, worktree_path, spec,
       # meta, agent_pid, from} — bounded by max_concurrent_creation/0
-      admission_queue: :queue.new()
+      admission_queue: :queue.new(),
+      # agent_id => {seq, sha} — the commit salvaged from an ABNORMAL agent
+      # death, retained until the crash retry consumes it (`salvage_for_retry/2`)
+      # or the bound drops it. IN-MEMORY ONLY (lost on a manager/BEAM restart).
+      salvaged: %{},
+      # monotonic insertion counter for `salvaged` (oldest-first eviction)
+      salvaged_seq: 0
     }
 
     # Crash-restart path: this GenServer restarts WITHOUT killing the running
@@ -211,6 +271,31 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
           accept_request(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
 
         {:noreply, state}
+    end
+  end
+
+  # Salvages the crashed run's work NOW (the scheduler asked before its own
+  # `:DOWN` handling reached us), reclaims the worktree exactly as the `:DOWN`
+  # path would, and answers the preserved sha. Dropping the registration +
+  # monitor makes the later `:DOWN` for that ref stale, so reclaim never runs
+  # twice.
+  def handle_call({:salvage_for_retry, agent_id, reason}, _from, state) do
+    case Map.get(state.agents, agent_id) do
+      %{status: :live, monitor_ref: ref} = info ->
+        state = retain_salvage(state, agent_id, info, reason)
+        {sha, state} = pop_salvaged(state, agent_id)
+        state = reclaim_live_agent(state, agent_id, ref, info)
+        {:reply, {:ok, sha}, state}
+
+      nil ->
+        # Already reclaimed by its `:DOWN` — answer what that handling retained.
+        {sha, state} = pop_salvaged(state, agent_id)
+        {:reply, {:ok, sha}, state}
+
+      _other_status ->
+        # Still queued/creating: no live worktree exists yet, so there is
+        # nothing to salvage. The create pipeline owns its eventual cleanup.
+        {:reply, {:ok, nil}, state}
     end
   end
 
@@ -284,7 +369,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
         )
 
       {nil, _} ->
-        handle_agent_process_down(ref, state)
+        handle_agent_process_down(ref, reason, state)
     end
   end
 
@@ -320,9 +405,12 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     end
   end
 
-  # A monitored AGENT process exited (`:normal` completion or crash — cleanup is
-  # identical for both).
-  defp handle_agent_process_down(ref, state) do
+  # A monitored AGENT process exited (`:normal` completion or crash). Reclaim is
+  # identical for both — every run gets a fresh worktree — but an ABNORMAL death
+  # first tries to SALVAGE the crashed run's dirty work (see
+  # `EvoGit.AgentScheduler.Salvage`) and retains the resulting sha for the crash
+  # retry. `:normal`/`:shutdown`/`{:shutdown, _}` behaves exactly as before.
+  defp handle_agent_process_down(ref, reason, state) do
     case Map.get(state.monitors, ref) do
       nil ->
         # Stale DOWN (monitor already demonitored/flushed)
@@ -356,24 +444,14 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
                  admission_queue: queue
              }}
 
-          %{
-            status: :live,
-            monitor_ref: ^ref,
-            worktree_path: wt,
-            repo_root: repo_root,
-            branch_name: branch_name
-          } ->
-            # Agent exited (normal or abnormal — identical cleanup; every run
-            # gets a fresh worktree). Destroy and drop the registration.
-            destroy_worktree(wt, repo_root, branch_name)
-            Process.demonitor(ref, [:flush])
+          %{status: :live, monitor_ref: ^ref} = info ->
+            # Agent exited. An ABNORMAL death first salvages the crashed run's
+            # dirty work and retains its sha for the crash retry; either way the
+            # worktree is then destroyed and the registration dropped.
+            state = retain_salvage(state, agent_id, info, reason)
+            state = reclaim_live_agent(state, agent_id, ref, info)
 
-            {:noreply,
-             %{
-               state
-               | agents: Map.delete(state.agents, agent_id),
-                 monitors: Map.delete(state.monitors, ref)
-             }}
+            {:noreply, state}
 
           _ ->
             # Stale DOWN for a replaced registration
@@ -383,6 +461,80 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   end
 
   # --- Private Helpers ---
+
+  # Destroys a live agent's worktree and drops its registration + monitor.
+  # Shared by the `:DOWN` path and `salvage_for_retry/2` so reclaim is identical
+  # wherever it is driven from.
+  defp reclaim_live_agent(state, agent_id, ref, info) do
+    destroy_worktree(info.worktree_path, info.repo_root, info.branch_name)
+    Process.demonitor(ref, [:flush])
+
+    %{
+      state
+      | agents: Map.delete(state.agents, agent_id),
+        monitors: Map.delete(state.monitors, ref)
+    }
+  end
+
+  # Best-effort salvage of a crashed run's worktree. Only ABNORMAL exits are
+  # salvaged; a failure is logged at warning and the caller reclaims EXACTLY as
+  # before (salvage must never block or break reclaim).
+  defp retain_salvage(state, agent_id, info, reason) do
+    if Salvage.abnormal_exit?(reason) do
+      opts = [base_sha: Map.get(info, :base_sha), branch_name: info.branch_name]
+
+      case Salvage.salvage(info.worktree_path, info.repo_root, opts) do
+        {:ok, sha} when is_binary(sha) ->
+          put_salvaged(state, agent_id, sha)
+
+        {:ok, nil} ->
+          state
+
+        {:error, why} ->
+          Logger.warning(
+            "WorktreeManager: salvage for agent #{agent_id} failed: #{inspect(why)}"
+          )
+
+          state
+      end
+    else
+      state
+    end
+  end
+
+  # Retains a salvaged sha for `agent_id`, evicting the OLDEST entry past the
+  # bound. In-memory only.
+  defp put_salvaged(state, agent_id, sha) do
+    seq = state.salvaged_seq + 1
+    salvaged = Map.put(state.salvaged, agent_id, {seq, sha})
+
+    salvaged =
+      if map_size(salvaged) <= @salvaged_max_entries do
+        salvaged
+      else
+        {oldest_id, _entry} = Enum.min_by(salvaged, fn {_id, {s, _sha}} -> s end)
+        Map.delete(salvaged, oldest_id)
+      end
+
+    %{state | salvaged: salvaged, salvaged_seq: seq}
+  end
+
+  # Consumes the retained sha for `agent_id` (one crash retry per salvage).
+  defp pop_salvaged(state, agent_id) do
+    case Map.pop(state.salvaged, agent_id) do
+      {nil, _salvaged} -> {nil, state}
+      {{_seq, sha}, salvaged} -> {sha, %{state | salvaged: salvaged}}
+    end
+  end
+
+  # The sha the agent's worktree was based on, read from its spec. A missing
+  # `phylo_node` (repo-less shapes) yields `nil`.
+  defp meta_base_sha(meta) do
+    case meta do
+      %{spec: %{phylo_node: %{current_commit: sha}}} when is_binary(sha) -> sha
+      _other -> nil
+    end
+  end
 
   # Initializes the workers directory for a repo the first time it is
   # requested after the app started. The destructive wipe (rm_rf the whole
@@ -525,6 +677,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
                 worktree_path: worktree_path,
                 repo_root: repo_root,
                 branch_name: branch_name,
+                base_sha: meta_base_sha(meta),
                 status: :queued,
                 monitor_ref: ref
               }),
@@ -812,9 +965,9 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
   # Re-monitors a single live agent. The rebuilt entry shape EXACTLY matches
   # what `handle_info({:DOWN, ...})` and `destroy_worktree/3` expect on the
-  # normal path: `%{worktree_path, repo_root, branch_name, status: :live,
-  # monitor_ref}` plus the reverse `monitors` map entry — so cleanup after the
-  # restart is identical to the normal path.
+  # normal path: `%{worktree_path, repo_root, branch_name, base_sha,
+  # status: :live, monitor_ref}` plus the reverse `monitors` map entry — so
+  # cleanup after the restart is identical to the normal path.
   defp rebuild_monitor(state, agent_id, meta) do
     with %{worktree: worktree, session_pid: session_pid, task_number: task_number}
          when is_binary(worktree) and is_pid(session_pid) and is_integer(task_number) <- meta,
@@ -831,6 +984,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
               worktree_path: worktree,
               repo_root: repo_root || Worktrees.repo_root_from_worktree(worktree),
               branch_name: Worktrees.branch_name(task_number, task_local_id),
+              base_sha: meta_base_sha(meta),
               status: :live,
               monitor_ref: ref
             }),

@@ -37,6 +37,13 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
   - `sub_agent_results` — `%{index => result}` accumulated subagent results by original spec index
   - `sub_agent_indices` — `%{agent_id => index}` mapping from subagent ID to original spec index
   - `foreign_repo_commits` — `%{repo_id => commit_sha}` latest known commit per foreign repo for this agent's subtree
+  - `crash_commit` — sha of the SALVAGED state of the previous (crashed) attempt: the
+    `WorktreeManager` committed the crashed run's dirty worktree and kept that commit
+    reachable, and a crash retry bases its fresh worktree on it so the resumed agent
+    finds the interrupted run's files. IN-MEMORY ONLY (a `WorktreeManager`/BEAM restart
+    drops it); `nil` on a first attempt and when nothing was worth preserving.
+  - `crash_reason` — the previous attempt's crash reason term (the `:DOWN` reason that
+    triggered the retry), or `nil`. IN-MEMORY ONLY, like `crash_commit`.
 
   ## `session_pid`, `mode` and `phase` — the session-owned lifecycle
 
@@ -118,7 +125,9 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
     pending_sub_agents: MapSet.new(),
     sub_agent_results: %{},
     sub_agent_indices: %{},
-    foreign_repo_commits: %{}
+    foreign_repo_commits: %{},
+    crash_commit: nil,
+    crash_reason: nil
   ]
 
   @type t :: %__MODULE__{
@@ -141,7 +150,9 @@ defmodule EvoGit.AgentScheduler.SchedMeta do
           pending_sub_agents: MapSet.t(pos_integer()),
           sub_agent_results: %{optional(non_neg_integer()) => term()},
           sub_agent_indices: %{optional(pos_integer()) => non_neg_integer()},
-          foreign_repo_commits: %{atom() => String.t()}
+          foreign_repo_commits: %{atom() => String.t()},
+          crash_commit: String.t() | nil,
+          crash_reason: term()
         }
 
   @doc false

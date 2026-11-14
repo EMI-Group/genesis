@@ -14,6 +14,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.ModelSelection
+  alias EvoGit.AgentScheduler.Salvage
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
@@ -239,6 +240,15 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         "worker_T#{meta.task_number}_A#{task_local_id}"
       ])
 
+    # Crash-resume-after-a-tool-call: a crash RETRY may carry the sha of the
+    # crashed run's SALVAGED work (recorded by `Lifecycle` from
+    # `WorktreeManager.salvage_for_retry/2`). Base the fresh worktree on it so
+    # the resumed agent finds the interrupted run's files instead of silently
+    # restarting from the task base. Rare (retries only) and bounded to one
+    # `git cat-file` check.
+    {spec, meta, worktree_resume_from} =
+      apply_crash_base(agent_id, spec, meta, agent_repo_root, retries)
+
     Store.put_sched_meta(agent_id, %{meta | worktree: worktree_path})
 
     # Phase 2 — Session phase (slow, concurrent):
@@ -273,6 +283,12 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         persistent_state: Keyword.get(spec.opts, :persistent_state, true) != false,
         restore_agent_state:
           retries > 0 and Keyword.get(spec.opts, :persistent_state, true) != false,
+        # Crash-resume-after-a-tool-call metadata (consumed by the agent-side
+        # workstream; harmless when unused): the sha the retry worktree was
+        # actually based on when it is NOT the task base (`nil` otherwise), and
+        # the previous attempt's crash reason (`nil` on a first attempt).
+        worktree_resume_from: worktree_resume_from,
+        retry_reason: meta.crash_reason,
         scheduler: self()
       ]
       |> append_repo_less_ctx(spec, agent_repo_root)
@@ -306,6 +322,34 @@ defmodule EvoGit.AgentScheduler.Dispatch do
           )
 
         state
+    end
+  end
+
+  # Rewrites the spec's worktree base for a crash RETRY when a VALID salvaged
+  # commit is recorded on the meta row (`Lifecycle` sets `crash_commit` from
+  # `WorktreeManager.salvage_for_retry/2`). Returns
+  # `{spec, meta, resume_from}` where `resume_from` is the salvaged sha ONLY
+  # when it is the base actually used, else `nil`.
+  #
+  # The rewritten spec is persisted by the caller's single
+  # `Store.put_sched_meta/2` write: `Worktrees.create_worktree/6` and
+  # `assign_and_prepare_worktree/3` both read the base from
+  # `meta.spec.phylo_node.current_commit`, so no new argument is threaded
+  # through either of them.
+  defp apply_crash_base(_agent_id, spec, meta, _repo_root, retries) when retries <= 0 do
+    {spec, meta, nil}
+  end
+
+  defp apply_crash_base(_agent_id, spec, meta, repo_root, _retries) do
+    sha = meta.crash_commit
+
+    if is_binary(sha) and match?(%EvoGit.Core.PhyloGraphNode{}, spec.phylo_node) and
+         Salvage.commit_exists?(repo_root, sha) do
+      updated_spec = %{spec | phylo_node: %{spec.phylo_node | current_commit: sha}}
+      {updated_spec, %{meta | spec: updated_spec}, sha}
+    else
+      # No usable salvaged commit: the task base stands, exactly as before.
+      {spec, meta, nil}
     end
   end
 
