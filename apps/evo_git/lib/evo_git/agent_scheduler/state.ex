@@ -52,6 +52,15 @@ defmodule EvoGit.AgentScheduler.State do
   - `close_waiters` — callers blocked in `EvoGit.AgentScheduler.await_close/2`, keyed by
     agent id and flushed exactly once by `EvoGit.AgentScheduler.Lifecycle` on the
     session's terminal outcome (`%{agent_id => [{caller_pid, GenServer.from()}]}`)
+  - `reattach_waiters` — callers blocked in
+    `EvoGit.AgentScheduler.reattach_sub_agents/3` for a parent's still-pending
+    subagent batch (`%{agent_id => GenServer.from()}`); cleared by the normal
+    resume path (`Subagents.dispatch_ready_parent/3`), by a fresh batch and by
+    the waiter's own timeout
+  - `reattach_timers` — the ONE bounded timer per re-attach waiter
+    (`%{agent_id => {token, timer_ref}}`); `token` is the identity carried in the
+    `{:reattach_timeout, agent_id, token}` message, so a timer whose waiter was
+    already claimed is ignored instead of clearing a newer batch
 
   ### LLM Slot Management (per-model pools)
   - `llm_holders` — `%{model_id => MapSet}` of agent IDs currently holding an LLM slot
@@ -89,6 +98,8 @@ defmodule EvoGit.AgentScheduler.State do
             ref_to_agent: %{},
             queue: :queue.new(),
             close_waiters: %{},
+            reattach_waiters: %{},
+            reattach_timers: %{},
             llm_holders: %{},
             llm_waiting: %{},
             llm_backoff_until: %{},
@@ -120,6 +131,8 @@ defmodule EvoGit.AgentScheduler.State do
           ref_to_agent: %{reference() => pos_integer()},
           queue: :queue.queue(pos_integer()),
           close_waiters: %{optional(pos_integer()) => [{pid(), GenServer.from()}]},
+          reattach_waiters: %{optional(pos_integer()) => GenServer.from()},
+          reattach_timers: %{optional(pos_integer()) => {reference(), reference()}},
           llm_holders: %{String.t() => MapSet.t(pos_integer())},
           llm_waiting: %{String.t() => :queue.queue(term())},
           llm_backoff_until: %{String.t() => integer() | nil},
@@ -467,6 +480,8 @@ defmodule EvoGit.AgentScheduler.State do
             ref_to_agent: state.ref_to_agent,
             queue: state.queue,
             close_waiters: state.close_waiters,
+            reattach_waiters: state.reattach_waiters,
+            reattach_timers: state.reattach_timers,
             task_local_counters: state.task_local_counters,
             task_agent_counts: state.task_agent_counts,
             paused: state.paused,

@@ -5,6 +5,13 @@ defmodule EvoGit.AgentScheduler.Subagents do
   Handles validating subagent specs (depth, ignored paths, spatial contracts),
   spawning validated subagents with pre-delegation cleanliness checks,
   tracking subagent results, and resuming parent agents when all subagents complete.
+
+  A parent's batch is only lost if nobody is left to deliver it to. When the
+  parent's waiter is nil or already dead (a crashed session being retried under
+  the same agent id), `dispatch_ready_parent/3` RETAINS the results on the
+  `%SchedMeta{}` row instead of dropping them, and
+  `EvoGit.AgentScheduler.reattach_sub_agents/3` hands them to the resumed parent
+  through `EvoGit.AgentScheduler.SubagentReattach`.
   """
 
   require Logger
@@ -13,6 +20,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
+  alias EvoGit.AgentScheduler.SubagentReattach
   alias EvoGit.AgentScheduler.Dispatch
 
   # --- Validation and Spawning ---
@@ -47,6 +55,13 @@ defmodule EvoGit.AgentScheduler.Subagents do
 
         parent = %{parent | status: :waiting}
         Store.put_sched_meta(parent_id, parent)
+
+        # A FRESH batch always starts clean: every batch field below is
+        # OVERWRITTEN (never merged) and any re-attach waiter left over from an
+        # earlier crash-resume is stale — a parent blocked in `spawn_sub_agents/2`
+        # cannot also be blocked in `reattach_sub_agents/3` — so its timer must
+        # not fire against this new batch. See `SubagentReattach`.
+        state = SubagentReattach.discard_waiter(state, parent_id)
 
         # Single reduce: validate, register, and build all collections in one pass.
         # `writable_accepted` tracks whether a writable-foreign-repo subagent was
@@ -479,31 +494,39 @@ defmodule EvoGit.AgentScheduler.Subagents do
 
   When all results are in, marks the parent as :ready and dispatches it
   (replies to the blocked GenServer.call from the parent agent).
+
+  A batch whose waiter is already gone — `sub_agent_from: nil`, the RETAINED
+  marker set by `dispatch_ready_parent/3` after a crash — is never re-dispatched
+  here: the results stay on the row for `EvoGit.AgentScheduler.reattach_sub_agents/3`,
+  and this function only guarantees the agent is not left `:waiting`.
   """
   @spec maybe_resume_parent(State.t(), pos_integer()) :: State.t()
   def maybe_resume_parent(%State{} = state, parent_id) do
     # Parent entry may be reaped by cancel_agent while a subagent completes in flight
     case Store.get_sched_meta(parent_id) do
       {:ok, parent} ->
-        all_done? = map_size(parent.sub_agent_results) == parent.total_sub_specs
+        cond do
+          retained_batch?(parent) ->
+            ensure_running(state, parent_id, parent)
 
-        if all_done? do
-          Logger.info(
-            "AgentScheduler: Agent #{parent_id} ready to resume, all subagents completed"
-          )
+          map_size(parent.sub_agent_results) == parent.total_sub_specs ->
+            Logger.info(
+              "AgentScheduler: Agent #{parent_id} ready to resume, all subagents completed"
+            )
 
-          # Parent keeps its live worktree while waiting (its process is
-          # still alive, blocked on spawn_sub_agents) — resume immediately
-          parent = %{parent | status: :ready}
-          Store.put_sched_meta(parent_id, parent)
+            # Parent keeps its live worktree while waiting (its process is
+            # still alive, blocked on spawn_sub_agents) — resume immediately
+            parent = %{parent | status: :ready}
+            Store.put_sched_meta(parent_id, parent)
 
-          if state.paused do
-            %{state | queue: :queue.in(parent_id, state.queue)}
-          else
-            dispatch_ready_parent(state, parent_id, parent)
-          end
-        else
-          state
+            if state.paused do
+              %{state | queue: :queue.in(parent_id, state.queue)}
+            else
+              dispatch_ready_parent(state, parent_id, parent)
+            end
+
+          true ->
+            state
         end
 
       :error ->
@@ -512,27 +535,84 @@ defmodule EvoGit.AgentScheduler.Subagents do
     end
   end
 
+  # A batch that has been RETAINED for a future re-attach: `sub_agent_from: nil`
+  # marks it, and `total_sub_specs > 0` distinguishes it from an agent that never
+  # spawned subagents at all. RETAINED means COMPLETE (`dispatch_ready_parent/3`
+  # only ever retains a finished batch), so an INCOMPLETE batch with a nil
+  # `from` is left exactly as it is — this function is only reached again when
+  # another child's result lands, which is not a state change.
+  defp retained_batch?(%SchedMeta{sub_agent_from: nil, total_sub_specs: total} = parent)
+       when is_integer(total) and total > 0,
+       do: map_size(parent.sub_agent_results) == total
+
+  defp retained_batch?(_parent), do: false
+
+  # A retained batch must never leave its agent parked in `:waiting` (a gate
+  # could read that as "blocked on children that will never finish"). Idempotent:
+  # the common case already reads `:running` and writes nothing.
+  defp ensure_running(state, _parent_id, %SchedMeta{status: :running}), do: state
+
+  defp ensure_running(state, parent_id, %SchedMeta{} = parent) do
+    Store.put_sched_meta(parent_id, %{parent | status: :running})
+    state
+  end
+
   @doc """
   Resumes a waiting parent agent. The parent keeps its LIVE worktree while
   waiting because its process is still alive (blocked on spawn_sub_agents);
   WorktreeManager reclaims the worktree only on process exit, so no worktree
   assignment is needed here.
+
+  Two waiter shapes are handled:
+
+  - a LIVE waiter (`{pid, tag}` whose pid is still alive, including the waiter
+    installed by `EvoGit.AgentScheduler.reattach_sub_agents/3`) is answered with
+    the ordered results and then the whole batch is cleared — a re-attach waiter
+    is answered `{:ok, results}` because that is its call's contract;
+  - a nil or DEAD waiter (the crashed/retried parent's exchange worker) is NOT
+    answered — `GenServer.reply(nil, _)` would crash the scheduler — and the
+    results are RETAINED for `reattach_sub_agents/3`: `sub_agent_from: nil`
+    becomes the retained marker, `status: :running` keeps the agent out of
+    `:waiting`, `pending_sub_agents` is cleared and `sub_agent_results` /
+    `sub_agent_indices` / `total_sub_specs` stay put.
   """
   @spec dispatch_ready_parent(State.t(), pos_integer(), SchedMeta.t()) :: State.t()
   def dispatch_ready_parent(%State{} = state, agent_id, %SchedMeta{worktree: wt} = meta) do
+    # A re-attach waiter is claimed FIRST: its timer must never fire against a
+    # batch this function is about to hand out, and its presence tells us which
+    # reply shape the caller expects.
+    {state, reattach_from} = SubagentReattach.claim_waiter(state, agent_id)
+
     results = build_ordered_results(meta.sub_agent_results, meta.total_sub_specs)
+    reply_from = meta.sub_agent_from || reattach_from
+    reply_term = if is_nil(reattach_from), do: results, else: {:ok, results}
 
-    GenServer.reply(meta.sub_agent_from, results)
+    if waiter_alive?(reply_from) do
+      GenServer.reply(reply_from, reply_term)
 
-    Store.put_sched_meta(agent_id, %{
-      meta
-      | status: :running,
-        sub_agent_from: nil,
-        pending_sub_agents: MapSet.new(),
-        sub_agent_results: %{},
-        sub_agent_indices: %{},
-        total_sub_specs: 0
-    })
+      Store.put_sched_meta(agent_id, %{
+        meta
+        | status: :running,
+          sub_agent_from: nil,
+          pending_sub_agents: MapSet.new(),
+          sub_agent_results: %{},
+          sub_agent_indices: %{},
+          total_sub_specs: 0
+      })
+    else
+      Store.put_sched_meta(agent_id, %{
+        meta
+        | status: :running,
+          sub_agent_from: nil,
+          pending_sub_agents: MapSet.new()
+      })
+
+      Logger.info(
+        "AgentScheduler: Agent #{agent_id} completed its subagent batch with no live waiter; " <>
+          "retaining #{map_size(meta.sub_agent_results)}/#{meta.total_sub_specs} result(s) " <>
+          "for subagent re-attach"
+      )
+    end
 
     # Agent entry may be reaped by cancel_agent while a subagent completes in flight
     commit_sha =
@@ -558,4 +638,10 @@ defmodule EvoGit.AgentScheduler.Subagents do
 
     state
   end
+
+  # A `GenServer.from()` (`{pid, tag}`) with a LIVE caller. `nil` (the retained
+  # marker) and a dead pid both mean "nobody is waiting"; replying to a dead pid
+  # is a safe no-op send, but a nil `from` would raise inside `GenServer.reply/2`.
+  defp waiter_alive?({pid, _tag}) when is_pid(pid), do: Process.alive?(pid)
+  defp waiter_alive?(_from), do: false
 end
