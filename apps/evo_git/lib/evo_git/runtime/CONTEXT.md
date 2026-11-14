@@ -234,6 +234,8 @@ There is no `EvoGit.Runtime.Phase` and no `EvoGit.Runtime.Prompts` module; the o
 It resolves the default/custom root module via `resolve_root_agent/2` → `{module, opts}` (unknown ids raise `ArgumentError`) and threads `foreign_repos`, `repo_notes`, `archive`, `task_id`, model selection, `quality_level` (absent → `nil`; subagent spec builders never carry the key, so subagent prompts stay unaffected), `:persistent_state` and `:attachments` (omit-when-nil), then appends custom-agent identity and canonical default opts and applies the legacy definition fallback without changing the task lock.
 `:persistent_state` is task-wide and defaults to `true` (absent or `nil` → `true`), and only an explicit `false` opts out — descendants inherit it from `%EvoGit.Agent.State{}`.
 New code constructing a root-agent spec should reuse it instead of hand-assembling specs at call sites.
+`spec_opts` is an explicit ALLOWLIST (`helpers.ex:649-662`) — any other runtime opt (`:build_system`, `:starting_commit`, `:session_mode`, `:concurrency`, …) is DROPPED, so a new task-wide flag needs its own `Keyword.get(opts, …)` line there, plus `RuntimeOpts` admission and `Store.Codec` `@atomized_opt_keys` membership (`store/codec.ex:492`) if it must survive task persistence.
+`SkillExtraction.run/1` keeps its OWN smaller allowlist (`skill_extraction.ex:24-31`: `foreign_repos`/`archive`/`task_id` + model selection), and only `SelfReflective.build_spec/2` forwards opts wholesale (`self_reflective.ex:90-94`, dropping just `:objective`/`:source_root`/`:node_path`).
 
 ### Task Model Selection
 Runtime opts may carry `:model_spec`, a map with STRING keys `provider_profile_id`, `model`, and optional `reasoning_effort`.
