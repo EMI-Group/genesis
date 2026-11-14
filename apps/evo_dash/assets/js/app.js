@@ -68,6 +68,7 @@ import DiffViewer from "./hooks/diff_viewer.js"
 import CommitGraph from "./hooks/commit_graph.js"
 import CapsulePanel from "./hooks/capsule_panel.js"
 import InspectorMessages from "./hooks/inspector_messages.js"
+import BrowserNotifications from "./browser_notifications.js"
 // Compute the longest common prefix among an array of strings
 function longestCommonPrefix(strings) {
   if (strings.length === 0) return "";
@@ -611,83 +612,6 @@ const StatePersistence = {
         persistFormState();
       }
     });
-  }
-};
-
-// BrowserNotifications hook: native OS notifications for terminal tasks and
-// pending Assistant approvals.
-//
-// Payload contract (server → client, `push_event(socket, "task_notification", …)`):
-//   %{title: String.t(), body: String.t(), tag?: String.t()}
-// `title` and `body` are required; `tag` is OPTIONAL and only used for dedupe
-// (a repeating approval replaces its previous notification instead of stacking
-// another one). The SAME event serves the existing terminal-task notifications
-// (no tag) and the Assistant approval notifications (tag = approval identity).
-//
-// Rules:
-//   * permission is requested ONCE on mount — never throws when the API is
-//     absent (desktop WebView, headless server, plain HTTP origins);
-//   * a notification is shown ONLY while the user cannot see the page
-//     (document hidden OR window unfocused) — someone looking at the dashboard
-//     is never notified about it;
-//   * clicking a notification focuses the window and closes it;
-//   * anything unsupported/denied is a silent no-op (no console noise).
-const BrowserNotifications = {
-  mounted() {
-    this._supported = typeof Notification === "function";
-    this._permission = this._supported ? Notification.permission : "denied";
-
-    if (this._supported && this._permission === "default") {
-      // Some embedded webviews expose Notification but not requestPermission,
-      // and others reject the promise: either way notifications just stay off.
-      try {
-        const result = Notification.requestPermission();
-        if (result && typeof result.then === "function") {
-          result.then(perm => { this._permission = perm; }).catch(() => {});
-        }
-      } catch (e) {
-        this._permission = "denied";
-      }
-    }
-
-    this.handleEvent("task_notification", payload => this._notify(payload));
-  },
-
-  // Only notify when the page is not being looked at.
-  _shouldNotify() {
-    if (!this._supported || this._permission !== "granted") return false;
-    const hidden = typeof document.hidden === "boolean"
-      ? document.hidden
-      : document.visibilityState === "hidden";
-    if (hidden) return true;
-    // No focus API → assume the user is looking (never spam).
-    return typeof document.hasFocus === "function" ? !document.hasFocus() : false;
-  },
-
-  _notify(payload) {
-    if (!this._shouldNotify()) return;
-    const {title, body, tag} = payload || {};
-    if (!title) return;
-
-    const options = {body: body || "", icon: "/favicon.ico"};
-    if (tag) {
-      options.tag = tag;
-      // renotify is only meaningful with a tag; browsers without support ignore it.
-      options.renotify = true;
-    }
-
-    let notification;
-    try {
-      notification = new Notification(title, options);
-    } catch (e) {
-      // Some webviews expose the constructor but refuse to instantiate it.
-      return;
-    }
-
-    notification.onclick = () => {
-      try { window.focus(); } catch (e) {}
-      try { notification.close(); } catch (e) {}
-    };
   }
 };
 
