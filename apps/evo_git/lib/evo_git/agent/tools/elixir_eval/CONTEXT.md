@@ -125,6 +125,13 @@ Unexpected raised/thrown/exited failures still pass through the broker's generic
 Compatible Read/Write facades retain their existing projections, validators, self-target policies, quota accounting and one-second runtime calls unchanged.
 `RemoteAPI.save_user_config/1`, Config.user_config/0, schema/defaults APIs and all other unlisted MFAs remain excluded.
 
+## Operator Configuration and Project Discovery Gaps
+The direct configuration surface admits only `Config.resolve/0,1`, `Config.save_user_config/1`, `AgentScheduler.get_config/1`, `update_config/1`, scheduler pause/resume and `RemoteAPI.reload_config/0`, not `Config.user_config/0`, config paths, schema/default introspection or `AgentScheduler.get_config/0`.
+No direct VCT/project-list MFA or `Read` project-list facade is admitted, and the broker has no project-list operation, so ordinary read/write evaluation cannot discover the user's mounted projects through runtime APIs.
+`Read.configuration_status/0` exposes only five live scheduler scalars, while `Read.model_profiles/0` returns at most 100 legacy-shaped id/model/concurrency entries without a truncation indicator or canonical provider-account/model inventory.
+There is no persisted-config listing/showing/patching convenience facade; callers must use direct resolved-config reads and whole-file read-modify-save, which can materialize defaults and overwrite concurrent edits.
+Any added project facade must be wired through facade exact-MFA admission, Dune Base names, broker read accounting and a bounded projection, and any added direct project API must enter `DirectAPI.entries/0` so shims, broker admission and help stay aligned.
+
 ## Capabilities, Quotas and Mutations
 Read exposes `help/0`, `system_info/0`, `list_tasks/0,1`, `get_task/1`, `list_agents/0`, `scheduler_status/0`, `model_profiles/0` and `configuration_status/0` through the broker.
 Write exposes `start_task/2`, `cancel_task/1`, `force_kill_task/1`, `pause_task/1`, `resume_task/1`, `delete_task/1`, `guide/1,2` and `update_scheduler_config/1`, and requires a write- or sudo-tier broker.
