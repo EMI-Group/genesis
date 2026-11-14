@@ -120,6 +120,8 @@ defmodule EvoGit.Agent.State do
   - `repo_notes` — the already-rendered git-submodules note block (markdown text) for this agent's repo tree, or `nil` when the repo has no submodules (or detection failed). Rendered into the agent's `<context>` block; subagents inherit it from the parent (no re-detection).
   - `foreign_repos` — list of foreign repos available to this agent tree (inherited from parent agent)
   - `skill_schemas` — tool schemas from enabled skills
+  - `pending_tool_batch` — the IN-FLIGHT tool-batch marker, `nil` unless a tool batch is executing right now (`EvoGit.Agent.ToolBatch`). Persisted with the pre-batch checkpoint so a crash mid-batch can be repaired on resume (`EvoGit.Agent.Resume`); written ONLY when `persistent_state` is true, so the opt-out stays fully inert.
+  - `resume_info` — the TRANSIENT crash-resume provenance descriptor (`restore_agent_state`, `retries`, `retry_reason`, `worktree_resume_from`, `restored`), built once by `EvoGit.Agent.Session.Setup.build_initial_state/3` from the dispatch ctx. NEVER persisted (it belongs to this run's dispatch, not to the conversation) and `nil` for a run that is not a crash retry.
   - `pending_inputs` — queued user inputs awaiting the next turn (`String.t()` or the canonical multimodal message map). The exchange drains and injects them at the top of each turn.
   - `cancel` — the pending cancel request, `nil` = none. Set by the session's `cancel` command and consumed by the exchange's cancel-grace path.
   - `phase` — the session lifecycle phase.
@@ -187,6 +189,8 @@ defmodule EvoGit.Agent.State do
     repo_notes: nil,
     foreign_repos: [],
     skill_schemas: [],
+    pending_tool_batch: nil,
+    resume_info: nil,
     # control
     pending_inputs: [],
     cancel: nil,
@@ -254,6 +258,8 @@ defmodule EvoGit.Agent.State do
           repo_notes: String.t() | nil,
           foreign_repos: [ForeignRepo.t()],
           skill_schemas: [ReqLLM.Tool.t()],
+          pending_tool_batch: EvoGit.Agent.ToolBatch.t() | nil,
+          resume_info: map() | nil,
           # control
           pending_inputs: [String.t() | map()],
           cancel: term(),

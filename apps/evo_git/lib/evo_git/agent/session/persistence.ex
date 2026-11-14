@@ -94,7 +94,8 @@ defmodule EvoGit.Agent.Session.Persistence do
     :compression_count,
     :current_commit,
     :pending_inputs,
-    :phase
+    :phase,
+    :pending_tool_batch
   ]
 
   # The conversation fields `restore/3` may take from the stored record, with the
@@ -107,7 +108,8 @@ defmodule EvoGit.Agent.Session.Persistence do
     {:prompt_cache_key, :binary},
     {:objective, :binary},
     {:pending_inputs, :list},
-    {:current_commit, :binary}
+    {:current_commit, :binary},
+    {:pending_tool_batch, :json}
   ]
 
   @doc """
@@ -332,6 +334,11 @@ defmodule EvoGit.Agent.Session.Persistence do
   defp restore_value(:integer, value) when is_integer(value), do: value
   defp restore_value(:usage, value) when is_map(value), do: Usage.from_archive_map(value)
   defp restore_value(:list, value) when is_list(value), do: value
+  # A marker column round-trips through JSON, so it comes back STRING-keyed with a
+  # STRING class. It is passed through RAW: `EvoGit.Agent.ToolBatch.normalize/1`
+  # is the ONE place that rebuilds the atom-keyed shape, and it is the consumer's
+  # job (never this module's) to do so.
+  defp restore_value(:json, value) when is_map(value), do: value
   defp restore_value(:binary, value) when is_binary(value), do: blank_to_keep(value)
   defp restore_value(_kind, _value), do: :keep
 

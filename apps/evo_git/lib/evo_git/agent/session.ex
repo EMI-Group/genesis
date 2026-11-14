@@ -1004,7 +1004,7 @@ defmodule EvoGit.Agent.Session do
   defp publish_checkpoint(data, %State{} = state) do
     # Worker messages are ordered. Only an advancing boundary may replace the transcript:
     # a duplicate/older checkpoint must not erase a newer call's phase or partial content.
-    if state.turn > data.state.turn do
+    if adoptable?(data.state, state) do
       # The previously ADOPTED state is the durable baseline's comparison point, so it is
       # captured before adoption. Classification (append vs rewrite) happens HERE — one list
       # comparison plus ONE cast — and never encodes/serializes in the session process.
@@ -1012,9 +1012,10 @@ defmodule EvoGit.Agent.Session do
       data = %{data | state: adopt_state(data, state)}
 
       data =
-        case data.activity.current_call do
-          %{turn: turn} when turn >= state.turn -> data
-          _other -> reset_activity(data)
+        if keep_activity?(data.activity.current_call, state) do
+          data
+        else
+          reset_activity(data)
         end
 
       Persistence.checkpoint(old_state, state)
@@ -1026,6 +1027,49 @@ defmodule EvoGit.Agent.Session do
       data
     end
   end
+
+  # The ADOPTION rule (the stale/duplicate guard).
+  #
+  # An advancing turn always wins. A checkpoint at the SAME turn is normally a duplicate and is
+  # ignored — with ONE exception: closing an in-flight tool batch. The turn is incremented BEFORE
+  # the batch runs (that is what makes the pre-batch checkpoint adoptable), so the batch-completion
+  # checkpoint shares that turn; without this arm the tool results would never become durable.
+  # The exception is narrow on purpose: the adopted state must CARRY the marker, the incoming one
+  # must have CLEARED it, and the transcript must have grown — i.e. exactly the one transition that
+  # answers a tool batch. Everything else at an equal or older turn stays ignored.
+  @doc false
+  # Public ONLY so the adoption rule is unit-testable without a live session process.
+  def adoptable?(%State{} = adopted, %State{} = state) do
+    cond do
+      state.turn > adopted.turn -> true
+      state.turn < adopted.turn -> false
+      true -> closes_tool_batch?(adopted, state)
+    end
+  end
+
+  def adoptable?(_adopted, _state), do: false
+  # A checkpoint that still CARRIES the in-flight batch marker is the batch START:
+  # the tools it describes are executing for the call being tracked, so the live
+  # call capture must survive it. Every other checkpoint keeps the original rule —
+  # only a call belonging to the incoming turn (or a later one) survives.
+  defp keep_activity?(_current_call, %State{pending_tool_batch: batch}) when not is_nil(batch),
+    do: true
+
+  defp keep_activity?(%{turn: turn}, %State{} = state) when turn >= state.turn, do: true
+  defp keep_activity?(_current_call, _state), do: false
+
+  defp closes_tool_batch?(%State{pending_tool_batch: nil}, _state), do: false
+
+  defp closes_tool_batch?(_adopted, %State{pending_tool_batch: batch}) when not is_nil(batch),
+    do: false
+
+  defp closes_tool_batch?(%State{} = adopted, %State{} = state),
+    do: transcript_size(state) > transcript_size(adopted)
+
+  defp transcript_size(%State{context: %{messages: messages}}) when is_list(messages),
+    do: length(messages)
+
+  defp transcript_size(_state), do: 0
 
   # A worker-held `%State{}` is a COPY: `event_seq`/`watchers` are SESSION-authoritative.
   defp adopt_state(data, %State{} = state) do
@@ -1240,6 +1284,10 @@ defmodule EvoGit.Agent.Session do
     try do
       data |> reset_activity() |> flush_deltas()
       shutdown_start(data)
+      # Best-effort containment: a session that stops for ANY reason must not leave its exchange
+      # worker (and the tool call it is blocked on) running against a worktree that is about to be
+      # reclaimed. A normal completion/yield has already ended the worker, so this is a no-op there.
+      shutdown_worker(data)
     catch
       _kind, _reason -> :ok
     end

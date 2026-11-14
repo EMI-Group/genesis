@@ -79,6 +79,7 @@ defmodule EvoGit.AgentState.Record do
     {:current_commit, "current_commit", :text},
     {:phase, "phase", :text},
     {:pending_inputs, "pending_inputs", :json},
+    {:pending_tool_batch, "pending_tool_batch", :json},
     {:status, "status", :text}
   ]
 
