@@ -687,7 +687,6 @@
                       phx-hook="InspectorMessages"
                       data-inspector-scope={inspector_scope(assigns)}
                     >
-                      <StreamPanel.stream_panel stream={@inspector_stream} />
                       <div
                         :if={@inspector_history_error}
                         id="inspector-history-error"
@@ -975,6 +974,7 @@
                           </div>
                         <% end %>
                       <% end %>
+                      <StreamPanel.stream_panel stream={@inspector_stream} />
                     </div>
                   </div>
                 </div>
