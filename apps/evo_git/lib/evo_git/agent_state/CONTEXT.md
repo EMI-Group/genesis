@@ -61,6 +61,15 @@ Timestamps are `%DateTime{}` (ISO8601 second precision, UTC) or `nil`.
 - One checkpoint = one transaction: scalar-row UPSERT + (optional) single chunk INSERT. Message payloads are `:erlang.term_to_binary(messages, compressed: 6)`; JSON fields are Jason TEXT; booleans are 0/1.
 - Tables: `agent_states` (PK `(task_id, agent_id)`) and `agent_state_chunks` (PK `(task_id, agent_id, seq)`).
 
+## Status & Unfinished-Run Queries
+
+`agent_states.status` is `TEXT NOT NULL DEFAULT 'running'` (migration `000001_create_agent_state.exs:37`) and surfaces ONLY as `Record.fields[:status]`; `mark_completed/3` is the one writer that sets it (`store.ex:284`), while every other value is whatever the checkpointing session supplied — a crashed run keeps the last supplied value (or the `'running'` default).
+There is NO query that selects rows by `status`, and NO unfinished/"recoverable run" listing API: the only non-terminal-row scan is `prune/1`'s retention `SELECT` (`store.ex:359-368`), which deletes and returns nothing to callers.
+The `agent_states_status_completed_at_index` index (migration `:58-60`) therefore has no query behind it today.
+`load/3` never filters on `status`/`completed_at`, so a completed or abandoned run loads exactly like a live one.
+A never-completed record is retained until `updated_at` is older than `2 × retention_days` (default 14 days) — the binding constraint of `prune/1`'s two windows — and is then deleted by the hourly prune pass.
+The primary key is `(task_id, agent_id)` with NO retry/attempt column, so a retry of the same agent id upserts the same row; `:turn` and `:compression_count` are the only progress counters.
+
 ## Constraints
 
 - `checkpoint/4` is a CAST, always `:ok`, and total: a malformed entry, a store fault or a dead server is logged/dropped and never propagates into an agent run.

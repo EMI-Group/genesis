@@ -118,6 +118,8 @@ The four rules are: append the new tail when the old message list is a prefix of
 The entry carries `owner: self()` (the session pid) and a small fixed fields map, so a store-reported continuity gap arrives as `{:agent_state_resync, task_id, agent_id}` in ANY phase and is answered with ONE full `:rewrite` (`Persistence.resync/1`) — never an append; a message for another/unset identity is logged and ignored.
 `Setup.build_initial_state/3` restores a crashed run's conversation only when the dispatch ctx carries `restore_agent_state: true` (a CRASH RETRY of the SAME agent_id) and the flag is on: the restored transcript is authoritative while identity/worktree/paths/model selection/phase stay fresh, and a missing/corrupt/unavailable row logs at `:info` and keeps the fresh state.
 `Persistence.complete/1` runs from `finalize/1` ONLY — the normal terminal delivery — never from `to_awaiting_input/3` (a parked interactive session is still resumable) and never from the force-cancel path.
+Checkpointing is PER TURN and never covers an in-flight tool call: the persisted transcript always ends at the last COMPLETED turn boundary (the engine's `:checkpoint` fires after `continue_after_tools/7` appended the tool results), so a crash mid-tool loses that call and whatever it did not commit, and no `%State{}` field records a pending tool call.
+Checkpoints are CASTS (no `flush/1` barrier anywhere in this node), and `Persistence.restore/3` runs inside `finish_start/2` in the SESSION process, so `AgentState.load/3` there is a synchronous read on the session's own process.
 
 ## Terminal Delivery Contract
 
