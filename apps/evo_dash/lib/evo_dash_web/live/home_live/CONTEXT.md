@@ -131,6 +131,10 @@ EVERY path that mutates `pending_approvals` — a response success/not-found, a 
 Events: `open_approval_dialog`, `dialog_closed`, `prev_approval`, `next_approval`, `retry_approvals`, `approval_response`.
 On `{:approval_requested, request}` (a genuinely NEW live request, never a recovery snapshot) the page auto-opens the dialog when it is not already open and — only when `ApprovalWorkflow.own_request?/2` accepts the request — pushes `task_notification` with `%{title: gettext("Approval needed"), body: gettext("Genesis is waiting for your approval."), tag: "genesis-approval"}` to the hidden `#assistant-notifications` host (`phx-hook="BrowserNotifications"`); a request this chat ignores never notifies.
 A resolved request (`{:approval_resolved, …}`) re-syncs the dialog index through `sync_approval_dialog/1`.
+`ApprovalWorkflow.approval_responses` maps request ids to response sequence tokens only, not decisions or execution outcomes, and `responded/3` treats `{:ok, :ok}` as a response acknowledgement and `{:ok, {:error, :not_found}}` as already resolved.
+Neither acknowledgement proves that an approved evaluation executed successfully, and this subtree has no request-id-to-tool-call execution correlation.
+The live `Delta` tool-result projection receives only call id and coarse status, rendering Running/Done/Failed/Timed out through `AssistantMessage.tool_entry/1`, while complete result text is available only in checkpoint history's Thought process projection.
+`Messages.transcript/1` deliberately omits raw tool messages from top-level bubbles, so snapshot replacement can remove live informational tool rows rather than preserve an execution audit trail.
 
 ## Layout stability & scrolling
 
