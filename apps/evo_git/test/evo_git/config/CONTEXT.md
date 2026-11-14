@@ -19,6 +19,7 @@ The parent `../CONTEXT.md` and `../../CONTEXT.md` own the cross-cutting async-sa
 | File | Module suffix | async | Scope |
 |------|---------------|-------|-------|
 | `schema_test.exs` | `SchemaTest` | `true` | Existing end-to-end schema contract, exact 106 descriptors and per-category counts (14 LLM), defaults, validation and legacy LLM helpers |
+| `settings_test.exs` | `SettingsTest` | `true` | Public operator API: ordered `list_settings/0` descriptors, snapshot-backed `show/0,1` paths/errors/no atom creation, partial persisted `update/1`, recursive map merges/list replacement, canonical inventories, collision rejection, full-candidate validation and serialization/filesystem failures |
 | `provider_profiles_test.exs` | `ProviderProfilesTest` | `true` | Public `Schema.provider_profiles/1` and `model_selections/1`: canonical-over-legacy precedence, recursive string-key normalization, ordered account/model/effort inventories, same-provider account isolation, legacy string/map/tuple/flat adapters, malformed-input degradation, context inheritance and pure OAuth runtime projections |
 | `provider_profile_resolution_test.exs` | `ProviderProfileResolutionTest` | `true` | Public `Schema.resolve_model_spec/2`: account/model/effort default precedence and explicit overrides, atom/string inputs, exact errors, generation/context inheritance, shared scheduling/auth/endpoint authority, ReqLLM-ready string/map model specs, account credentials and OAuth options |
 | `provider_profile_validation_test.exs` | `ProviderProfileValidationTest` | `true` | Canonical schema descriptors and raw provider/model validation: indexed error paths, type/range failures, duplicate account/model/effort identities and default membership, shared settings, nested context/generation overrides |
@@ -65,13 +66,18 @@ Canonical validation checks raw input before normalization can discard malformed
 Duplicate effort errors include the duplicate element's index, context-window validation uses rule `:integer`, and auth-mode validation uses rule `:string` for compatibility with the shared legacy validators.
 There is no global `[llm] oauth_file` schema key; OAuth files are per account/profile.
 `Schema.all_schemas/0` has exactly 106 entries and its LLM category has exactly 14, so adding/removing descriptors requires updating both count assertions.
+`settings_test.exs` uses unique ConfigDir isolation and real TOML persistence without reading or mutating global scheduler configuration.
+Its show tests pin the private resolved snapshot (defaults plus persisted data), including enum normalization, section reads, present nils, malformed paths, missing suffix errors and unknown string segments that remain absent from the atom table.
+Its update tests require only explicit user values on disk, preservation of unrelated and unknown persisted data, mixed path forms without shadows, recursive map merges with literal payload dots, whole-list replacement, canonical provider normalization and legacy-mirror removal.
+Rejected patches preserve exact file bytes and the entire cached snapshot, and error families cover structural paths/sections, alias collisions, nested payload keys/structs, scalar and provider validation, unrelated invalid persisted values, serialization failures and directory/file write failures.
+These tests establish the snapshot/persistence boundary without injecting scheduler overrides or asserting on mutable scheduler state.
 `Config.__atomize_enum_values__/1` remains a hardcoded per-key-path normalization list rather than schema-derived behavior.
 Config freshness has ONE reload implementation: the watcher's debounced file event, the save event `EvoGit.Config.Watcher.notify_change/2` routes into the watcher, and the bounded fallback that same function runs when no watcher answers all call `EvoGit.Config.Cache.reload_safely/1`, so one content change bumps the generation exactly once.
 `EvoGit.Config.Watcher.notify_change/2` is total and bounded: a `nil`, unregistered, dead or timed-out target falls back to the caller-side guarded reload and still returns `:ok`, so a save never fails, crashes or indefinitely blocks on the watcher.
 The `[tmp]` enum is `[:system, :custom, :per_repo]`, with rejected values reported at `[:tmp, :mode]` under the corresponding `{:in, ...}` rule.
 
 ## Test Inventory
-This node contains 395 tests across sixteen modules.
-Those sixteen modules live in fifteen files, because `reload_event_test.exs` holds both the fallback module and the live-watcher module.
-Per-file counts are schema 122, provider normalization/enumeration 14, provider resolution 21, provider validation 12, config health 3, Ecto validation 48, generation parameters 66, catalog 40, version state 15, context window 12, tmp schema 7, config cache 11, config watcher 3, LLM cache identity 14 and reload event 7 (4 fallback cases plus 3 live-watcher cases that skip when the `file_system` backend is unavailable).
+This node contains 420 tests across seventeen modules.
+Those seventeen modules live in sixteen files, because `reload_event_test.exs` holds both the fallback module and the live-watcher module.
+Per-file counts are schema 122, operator settings 25, provider normalization/enumeration 14, provider resolution 21, provider validation 12, config health 3, Ecto validation 48, generation parameters 66, catalog 40, version state 15, context window 12, tmp schema 7, config cache 11, config watcher 3, LLM cache identity 14 and reload event 7 (4 fallback cases plus 3 live-watcher cases that skip when the `file_system` backend is unavailable).
 Run the complete node with `mix test apps/evo_git/test/evo_git/config` from the umbrella root.
