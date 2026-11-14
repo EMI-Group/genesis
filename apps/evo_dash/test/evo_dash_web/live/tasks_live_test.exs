@@ -3248,19 +3248,26 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       html = flush_tasks_load(view)
 
-      pause_buttons = action_buttons(html, "open_pause_modal")
+      # The `:pausing` card renders its Pause control too, but DISABLED (it is
+      # already draining, so a second request would be a lie) — so the enabled
+      # control is the contract under test, not the rendered count.
+      pause_buttons =
+        html |> action_buttons("open_pause_modal") |> Enum.reject(&(&1 =~ "disabled"))
+
+      pause_all = action_buttons(html, "open_pause_modal")
       resume_buttons = action_buttons(html, "resume_task")
 
-      # Exactly ONE Pause control — the running task's.
+      # Exactly ONE ENABLED Pause control — the running task's.
       assert length(pause_buttons) == 1
       assert hd(pause_buttons) =~ running
       refute Enum.any?(pause_buttons, &(&1 =~ pending))
 
-      # A `:pausing` task is already draining: whatever the card renders for it
-      # is never an ENABLED pause control (a second request would be a lie).
-      refute Enum.any?(pause_buttons, fn button ->
-               button =~ pausing and not (button =~ "disabled")
-             end)
+      # A `:pausing` task is already draining: every control the card renders
+      # for it is disabled.
+      refute Enum.any?(pause_buttons, &(&1 =~ pausing))
+
+      assert Enum.any?(pause_all, &(&1 =~ pausing)),
+             "the :pausing card renders a disabled Pause control"
 
       # Resume is offered for the paused task only.
       assert length(resume_buttons) == 1
