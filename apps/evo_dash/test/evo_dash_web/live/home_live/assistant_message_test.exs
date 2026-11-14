@@ -400,7 +400,18 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
     test "renders the tool name with its status chip" do
       running = render_tool(%{role: :tool, tool_name: "bash", tool_status: :running})
       assert running =~ "bash"
-      assert running =~ "loading loading-spinner loading-xs"
+      doc = Floki.parse_document!(running)
+      [row] = Floki.find(doc, ".assistant-execution-indicator")
+      [dot] = Floki.find([row], ".assistant-execution-dot")
+      assert Floki.attribute([row], "data-state") == ["running"]
+      assert Floki.attribute([row], "data-busy") == ["true"]
+      assert Floki.attribute([row], "aria-busy") == ["true"]
+      assert Floki.attribute([row], "aria-live") == ["off"]
+      assert Floki.attribute([dot], "data-state") == ["running"]
+      assert Floki.attribute([dot], "data-busy") == ["true"]
+      assert Floki.attribute([dot], "aria-hidden") == ["true"]
+      assert Floki.find(doc, "[role='status']") == []
+      refute running =~ "loading-spinner"
       assert running =~ "Running"
 
       done = render_tool(%{role: :tool, tool_name: "bash", tool_status: :ok})
@@ -417,16 +428,46 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
       assert timed_out =~ "Timed out"
     end
 
-    test "renders no chip for an unknown/nil status" do
-      for status <- [nil, :bogus, "running"] do
+    test "unknown statuses explicitly report unavailable, never successful or busy" do
+      for status <- [nil, :bogus, "running", :approved] do
         html = render_tool(%{role: :tool, tool_name: "bash", tool_status: status})
-        classes = Floki.parse_document!(html) |> Floki.attribute("div", "class") |> hd()
+        doc = Floki.parse_document!(html)
+        [row] = Floki.find(doc, ".assistant-execution-indicator")
 
+        assert Floki.text([row]) =~ "Status unavailable"
+        assert Floki.attribute([row], "data-state") == ["unknown"]
+        assert Floki.attribute([row], "data-busy") == ["false"]
+        assert Floki.attribute([row], "aria-busy") == ["false"]
         refute html =~ "loading-spinner"
         refute html =~ "badge-ghost"
         refute html =~ "text-error"
         refute html =~ "text-warning"
-        assert classes =~ "flex items-center gap-2 text-xs text-base-content/60"
+      end
+    end
+
+    test "terminal tool results expose execution state and severity without live announcements" do
+      for {status, state, label, tone} <- [
+            {:ok, "ok", "Done", "text-base-content/60"},
+            {:error, "error", "Failed", "text-error"},
+            {:timeout, "timeout", "Timed out", "text-warning"}
+          ] do
+        doc =
+          render_tool(%{role: :tool, tool_name: "<bash>", tool_status: status})
+          |> Floki.parse_document!()
+
+        [row] = Floki.find(doc, ".assistant-execution-indicator")
+        [dot] = Floki.find([row], ".assistant-execution-dot")
+        assert Floki.attribute([row], "data-state") == [state]
+        assert Floki.attribute([row], "data-busy") == ["false"]
+        assert Floki.attribute([row], "aria-busy") == ["false"]
+        assert Floki.attribute([row], "aria-live") == ["off"]
+        assert Floki.attribute([dot], "data-state") == [state]
+        assert Floki.attribute([dot], "data-busy") == ["false"]
+        assert Floki.text([row]) =~ label
+        assert Floki.text([row]) =~ "<bash>"
+        assert Floki.find([row], "bash") == []
+        assert length(Floki.find([row], "span[class~='#{tone}']")) == 1
+        assert Floki.find([row], "button, [role='status'], .loading-spinner") == []
       end
     end
 
