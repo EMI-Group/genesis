@@ -10,6 +10,8 @@ Fixtures resolve the concrete paths through `EvoGit.Config.config_dir/0` and `co
 ## API Surface
 
 `assistant_message_test.exs` renders `AssistantMessage.assistant_message/1` and tests `AgentStream.extract_failed_message/1` directly.
+Its tool-row contracts pin shared execution-dot state, busy/accessibility bindings, honest unknown outcomes and terminal severity rather than an independent spinner.
+`execution_indicator_test.exs` pins `ExecutionIndicator.state/1` and rendering with authoritative phase projection, ended/approval/watch-error precedence, thinking/text independence, malformed inputs and payload privacy.
 `chat_state_test.exs`, `messages_test.exs`, and `transcript_test.exs` cover chat-state normalization, message extraction, and transcript normalization.
 `display_messages_test.exs` covers the ordered chat-transcript projection `EvoDashWeb.HomeLive.DisplayMessages` (`bubbles/1`, `bubble/1`, `user_authored?/1`) with hand-built `%ReqLLM.Message{}` fixtures: the `metadata[:user_authored]` marker, its `:unknown` shape-heuristic fallback, and totality on malformed payloads.
 `delta_test.exs` covers the pure `EvoDashWeb.HomeLive.Delta` reducer of the push-only agent-delta stream.
@@ -43,6 +45,10 @@ These tests exercise the public `EvoGit.Config.Schema.provider_profiles/1`, `mod
 
 ## ApprovalWorkflow Coverage
 
+`approval_workflow_review_test.exs` adds six pure async tests for `requested_with_notification/2`, notification payload admission and exact pending-ID review lookup.
+Only a novel owned live request notifies; duplicate, recovered and resolved identities do not, and generic notifications never include original code or request warnings.
+Review lookup rejects malformed, forged, foreign and stale-scope identities without dispatching a response, while busy or failed owned requests remain reviewable until source-authoritative settlement.
+The original code and write/sudo warning payloads remain intact in pending requests; warning rendering is owned by the parent-level approval component suite.
 `approval_workflow_test.exs` contains a shared fixture helper, 21 pure async workflow tests and five async runner tests against `apps/evo_dash/lib/evo_dash_web/live/home_live/approval_workflow.ex`.
 Both suites drive hand-built `%Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, ...}}` sockets without mounting `/assistant`, touching ChatHistory, invoking a live approval service or evaluating code.
 Ownership is source-node plus task OR string/integer-normalized agent identity; the source is `chat_node || current_node`, never evaluator `target_node`, and only legacy requests may omit the source node stamp.
