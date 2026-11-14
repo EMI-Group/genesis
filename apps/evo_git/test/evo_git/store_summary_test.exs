@@ -8,7 +8,7 @@ defmodule EvoGit.StoreSummaryTest do
   alias EvoGit.TaskInfo
   alias EvoGit.TestSupport.StoreTemplate
 
-  # The exact 17 keys returned by the summary API (select_tasks_summary/0,1,2,
+  # The exact 18 keys returned by the summary API (select_tasks_summary/0,1,2,
   # select_tasks_summary_by_path/2,3,4 and select_tasks_changed_since/1,2).
   # `result` is deliberately NOT in the projection — no summary consumer reads
   # it (the dashboard's review button uses the denormalized `branch_name`
@@ -18,6 +18,8 @@ defmodule EvoGit.StoreSummaryTest do
   # `error` IS included (nil except on :failed rows) — a cheap lenient decode.
   # `session_mode` (17th key) is the task's driver mode, normalized by the codec
   # so a legacy NULL row reads back as "oneshot".
+  # `pause_kind` (18th key) is `:clean | :dirty | nil` — nil whenever the task
+  # is not paused — decoded through the total `Codec.decode_pause_kind/1`.
   @summary_keys [
     :id,
     :status,
@@ -35,17 +37,20 @@ defmodule EvoGit.StoreSummaryTest do
     :lease_expires_at,
     :updated_at,
     :error,
-    :session_mode
+    :session_mode,
+    :pause_kind
   ]
 
-  # `Codec.encode_task/1` emits the 19 `tasks` columns in `Codec.task_columns/0`
-  # order (… branch_name, error, session_mode) — one placeholder per value.
+  # `Codec.encode_task/1` emits the 20 LIVE `tasks` columns in
+  # `Codec.task_columns/0` order (… branch_name, error, session_mode,
+  # pause_kind — `updated_at` excluded) — one placeholder per value.
   @insert_task_sql """
   INSERT OR REPLACE INTO tasks
   (id, type, status, opts, started_at, finished_at, logs,
    result, review_status, usage, agent_count, base_sha, commit_sha,
-   lease_expires_at, model_id, project_path, branch_name, error, session_mode)
-  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+   lease_expires_at, model_id, project_path, branch_name, error, session_mode,
+   pause_kind)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
   """
 
   # Same isolation pattern as store_test.exs: the production Store/TaskRegistry
@@ -134,7 +139,7 @@ defmodule EvoGit.StoreSummaryTest do
   end
 
   describe "select_tasks_summary/1" do
-    test "returns maps with exactly the 17 contract keys and decoded values" do
+    test "returns maps with exactly the 18 contract keys and decoded values" do
       put_task!(
         make_task("sum-1",
           status: :completed,
@@ -167,6 +172,8 @@ defmodule EvoGit.StoreSummaryTest do
       assert summary.commit_sha == "commit456"
       assert summary.lease_expires_at == 1_234_567_890
       assert summary.error == nil
+      # An unpaused row carries NO pause classification (the column is NULL).
+      assert summary.pause_kind == nil
       assert DateTime.compare(summary.started_at, ~U[2026-06-26 07:19:44Z]) == :eq
       assert DateTime.compare(summary.finished_at, ~U[2026-06-26 08:00:00Z]) == :eq
 
@@ -198,6 +205,21 @@ defmodule EvoGit.StoreSummaryTest do
       # Non-failed rows carry nil.
       assert by_id["sum-ok"].status == :completed
       assert by_id["sum-ok"].error == nil
+    end
+
+    test "a paused task's pause_kind IS present in the summary projection" do
+      put_task!(make_task("sum-clean", status: :paused, pause_kind: :clean, finished_at: nil))
+      put_task!(make_task("sum-dirty", status: :paused, pause_kind: :dirty, finished_at: nil))
+      put_task!(make_task("sum-running", status: :running, finished_at: nil))
+      by_id = Map.new(Store.select_tasks_summary(Store), &{&1.id, &1})
+      assert by_id["sum-clean"].status == :paused
+      assert by_id["sum-clean"].pause_kind == :clean
+      assert by_id["sum-dirty"].status == :paused
+      assert by_id["sum-dirty"].pause_kind == :dirty
+      # A task that is NOT paused normalizes to nil, never a stale kind.
+      assert by_id["sum-running"].pause_kind == nil
+      # `:paused` is NOT a finished status: the summary must not date it.
+      assert by_id["sum-clean"].finished_at == nil
     end
 
     test "nil scalar columns stay nil" do
@@ -331,7 +353,7 @@ defmodule EvoGit.StoreSummaryTest do
       assert Enum.map(summaries, & &1.id) |> Enum.sort() == ["nil-since-a", "nil-since-b"]
     end
 
-    test "select_tasks_changed_since/2 returns only newer rows with the 17-key projection", %{
+    test "select_tasks_changed_since/2 returns only newer rows with the 18-key projection", %{
       sqlite_path: sqlite_path
     } do
       put_task!(make_task("cs-old", status: :completed))

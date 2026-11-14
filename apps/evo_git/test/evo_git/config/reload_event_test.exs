@@ -106,9 +106,15 @@ defmodule EvoGit.Config.ReloadEventTest do
     # merely absent; its init primes the snapshot from the empty directory.
     # `with_log/1` keeps a backend-less host's "cannot watch" warning off the
     # console without losing it on failure.
+    # `restart: :temporary` is LOAD-BEARING: `use GenServer` defaults to
+    # `:permanent`, so ExUnit's test supervisor would RESTART the watcher the
+    # moment `GenServer.stop/2` below kills it and re-register `name` — a race
+    # the `Process.whereis(name) == nil` assertion loses under load. The fixture
+    # must produce a genuinely DEAD registration, which is what the assertion
+    # (and `notify_change/2`'s fallback) is actually about.
     {watcher, _log} =
       ExUnit.CaptureLog.with_log(fn ->
-        start_supervised!({Watcher, dir: dir, name: name})
+        start_supervised!({Watcher, dir: dir, name: name}, restart: :temporary)
       end)
 
     assert Cache.get(dir).generation == 1

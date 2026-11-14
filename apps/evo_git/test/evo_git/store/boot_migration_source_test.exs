@@ -31,7 +31,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   stderr: named-device capture goes through ONE shared `StringIO` per device,
   handed to every capturer with per-capturer offsets, so bytes written by a
   CONCURRENT test (another async module compiling a module, for example) can
-  appear inside this window. The refutes below are therefore SCOPED to the eight
+  appear inside this window. The refutes below are therefore SCOPED to the nine
   migration module NAMES — the only redefinitions that can be a regression of
   the property this suite owns — instead of a bare `"redefining module"`.
   `Boot` compiles in the calling process, so this test's own compiles are always

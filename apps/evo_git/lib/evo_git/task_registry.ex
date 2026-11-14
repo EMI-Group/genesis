@@ -10,6 +10,44 @@ defmodule EvoGit.TaskRegistry do
   The registry owns TASK state only: the Virtual Context Tree mount table is
   `EvoGit.VCT` business, persisted by `EvoGit.Store` and broadcast by the VCT
   itself, so nothing here reads or writes a mount.
+
+  ## Why this file is long (and why it stays ONE GenServer)
+
+  This module is the task LIFECYCLE STATE MACHINE. Every status transition a
+  task can make is decided in ONE process, because the decisions are mutually
+  exclusive and order-dependent: two processes (or two extracted state owners)
+  could each pass a guard and then both write. So the file legitimately owns,
+  in one place:
+
+    * the status sets themselves (`@terminal_statuses`, the killable /
+      cancellable / unstartable / finalizing-ignored lists) plus their
+      `@doc false` accessors, which a table-driven totality test asserts
+      against — a set that moves out of this file stops being total;
+    * `start_task/2` and the admission guards (duplicate/unstartable ids,
+      interactive and custom-root specs, tmpdir + `RuntimeOpts` validation);
+    * the WRAPPER protocol: `task_refs`, the `{ref, result}` /
+      `:DOWN` handlers, the stale-terminal guards and the straggler guard;
+    * the cancellation model (`cancel_task/1` → `:cancelling` with a grace
+      budget, `force_kill_task/1` → `:failed`, `:cancelled` meaning ONLY a
+      graceful cancel) and the force-kill / cancel-direct writes;
+    * task-level PAUSE and RESUME (`pause_task/1`, the `{:paused, info}`
+      resting state, the dirty-pause restart mapping in `init/1` and the
+      `:lease_sweep`, `resume_task/1` — the pure halves live in
+      `EvoGit.TaskRegistry.Pause`);
+    * lease bookkeeping (heartbeat renewal, the one-shot sweep) — the pure
+      classification lives in `EvoGit.TaskRegistry.Lease`;
+    * startup reconciliation of orphaned `:finalizing` / `:cancelling` rows and
+      the stuck-`:finalizing` watchdog;
+    * persistence sequencing over `EvoGit.Store` behind `StoreGuard` (the
+      persist-BEFORE-broadcast rule every arm here follows), the `"tasks"`
+      PubSub contract, and the cross-node filtering of it.
+
+  Everything that is PURE — validation, resume plans, cleanup, diagnostics,
+  the read offload, the runtime-opts and merge/resume context builders — is
+  already extracted under `lib/evo_git/task_registry/`. What remains here is
+  here because it reads or writes `%State{}`; splitting it out would either
+  thread the state through a module that cannot own it, or introduce a second
+  decision-maker for one transition.
   """
   use GenServer
 

@@ -40,7 +40,8 @@ defmodule EvoGit.MigrateStoreTest do
   @prune_indexes_version 20_260_815_000_006
   @vct_mounts_version 20_260_815_000_007
   @session_mode_version 20_260_815_000_008
-  # Ascending, exactly as `schema_migrations` reports it — eight contiguous
+  @pause_kind_version 20_260_815_000_009
+  # Ascending, exactly as `schema_migrations` reports it — nine contiguous
   # versions, no gaps.
   @migration_versions [
     @baseline_version,
@@ -50,20 +51,21 @@ defmodule EvoGit.MigrateStoreTest do
     @archive_table_version,
     @prune_indexes_version,
     @vct_mounts_version,
-    @session_mode_version
+    @session_mode_version,
+    @pause_kind_version
   ]
 
   @migration_count length(@migration_versions)
 
-  # The 20 LIVE `tasks` columns AFTER `20260815000005_task_agent_archives`
-  # drops the legacy `archive_metadata` column, in the FRESH-database canonical
-  # order (`session_mode` sits between `error` and `updated_at`). An ADOPTED
-  # legacy table legitimately carries `session_mode` appended at the tail
+  # The 21 `tasks` columns AFTER `20260815000005_task_agent_archives` drops the
+  # legacy `archive_metadata` column, in the FRESH-database canonical order
+  # (`session_mode` then `pause_kind` sit between `error` and `updated_at`). An
+  # ADOPTED legacy table legitimately carries those two appended at the tail
   # instead (SQLite ALTERs can only append), which is why the comparisons below
   # are order-insensitive.
   @live_task_columns ~w(id type status opts started_at finished_at logs result review_status
                         usage agent_count base_sha commit_sha lease_expires_at model_id
-                        project_path branch_name error session_mode updated_at)
+                        project_path branch_name error session_mode pause_kind updated_at)
 
   # The v0.9.0–v0.12.5 "reported crash-on-upgrade" shape: `updated_at` is the
   # 19th column and `error` does not exist yet — the canonical legacy DB a
@@ -158,11 +160,12 @@ defmodule EvoGit.MigrateStoreTest do
       assert output =~ "20260815000006_prune_redundant_indexes"
       assert output =~ "20260815000007_vct_mounts"
       assert output =~ "20260815000008_session_mode"
+      assert output =~ "20260815000009_task_pause_kind"
 
       assert output =~ "Database is now current (#{@migration_count} migration(s) applied)."
 
       # Every version is stamped and the canonical tables exist (`tasks` ends at
-      # its 20 live columns — the archive column is gone).
+      # its 21 columns — the archive column is gone).
       assert migration_versions(path) == @migration_versions
 
       # The legacy `projects` table is retired (migration 7 drops it), so the
@@ -174,9 +177,10 @@ defmodule EvoGit.MigrateStoreTest do
       assert "error" in columns(path)
       assert "session_mode" in columns(path)
       assert "updated_at" in columns(path)
-      # A fresh database gets the CANONICAL order: `session_mode` directly
-      # before `updated_at`.
-      assert Enum.take(columns(path), -3) == ~w(error session_mode updated_at)
+      assert "pause_kind" in columns(path)
+      # A fresh database gets the CANONICAL order: `session_mode` then
+      # `pause_kind` directly before `updated_at`.
+      assert Enum.take(columns(path), -4) == ~w(error session_mode pause_kind updated_at)
     end
   end
 
@@ -203,16 +207,17 @@ defmodule EvoGit.MigrateStoreTest do
       assert output =~ "Applying #{@migration_count} migration(s):"
 
       # Adoption: `error` appended (SQLite ALTERs append at the tail), then the
-      # archive migration drops `archive_metadata` and `session_mode` is
-      # appended last → the 20 live columns, with every version stamped.
+      # archive migration drops `archive_metadata`, `session_mode` is appended
+      # and finally `pause_kind` → the 21 columns, with every version stamped.
       cols = columns(path)
       assert Enum.sort(cols) == Enum.sort(@live_task_columns)
       assert "error" in cols
       assert "session_mode" in cols
       assert "updated_at" in cols
+      assert "pause_kind" in cols
       refute "archive_metadata" in cols
-      # An adopted table keeps the appended tail order: `session_mode` last.
-      assert List.last(cols) == "session_mode"
+      # An adopted table keeps the appended tail order: `pause_kind` last.
+      assert List.last(cols) == "pause_kind"
       assert migration_versions(path) == @migration_versions
 
       # Data normalization ran through the same migrations: the seeded
@@ -235,8 +240,8 @@ defmodule EvoGit.MigrateStoreTest do
       assert migration_versions(path) == @migration_versions
       cols = columns(path)
       assert Enum.sort(cols) == Enum.sort(@live_task_columns)
-      # `error` after `updated_at`, then `session_mode` appended last.
-      assert Enum.take(cols, -3) == ~w(updated_at error session_mode)
+      # `error` after `updated_at`, then `session_mode`, then `pause_kind`.
+      assert Enum.take(cols, -4) == ~w(updated_at error session_mode pause_kind)
     end
   end
 

@@ -587,7 +587,7 @@ defmodule EvoGit.StoreTest do
       assert Codec.decode_error("\"just a string\"") == nil
     end
 
-    test "encode_task/decode_task round-trip includes error and session_mode" do
+    test "encode_task/decode_task round-trip includes error, session_mode and pause_kind" do
       with_error = %TaskInfo{
         id: "codec-err",
         type: :genesis,
@@ -600,10 +600,18 @@ defmodule EvoGit.StoreTest do
 
       row = Codec.encode_task(with_error)
       # One value per LIVE column (`Codec.task_columns/0`, `updated_at` excluded).
-      assert length(row) == 19
+      assert length(row) == 20
       assert Codec.decode_task(row).error == canonical_error()
-      # `session_mode` rides last and round-trips, defaulting to "oneshot".
+      # `session_mode` round-trips, defaulting to "oneshot".
       assert Codec.decode_task(row).session_mode == "oneshot"
+      # `pause_kind` rides last and round-trips: a task that is NOT paused
+      # encodes as nil (the canonical "not paused" value) ...
+      assert List.last(row) == nil
+      assert Codec.decode_task(row).pause_kind == nil
+      # ... and a paused one survives the round-trip as its atom.
+      paused_row = Codec.encode_task(%{with_error | pause_kind: :dirty})
+      assert List.last(paused_row) == "dirty"
+      assert Codec.decode_task(paused_row).pause_kind == :dirty
 
       without_error = %TaskInfo{
         id: "codec-no-err",
@@ -615,7 +623,7 @@ defmodule EvoGit.StoreTest do
       }
 
       row2 = Codec.encode_task(without_error)
-      assert length(row2) == 19
+      assert length(row2) == 20
       decoded2 = Codec.decode_task(row2)
       assert decoded2.error == nil
       assert decoded2.id == "codec-no-err"

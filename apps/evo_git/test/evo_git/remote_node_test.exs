@@ -170,10 +170,10 @@ defmodule EvoGit.RemoteNodeTest do
       summary = Enum.find(results, &(&1.id == id))
       refute is_nil(summary)
 
-      # The summary projection has exactly the 17 lightweight keys (`result` is
+      # The summary projection has exactly the 18 lightweight keys (`result` is
       # deliberately excluded from the summary projection; `error` rides along,
-      # nil for non-failed rows, and `session_mode` normalizes a legacy NULL to
-      # "oneshot").
+      # nil for non-failed rows, `session_mode` normalizes a legacy NULL to
+      # "oneshot", and `pause_kind` is nil unless the task is paused).
       summary_keys = [
         :agent_count,
         :base_sha,
@@ -185,6 +185,7 @@ defmodule EvoGit.RemoteNodeTest do
         :lease_expires_at,
         :model_id,
         :opts,
+        :pause_kind,
         :project_path,
         :review_status,
         :session_mode,
@@ -197,6 +198,8 @@ defmodule EvoGit.RemoteNodeTest do
       assert Enum.sort(Map.keys(summary)) == Enum.sort(summary_keys)
       # updated_at is the raw fixed-precision ISO string.
       assert is_binary(summary.updated_at)
+      # This task is not paused, so its pause classification is nil.
+      assert summary.pause_kind == nil
 
       # A far-future since excludes everything.
       assert RemoteNode.list_tasks_changed_since(node(), "2999-01-01T00:00:00.000Z") == []
