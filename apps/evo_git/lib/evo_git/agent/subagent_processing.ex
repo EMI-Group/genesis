@@ -549,16 +549,16 @@ defmodule EvoGit.Agent.SubagentProcessing do
       |> Enum.zip(results)
       |> Enum.reduce({[], []}, fn {{index, spec}, result}, {children, details} ->
         case result do
-          {:ok, %Result{commit_sha: sha, branch: branch}} when is_binary(sha) ->
+          {:ok, %Result{commit_sha: sha} = completed} when is_binary(sha) ->
             if spec.repo_id == parent_repo_id do
-              child = %{
-                index: index,
-                commit_sha: sha,
-                branch: branch,
-                node_path: spec.context_node.path,
-                agent_module: spec.agent_module,
-                objective: spec.objective
-              }
+              child =
+                merge_child(
+                  index,
+                  completed,
+                  spec.context_node.path,
+                  spec.agent_module,
+                  spec.objective
+                )
 
               {[child | children], details}
             else
@@ -571,6 +571,35 @@ defmodule EvoGit.Agent.SubagentProcessing do
       end)
 
     {Enum.reverse(children), Enum.reverse(cross_repo_details)}
+  end
+
+  @doc false
+  # Shapes ONE `%EvoGit.Agent.ContextMerge.child{}` from a completed subagent
+  # result. THE single place the child map is built, shared by the spawn path
+  # (`collect_mergeable_results/3`, where `node_path` comes from the spec's
+  # context node) and the crash-resume re-attach path
+  # (`EvoGit.Agent.Resume.Reattach`, which re-derives it best-effort from the
+  # interrupted call).
+  #
+  # `node_path` may be `nil`: `EvoGit.Agent.ContextMerge` normalizes an absent
+  # node to the root (`"./"`), the most permissive ownership, so an unknown node
+  # can never drop a legitimate edit.
+  @spec merge_child(
+          non_neg_integer() | nil,
+          Result.t(),
+          String.t() | nil,
+          module() | nil,
+          String.t() | nil
+        ) :: ContextMerge.child()
+  def merge_child(index, %Result{} = result, node_path, agent_module, objective) do
+    %{
+      index: index,
+      commit_sha: result.commit_sha,
+      branch: result.branch,
+      node_path: node_path,
+      agent_module: agent_module,
+      objective: objective
+    }
   end
 
   # Builds the system note describing cross-repo subagent completions,

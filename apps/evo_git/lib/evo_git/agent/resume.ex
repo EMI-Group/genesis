@@ -24,6 +24,12 @@ defmodule EvoGit.Agent.Resume do
      honest (`EvoGit.Agent.Resume.ToolBatch`); without it the next provider call
      rejects the unpaired `tool_call_id` (HTTP 400 → `EvoGit.Agent.LlmError`
      fail-fast → a `:failed` task).
+     A `:subagent` call is the ONE class whose real answer may still arrive: the
+     interrupted batch is re-attached with ONE
+     `EvoGit.AgentScheduler.reattach_sub_agents/2` call for the WHOLE batch
+     (`EvoGit.Agent.Resume.Reattach`), so a surviving child's real, formatted
+     result is used instead of the fallback text and its same-repo commit is
+     merged into the parent worktree.
   2. **Notice** — append ONE `[RESUME]`-framed, NON-user-authored `:user`
      message (`EvoGit.Agent.Resume.Notice`) stating the interruption, the
      interrupted calls and their classes, the worktree situation and how to
@@ -33,7 +39,10 @@ defmodule EvoGit.Agent.Resume do
 
     * NEVER touches the system message or the first user message — the prompt
       cache prefix must stay byte-identical across a resume.
-    * TOTAL: no raises, no LLM call, no I/O, no scheduler interaction.
+    * TOTAL except for the ONE deliberate, bounded and fully guarded scheduler
+      re-attach call: no raises, no LLM call; every failure of the re-attach, the
+      formatting or the merge degrades to the honest fallback text with a
+      `:warning`, so a repair can never crash the exchange.
     * At most ONE notice per resumed run: the notice carries
       `metadata[:resume_notice]` and an existing one short-circuits the append
       (a transcript restored from a previous resume already contains it).
@@ -43,8 +52,12 @@ defmodule EvoGit.Agent.Resume do
       close it.
   """
 
+  # `apply/2` is the public option-taking entry point; Kernel's would clash.
+  import Kernel, except: [apply: 2]
+
   alias EvoGit.Agent.ContextBuilder
   alias EvoGit.Agent.Resume.Notice
+  alias EvoGit.Agent.Resume.Reattach
   alias EvoGit.Agent.Resume.ToolBatch, as: Impact
   alias EvoGit.Agent.State
   alias EvoGit.Agent.ToolBatch
@@ -58,17 +71,33 @@ defmodule EvoGit.Agent.Resume do
   Total: a malformed state/context returns the state unchanged.
   """
   @spec apply(State.t()) :: State.t()
-  def apply(%State{} = state) do
+  def apply(%State{} = state), do: apply(state, [])
+  def apply(state), do: state
+
+  @doc """
+  Repairs and annotates a crash-resumed state, with the resume-path options.
+
+  Options:
+
+    * `:reattach_fun` — `fn agent_id, expected_count -> reply` used to re-attach
+      the interrupted subagent batch; defaults to
+      `&EvoGit.AgentScheduler.reattach_sub_agents/2`. This is the ONE injection
+      point (an explicit option, never app env).
+
+  Total for any option value.
+  """
+  @spec apply(State.t(), keyword()) :: State.t()
+  def apply(%State{} = state, opts) when is_list(opts) do
     if crash_retry?(state) do
       batch = ToolBatch.normalize(state.pending_tool_batch)
       state = %{state | pending_tool_batch: batch}
-      state |> repair(batch) |> annotate(batch) |> clear_marker()
+      state |> repair(batch, opts) |> annotate(batch) |> clear_marker()
     else
       state
     end
   end
 
-  def apply(state), do: state
+  def apply(state, _opts), do: state
 
   @doc """
   True when this state is a CRASH RETRY: the durable restore was requested by the
@@ -132,26 +161,55 @@ defmodule EvoGit.Agent.Resume do
 
   ## Repair
 
-  defp repair(%State{} = state, batch) do
+  defp repair(%State{} = state, batch, opts) do
     case dangling(state) do
       {:ok, turn, calls} ->
+        # ONE re-attach request for the WHOLE interrupted batch: the subagent
+        # calls are collected in MODEL CALL ORDER (slot position ↔ sub-agent
+        # index) and answered together.
+        classified = classify(calls, batch, state)
+        reattach = Reattach.resolve(state, subagent_slots(classified), opts)
+
         results =
-          calls
-          |> Enum.map(&synthetic_result(&1, batch, state))
+          classified
+          |> Enum.map(&synthetic_result(&1, reattach))
           |> Enum.map(&ContextBuilder.tag_message_turn(&1, turn))
 
-        %{state | context: ReqLLM.Context.append(state.context, results)}
+        state = %{state | context: ReqLLM.Context.append(state.context, results)}
+
+        append_merge_note(state, turn, reattach)
 
       :none ->
         state
     end
   end
 
-  defp synthetic_result(call, batch, state) do
-    class = class_for(call, batch, state)
-    text = Impact.impact(class, call, [])
+  # One entry per unanswered call: `{model_call_index, call, class}`.
+  defp classify(calls, batch, state) do
+    calls
+    |> Enum.with_index()
+    |> Enum.map(fn {call, index} -> {index, call, class_for(call, batch, state)} end)
+  end
+
+  defp subagent_slots(classified) do
+    for {index, call, :subagent} <- classified, do: {index, call}
+  end
+
+  defp synthetic_result({index, call, class}, reattach) do
+    text = Map.get(reattach.texts, index) || Impact.impact(class, call)
     ToolDispatch.assemble_tool_result(call_id(call), call_name(call), text)
   end
+
+  # The merge outcome is reported the way the spawn path reports it: ONE
+  # `:user` note AFTER the tool results. It is harness text, never
+  # `MessageMarker`-flagged as user-authored.
+  defp append_merge_note(%State{} = state, turn, %{merge_note: note})
+       when is_binary(note) and note != "" do
+    message = ContextBuilder.build_injected_message(note, turn)
+    %{state | context: ReqLLM.Context.append(state.context, message)}
+  end
+
+  defp append_merge_note(state, _turn, _reattach), do: state
 
   # Provenance: prefer the marker entry for the SAME provider id, then the entry
   # at the SAME index; when the marker is absent (a crash outside a batch) the
