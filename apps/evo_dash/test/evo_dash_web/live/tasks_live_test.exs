@@ -2104,7 +2104,7 @@ defmodule EvoDashWeb.TasksLiveTest do
     end
   end
 
-  # The 16 summary keys of the lightweight /tasks page load (the
+  # The 18 summary keys of the lightweight /tasks page load (the
   # `EvoDash.NodeContext.list_tasks_page/2` projection). `result`, `usage`,
   # `logs` and `archive_metadata` are deliberately absent — they are fetched
   # per card, on demand.
@@ -2124,7 +2124,9 @@ defmodule EvoDashWeb.TasksLiveTest do
     :commit_sha,
     :lease_expires_at,
     :updated_at,
-    :error
+    :error,
+    :session_mode,
+    :pause_kind
   ]
 
   describe "lightweight page load (summary rows)" do
@@ -3187,6 +3189,331 @@ defmodule EvoDashWeb.TasksLiveTest do
       wait_until(fn -> render(view) =~ "Message sent" end)
       flush_tasks_load(view)
     end
+  end
+
+  # Task-level PAUSE / RESUME (`docs/task-pause.md`). `:pausing` is the DRAIN
+  # window (the agent stops at its next turn boundary, so the request is slow)
+  # and `:paused` is the NON-TERMINAL, resumable resting state. Both actions are
+  # ASYNC on this page, so every assertion either awaits the store row or the
+  # socket assigns instead of reading the click's HTML.
+  describe "task pause and resume" do
+    test "the status filter offers Pausing and Paused and filters by the stored status text", %{
+      conn: conn
+    } do
+      insert_fixture!(status: :pausing, finished_at: nil, opts: [prompt: "draining task"])
+
+      insert_fixture!(
+        status: :paused,
+        pause_kind: :clean,
+        finished_at: nil,
+        opts: [prompt: "resting task"]
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
+
+      # No atom conversion on this path: the option value IS the stored status
+      # text, which the store's exact-equality WHERE clause matches as-is.
+      assert html =~ ~r/<option value="pausing"[^>]*>\s*Pausing\s*<\/option>/
+      assert html =~ ~r/<option value="paused"[^>]*>\s*Paused\s*<\/option>/
+
+      _ = render_hook(view, "filter_tasks", %{"status_filter" => "paused"})
+      flush_tasks_load(view)
+
+      assert render_tasks_list(view) =~ "resting task"
+      refute render_tasks_list(view) =~ "draining task"
+      flush_tasks_load(view)
+    end
+
+    test "Pause renders for a running task and Resume for a paused one — neither for other states",
+         %{conn: conn} do
+      running = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running one"])
+
+      pausing =
+        insert_fixture!(status: :pausing, finished_at: nil, opts: [prompt: "pausing one"])
+
+      paused =
+        insert_fixture!(
+          status: :paused,
+          pause_kind: :clean,
+          finished_at: nil,
+          opts: [prompt: "paused one"]
+        )
+
+      pending = insert_fixture!(status: :pending, finished_at: nil, opts: [prompt: "pending one"])
+      _completed = insert_fixture!(status: :completed, opts: [prompt: "completed one"])
+      _failed = insert_fixture!(status: :failed, opts: [prompt: "failed one"])
+      _cancelled = insert_fixture!(status: :cancelled, opts: [prompt: "cancelled one"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
+
+      pause_buttons = action_buttons(html, "open_pause_modal")
+      resume_buttons = action_buttons(html, "resume_task")
+
+      # Exactly ONE Pause control — the running task's.
+      assert length(pause_buttons) == 1
+      assert hd(pause_buttons) =~ running
+      refute Enum.any?(pause_buttons, &(&1 =~ pending))
+
+      # A `:pausing` task is already draining: whatever the card renders for it
+      # is never an ENABLED pause control (a second request would be a lie).
+      refute Enum.any?(pause_buttons, fn button ->
+               button =~ pausing and not (button =~ "disabled")
+             end)
+
+      # Resume is offered for the paused task only.
+      assert length(resume_buttons) == 1
+      assert hd(resume_buttons) =~ paused
+      refute Enum.any?(resume_buttons, &(&1 =~ running))
+      refute Enum.any?(resume_buttons, &(&1 =~ pausing))
+
+      flush_tasks_load(view)
+    end
+
+    test "the pause modal opens, and confirming moves the task to :pausing, closes it and collapses the card",
+         %{conn: conn} do
+      id = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running to pause"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      _html = expand_card(view, id)
+
+      assert MapSet.member?(
+               :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.expanded_task_ids,
+               id
+             )
+
+      html = render_click(view, "open_pause_modal", %{"task_id" => id})
+      assert html =~ "Pause task?"
+      assert html =~ "Task: #{id}"
+      assert html =~ "Keep Running"
+      # The drain wording promises a delay and a resumable task.
+      assert html =~ "finishes its current tool call first"
+      assert html =~ "can be resumed later"
+
+      render_click(view, "confirm_pause_task", %{"task_id" => id})
+
+      wait_until(fn -> EvoGit.Store.get_task(EvoGit.Store, id).status == :pausing end)
+
+      # The modal closed and the card collapsed the moment the request started.
+      refute render(view) =~ "Pause task?"
+
+      refute MapSet.member?(
+               :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.expanded_task_ids,
+               id
+             )
+
+      flush_tasks_load(view)
+    end
+
+    test "a pause request marks the card busy while in flight and clears it on success", %{
+      conn: conn
+    } do
+      id = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "slow pause task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      # Suspend the isolated registry so the pause RPC stays in flight long
+      # enough to observe the busy marker deterministically (no sleeps). It is
+      # resumed in on_exit too, so a failed assertion can never wedge the
+      # suite's registry.
+      :sys.suspend(EvoGit.TaskRegistry)
+      on_exit(fn -> resume_registry_quietly() end)
+
+      render_click(view, "open_pause_modal", %{"task_id" => id})
+      render_click(view, "confirm_pause_task", %{"task_id" => id})
+
+      assigns = :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns
+      # The busy map is keyed by the STRING form — what a card's
+      # `phx-value-task_id` carries.
+      assert Map.get(assigns.action_busy, to_string(id)) == :pause
+      # …and the modal is already gone, so it can never be confirmed twice.
+      assert assigns.confirm_pause_task_id == nil
+
+      resume_registry_quietly()
+
+      wait_until(fn -> EvoGit.Store.get_task(EvoGit.Store, id).status == :pausing end)
+
+      wait_until(fn ->
+        :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.action_busy == %{}
+      end)
+
+      flush_tasks_load(view)
+    end
+
+    test "confirm_pause_task without an open modal is a no-op", %{conn: conn} do
+      id =
+        insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running untouched"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      html = render_click(view, "confirm_pause_task", %{"task_id" => id})
+
+      refute html =~ "Failed to pause task"
+      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :running
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.action_busy == %{}
+
+      flush_tasks_load(view)
+    end
+
+    test "resume re-enqueues a paused task in place, with no confirmation modal", %{conn: conn} do
+      id =
+        insert_fixture!(
+          status: :paused,
+          pause_kind: :clean,
+          finished_at: nil,
+          opts: [prompt: "paused task"]
+        )
+
+      # Resume's preconditions: durable run state to restore, and a wrapper
+      # spawn that must NOT start a real runtime in this page suite.
+      seed_durable_run!(id, 900_001)
+      install_wrapper_spawn_seam!()
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      # Resume needs NO confirmation.
+      refute render(view) =~ "Pause task?"
+
+      render_click(view, "resume_task", %{"task_id" => id})
+
+      wait_until(fn -> EvoGit.Store.get_task(EvoGit.Store, id).status == :running end)
+
+      resumed = EvoGit.Store.get_task(EvoGit.Store, id)
+      assert resumed.status == :running
+      # The paused-run facts are preserved (a resume is an in-place re-enqueue).
+      assert resumed.pause_kind == nil
+      assert resumed.finished_at == nil
+
+      assert_receive {:wrapper_spawned, :genesis, spawn_opts, ^id}, 5_000
+      assert Keyword.get(spawn_opts, :resume_kind) == :clean_pause
+
+      flush_tasks_load(view)
+    end
+
+    test "a refused pause flashes the interactive-session line and clears the busy state", %{
+      conn: conn
+    } do
+      id =
+        insert_fixture!(
+          status: :awaiting_input,
+          finished_at: nil,
+          session_mode: "interactive",
+          opts: [prompt: "idle session task"]
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      render_click(view, "open_pause_modal", %{"task_id" => id})
+      render_click(view, "confirm_pause_task", %{"task_id" => id})
+
+      # (The rendered text HTML-escapes the apostrophe in "can't", so the
+      # assertion pins a fragment without one.)
+      wait_until(fn -> render(view) =~ "This task cannot be paused" end)
+
+      # The row is untouched and no button stays disabled.
+      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :awaiting_input
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.action_busy == %{}
+      refute render(view) =~ "Pause task?"
+
+      flush_tasks_load(view)
+    end
+
+    test "a refused resume flashes the durable-state line and clears the busy state", %{
+      conn: conn
+    } do
+      id =
+        insert_fixture!(
+          status: :paused,
+          pause_kind: :clean,
+          finished_at: nil,
+          opts: [prompt: "paused without durable state"]
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      render_click(view, "resume_task", %{"task_id" => id})
+
+      wait_until(fn -> render(view) =~ "durable agent state is disabled" end)
+
+      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :paused
+      assert :sys.get_state(view.pid, @assigns_timeout_ms).socket.assigns.action_busy == %{}
+
+      flush_tasks_load(view)
+    end
+  end
+
+  # The `<button …>` opening tags carrying `phx-click="<action>"` — the file's
+  # visibility-matrix idiom (the task id and any `disabled` attribute live on
+  # the same tag).
+  defp action_buttons(html, action) do
+    html
+    |> then(&Regex.scan(~r/<button[^>]*phx-click="#{action}"[^>]*>/, &1))
+    |> List.flatten()
+  end
+
+  # Seeds ONE durable ROOT run for `task_id` in the app-booted
+  # `EvoGit.AgentState` — the precondition
+  # `EvoGit.TaskRegistry.resume_task/1` checks (`root_agent_ids/1 != []`).
+  # AgentState is an app-global resource, so this `async: false` module uses
+  # unique task ids and deletes the run in `on_exit`.
+  defp seed_durable_run!(task_id, agent_id) do
+    on_exit(fn -> EvoGit.AgentState.delete_task(task_id) end)
+
+    :ok =
+      EvoGit.AgentState.checkpoint(task_id, agent_id, %{
+        kind: :rewrite,
+        messages: [
+          %ReqLLM.Message{
+            role: :user,
+            content: [ReqLLM.Message.ContentPart.text("paused run #{task_id}")]
+          }
+        ],
+        fields: %{phase: "paused"}
+      })
+
+    :ok = EvoGit.AgentState.flush()
+    assert {:ok, _record} = EvoGit.AgentState.load(task_id, agent_id)
+    :ok
+  end
+
+  # Installs the isolated registry's wrapper-spawn seam (`:wrapper_spawn_fun`,
+  # the SAME seam apps/evo_git's `task_registry/pause_test.exs` starts a
+  # registry with) through `:sys.replace_state/2`: a resume re-enqueues the task
+  # by spawning a wrapper, and this page suite must never start a real runtime.
+  # The fun reports the spawn HERE and answers a fake ref, which the registry
+  # tracks exactly like a `%Task{}`.
+  defp install_wrapper_spawn_seam! do
+    test_pid = self()
+
+    :sys.replace_state(EvoGit.TaskRegistry, fn state ->
+      fun = fn task_type, spawn_opts, task_id, _server ->
+        send(test_pid, {:wrapper_spawned, task_type, spawn_opts, task_id})
+        :fake_task_ref
+      end
+
+      %{state | wrapper_spawn_fun: fun}
+    end)
+
+    :ok
+  end
+
+  # Resumes the (possibly suspended) isolated TaskRegistry, tolerating a
+  # registry that is already gone — used by `on_exit`, so a failed assertion in
+  # an in-flight test can never leave the suite's registry suspended.
+  defp resume_registry_quietly do
+    :sys.resume(EvoGit.TaskRegistry)
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
   end
 
   # --- task detail view helpers ---

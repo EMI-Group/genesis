@@ -95,6 +95,17 @@ defmodule EvoDashWeb.TasksLive do
                     <%!-- zh_CN: 等待输入（交互式会话空闲） --%>
                     {gettext("Awaiting Input")}
                   </option>
+                  <%!-- The pause statuses ride the store's exact-TEXT status
+                       filter unchanged ("pausing"/"paused" are the stored
+                       status strings) — no atom conversion anywhere. --%>
+                  <option value="pausing" selected={@status_filter == "pausing"}>
+                    <%!-- zh_CN: 正在暂停（等当前工具调用结束后停止） --%>
+                    {gettext("Pausing")}
+                  </option>
+                  <option value="paused" selected={@status_filter == "paused"}>
+                    <%!-- zh_CN: 已暂停（非终态，可恢复） --%>
+                    {gettext("Paused")}
+                  </option>
                   <option value="completed" selected={@status_filter == "completed"}>
                     {gettext("Completed")}
                   </option>
@@ -374,6 +385,7 @@ defmodule EvoDashWeb.TasksLive do
                     detail={Map.get(@task_details, task.id)}
                     current_node_id={@current_node_id}
                     session_agent_id={session_agent_id(@awaiting_sessions, task.id)}
+                    action_busy={@action_busy}
                   />
                 </div>
               <% end %>
@@ -598,6 +610,50 @@ defmodule EvoDashWeb.TasksLive do
             session_agent_id={session_agent_id(@awaiting_sessions, @confirm_close_session_task_id)}
           />
         <% end %>
+
+        <!-- Pause Task confirmation modal (graceful: agents stop at their next
+             turn boundary, the task keeps its work and stays resumable) -->
+        <%= if @confirm_pause_task_id do %>
+          <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="close_pause_modal">
+            </div>
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
+              <div class="flex items-center gap-3 mb-4">
+                <.icon name="hero-pause-circle" class="size-5 text-primary-standalone" />
+                <h3 class="text-lg font-bold">{gettext("Pause task?")}</h3>
+              </div>
+
+              <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
+                <%!-- zh_CN: 暂停在下一轮对话边界生效，当前工具调用会先执行完，所以可能要等一会儿 --%>
+                {gettext(
+                  "The agent finishes its current tool call first, so this can take a moment. The task keeps all of its work and can be resumed later."
+                )}
+              </p>
+              <p class="text-xs text-base-content/70 mb-5">
+                {gettext("Task: %{task_id}", task_id: @confirm_pause_task_id)}
+              </p>
+
+              <div class="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  class="btn btn-ghost rounded-md px-6"
+                  phx-click="close_pause_modal"
+                >
+                  {gettext("Keep Running")}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-primary rounded-md px-6 gap-2"
+                  phx-click="confirm_pause_task"
+                  phx-value-task_id={@confirm_pause_task_id}
+                >
+                  <.icon name="hero-pause" class="size-4.5" />
+                  {gettext("Pause Task")}
+                </button>
+              </div>
+            </div>
+          </div>
+        <% end %>
       <% end %>
     </EvoDashWeb.Layouts.app>
     """
@@ -652,6 +708,14 @@ defmodule EvoDashWeb.TasksLive do
         selected_options: nil,
         confirm_cancel_task_id: nil,
         confirm_force_kill_task_id: nil,
+        # Pause confirmation modal's task id (nil = closed) and the per-task
+        # in-flight action map the cards use to disable/spin their PAUSE /
+        # RESUME controls: `%{to_string(task_id) => :pause | :resume}` — keyed
+        # by the STRING form because that is what a card's
+        # `phx-value-task_id` carries. An entry is cleared by the action's own
+        # async result (success OR failure), so a button can never wedge.
+        confirm_pause_task_id: nil,
+        action_busy: %{},
         # `task_id => agent_id` of the sessions parked at `:awaiting_input`
         # (their cards render a reply box + close control), and the
         # close-session modal's task id (nil = closed). `session_mode_filter`
@@ -718,6 +782,11 @@ defmodule EvoDashWeb.TasksLive do
         socket
         |> assign(:confirm_cancel_task_id, nil)
         |> assign(:confirm_force_kill_task_id, nil)
+        |> assign(:confirm_pause_task_id, nil)
+        # The in-flight pause/resume markers belong to the OLD node too: a
+        # stale entry would render as a permanently disabled (or spinning)
+        # button on the newly-viewed node, which has no such request.
+        |> assign(:action_busy, %{})
         # An idle-session modal and the map it confirms against belong to the
         # OLD node — clear both so a close can never hit another node's session.
         |> assign(:confirm_close_session_task_id, nil)
@@ -861,6 +930,20 @@ defmodule EvoDashWeb.TasksLive do
   @impl true
   def handle_info({:session_message_sent, task_id, result}, socket),
     do: {:noreply, session_message_result(socket, task_id, result)}
+
+  # Async pause/resume results. `SafeCall.start/4` sends its tag VERBATIM, so
+  # `{:pause_result, task_id}` / `{:resume_result, task_id}` arrive NESTED as
+  # `{{tag, task_id}, result}` and are applied by `pause_resume_result/4`
+  # (which ALWAYS clears the task's busy marker, so a button can never wedge).
+  # Defined BEFORE the `handle_info(_msg, socket)` catch-all, like the sibling
+  # session-message clause above.
+  @impl true
+  def handle_info({{:pause_result, task_id}, result}, socket),
+    do: {:noreply, pause_resume_result(socket, task_id, :pause, result)}
+
+  @impl true
+  def handle_info({{:resume_result, task_id}, result}, socket),
+    do: {:noreply, pause_resume_result(socket, task_id, :resume, result)}
 
   # Per-card lazy detail result (EvoDashWeb.TasksLive.TaskDetail). The module
   # applies the node + entry + seq guards; a stale/foreign result is dropped.
@@ -1337,6 +1420,75 @@ defmodule EvoDashWeb.TasksLive do
     end
   end
 
+  # Task-level pause, step 1: open the confirmation modal. Every OTHER
+  # confirmation modal is closed, so exactly one is ever open.
+  @impl true
+  def handle_event("open_pause_modal", %{"task_id" => task_id}, socket) do
+    {:noreply,
+     socket
+     |> assign(:confirm_pause_task_id, task_id)
+     |> assign(:confirm_cancel_task_id, nil)
+     |> assign(:confirm_force_kill_task_id, nil)
+     |> assign(:confirm_close_session_task_id, nil)}
+  end
+
+  @impl true
+  def handle_event("close_pause_modal", _params, socket) do
+    {:noreply, assign(socket, :confirm_pause_task_id, nil)}
+  end
+
+  # Task-level pause, step 2: ASYNC under SafeCall (an exit becomes a value).
+  # A pause drains the task's agents at their NEXT TURN BOUNDARY — the agent
+  # finishes its current tool call first — so the call is far slower than a
+  # status write and must NEVER block the LiveView. The modal is closed, the
+  # card collapsed and the busy marker set immediately; the outcome lands as
+  # `{{:pause_result, task_id}, result}`.
+  @impl true
+  def handle_event("confirm_pause_task", _params, socket) do
+    case socket.assigns[:confirm_pause_task_id] do
+      nil ->
+        # Modal was never opened (or already closed) — no-op.
+        {:noreply, socket}
+
+      task_id ->
+        node = socket.assigns.current_node
+
+        EvoDash.SafeCall.start(self(), {:pause_result, task_id}, fn ->
+          EvoDash.NodeContext.pause_task(node, task_id)
+        end)
+
+        {:noreply,
+         socket
+         |> assign(:confirm_pause_task_id, nil)
+         |> assign(:expanded_task_ids, MapSet.delete(socket.assigns.expanded_task_ids, task_id))
+         |> assign(:action_busy, Map.put(socket.assigns.action_busy, to_string(task_id), :pause))}
+    end
+  end
+
+  # Task resume: ASYNC for the same reason (the re-enqueue admits the task and
+  # spawns its wrapper). Resume needs NO confirmation — the card's control
+  # posts here directly, and an unavailable node/task id is a silent no-op.
+  @impl true
+  def handle_event("resume_task", %{"task_id" => task_id}, socket)
+      when is_binary(task_id) and task_id != "" do
+    case socket.assigns.current_node do
+      nil ->
+        {:noreply, socket}
+
+      node ->
+        EvoDash.SafeCall.start(self(), {:resume_result, task_id}, fn ->
+          EvoDash.NodeContext.resume_task(node, task_id)
+        end)
+
+        {:noreply,
+         socket
+         |> assign(:expanded_task_ids, MapSet.delete(socket.assigns.expanded_task_ids, task_id))
+         |> assign(:action_busy, Map.put(socket.assigns.action_busy, to_string(task_id), :resume))}
+    end
+  end
+
+  def handle_event("resume_task", _params, socket), do: {:noreply, socket}
+
   @impl true
   def handle_event("delete_task", %{"task_id" => task_id}, socket) do
     result =
@@ -1446,6 +1598,66 @@ defmodule EvoDashWeb.TasksLive do
 
   defp session_send_error(reason),
     do: gettext("Failed to send message: %{reason}", reason: inspect(reason))
+
+  # Applies an async pause/resume outcome. The task's busy marker is cleared on
+  # EVERY arm — success or failure — so a failed action can never leave a
+  # permanently disabled/spinning control on the card. Success also collapses
+  # the card (its status just changed) and reloads the page ASYNCHRONOUSLY.
+  defp pause_resume_result(socket, task_id, action, result) do
+    socket =
+      socket
+      |> assign(:action_busy, Map.delete(socket.assigns.action_busy, to_string(task_id)))
+      |> assign(:expanded_task_ids, MapSet.delete(socket.assigns.expanded_task_ids, task_id))
+
+    case result do
+      {:ok, :ok} ->
+        PageLoad.start(socket, socket.assigns.current_page, false)
+
+      # The documented refusals are VALUES: `NodeContext.pause_task/2` returns
+      # `{:error, reason}` for them, while a transport/exit failure arrives as
+      # SafeCall's own `{:error, reason}`.
+      {:ok, {:error, reason}} ->
+        put_flash(socket, :error, pause_resume_error(action, reason))
+
+      {:error, reason} ->
+        put_flash(socket, :error, pause_resume_error(action, reason))
+    end
+  end
+
+  # ONE precise, gettext-wrapped line per documented refusal — an operator can
+  # act on these, while a bare `inspect/1` (reserved for the genuinely
+  # unexpected default arm) tells them nothing.
+  defp pause_resume_error(_action, :not_found), do: gettext("Task not found.")
+
+  defp pause_resume_error(_action, :not_running),
+    do: gettext("Only a running task can be paused.")
+
+  # zh_CN: 交互式会话任务不支持暂停（其生命周期由用户驱动）
+  defp pause_resume_error(_action, :not_pausable),
+    do: gettext("This task cannot be paused (interactive sessions can't be paused).")
+
+  # zh_CN: 未开启持久化 agent 状态的任务没有可恢复的运行记录
+  defp pause_resume_error(_action, :not_resumable),
+    do: gettext("This task can't be resumed because durable agent state is disabled for it.")
+
+  defp pause_resume_error(_action, :scheduler_unavailable),
+    do: gettext("The scheduler is unavailable right now.")
+
+  defp pause_resume_error(_action, :not_paused),
+    do: gettext("Only a paused task can be resumed.")
+
+  # A cross-node TRANSPORT failure: `EvoGit.RemoteNode.call_remote/4` wraps an
+  # `:erpc` failure as `{:error, {kind, reason}}`, and `EvoDash.SafeCall`
+  # captures a local exit/raise/throw the same way. The task's state was never
+  # touched, so one generic line is more honest than an inspected tuple.
+  defp pause_resume_error(_action, {kind, _reason}) when kind in [:exit, :throw, :error],
+    do: gettext("The node could not be reached — the task's state is unchanged.")
+
+  defp pause_resume_error(:pause, reason),
+    do: gettext("Failed to pause task: %{reason}", reason: inspect(reason))
+
+  defp pause_resume_error(:resume, reason),
+    do: gettext("Failed to resume task: %{reason}", reason: inspect(reason))
 
   # Normalizes a SafeCall-wrapped mutating store call to `:ok | {:error, reason}`.
   # The `EvoDash.NodeContext` mutating functions return `:ok | {:error, reason}`,
