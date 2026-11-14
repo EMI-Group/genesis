@@ -126,7 +126,7 @@ defmodule EvoGit.SelfReflectiveToolsTest do
              "Drive it: start genesis, evolve and reflect tasks; cancel, force-kill or delete tasks; pause and resume the scheduler"
 
     assert prompt =~
-             "Change settings for this session, or persist configuration changes for the user"
+             "Discover settings and project mounts; change runtime scheduler settings or patch persisted configuration for the user"
 
     assert prompt =~ "Guide the user to the right dashboard page with the guide overlay"
   end
@@ -138,7 +138,9 @@ defmodule EvoGit.SelfReflectiveToolsTest do
     assert prompt =~ "`tier` (`read`, `write`, or `sudo`; default `read`)"
     assert prompt =~ "`timeout_ms` and `max_output_bytes`"
     assert prompt =~ "**Read tier:** Dune sandbox evaluation"
-    assert prompt =~ "redacted Genesis read APIs; no approval"
+    assert prompt =~ "explicit whitelist of Genesis read APIs; no approval"
+    assert prompt =~ "Reads return real, unredacted values: inspect only what you need"
+    refute prompt =~ "redacted Genesis read APIs; no approval"
     assert prompt =~ "**Write tier:** Dune sandbox evaluation"
     assert prompt =~ "real `CommandApproval` approval of the exact code before execution"
     assert prompt =~ "a conversational OK is not approval"
@@ -226,6 +228,27 @@ defmodule EvoGit.SelfReflectiveToolsTest do
     assert catalog =~ "EvoGit.AgentScheduler.get_config/1"
     assert catalog =~ "Write (exact-code approval required): EvoGit.TaskRegistry.start_task/2"
 
+    assert [_, read_mfas, write_mfas] =
+             Regex.run(
+               ~r/Read: ([^\n]+)\nWrite \(exact-code approval required\): ([^\n]+)/,
+               catalog
+             )
+
+    for signature <- ~w(
+          EvoGit.Config.list_settings/0 EvoGit.Config.show/0 EvoGit.Config.show/1
+          EvoGit.Config.user_config/0 EvoGit.Config.config_path/0
+          EvoGit.VCT.projects/0 EvoGit.VCT.projects/1 EvoGit.VCT.search/1 EvoGit.VCT.search/2
+        ) do
+      assert read_mfas =~ signature
+      refute write_mfas =~ signature
+    end
+
+    assert write_mfas =~ "EvoGit.Config.update/1"
+    refute read_mfas =~ "EvoGit.Config.update/1"
+    refute write_mfas =~ "EvoGit.VCT."
+    assert catalog =~ "No VCT mutation is admitted."
+    assert catalog =~ "A refusal does not auto-escalate."
+
     assert catalog =~
              "only these exact MFAs are admitted, never an entire module or another arity"
 
@@ -250,7 +273,15 @@ defmodule EvoGit.SelfReflectiveToolsTest do
     assert recipes =~ "EvoGit.AgentScheduler.paused?()"
     assert recipes =~ "EvoGit.AgentScheduler.get_llm_slot_status()"
     assert recipes =~ "EvoGit.AgentScheduler.get_config(:max_turns)"
-    assert recipes =~ "EvoGit.Config.resolve(:scheduler)"
+
+    for snippet <- [
+          "tier: \"read\"\nEvoGit.Config.list_settings()",
+          ~s|tier: "read"\nEvoGit.Config.show("scheduler.max_tool_concurrency")|,
+          "tier: \"read\"\nEvoGit.VCT.projects(limit: 10)",
+          ~s|tier: "read"\nEvoGit.VCT.search("proj", limit: 10)|
+        ] do
+      assert length(:binary.matches(recipes, snippet)) == 1
+    end
 
     # Write tier.
     assert recipes =~ "EvoGit.TaskRegistry.start_task(:evolve"
@@ -260,8 +291,17 @@ defmodule EvoGit.SelfReflectiveToolsTest do
     assert recipes =~ "EvoGit.AgentScheduler.pause()"
     assert recipes =~ "EvoGit.AgentScheduler.resume()"
     assert recipes =~ "EvoGit.AgentScheduler.update_config(max_tool_concurrency: 8)"
-    assert recipes =~ "EvoGit.Config.save_user_config(updated)"
-    assert recipes =~ "EvoGit.AgentScheduler.RemoteAPI.reload_config()"
+
+    persisted_recipe = """
+    tier: "write"
+    case EvoGit.Config.update(%{"scheduler.max_tool_concurrency" => 8}) do
+      :ok -> EvoGit.AgentScheduler.RemoteAPI.reload_config()
+      error -> error
+    end
+    """
+
+    assert length(:binary.matches(recipes, persisted_recipe)) == 1
+    refute recipes =~ "EvoGit.Config.save_user_config(updated)"
 
     assert recipes =~
              ~s|EvoGit.Agent.Tools.ElixirEval.Write.guide("Open the Tasks page"|
@@ -288,7 +328,23 @@ defmodule EvoGit.SelfReflectiveToolsTest do
              "`get_config/1` reads the LIVE scheduler value (runtime overrides included"
 
     assert recipes =~
-             "`Config.resolve/0` returns the resolved defaults-plus-config.toml map and does not include runtime overrides"
+             "`Config.show/0` returns the resolved defaults-plus-persisted snapshot, NOT live scheduler state"
+
+    assert recipes =~ "malformed and unknown paths return explicit errors"
+    assert recipes =~ "{:error, :invalid_path}"
+    assert recipes =~ "{:error, {:unknown_setting, path}}"
+
+    assert recipes =~
+             "`Config.user_config/0` reads only persisted user configuration, without materializing defaults"
+
+    assert recipes =~ "`Config.config_path/0` locates config.toml on this runtime node"
+    assert recipes =~ "These reads are unredacted"
+
+    assert recipes =~
+             "Both omit reserved mounts such as `vct:///genesis-source` and retain mounts whose OS paths are missing"
+
+    assert recipes =~
+             "use the absolute `path`, not the virtual `point`, for task execution"
 
     assert recipes =~ "Do not cancel or delete your own task"
   end
@@ -314,7 +370,7 @@ defmodule EvoGit.SelfReflectiveToolsTest do
              "`/assistant` is the canonical Assistant chat page, and the legacy `/help` path redirects to it"
   end
 
-  test "public guidance distinguishes runtime config updates from whole-file persistence and reload" do
+  test "public guidance distinguishes partial persistence and snapshot refresh from runtime reload" do
     prompt = SelfReflective.system_prompt()
     catalog = ElixirEval.help()
 
@@ -324,12 +380,33 @@ defmodule EvoGit.SelfReflectiveToolsTest do
     assert prompt =~
              "Do not describe it as a saved configuration change or promise it survives a restart"
 
+    assert prompt =~ "`Config.update/1` accepts a nested or path-keyed partial map"
+
+    assert prompt =~
+             "It preserves unrelated persisted configuration and unknown existing settings, validates and saves without materializing defaults"
+
+    assert prompt =~
+             "It does NOT reload the scheduler; for save-only requests call just `Config.update/1`"
+
+    assert prompt =~ "reload explicitly only after a successful patch"
+    assert prompt =~ "The combined recipe needs exact-code write approval"
+
+    assert prompt =~
+             "Verify saved values with `Config.show/1` and runtime values with `AgentScheduler.get_config/1`"
+
+    assert catalog =~ "EvoGit.Config.update/1"
     assert catalog =~ "EvoGit.Config.save_user_config/1"
     assert catalog =~ "EvoGit.AgentScheduler.RemoteAPI.reload_config/0"
-    assert catalog =~ "REPLACES the whole config.toml (not a patch)"
-    assert catalog =~ "saving the full map in the SAME approved call"
-    assert catalog =~ "it does NOT reload the scheduler"
-    assert catalog =~ "Save success does not guarantee reload success"
+    assert catalog =~ "update/1 merges a nested partial patch into persisted user configuration"
+    assert catalog =~ "returning :ok or {:error, reason}, but does NOT reload runtime state"
+    assert catalog =~ "save_user_config/1 remains a whole-file REPLACEMENT, not a patch"
+    assert catalog =~ "preserve unrelated user settings when using it"
+
+    assert catalog =~
+             "Saves refresh the persisted-config read snapshot, not scheduler runtime state"
+
+    assert catalog =~ "RemoteAPI.reload_config/0 explicitly applies reloadable scheduler settings"
+    assert catalog =~ "Persistence success does not guarantee reload success"
     assert catalog =~ "reload is not a restart"
   end
 
