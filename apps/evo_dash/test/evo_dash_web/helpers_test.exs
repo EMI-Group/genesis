@@ -115,6 +115,47 @@ defmodule EvoDashWeb.HelpersTest do
                "bg-base-content/10 text-base-content/60 rounded-full flex items-center justify-center"
     end
 
+    test "pausing shares the exact amber busy family with running and cancelling" do
+      assert task_status_badge(:pausing) ==
+               "bg-warning/10 text-warning rounded-full flex items-center justify-center"
+
+      assert task_status_badge(:pausing) == task_status_badge(:running)
+      assert task_status_badge(:pausing) == task_status_badge(:cancelling)
+      assert task_status_badge(:pausing) =~ "bg-warning"
+      assert task_status_badge(:pausing) =~ "text-warning"
+    end
+
+    test "paused is its own info family, distinct from every other status" do
+      badge = task_status_badge(:paused)
+
+      assert badge == "bg-info/10 text-info rounded-full flex items-center justify-center"
+
+      # Blue info utilities — neither busy amber, nor muted terminal base-content,
+      # nor the human-needed violet family.
+      assert badge =~ "bg-info"
+      assert badge =~ "text-info"
+      refute badge =~ "bg-warning"
+      refute badge =~ "bg-base-200"
+      refute badge =~ "violet"
+      # Shares the shape that every badge slot relies on.
+      assert badge =~ "rounded-full"
+
+      for status <- [
+            :running,
+            :finalizing,
+            :pausing,
+            :cancelling,
+            :awaiting_input,
+            :completed,
+            :failed,
+            :pending,
+            :cancelled,
+            :unknown
+          ] do
+        refute badge == task_status_badge(status)
+      end
+    end
+
     test "cancelling badge differs from the unknown-status fallback" do
       refute task_status_badge(:cancelling) =~ "bg-base-200"
       refute task_status_badge(:cancelling) == task_status_badge(:unknown)
@@ -143,6 +184,8 @@ defmodule EvoDashWeb.HelpersTest do
 
       refute badge == task_status_badge(:running)
       refute badge == task_status_badge(:cancelling)
+      refute badge == task_status_badge(:pausing)
+      refute badge == task_status_badge(:paused)
       refute badge == task_status_badge(:unknown)
     end
   end
@@ -152,10 +195,44 @@ defmodule EvoDashWeb.HelpersTest do
       assert task_status_dot_class(:running) == "bg-warning"
       assert task_status_dot_class(:finalizing) == "bg-warning"
       assert task_status_dot_class(:cancelling) == "bg-warning"
+      assert task_status_dot_class(:pausing) == "bg-warning"
+      assert task_status_dot_class(:paused) == "bg-info"
       assert task_status_dot_class(:completed) == "bg-success"
       assert task_status_dot_class(:failed) == "bg-error"
       assert task_status_dot_class(:pending) == "bg-base-content/40"
       assert task_status_dot_class(:cancelled) == "bg-base-content/40"
+    end
+
+    test "pausing dot shares the amber busy family with running and cancelling" do
+      assert task_status_dot_class(:pausing) == "bg-warning"
+      assert task_status_dot_class(:pausing) == task_status_dot_class(:running)
+      assert task_status_dot_class(:pausing) == task_status_dot_class(:cancelling)
+    end
+
+    test "paused dot is info and distinct from every other status" do
+      dot = task_status_dot_class(:paused)
+
+      assert dot == "bg-info"
+      assert dot =~ "bg-info"
+      refute dot =~ "bg-warning"
+      refute dot =~ "base-content"
+      refute dot =~ "violet"
+
+      for status <- [
+            :running,
+            :finalizing,
+            :pausing,
+            :cancelling,
+            :awaiting_input,
+            :completed,
+            :failed,
+            :pending,
+            :cancelled,
+            :unknown,
+            nil
+          ] do
+        refute dot == task_status_dot_class(status)
+      end
     end
 
     test "falls back to a dim neutral gray for unknown statuses" do
@@ -171,6 +248,8 @@ defmodule EvoDashWeb.HelpersTest do
             :running,
             :finalizing,
             :cancelling,
+            :pausing,
+            :paused,
             :completed,
             :failed,
             :pending,
@@ -187,8 +266,43 @@ defmodule EvoDashWeb.HelpersTest do
       assert task_status_tint(:running) == "bg-warning/5 shadow-warning/10 border-warning/20"
       assert task_status_tint(:finalizing) == "bg-warning/5 shadow-warning/10 border-warning/20"
       assert task_status_tint(:cancelling) == "bg-warning/5 shadow-warning/10 border-warning/20"
+      assert task_status_tint(:pausing) == "bg-warning/5 shadow-warning/10 border-warning/20"
+      assert task_status_tint(:paused) == "bg-info/5 shadow-info/10 border-info/20"
       assert task_status_tint(:completed) == "bg-success/5 shadow-success/10 border-success/20"
       assert task_status_tint(:failed) == "bg-error/5 shadow-error/10 border-error/20"
+    end
+
+    test "pausing tint shares the amber busy family with running and cancelling" do
+      assert task_status_tint(:pausing) == "bg-warning/5 shadow-warning/10 border-warning/20"
+      assert task_status_tint(:pausing) == task_status_tint(:running)
+      assert task_status_tint(:pausing) == task_status_tint(:cancelling)
+    end
+
+    test "paused tint is its own info family, distinct from every other status" do
+      tint = task_status_tint(:paused)
+
+      assert tint == "bg-info/5 shadow-info/10 border-info/20"
+      assert tint =~ "bg-info/5"
+      assert tint =~ "border-info/20"
+      refute tint =~ "warning"
+      refute tint =~ "base-200"
+      refute tint =~ "violet"
+
+      for status <- [
+            :running,
+            :finalizing,
+            :pausing,
+            :cancelling,
+            :awaiting_input,
+            :completed,
+            :failed,
+            :pending,
+            :cancelled,
+            :unknown,
+            nil
+          ] do
+        refute tint == task_status_tint(status)
+      end
     end
 
     test "falls back to the neutral tint for pending/cancelled/unknown" do
@@ -210,6 +324,8 @@ defmodule EvoDashWeb.HelpersTest do
             :running,
             :finalizing,
             :cancelling,
+            :pausing,
+            :paused,
             :completed,
             :failed,
             :pending,

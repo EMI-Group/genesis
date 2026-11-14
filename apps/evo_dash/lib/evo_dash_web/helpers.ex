@@ -108,17 +108,20 @@ defmodule EvoDashWeb.Helpers do
 
   @doc """
   Returns badge class string for task status (`:running`, `:finalizing`,
-  `:completed`, `:failed`, `:cancelled`, `:cancelling`, `:pending`,
-  `:awaiting_input`).
+  `:pausing`, `:completed`, `:failed`, `:cancelled`, `:cancelling`, `:pending`,
+  `:awaiting_input`, `:paused`).
 
   Token-driven scheme: transitional/busy states (`:running`, `:finalizing`,
-  `:cancelling`) share the warning amber family, `:completed` is success,
-  `:failed` is error, and terminal-neutral states (`:pending`, `:cancelled`)
-  are muted base-content — the distinct label + pulse carry the state.
+  `:cancelling`, `:pausing`) share the warning amber family, `:completed` is
+  success, `:failed` is error, and terminal-neutral states (`:pending`,
+  `:cancelled`) are muted base-content — the distinct label + pulse carry the
+  state.
   `:awaiting_input` — an idle interactive agent session waiting for the next
   user message — is its OWN violet family: neither busy work (amber) nor a
   terminal outcome (base-content), so the colour itself says "a human is
   needed here".
+  `:pausing` is still busy work — a pause is draining the task's agents at the next turn boundary — so it shares the amber family.
+  `:paused` is a non-terminal, resumable resting state with no live wrapper, so it gets its own info (blue) family, deliberately distinct from busy (amber), terminal (base-content) and human-needed (violet).
   """
   def task_status_badge(:running),
     do: "bg-warning/10 text-warning rounded-full flex items-center justify-center"
@@ -126,9 +129,15 @@ defmodule EvoDashWeb.Helpers do
   def task_status_badge(:finalizing),
     do: "bg-warning/10 text-warning rounded-full flex items-center justify-center"
 
+  def task_status_badge(:pausing),
+    do: "bg-warning/10 text-warning rounded-full flex items-center justify-center"
+
   def task_status_badge(:awaiting_input),
     do:
       "bg-violet-500/10 text-violet-600 dark:text-violet-400 rounded-full flex items-center justify-center"
+
+  def task_status_badge(:paused),
+    do: "bg-info/10 text-info rounded-full flex items-center justify-center"
 
   def task_status_badge(:completed),
     do: "bg-success/10 text-success rounded-full flex items-center justify-center"
@@ -150,17 +159,21 @@ defmodule EvoDashWeb.Helpers do
 
   @doc """
   Returns the dot background class for a task status (`:running`,
-  `:finalizing`, `:cancelling`, `:completed`, `:failed`, `:pending`,
-  `:cancelled`, `:awaiting_input`). Callers compose shape classes
+  `:finalizing`, `:cancelling`, `:pausing`, `:completed`, `:failed`, `:pending`,
+  `:cancelled`, `:awaiting_input`, `:paused`). Callers compose shape classes
   (size/rounded) and any pulse/ping animation around the returned color.
   Statuses arrive as atoms; unknown/non-atom input falls back to a dim neutral
   gray. `:awaiting_input` is violet (the idle-session family), deliberately
   distinct from both the amber busy family and the neutral terminal family.
+  `:pausing` is still busy work (a pause draining the agents at the next turn boundary), so it stays amber.
+  `:paused` is the non-terminal resumable resting state and gets its own info (blue) family.
   """
   def task_status_dot_class(:running), do: "bg-warning"
   def task_status_dot_class(:finalizing), do: "bg-warning"
   def task_status_dot_class(:cancelling), do: "bg-warning"
+  def task_status_dot_class(:pausing), do: "bg-warning"
   def task_status_dot_class(:awaiting_input), do: "bg-violet-500"
+  def task_status_dot_class(:paused), do: "bg-info"
   def task_status_dot_class(:completed), do: "bg-success"
   def task_status_dot_class(:failed), do: "bg-error"
   def task_status_dot_class(:pending), do: "bg-base-content/40"
@@ -173,13 +186,18 @@ defmodule EvoDashWeb.Helpers do
   e.g. `"bg-warning/5 shadow-warning/10 border-warning/20"`). Neutral tint for
   `:pending`/`:cancelled` and unknown statuses; violet for `:awaiting_input`
   (the idle interactive-session family).
+  `:pausing` sits in the amber busy family alongside `:running`/`:cancelling`.
+  `:paused` takes the info (blue) tint of its own non-terminal resting family.
   """
   def task_status_tint(:running), do: "bg-warning/5 shadow-warning/10 border-warning/20"
   def task_status_tint(:finalizing), do: "bg-warning/5 shadow-warning/10 border-warning/20"
   def task_status_tint(:cancelling), do: "bg-warning/5 shadow-warning/10 border-warning/20"
+  def task_status_tint(:pausing), do: "bg-warning/5 shadow-warning/10 border-warning/20"
 
   def task_status_tint(:awaiting_input),
     do: "bg-violet-500/5 shadow-violet-500/10 border-violet-500/30"
+
+  def task_status_tint(:paused), do: "bg-info/5 shadow-info/10 border-info/20"
 
   def task_status_tint(:completed), do: "bg-success/5 shadow-success/10 border-success/20"
   def task_status_tint(:failed), do: "bg-error/5 shadow-error/10 border-error/20"
