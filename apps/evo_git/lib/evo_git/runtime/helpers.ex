@@ -617,7 +617,9 @@ defmodule EvoGit.Runtime.Helpers do
   resolved custom-agent opts are appended before `AgentSpec.new/5`; definition
   model defaults remain unlocked fallbacks, never explicit task selections.
   Task model normalization runs before applying the legacy definition id so
-  only a task selection can introduce a lock.
+  only a task selection can introduce a lock. A task-level pause resume's
+  `:resume_kind` (`:clean_pause | :dirty_pause`) is forwarded verbatim and
+  omitted for every other run.
   """
   @spec build_root_agent_spec(
           EvoGit.Core.ContextNode.t(),
@@ -662,6 +664,7 @@ defmodule EvoGit.Runtime.Helpers do
       ]
       |> normalize_model_selection_opts()
       |> maybe_put_attachments(attachments)
+      |> maybe_put_resume_kind(Keyword.get(opts, :resume_kind))
       |> Kernel.++(agent_opts)
 
     # Priority: explicit/locked task > script > default_model_spec > legacy
@@ -683,4 +686,25 @@ defmodule EvoGit.Runtime.Helpers do
        do: Keyword.put(spec_opts, :attachments, attachments)
 
   defp maybe_put_attachments(spec_opts, _attachments), do: spec_opts
+
+  # Task-level PAUSE RESUME provenance (`docs/task-pause.md` §6): the registry
+  # re-enqueues a paused task with `:resume_kind` in its task opts, and this is
+  # the ONE place the runtime threads it into the root agent's `spec.opts` so
+  # `EvoGit.AgentScheduler.Dispatch` can restore the paused conversation and
+  # base the worktree on the pause checkpoint. ONLY this key is forwarded; an
+  # absent (or unrecognized) value leaves `spec.opts` byte-identical, so a
+  # normal run is unchanged. Subagents never inherit it: their spec opts are
+  # built from explicit keys, not from this list.
+  @pause_resume_kinds [:clean_pause, :dirty_pause]
+
+  defp maybe_put_resume_kind(spec_opts, kind) when kind in @pause_resume_kinds,
+    do: Keyword.put(spec_opts, :resume_kind, kind)
+
+  defp maybe_put_resume_kind(spec_opts, "clean_pause"),
+    do: Keyword.put(spec_opts, :resume_kind, :clean_pause)
+
+  defp maybe_put_resume_kind(spec_opts, "dirty_pause"),
+    do: Keyword.put(spec_opts, :resume_kind, :dirty_pause)
+
+  defp maybe_put_resume_kind(spec_opts, _kind), do: spec_opts
 end

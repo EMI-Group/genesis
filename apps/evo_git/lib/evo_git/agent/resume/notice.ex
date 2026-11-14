@@ -1,17 +1,30 @@
 defmodule EvoGit.Agent.Resume.Notice do
   @moduledoc """
-  The ONE `[RESUME]` notice a crash-resumed agent receives.
+  The ONE resume notice a resumed agent receives.
 
-  Appended once at the top of the resumed exchange (see
+  Two texts, selected by the resume KIND (`state.resume_info[:resume_kind]`):
+
+    * `text/2` — the `[RESUME]` notice of an INTERRUPTED run: a crash retry
+      (`:resume_kind` absent) and a `:dirty_pause` resume (the task was brought
+      back by a restart, so the last tool batch may be partially executed). It
+      accompanies the tool-result repair.
+    * `pause_text/1` — the NEUTRAL notice of a `:clean_pause` resume: the user
+      paused the task at a turn boundary and resumed it, nothing was
+      interrupted, the worktree is exactly as it was left and NO repair runs.
+      It is deliberately not framed `[RESUME]` and never says a file may be
+      inconsistent.
+
+  Both are appended ONCE at the top of the resumed exchange (see
   `EvoGit.Agent.Resume`), as a NEUTRAL `:user` message — harness text, never
   `EvoGit.Agent.MessageMarker`-marked as user-authored — so a display layer can
-  tell it from a real user turn.
+  tell them from a real user turn.
 
   ## Every claim degrades on a missing fact
 
   The dispatch context keys this notice reports (`:retries`, `:retry_reason`,
-  `:worktree_resume_from`) are supplied by the scheduler crash-retry path and may
-  be absent; each absent value DROPS its sentence instead of asserting a guess:
+  `:worktree_resume_from`) are supplied by the scheduler retry/resume path and
+  may be absent; each absent value DROPS its sentence instead of asserting a
+  guess:
 
     * `:retries` — the count of retries already attempted for this run, so the
       notice states `attempt = retries + 1`; non-integer → no attempt sentence.
@@ -23,9 +36,13 @@ defmodule EvoGit.Agent.Resume.Notice do
     * the durable restore outcome — `false` adds one sentence saying the earlier
       turns are not in this transcript.
 
-  The notice is framed `[RESUME]` and stamped `metadata[:resume_notice] => true`,
-  which is ALSO the exactly-once guard: a second resumed exchange never appends a
-  second notice to the same transcript.
+  A PAUSE resume (`:clean_pause` / `:dirty_pause`) additionally says subagents
+  are NOT resumable after a restart: their processes are gone and a child's
+  partial work survives only if it was already merged.
+
+  Either text is stamped `metadata[:resume_notice] => true`, which is ALSO the
+  exactly-once guard: a second resumed exchange never appends a second notice to
+  the same transcript.
 
   Total and pure apart from reading `state`/`resume_info`; never raises.
   """
@@ -34,13 +51,15 @@ defmodule EvoGit.Agent.Resume.Notice do
   alias EvoGit.Agent.ToolBatch
 
   @doc """
-  The full notice TEXT for a resumed run of `state`, with `batch` the (already
-  normalized) in-flight marker — `nil` when no tool batch was executing when the
-  run stopped.
+  The full `[RESUME]` notice TEXT for a resumed run of `state`, with `batch` the
+  (already normalized) in-flight marker — `nil` when no tool batch was executing
+  when the run stopped. A `:dirty_pause` resume adds the pause/restart context
+  and the subagent sentence; a crash retry (`:resume_kind` absent) does not.
   """
   @spec text(State.t(), ToolBatch.t() | nil) :: String.t()
   def text(%State{} = state, batch) do
     info = resume_info(state)
+    kind = pause_kind(state)
 
     ["[RESUME] The previous run of this agent was interrupted and is now resuming."]
     |> append(attempt_sentence(info))
@@ -48,7 +67,30 @@ defmodule EvoGit.Agent.Resume.Notice do
     |> append(restore_sentence(info))
     |> append(interrupted_sentence(batch))
     |> append(worktree_sentence(info))
+    |> append(pause_sentence(kind))
+    |> append(subagent_sentence(kind))
     |> append(guidance_sentence())
+    |> Enum.join("\n\n")
+  end
+
+  @doc """
+  The NEUTRAL notice TEXT of a `:clean_pause` resume: the user paused the task
+  and resumed it, nothing was interrupted, the worktree is exactly as it was
+  left, and subagents are not resumable after a restart.
+
+  Total for any state; it never claims a fact the resume cannot back (a restore
+  that did not happen adds the restore-degradation sentence).
+  """
+  @spec pause_text(State.t()) :: String.t()
+  def pause_text(%State{} = state) do
+    info = resume_info(state)
+
+    [
+      "The user paused this task and has now resumed it. No tool call was interrupted and the " <>
+        "worktree is exactly as it was left."
+    ]
+    |> append(restore_sentence(info))
+    |> append(subagent_sentence(pause_kind(state)))
     |> Enum.join("\n\n")
   end
 
@@ -66,6 +108,7 @@ defmodule EvoGit.Agent.Resume.Notice do
       retry_reason: Map.get(info, :retry_reason),
       worktree_resume_from: Map.get(info, :worktree_resume_from),
       restored: Map.get(info, :restored),
+      resume_kind: pause_kind(state),
       interrupted_calls: length(ToolBatch.calls(batch)),
       class_counts: ToolBatch.class_counts(batch)
     }
@@ -118,6 +161,23 @@ defmodule EvoGit.Agent.Resume.Notice do
     end
   end
 
+  # Only a `:dirty_pause` resume is a POST-RESTART pause; a plain crash retry
+  # keeps today's wording exactly.
+  defp pause_sentence(:dirty_pause) do
+    "The task was PAUSED when the host restarted, so the run stopped mid-flight and the last " <>
+      "tool batch may be partially executed."
+  end
+
+  defp pause_sentence(_kind), do: nil
+
+  # A pause resume cannot restore subagent processes. Stated for BOTH pause kinds.
+  defp subagent_sentence(kind) when kind in [:clean_pause, :dirty_pause] do
+    "Subagents are NOT resumable after a restart: their processes are gone, and a child's " <>
+      "partial work survives only if it was already merged into this worktree."
+  end
+
+  defp subagent_sentence(_kind), do: nil
+
   defp guidance_sentence do
     "Inspect the current state first: run `git status`, re-read the files you were modifying and " <>
       "call `job_list` for background jobs you started. Do not blindly re-run destructive " <>
@@ -128,6 +188,15 @@ defmodule EvoGit.Agent.Resume.Notice do
 
   defp resume_info(%State{resume_info: info}) when is_map(info), do: info
   defp resume_info(_state), do: %{}
+
+  # `:clean_pause | :dirty_pause` for a task-level pause resume, `nil` otherwise
+  # (the crash-retry path never sets the key).
+  defp pause_kind(%State{} = state) do
+    case Map.get(resume_info(state), :resume_kind) do
+      kind when kind in [:clean_pause, :dirty_pause] -> kind
+      _other -> nil
+    end
+  end
 
   # `:retries` is the count of retries already attempted, so the human-facing
   # attempt number is `retries + 1`.

@@ -765,4 +765,129 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
       assert record.message_count == 2
     end
   end
+
+  # --- 10. Resume provenance (`resume_info`) --------------------------------
+
+  # `Setup.build_initial_state/3` is the ONE builder of `state.resume_info`: it
+  # carries the dispatch ctx's `:resume_kind` so `EvoGit.Agent.Resume` can pick
+  # the pause narration, and it stays `nil` for every non-restored run.
+  describe "resume provenance (resume_info)" do
+    test "carries resume_kind: :clean_pause of a clean-pause resume" do
+      task_id = unique_task_id()
+      agent_id = unique_agent_id()
+
+      seed!(task_id, agent_id, msgs(3), turn: 3)
+
+      tmp = workspace!(agent_id, "resume-kind")
+
+      assert {:ok, built} =
+               Setup.build_initial_state(
+                 StubAgent,
+                 "the persistence objective",
+                 build_ctx(task_id, agent_id, tmp,
+                   persistent_state: true,
+                   restore_agent_state: true,
+                   resume_kind: :clean_pause,
+                   retries: 0,
+                   retry_reason: nil,
+                   worktree_resume_from: "pause-sha"
+                 )
+               )
+
+      assert built.resume_info == %{
+               restore_agent_state: true,
+               restored: true,
+               resume_kind: :clean_pause,
+               retries: 0,
+               retry_reason: nil,
+               worktree_resume_from: "pause-sha"
+             }
+
+      # The conversation really was restored (the narration runs on it).
+      assert built.context.messages == msgs(3)
+      assert EvoGit.Agent.Resume.resume_kind(built) == :clean_pause
+    end
+
+    test "carries resume_kind: :dirty_pause of a dirty-pause resume" do
+      task_id = unique_task_id()
+      agent_id = unique_agent_id()
+
+      seed!(task_id, agent_id, msgs(3), turn: 3)
+
+      tmp = workspace!(agent_id, "resume-kind-dirty")
+
+      assert {:ok, built} =
+               Setup.build_initial_state(
+                 StubAgent,
+                 "the persistence objective",
+                 build_ctx(task_id, agent_id, tmp,
+                   persistent_state: true,
+                   restore_agent_state: true,
+                   resume_kind: :dirty_pause,
+                   worktree_resume_from: "pause-sha"
+                 )
+               )
+
+      assert built.resume_info.resume_kind == :dirty_pause
+      assert built.context.messages == msgs(3)
+      assert EvoGit.Agent.Resume.resume_kind(built) == :dirty_pause
+    end
+
+    test "carries resume_kind: nil on the crash-retry path (no pause kind in the ctx)" do
+      task_id = unique_task_id()
+      agent_id = unique_agent_id()
+
+      seed!(task_id, agent_id, msgs(2), turn: 2)
+
+      tmp = workspace!(agent_id, "resume-kind-crash")
+
+      assert {:ok, built} =
+               Setup.build_initial_state(
+                 StubAgent,
+                 "the persistence objective",
+                 build_ctx(task_id, agent_id, tmp, restore_agent_state: true, retries: 1)
+               )
+
+      assert built.resume_info.restore_agent_state == true
+      assert built.resume_info.resume_kind == nil
+      assert EvoGit.Agent.Resume.crash_retry?(built)
+      assert EvoGit.Agent.Resume.resume_kind(built) == nil
+    end
+
+    test "is nil (absent-shaped) for a normal run that restores nothing" do
+      agent_id = unique_agent_id()
+      tmp = workspace!(agent_id, "resume-kind-normal")
+
+      assert {:ok, built} =
+               Setup.build_initial_state(
+                 StubAgent,
+                 "the persistence objective",
+                 build_ctx(unique_task_id(), agent_id, tmp,
+                   restore_agent_state: false,
+                   resume_kind: :clean_pause
+                 )
+               )
+
+      assert built.resume_info == nil
+      refute EvoGit.Agent.Resume.crash_retry?(built)
+    end
+
+    test "a malformed resume_kind value is dropped rather than acted on" do
+      task_id = unique_task_id()
+      agent_id = unique_agent_id()
+      tmp = workspace!(agent_id, "resume-kind-garbage")
+
+      assert {:ok, built} =
+               Setup.build_initial_state(
+                 StubAgent,
+                 "the persistence objective",
+                 build_ctx(task_id, agent_id, tmp,
+                   restore_agent_state: true,
+                   resume_kind: "clean_pause"
+                 )
+               )
+
+      assert built.resume_info.resume_kind == nil
+    end
+  end
 end
