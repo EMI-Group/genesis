@@ -8,7 +8,9 @@ Client-side JavaScript for the EvoDash dashboard: the main entry (`app.js`, Live
 
 - `./hooks/` → Standalone LiveView hook files (`sidebar_collapse.js`, `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js`, `diff_viewer.js`, `commit_graph.js`, `capsule_panel.js`, `inspector_messages.js`) + `hooks/CONTEXT.md`
 - `./*.test.cjs` and `./hooks/*.test.cjs` → Node-run inline-hook and standalone-hook tests — `node --test apps/evo_dash/assets/js/*.test.cjs apps/evo_dash/assets/js/hooks/*.test.cjs`, never part of `mix test` (see "JS Unit Tests")
-- `app.js` → Main entry — LiveSocket, inline hooks (`TauriDetect`, `DesktopQuit`, `DesktopQuitConfirm`, `UpdateStatus`, `PlatformDetect`, `PathAutocomplete`, `DirectoryPicker`, `FilePicker`, `Guide`, `StatePersistence`, `AutoClearFlash`, `ClipboardCopy`, `AgentHistoryAutoScroll`, `DialogModal`, `FocusInput`, `PaletteList`), topbar wiring, guide-client-id sessionStorage
+- `app.js` → Main entry — LiveSocket, inline hooks (`TauriDetect`, `DesktopQuit`, `DesktopQuitConfirm`, `UpdateStatus`, `PlatformDetect`, `PathAutocomplete`, `DirectoryPicker`, `FilePicker`, `Guide`, `StatePersistence`, `AutoClearFlash`, `ClipboardCopy`, `AgentHistoryAutoScroll`, `FocusInput`, `PaletteList`), topbar wiring, guide-client-id sessionStorage
+- `dialog_modal.js` → Imported `DialogModal` review-only dialog hook with safe initial focus, focus restoration, native modal opening and visible nonmodal fallback.
+- `dialog_modal.test.cjs` → Focused Node/VM tests of the real dialog hook with DOM/native-dialog seams.
 - `browser_notifications.js` → Imported `BrowserNotifications` hook for advisory document notifications, explicit permission enablement, scoped approval review and notification lifecycle cleanup.
 - `browser_notifications.test.cjs` → Focused Node/VM tests of the actual notification hook with browser/host seams.
 - `highlight_setup.js` → Exposes the vendored highlight.js instance as `window.hljs` (module side effect — must evaluate BEFORE the cdnjs language-pack IIFE imports in `app.js`; load-order contract + pack list in `../assets/CONTEXT.md`)
@@ -65,11 +67,31 @@ Constructor/prompt failures render the translated error state without throwing o
 This is advisory document notification delivery only, with no service worker, persistent actions, background push, closed-page delivery, replay or click-to-authorize.
 Focused tests run with `node --test apps/evo_dash/assets/js/browser_notifications.test.cjs`.
 
+## DialogModal Integration Contract
+
+`dialog_modal.js` exports the hook registered as `DialogModal` in `app.js`, attached directly to a uniquely identified `<dialog class="modal" phx-hook="DialogModal">` containing `.modal-box`.
+This hook opens REVIEW UI only and never emits approval_response, allow, deny or execution events, intercepts decision controls, or interprets returnValue as a decision.
+Consumers should provide `aria-labelledby="<stable-title-id>"` on the dialog and a static `<h2 id="<stable-title-id>" data-dialog-title data-dialog-initial-focus tabindex="-1" autofocus>` inside `.modal-box`, with a server-translated review title.
+An optional `aria-describedby="<summary-id>"` should reference a concise translated review summary, not the entire code payload or a long warning.
+Never mark Allow/Deny controls with autofocus or data-dialog-initial-focus, and do not make a decision form implicitly submit on Enter from review text.
+The hook accepts only static heading/paragraph/div content without interactive descendants/ancestors as its initial target, falls back to the dialog container if no usable target exists, and preserves focus within an already open dialog across ordinary patches.
+It supports the existing approval markup without LiveView changes by using `.modal-box h2`, assigning a missing title id/aria-labelledby and tabindex, and recognizing `[phx-click="dialog_closed"]` plus `.modal-backdrop button` as dismissal controls.
+New markup should use a native `<button type="button" data-dialog-dismiss>` with a translated accessible Close label and no phx-click; dismissal is owned by the hook.
+A `form.modal-backdrop[method="dialog"]` with a translated Close button remains supported, including engines without native dialog submission.
+Provide `data-dialog-return-focus="<stable-review-button-id>"` on the dialog to return to the in-app Review trigger by ID, not a CSS selector.
+Otherwise focus returns to the captured opener, or for the legacy approval-dialog to `[phx-click="open_approval_dialog"]`, skipping disconnected, disabled, hidden or inert targets and never stealing focus already moved outside.
+Native showModal is guarded against duplicate opens; cancel, close, explicit Close and backdrop dismissal push exactly one dialog_closed per presentation, never deny, and updated never reopens a dismissed dialog.
+The existing dialog_open server event explicitly starts a new presentation, while stale queued native close events cannot dismiss a newly reopened dialog.
+When showModal is missing or throws, open plus DaisyUI modal-open keeps the review surface visible and pointer/keyboard accessible with role=dialog, aria-modal=false and data-dialog-mode=fallback, rather than leaving a closed dialog inaccessible.
+The fallback is deliberately NON-modal with no invented inert state or focus trap, supports Escape while focus is inside, and retains the in-app pending review path as the authority.
+Native mode sets aria-modal=true and data-dialog-mode=native and relies on the browser's modal focus containment.
+Teardown removes all DOM and LiveView event handlers before closing, restores focus when appropriate and never emits a dismissal; late dialog_open callbacks are inert.
+Focused tests run with `node --test apps/evo_dash/assets/js/dialog_modal.test.cjs` and cover native/fallback opening, safe focus, patch/reopen races, dismissal latching, review-only events and cleanup.
+Node seams do not replace browser/WebView checks of native top-layer focus trapping, screen-reader announcements, fallback layout and real keyboard tab order.
+
 ## Known Issues
 `app.js:807–987` AgentHistoryAutoScroll follows instantly with a 56 px inclusive threshold, disconnects observers when unpinned and cleans up frames/listeners/observers, but only its pure geometry predicate has Node coverage.
 The scroller and direct children are observed, and missing ResizeObserver means patch-driven following only; frame scheduling, observer lifecycle, reconnect and keyboard/scroll races are untested.
-`app.js:1338–1381` DialogModal guards showModal, latches user dismissal and removes its listener before teardown close, but has no fallback when showModal is absent or throws and no explicit focus-return target or dialog labelling.
-Consuming markup and browser-level tests must establish native-dialog focus behavior, accessible names and fallback access to pending approvals.
 `app.js:1270–1318` Guide and `1399–1414` PaletteList request smooth scrolling without reduced-motion checks; Guide does not catch malformed selector errors or cancel retry/highlight timers on dismissal or destruction.
 `app.js:1387–1397` FocusInput focuses on mount and refocuses focus-on-update elements on every patch, so consuming pages must prevent focus theft while another control or dialog owns focus.
-No Node tests here cover DialogModal, Guide, PaletteList or FocusInput; standalone animation/accessibility gaps and their tests are documented in `hooks/CONTEXT.md`.
+No Node tests here cover Guide, PaletteList or FocusInput; standalone animation/accessibility gaps and their tests are documented in `hooks/CONTEXT.md`.

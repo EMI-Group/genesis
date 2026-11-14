@@ -69,6 +69,7 @@ import CommitGraph from "./hooks/commit_graph.js"
 import CapsulePanel from "./hooks/capsule_panel.js"
 import InspectorMessages from "./hooks/inspector_messages.js"
 import BrowserNotifications from "./browser_notifications.js"
+import DialogModal from "./dialog_modal.js"
 // Compute the longest common prefix among an array of strings
 function longestCommonPrefix(strings) {
   if (strings.length === 0) return "";
@@ -1238,69 +1239,6 @@ const Guide = {
       setTimeout(() => target.classList.remove("guide-highlight"), 3000);
     };
     tryHighlight();
-  }
-};
-
-// DialogModal hook: opens/closes <dialog class="modal"> elements in the
-// browser's top layer, immune to parent CSS containing blocks (backdrop-filter,
-// transform, etc.). Pushes "dialog_closed" when the dialog is dismissed via ESC
-// or backdrop click so the server can sync state.
-//
-// Contract:
-//   * open with showModal() only when the element is not already open (a plain
-//     showModal() on an open dialog throws InvalidStateError) and only when the
-//     API exists (older/embedded engines may not implement it);
-//   * a user dismissal fires ONE "close" event — a per-instance latch keeps the
-//     push to exactly one "dialog_closed" even if the event repeats;
-//   * destroyed() removes the listener BEFORE closing, so the server unmounting
-//     an open dialog (which must release the top layer) reports nothing;
-//   * updated() re-asserts the modal state after a LiveView patch, because
-//     morphdom can strip the `open` attribute the browser set — but never after
-//     the user dismissed it (the server owns the reopen by re-mounting);
-//   * a server that KEEPS the same dialog element mounted can reopen it with
-//     `push_event(socket, "dialog_open", %{})`, which clears the dismissal latch.
-const DialogModal = {
-  mounted() {
-    this._closed = false;
-    this._openModal();
-
-    this._onClose = () => {
-      if (this._closed) return;
-      this._closed = true;
-      this.pushEvent("dialog_closed", {});
-    };
-    this.el.addEventListener("close", this._onClose);
-
-    this.handleEvent("dialog_open", () => {
-      this._closed = false;
-      this._openModal();
-    });
-  },
-
-  updated() {
-    if (!this._closed) this._openModal();
-  },
-
-  destroyed() {
-    if (this._onClose) {
-      this.el.removeEventListener("close", this._onClose);
-      this._onClose = null;
-    }
-    // If the dialog is still open when destroyed (e.g., server toggle while
-    // modal is showing), close it so the top layer is released. The listener is
-    // already gone, so this teardown is never reported as a user dismissal.
-    if (this.el.open && typeof this.el.close === "function") {
-      this.el.close();
-    }
-  },
-
-  _openModal() {
-    if (typeof this.el.showModal !== "function" || this.el.open) return;
-    try {
-      this.el.showModal();
-    } catch (e) {
-      // Already promoted to the top layer by another path — nothing to do.
-    }
   }
 };
 
