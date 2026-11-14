@@ -20,6 +20,13 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
   Resolution tombstones prevent an in-flight snapshot resurrecting a resolved
   card; requests arriving during recovery take precedence over snapshot data.
 
+  Live notification callers should use `requested_with_notification/2`, not
+  infer novelty from `own_request?/2`. Publish only its non-nil generic payload.
+  Expose `notification_host_json/1` on the page host for browser reconciliation;
+  route notification clicks through `dialog_index/3` with the exact request id
+  and captured scope. A nil index is a no-op, never an invitation to open the
+  first request. Opening/dismissing review never calls `respond/3`.
+
   Runners are captured at spawn time: `:approval_pending_runner` (node -> list
   or error) and the existing `:approval_responder` (node, id, decision -> result).
   All core/RPC work runs off the LiveView under SafeCall. The real pending API
@@ -30,9 +37,13 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
   import Phoenix.Component, only: [assign: 2]
   alias EvoDash.SafeCall
 
+  use Gettext, backend: EvoDashWeb.Gettext
+
   def init(socket) do
     assign(socket,
       pending_approvals: [],
+      approval_seen_requests: MapSet.new(),
+      approval_resolved_requests: MapSet.new(),
       approval_recovery_seq: nil,
       approval_recovering: false,
       approval_recovery_removed: MapSet.new(),
@@ -83,7 +94,11 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
 
     case result do
       {:ok, requests} when is_list(requests) ->
-        removed = socket.assigns[:approval_recovery_removed] || MapSet.new()
+        removed =
+          MapSet.union(
+            socket.assigns[:approval_recovery_removed] || MapSet.new(),
+            socket.assigns[:approval_resolved_requests] || MapSet.new()
+          )
 
         fetched =
           Enum.filter(requests, fn request ->
@@ -108,6 +123,10 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
 
         assign(socket,
           pending_approvals: entries,
+          approval_seen_requests:
+            Enum.reduce(entries, seen_requests(socket.assigns), fn request, seen ->
+              MapSet.put(seen, request.request_id)
+            end),
           approval_recovery_new: [],
           approval_error: nil
         )
@@ -117,17 +136,110 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
     end
   end
 
+  @doc """
+  Admits a live request and returns `{socket, notification_payload_or_nil}`.
+
+  Only a first owned live arrival notifies; duplicates, recovered requests,
+  resolved ids and foreign requests never do. Recovery itself never notifies.
+  The caller may push the returned payload as `task_notification`; it grants
+  review only, never approval or evidence of successful execution.
+  """
+  def requested_with_notification(socket, request) do
+    fresh? =
+      own_request?(socket.assigns, request) and
+        not MapSet.member?(seen_requests(socket.assigns), request.request_id) and
+        is_nil(pending_request(socket.assigns, request.request_id))
+
+    socket = requested(socket, request)
+    payload = if fresh?, do: notification_payload(socket.assigns, request.request_id)
+    {socket, payload}
+  end
+
   def requested(socket, request) do
-    if own_request?(socket.assigns, request) do
+    if own_request?(socket.assigns, request) and
+         not MapSet.member?(resolved_requests(socket.assigns), request.request_id) do
       live = socket.assigns[:approval_recovery_new] || []
 
       assign(socket,
         pending_approvals: upsert(pending_list(socket), request),
+        approval_seen_requests: MapSet.put(seen_requests(socket.assigns), request.request_id),
         approval_recovery_new:
           if(socket.assigns[:approval_recovering], do: upsert(live, request), else: live)
       )
     else
       socket
+    end
+  end
+
+  @doc "Returns only an owned CURRENTLY pending request for an exact binary id."
+  def pending_request(assigns, id) when is_binary(id) do
+    Enum.find(assigns[:pending_approvals] || [], fn request ->
+      own_request?(assigns, request) and request.request_id == id and
+        not MapSet.member?(resolved_requests(assigns), id)
+    end)
+  end
+
+  def pending_request(_assigns, _id), do: nil
+
+  def pending_request?(assigns, id), do: not is_nil(pending_request(assigns, id))
+
+  @doc "Exact zero-based dialog index, or nil (never falls back to a different request)."
+  def dialog_index(assigns, id) do
+    if pending_request?(assigns, id) do
+      Enum.find_index(assigns[:pending_approvals] || [], fn request ->
+        is_map(request) and Map.get(request, :request_id) == id
+      end)
+    end
+  end
+
+  @doc "Browser review route: rejects stale/foreign scope before looking up the exact id."
+  def dialog_index(assigns, id, captured_scope) do
+    if notification_scope?(assigns, captured_scope), do: dialog_index(assigns, id)
+  end
+
+  @doc "Opaque page-host identity; contains no code, command, target or credentials."
+  def notification_scope(assigns) do
+    if scoped?(assigns) do
+      scope(assigns)
+      |> :erlang.term_to_binary()
+      |> then(&:crypto.hash(:sha256, &1))
+      |> Base.url_encode64(padding: false)
+    end
+  end
+
+  def notification_scope?(assigns, captured_scope) when is_binary(captured_scope),
+    do: notification_scope(assigns) == captured_scope
+
+  def notification_scope?(_assigns, _captured_scope), do: false
+
+  @doc "The current actionable ids for browser notification reconciliation, not authority."
+  def notification_request_ids(assigns) do
+    (assigns[:pending_approvals] || [])
+    |> Enum.filter(&own_request?(assigns, &1))
+    |> Enum.map(& &1.request_id)
+    |> Enum.reject(&MapSet.member?(resolved_requests(assigns), &1))
+    |> Enum.uniq()
+  end
+
+  @doc "Privacy-safe host metadata; encode it into data attributes, never raw requests."
+  def notification_host(assigns),
+    do: %{scope: notification_scope(assigns), request_ids: notification_request_ids(assigns)}
+
+  def notification_host_json(assigns), do: Jason.encode!(notification_host(assigns))
+
+  @doc "Generic review-only notification payload for an owned pending id, else nil."
+  def notification_payload(assigns, id) do
+    if pending_request?(assigns, id) do
+      scope = notification_scope(assigns)
+      request_tag = :crypto.hash(:sha256, id) |> Base.url_encode64(padding: false)
+
+      %{
+        title: gettext("Approval needed"),
+        body: gettext("Genesis is waiting for your approval."),
+        request_id: id,
+        scope: scope,
+        tag: "genesis-approval:#{scope}:#{request_tag}"
+      }
     end
   end
 
@@ -141,10 +253,21 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
   end
 
   @doc "Applies a legacy unstamped resolution or an acknowledged response."
-  def resolved(socket, request_id) do
+  def resolved(socket, request_id) when is_binary(request_id) do
+    if scoped?(socket.assigns) and String.trim(request_id) != "" do
+      settle(socket, request_id)
+    else
+      socket
+    end
+  end
+
+  def resolved(socket, _request_id), do: socket
+
+  defp settle(socket, request_id) do
     removed = socket.assigns[:approval_recovery_removed] || MapSet.new()
 
     assign(socket,
+      approval_resolved_requests: MapSet.put(resolved_requests(socket.assigns), request_id),
       pending_approvals: drop(pending_list(socket), request_id),
       approval_recovery_new: drop(socket.assigns[:approval_recovery_new] || [], request_id),
       approval_responses: Map.delete(responses(socket.assigns), request_id),
@@ -158,7 +281,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
 
   @doc "Submits only an existing, owned card; no optimistic removal on failure."
   def respond(socket, request_id, decision) when decision in ["approve", "deny"] do
-    request = Enum.find(pending_list(socket), &(Map.get(&1, :request_id) == request_id))
+    request = pending_request(socket.assigns, request_id)
 
     if own_request?(socket.assigns, request) and not busy?(socket.assigns, request_id) do
       seq = System.unique_integer([:positive, :monotonic])
@@ -246,6 +369,8 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
 
   defp usable_id?(id) when is_binary(id), do: String.trim(id) != ""
   defp usable_id?(id), do: is_integer(id)
+  defp seen_requests(assigns), do: assigns[:approval_seen_requests] || MapSet.new()
+  defp resolved_requests(assigns), do: assigns[:approval_resolved_requests] || MapSet.new()
   defp responses(assigns), do: assigns[:approval_responses] || %{}
   defp pending_list(socket), do: socket.assigns[:pending_approvals] || []
   defp drop(entries, id), do: Enum.reject(entries, &(Map.get(&1, :request_id) == id))

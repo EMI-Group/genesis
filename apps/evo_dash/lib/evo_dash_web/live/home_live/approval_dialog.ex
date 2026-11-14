@@ -115,6 +115,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
   attr(:pending_approvals, :list, default: [])
   attr(:approval_dialog_index, :integer, default: 0)
   attr(:approval_responses, :map, default: %{})
+  attr(:approval_error, :any, default: nil)
 
   def approval_dialog(assigns) do
     {request, position, count} =
@@ -126,10 +127,20 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
       |> assign(:position, position)
       |> assign(:count, count)
       |> assign(:busy, busy?(request, assigns[:approval_responses]))
+      |> assign(:response_text, response_text(assigns[:approval_error], [request]))
 
     ~H"""
     <%= if @request do %>
-      <dialog id="approval-dialog" class="modal" phx-hook="DialogModal">
+      <dialog
+        id="approval-dialog"
+        class="modal"
+        phx-hook="DialogModal"
+        aria-labelledby="approval-dialog-title"
+        aria-describedby="approval-dialog-summary approval-dialog-permission"
+        aria-modal="true"
+        aria-busy={to_string(@busy)}
+        data-request-id={request_id(@request)}
+      >
         <div class="modal-box w-11/12 max-w-2xl overflow-hidden p-0">
           <header class="flex items-start gap-3 border-b border-base-300 px-5 py-3.5">
             <span class={"mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full " <> badge_class(@request)}>
@@ -139,7 +150,9 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
               <p class="text-[11px] font-semibold uppercase tracking-wide text-base-content/50">
                 {gettext("Approval required")}
               </p>
-              <h2 class="mt-0.5 text-base font-semibold leading-snug">{title_text(@request)}</h2>
+              <h2 id="approval-dialog-title" class="mt-0.5 text-base font-semibold leading-snug">
+                {title_text(@request)}
+              </h2>
             </div>
             <%= if @count > 1 do %>
               <span class="badge badge-ghost badge-sm mt-1 shrink-0 tabular-nums">
@@ -149,6 +162,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
             <button
               type="button"
               phx-click="dialog_closed"
+              autofocus
               aria-label={gettext("Close")}
               title={gettext("Close")}
               class="btn btn-ghost btn-sm btn-square shrink-0"
@@ -158,7 +172,9 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
           </header>
 
           <div class="max-h-[min(60vh,32rem)] overflow-y-auto overscroll-contain px-5 py-4 scrollbar-thin">
-            <p class="text-sm font-medium leading-snug text-base-content">{summary_text(@request)}</p>
+            <p id="approval-dialog-summary" class="text-sm font-medium leading-snug text-base-content">
+              {summary_text(@request)}
+            </p>
 
             <%= if sudo?(@request) do %>
               <div
@@ -170,11 +186,18 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
                   <p class="text-sm font-semibold text-error">
                     {gettext("Unrestricted Elixir — no rollback")}
                   </p>
-                  <p class="mt-1 text-sm leading-relaxed text-error">{body_text(@request)}</p>
+                  <p id="approval-dialog-permission" class="mt-1 text-sm leading-relaxed text-error">
+                    {body_text(@request)}
+                  </p>
                 </div>
               </div>
             <% else %>
-              <p class="mt-2 text-sm leading-relaxed text-base-content/70">{body_text(@request)}</p>
+              <p
+                id="approval-dialog-permission"
+                class="mt-2 text-sm leading-relaxed text-base-content/70"
+              >
+                {body_text(@request)}
+              </p>
             <% end %>
 
             <%!-- The request's OWN warning (any tier), exactly as the core wrote it.
@@ -209,6 +232,19 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
                   {args_text(@request)}
                 </p>
               <% end %>
+            <% end %>
+          </div>
+
+          <div aria-live="polite" aria-atomic="true" class="px-5">
+            <%= if @busy do %>
+              <p id="approval-dialog-busy" role="status" class="pb-3 text-xs text-base-content/70">
+                {gettext("Sending your decision…")}
+              </p>
+            <% end %>
+            <%= if @response_text do %>
+              <p id="approval-dialog-response-error" role="alert" class="pb-3 text-xs text-error">
+                {@response_text}
+              </p>
             <% end %>
           </div>
 
