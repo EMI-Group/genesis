@@ -138,10 +138,26 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
 
   defp scope(dom), do: attr(dom, "[phx-hook='InspectorMessages']", "data-inspector-scope")
 
-  test "page presents live response and thinking separately from checkpoint history" do
-    dom = page(watch(), agent: %{history: [checkpoint()]})
+  test "live assistant article is the final memory message after chronological checkpoint rows" do
+    first = checkpoint()
+    second = %{checkpoint("Later checkpoint response", "Later checkpoint reasoning") | turn: 2}
+    stream = watch(call(%{turn: 3}))
+    dom = page(stream, agent: %{history: [first, second]})
 
-    assert text(dom, "#inspector-stream h4") == "Live activity"
+    assert length(Floki.find(dom, "#{@history} #inspector-stream > article")) == 1
+    assert text(dom, "#inspector-live-message-0 > header > span") == "assistant"
+
+    assert words(dom, "#inspector-live-message-0 > header .ml-auto") ==
+             "Turn 3 Generating response"
+
+    assert Floki.find(live(dom), "h1, h2, h3, h4, h5, h6") == []
+
+    # Context Memory owns the border; the live tail is not a separate panel.
+    for selector <- ["#inspector-stream", "#inspector-live-message-0"] do
+      classes = attr(dom, selector, "class") |> hd() |> String.split()
+      refute Enum.any?(classes, &(&1 == "border" or String.starts_with?(&1, "border-")))
+    end
+
     assert text(dom, "#inspector-live-message-0 details summary") == "Thinking"
     assert text(dom, "#inspector-live-message-0 details pre") == "Live reasoning & evidence"
     assert text(dom, "#inspector-live-message-0 > div pre") == "Live response <not markup>"
@@ -152,21 +168,46 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
              "Checkpoint reasoning"
 
     assert words(dom, "#agent-history-entry-41-0 .text-sm") == "Response Checkpoint response"
+
+    assert words(dom, "#agent-history-entry-41-1 .text-sm") ==
+             "Response Later checkpoint response"
+
     refute text(live(dom), "pre") =~ "Checkpoint"
     refute text(dom, "#agent-history-entry-41-0") =~ "Live reasoning"
+
+    assert messages(dom) == [
+             "0-#{:erlang.phash2(first)}",
+             "1-#{:erlang.phash2(second)}",
+             "live-0"
+           ]
+
+    assert attr(dom, "#{@history} [data-inspector-message]", "id") == [
+             "agent-history-entry-41-0",
+             "agent-history-entry-41-1",
+             "inspector-live-message-0"
+           ]
   end
 
   test "authoritative llm phase animates generation even after tool announcements and results" do
     stream = watch() |> batch([{:tool_call, "call-1", "read"}, {:tool_result, "call-1", :ok}])
 
-    dom = page(stream)
-    assert text(dom, "#inspector-activity") == "Generating response"
+    entry = checkpoint()
+    dom = page(stream, agent: %{history: [entry]})
+
+    assert text(dom, "#inspector-live-message-0 > header #inspector-activity") ==
+             "Generating response"
+
+    assert length(Floki.find(dom, "#inspector-live-message-0 > header #inspector-thinking")) == 1
+    assert Floki.find(dom, "#agent-history-entry-41-0 [role='status']") == []
+    assert Floki.find(dom, "#agent-history-entry-41-0 #inspector-stream-cursor") == []
     assert attr(dom, "#inspector-thinking", "role") == ["status"]
     assert attr(dom, "#inspector-thinking", "aria-label") == ["Generating response"]
     assert attr(dom, "#inspector-stream-cursor", "aria-hidden") == ["true"]
     assert attr(dom, "#inspector-thinking", "class") |> hd() =~ "motion-reduce:animate-none"
     assert attr(dom, "#inspector-stream-cursor", "class") |> hd() =~ "motion-reduce:animate-none"
+    assert length(Floki.find(dom, "#inspector-live-message-0 > #inspector-stream-cursor")) == 1
     assert text(dom, "#inspector-live-message-0 li") == "readCompleted"
+    assert messages(dom) == ["0-#{:erlang.phash2(entry)}", "live-0"]
   end
 
   test "authoritative activity phases are independent of the running snapshot lifecycle" do
@@ -199,6 +240,81 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
     assert Floki.find(dom, "#inspector-thinking, #inspector-stream-cursor") == []
     assert Floki.find(live(dom), "article") == []
     refute text(live(dom), "pre") =~ "Unowned"
+  end
+
+  test "no-call connection and failure chrome stays actionable without fabricating a memory message" do
+    entry = checkpoint()
+    stream = %{watch(nil, :llm_waiting) | snapshot: nil}
+    dom = page(stream, agent: %{history: [entry]})
+
+    assert text(dom, "#inspector-activity") == "Waiting for model capacity"
+    assert text(live(dom), "p") == "Connecting to live updates…"
+    assert messages(dom) == ["0-#{:erlang.phash2(entry)}"]
+    assert Floki.find(live(dom), "article, [role='status'], [role='alert'], button") == []
+    assert Floki.find(dom, "#inspector-thinking, #inspector-stream-cursor") == []
+    assert words(dom, "#agent-history-entry-41-0 .text-sm") == "Response Checkpoint response"
+
+    failed = page(%{stream | error: :timeout}, agent: %{history: [entry]})
+
+    assert words(live(failed), "[role='alert']") ==
+             "Live updates are unavailable. Checkpoint history may be out of date. Retry"
+
+    assert text(live(failed), "button[phx-click='retry_inspector_stream']") == "Retry"
+    assert attr(live(failed), "button[phx-click='retry_inspector_stream']", "type") == ["button"]
+    assert Floki.find(live(failed), "button[disabled], article") == []
+    refute text(live(failed), "p") =~ "Connecting"
+    assert messages(failed) == messages(dom)
+    assert words(failed, "#agent-history-entry-41-0 .text-sm") == "Response Checkpoint response"
+
+    connected = page(watch(nil, :llm_waiting))
+    assert text(connected, "#inspector-activity") == "Waiting for model capacity"
+    assert text(live(connected), "p") == ""
+    assert Floki.find(live(connected), "article, button, [role='status']") == []
+  end
+
+  test "an existing live call keeps error and Retry chrome inline with its assistant header" do
+    stream = %{watch() | error: :timeout}
+    dom = page(stream)
+
+    assert length(Floki.find(dom, "#inspector-live-message-0 > header [role='alert']")) == 1
+    assert text(dom, "#inspector-live-message-0 > header button") == "Retry"
+
+    assert attr(dom, "#inspector-live-message-0 > header button", "phx-click") ==
+             ["retry_inspector_stream"]
+
+    assert text(live(dom), "details pre") == call().thinking
+    assert text(live(dom), "article > div pre") == call().text
+    assert length(Floki.find(live(dom), "#inspector-activity")) == 1
+  end
+
+  test "live response, thinking and tool names render as escaped text with tool outcomes" do
+    response = "<script>alert('response')</script> & response"
+    thinking = "<img src=x onerror='thinking'> & evidence"
+    names = ["<b>read</b> & inspect", "<svg onload='tool'>", "rg", "bash"]
+    statuses = [:ok, :error, :timeout, :announced]
+
+    events =
+      Enum.zip(names, statuses)
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {{name, status}, index} ->
+        [{:tool_call, "tool-#{index}", name}, {:tool_result, "tool-#{index}", status}]
+      end)
+
+    dom = watch(call(%{text: response, thinking: thinking}), :tools) |> batch(events) |> page()
+
+    assert text(live(dom), "article > div pre") == response
+    assert text(live(dom), "details pre") == thinking
+    assert Floki.find(live(dom), "script, img, b, svg[onload], [onerror]") == []
+    assert attr(live(dom), "details", "open") == []
+    assert live(dom) |> Floki.find("li > .font-mono") |> Enum.map(&Floki.text/1) == names
+
+    assert live(dom) |> Floki.find("li > .shrink-0") |> Enum.map(&Floki.text/1) ==
+             ["Completed", "Failed", "Timed out", "Announced"]
+
+    assert text(dom, "#inspector-live-message-0 > header #inspector-activity") ==
+             "Executing tools"
+
+    assert Floki.find(dom, "#inspector-thinking, #inspector-stream-cursor") == []
   end
 
   test "no-thinking notice requires successful generation and explicitly captured empty thinking" do
@@ -348,10 +464,29 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
     # Even apparent matching metadata cannot establish checkpoint coverage.
     # Call ids belong to live attempts; history has no producer coverage watermark.
     entry = put_in(entry, [:data, :metadata], %{id: current.id, message_index: 0, turn: 2})
-    dom = page(stream, agent: %{history: [entry]})
-    assert text(dom, "#{row} .inspector-thinking .whitespace-pre-wrap") == current.thinking
-    assert words(dom, "#{row} .text-sm") == "Response " <> current.text
-    assert Floki.find(dom, "#{row} > .space-y-2 > p") == []
+
+    for {response, thinking} <- [
+          {current.text, current.thinking},
+          {current.text, "Independent checkpoint thought"},
+          {"Independent checkpoint answer", current.thinking}
+        ] do
+      candidate = %{
+        entry
+        | data: %{entry.data | content: response, reasoning_details: [%{text: thinking}]}
+      }
+
+      dom = page(stream, agent: %{history: [candidate]})
+
+      assert Enum.sort(messages(dom)) == Enum.sort(["0-#{:erlang.phash2(candidate)}", "live-0"])
+      assert text(dom, "#{row} .inspector-thinking .whitespace-pre-wrap") == thinking
+      assert words(dom, "#{row} .text-sm") == "Response " <> response
+      assert text(live(dom), "details pre") == current.thinking
+      assert text(live(dom), "article > div pre") == current.text
+      assert Floki.find(dom, "#{row} > .space-y-2 > p") == []
+
+      assert Floki.find(dom, "#{row} article, #inspector-stream [id^='agent-history-entry-']") ==
+               []
+    end
 
     retired = batch(stream, [{:activity, activity(:idle, nil)}])
     dom = page(retired, agent: %{history: [entry]})
@@ -391,6 +526,13 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
              StreamPresentation.max_characters()
 
     assert String.length(text(live(dom), "details pre")) == StreamPresentation.max_characters()
+
+    assert text(live(dom), "article > div > p") ==
+             "#{cap + 37 - StreamPresentation.max_characters()} bytes omitted from this live excerpt."
+
+    assert text(live(dom), "details > p") ==
+             "#{cap + 19 - StreamPresentation.max_characters()} bytes omitted from this live excerpt."
+
     refute text(live(dom), "article") =~ @no_thinking
 
     retired = batch(repeated, [{:activity, activity(:idle, nil)}])
@@ -398,6 +540,29 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
     assert retired.state.response == ""
     assert retired.state.thinking == ""
     assert Floki.find(live(page(retired)), "article") == []
+  end
+
+  test "bounded tool previews disclose omitted names and announcements inside the live article" do
+    cap = RuntimeStream.max_tool_name_bytes()
+    name = String.duplicate("n", cap + 9)
+    count = max(RuntimeStream.max_tools(), StreamPresentation.max_tools()) + 3
+
+    events = for index <- 1..count, do: {:tool_call, "tool-#{index}", name}
+    dom = watch() |> batch(events) |> page()
+    visible = min(RuntimeStream.max_tools(), StreamPresentation.max_tools())
+
+    assert length(Floki.find(dom, "#inspector-live-message-0 li")) == visible
+
+    assert live(dom) |> Floki.find("li > .font-mono") |> Enum.map(&Floki.text/1) ==
+             List.duplicate(String.duplicate("n", cap), visible)
+
+    assert live(dom) |> Floki.find("li > p") |> Enum.map(&(Floki.text(&1) |> String.trim())) ==
+             List.duplicate("9 bytes omitted from this live excerpt.", visible)
+
+    assert text(dom, "#inspector-live-message-0 > p") ==
+             "#{count - visible} additional tool announcements omitted."
+
+    refute text(live(dom), "article") =~ @no_thinking
   end
 
   test "checkpoint entries retain independent animation keys and full-message expansion payloads" do
@@ -408,7 +573,6 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
     dom = page(stream, agent: %{history: [entry]}, selected_history_entry: entry)
     row = "#agent-history-entry-41-0"
 
-    assert messages(dom) == ["live-0", "0-#{:erlang.phash2(entry)}"]
     assert attr(dom, "#{row} button[phx-click='view_full_message']", "phx-value-index") == ["0"]
 
     assert text(dom, "#{row} .inspector-thinking .whitespace-pre-wrap") ==
@@ -431,5 +595,6 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
     updated = page(batch(stream, [{:text, " delta"}]), agent: %{history: [entry]})
     assert messages(updated) == messages(dom)
     assert scope(updated) == scope(dom)
+    assert messages(dom) == ["0-#{:erlang.phash2(entry)}", "live-0"]
   end
 end
