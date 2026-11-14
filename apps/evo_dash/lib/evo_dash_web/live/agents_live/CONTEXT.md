@@ -158,7 +158,11 @@ Atomic checkpoint/live ownership is established only by StreamWatch snapshot rec
 `StreamPanel.stream_panel/1` escapes bounded content, shows all byte/tool omissions and exposes the parent-owned `retry_inspector_stream` event on transport errors.
 The skeleton shimmer and cursor pulse run only for authoritative unfinished LLM generation, respect reduced motion and use stable local message ordinals for animation keys.
 Live excerpts are temporary current-call detail rather than a separate growing transcript or a lossless replay.
-`StreamPanel.stream_panel/1` currently renders a separate `#inspector-stream` section with its own heading, status/error/connecting chrome and current-call articles, so embedding live content into a memory bubble requires a presentation/markup change rather than a transport change.
+`StreamPanel.stream_panel/1` exposes a cohesive `#inspector-stream` tail-row container for placement AFTER checkpoint rows inside the memory list, with no separate heading, panel border, checkpoint-position explanation or standalone skeleton.
+Each current-call article retains `inspector-live-message-N` and `data-inspector-message="live-N"`, matches the history row's `p-3 hover:bg-base-300/40` styling and assistant icon/identity header, and displays activity plus an in-row compact generation indicator with the existing `inspector-thinking` accessibility/reduced-motion contract.
+Thinking details, escaped bounded response/tool content, byte omissions and `inspector-stream-cursor` remain unchanged in meaning.
+Shared status chrome appears in the live row's header, or as a compact status-only row when no projection exists, preserving connecting/error/Retry without fabricating an assistant message.
+The public `stream_panel/1` API and all stream ownership, snapshot and reducer protocols are unchanged; placement is the parent template's responsibility.
 `RuntimeStream.message_index` is a local monotonic live-call DOM ordinal, not an index into checkpoint messages, and neither it nor `turn` can identify a checkpoint bubble to replace.
 `OptimisticMessages.merge/2` appends queued user echoes after checkpoint rows, so the final displayed row is not necessarily the assistant/live call's placement target.
 
