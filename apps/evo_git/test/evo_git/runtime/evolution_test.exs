@@ -176,6 +176,46 @@ defmodule EvoGit.Runtime.EvolutionTest do
     end
   end
 
+  describe "deliver_agent_result/4 — task pause pass-through" do
+    test "a {:paused, info} term is returned unchanged, at :info, with no merge and no finalizing" do
+      info = %{
+        agent_id: 42,
+        task_id: "paused-task",
+        checkpoint: "checkpoint-sha",
+        branch: "evogit-agent-paused",
+        reason: :task_pause
+      }
+
+      {result, log} =
+        with_info_log_level(fn ->
+          with_log(fn ->
+            Evolution.deliver_agent_result(
+              {:paused, info},
+              # A path that does not exist: a merge attempt would fail loudly.
+              "/nonexistent/genesis-pause-repo",
+              [task_id: "paused-task"],
+              []
+            )
+          end)
+        end)
+
+      assert result == {:paused, info}
+      assert log =~ "paused"
+      refute log =~ "Evolution failed"
+      refute log =~ "merge_and_report"
+    end
+
+    test "a non-paused term keeps the existing error handling" do
+      {result, log} =
+        with_log(fn ->
+          Evolution.deliver_agent_result({:error, :llm_not_configured}, "/tmp", [], [])
+        end)
+
+      assert result == {:error, :llm_not_configured}
+      assert log =~ "Evolution failed"
+    end
+  end
+
   # --- Helpers -------------------------------------------------------------
 
   defp create_git_repo! do

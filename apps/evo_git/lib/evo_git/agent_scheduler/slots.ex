@@ -417,17 +417,33 @@ defmodule EvoGit.AgentScheduler.Slots do
   @doc """
   Purges agents from both LLM (per-model) and tool waiting queues.
 
-  Replies `{:error, :cancelled}` to each purged agent's blocked GenServer.from
-  so their waiting calls unblock cleanly. Returns the updated state with
-  rebuilt queues excluding the purged agent IDs.
+  Replies to each purged agent's blocked GenServer.from so their waiting calls
+  unblock cleanly: `{:error, :cancelled}` by default (force-kill / graceful
+  cancel) and `{:error, :paused}` when purged for a TASK PAUSE (`reason:
+  :paused`), so an LLM/tool slot request purged by a pause lands as a pause
+  instead of a cancel or a failure. Returns the updated state with rebuilt
+  queues excluding the purged agent IDs. Slot HOLDERS are never touched.
 
   Returns `{state, status_updates}`.
   """
   @spec purge_agents_from_queues(State.t(), MapSet.t(pos_integer())) ::
           {State.t(), [{pos_integer(), atom()}]}
   def purge_agents_from_queues(%State{} = state, agent_ids) do
+    purge_agents_from_queues(state, agent_ids, :cancelled)
+  end
+
+  @doc """
+  `purge_agents_from_queues/2` with an explicit purge REASON
+  (`:cancelled` | `:paused`): the blocked waiters of a purged agent are replied
+  `{:error, reason}`.
+  """
+  @spec purge_agents_from_queues(State.t(), MapSet.t(pos_integer()), :cancelled | :paused) ::
+          {State.t(), [{pos_integer(), atom()}]}
+  def purge_agents_from_queues(%State{} = state, agent_ids, reason) do
+    reply = purge_reply(reason)
+
     # Purge from all LLM model pools
-    %State{} = state = purge_llm_waiting_queues(state, agent_ids)
+    %State{} = state = purge_llm_waiting_queues(state, agent_ids, reply)
 
     # Purge from tool waiting queue
     {tool_kept, tool_removed} =
@@ -436,14 +452,19 @@ defmodule EvoGit.AgentScheduler.Slots do
       end)
 
     Enum.each(tool_removed, fn {_agent_id, from} ->
-      GenServer.reply(from, {:error, :cancelled})
+      GenServer.reply(from, reply)
     end)
 
     state = %State{state | tool_waiting: tool_kept}
     {state, []}
   end
 
-  defp purge_llm_waiting_queues(%State{} = state, agent_ids) do
+  # The reply a purged waiter receives: a cancel stays a cancel (byte-identical
+  # to the pre-pause behaviour), a pause asks the caller to pause.
+  defp purge_reply(:paused), do: {:error, :paused}
+  defp purge_reply(_reason), do: {:error, :cancelled}
+
+  defp purge_llm_waiting_queues(%State{} = state, agent_ids, reply) do
     Enum.reduce(State.all_model_ids(state), state, fn model_id, %State{} = acc_state ->
       waiting = State.waiting_for(acc_state, model_id)
 
@@ -454,18 +475,20 @@ defmodule EvoGit.AgentScheduler.Slots do
         end)
 
       # Debug: "rejected" waiters — queued LLM requests answered
-      # {:error, :cancelled} (force-kill / graceful-cancel purge), the
-      # counterpart of the grant sweep's granted/remaining counts.
+      # {:error, :cancelled} (force-kill / graceful-cancel purge) or
+      # {:error, :paused} (task pause), the counterpart of the grant sweep's
+      # granted/remaining counts.
       if removed != [] do
         Logger.debug(
           "AgentScheduler: purged #{length(removed)} LLM waiter(s) for model " <>
-            "#{inspect(model_id)} — agent(s) #{inspect(Enum.map(removed, &entry_agent_id/1))}"
+            "#{inspect(model_id)} (#{inspect(reply)}) — agent(s) " <>
+            "#{inspect(Enum.map(removed, &entry_agent_id/1))}"
         )
       end
 
       Enum.each(removed, fn
-        {_agent_id, from} -> GenServer.reply(from, {:error, :cancelled})
-        {_agent_id, from, _backoff} -> GenServer.reply(from, {:error, :cancelled})
+        {_agent_id, from} -> GenServer.reply(from, reply)
+        {_agent_id, from, _backoff} -> GenServer.reply(from, reply)
       end)
 
       State.update_waiting(acc_state, model_id, kept)

@@ -433,6 +433,13 @@ defmodule EvoGit.AgentScheduler.Subagents do
   that repo's tracked working commit. A local/primary or read-only child
   contributes nothing — its result's foreign commits are ignored, so a stale SHA
   can never overwrite a newer one recorded by a writable foreign agent.
+
+  A PAUSED child's `{:paused, info}` term is stored EXACTLY like a result (the
+  map/roll-up only special-cases `{:ok, %Result{}}`), so the parent receives it
+  as one more sub-result once its batch completes — the agent-side
+  `EvoGit.Agent.SubagentProcessing` then merges `info.checkpoint` (the child's
+  pause commit) like a normal completion and formats it as a neutral sentence,
+  never as an error.
   """
   @spec store_sub_result(pos_integer(), pos_integer(), term(), EvoGit.AgentSpec.t() | nil) :: :ok
   def store_sub_result(parent_id, sub_id, result, child_spec \\ nil) do

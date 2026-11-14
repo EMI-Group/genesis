@@ -26,8 +26,8 @@ defmodule EvoGit.Application do
     #     are one atomic insert, and `:ets.take/2` drains a key atomically, so a
     #     concurrent append is never lost or delivered twice. `seq` (a
     #     BEAM-monotonic integer) restores append order on drain.
-    #   * `:evogit_agent_control` — a SET of `{agent_id, cancel_requested}`, the
-    #     flag updated with ONE atomic op (`:ets.update_element/3`).
+    #   * `:evogit_agent_control` — a SET of `{agent_id, cancel_requested, pause_requested}`,
+    #     each flag updated with ONE atomic op (`:ets.update_element/3`).
     # App-owned so they survive AgentScheduler crashes/restarts.
     ensure_ets_table(:evogit_agent_inbox, [
       :bag,
@@ -38,6 +38,19 @@ defmodule EvoGit.Application do
     ])
 
     ensure_ets_table(:evogit_agent_control, [
+      :set,
+      :named_table,
+      :public,
+      read_concurrency: true
+    ])
+
+    # Task-level PAUSE marker: task_ids currently draining a task-level pause.
+    # `EvoGit.AgentScheduler.begin_task_pause/1` registers a task here BEFORE it
+    # flags the task's live agents, so an agent registered afterwards (a
+    # crash-retry, a late dispatch) is seeded with `pause_requested = true` by
+    # `ControlPlane.ensure_row/1` instead of running a whole extra turn.
+    # App-owned so it survives AgentScheduler crashes/restarts.
+    ensure_ets_table(:evogit_task_pause, [
       :set,
       :named_table,
       :public,

@@ -109,14 +109,36 @@ defmodule EvoGit.Runtime.Evolution do
         repo_notes
       )
 
-    case AgentScheduler.run_agent(spec) do
-      {:ok, %Result{} = agent_output} ->
-        Helpers.notify_finalizing(Keyword.get(opts, :task_id))
-        Helpers.merge_and_report(repo_path, agent_output, "evolve", foreign_repos)
+    AgentScheduler.run_agent(spec)
+    |> deliver_agent_result(repo_path, opts, foreign_repos)
+  end
 
-      error ->
-        Logger.error("Evolution failed: #{inspect(error)}")
-        error
-    end
+  @doc false
+  # The ONE terminal-result branch of `run_mode/7`, exposed (`@doc false`) so a
+  # test can pin the pause pass-through without a live scheduler.
+  #
+  # A TASK PAUSE is NOT completion: `{:paused, info}` is returned UNCHANGED, at
+  # `:info` (never `:error`), with NO `Helpers.notify_finalizing/1` and NO
+  # `Helpers.merge_and_report/3,4` — the caller owns what a paused task means.
+  @spec deliver_agent_result(term(), String.t(), keyword(), list()) :: term()
+  def deliver_agent_result({:paused, info} = paused, _repo_path, opts, _foreign_repos) do
+    Logger.info(
+      "Evolution: task paused at a turn boundary " <>
+        "(task #{inspect(Keyword.get(opts, :task_id))}, " <>
+        "agent #{inspect(Map.get(info, :agent_id))}, " <>
+        "checkpoint #{inspect(Map.get(info, :checkpoint))}) — not merging"
+    )
+
+    paused
+  end
+
+  def deliver_agent_result({:ok, %Result{} = agent_output}, repo_path, opts, foreign_repos) do
+    Helpers.notify_finalizing(Keyword.get(opts, :task_id))
+    Helpers.merge_and_report(repo_path, agent_output, "evolve", foreign_repos)
+  end
+
+  def deliver_agent_result(error, _repo_path, _opts, _foreign_repos) do
+    Logger.error("Evolution failed: #{inspect(error)}")
+    error
   end
 end

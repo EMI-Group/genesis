@@ -17,9 +17,9 @@ defmodule EvoGit.AgentScheduler.Store do
   reader treats it as a possibly-stale snapshot.
 
   Everything another process writes about a live agent (the injected message
-  queue and the graceful-cancel flag) goes through `ControlPlane` with atomic
-  ETS operations, so a cross-process write never read-modify-writes the agent's
-  row at all.
+  queue, the graceful-cancel flag and the task-pause flag) goes through
+  `ControlPlane` with atomic ETS operations, so a cross-process write never
+  read-modify-writes the agent's row at all.
 
   Every write/delete on the agent-state and sched-meta tables broadcasts
   enriched PubSub delta events so the dashboard can apply incremental updates,
@@ -321,6 +321,94 @@ defmodule EvoGit.AgentScheduler.Store do
         error
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Task-level pause (control-plane pause flag + task pause marker)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Sets the `pause_requested` flag to `true` on an agent's control row.
+
+  Called by the scheduler when a task-level pause is requested for the agent's
+  task; the agent honours the flag at its next turn boundary (never mid-tool) and
+  the flag is cleared by `clear_pause_requested/1` / the task-level clear when the
+  pause is completed or abandoned. One atomic update on the control row — the
+  agent's state row is never written here.
+  """
+  @spec set_pause_requested(pos_integer()) :: :ok | {:error, :not_found}
+  def set_pause_requested(agent_id) do
+    set_pause_requested(agent_id, true)
+  end
+
+  @doc """
+  Sets the `pause_requested` flag on an agent's control row to the given value
+  (`true` to request a pause, `false`/`nil` to clear it).
+
+  Independent of the cancel flag on the same row.
+  Returns `:ok` when the agent exists, `{:error, :not_found}` otherwise.
+  """
+  @spec set_pause_requested(pos_integer(), boolean() | nil) :: :ok | {:error, :not_found}
+  def set_pause_requested(agent_id, value) do
+    case ControlPlane.set_pause(agent_id, value) do
+      :ok ->
+        PubSub.broadcast_agents_updated()
+        :ok
+
+      {:error, :not_found} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Returns whether a task pause has been requested for the agent.
+
+  Reads the control row (never the state row); returns `false` when the agent
+  is missing or the flag is `nil`/`false`.
+  """
+  @spec pause_requested?(pos_integer()) :: boolean()
+  def pause_requested?(agent_id), do: ControlPlane.pause_requested?(agent_id)
+
+  @doc """
+  Clears the `pause_requested` flag on an agent's control row (sets it back to
+  `nil`).
+
+  Returns `:ok` when the agent exists, `{:error, :not_found}` otherwise.
+  """
+  @spec clear_pause_requested(pos_integer()) :: :ok | {:error, :not_found}
+  def clear_pause_requested(agent_id) do
+    case ControlPlane.set_pause(agent_id, nil) do
+      :ok ->
+        PubSub.broadcast_agents_updated()
+        :ok
+
+      {:error, :not_found} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Clears the `pause_requested` flag of every agent currently registered under
+  `task_id` (the `:evogit_sched_meta` scan).
+
+  Used when a pause is ABANDONED (a cancel that arrives while `:pausing` wins)
+  and when a force kill or a completed drain ends the pause. Total: an agent
+  whose row is already gone is simply skipped, and a missing table is a no-op.
+  """
+  @spec clear_pause_requested_for_task(String.t()) :: :ok
+  def clear_pause_requested_for_task(task_id) when is_binary(task_id) do
+    if :ets.whereis(@sched_table) != :undefined do
+      @sched_table
+      |> :ets.tab2list()
+      |> Enum.each(fn
+        {agent_id, %{task_id: ^task_id}} -> clear_pause_requested(agent_id)
+        _other -> :ok
+      end)
+    end
+
+    :ok
+  end
+
+  def clear_pause_requested_for_task(_task_id), do: :ok
 
   # ---------------------------------------------------------------------------
   # ETS Helpers (Agent History Table)
