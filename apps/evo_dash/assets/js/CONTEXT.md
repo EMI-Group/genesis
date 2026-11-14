@@ -44,4 +44,14 @@ The DOM half of that hook (rAF coalescing, observers, listeners) carries no deci
 
 ## Known Issues
 
-- `js/CONTEXT.md` routing note: the parent `assets/CONTEXT.md` routes `./js/` → `js/hooks/CONTEXT.md` for behavior detail; this file exists only since the theme audit — keep it lean (per-file detail belongs in code comments / hooks/CONTEXT.md).
+`app.js:635–692` BrowserNotifications handles task_notification with optional tag dedupe, hidden-or-unfocused gating, best-effort window focus on click and silent unsupported/denied/constructor-failure handling.
+Permission is requested on each hook mount when the cached browser permission is default, not by an explicit user gesture or a global once-only guard, and the cached permission is not refreshed after external permission changes.
+The hook has no service worker, background push, pending-notification replay, approval navigation, resolution-driven close or user-visible delivery failure, so notifications are advisory rather than an approval-delivery guarantee.
+Notification title/body pass directly into the OS notification constructor without truncation or approval/session identity validation, so callers own sensitive-content minimization.
+`app.js:807–987` AgentHistoryAutoScroll follows instantly with a 56 px inclusive threshold, disconnects observers when unpinned and cleans up frames/listeners/observers, but only its pure geometry predicate has Node coverage.
+The scroller and direct children are observed, and missing ResizeObserver means patch-driven following only; frame scheduling, observer lifecycle, reconnect and keyboard/scroll races are untested.
+`app.js:1338–1381` DialogModal guards showModal, latches user dismissal and removes its listener before teardown close, but has no fallback when showModal is absent or throws and no explicit focus-return target or dialog labelling.
+Consuming markup and browser-level tests must establish native-dialog focus behavior, accessible names and fallback access to pending approvals.
+`app.js:1270–1318` Guide and `1399–1414` PaletteList request smooth scrolling without reduced-motion checks; Guide does not catch malformed selector errors or cancel retry/highlight timers on dismissal or destruction.
+`app.js:1387–1397` FocusInput focuses on mount and refocuses focus-on-update elements on every patch, so consuming pages must prevent focus theft while another control or dialog owns focus.
+No Node tests here cover BrowserNotifications, DialogModal, Guide, PaletteList or FocusInput; standalone animation/accessibility gaps and their tests are documented in `hooks/CONTEXT.md`.
