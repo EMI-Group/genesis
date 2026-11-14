@@ -290,18 +290,37 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
 
       # --- 6. The scheduler CONTROL-PLANE sequence ---------------------------
       #
-      # One input drain + one cancel check per turn, and NOTHING else: the
+      # One input drain + one cancel check at the turn top, plus ONE pause
+      # probe at EACH of the two pause boundaries of a turn — the LOOP TOP
+      # (right after the cancel check) and the BATCH boundary (right after a
+      # tool batch appended its results, i.e. before the next turn's drain) —
+      # and NOTHING else: the
       # per-turn ETS write-through kinds (`:context`, `:total_tokens`, `:turn`,
       # `{:batch, fields}`) no longer exist — the exchange's own state is the
       # authority and is published by the `:checkpoint` seam below.
       assert Enum.map(scheduler_calls, fn {kind, _payload} -> kind end) == [
+               # turn 1 loop top
                :drain_inputs,
                :cancel_requested?,
+               :pause_requested?,
+               # turn 1 batch boundary (read + rg)
+               :pause_requested?,
+               # turn 2 loop top
                :drain_inputs,
                :cancel_requested?,
+               :pause_requested?,
+               # turn 2 batch boundary (write)
+               :pause_requested?,
+               # turn 3 loop top — the plain-text turn never reaches a batch
                :drain_inputs,
-               :cancel_requested?
+               :cancel_requested?,
+               :pause_requested?
              ]
+
+      # The pause probe carries the AGENT ID, i.e. it asks about THIS agent.
+      assert Enum.all?(
+               for {:pause_requested?, payload} <- scheduler_calls, do: payload == agent_id
+             )
 
       # --- 7. The per-turn `:checkpoint` publication ------------------------
       #
@@ -418,7 +437,8 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
 
   # The `:scheduler` seam: one adapter for every scheduler CONTROL-PLANE
   # interaction the loop performs. It records the kind + payload and answers the
-  # sane values a bare process needs (no pending inputs, no cancellation).
+  # sane values a bare process needs (no pending inputs, no cancellation, no
+  # task-level pause).
   defp scheduler_stub do
     fn kind, payload, _state ->
       record(:scheduler_calls, {kind, payload})
@@ -426,6 +446,7 @@ defmodule EvoGit.Agent.ExchangeGoldenTest do
       case kind do
         :drain_inputs -> []
         :cancel_requested? -> false
+        :pause_requested? -> false
       end
     end
   end
