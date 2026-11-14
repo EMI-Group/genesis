@@ -17,14 +17,14 @@ There is **no `live(...)` call anywhere in this directory**: every component is 
 | `diff_viewer_test.exs` | `EvoDashWeb.DiffViewerTest` | 11 / 53 — `ReviewComponents.DiffViewer` pure units + tree/DOM contract + render caps |
 | `archive_tree_test.exs` | `EvoDashWeb.ArchiveTreeTest` | 18 / 55 — archive tree/details rendering, string-keyed rows, cycles, paged envelope, `ArchiveHelpers` |
 | `blob_caps_test.exs` | `EvoDashWeb.BlobCapsTest` | 7 / 26 — the rendering-cap regression suite |
-| `task_card_components_test.exs` | `EvoDashWeb.TaskCardComponentsTest` | 9 / 35 — copy-text helpers, task card affordances, Review-button candidacy, structured errors, archive pass-through |
+| `task_card_components_test.exs` | `EvoDashWeb.TaskCardComponentsTest` | 12 / 57 — copy-text helpers, task card affordances, Model line, Review-button candidacy, structured errors, archive pass-through, the `:awaiting_input` session panel, the pause/resume matrix |
 | `setting_card_test.exs` | `EvoDashWeb.SettingCardTest` | 3 / 18 — `setting_card/1` `:list_of_strings` editor, `default_label/1`, appearance accent swatch picker |
 | `remote_gate_components_test.exs` | `EvoDashWeb.RemoteGateComponentsTest` | 5 / 16 — `remote_connection_gate/1` states + `gate_active?/1` truth table |
 | `model_profiles_editor_test.exs` | `EvoDashWeb.ModelProfilesEditorTest` | 2 / 35 — render-only peak/off-peak concurrency form + advanced disclosure open/closed rule and reasoning-effort placement (events belong to SettingsLive) |
 | `model_profiles_editor_auth_test.exs` | `EvoDashWeb.ModelProfilesEditorAuthTest` | 3 / 19 — render-only OAuth/subscription auth UI: edit-form auth-mode select vs OAuth-only badge, credential-file input, summary-row auth badge, credential-status line |
 | `custom_agents_editor_test.exs` | `EvoDashWeb.SettingsComponents.CustomAgentsEditorTest` | 2 / 7 — the editor's extra "Custom tools" chip group + alias-aware comparisons |
 | `custom_tools_panel_test.exs` | `EvoDashWeb.CustomToolsPanelTest` | 2 / 22 — `custom_tools_panel/1` render contract + pure `custom_tool_names/1` |
-| `layouts_test.exs` | `EvoDashWeb.LayoutsTest` | 5 / 17 — `Layouts.app/1` sidebar task grouping, the `:awaiting_input` Sessions group, the layout-owned Conversations section (incl. no leaked HTML comments), Assistant navigation, keyboard focus, and responsive configuration warning |
+| `layouts_test.exs` | `EvoDashWeb.LayoutsTest` | 5 / 19 — `Layouts.app/1` sidebar task grouping, the `:awaiting_input` Sessions group, the `:pausing`/`:paused` active partition (only `:pausing` pulses), the layout-owned Conversations section (incl. no leaked HTML comments), Assistant navigation, keyboard focus, and responsive configuration warning |
 | `llm_selection_components_test.exs` | `EvoDashWeb.LLMSelectionComponentsTest` | 37 async tests — fused-capsule structure (hook + two client-switched views, no provider select), reasoning effort-stop rendering/resolution, provider drill-down labels/selection, provider scoping, fallback, unavailable/empty/disabled states, events and accessibility |
 | `task_form_provider_selection_test.exs` | `EvoDashWeb.TaskFormProviderSelectionTest` | 22 async tests — provider-picker activation/placement, capsule hook/view pins, no-select drill-down payloads, legacy fallback/suppression, forwarding, scoping and quality independence |
 | `category_metadata_test.exs` | `EvoDashWeb.CategoryMetadataTest` | 2 / 4 — pure `SettingsComponents.CategoryMetadata` units |
@@ -122,7 +122,7 @@ Every test builds a marker-bearing oversized blob, renders the component, and as
 - **`ArchiveHelpers` capped builders** are pure and take a RAW record list (atom OR string keys): `shown` counts nodes actually PRESENT in the built tree (a record whose `parent_id` matches nothing in the slice is PROMOTED, so it is shown) while `truncated?` is only ever about records dropped by the CAP — assert both properties separately.
 - **Diff cap arithmetic**: the 2 000-line cap counts DIFF lines (header lines included), so a 5 000-added-line file renders additions 00001…01995 and reports `3,005 more lines not shown`. Keep the synthetic fixture's added lines zero-padded (`+added line 00001`) so a content assert can never collide with a gutter line number.
 
-## `task_card_components_test.exs` (9 describes / 35 tests)
+## `task_card_components_test.exs` (12 describes / 57 tests)
 
 - `objective_text/1` (3) — trimmed `:prompt` with `:objective` fallback; empty/nil/whitespace → `""`.
 - `result_copy_text/1` (5) — raw agent message on success (incl. `no_changes: true`) and plain maps, inspected reason on error/crash, pretty-inspected fallback.
@@ -132,6 +132,8 @@ Every test builds a marker-bearing oversized blob, renders the component, and as
 - `task_card/1 — failed-task structured error display` (9) — collapsed error strip (truncated `error.message`, kind-label fallback), expanded detail block (kind + "Source: …" caption chips via `Helpers.task_error_kind_label/1` / `task_error_source_label/1`, full message, last ≤8 stacktrace frames in a `<pre>`), legacy `{:error, _}` result-box coexistence, `error: nil`/non-map safety.
 - `task_card/1 — best-effort cost notice` (2) — `Helpers.cost_estimate_notice/1` renders at the card's cost display.
 - `Archive accessors — the paged archive envelope` (4) + `task_card/1 — paged archive pass-through` (2) — the per-card archive accessors and their render wiring.
+- `task_card/1 — :awaiting_input session panel` (4) — the reply box + Close-session action render only for an idle session whose agent id is known.
+- `task_card/1 — pause / resume` — the button matrix (Pause `[:running, :pausing]` disabled with the `Pausing…` spinner while draining, Resume `:paused` direct for `:clean` / `phx-confirm` for `:dirty`, `action_busy` disabling both, force-kill range widened to `[:running, :awaiting_input, :cancelling, :pausing, :paused]`, no Review button), the clean info strip and the `:dirty` warning strip with the subagents caveat, and the `Pausing…`/`Paused` labels with `:paused` never pulsing.
 
 ## `setting_card_test.exs` (3 describes / 18 tests)
 

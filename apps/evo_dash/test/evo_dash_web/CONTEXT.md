@@ -10,7 +10,7 @@ The app-wide Async-Safety Policy, the module census, the mount funnels, the glob
 
 - `./live/` → LiveView page suites and the pure unit suites for their support modules (`home_live_test.exs`, `home_live_render_test.exs`, `tasks_live_test.exs`, `system_live_test.exs`, `settings_live*`, `review_live_test.exs`, `projects_live_test.exs`, `agents_live*`, `processes_live_test.exs`, `welcome_*`, `approval_dialog_render_test.exs`, `platform_info_test.exs`) — `live/CONTEXT.md` (cross-suite mechanics), with per-suite detail pushed down to `live/projects_live/CONTEXT.md`, `live/settings_live/CONTEXT.md`, `live/agents_live/CONTEXT.md` and `live/home_live/CONTEXT.md`
 - `./live/home_live/` → Genesis Assistant support-module unit suites AND the mounted `GET /assistant` page-suite contracts (chat seeding, the approval strip + modal dialog, genesis-source gate, interactive session reattach, push-only delta streaming), including the interactive-session boundary (`session_actions_test.exs`, `session_list_test.exs`, `chat_state_test.exs`, `chat_state_session_fields_test.exs`, `transcript_test.exs`, `messages_test.exs`, `model_select_test.exs`, `approval_workflow_test.exs`, `assistant_message_test.exs`, `delta_test.exs`) — `live/home_live/CONTEXT.md`
-- `./components/` → function-component render/contract suites (`task_card_components_test.exs` incl. the `:awaiting_input` session panel and the Cancel/Force-kill ranges, `layouts_test.exs` incl. the sidebar "Sessions" group, profile-editor/task-form/LLM-selection suites) — `components/CONTEXT.md`
+- `./components/` → function-component render/contract suites (`task_card_components_test.exs` incl. the `:awaiting_input` session panel, the Pause/Resume matrix with `action_busy` and the paused explainer, and the Cancel/Force-kill ranges, `layouts_test.exs` incl. the sidebar "Sessions" group, profile-editor/task-form/LLM-selection suites) — `components/CONTEXT.md`
 - `./controllers/` → error templates, the streamed task-archive export, the legacy `GET /help` → `/assistant` 302 alias (raw query string preserved), and the `GET /server/status` operational probe (busy set excludes `:awaiting_input`) — `controllers/CONTEXT.md`
 - `./live_hooks/` → on-mount hook suites (NodeAware sidebar load, Guide, Appearance, DesktopQuit, UpdateStatus) — `live_hooks/CONTEXT.md`
 - `./helpers_test.exs` → status badge/dot/tint, datetime, icons, modals, `truncate_string/2`, `with_node_param/2`
@@ -36,12 +36,15 @@ Coverage is deliberately split so no suite duplicates another:
 | Persisted chat shape incl. `session_id`, `session_mode`, `queued_echoes` (bounds + per-key totality) | `live/home_live/chat_state_test.exs` + `chat_state_session_fields_test.exs` |
 | Transcript caps (200 entries, 8 000 graphemes/entry, 40 reasoning items/message) and per-message reasoning retention | `live/home_live/transcript_test.exs` |
 | Composer render contract (idle / running-queueable / `:awaiting_input` / `:cancelling` / `:ended`, queued echoes, interrupt affordance, rail panel) | `live/home_live_render_test.exs` |
-| `:awaiting_input` badge/dot/tint families and cross-status distinctness | `helpers_test.exs` |
-| Card reply box + Close session (only for an idle session), Cancel range `[:pending, :running, :awaiting_input]`, Force kill range `[:running, :awaiting_input, :cancelling]` | `components/task_card_components_test.exs` |
+| `:awaiting_input` badge/dot/tint families and cross-status distinctness (plus the `:pausing` amber and `:paused` info families, distinct from every other status) | `helpers_test.exs` |
+| Card reply box + Close session (only for an idle session), Cancel range `[:pending, :running, :awaiting_input]`, Force kill range `[:running, :awaiting_input, :cancelling, :pausing, :paused]`, Pause `[:running, :pausing]` / Resume `:paused` with `action_busy` and the clean/dirty paused explainer | `components/task_card_components_test.exs` |
 | Sidebar "Sessions" group (interactive rows, violet dot, never "Other") | `components/layouts_test.exs` |
-| Tasks page: server-side `session_mode` filter (rows AND total, whitelist, clear), `:awaiting_input` status filter, reply/close flows | `live/tasks_live_test.exs` |
-| `/server/status` busy set = `[:running, :pending, :finalizing, :cancelling]` atom-exactly | `controllers/server_status_controller_test.exs` |
+| Tasks page: server-side `session_mode` filter (rows AND total, whitelist, clear), `:awaiting_input`/`:pausing`/`:paused` status filter, reply/close flows, the pause modal → `:running → :pausing` transition, resume → `:running`, per-reason pause/resume flashes, the 18-key summary pin | `live/tasks_live_test.exs` |
+| `/server/status` busy set = `[:running, :pending, :finalizing, :cancelling, :pausing]` atom-exactly (`:paused`/`:awaiting_input` excluded) | `controllers/server_status_controller_test.exs` |
 | Update wind-down closes idle sessions via `close_session`, drops a stuck session after the grace polls, never force-kills one | `live/system_live_test.exs` (`SystemLiveSyncTest`) |
+| Sidebar active list admits `:pausing`/`:paused` (`partition_active_tasks/1` + the live/active partition, only `:pausing` pulses) | `live_hooks/node_aware_test.exs` + `components/layouts_test.exs` |
+| Update gate busy set = `[:running, :pending, :cancelling, :finalizing, :pausing]`: a draining pause blocks/participates, a paused task neither blocks nor is waited on | `live/system_live_test.exs` (`SystemLiveSyncTest`) |
+| `NodeContext.pause_task/2` / `resume_task/2` verbatim delegations + the 18-key summary projection (`pause_kind` 18th) | `evo_dash/node_context_test.exs` |
 
 ## Notes for Agents
 

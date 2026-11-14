@@ -3,7 +3,7 @@
 ## Intent
 
 The task card's data contract plus the helper families extracted from `task_card_components.ex`.
-`EvoDashWeb.TaskCardComponents.task_card/1` renders from a 17-key task SUMMARY map and an optional lazily-fetched `detail`, and delegates the result/option/repo/archive/error rendering to the modules here, re-exported through `defdelegate`s on the parent module — call sites always use `EvoDashWeb.TaskCardComponents.<fun>`.
+`EvoDashWeb.TaskCardComponents.task_card/1` renders from an 18-key task SUMMARY map and an optional lazily-fetched `detail`, and delegates the result/option/repo/archive/error rendering to the modules here, re-exported through `defdelegate`s on the parent module — call sites always use `EvoDashWeb.TaskCardComponents.<fun>`.
 
 ## Routing Table
 
@@ -15,12 +15,12 @@ The task card's data contract plus the helper families extracted from `task_card
 
 ## Task Cards & the Summary-Map Contract
 
-The sidebar "Active Tasks" section in `Layouts.app` is fed by `@running_tasks` / `@pending_tasks` — lightweight **summary maps** from the statuses-filtered `EvoGit.TaskRegistry.list_tasks_summary([:running, :pending, :finalizing, :cancelling, :awaiting_input, :completed])`. `layouts.ex` declares only those two attrs (there is NO `@tasks` attr; the dashboard renders no main task list).
+The sidebar "Active Tasks" section in `Layouts.app` is fed by `@running_tasks` / `@pending_tasks` — lightweight **summary maps** from the statuses-filtered `EvoGit.TaskRegistry.list_tasks_summary([:running, :pending, :finalizing, :cancelling, :awaiting_input, :pausing, :paused, :completed])` (the pause pair is included so a paused task stays findable and resumable). `layouts.ex` declares only those two attrs (there is NO `@tasks` attr; the dashboard renders no main task list).
 The Tasks page renders `task_card/1` from the same summary maps and fetches the heavy payload per expanded card into a separate `detail` entry; Review is the only page that still loads full `%TaskInfo{}` structs directly.
 
 ### The summary-map contract
 
-Plain maps with `EvoGit.Store.Operations.Summaries`' 17 keys: `id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error, session_mode`. `session_mode` is the persisted string `"oneshot" | "interactive"` (NULL decodes to `"oneshot"`); older or hand-built summary maps may omit it, so every read is `Map.get(task, :session_mode, "oneshot")`. `opts` is a decoded keyword list; `error` is the lenient atom-keyed failure record (nil unless `:failed`); `updated_at` is a raw ISO string. EXCLUDED: `result`, `logs`, `usage`, `archive_metadata` (and other TaskInfo fields such as `ref`).
+Plain maps with `EvoGit.Store.Operations.Summaries`' 18 keys: `id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error, session_mode, pause_kind`. `session_mode` is the persisted string `"oneshot" | "interactive"` (NULL decodes to `"oneshot"`); older or hand-built summary maps may omit it, so every read is `Map.get(task, :session_mode, "oneshot")`. `pause_kind` is the `:clean | :dirty | nil` pause provenance (18th key), also read defensively (`Map.get/2`) for legacy rows. `opts` is a decoded keyword list; `error` is the lenient atom-keyed failure record (nil unless `:failed`); `updated_at` is a raw ISO string. EXCLUDED: `result`, `logs`, `usage`, `archive_metadata` (and other TaskInfo fields such as `ref`).
 
 ### Interactive sessions (`:awaiting_input`) — reply box + close action
 
@@ -29,7 +29,17 @@ Plain maps with `EvoGit.Store.Operations.Summaries`' 17 keys: `id, status, revie
 `session_panel/1` lives in `./session.ex`, is imported (never also `defdelegate`d — a same name/arity clash), and implements no dialog itself: the owning LiveView owns the close confirmation modal.
 The reply is NOT optimistically echoed — a sent message shows only once the server re-renders session state (the task status leaves `:awaiting_input` while the next turn runs).
 Status styling: the badge/label use the violet family (`Helpers.task_status_badge/1`), the collapsed card's badge pulses like the running one but stays visually distinct, and the label reads `gettext("Awaiting input")` with a `gettext("(waiting for you)")` suffix — the raw atom is never rendered.
-Action gates: graceful **Cancel** is visible for `[:pending, :running, :awaiting_input]`; **Force kill** (three-dot dropdown, Danger zone) for `[:running, :awaiting_input, :cancelling]`. EXCLUDED: `result`, `logs`, `usage`, `archive_metadata` (and other TaskInfo fields such as `ref`).
+Action gates: graceful **Cancel** is visible for `[:pending, :running, :awaiting_input]`; **Pause** for `[:running, :pausing]`; **Resume** for `:paused`; **Force kill** (three-dot dropdown, Danger zone) for `[:running, :awaiting_input, :cancelling, :pausing, :paused]`; Delete is unconditional. EXCLUDED: `result`, `logs`, `usage`, `archive_metadata` (and other TaskInfo fields such as `ref`).
+
+### Task pause / resume (`:pausing`, `:paused`) — controls, `action_busy` and the explainer
+
+A paused task is a NON-terminal, resumable resting state; `:pausing` is still work draining (the agents stop at their next turn boundary, and an in-flight tool call is never interrupted).
+`task_card/1` declares `attr(:action_busy, :map, default: %{})` — in-flight async markers keyed by the STRING task id (`:pause` | `:resume`), read through the private total `action_busy/2` (a nil or non-map attr degrades to "nothing in flight" instead of raising).
+**Pause** (`phx-click="open_pause_modal"`, `phx-value-task_id`) is rendered for `[:running, :pausing]`; it is disabled while `@task.status == :pausing` or any marker exists for the task, and renders the spinner label `gettext("Pausing…")` in either case, with a `title` explaining that the agent finishes its current tool call before stopping. The control emits `open_pause_modal` — the owning LiveView owns the confirmation modal.
+**Resume** (`phx-click="resume_task"`, `phx-value-task_id`) is rendered only for `:paused`, disabled by any marker, spinner label `gettext("Resuming…")`; it is DIRECT for a `:clean` pause and carries a `phx-confirm` for a `:dirty` one (`resume_confirm/1` reads `Map.get(@task, :pause_kind)`) so the warning is seen BEFORE the click lands.
+**Force kill** stays available for `:pausing`/`:paused` (a draining or stuck pause must always be killable); **Review never is** — `show_review_button?/1` stays an allowlist on `:completed`/`:cancelled`, so a paused task is resumed, not reviewed.
+The card renders its own status-driven paused explainer (no LiveView round-trip, full width, only for `:paused`): `pause_kind: :dirty` → an amber warning strip (the last tool call may not have completed, so files and background jobs may be inconsistent) plus the one-line caveat `gettext("Subagents from before the restart are not restored.")`; `:clean` or nil (a legacy row) → the neutral info strip `gettext("Paused by you — resume continues where it stopped.")`.
+Status labels: the badge `cond` renders `gettext("Pausing…")` / `gettext("Paused")` (never the raw atom); the pulse set is `[:running, :cancelling, :awaiting_input, :pausing]`, so `:pausing` pulses amber and `:paused` never pulses; colours come from `Helpers.task_status_badge/1` / `task_status_dot_class/1` / `task_status_tint/1` (amber for `:pausing`, the `info`/blue family for `:paused`).
 
 ### The `detail` attr — lazily-fetched heavy payload
 
