@@ -85,6 +85,82 @@ defmodule EvoDashWeb.LayoutsTest do
     end
   end
 
+  describe "app/1 — paused/pausing tasks stay in the live partition" do
+    # The task-level pause pair is NON-terminal: `:pausing` is still working (a
+    # pause request drains the agents, wrapper + lease alive) and `:paused` is
+    # stopped but resumable (`finished_at` nil). Neither may be rendered or routed
+    # like a finished, reviewable task.
+    test "a :pausing task is a live row: agents link, pulsing dot, 'Pausing' tooltip" do
+      html =
+        render_app(
+          running_tasks: [
+            task(
+              id: "pa",
+              status: :pausing,
+              project_path: "/home/user/proj",
+              objective: "Pausing task"
+            )
+          ]
+        )
+
+      assert sidebar_group_names(html) == ["proj"]
+      assert sidebar_task_labels(html) == ["Pausing task"]
+
+      [link] = html |> parse() |> Floki.find("[data-sidebar-task-link]")
+      assert Floki.attribute(link, "href") == ["/agents"]
+
+      [dot] = Floki.find(link, "span.rounded-full")
+      # Still working → the row keeps its pulse; the wording names the drain.
+      assert_classes(dot, ~w(animate-pulse))
+      assert Floki.attribute(dot, "title") == ["Pausing"]
+
+      refute html =~ "Pending Review"
+    end
+
+    test "a :paused task is a live, non-animated row: agents link, 'Paused' tooltip, before finished rows" do
+      html =
+        render_app(
+          running_tasks: [
+            task(
+              id: "pz",
+              status: :paused,
+              project_path: "/home/user/proj",
+              objective: "Paused task"
+            )
+          ],
+          pending_tasks: [
+            task(
+              id: "done",
+              status: :completed,
+              project_path: "/home/user/proj",
+              objective: "Finished task"
+            )
+          ]
+        )
+
+      assert sidebar_group_names(html) == ["proj"]
+      # Live rows sort before their group's finished rows.
+      assert sidebar_task_labels(html) == ["Paused task", "Finished task"]
+
+      [paused_link, completed_link] = html |> parse() |> Floki.find("[data-sidebar-task-link]")
+
+      # A paused task is NOT reviewable: it opens the agent inspector, never
+      # `/review/<id>`, and it is never titled "Pending Review".
+      assert Floki.attribute(paused_link, "href") == ["/agents"]
+      assert Floki.attribute(completed_link, "href") == ["/review/done"]
+
+      [paused_dot] = Floki.find(paused_link, "span.rounded-full")
+      assert Floki.attribute(paused_dot, "title") == ["Paused"]
+      # Stopped means stopped: no pulse animation on the dot.
+      paused_classes = paused_dot |> Floki.attribute("class") |> Enum.join(" ") |> String.split()
+      assert "rounded-full" in paused_classes
+      refute "animate-pulse" in paused_classes
+
+      [completed_dot] = Floki.find(completed_link, "span.rounded-full")
+      assert Floki.attribute(completed_dot, "title") == ["Pending Review"]
+    end
+  end
+
   describe "app/1 — sidebar interactive sessions group" do
     # Interactive agent sessions get their OWN sidebar group ("Sessions", chat
     # icon, violet dot) above the per-project one-shot groups — a session must

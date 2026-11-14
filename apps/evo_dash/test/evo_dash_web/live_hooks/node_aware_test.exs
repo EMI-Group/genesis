@@ -232,7 +232,8 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
   describe "load_running_and_pending_tasks/1 — node-aware source" do
     # These tests verify that the function spawns an async fetch from the
     # correct node: local `TaskRegistry.list_tasks_summary([:running, :pending,
-    # :finalizing, :cancelling, :completed])` for the local node, and
+    # :finalizing, :cancelling, :awaiting_input, :pausing, :paused, :completed])`
+    # for the local node, and
     # `EvoDash.NodeContext.list_tasks_summary(node, statuses)` (RPC) for a
     # remote node. The spawned task's captured `view_pid` IS the test process,
     # so the assertions use `assert_receive {:node_aware_active_tasks, seq,
@@ -305,6 +306,81 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
 
       assert [%{status: :cancelling}] = mine(running, [c1.id])
       assert mine(pending, [c1.id]) == []
+    end
+
+    # The task-level pause pair is NON-terminal, so BOTH halves must reach the
+    # sidebar's active list — and because the fixtures are real store rows read
+    # through `@active_statuses`' SQL `WHERE status IN (...)`, each test also
+    # pins that status's membership in that filter (a missing atom would drop
+    # the row from `summaries` entirely).
+    test "local node: a :pausing task (a pause request still draining) is ACTIVE" do
+      # A pause request is still draining the task's agents: a wrapper and its
+      # lease are alive, so it is busy work and must stay visible.
+      pa = insert_fixture!(status: :pausing, finished_at: nil, pause_kind: :clean)
+
+      current_node = node()
+      sock = socket(%{current_node: current_node, current_node_id: nil})
+
+      NodeAware.load_running_and_pending_tasks(sock)
+
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
+                     1000
+
+      assert [%{status: :pausing}] = mine(running, [pa.id])
+      assert mine(pending, [pa.id]) == []
+    end
+
+    test "local node: a :paused task (stopped but resumable) is ACTIVE, never a review candidate" do
+      # Stopped at a turn boundary with durable state: nothing is running, yet
+      # it is NOT finished — it must stay in the sidebar so the user can resume
+      # it, and it must never appear among the review candidates.
+      pz = insert_fixture!(status: :paused, finished_at: nil, pause_kind: :dirty)
+
+      current_node = node()
+      sock = socket(%{current_node: current_node, current_node_id: nil})
+
+      NodeAware.load_running_and_pending_tasks(sock)
+
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
+                     1000
+
+      assert [%{status: :paused}] = mine(running, [pz.id])
+      assert mine(pending, [pz.id]) == []
+    end
+
+    test "partition_active_tasks/1 is pure and keeps both pause halves in the active bucket" do
+      pausing = %{
+        id: "pa",
+        status: :pausing,
+        finished_at: nil,
+        started_at: ~U[2026-01-01 00:00:00Z],
+        review_status: nil
+      }
+
+      paused = %{
+        id: "pz",
+        status: :paused,
+        finished_at: nil,
+        started_at: ~U[2026-01-01 00:00:00Z],
+        review_status: nil
+      }
+
+      # A finished-but-unreviewed task is the only review candidate here, so the
+      # pair cannot be mistaken for one.
+      completed = %{
+        id: "done",
+        status: :completed,
+        finished_at: ~U[2026-01-02 00:00:00Z],
+        started_at: ~U[2026-01-01 00:00:00Z],
+        review_status: nil,
+        type: :evolve
+      }
+
+      assert {running, pending} =
+               NodeAware.partition_active_tasks([pausing, paused, completed])
+
+      assert Enum.map(running, & &1.id) == ["pa", "pz"]
+      assert Enum.map(pending, & &1.id) == ["done"]
     end
 
     test "remote node: uses EvoDash.NodeContext.list_tasks_summary/2 (RPC), not local" do

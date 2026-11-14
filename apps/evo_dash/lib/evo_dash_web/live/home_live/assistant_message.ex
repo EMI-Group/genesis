@@ -73,6 +73,11 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                 "badge border-0 font-medium px-2 py-1 text-xs",
                 EvoDashWeb.Helpers.task_status_badge(@task_status)
               ]}>
+                <%!-- Only genuinely WORKING statuses animate. The task-level
+                     pause pair deliberately falls through: `:paused` is stopped
+                     (a running ping would misreport it) and `:pausing` relies on
+                     its own "Pausing…" label to say a drain is in progress, so
+                     neither renders a ping/spinner. --%>
                 <%= if @task_status in [:running, :cancelling] do %>
                   <span class="relative flex h-2 w-2 mr-1.5">
                     <span
@@ -396,6 +401,10 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   defp status_label(:running), do: gettext("Running")
   defp status_label(:pending), do: gettext("Pending")
   defp status_label(:finalizing), do: gettext("Finalizing")
+  # zh_CN: 已暂停(可恢复)
+  defp status_label(:paused), do: gettext("Paused")
+  # zh_CN: 暂停中(等待工具调用结束)
+  defp status_label(:pausing), do: gettext("Pausing…")
   defp status_label(:completed), do: gettext("Completed")
   defp status_label(:failed), do: gettext("Failed")
   defp status_label(:cancelled), do: gettext("Cancelled")

@@ -2921,6 +2921,47 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       assert assigns(view)[:update_force_kill_count] == nil
       refute render(view) =~ "Force Kill"
     end
+
+    # The task-level pause pair and the update gate. `:pausing` is BUSY — a pause
+    # request is still draining the task's agents, so a wrapper and its lease are
+    # alive — and therefore participates in the busy set the gate and the
+    # wind-down read. `:paused` is NOT busy: every agent stopped at a turn
+    # boundary, the state is durable and resumable, and no wrapper and no lease
+    # remain, so a paused task must never block an update.
+    #
+    # This test exercises the DEFAULT branch (the `:update_active_task_ids` seam
+    # is deleted) against REAL store rows, which is exactly what production runs:
+    # `EvoDash.NodeContext.list_task_ids(node(), UpdateCard.active_statuses())`.
+    # It compares against a BASELINE id set instead of a count, so rows owned by
+    # other suites in the run-wide store can never make it flaky.
+    test "a :pausing task joins the update busy set while a :paused task does not", %{conn: _conn} do
+      update_card = EvoDashWeb.SystemLive.UpdateCard
+
+      # Atom-precise busy set: :pausing in, :paused out.
+      assert :pausing in update_card.active_statuses()
+      refute :paused in update_card.active_statuses()
+
+      Application.delete_env(:evo_dash, :update_active_task_ids)
+
+      baseline = update_card.active_task_ids(:gate)
+
+      paused_id = "gate_paused_#{System.unique_integer([:positive])}"
+      pausing_id = "gate_pausing_#{System.unique_integer([:positive])}"
+
+      put_pause_fixture!(paused_id, :paused, :dirty)
+
+      # A paused task is invisible to BOTH gate contexts: nothing to drain.
+      assert update_card.active_task_ids(:gate) == baseline
+      assert update_card.active_task_ids(:winddown_poll) == baseline
+
+      put_pause_fixture!(pausing_id, :pausing, :clean)
+
+      # A draining pause request IS busy in both contexts, so the gate opens the
+      # busy modal and the wind-down cancels it like any other live task.
+      assert pausing_id in update_card.active_task_ids(:gate)
+      assert pausing_id in update_card.active_task_ids(:winddown_poll)
+      refute paused_id in update_card.active_task_ids(:gate)
+    end
   end
 
   # The ONE "genesis source card" test that must stay sync: its injected
@@ -2962,5 +3003,26 @@ defmodule EvoDashWeb.SystemLiveSyncTest do
       refute html =~ "Loading…"
       refute html =~ "The self-reflective agent reads"
     end
+  end
+
+  # Inserts ONE real task row in a pause status directly into the run-wide store
+  # and registers its removal in `on_exit` (the same direct-Store pattern the
+  # sidebar tests use, so no `TaskRegistry` broadcast can reach another suite).
+  # A paused row must carry its `pause_kind` and a nil `finished_at` — that pair
+  # is what makes it resumable rather than finished.
+  defp put_pause_fixture!(id, status, pause_kind) do
+    EvoGit.Store.put_task(EvoGit.Store, %EvoGit.TaskInfo{
+      id: id,
+      type: :evolve,
+      status: status,
+      pause_kind: pause_kind,
+      opts: [path: "/tmp/gate-pause-fixture"],
+      started_at: DateTime.utc_now(),
+      finished_at: nil
+    })
+
+    on_exit(fn -> EvoGit.Store.delete_task(EvoGit.Store, id) end)
+
+    :ok
   end
 end

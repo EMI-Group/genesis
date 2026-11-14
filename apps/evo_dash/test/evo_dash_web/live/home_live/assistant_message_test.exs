@@ -306,6 +306,10 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
         running: "Running",
         finalizing: "Finalizing",
         cancelling: "Cancelling…",
+        # The task-level pause pair: a paused task must name its own state
+        # instead of falling through to a generic label.
+        paused: "Paused",
+        pausing: "Pausing…",
         completed: "Completed",
         failed: "Failed",
         cancelled: "Cancelled"
@@ -319,6 +323,14 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
 
       assert render_card(task_status: :running) =~ "animate-ping"
       assert render_card(task_status: :finalizing) =~ "loading-spinner"
+
+      # Neither pause half claims running activity: no ping dot, no spinner —
+      # the label alone reports the state.
+      for status <- [:pausing, :paused] do
+        html = render_card(task_status: status)
+        refute html =~ "animate-ping", "expected no ping dot for #{inspect(status)}"
+        refute html =~ "loading-spinner", "expected no spinner for #{inspect(status)}"
+      end
     end
 
     test "unrecognized statuses degrade (raw atom name, empty label for non-atoms)" do

@@ -85,13 +85,22 @@ defmodule EvoDashWeb.ServerStatusControllerTest do
 
   @seam :server_status_task_runner
 
-  # The four LIVE statuses the controller counts. `:awaiting_input` is
-  # deliberately absent: it marks an idle interactive session waiting for the
-  # user (no worker, no LLM slot, no tool slot, no timer), so winding it down
-  # during an upgrade loses no work and it must never block the CLI's
-  # self-update idle gate.
-  @busy_statuses [:running, :pending, :finalizing, :cancelling]
-  @idle_or_terminal_statuses [:awaiting_input, :completed, :failed, :cancelled]
+  # The LIVE statuses the controller counts. `:awaiting_input` is deliberately
+  # absent: it marks an idle interactive session waiting for the user (no
+  # worker, no LLM slot, no tool slot, no timer), so winding it down during an
+  # upgrade loses no work and it must never block the CLI's self-update idle
+  # gate. `:pausing` IS busy (a pause request is still draining the task's agents
+  # with a live wrapper and lease) while `:paused` is NOT (every agent stopped at
+  # a turn boundary, state durable, no wrapper, no lease).
+  @busy_statuses [:running, :pending, :finalizing, :cancelling, :pausing]
+
+  @idle_or_terminal_statuses [
+    :awaiting_input,
+    :paused,
+    :completed,
+    :failed,
+    :cancelled
+  ]
 
   describe "GET /server/status" do
     test "answers 200 JSON with exactly status, version and active_tasks", %{conn: conn} do
@@ -189,7 +198,7 @@ defmodule EvoDashWeb.ServerStatusControllerTest do
   # attribute — not persisted, so `__info__(:attributes)` cannot see it) handed
   # to `EvoGit.TaskRegistry.list_task_ids/1`. These tests keep the production
   # runner and record that argument instead: see `EvoDashWeb.ServerStatusTestRegistry`.
-  describe "GET /server/status — the busy-status set (:awaiting_input excluded)" do
+  describe "GET /server/status — the busy-status set (:awaiting_input + :paused excluded)" do
     setup :use_busy_status_registry
 
     test "an :awaiting_input session is not busy while a :running task is",
@@ -206,20 +215,21 @@ defmodule EvoDashWeb.ServerStatusControllerTest do
       refute :awaiting_input in statuses
     end
 
-    # Atom-precise pin of the busy set: if `:awaiting_input` (or anything else)
-    # were admitted to `@active_statuses` — or one of the four were dropped —
-    # this fails loudly, independently of the counting assertions below.
-    test "the controller asks the registry for exactly the four live statuses",
+    # Atom-precise pin of the busy set: if `:awaiting_input` or `:paused` (or
+    # anything else) were admitted to `@active_statuses` — or one of the five
+    # were dropped — this fails loudly, independently of the counting assertions
+    # below.
+    test "the controller asks the registry for exactly the five live statuses",
          %{conn: conn, registry: registry} do
       FakeRegistry.seed(registry, [])
 
       assert json_response(get(conn, "/server/status"), 200)["active_tasks"] == 0
 
       assert Enum.sort(FakeRegistry.last_statuses(registry)) ==
-               Enum.sort([:running, :pending, :finalizing, :cancelling])
+               Enum.sort([:running, :pending, :finalizing, :cancelling, :pausing])
     end
 
-    for status <- [:running, :pending, :finalizing, :cancelling] do
+    for status <- [:running, :pending, :finalizing, :cancelling, :pausing] do
       test "#{status} tasks count as busy", %{conn: conn, registry: registry} do
         busy_status = unquote(status)
         FakeRegistry.seed(registry, [%{id: "busy-1", status: busy_status}])
@@ -229,7 +239,7 @@ defmodule EvoDashWeb.ServerStatusControllerTest do
       end
     end
 
-    for status <- [:awaiting_input, :completed, :failed, :cancelled] do
+    for status <- [:awaiting_input, :paused, :completed, :failed, :cancelled] do
       test "#{status} tasks do not count as busy", %{conn: conn, registry: registry} do
         idle_status = unquote(status)
         FakeRegistry.seed(registry, [%{id: "idle-1", status: idle_status}])
@@ -256,7 +266,44 @@ defmodule EvoDashWeb.ServerStatusControllerTest do
       assert json_response(conn, 200)["active_tasks"] == 0
     end
 
-    test "a mixed set counts only the four busy statuses", %{conn: conn, registry: registry} do
+    # The task-level pause PAIR, atom-precise in ONE call: a pause request that
+    # is still draining (`:pausing`) is in-flight work and raises the count,
+    # while a `:paused` task (stopped at a turn boundary, state durable, no
+    # wrapper, no lease) contributes nothing — it must never block an upgrade.
+    test "a :pausing task is busy while a :paused task is not",
+         %{conn: conn, registry: registry} do
+      FakeRegistry.seed(registry, [
+        %{id: "pausing-1", status: :pausing},
+        %{id: "paused-1", status: :paused}
+      ])
+
+      assert json_response(get(conn, "/server/status"), 200)["active_tasks"] == 1
+
+      statuses = FakeRegistry.last_statuses(registry)
+      assert :pausing in statuses
+      refute :paused in statuses
+    end
+
+    # A paused task must leave the count UNCHANGED rather than merely staying
+    # under a threshold: the same busy row is reported with and without it.
+    test "adding a :paused task leaves active_tasks unchanged",
+         %{conn: conn, registry: registry} do
+      busy_only = [
+        %{id: "running-1", status: :running},
+        %{id: "finalizing-1", status: :finalizing}
+      ]
+
+      FakeRegistry.seed(registry, busy_only)
+      without_paused = json_response(get(conn, "/server/status"), 200)["active_tasks"]
+
+      FakeRegistry.seed(registry, busy_only ++ [%{id: "paused-1", status: :paused}])
+      with_paused = json_response(get(conn, "/server/status"), 200)["active_tasks"]
+
+      assert without_paused == 2
+      assert with_paused == without_paused
+    end
+
+    test "a mixed set counts only the five busy statuses", %{conn: conn, registry: registry} do
       tasks =
         (@busy_statuses ++ @idle_or_terminal_statuses)
         |> Enum.with_index()

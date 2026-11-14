@@ -268,7 +268,12 @@ defmodule EvoDashWeb.Layouts do
                   </div>
                   <%!-- Tasks in this group --%>
                   <%= for task <- tasks do %>
-                    <% is_running = task.status in [:running, :pending, :finalizing, :cancelling] %>
+                    <%!-- `is_running` = LIVE (not finished) and therefore links to
+                         the agent inspector; it covers the pause pair because
+                         `:paused`/`:pausing` are NON-terminal, so they must NEVER
+                         be titled or routed like a reviewable finished task. --%>
+                    <% is_running =
+                      task.status in [:running, :pending, :finalizing, :cancelling, :pausing, :paused] %>
                     <.link
                       navigate={
                         if is_running,
@@ -283,9 +288,13 @@ defmodule EvoDashWeb.Layouts do
                         class={[
                           "w-2.5 h-2.5 rounded-full shrink-0",
                           task_status_dot_class(task.status),
-                          is_running && "animate-pulse"
+                          pulsing_status?(task.status) && "animate-pulse"
                         ]}
-                        title={if is_running, do: gettext("Running"), else: gettext("Pending Review")}
+                        title={
+                          if is_running,
+                            do: active_status_title(task.status),
+                            else: gettext("Pending Review")
+                        }
                       ></span>
                       <div class="min-w-0 flex-1 sidebar-label">
                         <span class="block truncate group-hover:text-base-content transition-colors">
@@ -525,6 +534,23 @@ defmodule EvoDashWeb.Layouts do
     end
   end
 
+  # Statuses whose sidebar dot may ANIMATE: only states that can still make
+  # progress on their own. `:paused` is deliberately absent — the task is
+  # stopped, so a pulse would claim activity that is not happening (it keeps the
+  # family colour `task_status_dot_class/1` gives it, rendered static).
+  defp pulsing_status?(status),
+    do: status in [:running, :pending, :finalizing, :cancelling, :pausing]
+
+  # Tooltip text for a LIVE row's status dot. The COLOUR still comes from
+  # `EvoDashWeb.Helpers.task_status_dot_class/1` (one source of truth); only the
+  # wording differs, because the pause pair is live-but-not-running and calling a
+  # paused task "Running" would misreport it.
+  # zh_CN: 已暂停(可恢复)
+  defp active_status_title(:paused), do: gettext("Paused")
+  # zh_CN: 暂停中(等待工具调用结束)
+  defp active_status_title(:pausing), do: gettext("Pausing")
+  defp active_status_title(_status), do: gettext("Running")
+
   # Format a DateTime as a relative elapsed string like "2m ago", "1h ago"
   defp format_elapsed(nil), do: ""
 
@@ -579,21 +605,34 @@ defmodule EvoDashWeb.Layouts do
 
     sorted_groups =
       Enum.map(sorted_named, fn {name, tasks} ->
-        {running, pending} =
-          Enum.split_with(tasks, &(&1.status in [:running, :pending, :finalizing, :cancelling]))
+        {running, pending} = Enum.split_with(tasks, &live_task?/1)
 
         {name, running ++ pending}
       end)
 
     if others != [] do
-      {running, pending} =
-        Enum.split_with(others, &(&1.status in [:running, :pending, :finalizing, :cancelling]))
+      {running, pending} = Enum.split_with(others, &live_task?/1)
 
       [{"Other", running ++ pending} | sorted_groups]
     else
       sorted_groups
     end
   end
+
+  # The "live" side of a project group: a task that is not finished renders
+  # BEFORE its group's finished (reviewable) rows. The pause pair belongs here —
+  # a paused task is non-terminal (resumable, `finished_at` nil) and must never
+  # be ordered or rendered like a completed review candidate.
+  defp live_task?(task),
+    do:
+      Map.get(task, :status) in [
+        :running,
+        :pending,
+        :finalizing,
+        :cancelling,
+        :pausing,
+        :paused
+      ]
 
   attr(:navigate, :string, required: true)
   attr(:current, :boolean, default: false)

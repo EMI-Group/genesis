@@ -59,6 +59,10 @@ defmodule EvoDashWeb.HomeLive.SessionList do
   @title_chars 80
 
   # Agent statuses that mean "this session is live" (atom or string form).
+  # These are AGENT-session statuses, not task statuses: the task-level pause
+  # pair never appears here, because pausing an interactive session is refused by
+  # design (a paused task has no live session and no agent stuck mid-turn), so
+  # this list must not grow a `:paused`/`:pausing` entry.
   @live_statuses [:awaiting_input, :running]
   @live_status_strings Enum.map(@live_statuses, &Atom.to_string/1)
 

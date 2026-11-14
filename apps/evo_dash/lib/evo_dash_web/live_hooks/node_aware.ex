@@ -139,10 +139,23 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   # `:awaiting_input` interactive sessions (a non-terminal idle session waiting
   # for the next user message — it holds no worker and no LLM/tool slot, so it
   # is only picked up because this list is passed to the store's SQL
-  # `WHERE status IN (...)` filter) and completed tasks (the source of review
+  # `WHERE status IN (...)` filter), the pause pair (`:pausing` is a pause
+  # request still DRAINING the task's agents — busy, and a wrapper is alive;
+  # `:paused` is a genuinely stopped but NON-terminal task whose state is
+  # durable and resumable, so it must stay listed and survive
+  # `clear_finished_tasks`) and completed tasks (the source of review
   # candidates). `:blocked` is deliberately absent: it is a subagent scheduling
   # state, not a task status.
-  @active_statuses [:running, :pending, :finalizing, :cancelling, :awaiting_input, :completed]
+  @active_statuses [
+    :running,
+    :pending,
+    :finalizing,
+    :cancelling,
+    :awaiting_input,
+    :pausing,
+    :paused,
+    :completed
+  ]
 
   @doc """
   On-mount hook — sets initial node-context assigns, seeds the sidebar Active
@@ -317,8 +330,10 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   the in-flight statuses (running/pending/finalizing/cancelling) plus
   `:awaiting_input` — the NON-TERMINAL idle state of an interactive agent
   session parked until the next user message (no worker, no LLM/tool slot, no
-  timer, yet the task is still live and must stay visible) — plus `:completed`,
-  which feeds the sidebar's review candidates.
+  timer, yet the task is still live and must stay visible) — plus the pause
+  pair (`:pausing` while a pause request drains the agents, and `:paused` while
+  the task is stopped but still resumable) plus `:completed`, which feeds the
+  sidebar's review candidates.
 
   Pending-remote guard: when a remote context was requested
   (`current_node_id != nil`) but `current_node` still points at the local BEAM
@@ -359,13 +374,19 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   Partitions active-task summaries into `{running, pending}` (PURE — no I/O).
 
   Running = status in `[:running, :pending, :finalizing, :cancelling,
-  :awaiting_input]`. `:awaiting_input` belongs with the in-flight statuses: it
-  is a NON-TERMINAL idle interactive agent session waiting for the next user
-  message, so it must render in the sidebar's active list (and its later
-  transitions still arrive as `"tasks"` broadcasts, which reload the lists
-  through the debounce). `:blocked` is unrelated — it is a subagent scheduling
-  state, not a task status. Pending (review candidates) = status `:completed`,
-  `review_status` nil, and `show_review_button?/1` true, sorted
+  :awaiting_input, :pausing, :paused]`. `:awaiting_input` belongs with the
+  in-flight statuses: it is a NON-TERMINAL idle interactive agent session
+  waiting for the next user message, so it must render in the sidebar's active
+  list (and its later transitions still arrive as `"tasks"` broadcasts, which
+  reload the lists through the debounce). The pause pair belongs here too: a
+  `:pausing` task is still WORKING (a pause request is draining its agents and a
+  wrapper plus lease are alive), and a `:paused` task is stopped but
+  NON-TERMINAL — its state is durable and resumable, `finished_at` stays nil and
+  it survives `clear_finished_tasks`, so it renders in the active list (that is
+  the "active" in the loose sense of "live, not finished": the user must be able
+  to find it to resume it). `:blocked` is unrelated — it is a subagent
+  scheduling state, not a task status. Pending (review candidates) = status
+  `:completed`, `review_status` nil, and `show_review_button?/1` true, sorted
   `{:desc, DateTime}` by `finished_at || started_at` (nil-safe: both-nil
   timestamps fall back to the Unix epoch so the DateTime module sorter never
   compares nil).
@@ -374,7 +395,15 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     running_tasks =
       Enum.filter(
         summaries,
-        &(&1.status in [:running, :pending, :finalizing, :cancelling, :awaiting_input])
+        &(&1.status in [
+            :running,
+            :pending,
+            :finalizing,
+            :cancelling,
+            :awaiting_input,
+            :pausing,
+            :paused
+          ])
       )
 
     pending_tasks =
@@ -1102,13 +1131,15 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
   The `:evo_git` app emits the node-identity contract on the `"tasks"` topic:
   `{:task_updated, task_id, status, node}` (status = the task status atom
-  `:pending|:running|:finalizing|:cancelling|:awaiting_input|:completed|:failed|:cancelled`,
+  `:pending|:running|:finalizing|:cancelling|:awaiting_input|:pausing|:paused|:completed|:failed|:cancelled`,
   or `nil` for review-only mutations) and `{:task_deleted, task_id, node}`.
   Every event carries the BEAM node atom of the publishing node.
   `:awaiting_input` is the NON-TERMINAL idle interactive-session status, so a
   transition into or out of it reloads the lists exactly like any other status
   change — the session leaves the sidebar only once the task reaches a terminal
-  status.
+  status. The pause pair behaves the same way: `:running → :pausing → :paused`
+  are all non-terminal, so every one of those transitions reloads the lists and
+  a paused task stays in the sidebar until it is resumed or terminated.
 
   Node filtering: an event only schedules a reload when its `node` matches the
   currently-viewed node identity (`event_from_current_node?/2` — local viewing

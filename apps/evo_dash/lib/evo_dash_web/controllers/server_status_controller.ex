@@ -17,13 +17,13 @@ defmodule EvoDashWeb.ServerStatusController do
   `{"status":"ok","version":"<evo_git vsn>","active_tasks":<integer>}`.
 
   `active_tasks` is the number of task ids in a live state (`:running`,
-  `:pending`, `:cancelling`, `:finalizing`) and nothing else: this endpoint
-  deliberately exposes ONLY that COUNT — never task ids, titles, objectives or
-  repo paths. When the task read fails (raises, exits/times out, or returns a
-  non-list) the value degrades to `-1`, which the CLI reads as "unknown" and
-  handles with a warning rather than treating the server as idle.
+  `:pending`, `:cancelling`, `:finalizing`, `:pausing`) and nothing else: this
+  endpoint deliberately exposes ONLY that COUNT — never task ids, titles,
+  objectives or repo paths. When the task read fails (raises, exits/times out,
+  or returns a non-list) the value degrades to `-1`, which the CLI reads as
+  "unknown" and handles with a warning rather than treating the server as idle.
 
-  The BUSY set is exactly those four statuses, and `:awaiting_input` is
+  The BUSY set is exactly those five statuses, and `:awaiting_input` is
   deliberately EXCLUDED from it. `:awaiting_input` marks an idle interactive
   session waiting for the user, which holds no worker, no LLM slot, no tool slot
   and no timer, so winding such a session down during an upgrade is safe and
@@ -31,6 +31,14 @@ defmodule EvoDashWeb.ServerStatusController do
   and it is never reported as an error or an unknown either: it simply does not
   contribute to `active_tasks`. `:finalizing` stays included because a task in
   that phase still owns its worktree and its merge-back work.
+
+  The task-level PAUSE pair splits across that line. `:pausing` IS busy: a pause
+  request is still DRAINING the task's agents at their next turn boundary, so a
+  wrapper and its lease are alive and work is in flight — stopping the server
+  now would lose it. `:paused` is NOT busy: every agent has stopped at a turn
+  boundary, the state is durable and resumable, and no wrapper and no lease
+  remain, so a paused task holds nothing an upgrade could destroy and must not
+  block it.
   """
 
   use EvoDashWeb, :controller
@@ -40,12 +48,19 @@ defmodule EvoDashWeb.ServerStatusController do
   # The live-state ids are counted. `:finalizing` is included on purpose: a task
   # in that phase still owns its worktree and its merge-back work.
   #
+  # `:pausing` is included: a pause request is still DRAINING the task's agents
+  # at their next turn boundary, so a wrapper and its lease are alive and work is
+  # in flight. `:paused` is deliberately EXCLUDED: every agent has stopped at a
+  # turn boundary, the state is durable and resumable, and no wrapper and no
+  # lease remain — a paused task holds nothing an upgrade could destroy, so it
+  # must not block the idle gate.
+  #
   # `:awaiting_input` is deliberately EXCLUDED: it marks an idle interactive
   # session waiting for the user, which holds no worker, no LLM slot, no tool
   # slot and no timer, so winding it down during an upgrade is safe and
   # expected. An idle session is not busy, and it is never an error or an
   # unknown either — it simply does not contribute to the count.
-  @active_statuses [:running, :pending, :cancelling, :finalizing]
+  @active_statuses [:running, :pending, :cancelling, :finalizing, :pausing]
 
   @doc """
   Renders the status document. Never raises: an unreadable app version degrades

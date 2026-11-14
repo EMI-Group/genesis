@@ -15,8 +15,8 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   ## Busy tasks vs idle interactive sessions
 
   The BUSY set for update gating is exactly
-  `[:running, :pending, :cancelling, :finalizing]` — tasks that can still do
-  work while the update is applied.
+  `[:running, :pending, :cancelling, :finalizing, :pausing]` — tasks that can
+  still do work while the update is applied.
 
   A NON-TERMINAL but IDLE interactive agent session (`:awaiting_input`) is
   deliberately NOT busy: it holds no exchange worker, no LLM/tool slot and no
@@ -27,6 +27,14 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   bookkeeping runs once, the session stops, the worktree is released) — instead
   of force-killing them. An idle session holds no in-flight work to lose, so a
   force kill would be needless data loss.
+
+  The task-level PAUSE pair splits the same way. `:pausing` IS busy — a pause
+  request is still DRAINING the task's agents at their next turn boundary, so a
+  wrapper and its lease are alive and work is in flight — so the wind-down
+  cancels it like any other busy task. `:paused` is NOT busy and is deliberately
+  absent: every agent has stopped at a turn boundary, the state is durable and
+  resumable, and no wrapper and no lease remain, so there is nothing to drain and
+  the wind-down must neither cancel nor wait for it.
 
   A session that never closes must not wedge the busy modal, so an idle session
   blocks completion for at most 3 wind-down polls
@@ -50,13 +58,16 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
 
   # Statuses that count as BUSY/active for update gating: the update can only be
   # applied when no task is in any of these states, because only these can still
-  # do work (a worker is running, queued or finalizing).
+  # do work (a worker is running, queued or finalizing). `:pausing` belongs here
+  # because a pause request is still draining the task's agents (wrapper and
+  # lease alive); `:paused` deliberately does NOT — the agents have stopped at a
+  # turn boundary, the state is durable, and there is no wrapper to wind down.
   #
   # A non-terminal but IDLE interactive session (`:awaiting_input`) is
   # deliberately NOT in this set: it holds no worker, no LLM/tool slot and no
   # timer, so it is not busy and must never block the update gate. It is wound
   # down by a graceful CLOSE (see `close_session/1`), never a force kill.
-  @active_statuses [:running, :pending, :cancelling, :finalizing]
+  @active_statuses [:running, :pending, :cancelling, :finalizing, :pausing]
 
   # How many wind-down polls an idle interactive session may hold up completion
   # before it stops blocking. A session that never closes must not wedge the busy
@@ -71,7 +82,9 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   def visible?(node), do: UpdateStatus.visible?(node)
 
   @doc """
-  Returns the ids of active tasks (running/pending/cancelling/finalizing).
+  Returns the ids of active tasks
+  (running/pending/cancelling/finalizing/pausing — a `:paused` task is NOT
+  active here, see `active_statuses/0`).
 
   `ctx` is `:gate` (the apply gate, called from the LiveView event handler) or
   `:winddown_poll` (the wind-down loop). Test seam
