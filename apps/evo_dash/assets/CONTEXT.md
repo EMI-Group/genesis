@@ -9,7 +9,10 @@ This directory holds all frontend source assets (JavaScript, CSS, vendor librari
 - `./js/` → JavaScript source (LiveSocket setup, inline hooks, topbar; `app.js` + `highlight_setup.js`)
 - `./js/hooks/` → Standalone JS hook files (`sidebar_collapse.js`, `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js`, `diff_viewer.js`, `commit_graph.js`, `capsule_panel.js`) — registration table + behavior notes in `js/hooks/CONTEXT.md`
 - `./js/*.test.cjs` → Node-run unit tests for the PURE logic of inline hooks (`agent_history_scroll.test.cjs`, `state_persistence.test.cjs`) — `node --test apps/evo_dash/assets/js/*.test.cjs`, never part of `mix test`; detail in `js/CONTEXT.md` → "JS Unit Tests"
-- `./css/` → Stylesheets (Tailwind CSS 4 configuration, DaisyUI themes)
+- `./css/` → Stylesheets (Tailwind CSS 4 configuration, DaisyUI themes), including Assistant transcript/layout invariants and the verified motion-coverage/cascade gaps documented in `css/CONTEXT.md`.
+- Assistant browser-feedback audit → `js/CONTEXT.md` (notification permission caching, absent notification/dialog tests and Guide scroll/lifetime gaps) + `js/hooks/CONTEXT.md` (stable-key inspector animation and keyboard/focus gaps).
+- Browser notifications are advisory nonpersistent document notifications, not an approval authority or background-delivery mechanism; the current `new Notification()` path has no action buttons, service worker, closed-page push, session-aware click navigation or resolution-driven close.
+- Action buttons require a service-worker persistent-notification path with browser-dependent support, so an in-app pending-approval review surface remains mandatory, and notification activation should open validated review context rather than authorize execution.
 - `/agents` inspector animation assets → `js/hooks/inspector_messages.js` (`InspectorMessages`, `data-inspector-scope` + stable `data-inspector-message` keys) and `css/app.css` (`inspector-thinking`, `inspector-stream-cursor`, `inspector-message-enter`); exact contracts live in `js/hooks/CONTEXT.md` and `css/CONTEXT.md`.
 - Run all asset Node tests, including standalone-hook regressions, with `node --test apps/evo_dash/assets/js/*.test.cjs apps/evo_dash/assets/js/hooks/*.test.cjs`.
 - `./vendor/` → Third-party JS libraries (DaisyUI, Heroicons, Topbar, highlight.js, brand SVGs)
@@ -89,7 +92,7 @@ There is no `phx-click` on the hook element and nothing stops propagation; all l
 Every step guards its own state (closed panel, missing `.capsule-panel`, already-closing) → no-op, never throws.
 The matching keyframes / view-visibility rules live in the `css/app.css` `Fused Capsule Controls` section.
 - **BrowserNotifications — visibility-gated native notifications** (inline hook in `js/app.js`): ONE hook serves both producers through the `task_notification` push event with `%{title: String.t(), body: String.t(), tag?: String.t()}` — ProjectsLive's terminal-task notifications (no tag) and the Assistant page's hidden `#assistant-notifications` host, which receives approval requests with `tag: "genesis-approval"`.
-Permission is requested ONCE on mount (a missing API, a synchronous throw or a rejected promise all leave notifications off).
+Permission is requested on each hook mount while the browser reports `default`, without an explicit user-gesture control, and the hook caches permission rather than refreshing it on focus (a missing API, a synchronous throw or a rejected promise all leave notifications off).
 A notification is shown ONLY while the user cannot see the page: `document.hidden` (falling back to `document.visibilityState`) OR `!document.hasFocus()` — someone looking at the dashboard is never notified about it.
 An optional `tag` dedupes, so a repeating approval replaces its previous notification (`renotify: true`) instead of stacking another; clicking one focuses the window and closes it.
 Unsupported APIs, denied permission and a constructor that throws are a SILENT no-op — no console noise.
