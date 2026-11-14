@@ -36,6 +36,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   use Gettext, backend: EvoDashWeb.Gettext
 
   alias EvoDashWeb.AgentsLive.ToolCallDisplay
+  alias EvoDashWeb.HomeLive.ExecutionIndicator
 
   attr(:entry, :map, required: true)
   attr(:task_status, :any, default: nil)
@@ -235,7 +236,8 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   # One tool invocation of the in-progress turn as a compact, quiet row: the
   # tool name plus a status chip. Purely informational — no controls, no
   # expandable payload (the collapsible thought process carries the details).
-  # Total: a non-map/nil entry renders the fallback label with no chip.
+  # Unknown status is explicit, never a success claim; tool rows are not live
+  # regions, so a batch of tool events cannot flood screen-reader announcements.
   def tool_entry(assigns) do
     entry = if is_map(assigns.entry), do: assigns.entry, else: %{}
 
@@ -243,24 +245,31 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
       assigns
       |> assign(:entry, entry)
       |> assign(:tool_label, tool_label(entry))
-      |> assign(:tool_status, Map.get(entry, :tool_status))
+      |> assign(:tool_execution, ExecutionIndicator.tool_state(Map.get(entry, :tool_status)))
 
     ~H"""
-    <div class="my-1 flex items-center gap-2 text-xs text-base-content/60">
-      <.icon name="hero-wrench-screwdriver" class="size-3.5" />
-      <span class="font-mono font-semibold">{@tool_label}</span>
-      <%= case @tool_status do %>
-        <% :running -> %>
-          <span class="loading loading-spinner loading-xs"></span>
-          <span>{gettext("Running")}</span>
-        <% :ok -> %>
-          <span class="badge badge-ghost badge-sm">{gettext("Done")}</span>
-        <% :error -> %>
-          <span class="text-error">{gettext("Failed")}</span>
-        <% :timeout -> %>
-          <span class="text-warning">{gettext("Timed out")}</span>
-        <% _ -> %>
-      <% end %>
+    <div
+      class="assistant-execution-indicator my-1 flex items-center gap-2 text-xs text-base-content/60 min-w-0"
+      data-state={@tool_execution.state}
+      data-busy={to_string(@tool_execution.busy?)}
+      aria-live="off"
+      aria-busy={to_string(@tool_execution.busy?)}
+    >
+      <span
+        class="assistant-execution-dot shrink-0"
+        data-state={@tool_execution.state}
+        data-busy={to_string(@tool_execution.busy?)}
+        aria-hidden="true"
+      ></span>
+      <.icon name="hero-wrench-screwdriver" class="size-3.5 shrink-0" />
+      <span class="min-w-0 truncate font-mono font-semibold">{@tool_label}</span>
+      <span class={[
+        "shrink-0",
+        @tool_execution.state == :ok && "badge badge-ghost badge-sm",
+        ExecutionIndicator.tone_class(@tool_execution.tone)
+      ]}>
+        {@tool_execution.label}
+      </span>
     </div>
     """
   end
