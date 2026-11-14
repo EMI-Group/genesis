@@ -226,6 +226,8 @@ defmodule EvoGit.Agent.Tools.ElixirEval.DirectAPITest do
             "EvoGit.TaskRegistry.start_task(:reflect, [])",
             "EvoGit.TaskRegistry.cancel_task(#{id})",
             "EvoGit.TaskRegistry.force_kill_task(#{id})",
+            "EvoGit.TaskRegistry.pause_task(#{id})",
+            "EvoGit.TaskRegistry.resume_task(#{id})",
             "EvoGit.TaskRegistry.delete_task(#{id})",
             "EvoGit.AgentScheduler.update_config([])",
             "EvoGit.AgentScheduler.pause()",
@@ -250,6 +252,8 @@ defmodule EvoGit.Agent.Tools.ElixirEval.DirectAPITest do
             "EvoGit.TaskRegistry.start_task(:reflect)",
             "EvoGit.TaskRegistry.cancel_task()",
             "EvoGit.TaskRegistry.force_kill_task()",
+            "EvoGit.TaskRegistry.pause_task()",
+            "EvoGit.TaskRegistry.resume_task()",
             "EvoGit.TaskRegistry.delete_task()",
             "EvoGit.AgentScheduler.get_config()",
             "EvoGit.AgentScheduler.paused?(true)",
@@ -393,6 +397,32 @@ defmodule EvoGit.Agent.Tools.ElixirEval.DirectAPITest do
                )
 
       assert TaskRegistry.get_task(target.id).status == :completed
+      assert_resolved(request, :approve)
+      assert_no_escalation(ctx.fixture)
+    end
+
+    test "exact approved pause and resume reach the real registry contract", ctx do
+      target = seed_task(ctx, :pending)
+
+      code = """
+      {EvoGit.TaskRegistry.pause_task(#{inspect(target.id)}),
+       EvoGit.TaskRegistry.resume_task(#{inspect(target.id)}),
+       EvoGit.TaskRegistry.pause_task("missing_direct_task"),
+       EvoGit.TaskRegistry.resume_task("missing_direct_task")}
+      """
+
+      handle = start_eval(ctx.fixture, code, "write")
+      request = await_write_request(ctx.fixture, code)
+      assert :ok = CommandApproval.respond(request.request_id, :approve)
+
+      assert Fixture.await(handle) ==
+               result(
+                 {{:error, :not_running}, {:error, :not_paused}, {:error, :not_found},
+                  {:error, :not_found}}
+               )
+
+      # The real registry contract decided both calls; the row is untouched.
+      assert Store.get_task(ctx.store, target.id).status == :pending
       assert_resolved(request, :approve)
       assert_no_escalation(ctx.fixture)
     end

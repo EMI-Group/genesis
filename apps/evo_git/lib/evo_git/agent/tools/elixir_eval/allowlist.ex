@@ -31,6 +31,8 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WriteAllowlist.Base do
       :start_task,
       :cancel_task,
       :force_kill_task,
+      :pause_task,
+      :resume_task,
       :delete_task,
       :guide,
       :update_scheduler_config

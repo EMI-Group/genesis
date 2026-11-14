@@ -268,6 +268,97 @@ defmodule EvoGit.TaskControl do
     end
   end
 
+  @doc """
+  Requests a TASK-LEVEL PAUSE for a running task (`docs/task-pause.md`).
+
+  A pause only ACCEPTS the request: the task moves to `:pausing` while its
+  agents stop at their next turn boundary, and reaches the `:paused` resting
+  state later, so `status` is the SAVED status at this instant. Repeating the
+  request on a `:pausing`/`:paused` task is idempotent. An interactive-session
+  task is refused (`not_pausable`) and a task whose durable agent state is
+  disabled is refused (`not_resumable`), because there would be nothing to
+  resume.
+  """
+  def pause(args) do
+    with :ok <- keys(args, ~w(task_id)),
+         {:ok, id} <- required_string(args, "task_id") do
+      safe(fn ->
+        case TaskRegistry.pause_task(id) do
+          :ok -> pause_state(id)
+          {:error, reason} -> pause_error(id, reason, "pause_failed")
+        end
+      end)
+    end
+  end
+
+  @doc """
+  RESUMES a `:paused` task in place: the SAME task id is re-enqueued from its
+  durable run state (`docs/task-pause.md`).
+
+  Returns the saved state (`%{task_id:, status:, pause_kind:}`) with `status`
+  back to `running`; `pause_kind` is `nil` unless the row is still paused, and
+  never `"clean"`/`"dirty"` for a running task. Only a paused task is accepted
+  (`not_paused` otherwise), and a task with no durable run is `not_resumable`.
+  """
+  def resume(args) do
+    with :ok <- keys(args, ~w(task_id)),
+         {:ok, id} <- required_string(args, "task_id") do
+      safe(fn ->
+        case TaskRegistry.resume_task(id) do
+          :ok -> pause_state(id)
+          {:error, reason} -> pause_error(id, reason, "resume_failed")
+        end
+      end)
+    end
+  end
+
+  # The saved pause facts for `id`, read AFTER the registry accepted the request
+  # (the registry owns validation and persistence, exactly like cancellation).
+  # `nil` is only possible when the row vanished, which is reported like any
+  # other missing task.
+  defp pause_state(id) do
+    case TaskRegistry.get_task(id) do
+      nil ->
+        error("not_found", "Task not found: #{id}")
+
+      task ->
+        {:ok,
+         %{
+           task_id: id,
+           status: to_string(task.status),
+           pause_kind: pause_kind(task.pause_kind)
+         }}
+    end
+  end
+
+  defp pause_kind(kind) when is_atom(kind) and not is_nil(kind), do: to_string(kind)
+  defp pause_kind(_none), do: nil
+
+  defp pause_error(id, reason, fallback) do
+    case reason do
+      :not_found ->
+        error("not_found", "Task not found: #{id}")
+
+      :not_running ->
+        error("not_running", "The task is not running.")
+
+      :not_paused ->
+        error("not_paused", "The task is not paused.")
+
+      :not_pausable ->
+        error("not_pausable", "An interactive session cannot be paused.")
+
+      :not_resumable ->
+        error("not_resumable", "Durable agent state is disabled for the task.")
+
+      :scheduler_unavailable ->
+        error("scheduler_unavailable", "The task scheduler is unavailable.")
+
+      other ->
+        error(fallback, inspect(other))
+    end
+  end
+
   defp status_filter(args) do
     if Map.get(args, "status", "all") in @status_filters,
       do: :ok,

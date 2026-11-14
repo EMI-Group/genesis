@@ -40,10 +40,12 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
   ## The deliberate exemptions
 
   `@exempt_lists` pins any set that admits `:running` but DELIBERATELY not
-  `:awaiting_input`, each with its reason. There is ONE: the Assistant's
-  `TaskControl.status_filters/0`, which is a caller-facing FILTER VOCABULARY
-  (it defaults to `"all"`, so every row is listable without naming a status),
-  not a liveness admission set.
+  `:awaiting_input`, each with its reason. The first is a caller-facing
+  asymmetry: `TaskControl.status_filters/0` is a FILTER VOCABULARY (it defaults
+  to `"all"`, so every row is listable without naming a status), not a liveness
+  admission set. The second is the Assistant's pause facade
+  (`Broker.pause_statuses/0`): an interactive session is deliberately
+  UNPAUSABLE, so its idle `:awaiting_input` status must not be admitted.
 
   `@pinned_absences` pins the one set whose ABSENCE of `:awaiting_input` is
   intentional without being a live-session set:
@@ -150,6 +152,13 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
      :running},
     {"Agent.Tools.ElixirEval.Broker.force_kill_statuses/0", {Broker, :force_kill_statuses}, :atom,
      :running},
+    # A pause is requested FROM a running task and stays idempotent on the two
+    # pause statuses; an idle `:awaiting_input` interactive session is refused by
+    # the registry (`:not_pausable`), so this list is pinned in `@exempt_lists`.
+    {"Agent.Tools.ElixirEval.Broker.pause_statuses/0", {Broker, :pause_statuses}, :atom,
+     :running},
+    {"Agent.Tools.ElixirEval.Broker.resume_statuses/0", {Broker, :resume_statuses}, :atom,
+     :not_running},
     {"Agent.Tools.ElixirEval.Authorization.accepted_agent_statuses/0",
      {Authorization, :accepted_agent_statuses}, :atom, :running},
     {"Agent.Tools.ElixirEval.Authorization.accepted_agent_task_statuses/0",
@@ -177,20 +186,24 @@ defmodule EvoGit.StatusAdmissionTotalityTest do
   ]
 
   # {label, {module, function}, :atom | :string, reason} — a list that admits
-  # `:running` but DELIBERATELY does not admit `:awaiting_input`. Empty today
-  # (every running-bearing list pairs them); the mechanism exists so a future
-  # intentional asymmetry is pinned WITH its reason instead of silently
-  # weakening the sweep below.
-  #
-  # The ONE entry is a filter VOCABULARY, not an admission set: `list/1`
-  # defaults to `"all"`, so every row (an idle `:awaiting_input` session
-  # included) is listable without naming its status. It gains the pause values
-  # because they are persisted statuses, which is the only rule it follows.
+  # `:running` but DELIBERATELY does not admit `:awaiting_input`. The mechanism
+  # exists so an intentional asymmetry is pinned WITH its reason instead of
+  # silently weakening the sweep below.
   @exempt_lists [
+    # A filter VOCABULARY, not an admission set: `list/1` defaults to `"all"`, so
+    # every row (an idle `:awaiting_input` session included) is listable without
+    # naming its status. It gains the pause values because they are persisted
+    # statuses, which is the only rule it follows.
     {"TaskControl.status_filters/0", {TaskControl, :status_filters}, :string,
      "a caller-facing filter VOCABULARY, not a liveness/admission set: the " <>
        "filter defaults to \"all\", so an :awaiting_input row is listable " <>
-       "without a dedicated value"}
+       "without a dedicated value"},
+    # An interactive session is deliberately UNPAUSABLE (`:not_pausable`): it has
+    # no resumable one-shot run, so its idle `:awaiting_input` status must not be
+    # admitted by the Assistant's pause facade.
+    {"Agent.Tools.ElixirEval.Broker.pause_statuses/0", {Broker, :pause_statuses}, :atom,
+     "an idle :awaiting_input interactive session is refused `:not_pausable` by " <>
+       "the task registry: a pause needs a resumable one-shot run"}
   ]
 
   # The pinned "absence is deliberate" sets that are not running-bearing live
