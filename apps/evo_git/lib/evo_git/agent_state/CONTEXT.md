@@ -68,6 +68,7 @@ Timestamps are `%DateTime{}` (ISO8601 second precision, UTC) or `nil`.
 
 `agent_states.status` is `TEXT NOT NULL DEFAULT 'running'` (migration `000001_create_agent_state.exs:37`) and surfaces ONLY as `Record.fields[:status]`; `mark_completed/3` is the one writer that sets it (`store.ex:288`), while every other value is whatever the checkpointing session supplied — a crashed run keeps the last supplied value (or the `'running'` default).
 There is NO query that selects rows by `status`, and NO unfinished/"recoverable run" listing API: the only non-terminal-row scan is `prune/1`'s retention `SELECT` (`store.ex:370`), which deletes and returns nothing to callers.
+There is likewise NO per-TASK roster read: the store exposes only per-agent `load/3` plus `delete_task/2` (a bulk DELETE returning `:ok`, no rows), so restoring EVERY agent of a task requires the agent ids from another source (scheduler rows / task store) even though each row does persist its own `depth`, `parent_id`, `objective` and `status`.
 The `agent_states_status_completed_at_index` index (migration `:58-60`) therefore has no query behind it today.
 `load/3` never filters on `status`/`completed_at`, so a completed or abandoned run loads exactly like a live one.
 A never-completed record is retained until `updated_at` is older than `2 × retention_days` (default 14 days) — the binding constraint of `prune/1`'s two windows — and is then deleted by the hourly prune pass.

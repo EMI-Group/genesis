@@ -45,6 +45,21 @@ It is admitted wherever a task is ACTIVE — sidebar active lists (`NodeAware` `
 Its presentation is a VIOLET family, deliberately outside both the amber busy family and the neutral terminal family (see the task-status color bullet below).
 The card's session panel (`TaskCardComponents.Session.session_panel/1`, rendered only for an idle session whose agent id the page resolved) posts `session_send_message` → `EvoDash.NodeContext.send_session_message/4` (`:queue`) and offers `open_close_session_modal`/`confirm_close_session` → `EvoDash.NodeContext.close_session/3` (`:normal`); the sidebar lists sessions in their own group. Details: `./live/tasks_live/CONTEXT.md`, `./components/task_card_components/CONTEXT.md`, `./live_hooks/CONTEXT.md`.
 
+### Task-status admission inventory (where any new task status must be wired)
+
+Every dashboard status list is an independent literal — there is no shared status enum on the dashboard side, and the store filter is a pure SQL string comparison, so an unwired status still round-trips from the core.
+- `helpers.ex` `task_status_badge/1` (:123-149), `task_status_dot_class/1` (:160-168), `task_status_tint/1` (:177-188) — each ends in a `_`/`_status` catch-all, so a missing clause silently renders neutral gray.
+- `components/task_card_components.ex:208` pulse set `[:running, :cancelling, :awaiting_input]`; `:226-239` label `cond` whose `true ->` arm prints the raw atom; `:335` Cancel set `[:pending, :running, :awaiting_input]`; `:378` Force-kill set `[:running, :awaiting_input, :cancelling]`.
+- `components/layouts.ex:271`, `:583`, `:590` sidebar "running" split set `[:running, :pending, :finalizing, :cancelling]`; `:234` session sub-line keyed on `:awaiting_input`.
+- `live_hooks/node_aware.ex:145` `@active_statuses = [:running, :pending, :finalizing, :cancelling, :awaiting_input, :completed]` (SQL `WHERE status IN (...)`) and `:377` the sidebar running partition list.
+- `live/tasks_live.ex:82-106` the status-filter `<option>` list (string values) fed to `page_load.ex:173`.
+- Terminal sets: `live/home_live.ex:73` and `live/home_live/send_path.ex:48` `@terminal_statuses = [:completed, :cancelled, :failed]`; `send_path.ex:387-410` the status fold (`:cancelling` and `[:running, :pending, :finalizing]` have their own arms); `live/projects_live/notifications.ex:29` the same three (local-only notification scan).
+- Assistant persistence: `live/home_live/chat_state.ex:48-57` `@task_statuses` (whitelist — a missing atom is normalized to nil on restore) and `live/home_live/assistant_message.ex:396-404` `status_label/1` (falls back to `Atom.to_string/1`); `live/home_live/session_list.ex:62` `@live_statuses [:awaiting_input, :running]`.
+- Update gate: `live/system_live/update_card.ex:59` `@active_statuses = [:running, :pending, :cancelling, :finalizing]` (its per-id cancel/close helpers at `:223`/`:237` call the registry/session APIs directly, local node only).
+- Headless CLI gate: `controllers/server_status_controller.ex:48` the same four-status busy set (`:awaiting_input` deliberately excluded).
+- Review page needs no status list: `live/review_live/load_data.ex:182` passes the raw status through, `components/review_components/header.ex:55` renders `String.capitalize(to_string(status))`, and `live/review_live.ex:1820-1822` reloads only when the status value changes.
+- `mcp/tools.ex:58` the `genesis_list_tasks` status enum `~w(pending running finalizing completed failed cancelled cancelling)` — the only dashboard-side status string enum bound for the MCP surface, dispatched to core `EvoGit.TaskControl`.
+
 ### Agent Status Display (frontend merges `:blocked` into `:pending`)
 
 The frontend presents `:blocked` and `:pending` agents identically as **"Pending"** on all agent status surfaces — to the user, both mean "queued / waiting to be scheduled" (`Helpers.agent_status_label/1` is the single source of label text; the four `agent_status_*` presentation helpers delegate `:blocked` → the `:pending` clause). The backend scheduler keeps `:blocked` and `:pending` distinct. Note: the SystemLive scheduler charts (`live/system_live/charts.ex`) consume the raw `:blocked` COUNT as the slot-saturation "waiting" telemetry series — that is scheduler telemetry, not an agent-status display.
