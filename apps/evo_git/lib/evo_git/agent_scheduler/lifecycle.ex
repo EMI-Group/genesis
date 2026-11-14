@@ -397,8 +397,59 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   registered without a caller to reply to (`EvoGit.AgentScheduler.start_session/1`),
   so only its `EvoGit.AgentScheduler.await_close/2` waiters — flushed with the
   SAME post-injection terminal term — are answered.
+
+  The PAUSED shape (`{:paused, info}`, the terminal term of a TASK PAUSE) is
+  routed with the same root/child split but WITHOUT completion semantics: no
+  `:finalizing` notification, no merge, no archive/note write. `info` is
+  `%{agent_id, task_id, checkpoint, branch, reason: :task_pause}`, where
+  `checkpoint` is the paused worktree's checkpoint commit (or `nil`). A ROOT
+  replies `{:paused, info}` to its blocked caller (when it has one) and flushes
+  its `await_close/2` waiters with the same term; a CHILD stores `{:paused, info}`
+  as its sub-result and resumes the parent, which merges the child's committed
+  work like a normal completion and then stops at its own boundary.
   """
   @spec handle_session_result(pos_integer(), term(), State.t()) :: {:noreply, State.t()}
+  def handle_session_result(agent_id, {:paused, info} = paused, %State{} = state)
+      when is_map(info) do
+    case Store.get_sched_meta(agent_id) do
+      {:ok, meta} ->
+        # `result_sent` keeps a later `:DOWN` a RECYCLE instead of a crash-retry.
+        Store.put_sched_meta(agent_id, %{meta | result_sent: true})
+
+        Logger.info(
+          "AgentScheduler: Agent #{agent_id} paused at a turn boundary " <>
+            "(task #{inspect(meta.task_id)}, checkpoint #{inspect(Map.get(info, :checkpoint))})"
+        )
+
+        if meta.parent_id do
+          Subagents.store_sub_result(meta.parent_id, agent_id, paused, meta.spec)
+          {:noreply, Subagents.maybe_resume_parent(state, meta.parent_id)}
+        else
+          # A `nil` `from` (interactive root) has no caller to reply to.
+          if meta.from do
+            GenServer.reply(meta.from, paused)
+          end
+
+          state = flush_close_waiters(state, agent_id, paused)
+
+          state = %{
+            state
+            | task_agent_counts: Map.delete(state.task_agent_counts, meta.task_id)
+          }
+
+          {:noreply, state}
+        end
+
+      :error ->
+        Logger.warning(
+          "AgentScheduler: paused result for agent #{agent_id} but no sched_meta found. Ignoring."
+        )
+
+        {:noreply, state}
+    end
+  end
+
+  # Any non-paused terminal term (a `%Result{}` tuple, an error tuple).
   def handle_session_result(agent_id, result, %State{} = state) do
     case Store.get_sched_meta(agent_id) do
       {:ok, meta} ->

@@ -16,16 +16,24 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
       returns every object for the key in ONE atomic BIF, so a concurrent
       append is either fully drained now or fully left for the next drain.
     * `:evogit_agent_control` — a `:set` keyed by `agent_id`, object shape
-      `{agent_id, cancel_requested}` (2-tuple, so the writer updates the flag
-      atomically with `:ets.update_element/3`).
+      `{agent_id, cancel_requested, pause_requested}` (3-tuple, so the writer
+      updates ONE flag atomically with `:ets.update_element/3` — never a
+      whole-struct read-modify-write, so the cancel and pause flags are
+      independent of each other).
+    * `:evogit_task_pause` — a `:set` of `{task_id}`: the TASK-level pause
+      marker. `EvoGit.AgentScheduler.begin_task_pause/1` marks the task here
+      BEFORE it flags the task's live agents, so an agent registered AFTER the
+      pause began (a crash-retry, a subagent spawned just before the drain, a
+      late dispatch) is seeded with `pause_requested = true` by `ensure_row/1`
+      instead of running a whole extra turn.
 
-  Both tables are created by `EvoGit.Application` (app-owned, `:public`), so
-  they survive an `AgentScheduler` crash/restart.
+  All three tables are created by `EvoGit.Application` (app-owned, `:public`),
+  so they survive an `AgentScheduler` crash/restart.
 
   Consumers: `EvoGit.Agent.Session` (the running exchange), plus
-  `EvoGit.AgentScheduler.Store.drain_pending_user_messages/1` and
-  `Store.cancel_requested?/1`, which are the only entry points other callers
-  use.
+  `EvoGit.AgentScheduler.Store.drain_pending_user_messages/1`,
+  `Store.cancel_requested?/1`, `Store.pause_requested?/1` and the task pause
+  marker helpers, which are the only entry points other callers use.
 
   Every function here is TOTAL: a missing table (app shutdown) reads as its
   empty value and answers a write with `{:error, :not_found}`; nothing in this
@@ -36,7 +44,9 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
 
   @inbox :evogit_agent_inbox
   @control :evogit_agent_control
+  @task_pause :evogit_task_pause
   @agent_table :evogit_agent_summary
+  @sched_table :evogit_sched_meta
 
   @typedoc "The queue tolerates both message shapes (see `Store.append_pending_user_message/2`)."
   @type message :: String.t() | Attachments.message()
@@ -49,9 +59,13 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
   @spec inbox_table() :: atom()
   def inbox_table, do: @inbox
 
-  @doc "The control table name (a `:set` of `{agent_id, cancel_requested}`)."
+  @doc "The control table name (a `:set` of `{agent_id, cancel_requested, pause_requested}`)."
   @spec control_table() :: atom()
   def control_table, do: @control
+
+  @doc "The task pause marker table name (a `:set` of `{task_id}`)."
+  @spec task_pause_table() :: atom()
+  def task_pause_table, do: @task_pause
 
   # ---------------------------------------------------------------------------
   # Inbox — pending user messages
@@ -110,19 +124,23 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
   end
 
   # ---------------------------------------------------------------------------
-  # Control row — cancel flag
+  # Control row — cancel + pause flags
   # ---------------------------------------------------------------------------
 
   @doc """
-  Ensures the agent has a control row (`{agent_id, nil}`), idempotently.
+  Ensures the agent has a control row (`{agent_id, cancel_requested, pause_requested}`),
+  idempotently.
 
   `:ets.insert_new/2` only writes when the key is absent, so an existing flag
-  is never reset.
+  is never reset. The pause flag of a NEW row is SEEDED from the task pause
+  marker: an agent registered for a task whose pause is already draining starts
+  with `pause_requested = true`, so a crash-retried or late-queued agent stops
+  at its first turn boundary instead of running a whole extra turn.
   """
   @spec ensure_row(pos_integer()) :: :ok | {:error, :not_found}
   def ensure_row(agent_id) do
     if table_exists?(@control) do
-      :ets.insert_new(@control, {agent_id, nil})
+      :ets.insert_new(@control, {agent_id, nil, initial_pause_flag(agent_id)})
       :ok
     else
       {:error, :not_found}
@@ -133,13 +151,15 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
   Sets the agent's `cancel_requested` flag (`true` | `false` | `nil`).
 
   One atomic single-element update (`:ets.update_element/3`) — the agent's state
-  row is never touched. Returns `{:error, :not_found}` when the agent is not
-  live.
+  row is never touched, and the pause flag on the same row is left untouched.
+  A legacy/partial 2-tuple row is upgraded to the 3-tuple shape first, so a row
+  written by an older build can never make the update fail.
+  Returns `{:error, :not_found}` when the agent is not live.
   """
   @spec set_cancel(pos_integer(), boolean() | nil) :: :ok | {:error, :not_found}
   def set_cancel(agent_id, value) when value in [true, false, nil] do
     with true <- agent_row?(agent_id),
-         :ok <- ensure_row(agent_id),
+         :ok <- ensure_row_shape(agent_id),
          true <- :ets.update_element(@control, agent_id, {2, value}) do
       :ok
     else
@@ -156,9 +176,81 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
   def cancel_requested?(agent_id) do
     case control_row(agent_id) do
       {_agent_id, value} -> value == true
+      {_agent_id, value, _pause} -> value == true
       nil -> false
     end
   end
+
+  @doc """
+  Sets the agent's `pause_requested` flag (`true` | `false` | `nil`) — the
+  TASK-PAUSE request an agent honours at its next turn boundary.
+
+  One atomic single-element update (`:ets.update_element/3`) on element 3, so it
+  is independent of the cancel flag and never a whole-row read-modify-write.
+  Returns `{:error, :not_found}` when the agent is not live.
+  """
+  @spec set_pause(pos_integer(), boolean() | nil) :: :ok | {:error, :not_found}
+  def set_pause(agent_id, value) when value in [true, false, nil] do
+    with true <- agent_row?(agent_id),
+         :ok <- ensure_row_shape(agent_id),
+         true <- :ets.update_element(@control, agent_id, {3, value}) do
+      :ok
+    else
+      _other -> {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Returns whether a task pause is pending for the agent (`== true`).
+
+  `false` when the agent/row is absent or the flag is `nil`/`false`.
+  """
+  @spec pause_requested?(pos_integer()) :: boolean()
+  def pause_requested?(agent_id) do
+    case control_row(agent_id) do
+      {_agent_id, _cancel, pause} -> pause == true
+      _other -> false
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Task pause marker
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Marks `task_id` as pausing (a task-level pause is draining its agents).
+
+  Total: an absent table (app shutdown) is a no-op. Idempotent.
+  """
+  @spec mark_task_pausing(String.t()) :: :ok
+  def mark_task_pausing(task_id) when is_binary(task_id) do
+    if table_exists?(@task_pause), do: :ets.insert(@task_pause, {task_id})
+    :ok
+  end
+
+  @doc "Returns whether the task is marked as pausing. `false` for a missing table."
+  @spec task_pausing?(String.t()) :: boolean()
+  def task_pausing?(task_id) when is_binary(task_id) do
+    table_exists?(@task_pause) and :ets.member(@task_pause, task_id)
+  end
+
+  def task_pausing?(_task_id), do: false
+
+  @doc """
+  Clears the task's pause marker.
+
+  Called when the pause is abandoned — a cancel that arrives while `:pausing`
+  wins, and a force-killed task must not leave the scheduler believing a pause
+  is in progress — and when the drain completes and the task becomes `:paused`.
+  Idempotent, total.
+  """
+  @spec clear_task_pausing(String.t()) :: :ok
+  def clear_task_pausing(task_id) when is_binary(task_id) do
+    if table_exists?(@task_pause), do: :ets.delete(@task_pause, task_id)
+    :ok
+  end
+
+  def clear_task_pausing(_task_id), do: :ok
 
   # ---------------------------------------------------------------------------
   # Cleanup
@@ -196,6 +288,47 @@ defmodule EvoGit.AgentScheduler.ControlPlane do
       case :ets.lookup(@control, agent_id) do
         [row] -> row
         [] -> nil
+      end
+    end
+  end
+
+  # Guarantees the agent's control row is the 3-tuple shape BEFORE a single
+  # element is updated. A legacy 2-tuple row (written by an older build) is
+  # rewritten once, preserving its cancel flag and seeding the pause flag from
+  # the task pause marker; a missing row is created; a 3-tuple row is left
+  # exactly as it is (no write at all).
+  defp ensure_row_shape(agent_id) do
+    case control_row(agent_id) do
+      {_agent_id, _cancel, _pause} ->
+        :ok
+
+      {_agent_id, cancel} ->
+        _ = :ets.insert(@control, {agent_id, cancel, initial_pause_flag(agent_id)})
+        :ok
+
+      nil ->
+        ensure_row(agent_id)
+    end
+  end
+
+  # A NEW agent of a task whose pause is already draining starts paused.
+  # The task binding is the scheduler's own `SchedMeta.task_id` (the summary row
+  # carries no task id); a missing row/table simply seeds nothing.
+  defp initial_pause_flag(agent_id) do
+    case task_id_for(agent_id) do
+      task_id when is_binary(task_id) ->
+        if task_pausing?(task_id), do: true, else: nil
+
+      _other ->
+        nil
+    end
+  end
+
+  defp task_id_for(agent_id) do
+    if table_exists?(@sched_table) do
+      case :ets.lookup_element(@sched_table, agent_id, 2, nil) do
+        %{task_id: task_id} -> task_id
+        _other -> nil
       end
     end
   end

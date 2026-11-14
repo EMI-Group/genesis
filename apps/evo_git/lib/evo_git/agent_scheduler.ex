@@ -63,6 +63,17 @@ defmodule EvoGit.AgentScheduler do
   await its explicit close, after any number of exchanges. `:blocked` keeps its
   own meaning (parked in a slot queue) — an idle session is `:awaiting_input`.
 
+  ## Task-level pause
+
+  A task can be PAUSED instead of cancelled (`begin_task_pause/1`): the task's
+  agents get a `pause_requested` control-plane flag, are purged from the
+  LLM/tool waiting queues with `{:error, :paused}`, and stop at their next turn
+  boundary — never mid-tool — delivering `{:paused, info}` as their terminal
+  outcome (a root caller and its `await_close/2` waiters receive that term
+  instead of a `%EvoGit.Agent.Result{}`). `clear_task_pause/1` abandons a pause;
+  a graceful cancel always WINS over a pending pause and a pause that arrives
+  while the task is cancelling is ignored.
+
   ## ETS Tables
 
   Agent data is split across two ETS tables with clear ownership:
@@ -97,6 +108,7 @@ defmodule EvoGit.AgentScheduler do
   use GenServer
   require Logger
   alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.ControlPlane
   alias EvoGit.AgentScheduler.Dispatch
   alias EvoGit.AgentScheduler.Lifecycle
   alias EvoGit.AgentScheduler.SchedMeta
@@ -125,8 +137,20 @@ defmodule EvoGit.AgentScheduler do
 
   The scheduler handles worktree preparation (clean + checkout) and stores
   the agent's state in ETS for the agent process to read.
+
+  On the `:ok` path the caller receives ONE of three terms:
+
+    * `{:ok, %EvoGit.Agent.Result{}}` — the agent finished;
+    * `{:error, reason}` — it failed (including `:llm_not_configured`,
+      `:cancelled` for a task already cancelling, and
+      `:agent_max_retries_exceeded`);
+    * `{:paused, info}` — a TASK PAUSE stopped it at a turn boundary, with
+      `info = %{agent_id, task_id, checkpoint, branch, reason: :task_pause}`.
+      A pause is NOT completion: nothing is merged, archived or reported — the
+      caller decides what a paused task means.
   """
-  @spec run_agent(AgentSpec.t(), timeout()) :: term()
+  @spec run_agent(AgentSpec.t(), timeout()) ::
+          {:ok, %EvoGit.Agent.Result{}} | {:error, term()} | {:paused, map()}
   def run_agent(%AgentSpec{} = spec, timeout \\ :infinity) do
     GenServer.call(__MODULE__, {:run_agent, spec}, timeout)
   end
@@ -659,9 +683,12 @@ defmodule EvoGit.AgentScheduler do
   capacity returns — including a 0-capacity model on peak exit, which flows
   through `update_config` → the end-of-update `grant_pending_on_resume` sweep.
 
-  A non-`:ok` result from the slot request (`{:error, :cancelled}` when the
-  agent is purged from the waiting queue during a force-kill or graceful
-  cancel) raises instead of proceeding without a slot.
+  A non-`:ok` result from the slot request raises instead of proceeding without
+  a slot: `{:error, :cancelled}` when the agent is purged from the waiting queue
+  during a force-kill or graceful cancel, and `{:error, :paused}` when it is
+  purged by a TASK PAUSE. Both raise the SAME `RuntimeError`; the session-side
+  pause handling turns an aborted worker into a pause when the agent's pause
+  flag is set.
 
   The raise is deliberate: callers (`EvoGit.Agent.LLMPrompting.call_llm_with_retry/5`,
   context compression) already depend on a non-`:ok` slot result being an
@@ -691,9 +718,10 @@ defmodule EvoGit.AgentScheduler do
   Acquires a tool execution slot, executes the given function, and releases the slot afterward.
   Ensures the slot is released even if the function raises.
 
-  A non-`:ok` result from the slot request (e.g. `{:error, :cancelled}` when the
-  agent is purged from the waiting queue during a force-kill) raises instead of
-  proceeding without a slot.
+  A non-`:ok` result from the slot request raises instead of proceeding without
+  a slot: `{:error, :cancelled}` when the agent is purged from the waiting queue
+  during a force-kill / graceful cancel, and `{:error, :paused}` when it is purged
+  by a TASK PAUSE (both raise the same exception, see `with_llm_slot/2`).
 
   Returns the result of `fun.()`.
   """
@@ -797,6 +825,46 @@ defmodule EvoGit.AgentScheduler do
   @spec clear_cancelling_task(String.t()) :: :ok
   def clear_cancelling_task(task_id) when is_binary(task_id) do
     GenServer.call(__MODULE__, {:clear_cancelling_task, task_id})
+  end
+
+  @doc """
+  Begins a TASK-LEVEL PAUSE for the given task.
+
+  Called by `EvoGit.TaskRegistry.pause_task/1` once the task's status has been
+  set to `:pausing`. The handler:
+
+  1. Marks the task in the `:evogit_task_pause` control-plane marker FIRST, so
+     any agent registered from now on (a crash-retry, a late dispatch) starts
+     with `pause_requested = true` instead of running a whole extra turn.
+  2. Finds every agent of the task (the `SchedMeta.task_id` scan) and, for each
+     agent with a live state row, sets `pause_requested` on its control row —
+     the agent honours the flag at its next TURN BOUNDARY, never mid-tool.
+  3. Purges those agents from the LLM/tool waiting queues with the `:paused`
+     reason (`{:error, :paused}` to each blocked caller), so a pause can never
+     hang behind a slot wait. Slot HOLDERS are untouched: an agent mid-call
+     finishes its call and reads the flag at its next loop top.
+
+  A pause is IGNORED while the task is marked cancelling (a cancel wins): the
+  handler returns `:ok` immediately, with no marker, no flag and no purge.
+  Returns `:ok`.
+  """
+  @spec begin_task_pause(String.t()) :: :ok
+  def begin_task_pause(task_id) when is_binary(task_id) do
+    GenServer.call(__MODULE__, {:begin_task_pause, task_id})
+  end
+
+  @doc """
+  Ends a task-level pause: clears the task marker and every `pause_requested`
+  flag of the task's currently registered agents.
+
+  Called when the drain completes (the task becomes `:paused`), when the pause is
+  abandoned (a cancel that arrives while `:pausing` wins) or when the task is
+  resumed. Total and idempotent — a task with no agents left is a no-op.
+  Returns `:ok`.
+  """
+  @spec clear_task_pause(String.t()) :: :ok
+  def clear_task_pause(task_id) when is_binary(task_id) do
+    GenServer.call(__MODULE__, {:clear_task_pause, task_id})
   end
 
   # --- Server Callbacks ---
@@ -1049,6 +1117,13 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call({:begin_graceful_cancel, task_id}, _from, %State{} = state) do
+    # 0. CANCEL WINS over a task pause (hard requirement): abandon any in-flight
+    #    pause FIRST — clear the task pause marker and every agent's pause flag —
+    #    so no lingering pause flag can block or confuse the cancel that is
+    #    about to drive those agents into cancel-grace.
+    ControlPlane.clear_task_pausing(task_id)
+    Store.clear_pause_requested_for_task(task_id)
+
     # 1. Register the task in the cancelling marker so run_agent refuses new
     #    root agents for it and Dispatch.register_agent immediately puts any
     #    newly registered agent (subagent spawns, crash-retries, queued agents
@@ -1100,6 +1175,53 @@ defmodule EvoGit.AgentScheduler do
       :undefined -> :ok
       _tid -> :ets.delete(:evogit_cancelling_tasks, task_id)
     end
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:begin_task_pause, task_id}, _from, %State{} = state) do
+    if cancelling_task?(task_id) do
+      # A pause that arrives while the task is being CANCELLED is ignored: no
+      # marker, no flag, no purge — the cancel owns the drain.
+      Logger.info("AgentScheduler: Pause for task #{task_id} ignored — the task is cancelling")
+
+      {:reply, :ok, state}
+    else
+      # 1. The TASK marker goes in FIRST, so an agent registered from here on
+      #    (crash-retry, late dispatch) is seeded with pause_requested = true.
+      ControlPlane.mark_task_pausing(task_id)
+
+      # 2. Flag every live agent of the task; the flag is honoured at the next
+      #    turn boundary, never mid-tool (that is what makes the pause clean).
+      agent_ids = agent_ids_for_task(task_id)
+
+      Enum.each(agent_ids, fn agent_id ->
+        case Store.get_agent_state(agent_id) do
+          {:ok, _agent_state} -> Store.set_pause_requested(agent_id)
+          :error -> :ok
+        end
+      end)
+
+      # 3. Purge the task's agents from the LLM/tool waiting queues with the
+      #    PAUSE reason so a pause can never hang behind a slot wait. An agent
+      #    blocked on a 0-capacity model (or a long backoff) would otherwise
+      #    never reach a turn boundary. Slot HOLDERS are untouched.
+      {state, _status_updates} =
+        Slots.purge_agents_from_queues(state, MapSet.new(agent_ids), :paused)
+
+      Logger.info(
+        "AgentScheduler: Began task pause for task #{task_id} — #{length(agent_ids)} agent(s) flagged"
+      )
+
+      {:reply, :ok, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:clear_task_pause, task_id}, _from, %State{} = state) do
+    ControlPlane.clear_task_pausing(task_id)
+    Store.clear_pause_requested_for_task(task_id)
 
     {:reply, :ok, state}
   end
@@ -1518,6 +1640,12 @@ defmodule EvoGit.AgentScheduler do
   # so the cascade is IDENTICAL for a blocking `run_agent/2` task and for a
   # `from = nil` interactive session.
   defp cancel_task_agents(%State{} = state, task_id) do
+    # 0. A force kill ABANDONS any in-flight task pause: clear the task marker
+    #    and every pause flag, so a killed task cannot leave the scheduler (or a
+    #    late-registered agent) believing a pause is still draining.
+    ControlPlane.clear_task_pausing(task_id)
+    Store.clear_pause_requested_for_task(task_id)
+
     # 1. Find ALL agents with this task_id
     agent_ids = agent_ids_for_task(task_id)
 
