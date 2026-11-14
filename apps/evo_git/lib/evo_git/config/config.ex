@@ -137,6 +137,17 @@ defmodule EvoGit.Config do
 
   require Logger
 
+  alias EvoGit.Config.{Normalization, Settings}
+
+  import Normalization,
+    only: [
+      atomize_enum_values: 1,
+      migrate_llm_models: 1,
+      deep_merge: 2,
+      canonical_providers?: 1,
+      get_key: 2
+    ]
+
   @config_filename "config.toml"
   @credentials_filename "credentials.toml"
 
@@ -187,6 +198,39 @@ defmodule EvoGit.Config do
     EvoGit.Config.Cache.get().resolved
   end
 
+  @doc "Returns schema descriptors for every supported setting, in schema order."
+  @spec list_settings() :: [EvoGit.Config.Schema.schema_map()]
+  def list_settings, do: Settings.list_settings()
+
+  @doc "Returns the snapshot's defaults plus persisted configuration, not scheduler overrides."
+  @spec show() :: map()
+  def show, do: Settings.show()
+
+  @doc """
+  Returns a snapshot value at an atom, dotted string or nonempty atom/string
+  list path (including section paths), without creating atoms.
+  Missing paths return `{:error, {:unknown_setting, path}}`; malformed paths
+  return `{:error, :invalid_path}`.
+  """
+  @spec show(atom() | String.t() | [atom() | String.t()]) :: term()
+  def show(path), do: Settings.show(path)
+
+  @doc """
+  Applies a partial settings map to the current persisted user configuration.
+
+  Nested maps, dotted keys and atom/string list keys address schema settings.
+  Unknown paths, malformed sections and colliding aliases are rejected before
+  writing; list-valued settings (including provider inventories) replace the
+  whole value, and nested provider keys remain strings.
+  The complete candidate is normalized and validated with defaults, but only
+  user data is saved, preserving unrelated and unknown existing keys.
+  Returns the actual `:ok | {:error, reason}` validation/serialization/file
+  result; refreshes the config snapshot but never reloads scheduler state.
+  Like `save_user_config/1`, this read-modify-save operation is not atomic.
+  """
+  @spec update(map()) :: :ok | {:error, term()}
+  def update(patch), do: Settings.update(patch)
+
   @doc false
   # Builds one complete config snapshot for `dir` from disk. This is the ONLY
   # place that reads `config.toml`/`credentials.toml`; `EvoGit.Config.Cache`
@@ -209,11 +253,7 @@ defmodule EvoGit.Config do
     credentials =
       load_credentials(decode_raw_file(credentials_bytes, credentials_path, "credentials"))
 
-    resolved =
-      defaults()
-      |> deep_merge(atomize_keys(user_config))
-      |> atomize_enum_values()
-      |> migrate_llm_models()
+    resolved = Normalization.resolve(user_config)
 
     validation_errors =
       case EvoGit.Config.Schema.validate(resolved) do
@@ -280,267 +320,6 @@ defmodule EvoGit.Config do
     end)
 
     creds
-  end
-
-  defp atomize_enum_values(config) when is_map(config) do
-    Enum.reduce(config, config, fn
-      # Sandbox mode: "auto" | "enabled" | "disabled" -> :auto | :enabled | :disabled
-      {:sandbox, sandbox_config}, acc when is_map(sandbox_config) ->
-        mode = Map.get(sandbox_config, :mode)
-        new_mode = atomize_if_string(mode, [:auto, :enabled, :disabled])
-        acc = put_in(acc, [:sandbox, :mode], new_mode)
-
-        # Sandbox backend: "auto" | "systemd" | "bwrap" -> :auto | :systemd | :bwrap
-        backend = Map.get(sandbox_config, :backend)
-        new_backend = atomize_if_string(backend, [:auto, :systemd, :bwrap])
-        put_in(acc, [:sandbox, :backend], new_backend)
-
-      # Git CoW worktree creation: "auto" | "enabled" | "disabled" -> :auto | :enabled | :disabled
-      {:git, git_config}, acc when is_map(git_config) ->
-        cow = Map.get(git_config, :cow_worktree_creation)
-        new_cow = atomize_if_string(cow, [:auto, :enabled, :disabled])
-        put_in(acc, [:git, :cow_worktree_creation], new_cow)
-
-      # Tmp directory mode: "system" | "custom" | "per_repo" -> :system | :custom | :per_repo
-      {:tmp, tmp_config}, acc when is_map(tmp_config) ->
-        mode = Map.get(tmp_config, :mode)
-        new_mode = atomize_if_string(mode, [:system, :custom, :per_repo])
-        put_in(acc, [:tmp, :mode], new_mode)
-
-      # LLM model normalization:
-      # 1. Flat [llm].model map → normalize to string or atomized map
-      # 2. [[llm.models]] → normalize model maps in each profile; strings pass through
-      {:llm, llm_config}, acc when is_map(llm_config) ->
-        # Normalize the flat model (backward compat). Map model specs are
-        # normalized to string or atomized map; strings pass through as-is.
-        acc =
-          case Map.get(llm_config, :model) do
-            model when is_map(model) ->
-              put_in(acc, [:llm, :model], normalize_model_map(model))
-
-            _ ->
-              acc
-          end
-
-        # Provider profiles (including nested model/option maps) deliberately
-        # use string keys, independent of which atoms have been loaded.
-        # Keep malformed entries intact so schema validation can report them.
-        acc =
-          case Map.fetch(llm_config, :providers) do
-            {:ok, providers} ->
-              put_in(
-                acc,
-                [:llm, :providers],
-                EvoGit.Config.Schema.ProviderProfiles.Normalize.stringify(providers)
-              )
-
-            :error ->
-              acc
-          end
-
-        # Normalize each legacy profile's model map in the models list.
-        # Defensive: skip non-map entries (e.g. `models = "foo"`) — the
-        # schema validator reports the type error.
-        case Map.get(llm_config, :models) do
-          models when is_list(models) ->
-            normalized_models =
-              Enum.map(models, fn
-                profile when is_map(profile) ->
-                  profile = normalize_profile_keys(profile)
-
-                  case Map.get(profile, :model) do
-                    model when is_map(model) ->
-                      Map.put(profile, :model, normalize_model_map(model))
-
-                    _ ->
-                      profile
-                  end
-
-                _non_map_profile ->
-                  %{}
-              end)
-
-            put_in(acc, [:llm, :models], normalized_models)
-
-          _ ->
-            acc
-        end
-
-      # Tools search: convert string enum values to atoms
-      # (e.g., "tavily" -> :tavily, "basic" -> :basic)
-      {:tools, tools_config}, acc when is_map(tools_config) ->
-        search_config = Map.get(tools_config, :search, %{})
-
-        if is_map(search_config) do
-          providers = EvoGit.Config.Schema.Definitions.search_providers()
-          provider = Map.get(search_config, :provider)
-          new_provider = atomize_if_string(provider, providers)
-          acc = put_in(acc, [:tools, :search, :provider], new_provider)
-
-          # Atomize each provider section's search_depth generically — the
-          # provider list comes from the schema (single source of truth).
-          Enum.reduce(providers, acc, fn prov, acc ->
-            provider_config = Map.get(search_config, prov, %{})
-
-            if is_map(provider_config) do
-              search_depth = Map.get(provider_config, :search_depth)
-              new_depth = atomize_if_string(search_depth, [:basic, :advanced])
-              put_in(acc, [:tools, :search, prov, :search_depth], new_depth)
-            else
-              acc
-            end
-          end)
-        else
-          acc
-        end
-
-      _, acc ->
-        acc
-    end)
-  end
-
-  # Canonical providers take precedence without materializing runtime mirrors.
-  # Otherwise preserve legacy [[llm.models]] profiles verbatim, or migrate a
-  # flat model into a single "default" profile with the original flat fields.
-  #
-  # Defensive against malformed config: if `:llm` or `:scheduler` is not a map
-  # (e.g. user wrote `llm = "claude"` — a scalar — instead of a `[llm]` table),
-  # we treat it as an empty section. The deep_merge in resolve/0 already
-  # discards such type mismatches at the top level, but this guard provides
-  # defense-in-depth for direct/test callers.
-  defp migrate_llm_models(config) when is_map(config) do
-    raw_llm = Map.get(config, :llm, %{})
-    llm = if is_map(raw_llm), do: raw_llm, else: %{}
-    # Canonical providers are authoritative. LLM.model_profiles/1 supplies their
-    # legacy-compatible runtime projection lazily; do not materialize that
-    # derived projection here or reinterpret stale legacy mirrors as accounts.
-    if canonical_providers?(llm) do
-      Map.put(config, :llm, llm)
-    else
-      migrate_legacy_llm_models(config, llm)
-    end
-  end
-
-  defp canonical_providers?(llm) do
-    case get_key(llm, :providers) do
-      providers when is_list(providers) and providers != [] -> true
-      _ -> false
-    end
-  end
-
-  defp migrate_legacy_llm_models(config, llm) do
-    existing_models = Map.get(llm, :models, [])
-
-    models =
-      cond do
-        # New format: models list already has profiles
-        is_list(existing_models) and existing_models != [] ->
-          existing_models
-
-        # Old flat format: migrate model into a single "default" profile
-        true ->
-          flat_model = Map.get(llm, :model)
-
-          if flat_model == nil or flat_model == "" do
-            []
-          else
-            [EvoGit.Config.Schema.LLM.build_legacy_default_profile(config)]
-          end
-      end
-
-    # Ensure the flat [llm].model mirrors the default profile's model for
-    # backward compatibility (Config.resolve([:llm, :model]) still works).
-    # Defensive: the first profile may lack a :model key (e.g. a manually
-    # edited config.toml or an incomplete dashboard profile). Use Map.get
-    # so we don't crash on such profiles — the flat field is simply left
-    # unchanged when the first profile has no model.
-    llm =
-      case models do
-        [first | _] when is_map(first) ->
-          case Map.get(first, :model) do
-            nil -> llm
-            default_model -> Map.put(llm, :model, default_model)
-          end
-
-        _ ->
-          llm
-      end
-
-    put_in(config, [:llm], Map.put(llm, :models, models))
-  end
-
-  # Atomizes the string keys of a model profile map.
-  # atomize_keys recurses into map values but NOT list elements, so profiles
-  # inside the models list may still have string keys after the initial pass.
-  defp normalize_profile_keys(profile) when is_map(profile) do
-    Map.new(profile, fn
-      {key, value} when is_binary(key) -> {safe_atomize(key), value}
-      {key, value} -> {key, value}
-    end)
-  end
-
-  # Normalizes a model map so that keys are atoms and the :provider value is
-  # an atom. Produces LLMDB-compatible output instead of a plain map:
-  #   - Simple models (only :provider + :id) → "provider:id" string
-  #   - Models with override keys (:base_url, :extra, etc.) → atomized map
-  #     (returned as-is so ReqLLM.model/1's map clause handles overrides correctly)
-  # req_llm's ReqLLM.model/1 natively resolves both formats through LLMDB for
-  # cost tracking and model metadata.
-  defp normalize_model_map(model) when is_map(model) do
-    # Ensure atom keys (atomize_keys may have left string keys if the atom
-    # didn't exist yet — e.g. "base_url").
-    atomized =
-      Map.new(model, fn
-        {key, value} when is_binary(key) -> {safe_atomize(key), value}
-        {key, value} -> {key, value}
-      end)
-
-    # Convert the provider VALUE to an atom if it's a string.
-    atomized =
-      case Map.get(atomized, :provider) do
-        provider when is_binary(provider) -> Map.put(atomized, :provider, safe_atomize(provider))
-        _ -> atomized
-      end
-
-    provider = Map.get(atomized, :provider)
-    id = Map.get(atomized, :id)
-
-    # Collect override keys (anything beyond :provider and :id).
-    override_keys = Map.keys(atomized) -- [:provider, :id]
-
-    if provider != nil and id != nil and override_keys == [] do
-      # Simple model: format as "provider:id" string (resolved through LLMDB).
-      "#{provider}:#{id}"
-    else
-      # Model with overrides (keep as atomized map so ReqLLM.model/1's map
-      # clause handles base_url and other overrides correctly) OR a defensive
-      # fallback for missing provider/id (the schema validator reports the error).
-      atomized
-    end
-  end
-
-  defp atomize_if_string(value, valid_atoms) when is_binary(value) do
-    # Build a string→atom lookup from the known valid atoms. This avoids
-    # String.to_existing_atom/1 + rescue entirely — unknown values (typos)
-    # simply pass through as strings via Map.get's default.
-    lookup = Map.new(valid_atoms, &{Atom.to_string(&1), &1})
-    Map.get(lookup, value, value)
-  end
-
-  defp atomize_if_string(value, _valid_atoms), do: value
-
-  defp safe_atomize(string) when is_binary(string) do
-    # KEPT: try/rescue is the idiomatic pattern for safely atomizing
-    # user-supplied TOML config keys. The Elixir atom table is not queryable,
-    # so there is no non-crashing way to check whether an atom exists before
-    # converting. String.to_existing_atom/1 raises ArgumentError for unknown
-    # atoms, which we catch to gracefully reject typo'd config keys — they are
-    # kept as strings rather than crashing or exhausting the atom table.
-    try do
-      String.to_existing_atom(string)
-    rescue
-      ArgumentError -> string
-    end
   end
 
   @doc """
@@ -681,14 +460,6 @@ defmodule EvoGit.Config do
 
       _ ->
         config
-    end
-  end
-
-  # Reads a key from a map, checking both the atom and string forms.
-  defp get_key(map, key) when is_map(map) do
-    case Map.fetch(map, key) do
-      {:ok, value} -> value
-      :error -> Map.get(map, Atom.to_string(key))
     end
   end
 
@@ -1182,54 +953,4 @@ defmodule EvoGit.Config do
         false
     end
   end
-
-  # --- Private Helpers ---
-
-  # Deep merges two maps. `override` values take precedence.
-  # Only merges maps; non-map values in `override` replace defaults.
-  #
-  # Type-mismatch safety: if the override value is a non-map but the default
-  # value at that key is a map (e.g. user wrote `llm = "claude"` — a string —
-  # instead of a `[llm]` table), the user value is a type error. We discard it
-  # and keep the default (the schema validator will report the error). This
-  # prevents the downstream pipeline from crashing on `Map.get/3` against a
-  # string. The reverse — user has a map where a default is a leaf — is fine
-  # and uses the user value.
-  defp deep_merge(base, override) when is_map(base) and is_map(override) do
-    Map.merge(base, override, fn _key, base_val, override_val ->
-      cond do
-        is_map(base_val) and is_map(override_val) ->
-          deep_merge(base_val, override_val)
-
-        is_map(base_val) and not is_map(override_val) ->
-          # Type mismatch: default is a map but user gave a leaf value
-          # (e.g. `llm = "x"` instead of `[llm]`). Keep the default — the
-          # wrong user value would crash downstream map operations.
-          base_val
-
-        true ->
-          override_val
-      end
-    end)
-  end
-
-  defp deep_merge(base, _override) when is_map(base), do: base
-  defp deep_merge(_base, override), do: override
-
-  # Recursively converts string keys to atom keys in a map.
-  # Only converts top-level and nested map keys; list elements are left as-is.
-  # Uses `String.to_existing_atom/1` to prevent atom-table DoS.
-  # Unknown keys are kept as strings.
-  defp atomize_keys(map) when is_map(map) do
-    Map.new(map, fn
-      {key, value} when is_binary(key) ->
-        atom_key = safe_atomize(key)
-        {atom_key, atomize_keys(value)}
-
-      {key, value} ->
-        {key, atomize_keys(value)}
-    end)
-  end
-
-  defp atomize_keys(value), do: value
 end
