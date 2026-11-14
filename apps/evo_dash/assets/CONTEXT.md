@@ -10,11 +10,12 @@ This directory holds all frontend source assets (JavaScript, CSS, vendor librari
 - `./js/hooks/` → Standalone JS hook files (`sidebar_collapse.js`, `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js`, `diff_viewer.js`, `commit_graph.js`, `capsule_panel.js`) — registration table + behavior notes in `js/hooks/CONTEXT.md`
 - `./js/*.test.cjs` → Node-run unit tests for the PURE logic of inline hooks (`agent_history_scroll.test.cjs`, `state_persistence.test.cjs`) — `node --test apps/evo_dash/assets/js/*.test.cjs`, never part of `mix test`; detail in `js/CONTEXT.md` → "JS Unit Tests"
 - `./css/` → Stylesheets (Tailwind CSS 4 configuration, DaisyUI themes), including Assistant transcript/layout invariants and the verified motion-coverage/cascade gaps documented in `css/CONTEXT.md`.
-- Assistant browser-feedback audit → `js/CONTEXT.md` (notification permission caching, absent notification/dialog tests and Guide scroll/lifetime gaps) + `js/hooks/CONTEXT.md` (stable-key inspector animation and keyboard/focus gaps).
-- Browser notifications are advisory nonpersistent document notifications, not an approval authority or background-delivery mechanism; the current `new Notification()` path has no action buttons, service worker, closed-page push, session-aware click navigation or resolution-driven close.
-- Action buttons require a service-worker persistent-notification path with browser-dependent support, so an in-app pending-approval review surface remains mandatory, and notification activation should open validated review context rather than authorize execution.
+- Assistant notifications and dialog accessibility → `js/CONTEXT.md` (`browser_notifications.js`, `dialog_modal.js`, explicit permission controls, scoped review-only activation, fallback and focus contracts).
+- Browser notifications are advisory nonpersistent document notifications, never approval authority or closed-page delivery; approval activation validates current scope/pending IDs and requests exact-code in-app review, never execution.
+- Restrained Assistant opacity-only execution indicators, reduced-motion behavior and scoped history entrances → `css/CONTEXT.md` and `css/assistant_motion.test.cjs`.
+- Guide scroll/lifetime gaps and inspector keyboard/focus gaps remain documented in `js/CONTEXT.md` and `js/hooks/CONTEXT.md`.
 - `/agents` inspector animation assets → `js/hooks/inspector_messages.js` (`InspectorMessages`, `data-inspector-scope` + stable `data-inspector-message` keys) and `css/app.css` (`inspector-thinking`, `inspector-stream-cursor`, `inspector-message-enter`); exact contracts live in `js/hooks/CONTEXT.md` and `css/CONTEXT.md`.
-- Run all asset Node tests, including standalone-hook regressions, with `node --test apps/evo_dash/assets/js/*.test.cjs apps/evo_dash/assets/js/hooks/*.test.cjs`.
+- Run all asset Node tests, including standalone-hook and motion regressions, with `node --test apps/evo_dash/assets/js/*.test.cjs apps/evo_dash/assets/js/hooks/*.test.cjs apps/evo_dash/assets/css/*.test.cjs`.
 - `./vendor/` → Third-party JS libraries (DaisyUI, Heroicons, Topbar, highlight.js, brand SVGs)
 
 ## API Surface
@@ -91,23 +92,24 @@ LiveView patches strip every attribute the server does not render (including `op
 There is no `phx-click` on the hook element and nothing stops propagation; all listeners plus the pending close timer are removed in `destroyed()`, and each instance only ever closes its own panel, so several capsules can share a page.
 Every step guards its own state (closed panel, missing `.capsule-panel`, already-closing) → no-op, never throws.
 The matching keyframes / view-visibility rules live in the `css/app.css` `Fused Capsule Controls` section.
-- **BrowserNotifications — visibility-gated native notifications** (inline hook in `js/app.js`): ONE hook serves both producers through the `task_notification` push event with `%{title: String.t(), body: String.t(), tag?: String.t()}` — ProjectsLive's terminal-task notifications (no tag) and the Assistant page's hidden `#assistant-notifications` host, which receives approval requests with `tag: "genesis-approval"`.
-Permission is requested on each hook mount while the browser reports `default`, without an explicit user-gesture control, and the hook caches permission rather than refreshing it on focus (a missing API, a synchronous throw or a rejected promise all leave notifications off).
-A notification is shown ONLY while the user cannot see the page: `document.hidden` (falling back to `document.visibilityState`) OR `!document.hasFocus()` — someone looking at the dashboard is never notified about it.
-An optional `tag` dedupes, so a repeating approval replaces its previous notification (`renotify: true`) instead of stacking another; clicking one focuses the window and closes it.
-Unsupported APIs, denied permission and a constructor that throws are a SILENT no-op — no console noise.
-Payload contract + call sites: `js/hooks/CONTEXT.md` (`BrowserNotifications` row).
+- **BrowserNotifications** (`js/browser_notifications.js`, registered in `app.js`) serves Projects terminal notifications and Assistant approval notifications through `task_notification`.
+Permission requires an explicit `[data-enable-notifications]` gesture; focus, visibility and patch events refresh permission, and `[data-notification-status]` uses host-supplied localized labels.
+Delivery remains hidden-or-unfocused only, with honest unsupported/denied/error fallback.
+Assistant hosts provide `data-approval-scope` and `data-approval-request-ids` JSON; an optional payload `request_id` is revalidated against captured/current scope and pending IDs before activation pushes only `review_approval_notification` with `{request_id}`.
+Resolution, scope changes, disconnect and teardown close retained notifications; Projects notifications need no approval metadata and never emit review events.
+Approval payloads must contain privacy-safe generic text, never exact code or secrets; there is no service worker, background delivery or notification authorization action.
+Full host attributes, label names and lifecycle contracts live in `js/CONTEXT.md`.
 - **AgentHistoryAutoScroll — instant, coalesced stick-to-bottom** (inline hook in `js/app.js`; CSS in the "Auto-scrolled transcripts" section of `css/app.css`): attached to `#chat-messages` (Assistant page) and `#agent-history-<selected_agent_id>` (the /agents Chat History / Session Memory panel, which also carries `.agent-history-scroll`); the pure decision is `shouldFollowLatest(scrollTop, scrollHeight, clientHeight, threshold?)` with `STICK_TO_BOTTOM_THRESHOLD_PX = 56`.
 The hook is deterministic and instant — one coalesced `requestAnimationFrame` assigns `scrollTop = scrollHeight`; there is NO easing, tween or animated scroll.
 `pinned` is re-evaluated only on user intent (`scroll`, `wheel`, `touchmove`, `keydown`), a programmatic write lands at the bottom so the pin survives without suppression flags, and while unpinned the hook early-returns and disconnects both observers (reading history costs no observer work).
 A `ResizeObserver` on the scroller and its direct children re-follows late layout changes (Markdown render, images, a `<details>` opening inside a message) and a `MutationObserver` re-syncs the observed child set; `destroyed()` releases every listener and observer.
 CSS invariants (do NOT drop them): both panels keep `overflow-anchor: none` (the hook owns scroll anchoring), `overscroll-behavior: contain` (no scroll chaining) and `scroll-behavior: auto` — the document sets `html { scroll-behavior: smooth }`, and a smooth behavior on these panels would animate every instant assignment into exactly the shaking the hook removes — plus `min-height: 0`, which lets the scroller shrink inside its flex column instead of growing the page.
 Behavior + tests: `js/hooks/CONTEXT.md` ("AgentHistoryAutoScroll hook") and `js/CONTEXT.md` ("JS Unit Tests").
-- **DialogModal — native top-layer `<dialog>` contract** (inline hook in `js/app.js`): MUST be mounted on the `<dialog class="modal">` element itself; its only current consumer is the Assistant approval dialog (`lib/evo_dash_web/live/home_live/approval_dialog.ex` — `<dialog id="approval-dialog" class="modal" phx-hook="DialogModal">`, mounted only while `:approval_dialog_open` is true).
-`showModal()` runs only when the API exists and the dialog is not already open (a second call on an open dialog throws `InvalidStateError`).
-A user dismissal (ESC/backdrop) pushes `dialog_closed` EXACTLY ONCE via a per-instance latch; `destroyed()` removes the close listener BEFORE closing, so a server-driven unmount reports nothing, and `updated()` re-asserts the modal after a patch unless the user dismissed it.
-`push_event(socket, "dialog_open", %{})` clears the latch and re-shows the SAME mounted element (a hook capability no page uses today).
-Detail: `js/hooks/CONTEXT.md` → "DialogModal hook".
+- **DialogModal** (`js/dialog_modal.js`, registered in `app.js`) owns accessible native top-layer review and an honestly nonmodal visible fallback when `showModal()` is unavailable or throws.
+Initial focus targets a static review heading or the dialog container, never Allow/Deny; patches preserve current focus and teardown restores a viable explicit return target or prior focus without stealing focus elsewhere.
+Escape/backdrop/marked dismiss controls emit `dialog_closed` exactly once and never imply denial; server teardown emits no dismissal.
+Dialogs should provide accessible naming, a static `[data-dialog-title][data-dialog-initial-focus]` heading with `tabindex="-1"`, an optional `data-dialog-return-focus` element ID and a `[data-dialog-dismiss]` close button without `phx-click`.
+Focus, fallback, lifecycle and supported legacy markup contracts live in `js/CONTEXT.md`.
 
 ## Known Issues — Custom CSS Variables (`css/app.css`)
 
