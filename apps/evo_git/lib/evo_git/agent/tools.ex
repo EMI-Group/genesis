@@ -331,6 +331,32 @@ defmodule EvoGit.Agent.Tools do
     ElixirEval.execute(args, repo_path, repo_root)
   end
 
+  defp dispatch_tool_call("genesis_source", args, repo_path, _repo_root, node_path) do
+    EvoGit.Agent.Tools.GenesisSource.execute(args, repo_path, node_path, [])
+  end
+
+  @genesis_task_tools EvoGit.TaskControl.Tools.names() ++ ["genesis_follow_task"]
+  defp dispatch_tool_call(name, args, repo_path, repo_root, _node_path)
+       when name in @genesis_task_tools do
+    EvoGit.Agent.Tools.GenesisTools.execute(name, args, repo_path, repo_root)
+  end
+
+  @assistant_source_readers ~w(read_file rg glob list_dir read_context search_context search_history)
+  defp dispatch_tool_call(name, args, repo_path, repo_root, node_path)
+       when name in @assistant_source_readers do
+    if ElixirEval.authorized_assistant?() do
+      case EvoGit.Agent.Tools.GenesisSource.reference_status() do
+        %{available: true, reference_path: reference} ->
+          maybe_block_repo_less(name, args, reference, reference, node_path)
+
+        _ ->
+          "Error: Genesis source reference is unavailable. Use genesis_source status or request prepare when source details are needed."
+      end
+    else
+      maybe_block_repo_less(name, args, repo_path, repo_root, node_path)
+    end
+  end
+
   defp dispatch_tool_call(name, args, repo_path, repo_root, node_path) do
     maybe_block_repo_less(name, args, repo_path, repo_root, node_path)
   end
@@ -488,6 +514,7 @@ defmodule EvoGit.Agent.Tools do
   # Evaluations are ALWAYS serial, including read tier: one approval/effect
   # sequence at a time, independent of file-write classification or custom tools.
   def serial_tool?("elixir_eval"), do: true
+  def serial_tool?(name) when name in @genesis_task_tools, do: true
 
   def serial_tool?(tool_name) when is_binary(tool_name) do
     normalized = ToolNames.normalize(tool_name)

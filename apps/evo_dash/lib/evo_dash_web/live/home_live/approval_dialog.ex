@@ -224,21 +224,50 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
               </div>
             <% end %>
 
-            <%= if evaluator?(@request) do %>
-              <p class="mt-3 break-all text-xs font-semibold text-base-content/80">
-                {gettext("Target runtime: %{node}", node: target_text(@request))}
-              </p>
-              <pre class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-base-300 bg-base-100 p-3 text-xs font-mono leading-relaxed text-base-content"><code>{code_text(@request)}</code></pre>
-            <% else %>
-              <div class="mt-2 rounded-md border border-base-300/80 bg-base-100 px-2.5 py-1.5">
-                <code class="block break-all text-xs font-mono font-semibold text-base-content">{command_text(
-                  @request
-                )}</code>
-              </div>
-              <%= if args_text(@request) != "" do %>
-                <p class="mt-1.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-base-content/60">
-                  {args_text(@request)}
+            <%= if structured?(@request) do %>
+              <dl
+                id="approval-action-details"
+                class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm"
+              >
+                <dt class="text-base-content/60">{gettext("Action")}</dt>
+                <dd id="approval-action" class="break-words font-medium">{action_text(@request)}</dd>
+                <dt class="text-base-content/60">{gettext("Runtime")}</dt>
+                <dd id="approval-target-node" class="break-all">{target_text(@request)}</dd>
+                <%= if text(@request, :project_path) != "" do %>
+                  <dt class="text-base-content/60">{gettext("Project")}</dt>
+                  <dd id="approval-project" class="break-all">{text(@request, :project_path)}</dd>
+                <% end %>
+                <%= if text(@request, :target_task_id) != "" do %>
+                  <dt class="text-base-content/60">{gettext("Task")}</dt>
+                  <dd id="approval-task" class="break-all">{text(@request, :target_task_id)}</dd>
+                <% end %>
+                <%= for {key, label, value} <- parameter_rows(@request) do %>
+                  <dt class="text-base-content/60">{label}</dt>
+                  <dd id={"approval-parameter-" <> key} class="break-words">{value}</dd>
+                <% end %>
+              </dl>
+              <%= if text(@request, :summary) != "" do %>
+                <p id="approval-summary" class="mt-3 whitespace-pre-wrap break-words text-sm">
+                  {text(@request, :summary)}
                 </p>
+              <% end %>
+            <% else %>
+              <%= if evaluator?(@request) do %>
+                <p class="mt-3 break-all text-xs font-semibold text-base-content/80">
+                  {gettext("Target runtime: %{node}", node: target_text(@request))}
+                </p>
+                <pre class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-base-300 bg-base-100 p-3 text-xs font-mono leading-relaxed text-base-content"><code>{code_text(@request)}</code></pre>
+              <% else %>
+                <div class="mt-2 rounded-md border border-base-300/80 bg-base-100 px-2.5 py-1.5">
+                  <code class="block break-all text-xs font-mono font-semibold text-base-content">{command_text(
+                    @request
+                  )}</code>
+                </div>
+                <%= if args_text(@request) != "" do %>
+                  <p class="mt-1.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-base-content/60">
+                    {args_text(@request)}
+                  </p>
+                <% end %>
               <% end %>
             <% end %>
           </div>
@@ -362,6 +391,61 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
   ## Kind / tier classification
 
   @doc "True for the tiered `elixir_eval` evaluator requests."
+  def structured?(request), do: field(request, :kind) == :task_control
+
+  def action_text(request) do
+    case field(request, :tool_name) do
+      "genesis_start_task" ->
+        gettext("Start development task")
+
+      "genesis_send_message" ->
+        gettext("Add task requirements")
+
+      "genesis_cancel_task" ->
+        if get_in(request, [:parameters, "force"]) == true,
+          do: gettext("Force stop development task"),
+          else: gettext("Cancel development task")
+
+      "genesis_reload_config" ->
+        gettext("Reload configuration")
+
+      "genesis_pause_task" ->
+        gettext("Pause task")
+
+      "genesis_resume_task" ->
+        gettext("Resume task")
+
+      "genesis_source" ->
+        gettext("Prepare Genesis source reference")
+
+      _ ->
+        gettext("Run task action")
+    end
+  end
+
+  def parameter_rows(request) do
+    parameters = field(request, :parameters) || %{}
+
+    [
+      {"task_type", gettext("Task type")},
+      {"mode", gettext("Mode")},
+      {"model_id", gettext("Model")},
+      {"persistent_state", gettext("Save agent checkpoints")},
+      {"resume_from", gettext("Continue from")},
+      {"agent_id", gettext("Agent")},
+      {"force", gettext("Force stop")}
+    ]
+    |> Enum.flat_map(fn {key, label} ->
+      case Map.fetch(parameters, key) do
+        {:ok, value} when is_binary(value) or is_boolean(value) or is_integer(value) ->
+          [{key, label, to_string(value)}]
+
+        _ ->
+          []
+      end
+    end)
+  end
+
   def evaluator?(request), do: field(request, :kind) == :elixir_eval
 
   @doc "True for the unrestricted (sudo) evaluator tier."
@@ -385,6 +469,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
   @doc "Dialog heading: what kind of decision this is."
   def title_text(request) do
     cond do
+      structured?(request) -> gettext("Allow this action once?")
       sudo?(request) -> gettext("Danger — unrestricted Elixir execution")
       evaluator?(request) -> gettext("Allow this Elixir code once?")
       danger?(request) -> gettext("Action required — real side effects")
@@ -395,6 +480,9 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
   @doc "One-line plain-language summary of what the agent wants to do."
   def summary_text(request) do
     cond do
+      structured?(request) ->
+        action_text(request)
+
       sudo?(request) ->
         # 审批横幅/对话框的一行摘要：sudo 层会在实时运行时里执行任意 Elixir。
         gettext("Run unrestricted Elixir in the live Genesis runtime.")
@@ -413,6 +501,11 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
   @doc "Body copy: scope of the permission, or the legacy action's weight."
   def body_text(request) do
     cond do
+      structured?(request) ->
+        gettext(
+          "Approve the action and parameters shown below. This applies to this request once."
+        )
+
       sudo?(request) ->
         # sudo 层不是操作系统 root，但可以改动运行中的进程、文件与配置，且无法回滚。
         gettext(

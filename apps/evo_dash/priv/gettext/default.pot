@@ -7083,3 +7083,87 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "These are request vocabulary choices, not verified support for this model or endpoint. Select only levels you have confirmed."
 msgstr ""
+
+msgid "Live updates are unavailable. The conversation may still be running. Retry to reconnect."
+msgstr ""
+
+msgid "Updates disconnected. Reply status is unknown; reconnect to check."
+msgstr ""
+
+msgid "Where shall we start?"
+msgstr ""
+
+msgid "Upload files from this computer"
+msgstr ""
+
+msgid "Up to 4 files, 15 MiB each. Text, PDF, Word, images and audio."
+msgstr ""
+
+msgid "Add from Genesis server path"
+msgstr ""
+
+msgid "Absolute file path on the selected server"
+msgstr ""
+
+msgid "Uploading %{name}: %{progress}%"
+msgstr ""
+
+msgid "Cancel upload"
+msgstr ""
+
+msgid "Dismiss upload error"
+msgstr ""
+
+msgid "Each file must be 15 MiB or smaller."
+msgstr ""
+
+msgid "This file type is not supported."
+msgstr ""
+
+msgid "Upload failed. Choose the file again."
+msgstr ""
+
+msgid "Adding a server file is unavailable on the selected node. Upload a file from this computer instead."
+msgstr ""
+
+msgid "Turn ideas into working software"
+msgstr ""
+
+msgid "Attach"
+msgstr ""
+
+msgid "Choose a task to follow"
+msgstr ""
+
+msgid "Refresh tasks"
+msgstr ""
+
+msgid "Search task names or projects"
+msgstr ""
+
+msgid "Loading tasks…"
+msgstr ""
+
+msgid "Could not load tasks. Check the selected node and retry."
+msgstr ""
+
+msgid "No tasks yet. Tasks you create will appear here."
+msgstr ""
+
+msgid "No matching tasks. Try another name or project."
+msgstr ""
+
+msgid "Load more tasks"
+msgstr ""
+
+msgid "Following"
+msgstr ""
+
+msgid "Enter a task ID instead"
+msgstr ""
+
+msgid "Awaiting input"
+msgstr ""
+
+msgid "Save agent checkpoints"
+msgstr ""

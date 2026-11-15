@@ -179,17 +179,19 @@ defmodule EvoGit.SelfReflectiveSource do
   error.
   """
   @spec clone() :: {:ok, map()} | {:error, term()}
-  def clone do
-    dir = source_dir()
+  def clone, do: clone_at(source_dir(), clone_url())
 
+  @doc "Prepares the exact approved source destination and upstream without rereading config."
+  @spec clone_at(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  def clone_at(dir, url) when is_binary(dir) and is_binary(url) do
     if File.dir?(dir) do
       {:error, :already_cloned}
     else
       case File.mkdir_p(Path.dirname(dir)) do
         :ok ->
-          case Git.clone(clone_url(), dir, ["--depth", "1"]) do
+          case Git.clone(url, dir, ["--depth", "1"]) do
             {:ok, _} ->
-              ensure_mount_after_sync()
+              ensure_mount_after_sync(dir)
               {:ok, status()}
 
             {:error, reason} ->
@@ -259,9 +261,8 @@ defmodule EvoGit.SelfReflectiveSource do
     4. `source_dir/0` IF the dir exists AND is a valid Genesis checkout
        (git repo + `CONTEXT.md` at root) — auto-reference: cloning makes it
        the reference, no separate set-reference action
-    5. `nil` (callers supply their own terminal fallback — see
-       `EvoGit.Runtime.SelfReflective.source_root/0` for `File.cwd!()` and
-       `EvoGit.AgentScheduler.Dispatch` for `"[system]"`)
+    5. `nil` (the assistant remains repo-less with its isolated `[system]`
+       runtime root; optional source reads must explicitly request preparation)
 
   Never raises.
   """
@@ -287,8 +288,7 @@ defmodule EvoGit.SelfReflectiveSource do
   RIGHT NOW.
 
   Resolves the SAME source root the agent will actually use —
-  `reference_path() || File.cwd!()` (the terminal fallback mirrors
-  `EvoGit.Runtime.SelfReflective.source_root/0`) — and validates it is a Genesis
+  `reference_path()` (no launch-directory fallback) — and validates it is a Genesis
   checkout: the dir exists AND carries a `CONTEXT.md` at its root (the same
   validity rule as `status/0`'s `valid` field and `managed_reference/0`).
 
@@ -301,8 +301,8 @@ defmodule EvoGit.SelfReflectiveSource do
   """
   @spec available?() :: boolean()
   def available? do
-    dir = reference_path() || File.cwd!()
-    genesis_checkout?(dir)
+    dir = reference_path()
+    is_binary(dir) and genesis_checkout?(dir)
   end
 
   # --- Private helpers ------------------------------------------------------
@@ -348,8 +348,17 @@ defmodule EvoGit.SelfReflectiveSource do
 
   # Best effort after a successful clone/update: a VCT failure must NEVER turn
   # the sync into an error, so it is only logged.
-  defp ensure_mount_after_sync do
-    case ensure_mount() do
+  defp ensure_mount_after_sync(dir \\ source_dir()) do
+    mount_result =
+      try do
+        EvoGit.VCT.ensure_mount(point(), dir, name: @genesis_source_name)
+      rescue
+        exception -> {:error, exception}
+      catch
+        kind, reason -> {:error, {kind, reason}}
+      end
+
+    case mount_result do
       {:ok, _mount} ->
         :ok
 

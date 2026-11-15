@@ -124,6 +124,19 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
 
   test "all evaluator tiers serialize approval/effects before earlier-indexed parallel reads",
        ctx do
+    # Source reads resolve the optional reference at call time; keep this
+    # serialization fixture's read and sudo write on that same reference.
+    previous_reference = Application.fetch_env(:evo_git, :self_reflective_source_root)
+    Application.put_env(:evo_git, :self_reflective_source_root, ctx.repo_root)
+    File.write!(Path.join(ctx.repo_root, "CONTEXT.md"), "Serialization reference fixture")
+
+    on_exit(fn ->
+      case previous_reference do
+        {:ok, value} -> Application.put_env(:evo_git, :self_reflective_source_root, value)
+        :error -> Application.delete_env(:evo_git, :self_reflective_source_root)
+      end
+    end)
+
     target = seed_target(:pending)
     path = Path.join(ctx.repo_root, "after-sudo.txt")
     write = "EvoGit.Agent.Tools.ElixirEval.Write.cancel_task(#{inspect(target)})"
@@ -201,6 +214,38 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
       assert output =~ "Result:"
       refute output =~ "Error:"
       assert_effect(tier, ctx, message)
+    end
+  end
+
+  @tag timeout: 120_000
+  test "shared task mutations retain approval time beyond the default tool deadline", ctx do
+    hold = EvoGit.Agent.DelegationHints.default_tool_timeout() + 100
+    Application.put_env(:evo_git, :command_approval_timeout, hold + @deadline)
+
+    for name <- ~w(genesis_pause_task genesis_resume_task) do
+      assert EvoGit.Agent.Tools.serial_tool?(name)
+
+      owner =
+        start_batch(ctx, [call(name, %{"task_id" => "missing-target"})],
+          meta: fn meta ->
+            spec = %{
+              meta.spec
+              | opts: Keyword.put(meta.spec.opts, :assistant_conversation_id, "approval-window")
+            }
+
+            %{meta | spec: spec}
+          end
+        )
+
+      assert_receive {:approval_requested, request}, @deadline
+      assert request.tool_name == name
+      token = make_ref()
+      Process.send_after(self(), {:held_task_approval, token}, hold)
+      assert_receive {:held_task_approval, ^token}, hold + @deadline
+      assert Process.alive?(owner.pid)
+      assert :ok = CommandApproval.respond(request.request_id, :deny)
+      assert [{0, _, ^name, output}] = finish(owner)
+      assert output =~ "denied"
     end
   end
 

@@ -301,9 +301,9 @@ defmodule EvoGit.Sandbox.Helpers do
     `gitdir: <path>` line as produced by `git worktree add`). The pointer
     target is the per-worktree metadata dir (`<common>/worktrees/<name>`);
     git also needs the COMMON dir (objects/refs/logs/packed-refs/config),
-    so the prefix before the LAST "/worktrees/" segment is returned (a
-    subpath rule on the common dir covers the per-worktree dir inside it).
-    A pointer without a "/worktrees/" segment resolves to itself.
+    so only a terminal `/worktrees/<name>` pair is reduced to its parent
+    common directory (a subpath rule covers the metadata inside it).
+    A `worktrees` ancestor elsewhere in the path does not change the target.
   - Otherwise (`.git` is a real directory, or missing):
     - repo_root given → the literal `<repo_root>/.git`.
     - repo_root nil → nil, UNLESS the literal is an existing directory
@@ -329,9 +329,8 @@ defmodule EvoGit.Sandbox.Helpers do
   starting with "gitdir:", strips the prefix, trims whitespace; empty or
   missing → unparseable → falls back to `literal`. The resolved target is
   expanded relative to `base` when not absolute, then reduced to the common
-  git dir (prefix before the last "/worktrees/" segment — `binary_part` on
-  the last match start, NOT `String.split` with parts: 2, which is wrong
-  when the repo path itself contains "/worktrees/").
+  git dir only when its immediate parent is named `worktrees`. A repository
+  or other ancestor named `worktrees` does not imply Git metadata.
   """
   @spec parse_gitdir_pointer(String.t(), String.t(), String.t()) :: String.t()
   def parse_gitdir_pointer(content, base, literal) do
@@ -354,19 +353,15 @@ defmodule EvoGit.Sandbox.Helpers do
       pointer ->
         resolved = Path.expand(pointer, base)
 
-        case :binary.matches(resolved, "/worktrees/") do
-          [] ->
-            resolved
+        parent = Path.dirname(resolved)
 
-          matches ->
-            {start, _len} = List.last(matches)
-
-            case :binary.part(resolved, 0, start) do
-              # Pathological: common dir at filesystem root — never emit a
-              # broken empty path; use the resolved target itself.
-              "" -> resolved
-              common -> common
-            end
+        if Path.basename(parent) == "worktrees" do
+          common = Path.dirname(parent)
+          # Preserve the pathological-root guard: never grant the entire filesystem
+          # merely because the pointer happens to be `/worktrees/<name>`.
+          if Path.dirname(common) == common, do: resolved, else: common
+        else
+          resolved
         end
     end
   end

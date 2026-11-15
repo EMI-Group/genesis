@@ -26,10 +26,14 @@ defmodule EvoGit.SelfReflectiveToolsTest do
     recipes
   end
 
-  test "the repo-less assistant preserves source read tools and offers only the evaluator for control" do
+  test "the repo-less assistant preserves optional source tools and evaluator with structured task controls" do
     names = Enum.map(SelfReflective.available_tools(), & &1.name)
     source_tools = ~w(read rg glob web_fetch list_dir read_context search_context search_history)
-    expected = source_tools ++ ["elixir_eval"]
+
+    expected =
+      source_tools ++
+        ["elixir_eval", "genesis_source"] ++
+        Enum.map(EvoGit.Agent.Tools.GenesisTools.schemas(), & &1.name)
 
     expected =
       if EvoGit.Config.tools_search_enabled?(), do: expected ++ ["web_search"], else: expected
@@ -80,29 +84,20 @@ defmodule EvoGit.SelfReflectiveToolsTest do
   test "the persona states the repo-less situation and the reference-checkout boundary" do
     prompt = SelfReflective.system_prompt()
 
-    assert prompt =~ "You are repo-less: this task has no repository and no worktree"
-    assert prompt =~ "produce no commits, open no branch and merge nothing"
-    assert prompt =~ "the Genesis REFERENCE checkout"
-    assert prompt =~ "It is not an execution target"
-    assert prompt =~ "repo_path is the Genesis source root, not a runtime execution target"
-    assert prompt =~ "You cannot edit files and you cannot run a shell"
+    assert prompt =~ "this conversation has no repository or worktree"
+    assert prompt =~ "Genesis source is optional read-only reference"
+    assert prompt =~ "Source is never an execution target"
+    assert prompt =~ "Do not load launch-directory CONTEXT or project skills"
+    assert prompt =~ "optional selected project scopes task operations"
   end
 
-  test "the persona keeps source inspection read-only, shell-free and write-free" do
+  test "the persona keeps source inspection read-only and uses structured operations first" do
     prompt = SelfReflective.system_prompt()
-
-    assert prompt =~ "Source tools are read-only"
-
-    assert prompt =~
-             "`read`, `rg`, `glob`, `list_dir`, `read_context`, `search_context` (the CONTEXT.md tree) and `search_history` (git log and notes)"
-
-    assert prompt =~ "Network reads use `web_fetch` (one URL, rendered as Markdown)"
-    assert prompt =~ "`web_search` when it is configured"
-    assert prompt =~ "No OS-shell tool (`bash`) or ordinary file-write tools"
-    assert prompt =~ "CONTEXT.md cannot be written"
-
-    assert prompt =~
-             "Every change you make to the world goes through the approval-gated evaluation below"
+    assert prompt =~ "You cannot edit files or run a shell"
+    assert prompt =~ "Prefer the structured Genesis tools"
+    assert prompt =~ "A conversational “yes” does not approve"
+    assert prompt =~ "never automatically resubmit a task"
+    assert prompt =~ "Retain `elixir_eval` for scheduler controls"
   end
 
   test "the persona answers a greeting or capability question with no tool calls, inventory included" do
@@ -134,7 +129,7 @@ defmodule EvoGit.SelfReflectiveToolsTest do
   test "the persona explains all three tiers, exact-code approval and no escalation" do
     prompt = SelfReflective.system_prompt()
 
-    assert prompt =~ "`elixir_eval` is your one action tool"
+    assert prompt =~ "Retain `elixir_eval` for scheduler controls"
     assert prompt =~ "`tier` (`read`, `write`, or `sudo`; default `read`)"
     assert prompt =~ "`timeout_ms` and `max_output_bytes`"
     assert prompt =~ "**Read tier:** Dune sandbox evaluation"

@@ -520,11 +520,9 @@ defmodule EvoDash.NodeContextTest do
           EvoDash.NodeContext.approval_response(:"nonexistent-node@nowhere", "r1", "approve")
         end)
 
-      if node() == :nonode@nohost do
-        assert result == {:error, {:error, {:erpc, :noconnection}}}
-      else
-        assert result == {:error, :nodedown}
-      end
+      # Distribution may change between the call and this assertion in the async suite.
+      # Both documented transport failures satisfy the totality contract.
+      assert result in [{:error, {:error, {:erpc, :noconnection}}}, {:error, :nodedown}]
     end
   end
 

@@ -18,10 +18,12 @@ defmodule EvoDashWeb.HomeLive.UserMessage do
   attr(:entry, :map, required: true)
 
   def user_message(assigns) do
+    # Formatting inside whitespace-pre-wrap would add visible template whitespace.
     ~H"""
-    <div class="w-fit max-w-[85%] sm:max-w-[80%] rounded-3xl rounded-br-md bg-base-200 px-4 py-2.5 text-left text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content">
-      {Map.get(@entry, :text, "")}
-    </div>
+    <div
+      phx-no-format
+      class="w-fit max-w-[85%] sm:max-w-[80%] rounded-3xl rounded-br-md bg-base-200 px-4 py-2.5 text-left text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content"
+    >{Map.get(@entry, :text, "")}</div>
     """
   end
 end

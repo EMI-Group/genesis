@@ -29,6 +29,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
       task_status: Keyword.get(opts, :task_status, nil),
       thought_process: Keyword.get(opts, :thought_process, []),
       raw: Keyword.get(opts, :raw, false),
+      stream_unavailable: Keyword.get(opts, :stream_unavailable, false),
       stream_meta: Keyword.get(opts, :stream_meta)
     )
   end
@@ -596,6 +597,34 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
         assert AgentStream.extract_failed_message(payload) == expected,
                "unexpected message for #{inspect(payload)}"
       end
+    end
+  end
+
+  test "a failed live subscription shows unknown status instead of a running animation" do
+    for text <- ["", "partial reply"] do
+      html =
+        render_card(
+          entry: %{id: "lost", role: :assistant, text: text, streaming: true},
+          task_status: :running,
+          stream_unavailable: true
+        )
+
+      dom = Floki.parse_document!(html)
+      assert Floki.find(dom, "[data-stream-unavailable]") != []
+
+      assert Floki.find(dom, ".animate-bounce, .animate-ping, .help-caret, .loading-spinner") ==
+               []
+
+      if text != "",
+        do: assert(dom |> Floki.find("[data-disconnected-partial]") |> Floki.text() == text)
+    end
+  end
+
+  test "confirmed terminal badges remain visible after a later watch failure" do
+    for status <- [:completed, :failed, :cancelled] do
+      dom = render_card(task_status: status, stream_unavailable: true) |> Floki.parse_document!()
+      assert Floki.find(dom, ".badge") != []
+      assert Floki.find(dom, ".animate-bounce, .animate-ping, .help-caret") == []
     end
   end
 end

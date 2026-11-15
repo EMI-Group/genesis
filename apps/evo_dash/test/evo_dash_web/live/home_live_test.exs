@@ -117,6 +117,21 @@ defmodule EvoDashWeb.HomeLiveTest do
     # node_aware_test.exs / chat_history_test.exs convention).
     EvoDash.ChatHistory.reset()
 
+    install_session_seam(:home_session_workspace_send_runner, fn target,
+                                                                 agent,
+                                                                 message,
+                                                                 policy,
+                                                                 _workspace ->
+      runner =
+        Application.get_env(
+          :evo_dash,
+          :home_session_send_runner,
+          &EvoDash.NodeContext.send_session_message/4
+        )
+
+      runner.(target, agent, message, policy)
+    end)
+
     # `EvoDash.ActiveTasks` is a process-less public-ETS module (NOT a GenServer) over
     # the boot-created, process-wide `:evo_dash_active_tasks` table, so it is shared by
     # the whole run and untouched by the `EvoDash.Test.IsolatedTaskStore.isolate!/1` above.
@@ -443,7 +458,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, _view, html} = live(conn, "/assistant")
 
       assert page_heading(html) == "Genesis Assistant"
-      assert html =~ "Start a conversation"
+      assert html =~ "Turn ideas into working software"
 
       # Match the hook's exact localized label contract for every browser state.
       host = html |> Floki.parse_document!() |> Floki.find("#assistant-notifications")
@@ -468,7 +483,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       # New chat is enabled on idle (it is disabled only while a chat is
       # running); Stop is disabled when nothing is running.
-      assert present?(html, ~s(button[phx-click="new_chat"]))
+      refute present?(html, ~s(button[phx-click="new_chat"]))
       refute disabled?(html, ~s(button[phx-click="new_chat"]))
       assert present?(html, ~s(button[phx-click="stop"]))
       assert disabled?(html, ~s(button[phx-click="stop"]))
@@ -480,7 +495,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # ChatGPT-style empty state: greeting + 4 suggestion chips, each wired to
       # the send_message event with its message text as the phx-value (so
       # clicking a chip submits it through the existing handle_event clause).
-      assert html =~ "What would you like Genesis to do?"
+      assert html =~ "Turn ideas into working software"
 
       chips =
         html
@@ -637,7 +652,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # No optimistic bubbles, no task, still idle.
       assert assigns(view).chat_status == :idle
       assert assigns(view).chat_task_id == nil
-      assert html =~ "Start a conversation"
+      assert html =~ "Turn ideas into working software"
       assert EvoGit.TaskRegistry.get_task(fixture_id) != nil
       assert length(EvoGit.Store.safe_select_all_tasks(EvoGit.Store)) == 1
     end
@@ -697,7 +712,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).chat_status == :idle
 
       html = render_click(view, "new_chat", %{})
-      assert html =~ "Start a conversation"
+      assert html =~ "Turn ideas into working software"
       assert assigns(view).chat_status == :idle
       assert assigns(view).chat_task_id == nil
       refute disabled?(html, ~s(button[type="submit"]))
@@ -724,7 +739,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       new_id = assigns(view).chat_id
 
       assert new_id != nil and new_id != old_id
-      assert html =~ "Start a conversation"
+      assert html =~ "Turn ideas into working software"
       assert assigns(view).transcript == []
       assert assigns(view).chat_status == :idle
       assert assigns(view).chat_task_id == nil
@@ -747,7 +762,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       html = render_click(view, "new_chat", %{})
       new_id = assigns(view).chat_id
 
-      assert html =~ "Start a conversation"
+      assert html =~ "Turn ideas into working software"
       assert EvoDash.ChatHistory.current_chat_id() == new_id
       assert length(EvoDash.ChatHistory.list_chats()) == 10
       refute first_id in EvoDash.ChatHistory.list_chats()
@@ -2205,7 +2220,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute present?(html, ~s(select[name="model_id"]))
       # The picker moved from the header into the composer card's control bar
       # (still inside the ONE `#chat-form`).
-      assert present?(html, "#chat-form #chat-composer-controls #chat-llm-selection")
+      assert present?(html, "#chat-composer-controls #chat-llm-selection")
       refute present?(html, "#chat-header #chat-llm-selection")
       refute present?(html, "form#chat-llm-selection-form")
       dom = Floki.parse_document!(html)
@@ -2344,7 +2359,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # Placement: the capsule is a control in the composer card, not the
       # header; it renders inside the ONE `#chat-form` but owns its own
       # `phx-click` bindings, so no form submission is involved.
-      assert present?(html, "#chat-form #chat-composer-controls #chat-llm-selection")
+      assert present?(html, "#chat-composer-controls #chat-llm-selection")
       refute present?(html, "#chat-header #chat-llm-selection")
 
       # Typing still drives the draft through the form-level `chat_input`.
@@ -2392,9 +2407,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       # The submit control lives in the same control bar row as the capsule.
       assert present?(html, "#chat-composer-controls button[type=\"submit\"]")
       assert present?(html, "#chat-composer-controls #chat-llm-selection")
-      assert disabled?(html, ~s(#chat-form button[type="submit"])) == false
+      assert disabled?(html, ~s(button[form="chat-form"][type="submit"])) == true
 
-      render_change(view, "chat_input", %{"message" => "sent from the composer"})
+      ready = render_change(view, "chat_input", %{"message" => "sent from the composer"})
+      assert disabled?(ready, ~s(button[form="chat-form"][type="submit"])) == false
 
       # A REAL form submit: the test client resolves `phx-submit` from the
       # `#chat-form` DOM node and collects the form's own input values.
@@ -2442,7 +2458,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, html} = live(conn, "/assistant")
       assert assigns(view).model_selection_error == :invalid_model_spec
-      assert disabled?(html, ~s(#chat-form button[type="submit"]))
+      assert disabled?(html, ~s(button[form="chat-form"][type="submit"]))
       html = render_submit(view, "send_message", %{"message" => "keep this draft"})
       assert html =~ "Choose a valid model before sending a message."
       assert assigns(view).chat_draft == "keep this draft"
@@ -2523,7 +2539,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       render_change(view, "select_reasoning_effort", %{"reasoning_effort" => "2"})
       old_chat_id = assigns(view).chat_id
       html = render_click(view, "new_chat", %{})
-      assert html =~ "Start a conversation"
+      assert html =~ "Turn ideas into working software"
       assert assigns(view).chat_id != old_chat_id
       assert assigns(view).transcript == []
       assert assigns(view).model_spec == work_spec("high")
@@ -2829,7 +2845,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       html = render_click(view, "stop", %{})
       assert assigns(view).chat_status == :idle
       assert assigns(view).chat_task_id == nil
-      assert html =~ "Start a conversation"
+      assert html =~ "Turn ideas into working software"
     end
   end
 
@@ -3034,8 +3050,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, _html} = live(conn, "/assistant")
       seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
 
-      # Nothing pending: the strip keeps its reserved height but renders no
-      # count/Review, and no dialog is mounted.
+      # Preserve the shared notification/approval strip without a pending count or dialog.
       html = render(view)
       assert present?(html, "#approval-status-bar")
       assert approval_strip_count(html) == ""
@@ -3655,7 +3670,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       # Model a scope moving before its old asynchronous result can land.
       # Use the SAME task refs to ensure the full chat scope, not only the
       # own-request predicate, is checked by the page's forwarding handler.
-      seed_chat_state(view, %{chat_id: "different-chat"})
+      seed_chat_state(view, %{
+        chat_id: "different-chat",
+        assistant_conversation_id: "different-chat"
+      })
 
       html =
         send_and_render(
@@ -4245,138 +4263,163 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
   end
 
-  describe "genesis source gate" do
-    # The gate's availability/clone runners are read from the app env AT SPAWN
-    # TIME inside EvoDash.TaskSupervisor children, so tests stub them BEFORE
-    # live/3 and restore the originals in on_exit (the system_live_test.exs
-    # "genesis source card" restore_env_value/2 idiom). The default runners
-    # degrade to {:unavailable, :function_missing} while the core
-    # EvoGit.SelfReflectiveSource backend is absent, so the gate stays OFF for
-    # every test that does not stub it.
-    setup do
-      keys = [:source_availability_runner, :source_clone_runner]
-      originals = Map.new(keys, fn key -> {key, Application.get_env(:evo_dash, key)} end)
+  describe "optional project and source context" do
+    test "atomic workspace send failure preserves the unsent draft and conversation", %{
+      conn: conn
+    } do
+      test_pid = self()
+      workspace = %{path: "/tmp/project", node: node(), node_id: nil, name: "project"}
 
-      on_exit(fn ->
-        Enum.each(originals, fn {key, original} -> restore_env_value(key, original) end)
+      install_session_seam(:home_session_workspace_send_runner, fn target,
+                                                                   agent,
+                                                                   message,
+                                                                   policy,
+                                                                   selected ->
+        send(test_pid, {:atomic_send_attempt, target, agent, message, policy, selected})
+        {:error, :workspace_changed}
       end)
 
-      :ok
-    end
-
-    test "known-unavailable source shows the gate and blocks the composer", %{conn: conn} do
-      Application.put_env(:evo_dash, :source_availability_runner, fn -> false end)
-
-      # An unrelated pre-existing row proves a blocked send persists nothing new.
-      fixture_id = insert_task_fixture!(opts: [path: "/tmp/test", objective: "fixture"])
-
-      {:ok, view, _html} = live(conn, "/assistant")
-      html = await_source_available(view, false)
-
-      # Gate container + Download button render (idle → enabled, "Download source").
-      assert present?(html, "#genesis-source-gate")
-      assert present?(html, "#genesis-source-download")
-      assert html =~ "has not been downloaded yet"
-      assert html =~ "Download source"
-      refute html =~ "Cloning…"
-      refute disabled?(html, "#genesis-source-download")
-      # Secondary node-aware link to the System page (local node → /system).
-      assert present?(html, ~s(#genesis-source-gate a[href="/system"]))
-
-      # The empty state swaps the suggestion chips for the blocked note.
-      assert html =~ "Download the Genesis source to start chatting."
-      refute html =~ "Show my running tasks"
-
-      # Composer blocked: textarea + Send button disabled.
-      assert disabled?(html, ~s(textarea[name="message"]))
-      assert disabled?(html, ~s(button[type="submit"]))
-
-      # A submit is a defensive no-op: no optimistic bubble, no :reflect task,
-      # error flash pointing at the Download button. (Wrapped in the send
-      # helper for uniformity — it starts no task, so the terminal await is
-      # immediately satisfied and no async registry log can escape.)
-      {html, _log} =
-        send_and_await_terminal(fn ->
-          render_submit(view, "send_message", %{"message" => "hello genesis"})
-        end)
-
-      assert html =~ "Download the Genesis source before sending a message."
-      refute html =~ "hello genesis"
-      assert assigns(view).chat_task_id == nil
-      assert assigns(view).chat_status == :idle
+      {:ok, view, _} = live(conn, "/assistant")
+      seed_session_state(view, 987_653, %{chat_draft: "keep this draft", workspace: workspace})
+      html = render_submit(view, "send_message", %{"message" => "keep this draft"})
+      assert html =~ "project selection changed in another view"
+      assert_receive {:atomic_send_attempt, _, 987_653, "keep this draft", :queue, ^workspace}
+      assert assigns(view).chat_draft == "keep this draft"
       assert assigns(view).transcript == []
-
-      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-      assert Enum.filter(tasks, &(&1.type == :reflect)) == []
-      assert EvoGit.TaskRegistry.get_task(fixture_id) != nil
+      assert assigns(view).session_id == 987_653
     end
 
-    test "available source renders no gate and the send path stays open", %{conn: conn} do
-      Application.put_env(:evo_dash, :source_availability_runner, fn -> true end)
+    test "missing source leaves ordinary chat available", %{conn: conn} do
+      install_session_seam(:source_availability_runner, fn -> false end)
+      test_pid = self()
 
-      {:ok, view, _html} = live(conn, "/assistant")
-      html = await_source_available(view, true)
+      install_session_seam(:home_session_start_runner, fn _, opts ->
+        send(test_pid, {:workspace_probe_start, opts})
+        {:error, :probe_complete}
+      end)
 
-      # No gate, chips intact, composer enabled — the gate's open state is the
-      # subject; a full real task run is not (the send-path contract is pinned
-      # by the canonical send test in "send message").
-      refute present?(html, "#genesis-source-gate")
-      refute html =~ "Download the Genesis source to start chatting."
-      assert html =~ "Show my running tasks"
-      refute disabled?(html, ~s(textarea[name="message"]))
-      refute disabled?(html, ~s(button[type="submit"]))
-      assert assigns(view).source_available == true
+      {:ok, view, _} = live(conn, "/assistant")
+      await_source_available(view, false)
+      refute has_element?(view, "#genesis-source-gate")
+      refute has_element?(view, "textarea[name=message][disabled]")
+      render_submit(view, "send_message", %{"message" => "hello without a project"})
+      assert_receive {:workspace_probe_start, opts}
+      assert opts[:objective] == "hello without a project"
+      assert opts[:assistant_workspace] == nil
+      assert opts[:assistant_conversation_id] == assigns(view).assistant_conversation_id
     end
 
-    test "a successful download clears the gate (busy → post-clone re-check)", %{conn: conn} do
-      Application.put_env(:evo_dash, :source_availability_runner, fn -> false end)
+    test "selecting and clearing a project preserves the draft and survives a new chat", %{
+      conn: conn
+    } do
+      root =
+        Path.join(
+          System.tmp_dir!(),
+          "assistant-live-workspace-#{System.unique_integer([:positive])}"
+        )
 
-      {:ok, view, _html} = live(conn, "/assistant")
-      html = await_source_available(view, false)
-      assert present?(html, "#genesis-source-gate")
+      File.mkdir_p!(root)
 
-      # The post-clone re-check now reports the source as downloaded. The
-      # "Cloning…" busy state asserted below is assigned SYNCHRONOUSLY by the
-      # `download_source` event handler, and `render_click/1`'s reply carries
-      # the render taken immediately after that handler returns (the LiveView
-      # process cannot process the clone-result message before then) — so the
-      # busy markup is deterministic and the stub needs no artificial delay.
-      # The post-clone settle is waited for with the bounded `wait_until/1`
-      # poll below.
-      Application.put_env(:evo_dash, :source_availability_runner, fn -> true end)
+      on_exit(fn ->
+        EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.forget_project(node(), root) end)
+        File.rm_rf!(root)
+      end)
 
-      Application.put_env(:evo_dash, :source_clone_runner, fn -> {:ok, %{}} end)
-      html = render_click(view, "download_source")
-      assert html =~ "Cloning…"
-      assert disabled?(html, "#genesis-source-download")
-
-      # The clone result clears the busy marker and re-runs the availability
-      # check → the gate disappears and the composer is usable again.
-      wait_until(fn -> assigns(view)[:source_busy] == nil end)
-      html = await_source_available(view, true)
-
-      refute present?(html, "#genesis-source-gate")
-      refute html =~ "has not been downloaded yet"
-      refute disabled?(html, ~s(textarea[name="message"]))
-      assert html =~ "Show my running tasks"
+      {:ok, view, _} = live(conn, "/assistant")
+      render_change(view, "chat_input", %{"message" => "keep my draft"})
+      render_click(view, "workspace_toggle")
+      wait_until(fn -> assigns(view).workspace_loading == false end)
+      view |> form("#workspace-form", workspace: %{path: root}) |> render_submit()
+      wait_until(fn -> assigns(view).workspace != nil end)
+      assert assigns(view).workspace.path == root
+      assert assigns(view).chat_draft == "keep my draft"
+      assert has_element?(view, "#workspace-toggle[title='#{root}']")
+      render_click(view, "new_chat")
+      assert assigns(view).workspace.path == root
+      render_change(view, "chat_input", %{"message" => "another draft"})
+      render_click(view, "workspace_clear")
+      assert assigns(view).workspace == nil
+      assert assigns(view).chat_draft == "another draft"
     end
 
-    test "a failing download flashes the error and keeps the gate", %{conn: conn} do
-      Application.put_env(:evo_dash, :source_availability_runner, fn -> false end)
+    test "invalid project selection reports an inline error without losing the draft", %{
+      conn: conn
+    } do
+      {:ok, view, _} = live(conn, "/assistant")
+      render_change(view, "chat_input", %{"message" => "unfinished message"})
+      render_click(view, "workspace_toggle")
+      wait_until(fn -> assigns(view).workspace_loading == false end)
+      view |> form("#workspace-form", workspace: %{path: "relative-project"}) |> render_submit()
+      wait_until(fn -> assigns(view).workspace_error != nil end)
+      assert has_element?(view, "#workspace-error")
+      assert assigns(view).workspace == nil
+      assert assigns(view).chat_draft == "unfinished message"
+    end
+  end
 
-      Application.put_env(:evo_dash, :source_clone_runner, fn -> {:error, :boom} end)
-      {:ok, view, _html} = live(conn, "/assistant")
-      html = await_source_available(view, false)
-      assert present?(html, "#genesis-source-gate")
+  describe "followed development tasks" do
+    test "restoring a session retains its pending action identity instead of allowing a second operation",
+         %{conn: conn} do
+      session_id = 987_654
+      conversation = 123_789
+      captured_scope = {node(), conversation}
+      operation_id = "operation-still-pending"
 
-      render_click(view, "download_source")
-      wait_until(fn -> assigns(view)[:source_busy] == nil end)
+      install_session_seam(:home_session_attach_runner, fn _, ^session_id ->
+        parked_attach(session_id)
+      end)
 
-      html = render(view)
-      assert html =~ "Failed to download the Genesis source"
-      assert html =~ ":boom"
-      # Still unavailable → the gate stays.
-      assert present?(html, "#genesis-source-gate")
+      seed_cached_chat(session_id, [])
+      stored = EvoDash.ChatHistory.get_state(session_id)
+
+      EvoDash.ChatHistory.put_state(
+        session_id,
+        Map.merge(stored, %{
+          assistant_conversation_id: conversation,
+          task_action_ids: %{captured_scope => operation_id},
+          task_action_pending: MapSet.new([captured_scope])
+        })
+      )
+
+      # A fresh mount first restores a different current draft, then resolves ?session.
+      EvoDash.ChatHistory.new_chat()
+      {:ok, view, _} = live(conn, "/assistant?session=#{session_id}")
+      assert assigns(view).task_action_ids[captured_scope] == operation_id
+      assert MapSet.member?(assigns(view).task_action_pending, captured_scope)
+      assert has_element?(view, "#assistant-follow-task button[disabled]")
+      render_click(view, "assistant_task_cancel", %{"task_id" => "any-task"})
+      assert assigns(view).task_action_ids[captured_scope] == operation_id
+    end
+
+    test "following real task snapshots produces isolated cards for each conversation", %{
+      conn: conn
+    } do
+      first =
+        insert_task_fixture!(opts: [path: "/tmp/assistant-project-one", objective: "first task"])
+
+      second =
+        insert_task_fixture!(opts: [path: "/tmp/assistant-project-two", objective: "second task"])
+
+      {:ok, first_view, _} = live(conn, "/assistant")
+      first_conversation = assigns(first_view).assistant_conversation_id
+      first_view |> form("#assistant-follow-task", task_id: first) |> render_submit()
+      wait_until(fn -> has_element?(first_view, "#assistant-task-#{first}") end)
+      assert [task] = assigns(first_view).tracked_tasks
+      assert task.path == "/tmp/assistant-project-one"
+
+      {:ok, second_view, _} = live(conn, "/assistant")
+      render_click(second_view, "new_chat")
+      assert assigns(second_view).assistant_conversation_id != first_conversation
+      refute has_element?(second_view, "#assistant-task-#{first}")
+      second_view |> form("#assistant-follow-task", task_id: second) |> render_submit()
+      wait_until(fn -> has_element?(second_view, "#assistant-task-#{second}") end)
+      refute has_element?(second_view, "#assistant-task-#{first}")
+      refute has_element?(first_view, "#assistant-task-#{second}")
+
+      # Restoring the earlier conversation loads its own server-side links.
+      {:ok, restored, _} = live(conn, "/assistant?session=#{first_conversation}")
+      wait_until(fn -> has_element?(restored, "#assistant-task-#{first}") end)
+      refute has_element?(restored, "#assistant-task-#{second}")
     end
   end
 
@@ -4446,7 +4489,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # Patching back to "/assistant" (no ?node=) switches to local → a NEW chat.
       html = render_patch(view, "/assistant")
       assert assigns(view).current_node == node()
-      assert html =~ "Start a conversation"
+      assert html =~ "Turn ideas into working software"
       assert assigns(view).chat_status == :idle
       assert assigns(view).chat_task_id == nil
       new_id = assigns(view).chat_id
@@ -4545,7 +4588,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute present?(html, "#genesis-source-gate")
       refute html =~ "Download the Genesis source to start chatting."
       refute disabled?(html, ~s(textarea[name="message"]))
-      assert disabled?(html, ~s(#chat-form button[type="submit"]))
+      assert disabled?(html, ~s(button[form="chat-form"][type="submit"]))
       assert html =~ "Show my running tasks"
     end
   end
@@ -4911,6 +4954,38 @@ defmodule EvoDashWeb.HomeLiveTest do
       cleanup_task_on_exit(task.id)
     end
 
+    test "an attachment-only message survives one-shot fallback and clears staged media", %{
+      conn: conn
+    } do
+      install_session_seam(:home_session_start_runner, fn _, _ ->
+        {:error, :session_api_unavailable}
+      end)
+
+      {:ok, view, _} = live(conn, "/assistant")
+      raw = <<137, 80, 78, 71, 0, 255>>
+
+      upload =
+        file_input(view, "#chat-upload-form", :chat_files, [
+          %{name: "fallback.png", type: "image/png", content: raw}
+        ])
+
+      view |> form("#chat-upload-form") |> render_change(upload)
+      render_upload(upload, "fallback.png")
+      send_and_await_terminal(fn -> render_submit(view, "send_message", %{"message" => ""}) end)
+
+      assert [task] =
+               Enum.filter(
+                 EvoGit.Store.safe_select_all_tasks(EvoGit.Store),
+                 &(&1.type == :reflect)
+               )
+
+      assert [image] = opt(task, :attachments)
+      assert Base.decode64!(image["data"]) == raw
+      assert image["name"] == "fallback.png"
+      assert EvoDashWeb.HomeLive.Attachments.count(assigns(view).pending_attachments) == 0
+      cleanup_task_on_exit(task.id)
+    end
+
     test "a wrapped interactive_root_only refusal also falls back to one-shot mode", %{
       conn: conn
     } do
@@ -5070,7 +5145,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # `handle_params` reattaches on the FIRST connected render, so the CACHED
       # conversation is already visible (not an empty state).
       assert html =~ "cached text"
-      refute html =~ "What would you like Genesis to do?"
+      refute html =~ "Turn ideas into working software"
       assert assigns(view).session_id == session_id
       assert assigns(view).session_mode == :interactive
 
@@ -5264,7 +5339,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # Nothing was cached and nothing was fetched, so the ended-session state
       # replaces the greeting (whose suggestion chips could only send doomed
       # messages) and offers the explicit New-chat affordance.
-      refute html =~ "What would you like Genesis to do?"
+      refute html =~ "Turn ideas into working software"
       refute present?(html, ~s(#chat-messages button[phx-value-message]))
       assert present?(html, "#chat-session-ended")
       assert html =~ "This session has ended."
@@ -5550,13 +5625,15 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).queued_echoes == []
     end
 
-    test "a successful Stop clears the queued echo", %{conn: conn} do
+    test "stopping a reply keeps the session and queued input until authoritative state", %{
+      conn: conn
+    } do
       test_pid = self()
       local_node = node()
       echo = %{id: "echo-1", text: "queued message", at: System.system_time(:millisecond)}
 
-      install_session_seam(:home_session_close_runner, fn node, agent_id, reason ->
-        send(test_pid, {:session_close_called, node, agent_id, reason})
+      install_session_seam(:home_session_stop_runner, fn node, agent_id ->
+        send(test_pid, {:session_stop_called, node, agent_id})
         :ok
       end)
 
@@ -5566,10 +5643,11 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       render_click(view, "stop")
 
-      # The close runs synchronously through the seam (the page is interactive
-      # with a session and no task id, so Stop closes the session).
-      assert_receive {:session_close_called, ^local_node, 7002, :normal}
-      assert assigns(view).queued_echoes == []
+      assert_receive {:session_stop_called, ^local_node, 7002}
+      assert assigns(view).session_id == 7002
+      assert assigns(view).chat_status == :running
+      assert assigns(view).queued_echoes == [echo]
+      assert has_element?(view, "#workspace-toggle[disabled]")
     end
 
     test "New chat clears the queued echo", %{conn: conn} do
@@ -5609,8 +5687,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       html = render_click(view, "interrupt_turn")
 
-      # The interrupt is NOT a queue: the running turn is pre-empted so the
-      # draft reaches the agent at the next boundary, phrased as `:interrupt`.
+      # The compatibility policy also queues for the next turn boundary.
       assert_receive {:session_send_called, ^local_node, 7004, "do it now", :interrupt}
 
       assigns = assigns(view)
@@ -5624,6 +5701,52 @@ defmodule EvoDashWeb.HomeLiveTest do
   end
 
   describe "interactive session attachments" do
+    test "upload progress blocks forged send and interrupt events", %{conn: conn} do
+      parent = self()
+
+      install_session_seam(:home_session_send_runner, fn _, _, _, _ ->
+        send(parent, :unexpected_upload_send)
+        :ok
+      end)
+
+      {:ok, view, _} = live(conn, "/assistant")
+      seed_session_state(view, 7081, %{chat_status: :running, upload_in_progress: true})
+      render_submit(view, "send_message", %{"message" => "must wait for upload"})
+      render_click(view, "interrupt_turn", %{"message" => "must also wait"})
+      refute_receive :unexpected_upload_send
+      assert assigns(view).upload_in_progress
+    end
+
+    test "a browser image alone sends empty text with one base64 conversion", %{conn: conn} do
+      parent = self()
+      local = node()
+      raw = <<137, 80, 78, 71, 0, 255>>
+
+      install_session_seam(:home_session_send_runner, fn target, id, message, policy ->
+        send(parent, {:attachment_only_sent, target, id, message, policy})
+        :ok
+      end)
+
+      {:ok, view, _} = live(conn, "/assistant")
+
+      upload =
+        file_input(view, "#chat-upload-form", :chat_files, [
+          %{name: "only-image.png", type: "image/png", content: raw}
+        ])
+
+      view |> form("#chat-upload-form") |> render_change(upload)
+      render_upload(upload, "only-image.png")
+      seed_session_state(view, 7082)
+      render_submit(view, "send_message", %{"message" => ""})
+
+      assert_receive {:attachment_only_sent, ^local, 7082, %{text: "", attachments: [image]},
+                      :queue}
+
+      assert Base.decode64!(image["data"]) == raw
+      assert image["name"] == "only-image.png"
+      assert EvoDashWeb.HomeLive.Attachments.count(assigns(view).pending_attachments) == 0
+    end
+
     test "a staged TEXT attachment rides the send as appended message text", %{conn: conn} do
       test_pid = self()
       local_node = node()

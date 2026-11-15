@@ -7073,3 +7073,99 @@ msgstr "槽位以服務商設定檔為單位共用——同一設定檔下的模
 #, elixir-autogen, elixir-format
 msgid "These are request vocabulary choices, not verified support for this model or endpoint. Select only levels you have confirmed."
 msgstr "這些是請求用語選項，並不代表此模型或端點已驗證支援。請僅選取您已確認的層級。"
+
+msgid "Live updates are unavailable. The conversation may still be running. Retry to reconnect."
+msgstr "即時更新暫時無法使用，對話可能仍在進行。請重試連線。"
+
+msgid "Updates disconnected. Reply status is unknown; reconnect to check."
+msgstr "即時更新已中斷，暫時無法確認回覆狀態，請重新連線查看。"
+
+msgid "Where shall we start?"
+msgstr "我們從哪裡開始？"
+
+msgid "Select project"
+msgstr "選擇專案"
+
+msgid "Attach a file"
+msgstr "加入附件"
+
+msgid "Add attachment"
+msgstr "加入附件"
+
+msgid "Full directory path"
+msgstr "完整目錄路徑"
+
+msgid "Turn ideas into working software"
+msgstr "讓想法成為作品"
+
+msgid "Attach"
+msgstr "新增"
+
+msgid "Upload files from this computer"
+msgstr "從目前電腦上傳檔案"
+
+msgid "Up to 4 files, 15 MiB each. Text, PDF, Word, images and audio."
+msgstr "最多 4 個檔案，每個 15 MiB。支援文字、PDF、Word、圖片與音訊。"
+
+msgid "Add from Genesis server path"
+msgstr "從 Genesis 伺服器路徑新增"
+
+msgid "Absolute file path on the selected server"
+msgstr "所選伺服器上的檔案絕對路徑"
+
+msgid "Uploading %{name}: %{progress}%"
+msgstr "正在上傳 %{name}：%{progress}%"
+
+msgid "Cancel upload"
+msgstr "取消上傳"
+
+msgid "Dismiss upload error"
+msgstr "關閉上傳錯誤"
+
+msgid "Each file must be 15 MiB or smaller."
+msgstr "每個檔案不能超過 15 MiB。"
+
+msgid "This file type is not supported."
+msgstr "不支援此檔案類型。"
+
+msgid "Upload failed. Choose the file again."
+msgstr "上傳失敗，請重新選擇檔案。"
+
+msgid "Adding a server file is unavailable on the selected node. Upload a file from this computer instead."
+msgstr "所選節點不支援從伺服器路徑新增檔案，請從目前電腦上傳。"
+
+msgid "Choose a task to follow"
+msgstr "選擇要跟進的任務"
+
+msgid "Refresh tasks"
+msgstr "重新整理任務"
+
+msgid "Search task names or projects"
+msgstr "搜尋任務名稱或專案"
+
+msgid "Loading tasks…"
+msgstr "正在載入任務…"
+
+msgid "Could not load tasks. Check the selected node and retry."
+msgstr "無法載入任務，請檢查所選節點後重試。"
+
+msgid "No tasks yet. Tasks you create will appear here."
+msgstr "暫無任務，建立後會顯示在這裡。"
+
+msgid "No matching tasks. Try another name or project."
+msgstr "沒有符合的任務，試試其他名稱或專案。"
+
+msgid "Load more tasks"
+msgstr "載入更多任務"
+
+msgid "Following"
+msgstr "已跟進"
+
+msgid "Enter a task ID instead"
+msgstr "透過任務 ID 新增"
+
+msgid "Awaiting input"
+msgstr "等待輸入"
+
+msgid "Save agent checkpoints"
+msgstr "儲存 Agent 檢查點"

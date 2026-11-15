@@ -371,6 +371,281 @@ defmodule EvoGit.Agent.SessionTest do
     end
   end
 
+  describe "stop current interactive reply" do
+    test "stops a blocked model, keeps the session, and resumes with the queued input intact",
+         %{agent_id: id, tmp_dir: tmp} do
+      parent = self()
+
+      llm = fn context, _, _, _, _ ->
+        send(parent, {:stop_test_llm, self(), context})
+
+        receive do
+          :finish_reply ->
+            {:implicit_completion, response(context, "resumed answer"), "resumed answer"}
+        end
+      end
+
+      ctx = dispatch_ctx(id, tmp, llm_call: llm) |> Keyword.put(:session_mode, :interactive)
+      {:ok, pid, _} = start_session(ctx)
+      assert_receive {:stop_test_llm, worker, _}, 5_000
+      worker_ref = Process.monitor(worker)
+      assert :ok = Session.stop_current_turn(pid)
+      assert_receive {:DOWN, ^worker_ref, :process, ^worker, _}, 5_000
+      assert {:ok, %{phase: :awaiting_input}} = Session.inspect(pid)
+      assert Process.alive?(pid)
+      assert :ok = Session.stop_current_turn(pid)
+      assert :ok = Session.start_input(pid, "second question")
+      assert_receive {:stop_test_llm, worker2, context}, 5_000
+      assert transcript_text(context.messages) =~ "second question"
+
+      assert transcript_text(context.messages) =~
+               "Tool operations already executed remain in effect"
+
+      send(worker2, :finish_reply)
+      assert {:ok, %{phase: :awaiting_input}} = wait_phase(pid, :awaiting_input)
+      assert transcript_text(Session.history(pid)) =~ "resumed answer"
+      # A late outcome from the killed worker cannot close this conversation.
+      send(pid, {:exchange_finished, worker, {:error, :stale}})
+      assert {:ok, %{phase: :awaiting_input}} = Session.inspect(pid)
+    end
+
+    test "settles an executing tool and preserves its result before stopping",
+         %{agent_id: id, tmp_dir: tmp} do
+      parent = self()
+
+      llm = fn context, _, _, _, _ ->
+        call = ReqLLM.ToolCall.new("stop-tool", "read", %{file_path: "unused"})
+        message = %ReqLLM.Message{role: :assistant, content: [], tool_calls: [call]}
+
+        {:ok,
+         %{
+           response(context, "")
+           | message: message,
+             context: ReqLLM.Context.append(context, message)
+         }}
+      end
+
+      batch = fn [{_call, 0}], _state ->
+        send(parent, {:stop_test_tool, self()})
+
+        receive do
+          :settle_tool -> :ok
+        end
+
+        send(parent, :tool_effect_completed)
+        [{0, "stop-tool", "read", "real settled tool result"}]
+      end
+
+      ctx =
+        dispatch_ctx(id, tmp, llm_call: llm, tool_batch: batch)
+        |> Keyword.put(:session_mode, :interactive)
+
+      {:ok, pid, _} = start_session(ctx)
+      assert_receive {:stop_test_tool, worker}, 5_000
+      assert :ok = Session.stop_current_turn(pid)
+      assert Process.alive?(worker)
+      assert {:ok, %{phase: :running}} = Session.inspect(pid)
+      send(worker, :settle_tool)
+      assert_receive :tool_effect_completed, 5_000
+      assert {:ok, %{phase: :awaiting_input}} = wait_phase(pid, :awaiting_input)
+      assert transcript_text(Session.history(pid)) =~ "real settled tool result"
+      assert Process.alive?(pid)
+    end
+
+    test "does not turn a one-shot cancellation into an idle session",
+         %{agent_id: id, tmp_dir: tmp} do
+      {:ok, pid, _} = start_session(dispatch_ctx(id, tmp, llm_call: blocking_llm_call(self())))
+      assert_receive {:llm_blocked, _}, 5_000
+      assert {:error, {:bad_state, :running}} = Session.stop_current_turn(pid)
+      assert {:ok, %{phase: :running}} = Session.inspect(pid)
+    end
+  end
+
+  test "workspace updates are idle-only and replace trusted metadata without reading project files",
+       %{agent_id: id, tmp_dir: tmp} do
+    File.write!(Path.join(tmp, "CONTEXT.md"), "DO_NOT_READ_SELECTED_PROJECT")
+
+    ctx =
+      dispatch_ctx(id, tmp, llm_call: blocking_llm_call(self()))
+      |> Keyword.put(:session_mode, :interactive)
+
+    spec = %{
+      ctx[:spec]
+      | agent_module: EvoGit.Agents.SelfReflective,
+        opts: Keyword.put(ctx[:spec].opts, :assistant_conversation_id, "original-conversation")
+    }
+
+    ctx = Keyword.put(ctx, :spec, spec)
+    {:ok, meta} = SchedStore.get_sched_meta(id)
+    SchedStore.put_sched_meta(id, %{meta | spec: spec})
+    {:ok, pid, _} = start_session(ctx)
+    assert_receive {:llm_blocked, _}, 5000
+    workspace = %{path: tmp, node: node(), name: "selected"}
+    assert {:error, {:bad_state, :running}} = Session.update_assistant_workspace(pid, workspace)
+    assert :ok = Session.stop_current_turn(pid)
+    assert :ok = Session.update_assistant_workspace(pid, workspace)
+    {:ok, updated} = SchedStore.get_sched_meta(id)
+    assert updated.spec.opts[:assistant_workspace] == workspace
+    assert updated.spec.opts[:assistant_conversation_id] == "original-conversation"
+    assert transcript_text(Session.history(pid)) =~ tmp
+    refute transcript_text(Session.history(pid)) =~ "DO_NOT_READ_SELECTED_PROJECT"
+
+    assert {:error, :invalid_workspace} =
+             Session.update_assistant_workspace(pid, %{path: "relative"})
+
+    assert :ok = Session.update_assistant_workspace(pid, nil)
+    {:ok, cleared} = SchedStore.get_sched_meta(id)
+    assert cleared.spec.opts[:assistant_workspace] == nil
+    assert transcript_text(Session.history(pid)) =~ "Authoritative selected project: none"
+  end
+
+  test "concurrent project sends cannot queue a message against another tab's selected project",
+       %{agent_id: id, tmp_dir: tmp} do
+    other = Path.join(tmp, "other-project")
+    File.mkdir_p!(other)
+
+    ctx =
+      dispatch_ctx(id, tmp, llm_call: blocking_llm_call(self()))
+      |> Keyword.put(:session_mode, :interactive)
+
+    spec = %{ctx[:spec] | agent_module: EvoGit.Agents.SelfReflective}
+    ctx = Keyword.put(ctx, :spec, spec)
+    {:ok, meta} = SchedStore.get_sched_meta(id)
+    SchedStore.put_sched_meta(id, %{meta | spec: spec})
+    {:ok, pid, _} = start_session(ctx)
+    assert_receive {:llm_blocked, _}, 5000
+    assert :ok = Session.stop_current_turn(pid)
+
+    selections = [
+      {"tab one request", %{path: tmp, node: node()}},
+      {"tab two request", %{path: other, node: node()}}
+    ]
+
+    results =
+      selections
+      |> Enum.map(fn {message, workspace} ->
+        Task.async(fn ->
+          {message, workspace,
+           Session.send_message_with_workspace(pid, message, :queue, workspace)}
+        end)
+      end)
+      |> Task.await_many()
+
+    assert [{accepted, selected, :ok}] = Enum.filter(results, &(elem(&1, 2) == :ok))
+
+    assert [{rejected, _, {:error, :workspace_changed}}] =
+             Enum.reject(results, &(elem(&1, 2) == :ok))
+
+    assert_receive {:llm_blocked, _}, 5000
+    {:ok, saved} = SchedStore.get_sched_meta(id)
+    assert saved.spec.opts[:assistant_workspace] == selected
+    history = transcript_text(Session.history(pid))
+    assert history =~ accepted
+    refute history =~ rejected
+    # The same authoritative selection can still queue normal follow-up messages.
+    assert :ok =
+             Session.send_message_with_workspace(
+               pid,
+               %{text: "same project follow-up", attachments: []},
+               :queue,
+               selected
+             )
+  end
+
+  test "first assistant media reaches the model in both session modes",
+       %{agent_id: id, tmp_dir: tmp} do
+    parent = self()
+    raw = <<137, 80, 78, 71, 0, 255>>
+
+    attachments = [
+      %{
+        "type" => "image",
+        "name" => "only.png",
+        "media_type" => "image/png",
+        "data" => Base.encode64(raw)
+      }
+    ]
+
+    for mode <- [:oneshot, :interactive] do
+      blocking = blocking_llm_call(parent)
+
+      llm = fn context, tools, params, agent, retries ->
+        send(parent, {:model_media, context.messages})
+        blocking.(context, tools, params, agent, retries)
+      end
+
+      ctx = dispatch_ctx(id, tmp, llm_call: llm) |> Keyword.put(:session_mode, mode)
+
+      spec = %{
+        ctx[:spec]
+        | agent_module: EvoGit.Agents.SelfReflective,
+          objective: "",
+          opts: Keyword.put(ctx[:spec].opts, :attachments, attachments)
+      }
+
+      {:ok, pid, ref} = start_session(Keyword.put(ctx, :spec, spec))
+      assert_receive {:model_media, messages}, 5000
+      assert Enum.any?(List.last(messages).content, &(Map.get(&1, :data) == raw))
+      assert_receive {:llm_blocked, _}, 5000
+      assert :ok = Session.cancel(pid, :force)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :shutdown}, 5000
+    end
+  end
+
+  test "assistant context and skills stay isolated in both session modes",
+       %{agent_id: id, tmp_dir: tmp} do
+    File.write!(
+      Path.join(tmp, "CONTEXT.md"),
+      "---\nskill:\n  - leaky\n---\nLEAKED_SOURCE_CONTEXT"
+    )
+
+    File.mkdir_p!(Path.join(tmp, ".agents/skills"))
+
+    File.write!(
+      Path.join(tmp, ".agents/skills/leaky.md"),
+      "---\nname: leaky\ndescription: LEAKED_PROJECT_SKILL\n---\nLEAKED_PROJECT_SKILL"
+    )
+
+    assert [%{name: "leaky"}] = EvoGit.Skills.load_skills(tmp)
+    assert EvoGit.Skills.hierarchical_skill_names("./", tmp) == ["leaky"]
+
+    for mode <- [:oneshot, :interactive] do
+      # Only one session owns an id at a time; force-stop before the next mode.
+      ctx = dispatch_ctx(id, tmp, llm_call: blocking_llm_call(self()))
+      spec = %{ctx[:spec] | agent_module: EvoGit.Agents.SelfReflective}
+      ctx = ctx |> Keyword.put(:spec, spec) |> Keyword.put(:session_mode, mode)
+      {:ok, pid, ref} = start_session(ctx)
+      assert_receive {:llm_blocked, _}, 5_000
+      assert {:ok, %{state: state}} = Session.inspect(pid)
+      refute transcript_text(state.context.messages) =~ "LEAKED_SOURCE_CONTEXT"
+      refute inspect(state.skill_schemas) =~ "leaky"
+      assert state.skill_schemas == []
+      assert :ok = Session.cancel(pid, :force)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :shutdown}, 5_000
+    end
+  end
+
+  defp transcript_text(messages) do
+    Enum.map_join(messages, "\n", fn message ->
+      Enum.map_join(message.content, "", fn part -> Map.get(part, :text) || "" end)
+    end)
+  end
+
+  defp wait_phase(pid, target, attempts \\ 100)
+
+  defp wait_phase(pid, target, attempts) when attempts > 0 do
+    case Session.inspect(pid) do
+      {:ok, %{phase: ^target}} = result ->
+        result
+
+      _ ->
+        Process.sleep(10)
+        wait_phase(pid, target, attempts - 1)
+    end
+  end
+
+  defp wait_phase(pid, _, _), do: Session.inspect(pid)
+
   # ---------------------------------------------------------------------------
   # dispatch context / session lifecycle
   # ---------------------------------------------------------------------------

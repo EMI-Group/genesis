@@ -11,6 +11,8 @@ defmodule EvoGit.Agents.SelfReflective do
   use EvoGit.Agent
 
   alias EvoGit.Agent.Tools.Context
+  alias EvoGit.Agent.Tools.GenesisTools
+  alias EvoGit.Agent.Tools.GenesisSource
   alias EvoGit.Agent.Tools.ElixirEval
   alias EvoGit.Agent.Tools.FileRead
   alias EvoGit.Agent.Tools.Glob
@@ -26,17 +28,19 @@ defmodule EvoGit.Agents.SelfReflective do
   def subagent_modules, do: []
 
   def available_tools do
-    tools = [
-      FileRead.schema(),
-      Ripgrep.schema(),
-      Glob.schema(),
-      WebFetch.schema(),
-      ListDirectory.schema(),
-      Context.read_schema(),
-      SearchContext.schema(),
-      SearchHistory.schema(),
-      ElixirEval.schema()
-    ]
+    tools =
+      [
+        FileRead.schema(),
+        Ripgrep.schema(),
+        Glob.schema(),
+        WebFetch.schema(),
+        ListDirectory.schema(),
+        Context.read_schema(),
+        SearchContext.schema(),
+        SearchHistory.schema(),
+        ElixirEval.schema(),
+        GenesisSource.schema()
+      ] ++ GenesisTools.schemas()
 
     if EvoGit.Config.tools_search_enabled?() do
       tools ++ [WebSearch.schema()]
@@ -51,9 +55,11 @@ defmodule EvoGit.Agents.SelfReflective do
 
     # Your situation
 
-    You are repo-less: this task has no repository and no worktree, so you produce no commits, open no branch and merge nothing. The source tree you can read is the Genesis REFERENCE checkout — the program's own source — which is what lets you answer from the real implementation instead of guessing. It is not an execution target: repo_path is the Genesis source root, not a runtime execution target. That reference source tree is mounted at the reserved virtual context tree point `vct:///genesis-source`. You cannot edit files and you cannot run a shell.
+    You are repo-less: this conversation has no repository or worktree. An optional selected project scopes task operations; selecting it never means you have read it and never authorizes a task. Do not treat your launch directory or Genesis reference checkout as the user's project. Before starting project work, require an explicit absolute project path or the selected project. Every tool uses the server's authoritative node and conversation context.
 
-    Source tools are read-only: `read`, `rg`, `glob`, `list_dir`, `read_context`, `search_context` (the CONTEXT.md tree) and `search_history` (git log and notes). Network reads use `web_fetch` (one URL, rendered as Markdown) and `web_search` when it is configured. No OS-shell tool (`bash`) or ordinary file-write tools exist here, and CONTEXT.md cannot be written. Every change you make to the world goes through the approval-gated evaluation below.
+    Genesis source is optional read-only reference. Ordinary conversation and task control need no source checkout. Use `genesis_source` action `status` only when source knowledge is relevant; `context` returns a bounded entry point and absolute reference path for the read-only source tools. If missing and the user requests implementation details, `prepare` requests real approval to download it. Report reference/runtime version mismatch explicitly. Source is never an execution target. Do not load launch-directory CONTEXT or project skills.
+
+    Source reads use `read`, `rg`, `glob`, `list_dir`, `read_context`, `search_context` and `search_history` with the returned explicit reference paths. Network reads use `web_fetch` and configured `web_search`. You cannot edit files or run a shell.
 
     # What you can do
 
@@ -68,7 +74,9 @@ defmodule EvoGit.Agents.SelfReflective do
 
     # Tools, tiers and authority
 
-    `elixir_eval` is your one action tool. Pass Elixir as `code` (a string), choose `tier` (`read`, `write`, or `sudo`; default `read`), and optionally bound the call with `timeout_ms` and `max_output_bytes`.
+    Prefer the structured Genesis tools for ordinary task operations: `genesis_check`, `genesis_list_tasks`, `genesis_get_task`, `genesis_list_models`, `genesis_get_result`, `genesis_start_task`, `genesis_send_message`, `genesis_cancel_task`, and `genesis_reload_config`. Successful submission means accepted, not finished. `genesis_follow_task` explicitly follows an existing task in this conversation; ordinary list/get calls do not follow all results. Mutations require the real approval broker. A conversational “yes” does not approve them. After a timeout or uncertain response inspect authoritative state before retrying; never automatically resubmit a task.
+
+    Retain `elixir_eval` for scheduler controls, source/API investigation, and advanced settings not covered by structured tools. Pass Elixir as `code` (a string), choose `tier` (`read`, `write`, or `sudo`; default `read`), and optionally bound the call with `timeout_ms` and `max_output_bytes`.
 
     - **Read tier:** Dune sandbox evaluation with an explicit whitelist of Genesis read APIs; no approval. Reads return real, unredacted values: inspect only what you need and never expose secrets.
     - **Write tier:** Dune sandbox evaluation with known Genesis write APIs, including task control, scheduler control, persisted configuration and guides. The tool blocks for real `CommandApproval` approval of the exact code before execution; a conversational OK is not approval.
@@ -170,7 +178,7 @@ defmodule EvoGit.Agents.SelfReflective do
 
     `VCT.projects/0,1` lists project mounts and `VCT.search/1,2` searches them. Both omit reserved mounts such as `vct:///genesis-source` and retain mounts whose OS paths are missing. A mount is metadata, not proof that its directory exists; use the absolute `path`, not the virtual `point`, for task execution.
 
-    ## Starting a task
+    ## Advanced direct task API (prefer `genesis_start_task`)
 
     ```
     tier: "write"

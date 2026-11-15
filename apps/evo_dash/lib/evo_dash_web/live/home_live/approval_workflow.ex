@@ -335,12 +335,17 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
     req_node = Map.get(request, :node)
     node_matches = req_node == chat_node(assigns)
     # Legacy producers may omit node; evaluator metadata must be node-stamped.
-    legacy_node = req_node == nil and Map.get(request, :kind) != :elixir_eval
+    structured = Map.get(request, :kind) == :task_control
+    legacy_node = req_node == nil and Map.get(request, :kind) not in [:elixir_eval, :task_control]
 
     is_binary(id) and String.trim(id) != "" and scoped?(assigns) and
       (node_matches or legacy_node) and
-      (same_id?(Map.get(request, :task_id), assigns[:chat_task_id]) or
-         same_id?(Map.get(request, :agent_id), assigns[:chat_agent_id]))
+      if(structured,
+        do: same_id?(Map.get(request, :conversation_id), conversation_id(assigns)),
+        else:
+          same_id?(Map.get(request, :task_id), assigns[:chat_task_id]) or
+            same_id?(Map.get(request, :agent_id), assigns[:chat_agent_id])
+      )
   end
 
   def own_request?(_assigns, _request), do: false
@@ -353,14 +358,20 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
 
   defp scope(assigns),
     do:
-      {assigns[:chat_id], assigns[:current_node_id], assigns[:current_node], chat_node(assigns),
-       assigns[:chat_task_id], assigns[:chat_agent_id]}
+      {conversation_id(assigns), assigns[:current_node_id], assigns[:current_node],
+       chat_node(assigns), assigns[:chat_task_id], assigns[:chat_agent_id]}
+
+  defp conversation_id(assigns), do: assigns[:assistant_conversation_id] || assigns[:chat_id]
 
   defp chat_node(assigns), do: assigns[:chat_node] || assigns[:current_node]
 
   defp scoped?(assigns) do
     target = chat_node(assigns)
-    known_ref = usable_id?(assigns[:chat_task_id]) or usable_id?(assigns[:chat_agent_id])
+
+    known_ref =
+      usable_id?(conversation_id(assigns)) or usable_id?(assigns[:chat_task_id]) or
+        usable_id?(assigns[:chat_agent_id])
+
     # A disconnected remote context falls back to local in NodeAware; never
     # recover or respond against the local service on behalf of that context.
     pending_remote = assigns[:current_node_id] != nil and assigns[:current_node] == node()

@@ -12,6 +12,16 @@ The session also OWNS the push-only streaming contract — the watcher set, the 
 `../session.ex` is intentionally long and cohesive: the `gen_statem` lifecycle, authoritative state and stream sequence, and terminal ordering must remain together.
 `TerminalHandoff` extracts only direct fan-out, never lifecycle ownership.
 
+## Assistant turn stop and project metadata
+
+`Session.stop_current_turn/1` is a non-terminal operation for interactive sessions. LLM work is stopped by retiring only the exchange worker; a running tool batch first settles and checkpoints its complete tool results. The session remains alive in `:awaiting_input`, emits the existing scheduler yield event, and can resume the same conversation. No associated background development task is cancelled and no committed side effect is rolled back. Repeated stop while idle is harmless; one-shot sessions refuse it.
+
+`Session.Worker.boundary/2` serializes `:llm`, `:tools`, and `:checkpoint` gates through the session. The LLM boundary retains drained human input before generation; the pre-tool gate never adopts a transcript containing unmatched tool calls; a checkpoint retains settled results before honoring a pending stop. Outside session workers these gates are inert. The checkpoint observer still fires once per turn. Stale messages from a retired stopped worker cannot terminate the parked session.
+
+`Session.send_message_with_workspace/4` atomically updates project metadata and resumes an idle assistant within one serialized event. During a running exchange it accepts input only for the current normalized path/node; a competing tab with a changed selection receives `{:error, :workspace_changed}` and its message is never queued.
+
+`Session.update_assistant_workspace/2` accepts a normalized existing absolute directory or `nil` only while an assistant is awaiting input. It updates the trusted scheduler `spec.opts[:assistant_workspace]` and session dispatch spec, appending a small authoritative project-selection message. Conversation identity remains fixed. Initial and refreshed SelfReflective context never load project or launch-directory CONTEXT/skills; optional reference source is accessed only by explicit tools.
+
 ## API Surface
 
 | Module | Function | Role |

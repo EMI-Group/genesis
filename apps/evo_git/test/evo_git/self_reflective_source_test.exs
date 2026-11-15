@@ -219,17 +219,17 @@ defmodule EvoGit.SelfReflectiveSourceTest do
       assert SelfReflective.source_root() == "/tmp/from-app-env"
     end
 
-    test "Runtime.SelfReflective.source_root/0 falls back to File.cwd!() when reference is nil" do
+    test "Runtime.SelfReflective.source_root/0 returns nil when reference is absent" do
       set_app_env(:self_reflective_source_dir, tmp_path!("nothing"))
 
       assert SelfReflectiveSource.reference_path() == nil
-      assert SelfReflective.source_root() == File.cwd!()
+      assert SelfReflective.source_root() == nil
     end
 
-    test "Dispatch.resolve_agent_repo_root/2 mirrors the reference path" do
+    test "assistant runtime stays isolated from the optional reference path" do
       set_app_env(:self_reflective_source_root, "/tmp/from-app-env")
 
-      assert Dispatch.resolve_agent_repo_root(repo_less_spec(), %State{}) == "/tmp/from-app-env"
+      assert Dispatch.resolve_agent_repo_root(repo_less_spec(), %State{}) == "[system]"
     end
 
     test "Dispatch.resolve_agent_repo_root/2 returns a binary when all knobs are absent" do
@@ -239,7 +239,7 @@ defmodule EvoGit.SelfReflectiveSourceTest do
       set_app_env(:self_reflective_source_dir, tmp_path!("nothing"))
 
       assert SelfReflectiveSource.reference_path() == nil
-      assert Dispatch.resolve_agent_repo_root(repo_less_spec(), %State{}) == File.cwd!()
+      assert Dispatch.resolve_agent_repo_root(repo_less_spec(), %State{}) == "[system]"
     end
   end
 
@@ -274,14 +274,10 @@ defmodule EvoGit.SelfReflectiveSourceTest do
       assert SelfReflectiveSource.available?()
     end
 
-    test "falls back to cwd when no source is configured" do
-      set_app_env(:self_reflective_source_dir, tmp_path!("avail-nothing"))
-
-      assert SelfReflectiveSource.reference_path() == nil
-      # Under `mix test` the cwd is the umbrella repo root, which carries a
-      # CONTEXT.md — the File.cwd!() fallback therefore resolves to `true`.
-      assert File.regular?(Path.join(File.cwd!(), "CONTEXT.md"))
-      assert SelfReflectiveSource.available?()
+    test "does not infer a source checkout from the launch directory" do
+      set_app_env(:self_reflective_source_root, nil)
+      System.delete_env("GENESIS_SOURCE_ROOT")
+      refute SelfReflectiveSource.available?()
     end
   end
 

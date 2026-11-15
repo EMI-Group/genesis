@@ -383,6 +383,36 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialogRenderTest do
     end
   end
 
+  describe "structured task requests" do
+    test "shows the bound action, runtime, project and requirements without Elixir" do
+      dom =
+        dialog(%{
+          request_id: "structured-task",
+          kind: :task_control,
+          level: 2,
+          tool_name: "genesis_start_task",
+          target_node: :runtime@host,
+          project_path: "/projects/actual-target",
+          target_task_id: nil,
+          summary: "Implement <feature> & verify",
+          parameters: %{
+            "objective" => "Implement <feature> & verify",
+            "mode" => "existing",
+            "model_id" => "configured-model"
+          }
+        })
+
+      assert text(dom, "#approval-action") == "Start development task"
+      assert text(dom, "#approval-target-node") == "runtime@host"
+      assert text(dom, "#approval-project") == "/projects/actual-target"
+      assert text(dom, "#approval-summary") == "Implement <feature> & verify"
+      assert text(dom, "#approval-parameter-mode") == "existing"
+      assert text(dom, "#approval-parameter-model_id") == "configured-model"
+      assert Floki.find(dom, "pre, code, feature") == []
+      assert_decisions(dom, "structured-task", false)
+    end
+  end
+
   describe "legacy command requests" do
     test "level 2 and 3 retain command, args, Confirm and their distinct danger styling" do
       command = "StartTask.start_task"

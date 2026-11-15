@@ -203,6 +203,7 @@ defmodule EvoGit.Agent.ToolDispatch do
         trigger_recovery_fn,
         opts
       ) do
+    EvoGit.Agent.Session.Worker.boundary(state, :llm)
     Sink.start_turn(state.turn)
     context = state.context
     tools = effective_tools_fn.(state)
@@ -898,6 +899,8 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   @doc false
   def process_regular_tool_calls(tool_calls, %State{} = state, subagent_modules, opts) do
+    EvoGit.Agent.Session.Worker.boundary(state, :tools)
+
     # 1. Index: Attach index to each call
     indexed_calls = Enum.with_index(tool_calls)
 

@@ -26,6 +26,9 @@ defmodule EvoDashWeb.HomeLive.SessionActions do
       `&EvoDash.NodeContext.start_session/2`.
     * `:home_session_send_runner` — 4-arity `(node, agent_id, message, policy)`,
       default `&EvoDash.NodeContext.send_session_message/4`.
+    * `:home_session_workspace_send_runner` — 5-arity
+      `(node, agent_id, message, policy, workspace)` atomically applies trusted
+      workspace metadata with this input.
     * `:home_session_close_runner` — 3-arity `(node, agent_id, reason)`,
       default `&EvoDash.NodeContext.close_session/3`.
     * `:home_session_attach_runner` — 2-arity `(node, session_id)`, default the
@@ -151,6 +154,8 @@ defmodule EvoDashWeb.HomeLive.SessionActions do
     base
     |> maybe_put(:model_spec, canonical_spec(Keyword.get(opts, :model_spec)))
     |> maybe_put(:attachments, attachment_list(Keyword.get(opts, :attachments)))
+    |> maybe_put(:assistant_conversation_id, Keyword.get(opts, :assistant_conversation_id))
+    |> workspace_opts(opts)
   end
 
   @doc """
@@ -224,17 +229,57 @@ defmodule EvoDashWeb.HomeLive.SessionActions do
   `{:session, :finished}` / `{:session, :not_found}` /
   `{:session, {:bad_state, phase}}`).
   """
-  @spec send_message(node(), term(), term(), term(), :queue | :interrupt) ::
+  @spec send_message(node(), term(), term(), term(), :queue | :interrupt, keyword()) ::
           :ok | {:error, reason()}
-  def send_message(node, agent_id, text, attachments, policy \\ :queue) do
+  def send_message(node, agent_id, text, attachments, policy \\ :queue, opts \\ []) do
     message = build_message(text, attachments)
-    runner = runner(:home_session_send_runner, 4, &NodeContext.send_session_message/4)
 
-    case runner.(node, agent_id, message, policy) do
+    result =
+      if Keyword.has_key?(opts, :assistant_workspace) do
+        workspace = EvoDashWeb.HomeLive.Workspace.normalize(opts[:assistant_workspace])
+
+        runner =
+          runner(
+            :home_session_workspace_send_runner,
+            5,
+            &NodeContext.send_message_with_workspace/5
+          )
+
+        runner.(node, agent_id, message, policy, workspace) |> normalize_workspace_send()
+      else
+        runner = runner(:home_session_send_runner, 4, &NodeContext.send_session_message/4)
+        runner.(node, agent_id, message, policy)
+      end
+
+    case result do
       :ok -> :ok
       {:ok, _result} -> :ok
       {:error, reason} -> {:error, reason}
       other -> {:error, {:unexpected_send_result, other}}
+    end
+  end
+
+  defp normalize_workspace_send({:error, reason}) when reason in [:not_found, :finished],
+    do: {:error, {:session, reason}}
+
+  defp normalize_workspace_send({:error, {:bad_state, phase}})
+       when phase in [:done, :finalizing, :cancelling],
+       do: {:error, {:session, :finished}}
+
+  defp normalize_workspace_send({:error, {:bad_state, phase}}),
+    do: {:error, {:session, {:bad_state, phase}}}
+
+  defp normalize_workspace_send(result), do: result
+
+  defp workspace_opts(base, opts) do
+    if Keyword.has_key?(opts, :assistant_workspace) do
+      Keyword.put(
+        base,
+        :assistant_workspace,
+        EvoDashWeb.HomeLive.Workspace.normalize(opts[:assistant_workspace])
+      )
+    else
+      base
     end
   end
 

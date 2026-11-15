@@ -7073,3 +7073,168 @@ msgstr "槽位按服务商配置档案分池——同一配置档案下的模型
 #, elixir-autogen, elixir-format
 msgid "These are request vocabulary choices, not verified support for this model or endpoint. Select only levels you have confirmed."
 msgstr "这些仅为请求用语选项，并不表示此模型或端点已验证支持。请仅选择您已确认的级别。"
+
+msgid "Followed tasks"
+msgstr "跟进中的任务"
+
+msgid "Follow an existing task ID"
+msgstr "输入要跟进的任务 ID"
+
+msgid "Follow task"
+msgstr "跟进任务"
+
+msgid "Task details"
+msgstr "任务详情"
+
+msgid "Updated"
+msgstr "更新于"
+
+msgid "Unable to refresh this task."
+msgstr "暂时无法刷新此任务。"
+
+msgid "A saved result is available in task details."
+msgstr "任务详情中已有保存的结果。"
+
+msgid "Additional task requirements"
+msgstr "补充任务要求"
+
+msgid "Send requirements"
+msgstr "发送补充要求"
+
+msgid "Request task cancellation"
+msgstr "请求取消任务"
+
+msgid "Observed agents"
+msgstr "已观察到的代理数"
+
+msgid "Stop reply"
+msgstr "停止回复"
+
+msgid "Queue for the next turn"
+msgstr "排队到下一轮"
+
+msgid "Stopping this reply. Background development tasks continue."
+msgstr "正在停止本次回复，后台开发任务继续运行。"
+
+msgid "Task updates are temporarily unavailable. Last known state is retained."
+msgstr "暂时无法更新任务，已保留上次状态。"
+
+msgid "Could not follow this task. Check the ID and connection."
+msgstr "无法跟进此任务，请检查任务 ID 和连接。"
+
+msgid "Task action submitted. Review any approval request before it runs."
+msgstr "已提交任务操作，请在执行前审阅审批请求。"
+
+msgid "Could not submit task action."
+msgstr "无法提交任务操作。"
+
+msgid "Task request accepted. Current status will update below."
+msgstr "任务请求已接受，下方将更新实际状态。"
+
+msgid "Task request did not succeed. Check its current state before trying again."
+msgstr "任务请求未成功，请核对当前状态后再尝试。"
+
+msgid "The task action result is uncertain. Checking the original operation before allowing another request."
+msgstr "暂时无法确认操作结果，正在核对原请求。"
+
+msgid "The operation could not be confirmed. Inspect the task in task details before taking further action."
+msgstr "无法确认此操作的结果，请先在任务详情中核对状态。"
+
+msgid "Live updates are unavailable. The conversation may still be running. Retry to reconnect."
+msgstr "实时更新暂时不可用，对话可能仍在进行。请重试连接。"
+
+msgid "Updates disconnected. Reply status is unknown; reconnect to check."
+msgstr "实时更新已断开，暂时无法确认回复状态，请重新连接查看。"
+
+msgid "Where shall we start?"
+msgstr "我们从哪里开始？"
+
+msgid "Select project"
+msgstr "选择项目"
+
+msgid "Attach a file"
+msgstr "添加附件"
+
+msgid "Add attachment"
+msgstr "添加附件"
+
+msgid "Full directory path"
+msgstr "完整目录路径"
+
+msgid "No project selected"
+msgstr "选择项目"
+
+msgid "Turn ideas into working software"
+msgstr "让想法成为作品"
+
+msgid "Attach"
+msgstr "添加"
+
+msgid "Upload files from this computer"
+msgstr "从当前电脑上传文件"
+
+msgid "Up to 4 files, 15 MiB each. Text, PDF, Word, images and audio."
+msgstr "最多 4 个文件，每个 15 MiB。支持文本、PDF、Word、图片和音频。"
+
+msgid "Add from Genesis server path"
+msgstr "从 Genesis 服务器路径添加"
+
+msgid "Absolute file path on the selected server"
+msgstr "所选服务器上的文件绝对路径"
+
+msgid "Uploading %{name}: %{progress}%"
+msgstr "正在上传 %{name}：%{progress}%"
+
+msgid "Cancel upload"
+msgstr "取消上传"
+
+msgid "Dismiss upload error"
+msgstr "关闭上传错误"
+
+msgid "Each file must be 15 MiB or smaller."
+msgstr "每个文件不能超过 15 MiB。"
+
+msgid "This file type is not supported."
+msgstr "不支持此文件类型。"
+
+msgid "Upload failed. Choose the file again."
+msgstr "上传失败，请重新选择文件。"
+
+msgid "Adding a server file is unavailable on the selected node. Upload a file from this computer instead."
+msgstr "所选节点不支持从服务器路径添加文件，请从当前电脑上传。"
+
+msgid "Choose a task to follow"
+msgstr "选择要跟进的任务"
+
+msgid "Refresh tasks"
+msgstr "刷新任务"
+
+msgid "Search task names or projects"
+msgstr "搜索任务名称或项目"
+
+msgid "Loading tasks…"
+msgstr "正在加载任务…"
+
+msgid "Could not load tasks. Check the selected node and retry."
+msgstr "无法加载任务，请检查所选节点后重试。"
+
+msgid "No tasks yet. Tasks you create will appear here."
+msgstr "暂无任务，创建后会显示在这里。"
+
+msgid "No matching tasks. Try another name or project."
+msgstr "没有匹配的任务，试试其他名称或项目。"
+
+msgid "Load more tasks"
+msgstr "加载更多任务"
+
+msgid "Following"
+msgstr "已跟进"
+
+msgid "Enter a task ID instead"
+msgstr "通过任务 ID 添加"
+
+msgid "Awaiting input"
+msgstr "等待输入"
+
+msgid "Save agent checkpoints"
+msgstr "保存 Agent 检查点"

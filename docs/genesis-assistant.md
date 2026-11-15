@@ -1,229 +1,55 @@
 # Genesis Assistant
 
-Genesis Assistant is the dashboard's operator chat, opened from the sidebar entry **Assistant** (route `/assistant`; the legacy `/help` link 302-redirects there with the query string preserved).
-It is not just a help page: it understands Genesis itself — the context tree, task lifecycle, agents and scheduler, models and configuration, the dashboard — and it operates the running system on your behalf while it explains it.
-It answers as Genesis in the first person (“I can …”), in your language, and its final chat reply is the answer you read.
+The `/assistant` page is a conversational operator for Genesis. `/help` redirects there. It uses interactive sessions, the shared sidebar conversation list, atomic streaming watches, and the existing provider/model picker.
 
-If the Genesis source has not been downloaded yet, a banner blocks the composer until you press **Download source**; the Assistant reads that checkout, so source-backed answers need it.
-That checkout is registered as the VCT system mount `vct:///genesis-source`, which is how the Assistant names the source tree it is reading; the mount is not a project and does not appear in the project list.
-To make it read a different local source tree, re-point `vct:///genesis-source` at that checkout (setting `GENESIS_SOURCE_ROOT` also works and takes precedence).
-The gate is local-only: on a remote node it stays hidden instead of blocking the chat.
+## Project context
 
-## Conversations
+A conversation may have no project. System questions and global task reads work without one. Use the project control below the header to choose a recent project or enter an existing absolute directory on the selected host. Opening or clearing a project preserves the message draft. The choice is conversation- and node-scoped, restored on remount, and inherited by a new conversation on the same node.
 
-Each conversation is ONE long-lived interactive agent session addressed `/assistant?session=<agent_id>`, so it keeps one agent id, one worktree and one prompt-cache identity across messages.
-The conversation list is not on the Assistant page: the shared app-layout sidebar renders a **Conversations** section directly below **Active Tasks**, on every dashboard page.
-It lists this node's live sessions (waiting for you, or running) together with locally cached chats, and marks each row **Waiting for you**, **Running** or **Ended**.
-On the Assistant page a row switches the current view to that conversation; from any other page it navigates to `/assistant?session=<agent_id>`.
-**New chat** in the page header starts a fresh conversation and leaves the previous one in the list, because a session ends explicitly rather than on an idle timer.
+Project switching is locked while a reply is running. At an input boundary, the next message updates the session's authoritative project metadata. The selected project supplies omitted paths for project-scoped task operations. An explicit different path remains the actual target shown for approval. Selecting a project does not mean the Assistant has read its files or started development.
 
-## What it can do
+## Task tools and approvals
 
-- Read the Genesis source and documentation: `read`, `read_context`, `list_dir`, `rg`, `glob`, `search_context`, and git history via `search_history`.
-- Read a pasted URL or documentation page as Markdown (`web_fetch`), and search the web when web search is enabled in your configuration.
-- Evaluate Elixir against the live runtime through one tiered `elixir_eval` tool: **read**, **write**, **sudo**.
-- Inspect and drive tasks: list pages, inspect one task, start `genesis`/`evolve`/`reflect`/`extract_skills` work, resume an earlier task, gracefully cancel, force-kill, or delete.
-- Read live scheduler state and resolved configuration, change runtime settings, or persist configuration.
-- Drive the guide overlay to a standard dashboard page (`/projects`, `/tasks`, `/agents`, `/settings`, `/system`, `/assistant`), optionally highlighting one element, with a **Go** button that opens it.
-  The guide facade's fixed page list still names the legacy `/help` path, which redirects to `/assistant`, so a guide opened there lands on the canonical page.
+Ordinary development uses the same eleven task-control definitions as MCP:
 
-`elixir_eval` always runs on the node you are currently viewing, never on an arbitrary node.
+- `genesis_check`, `genesis_reload_config`, `genesis_list_models`
+- `genesis_start_task`, `genesis_get_task`, `genesis_list_tasks`
+- `genesis_get_result`, `genesis_send_message`, `genesis_cancel_task`
+- `genesis_pause_task`, `genesis_resume_task`
 
-## Things to ask it
+`EvoGit.TaskControl.Tools` owns schemas, validation and dispatch. MCP owns its HTTP envelope and links; `Agent.Tools.GenesisTools` owns model-facing output and Assistant authorization. Model arguments cannot choose the runtime node or conversation identity. Both come from the actual assistant owner and its server-owned session metadata.
 
-- “Show my running tasks, newest first.”
-- “Why did that task fail? Check its status, error and result.”
-- “Start an evolve task in this repository.”
-- “Pause scheduling until I finish this merge.”
-- “What is my live capacity right now — queues, LLM slots and tool concurrency?”
-- “Raise the turn limit to 200 for the next agents.”
-- “Take me to this task's review page.”
+Read-only task queries run directly. Assistant mutations require the existing approval broker. The dialog shows the action, target node, project/task, and exact structured parameters. Approval binds that request, rather than reading a mutable composer after approval. Denial or timeout does not execute the action. After an uncertain submission, inspect current task state before retrying; starting a task is not completing it.
 
-For a specific review page, the Assistant reads the task and gives you its `/review/<task_id>` path; the guide overlay itself opens standard dashboard pages.
+Advanced system inspection, scheduler changes and configuration operations may still use `elixir_eval`. Its read/write/sudo tiers and exact-code approval remain in effect. Structured task tools do not expand evaluator privileges or alter external MCP authorization.
 
-## Choose a model and reasoning effort
+## Following development tasks
 
-The Assistant uses the same **Provider profile**, **Model** dropdowns and supported **Reasoning effort** slider as Projects.
-Models come from the selected account's explicit inventory; see [LLM provider profiles](llm-profiles.md) for configuration and selection rules.
-The effort slider appears only when the selected model advertises a nonempty supported-effort inventory; with one effort it is disabled.
-It selects the model's configured default effort when available, otherwise the first supported item—this UI fallback does not set a configuration default.
-An explicit `none` effort is a concrete choice, not an omitted value that inherits configured/provider defaults.
+A successful Assistant task start is automatically linked to that conversation. The composer's Tasks menu lists task names, statuses and projects on the selected node, supports search and pagination, and follows a task when selected. Already followed tasks are marked. Manual ID entry remains in a secondary disclosure; `genesis_follow_task` is also available to the Assistant. Listing or reading tasks does not automatically follow every returned task.
 
-**Auto (by rules)** leaves model selection to the existing rules; choosing a concrete provider profile/model locks that choice for the Assistant task you send.
-This does not change saved defaults or other tasks, including tasks the Assistant later starts on your behalf.
-Selection is scoped to the node you are viewing; check the target after switching nodes, and resolve unavailable profiles/models/efforts before sending rather than assuming an automatic fallback.
+Task cards show saved status, project, observed agent counts, refresh time and an entry to the task's review/results page. Missing stage data is not converted into an invented percentage. Cards refresh asynchronously from the task-control boundary; stale results from another node or conversation are ignored. A refresh failure retains the last known facts.
 
-## Execution tiers and approval
+Task references are held separately from the live Assistant session, so the task remains accessible when the Assistant session finishes. They have the same volatile lifetime as the dashboard's in-memory conversation store. This does not provide full conversation recovery after a server restart. Tasks and results remain in the existing persistent task store and can be found and followed again.
 
-The Assistant uses one `elixir_eval` tool with three tiers:
+## Reply, message and cancellation controls
 
-| Tier | Execution | Approval |
-| --- | --- | --- |
-| **read** | Dune interpreter with an explicit module/function/arity whitelist for inspection. | None. |
-| **write** | The same interpreter, adding known write APIs. | **Allow once** for the exact code on every call. |
-| **sudo** | Ordinary, unrestricted native Elixir—not the Dune interpreter. | Its own prominent **red warning inside the approval dialog**. |
+- **Stop reply** stops the current Assistant generation and keeps the interactive session available for another message. Background development continues. An executing tool batch is allowed to settle before the reply stops; stopping generation does not undo an external action.
+- **Send requirements** on a task card sends to that specific task through the shared tool and approval boundary. Acceptance means queued/accepted, not that an agent has already adopted the instruction.
+- **Request task cancellation** targets the selected development task. The card follows the backend's state; a cancellation request is not an immediate process-cleanup guarantee and does not undo Git changes.
+- Sending from the ordinary composer while the Assistant is running queues a message for a later turn boundary. The explicit queue button has the same boundary semantics; it does not immediately halt an LLM chunk.
 
-A public API found in source is **not automatically available** in read/write: its module, function, and arity must be whitelisted.
-Ask the Assistant to read source/API help first rather than guess a name or escalate after a rejection.
-An optional safe `Read`/`Write` convenience facade exists, but is not required; the examples below use actual fully-qualified APIs.
-Each evaluation starts with fresh bindings: variables do not carry over to the next call.
-There is no automatic escalation between tiers.
-The tool blocks for approval of the exact code, so a conversational “OK” is not approval; a denied or timed-out call is explained, never retried at a higher tier.
+## Attachments
 
-**Sudo is powerful, not OS root.** It runs under the Genesis server's OS identity in the live, shared BEAM, with access to its filesystem and configuration.
-It can affect other running work; it provides neither isolation nor rollback.
-Execution-time and output bounds are operational limits, **not a security boundary**.
-A timeout does not undo effects or prove that an operation failed: inspect current state before retrying any write.
+The plus menu opens the browser's native file chooser on the user's current device. Selected files upload to the dashboard and are staged for the current conversation; deploying Genesis on another machine does not make that chooser browse the server. Text, PDF, DOCX, supported images and audio share one upload action, with up to four files per message and 15 MiB per file. Classification uses the original filename rather than the extensionless upload temporary path. Text documents join the message body; media uses the existing session attachment format.
 
-### Reviewing a request
+The secondary server-path entry reads an existing absolute path on the selected Genesis host. The current path reader supports the dashboard's local node; an unsupported remote node reports that limitation and directs the user to browser upload. It never reads the dashboard host as a substitute. Switching conversation or node cancels pending uploads. Sending waits for upload completion; a completed attachment can be sent without extra text.
 
-Approvals never push the chat around: ONE fixed-height status strip sits between the transcript and the composer, and its height is reserved whether or not anything is pending.
-With a request waiting, the strip shows “Genesis is waiting for your approval”, a count badge and a **Review** button; the decision itself happens in ONE modal dialog that shows a single request at a time, with “1 of N” stepping when several are queued.
-A genuinely new live request opens that dialog automatically and raises a browser/OS notification—only while the window is hidden or unfocused, replacing its previous notification instead of stacking another one, and clicking it focuses the window.
-If the pending list cannot be loaded, the same strip carries the error and a **Retry approvals** action instead of anything appearing inline in the transcript.
+## Optional source reference
 
-- Check the **exact original code and execution target** in the dialog, not only the Assistant's explanation.
-- Choose **Allow once** to run that call, or **Deny** to reject it; a sudo request carries its own red warning so it cannot be mistaken for a normal write.
-- The Assistant submits code through the tool instead of asking you to confirm in prose: a reply with no tool calls ends its run and its text is your answer.
-- Pending requests are restored while the request is still pending; this is not a promise of durable storage across server restarts.
-- If approval submission fails, the dialog stays open with guidance; do not assume the code ran or submit a replacement write blindly.
-- Failed-task responses are retained when available; inspect the response and current state rather than treating a failed task as proof that nothing happened.
+Chat and task control need no Genesis checkout. The Assistant starts with minimal repo-less context and does not load the launch directory's CONTEXT tree or project skills.
 
-### Layout stability
+For implementation questions, `genesis_source` can inspect reference availability, read bounded root context, or prepare a missing checkout after approval. The reference is separate from the execution working directory and user project. The tool reports reference and runtime versions so a mismatched checkout cannot be described as the exact running implementation. Source management remains available in System settings. A missing or failed source download does not block normal chat.
 
-The chat keeps a fixed geometry while it streams: the approval strip, the interrupt slot above the composer and the composer itself have reserved heights, so a request arriving, a turn ending or the interrupt affordance disappearing never reflows the transcript column.
-The transcript sticks to the bottom with no animated scroll—an instant coalesced jump while you are reading the latest content—and stops following as soon as you scroll up into history.
-Both are deliberate: streaming deltas and the stream-to-Markdown swap arrive faster than any ease-out curve can settle, so the scroller tracks position rather than a trajectory.
+## Storage and remote nodes
 
-## Read: tasks, failures and live capacity
-
-Ask: “Show ten task summaries and the total count.” Example **read** code:
-
-```elixir
-page = EvoGit.TaskRegistry.list_tasks_page(limit: 10, offset: 0)
-%{
-  total: page.total,
-  tasks: Enum.map(page.rows, &Map.take(&1, [:id, :status, :type, :project_path]))
-}
-```
-
-The page result is `%{rows: [summary], total: integer}`.
-The default limit is 25, capped at 50; offset defaults to 0.
-Filters include `status`, `project_path`, `review_status`, and `search`.
-Use `EvoGit.TaskRegistry.get_task_lite(id)` or `EvoGit.TaskRegistry.get_task(id)` for one task (`TaskInfo` or `nil`), and `EvoGit.AgentScheduler.RemoteAPI.list_agents()` for the live agent list.
-These are admitted APIs, not a promise of arbitrary remote execution.
-
-Ask: “Why did that task fail?” Example **read** code:
-
-```elixir
-task = EvoGit.TaskRegistry.get_task("task_id")
-%{
-  status: task.status,
-  error: task.error,
-  review_status: task.review_status,
-  commit_sha: task.commit_sha,
-  result: task.result
-}
-```
-
-`nil` means the id is unknown—check for `nil` before reading fields; select only the fields you need, because `result` can be large and sensitive.
-Output caps are size limits, not redaction.
-
-Ask: “Is scheduling paused, and what is the live tool capacity?” Example **read** code:
-
-```elixir
-%{
-  paused: EvoGit.AgentScheduler.paused?(),
-  tool_concurrency: EvoGit.AgentScheduler.get_config(:max_tool_concurrency),
-  llm_slots: EvoGit.AgentScheduler.get_llm_slot_status()
-}
-```
-
-`paused?/0` returns a boolean and `get_llm_slot_status/0` a per-provider-profile map of live pools.
-Models and reasoning efforts under the same provider profile share its capacity.
-Scheduler configuration uses **`get_config/1`, not `get_config/0`**.
-`EvoGit.Config.resolve()` reads defaults plus saved configuration, **not live scheduler overrides**.
-For a section use `EvoGit.Config.resolve(:scheduler)`; for one nested value use `EvoGit.Config.resolve([:scheduler, :max_tool_concurrency])`.
-Resolved configuration can include credentials, so print only the keys you asked for.
-
-## Write: start or manage a task
-
-Ask: “Start a simple evolution task in this repository.” Example **write** code, requiring approval:
-
-```elixir
-EvoGit.TaskRegistry.start_task(:evolve,
-  path: "/absolute/path/to/repository",
-  mode: "simple",
-  objective: "Add regression tests for the parser"
-)
-```
-
-Replace the path and objective before approving; `mode` is the **string** `"simple"`.
-Add `resume_from: "<task_id>"` to continue an earlier task instead of starting from scratch.
-`{:ok, task_info}` means the task was accepted for immediate start—not that its work succeeded.
-Read its status and result afterward.
-
-Other admitted write operations:
-
-| API | Effect and what the acknowledgement proves |
-| --- | --- |
-| `EvoGit.TaskRegistry.cancel_task(id)` | Graceful cancellation: the task turns `:cancelling`, agents get a save-work message and a short grace budget, and the result is preserved under a final `:cancelled`. `:ok` acknowledges the request, not that the task has stopped. |
-| `EvoGit.TaskRegistry.force_kill_task(id)` | Kills the task's agents and wrapper and persists `:failed` with the result discarded. `:ok` acknowledges the kill request. |
-| `EvoGit.TaskRegistry.delete_task(id)` | An asynchronous cast that removes a task's row; use it on terminal tasks. `:ok` only means the deletion was queued—re-read the task to confirm it is gone. |
-| `EvoGit.AgentScheduler.pause()` / `resume()` | Return `:ok`; in-flight work continues under pause. Pause is not an absolute maintenance barrier. |
-
-The bounded write facade also enforces statuses (cancel `:pending`/`:running`, force-kill `:running`/`:cancelling`, delete terminal only) and refuses the Assistant's own task.
-Direct calls to the real APIs add no facade status or self-target policy, so check a task's current state before acting on it.
-
-## Write: pause, resume and turn caps
-
-Ask: “Pause scheduling until I finish this merge.” Example **write** code:
-
-```elixir
-EvoGit.AgentScheduler.pause()
-EvoGit.AgentScheduler.paused?()
-```
-
-`resume/0` grants queued slots and dispatches agents blocked during the pause.
-`update_config/1` ignores `:paused`, so pause and resume need their own transitions.
-
-Ask: “Raise the turn limit to 200 for the next agents.” Example **write** code:
-
-```elixir
-EvoGit.AgentScheduler.update_config(max_turns: 200, max_turns_root: 300)
-```
-
-Turn caps apply to future agent registrations; agents already running keep theirs.
-This is a runtime-only change.
-
-## Write: runtime settings versus saved configuration
-
-For a temporary scheduler change, request **write** approval for:
-
-```elixir
-EvoGit.AgentScheduler.update_config(max_tool_concurrency: 8)
-```
-
-This changes the live scheduler only; it does not save the setting.
-To persist the setting, preserve unrelated settings rather than replacing the configuration with a tiny map:
-
-```elixir
-config = EvoGit.Config.resolve()
-updated = put_in(config, [:scheduler, :max_tool_concurrency], 8)
-
-case EvoGit.Config.save_user_config(updated) do
-  :ok -> EvoGit.AgentScheduler.RemoteAPI.reload_config()
-  error -> error
-end
-```
-
-Run the whole snippet in one **write** evaluation, then inspect both saved configuration and live scheduler state.
-`save_user_config/1` validates and replaces the **whole configuration file**; it does not reload it.
-`reload_config/0` applies selected saved settings, not every subsystem's configuration; boot-only settings such as distribution still need a restart.
-This read-modify-save sequence is not atomic and materializes defaults, so coordinate with other configuration editors.
-For model changes, edit the existing `llm.providers` accounts and their nested `models` inventory rather than overwriting them with an incomplete configuration.
-See [LLM provider profiles](llm-profiles.md) for account defaults, model overrides and selection rules.
-
-When uncertain, ask for a source-backed explanation and a read-only check first; review each write's exact code and target before allowing it.
-
-The Assistant does not volunteer terminal commands by default: it guides with dashboard pages and in-app capabilities instead, and explains terminal usage only when you explicitly ask about your own shell or other tools.
+Conversation state remains in the existing in-memory ChatHistory store. Page navigation and remount can restore it; BEAM restart is not durable chat recovery. Model selection, project identity, task references and async results must stay scoped to the selected node/conversation. Unresolved remote connections never fall back to the dashboard host for project or task actions.

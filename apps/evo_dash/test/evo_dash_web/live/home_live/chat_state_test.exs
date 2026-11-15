@@ -9,6 +9,8 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
   # degrades to safe defaults, never raises.
 
   @default_state %{
+    task_action_ids: %{},
+    task_action_pending: MapSet.new(),
     transcript: [],
     chat_draft: "",
     chat_status: :idle,
@@ -28,6 +30,8 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
   # opt-in: the parent seeds `model_spec` / `model_selection_scope` to persist
   # them, so a bare build must never invent them.
   @state_keys [
+    :task_action_ids,
+    :task_action_pending,
     :transcript,
     :chat_draft,
     :chat_status,
@@ -51,6 +55,8 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
       echo = %{id: "echo-1", text: "queued message", at: 1_700_000_001}
 
       assigns = %{
+        task_action_ids: %{},
+        task_action_pending: MapSet.new(),
         transcript: [entry],
         chat_draft: "draft",
         chat_status: :running,
@@ -99,6 +105,8 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
       echo = %{id: "echo-2", text: "queued", at: {:monotonic, 5}}
 
       state = %{
+        task_action_ids: %{},
+        task_action_pending: MapSet.new(),
         transcript: [entry],
         chat_draft: "draft",
         chat_status: :cancelling,

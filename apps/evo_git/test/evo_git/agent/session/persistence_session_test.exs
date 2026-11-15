@@ -222,6 +222,50 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
       assert_receive {:DOWN, ^ref, :process, ^pid, :shutdown}, 5_000
     end
 
+    test "a resumed input is durable before the next LLM finishes", ctx do
+      parent = self()
+
+      llm = fn context, _tools, _params, _id, _retries ->
+        if Enum.any?(context.messages, &(text_of(&1) =~ "second durable input")) do
+          send(parent, {:second_llm_blocked, self()})
+
+          receive do
+            :release -> :ok
+          after
+            30_000 -> :ok
+          end
+        end
+
+        {:implicit_completion, response(context, "yield response"), "yield response"}
+      end
+
+      {:ok, pid, ref} =
+        start_session(
+          dispatch_ctx(ctx.agent_id, ctx.task_id, ctx.tmp_dir,
+            agent_module: EvoGit.Agent.Session.PersistenceSessionTest.InteractiveAgent,
+            llm_call: llm
+          )
+        )
+
+      assert await_phase(pid, :awaiting_input)
+      assert :ok = Session.input(pid, "second durable input")
+      assert_receive {:second_llm_blocked, worker}, 5000
+
+      {:ok, record} =
+        await_record(ctx.task_id, ctx.agent_id, fn record ->
+          Enum.any?(record.messages, &(text_of(&1) =~ "second durable input"))
+        end)
+
+      assert record.chunk_count > 1
+      send(worker, :release)
+      assert await_phase(pid, :awaiting_input)
+      AgentState.flush()
+      {:ok, record} = AgentState.load(ctx.task_id, ctx.agent_id)
+      assert Enum.map(record.messages, &text_of/1) == Enum.map(await_history(pid), &text_of/1)
+      assert :ok = Session.cancel(pid, :force)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :shutdown}, 5000
+    end
+
     test "a force-killed session is never marked completed",
          %{agent_id: agent_id, task_id: task_id, tmp_dir: tmp_dir} do
       {:ok, pid, ref} =

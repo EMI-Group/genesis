@@ -933,7 +933,9 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       # `EvoGit.Runtime.SelfReflective.source_root/0` delegate to the shared
       # `EvoGit.SelfReflectiveSource.reference_path/0` (single source of
       # truth) so they always agree.
-      resolve_repo_less_root()
+      if spec.agent_module == EvoGit.Agents.SelfReflective,
+        do: "[system]",
+        else: resolve_repo_less_root()
     else
       resolve_agent_repo_root_regular(spec, state)
     end

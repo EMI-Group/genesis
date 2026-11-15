@@ -39,55 +39,62 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
   # the chips (chips would only start a doomed `:reflect` task).
   def empty_state(assigns) do
     ~H"""
-    <div class="min-h-full flex flex-col items-center justify-center gap-4 text-center px-4 py-8 sm:px-6">
-      <div class="flex size-12 items-center justify-center rounded-full bg-base-200">
-        <.icon name="hero-sparkles" class="size-6 text-primary-standalone" />
+    <div id="assistant-welcome" class="assistant-empty-heading">
+      <div class="assistant-brand">
+        <img
+          src={~p"/images/logo.svg"}
+          alt="Genesis"
+          class="assistant-brand-mark block dark:hidden"
+          width="46"
+          height="38"
+        />
+        <img
+          src={~p"/images/logo-alt.svg"}
+          alt="Genesis"
+          class="assistant-brand-mark hidden dark:block"
+          width="46"
+          height="38"
+        />
+        <h2>{gettext("Turn ideas into working software")}</h2>
       </div>
-      <%!-- zh_CN: "你想让 Genesis 做什么？" --%>
-      <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-base-content">
-        {gettext("What would you like Genesis to do?")}
-      </h2>
-      <p class="max-w-md text-sm leading-relaxed text-base-content/70">
-        <%!-- zh_CN: "开始对话" --%>{gettext("Start a conversation")}
-      </p>
-      <%= if @source_gate? do %>
-        <p class="mt-4 max-w-md text-sm text-base-content/70">
-          <%!-- zh_CN: "请先下载 Genesis 源码后再开始对话" --%>{gettext(
-            "Download the Genesis source to start chatting."
-          )}
-        </p>
-      <% else %>
-        <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
-          <%!-- zh_CN: "显示我的运行中任务" --%>
-          <.suggestion_chip message={gettext("Show my running tasks")}>
-            <.icon
-              name="hero-light-bulb"
-              class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
-            />
-          </.suggestion_chip>
-          <%!-- zh_CN: "检查系统状态与容量" --%>
-          <.suggestion_chip message={gettext("Check system status and capacity")}>
-            <.icon
-              name="hero-magnifying-glass"
-              class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
-            />
-          </.suggestion_chip>
-          <%!-- zh_CN: "帮我启动一个任务" --%>
-          <.suggestion_chip message={gettext("Start a task for me")}>
-            <.icon
-              name="hero-puzzle-piece"
-              class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
-            />
-          </.suggestion_chip>
-          <%!-- zh_CN: "解释任务是如何被调度的" --%>
-          <.suggestion_chip message={gettext("Explain how tasks are scheduled")}>
-            <.icon
-              name="hero-map"
-              class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
-            />
-          </.suggestion_chip>
-        </div>
-      <% end %>
+    </div>
+    """
+  end
+
+  def quick_actions(assigns) do
+    ~H"""
+    <div
+      id="assistant-quick-actions"
+      class="assistant-quick-actions"
+      aria-label={gettext("Conversation starters")}
+    >
+      <.suggestion_chip message={gettext("Show my running tasks")}>
+        <.icon
+          name="hero-light-bulb"
+          class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
+        />
+      </.suggestion_chip>
+      <%!-- zh_CN: "检查系统状态与容量" --%>
+      <.suggestion_chip message={gettext("Check system status and capacity")}>
+        <.icon
+          name="hero-magnifying-glass"
+          class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
+        />
+      </.suggestion_chip>
+      <%!-- zh_CN: "帮我启动一个任务" --%>
+      <.suggestion_chip message={gettext("Start a task for me")}>
+        <.icon
+          name="hero-puzzle-piece"
+          class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
+        />
+      </.suggestion_chip>
+      <%!-- zh_CN: "解释任务是如何被调度的" --%>
+      <.suggestion_chip message={gettext("Explain how tasks are scheduled")}>
+        <.icon
+          name="hero-map"
+          class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
+        />
+      </.suggestion_chip>
     </div>
     """
   end
@@ -125,6 +132,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
     """
   end
 
+  attr(:stream_unavailable, :boolean, default: false)
   attr(:transcript, :list, required: true)
   attr(:chat_task_status, :any, required: true)
   attr(:thought_process, :list, required: true)
@@ -152,6 +160,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
               <% is_last = index == last_assistant_index(@transcript) %>
               <.assistant_message
                 entry={entry}
+                stream_unavailable={is_last and @stream_unavailable}
                 raw={MapSet.member?(@raw_entry_ids, Map.get(entry, :id))}
                 task_status={if is_last, do: @chat_task_status, else: nil}
                 thought_process={Map.get(entry, :reasoning, [])}
@@ -231,7 +240,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
       type="button"
       phx-click="send_message"
       phx-value-message={@message}
-      class="group flex flex-col items-start gap-2.5 rounded-xl border border-base-300 bg-base-100 px-4 py-3.5 text-left text-sm leading-relaxed text-base-content/70 hover:-translate-y-0.5 hover:border-base-300 hover:bg-base-200 hover:text-base-content transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
+      class="assistant-quick-action group"
     >
       {render_slot(@inner_block)}
       {@message}

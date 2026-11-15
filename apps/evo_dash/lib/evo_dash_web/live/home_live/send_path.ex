@@ -7,7 +7,7 @@ defmodule EvoDashWeb.HomeLive.SendPath do
   Two halves:
 
     * the send path — `send_chat/2` / `send_draft/3` guards (pending remote
-      node, missing Genesis source), the interactive-session branch
+      node, project selection in progress), the interactive-session branch
       (`SessionActions.send_message/5`, with the queue policy of the
       interactive composer) and the one-shot `:reflect` branch
       (`NodeContext.start_task/3` via the session-attach fallback), plus the
@@ -39,8 +39,8 @@ defmodule EvoDashWeb.HomeLive.SendPath do
     ModelSelect,
     ModelSelection,
     SessionActions,
-    SourceGate,
-    Transcript
+    Transcript,
+    TaskTracking
   }
 
   alias EvoDashWeb.HomeLive
@@ -61,13 +61,9 @@ defmodule EvoDashWeb.HomeLive.SendPath do
            gettext("Connect to the remote node before sending a message.")
          )}
 
-      SourceGate.blocked?(socket.assigns) ->
+      socket.assigns[:workspace_loading] == true ->
         {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Download the Genesis source before sending a message.")
-         )}
+         put_flash(socket, :error, gettext("Wait for the project selection to finish."))}
 
       true ->
         do_send_chat(socket, text, policy)
@@ -82,7 +78,10 @@ defmodule EvoDashWeb.HomeLive.SendPath do
         # Defensive — the composer disables Send in these states anyway.
         {:noreply, socket}
 
-      text == "" ->
+      socket.assigns[:upload_in_progress] == true ->
+        {:noreply, socket}
+
+      text == "" and Attachments.count(socket.assigns[:pending_attachments]) == 0 ->
         {:noreply, socket}
 
       true ->
@@ -91,7 +90,14 @@ defmodule EvoDashWeb.HomeLive.SendPath do
 
         opts =
           if is_nil(socket.assigns[:session_id]) do
-            [mode: "reflect", objective: reflect_objective(socket, message)]
+            [
+              mode: "reflect",
+              objective: reflect_objective(socket, message),
+              attachments: attachments,
+              assistant_workspace: socket.assigns[:workspace],
+              assistant_conversation_id:
+                socket.assigns[:assistant_conversation_id] || socket.assigns[:chat_id]
+            ]
           else
             []
           end
@@ -143,7 +149,8 @@ defmodule EvoDashWeb.HomeLive.SendPath do
 
     result =
       SafeCall.run(fn ->
-        SessionActions.send_message(node, agent_id, text, attachments, policy)
+        opts = [assistant_workspace: socket.assigns[:workspace]]
+        SessionActions.send_message(node, agent_id, text, attachments, policy, opts)
       end)
 
     case normalize_send(result) do
@@ -163,6 +170,7 @@ defmodule EvoDashWeb.HomeLive.SendPath do
             chat_status: :running
           )
           |> ChatState.persist()
+          |> TaskTracking.refresh()
 
         {:noreply, if(queued?, do: push_queued_echo(socket, text), else: socket)}
 
@@ -204,6 +212,16 @@ defmodule EvoDashWeb.HomeLive.SendPath do
     end
   end
 
+  def send_failure(socket, :workspace_changed) do
+    put_flash(
+      socket,
+      :error,
+      gettext(
+        "The project selection changed in another view. Select the project again and retry your message."
+      )
+    )
+  end
+
   def send_failure(socket, reason) do
     if SessionActions.session_ended?(reason) do
       socket
@@ -229,7 +247,10 @@ defmodule EvoDashWeb.HomeLive.SendPath do
     opts =
       SessionActions.session_opts(text,
         model_spec: Keyword.get(task_opts, :model_spec),
-        attachments: attachments
+        attachments: attachments,
+        assistant_workspace: socket.assigns[:workspace],
+        assistant_conversation_id:
+          socket.assigns[:assistant_conversation_id] || socket.assigns[:chat_id]
       )
 
     case SafeCall.run(fn -> SessionActions.start(node, opts) end) do
@@ -302,6 +323,7 @@ defmodule EvoDashWeb.HomeLive.SendPath do
       |> HomeLive.spawn_attach(agent_id)
       |> HomeLive.attach_stream()
       |> HomeLive.maybe_load_sessions()
+      |> TaskTracking.refresh()
 
     {:noreply,
      push_patch(socket, to: SessionActions.url(socket.assigns[:current_node_id], agent_id))}
@@ -340,6 +362,7 @@ defmodule EvoDashWeb.HomeLive.SendPath do
             socket =
               socket
               |> assign(chat_task_id: id, chat_task_status: :pending)
+              |> assign(pending_attachments: Attachments.clear())
               |> ChatState.persist()
               |> HomeLive.async_lookup_agent()
               |> HomeLive.maybe_recover_approvals()

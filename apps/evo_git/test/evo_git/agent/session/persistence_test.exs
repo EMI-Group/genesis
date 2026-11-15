@@ -476,6 +476,23 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
     end
   end
 
+  test "an adopted transcript ahead of the durable baseline rewrites without a continuity gap" do
+    task_id = unique_task_id()
+    agent_id = unique_agent_id()
+    seed!(task_id, agent_id, msgs(3), turn: 1)
+
+    assert :ok =
+             Persistence.checkpoint(
+               run_state(task_id, agent_id, msgs(5), turn: 2),
+               run_state(task_id, agent_id, msgs(6), turn: 3)
+             )
+
+    record = load!(task_id, agent_id)
+    assert record.messages == msgs(6)
+    assert record.message_count == 6
+    refute_receive {:agent_state_resync, ^task_id, ^agent_id}
+  end
+
   # --- 6. Structural non-prefix ⇒ rewrite ----------------------------------
 
   describe "structural divergence" do

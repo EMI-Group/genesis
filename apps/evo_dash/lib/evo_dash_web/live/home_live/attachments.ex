@@ -193,6 +193,27 @@ defmodule EvoDashWeb.HomeLive.Attachments do
     end
   end
 
+  @doc "Stages a browser upload, classifying by the safe original filename."
+  def stage_uploaded(pending, path, client_name) do
+    pending = normalize(pending)
+
+    if full?(pending) do
+      {:error, :too_many}
+    else
+      with {:ok, name} <- EvoDash.AttachedFile.upload_name(client_name),
+           {:ok, payload} <- EvoDash.AttachedFile.read_uploaded(path, name) do
+        case payload do
+          %{type: "text", text: content} ->
+            stage_text(pending, name, content)
+
+          %{type: kind, media_type: mime, bytes: bytes} ->
+            entry = %{kind: kind, name: name, block: nil, media_type: mime, data: bytes}
+            {:ok, %{pending | entries: pending.entries ++ [entry]}}
+        end
+      end
+    end
+  end
+
   @doc """
   Removes ONE staged attachment by 0-based index into the staging list, or by
   its `name` (the file's basename — the first match wins).

@@ -73,6 +73,7 @@ defmodule EvoGit.Agent.Session.Worker do
     # commit against a reclaimed worktree). It exits by itself when the worker ends first, so a
     # normal `:finish`/`:yield` path is untouched.
     start_session_watchdog(session_pid)
+    Process.put(:evogit_exchange_owner, session_pid)
 
     # The SESSION is the owner: the worker is short-lived and owns nothing
     # durable, so anything bound to the owner pid must outlive this task (D7).
@@ -87,7 +88,7 @@ defmodule EvoGit.Agent.Session.Worker do
     # Checkpoints and terminal outcomes share the same worker identity: a late
     # checkpoint must never overwrite the state of a resumed exchange.
     checkpoint = fn %State{} = checkpointed ->
-      send(session_pid, {:checkpoint, self(), checkpointed})
+      boundary(checkpointed, :checkpoint)
     end
 
     exchange_opts = [checkpoint: checkpoint] ++ Keyword.delete(opts, :tmpdir)
@@ -95,6 +96,8 @@ defmodule EvoGit.Agent.Session.Worker do
     outcome =
       try do
         Exchange.run(state, exchange_opts)
+      catch
+        {:stop_current_turn, %State{} = stopped} -> {:yield, stopped, "已停止回复。"}
       after
         # Uninstall FIRST: the terminal `{:exchange_finished, …}` is sent right after
         # this block, and uninstalling here is what guarantees no delta can TRAIL it
@@ -102,6 +105,7 @@ defmodule EvoGit.Agent.Session.Worker do
         # its output). Being first also means anything the fallback below triggers
         # hits an INERT sink — `emit/1` is a no-op once uninstalled.
         Sink.uninstall()
+        Process.delete(:evogit_exchange_owner)
 
         # The agent process owns git operations. After the agent finishes
         # (any exit path), commit any pending changes as a best-effort
@@ -141,6 +145,22 @@ defmodule EvoGit.Agent.Session.Worker do
     end)
 
     :ok
+  end
+
+  @doc false
+  # Synchronous phase gates serialize Stop against the start of a tool batch. Outside a
+  # session worker this is inert, preserving the standalone Exchange/Turn contract.
+  def boundary(%State{} = state, phase) when phase in [:llm, :tools, :checkpoint] do
+    case Process.get(:evogit_exchange_owner) do
+      owner when is_pid(owner) ->
+        case :gen_statem.call(owner, {:worker_boundary, self(), phase, state}, :infinity) do
+          :continue -> :ok
+          :stop -> throw({:stop_current_turn, state})
+        end
+
+      _ ->
+        :ok
+    end
   end
 
   # The `after` fallback above may have created the ONLY commit of this run,

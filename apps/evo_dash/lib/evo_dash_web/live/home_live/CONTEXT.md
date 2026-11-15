@@ -283,8 +283,16 @@ Enter submits through a server-maintained Shift latch, Shift+Enter keeps the new
 - No code in this subtree reads `config.toml`/`credentials.toml` or computes config paths; the only file reads are user attachments (`home_live.ex:823`, `:849`).
 - Every new user-facing string is `gettext`-wrapped; Chinese comments only for short/ambiguous labels; never run `mix gettext.extract`/`merge`/`translate` during feature work.
 - `?session=` parses with `Integer.parse/1` + a positive guard; no `String.to_atom/1` on client input.
-- Never block the LiveView on a cross-node call; every async load carries a monotonic seq + node stale guard; no polling.
-- Preserve the render-test DOM markers: `#chat-form`, `#chat-messages`, `#chat-llm-selection`, `#chat-composer-controls`, `#chat-interrupt-button`, `#chat-session-list`, `#chat-session-ended`, `#genesis-source-gate`, `#approval-status-bar`, `#approval-dialog`, `#approval-recovery-error`, `#approval-response-error`, `#assistant-notifications`, the `h1` "Genesis Assistant", the textarea placeholder/aria-label "Message Genesis Assistant…", Send/Stop semantics, "Enter to send · Shift+Enter for a new line", the empty-state heading "What would you like Genesis to do?" and its four suggestion chips.
+- Never block the LiveView on a cross-node call; every async load carries a monotonic seq + node stale guard. Assistant messages remain push-only with no history polling. `TaskTracking` separately refreshes linked active/pausing task summaries every three seconds, stops at resting/terminal states, and ignores other node/conversation results.
+- Preserve interaction markers: `#chat-form`, `#chat-messages`, `#chat-llm-selection`, `#chat-composer-controls`, `#chat-interrupt-button`, `#chat-session-list`, `#chat-session-ended`, `#approval-status-bar`, `#approval-dialog`, `#approval-recovery-error`, `#approval-response-error`, and `#assistant-notifications`. The empty surface now uses `#assistant-welcome` with the existing Genesis logo and translated slogan; four quick actions sit below the composer and disappear after conversation starts. Source availability no longer gates chat. Keep the textarea label, Send/Stop and Enter/Shift+Enter semantics.
+
+## Assistant workspace and task controls
+
+`Workspace` and `WorkspaceComponent` select an optional existing project without reading its files. `TaskTracking` owns followed task links and action reconciliation; `TaskCard` renders them. `TaskPicker` loads searchable, paginated summaries on menu open and follows by selection, with manual ID entry secondary. Node/conversation/sequence guards reject stale asynchronous responses and pending remote targets never use local data.
+
+`Uploads` owns native browser upload validation, progress and consumption; `Attachments` stages text/media and encodes media once at send. Browser upload works independently of the deployment host. Server-path attachment is a separate, local-node-only entry. An empty/whitespace draft with no completed attachment cannot send; uploads in progress block all send events while leaving the draft editable. New chat and session/node switches cancel pending uploads.
+
+The shared task catalog is `EvoGit.TaskControl.Tools`; Assistant actions use real structured approvals, while MCP retains its own transport authorization. Startup checks tracked static assets and performs a full navigation on a version mismatch before initializing the Assistant, preserving node/session parameters.
 - Node switches reset chat state without cancelling the previous session; pending remote targets never load local models or launch locally; a failed model snapshot stays an error, never a silent Auto.
 
 ## Transcription contract (history → display bubbles)

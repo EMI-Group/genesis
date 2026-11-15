@@ -6,6 +6,25 @@ defmodule EvoGit.Sandbox.HelpersTest do
   # Budget for the ONE bounded poll in this file (port-close observation); it
   # only absorbs scheduling latency, the condition itself is asynchronous.
   @port_close_timeout_ms 2_000
+  describe "parse_gitdir_pointer/3" do
+    test "only the final worktrees/name pair identifies linked-worktree metadata" do
+      target = "/repos/worktrees/checkout/.git/worktrees/agent"
+
+      assert Helpers.parse_gitdir_pointer("gitdir: " <> target, "/repo", "/repo/.git") ==
+               "/repos/worktrees/checkout/.git"
+    end
+
+    test "keeps an absolute custom git directory below a worktrees ancestor" do
+      target = "/repos/worktrees/checkout/custom-git-dir"
+      assert Helpers.parse_gitdir_pointer("gitdir: " <> target, "/repo", "/repo/.git") == target
+    end
+
+    test "does not reduce deeper custom metadata or grant the filesystem root" do
+      for target <- ["/repos/.git/worktrees/agent/custom", "/worktrees/agent"] do
+        assert Helpers.parse_gitdir_pointer("gitdir: " <> target, "/repo", "/repo/.git") == target
+      end
+    end
+  end
 
   describe "shell_escape/1" do
     test "wraps a simple argument in single quotes" do
