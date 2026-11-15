@@ -845,7 +845,10 @@
                                   <div class="mt-1 space-y-2">
                                     <% reasoning_details = Map.get(entry.data, :reasoning_details) %>
                                     <%= if reasoning_details do %>
-                                      <div class="inspector-thinking text-xs bg-base-content/5 p-2 rounded text-base-content/70">
+                                      <div
+                                        data-inspector-reasoning
+                                        class="text-xs bg-base-content/5 p-2 rounded text-base-content/70"
+                                      >
                                         <div class="font-semibold mb-1">
                                           {gettext("Thinking")}
                                         </div>
@@ -863,8 +866,8 @@
                                       </div>
                                     <% end %>
                                     <%= if entry.data.content && String.trim(entry.data.content) != "" do %>
-                                      <div class="text-sm bg-base-100 p-2 rounded text-base-content">
-                                        <div class="text-xs font-semibold mb-1">
+                                      <div class="text-sm bg-primary/5 border border-primary/15 p-2 rounded text-base-content">
+                                        <div class="text-xs font-medium mb-1 text-primary-standalone">
                                           {gettext("Response")}
                                         </div>
                                         {String.slice(entry.data.content, 0, 300)}{if String.length(
