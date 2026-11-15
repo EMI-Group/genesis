@@ -48,6 +48,9 @@ defmodule EvoDashWeb.HomeLive do
     ApprovalWorkflow,
     Attachments,
     ChatState,
+    Workspace,
+    TaskTracking,
+    TaskPicker,
     Messages,
     ModelSelection,
     SendPath,
@@ -69,7 +72,6 @@ defmodule EvoDashWeb.HomeLive do
 
   alias EvoDashWeb.LiveHooks.NodeAware
   import EvoDashWeb.HomeLive.ChatMessages
-  import EvoDashWeb.HomeLive.SourceGate
   @terminal_statuses [:completed, :cancelled, :failed]
 
   @impl true
@@ -96,21 +98,24 @@ defmodule EvoDashWeb.HomeLive do
       guide={@guide}
       accent_color={assigns[:accent_color] || "blue"}
     >
-      <div class="flex h-full min-h-0 w-full min-w-0">
-        <div class="flex h-full min-h-0 w-full min-w-0 max-w-3xl flex-col mx-auto">
+      <div id="assistant-surface" class="assistant-surface">
+        <div class={["assistant-column", (@transcript == [] and @chat_status != :ended) && "is-empty"]}>
           <!-- The header, answers and composer share one reading column. -->
           <div
             id="chat-header"
-            class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-base-300 px-3 pt-3 pb-3 sm:px-4 sm:pt-4"
+            class="assistant-page-header"
           >
             <div class="min-w-0 basis-full sm:basis-auto sm:flex-1">
-              <h1 class="text-base font-semibold truncate">
+              <h1 class={
+                if @transcript == [], do: "sr-only", else: "text-sm font-medium text-base-content/60"
+              }>
                 <%!-- zh_CN: Genesis Assistant 是此对话助手的名称 --%>{gettext(
                   "Genesis Assistant"
                 )}
               </h1>
             </div>
             <button
+              :if={@transcript != []}
               type="button"
               phx-click="new_chat"
               disabled={@chat_status not in [:idle, :ended]}
@@ -120,15 +125,7 @@ defmodule EvoDashWeb.HomeLive do
               <%!-- zh_CN: "新对话" --%>{gettext("New chat")}
             </button>
           </div>
-          <!-- Genesis-source gate: the /assistant chat runs a repo-less `:reflect`
-             agent whose reference is the managed Genesis source checkout. On a
-             fresh install it is usually not downloaded yet, so a send would only
-             start a doomed task. Pinned BETWEEN the header and the message
-             scroller so it shows for the empty state AND a restored transcript.
-             Local-node only (EvoDashWeb.HomeLive.SourceGate.blocked?/1). -->
-          <%= if SourceGate.blocked?(assigns) do %>
-            <.source_gate source_busy={@source_busy} current_node_id={@current_node_id} />
-          <% end %>
+          {EvoDashWeb.HomeLive.TaskCard.cards(assigns)}
           <div
             :if={@stream_error != nil and @stream_error != {:not_found, :session_not_found}}
             id="chat-stream-error"
@@ -152,7 +149,7 @@ defmodule EvoDashWeb.HomeLive do
           <div
             id="chat-messages"
             phx-hook="AgentHistoryAutoScroll"
-            class="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain scrollbar-thin"
+            class="assistant-messages scrollbar-thin"
           >
             <!-- An EMPTY transcript shows one of two empty states: the ended
                session (the session is gone AND nothing was cached, so the
@@ -162,7 +159,7 @@ defmodule EvoDashWeb.HomeLive do
               <% @transcript == [] and @chat_status == :ended -> %>
                 <.session_ended_state />
               <% @transcript == [] -> %>
-                <.empty_state source_gate?={SourceGate.blocked?(assigns)} />
+                <.empty_state source_gate?={false} />
               <% true -> %>
                 <.message_list
                   transcript={@transcript}
@@ -170,6 +167,7 @@ defmodule EvoDashWeb.HomeLive do
                   thought_process={@thought_process}
                   raw_entry_ids={@raw_entry_ids}
                   stream_meta={@chat_stream_meta}
+                  stream_unavailable={@stream_error != nil}
                 />
             <% end %>
             <!-- Transient queued-message echoes are NOT transcript entries: they
@@ -247,14 +245,17 @@ defmodule EvoDashWeb.HomeLive do
              the Send/Stop controls; the attach affordance and its manual-path
              fallback sit outside it because no form may ever be nested. -->
           {EvoDashWeb.HomeLive.Composer.composer(assigns)}
+          <.quick_actions :if={@transcript == [] and @chat_status != :ended} />
         </div>
       </div>
     </EvoDashWeb.Layouts.app>
     """
   end
 
+  alias EvoDashWeb.HomeLive.Uploads
+
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(params, _session, socket) do
     onboarding_needed =
       !connected?(socket) and
         if Code.ensure_loaded?(EvoGit.Config.VersionState) do
@@ -263,27 +264,47 @@ defmodule EvoDashWeb.HomeLive do
           false
         end
 
-    if onboarding_needed do
-      {:ok, push_navigate(socket, to: "/welcome")}
-    else
-      if connected?(socket) do
-        Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
-        Phoenix.PubSub.subscribe(EvoGit.PubSub, "agents")
-        Phoenix.PubSub.subscribe(EvoGit.PubSub, "approvals")
-      end
+    cond do
+      connected?(socket) and static_changed?(socket) ->
+        # Reconnect with matching CSS/JS before rendering the updated assistant.
+        {:ok, redirect(socket, to: ~p"/assistant?#{Map.take(params, ~w(node session))}")}
 
-      socket =
-        socket
-        |> assign(base_assigns())
-        |> ApprovalWorkflow.init()
-        |> attach_chat()
+      onboarding_needed ->
+        {:ok, push_navigate(socket, to: "/welcome")}
 
-      {:ok, socket}
+      true ->
+        if connected?(socket) do
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "agents")
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "approvals")
+        end
+
+        socket =
+          socket
+          |> assign(base_assigns())
+          |> ApprovalWorkflow.init()
+          |> attach_chat()
+          |> Uploads.init(&handle_upload_progress/3)
+
+        {:ok, socket}
     end
   end
 
   defp base_assigns do
     %{
+      workspace: nil,
+      assistant_conversation_id: nil,
+      workspace_open: false,
+      workspace_path: "",
+      workspace_projects: [],
+      workspace_error: nil,
+      workspace_loading: false,
+      workspace_seq: 0,
+      tracked_tasks: [],
+      task_tracking_error: nil,
+      task_tracking_loading: false,
+      task_tracking_seq: 0,
+      task_picker: TaskPicker.new(),
       transcript: Transcript.new(),
       chat_draft: "",
       chat_status: :idle,
@@ -360,6 +381,8 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   defp reattach_session(socket, id) do
+    socket = socket |> Uploads.cancel_all() |> TaskPicker.reset()
+
     restored =
       if connected?(socket) do
         ChatState.restore(ChatHistory.get_state(id))
@@ -379,10 +402,18 @@ defmodule EvoDashWeb.HomeLive do
       chat_task_status: nil,
       agent_message_count: nil,
       queued_echoes: [],
+      task_action_ids: restored.task_action_ids,
+      task_action_pending: restored.task_action_pending,
+      workspace: Workspace.restore(restored[:workspace], Workspace.scope(socket.assigns)),
+      assistant_conversation_id: restored[:assistant_conversation_id] || id,
+      workspace_open: false,
+      workspace_loading: false,
+      workspace_error: nil,
+      workspace_seq: socket.assigns.workspace_seq + 1,
       thought_process: restored.thought_process,
       raw_entry_ids: MapSet.new(),
       pending_attachments: Attachments.clear(),
-      chat_draft: "",
+      chat_draft: restored.chat_draft,
       transcript: restored.transcript,
       chat_status: restore_status(restored.chat_status)
     )
@@ -608,13 +639,52 @@ defmodule EvoDashWeb.HomeLive do
     socket =
       socket
       |> resolve_session(params["session"])
+      |> restore_workspace_scope(scope)
       |> ModelSelection.assign_model_select()
       |> assign(current_path: ~p"/assistant")
       |> maybe_check_source()
       |> maybe_recover_approvals()
+      |> TaskTracking.refresh()
 
     {:noreply, socket}
   end
+
+  defp restore_workspace_scope(socket, scope) do
+    socket
+    |> assign(workspace: Workspace.restore(socket.assigns[:workspace], scope))
+    |> ChatState.persist()
+  end
+
+  def handle_event("workspace_toggle", _, socket), do: {:noreply, Workspace.toggle(socket)}
+  def handle_event("workspace_clear", _, socket), do: {:noreply, Workspace.clear(socket)}
+
+  def handle_event("workspace_path", %{"workspace" => %{"path" => path}}, socket),
+    do: {:noreply, assign(socket, workspace_path: path, workspace_error: nil)}
+
+  def handle_event("workspace_open", %{"workspace" => %{"path" => path}}, socket),
+    do: {:noreply, Workspace.select(socket, path)}
+
+  def handle_event("workspace_select", %{"path" => path}, socket),
+    do: {:noreply, Workspace.select(socket, path)}
+
+  def handle_event("assistant_task_picker_open", _, socket),
+    do: {:noreply, TaskPicker.load(socket, TaskPicker.view(socket.assigns).query)}
+
+  def handle_event("assistant_task_picker_search", %{"query" => query}, socket),
+    do: {:noreply, TaskPicker.load(socket, query)}
+
+  def handle_event("assistant_task_picker_more", _, socket),
+    do: {:noreply, TaskPicker.load(socket, TaskPicker.view(socket.assigns).query, true)}
+
+  def handle_event("assistant_follow_task", %{"task_id" => id}, socket),
+    do: TaskTracking.follow(socket, id)
+
+  def handle_event("assistant_task_message", %{"task_id" => id, "message" => message}, socket),
+    do:
+      TaskTracking.action(socket, "genesis_send_message", %{"task_id" => id, "message" => message})
+
+  def handle_event("assistant_task_cancel", %{"task_id" => id}, socket),
+    do: TaskTracking.action(socket, "genesis_cancel_task", %{"task_id" => id})
 
   @impl true
   def handle_event("send_message", %{"message" => text}, socket), do: send_chat(socket, text)
@@ -623,7 +693,7 @@ defmodule EvoDashWeb.HomeLive do
     do: send_chat(socket, socket.assigns[:chat_draft])
 
   def handle_event("chat_input", %{"message" => text}, socket) do
-    {:noreply, assign(socket, chat_draft: text || "")}
+    {:noreply, socket |> assign(chat_draft: text || "") |> ChatState.persist()}
   end
 
   def handle_event("chat_keydown", %{"key" => key}, socket) do
@@ -723,8 +793,8 @@ defmodule EvoDashWeb.HomeLive do
 
   def handle_event("stop", _params, socket) do
     cond do
+      interactive_session?(socket) -> stop_reply(socket)
       not is_nil(socket.assigns[:chat_task_id]) -> cancel_chat_task(socket)
-      interactive_session?(socket) -> close_chat_session(socket)
       true -> {:noreply, socket}
     end
   end
@@ -736,6 +806,15 @@ defmodule EvoDashWeb.HomeLive do
       {:noreply, socket}
     end
   end
+
+  def handle_event("chat_upload_validate", _params, socket),
+    do: {:noreply, Uploads.validate(socket)}
+
+  def handle_event("chat_upload_cancel", %{"ref" => ref}, socket),
+    do: {:noreply, Uploads.cancel_entry(socket, ref)}
+
+  def handle_event("chat_upload_clear_error", _params, socket),
+    do: {:noreply, Uploads.clear_error(socket)}
 
   # ── Composer attachments ──
   # The attach affordance dispatches ONE whitelisted kind (pattern match, never
@@ -836,26 +915,26 @@ defmodule EvoDashWeb.HomeLive do
     )
   end
 
-  defp close_chat_session(socket) do
-    node = socket.assigns[:current_node] || node()
-    agent_id = socket.assigns[:session_id]
+  defp stop_reply(socket) do
+    target = socket.assigns[:current_node] || node()
 
-    case SafeCall.run(fn -> SessionActions.close(node, agent_id, :normal) end) do
+    runner =
+      Application.get_env(:evo_dash, :home_session_stop_runner, &NodeContext.stop_current_turn/2)
+
+    case SafeCall.run(fn -> runner.(target, socket.assigns[:session_id]) end) do
+      {:ok, :ok} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :info,
+           gettext("Stopping this reply. Background development tasks continue.")
+         )}
+
       {:ok, {:error, reason}} ->
         {:noreply, stop_flash(socket, reason)}
 
       {:error, reason} ->
         {:noreply, stop_flash(socket, reason)}
-
-      {:ok, _ok} ->
-        # A closed session emits nothing further: finalize the in-flight bubble
-        # and unwatch. The assign values stay EXACTLY what `stop_ok/3` sets.
-        {:noreply,
-         socket
-         |> stop_ok([chat_status: :cancelling, queued_echoes: []], true)
-         |> finalize_bubble()
-         |> Watch.detach()
-         |> ChatState.persist()}
     end
   end
 
@@ -877,6 +956,9 @@ defmodule EvoDashWeb.HomeLive do
   defp stop_flash(socket, reason) do
     put_flash(socket, :error, gettext("Failed to stop: %{reason}", reason: inspect(reason)))
   end
+
+  defp handle_upload_progress(:chat_files, entry, socket),
+    do: {:noreply, Uploads.progress(entry, socket)}
 
   ## Composer attachments
 
@@ -919,7 +1001,10 @@ defmodule EvoDashWeb.HomeLive do
 
   defp begin_attach(socket, _kind), do: socket
 
-  defp local_attach_node?(socket), do: socket.assigns[:current_node] == node()
+  # NodeAware retains a target id while a remote connection still uses the local
+  # node as a placeholder. Reuse the same authoritative pending predicate as sends.
+  defp local_attach_node?(socket),
+    do: socket.assigns[:current_node] == node() and not ModelSelection.pending_remote?(socket)
 
   defp at_attachment_cap?(socket) do
     Attachments.count(socket.assigns[:pending_attachments]) >= Attachments.max_attachments()
@@ -932,7 +1017,13 @@ defmodule EvoDashWeb.HomeLive do
 
     cond do
       not local_attach_node?(socket) ->
-        assign(socket, attach_unavailable: true)
+        put_flash(
+          socket,
+          :error,
+          gettext(
+            "Adding a server file is unavailable on the selected node. Upload a file from this computer instead."
+          )
+        )
 
       path == "" ->
         put_flash(socket, :error, gettext("Enter a file path to attach."))
@@ -941,7 +1032,14 @@ defmodule EvoDashWeb.HomeLive do
         attachment_flash(socket, :enoent, path)
 
       true ->
-        stage_text_attachment(socket, path)
+        case Attachments.stage_uploaded(
+               socket.assigns[:pending_attachments],
+               path,
+               Path.basename(path)
+             ) do
+          {:ok, pending} -> store_pending_attachments(socket, pending)
+          {:error, reason} -> attachment_flash(socket, reason, path)
+        end
     end
   end
 
@@ -1009,7 +1107,14 @@ defmodule EvoDashWeb.HomeLive do
   @impl true
   def handle_info({:task_updated, task_id, status, node} = msg, socket) do
     {:noreply, socket} = NodeAware.handle_task_info(socket, msg)
-    {:noreply, handle_task_event(socket, task_id, status, node)}
+    socket = handle_task_event(socket, task_id, status, node)
+
+    socket =
+      if NodeAware.event_from_current_node?(socket.assigns, node),
+        do: TaskTracking.refresh(socket),
+        else: socket
+
+    {:noreply, socket}
   end
 
   def handle_info({:task_deleted, task_id, node} = msg, socket) do
@@ -1162,6 +1267,29 @@ defmodule EvoDashWeb.HomeLive do
       {:noreply, finalize_terminal(socket, task)}
     end
   end
+
+  def handle_info({{:assistant_workspace_loaded, seq, scope, chat_id, kind}, result}, socket),
+    do: {:noreply, Workspace.apply_result(socket, seq, scope, chat_id, kind, result)}
+
+  def handle_info({:assistant_action_reconcile, scope}, socket),
+    do: {:noreply, TaskTracking.reconcile(socket, scope)}
+
+  def handle_info({{:assistant_action_status, scope, id}, result}, socket),
+    do: {:noreply, TaskTracking.reconcile_result(socket, scope, id, result)}
+
+  def handle_info({{:assistant_follow_result, scope}, result}, socket),
+    do: {:noreply, TaskTracking.follow_result(socket, scope, result)}
+
+  def handle_info({{:assistant_task_choices, seq, scope, offset}, result}, socket),
+    do: {:noreply, TaskPicker.apply_result(socket, seq, scope, offset, result)}
+
+  def handle_info(:assistant_tasks_tick, socket), do: {:noreply, TaskTracking.refresh(socket)}
+
+  def handle_info({{:assistant_tasks_loaded, seq, scope}, result}, socket),
+    do: {:noreply, TaskTracking.apply_result(socket, seq, scope, result)}
+
+  def handle_info({{:assistant_task_action, scope, id}, result}, socket),
+    do: {:noreply, TaskTracking.correlated_result(socket, scope, id, result)}
 
   def handle_info({:source_availability_loaded, seq, node, result}, socket) do
     if seq == socket.assigns[:source_check_seq] and is_atom(node) and
@@ -1585,6 +1713,8 @@ defmodule EvoDashWeb.HomeLive do
     # Keep the serial registration worker and the generation advanced by detach;
     # older loader results must stay obsolete even after a later chat reset.
     socket
+    |> Uploads.cancel_all()
+    |> TaskPicker.reset()
     |> Watch.detach()
     |> assign(
       transcript: Transcript.new(),
@@ -1606,7 +1736,12 @@ defmodule EvoDashWeb.HomeLive do
       pending_attachments: Attachments.clear(),
       approval_context: nil,
       approval_dialog_open: false,
-      approval_dialog_index: 0
+      approval_dialog_index: 0,
+      workspace_open: false,
+      workspace_loading: false,
+      workspace_error: nil,
+      workspace_projects: [],
+      workspace_seq: socket.assigns.workspace_seq + 1
     )
     |> ApprovalWorkflow.init()
   end
@@ -1714,7 +1849,7 @@ defmodule EvoDashWeb.HomeLive do
       if connected?(socket) do
         chat_id = ChatHistory.new_chat()
         ChatHistory.prune(10)
-        assign(socket, chat_id: chat_id)
+        assign(socket, chat_id: chat_id, assistant_conversation_id: chat_id)
       else
         socket
       end
@@ -1722,6 +1857,7 @@ defmodule EvoDashWeb.HomeLive do
     socket
     |> reset_chat()
     |> ChatState.persist()
+    |> TaskTracking.refresh()
   end
 
   defp attach_chat(socket) do
@@ -1733,6 +1869,9 @@ defmodule EvoDashWeb.HomeLive do
         socket
         |> assign(chat_id: chat_id, model_selection_restore: saved_state || %{})
         |> assign(ChatState.restore(saved_state))
+        |> assign(
+          assistant_conversation_id: (saved_state || %{})[:assistant_conversation_id] || chat_id
+        )
 
       reconcile_chat(socket)
     else

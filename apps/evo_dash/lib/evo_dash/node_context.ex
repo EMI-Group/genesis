@@ -443,6 +443,34 @@ defmodule EvoDash.NodeContext do
     EvoGit.RemoteNode.close_session(node, agent_id, reason)
   end
 
+  def send_message_with_workspace(target, agent_id, message, policy, workspace) do
+    assistant_session_call(target, :send_message_with_workspace, [
+      agent_id,
+      message,
+      policy,
+      workspace
+    ])
+  end
+
+  def stop_current_turn(target, agent_id) do
+    assistant_session_call(target, :stop_current_turn, [agent_id])
+  end
+
+  def update_assistant_workspace(target, agent_id, workspace) do
+    assistant_session_call(target, :update_assistant_workspace, [agent_id, workspace])
+  end
+
+  defp assistant_session_call(target, function, args) when target == node() do
+    apply(EvoGit.Agent.Session, function, args)
+  end
+
+  defp assistant_session_call(target, function, args) do
+    case EvoGit.RemoteNode.call_remote(target, EvoGit.Agent.Session, function, args) do
+      {:ok, result} -> result
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   @doc """
   Blocks until the interactive session for `agent_id` reaches its terminal
   outcome on the given node.

@@ -68,6 +68,8 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   @spec build(map()) :: map()
   def build(assigns) do
     %{
+      task_action_ids: assigns[:task_action_ids] || %{},
+      task_action_pending: assigns[:task_action_pending] || MapSet.new(),
       transcript: assigns[:transcript] || [],
       chat_draft: assigns[:chat_draft] || "",
       chat_status: assigns[:chat_status] || :idle,
@@ -84,6 +86,7 @@ defmodule EvoDashWeb.HomeLive.ChatState do
       queued_echoes: assigns[:queued_echoes] || []
     }
     |> persist_selection(assigns)
+    |> persist_workspace(assigns)
   end
 
   @doc """
@@ -116,6 +119,13 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   @spec restore(term()) :: map()
   def restore(state) when is_map(state) do
     %{
+      task_action_ids:
+        if(is_map(state[:task_action_ids]), do: state[:task_action_ids], else: %{}),
+      task_action_pending:
+        if(is_struct(state[:task_action_pending], MapSet),
+          do: state[:task_action_pending],
+          else: MapSet.new()
+        ),
       transcript: Transcript.normalize(Map.get(state, :transcript)),
       chat_draft: normalize_draft(Map.get(state, :chat_draft)),
       chat_status: normalize_chat_status(Map.get(state, :chat_status)),
@@ -131,6 +141,7 @@ defmodule EvoDashWeb.HomeLive.ChatState do
       queued_echoes: normalize_queued_echoes(Map.get(state, :queued_echoes))
     }
     |> persist_selection(state)
+    |> persist_workspace(state)
   end
 
   def restore(_state), do: restore(%{})
@@ -169,6 +180,17 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   end
 
   def restore_selection(_state, scope), do: empty_selection(scope)
+
+  defp persist_workspace(state, source) do
+    if Map.has_key?(source, :workspace) or Map.has_key?(source, :assistant_conversation_id) do
+      Map.merge(state, %{
+        workspace: EvoDashWeb.HomeLive.Workspace.normalize(source[:workspace]),
+        assistant_conversation_id: source[:assistant_conversation_id]
+      })
+    else
+      state
+    end
+  end
 
   defp persist_selection(state, source) do
     # Keep pre-redesign ChatHistory maps readable without inventing a scope.

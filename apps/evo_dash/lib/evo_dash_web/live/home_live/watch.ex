@@ -24,6 +24,9 @@ defmodule EvoDashWeb.HomeLive.Watch do
   One consumer-monitored worker serializes registration and cleanup, passing the
   LiveView pid to the core. Detach never races a later register; worker startup,
   RPC failures and buffer overflow remain explicit errors, not history fallback.
+  A first registration that finds the session still `:starting` waits at most ten
+  seconds for readiness in this worker; detach, scope changes and consumer death
+  cancel that wait. No other failure is automatically retried.
   Runner seams are `:home_agent_watch_runner` and `:home_agent_unwatch_runner`,
   both `(node, agent_id, consumer_pid)`, resolved when attach is requested.
   """
@@ -39,6 +42,8 @@ defmodule EvoDashWeb.HomeLive.Watch do
 
   @max_batches 128
   @max_bytes 1_048_576
+  @starting_wait_ms 10_000
+  @starting_retry_ms 50
 
   @doc "Attaches a connected, resolved session; a healthy same-scope watch is a no-op."
   def attach(socket) do
@@ -488,12 +493,10 @@ defmodule EvoDashWeb.HomeLive.Watch do
   defp worker(consumer, monitor, registration) do
     receive do
       {:register, desired} ->
-        if registration != nil and target(registration) != target(desired),
-          do: unwatch(registration, consumer)
+        registration = retire_other_scope(registration, desired, consumer)
 
-        result = SafeCall.run(fn -> desired.watch.(desired.node, desired.id, consumer) end)
-        send(consumer, {:chat_stream_ready, desired.node, desired.token, desired.id, result})
-        worker(consumer, monitor, desired)
+        deadline = registration_deadline()
+        register_when_ready(consumer, monitor, registration, desired, deadline)
 
       :unregister ->
         if registration != nil, do: unwatch(registration, consumer)
@@ -504,12 +507,107 @@ defmodule EvoDashWeb.HomeLive.Watch do
     end
   end
 
+  # The scheduler returns the id before the monitored setup task has built a State.
+  # `:starting` is therefore readiness, not a broken stream. Only that precise response
+  # is retried; provider, transport, missing-session and terminal errors remain failures.
+  defp register_when_ready(consumer, monitor, registration, desired, deadline) do
+    result = SafeCall.run(fn -> desired.watch.(desired.node, desired.id, consumer) end)
+
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    if starting_result?(result) and remaining > 0 do
+      receive do
+        {:register, replacement} ->
+          registration = retire_other_scope(registration, replacement, consumer)
+
+          register_when_ready(
+            consumer,
+            monitor,
+            registration,
+            replacement,
+            registration_deadline()
+          )
+
+        :unregister ->
+          if registration != nil, do: unwatch(registration, consumer)
+          worker(consumer, monitor, nil)
+
+        {:DOWN, ^monitor, :process, ^consumer, _reason} ->
+          if registration != nil, do: unwatch(registration, consumer)
+      after
+        min(@starting_retry_ms, remaining) ->
+          if System.monotonic_time(:millisecond) < deadline do
+            register_when_ready(consumer, monitor, registration, desired, deadline)
+          else
+            finish_registration(consumer, monitor, desired, result)
+          end
+      end
+    else
+      finish_registration(consumer, monitor, desired, result)
+    end
+  end
+
+  defp finish_registration(consumer, monitor, desired, result) do
+    unless registered_result?(result) do
+      Logger.warning(
+        "Assistant stream registration failed: agent_id=#{desired.id} " <>
+          "reason=#{registration_failure(result)}"
+      )
+    end
+
+    send(consumer, {:chat_stream_ready, desired.node, desired.token, desired.id, result})
+    worker(consumer, monitor, desired)
+  end
+
+  defp registration_deadline do
+    timeout =
+      case Application.get_env(:evo_dash, :home_agent_watch_start_timeout_ms) do
+        ms when is_integer(ms) and ms > 0 -> ms
+        _ -> @starting_wait_ms
+      end
+
+    System.monotonic_time(:millisecond) + timeout
+  end
+
+  defp starting_result?({:ok, inner}), do: starting_result?(inner)
+  defp starting_result?({:error, {:bad_state, :starting}}), do: true
+  defp starting_result?(_), do: false
+
+  defp registered_result?({:ok, inner}), do: registered_result?(inner)
+  defp registered_result?({:ok, %Snapshot{}, seq}) when is_integer(seq), do: true
+  defp registered_result?(_), do: false
+
+  # Classify only: log no snapshots, user messages or arbitrary provider/RPC details.
+  defp registration_failure({:ok, inner}), do: registration_failure(inner)
+  defp registration_failure({:error, {:bad_state, :starting}}), do: "starting_timeout"
+
+  defp registration_failure({:error, {:bad_state, phase}})
+       when phase in [:running, :awaiting_input, :cancelling, :finalizing, :done],
+       do: "bad_state_#{phase}"
+
+  defp registration_failure({:error, {:not_found, :session_not_found}}), do: "session_not_found"
+  defp registration_failure({:error, {:not_found, _}}), do: "unavailable"
+  defp registration_failure({:error, _}), do: "call_failed"
+  defp registration_failure(_), do: "invalid_result"
+
+  defp retire_other_scope(nil, _desired, _consumer), do: nil
+
+  defp retire_other_scope(registration, desired, consumer) do
+    if target(registration) == target(desired) do
+      registration
+    else
+      unwatch(registration, consumer)
+      nil
+    end
+  end
+
   defp unwatch(registration, consumer) do
     case SafeCall.run(fn ->
            registration.unwatch.(registration.node, registration.id, consumer)
          end) do
       {:ok, :ok} -> :ok
       {:ok, {:ok, _}} -> :ok
+      {:ok, {:error, {:not_found, :session_not_found}}} -> :ok
       other -> Logger.warning("Assistant stream cleanup failed: #{inspect(other)}")
     end
   end

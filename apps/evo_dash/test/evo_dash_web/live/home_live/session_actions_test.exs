@@ -49,6 +49,50 @@ defmodule EvoDashWeb.HomeLive.SessionActionsTest do
     )
   end
 
+  test "sends the exact workspace and input in one atomic runtime call" do
+    test_pid = self()
+    workspace = %{path: "/tmp/project", node: node(), node_id: nil, name: "project"}
+
+    seam(:home_session_workspace_send_runner, fn target, id, message, policy, selected ->
+      send(test_pid, {:workspace_send, target, id, message, policy, selected})
+      {:error, :unsupported}
+    end)
+
+    seam(:home_session_send_runner, fn _, _, _, _ -> flunk("must use the atomic metadata API") end)
+
+    assert {:error, :unsupported} =
+             SessionActions.send_message(node(), 7, "hi", [], :queue,
+               assistant_workspace: workspace
+             )
+
+    assert_receive {:workspace_send, target, 7, "hi", :queue, ^workspace}
+    assert target == node()
+
+    assert {:error, :unsupported} =
+             SessionActions.send_message(node(), 7, "clear", [], :queue, assistant_workspace: nil)
+
+    assert_receive {:workspace_send, ^target, 7, "clear", :queue, nil}
+  end
+
+  test "atomic send preserves session terminal semantics while workspace conflicts remain retryable" do
+    for {raw, normalized} <- [
+          {:not_found, {:session, :not_found}},
+          {:finished, {:session, :finished}},
+          {{:bad_state, :done}, {:session, :finished}},
+          {{:session, :not_found}, {:session, :not_found}},
+          {:workspace_changed, :workspace_changed}
+        ] do
+      seam(:home_session_workspace_send_runner, fn _, _, _, _, _ -> {:error, raw} end)
+
+      assert {:error, ^normalized} =
+               SessionActions.send_message(node(), 7, "draft", [], :queue,
+                 assistant_workspace: nil
+               )
+
+      assert SessionActions.session_ended?(normalized) == (raw != :workspace_changed)
+    end
+  end
+
   describe "url/2" do
     test "no session and no node is the bare /assistant path" do
       assert SessionActions.url(nil, nil) == "/assistant"
@@ -131,6 +175,22 @@ defmodule EvoDashWeb.HomeLive.SessionActionsTest do
       refute Keyword.has_key?(opts, :parent_id)
       refute Keyword.has_key?(opts, :model_spec)
       refute Keyword.has_key?(opts, :attachments)
+    end
+
+    test "passes authoritative optional workspace and stable conversation identity" do
+      workspace = %{path: "/tmp/project", node: node(), node_id: nil, name: "project"}
+
+      opts =
+        SessionActions.session_opts("hi",
+          assistant_workspace: workspace,
+          assistant_conversation_id: 123
+        )
+
+      assert opts[:assistant_workspace] == workspace
+      assert opts[:assistant_conversation_id] == 123
+
+      assert SessionActions.session_opts("hi", assistant_workspace: nil)[:assistant_workspace] ==
+               nil
     end
 
     test "a non-binary text becomes an empty objective, and junk opts are ignored" do

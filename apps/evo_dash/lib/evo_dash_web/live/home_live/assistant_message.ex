@@ -51,6 +51,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   # the transcript's last assistant entry. Rendered as a quiet footer line when
   # it carries an integer turn/token count.
   attr(:stream_meta, :any, default: nil)
+  attr(:stream_unavailable, :boolean, default: false)
 
   def assistant_message(assigns) do
     ~H"""
@@ -65,7 +66,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
           )}
         </div>
         <div class="group/assistant min-w-0">
-          <%= if @task_status != nil do %>
+          <%= if @task_status != nil and not (@stream_unavailable and streaming?(@entry)) do %>
             <div class="mb-2 flex flex-wrap items-center gap-2">
               <span class="text-xs font-normal text-base-content/60">
                 <%!-- zh_CN: "任务" --%>{gettext("Task")}
@@ -101,53 +102,65 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
               </span>
             </div>
           <% end %>
-          <%= if streaming?(@entry) and entry_text(@entry) == "" do %>
-            <!-- Empty + streaming: pulsing dots pill (unchanged — never
-                 markdown-rendered). -->
-            <div class="py-2">
-              <span class="inline-flex items-center gap-1 rounded-2xl rounded-bl-md bg-base-200/70 px-3 py-2">
-                <span
-                  class="size-1.5 rounded-full bg-base-content/50 animate-bounce"
-                  style="animation-delay:0ms"
-                ></span>
-                <span
-                  class="size-1.5 rounded-full bg-base-content/50 animate-bounce"
-                  style="animation-delay:150ms"
-                ></span>
-                <span
-                  class="size-1.5 rounded-full bg-base-content/50 animate-bounce"
-                  style="animation-delay:300ms"
-                ></span>
-              </span>
+          <%= if @stream_unavailable and streaming?(@entry) do %>
+            <div data-stream-unavailable class="py-2 text-sm text-warning" role="status">
+              {gettext("Updates disconnected. Reply status is unknown; reconnect to check.")}
             </div>
+            <p
+              :if={entry_text(@entry) != ""}
+              phx-no-format
+              data-disconnected-partial
+              class="whitespace-pre-wrap break-words text-[15px] leading-relaxed"
+            >{entry_text(@entry)}</p>
           <% else %>
-            <!-- Layout stability: ONE text container for every state. The outer
+            <%= if streaming?(@entry) and entry_text(@entry) == "" do %>
+              <!-- Empty + streaming: pulsing dots pill (unchanged — never
+                 markdown-rendered). -->
+              <div class="py-2">
+                <span class="inline-flex items-center gap-1 rounded-2xl rounded-bl-md bg-base-200/70 px-3 py-2">
+                  <span
+                    class="size-1.5 rounded-full bg-base-content/50 animate-bounce"
+                    style="animation-delay:0ms"
+                  ></span>
+                  <span
+                    class="size-1.5 rounded-full bg-base-content/50 animate-bounce"
+                    style="animation-delay:150ms"
+                  ></span>
+                  <span
+                    class="size-1.5 rounded-full bg-base-content/50 animate-bounce"
+                    style="animation-delay:300ms"
+                  ></span>
+                </span>
+              </div>
+            <% else %>
+              <!-- Layout stability: ONE text container for every state. The outer
                  div keeps identical classes while streaming, in raw view and
                  after finalization, so only the inner node is replaced when a
                  turn ends — the block's own line-box metrics never change, so
                  the transcript column cannot resize mid-stream or at turn end. -->
-            <div class="py-2 text-[15px] leading-relaxed break-words text-base-content">
-              <%= if streaming?(@entry) do %>
-                <!-- In-progress stream: raw partial text + blinking caret.
+              <div class="py-2 text-[15px] leading-relaxed break-words text-base-content">
+                <%= if streaming?(@entry) do %>
+                  <!-- In-progress stream: raw partial text + blinking caret.
                      Streaming text is NEVER markdown-rendered (a half-rendered
                      stream would flicker) — the render switches to markdown only
                      when the entry is finalized (streaming: false). -->
-                <span class="whitespace-pre-wrap">{entry_text(@entry)}</span>
-                <span class="help-caret ml-0.5 inline-block h-4 w-[3px] rounded-full bg-primary align-[-3px]"></span>
-              <% else %>
-                <%= if @raw do %>
-                  <!-- Per-message raw view: the plain (HTML-escaped) source text. -->
                   <span class="whitespace-pre-wrap">{entry_text(@entry)}</span>
+                  <span class="help-caret ml-0.5 inline-block h-4 w-[3px] rounded-full bg-primary align-[-3px]"></span>
                 <% else %>
-                  <!-- Finalized assistant text renders as Markdown — same helper
+                  <%= if @raw do %>
+                    <!-- Per-message raw view: the plain (HTML-escaped) source text. -->
+                    <span class="whitespace-pre-wrap">{entry_text(@entry)}</span>
+                  <% else %>
+                    <!-- Finalized assistant text renders as Markdown — same helper
                        + call pattern as the tasks/review pages. Always-safe
                        HTML: MDEx render with an HTML-escaped fallback. -->
-                  <div class="md-content min-w-0 break-words text-[15px] leading-relaxed text-base-content">
-                    {raw(EvoDash.MarkdownRender.render(entry_text(@entry)))}
-                  </div>
+                    <div class="md-content min-w-0 break-words text-[15px] leading-relaxed text-base-content">
+                      {raw(EvoDash.MarkdownRender.render(entry_text(@entry)))}
+                    </div>
+                  <% end %>
                 <% end %>
-              <% end %>
-            </div>
+              </div>
+            <% end %>
           <% end %>
           <%= if @thought_process != [] do %>
             <details class="group mt-3 min-w-0">

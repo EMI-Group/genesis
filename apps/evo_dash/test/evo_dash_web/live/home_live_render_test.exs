@@ -26,6 +26,8 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
       model_selection_error: nil,
       model_selection_enabled: false,
       source_available: true,
+      tracked_tasks: [],
+      task_tracking_error: nil,
       source_busy: nil,
       transcript: [],
       chat_status: :idle,
@@ -154,7 +156,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     # the ONE `#chat-form` (its items carry their own click bindings, so no
     # nested form or form owner is involved), and is gone from the page header
     # along with its old standalone form.
-    assert Floki.find(dom, "#chat-form #chat-composer-controls #chat-llm-selection") != []
+    assert Floki.find(dom, "#chat-composer-controls #chat-llm-selection") != []
     assert Floki.find(dom, "#chat-header #chat-llm-selection") == []
     assert Floki.find(dom, "form#chat-llm-selection-form") == []
     assert Floki.find(dom, "select[name='model_id']") == []
@@ -197,7 +199,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
              "Unavailable profile: removed-account"
   end
 
-  test "composer control bar pairs the picker with the send control inside one form" do
+  test "composer control bar pairs the picker with the send control beside separate project and attachment forms" do
     profiles = [%{"id" => "work-account", "name" => "Work", "provider" => "openai"}]
 
     selections = [
@@ -225,14 +227,15 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert Floki.find(dom, "#chat-composer-controls button[phx-click='stop']") != []
 
     assert Floki.find(dom, "#chat-form > textarea") != []
-    assert Floki.find(dom, "#chat-form > textarea + #chat-composer-controls") != []
+    assert Floki.find(dom, ".assistant-input-card > #chat-form + #chat-composer-controls") != []
+    assert Floki.find(dom, "#chat-composer-controls button[form=chat-form][type=submit]") != []
 
     # Provider rows carry their OWN click bindings, which LiveView dispatches
     # to `select_provider_profile` with the row's profile id; the textarea has
     # no own binding, so typing still hits the enclosing form's `chat_input`.
     assert attr(
              dom,
-             "#chat-form #chat-llm-selection-provider-list [phx-click='select_provider_profile']",
+             "#chat-llm-selection-provider-list [phx-click='select_provider_profile']",
              "phx-value-provider_profile_id"
            ) == ["", "work-account"]
 
@@ -246,8 +249,8 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
           [model_selection_error: :invalid_model_spec],
           [model_snapshot: nil, model_select_load_error: :remote_not_connected]
         ] do
-      dom = page(overrides)
-      assert Floki.find(dom, "#chat-form button[type='submit'][disabled]") != []
+      dom = page(Keyword.put(overrides, :chat_draft, "Ready to send"))
+      assert Floki.find(dom, "button[form='chat-form'][type='submit'][disabled]") != []
       # The draft remains editable while the model load/choice is repaired.
       assert Floki.find(dom, "#chat-form textarea[disabled]") == []
     end
@@ -257,12 +260,21 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert text(dom, "[role='alert']") =~ "Model selection is unavailable."
   end
 
-  test "empty chat offers actionable prompts inside the message scroller, not the composer" do
+  test "empty hero uses the existing Genesis light and dark marks with the product slogan" do
+    dom = page()
+    assert text(dom, "#assistant-welcome h2") == "Turn ideas into working software"
+    assert attr(dom, "#assistant-welcome img.block", "src") == ["/images/logo.svg"]
+    assert attr(dom, "#assistant-welcome img.hidden", "src") == ["/images/logo-alt.svg"]
+    assert attr(dom, "#assistant-welcome img", "alt") == ["Genesis", "Genesis"]
+    assert Floki.find(dom, "button[form='chat-form'][type='submit'][disabled]") != []
+    assert Floki.find(dom, "#chat-form textarea[disabled]") == []
+  end
+
+  test "empty chat offers actionable prompts below the composer" do
     dom = page()
 
-    assert text(dom, "h1") == "Genesis Assistant"
-    assert text(dom, "#chat-messages h2") == "What would you like Genesis to do?"
-    prompts = Floki.find(dom, "#chat-messages button[phx-click='send_message']")
+    assert text(dom, "#chat-messages h2") != ""
+    prompts = Floki.find(dom, "#assistant-quick-actions button[phx-click='send_message']")
     assert length(prompts) == 4
 
     for prompt <- prompts do
@@ -273,8 +285,8 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
 
     assert Floki.find(dom, "#chat-messages #chat-form") == []
     assert attr(dom, "#chat-messages", "phx-hook") == ["AgentHistoryAutoScroll"]
-    assert text(dom, "#chat-form button[type='submit']") == "Send"
-    assert Floki.text(dom) =~ "Genesis Assistant can make mistakes. Verify important information."
+    assert text(dom, "button[form='chat-form'][type='submit']") == "Send"
+    refute Floki.text(dom) =~ "Genesis Assistant can make mistakes. Verify important information."
   end
 
   test "idle composer preserves the draft and exposes keyboard and accessible send controls" do
@@ -282,7 +294,11 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
 
     assert attr(dom, "#chat-form", "phx-submit") == ["send_message"]
     assert attr(dom, "#chat-form", "phx-change") == ["chat_input"]
-    assert attr(dom, "#chat-form textarea", "value") == ["Explain <this> & that"]
+    assert attr(dom, "#chat-form textarea", "value") == []
+    # Floki retains entities in raw-text elements; browsers decode the textarea value.
+    assert dom |> Floki.find("#chat-form textarea") |> Floki.text() ==
+             "Explain &lt;this&gt; &amp; that"
+
     assert attr(dom, "#chat-form textarea", "name") == ["message"]
     assert attr(dom, "#chat-form textarea", "aria-label") == ["Message Genesis Assistant…"]
     assert attr(dom, "#chat-form textarea", "placeholder") == ["Message Genesis Assistant…"]
@@ -291,15 +307,22 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
 
     assert Floki.find(
              dom,
-             "#chat-form textarea[disabled], #chat-form button[type='submit'][disabled]"
+             "#chat-form textarea[disabled], button[form='chat-form'][type='submit'][disabled]"
            ) == []
 
-    assert Floki.find(dom, "#chat-form button[phx-click='stop'][disabled].hidden") != []
+    assert Floki.find(dom, "#chat-composer-controls button[phx-click='stop'][disabled].hidden") !=
+             []
+
     assert Floki.text(dom) =~ "Enter to send · Shift+Enter for a new line"
   end
 
   test "a running chat keeps the composer queueable, exposes interrupt and stop, and locks competing actions" do
-    dom = page(chat_status: :running)
+    dom =
+      page(
+        chat_status: :running,
+        chat_draft: "Next request",
+        transcript: [%{id: "running-user", role: :user, text: "hello"}]
+      )
 
     # A send during a run is QUEUED for the next turn boundary, so the textarea
     # stays writable instead of being locked by the running status.
@@ -310,16 +333,16 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     # Send stays present and usable for that queued send, but it is not an
     # ACTIVE send: it owns no click binding of its own (it only submits
     # `#chat-form`), and it is not hidden.
-    assert length(Floki.find(dom, "#chat-form button[type='submit']")) == 1
-    assert attr(dom, "#chat-form button[type='submit']", "phx-click") == []
-    assert attr(dom, "#chat-form button[type='submit']", "disabled") == []
-    assert Floki.find(dom, "#chat-form button[type='submit'].hidden") == []
+    assert length(Floki.find(dom, "button[form='chat-form'][type='submit']")) == 1
+    assert attr(dom, "button[form='chat-form'][type='submit']", "phx-click") == []
+    assert attr(dom, "button[form='chat-form'][type='submit']", "disabled") == []
+    assert Floki.find(dom, "button[form='chat-form'][type='submit'].hidden") == []
 
     # The send control is still independently UNUSABLE without a usable model
     # snapshot — even while running — and the draft stays editable either way.
-    blocked = page(chat_status: :running, model_snapshot: nil)
+    blocked = page(chat_status: :running, chat_draft: "Next request", model_snapshot: nil)
 
-    assert Floki.find(blocked, "#chat-form button[type='submit'][disabled]") != []
+    assert Floki.find(blocked, "button[form='chat-form'][type='submit'][disabled]") != []
     assert Floki.find(blocked, "#chat-form textarea[disabled]") == []
 
     # The interrupt affordance is the running-only explicit action.
@@ -327,12 +350,12 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert attr(dom, "#chat-interrupt-button", "type") == ["button"]
     assert attr(dom, "#chat-interrupt-button", "phx-click") == ["interrupt_turn"]
     assert attr(dom, "#chat-interrupt-button", "disabled") == []
-    assert text(dom, "#chat-interrupt-button") == "Send now (interrupt turn)"
+    assert text(dom, "#chat-interrupt-button") == "Queue for the next turn"
 
     # Stop is a separate, ENABLED control while the turn runs.
-    assert text(dom, "#chat-form button[phx-click='stop']") == "Stop"
-    assert Floki.find(dom, "#chat-form button[phx-click='stop'][disabled]") == []
-    assert Floki.find(dom, "#chat-form button[phx-click='stop'].hidden") == []
+    assert text(dom, "#chat-composer-controls button[phx-click='stop']") == "Stop reply"
+    assert Floki.find(dom, "#chat-composer-controls button[phx-click='stop'][disabled]") == []
+    assert Floki.find(dom, "#chat-composer-controls button[phx-click='stop'].hidden") == []
 
     # Competing actions stay locked, and the idle mistakes note stays absent.
     assert Floki.find(dom, "button[phx-click='new_chat'][disabled]") != []
@@ -344,22 +367,22 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
 
     assert text(dom, "#chat-messages") =~ "Explain the scheduler"
     assert Floki.find(dom, "#chat-messages h2") == []
-    assert Floki.find(dom, "#chat-messages button[phx-click='send_message']") == []
+    assert Floki.find(dom, "#assistant-quick-actions button[phx-click='send_message']") == []
     assert Floki.find(dom, "#chat-form textarea[disabled]") == []
-    assert text(dom, "#chat-form button[type='submit']") == "Send"
+    assert text(dom, "button[form='chat-form'][type='submit']") == "Send"
     assert Floki.text(dom) =~ "Enter to send · Shift+Enter for a new line"
     refute Floki.text(dom) =~ "Genesis Assistant can make mistakes. Verify important information."
   end
 
-  test "known missing local source replaces suggestion actions with guidance and disables send" do
-    dom = page(source_available: false)
+  test "known missing local source keeps suggestions and ordinary chat available" do
+    dom = page(source_available: false, chat_draft: "Ready to send")
 
-    assert text(dom, "#chat-messages") =~ "Download the Genesis source to start chatting."
-    assert Floki.find(dom, "#chat-messages button[phx-click='send_message']") == []
-    assert Floki.find(dom, "button[phx-click='download_source']") != []
-    assert Floki.find(dom, "#chat-form textarea[disabled]") != []
-    assert Floki.find(dom, "#chat-form button[type='submit'][disabled]") != []
-    # Downloading the source does not prevent starting a fresh conversation.
+    assert length(Floki.find(dom, "#assistant-quick-actions button[phx-click='send_message']")) ==
+             4
+
+    assert Floki.find(dom, "button[phx-click='download_source']") == []
+    assert Floki.find(dom, "#chat-form textarea[disabled]") == []
+    assert Floki.find(dom, "button[form='chat-form'][type='submit'][disabled]") == []
     assert Floki.find(dom, "button[phx-click='new_chat'][disabled]") == []
   end
 
@@ -368,33 +391,35 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
           [source_available: nil],
           [source_available: false, current_node: :remote@host]
         ] do
-      dom = page(overrides)
+      dom = page(Keyword.put(overrides, :chat_draft, "Ready to send"))
 
-      assert length(Floki.find(dom, "#chat-messages button[phx-click='send_message']")) == 4
+      assert length(Floki.find(dom, "#assistant-quick-actions button[phx-click='send_message']")) ==
+               4
+
       assert Floki.find(dom, "button[phx-click='download_source']") == []
 
       assert Floki.find(
                dom,
-               "#chat-form textarea[disabled], #chat-form button[type='submit'][disabled]"
+               "#chat-form textarea[disabled], button[form='chat-form'][type='submit'][disabled]"
              ) == []
     end
   end
 
   test "an awaiting-input session renders an idle-style, writable composer" do
-    dom = page(chat_status: :awaiting_input)
+    dom = page(chat_status: :awaiting_input, chat_draft: "Continue this conversation")
 
     # An idle live session is writable: the draft is accepted and Send is
     # usable once a model snapshot exists.
     assert Floki.find(dom, "#chat-form textarea[disabled]") == []
     assert attr(dom, "#chat-form textarea", "name") == ["message"]
 
-    assert length(Floki.find(dom, "#chat-form button[type='submit']")) == 1
-    assert attr(dom, "#chat-form button[type='submit']", "disabled") == []
-    assert Floki.find(dom, "#chat-form button[type='submit'].hidden") == []
-    assert text(dom, "#chat-form button[type='submit']") == "Send"
+    assert length(Floki.find(dom, "button[form='chat-form'][type='submit']")) == 1
+    assert attr(dom, "button[form='chat-form'][type='submit']", "disabled") == []
+    assert Floki.find(dom, "button[form='chat-form'][type='submit'].hidden") == []
+    assert text(dom, "button[form='chat-form'][type='submit']") == "Send"
 
     # No turn is in flight: Stop is hidden and the interrupt affordance is gone.
-    assert Floki.find(dom, "#chat-form button[phx-click='stop'].hidden") != []
+    assert Floki.find(dom, "#chat-composer-controls button[phx-click='stop'].hidden") != []
     assert Floki.find(dom, "#chat-interrupt-button") == []
   end
 
@@ -402,24 +427,27 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     ended = page(chat_status: :ended)
 
     assert Floki.find(ended, "#chat-form textarea[disabled]") != []
-    assert Floki.find(ended, "#chat-form button[type='submit'].hidden") != []
-    assert Floki.find(ended, "#chat-form button[type='submit'][disabled]") != []
+    assert Floki.find(ended, "button[form='chat-form'][type='submit'].hidden") != []
+    assert Floki.find(ended, "button[form='chat-form'][type='submit'][disabled]") != []
     # A finished session can never be stopped again: Stop stays hidden (and
     # disabled) while the only remaining affordance is New chat.
-    assert Floki.find(ended, "#chat-form button[phx-click='stop'].hidden") != []
+    assert Floki.find(ended, "#chat-composer-controls button[phx-click='stop'].hidden") != []
     assert Floki.find(ended, "button[phx-click='new_chat'][disabled]") == []
 
     cancelling = page(chat_status: :cancelling)
 
     assert Floki.find(cancelling, "#chat-form textarea[disabled]") != []
-    assert Floki.find(cancelling, "#chat-form button[type='submit'].hidden") != []
-    assert Floki.find(cancelling, "#chat-form button[type='submit'][disabled]") != []
+    assert Floki.find(cancelling, "button[form='chat-form'][type='submit'].hidden") != []
+    assert Floki.find(cancelling, "button[form='chat-form'][type='submit'][disabled]") != []
 
     # A cancel is already in flight: Stop is the one remaining control, shown
     # but deliberately disabled.
-    assert Floki.find(cancelling, "#chat-form button[phx-click='stop'].hidden") == []
-    assert Floki.find(cancelling, "#chat-form button[phx-click='stop'][disabled]") != []
-    assert text(cancelling, "#chat-form button[phx-click='stop']") == "Stop"
+    assert Floki.find(cancelling, "#chat-composer-controls button[phx-click='stop'].hidden") == []
+
+    assert Floki.find(cancelling, "#chat-composer-controls button[phx-click='stop'][disabled]") !=
+             []
+
+    assert text(cancelling, "#chat-composer-controls button[phx-click='stop']") == "Stop reply"
     assert Floki.find(cancelling, "#chat-interrupt-button") == []
   end
 
@@ -458,7 +486,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert Floki.find(dom, "#chat-queued-echo-1 [phx-click]") == []
 
     # The empty greeting is still the only thing in the transcript.
-    assert text(dom, "#chat-messages h2") == "What would you like Genesis to do?"
+    assert text(dom, "#chat-messages h2") == "Turn ideas into working software"
   end
 
   test "an empty queue renders no echo container at all" do
@@ -473,15 +501,21 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
       assert Floki.find(page(chat_status: status), "#chat-interrupt-button") == []
     end
 
-    running = page(chat_status: :running)
+    running =
+      page(
+        chat_status: :running,
+        chat_draft: "Next request",
+        transcript: [%{id: "running-user", role: :user, text: "hello"}]
+      )
+
     interrupt = Floki.find(running, "#chat-interrupt-button")
 
     assert length(interrupt) == 1
     assert Floki.attribute(interrupt, "type") == ["button"]
     assert Floki.attribute(interrupt, "phx-click") == ["interrupt_turn"]
     assert Floki.attribute(interrupt, "disabled") == []
-    assert Floki.text(interrupt) |> String.trim() == "Send now (interrupt turn)"
-    assert Floki.attribute(interrupt, "title") == ["Send now (interrupt turn)"]
+    assert Floki.text(interrupt) |> String.trim() == "Queue for the next turn"
+    assert Floki.attribute(interrupt, "title") == ["Queue for the next turn"]
   end
 
   test "the conversation rail lists awaiting, running and ended sessions in order" do

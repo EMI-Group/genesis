@@ -26,6 +26,57 @@ defmodule EvoDash.AttachedFileTest do
 
   @fifteen_mib 15 * 1024 * 1024
 
+  describe "read_uploaded/2" do
+    test "uses the browser filename to classify an extensionless temporary file" do
+      raw = <<137, 80, 78, 71, 0, 255>>
+      path = write_tmp!("opaque-temp", raw)
+
+      assert {:ok, %{type: "image", media_type: "image/png", bytes: ^raw}} =
+               AttachedFile.read_uploaded(path, "C:\\client\\photo.PNG")
+
+      assert {:ok, "photo.PNG"} = AttachedFile.upload_name("C:\\client\\photo.PNG")
+      text = write_tmp!("opaque-text", "  Browser notes\n")
+
+      assert {:ok, %{type: "text", name: "notes.md", text: "Browser notes"}} =
+               AttachedFile.read_uploaded(text, "../../notes.md")
+    end
+
+    test "document extraction uses client extension rather than the temporary path" do
+      docx =
+        write_tmp!(
+          "opaque-doc",
+          docx_zip("<w:document><w:p><w:r><w:t>Upload document</w:t></w:r></w:p></w:document>")
+        )
+
+      assert {:ok, %{type: "text", text: "Upload document"}} =
+               AttachedFile.read_uploaded(docx, "notes.docx")
+
+      pdf = write_tmp!("opaque-pdf", pdf_binary(["Browser PDF text"]))
+
+      assert {:ok, %{type: "text", text: extracted}} =
+               AttachedFile.read_uploaded(pdf, "original.pdf")
+
+      assert extracted =~ "Browser PDF text"
+      assert extracted =~ "original.pdf"
+      refute extracted =~ "opaque-pdf"
+    end
+
+    test "rejects unsupported extensions, invalid text, untrusted names and oversize files" do
+      path = write_tmp!("opaque-invalid", <<0, 255, 1>>)
+
+      assert {:error, {:unsupported_extension, ".exe"}} =
+               AttachedFile.read_uploaded(path, "run.exe")
+
+      assert {:error, :invalid_text} = AttachedFile.read_uploaded(path, "notes.txt")
+
+      assert {:error, :invalid_filename} =
+               AttachedFile.read_uploaded(path, "bad" <> <<0>> <> ".txt")
+
+      oversized = sparse_file!("opaque-large", @fifteen_mib + 1)
+      assert {:error, {:file_too_large, _}} = AttachedFile.read_uploaded(oversized, "notes.txt")
+    end
+  end
+
   describe "read/1 — plain text" do
     test ".txt is trimmed, .md is returned as-is" do
       assert {:ok, "Implement the feature."} =

@@ -82,9 +82,77 @@ defmodule EvoDash.AttachedFile do
     end
   end
 
+  @text_extensions ~w(.txt .md .markdown .csv .tsv .json .jsonl .yaml .yml .toml .xml .log .ini .conf .ex .exs .js .jsx .ts .tsx .html .htm .css .scss .py .rb .sh .sql .go .rs .java .c .h .cpp .hpp .swift .kt .vue .svelte)
+
+  @doc "Supported browser-upload extensions, including text documents and media."
+  def upload_extensions,
+    do: @text_extensions ++ [".pdf", ".docx"] ++ Map.keys(upload_media_types())
+
+  @doc "Sanitizes an untrusted browser filename without using it as a server path."
+  def upload_name(name) when is_binary(name) do
+    if String.valid?(name) and not String.contains?(name, <<0>>) do
+      name =
+        name
+        |> String.replace("\\", "/")
+        |> Path.basename()
+        |> String.replace(~r/[\r\n\t]/, "_")
+        |> String.slice(0, 255)
+
+      if name in ["", ".", ".."], do: {:error, :invalid_filename}, else: {:ok, name}
+    else
+      {:error, :invalid_filename}
+    end
+  end
+
+  def upload_name(_), do: {:error, :invalid_filename}
+
+  @doc "Reads a consumed upload using its original name, never its extensionless temporary path."
+  def read_uploaded(path, client_name) do
+    with {:ok, name} <- upload_name(client_name),
+         ext = name |> Path.extname() |> String.downcase(),
+         true <- ext in upload_extensions(),
+         {:ok, stat} <- File.stat(path),
+         true <- stat.type == :regular,
+         :ok <- upload_size(stat.size) do
+      case Map.get(upload_media_types(), ext) do
+        {kind, media_type} ->
+          read_kind_file(path, kind, media_type)
+
+        nil ->
+          result =
+            case ext do
+              ".pdf" -> read_pdf(path, name)
+              ".docx" -> read_docx(path)
+              _ -> read_text(path)
+            end
+
+          with {:ok, text} <- result,
+               true <- String.valid?(text) and not String.contains?(text, <<0>>),
+               :ok <- upload_size(byte_size(text)) do
+            {:ok, %{type: "text", name: name, text: text}}
+          else
+            false -> {:error, :invalid_text}
+            {:error, _} = error -> error
+          end
+      end
+    else
+      false -> {:error, {:unsupported_extension, Path.extname(to_string(client_name))}}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp upload_size(size) when size <= @max_attachment_bytes, do: :ok
+  defp upload_size(size), do: {:error, {:file_too_large, size}}
+
   @doc "Builds a user-ready error message for a `read/1`/`read_kind/2` error."
   def describe_error(error, path) do
     case error do
+      :invalid_filename ->
+        "Invalid attachment filename"
+
+      :invalid_text ->
+        "The file does not contain valid UTF-8 text"
+
       :enoent ->
         "File not found: #{path}"
 
@@ -146,6 +214,11 @@ defmodule EvoDash.AttachedFile do
   }
 
   @media_types Map.merge(@image_media_types, @audio_media_types)
+
+  defp upload_media_types do
+    Map.new(@image_media_types, fn {ext, mime} -> {ext, {"image", mime}} end)
+    |> Map.merge(Map.new(@audio_media_types, fn {ext, mime} -> {ext, {"audio", mime}} end))
+  end
 
   @doc """
   Maps a lowercase file extension (with or without the leading dot) to the
@@ -353,9 +426,9 @@ defmodule EvoDash.AttachedFile do
       "artifacts, not as the source document's intended text."
   end
 
-  defp read_pdf(path) do
+  defp read_pdf(path, display_name \\ nil) do
     with {:ok, binary} <- File.read(path) do
-      extract_pdf(binary, path)
+      extract_pdf(binary, display_name || path)
     end
   end
 

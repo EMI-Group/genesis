@@ -18,7 +18,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
   `send_blocked?/1` (no usable model, so no send).
 
     * `compose_disabled?/1` is true only while the chat is `:cancelling` /
-      `:ended` or while `EvoDashWeb.HomeLive.SourceGate.blocked?/1` holds.
+      `:ended`.
       It drives the textarea's `disabled` attribute and the attach affordances.
     * the textarea is ENABLED in every other state: `:idle`, `:awaiting_input`,
       `:running` (a send during a run is queued, delivered at the next turn
@@ -51,7 +51,6 @@ defmodule EvoDashWeb.HomeLive.Composer do
   import EvoDashWeb.LLMSelectionComponents, only: [llm_selection: 1]
 
   alias EvoDashWeb.HomeLive.Attachments
-  alias EvoDashWeb.HomeLive.SourceGate
 
   @chat_statuses [:idle, :running, :cancelling, :awaiting_input, :ended]
 
@@ -67,7 +66,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
   `:attach_unavailable`, `:provider_profiles`, `:model_selections`,
   `:model_spec`, `:model_selection_enabled`, `:model_select_loading`,
   `:model_select_load_error`, `:model_selection_error`, `:model_snapshot`,
-  `:source_available` and `:current_node` (through `SourceGate.blocked?/1`).
+  Optional project selection loading only disables sending, preserving the draft.
   """
   def composer(assigns) do
     status = chat_status(assigns)
@@ -88,103 +87,76 @@ defmodule EvoDashWeb.HomeLive.Composer do
         composer_send_hidden?: status in [:cancelling, :ended],
         composer_send_disabled?: send_blocked?(assigns),
         composer_stop_visible?: status in [:running, :cancelling],
-        composer_stop_disabled?: status != :running,
-        composer_mistakes_note?: status == :idle and transcript_empty?(assigns[:transcript])
+        composer_stop_disabled?: status != :running
       )
 
     ~H"""
-    <div class="shrink-0 px-3 pt-2 pb-3 sm:px-4 bg-base-100">
-      <p
-        :if={@composer_model_error?}
-        role="alert"
-        class="mb-1.5 text-xs text-error"
-      >
+    <div class="assistant-compose">
+      <p :if={@composer_model_error?} role="alert" class="assistant-compose-error">
         {gettext("Model selection is unavailable. Choose a valid model or reconnect to the node.")}
       </p>
-
-      <%!-- The attach affordance sits OUTSIDE `#chat-form`: its manual-path
-           fallback is its own small form, and no form may ever be nested inside
-           the message form. --%>
-      <div class="flex items-center gap-1 px-1 pb-1">
-        <.attach_menu {assigns} />
-      </div>
-
-      <form
-        id="chat-form"
-        phx-submit="send_message"
-        phx-change="chat_input"
-        class="help-composer flex flex-col gap-1 rounded-2xl p-1"
-      >
-        <.attachment_chips {assigns} />
-
-        <textarea
-          name="message"
-          value={@composer_draft}
-          phx-keydown="chat_keydown"
-          phx-keyup="chat_keyup"
-          disabled={@composer_textarea_disabled?}
-          placeholder={gettext("Message Genesis Assistant…")}
-          rows="1"
-          aria-label={gettext("Message Genesis Assistant…")}
-          class="w-full min-w-0 min-h-[46px] max-h-[min(10rem,25dvh)] resize-y bg-transparent px-4 py-3 text-base leading-relaxed placeholder:text-base-content/50 focus:outline-none disabled:opacity-50"
-        ></textarea>
-
-        <%!-- Composer control bar: picker left, controls right. --%>
-        <div id="chat-composer-controls" class="help-composer-controls">
-          <.llm_selection
-            id="chat-llm-selection"
-            provider_profiles={@composer_provider_profiles}
-            model_selections={@composer_model_selections}
-            model_spec={@composer_model_spec}
-            show_auto_option={@composer_model_selection_enabled}
-            disabled={@composer_picker_disabled?}
-            compact
-            class="min-w-0"
-          />
-          <div class="ml-auto flex shrink-0 items-center gap-2">
-            <%!-- The interrupt affordance is rendered by the PAGE, directly
-                 above this card (exactly one `#chat-interrupt-button`). --%>
-            <%!-- Send and Stop coexist while running: a send during a run is
-                 QUEUED for the next turn boundary. Send is hidden only once
-                 the chat can no longer accept input. --%>
+      <div class="assistant-input-card">
+        <form
+          id="chat-form"
+          phx-submit="send_message"
+          phx-change="chat_input"
+          class="assistant-message-form"
+        >
+          <.attachment_chips {assigns} />
+          <textarea
+            id="chat-message-input"
+            name="message"
+            phx-keydown="chat_keydown"
+            phx-keyup="chat_keyup"
+            disabled={@composer_textarea_disabled?}
+            placeholder={gettext("Message Genesis Assistant…")}
+            rows="3"
+            aria-label={gettext("Message Genesis Assistant…")}
+            aria-describedby="chat-keyboard-hint"
+            class="assistant-textarea"
+          >{@composer_draft}</textarea>
+        </form>
+        <div id="chat-composer-controls" class="assistant-context-bar">
+          <div class="assistant-context-start">
+            <.attach_menu {assigns} />
+            {EvoDashWeb.HomeLive.WorkspaceComponent.selector(assigns)}
+            {EvoDashWeb.HomeLive.TaskCard.follow_control(assigns)}
+          </div>
+          <div class="assistant-context-end">
+            <.llm_selection
+              id="chat-llm-selection"
+              provider_profiles={@composer_provider_profiles}
+              model_selections={@composer_model_selections}
+              model_spec={@composer_model_spec}
+              show_auto_option={@composer_model_selection_enabled}
+              disabled={@composer_picker_disabled?}
+              compact
+              class="assistant-model-control"
+            />
             <button
               type="submit"
+              form="chat-form"
               disabled={@composer_send_disabled?}
-              class={[
-                "help-send-btn flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-content transition hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:pointer-events-none",
-                @composer_send_hidden? && "hidden"
-              ]}
+              class={["assistant-send-button", @composer_send_hidden? && "hidden"]}
             >
-              <.icon name="hero-paper-airplane" class="size-4" />
-              <span class="sr-only"><%!-- zh_CN: "发送" --%>{gettext("Send")}</span>
+              <.icon name="hero-arrow-up" class="size-4" />
+              <span class="sr-only">{gettext("Send")}</span>
             </button>
             <button
               type="button"
               phx-click="stop"
               disabled={@composer_stop_disabled?}
-              class={[
-                "flex size-9 shrink-0 items-center justify-center rounded-full bg-base-content text-base-100 transition hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:pointer-events-none",
-                not @composer_stop_visible? && "hidden"
-              ]}
+              class={["assistant-stop-button", not @composer_stop_visible? && "hidden"]}
             >
               <.icon name="hero-stop" class="size-4" />
-              <span class="sr-only"><%!-- zh_CN: "停止" --%>{gettext("Stop")}</span>
+              <span class="sr-only">{gettext("Stop reply")}</span>
             </button>
           </div>
         </div>
-      </form>
-
-      <div class="mt-1.5 text-center text-xs text-base-content/60">
-        <%!-- zh_CN: "回车发送 · Shift+回车换行" --%>{gettext(
-          "Enter to send · Shift+Enter for a new line"
-        )}
-        <%= if @composer_mistakes_note? do %>
-          <br />
-          <%!-- zh_CN: Genesis Assistant 可能会出错，请核实重要信息。 --%>{gettext(
-            "Genesis Assistant can make mistakes. Verify important information."
-          )}
-        <% end %>
       </div>
+      <p id="chat-keyboard-hint" class="sr-only">
+        {gettext("Enter to send · Shift+Enter for a new line")}
+      </p>
     </div>
     """
   end
@@ -210,12 +182,12 @@ defmodule EvoDashWeb.HomeLive.Composer do
       type="button"
       phx-click="interrupt_turn"
       disabled={@interrupt_disabled?}
-      title={gettext("Send now (interrupt turn)")}
+      title={gettext("Queue for the next turn")}
       class="btn btn-ghost btn-xs shrink-0 gap-1 rounded-full text-base-content/80"
     >
       <.icon name="hero-bolt" class="size-3.5" />
       <%!-- zh_CN: 立即发送：把草稿插到下一条消息，当前回合跑完才生效，不会中途打断 --%>
-      <span class="text-[11px]">{gettext("Send now (interrupt turn)")}</span>
+      <span class="text-[11px]">{gettext("Queue for the next turn")}</span>
     </button>
     """
   end
@@ -271,79 +243,138 @@ defmodule EvoDashWeb.HomeLive.Composer do
     """
   end
 
-  @doc """
-  The attach affordance: a `chat-attach-button` icon button plus one
-  `chat_attach` item per kind (`text` / `image` / `audio`), disabled when the
-  compose surface is disabled or the pending set is at the cap.
-
-  When `:attach_unavailable` is truthy a manual-path fallback form is rendered
-  (`chat-attach-manual` input named `path`, `phx-submit="chat_attach_manual"`).
-  """
+  @doc "Browser-local upload entry point plus a clearly separate server-path option."
   def attach_menu(assigns) do
     disabled? = compose_disabled?(assigns) or at_capacity?(assigns)
+    upload = get_in(assigns, [:uploads, :chat_files])
 
     assigns =
       assign(assigns,
         attach_disabled?: disabled?,
-        attach_manual?: assigns[:attach_unavailable] == true
+        attach_upload: upload,
+        attach_upload_error: assigns[:upload_error],
+        attach_upload_entries:
+          if(upload, do: Enum.reject(upload.entries, & &1.cancelled?), else: [])
       )
 
     ~H"""
-    <div id="chat-attach-menu" class="relative flex items-center gap-1">
-      <button
-        id="chat-attach-button"
-        type="button"
-        disabled={@attach_disabled?}
-        title={gettext("Attach a file")}
-        aria-label={gettext("Attach a file")}
-        class="btn btn-ghost btn-sm btn-circle shrink-0 rounded-md text-base-content/70"
+    <div class="relative min-w-0">
+      <details
+        id="chat-attach-menu"
+        phx-hook="AssistantDisclosure"
+        class="assistant-attach-menu"
+        phx-click-away={JS.remove_attribute("open", to: "#chat-attach-menu")}
+        phx-window-keydown={
+          JS.remove_attribute("open", to: "#chat-attach-menu") |> JS.focus(to: "#chat-attach-button")
+        }
+        phx-key="Escape"
       >
-        <.icon name="hero-paper-clip" class="size-4" />
-      </button>
-      <button
-        type="button"
-        phx-click="chat_attach"
-        phx-value-kind="text"
-        disabled={@attach_disabled?}
-        class="btn btn-ghost btn-xs rounded-md text-base-content/70"
+        <summary
+          id="chat-attach-button"
+          title={gettext("Attach a file")}
+          aria-label={gettext("Attach a file")}
+          aria-disabled={to_string(@attach_disabled?)}
+          class="assistant-icon-button"
+        >
+          <.icon name="hero-plus" class="size-5" />
+        </summary>
+        <div class="assistant-menu-panel assistant-attach-panel">
+          <form
+            :if={@attach_upload}
+            id="chat-upload-form"
+            phx-change="chat_upload_validate"
+            phx-submit="chat_upload_validate"
+          >
+            <label
+              for={@attach_upload.ref}
+              class={[
+                "assistant-menu-item cursor-pointer",
+                @attach_disabled? && "opacity-40 cursor-not-allowed"
+              ]}
+            >
+              <.icon name="hero-arrow-up-tray" class="size-4" />
+              <span>{gettext("Upload files from this computer")}</span>
+            </label>
+            <.live_file_input
+              upload={@attach_upload}
+              accept={Enum.join(EvoDash.AttachedFile.upload_extensions(), ",")}
+              class="sr-only"
+              disabled={@attach_disabled?}
+              aria-label={gettext("Upload files from this computer")}
+            />
+          </form>
+          <button :if={is_nil(@attach_upload)} type="button" disabled class="assistant-menu-item">
+            <.icon name="hero-arrow-up-tray" class="size-4" />
+            <span>{gettext("Upload files from this computer")}</span>
+          </button>
+          <p class="px-3 pb-2 text-[11px] text-base-content/50">
+            {gettext("Up to 4 files, 15 MiB each. Text, PDF, Word, images and audio.")}
+          </p>
+          <details id="chat-server-attachment" class="border-t border-base-300/60 pt-1">
+            <summary class="assistant-menu-item cursor-pointer text-xs">
+              {gettext("Add from Genesis server path")}
+            </summary>
+            <.form
+              for={to_form(%{}, as: nil)}
+              id="chat-attach-manual-form"
+              phx-submit="chat_attach_manual"
+              class="assistant-attachment-path-form"
+            >
+              <.input
+                id="chat-attach-manual"
+                type="text"
+                name="path"
+                value=""
+                autocomplete="off"
+                placeholder={gettext("Absolute file path on the selected server")}
+                aria-label={gettext("Absolute file path on the selected server")}
+                disabled={@attach_disabled?}
+                class="assistant-path-input"
+              />
+              <button type="submit" disabled={@attach_disabled?} class="assistant-menu-submit">{gettext(
+                "Attach"
+              )}</button>
+            </.form>
+          </details>
+        </div>
+      </details>
+      <div
+        :if={@attach_upload_entries != []}
+        id="chat-upload-progress"
+        class="absolute bottom-full left-0 z-[70] mb-2 w-64 rounded-xl border border-base-300 bg-base-100 p-2 shadow-lg"
       >
-        <%!-- zh_CN: 文本文件 --%>{gettext("File")}
-      </button>
-      <button
-        type="button"
-        phx-click="chat_attach"
-        phx-value-kind="image"
-        disabled={@attach_disabled?}
-        class="btn btn-ghost btn-xs rounded-md text-base-content/70"
+        <div :for={entry <- @attach_upload_entries} class="flex items-center gap-2 py-1 text-xs">
+          <span class="min-w-0 flex-1 truncate" role="status">{gettext(
+            "Uploading %{name}: %{progress}%",
+            name: entry.client_name,
+            progress: entry.progress
+          )}</span>
+          <button
+            type="button"
+            phx-click="chat_upload_cancel"
+            phx-value-ref={entry.ref}
+            aria-label={gettext("Cancel upload")}
+            class="shrink-0 text-base-content/60 hover:text-error"
+          >
+            <.icon name="hero-x-mark" class="size-4" />
+          </button>
+        </div>
+      </div>
+      <div
+        :if={@attach_upload_error}
+        id="chat-upload-error"
+        role="alert"
+        class="absolute bottom-full left-0 z-[70] mb-2 flex w-72 items-start gap-2 rounded-xl border border-error/30 bg-base-100 p-3 text-xs text-error shadow-lg"
       >
-        <%!-- zh_CN: 图片 --%>{gettext("Image")}
-      </button>
-      <button
-        type="button"
-        phx-click="chat_attach"
-        phx-value-kind="audio"
-        disabled={@attach_disabled?}
-        class="btn btn-ghost btn-xs rounded-md text-base-content/70"
-      >
-        <%!-- zh_CN: 音频 --%>{gettext("Audio")}
-      </button>
-
-      <form
-        :if={@attach_manual?}
-        id="chat-attach-manual-form"
-        phx-submit="chat_attach_manual"
-        class="absolute bottom-full left-0 z-20 mb-1 flex items-center gap-1 rounded-md border border-base-300 bg-base-100 p-1 shadow-md"
-      >
-        <input
-          id="chat-attach-manual"
-          type="text"
-          name="path"
-          autocomplete="off"
-          placeholder={gettext("Path to a file on this machine")}
-          class="input input-xs w-56 rounded-md border border-base-300 bg-base-100 px-2 py-1 text-xs"
-        />
-        <button type="submit" class="btn btn-xs rounded-md">{gettext("Attach")}</button>
-      </form>
+        <span class="flex-1">{@attach_upload_error}</span>
+        <button
+          type="button"
+          phx-click="chat_upload_clear_error"
+          aria-label={gettext("Dismiss upload error")}
+        >
+          <.icon name="hero-x-mark" class="size-4" />
+        </button>
+      </div>
     </div>
     """
   end
@@ -392,13 +423,13 @@ defmodule EvoDashWeb.HomeLive.Composer do
   end
 
   # "No new input at all" predicate: the chat is winding down (`:cancelling` /
-  # `:ended`) or the Genesis source gate blocks the page. It drives the
+  # `:ended`). It drives the
   # textarea's `disabled` attribute and the attach affordances ONLY — every
   # model-not-ready state (still loading, no snapshot, invalid selection, a
   # pending/unconnected remote target) leaves the draft editable so typing is
   # never lost while the choice is repaired.
   defp compose_disabled?(assigns) do
-    chat_status(assigns) in [:cancelling, :ended] or SourceGate.blocked?(assigns)
+    chat_status(assigns) in [:cancelling, :ended]
   end
 
   # "Sending is blocked" predicate: composing is disabled PLUS the model
@@ -407,7 +438,14 @@ defmodule EvoDashWeb.HomeLive.Composer do
   # resolved model — the Send button and the interrupt-turn button — never the
   # textarea.
   defp send_blocked?(assigns) do
-    compose_disabled?(assigns) or model_missing?(assigns) or model_error?(assigns)
+    compose_disabled?(assigns) or assigns[:workspace_loading] == true or
+      assigns[:upload_in_progress] == true or not has_content?(assigns) or
+      model_missing?(assigns) or model_error?(assigns)
+  end
+
+  defp has_content?(assigns) do
+    String.trim(text_value(assigns[:chat_draft])) != "" or
+      Attachments.count(assigns[:pending_attachments]) > 0
   end
 
   defp picker_disabled?(assigns) do
@@ -420,9 +458,6 @@ defmodule EvoDashWeb.HomeLive.Composer do
     not is_nil(assigns[:model_selection_error]) or
       not is_nil(assigns[:model_select_load_error])
   end
-
-  defp transcript_empty?(transcript) when is_list(transcript), do: transcript == []
-  defp transcript_empty?(_transcript), do: true
 
   defp at_capacity?(assigns) do
     Attachments.count(assigns[:pending_attachments]) >= Attachments.max_attachments()

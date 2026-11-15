@@ -37,8 +37,8 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowTest.Helpers do
   def scope(socket) do
     a = socket.assigns
 
-    {a.chat_id, a.current_node_id, a.current_node, a.chat_node || a.current_node, a.chat_task_id,
-     a.chat_agent_id}
+    {a[:assistant_conversation_id] || a.chat_id, a.current_node_id, a.current_node,
+     a.chat_node || a.current_node, a.chat_task_id, a.chat_agent_id}
   end
 
   def recovery(socket, seq \\ 101) do
@@ -76,6 +76,41 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowTest do
   import Phoenix.Component, only: [assign: 2]
 
   describe "request ownership" do
+    test "structured approvals keep stable conversation scope after interactive adoption" do
+      socket = socket(%{chat_id: 99, assistant_conversation_id: 42})
+      own = request(%{kind: :task_control, conversation_id: 42, task_id: nil, agent_id: nil})
+      assert ApprovalWorkflow.own_request?(socket.assigns, own)
+      refute ApprovalWorkflow.own_request?(socket.assigns, %{own | conversation_id: 99})
+      {socket, tag} = recovery(socket)
+      adopted = assign(socket, chat_id: 101)
+      loaded = ApprovalWorkflow.recovered(adopted, tag, {:ok, [own]})
+      assert loaded.assigns.pending_approvals == [own]
+      changed = assign(socket, assistant_conversation_id: 43)
+
+      assert ApprovalWorkflow.recovered(changed, tag, {:ok, [own]}).assigns.pending_approvals ==
+               []
+    end
+
+    test "structured requests belong to the exact conversation even after its agent stops" do
+      socket = socket(%{chat_task_id: nil, chat_agent_id: nil})
+
+      request =
+        request(%{kind: :task_control, task_id: nil, agent_id: nil, conversation_id: "chat-1"})
+
+      assert ApprovalWorkflow.own_request?(socket.assigns, request)
+      refute ApprovalWorkflow.own_request?(socket.assigns, %{request | conversation_id: "chat-2"})
+      refute ApprovalWorkflow.own_request?(socket.assigns, %{request | node: :other@host})
+      refute ApprovalWorkflow.own_request?(socket.assigns, %{request | node: nil})
+      # Matching a stale agent cannot make a different conversation's request ours.
+      socket = socket(%{chat_agent_id: 17})
+
+      refute ApprovalWorkflow.own_request?(socket.assigns, %{
+               request
+               | conversation_id: "chat-2",
+                 agent_id: 17
+             })
+    end
+
     test "uses the source chat node and task OR normalized agent id, not evaluator target" do
       socket = socket()
 
@@ -131,10 +166,10 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowTest do
       assert ApprovalWorkflow.own_request?(socket().assigns, request(%{request_id: " id "}))
     end
 
-    test "usable task or agent references and a resolved source node are required" do
+    test "usable conversation, task or agent references and a resolved source node are required" do
       for overrides <- [
-            %{chat_task_id: nil, chat_agent_id: nil},
-            %{chat_task_id: " ", chat_agent_id: []},
+            %{chat_id: nil, chat_task_id: nil, chat_agent_id: nil},
+            %{chat_id: " ", chat_task_id: " ", chat_agent_id: []},
             %{chat_node: "not-an-atom"},
             %{chat_node: nil, current_node: nil},
             %{current_node_id: "disconnected-remote", current_node: node()}
@@ -184,8 +219,8 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowTest do
                []
 
       for overrides <- [
-            %{chat_task_id: nil, chat_agent_id: nil},
-            %{chat_task_id: " ", chat_agent_id: []},
+            %{chat_id: nil, chat_task_id: nil, chat_agent_id: nil},
+            %{chat_id: " ", chat_task_id: " ", chat_agent_id: []},
             %{chat_node: "not-an-atom"},
             %{chat_node: nil, current_node: nil},
             %{current_node_id: "pending", current_node: node()}

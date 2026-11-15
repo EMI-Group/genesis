@@ -12,7 +12,7 @@ defmodule EvoGit.TaskControl.Tools do
      "Reload Genesis configuration through the existing scheduler API, then return configuration readiness. Takes no secrets or file contents. Does not restart existing agents or test provider connectivity; node distribution changes require a service restart.",
      %{}, [], false},
     {"genesis_start_task", :start,
-     "Start background development; returns a task ID immediately. Existing Genesis Git behavior applies. Poll genesis_get_task for the actual result. To continue a finished task, use evolve with resume_from in the same project.",
+     "Start background development; returns a task ID immediately. Existing Genesis Git behavior applies. Poll genesis_get_task for the actual result. To continue a finished task, use evolve with resume_from in the same project. Set persistent_state false to skip agent-state checkpoints for this task.",
      %{
        path: @path,
        objective: %{
@@ -27,10 +27,16 @@ defmodule EvoGit.TaskControl.Tools do
            "Allowed pairs: evolve/simple, genesis/new, genesis/existing. Omit mode to use simple for evolve or new for genesis."
        },
        resume_from: @id,
-       model_id: %{type: "string", description: "Optional configured Genesis model profile ID."}
+       model_id: %{type: "string", description: "Optional configured Genesis model profile ID."},
+       persistent_state: %{
+         type: "boolean",
+         default: true,
+         description:
+           "Save agent state checkpoints for this task (default true); false disables persistence to skip the extra disk writes."
+       }
      }, ["path", "objective"], false},
     {"genesis_get_task", :get,
-     "Read saved task status, bounded scheduler observations and saved results. Full objectives are opt-in. Running is not completed; reports are not independent verification.",
+     "Read saved task status, bounded scheduler observations and saved results. Full objectives are opt-in. Running is not completed; a pausing or paused task is not completed either. Reports are not independent verification.",
      %{
        task_id: @id,
        since: %{
@@ -49,7 +55,7 @@ defmodule EvoGit.TaskControl.Tools do
        offset: %{type: "integer", minimum: 0, maximum: 1_000_000, default: 0},
        status: %{
          type: "string",
-         enum: ~w(pending running finalizing completed failed cancelled cancelling)
+         enum: ~w(pending running pausing paused finalizing completed failed cancelled cancelling)
        },
        search: %{type: "string", description: "Search task goals, IDs and project paths."}
      }, [], true},
@@ -68,7 +74,13 @@ defmodule EvoGit.TaskControl.Tools do
      %{
        task_id: @id,
        force: %{type: "boolean", default: false}
-     }, ["task_id"], false}
+     }, ["task_id"], false},
+    {"genesis_pause_task", :pause,
+     "pause the task at the next turn boundary; the agent finishes its current tool call; only non-interactive tasks with durable agent state can be paused; returns request acceptance and the saved task state, not proof that every agent has stopped",
+     %{task_id: @id}, ["task_id"], false},
+    {"genesis_resume_task", :resume,
+     "resume a paused task from its durable checkpoint; a pause recorded after a restart (dirty) tells the agents their last tool call may be incomplete; same task id, work continues where it stopped",
+     %{task_id: @id}, ["task_id"], false}
   ]
 
   def list do

@@ -2,6 +2,7 @@
    https://tailwindcss.com/docs/configuration */
 
 @import "tailwindcss" source(none);
+@import "./assistant.css";
 @source "../css";
 @source "../js";
 @source "../../lib/evo_dash_web";
