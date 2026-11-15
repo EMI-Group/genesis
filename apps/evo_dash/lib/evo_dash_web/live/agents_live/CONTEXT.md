@@ -156,7 +156,10 @@ Checkpoint messages have no core call id or coverage watermark, and no checkpoin
 Atomic checkpoint/live ownership is established only by StreamWatch snapshot reconciliation, never fabricated row/turn/content matches.
 `owned?/3` checks exact selected-agent and viewed-node ownership.
 `StreamPanel.stream_panel/1` escapes bounded content, shows all byte/tool omissions and exposes the parent-owned `retry_inspector_stream` event on transport errors.
-The skeleton shimmer and cursor pulse run only for authoritative unfinished LLM generation, respect reduced motion and use stable local message ordinals for animation keys.
+The live header's `#inspector-thinking` skeleton and cursor pulse are gated by `message.active`, derived from authoritative `:llm` activity, unfinished state and the final incomplete projection, and respect reduced motion.
+`StreamPanel` does not currently attach the CSS `.inspector-thinking` shimmer class to its thinking details or label, and its response excerpt uses `bg-base-100 text-base-content` rather than a semantic tinted inset.
+`StreamPresentation` receives only reducer state, not watch errors, so a failed watch retaining a last-known `:llm` projection can still render its live generation indicators.
+The activity protocol has no distinct thinking-versus-response streaming subphase, so active LLM generation is the most precise existing animation predicate without new producer signals.
 Live excerpts are temporary current-call detail rather than a separate growing transcript or a lossless replay.
 `StreamPanel.stream_panel/1` exposes a cohesive `#inspector-stream` tail-row container for placement AFTER checkpoint rows inside the memory list, with no separate heading, panel border, checkpoint-position explanation or standalone skeleton.
 Each current-call article retains `inspector-live-message-N` and `data-inspector-message="live-N"`, matches the history row's `p-3 hover:bg-base-300/40` styling and assistant icon/identity header, and displays activity plus an in-row compact generation indicator with the existing `inspector-thinking` accessibility/reduced-motion contract.
