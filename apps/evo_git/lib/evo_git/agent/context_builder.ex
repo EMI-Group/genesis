@@ -313,10 +313,14 @@ defmodule EvoGit.Agent.ContextBuilder do
     parent_id = Map.get(state, :parent_id)
 
     context_tree =
-      build_dynamic_context(%{
-        node_path: Map.get(state, :node_path),
-        repo_path: Map.get(state, :repo_path)
-      })
+      if Map.get(state, :agent_module) == EvoGit.Agents.SelfReflective do
+        ""
+      else
+        build_dynamic_context(%{
+          node_path: Map.get(state, :node_path),
+          repo_path: Map.get(state, :repo_path)
+        })
+      end
 
     body =
       [

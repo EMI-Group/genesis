@@ -398,6 +398,12 @@ defmodule EvoGit.ToolRuntime.Executor do
        when tier in ["write", "sudo"],
        do: true
 
+  defp approval_window_tool_call?(name, _args)
+       when name in ~w(genesis_reload_config genesis_start_task genesis_send_message genesis_cancel_task),
+       do: true
+
+  defp approval_window_tool_call?("genesis_source", %{"action" => "prepare"}), do: true
+
   # Legacy timeout compatibility only: Tools.execute/5 refuses run_command.
   # Command paths at level >= 2 historically waited for interactive approval.
   defp approval_window_tool_call?("run_command", %{"command" => command})

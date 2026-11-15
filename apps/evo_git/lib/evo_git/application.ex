@@ -206,6 +206,7 @@ defmodule EvoGit.Application do
            name: EvoGit.TaskRegistry.ProcessRegistry,
            id: :task_registry_process_registry},
           {EvoGit.TaskRegistry, []},
+          {EvoGit.AssistantTaskLinks, []},
           # THE live OS-execution registry (one record per foreground tool call /
           # detached background job, with its normalized OS handle, stats sampling
           # and PubSub topic "processes"). It starts BEFORE EvoGit.BackgroundJobs

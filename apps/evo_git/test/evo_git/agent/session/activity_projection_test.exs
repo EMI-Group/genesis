@@ -267,10 +267,10 @@ defmodule EvoGit.Agent.Session.ActivityProjectionTest do
     assert {:ok, ^baseline, ^seq} = Stream.snapshot(session)
     assert baseline.activity == activity(call_id, 2, "new worker", "")
     assert Enum.any?(baseline.messages, &(text_of(&1) == "exact first yield"))
-    # Input has reached the resumed exchange, but remains outside the public
-    # checkpoint transcript until that worker completes its turn.
+    # The pre-LLM safety boundary retains drained input immediately, so stopping
+    # the current reply cannot erase a user message before its first completed turn.
     assert Enum.any?(resumed_context.messages, &(text_of(&1) == "resume explicitly"))
-    refute Enum.any?(baseline.messages, &(text_of(&1) == "resume explicitly"))
+    assert Enum.any?(baseline.messages, &(text_of(&1) == "resume explicitly"))
     assert Session.watching?(session)
   end
 

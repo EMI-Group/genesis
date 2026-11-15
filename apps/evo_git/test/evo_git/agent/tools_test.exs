@@ -134,7 +134,8 @@ defmodule EvoGit.Agent.ToolsTest do
       prompt = SelfReflective.system_prompt()
 
       assert prompt =~ ElixirEval.help()
-      assert prompt =~ "`elixir_eval` is your one action tool"
+      assert prompt =~ "Prefer the structured Genesis tools for ordinary task operations"
+      assert prompt =~ "Retain `elixir_eval` for scheduler controls"
       assert prompt =~ "`tier` (`read`, `write`, or `sudo`; default `read`)"
       assert prompt =~ "**Read tier:** Dune sandbox evaluation"
       assert prompt =~ "**Write tier:** Dune sandbox evaluation"
@@ -146,7 +147,7 @@ defmodule EvoGit.Agent.ToolsTest do
       assert prompt =~ "Evaluation targets only the current authenticated runtime node"
 
       assert prompt =~
-               "`read`, `rg`, `glob`, `list_dir`, `read_context`, `search_context` (the CONTEXT.md tree) and `search_history`"
+               "`read`, `rg`, `glob`, `list_dir`, `read_context`, `search_context` and `search_history`"
 
       assert prompt =~ "A reply with no tool calls ends your run"
       refute prompt =~ "run_command"

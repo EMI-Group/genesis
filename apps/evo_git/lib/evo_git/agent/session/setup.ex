@@ -330,8 +330,22 @@ defmodule EvoGit.Agent.Session.Setup do
           repo_less: repo_less,
           foreign_repos: foreign_repos,
           repo_notes: repo_notes,
-          quality_level: quality_level
+          quality_level: quality_level,
+          agent_module: agent_module
         })
+
+      context_block =
+        if agent_module == EvoGit.Agents.SelfReflective do
+          workspace = get_field(ctx, :assistant_workspace)
+          path = if is_map(workspace), do: Map.get(workspace, :path), else: nil
+
+          context_block <>
+            "\n\nAuthoritative selected project: " <>
+            (path || "none") <>
+            ". Selection scopes task operations; no project files have been loaded."
+        else
+          context_block
+        end
 
       objective_body =
         if EvoGit.Agent.ContextBuilder.blank?(objective), do: "", else: to_string(objective)
@@ -377,7 +391,7 @@ defmodule EvoGit.Agent.Session.Setup do
       # repo root, so a skill an agent adds/edits is visible to it immediately
       # and gets committed on its `evogit-agent-*` branch.
       skill_schemas =
-        if repo_root && is_binary(repo_root) do
+        if (agent_module != EvoGit.Agents.SelfReflective and repo_root) && is_binary(repo_root) do
           all_skills = EvoGit.Skills.load_skills(repo_path)
           skill_names = EvoGit.Skills.hierarchical_skill_names(node_path, repo_path)
 

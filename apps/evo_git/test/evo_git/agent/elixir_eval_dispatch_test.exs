@@ -124,6 +124,19 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
 
   test "all evaluator tiers serialize approval/effects before earlier-indexed parallel reads",
        ctx do
+    # Source reads resolve the optional reference at call time; keep this
+    # serialization fixture's read and sudo write on that same reference.
+    previous_reference = Application.fetch_env(:evo_git, :self_reflective_source_root)
+    Application.put_env(:evo_git, :self_reflective_source_root, ctx.repo_root)
+    File.write!(Path.join(ctx.repo_root, "CONTEXT.md"), "Serialization reference fixture")
+
+    on_exit(fn ->
+      case previous_reference do
+        {:ok, value} -> Application.put_env(:evo_git, :self_reflective_source_root, value)
+        :error -> Application.delete_env(:evo_git, :self_reflective_source_root)
+      end
+    end)
+
     target = seed_target(:pending)
     path = Path.join(ctx.repo_root, "after-sudo.txt")
     write = "EvoGit.Agent.Tools.ElixirEval.Write.cancel_task(#{inspect(target)})"

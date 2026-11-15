@@ -215,6 +215,34 @@ defmodule EvoGit.CommandApproval do
 
   def request_eval(_code, _tier, _target_node, _agent_id, _task_id), do: :denied
 
+  @doc "Requests one approval for an immutable structured action payload."
+  def request_action(tool_name, parameters, %{target_node: target} = context)
+      when is_binary(tool_name) and is_map(parameters) and target == node() do
+    task_id = normalize_id(context[:task_id])
+    agent_id = context[:agent_id]
+
+    if eval_task_active?(task_id, agent_id) do
+      tool_name
+      |> request_fields(Jason.encode!(parameters), 2, agent_id, task_id)
+      |> Map.merge(%{
+        kind: :task_control,
+        tool_name: tool_name,
+        parameters: parameters,
+        target_node: target,
+        conversation_id: context[:conversation_id],
+        operation_id: context[:operation_id],
+        project_path: context[:project_path],
+        target_task_id: parameters["task_id"],
+        summary: context[:summary] || parameters["objective"] || parameters["message"] || ""
+      })
+      |> request_approval()
+    else
+      :denied
+    end
+  end
+
+  def request_action(_, _, _), do: :denied
+
   @doc """
   Returns pending public request maps for dashboard refresh, without caller,
   monitor or timer internals. Returns `[]` when the service is unavailable.

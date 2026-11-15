@@ -370,6 +370,25 @@ defmodule EvoGit.Agent.Session do
   end
 
   @doc """
+  Stops the current interactive reply without closing its session or cancelling tasks.
+  LLM work stops immediately. An executing tool batch settles first; completed side effects
+  are retained. `:ok` acknowledges the stop request, not rollback of a tool operation.
+  """
+  def stop_current_turn(target), do: call(target, :stop_current_turn, @call_timeout)
+
+  @doc "Atomically applies trusted workspace metadata and sends an assistant message."
+  def send_message_with_workspace(target, message, policy, workspace)
+      when (is_binary(message) or is_map(message)) and policy in [:queue, :interrupt],
+      do: call(target, {:workspace_input, message, policy, workspace}, @call_timeout)
+
+  def send_message_with_workspace(_target, _message, _policy, _workspace),
+    do: {:error, :not_found}
+
+  @doc "Updates trusted assistant workspace metadata between exchanges."
+  def update_assistant_workspace(target, workspace),
+    do: call(target, {:update_assistant_workspace, workspace}, @call_timeout)
+
+  @doc """
   Cancels the exchange (or the IDLE session).
 
   `:graceful` keeps a running worker alive so the engine's 3-turn save-work grace runs
@@ -466,6 +485,9 @@ defmodule EvoGit.Agent.Session do
     data = %{
       state: nil,
       worker: nil,
+      worker_phase: :boundary,
+      stopped_worker: nil,
+      stop_requested: false,
       finalizer: nil,
       # The MONITORED pause finalizer (`EvoGit.Agent.Session.Pause`), mirroring `finalizer`: it
       # makes a clean pause durable and reports `{:session_paused, pid, info}`.
@@ -527,6 +549,9 @@ defmodule EvoGit.Agent.Session do
 
   def handle_event(:info, {:exchange_finished, pid, outcome}, phase, data) do
     cond do
+      data.stopped_worker == pid ->
+        {:keep_state, data}
+
       current_worker?(data, pid) ->
         handle_outcome(phase, data, outcome)
 
@@ -777,6 +802,120 @@ defmodule EvoGit.Agent.Session do
     {:keep_state, data, [{:reply, from, {:error, {:bad_state, phase}}}]}
   end
 
+  def handle_event(
+        {:call, from},
+        {:worker_boundary, pid, boundary, %State{} = state},
+        phase,
+        data
+      )
+      when phase in [:running, :cancelling] do
+    if current_worker?(data, pid) do
+      # A pre-tool state contains unmatched tool_calls. Only LLM input and fully settled
+      # checkpoints may replace the durable transcript.
+      data =
+        case boundary do
+          :tools -> data
+          :checkpoint -> publish_checkpoint(data, state)
+          :llm -> %{data | state: adopt_state(data, state)}
+        end
+
+      data = %{data | worker_phase: boundary}
+
+      if data.stop_requested and boundary != :tools do
+        {:keep_state, data, [{:reply, from, :stop}]}
+      else
+        {:keep_state, data, [{:reply, from, :continue}]}
+      end
+    else
+      {:keep_state, data, [{:reply, from, :stop}]}
+    end
+  end
+
+  def handle_event(
+        {:call, from},
+        :stop_current_turn,
+        :running,
+        %{state: %State{mode: :interactive}} = data
+      ) do
+    if data.worker_phase in [:llm, :checkpoint] do
+      stopped_worker = data.worker.pid
+      shutdown_worker(data)
+      {_, _, parked} = stop_reply(%{data | stopped_worker: stopped_worker})
+      {:next_state, :awaiting_input, parked, [{:reply, from, :ok}]}
+    else
+      {:keep_state, %{data | stop_requested: true}, [{:reply, from, :ok}]}
+    end
+  end
+
+  def handle_event(
+        {:call, from},
+        :stop_current_turn,
+        :awaiting_input,
+        %{state: %State{mode: :interactive}} = data
+      ) do
+    {:keep_state, data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, :stop_current_turn, phase, data) do
+    {:keep_state, data, [{:reply, from, {:error, {:bad_state, phase}}}]}
+  end
+
+  def handle_event(
+        {:call, from},
+        {:workspace_input, message, mode, workspace},
+        :awaiting_input,
+        %{state: %State{agent_module: EvoGit.Agents.SelfReflective}} = data
+      ) do
+    case update_workspace(data, workspace) do
+      {:ok, updated} ->
+        handle_event({:call, from}, {:start_input, message, mode}, :awaiting_input, updated)
+
+      {:error, reason} ->
+        {:keep_state, data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  def handle_event(
+        {:call, from},
+        {:workspace_input, message, mode, workspace},
+        :running,
+        %{state: %State{agent_module: EvoGit.Agents.SelfReflective}} = data
+      ) do
+    selected =
+      data.dispatch_ctx
+      |> Keyword.fetch!(:spec)
+      |> Map.fetch!(:opts)
+      |> Keyword.get(:assistant_workspace)
+
+    case {workspace_identity(selected), workspace_identity(workspace)} do
+      {{:ok, identity}, {:ok, identity}} ->
+        handle_event({:call, from}, {:start_input, message, mode}, :running, data)
+
+      _ ->
+        {:keep_state, data, [{:reply, from, {:error, :workspace_changed}}]}
+    end
+  end
+
+  def handle_event({:call, from}, {:workspace_input, _, _, _}, phase, data) do
+    {:keep_state, data, [{:reply, from, {:error, {:bad_state, phase}}}]}
+  end
+
+  def handle_event(
+        {:call, from},
+        {:update_assistant_workspace, workspace},
+        :awaiting_input,
+        %{state: %State{agent_module: EvoGit.Agents.SelfReflective}} = data
+      ) do
+    case update_workspace(data, workspace) do
+      {:ok, data} -> {:keep_state, data, [{:reply, from, :ok}]}
+      {:error, reason} -> {:keep_state, data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  def handle_event({:call, from}, {:update_assistant_workspace, _}, phase, data) do
+    {:keep_state, data, [{:reply, from, {:error, {:bad_state, phase}}}]}
+  end
+
   def handle_event({:call, from}, {:start_input, message, mode}, phase, data)
       when (is_binary(message) or is_map(message)) and mode in [:queue, :interrupt] do
     # The phase policy is the PURE, documented table in `Session.Input`.
@@ -994,7 +1133,8 @@ defmodule EvoGit.Agent.Session do
       session_mode: session_mode(ctx, row),
       quality_level: Keyword.get(spec.opts, :quality_level),
       custom_agent_id: Keyword.get(spec.opts, :custom_agent_id),
-      attachments: Keyword.get(spec.opts, :attachments)
+      attachments: Keyword.get(spec.opts, :attachments),
+      assistant_workspace: Keyword.get(spec.opts, :assistant_workspace)
     ]
 
     Setup.build_initial_state(spec.agent_module, spec.objective, state_ctx)
@@ -1244,6 +1384,10 @@ defmodule EvoGit.Agent.Session do
 
   # --- outcomes ---
 
+  defp handle_outcome(:running, %{stop_requested: true} = data, {:yield, %State{} = state, _}) do
+    stop_reply(%{data | state: adopt_state(data, state)})
+  end
+
   defp handle_outcome(phase, data, outcome) do
     # Transcript adoption and live-call retirement happen in this ONE session event.
     # An idle session may retain only the batcher's bounded pending reset, never call content.
@@ -1303,10 +1447,86 @@ defmodule EvoGit.Agent.Session do
       | state: state,
         worker: nil,
         phase: :awaiting_input,
-        last_yield_text: text
+        last_yield_text: text,
+        stop_requested: false,
+        worker_phase: :boundary
     }
 
     {:next_state, :awaiting_input, data}
+  end
+
+  defp stop_reply(data) do
+    text =
+      case data.activity do
+        %{current_call: %{text: partial}} when is_binary(partial) and partial != "" ->
+          partial <> "\n\n[回复已停止]"
+
+        _ ->
+          "已停止回复。已执行的工具操作仍保留。"
+      end
+
+    notice =
+      EvoGit.Agent.ContextBuilder.build_injected_message(
+        "The user stopped this assistant reply. Tool operations already executed remain in effect; inspect their state before retrying.",
+        data.state.turn
+      )
+
+    stopped_reply = %ReqLLM.Message{
+      role: :assistant,
+      content: [ReqLLM.Message.ContentPart.text(text)],
+      metadata: %{turn: data.state.turn}
+    }
+
+    context = ReqLLM.Context.append(data.state.context, [stopped_reply, notice])
+    state = %{data.state | context: context}
+    data = data |> reset_activity() |> flush_deltas()
+    to_awaiting_input(%{data | stop_requested: false}, state, text)
+  end
+
+  defp workspace_identity(nil), do: {:ok, nil}
+
+  defp workspace_identity(%{path: path} = workspace) when is_binary(path) do
+    scope = Map.get(workspace, :node)
+
+    if Path.type(path) == :absolute and scope in [nil, node(), Atom.to_string(node())] do
+      {:ok, {Path.expand(path), node()}}
+    else
+      :error
+    end
+  end
+
+  defp workspace_identity(_), do: :error
+
+  defp update_workspace(data, workspace) do
+    valid =
+      is_nil(workspace) or
+        (is_map(workspace) and is_binary(Map.get(workspace, :path)) and
+           Path.type(workspace.path) == :absolute and File.dir?(workspace.path) and
+           Map.get(workspace, :node) in [nil, node(), Atom.to_string(node())])
+
+    with true <- valid,
+         {:ok, meta} <- Store.get_sched_meta(agent_id(data)) do
+      spec = %{meta.spec | opts: Keyword.put(meta.spec.opts, :assistant_workspace, workspace)}
+      Store.put_sched_meta(agent_id(data), %{meta | spec: spec})
+      ctx = Keyword.put(data.dispatch_ctx, :spec, spec)
+      # Appended authoritative metadata supersedes the previous selection without rewriting
+      # the provider's cached prefix, and never loads project files.
+      label = if workspace, do: workspace.path, else: "none"
+
+      message =
+        EvoGit.Agent.ContextBuilder.build_injected_message(
+          "Authoritative selected project: " <>
+            label <>
+            ". This supersedes earlier selections; existing tasks keep their original project.",
+          data.state.turn
+        )
+
+      state = %{data.state | context: ReqLLM.Context.append(data.state.context, message)}
+      {:ok, %{data | dispatch_ctx: ctx, state: state}}
+    else
+      false -> {:error, :invalid_workspace}
+      _ -> {:error, :not_found}
+    end
   end
 
   defp state_mode(%{state: %State{mode: mode}}), do: mode
