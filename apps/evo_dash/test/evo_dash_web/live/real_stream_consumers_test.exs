@@ -279,9 +279,12 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
     history = agent_history(view, session.id)
     answers = Enum.filter(history, &(&1.type == "assistant"))
     assert Enum.map(answers, & &1.data.content) == ["Inspector answer prefix plus suffix"]
-    assert length(elements(view, "#agent-detail-#{session.id} .inspector-thinking")) == 1
+    assert length(elements(view, "#agent-detail-#{session.id} [data-inspector-reasoning]")) == 1
 
-    assert text(view, "#agent-detail-#{session.id} .inspector-thinking .whitespace-pre-wrap") ==
+    assert text(
+             view,
+             "#agent-detail-#{session.id} [data-inspector-reasoning] .whitespace-pre-wrap"
+           ) ==
              "Inspector thought prefix plus suffix"
 
     assert length(Regex.scan(~r/Inspector answer prefix plus suffix/, render(view))) == 1
@@ -674,7 +677,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
         :inspector ->
           await(fn -> assigns(view).inspector_stream.snapshot == snapshot end)
 
-          assert text(view, "#agent-detail-#{id} .inspector-thinking .whitespace-pre-wrap") ==
+          assert text(view, "#agent-detail-#{id} [data-inspector-reasoning] .whitespace-pre-wrap") ==
                    "Terminal thought after suspension"
 
           assert length(Regex.scan(~r/Terminal answer after suspension/, render(view))) == 1
