@@ -452,6 +452,19 @@ defmodule EvoGit.Sandbox.BwrapTest do
       assert has_subsequence?(args, ["--bind-try", custom_git, custom_git])
     end
 
+    test "a worktrees ancestor does not turn a custom pointer into linked-worktree metadata", %{
+      tmp_dir: tmp_dir
+    } do
+      checkout = Path.join(tmp_dir, "parent/worktrees/checkout")
+      repo = Path.join(checkout, "nested/custom")
+      target = Path.join(checkout, "custom-git-dir")
+      File.mkdir_p!(repo)
+      File.write!(Path.join(repo, ".git"), "gitdir: #{target}\n")
+
+      args = Bwrap.args(repo, "/usr/bin/env", [], repo)
+      assert has_subsequence?(args, ["--bind-try", target, target])
+    end
+
     test "nil repo_root with a non-repo cwd emits no git bind", %{plain: plain} do
       args = Bwrap.args(plain, "/usr/bin/env", [], nil)
 
