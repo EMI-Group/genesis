@@ -47,7 +47,8 @@ Watched checkpoint history belongs exclusively to the stream, including snapshot
 Independent history responses cannot overwrite owned checkpoint rows, and message-count updates cannot start history RPCs while that ownership remains.
 Watched history Retry and empty-history full-message refresh use `StreamWatch.reconcile/1`; transport failures require explicit stream reattachment and never trigger automatic fallback history reads or polling.
 Unwatchable agents retain the independent history fallback with `{:agent_history_loaded, agent_id, node, history_seq, watch_token, result, modal_index}` guarded by selection, node, sequence and watch token, while unscoped five-element results are ignored.
-`StreamPanel.stream_panel/1` renders temporary current-call excerpts separately from unsuppressed checkpoint memory, with no message-identity or content/turn/index-based suppression API.
+`StreamPanel.stream_panel/1` renders an assistant-style live current-call row at the memory tail with inline activity and animation, outside checkpoint history loading, empty and error conditionals.
+Checkpoint memory remains unsuppressed, with no message-identity or content/turn/index guessing; atomic handoff belongs to StreamWatch.
 Raw history, tool details, full-message modals and stable DOM ids remain intact.
 The stable `agent-history-<id>` root uses `InspectorMessages`, `data-inspector-scope` binds node/target/selection/watch/snapshot scope, and checkpoint rows expose stable `data-inspector-message` markers without changing existing DOM ids.
 Activity interpretation and thinking-coverage presentation remain owned by `StreamPresentation` and `StreamPanel`, never inferred from agent lifecycle status by the page.

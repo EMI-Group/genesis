@@ -25,7 +25,8 @@ No page or unit suite writes the config dir BEAM-globally: it is isolated per pr
   These tests assert unwatched-prefix snapshot capture, suffix uniqueness, nested call identity, yield retirement, actual unmount/remount and per-answer thinking retention without stale carets, and retain strong failures when the source consumer cannot honor the producer contract.
   Teardown monitors consumers, their supervised watch/load workers, Session/exchange/ReqLLM descendants and the SSE acceptor before restoring scheduler pools and shared ChatHistory state.
 - `./agents_stream_integration_test.exs` → synchronous mounted inspector-stream integration tests covering watch/snapshot/delta delivery, activity, cleanup, no watched history-count refetch and atomic checkpoint failure/retry.
-- `./agents_stream_render_test.exs` → fourteen async public page-render contracts for stream presentation, capture-aware no-thinking verdicts and per-message animation API/scope.
+- `./agents_stream_render_test.exs` → async public page-render contracts for stream presentation, capture-aware no-thinking verdicts, per-message animation scope and the chronological Context Memory tail.
+  Checkpoint articles remain independent and precede the final assistant-style live article, whose activity and generation animation render inline; connecting/error/Retry must work without a current call.
 - `./agents_stream_watch_lifecycle_test.exs` → seven synchronous real `StreamWatch` worker lifecycle tests using an isolated spawned consumer and a connected hand-built socket, not a mounted page.
   The forcing globals are the BEAM-global `:agents_watch_runner` / `:agents_unwatch_runner` seams, snapshotted and restored only after the consumer and its supervised workers have exited.
 - `./processes_live_test.exs` (23, `async: false` `EvoDashWeb.ProcessesLiveTest`) → the managed-process `/processes` page: status/kind/free-text/agent-id/task-id URL filters, the five node-tagged `"processes"` PubSub events applied without refetching, pause/resume, the reason-required Terminate/Kill modal, control-error flashes, the load-error + Retry state, and row expansion with the control log.
@@ -133,7 +134,8 @@ The child async `agents_live/stream_watch_test.exs` covers pure snapshot/replay 
 `agents_stream_integration_test.exs` covers the mounted `/agents` inspector-stream path through actual selection/watch seams, buffered snapshot replay, stale/duplicate/foreign deltas, authoritative LLM/tools phases, and suppression of message-count history refetch while watched.
 Its mounted tests also pin selection/close/local-to-remote URL-patch cleanup and atomic checkpoint reconciliation failure with retained content and explicit retry.
 The module is synchronous because its global app-env runner seams overlap the existing async page suites, and monitored consumer/worker teardown completes before those seams are restored.
-`agents_stream_render_test.exs` has fourteen async tests exercising the public `AgentsLive.render/1` without mounting or mutating global state.
+`agents_stream_render_test.exs` has eighteen async tests exercising the public `AgentsLive.render/1` without mounting or mutating global state.
+Its Context Memory assertions pin checkpoint-first/live-last article ordering, inline animation inside the live article, no inferred checkpoint/live deduplication, escaped content/tool outcomes and no-call connecting/error/Retry states.
 It pins response/thinking separation, authoritative activity, no-thinking only after completed generation with explicit complete thinking capture, and stable per-message animation identities, attachment scope, disclosure/expansion and checkpoint-part identity gates.
 Incomplete, omitted-thinking, late-start, failed and cancelled captures never establish a no-thinking verdict.
 Run all scoped inspector tests with `mix test apps/evo_dash/test/evo_dash_web/live/agents_live apps/evo_dash/test/evo_dash_web/live/agents*_test.exs` from the umbrella root.
