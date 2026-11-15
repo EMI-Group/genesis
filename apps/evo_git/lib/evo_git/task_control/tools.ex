@@ -104,7 +104,8 @@ defmodule EvoGit.TaskControl.Tools do
   end
 
   def names, do: Enum.map(@tools, &elem(&1, 0))
-  def mutation?(name), do: Enum.any?(@tools, &(elem(&1, 0) == name and not elem(&1, 5)))
+  def mutation_names, do: for({name, _, _, _, _, false} <- @tools, do: name)
+  def mutation?(name), do: name in mutation_names()
 
   def call(name, args) when is_binary(name) and is_map(args) do
     case Enum.find(@tools, &(elem(&1, 0) == name)) do

@@ -7164,3 +7164,6 @@ msgstr ""
 
 msgid "Awaiting input"
 msgstr ""
+
+msgid "Save agent checkpoints"
+msgstr ""

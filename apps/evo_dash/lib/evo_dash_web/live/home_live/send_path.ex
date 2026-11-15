@@ -93,6 +93,7 @@ defmodule EvoDashWeb.HomeLive.SendPath do
             [
               mode: "reflect",
               objective: reflect_objective(socket, message),
+              attachments: attachments,
               assistant_workspace: socket.assigns[:workspace],
               assistant_conversation_id:
                 socket.assigns[:assistant_conversation_id] || socket.assigns[:chat_id]
@@ -361,6 +362,7 @@ defmodule EvoDashWeb.HomeLive.SendPath do
             socket =
               socket
               |> assign(chat_task_id: id, chat_task_status: :pending)
+              |> assign(pending_attachments: Attachments.clear())
               |> ChatState.persist()
               |> HomeLive.async_lookup_agent()
               |> HomeLive.maybe_recover_approvals()

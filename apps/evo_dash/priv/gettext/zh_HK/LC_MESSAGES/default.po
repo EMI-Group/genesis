@@ -7166,3 +7166,6 @@ msgstr "透過任務 ID 新增"
 
 msgid "Awaiting input"
 msgstr "等待輸入"
+
+msgid "Save agent checkpoints"
+msgstr "儲存 Agent 檢查點"

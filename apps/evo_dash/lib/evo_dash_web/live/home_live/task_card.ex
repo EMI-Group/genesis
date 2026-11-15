@@ -50,7 +50,7 @@ defmodule EvoDashWeb.HomeLive.TaskCard do
             </p>
             <p :if={task.has_result}>{gettext("A saved result is available in task details.")}</p>
             <.form
-              :if={task.status in ["pending", "running", "finalizing", "cancelling"]}
+              :if={task.status in ["pending", "running", "pausing", "finalizing", "cancelling"]}
               for={to_form(%{})}
               id={"assistant-task-message-" <> task.id}
               phx-submit="assistant_task_message"
@@ -70,7 +70,7 @@ defmodule EvoDashWeb.HomeLive.TaskCard do
               )}</button>
             </.form>
             <button
-              :if={task.status in ["pending", "running"]}
+              :if={task.status in ["pending", "running", "pausing", "paused"]}
               type="button"
               phx-click="assistant_task_cancel"
               phx-value-task_id={task.id}
@@ -247,6 +247,8 @@ defmodule EvoDashWeb.HomeLive.TaskCard do
 
   defp status_label(:pending), do: gettext("Pending")
   defp status_label(:running), do: gettext("Running")
+  defp status_label(:pausing), do: gettext("Pausing")
+  defp status_label(:paused), do: gettext("Paused")
   defp status_label(:finalizing), do: gettext("Finalizing")
   defp status_label(:cancelling), do: gettext("Cancelling")
   defp status_label(:cancelled), do: gettext("Cancelled")

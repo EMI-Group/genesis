@@ -2,7 +2,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
   @moduledoc """
   Composer card for the Genesis Assistant interactive-session UX
   (`EvoDashWeb.HomeLive` at `/assistant`): the message textarea, the pending
-  attachment chips, the attach affordance (with its manual-path fallback), the
+  attachment chips, browser uploads and a secondary server-path entry, the
   shared provider/model/reasoning capsule, the Send / Stop / interrupt controls
   and the transient "queued for the next turn boundary" echoes.
 
@@ -15,7 +15,7 @@ defmodule EvoDashWeb.HomeLive.Composer do
 
   Two separate predicates keep the draft editable wherever the user could
   legitimately type: `compose_disabled?/1` (no new input at all) and
-  `send_blocked?/1` (no usable model, so no send).
+  `send_blocked?/1` (content, upload, project or model is not ready to send).
 
     * `compose_disabled?/1` is true only while the chat is `:cancelling` /
       `:ended`.
@@ -25,7 +25,8 @@ defmodule EvoDashWeb.HomeLive.Composer do
       boundary), and every model-not-ready state (snapshot still loading,
       snapshot missing, invalid selection, pending/unconnected remote target).
     * `send_blocked?/1` is `compose_disabled?/1` plus a missing model snapshot
-      or a model selection/load error. It drives ONLY the actions that need a
+      or a model selection/load error, empty content, an active upload, or a
+      pending project selection. It drives ONLY the actions that need a
       resolved model: the Send button and the interrupt-turn button.
     * Send is available for `:idle` / `:running` and hidden while `:cancelling`
       / `:ended`; Stop is visible for `:running` / `:cancelling` and enabled
@@ -38,8 +39,8 @@ defmodule EvoDashWeb.HomeLive.Composer do
   ## Event contract (implemented by the page)
 
   `send_message` (form submit), `chat_input` (form change), `chat_keydown`,
-  `chat_keyup`, `stop`, `interrupt_turn`, `chat_attach` (`phx-value-kind` =
-  `"text"` / `"image"` / `"audio"`), `chat_attach_manual` (manual-path form
+  `chat_keyup`, `stop`, `interrupt_turn`, `chat_upload_validate`,
+  `chat_upload_cancel`, `chat_upload_clear_error`, `chat_attach_manual` (server-path form
   submit with `path`) and `chat_attachment_remove` (`phx-value-index`).
 
   Everything is TOTAL: no dot access on optional maps, no atom conversion from

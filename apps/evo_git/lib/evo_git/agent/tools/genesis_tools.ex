@@ -7,6 +7,7 @@ defmodule EvoGit.Agent.Tools.GenesisTools do
 
   @follow "genesis_follow_task"
   @ui_actions ~w(genesis_send_message genesis_cancel_task)
+  @task_mutations @ui_actions ++ ~w(genesis_pause_task genesis_resume_task)
 
   def schemas do
     Enum.map(Catalog.list(), fn tool ->
@@ -159,7 +160,7 @@ defmodule EvoGit.Agent.Tools.GenesisTools do
 
   defp prepare(_, _, _), do: {:error, "Tool arguments must be an object."}
 
-  defp forbid_self_target(name, %{"task_id" => id}, %{task_id: id}) when name in @ui_actions,
+  defp forbid_self_target(name, %{"task_id" => id}, %{task_id: id}) when name in @task_mutations,
     do: {:error, "The assistant cannot mutate its own task through task tools."}
 
   defp forbid_self_target(_, _, _), do: :ok

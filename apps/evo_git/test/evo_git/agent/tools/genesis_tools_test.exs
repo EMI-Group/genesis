@@ -31,7 +31,7 @@ defmodule EvoGit.Agent.Tools.GenesisToolsTest do
     {:ok, fixture: fixture}
   end
 
-  test "shared schemas preserve the nine MCP contracts exactly" do
+  test "shared schemas preserve the current MCP contracts exactly" do
     assert EvoGit.TaskControl.Tools.list() == EvoGit.TestSupport.MCPToolsBaseline.list()
 
     assert Enum.map(GenesisTools.schemas(), & &1.name) ==
@@ -40,6 +40,29 @@ defmodule EvoGit.Agent.Tools.GenesisToolsTest do
     for schema <- GenesisTools.schemas(), schema.name != "genesis_follow_task" do
       original = Enum.find(EvoGit.TaskControl.Tools.list(), &(&1.name == schema.name))
       assert schema.parameter_schema == Jason.decode!(Jason.encode!(original.inputSchema))
+    end
+  end
+
+  test "pause and resume use the same structured approval boundary", %{fixture: fixture} do
+    for name <- ~w(genesis_pause_task genesis_resume_task) do
+      handle =
+        Fixture.call_async(fixture, fn ->
+          Tools.execute(name, %{"task_id" => "missing-target"}, "/", "/", nil)
+        end)
+
+      assert_receive {:approval_requested, request}, 3000
+      assert request.tool_name == name
+      assert request.parameters == %{"task_id" => "missing-target"}
+      assert :ok = EvoGit.CommandApproval.respond(request.request_id, :deny)
+      assert Fixture.await(handle) =~ "denied"
+
+      handle =
+        Fixture.call_async(fixture, fn ->
+          Tools.execute(name, %{"task_id" => fixture.task_id}, "/", "/", nil)
+        end)
+
+      assert Fixture.await(handle) =~ "cannot mutate its own task"
+      refute_receive {:approval_requested, _}
     end
   end
 

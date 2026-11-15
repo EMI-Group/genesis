@@ -249,6 +249,9 @@ defmodule EvoGit.Agent.Session.Persistence do
       is_nil(get_baseline(task_id, agent_id)) ->
         {:rewrite, nil, new_messages}
 
+      get_baseline(task_id, agent_id) != length(old_messages) ->
+        {:rewrite, nil, new_messages}
+
       new_state.compression_count != old_state.compression_count ->
         {:rewrite, nil, new_messages}
 

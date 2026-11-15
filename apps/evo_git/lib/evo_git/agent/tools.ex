@@ -335,7 +335,7 @@ defmodule EvoGit.Agent.Tools do
     EvoGit.Agent.Tools.GenesisSource.execute(args, repo_path, node_path, [])
   end
 
-  @genesis_task_tools ~w(genesis_check genesis_reload_config genesis_start_task genesis_get_task genesis_list_tasks genesis_list_models genesis_get_result genesis_send_message genesis_cancel_task genesis_follow_task)
+  @genesis_task_tools EvoGit.TaskControl.Tools.names() ++ ["genesis_follow_task"]
   defp dispatch_tool_call(name, args, repo_path, repo_root, _node_path)
        when name in @genesis_task_tools do
     EvoGit.Agent.Tools.GenesisTools.execute(name, args, repo_path, repo_root)

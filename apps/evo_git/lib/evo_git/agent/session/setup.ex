@@ -359,12 +359,13 @@ defmodule EvoGit.Agent.Session.Setup do
         |> Enum.join("\n\n---\n\n")
 
       # Media attachments (images/audio) ride on the ROOT agent's first user
-      # message ONLY — the helper gates on `parent_id == nil`; repo-less agents
-      # (self-reflective chat) never get them even with a stray spec opt, so
-      # the plain-text path is preserved (no reflect entry point sends the key).
+      # message ONLY — the helper gates on `parent_id == nil`. The reflective
+      # assistant accepts browser media; other repo-less roles ignore stray opts.
       # This exact value is retained on the state so a mid-run compression
       # can reproduce the same media content parts.
-      attachments = if repo_less, do: nil, else: get_field(ctx, :attachments)
+      attachments =
+        if not repo_less or agent_module == EvoGit.Agents.SelfReflective,
+          do: get_field(ctx, :attachments)
 
       messages =
         EvoGit.Agent.ContextBuilder.build_initial_messages(

@@ -217,6 +217,38 @@ defmodule EvoGit.Agent.ElixirEvalDispatchTest do
     end
   end
 
+  @tag timeout: 120_000
+  test "shared task mutations retain approval time beyond the default tool deadline", ctx do
+    hold = EvoGit.Agent.DelegationHints.default_tool_timeout() + 100
+    Application.put_env(:evo_git, :command_approval_timeout, hold + @deadline)
+
+    for name <- ~w(genesis_pause_task genesis_resume_task) do
+      assert EvoGit.Agent.Tools.serial_tool?(name)
+
+      owner =
+        start_batch(ctx, [call(name, %{"task_id" => "missing-target"})],
+          meta: fn meta ->
+            spec = %{
+              meta.spec
+              | opts: Keyword.put(meta.spec.opts, :assistant_conversation_id, "approval-window")
+            }
+
+            %{meta | spec: spec}
+          end
+        )
+
+      assert_receive {:approval_requested, request}, @deadline
+      assert request.tool_name == name
+      token = make_ref()
+      Process.send_after(self(), {:held_task_approval, token}, hold)
+      assert_receive {:held_task_approval, ^token}, hold + @deadline
+      assert Process.alive?(owner.pid)
+      assert :ok = CommandApproval.respond(request.request_id, :deny)
+      assert [{0, _, ^name, output}] = finish(owner)
+      assert output =~ "denied"
+    end
+  end
+
   test "max_timeout still caps the approval floor and cleans the dead tool's request", ctx do
     path = Path.join(ctx.repo_root, "must-not-run.txt")
     code = "File.write!(#{inspect(path)}, \"unexpected\")"

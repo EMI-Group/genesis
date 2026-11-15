@@ -7235,3 +7235,6 @@ msgstr "通过任务 ID 添加"
 
 msgid "Awaiting input"
 msgstr "等待输入"
+
+msgid "Save agent checkpoints"
+msgstr "保存 Agent 检查点"

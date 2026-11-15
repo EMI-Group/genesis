@@ -409,6 +409,12 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
       "genesis_reload_config" ->
         gettext("Reload configuration")
 
+      "genesis_pause_task" ->
+        gettext("Pause task")
+
+      "genesis_resume_task" ->
+        gettext("Resume task")
+
       "genesis_source" ->
         gettext("Prepare Genesis source reference")
 
@@ -424,6 +430,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalDialog do
       {"task_type", gettext("Task type")},
       {"mode", gettext("Mode")},
       {"model_id", gettext("Model")},
+      {"persistent_state", gettext("Save agent checkpoints")},
       {"resume_from", gettext("Continue from")},
       {"agent_id", gettext("Agent")},
       {"force", gettext("Force stop")}

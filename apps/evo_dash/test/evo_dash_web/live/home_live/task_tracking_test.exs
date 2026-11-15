@@ -60,6 +60,11 @@ defmodule EvoDashWeb.HomeLive.TaskTrackingTest do
     assert TaskTracking.follow_result(socket, {node(), 8}, {:error, :disconnected}) == socket
   end
 
+  test "an uncertain action in another conversation cannot replace this page's feedback" do
+    socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, chat_id: 7}}
+    assert TaskTracking.action_result(socket, {node(), 8}, {:error, :disconnected}) == socket
+  end
+
   test "an operation absent after reconnect releases the UI latch" do
     target = {node(), 17}
 

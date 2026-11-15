@@ -398,8 +398,9 @@ defmodule EvoGit.ToolRuntime.Executor do
        when tier in ["write", "sudo"],
        do: true
 
+  @approval_task_tools EvoGit.TaskControl.Tools.mutation_names()
   defp approval_window_tool_call?(name, _args)
-       when name in ~w(genesis_reload_config genesis_start_task genesis_send_message genesis_cancel_task),
+       when name in @approval_task_tools,
        do: true
 
   defp approval_window_tool_call?("genesis_source", %{"action" => "prepare"}), do: true

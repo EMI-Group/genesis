@@ -552,6 +552,46 @@ defmodule EvoGit.Agent.SessionTest do
              )
   end
 
+  test "first assistant media reaches the model in both session modes",
+       %{agent_id: id, tmp_dir: tmp} do
+    parent = self()
+    raw = <<137, 80, 78, 71, 0, 255>>
+
+    attachments = [
+      %{
+        "type" => "image",
+        "name" => "only.png",
+        "media_type" => "image/png",
+        "data" => Base.encode64(raw)
+      }
+    ]
+
+    for mode <- [:oneshot, :interactive] do
+      blocking = blocking_llm_call(parent)
+
+      llm = fn context, tools, params, agent, retries ->
+        send(parent, {:model_media, context.messages})
+        blocking.(context, tools, params, agent, retries)
+      end
+
+      ctx = dispatch_ctx(id, tmp, llm_call: llm) |> Keyword.put(:session_mode, mode)
+
+      spec = %{
+        ctx[:spec]
+        | agent_module: EvoGit.Agents.SelfReflective,
+          objective: "",
+          opts: Keyword.put(ctx[:spec].opts, :attachments, attachments)
+      }
+
+      {:ok, pid, ref} = start_session(Keyword.put(ctx, :spec, spec))
+      assert_receive {:model_media, messages}, 5000
+      assert Enum.any?(List.last(messages).content, &(Map.get(&1, :data) == raw))
+      assert_receive {:llm_blocked, _}, 5000
+      assert :ok = Session.cancel(pid, :force)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :shutdown}, 5000
+    end
+  end
+
   test "assistant context and skills stay isolated in both session modes",
        %{agent_id: id, tmp_dir: tmp} do
     File.write!(

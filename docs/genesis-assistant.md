@@ -10,11 +10,12 @@ Project switching is locked while a reply is running. At an input boundary, the 
 
 ## Task tools and approvals
 
-Ordinary development uses the same nine task-control definitions as MCP:
+Ordinary development uses the same eleven task-control definitions as MCP:
 
 - `genesis_check`, `genesis_reload_config`, `genesis_list_models`
 - `genesis_start_task`, `genesis_get_task`, `genesis_list_tasks`
 - `genesis_get_result`, `genesis_send_message`, `genesis_cancel_task`
+- `genesis_pause_task`, `genesis_resume_task`
 
 `EvoGit.TaskControl.Tools` owns schemas, validation and dispatch. MCP owns its HTTP envelope and links; `Agent.Tools.GenesisTools` owns model-facing output and Assistant authorization. Model arguments cannot choose the runtime node or conversation identity. Both come from the actual assistant owner and its server-owned session metadata.
 

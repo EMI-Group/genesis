@@ -183,7 +183,10 @@ defmodule EvoDashWeb.HomeLive do
           <div
             id="assistant-notifications"
             phx-hook="BrowserNotifications"
-            class="flex h-10 shrink-0 items-center"
+            class={[
+              "flex h-10 shrink-0 items-center",
+              @transcript == [] and @pending_approvals == [] and "hidden!"
+            ]}
             data-approval-request-ids={Jason.encode!(@approval_host.request_ids)}
             data-approval-scope={@approval_host.scope}
             data-notification-label-unsupported={gettext("Notifications unavailable")}
@@ -226,7 +229,10 @@ defmodule EvoDashWeb.HomeLive do
              boundary (gettext("Send now (interrupt turn)")). The slot keeps a
              CONSTANT height so the affordance disappearing at the end of a turn
              cannot reflow the column. -->
-          <div class="shrink-0 flex h-7 items-center justify-between gap-2 px-3 sm:px-4">
+          <div class={[
+            "shrink-0 flex h-7 items-center justify-between gap-2 px-3 sm:px-4",
+            @transcript == [] and @pending_approvals == [] and "hidden!"
+          ]}>
             <div class="min-w-0 flex-1">
               <EvoDashWeb.HomeLive.ExecutionIndicator.execution_indicator
                 chat_status={@chat_status}

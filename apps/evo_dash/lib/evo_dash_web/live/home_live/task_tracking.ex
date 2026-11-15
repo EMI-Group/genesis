@@ -111,7 +111,7 @@ defmodule EvoDashWeb.HomeLive.TaskTracking do
       active =
         Enum.any?(
           socket.assigns[:tracked_tasks] || [],
-          &(&1.status in ~w(pending running finalizing cancelling))
+          &(&1.status in ~w(pending running pausing finalizing cancelling))
         )
 
       timer =
@@ -228,13 +228,17 @@ defmodule EvoDashWeb.HomeLive.TaskTracking do
   def action_result(socket, incoming_scope, {:error, _}) do
     Process.send_after(self(), {:assistant_action_reconcile, incoming_scope}, 3000)
 
-    put_flash(
-      socket,
-      :error,
-      gettext(
-        "The task action result is uncertain. Checking the original operation before allowing another request."
+    if incoming_scope == scope(socket.assigns) do
+      put_flash(
+        socket,
+        :error,
+        gettext(
+          "The task action result is uncertain. Checking the original operation before allowing another request."
+        )
       )
-    )
+    else
+      socket
+    end
   end
 
   def action_result(socket, incoming_scope, result) do

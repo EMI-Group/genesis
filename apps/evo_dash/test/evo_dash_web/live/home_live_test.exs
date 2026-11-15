@@ -3050,9 +3050,9 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, _html} = live(conn, "/assistant")
       seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
 
-      # An empty conversation keeps the approval surface hidden until a request arrives.
+      # Preserve the shared notification/approval strip without a pending count or dialog.
       html = render(view)
-      refute present?(html, "#approval-status-bar")
+      assert present?(html, "#approval-status-bar")
       assert approval_strip_count(html) == ""
       refute dialog_open?(html)
 
@@ -4951,6 +4951,38 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert opt(task, :mode) == "reflect"
       assert opt(task, :objective) == text
       refute has_opt?(task, :path)
+      cleanup_task_on_exit(task.id)
+    end
+
+    test "an attachment-only message survives one-shot fallback and clears staged media", %{
+      conn: conn
+    } do
+      install_session_seam(:home_session_start_runner, fn _, _ ->
+        {:error, :session_api_unavailable}
+      end)
+
+      {:ok, view, _} = live(conn, "/assistant")
+      raw = <<137, 80, 78, 71, 0, 255>>
+
+      upload =
+        file_input(view, "#chat-upload-form", :chat_files, [
+          %{name: "fallback.png", type: "image/png", content: raw}
+        ])
+
+      view |> form("#chat-upload-form") |> render_change(upload)
+      render_upload(upload, "fallback.png")
+      send_and_await_terminal(fn -> render_submit(view, "send_message", %{"message" => ""}) end)
+
+      assert [task] =
+               Enum.filter(
+                 EvoGit.Store.safe_select_all_tasks(EvoGit.Store),
+                 &(&1.type == :reflect)
+               )
+
+      assert [image] = opt(task, :attachments)
+      assert Base.decode64!(image["data"]) == raw
+      assert image["name"] == "fallback.png"
+      assert EvoDashWeb.HomeLive.Attachments.count(assigns(view).pending_attachments) == 0
       cleanup_task_on_exit(task.id)
     end
 

@@ -814,9 +814,17 @@ defmodule EvoGit.Agent.Session do
       # checkpoints may replace the durable transcript.
       data =
         case boundary do
-          :tools -> data
-          :checkpoint -> publish_checkpoint(data, state)
-          :llm -> %{data | state: adopt_state(data, state)}
+          :tools ->
+            data
+
+          :checkpoint ->
+            publish_checkpoint(data, state)
+
+          :llm ->
+            # Drained inputs/notifications must reach the durable baseline before
+            # this state becomes the comparison point for the next checkpoint.
+            if data.state.context != state.context, do: Persistence.checkpoint(data.state, state)
+            %{data | state: adopt_state(data, state)}
         end
 
       data = %{data | worker_phase: boundary}
@@ -1433,6 +1441,7 @@ defmodule EvoGit.Agent.Session do
   # IDLE: no worker or slot; only the bounded pending yield/reset batch may still flush.
   defp to_awaiting_input(data, %State{} = state, text) do
     state = %{adopt_state(data, state) | phase: :awaiting_input}
+    Persistence.checkpoint(data.state, state)
 
     Store.clear_cancel_requested(agent_id(data))
     Summary.publish(agent_id(data), state, status: :awaiting_input)
@@ -1522,6 +1531,7 @@ defmodule EvoGit.Agent.Session do
         )
 
       state = %{data.state | context: ReqLLM.Context.append(data.state.context, message)}
+      Persistence.checkpoint(data.state, state)
       {:ok, %{data | dispatch_ctx: ctx, state: state}}
     else
       false -> {:error, :invalid_workspace}
