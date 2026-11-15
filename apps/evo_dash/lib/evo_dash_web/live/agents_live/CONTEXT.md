@@ -156,7 +156,9 @@ Checkpoint messages have no core call id or coverage watermark, and no checkpoin
 Atomic checkpoint/live ownership is established only by StreamWatch snapshot reconciliation, never fabricated row/turn/content matches.
 `owned?/3` checks exact selected-agent and viewed-node ownership.
 `StreamPanel.stream_panel/1` escapes bounded content, shows all byte/tool omissions and exposes the parent-owned `retry_inspector_stream` event on transport errors.
-The skeleton shimmer and cursor pulse run only for authoritative unfinished LLM generation, respect reduced motion and use stable local message ordinals for animation keys.
+StreamPanel gates the live header's `#inspector-thinking` skeleton, cursor pulse and thinking-summary-only `.inspector-thinking` shimmer on `message.active` AND an error-free watch, so completed calls and failed watches retaining `:llm` excerpts stay static and reduced motion remains respected.
+The inner live Response inset uses theme-aware `bg-primary/5 border border-primary/15` with readable `text-base-content` and a `text-primary-standalone` label; the outer tail and article remain borderless.
+The activity protocol has no distinct thinking-versus-response streaming subphase, so active LLM generation is the most precise existing animation predicate without new producer signals.
 Live excerpts are temporary current-call detail rather than a separate growing transcript or a lossless replay.
 `StreamPanel.stream_panel/1` exposes a cohesive `#inspector-stream` tail-row container for placement AFTER checkpoint rows inside the memory list, with no separate heading, panel border, checkpoint-position explanation or standalone skeleton.
 Each current-call article retains `inspector-live-message-N` and `data-inspector-message="live-N"`, matches the history row's `p-3 hover:bg-base-300/40` styling and assistant icon/identity header, and displays activity plus an in-row compact generation indicator with the existing `inspector-thinking` accessibility/reduced-motion contract.

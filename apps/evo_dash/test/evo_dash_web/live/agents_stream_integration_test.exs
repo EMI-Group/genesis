@@ -391,7 +391,7 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
 
     assert history_content(view, id) == ["Question", "Answer A"]
     assert text(view, "#agent-history-entry-#{id}-1 .text-sm") =~ "Answer A"
-    assert text(view, "#agent-history-entry-#{id}-1 .inspector-thinking") =~ "Reason A"
+    assert text(view, "#agent-history-entry-#{id}-1 [data-inspector-reasoning]") =~ "Reason A"
     assert text(view, "#inspector-live-message-1 div pre") == "Answer B prefix suffix"
     assert text(view, "#inspector-stream details pre") == "Reason B"
     refute has_element?(view, "#inspector-live-message-0")
@@ -418,7 +418,7 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     refute has_element?(view, "#inspector-stream article")
     refute has_element?(view, "#inspector-stream-cursor")
     assert length(elements(view, "#agent-history-entry-#{id}-2")) == 1
-    assert text(view, "#agent-history-entry-#{id}-2 .inspector-thinking") =~ "Reason B"
+    assert text(view, "#agent-history-entry-#{id}-2 [data-inspector-reasoning]") =~ "Reason B"
     assert assigns(view).inspector_stream.state.phase == :awaiting_input
     assert watch_calls() == 3
     assert history_calls(view) == 0
@@ -514,11 +514,14 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     assert Enum.map(entries, & &1.type) == ["system", "user", "assistant", "tool"]
     assert Enum.at(entries, 2).data.reasoning_details == [%{text: "Live reasoning stays"}]
     row = "#agent-history-entry-#{id}-2"
-    assert text(view, "#{row} .inspector-thinking .whitespace-pre-wrap") == "Live reasoning stays"
+
+    assert text(view, "#{row} [data-inspector-reasoning] .whitespace-pre-wrap") ==
+             "Live reasoning stays"
+
     assert text(view, "#{row} .text-sm") =~ "Live response stays"
     assert has_element?(view, "#agent-detail-#{id}", "Authoritative tool output")
     assert length(elements(view, row)) == 1
-    assert length(elements(view, "#{row} .inspector-thinking")) == 1
+    assert length(elements(view, "#{row} [data-inspector-reasoning]")) == 1
     assert length(elements(view, "#{row} .text-sm")) == 1
     refute has_element?(view, "#inspector-stream article")
     refute render(view) =~ "UNOWNED"
@@ -718,7 +721,7 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     row = "#agent-history-entry-#{id}-1"
     assert length(elements(view, row)) == 1
 
-    assert text(view, "#{row} .inspector-thinking .whitespace-pre-wrap") ==
+    assert text(view, "#{row} [data-inspector-reasoning] .whitespace-pre-wrap") ==
              "Authoritative final reasoning"
 
     assert text(view, "#{row} .text-sm") =~ "Authoritative final answer"

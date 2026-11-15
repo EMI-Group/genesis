@@ -15,7 +15,10 @@ defmodule EvoDashWeb.AgentsLive.StreamPanel do
   attr :stream, :any, default: nil
 
   def stream_panel(assigns) do
-    assigns = assign(assigns, :view, StreamPresentation.build(state(assigns.stream)))
+    assigns =
+      assigns
+      |> assign(:view, StreamPresentation.build(state(assigns.stream)))
+      |> assign(:watch_failed, field(assigns.stream, :error) != nil)
 
     ~H"""
     <div :if={@stream != nil} id="inspector-stream" class="divide-y divide-base-300">
@@ -42,7 +45,7 @@ defmodule EvoDashWeb.AgentsLive.StreamPanel do
             {gettext("assistant")}
           </span>
           <span
-            :if={message.active}
+            :if={message.active and not @watch_failed}
             id="inspector-thinking"
             class="skeleton h-1 w-8 rounded motion-reduce:animate-none"
             role="status"
@@ -63,7 +66,12 @@ defmodule EvoDashWeb.AgentsLive.StreamPanel do
           :if={message.thinking != "" or message.omitted_thinking_bytes > 0}
           class="text-xs bg-base-content/5 p-2 rounded text-base-content/70"
         >
-          <summary class="cursor-pointer text-xs font-medium">{gettext("Thinking")}</summary>
+          <summary class={[
+            "cursor-pointer text-xs font-medium",
+            (message.active and not @watch_failed) && "inspector-thinking"
+          ]}>
+            {gettext("Thinking")}
+          </summary>
           <pre class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">{message.thinking}</pre>
           <.omission count={message.omitted_thinking_bytes} />
         </details>
@@ -72,14 +80,14 @@ defmodule EvoDashWeb.AgentsLive.StreamPanel do
         </p>
         <div
           :if={message.response != "" or message.omitted_response_bytes > 0}
-          class="text-sm bg-base-100 p-2 rounded text-base-content"
+          class="text-sm bg-primary/5 border border-primary/15 p-2 rounded text-base-content"
         >
-          <div class="text-xs font-medium">{gettext("Response")}</div>
+          <div class="text-xs font-medium text-primary-standalone">{gettext("Response")}</div>
           <pre class="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm">{message.response}</pre>
           <.omission count={message.omitted_response_bytes} />
         </div>
         <span
-          :if={message.active}
+          :if={message.active and not @watch_failed}
           id="inspector-stream-cursor"
           class="inline-block h-4 w-1.5 animate-pulse bg-primary motion-reduce:animate-none"
           aria-hidden="true"
