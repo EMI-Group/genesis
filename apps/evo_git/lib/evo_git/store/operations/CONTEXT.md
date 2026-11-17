@@ -23,6 +23,9 @@ Search matches escaped literal substrings in `id`, raw JSON `opts`, `project_pat
 Filters expect keyword lists and correctly typed strings; they do not normalize arbitrary Assistant input or validate enum values.
 Page count and selection are separate statements without a shared snapshot, and `started_at DESC` has no tie-breaker.
 Do not infer legacy pagination bounds or get-task-lite payload bounds from its name; the contracts above describe the actual operation returns, not evaluator-specific substitutes.
+`VctMounts.list/1` raises on an absent `vct_mounts` table and relies on the facade's read offload to degrade to `[]`, which is indistinguishable from a genuinely empty table.
+`VctMounts.save/2` always executes `Repo.delete_all(VctMountRow)` inside the immediate transaction, even for an empty supplied list, so an absent table raises before insertion and is not repaired or skipped by this operation.
+VCT writes depend on boot migrations establishing the physical table rather than merely having corresponding migration-ledger entries; non-disk-full write failures propagate through the serialized writer according to the parent Store contract.
 
 ## Routing Table
 There are no child subdirectories.
@@ -32,5 +35,5 @@ There are no child subdirectories.
 - `tasks.ex` owns task CRUD, legacy full-row pagination, status/update-info reads, and row conversion.
 - `lightweight.ex` owns narrow id/path/lease/cleanup reads.
 - `archives.ex` owns relational per-agent archives.
-- `projects.ex` owns project CRUD.
+- `vct_mounts.ex` owns VCT mount listing and atomic replace-all persistence; project recents are not a separate projects operation.
 - `safety.ex` owns safe full-table reads and counts.
