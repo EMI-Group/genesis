@@ -156,6 +156,14 @@ The evaluator subtree is validated against genuine Dune rather than parser, allo
 ### Known Issue
 The help example in `lib/evo_git/agent/tools/elixir_eval/direct_api.ex:118` passes an atom status where the actual page API requires a string; the direct API suite pins the real invalid-atom degraded-read behavior.
 
+## Background Lifetime versus Scheduler-Slot Coverage
+`job_tools_test.exs:84-113` starts an isolated BackgroundJobs registry and binds ownership to the test process, while its start helper (`:231-241`) calls BackgroundJobs.start_job/1 directly.
+Its shell-start tests (`:1172-1223`) call ShellTool.execute/3 directly and prove a registered running job survives the launch return, ignores the launch timeout argument, and can be killed with actual OS-pid death observed.
+Its bounded JobOutput wait (`:555-579`) returns while the job remains running, but makes no scheduler occupancy assertion.
+Neither job_tools_test.exs nor shell_tool_test.exs invokes ToolRuntime or ToolDispatch, acquires scheduler tool slots, or asserts tool-slot usage or waiting counts, so these suites do not establish that a detached job remains charged against tool concurrency after launch returns.
+The test named "a full-budget wait is never cut off by the dispatch ceiling" (`job_tools_test.exs:826-856`) checks timeout helper arithmetic and calls JobOutput.execute/3 through wait_read/3 directly, not the real dispatcher.
+Missing regressions include a genuine managed background launch holding capacity after its result returns, a competing foreground/background request remaining queued until job exit, and exactly-once slot release on natural exit, explicit kill, owner death and failed launch without leaking or double-charging capacity.
+Such lifetime-accounting regressions belong with parent-owned ToolRuntime/BackgroundJobs/scheduler integration rather than interpreting direct tool-result or process-liveness assertions as scheduler evidence.
 ## Notes for Agents
 
 - `reflect_tools_test.exs` spawns a live `Process.sleep(:infinity)` "wrapper" process on purpose — it is NOT a wait to reduce.
