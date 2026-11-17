@@ -7,7 +7,7 @@ defmodule EvoGit.Store.RepoTest do
 
   Pinned contracts:
 
-    * `start_dynamic/1` applies exactly the ten shipped migration versions
+    * `start_dynamic/1` applies exactly the nine shipped migration versions
     * the resulting `tasks` table has the exact 21-column shape (names, ORDER,
       DDL types, notnull/pk flags) — declared in ONE step by the baseline
       migration, which never creates the retired `archive_metadata` column (only
@@ -81,8 +81,7 @@ defmodule EvoGit.Store.RepoTest do
     @prune_indexes_version,
     @vct_mounts_version,
     @session_mode_version,
-    @task_pause_kind_version,
-    20_260_815_000_010
+    @task_pause_kind_version
   ]
 
   # `tasks` columns RETIRED from the live table: the per-agent archive moved to

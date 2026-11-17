@@ -41,7 +41,7 @@ defmodule EvoGit.MigrateStoreTest do
   @vct_mounts_version 20_260_815_000_007
   @session_mode_version 20_260_815_000_008
   @pause_kind_version 20_260_815_000_009
-  # Ascending, exactly as `schema_migrations` reports it — ten contiguous
+  # Ascending, exactly as `schema_migrations` reports it — nine contiguous
   # versions, no gaps.
   @migration_versions [
     @baseline_version,
@@ -52,8 +52,7 @@ defmodule EvoGit.MigrateStoreTest do
     @prune_indexes_version,
     @vct_mounts_version,
     @session_mode_version,
-    @pause_kind_version,
-    20_260_815_000_010
+    @pause_kind_version
   ]
 
   @migration_count length(@migration_versions)
@@ -162,7 +161,7 @@ defmodule EvoGit.MigrateStoreTest do
       assert output =~ "20260815000007_vct_mounts"
       assert output =~ "20260815000008_session_mode"
       assert output =~ "20260815000009_task_pause_kind"
-      assert output =~ "20260815000010"
+      refute output =~ "20260815000010"
 
       assert output =~ "Database is now current (#{@migration_count} migration(s) applied)."
 
@@ -244,6 +243,49 @@ defmodule EvoGit.MigrateStoreTest do
       assert Enum.sort(cols) == Enum.sort(@live_task_columns)
       # `error` after `updated_at`, then `session_mode`, then `pause_kind`.
       assert Enum.take(cols, -4) == ~w(updated_at error session_mode pause_kind)
+    end
+  end
+
+  describe "interrupted preservation remnants" do
+    for {label, statement} <- [
+          {"empty marker", "CREATE TABLE __genesis_historical_sources (stage TEXT)"},
+          {"hidden archive column",
+           "ALTER TABLE tasks ADD COLUMN __genesis_preserved_archive_metadata TEXT"},
+          {"hidden projects table", "CREATE TABLE __genesis_preserved_projects (path TEXT)"}
+        ] do
+      test "#{label} refuses migration without changing the database", %{db_path: path} do
+        # Exercise both pre-Ecto adoption and a fully stamped ordinary ledger.
+        # Tagged-release upgrade data semantics are covered in store/; the CLI
+        # must propagate this guard rather than claiming a successful repair.
+        for current? <- [false, true] do
+          database = path <> if(current?, do: ".current", else: ".legacy")
+
+          if current? do
+            run_task!(database)
+          else
+            build_legacy_db!(database, @ddl_19_col, seed: :legacy)
+          end
+
+          conn = open_conn!(database)
+          {:ok, _} = XqliteNIF.execute(conn, unquote(statement), [])
+          close_conn!(conn)
+          before_migration = database_snapshot(database)
+
+          for _attempt <- 1..2 do
+            {_result, output} =
+              with_io(fn ->
+                assert_raise Ecto.MigrationError,
+                             ~r/reserved preservation objects exist; inspect and recover the interrupted preservation state/,
+                             fn -> Mix.Tasks.Migrate.Store.run([database]) end
+              end)
+
+            refute output =~ "Database is now current"
+            refute output =~ "Database is already current"
+            assert database_snapshot(database) == before_migration
+            assert EvoGit.Repo.get_dynamic_repo() == EvoGit.Repo
+          end
+        end
+      end
     end
   end
 
@@ -381,6 +423,37 @@ defmodule EvoGit.MigrateStoreTest do
 
     close_conn!(conn)
     Enum.map(rows, fn [name] -> name end)
+  end
+
+  defp database_snapshot(path) do
+    conn = open_conn!(path)
+
+    try do
+      {:ok, %{rows: schema}} =
+        XqliteNIF.query(
+          conn,
+          "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name",
+          []
+        )
+
+      {:ok, %{rows: tables}} =
+        XqliteNIF.query(
+          conn,
+          "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+          []
+        )
+
+      data =
+        for [table] <- tables do
+          quoted = String.replace(table, "\"", "\"\"")
+          {:ok, %{rows: rows}} = XqliteNIF.query(conn, "SELECT * FROM \"#{quoted}\"", [])
+          {table, Enum.sort(rows)}
+        end
+
+      {schema, data}
+    after
+      close_conn!(conn)
+    end
   end
 
   defp migration_versions(path) do

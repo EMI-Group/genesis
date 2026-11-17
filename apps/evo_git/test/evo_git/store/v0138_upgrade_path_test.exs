@@ -13,29 +13,26 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   composites).
 
   Those three versions are STAMPED, so a real v0.13.8 database never re-runs
-  them: this suite proves the PENDING set only — the seven migrations HEAD
+  them: this suite proves the PENDING set only — the six migrations HEAD
   ships on top of them, `…00004_covering_indexes`,
-  `…00005_task_agent_archives`, `…00006_prune_redundant_indexes`,
-  `…00007_vct_mounts`,
+  `…00005_task_agent_archives` (table + legacy fan-out + `archive_metadata`
+  drop), `…00006_prune_redundant_indexes`, `…00007_vct_mounts` (the VCT
+  mount table, which also retires the legacy `projects` table),
   `…00008_session_mode` (the probe-guarded `tasks.session_mode` adoption,
   which ALTERs the column in at the tail) and `…00009_task_pause_kind` (the
-  same probe-guarded pattern for `tasks.pause_kind`, appended after it), plus
-  `…00010` reconciling schemas whose historical migration identities collided.
-  HEAD's ten migrations are versions 1..10 with no gaps.
+  same probe-guarded pattern for `tasks.pause_kind`, appended after it).
+  HEAD's nine migrations are versions 1..9 with no gaps.
 
   This suite crafts that file with RAW xqlite — never through the migration
   modules, so the fixture stays independent of HEAD's code — seeds v0.13.8-shaped
   rows, and runs the REAL boot path (`EvoGit.Store.Boot.run_migrations/1`, the
   entry point `Boot.start_dynamic/2` and `mix migrate.store` use), pinning the
-  applied list, the integrated upgrade shapes, the per-agent archive fan-out,
-  byte-identical source archives/results and all legacy projects retained and
-  imported without the live project-list cap, the four redundant indexes pruned
-  down to the final six, and a second run that applies nothing and changes nothing.
-  Boot's preservation preflight protects source data from the frozen migrations
-  5 and 7; their standalone drop/strip/cap contracts are not this integrated
-  entry point's contract.
-  The fixture has no `"z1:"` payload (v0.13.8 never wrote that abandoned format),
-  independently of migration 10's support for repairing later historical files.
+  applied list, the HEAD shapes, the per-agent archive fan-out, the
+  `archive_records` strip, the untouched archive-less/canonical rows, the
+  `archive_metadata` drop, the four redundant indexes pruned down to the final
+  six, the plain absence of any `"z1:"` payload (v0.13.8 never wrote that
+  abandoned prefix-tagged format and no migration repairs it any more) and a
+  second run that applies nothing and changes nothing.
   """
 
   use ExUnit.Case, async: true
@@ -48,27 +45,27 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   # `schema_migrations` carries exactly these rows.
   @v0138_versions [20_260_815_000_001, 20_260_815_000_002, 20_260_815_000_003]
 
-  # The seven migrations HEAD ships ON TOP of the v0.13.8 three: contiguous
-  # versions, so the shipped set is `1..10` with no gaps.
+  # The six migrations HEAD ships ON TOP of the v0.13.8 three: contiguous
+  # versions, so the shipped set is `1..9` with no gaps.
   @pending_versions [
     20_260_815_000_004,
     20_260_815_000_005,
     20_260_815_000_006,
     20_260_815_000_007,
     20_260_815_000_008,
-    20_260_815_000_009,
-    20_260_815_000_010
+    20_260_815_000_009
   ]
 
   @shipped_versions @v0138_versions ++ @pending_versions
 
-  # The v0.13.8 `tasks` columns in physical order (20 columns); integrated
-  # boot retains `archive_metadata` and appends `session_mode` / `pause_kind`.
+  # The v0.13.8 `tasks` columns in physical order (pre-drop, 20 columns); the
+  # HEAD shape is the same list minus `archive_metadata`, plus the
+  # `session_mode` / `pause_kind` column ALTERs appended at the tail.
   @v0138_task_columns ~w(id type status opts started_at finished_at logs result review_status
                          usage agent_count base_sha commit_sha archive_metadata
                          lease_expires_at model_id project_path branch_name error updated_at)a
 
-  @head_task_columns @v0138_task_columns ++ [:session_mode, :pause_kind]
+  @head_task_columns (@v0138_task_columns -- [:archive_metadata]) ++ [:session_mode, :pause_kind]
 
   # The eight indexes a v0.13.8 database carries: the six single-column ones
   # `…00001` created + the two composites `…00003` created.
@@ -158,14 +155,9 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   # ── The chain ─────────────────────────────────────────────────────────────
 
   describe "released v0.13.8 database → HEAD" do
-    test "applies exactly the seven pending migrations and stamps the ten shipped versions",
+    test "applies exactly the six pending migrations and stamps the nine shipped versions",
          %{path: path} do
-      # Exceed the live list's 100-project cap: integrated boot must preserve
-      # and import EVERY historical project, not silently evict the oldest.
-      projects = legacy_projects(106)
-      build_v0138_db!(path, projects)
-      source_projects = query_rows!(path, "SELECT * FROM projects ORDER BY path")
-      assert source_projects == Enum.sort(projects)
+      build_v0138_db!(path)
 
       # The fixture really is a v0.13.8 database: only its three versions.
       assert migration_versions!(path) == @v0138_versions
@@ -177,25 +169,14 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
 
       assert migration_versions!(path) == @shipped_versions
 
-      assert "vct_mounts" in table_names!(path)
-      assert "projects" in table_names!(path)
-      assert query_rows!(path, "SELECT * FROM projects ORDER BY path") == source_projects
-
-      expected_mounts =
-        projects
-        |> Enum.map(fn [project_path, name, opened_at] ->
-          ["vct:///projects/#{name}", project_path, name, "git", opened_at]
-        end)
-        |> Enum.sort()
-
-      assert vct_mounts!(path) == expected_mounts
-
-      snapshot = db_snapshot!(path)
-      assert Boot.run_migrations(pid) == []
-      assert db_snapshot!(path) == snapshot
+      # `…00007_vct_mounts` created the VCT mount table AND retired the legacy
+      # `projects` table, carrying its one seeded row over as a VCT mount.
+      assert table_names!(path) |> Enum.member?("vct_mounts")
+      refute table_names!(path) |> Enum.member?("projects")
+      assert vct_mount_points!(path) == ["vct:///projects/demo"]
     end
 
-    test "retains the archive source in the 22-column upgrade shape and prunes redundant indexes",
+    test "ends at HEAD's 21-column tasks shape with the four redundant indexes pruned",
          %{path: path} do
       build_v0138_db!(path)
 
@@ -212,11 +193,11 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
 
       info = task_table_info!(path)
       assert column_names(info) == column_strings(@head_task_columns)
-      assert "archive_metadata" in column_names(info)
+      refute "archive_metadata" in column_names(info)
 
-      # The retained source column and both appended columns have contiguous
-      # cids and the full per-column type/nullability/default/PK contract.
-      assert Enum.map(info, fn [cid | _rest] -> cid end) == Enum.to_list(0..21)
+      # Contiguous `cid`s (the dropped column left no hole) and the full
+      # per-column type/nullability/default/PK contract.
+      assert Enum.map(info, fn [cid | _rest] -> cid end) == Enum.to_list(0..20)
 
       assert column_specs(info) ==
                Map.new(@head_task_columns, &{to_string(&1), head_column_spec(&1)})
@@ -237,8 +218,8 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
       assert index_columns!(path, "idx_tasks_finished_at_id") == ["finished_at", "id"]
 
       # The PRIMARY KEY's own b-tree is not one of the `idx_tasks_*` indexes:
-      # it is the table's implicit UNIQUE index, untouched by source
-      # preservation and index pruning.
+      # it is the table's implicit UNIQUE index, and the `archive_metadata`
+      # DROP COLUMN plus the prune leave it untouched.
       assert index_meta!(path, "sqlite_autoindex_tasks_1") == {1, "pk"}
       assert index_columns!(path, "sqlite_autoindex_tasks_1") == ["id"]
     end
@@ -281,31 +262,27 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
       assert archive_entries!(path, @canonical_id) == []
     end
 
-    test "retains both source archives byte-identically and keeps the result decodable",
+    test "strips the duplicated archive_records from result and keeps the rest decodable",
          %{path: path} do
       build_v0138_db!(path)
-      source_result = raw_value!(path, @archived_id, "result")
-      source_archive = raw_value!(path, @archived_id, "archive_metadata")
-      assert Jason.decode!(source_archive) == archive_records()
-      assert Jason.decode!(source_result)["data"] == archived_result_data()
-
       pid = start_repo!(path)
       Boot.run_migrations(pid)
 
       raw = raw_value!(path, @archived_id, "result")
-      assert raw == source_result
-      assert raw_value!(path, @archived_id, "archive_metadata") == source_archive
-      assert Jason.decode!(raw) == %{"__result_tag__" => "ok", "data" => archived_result_data()}
+      decoded = Jason.decode!(raw)
 
-      assert archive_entries!(path, @archived_id) ==
-               Enum.map(archive_records(), &Map.put(&1, "task_id", @archived_id))
+      assert decoded["__result_tag__"] == "ok"
+      refute Map.has_key?(decoded["data"], "archive_records")
+
+      # Everything else in the result survives the migration's decode/
+      # re-encode for the strip.
+      assert decoded["data"] == Map.delete(archived_result_data(), "archive_records")
 
       # ...and the row is still readable through the strict codec (an
       # untagged/non-canonical result would raise here).
       assert Codec.decode_result(raw) ==
                {:ok,
                 %{
-                  "archive_records" => archive_records(),
                   commit_sha: @archived_root_final,
                   result: "Created README.md and linked it from the project page.",
                   tag: "v0.13.8",
@@ -336,18 +313,21 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
         assert after_[id]["session_mode"] == nil
         assert after_[id]["pause_kind"] == nil
 
-        assert Map.drop(after_[id], ["session_mode", "pause_kind"]) == before[id]
+        assert Map.drop(after_[id], ["session_mode", "pause_kind"]) ==
+                 Map.drop(before[id], ["archive_metadata"])
       end
 
-      # The archived row is equally untouched, including BOTH source copies.
+      # (a) the archived task differs ONLY by the dropped archive column, the
+      # NULL-appended `session_mode` / `pause_kind` and the stripped `result`.
       assert after_[@archived_id]["session_mode"] == nil
       assert after_[@archived_id]["pause_kind"] == nil
 
-      assert Map.drop(after_[@archived_id], ["session_mode", "pause_kind"]) ==
-               before[@archived_id]
+      assert Map.drop(after_[@archived_id], ["result", "session_mode", "pause_kind"]) ==
+               Map.drop(before[@archived_id], ["archive_metadata", "result"])
 
-      # v0.13.8 never wrote the abandoned prefix-tagged format; pin its absence
-      # in this fixture independently of repair support for later databases.
+      # No `"z1:"`-prefixed value survives anywhere. v0.13.8 never wrote that
+      # abandoned prefix-tagged format and no shipped migration repairs it, so
+      # this is a plain absence pin against any future writer.
       for {_id, row} <- after_, {column, value} <- row, is_binary(value) do
         refute String.starts_with?(value, "z1:"), "#{column} still holds a z1: payload"
       end
@@ -373,7 +353,7 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
 
   # ── Seeding a v0.13.8 database (raw SQL, never the migrations) ────────────
 
-  defp build_v0138_db!(path, projects \\ legacy_projects(1)) do
+  defp build_v0138_db!(path) do
     File.mkdir_p!(Path.dirname(path))
     {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
 
@@ -390,13 +370,11 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
       ])
     end
 
-    for project <- projects do
-      exec!(
-        conn,
-        "INSERT INTO projects (path, name, last_opened_at) VALUES (?1, ?2, ?3)",
-        project
-      )
-    end
+    exec!(conn, "INSERT INTO projects (path, name, last_opened_at) VALUES (?1, ?2, ?3)", [
+      "/home/user/projects/demo",
+      "demo",
+      "2025-11-02T09:42:12.001Z"
+    ])
 
     for row <- [archived_row(), legacy_row(), canonical_row()], do: insert_task!(conn, row)
 
@@ -443,7 +421,7 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
 
   # (a) A COMPLETED task whose per-agent archive lives in `archive_metadata`
   # (a two-record JSON array) AND is duplicated under `result.data.archive_records`
-  # — the duplicate frozen migration 5 would strip without Boot's preflight.
+  # — the exact duplicate `…00005` fans out and strips.
   defp archived_row do
     task_row(@archived_id,
       type: "evolve",
@@ -702,18 +680,9 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
     |> List.flatten()
   end
 
-  defp legacy_projects(count) do
-    for i <- 1..count do
-      name = if i == 1, do: "demo", else: "project-#{String.pad_leading(to_string(i), 3, "0")}"
-      ["/home/user/projects/#{name}", name, "2025-11-02T09:42:12.001Z"]
-    end
-  end
-
-  defp vct_mounts!(path) do
-    query_rows!(
-      path,
-      "SELECT point, path, name, kind, last_opened_at FROM vct_mounts ORDER BY point"
-    )
+  defp vct_mount_points!(path) do
+    query_rows!(path, "SELECT point FROM vct_mounts ORDER BY point")
+    |> List.flatten()
   end
 
   defp migration_versions!(path) do
@@ -722,8 +691,8 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   end
 
   # ONE row per task as a COLUMN => value map for the given column list (20
-  # columns before boot, 22 after source-preserving boot). `id` is selected first,
-  # so `hd/1` keys the map. Raw xqlite — independent of the repo/codec.
+  # columns pre-drop, 19 post-drop). `id` is selected first, so `hd/1` keys the
+  # map. Raw xqlite — independent of the repo/codec.
   defp task_rows_snapshot!(path, columns) do
     names = column_strings(columns)
     sql = "SELECT #{Enum.join(names, ", ")} FROM tasks ORDER BY id"
@@ -742,8 +711,6 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
       task_table_info!(path),
       archive_table_info!(path),
       task_rows_snapshot!(path, @head_task_columns),
-      query_rows!(path, "SELECT * FROM projects ORDER BY path"),
-      vct_mounts!(path),
       query_rows!(
         path,
         "SELECT #{@archive_projection} FROM task_agent_archives ORDER BY task_id, agent_id"
