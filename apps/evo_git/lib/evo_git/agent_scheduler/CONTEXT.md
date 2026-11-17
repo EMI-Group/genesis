@@ -130,7 +130,11 @@ Scripts still override the fallback (nil/error results use it; invalid canonical
 
 ## Slot Management (Slots module)
 
-Two independent pools of agent-ID `MapSet`s; capacity = `capacity - map_size(holders)` — leaks impossible, `release_agent_slots/2` removes the holder from both sets.
+Two independent pools use agent-ID `MapSet`s rather than per-call permits; availability is derived from `MapSet.size/1`, and session `:DOWN` removes the agent from both pools and purges its queued requests.
+Tool requests queue FIFO as `{agent_id, from}` when globally paused or full, immediate grants do not change status, and queued grants emit `:running` while enqueues emit `:blocked` (`slots.ex:297–313,714–729`).
+Tool holders have no reference count or caller-process monitor: multiple simultaneous requests from one agent collapse into one holder whenever admitted, while ANY release deletes that holder, so this semaphore is only correct when callers serialize slot ownership per agent (`slots.ex:306–330`).
+Queue grants neither deduplicate agent ids nor test the waiting caller's liveness, so a dead tool-task waiter can receive a grant and retain its agent's holder until another release or session death (`slots.ex:714–729`).
+Detached OS-job lifetime is not represented in these slot tables: this directory has no job-completion-to-slot-release linkage, and background cleanup is separately performed through `BackgroundJobs.reap_under/1` before worktree removal (`worktree_manager.ex:923–977`).
 
 | Pool | State keys | Capacity | Backoff |
 |---|---|---|---|
