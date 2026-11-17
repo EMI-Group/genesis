@@ -298,6 +298,12 @@ Every job record carries `announced` — "the owner already knows this job's out
 BOTH rebuild paths (stage 1 prune-only and stage 2 summarising) drop EVERY earlier refresh message via `ContextCompression.drop_stale_refreshes/1` — which rejects every message matching `ContextBuilder.refresh_message?/1` and is total over malformed shapes (a non-list comes back as-is, every other message keeps its order) — BEFORE appending the freshly built refresh, so exactly ONE refresh, and therefore exactly ONE current `## Background Jobs` section, survives any compression.
 Stage 1 injects no job snapshot, and the summariser does NOT list job ids/statuses under `## Pending Jobs`.
 
+## Background Jobs Versus Tool Slots
+`AgentScheduler.with_tool_slot/2` holds a slot only for its callback and releases it in `after` (`agent_scheduler.ex:729–738`), so a detached bash launch releases its tool-call slot when launch returns rather than when its background process exits.
+`BackgroundJobs` does not acquire scheduler slots: it caps live jobs at 10 per owner (`background_jobs.ex:26,815–823`), tracks each separately as a `ProcessManager` background execution (`894–912`), and stops live jobs on owner death (`734–764`).
+The configured `max_tool_concurrency` is therefore not a node-wide bound on live detached processes, and `job_output(wait: true)` instead occupies an ordinary tool-call slot while polling.
+`SystemSampler.build_sample/5` reports `tool_used = counts.running` and `tool_waiting = counts.blocked` (`system_sampler.ex:419–436`), not scheduler permits or background-job counts, so these telemetry keys cannot establish actual tool-slot or process occupancy.
+Invocation-level permit identity and queue/holder caveats belong to `agent_scheduler/CONTEXT.md`, execution boundaries to `tool_runtime/CONTEXT.md`, and shell/wait contracts to `agent/tools/CONTEXT.md`.
 ## Background Job Timers (test seam)
 
 The periodic `:reconcile_tick` arm and the public `tick_interval_ms/0` BOTH read `EvoGit.BackgroundJobs.resolved_tick_interval_ms/0`, a CALL-TIME `Application.get_env(:evo_git, :background_tick_interval_ms, @tick_interval_ms)` lookup whose production default stays `@tick_interval_ms` = 1_000 ms (any non-integer/negative override falls back to it).
