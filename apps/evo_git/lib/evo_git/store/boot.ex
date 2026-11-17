@@ -19,11 +19,10 @@ defmodule EvoGit.Store.Boot do
   The remaining `:global` lock serializes that one-time compile plus each run
   (see `migrate_synchronized!/0`).
 
-  `HistoricalSources` stages pending migrations without editing their frozen
-  source or ledger identities: after 1..4, it transactionally hides legacy
-  archive/project sources from destructive 5/7, restores them after 5..9, then
-  runs additive repair 10. A durable marker makes interrupted preservation
-  restartable; unknown preservation state fails boot rather than risking data.
+  `HistoricalSources` rejects reserved objects left by an interrupted prior
+  preservation attempt before running the ordinary ordered migration source.
+  No source is hidden or restored, and no reconciliation migration is required;
+  interrupted preservation state fails boot rather than risking hidden data.
 
   ## Usage
 
