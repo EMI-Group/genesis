@@ -9,8 +9,8 @@ defmodule EvoGit.ToolRuntimeTest do
     * real PARALLEL overlap — two non-serial calls are provably inside their
       tool bodies at the same time (each fake parks on `receive` until the test
       releases it, so no fixed sleep is involved);
-    * the scheduler TOOL SLOT gate — held under the request's `agent_id` for the
-      batch and released afterwards;
+    * the scheduler TOOL SLOT gate — a per-call permit attributed to the request's
+      `agent_id`, released after completion or timeout, while cheap calls bypass it;
     * per-call TIMEOUT — the exact `Error: Tool execution timed out after …`
       result plus a `:killed` tracking record;
     * CONTEXT PROPAGATION into the spawned tool tasks — tmpdir, owner identity
@@ -45,13 +45,14 @@ defmodule EvoGit.ToolRuntimeTest do
   Every assertion is FILTERED by a per-test UNIQUE `agent_id`
   (`9_900_000 + :erlang.unique_integer([:positive])`), so the app-global
   `EvoGit.ProcessManager` registry and the app-global
-  `EvoGit.AgentScheduler`'s `tool_holders` set are read in isolation — the
+  `EvoGit.AgentScheduler`'s `tool_permits` map are read in isolation — the
   runtime resolves `EvoGit.ProcessManager.server/0` from the CALLING process,
   and the concurrent group runs in `Task.async_stream` workers that do not
   inherit a test process dictionary, so no per-process registry override is
   possible here.
 
-  Serialized (`async: false`) by ONE global: the fake-tool registry app env
+  Serialized (`async: false`) by the app-global scheduler capacity override in
+  the saturation regression and the fake-tool registry app env
   `:evo_git, :tool_dispatch_test_tools` — a single BEAM-global key that needs a
   DIFFERENT value per test and is shared with `agent/tool_output_integration_test.exs`
   and `agent/tool_dispatch_containment_test.exs`, so the three modules must never
@@ -84,11 +85,9 @@ defmodule EvoGit.ToolRuntimeTest do
   # honours first).
   @max_timeout 30_000
 
-  # Explicit per-call `timeout` for the timeout case: small enough that the case
-  # costs ~50 ms, large enough that a timer can never fire early (timers fire
-  # LATE, never early), and distinct from `@max_timeout` so the message below can
-  # only be the explicit budget.
-  @explicit_timeout 50
+  # Explicit timeout is distinct from the request ceiling and leaves time for
+  # the tool body to report its held permit before the timer expires.
+  @explicit_timeout 250
 
   # Upper bound for every "wait for another process" step. Event-driven (a
   # `receive` or a bounded poll), never a fixed sleep.
@@ -204,18 +203,18 @@ defmodule EvoGit.ToolRuntimeTest do
     parent = self()
 
     install_fake_tools(%{
-      "read_file" => blocking_tool(parent, "read_file")
+      "rg" => blocking_tool(parent, "rg")
     })
 
     # The unique id guarantees the slot is not held by anything else yet.
     refute slot_held?(agent_id)
 
-    calls = indexed([tool_call("read_file", %{"file_path" => "./a.txt"})])
+    calls = indexed([tool_call("rg", %{"pattern" => "defmodule"})])
 
     batch =
       Task.async(fn -> ToolRuntime.execute_batch(calls, request(agent_id, task_id)) end)
 
-    assert_receive {:tool_started, "read_file", tool_pid}, @wait_ms
+    assert_receive {:tool_started, "rg", tool_pid}, @wait_ms
 
     # While the tool body runs, the REAL scheduler has granted the slot to this
     # agent id (read-only assertion: nothing is mutated by `:sys.get_state/1`).
@@ -223,11 +222,95 @@ defmodule EvoGit.ToolRuntimeTest do
 
     send(tool_pid, :release)
 
-    assert [{0, _, "read_file", "read_file ok"}] = Task.await(batch, @wait_ms)
+    assert [{0, _, "rg", "rg ok"}] = Task.await(batch, @wait_ms)
 
-    # The release is a cast, so it is awaited with a bounded poll rather than
-    # assumed to have landed.
+    # Check the attributed permit is gone after the managed call returns.
     assert wait_until(fn -> not slot_held?(agent_id) end, @wait_ms)
+  end
+
+  @tag :tmp_dir
+  test "real builtin reads and job listing progress while expensive dispatch is saturated", %{
+    agent_id: agent_id,
+    task_id: task_id,
+    tmp_dir: tmp_dir
+  } do
+    # This test also mutates the app-global scheduler's capacity, restored below.
+    previous = :sys.get_state(AgentScheduler).max_tool_concurrency
+    AgentScheduler.update_config(max_tool_concurrency: 1)
+    on_exit(fn -> AgentScheduler.update_config(max_tool_concurrency: previous) end)
+
+    parent = self()
+    install_fake_tools(%{"rg" => blocking_tool(parent, "rg")})
+    owner = self()
+
+    req =
+      request(agent_id, task_id,
+        agent_pid: owner,
+        repo_path: tmp_dir,
+        repo_root: tmp_dir,
+        node_path: "./"
+      )
+
+    holder =
+      Task.async(fn ->
+        ToolRuntime.execute_batch(indexed([tool_call("rg", %{"pattern" => "held"})]), req)
+      end)
+
+    on_exit(fn -> if Process.alive?(holder.pid), do: Process.exit(holder.pid, :kill) end)
+    assert_receive {:tool_started, "rg", tool_pid}, @wait_ms
+    assert slot_held?(agent_id)
+
+    competitor_id = agent_id + 1_000_000_000
+
+    competitor =
+      Task.async(fn ->
+        ToolRuntime.execute_batch(
+          indexed([tool_call("rg", %{"pattern" => "queued"})]),
+          request(competitor_id, task_id, agent_pid: owner)
+        )
+      end)
+
+    on_exit(fn -> if Process.alive?(competitor.pid), do: Process.exit(competitor.pid, :kill) end)
+
+    assert wait_until(
+             fn ->
+               :sys.get_state(AgentScheduler).tool_permits
+               |> Enum.any?(fn {_, entry} ->
+                 entry.agent_id == competitor_id and entry.status == :waiting
+               end)
+             end,
+             @wait_ms
+           )
+
+    File.write!(Path.join(tmp_dir, "cheap.txt"), "cheap dispatch made progress")
+
+    # No fake for either name: these run the actual builtin implementations.
+    cheap =
+      Task.async(fn ->
+        ToolRuntime.execute_batch(
+          indexed([
+            tool_call("read", %{"file_path" => "cheap.txt"}),
+            tool_call("jobs", %{})
+          ]),
+          req
+        )
+      end)
+
+    assert [{0, _, "read", text}, {1, _, "jobs", "(no background jobs)"}] =
+             Task.await(cheap, @wait_ms)
+
+    assert text =~ "cheap dispatch made progress"
+    assert slot_held?(agent_id)
+    refute slot_held?(competitor_id)
+    refute_received {:tool_started, "rg", _}
+
+    send(tool_pid, :release)
+    assert [{0, _, "rg", "rg ok"}] = Task.await(holder, @wait_ms)
+    assert_receive {:tool_started, "rg", competitor_pid}, @wait_ms
+    assert slot_held?(competitor_id)
+    send(competitor_pid, :release)
+    assert [{0, _, "rg", "rg ok"}] = Task.await(competitor, @wait_ms)
+    assert wait_until(fn -> not slot_held?(competitor_id) end, @wait_ms)
   end
 
   # ---------------------------------------------------------------------------
@@ -238,25 +321,46 @@ defmodule EvoGit.ToolRuntimeTest do
     agent_id: agent_id,
     task_id: task_id
   } do
-    install_fake_tools(%{"read_file" => never_returning_tool()})
+    parent = self()
+
+    install_fake_tools(%{
+      "rg" => fn args, repo_path, repo_root, node_path ->
+        send(parent, {:timeout_slot_held, slot_held?(agent_id), self()})
+        never_returning_tool().(args, repo_path, repo_root, node_path)
+      end
+    })
 
     calls =
       indexed([
-        tool_call("read_file", %{
-          "file_path" => "./a.txt",
+        tool_call("rg", %{
+          "pattern" => "defmodule",
           "timeout" => @explicit_timeout
         })
       ])
 
-    assert [{0, _, "read_file", output}] =
+    assert [{0, _, "rg", output}] =
              ToolRuntime.execute_batch(calls, request(agent_id, task_id))
 
     assert output ==
              "Error: Tool execution timed out after #{@explicit_timeout}ms. " <>
                "Some output may have been partially captured by the tool."
 
+    assert_receive {:timeout_slot_held, true, tool_pid}, @wait_ms
+    refute Process.alive?(tool_pid)
+    assert wait_until(fn -> not slot_held?(agent_id) end, @wait_ms)
+
+    # A subsequent expensive call can acquire capacity after timeout cleanup.
+    install_fake_tools(%{"rg" => event_tool(self(), "rg")})
+
+    assert [{0, _, "rg", "rg ok"}] =
+             ToolRuntime.execute_batch(
+               indexed([tool_call("rg", %{"pattern" => "after timeout"})]),
+               request(agent_id, task_id)
+             )
+
     # The tracking record settles as `:killed` and names the real timeout.
-    assert [%{id: execution_id, status: :killed}] = tool_executions(agent_id, "read_file")
+    assert [%{id: execution_id, status: :killed}] =
+             Enum.filter(tool_executions(agent_id, "rg"), &(&1.status == :killed))
 
     assert {:ok, %{status: :killed, reason: :timeout, exit_code: nil}} =
              ProcessManager.get(execution_id)
@@ -568,10 +672,13 @@ defmodule EvoGit.ToolRuntimeTest do
     end
   end
 
-  # True while the REAL app-global scheduler holds a tool slot for `agent_id`.
+  # Explicit per-call permits, not the legacy agent-keyed tool_holders set.
   defp slot_held?(agent_id) do
-    %{tool_holders: holders} = :sys.get_state(AgentScheduler)
-    MapSet.member?(holders, agent_id)
+    %{tool_permits: permits} = :sys.get_state(AgentScheduler)
+
+    Enum.any?(permits, fn {_, entry} ->
+      entry.agent_id == agent_id and entry.status == :granted
+    end)
   end
 
   # Bounded poll for a cross-process condition (never a fixed sleep).
