@@ -17,6 +17,10 @@ It creates missing archives and transactionally copies INTEGER repo_id archives 
 It fans out archive_metadata into relational rows without overwriting existing agent rows and retains the original archive_metadata column and payload as the lossless source.
 It creates missing VCT mounts and imports projects with stable basename-derived points and -N collision suffixes without migration-time eviction, keeping projects intact when version 10 encounters it.
 Existing mounts, including reserved points, are not overwritten or evicted by version 10.
+Version 10 imports projects in last_opened_at DESC, path ASC order, preserves the raw path and timestamp, derives the basename after replacing backslashes and trimming trailing slashes, strips ASCII controls and surrounding whitespace from the point segment, and allocates collision suffixes starting at -2.
+Version 10 preserves a nonblank stored display name verbatim rather than trimming it, rejects invalid absolute paths transactionally rather than skipping them, and keeps both projects and all imported mounts without a 100-row cap.
+These repair rules differ deliberately from frozen version 7, which trims paths, names and timestamps, skips unusable paths, caps mounts to 100 and drops projects.
+A standalone physical-schema repair must leave all existing schema_migrations entries untouched, including versions 20260815000001 through 20260815000009, and must not stamp version 10 unless the actual Ecto migrator applies it.
 It reuses the frozen composite, covering and prune index implementations and the frozen VCT implementation only when no legacy projects table exists.
 
 ## Constraints
