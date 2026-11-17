@@ -112,10 +112,15 @@ Adds the task-level `session_mode` column to a database an earlier release alrea
 
 ### Migration versions & ordering
 
-The shipped versions are 1..8, CONTIGUOUS.
-Version 1 is the ONE `tasks` schema-creating step (`tasks` + the final six indexes); 3, 4, 6 and 8 are pure no-ops on a fresh database (idempotent re-statements and probes, then drops of indexes that were never created); versions 5 (`task_agent_archives`) and 7 (`vct_mounts`) are the ONLY tables created outside version 1, each in exactly one place.
-Version 5 must stay ABOVE 1 (its fan-out probes the `tasks` table version 1 creates), version 6 must stay ABOVE the index migrations it prunes, version 7 must stay ABOVE every `projects` interaction since nothing may create that retired table again, and version 8 stays LAST because it only probes `tasks` and must therefore run after every migration that shapes that table.
-Any future migration takes a version above `20260815000008`.
+The shipped versions are 1..10, CONTIGUOUS, and their ledger identities and frozen source files are never rewritten.
+Version 9 adds `pause_kind`; additive version 10 repairs historical identity collisions by probing physical schema, inflating `z1:` JSON, reconciling archive `repo_id` to TEXT, importing archives without replacing authoritative relational rows, and importing projects without a cap while retaining legacy sources.
+Future migrations take a version above `20260815000010`.
+`Boot` delegates the ordered run to `HistoricalSources.run/1` under its existing migration lock: run pending 1..4, transactionally hide sources needed by pending 5/7, run pending 5..9 unchanged, transactionally restore the sources, then run 10 and later migrations.
+The preservation transaction renames `tasks.archive_metadata` to `tasks.__genesis_preserved_archive_metadata` and `projects` to `__genesis_preserved_projects` only when the corresponding destructive migration is pending, recording the exact hidden sources in `__genesis_historical_sources`.
+This boot-only raw SQL boundary changes no source payload or migration version, prevents frozen 5 from consuming compressed archives and frozen 7 from capping/dropping projects, and lets version 10 see the restored original sources.
+The durable marker and renames commit atomically; an interrupted run resumes with the hidden sources, and restoration plus marker removal also commit atomically.
+Unknown marker shapes, reserved-name collisions, missing hidden sources or a marker remaining after version 10 fail boot without swallowing errors; failed frozen migrations leave the originals hidden but intact for retry, while failed repair 10 leaves them restored and intact.
+Each migration retains its own transaction/version-stamp atomicity, but the entire upgrade is not one transaction, and no concurrent external migrator or old binary may operate on the same database during upgrade.
 
 ### Migration source & concurrent-boot serialization
 
@@ -262,7 +267,7 @@ Because `put_task` is delete + full-row insert, every task write maintains SIX i
 ## Constraints
 
 - **Codec is the wire oracle**: `Types.*` and the Operations must DELEGATE, never re-implement, encode/decode logic — the `types_test.exs` oracle-equivalence tests pin byte-identity so drift fails loudly.
-- **No `?N` SQL in store code**: all runtime access is `EvoGit.Repo.*` + `Ecto.Query`; raw SQL exists only inside the eight migrations (via `repo().query!/3`, where in-body `PRAGMA` probing needs immediate execution). The ONE runtime `fragment/1` is `Filters`' 4-column OR-LIKE search (`id`/`opts`/`project_path`/`branch_name` LIKE ? ESCAPE ?), with the escape char pinned as a PARAMETER (a SQL literal `'\'` is doubled by the adapter and rejected by SQLite).
+- **No `?N` SQL in runtime store code**: all runtime access is `EvoGit.Repo.*` + `Ecto.Query`; raw SQL is restricted to migrations and the boot-only `HistoricalSources` preservation boundary (immediate schema probes, transactional marker/rename DDL, never runtime task access). The ONE runtime `fragment/1` is `Filters`' 4-column OR-LIKE search (`id`/`opts`/`project_path`/`branch_name` LIKE ? ESCAPE ?), with the escape char pinned as a PARAMETER (a SQL literal `'\'` is doubled by the adapter and rejected by SQLite).
 - **Crash philosophy**: no blanket try/rescue on the write path — a failed write raises out of the `EvoGit.Repo.*` call and crashes the process running it (the writer), then the store. Deliberate boundaries: `write_call/2`, the failure-isolated read worker, the writer LINKED to the store, the per-row skip-and-log decode boundaries in the Operations, and `TaskRegistry.StoreGuard` at every synchronous registry→store call. Justified try/rescue / try-catch: `terminate/2`, `write_call/2`, `start_offload_worker/2`, `run_offload/2`.
 - **A READ never takes down the store or its callers**: reads degrade to their own empty shape and `StoreGuard` catches the remaining store-process failures.
 - **Writes go through the TYPED schemas** (or `Codec.encode_*` directly); the raw twins are read-projection only.
@@ -296,7 +301,8 @@ Because `put_task` is delete + full-row insert, every task write maintains SIX i
 - **`put_task/2` rewrites the whole row by design** (delete + full 20-key insert): a single status change through the full-row path re-writes every column and all six index entries; the targeted `update_task_columns/3` path exists to avoid that.
 - **The one-time data migrations cost O(rows)**: migration 5 decodes each archived task's array on a cold page cache (migration 2 rewrites every legacy opts/status form) — the slowest boots in the product, within the desktop shell's 90 s backend-readiness budget; freed pages return only via `mix store.maintenance --vacuum`.
 - **The legacy full-row page read has no consumer in `apps/`**: `safe_select_paginated_tasks/2` is reachable only through the frozen RPC wrappers `TaskRegistry.list_tasks_paginated/1` / `list_tasks_by_path/1` (and their `RemoteAPI`/`RemoteNode`/`NodeContext` mirrors), which no `evo_dash` code calls — the dashboard reads `select_tasks_page/2` + `get_task_lite/2`. Same for the zero-caller facade reads `safe_select_all_tasks/1`, `clear_tasks/1` and `size/1`.
-- **The `projects` table and its operations no longer exist**: project mounts live in `vct_mounts`, which `EvoGit.VCT` owns end to end (the store layer only moves the list in and out and never derives or re-points a mount point), and migration 7 drops the retired table.
+- Runtime project operations use only `vct_mounts`, which `EvoGit.VCT` owns end to end, but additive repair 10 retains an existing legacy `projects` table as historical evidence.
+Boot preservation keeps pending frozen migration 7 from dropping that source before repair 10 can import it without eviction.
 - **A status value missing from `Codec.@known_atoms` is TOTALLED, not silently lost**: `Codec.decode_status/1` answers `{:unknown, raw}` plus a `Logger.warning` (and `nil` for an absent value), so `get_task_status/2` distinguishes "no such row" from "row holds a status this build does not know", while the typed `get_task/2` path still maps it to `:pending` (`decode_task`'s `|| :pending`) and the summary projections report `status: nil`.
 The lease classifiers are CONSERVATIVE about it — `Lease.lease_renewable?/1` answers `true` and `Lease.leaked?/3` answers `false` for `{:unknown, _}`, so the 60 s heartbeat keeps renewing and the sweep never marks such a task `:failed` — pinned by `test/evo_git/store/store_invariants_test.exs`. Extend the whitelist in the same commit as any new status atom.
 - **A multi-megabyte `result` row is decoded IN FULL by `get_task/2`**: nothing bounds the decoded term and `Codec.validate_task/1` checks only `id`/`status`, so a huge `result` is read whole (one `Repo.one/1` fetch, one `Jason.decode`, the `decode_result_data/1` rebuild); use `select_tasks_page/2` when result/logs/usage are not needed, but remember it still decodes whole opts (including base64 attachments) and error without redaction or byte limits; `get_task_lite/2` still reads every heavy payload.
@@ -308,6 +314,7 @@ The lease classifiers are CONSERVATIVE about it — `Lease.lease_renewable?/1` a
 ## Routing Table
 
 - `../store.ex` → `EvoGit.Store` — facade (client API, dispatch, read/write offload, disk-full choke point, test seams)
+- `./historical_sources.ex` → Boot-only staged preservation around frozen migrations 5/7, with transactional renames and durable restart marker before additive repair 10.
 - `./writer.ex` → `EvoGit.Store.Writer` — dedicated writer process (arrival-order serialization, reply-after-commit, link crash propagation)
 - `./maintenance.ex` → `EvoGit.Store.Maintenance` — hourly `PRAGMA optimize` (never `VACUUM`)
 - `../repo.ex` → `EvoGit.Repo` — the Ecto repo (XqliteEcto3, unnamed dynamic instances, effective tuning in `start_opts/0`, runtime `database:` resolution)

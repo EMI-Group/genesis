@@ -26,6 +26,8 @@ Do not infer legacy pagination bounds or get-task-lite payload bounds from its n
 `VctMounts.list/1` raises on an absent `vct_mounts` table and relies on the facade's read offload to degrade to `[]`, which is indistinguishable from a genuinely empty table.
 `VctMounts.save/2` always executes `Repo.delete_all(VctMountRow)` inside the immediate transaction, even for an empty supplied list, so an absent table raises before insertion and is not repaired or skipped by this operation.
 VCT writes depend on boot migrations establishing the physical table rather than merely having corresponding migration-ledger entries; non-disk-full write failures propagate through the serialized writer according to the parent Store contract.
+No Operations module reads legacy `tasks.archive_metadata` or the legacy `projects` table, so historical-data preservation must finish at the boot/migration boundary before runtime writes begin.
+`Tasks.put_task/2` deletes and reinserts the task using only current schema fields, which would discard an unconverted legacy `archive_metadata` value; `VctMounts.save/2` similarly replaces all current mount rows and cannot import legacy projects.
 
 ## Routing Table
 There are no child subdirectories.
