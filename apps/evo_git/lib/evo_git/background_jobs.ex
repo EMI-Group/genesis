@@ -156,13 +156,17 @@ defmodule EvoGit.BackgroundJobs do
 
   @doc """
   Starts a detached background job and returns its record.
+  The job holds one scheduler tool permit for its full live lifetime: a runtime
+  tool's inherited permit is transferred to the registry; direct callers acquire
+  in the calling process before launch, never inside the singleton registry.
+  An unavailable scheduler refuses launch rather than bypassing the tool pool.
   Spec (`map` or keyword list): `:command` (**required**) — the shell command line to run; `:cwd` (**required**) — existing absolute working directory; `:owner_pid` (**required**) — the owning AGENT pid, defaulting to `current_owner_pid/0` when absent; `:repo_root` — optional repository root (context only); `:label` — optional short human label (defaults to the command's first line); `:agent_id` / `:task_id` — optional identifiers carried on the record.
   Returns `{:ok, job}` — the job record (`t:job/0`), whose output is written to its `:output_path` field — or `{:error, message}`, one actionable prose sentence.
   """
   @spec start_job(map() | keyword()) :: {:ok, job()} | {:error, String.t()}
   def start_job(spec) do
     with {:ok, normalized} <- normalize_start_spec(spec) do
-      call_registry({:start_job, normalized}, {:error, registry_down_error()})
+      start_with_permit(normalized, nil)
     end
   end
 
@@ -177,7 +181,7 @@ defmodule EvoGit.BackgroundJobs do
           {:ok, job()} | {:error, String.t()}
   def start_job_with_handle(spec, handle) when is_map(handle) do
     with {:ok, normalized} <- normalize_start_spec(spec) do
-      call_registry({:start_job, normalized, handle}, {:error, registry_down_error()})
+      start_with_permit(normalized, handle)
     end
   end
 
@@ -366,6 +370,47 @@ defmodule EvoGit.BackgroundJobs do
     end
   end
 
+  # Acquire only in the caller: the singleton must remain able to observe exits
+  # and release capacity while another launch waits. An inherited permit is the
+  # tool call's existing capacity, not a second slot.
+  defp start_with_permit(spec, handle) do
+    acquired =
+      if is_reference(spec.tool_permit),
+        do: {:ok, spec.tool_permit},
+        else: permit_call(fn -> EvoGit.AgentScheduler.acquire_tool_permit(spec.agent_id) end)
+
+    case acquired do
+      {:ok, permit} ->
+        try do
+          call_registry(
+            {:start_job, %{spec | tool_permit: permit}, handle},
+            {:error, registry_down_error()}
+          )
+        after
+          # Owner-enforced: after handoff this stale caller cannot free the job's
+          # permit; before handoff it cleans up failed/dead registry calls.
+          release_permit(permit)
+        end
+
+      {:error, reason} ->
+        {:error, "Background job tool permit request failed: #{inspect(reason)}"}
+    end
+  end
+
+  # Scheduler availability is an external lifecycle boundary, including shutdown.
+  defp permit_call(fun) do
+    try do
+      fun.()
+    catch
+      :exit, reason -> {:error, {:scheduler_unavailable, reason}}
+    end
+  end
+
+  defp release_permit(permit) when is_reference(permit),
+    do: permit_call(fn -> EvoGit.AgentScheduler.release_tool_permit(permit) end)
+
+  defp release_permit(_), do: :ok
+
   defp request_tag(message) when is_tuple(message), do: inspect(elem(message, 0))
   defp request_tag(message), do: inspect(message)
 
@@ -414,7 +459,8 @@ defmodule EvoGit.BackgroundJobs do
            label: normalize_label(Map.get(keyed, :label), command),
            owner_pid: owner_pid,
            agent_id: normalize_identity(Map.get(keyed, :agent_id)),
-           task_id: normalize_identity(Map.get(keyed, :task_id))
+           task_id: normalize_identity(Map.get(keyed, :task_id)),
+           tool_permit: Process.get(:evogit_tool_permit)
          }}
     end
   end
@@ -785,6 +831,7 @@ defmodule EvoGit.BackgroundJobs do
     Enum.each(state.jobs, fn {_id, job} ->
       if live?(job) do
         kill_detached(job.handle)
+        release_permit(Map.get(job, :tool_permit))
         settle_shutdown(state, job)
       end
     end)
@@ -813,6 +860,25 @@ defmodule EvoGit.BackgroundJobs do
   # Shared by the public `:start_job` call and the `start_job_with_handle/2`
   # test seam, so both go through the SAME cap check, start path and tick arming.
   defp handle_start(spec, handle_override, state) do
+    case permit_call(fn ->
+           EvoGit.AgentScheduler.transfer_tool_permit(spec.tool_permit, self())
+         end) do
+      :ok ->
+        result = handle_permitted_start(spec, handle_override, state)
+
+        case result do
+          {:reply, {:error, _}, _} -> release_permit(spec.tool_permit)
+          _ -> :ok
+        end
+
+        result
+
+      {:error, reason} ->
+        {:reply, {:error, "Background job tool permit handoff failed: #{inspect(reason)}"}, state}
+    end
+  end
+
+  defp handle_permitted_start(spec, handle_override, state) do
     if live_jobs_for_owner(state.jobs, spec.owner_pid) >= @max_jobs_per_owner do
       {:reply, {:error, limit_error()}, state}
     else
@@ -851,6 +917,7 @@ defmodule EvoGit.BackgroundJobs do
           cwd: spec.cwd,
           output_path: output_path,
           handle: handle,
+          tool_permit: spec.tool_permit,
           execution_id: nil,
           status: :running,
           exit_code: nil,
@@ -1460,7 +1527,13 @@ defmodule EvoGit.BackgroundJobs do
   # avoids pointless calls. A job killed only through the manager settles here
   # as well, because the manager routes a `:background_job` kill to `kill/3`.
   defp put_job(state, job) do
-    settle_execution(state, Map.get(state.jobs, job.id), job)
+    previous = Map.get(state.jobs, job.id)
+
+    if not live?(job) and (is_nil(previous) or live?(previous)) do
+      release_permit(Map.get(job, :tool_permit))
+    end
+
+    settle_execution(state, previous, job)
     %{state | jobs: Map.put(state.jobs, job.id, job)}
   end
 

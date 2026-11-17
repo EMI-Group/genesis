@@ -187,6 +187,13 @@ A model profile can spend a ChatGPT/Claude **subscription login** instead of a p
 - **Assembly**: `Config.Schema.LLM.profile_generation_params/1` is the choke point (`provider_options` three-level precedence; `ensure_profile_credentials/1` / `oauth_credential_status/1`) → `config/schema/CONTEXT.md`.
 - Tests are hermetic via `opts[:home]`/`opts[:codex_home]`/`opts[:oauth_file]` and the call-time app env `:auth_home_fun` → `test/CONTEXT.md`.
 
+## Tool permit integration
+`AgentScheduler.acquire_tool_permit/1`, `transfer_tool_permit/2` and `release_tool_permit/1` delegate to `AgentScheduler.ToolPermits`, with monitor DOWN handling before the session lifecycle fallback and status updates applied at the scheduler hub.
+`with_tool_slot/2` acquires a unique permit and synchronously releases that exact permit in `after`, with stale release after ownership transfer a no-op.
+`BackgroundJobs.start_job/1` captures the runtime tool task's `:evogit_tool_permit` process key or acquires a permit in its caller using the spec's agent attribution, and the registry synchronously takes ownership before launch without ever waiting to acquire capacity itself.
+Every live background job retains its permit until the single terminal record funnel, launch failure or registry shutdown releases it, while scheduler owner monitoring covers registry crashes.
+The existing handle-injection test seam follows the same permit policy, and unavailable scheduler service refuses a launch instead of allowing uncounted execution.
+
 ## Constraints
 
 - Part of an **umbrella project** — deps, artifacts and lockfile at the repo root; Elixir ~> 1.18; **Git CLI only** (no libgit2); no source at root; subdirectories follow Elixir convention (`./lib/evo_git/<subdir>/` ↔ `EvoGit.<Subdir>`).

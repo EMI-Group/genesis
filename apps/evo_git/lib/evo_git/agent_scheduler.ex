@@ -114,6 +114,11 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.SessionOpts
   alias EvoGit.AgentScheduler.Slots
+  alias EvoGit.AgentScheduler.ToolPermits
+
+  defdelegate acquire_tool_permit(agent_id), to: ToolPermits
+  defdelegate transfer_tool_permit(permit, owner), to: ToolPermits
+  defdelegate release_tool_permit(permit), to: ToolPermits
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.SubagentReattach
@@ -715,10 +720,11 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
-  Acquires a tool execution slot, executes the given function, and releases the slot afterward.
-  Ensures the slot is released even if the function raises.
+  Acquires a unique monitored tool permit, executes the given function, and
+  synchronously releases that exact permit afterward, even if the function raises.
+  A permit transferred to another owner is not released by this stale caller.
 
-  A non-`:ok` result from the slot request raises instead of proceeding without
+  A non-`{:ok, permit}` result from the permit request raises instead of proceeding without
   a slot: `{:error, :cancelled}` when the agent is purged from the waiting queue
   during a force-kill / graceful cancel, and `{:error, :paused}` when it is purged
   by a TASK PAUSE (both raise the same exception, see `with_llm_slot/2`).
@@ -727,14 +733,14 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec with_tool_slot(pos_integer(), (-> result)) :: result when result: var
   def with_tool_slot(agent_id, fun) when is_function(fun, 0) do
-    case request_tool_slot(agent_id) do
-      :ok ->
+    case acquire_tool_permit(agent_id) do
+      {:ok, permit} ->
         # try/after (not rescue) — guarantees slot release even if fun raises.
         # The exception is NOT swallowed; it's re-raised after cleanup.
         try do
           fun.()
         after
-          release_tool_slot(agent_id)
+          release_tool_permit(permit)
         end
 
       other ->
@@ -1370,6 +1376,31 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
+  @impl true
+  def handle_call({:acquire_tool_permit, agent_id}, from, %State{} = state) do
+    permit_reply(ToolPermits.handle_acquire(agent_id, from, state))
+  end
+
+  @impl true
+  def handle_call({:transfer_tool_permit, permit, owner}, _from, %State{} = state) do
+    permit_reply(ToolPermits.handle_transfer(permit, owner, state))
+  end
+
+  @impl true
+  def handle_call({:release_tool_permit, permit}, from, %State{} = state) do
+    permit_reply(ToolPermits.handle_release(permit, elem(from, 0), state))
+  end
+
+  defp permit_reply({:reply, reply, state, updates}) do
+    Lifecycle.apply_status_updates(updates)
+    {:reply, reply, state}
+  end
+
+  defp permit_reply({:noreply, state, updates}) do
+    Lifecycle.apply_status_updates(updates)
+    {:noreply, state}
+  end
+
   # Best-effort ReqLLM Finch pool reconciliation after a successful config
   # update. `State.do_update_config/2` always returns `{:reply, :ok, new_state}`
   # (the llm_model-nil error path never reaches it), so reconcile never raises.
@@ -1481,7 +1512,10 @@ defmodule EvoGit.AgentScheduler do
   # Session process exited (monitor :DOWN).
   @impl true
   def handle_info({:DOWN, ref, :process, pid, reason}, %State{} = state) do
-    Lifecycle.handle_agent_down(ref, pid, reason, state)
+    case ToolPermits.handle_down(ref, state) do
+      :unhandled -> Lifecycle.handle_agent_down(ref, pid, reason, state)
+      reply -> permit_reply(reply)
+    end
   end
 
   # A session's ONE terminal result, delivered BEFORE it stops (signal ordering
