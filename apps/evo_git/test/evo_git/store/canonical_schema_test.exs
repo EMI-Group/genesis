@@ -295,11 +295,12 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
       {statements, _emitters, []} = capture_statements(fn -> Boot.run_migrations(pid) end)
 
       # The migrator still READS its bookkeeping (that is what tells it nothing
-      # is pending) and re-asserts its OWN table on every run — that bootstrap
-      # is the only DDL a no-op run may emit; no store object is touched.
+      # is pending) and re-asserts its OWN table for each staged migration run:
+      # frozen versions 1..9, then additive physical-schema reconciliation.
+      # These identical bootstraps are the only DDL; no store object is touched.
       assert statements != []
 
-      assert [bookkeeping] =
+      assert [bookkeeping, bookkeeping] =
                statements_matching(statements, ~r/^\s*(CREATE|ALTER|DROP)\b/i)
 
       assert bookkeeping =~ ~r/CREATE TABLE IF NOT EXISTS "schema_migrations"/
@@ -498,7 +499,13 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
              ) ==
                []
 
-      assert statements_matching(statements, ~r/SELECT\s+id\s+FROM\s+tasks/i) == []
+      # Reconciliation probes for abandoned compressed payloads even on a fresh
+      # database; these are not archive fan-out reads. Pin the complete list so
+      # an additional legacy archive SELECT cannot slip through.
+      assert statements_matching(statements, ~r/SELECT\s+id\s+FROM\s+tasks/i) == [
+               "SELECT id FROM tasks WHERE substr(result, 1, 3) = 'z1:'",
+               "SELECT id FROM tasks WHERE substr(logs, 1, 3) = 'z1:'"
+             ]
     end
 
     test "the prune step runs its four DROP INDEX IF EXISTS convergence no-ops" do

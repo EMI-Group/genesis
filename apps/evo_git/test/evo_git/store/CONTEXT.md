@@ -96,6 +96,8 @@ The opts round-trip fixture includes atom-keyed `:model_spec` with a canonical s
 
 ## Notes for Agents
 
+- `VALIDATION.md` records the isolated migration-harness setup, dependency-artifact limitations and unresolved frozen-migration versus integrated-preservation contract conflicts; it is not evidence of a normal Mix-suite pass.
+
 - Prefer an EVENT over an observation window: "a write is in flight" is constructed by holding the DB write lock externally (`BEGIN IMMEDIATE`), "the pool is saturated" is the pool's own `checkout_queue_length`, "every connection is ready" is a poll to `ready_conn_count == N`, and "nothing else happened" is a zero-wait `refute_receive … , 0` after a synchronous call — do not reintroduce fixed `refute_receive …, 200` windows.
 - Tmp DB filenames must be unique ACROSS BEAM restarts too — embed the wall-clock ms (`System.system_time(:millisecond)`) alongside `System.unique_integer` + `inspect(self())`; a counter+pid alone collides with a previous run's leftover file and silently reopens its stale rows.
 - Every per-test tmp DB must ALSO be deleted on exit: `File.rm` the DB plus its `-wal`/`-shm` sidecars (`{:error, :enoent}` for a missing path must not raise) — a merely unique name still leaves one file per test behind (136/270/408 leftovers after 3 consecutive store-suite runs before the cleanup landed).
