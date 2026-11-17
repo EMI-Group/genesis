@@ -197,7 +197,7 @@ defmodule EvoGit.ToolRuntime.Executor do
       try do
         task = start_tool_task(name, args, request, exec_id, permit)
 
-        case Task.yield(task, tool_timeout) || Task.shutdown(task) do
+        case Task.yield(task, tool_timeout) do
           {:ok, {:tool_crashed, message}} ->
             Tracking.finish(exec_id, :failed, reason: {:crashed, message})
             "Error: Tool execution crashed: #{message}"
@@ -224,12 +224,15 @@ defmodule EvoGit.ToolRuntime.Executor do
             "Error: Tool execution crashed: #{inspect(reason)}"
 
           nil ->
-            # The tool task was stopped, but the OS process it started is not
-            # necessarily dead: kill the handle first, then settle the record
-            # (both calls are total and idempotent). The kill's terminal fact is
-            # `:timeout`; a builtin record (no OS handle, so the kill has
-            # nothing to stop) is settled by the follow-up finish.
+            # Attempt external containment cleanup BEFORE stopping the permit
+            # owner: shutdown (or owner DOWN) releases its scheduler capacity.
+            # Tracking.kill/2 is synchronous and total; a builtin/no-handle call
+            # is settled by finish/3. Do not use shutdown's possible late result:
+            # once yield expires, this call must retain its timeout outcome.
+            # Successful background launches never enter this arm, and their
+            # registry-owned permit is untouched by the tool task's shutdown.
             Tracking.kill(exec_id, :timeout)
+            Task.shutdown(task)
             Tracking.finish(exec_id, :killed, reason: :timeout)
 
             "Error: Tool execution timed out after #{tool_timeout}ms. Some output may have been partially captured by the tool."
@@ -388,8 +391,9 @@ defmodule EvoGit.ToolRuntime.Executor do
     #     `EvoGit.BackgroundJobs.current_owner_pid/0` to bind a detached job's
     #     lifetime to its owner. It MUST be the agent pid, never `self()` here:
     #     this tool task is shut down the moment the tool returns
-    #     (`Task.yield/2 || Task.shutdown/1`), so a job monitored on it would be
-    #     killed instantly — the agent pid is the one lifetime signal covering
+    #     (`Task.yield/2`, or timeout cleanup + `Task.shutdown/1`), so a job
+    #     monitored on it would be killed instantly — the agent pid is the one
+    #     lifetime signal covering
     #     agent completion, crash, graceful cancel and force-kill.
     #   * `:evogit_agent_id` / `:evogit_task_id` — read by the command-approval
     #     gate (`EvoGit.CommandShell.request_approval/3`) and by the
