@@ -140,9 +140,9 @@ The compatibility `handle_release(permit, state)` uses `self()` as caller and is
 Explicit permits count separately even for the same agent, share capacity and one FIFO queue with legacy agent-keyed tool slots, and survive config rebuilding in `State.tool_permits` plus `State.tool_permit_monitors`.
 Legacy `request_tool_slot` / `release_tool_slot` remain one-holder-per-agent and require serialized ownership; their queued callers are now monitored and dead callers are discarded before grant.
 `Slots.release_agent_slots/2` purges waiting requests with the existing cancellation reason, drops every attributed explicit permit and demonitor-flushes owners before granting capacity; task pause/cancel queue purges preserve `:paused` / `:cancelled` and do not revoke holders.
-The public hub integration is REQUIRED outside this source node: delegate `acquire_tool_permit/1`, `transfer_tool_permit/2`, `release_tool_permit/1` to `ToolPermits`, route matching calls to `handle_acquire/3`, `handle_transfer/3`, `handle_release/3` (passing the GenServer caller pid), apply returned status updates, and offer every process DOWN ref to `ToolPermits.handle_down/2` before existing agent-monitor handling (`:unhandled` means fall through).
-Until that hub integration lands the explicit client API is not usable, and monitored waiter cleanup only runs on grant/purge rather than immediately on DOWN.
-Detached OS-job lifetime is not represented in these slot tables: this directory has no job-completion-to-slot-release linkage, and background cleanup is separately performed through `BackgroundJobs.reap_under/1` before worktree removal (`worktree_manager.ex:923–977`).
+The scheduler hub delegates `acquire_tool_permit/1`, `transfer_tool_permit/2` and `release_tool_permit/1` to `ToolPermits`, routes their calls through `permit_reply/1` to apply status updates, passes the releasing caller pid to `handle_release/3`, and routes every process DOWN through `ToolPermits.handle_down/2` before agent lifecycle handling.
+`with_tool_slot/2` acquires a per-call permit and synchronously releases that exact reference in `after`, with a transferred permit protected from the former owner's release.
+Detached-job permit acquisition, handoff and terminal release belong to the parent `background_jobs.ex`; worktree cleanup additionally calls `BackgroundJobs.reap_under/1` before removing a worktree.
 
 | Pool | State keys | Capacity | Backoff |
 |---|---|---|---|
