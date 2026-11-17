@@ -96,7 +96,10 @@ The opts round-trip fixture includes atom-keyed `:model_spec` with a canonical s
 
 ## Notes for Agents
 
-- `VALIDATION.md` records the isolated migration-harness setup, dependency-artifact limitations and unresolved frozen-migration versus integrated-preservation contract conflicts; it is not evidence of a normal Mix-suite pass.
+- This directory's `VALIDATION.md` (not a repository-root file) records the exact isolated in-memory migration-harness invocation and its 126-test seed-42 diagnostic result: 111 passed and 15 failed, not a normal Mix-suite pass.
+The 14 preservation/policy failures are in `boot_migration_test.exs` (six), `v0138_upgrade_path_test.exs` (three), and `vct_mounts_migration_test.exs` (five), whose integrated Boot entry points conflict with frozen destructive drop/strip/cap/skip and rollback-boundary expectations.
+The remaining `repo_test.exs:582` busy-timeout mismatch is attributed to the harness loading xqlite 0.12.2 rather than the declared 0.16 series, so it does not justify changing the current-driver assertion.
+Keep frozen-migration contracts distinct from integrated non-destructive preservation and fail-closed malformed-source contracts rather than deleting behavioral assertions to make the diagnostic green.
 
 - Prefer an EVENT over an observation window: "a write is in flight" is constructed by holding the DB write lock externally (`BEGIN IMMEDIATE`), "the pool is saturated" is the pool's own `checkout_queue_length`, "every connection is ready" is a poll to `ready_conn_count == N`, and "nothing else happened" is a zero-wait `refute_receive … , 0` after a synchronous call — do not reintroduce fixed `refute_receive …, 200` windows.
 - Tmp DB filenames must be unique ACROSS BEAM restarts too — embed the wall-clock ms (`System.system_time(:millisecond)`) alongside `System.unique_integer` + `inspect(self())`; a counter+pid alone collides with a previous run's leftover file and silently reopens its stale rows.
