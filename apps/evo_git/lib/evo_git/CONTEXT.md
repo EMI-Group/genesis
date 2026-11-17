@@ -306,9 +306,10 @@ BOTH rebuild paths (stage 1 prune-only and stage 2 summarising) drop EVERY earli
 Stage 1 injects no job snapshot, and the summariser does NOT list job ids/statuses under `## Pending Jobs`.
 
 ## Background Jobs Versus Tool Slots
-`AgentScheduler.with_tool_slot/2` holds a slot only for its callback and releases it in `after` (`agent_scheduler.ex:729–738`), so a detached bash launch releases its tool-call slot when launch returns rather than when its background process exits.
-`BackgroundJobs` does not acquire scheduler slots: it caps live jobs at 10 per owner (`background_jobs.ex:26,815–823`), tracks each separately as a `ProcessManager` background execution (`894–912`), and stops live jobs on owner death (`734–764`).
-The configured `max_tool_concurrency` is therefore not a node-wide bound on live detached processes, and `job_output(wait: true)` instead occupies an ordinary tool-call slot while polling.
+`BackgroundJobs.start_job/1` acquires a caller-owned tool permit or inherits the runtime tool task's permit, then synchronously transfers it to the registry before spawning; each live job retains capacity until its terminal record transition.
+Failed admissions and launches release their permits, while owner-enforced release prevents the stale caller or executor from freeing registry-owned capacity.
+`job_output`, `job_list` and `job_kill` bypass permit admission through `ToolRuntime.Policy`, so background jobs occupying every permit do not prevent these controls from executing.
+A launch already accepted by the registry is not cancelled when its calling tool task dies or its registry call times out: the registry monitors only the durable agent owner, and installs that monitor after backend spawn returns.
 `SystemSampler.build_sample/5` reports `tool_used = counts.running` and `tool_waiting = counts.blocked` (`system_sampler.ex:419–436`), not scheduler permits or background-job counts, so these telemetry keys cannot establish actual tool-slot or process occupancy.
 Invocation-level permit identity and queue/holder caveats belong to `agent_scheduler/CONTEXT.md`, execution boundaries to `tool_runtime/CONTEXT.md`, and shell/wait contracts to `agent/tools/CONTEXT.md`.
 ## Background Job Timers (test seam)
