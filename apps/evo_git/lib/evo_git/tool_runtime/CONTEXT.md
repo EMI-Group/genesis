@@ -32,9 +32,11 @@ The agent no longer owns concurrency logic: `EvoGit.Agent.ToolDispatch.batch_exe
 - `Tracking.kill(id, :timeout)` settles the terminal fact `:timeout`; every other kill reason settles `{:killed_by, :tool_runtime}`, with the human prose kept in the record's `control_log`.
 - `finish/3` and `kill/2` are total (a `nil` or non-binary id is a no-op) and never raise into the tool path.
 
-## Audit caveats
-- Timeout cleanup orders tool-task shutdown before OS-handle kill (`executor.ex:200,226–233`), while the tool task releases its permit in `after` (`:262–266`) or scheduler owner-DOWN reclamation reclaims it on brutal shutdown, so a queued replacement can be admitted before `Tracking.kill/2` attempts to stop a surviving OS process.
-- The runtime caller's final release cannot act as a cleanup barrier after transfer because release is owner-enforced; preserving strict OS concurrency through timeout requires retaining or transferring admission ownership until containment teardown is complete.
+## Timeout cleanup ordering
+- When `Task.yield/2` expires, the runtime synchronously calls `Tracking.kill/2` BEFORE `Task.shutdown/1`, so runtime-initiated shutdown cannot release the task-owned permit before external containment cleanup is attempted.
+- A late result returned by shutdown is discarded: an expired yield always returns the timeout error, with terminal settlement still subject to ProcessManager's first-fact-wins rule.
+- Successful background launches keep the existing registry-owned permit handoff; neither the tool task nor the runtime's final release can free a permit owned by the background registry.
+- Tracking remains best-effort: unavailable tracking, a missing handle, backend kill failure, or a tool task independently finishing/dying during cleanup cannot provide a strict external-process teardown barrier.
 
 ## Routing Table
 
