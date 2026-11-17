@@ -53,7 +53,7 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
   alias EvoGit.Store.Schemas.TaskAgentArchiveRow
   alias EvoGit.Store.Schemas.TaskRow
 
-  # The ten shipped migrations, contiguous versions 1..10.
+  # The nine shipped migrations, contiguous versions 1..9.
   @migration_versions [
     20_260_815_000_001,
     20_260_815_000_002,
@@ -63,8 +63,7 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
     20_260_815_000_006,
     20_260_815_000_007,
     20_260_815_000_008,
-    20_260_815_000_009,
-    20_260_815_000_010
+    20_260_815_000_009
   ]
 
   # `PRAGMA table_info(tasks)` — [cid, name, type, notnull, dflt_value, pk] —
@@ -270,7 +269,7 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
   # ── Migration bookkeeping ────────────────────────────────────────────────
 
   describe "migration set" do
-    test "a fresh boot stamps exactly the ten shipped, contiguous versions" do
+    test "a fresh boot stamps exactly the nine shipped, contiguous versions" do
       pid = boot_fresh!(:versions)
 
       assert pid
@@ -295,12 +294,11 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
       {statements, _emitters, []} = capture_statements(fn -> Boot.run_migrations(pid) end)
 
       # The migrator still READS its bookkeeping (that is what tells it nothing
-      # is pending) and re-asserts its OWN table for each staged migration run:
-      # frozen versions 1..9, then additive physical-schema reconciliation.
-      # These identical bootstraps are the only DDL; no store object is touched.
+      # is pending) and re-asserts its OWN table on every run — that bootstrap
+      # is the only DDL a no-op run may emit; no store object is touched.
       assert statements != []
 
-      assert [bookkeeping, bookkeeping] =
+      assert [bookkeeping] =
                statements_matching(statements, ~r/^\s*(CREATE|ALTER|DROP)\b/i)
 
       assert bookkeeping =~ ~r/CREATE TABLE IF NOT EXISTS "schema_migrations"/
@@ -499,13 +497,7 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
              ) ==
                []
 
-      # Reconciliation probes for abandoned compressed payloads even on a fresh
-      # database; these are not archive fan-out reads. Pin the complete list so
-      # an additional legacy archive SELECT cannot slip through.
-      assert statements_matching(statements, ~r/SELECT\s+id\s+FROM\s+tasks/i) == [
-               "SELECT id FROM tasks WHERE substr(result, 1, 3) = 'z1:'",
-               "SELECT id FROM tasks WHERE substr(logs, 1, 3) = 'z1:'"
-             ]
+      assert statements_matching(statements, ~r/SELECT\s+id\s+FROM\s+tasks/i) == []
     end
 
     test "the prune step runs its four DROP INDEX IF EXISTS convergence no-ops" do
