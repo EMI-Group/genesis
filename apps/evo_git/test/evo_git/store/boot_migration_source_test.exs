@@ -31,7 +31,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   stderr: named-device capture goes through ONE shared `StringIO` per device,
   handed to every capturer with per-capturer offsets, so bytes written by a
   CONCURRENT test (another async module compiling a module, for example) can
-  appear inside this window. The refutes below are therefore SCOPED to the nine
+  appear inside this window. The refutes below are therefore SCOPED to the ten
   migration module NAMES — the only redefinitions that can be a regression of
   the property this suite owns — instead of a bare `"redefining module"`.
   `Boot` compiles in the calling process, so this test's own compiles are always
@@ -46,9 +46,9 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   alias EvoGit.Store.Boot
   alias EvoGit.Store.RepoScope
 
-  # The shipped migration versions — the leading integers of the nine
+  # The shipped migration versions — the leading integers of the ten
   # `priv/repo/migrations/` files (`20260815000001_baseline_adoption.exs` …
-  # `20260815000009_task_pause_kind.exs`), as the sibling boot suites pin them;
+  # migration 20260815000010), as the sibling boot suites pin them;
   # `migration_file_versions/0` re-derives them from disk.
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
@@ -81,7 +81,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
     @prune_indexes_version,
     @vct_mounts_version,
     @session_mode_version,
-    @pause_kind_version
+    @pause_kind_version,
+    20_260_815_000_010
   ]
 
   # The `:persistent_term` memo slot `EvoGit.Store.Boot` fills with the
@@ -113,17 +114,18 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
     test "returns exactly the shipped {version, module} pairs, ascending, modules loaded" do
       source = Boot.migration_source()
 
-      assert source == [
-               {@baseline_version, @baseline_module},
-               {@normalization_version, @normalization_module},
-               {@composite_index_version, @composite_index_module},
-               {@covering_index_version, @covering_index_module},
-               {@archive_version, @archive_module},
-               {@prune_indexes_version, @prune_indexes_module},
-               {@vct_mounts_version, @vct_mounts_module},
-               {@session_mode_version, @session_mode_module},
-               {@pause_kind_version, @pause_kind_module}
-             ]
+      assert source ==
+               [
+                 {@baseline_version, @baseline_module},
+                 {@normalization_version, @normalization_module},
+                 {@composite_index_version, @composite_index_module},
+                 {@covering_index_version, @covering_index_module},
+                 {@archive_version, @archive_module},
+                 {@prune_indexes_version, @prune_indexes_module},
+                 {@vct_mounts_version, @vct_mounts_module},
+                 {@session_mode_version, @session_mode_module},
+                 {@pause_kind_version, @pause_kind_module}
+               ] ++ [reconciliation_entry()]
 
       versions = Enum.map(source, &elem(&1, 0))
       assert versions == Enum.sort(versions)
@@ -175,17 +177,18 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
       # migrated before the suite ran), so a regression to a directory source
       # would have to REDEFINE them — which is exactly what the capture looks
       # for.
-      assert Boot.migration_source() == [
-               {@baseline_version, @baseline_module},
-               {@normalization_version, @normalization_module},
-               {@composite_index_version, @composite_index_module},
-               {@covering_index_version, @covering_index_module},
-               {@archive_version, @archive_module},
-               {@prune_indexes_version, @prune_indexes_module},
-               {@vct_mounts_version, @vct_mounts_module},
-               {@session_mode_version, @session_mode_module},
-               {@pause_kind_version, @pause_kind_module}
-             ]
+      assert Boot.migration_source() ==
+               [
+                 {@baseline_version, @baseline_module},
+                 {@normalization_version, @normalization_module},
+                 {@composite_index_version, @composite_index_module},
+                 {@covering_index_version, @covering_index_module},
+                 {@archive_version, @archive_module},
+                 {@prune_indexes_version, @prune_indexes_module},
+                 {@vct_mounts_version, @vct_mounts_module},
+                 {@session_mode_version, @session_mode_module},
+                 {@pause_kind_version, @pause_kind_module}
+               ] ++ [reconciliation_entry()]
 
       assert Code.ensure_loaded?(@baseline_module)
       assert Code.ensure_loaded?(@normalization_module)
@@ -210,6 +213,13 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
 
   # ── Helpers ───────────────────────────────────────────────────────────────
 
+  defp reconciliation_entry do
+    [{20_260_815_000_010, module}] = Enum.drop(Boot.migration_source(), 9)
+    assert Code.ensure_loaded?(module)
+    assert function_exported?(module, :__migration__, 0)
+    {20_260_815_000_010, module}
+  end
+
   defp db_path(root, tag), do: Path.join(root, "evogit_bootsource_#{tag}.sqlite")
 
   # Refutes a redefinition of ANY shipped migration module — the SCOPED form of
@@ -217,7 +227,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   # emitted by a concurrent async test shares the named-device stderr capture,
   # so a bare `"redefining module"` match would be flaky. Every migration module
   # is still checked individually, so a regression to a directory source (which
-  # recompiles all nine on every boot) is caught.
+  # recompiles all ten on every boot) is caught.
   defp refute_migration_redefinition(output) do
     for module <- [
           @baseline_module,
@@ -228,7 +238,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
           @prune_indexes_module,
           @vct_mounts_module,
           @session_mode_module,
-          @pause_kind_module
+          @pause_kind_module,
+          elem(reconciliation_entry(), 1)
         ] do
       refute output =~ "redefining module #{inspect(module)}"
     end

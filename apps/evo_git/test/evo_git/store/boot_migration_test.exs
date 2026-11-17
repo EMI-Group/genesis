@@ -93,7 +93,8 @@ defmodule EvoGit.Store.BootMigrationTest do
     @prune_indexes_version,
     @vct_mounts_version,
     @session_mode_version,
-    @pause_kind_version
+    @pause_kind_version,
+    20_260_815_000_010
   ]
 
   # The LEGACY 20 column names in physical order — the shape a pre-release
@@ -597,7 +598,7 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all nine migrations (the Ecto migrator saw version 0).
+      # The boot stamped all ten migrations (the Ecto migrator saw version 0).
       assert migration_versions(pid) == @migration_versions
 
       # The schema was adopted untouched, with `session_mode` and `pause_kind`
@@ -663,7 +664,7 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all nine migrations (the Ecto migrator saw version 0)...
+      # The boot stamped all ten migrations (the Ecto migrator saw version 0)...
       assert migration_versions(pid) == @migration_versions
       assert schema_migrations_count(pid) == [[9]]
 

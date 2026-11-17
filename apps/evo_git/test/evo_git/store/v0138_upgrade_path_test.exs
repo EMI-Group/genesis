@@ -13,15 +13,16 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   composites).
 
   Those three versions are STAMPED, so a real v0.13.8 database never re-runs
-  them: this suite proves the PENDING set only — the six migrations HEAD
+  them: this suite proves the PENDING set only — the seven migrations HEAD
   ships on top of them, `…00004_covering_indexes`,
   `…00005_task_agent_archives` (table + legacy fan-out + `archive_metadata`
   drop), `…00006_prune_redundant_indexes`, `…00007_vct_mounts` (the VCT
   mount table, which also retires the legacy `projects` table),
   `…00008_session_mode` (the probe-guarded `tasks.session_mode` adoption,
   which ALTERs the column in at the tail) and `…00009_task_pause_kind` (the
-  same probe-guarded pattern for `tasks.pause_kind`, appended after it).
-  HEAD's nine migrations are versions 1..9 with no gaps.
+  same probe-guarded pattern for `tasks.pause_kind`, appended after it), plus
+  `…00010` reconciling schemas whose historical migration identities collided.
+  HEAD's ten migrations are versions 1..10 with no gaps.
 
   This suite crafts that file with RAW xqlite — never through the migration
   modules, so the fixture stays independent of HEAD's code — seeds v0.13.8-shaped
@@ -45,15 +46,16 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   # `schema_migrations` carries exactly these rows.
   @v0138_versions [20_260_815_000_001, 20_260_815_000_002, 20_260_815_000_003]
 
-  # The six migrations HEAD ships ON TOP of the v0.13.8 three: contiguous
-  # versions, so the shipped set is `1..9` with no gaps.
+  # The seven migrations HEAD ships ON TOP of the v0.13.8 three: contiguous
+  # versions, so the shipped set is `1..10` with no gaps.
   @pending_versions [
     20_260_815_000_004,
     20_260_815_000_005,
     20_260_815_000_006,
     20_260_815_000_007,
     20_260_815_000_008,
-    20_260_815_000_009
+    20_260_815_000_009,
+    20_260_815_000_010
   ]
 
   @shipped_versions @v0138_versions ++ @pending_versions
@@ -155,7 +157,7 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   # ── The chain ─────────────────────────────────────────────────────────────
 
   describe "released v0.13.8 database → HEAD" do
-    test "applies exactly the six pending migrations and stamps the nine shipped versions",
+    test "applies exactly the seven pending migrations and stamps the ten shipped versions",
          %{path: path} do
       build_v0138_db!(path)
 

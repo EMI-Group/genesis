@@ -53,7 +53,7 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
   alias EvoGit.Store.Schemas.TaskAgentArchiveRow
   alias EvoGit.Store.Schemas.TaskRow
 
-  # The nine shipped migrations, contiguous versions 1..9.
+  # The ten shipped migrations, contiguous versions 1..10.
   @migration_versions [
     20_260_815_000_001,
     20_260_815_000_002,
@@ -63,7 +63,8 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
     20_260_815_000_006,
     20_260_815_000_007,
     20_260_815_000_008,
-    20_260_815_000_009
+    20_260_815_000_009,
+    20_260_815_000_010
   ]
 
   # `PRAGMA table_info(tasks)` — [cid, name, type, notnull, dflt_value, pk] —
@@ -269,7 +270,7 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
   # ── Migration bookkeeping ────────────────────────────────────────────────
 
   describe "migration set" do
-    test "a fresh boot stamps exactly the nine shipped, contiguous versions" do
+    test "a fresh boot stamps exactly the ten shipped, contiguous versions" do
       pid = boot_fresh!(:versions)
 
       assert pid

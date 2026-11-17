@@ -322,10 +322,11 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
       # EXACTLY three migrations are pending: the VCT one, the `session_mode`
       # adoption, then the `pause_kind` adoption.
       assert Boot.run_migrations(pid) ==
-               [@vct_version, @session_mode_version, @pause_kind_version]
+               [@vct_version, @session_mode_version, @pause_kind_version, 20_260_815_000_010]
 
       assert migration_versions(pid) ==
-               @released_versions ++ [@vct_version, @session_mode_version, @pause_kind_version]
+               @released_versions ++
+                 [@vct_version, @session_mode_version, @pause_kind_version, 20_260_815_000_010]
 
       # The SAME fan-out rules the pre-Ecto fixture pins: newest first, `-N`
       # suffixes on collisions, stored display names preserved, NULL
@@ -368,14 +369,15 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
       # creates the table, drops the empty legacy one and stamps itself (and
       # versions 8 and 9 stamp themselves too).
       assert Boot.run_migrations(pid) ==
-               [@vct_version, @session_mode_version, @pause_kind_version]
+               [@vct_version, @session_mode_version, @pause_kind_version, 20_260_815_000_010]
 
       assert mount_rows(pid) == []
       refute "projects" in table_names(pid)
       assert column_names(pid, "vct_mounts") == @mount_columns
 
       assert migration_versions(pid) ==
-               @released_versions ++ [@vct_version, @session_mode_version, @pause_kind_version]
+               @released_versions ++
+                 [@vct_version, @session_mode_version, @pause_kind_version, 20_260_815_000_010]
     end
 
     test "an unreadable legacy projects table ABORTS the migration and survives", %{root: root} do
