@@ -4,6 +4,10 @@ defmodule EvoGit.AgentScheduler.ToolPermits do
 
   Client calls target the scheduler; its hub must route the three calls and
   monitor DOWN messages to the handlers here and apply returned status updates.
+  Release is owner-enforced: the hub passes the GenServer caller pid, so a stale
+  executor cannot release a permit transferred to a background registry.
+  Transfer deliberately uses the unguessable permit reference as a capability,
+  not caller ownership: a background registry transfers on the tool task's behalf.
   Explicit permits and legacy agent slots share capacity and one FIFO queue.
   Legacy holders retain their historical one-slot-per-agent semantics; explicit
   permits count every call separately, including calls from the same agent.
@@ -79,10 +83,20 @@ defmodule EvoGit.AgentScheduler.ToolPermits do
 
   defp entry_monitor(state, permit), do: state.tool_permits[permit].monitor
 
-  def handle_release(permit, %State{} = state) do
-    {state, updates} = state |> drop_permit(permit) |> grant_pending()
-    {:reply, :ok, state, updates}
+  @doc "Releases only the caller's permit; missing and nonowner releases are no-ops."
+  def handle_release(permit, caller_pid, %State{} = state) do
+    case Map.get(state.tool_permits, permit) do
+      %{owner: ^caller_pid} when is_pid(caller_pid) ->
+        {state, updates} = state |> drop_permit(permit) |> grant_pending()
+        {:reply, :ok, state, updates}
+
+      _ ->
+        {:reply, :ok, state, []}
+    end
   end
+
+  @doc "Compatibility for direct owner calls; scheduler hubs must pass the caller to /3."
+  def handle_release(permit, %State{} = state), do: handle_release(permit, self(), state)
 
   @doc "Returns :unhandled for monitor refs not owned by tool permits."
   def handle_down(monitor, %State{} = state) do
@@ -114,7 +128,9 @@ defmodule EvoGit.AgentScheduler.ToolPermits do
     %{state | tool_permit_monitors: Map.put(state.tool_permit_monitors, monitor, {:legacy, from})}
   end
 
-  def occupancy(state),
+  @doc "Counts legacy holders plus granted per-call permits, without copying the waiting queue."
+  @spec occupancy(State.t()) :: non_neg_integer()
+  def occupancy(%State{} = state),
     do:
       MapSet.size(state.tool_holders) +
         Enum.count(state.tool_permits, fn {_, entry} -> entry.status == :granted end)
