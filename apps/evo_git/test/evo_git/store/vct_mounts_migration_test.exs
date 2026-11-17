@@ -3,17 +3,20 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
   `20260815000007_vct_mounts` — the migration that puts the Virtual Context Tree
   (VCT) mount table into SQLite and retires the legacy `projects` table.
 
-  Three audiences, one suite:
+  Integrated Boot upgrades retain the legacy source table and import every
+  valid project without the runtime project cap.
+  Malformed source data fails closed at repair 10, after frozen versions 7..9
+  have committed; retries must preserve the same source bytes and schema.
+  Direct frozen-version-7 tests separately pin its historical skip/drop/cap rules.
+
+  Historical version-7 audiences:
 
     * a LEGACY database (a release that still shipped `projects` rows) → every
       usable row is carried into `vct_mounts`, the table is DROPPED, and the
       result is capped to the 100 newest mounts; unusable rows are skipped
     * a RELEASED v0.14.1 database (`schema_migrations` stamped with versions
-      1..6, which Ecto therefore never re-runs) → versions 7 and 8 are the ONLY
-      pending migrations: version 7 carries the rows over and drops `projects`,
-      version 8 appends `tasks.session_mode`; an unreadable `projects` table
-      instead ABORTS the chain at version 7, leaving both the table and its
-      rows (and versions 7/8 pending) intact
+      1..6, which Ecto therefore never re-runs) → integrated Boot applies
+      versions 7..10, preserving the source even when it is empty
     * a FRESH database → `vct_mounts` exists with its five columns and
       `projects` NEVER appears in `sqlite_master` (the baseline migration no
       longer creates it)
@@ -78,10 +81,8 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
 
   # ── The released v0.14.1 upgrade fixture ─────────────────────────────────
   #
-  # v0.14.1 shipped exactly the six migrations BELOW version 7, so a real
-  # v0.14.1 `schema_migrations` carries these rows and Ecto never re-runs them:
-  # the ONLY pending work on such a database is `…00007_vct_mounts`,
-  # `…00008_session_mode` and `…00009_task_pause_kind`.
+  # v0.14.1 shipped exactly the six migrations BELOW version 7, so Ecto never
+  # re-runs those versions; the integrated pending chain is versions 7..10.
   @released_versions [
     20_260_815_000_001,
     20_260_815_000_002,
@@ -246,11 +247,12 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
   # ── (a) legacy projects rows ───────────────────────────────────────────────
 
   describe "a legacy database with projects rows" do
-    test "derives the mount rows, preserves names, skips unusable rows and drops projects",
+    test "imports every usable project and retains the original source rows",
          %{root: root} do
       path = Path.join(root, "legacy.sqlite")
 
-      build_legacy_db!(path, @legacy_rows)
+      rows = Enum.take(@legacy_rows, 4)
+      build_legacy_db!(path, rows)
 
       # Ground truth BEFORE boot: the fixture really carries the legacy table.
       assert File.exists?(path)
@@ -261,22 +263,24 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
       # Every usable row, in point order, with its derived point/name.
       assert mount_rows(pid) == @expected_mounts
 
-      # The legacy table is GONE (post-condition of the migration), and the
-      # fresh mount table carries exactly its five canonical columns.
-      refute "projects" in table_names(pid)
+      assert project_rows(pid) == sorted_projects(rows)
       assert column_names(pid, "vct_mounts") == @mount_columns
+      assert_idempotent_boot(pid)
     end
 
-    test "caps the fan-out at the 100 NEWEST mounts", %{root: root} do
+    test "imports and retains ALL 120 projects without applying the runtime cap", %{root: root} do
       path = Path.join(root, "cap.sqlite")
 
-      # 120 legacy rows, oldest first: `project-001` is the oldest and
-      # `project-120` the newest, with distinct basenames so no `-N` suffix is
-      # involved and the cap is the only thing that removes rows.
+      # 120 legacy rows, oldest first, with distinct basenames.
+      # The integrated upgrade must not evict even the oldest source project.
       rows =
         for index <- 1..120 do
-          stamp = Date.utc_today() |> DateTime.new!(~T[00:00:00], "Etc/UTC")
-          opened_at = DateTime.add(stamp, index * 60, :second) |> DateTime.to_iso8601()
+          # Already canonical milliseconds: baseline timestamp normalization
+          # must not obscure the byte-preservation assertion below.
+          opened_at =
+            ~U[2025-01-01 00:00:00.000Z]
+            |> DateTime.add(index * 60, :second)
+            |> DateTime.to_iso8601()
 
           {"/legacy/project-#{pad(index)}", "project-#{pad(index)}", opened_at}
         end
@@ -285,30 +289,27 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      points = mount_rows(pid) |> Enum.map(&hd/1)
+      assert mount_rows(pid) ==
+               Enum.map(rows, fn {path, name, opened_at} ->
+                 ["vct:///projects/" <> Path.basename(path), path, name, "git", opened_at]
+               end)
 
-      assert length(points) == 100
-      # The 100 NEWEST survive: 021..120.
-      assert "vct:///projects/project-120" in points
-      assert "vct:///projects/project-021" in points
-      refute "vct:///projects/project-020" in points
-      refute "vct:///projects/project-001" in points
-      refute "projects" in table_names(pid)
+      assert project_rows(pid) == sorted_projects(rows)
+      assert_idempotent_boot(pid)
     end
   end
 
   # ── (b) released v0.14.1 database ─────────────────────────────────────────
   #
-  # v0.14.1 stamped versions 1..6 and shipped the `projects` table, so the
-  # ONLY migration such a database still runs is `…00007_vct_mounts`. Ecto
-  # tracks version numbers only (no checksums), so the five already-applied
-  # versions can never re-run and must not be "repaired" by this fixture.
+  # v0.14.1 stamped versions 1..6; integrated Boot stages the remaining
+  # frozen migrations before the additive, non-destructive repair 10.
 
   describe "a released v0.14.1 database" do
-    test "applies only the pending versions (7 and 8) and derives the mounts from its projects rows",
+    test "applies only pending versions 7..10 and retains imported projects",
          %{root: root} do
       path = Path.join(root, "released.sqlite")
-      build_released_db!(path, @legacy_rows)
+      rows = Enum.take(@legacy_rows, 4)
+      build_released_db!(path, rows)
 
       # Ground truth BEFORE boot: a genuine v0.14.1 file — the six shipped
       # versions, the legacy `projects` table with rows, no `vct_mounts`.
@@ -319,8 +320,8 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
 
       pid = start_repo!(path)
 
-      # EXACTLY three migrations are pending: the VCT one, the `session_mode`
-      # adoption, then the `pause_kind` adoption.
+      # EXACTLY four migrations are pending: VCT, session mode, pause kind,
+      # and the additive historical-identity repair.
       assert Boot.run_migrations(pid) ==
                [@vct_version, @session_mode_version, @pause_kind_version, 20_260_815_000_010]
 
@@ -328,15 +329,11 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
                @released_versions ++
                  [@vct_version, @session_mode_version, @pause_kind_version, 20_260_815_000_010]
 
-      # The SAME fan-out rules the pre-Ecto fixture pins: newest first, `-N`
-      # suffixes on collisions, stored display names preserved, NULL
-      # timestamps last, unusable paths skipped.
+      # Newest first, collision suffixes and stored display names are preserved.
       assert mount_rows(pid) == @expected_mounts
-
-      # The legacy table is dropped and the mount table carries its five
-      # canonical columns.
-      refute "projects" in table_names(pid)
+      assert project_rows(pid) == sorted_projects(rows)
       assert column_names(pid, "vct_mounts") == @mount_columns
+      assert_idempotent_boot(pid)
 
       # Nothing else moved: the released `tasks`/archive shapes and the final
       # six-index set are exactly what v0.14.1 already had, plus the
@@ -365,22 +362,52 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
 
       pid = start_repo!(path)
 
-      # The majority of real users: nothing to carry over, so version 7 still
-      # creates the table, drops the empty legacy one and stamps itself (and
-      # versions 8 and 9 stamp themselves too).
+      # Empty sources are retained too; all four pending versions commit.
       assert Boot.run_migrations(pid) ==
                [@vct_version, @session_mode_version, @pause_kind_version, 20_260_815_000_010]
 
       assert mount_rows(pid) == []
-      refute "projects" in table_names(pid)
+      assert project_rows(pid) == []
+      assert column_names(pid, "projects") == ~w(path name last_opened_at)
       assert column_names(pid, "vct_mounts") == @mount_columns
+      assert_idempotent_boot(pid)
 
       assert migration_versions(pid) ==
                @released_versions ++
                  [@vct_version, @session_mode_version, @pause_kind_version, 20_260_815_000_010]
     end
 
-    test "an unreadable legacy projects table ABORTS the migration and survives", %{root: root} do
+    test "invalid project paths fail closed with every source row retained", %{root: root} do
+      path = Path.join(root, "released_invalid.sqlite")
+      # A malformed OLDER row follows valid imports, proving repair rolls those
+      # inserts back rather than leaving a partially populated destination.
+      for invalid_path <- ["relative/path", "", "   ", nil] do
+        fixture = path <> "-#{System.unique_integer([:positive])}"
+        rows = Enum.take(@legacy_rows, 4) ++ [{invalid_path, "invalid", nil}]
+        build_released_db!(fixture, rows)
+        pid = start_repo!(fixture)
+
+        assert_raise Ecto.MigrationError, ~r/legacy project has an invalid path/, fn ->
+          Boot.run_migrations(pid)
+        end
+
+        assert project_rows(pid) == sorted_projects(rows)
+        assert mount_rows(pid) == []
+
+        assert migration_versions(pid) ==
+                 @released_versions ++ [@vct_version, @session_mode_version, @pause_kind_version]
+
+        before_retry = database_snapshot(pid)
+
+        assert_raise Ecto.MigrationError, ~r/legacy project has an invalid path/, fn ->
+          Boot.run_migrations(pid)
+        end
+
+        assert database_snapshot(pid) == before_retry
+      end
+    end
+
+    test "an unreadable legacy projects table ABORTS repair 10 and survives", %{root: root} do
       path = Path.join(root, "released_broken.sqlite")
 
       # A `projects` table without `last_opened_at`: the fan-out's read cannot
@@ -399,16 +426,83 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
         Boot.run_migrations(pid)
       end
 
-      # The transaction rolled back: the legacy table AND its row survive, the
-      # half-built mount table is gone and version 7 stays PENDING (so the
-      # next boot retries it once the shape is fixed).
-      assert "projects" in table_names(pid)
-      refute "vct_mounts" in table_names(pid)
+      # Frozen versions 7..9 commit before repair 10 reads the retained source.
+      # Only repair 10 rolls back; every subsequent retry must be identical.
+      assert column_names(pid, "projects") == ~w(path name)
+      assert column_names(pid, "vct_mounts") == @mount_columns
+      assert mount_rows(pid) == []
 
       assert query_rows(pid, "SELECT path, name FROM projects") == [
                ["/home/user/projects/demo", "demo"]
              ]
 
+      assert migration_versions(pid) ==
+               @released_versions ++ [@vct_version, @session_mode_version, @pause_kind_version]
+
+      before_retry = database_snapshot(pid)
+
+      assert_raise XqliteEcto3.Error, ~r/no such column: last_opened_at/, fn ->
+        Boot.run_migrations(pid)
+      end
+
+      assert database_snapshot(pid) == before_retry
+    end
+  end
+
+  describe "frozen version 7 in isolation (not integrated Boot policy)" do
+    test "skips unusable paths and drops the legacy source", %{root: root} do
+      path = Path.join(root, "frozen_skip.sqlite")
+      build_released_db!(path, @legacy_rows)
+      pid = start_repo!(path)
+
+      assert run_frozen_vct(pid) == [@vct_version]
+      assert mount_rows(pid) == @expected_mounts
+      refute "projects" in table_names(pid)
+      assert migration_versions(pid) == @released_versions ++ [@vct_version]
+    end
+
+    test "keeps exactly the 100 newest projects and drops the source", %{root: root} do
+      path = Path.join(root, "frozen_cap.sqlite")
+
+      rows =
+        for index <- 1..120 do
+          opened = DateTime.add(~U[2025-01-01 00:00:00Z], index * 60, :second)
+          {"/legacy/project-#{pad(index)}", "project-#{pad(index)}", DateTime.to_iso8601(opened)}
+        end
+
+      build_released_db!(path, rows)
+      pid = start_repo!(path)
+      assert run_frozen_vct(pid) == [@vct_version]
+
+      assert mount_rows(pid) ==
+               rows
+               |> Enum.drop(20)
+               |> Enum.map(fn {path, name, opened} ->
+                 ["vct:///projects/" <> Path.basename(path), path, name, "git", opened]
+               end)
+
+      refute "projects" in table_names(pid)
+      assert migration_versions(pid) == @released_versions ++ [@vct_version]
+    end
+
+    test "an unreadable source rolls version 7 back atomically", %{root: root} do
+      path = Path.join(root, "frozen_broken.sqlite")
+      build_released_db!(path, [], @broken_projects_ddl)
+
+      raw_exec!(path, "INSERT INTO projects (path, name) VALUES (?1, ?2)", [
+        "/legacy/demo",
+        "demo"
+      ])
+
+      pid = start_repo!(path)
+      before_migration = database_snapshot(pid)
+
+      assert_raise XqliteEcto3.Error, ~r/no such column: last_opened_at/, fn ->
+        run_frozen_vct(pid)
+      end
+
+      assert database_snapshot(pid) == before_migration
+      refute "vct_mounts" in table_names(pid)
       assert migration_versions(pid) == @released_versions
     end
   end
@@ -581,6 +675,37 @@ defmodule EvoGit.Store.VctMountsMigrationTest do
     pid
     |> query_rows("SELECT version FROM schema_migrations ORDER BY version")
     |> List.flatten()
+  end
+
+  defp run_frozen_vct(pid) do
+    source = Enum.filter(Boot.migration_source(), fn {version, _} -> version == @vct_version end)
+    RepoScope.with_repo(pid, fn -> Ecto.Migrator.run(Repo, source, :up, all: true) end)
+  end
+
+  defp sorted_projects(rows), do: rows |> Enum.map(&Tuple.to_list/1) |> Enum.sort()
+
+  defp project_rows(pid),
+    do: query_rows(pid, "SELECT path, name, last_opened_at FROM projects ORDER BY path")
+
+  # Include all source/destination rows, ledger timestamps, DDL and indexes so
+  # retries cannot silently discard data or mutate schema behind a count check.
+  defp database_snapshot(pid) do
+    schema =
+      query_rows(pid, "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name")
+
+    rows =
+      for table <- table_names(pid), table != "sqlite_sequence" do
+        quoted = String.replace(table, "\"", "\"\"")
+        {table, query_rows(pid, "SELECT * FROM \"#{quoted}\"") |> Enum.sort()}
+      end
+
+    {schema, rows}
+  end
+
+  defp assert_idempotent_boot(pid) do
+    before_boot = database_snapshot(pid)
+    assert Boot.run_migrations(pid) == []
+    assert database_snapshot(pid) == before_boot
   end
 
   defp query_rows(pid, sql) do
