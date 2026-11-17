@@ -72,8 +72,10 @@ defmodule EvoGit.AgentScheduler.State do
   - `paused` — whether the scheduler is paused (no new slots or agent dispatches granted)
 
   ### Tool Slot Management
-  - `tool_holders` — `MapSet` of agent IDs currently holding a tool slot
-  - `tool_waiting` — FIFO queue of `{agent_id, from}` pairs blocked on a tool slot
+  - `tool_holders` — `MapSet` of agent IDs currently holding a legacy tool slot
+  - `tool_permits` — per-call reference to attributed owner/monitor/status entry
+  - `tool_permit_monitors` — owned monitor refs for explicit permits and legacy waiters
+  - `tool_waiting` — shared FIFO of legacy `{agent_id, from}` and `{:permit, ref}` entries
   """
 
   require Logger
@@ -104,6 +106,8 @@ defmodule EvoGit.AgentScheduler.State do
             llm_waiting: %{},
             llm_backoff_until: %{},
             llm_last_granted: %{},
+            tool_permits: %{},
+            tool_permit_monitors: %{},
             tool_holders: MapSet.new(),
             tool_waiting: :queue.new(),
             max_tool_concurrency: 2,
@@ -137,6 +141,8 @@ defmodule EvoGit.AgentScheduler.State do
           llm_waiting: %{String.t() => :queue.queue(term())},
           llm_backoff_until: %{String.t() => integer() | nil},
           llm_last_granted: %{String.t() => %{optional(pos_integer()) => integer()}},
+          tool_permits: %{optional(reference()) => map()},
+          tool_permit_monitors: %{optional(reference()) => term()},
           tool_holders: MapSet.t(pos_integer()),
           tool_waiting: :queue.queue(term()),
           max_tool_concurrency: pos_integer(),
@@ -485,6 +491,8 @@ defmodule EvoGit.AgentScheduler.State do
             task_local_counters: state.task_local_counters,
             task_agent_counts: state.task_agent_counts,
             paused: state.paused,
+            tool_permits: state.tool_permits,
+            tool_permit_monitors: state.tool_permit_monitors,
             tool_holders: state.tool_holders,
             tool_waiting: state.tool_waiting,
             max_tool_concurrency:

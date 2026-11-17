@@ -17,10 +17,10 @@ defmodule EvoGit.AgentScheduler.Slots do
 
   ## Slot Tracking
 
-  Slots are tracked as `MapSet`s of agent IDs (`llm_holders[model_id]` / `tool_holders`).
-  Available capacity is derived: `capacity - map_size(holders)`. This makes
-  leaks impossible by construction — when an agent dies, it is removed from
-  the holder sets in `release_agent_slots/2`, restoring the slot automatically.
+  LLM slots and legacy tool slots use agent-ID `MapSet`s. Explicit tool permits
+  use per-call references in `ToolPermits`, with monitored owners and a shared
+  capacity/queue alongside legacy tool holders. Agent death releases all of its
+  slots and permits in `release_agent_slots/2`.
 
   ## Slot Types
 
@@ -48,6 +48,7 @@ defmodule EvoGit.AgentScheduler.Slots do
 
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
+  alias EvoGit.AgentScheduler.ToolPermits
 
   @default_backoff_ms 60_000
   @max_timer_ms 4_000_000_000
@@ -296,6 +297,7 @@ defmodule EvoGit.AgentScheduler.Slots do
   @spec handle_request_tool_slot(pos_integer(), GenServer.from(), State.t()) :: slot_result()
   def handle_request_tool_slot(agent_id, from, %State{} = state) do
     if state.paused do
+      state = ToolPermits.monitor_legacy_waiter(state, {agent_id, from})
       tool_waiting = :queue.in({agent_id, from}, state.tool_waiting)
       {:noreply, %State{state | tool_waiting: tool_waiting}, [{agent_id, :blocked}]}
     else
@@ -304,10 +306,11 @@ defmodule EvoGit.AgentScheduler.Slots do
   end
 
   defp do_handle_request_tool_slot(agent_id, from, %State{} = state) do
-    if MapSet.size(state.tool_holders) < state.max_tool_concurrency do
+    if ToolPermits.occupancy(state) < state.max_tool_concurrency do
       state = %State{state | tool_holders: MapSet.put(state.tool_holders, agent_id)}
       {:reply, :ok, state, []}
     else
+      state = ToolPermits.monitor_legacy_waiter(state, {agent_id, from})
       tool_waiting = :queue.in({agent_id, from}, state.tool_waiting)
       {:noreply, %State{state | tool_waiting: tool_waiting}, [{agent_id, :blocked}]}
     end
@@ -370,6 +373,7 @@ defmodule EvoGit.AgentScheduler.Slots do
 
     # Purge from waiting queues (in case the agent was blocked, not holding)
     {state, _} = purge_agents_from_queues(state, MapSet.new([agent_id]))
+    state = ToolPermits.release_agent(state, agent_id)
 
     # Grant any newly-available slots to pending waiters
     {state, llm_unblocked, _sweep} = grant_pending_llm_slots(state)
@@ -445,17 +449,7 @@ defmodule EvoGit.AgentScheduler.Slots do
     # Purge from all LLM model pools
     %State{} = state = purge_llm_waiting_queues(state, agent_ids, reply)
 
-    # Purge from tool waiting queue
-    {tool_kept, tool_removed} =
-      partition_waiting(state.tool_waiting, agent_ids, fn
-        {agent_id, _from}, agent_ids -> not MapSet.member?(agent_ids, agent_id)
-      end)
-
-    Enum.each(tool_removed, fn {_agent_id, from} ->
-      GenServer.reply(from, reply)
-    end)
-
-    state = %State{state | tool_waiting: tool_kept}
+    state = ToolPermits.purge_waiters(state, agent_ids, reply)
     {state, []}
   end
 
@@ -702,37 +696,7 @@ defmodule EvoGit.AgentScheduler.Slots do
 
   # --- Private Helpers: Tool Slots ---
 
-  # Grants pending tool slots using holder sets.
-  # Returns {state, unblocked} where unblocked is a list of {agent_id, :running}.
-  defp grant_pending_tool_slots(%State{} = state) do
-    grant_tool_from_queue(state)
-  end
-
-  # The same pause gate covers tool releases, death cleanup and config sweeps.
-  defp grant_tool_from_queue(%State{paused: true} = state), do: {state, []}
-
-  defp grant_tool_from_queue(%State{} = state) do
-    if MapSet.size(state.tool_holders) >= state.max_tool_concurrency do
-      {state, []}
-    else
-      case :queue.out(state.tool_waiting) do
-        {{:value, {agent_id, from}}, rest_waiting} ->
-          GenServer.reply(from, :ok)
-
-          state = %State{
-            state
-            | tool_waiting: rest_waiting,
-              tool_holders: MapSet.put(state.tool_holders, agent_id)
-          }
-
-          {state, more} = grant_tool_from_queue(state)
-          {state, [{agent_id, :running} | more]}
-
-        {:empty, _} ->
-          {state, []}
-      end
-    end
-  end
+  defp grant_pending_tool_slots(%State{} = state), do: ToolPermits.grant_pending(state)
 
   # Updates all waiting LLM entries with a new backoff timestamp
   defp update_waiting_with_backoff(waiting, backoff_until) do
