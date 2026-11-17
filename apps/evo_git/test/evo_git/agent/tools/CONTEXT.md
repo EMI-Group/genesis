@@ -164,6 +164,9 @@ Neither job_tools_test.exs nor shell_tool_test.exs invokes ToolRuntime or ToolDi
 The test named "a full-budget wait is never cut off by the dispatch ceiling" (`job_tools_test.exs:826-856`) checks timeout helper arithmetic and calls JobOutput.execute/3 through wait_read/3 directly, not the real dispatcher.
 Missing regressions include a genuine managed background launch holding capacity after its result returns, a competing foreground/background request remaining queued until job exit, and exactly-once slot release on natural exit, explicit kill, owner death and failed launch without leaking or double-charging capacity.
 Such lifetime-accounting regressions belong with parent-owned ToolRuntime/BackgroundJobs/scheduler integration rather than interpreting direct tool-result or process-liveness assertions as scheduler evidence.
+HEAD resource-admission policy lives in `lib/evo_git/tool_runtime/policy.ex`, separately from tool serialization, and explicitly bypasses `job_output`, `job_list` and `job_kill`; these tool bodies call BackgroundJobs directly rather than acquiring permits.
+A saturation regression must invoke actual managed dispatch while capacity is held, because direct `JobOutput.execute/3`, `JobList.execute/3` or `JobKill.execute/3` calls cannot establish that admission bypass remains reachable.
+Keep saturated job-control progress, the policy inventory, detached permit transfer and unique-permit ownership in parent runtime/BackgroundJobs and scheduler integration suites rather than duplicating them in this per-tool subtree.
 ## Notes for Agents
 
 - `reflect_tools_test.exs` spawns a live `Process.sleep(:infinity)` "wrapper" process on purpose — it is NOT a wait to reduce.
