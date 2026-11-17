@@ -17,6 +17,7 @@ defmodule EvoGit.ToolRuntime.Executor do
   alias EvoGit.Agent.ToolInvocation
   alias EvoGit.AgentScheduler
   alias EvoGit.ToolRuntime.Output
+  alias EvoGit.ToolRuntime.Policy
   alias EvoGit.ToolRuntime.Request
   alias EvoGit.ToolRuntime.Tracking
 
@@ -63,10 +64,10 @@ defmodule EvoGit.ToolRuntime.Executor do
         run_tool_call(call, index, request, backend)
       end)
 
-    # Execute the remaining standard tool calls CONCURRENTLY, bounded only
-    # by the scheduler's tool-slot pool: each parallel task still acquires a
-    # tool slot via `AgentScheduler.with_tool_slot/2` inside
-    # `execute_tool_with_timeout/4` (respecting `max_tool_concurrency`).
+    # Execute the remaining standard tool calls CONCURRENTLY. Policy-limited
+    # calls acquire a unique scheduler permit inside execute_tool_with_timeout/4;
+    # cheap local/control calls bypass resource admission independently of this
+    # serial/parallel partition (respecting max_tool_concurrency for permits).
     # `max_concurrency` is set to the batch size so every call starts
     # immediately — Elixir's `max_concurrency` only accepts positive integers
     # (`:infinity` is valid for `timeout` only) — making the scheduler, not a
@@ -186,7 +187,7 @@ defmodule EvoGit.ToolRuntime.Executor do
 
     exec_id = Tracking.track(request, name, args, backend)
 
-    AgentScheduler.with_tool_slot(request.agent_id, fn ->
+    with_tool_permit(name, request.agent_id, exec_id, fn permit ->
       # The phase's OWN process must expose the exec id for its duration (the
       # shell tool reads it to attach the real OS handle), and must not leak it
       # past this call — the serial phase runs in the long-lived agent process.
@@ -194,7 +195,7 @@ defmodule EvoGit.ToolRuntime.Executor do
       Process.put(:evogit_execution_id, exec_id)
 
       try do
-        task = start_tool_task(name, args, request, exec_id)
+        task = start_tool_task(name, args, request, exec_id, permit)
 
         case Task.yield(task, tool_timeout) || Task.shutdown(task) do
           {:ok, {:tool_crashed, message}} ->
@@ -247,14 +248,68 @@ defmodule EvoGit.ToolRuntime.Executor do
   # LINKED (`async/2`, never `async_nolink/2`): the containment inside
   # `execute_tool_task/4` is what makes a crashing tool survivable, so the link
   # keeps the historical exit semantics intact.
-  defp start_tool_task(name, args, %Request{} = request, exec_id) do
-    fun = fn -> execute_tool_task(name, args, request, exec_id) end
+  defp start_tool_task(name, args, %Request{} = request, exec_id, permit) do
+    # Do not run a body until ownership has moved to its task. This makes an
+    # owner-enforced BackgroundJobs transfer possible without trusting a copied
+    # token as authority. The scheduler must monitor/reclaim dead permit owners.
+    ready = make_ref()
 
-    case Process.whereis(EvoGit.ToolRuntime.TaskSupervisor) do
-      pid when is_pid(pid) -> Task.Supervisor.async(EvoGit.ToolRuntime.TaskSupervisor, fun)
-      _not_running -> Task.async(fun)
+    fun = fn ->
+      receive do
+        {^ready, :ok} ->
+          Process.put(:evogit_tool_permit, permit)
+
+          try do
+            execute_tool_task(name, args, request, exec_id)
+          after
+            release_tool_permit(permit)
+          end
+
+        {^ready, {:error, reason}} ->
+          {:error, {:tool_permit_transfer_failed, reason}}
+      end
+    end
+
+    task =
+      case Process.whereis(EvoGit.ToolRuntime.TaskSupervisor) do
+        pid when is_pid(pid) -> Task.Supervisor.async(EvoGit.ToolRuntime.TaskSupervisor, fun)
+        _not_running -> Task.async(fun)
+      end
+
+    result =
+      if is_nil(permit),
+        do: :ok,
+        else: AgentScheduler.transfer_tool_permit(permit, task.pid)
+
+    send(task.pid, {ready, result})
+    task
+  end
+
+  defp with_tool_permit(name, agent_id, exec_id, fun) do
+    admission =
+      if Policy.limited?(name),
+        do: AgentScheduler.acquire_tool_permit(agent_id),
+        else: {:ok, nil}
+
+    case admission do
+      {:ok, permit} ->
+        try do
+          fun.(permit)
+        after
+          # Also covers spawn/transfer failures. After a successful transfer this
+          # caller is NOT the owner: release MUST reject it without freeing the
+          # task's (or detached registry's) permit. Repeated releases are safe.
+          release_tool_permit(permit)
+        end
+
+      {:error, reason} ->
+        Tracking.finish(exec_id, :failed, reason: {:tool_error, reason})
+        "Error: Tool resource admission failed: #{inspect(reason)}"
     end
   end
+
+  defp release_tool_permit(nil), do: :ok
+  defp release_tool_permit(permit), do: AgentScheduler.release_tool_permit(permit)
 
   # Applies a tool's OWN advertised default timeout
   # (`EvoGit.Agent.Tools.default_timeout_ms/1`) to the resolved per-call timeout.
