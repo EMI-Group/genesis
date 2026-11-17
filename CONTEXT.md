@@ -189,7 +189,9 @@ Desktop logs are `<data_dir>/logs/backend.log` and `shell.log`; headless boots l
 Persistence runs on Ecto 3.x via `xqlite_ecto3` (`EvoGit.Repo`, dynamic-repo capable) and `EvoGit.Store.Boot.run_migrations/1` migrates `priv/repo/migrations/` BEFORE any read/write.
 `EvoGit.Store` is a thin GenServer facade over `store/operations/` + `store/schemas/` + `store/types/`; reads use 6 WAL readers, writes serialize through `EvoGit.Store.Writer`, and every read runs on a failure-isolated offload worker answering its documented degraded value — a slow read can never kill `EvoGit.Store` or `EvoGit.TaskRegistry`.
 A SECOND SQLite file, `<data_dir>/agent_state.sqlite`, holds durable per-run agent state (`EvoGit.AgentState`: its own unnamed dynamic repo, own migrations in `priv/agent_state_repo/migrations/`, WAL + `synchronous: normal`, one serialized writer, append-only compressed message chunks) so checkpoint churn never contends with task reads; it is pruned on retention (default 7 days) and cascaded from task deletion — detail: `apps/evo_git/lib/evo_git/agent_state/CONTEXT.md`.
-Migration `000001` is the ONE schema-creating step and every later one is a probe-guarded no-op on a fresh DB; a shipped version number is an identity that is never renumbered.
+Migration `000001` creates the canonical schema; additive reconciliation migration `20260815000010` repairs physical-schema gaps from historical version-identity collisions without resetting the migration ledger, and boot preserves legacy source tables before frozen pending migrations execute.
+A shipped migration version is an immutable identity and must never be reused or renumbered.
+Upgrade preservation and reconciliation contracts live in `apps/evo_git/lib/evo_git/store/CONTEXT.md` and `apps/evo_git/priv/repo/migrations/CONTEXT.md`.
 Details: `apps/evo_git/CONTEXT.md` + `apps/evo_git/lib/evo_git/store/CONTEXT.md` + `apps/evo_git/priv/repo/migrations/CONTEXT.md` + `config/CONTEXT.md`.
 ### Desktop Backend Port & Orphan Prevention (dynamic port)
 
