@@ -1,36 +1,24 @@
 # Store migration validation follow-up
 
-This report follows commit `6ba8b5658` and records an isolated diagnostic run, not a normal Mix-suite pass.
+This report records the integrated tests-only preservation follow-up and an isolated diagnostic run, not a normal Mix-suite pass.
 No production source, dependency declarations, lockfiles or user databases were changed.
 
 ## Results and classification
 
-The selected suites ran 126 tests at seed 42: initially **109 passed / 17 failed**, then **111 passed / 15 failed** after the exact expectation updates below.
-This selection is broader than the earlier reported 81-test harness, whose invocation was not included in the commit's `refs/notes/evogit` report.
-All ten `LedgerReconciliationTest` cases passed, including preservation failure/retry and rollback cases.
+The exact invocation below ran **131 tests at seed 42: 130 passed / 1 failed**, exit status **2**, in 10.6 seconds (1.3s load, 9.0s async, 0.3s sync).
+All 14 behavior-related integrated failures are resolved, and all ten `LedgerReconciliationTest` cases passed.
+The only remaining failure is `repo_test.exs:582`: `PRAGMA busy_timeout` returns `[[30000]]` with loaded xqlite **0.12.2**, while the declared 0.16-driver contract correctly requires `[[0]]`.
+That assertion and the `Xqlite.get_busy_timeout/1` check remain unchanged.
 
-Corrected obsolete expectations:
-- Two remaining `[[9]]` ledger-count assertions now require `[[10]]`, alongside the existing exact version-list assertions.
-- Fresh-boot SQL now requires exactly the two migration-10 compression probes, rather than mistaking them for archive fan-out; the no-archive-INSERT/no-ALTER assertions remain unchanged.
-- A no-op boot now requires exactly two identical migrator bookkeeping CREATEs (frozen stage and additive reconciliation), still rejecting any other DDL.
+The integrated migration suites require exact retained-source schemas, byte-identical archive sources (including duplicated result archives), complete relational archive fan-out, and every legacy project retained and imported without the live project cap.
+Malformed archive sources and invalid/unreadable project sources fail closed, retain their source bytes, leave migration 10 unstamped, and preserve repeat-attempt snapshots rather than silently skipping data.
+Rollback assertions distinguish the committed frozen stage from the migration-10 repair transaction.
+Separate direct frozen-version-7 cases continue to pin skip/drop/cap behavior and atomic rollback; the integrated tests do not erase those historical contracts.
+All changes are isolated synthetic-fixture tests; async conventions remain unchanged.
 
-Remaining failures (test declaration line numbers):
-
-| File and lines | Observed behavior | Classification / follow-up |
-|---|---|---|
-| `repo_test.exs:582` | `PRAGMA busy_timeout` returns `30000`, expected `0`. | Harness artifact: loaded xqlite is **0.12.2**, not the declared 0.16 series; do not change the current-driver assertion. |
-| `boot_migration_test.exs:637,708,735,803` | Full PRAGMA equality differs because `archive_metadata` survives (22 columns rather than 21). | Old destructive-upgrade expectations conflict with deliberate source preservation. Keep exact schema assertions pending an explicit integrated-upgrade contract update. |
-| `boot_migration_test.exs:857` | Legacy `projects` survives. | Same intentional preservation versus old drop expectation. |
-| `boot_migration_test.exs:590` | Migration 10 rejects `archive_metadata` containing a JSON object rather than an array. | Fail-closed repair versus old skip/drop fixture policy; do not weaken source-byte preservation assertions or silently discard the invalid payload. |
-| `v0138_upgrade_path_test.exs:160,181,267` | Legacy projects, archive column and duplicated `data.archive_records` survive respectively. | Old destructive-upgrade expectations; pending version-list checks already pass. |
-| `vct_mounts_migration_test.exs:249,308` | Invalid legacy paths abort repair 10 rather than being skipped. | Explicit policy conflict with the frozen migration-7 skip contract, not evidence that source data was lost. Requires deciding whether to test frozen migration 7 directly or integrated fail-closed repair separately. |
-| `vct_mounts_migration_test.exs:270` | All 120 source projects imported rather than capped at 100. | Deliberate non-destructive integrated boot conflicts with frozen migration-7 cap expectation. |
-| `vct_mounts_migration_test.exs:359` | Empty legacy projects table retained. | Preservation versus old drop expectation. |
-| `vct_mounts_migration_test.exs:383` | Unreadable projects still abort with source retained, but `vct_mounts` already exists. | Failure now occurs at repair 10 after frozen 7/8/9 commit, not atomically at 7; the old rollback-boundary expectation does not describe staged boot. |
-
-No production regression is established by these failures.
-The 14 non-driver failures concern deliberate preservation/staging or stricter malformed-source policy, but the frozen migration tests should not simply have their behavioral assertions removed to make integrated boot green.
-Normal validation against the declared driver and a deliberate separation of frozen-migration versus integrated-upgrade contracts remain necessary.
+Normal validation against the declared driver remains necessary.
+The final manager-level `mix format --check-formatted` attempt was blocked by dev dependency lock mismatches (xqlite, xqlite_ecto3, llm_db and websock_adapter); individual file agents reported successful formatting checks.
+`git diff --check` passes.
 
 ## Harness provenance and limitations
 
@@ -81,4 +69,4 @@ Path.wildcard("apps/evo_git/test/evo_git/store/{boot*test,canonical_schema_test,
 ' > "$TMPDIR/store-followup-final.log" 2>&1
 ```
 
-Expected diagnostic exit status is 2 while the 15 failures above remain.
+Actual diagnostic exit status is 2 solely because of the stale-driver busy-timeout mismatch described above.
