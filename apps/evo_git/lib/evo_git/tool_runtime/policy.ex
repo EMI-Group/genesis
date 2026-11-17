@@ -13,6 +13,8 @@ defmodule EvoGit.ToolRuntime.Policy do
   @bypass ~w(
     read_file create_files write_file edit_file make_dir
     read_context write_context edit_context list_dir glob
+    skill_list skill_read skill_add skill_edit skill_remove
+    skill_enable skill_disable skill_where
     job_output job_list job_kill elixir_eval
     genesis_check genesis_reload_config genesis_start_task genesis_get_task
     genesis_list_tasks genesis_list_models genesis_get_result
