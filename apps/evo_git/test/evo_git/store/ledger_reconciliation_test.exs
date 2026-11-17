@@ -90,7 +90,8 @@ defmodule EvoGit.Store.LedgerReconciliationTest do
              )
              |> Enum.at(2) == "TEXT"
 
-      assert rows(repo, "PRAGMA table_info(projects)") == []
+      assert rows(repo, "SELECT path, name, last_opened_at FROM projects ORDER BY path") ==
+               [["/historical/demo", "Demo", "2026-01-01T00:00:00Z"]]
 
       for {name, columns} <- @indexes do
         assert Enum.map(rows(repo, "PRAGMA index_info(#{name})"), &Enum.at(&1, 2)) == columns
@@ -169,17 +170,15 @@ defmodule EvoGit.Store.LedgerReconciliationTest do
     assert rows(repo, "SELECT logs, updated_at FROM tasks") == [[logs, "2026-01-02T03:04:05Z"]]
     [[decoded]] = rows(repo, "SELECT result FROM tasks")
 
-    assert Jason.decode!(decoded) == %{
-             "__result_tag__" => "ok",
-             "data" => %{"result" => "kept report"}
-           }
+    assert decoded == result
+    assert rows(repo, "SELECT archive_metadata FROM tasks") == [[Jason.encode!([archive])]]
 
     assert Store.get_agent_archive(store, "kept", 17)["result"] == "existing report"
     assert Store.get_agent_archive(store, "kept", 18)["result"] == "legacy report"
     assert Store.get_agent_archive(store, "kept", 18)["repo_id"] == "foreign"
     assert Store.get_agent_archive(store, "kept", 18)["compression_count"] == 2
 
-    refute Enum.any?(
+    assert Enum.any?(
              rows(repo, "PRAGMA table_info(tasks)"),
              &(Enum.at(&1, 1) == "archive_metadata")
            )
@@ -188,6 +187,56 @@ defmodule EvoGit.Store.LedgerReconciliationTest do
     assert Boot.run_migrations(repo) == []
     assert snapshot(repo) == snapshot
     assert @version in Enum.map(rows(repo, "SELECT version FROM schema_migrations"), &hd/1)
+  end
+
+  test "boot preflight preserves every legacy project before pending frozen version 7", %{
+    path: path
+  } do
+    fixture!(path, @rewritten, "TEXT", false)
+
+    # Frozen version 7 caps mounts at 100 and drops projects. A repair which
+    # runs only as version 10 is too late to recover these older rows.
+    for index <- 1..105 do
+      suffix = index |> Integer.to_string() |> String.pad_leading(3, "0")
+
+      raw!(path, "INSERT INTO projects VALUES (?1, ?2, ?3)", [
+        "/historical/project-#{suffix}",
+        "Historical #{suffix}",
+        nil
+      ])
+    end
+
+    projects = raw!(path, "SELECT path, name, last_opened_at FROM projects ORDER BY path")
+    assert length(projects) == 106
+    task_sql = "SELECT id, type, status, opts, result, logs, updated_at FROM tasks ORDER BY id"
+    tasks = raw!(path, task_sql)
+    archives = raw!(path, "SELECT * FROM task_agent_archives ORDER BY task_id, agent_id")
+    store = start_store!(path)
+    repo = Store.__repo_pid__(store)
+
+    assert rows(repo, "SELECT path, name, last_opened_at FROM projects ORDER BY path") == projects
+
+    assert rows(repo, "SELECT path, name, last_opened_at FROM vct_mounts ORDER BY path") ==
+             projects
+
+    assert rows(repo, "SELECT point, kind FROM vct_mounts ORDER BY path") ==
+             Enum.map(projects, fn [path, _, _] ->
+               ["vct:///projects/" <> Path.basename(path), "git"]
+             end)
+
+    assert rows(repo, "SELECT version FROM schema_migrations ORDER BY version") ==
+             Enum.map(@all, &[&1])
+
+    assert rows(repo, task_sql) == tasks
+
+    assert rows(repo, "SELECT * FROM task_agent_archives ORDER BY task_id, agent_id") == archives
+    assert length(Store.list_vct_mounts(store)) == 106
+    snapshot = snapshot(repo)
+    assert Boot.run_migrations(repo) == []
+    assert snapshot(repo) == snapshot
+    stop_supervised!(store)
+    restarted = start_store!(path)
+    assert snapshot(Store.__repo_pid__(restarted)) == snapshot
   end
 
   defp fixture!(path, ledger, repo_type, mounts?) do
@@ -234,7 +283,7 @@ defmodule EvoGit.Store.LedgerReconciliationTest do
     if mounts? do
       raw!(
         path,
-        "CREATE TABLE vct_mounts (point TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'git', last_opened_at TEXT)"
+        "CREATE TABLE vct_mounts (point TEXT PRIMARY KEY NOT NULL, path TEXT NOT NULL UNIQUE, name TEXT NOT NULL, kind TEXT NOT NULL, last_opened_at TEXT)"
       )
 
       raw!(
@@ -265,6 +314,7 @@ defmodule EvoGit.Store.LedgerReconciliationTest do
           "SELECT * FROM schema_migrations ORDER BY version",
           "SELECT * FROM tasks ORDER BY id",
           "SELECT * FROM task_agent_archives ORDER BY task_id, agent_id",
+          "SELECT * FROM projects ORDER BY path",
           "SELECT * FROM vct_mounts ORDER BY point"
         ],
         do: rows(repo, sql)

@@ -13,7 +13,10 @@ The suites that terminate/restart the app-global `EvoGit.Store`/`EvoGit.TaskRegi
 ## Routing Table
 
 - `./ledger_reconciliation_test.exs` → async raw synthetic upgrade fixtures for 9135df985 → 6e10e18dd and the pre-rewrite colliding ledger, requiring migration `20260815000010` to repair absent VCT/session/pause/index schema without losing tasks, archives, legacy projects or existing reserved/project mounts.
-The suite also covers INTEGER archive `repo_id`, abandoned `z1:` compression plus legacy archive fan-out, live Store VCT replace-all without writer death, and repeated migration/store boot with identical schema, ledger and rows.
+The suite also covers INTEGER archive `repo_id`, abandoned `z1:` compression plus legacy archive fan-out with the original `archive_metadata` and duplicate result archive retained, live Store VCT replace-all without writer death, and repeated migration/store boot with identical schema, ledger and rows.
+Historical reconciliation retains the legacy `projects` source table and all its rows, unlike the frozen version-7 migration's standalone drop-and-cap contract.
+A ledger-1-through-6 fixture with 106 legacy projects requires boot preflight to preserve every source row and import every mount before pending frozen version 7 can cap or drop them, with exact task/archive preservation and restart idempotency.
+These tests require the integrated Store boot preflight safeguard; running version 10 only after pending version 7 cannot recover already dropped projects.
 Fixtures are historical SQL literals and ledger numbers, never copied user databases or current-schema templates.
 
 - `./operations/` → one file per Operation module (`tasks_test.exs`, `lightweight_test.exs`, `summaries_test.exs`, `pages_test.exs`, `vct_mounts_test.exs`, `safety_test.exs` (plus the `vct_mounts_migration_test.exs` chain suite alongside them), `archives_test.exs`) — real dynamic repos, rows seeded through the TYPED schemas, return shapes pinned to the public-API contract.
