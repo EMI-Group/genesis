@@ -2,7 +2,8 @@
 """Development-only, one-time physical repair of ONE inspected store fingerprint."""
 
 import argparse
-from contextlib import closing
+from contextlib import closing, contextmanager
+import errno
 import os
 from pathlib import Path
 import pickle
@@ -13,7 +14,32 @@ import tempfile
 
 
 class Refusal(RuntimeError):
-    """A safety precondition or preservation check failed (no payload in message)."""
+    """Only explicitly audited diagnostics may cross the CLI privacy boundary."""
+
+    def __init__(self, message, *, public=False):
+        super().__init__(message)
+        self.diagnostic = message if public else "Safety/precondition/verification failure"
+
+
+def os_diagnostic(error):
+    # errno symbols are fixed vocabulary; str(error), filenames and strerror are private.
+    code = errno.errorcode.get(error.errno, "UNKNOWN")
+    return ("OS operation failed (" + code + "); check access permissions, file existence "
+            "and available disk space")
+
+
+@contextmanager
+def stage(name):
+    """Attach a fixed operational stage without exposing raw exceptions or payloads."""
+    try:
+        yield
+    except Refusal as error:
+        raise Refusal(name + ": " + error.diagnostic, public=True) from None
+    except OSError as error:
+        raise Refusal(name + ": " + os_diagnostic(error), public=True) from None
+    except sqlite3.Error:
+        raise Refusal(name + ": SQLite operation failed; check offline access, integrity "
+                      "and disk space (raw SQLite error suppressed)", public=True) from None
 
 
 VERSIONS = list(range(20260815000001, 20260815000010))
@@ -33,7 +59,8 @@ VCT_DDL = """CREATE TABLE vct_mounts (
 
 def require(condition, message):
     if not condition:
-        raise Refusal(message)
+        # Messages here are authored safety checks, never database/OS error text.
+        raise Refusal(message, public=True)
 
 
 def quote(name):
@@ -97,8 +124,10 @@ def fingerprint(db):
     require([r[0] for r in db.execute("SELECT version FROM schema_migrations ORDER BY version")]
             == VERSIONS, "Unexpected migration ledger versions")
     for table, count in COUNTS.items():
-        require(db.execute("SELECT count(*) FROM " + quote(table)).fetchone()[0] == count,
-                "Unexpected row count: " + table)
+        actual = db.execute("SELECT count(*) FROM " + quote(table)).fetchone()[0]
+        require(actual == count,
+                "Unexpected row count: " + table + " (expected " + str(count) +
+                ", found " + str(actual) + "); do not broaden the historical fingerprint")
     integrity(db)
     return project_import(db)
 
@@ -187,7 +216,10 @@ def check_proc_visibility(proc):
     # Be deliberately conservative: aliases, overmounts and even apparently harmless
     # submounts make this view unsuitable for an offline safety decision.
     proc_mounts = [(fields, sep) for fields, sep in entries if fields[sep + 1] == "proc"]
-    require(len(proc_mounts) == 1, "Ambiguous proc mounts")
+    require(len(proc_mounts) == 1,
+            "Ambiguous proc mounts (count=" + str(len(proc_mounts)) + "); "
+            "use the genuine host with one complete /proc mount; do not unmount "
+            "restrictions or bypass the guard")
     fields, separator = proc_mounts[0]
     require(fields[3] == "/" and fields[4] == str(proc),
             "Proc must expose the complete filesystem at its expected mount point")
@@ -219,27 +251,40 @@ def offline_scan(path, proc=Path("/proc")):
     require(sys.platform.startswith("linux"), "Offline verification requires Linux /proc")
     targets = {str(path) + suffix for suffix in ("", "-wal", "-shm")}
     identities = set()
+    operation = "proc visibility checks"
     try:
         check_proc_visibility(proc)
+        operation = "database/sidecar metadata inspection"
         for target in targets:
             try:
                 st = os.stat(target)
                 identities.add((st.st_dev, st.st_ino))
             except FileNotFoundError:
                 pass  # WAL/SHM need not exist.
+        operation = "process enumeration"
         pids = [p for p in proc.iterdir() if p.name.isdecimal()]
         require(bool(pids), "No processes visible in /proc")
         for pid in pids:
+            operation = "fd enumeration for PID " + pid.name
             # Keep the enumeration fd alive: our own /proc entry includes it.
             with os.scandir(pid / "fd") as entries:
                 for fd in entries:
+                    # Only numeric kernel identifiers are safe to print, not fd targets.
+                    operation = "fd inspection for PID " + pid.name
+                    if fd.name.isdecimal():
+                        operation += " fd " + fd.name
                     link = os.readlink(fd.path)
                     st = os.stat(fd.path)
                     require(link.removesuffix(" (deleted)") not in targets and
                             (st.st_dev, st.st_ino) not in identities,
-                            "Database or WAL/SHM is open; shut down its owner manually")
-    except OSError:
-        raise Refusal("Incomplete /proc fd inspection; no repair permitted") from None
+                            "Database or WAL/SHM is open at PID " + pid.name +
+                            "; shut down its owner manually for the maintenance window")
+    except OSError as error:
+        raise Refusal("Incomplete /proc inspection during " + operation + " (" +
+                      errno.errorcode.get(error.errno, "UNKNOWN") + "); "
+                      "no repair permitted. Check host-wide inspection permissions; "
+                      "if a process/fd exited during the scan, retry while consumers "
+                      "remain stopped", public=True) from None
 
 
 def backup_to(source, destination, before):
@@ -264,27 +309,33 @@ def backup_to(source, destination, before):
 
 
 def run(path, apply=False):
-    path = Path(path).expanduser().resolve(strict=True)
-    require(path.is_file(), "Database must be an existing regular file")
-    offline_scan(path)
-    with closing(connect(path)) as source:
-        mounts = fingerprint(source)
-        before = snapshot(source)
-        if not apply:
-            return "Dry-run passed: 1037 tasks, 10539 archives, 10 projects; no repair written."
-        # Backup stored beside DB, unique private name, never overwrite a prior backup.
-        backup_dir = Path(tempfile.mkdtemp(prefix="store-repair-backup-", dir=path.parent))
-        backup = backup_dir / "original.sqlite"
-        backup_to(source, backup, before)
-    with tempfile.TemporaryDirectory(prefix="store-repair-rehearsal-", dir=path.parent) as temp:
-        rehearsal = Path(temp) / "rehearsal.sqlite"
-        with closing(connect(backup)) as original:
-            backup_to(original, rehearsal, before)
-        with closing(connect(rehearsal, writable=True)) as trial:
-            repair(trial, before, mounts)
-    offline_scan(path)
-    with closing(connect(path, writable=True)) as live:
-        repair(live, before, mounts)
+    with stage("Database path validation"):
+        path = Path(path).expanduser().resolve(strict=True)
+        require(path.is_file(), "Database must be an existing regular file")
+    with stage("Initial offline scan (SQLite not opened)"):
+        offline_scan(path)
+    with stage("Source fingerprint and backup"):
+        with closing(connect(path)) as source:
+            mounts = fingerprint(source)
+            before = snapshot(source)
+            if not apply:
+                return "Dry-run passed: 1037 tasks, 10539 archives, 10 projects; no repair written."
+            # Backup stored beside DB, unique private name, never overwrite a prior backup.
+            backup_dir = Path(tempfile.mkdtemp(prefix="store-repair-backup-", dir=path.parent))
+            backup = backup_dir / "original.sqlite"
+            backup_to(source, backup, before)
+    with stage("Backup rehearsal"):
+        with tempfile.TemporaryDirectory(prefix="store-repair-rehearsal-", dir=path.parent) as temp:
+            rehearsal = Path(temp) / "rehearsal.sqlite"
+            with closing(connect(backup)) as original:
+                backup_to(original, rehearsal, before)
+            with closing(connect(rehearsal, writable=True)) as trial:
+                repair(trial, before, mounts)
+    with stage("Final offline scan (before writable source open)"):
+        offline_scan(path)
+    with stage("Source repair transaction"):
+        with closing(connect(path, writable=True)) as live:
+            repair(live, before, mounts)
     return "Repair committed and verified; private backup retained in " + str(backup_dir)
 
 
@@ -295,9 +346,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         print(run(args.db, args.apply))
-    except (Refusal, OSError, sqlite3.Error):
-        # Never print SQLite exceptions, SQL, paths or cell values from private stores.
-        print("REFUSED: safety/precondition/verification failure; no successful repair. "
+    except (Refusal, OSError, sqlite3.Error) as error:
+        # Never print raw exceptions, SQL, paths or cell values from private stores.
+        if isinstance(error, Refusal):
+            diagnostic = error.diagnostic
+        elif isinstance(error, OSError):
+            diagnostic = os_diagnostic(error)
+        else:
+            diagnostic = "SQLite operation failed (raw SQLite error suppressed)"
+        print("REFUSED: " + diagnostic + ". No successful repair reported. "
               "Keep any backup; consult the development runbook.", file=sys.stderr)
         return 1
     return 0

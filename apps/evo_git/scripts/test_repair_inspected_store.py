@@ -176,6 +176,50 @@ class RepairTests(unittest.TestCase):
                 with contextlib.closing(repair.connect(self.path)) as db:
                     self.assertEqual(repair.snapshot(db), before)
 
+    def test_cli_reports_safe_stage_and_never_opens_source_after_guard_refusal(self):
+        error = io.StringIO()
+        with patch.object(repair, 'offline_scan', side_effect=lambda path:
+                          repair.require(False, 'Ambiguous proc mounts (count=11)')):
+            with patch.object(repair, 'connect') as connect:
+                with contextlib.redirect_stderr(error):
+                    self.assertEqual(repair.main(['--db', str(self.path), '--apply']), 1)
+                connect.assert_not_called()
+        self.assertIn('Initial offline scan (SQLite not opened)', error.getvalue())
+        self.assertIn('Ambiguous proc mounts (count=11)', error.getvalue())
+        self.assertNotIn(str(self.path), error.getvalue())
+        self.assertEqual(list(self.path.parent.glob('store-repair-backup-*')), [])
+
+    def test_cli_sanitizes_all_untrusted_exception_messages(self):
+        for exception in (sqlite3.Error('PRIVATE payload'),
+                          PermissionError(13, 'PRIVATE payload', '/PRIVATE/path'),
+                          repair.Refusal('PRIVATE payload')):
+            with self.subTest(exception=type(exception).__name__):
+                error = io.StringIO()
+                with patch.object(repair, 'run', side_effect=exception):
+                    with contextlib.redirect_stderr(error):
+                        self.assertEqual(repair.main(['--db', str(self.path)]), 1)
+                self.assertNotIn('PRIVATE', error.getvalue())
+        with self.assertRaises(repair.Refusal) as caught:
+            with repair.stage('Backup rehearsal'):
+                raise sqlite3.Error('PRIVATE SQL payload')
+        self.assertIn('Backup rehearsal: SQLite operation failed', caught.exception.diagnostic)
+        self.assertNotIn('PRIVATE', caught.exception.diagnostic)
+
+    def test_missing_path_has_actionable_private_diagnostic(self):
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            self.assertEqual(repair.main(['--db', str(self.path.parent / 'PRIVATE')]), 1)
+        self.assertIn('Database path validation', error.getvalue())
+        self.assertIn('ENOENT', error.getvalue())
+        self.assertNotIn('PRIVATE', error.getvalue())
+
+    def test_row_count_diagnostic_has_only_table_and_counts(self):
+        self.db.execute("DELETE FROM tasks WHERE id='0'")
+        with self.assertRaises(repair.Refusal) as caught:
+            repair.fingerprint(self.db)
+        self.assertIn('tasks (expected 1037, found 1036)', caught.exception.diagnostic)
+        self.assertNotIn('payload', caught.exception.diagnostic)
+
     def test_cli_requires_explicit_db_and_suppresses_private_errors(self):
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
@@ -281,6 +325,33 @@ class OfflineTests(unittest.TestCase):
         self.mountinfo.unlink()
         with self.assertRaises(repair.Refusal):
             repair.offline_scan(self.db, self.proc)
+
+    def test_fd_diagnostics_are_actionable_without_target_paths(self):
+        fd = self.proc / '123' / 'fd' / '4'
+        fd.symlink_to(self.root / 'PRIVATE-gone')
+        with self.assertRaises(repair.Refusal) as caught:
+            repair.offline_scan(self.db, self.proc)
+        diagnostic = caught.exception.diagnostic
+        self.assertIn('PID 123 fd 4', diagnostic)
+        self.assertIn('ENOENT', diagnostic)
+        self.assertNotIn('PRIVATE', diagnostic)
+        self.assertNotIn(str(self.root), diagnostic)
+        fd.unlink()
+        fd.symlink_to(self.db)
+        with self.assertRaises(repair.Refusal) as caught:
+            repair.offline_scan(self.db, self.proc)
+        self.assertIn('open at PID 123', caught.exception.diagnostic)
+        self.assertNotIn(str(self.db), caught.exception.diagnostic)
+
+    def test_mount_count_diagnostic_preserves_strict_guard(self):
+        self.mountinfo.write_text(self.clean_mount * 11)
+        with patch.object(os, 'scandir') as scan:
+            with self.assertRaises(repair.Refusal) as caught:
+                repair.offline_scan(self.db, self.proc)
+            scan.assert_not_called()
+        self.assertIn('Ambiguous proc mounts (count=11)', caught.exception.diagnostic)
+        self.assertIn('do not unmount', caught.exception.diagnostic)
+        self.assertNotIn(str(self.proc), caught.exception.diagnostic)
 
     def test_vanished_or_unreadable_fd_refuses(self):
         (self.proc / '123' / 'fd' / '4').symlink_to(self.root / 'gone')

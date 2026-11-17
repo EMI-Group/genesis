@@ -44,7 +44,32 @@ The script checks these facts; it does not read application configuration, locat
 
 6. Retain the private `store-repair-backup-*/original.sqlite` directory reported on success, inspect the repaired schema offline, and only then restart the intended application.
    Exit status 0 means a dry-run passed or an apply committed; status 1 is a refusal/failure, and argparse uses status 2 for invalid arguments.
-   A refusal deliberately prints no raw exception or private data; investigate permissions, process ownership, preconditions, and disk space manually.
+   A refusal reports an operational stage and an audited reason, never raw exceptions or private data; follow the diagnostics below.
+
+### Diagnosing a refusal safely
+
+The CLI distinguishes path validation, the initial offline scan, source fingerprint/backup, backup rehearsal, the final offline scan, and the source repair transaction.
+A refusal in the **initial offline scan (SQLite not opened)** means no source SQLite connection, backup, rehearsal, or repair was attempted.
+A later failure can leave a private backup; retain it even when no success was reported.
+Diagnostics include only authored checks, numeric counts, kernel PID/fd identifiers, and symbolic errno values; they never include fd targets, arbitrary schema names, SQL, cell contents, raw OS/SQLite exceptions, or failing filesystem paths.
+Use PID identifiers only to investigate ownership manually; do not kill an unidentified process or assume the PID has not been reused.
+
+| Diagnostic | Action |
+|---|---|
+| `Ambiguous proc mounts (count=N)` | The environment exposes zero or multiple proc filesystem mounts. Move the maintenance operation to the genuine host environment with one complete `/proc`; do **not** unmount restrictions or change the guard to force a pass. |
+| Restricted proc mount, proc submounts, unsupported PID 1, missing/nested namespace evidence | Establish genuine host namespace provenance independently; sandbox/container views are unsuitable. Passing checks alone never proves host-wide visibility. |
+| Incomplete proc inspection, `EACCES` / `EPERM` | Arrange authorized host-wide fd inspection permissions. Elevated access alone does not fix namespace restrictions. |
+| Incomplete proc inspection, `ENOENT` | A process/fd or visibility file may have vanished. Retry only with all consumers still stopped; do not skip missing entries or disable fail-closed checks. |
+| Database or WAL/SHM open at PID | Identify and manually shut down the consumer, including its restart mechanism; retry the entire dry-run. |
+| Path validation with `ENOENT` / `EACCES` | Confirm the explicit DB path and authorized access, without creating a replacement database. |
+| Unexpected inventory/schema/ledger/count | Stop. This tool accepts one historical fingerprint, not arbitrary or already repaired stores. Obtain a new read-only inspection and review; do not relax the count/schema checks. |
+| SQLite operation failed, backup/rehearsal/transaction failure | Keep any backup, check offline access, integrity and storage capacity through a separately reviewed offline procedure. Raw exceptions are intentionally suppressed. |
+
+For the reported real-store refusal, a metadata-only diagnosis on 2026-11-17 found the file present but **11 proc filesystem mounts** in the agent execution environment (two complete-root mounts at `/proc` and nine proc submounts).
+The first failing check was therefore `Ambiguous proc mounts`, before any SQLite open or fingerprint check.
+This is an environment-specific observation, not evidence that the database is valid, invalid, offline, or repairable on the host.
+No real database was opened or repaired during that diagnosis, and no schema-precondition defect was established; the strict mount prerequisite remains intact.
+The operator must rerun the dry-run in a suitable host maintenance window to learn whether any further precondition fails.
 
 Dry-run opens SQLite read-only and performs no repair or backup.
 Normal SQLite WAL readers can interact with shared-memory bookkeeping; this is not a promise of byte-for-byte filesystem immutability.
