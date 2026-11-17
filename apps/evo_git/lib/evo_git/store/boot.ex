@@ -19,6 +19,12 @@ defmodule EvoGit.Store.Boot do
   The remaining `:global` lock serializes that one-time compile plus each run
   (see `migrate_synchronized!/0`).
 
+  `HistoricalSources` stages pending migrations without editing their frozen
+  source or ledger identities: after 1..4, it transactionally hides legacy
+  archive/project sources from destructive 5/7, restores them after 5..9, then
+  runs additive repair 10. A durable marker makes interrupted preservation
+  restartable; unknown preservation state fails boot rather than risking data.
+
   ## Usage
 
   Canonical instance (must already be started):
@@ -355,7 +361,7 @@ defmodule EvoGit.Store.Boot do
   # serialized, and the compile it guards is a one-time per-BEAM cost.
   defp migrate_synchronized! do
     with_migration_lock(fn ->
-      Ecto.Migrator.run(@repo, load_migration_source(), :up, all: true)
+      EvoGit.Store.HistoricalSources.run(load_migration_source())
     end)
   end
 
