@@ -32,6 +32,10 @@ The agent no longer owns concurrency logic: `EvoGit.Agent.ToolDispatch.batch_exe
 - `Tracking.kill(id, :timeout)` settles the terminal fact `:timeout`; every other kill reason settles `{:killed_by, :tool_runtime}`, with the human prose kept in the record's `control_log`.
 - `finish/3` and `kill/2` are total (a `nil` or non-binary id is a no-op) and never raise into the tool path.
 
+## Audit caveats
+- Timeout cleanup orders tool-task shutdown before OS-handle kill (`executor.ex:200,226–233`), while the tool task releases its permit in `after` (`:262–266`) or scheduler owner-DOWN reclamation reclaims it on brutal shutdown, so a queued replacement can be admitted before `Tracking.kill/2` attempts to stop a surviving OS process.
+- The runtime caller's final release cannot act as a cleanup barrier after transfer because release is owner-enforced; preserving strict OS concurrency through timeout requires retaining or transferring admission ownership until containment teardown is complete.
+
 ## Routing Table
 
 - `./policy.ex` → pure alias-normalized `Policy.limited?/1`, the single resource-admission classification with conservative unknown/custom fallback.
