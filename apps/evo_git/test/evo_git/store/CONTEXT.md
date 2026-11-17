@@ -17,6 +17,10 @@ The suite also covers INTEGER archive `repo_id`, abandoned `z1:` compression plu
 Historical reconciliation retains the legacy `projects` source table and all its rows, unlike the frozen version-7 migration's standalone drop-and-cap contract.
 A ledger-1-through-6 fixture with 106 legacy projects requires boot preflight to preserve every source row and import every mount before pending frozen version 7 can cap or drop them, with exact task/archive preservation and restart idempotency.
 These tests require the integrated Store boot preflight safeguard; running version 10 only after pending version 7 cannot recover already dropped projects.
+Ledger-4 fixtures preserve compressed result/log/archive bytes and authoritative relational archives across frozen migrations 5/7, import all 101 projects, and prove repeated boot idempotency.
+A deliberately unsupported VCT shape interrupts the frozen stage after durable source hiding; a fresh boot retries from the marker after the shape is repaired.
+Malformed `z1:` logs roll repair 10 back, retaining the compressed result/archive bytes and restored projects with version 10 unstamped across retries.
+An operator-owned reserved marker with an unsupported shape fails closed with identical schema, ledger and source rows.
 Fixtures are historical SQL literals and ledger numbers, never copied user databases or current-schema templates.
 
 - `./operations/` → one file per Operation module (`tasks_test.exs`, `lightweight_test.exs`, `summaries_test.exs`, `pages_test.exs`, `vct_mounts_test.exs`, `safety_test.exs` (plus the `vct_mounts_migration_test.exs` chain suite alongside them), `archives_test.exs`) — real dynamic repos, rows seeded through the TYPED schemas, return shapes pinned to the public-API contract.

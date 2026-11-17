@@ -82,7 +82,8 @@ defmodule EvoGit.Store.LedgerReconciliationTest do
       assert rows(repo, "SELECT version FROM schema_migrations ORDER BY version") ==
                Enum.map(@all, &[&1])
 
-      assert rows(repo, "SELECT session_mode, pause_kind FROM tasks") == [["oneshot", nil]]
+      assert rows(repo, "SELECT session_mode, pause_kind FROM tasks") == [[nil, nil]]
+      assert Store.get_task(store, "kept").session_mode == "oneshot"
 
       assert Enum.find(
                rows(repo, "PRAGMA table_info(task_agent_archives)"),
@@ -237,6 +238,204 @@ defmodule EvoGit.Store.LedgerReconciliationTest do
     stop_supervised!(store)
     restarted = start_store!(path)
     assert snapshot(Store.__repo_pid__(restarted)) == snapshot
+  end
+
+  test "ledger 4 protects compressed archives and all 101 projects from frozen migrations", %{
+    path: path
+  } do
+    ledger4_fixture!(path, false)
+    payloads = compressed_archive!(path)
+
+    for index <- 1..100 do
+      raw!(path, "INSERT INTO projects VALUES (?1, ?2, NULL)", [
+        "/historical/project-#{index}",
+        "Project #{index}"
+      ])
+    end
+
+    projects = raw!(path, "SELECT * FROM projects ORDER BY path")
+    authoritative = raw!(path, "SELECT * FROM task_agent_archives")
+    store = start_store!(path)
+    repo = Store.__repo_pid__(store)
+
+    assert rows(repo, "SELECT result, logs, archive_metadata FROM tasks") == [payloads]
+    assert rows(repo, "SELECT * FROM projects ORDER BY path") == projects
+
+    assert rows(repo, "SELECT path, name, last_opened_at FROM vct_mounts ORDER BY path") ==
+             projects
+
+    assert length(Store.list_vct_mounts(store)) == 101
+    assert rows(repo, "SELECT * FROM task_agent_archives WHERE agent_id = 17") == authoritative
+    assert Store.get_agent_archive(store, "kept", 18)["result"] == "legacy report"
+    assert rows(repo, "SELECT updated_at FROM tasks") == [["2026-01-02T03:04:05Z"]]
+    assert_reconciled!(repo)
+    before = snapshot(repo)
+    stop_supervised!(store)
+    assert snapshot(Store.__repo_pid__(start_store!(path))) == before
+  end
+
+  test "failed frozen migration leaves durable hidden sources for a fresh boot retry", %{
+    path: path
+  } do
+    ledger4_fixture!(path, true)
+    payloads = compressed_archive!(path)
+    raw!(path, "ALTER TABLE vct_mounts ADD COLUMN unexpected TEXT")
+    repo = start_unmigrated_repo!(path)
+
+    assert_raise Ecto.MigrationError, ~r/vct_mounts/, fn -> Boot.run_migrations(repo) end
+
+    assert rows(repo, "SELECT source FROM __genesis_historical_sources ORDER BY source") ==
+             [["archive_metadata"], ["projects"]]
+
+    assert rows(repo, "SELECT result, logs, __genesis_preserved_archive_metadata FROM tasks") ==
+             [Enum.map(payloads, &pack/1)]
+
+    assert rows(repo, "SELECT * FROM __genesis_preserved_projects") ==
+             [["/historical/demo", "Demo", "2026-01-01T00:00:00Z"]]
+
+    refute @version in versions(repo)
+    refute Enum.at(@all, 6) in versions(repo)
+    rows(repo, "ALTER TABLE vct_mounts DROP COLUMN unexpected")
+    :ok = Boot.stop(repo)
+    store = start_store!(path)
+    repo = Store.__repo_pid__(store)
+    assert rows(repo, "SELECT result, logs, archive_metadata FROM tasks") == [payloads]
+    assert Store.get_agent_archive(store, "kept", 18)["result"] == "legacy report"
+
+    assert Enum.map(Store.list_vct_mounts(store), & &1["path"]) |> Enum.sort() ==
+             Enum.sort(["/existing/source", "/existing/project", "/historical/demo"])
+
+    assert_reconciled!(repo)
+  end
+
+  test "invalid z1 rolls repair 10 back with restored source bytes and no ledger stamp", %{
+    path: path
+  } do
+    ledger4_fixture!(path, false)
+    [result, _logs, archive] = compressed_archive!(path)
+    invalid = "z1:not-base64!"
+    raw!(path, "UPDATE tasks SET logs = ?1", [invalid])
+    repo = start_unmigrated_repo!(path)
+
+    # result is inflated before logs: the failure must roll that update back too.
+    assert_raise Ecto.MigrationError, ~r/invalid compressed JSON in tasks.logs/, fn ->
+      Boot.run_migrations(repo)
+    end
+
+    assert rows(repo, "SELECT result, logs, archive_metadata FROM tasks") ==
+             [[pack(result), invalid, pack(archive)]]
+
+    assert rows(repo, "SELECT * FROM projects") ==
+             [["/historical/demo", "Demo", "2026-01-01T00:00:00Z"]]
+
+    assert rows(repo, "SELECT agent_id, result FROM task_agent_archives") ==
+             [[17, "existing report"]]
+
+    assert versions(repo) == Enum.take(@all, 9)
+    assert_no_preservation!(repo)
+
+    assert_raise Ecto.MigrationError, ~r/invalid compressed JSON/, fn ->
+      Boot.run_migrations(repo)
+    end
+
+    assert rows(repo, "SELECT result, logs, archive_metadata FROM tasks") ==
+             [[pack(result), invalid, pack(archive)]]
+  end
+
+  test "reserved preservation marker collision fails closed without touching sources", %{
+    path: path
+  } do
+    ledger4_fixture!(path, false)
+    compressed_archive!(path)
+    raw!(path, "CREATE TABLE __genesis_historical_sources (operator_note TEXT)")
+    raw!(path, "INSERT INTO __genesis_historical_sources VALUES ('do not overwrite')")
+    repo = start_unmigrated_repo!(path)
+    before = snapshot_without_mounts(repo)
+
+    assert_raise Ecto.MigrationError, ~r/unsupported preservation marker shape/, fn ->
+      Boot.run_migrations(repo)
+    end
+
+    assert snapshot_without_mounts(repo) == before
+    assert rows(repo, "SELECT * FROM __genesis_historical_sources") == [["do not overwrite"]]
+    assert versions(repo) == Enum.take(@all, 4)
+  end
+
+  defp ledger4_fixture!(path, mounts?) do
+    fixture!(path, Enum.take(@all, 4), "TEXT", mounts?)
+    # Ledger 4 already shipped the covering indexes; frozen prune 6 checks them.
+    for {name, columns} <- @indexes do
+      raw!(path, "CREATE INDEX #{name} ON tasks(#{Enum.join(columns, ", ")})")
+    end
+  end
+
+  defp compressed_archive!(path) do
+    archives = [
+      %{"agent_id" => 17, "result" => "stale legacy report"},
+      %{"agent_id" => 18, "result" => "legacy report", "repo_id" => "foreign"}
+    ]
+
+    payloads = [
+      Jason.encode!(%{
+        "__result_tag__" => "ok",
+        "data" => %{"result" => "kept report", "archive_records" => archives}
+      }),
+      Jason.encode!(["historical log"]),
+      Jason.encode!(archives)
+    ]
+
+    raw!(path, "ALTER TABLE tasks ADD COLUMN archive_metadata TEXT")
+
+    raw!(
+      path,
+      "UPDATE tasks SET result = ?1, logs = ?2, archive_metadata = ?3",
+      Enum.map(payloads, &pack/1)
+    )
+
+    payloads
+  end
+
+  defp start_unmigrated_repo!(path) do
+    {:ok, repo} =
+      Repo.start_link(Keyword.merge(Repo.start_opts(), database: path, name: nil, pool_size: 1))
+
+    Process.unlink(repo)
+    on_exit(fn -> if Process.alive?(repo), do: Boot.stop(repo) end)
+    repo
+  end
+
+  defp versions(repo),
+    do: Enum.map(rows(repo, "SELECT version FROM schema_migrations ORDER BY version"), &hd/1)
+
+  defp assert_reconciled!(repo) do
+    assert versions(repo) == @all
+    assert_no_preservation!(repo)
+    before = snapshot(repo)
+    assert Boot.run_migrations(repo) == []
+    assert snapshot(repo) == before
+  end
+
+  defp assert_no_preservation!(repo) do
+    assert rows(
+             repo,
+             "SELECT name FROM sqlite_master WHERE name IN ('__genesis_historical_sources', '__genesis_preserved_projects')"
+           ) == []
+
+    refute Enum.any?(
+             rows(repo, "PRAGMA table_info(tasks)"),
+             &(Enum.at(&1, 1) == "__genesis_preserved_archive_metadata")
+           )
+  end
+
+  defp snapshot_without_mounts(repo) do
+    for sql <- [
+          "SELECT type, name, sql FROM sqlite_master ORDER BY type, name",
+          "SELECT * FROM schema_migrations ORDER BY version",
+          "SELECT * FROM tasks ORDER BY id",
+          "SELECT * FROM task_agent_archives ORDER BY task_id, agent_id",
+          "SELECT * FROM projects ORDER BY path"
+        ],
+        do: rows(repo, sql)
   end
 
   defp fixture!(path, ledger, repo_type, mounts?) do
