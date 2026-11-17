@@ -132,8 +132,12 @@ Scripts still override the fallback (nil/error results use it; invalid canonical
 
 Two independent pools use agent-ID `MapSet`s rather than per-call permits; availability is derived from `MapSet.size/1`, and session `:DOWN` removes the agent from both pools and purges its queued requests.
 Tool requests queue FIFO as `{agent_id, from}` when globally paused or full, immediate grants do not change status, and queued grants emit `:running` while enqueues emit `:blocked` (`slots.ex:297–313,714–729`).
-Tool holders have no reference count or caller-process monitor: multiple simultaneous requests from one agent collapse into one holder whenever admitted, while ANY release deletes that holder, so this semaphore is only correct when callers serialize slot ownership per agent (`slots.ex:306–330`).
-Queue grants neither deduplicate agent ids nor test the waiting caller's liveness, so a dead tool-task waiter can receive a grant and retain its agent's holder until another release or session death (`slots.ex:714–729`).
+`ToolPermits` (`tool_permits.ex`) provides per-call `make_ref()` permits attributed to an agent and monitored on the acquiring caller, with synchronous transfer to a new owner and idempotent synchronous release.
+Explicit permits count separately even for the same agent, share capacity and one FIFO queue with legacy agent-keyed tool slots, and survive config rebuilding in `State.tool_permits` plus `State.tool_permit_monitors`.
+Legacy `request_tool_slot` / `release_tool_slot` remain one-holder-per-agent and require serialized ownership; their queued callers are now monitored and dead callers are discarded before grant.
+`Slots.release_agent_slots/2` purges waiting requests with the existing cancellation reason, drops every attributed explicit permit and demonitor-flushes owners before granting capacity; task pause/cancel queue purges preserve `:paused` / `:cancelled` and do not revoke holders.
+The public hub integration is REQUIRED outside this source node: delegate `acquire_tool_permit/1`, `transfer_tool_permit/2`, `release_tool_permit/1` to `ToolPermits`, route matching calls to `handle_acquire/3`, `handle_transfer/3`, `handle_release/2`, apply returned status updates, and offer every process DOWN ref to `ToolPermits.handle_down/2` before existing agent-monitor handling (`:unhandled` means fall through).
+Until that hub integration lands the explicit client API is not usable, and monitored waiter cleanup only runs on grant/purge rather than immediately on DOWN.
 Detached OS-job lifetime is not represented in these slot tables: this directory has no job-completion-to-slot-release linkage, and background cleanup is separately performed through `BackgroundJobs.reap_under/1` before worktree removal (`worktree_manager.ex:923–977`).
 
 | Pool | State keys | Capacity | Backoff |
