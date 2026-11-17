@@ -113,7 +113,9 @@ Adds the task-level `session_mode` column to a database an earlier release alrea
 ### Migration versions & ordering
 
 The migration versions are 1..9, CONTIGUOUS, and shipped ledger identities and frozen source files are never rewritten.
-Version 9 adds `pause_kind`; no dedicated reconciliation migration is required.
+Version 9 adds `pause_kind`; boot has no physical-schema reconciliation for an already-stamped ledger.
+`HistoricalSources.run/1` only rejects reserved preservation remnants and runs pending versions, so a ledger containing versions 1–9 with missing `session_mode`, `pause_kind` or `vct_mounts` remains inconsistent after a successful no-op migration run.
+For offline local repair, preserve ledger and existing payloads and repair only verified physical gaps; deleting ledger rows to replay migrations also re-enables destructive legacy archive/project transformations.
 `Boot` delegates to `HistoricalSources.run/1` under its existing migration lock, which checks for interrupted preservation objects before one ordinary `Ecto.Migrator.run/4` with `all: true`.
 No legacy sources are hidden or restored, and migrations 5/7 retain their normal archive fan-out and capped project-import behavior.
 The reserved marker table `__genesis_historical_sources`, column `tasks.__genesis_preserved_archive_metadata` or table `__genesis_preserved_projects` causes boot to fail before any migration runs, regardless of the migration ledger.
