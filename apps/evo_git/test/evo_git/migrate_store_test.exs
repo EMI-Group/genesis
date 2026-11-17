@@ -41,7 +41,7 @@ defmodule EvoGit.MigrateStoreTest do
   @vct_mounts_version 20_260_815_000_007
   @session_mode_version 20_260_815_000_008
   @pause_kind_version 20_260_815_000_009
-  # Ascending, exactly as `schema_migrations` reports it — nine contiguous
+  # Ascending, exactly as `schema_migrations` reports it — ten contiguous
   # versions, no gaps.
   @migration_versions [
     @baseline_version,
@@ -52,7 +52,8 @@ defmodule EvoGit.MigrateStoreTest do
     @prune_indexes_version,
     @vct_mounts_version,
     @session_mode_version,
-    @pause_kind_version
+    @pause_kind_version,
+    20_260_815_000_010
   ]
 
   @migration_count length(@migration_versions)
@@ -161,6 +162,7 @@ defmodule EvoGit.MigrateStoreTest do
       assert output =~ "20260815000007_vct_mounts"
       assert output =~ "20260815000008_session_mode"
       assert output =~ "20260815000009_task_pause_kind"
+      assert output =~ "20260815000010"
 
       assert output =~ "Database is now current (#{@migration_count} migration(s) applied)."
 
