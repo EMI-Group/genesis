@@ -443,7 +443,16 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
 
   test "real read tools publish results, retire their call and start a fresh inspector call",
        ctx do
-    session = start_session(ctx.provider)
+    owner = self()
+    gate = make_ref()
+
+    tool_batch = fn calls, state ->
+      send(owner, {:tool_batch_ready, gate, self()})
+      assert_receive {:release_tools, ^gate}, @budget
+      EvoGit.Agent.ToolDispatch.process_standard_calls(calls, state, tool_batch: nil)
+    end
+
+    session = start_session(ctx.provider, exchange_opts: [tool_batch: tool_batch])
     socket = Provider.request(ctx.provider, 0)
     Provider.open(socket)
     Provider.write(socket, %{role: "assistant", reasoning_content: "Read planning thought"})
@@ -453,12 +462,13 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
     await(fn -> text(view, "#inspector-stream article div pre") == "Checking the fixture" end)
     {:ok, _, _} = Stream.watch(session.pid)
 
-    # A paused scheduler gates the REAL tool-slot acquisition, not tool execution
-    # or its result. This makes the otherwise very short :tools phase observable.
-    :ok = AgentScheduler.pause()
+    # Cheap reads bypass scheduler slots. Gate only entry to the batch, then
+    # delegate unchanged to production dispatch (real reads, tracking and results).
+    # The worker handshake keeps :tools observable without a timing window.
     Provider.tool(socket, 0, "read-ok", Path.join(session.dir, "fixture.txt"))
     Provider.tool(socket, 1, "read-missing", Path.join(session.dir, "missing.txt"))
     Provider.finish(ctx.provider, socket, "tool_calls")
+    assert_receive {:tool_batch_ready, ^gate, worker}, @budget
 
     await(fn -> text(view, "#inspector-activity") == "Executing tools" end)
     {:ok, during_tools, _} = Stream.snapshot(session.pid)
@@ -467,7 +477,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
     refute has_element?(view, "#inspector-stream-cursor")
     assert text(view, "#inspector-stream details pre") == "Read planning thought"
 
-    :ok = AgentScheduler.resume()
+    send(worker, {:release_tools, gate})
     {next_socket, request} = Provider.request_with_body(ctx.provider, 1)
     tool_messages = Enum.filter(request["messages"], &(&1["role"] == "tool"))
     assert Enum.map(tool_messages, & &1["tool_call_id"]) == ["read-ok", "read-missing"]
@@ -797,6 +807,7 @@ defmodule EvoDashWeb.RealStreamConsumersTest do
         repo_less: true,
         repo_less_repo_path: dir,
         session_mode: mode,
+        exchange_opts: Keyword.get(opts, :exchange_opts, []),
         scheduler: self()
       )
 
