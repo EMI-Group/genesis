@@ -174,19 +174,53 @@ def repair(db, before, mounts):
         raise
 
 
+def check_proc_visibility(proc):
+    """Reject detectable restrictions; host provenance still belongs to the operator."""
+    entries = []
+    for line in (proc / "self" / "mountinfo").read_text().splitlines():
+        fields = line.split()
+        require("-" in fields, "Cannot parse proc mount visibility")
+        separator = fields.index("-")
+        require(separator >= 6 and len(fields) == separator + 4,
+                "Cannot parse proc mount visibility")
+        entries.append((fields, separator))
+    # Be deliberately conservative: aliases, overmounts and even apparently harmless
+    # submounts make this view unsuitable for an offline safety decision.
+    proc_mounts = [(fields, sep) for fields, sep in entries if fields[sep + 1] == "proc"]
+    require(len(proc_mounts) == 1, "Ambiguous proc mounts")
+    fields, separator = proc_mounts[0]
+    require(fields[3] == "/" and fields[4] == str(proc),
+            "Proc must expose the complete filesystem at its expected mount point")
+    options = fields[5].split(",") + fields[separator + 3].split(",")
+    require(not any((opt.startswith("hidepid=") and opt != "hidepid=0") or
+                    (opt.startswith("subset=") and opt != "subset=all") for opt in options),
+            "Restricted proc mount")
+    require(not any(other[4].startswith(str(proc) + "/") for other, _ in entries),
+            "Proc submounts prevent complete inspection")
+
+    # Namespace-local absence is not evidence of host-wide absence. These are
+    # conservative necessary checks, NOT proof that this is the initial namespace.
+    require((proc / "1" / "comm").read_text().strip() in ("init", "systemd"),
+            "PID 1 is not a supported host init; use the genuine host environment")
+    for process in ("self", "1"):
+        status = (proc / process / "status").read_text().splitlines()
+        nspids = [line.split()[1:] for line in status if line.startswith("NSpid:")]
+        require(len(nspids) == 1 and len(nspids[0]) == 1 and nspids[0][0].isdecimal(),
+                "Missing or nested PID namespace information")
+        if process == "1":
+            require(nspids == [["1"]], "Unexpected init PID namespace")
+    require(os.readlink(proc / "self" / "ns" / "pid") ==
+            os.readlink(proc / "1" / "ns" / "pid"),
+            "Process and proc init PID namespaces differ")
+
+
 def offline_scan(path, proc=Path("/proc")):
     """Inspect every visible process, including our own; any uncertainty refuses."""
     require(sys.platform.startswith("linux"), "Offline verification requires Linux /proc")
     targets = {str(path) + suffix for suffix in ("", "-wal", "-shm")}
     identities = set()
     try:
-        # hidepid can silently omit other users' processes, so reject such mounts.
-        mounts = (proc / "mounts").read_text()
-        require(any(parts[1:3] == [str(proc), "proc"] and
-                    not any(opt.startswith("hidepid=") and opt != "hidepid=0"
-                            for opt in parts[3].split(","))
-                    for parts in (line.split() for line in mounts.splitlines()) if len(parts) >= 4),
-                "Cannot establish complete /proc visibility")
+        check_proc_visibility(proc)
         for target in targets:
             try:
                 st = os.stat(target)

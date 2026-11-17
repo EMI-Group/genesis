@@ -11,7 +11,8 @@ Adding `--apply` requires a verified SQLite backup, successful rehearsal, and a 
 
 ## Constraints
 Never discover, inspect, or apply against a real database as part of development tests.
-Never stop processes or bypass incomplete offline inspection; the operator owns the maintenance window and full host namespace visibility.
+Never stop processes or bypass incomplete offline inspection; the operator owns the maintenance window and must independently establish genuine host namespace visibility.
+The offline guard conservatively rejects multiple proc mounts, proc submounts/overlays, restrictive mount options, unsupported PID 1 names, and missing or detectably nested PID namespace evidence, but cannot authenticate the initial host namespace.
 Keep ledger, projects, and every original task/archive cell untouched, add only nullable no-default task columns and the canonical VCT mount table, and import every project without capping or dropping.
 Reject interrupted preservation remnants and unexpected fingerprints rather than generalizing this repair into a migration framework.
 Never print private database payloads or raw SQLite errors.

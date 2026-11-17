@@ -194,7 +194,15 @@ class OfflineTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.proc = self.root / 'proc'
         (self.proc / '123' / 'fd').mkdir(parents=True)
-        (self.proc / 'mounts').write_text('proc ' + str(self.proc) + ' proc rw 0 0\n')
+        self.mountinfo = self.proc / 'self' / 'mountinfo'
+        for process in ('self', '1'):
+            (self.proc / process / 'ns').mkdir(parents=True)
+            (self.proc / process / 'ns' / 'pid').symlink_to('pid:[1234]')
+            (self.proc / process / 'status').write_text('NSpid:\t1\n')
+        (self.proc / '1' / 'fd').mkdir()
+        (self.proc / '1' / 'comm').write_text('systemd\n')
+        self.clean_mount = f'20 10 0:1 / {self.proc} rw - proc proc rw\n'
+        self.mountinfo.write_text(self.clean_mount)
         self.db = self.root / 'synthetic.sqlite'
         self.db.write_bytes(b'fixture')
 
@@ -220,10 +228,57 @@ class OfflineTests(unittest.TestCase):
                 # Ensure readlink is reached.
                 fd = self.proc / '123' / 'fd' / '3'
                 if not fd.exists():
-                    fd.symlink_to(self.proc / 'mounts')
+                    fd.symlink_to(self.mountinfo)
                 with self.assertRaises(repair.Refusal):
                     repair.offline_scan(self.db, self.proc)
-        (self.proc / 'mounts').write_text('proc ' + str(self.proc) + ' proc rw,hidepid=2 0 0\n')
+        self.mountinfo.write_text(self.clean_mount.replace('rw -', 'rw,hidepid=2 -'))
+        with self.assertRaises(repair.Refusal):
+            repair.offline_scan(self.db, self.proc)
+
+    def test_restricted_or_ambiguous_proc_mounts_refuse_before_fd_scan(self):
+        cases = [
+            '', 'malformed\n',
+            self.clean_mount.replace('rw -', 'rw,hidepid=invisible -'),
+            self.clean_mount.replace('proc rw', 'proc rw,hidepid=1'),
+            self.clean_mount.replace('proc rw', 'proc rw,subset=pid'),
+            self.clean_mount.replace(' / ', ' /restricted '),
+            self.clean_mount + self.clean_mount,
+            self.clean_mount + self.clean_mount.replace('proc rw', 'proc rw,hidepid=invisible'),
+            self.clean_mount.replace('proc rw', 'proc rw,hidepid=invisible') + self.clean_mount,
+            self.clean_mount + f'21 10 0:2 / /other-proc rw - proc proc rw\n',
+            self.clean_mount + f'21 20 0:2 / {self.proc}/hidden rw - proc proc rw,hidepid=invisible\n',
+            self.clean_mount + f'21 20 0:2 / {self.proc}/123 rw - tmpfs tmpfs rw\n',
+        ]
+        for mounts in cases:
+            with self.subTest(mounts=mounts):
+                self.mountinfo.write_text(mounts)
+                with patch.object(os, 'scandir') as scan:
+                    with self.assertRaises(repair.Refusal):
+                        repair.offline_scan(self.db, self.proc)
+                    scan.assert_not_called()
+
+    def test_detectable_pid_namespace_limitations_refuse(self):
+        for comm in ('bash\n', 'sh\n', 'python3\n', ''):
+            with self.subTest(comm=comm):
+                (self.proc / '1' / 'comm').write_text(comm)
+                with self.assertRaises(repair.Refusal):
+                    repair.offline_scan(self.db, self.proc)
+        (self.proc / '1' / 'comm').write_text('systemd\n')
+        for process in ('self', '1'):
+            for status in ('', 'NSpid:\t100 1\n', 'NSpid:\tx\n',
+                           'NSpid:\t1\nNSpid:\t1\n'):
+                with self.subTest(process=process, status=status):
+                    (self.proc / process / 'status').write_text(status)
+                    with self.assertRaises(repair.Refusal):
+                        repair.offline_scan(self.db, self.proc)
+            (self.proc / process / 'status').write_text('NSpid:\t1\n')
+        (self.proc / 'self' / 'ns' / 'pid').unlink()
+        (self.proc / 'self' / 'ns' / 'pid').symlink_to('pid:[5678]')
+        with self.assertRaises(repair.Refusal):
+            repair.offline_scan(self.db, self.proc)
+
+    def test_missing_visibility_evidence_refuses(self):
+        self.mountinfo.unlink()
         with self.assertRaises(repair.Refusal):
             repair.offline_scan(self.db, self.proc)
 

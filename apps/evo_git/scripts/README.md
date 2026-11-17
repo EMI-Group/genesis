@@ -26,7 +26,8 @@ The script checks these facts; it does not read application configuration, locat
 2. **Manually** shut down every Genesis/BEAM instance and every other database consumer (including SQLite browsers, test runners, and backup tools).
    Disable anything that could restart them for the whole operation.
    This script never stops, kills, or signals a process.
-3. Run on the **Linux host and PID/mount namespace that can see all consumers** of the database; do not use a container's restricted `/proc` against a host database.
+3. Run directly on the **genuine Linux host in its initial PID/mount namespaces**, with visibility of all consumers of the database; do not use a sandbox, container, or namespace-local `/proc` against a host database.
+   The supported environment has PID 1 named `systemd` or `init`, one complete proc mount, and no proc submounts or aliases; other setups are conservatively refused, even if an operator considers them safe.
    You need permission to inspect every visible process's fd directory (often an administrator-run Python process).
    No elevated access is requested automatically.
 4. Supply the database explicitly, first without `--apply`:
@@ -48,9 +49,14 @@ The script checks these facts; it does not read application configuration, locat
 Dry-run opens SQLite read-only and performs no repair or backup.
 Normal SQLite WAL readers can interact with shared-memory bookkeeping; this is not a promise of byte-for-byte filesystem immutability.
 The fd scan covers DB/WAL/SHM paths, deleted-open path targets, and existing inode aliases (hardlinks).
-Unreadable, missing-during-inspection, or otherwise uninspectable fds/process directories fail closed, as do missing `/proc` and `hidepid` mounts.
+Unreadable, missing-during-inspection, or otherwise uninspectable fds/process directories fail closed.
+The guard reads `self/mountinfo`, requires exactly one proc filesystem mounted at `/proc` with filesystem root `/`, rejects restrictive `hidepid`/`subset` options, and rejects every submount beneath `/proc` (including non-proc overlays).
+An unrestricted-looking entry never cancels out a restricted entry elsewhere in the mount table.
+It also requires a supported PID 1 name, single-valued `NSpid` evidence for self and PID 1, and matching self/PID-1 PID namespace links; missing evidence or detectable nesting is refused before fd inspection.
 A racing process exit may therefore require retrying the scan.
-`/proc` cannot prove visibility outside its PID namespace or prevent a future opener, and SQLite locks do not exclude all readers: **the operator must keep all consumers stopped throughout**.
+**These checks do not authenticate host visibility.** A container can run `systemd`/`init` as PID 1, and a proc filesystem mounted inside a nested PID namespace can report only one `NSpid` value with matching namespace links.
+Names and namespace-local metadata cannot prove this is the initial host namespace; passing the guard means only that the supported checks found no restriction or open consumer in the visible view, not that the database is globally offline.
+The operator must establish genuine host provenance independently and keep all consumers stopped throughout; `/proc` cannot prevent a future opener, and SQLite locks do not exclude all readers.
 There is deliberately no unsafe override of the offline guard.
 
 ## Apply protocol and guarantees
