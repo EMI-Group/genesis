@@ -192,6 +192,9 @@ A model profile can spend a ChatGPT/Claude **subscription login** instead of a p
 `with_tool_slot/2` acquires a unique permit and synchronously releases that exact permit in `after`, with stale release after ownership transfer a no-op.
 `BackgroundJobs.start_job/1` captures the runtime tool task's `:evogit_tool_permit` process key or acquires a permit in its caller using the spec's agent attribution, and the registry synchronously takes ownership before launch without ever waiting to acquire capacity itself.
 Every live background job retains its permit until the single terminal record funnel, launch failure or registry shutdown releases it, while scheduler owner monitoring covers registry crashes.
+Background launch requests carry the tool-task requester pid and a caller-minted monotonic deadline matching the 15-second registry call budget.
+The registry checks requester/agent liveness and the deadline before spawning and again before accepting success, killing an abandoned launch before releasing capacity; failed kills remain tracked and counted for cleanup.
+After acceptance, the job intentionally detaches from the requester and remains bound only to its owning agent.
 The existing handle-injection test seam follows the same permit policy, and unavailable scheduler service refuses a launch instead of allowing uncounted execution.
 
 ## Constraints

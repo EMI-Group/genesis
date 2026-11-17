@@ -383,8 +383,14 @@ defmodule EvoGit.BackgroundJobs do
       {:ok, permit} ->
         try do
           call_registry(
-            {:start_job, %{spec | tool_permit: permit}, handle},
-            {:error, registry_down_error()}
+            {:start_job,
+             Map.merge(spec, %{
+               tool_permit: permit,
+               launch_requester: self(),
+               launch_deadline: System.monotonic_time(:millisecond) + @call_timeout
+             }), handle},
+            {:error,
+             "The background job service is not running or the launch timed out before acknowledgement. Any unaccepted launch will be stopped; check the job list before retrying."}
           )
         after
           # Owner-enforced: after handoff this stale caller cannot free the job's
@@ -867,8 +873,16 @@ defmodule EvoGit.BackgroundJobs do
         result = handle_permitted_start(spec, handle_override, state)
 
         case result do
-          {:reply, {:error, _}, _} -> release_permit(spec.tool_permit)
-          _ -> :ok
+          {:reply, {:error, _}, updated_state} ->
+            # A failed cleanup must stay counted and inspectable until reaped.
+            unless Enum.any?(updated_state.jobs, fn {_id, job} ->
+                     job.tool_permit == spec.tool_permit and not terminal?(job)
+                   end) do
+              release_permit(spec.tool_permit)
+            end
+
+          _ ->
+            :ok
         end
 
         result
@@ -879,14 +893,43 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   defp handle_permitted_start(spec, handle_override, state) do
-    if live_jobs_for_owner(state.jobs, spec.owner_pid) >= @max_jobs_per_owner do
-      {:reply, {:error, limit_error()}, state}
-    else
-      case do_start_job(spec, handle_override, state) do
-        {:ok, job, state} -> {:reply, {:ok, job}, arm_tick(prune_finished(state))}
-        {:error, message} -> {:reply, {:error, message}, state}
-      end
+    cond do
+      not launch_valid?(spec) ->
+        {:reply, {:error, launch_abandoned_error()}, state}
+
+      live_jobs_for_owner(state.jobs, spec.owner_pid) >= @max_jobs_per_owner ->
+        {:reply, {:error, limit_error()}, state}
+
+      true ->
+        case do_start_job(spec, handle_override, state) do
+          {:ok, job, state} ->
+            # Spawn/tracking can block past the call budget or outlive the tool
+            # task. Only this acceptance point detaches from the requester.
+            if launch_valid?(spec) do
+              {:reply, {:ok, job}, arm_tick(prune_finished(state))}
+            else
+              case stop_job(job, :launch_abandoned, {:killed_by, :launch_abandoned}) do
+                {:ok, stopped} ->
+                  {:reply, {:error, launch_abandoned_error()}, arm_tick(put_job(state, stopped))}
+
+                {:error, message} ->
+                  {:reply, {:error, launch_abandoned_error() <> " " <> message}, arm_tick(state)}
+              end
+            end
+
+          {:error, message} ->
+            {:reply, {:error, message}, state}
+        end
     end
+  end
+
+  defp launch_valid?(spec) do
+    Process.alive?(spec.launch_requester) and Process.alive?(spec.owner_pid) and
+      System.monotonic_time(:millisecond) < spec.launch_deadline
+  end
+
+  defp launch_abandoned_error do
+    "The background job launch was not accepted because its requester or owning agent ended, or its launch deadline expired."
   end
 
   defp do_start_job(spec, handle_override, state) do
