@@ -112,7 +112,7 @@ Top-level approval registration tests do not establish evaluator authorization, 
 Approval-service restart with pending requests, responder/session authentication, approval-versus-cancel races and durable/redacted audit records remain outside this top-level coverage.
 
 ### Managed execution/activity test boundaries
-`tool_runtime_test.exs` directly drives `execute_batch/2` and pins serial-before-parallel ordering, parked simultaneous concurrent tool bodies, request-agent tool-slot ownership, exact timeout/crash results, request owner/role propagation and per-call execution metadata/backend/terminal facts.
+`tool_runtime_test.exs` directly drives `execute_batch/2` and pins serial-before-parallel ordering, parked simultaneous concurrent tool bodies, unique expensive-invocation permit ownership, cheap bypass under saturation, exact timeout/crash results, request owner/role propagation and per-call execution metadata/backend/terminal facts.
 Its returned results retain `{index, tool_call_id, name, output}`, but its execution-record assertions do not establish a call-id/index correlation or an agent current-call streaming contract.
 `tool_runtime_tracking_test.exs` uses real serial `write` calls and an isolated manager to pin builtin classification, malformed-argument settlement, OS-control refusal and listability without sampling.
 Its direct `Tracking.track/4` helper explicitly requires an unattached builtin execution to remain `:starting` until finish, so an inspector must not interpret only `:running` or `Registry.live/1` as all active tool calls.
@@ -120,13 +120,14 @@ Its direct `Tracking.track/4` helper explicitly requires an unattached builtin e
 The process manager PubSub topic is shared even for isolated registries, whose `proc-<n>` ids collide, so new event assertions need an additional unique execution identity or isolated PubSub plumbing rather than id-only matching.
 `remote_api_process_test.exs` pins degraded/unknown-manager behavior and native integer agent-id filtering, but contains no agent-stream snapshot or activity assertion.
 `background_jobs_test.exs` pins `job.execution_id` correlation, native integer agent/task identities, background origin and terminal settlement independently of foreground tool-call completion.
-### Background-job scheduler-accounting coverage gap
-`tool_runtime_test.exs:199–230` proves an agent-keyed scheduler tool holder exists while a parked fake foreground read runs and disappears after its batch returns, while `:155–192` proves concurrent fake tool-body overlap without asserting per-call capacity accounting.
-`background_jobs_test.exs:338–382` proves background ProcessManager tracking and settlement, `:782–833` proves the separate ten-live-jobs-per-owner cap, and `:838–861` plus `:873–924` prove detached-child cleanup on owner death and registry shutdown, not scheduler tool-slot retention.
-No top-level background-job/runtime test proves that a detached bash process retains scheduler capacity after launch returns or blocks a competing tool request until it exits.
-Missing integration regressions include real managed background dispatch followed by post-return occupancy and queued-competitor assertions, multiple jobs from one agent consuming distinct permits, and exactly-once permit release on natural exit, kill and owner death with no leak or double charge on launch failure or immediate exit.
-Sibling direct shell/job-output tests and agent-keyed scheduler handler tests do not bridge this gap; their evidence and boundaries live in `agent/tools/CONTEXT.md` and `agent_scheduler/CONTEXT.md`.
-These are coverage boundaries rather than evidence of production accounting behavior.
+### Invocation permits and background-job scheduler accounting
+`tool_runtime_policy_test.exs` is async and pins the cheap builtin/job-control bypass inventory, aliases, expensive calls and the expensive default for unknown/custom tools.
+`tool_runtime_test.exs` holds an expensive `rg` invocation permit, proves cheap real read/job-list dispatch progresses while an expensive competitor remains queued, and proves foreground timeout terminates its tool and releases capacity for subsequent dispatch.
+`background_job_permits_test.exs` covers exactly-one transferred launch occupancy across the job lifetime, stale launch-owner release refusal, natural exit/kill/owner-death release, repeated terminal observation without releasing a subsequent holder, post-handoff launch failure and immediate-exit cleanup.
+Its managed background bash regression runs real job-list/output/kill controls under saturation rather than only calling those tool implementations directly.
+The background permit module is synchronous because it changes the app-global scheduler capacity, and the runtime module also changes the global fake-tool registry; their in-file comments name these globals.
+`agent_scheduler/tool_permits_test.exs` is async with an isolated scheduler state and covers same-agent concurrent unique permits, queued caller death/FIFO cleanup, transfer and current-owner-only release.
+Direct job-tool behavior remains owned by `agent/tools/`, while scheduler API ownership and cleanup contracts belong to `agent_scheduler/`.
 New inspector-activity coverage must distinguish overlapping calls from a single current-call slot, foreground calls from surviving background jobs, listable builtin `:starting` activity from OS-sampleable execution, and process-statistics sequence numbers from the agent stream's own sequence.
 ## Notes for Agents
 - `EvoGit.PeakHourEngine` asynchronously rewrites the global scheduler's `model_concurrency`: it subscribes to the `"scheduler_config"` PubSub topic and re-applies an effective map from the LIVE `model_profiles`, possibly after a test's own `AgentScheduler.update_config/1`. So do NOT assert exact equality against live scheduler-derived values (`get_llm_slot_status/0`, `model_concurrency`) after mutating global config — inject a per-call seam or compare against a FRESH live read. `agent_scheduler_test.exs` instead suspends `PeakHourEngine` per test.
