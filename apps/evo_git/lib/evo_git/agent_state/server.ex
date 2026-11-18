@@ -150,15 +150,9 @@ defmodule EvoGit.AgentState.Server do
 
   ## Bookkeeping writes (casts: never a synchronous barrier for the caller)
 
-  # The v2 completion: the run is `done` and carries its result and the commit
-  # it produced. The legacy `{:mark_completed, …}` shape is the SAME write with
-  # nothing new to record.
+  # The completion: the run is `done` and carries its result and the commit it
+  # produced.
   @impl true
-  def handle_cast({:mark_completed, task_id, agent_id}, state) do
-    mark_done(state, task_id, agent_id, nil, nil)
-    {:noreply, state}
-  end
-
   def handle_cast({:mark_done, task_id, agent_id, result, current_commit}, state) do
     mark_done(state, task_id, agent_id, result, current_commit)
     {:noreply, state}

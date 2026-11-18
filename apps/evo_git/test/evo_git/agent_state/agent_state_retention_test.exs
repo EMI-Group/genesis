@@ -1,6 +1,6 @@
 defmodule EvoGit.AgentStateRetentionTest do
   @moduledoc """
-  RETENTION + DELETE coverage for the durable agent-state store: `mark_completed`
+  RETENTION + DELETE coverage for the durable agent-state store: `mark_done`
   keeps the row and stamps `status`/`completed_at`, `prune/1` deletes exactly the
   expired runs (with their chunks), a recently-touched row is never pruned, and
   `delete/3` / `delete_task/2` remove one run / every run of a task.
@@ -8,7 +8,7 @@ defmodule EvoGit.AgentStateRetentionTest do
   Every case uses its OWN isolated `EvoGit.AgentState` instance started with an
   EXPLICIT `retention_days: 7` start option (never an app-env mutation, so the
   module stays `async: true`) on a per-test SQLite file, addressed through
-  `store: pid`. Checkpoints AND the `mark_completed`/`delete`/`delete_task`/
+  `store: pid`. Checkpoints AND the `mark_done`/`delete`/`delete_task`/
   `delete_tasks` bookkeeping writes are CASTS, so every read/SQL assertion is
   preceded by `EvoGit.AgentState.flush/1`; `prune` is a synchronous call.
 
@@ -133,9 +133,9 @@ defmodule EvoGit.AgentStateRetentionTest do
   defp rewrite(messages),
     do: %{kind: :rewrite, messages: messages, fields: %{status: "running"}}
 
-  ## 1. mark_completed/3
+  ## 1. mark_done/5 without new facts
 
-  test "mark_completed/3 stamps status + completed_at and keeps messages and counts",
+  test "mark_done/5 with nil result and commit stamps status + completed_at and keeps messages and counts",
        %{tmp_dir: tmp_dir} do
     pid = start_store!(tmp_dir, retention_days: @retention_days)
     messages = [message("one"), message("two")]
@@ -148,7 +148,7 @@ defmodule EvoGit.AgentStateRetentionTest do
     assert before.message_count == 2
     assert before.chunk_count == 1
 
-    assert :ok = AgentState.mark_completed("task-a", 1, store: pid)
+    assert :ok = AgentState.mark_done("task-a", 1, nil, nil, store: pid)
     flush!(pid)
 
     assert {:ok, %Record{} = completed} = AgentState.load("task-a", 1, store: pid)
@@ -177,8 +177,8 @@ defmodule EvoGit.AgentStateRetentionTest do
     end
 
     # `task-a`'s two runs COMPLETE; `task-b`'s two never do (crash/abandon).
-    assert :ok = AgentState.mark_completed("task-a", 1, store: pid)
-    assert :ok = AgentState.mark_completed("task-a", 2, store: pid)
+    assert :ok = AgentState.mark_done("task-a", 1, nil, nil, store: pid)
+    assert :ok = AgentState.mark_done("task-a", 2, nil, nil, store: pid)
     flush!(pid)
 
     # Expired: completed 10 days ago, untouched since.
@@ -211,7 +211,7 @@ defmodule EvoGit.AgentStateRetentionTest do
        %{tmp_dir: tmp_dir} do
     pid = start_store!(tmp_dir, retention_days: @retention_days)
     checkpoint!(pid, "task-a", 1, rewrite([message("recent")]))
-    assert :ok = AgentState.mark_completed("task-a", 1, store: pid)
+    assert :ok = AgentState.mark_done("task-a", 1, nil, nil, store: pid)
     flush!(pid)
 
     # Old completion, but `updated_at` is NOW: the prune SQL additionally
@@ -230,7 +230,7 @@ defmodule EvoGit.AgentStateRetentionTest do
   test "a second prune returns {:ok, 0}", %{tmp_dir: tmp_dir} do
     pid = start_store!(tmp_dir, retention_days: @retention_days)
     checkpoint!(pid, "task-a", 1, rewrite([message("expired")]))
-    assert :ok = AgentState.mark_completed("task-a", 1, store: pid)
+    assert :ok = AgentState.mark_done("task-a", 1, nil, nil, store: pid)
     flush!(pid)
     backdate_completed!(pid, "task-a", 1, 10)
 

@@ -37,15 +37,9 @@ defmodule EvoGit.TaskRegistry.AgentStateRead do
 
   | Function | Degraded value | Consequence |
   |---|---|---|
-  | `root_agent_ids/2` | `[]` | resume/pause refuses with `:not_resumable` |
-  | `resumable?/2` | `false` | a restart classifies as NON-resumable (`:failed`) |
   | `roster/2` | `[]` | resume/pause refuses with `:not_resumable` |
   | `pause_commit/3` | `nil` | the worktree falls back to the task base |
   | `max_agent_id/1` | `0` | the scheduler seeds `next_agent_id` with `1` |
-
-  An unprovable "resumable" is answered `false` on purpose: a resume that
-  cannot prove durable state must not pretend, exactly like the honest-barrier
-  rule for `EvoGit.AgentState.flush/1`.
 
   ## The target is resolved in the CALLER
 
@@ -67,24 +61,6 @@ defmodule EvoGit.TaskRegistry.AgentStateRead do
 
   @supervisor EvoGit.TaskSupervisor
   @default_timeout 5_000
-
-  @doc """
-  The task's ROOT run ids (`parent_id IS NULL`), ascending. `[]` when the read
-  cannot be answered within its budget.
-  """
-  @spec root_agent_ids(EvoGit.AgentState.task_id(), keyword()) :: [pos_integer()]
-  def root_agent_ids(task_id, opts \\ []) do
-    read(&EvoGit.AgentState.root_agent_ids(task_id, store: &1), [], opts)
-  end
-
-  @doc """
-  Whether the task has ANY durable run row. `false` when the read cannot be
-  answered within its budget.
-  """
-  @spec resumable?(EvoGit.AgentState.task_id(), keyword()) :: boolean()
-  def resumable?(task_id, opts \\ []) do
-    read(&EvoGit.AgentState.resumable?(task_id, store: &1), false, opts)
-  end
 
   @doc """
   The task's whole durable run roster (`depth ASC, agent_id ASC`, each record

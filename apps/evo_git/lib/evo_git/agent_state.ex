@@ -62,14 +62,13 @@ defmodule EvoGit.AgentState do
 
   ## Task-level pause/resume
 
-  A task-level pause needs three durable facts, all owned here:
+  A task-level pause needs two durable facts, both owned here:
 
     * `pause_commit/2,3` — the git commit sha of the worktree checkpoint the
       agent made when it paused (written by `put_pause_commit/3,4`), so a later
       resume starts from exactly that commit;
-    * `resumable?/1,2` — whether the task has ANY durable run row at all;
-    * `root_agent_ids/1,2` — which of those runs are ROOT agents
-      (`parent_id IS NULL`).
+    * `roster/2` — the task's whole durable run tree, from which a resume
+      admission resolves the ROOT row it must restore.
 
   `flush/1` is the durability barrier the pause path calls immediately before it
   delivers a paused outcome: it is a synchronous `GenServer.call` round-trip
@@ -264,33 +263,6 @@ defmodule EvoGit.AgentState do
   end
 
   @doc """
-  Whether the task has ANY durable run row — the cheap gate a resume checks
-  before it asks `root_agent_ids/1,2` for the runs to restore.
-
-  Total: `false` on a missing/dead store, an error and no rows.
-  """
-  @spec resumable?(task_id(), keyword()) :: boolean()
-  def resumable?(task_id, opts \\ []) do
-    case repo(target(opts)) do
-      nil -> false
-      repo -> Store.resumable?(repo, task_id)
-    end
-  end
-
-  @doc """
-  The task's ROOT agent ids (`parent_id IS NULL`), ascending.
-
-  Total: `[]` on a missing/dead store, an error and no rows.
-  """
-  @spec root_agent_ids(task_id(), keyword()) :: [pos_integer()]
-  def root_agent_ids(task_id, opts \\ []) do
-    case repo(target(opts)) do
-      nil -> []
-      repo -> Store.root_agent_ids(repo, task_id)
-    end
-  end
-
-  @doc """
   The task's WHOLE durable agent tree, ordered `depth ASC, agent_id ASC`.
 
   ONE `SELECT` over `agent_states` with no chunk read: each record carries
@@ -377,17 +349,6 @@ defmodule EvoGit.AgentState do
   @spec delete_done_children(task_id(), integer() | nil, integer() | nil, keyword()) :: :ok
   def delete_done_children(task_id, parent_id, spawn_turn, opts \\ []) do
     cast(opts, {:delete_done_children, task_id, parent_id, spawn_turn})
-  end
-
-  @doc """
-  Legacy completion shape: marks the run done with no result and no commit.
-
-  A thin alias of `mark_done/5`; the call sites that only know an agent
-  finished keep working unchanged.
-  """
-  @spec mark_completed(String.t(), integer(), keyword()) :: :ok
-  def mark_completed(task_id, agent_id, opts \\ []) do
-    mark_done(task_id, agent_id, nil, nil, opts)
   end
 
   @doc """

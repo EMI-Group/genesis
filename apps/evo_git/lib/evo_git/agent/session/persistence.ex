@@ -81,7 +81,7 @@ defmodule EvoGit.Agent.Session.Persistence do
   `complete/2` owns the terminal decision: `mark_done/5` with the finished
   run's result, then a ROOT deletes its own row (nothing consumes a root's
   result) while a CHILD keeps its `done` row until the parent's batch-clearing
-  checkpoint deletes it (`EvoGit.AgentState.delete_done_children/3`).
+  checkpoint deletes it (`EvoGit.AgentState.delete_done_children/4`).
   """
 
   require Logger
@@ -187,7 +187,7 @@ defmodule EvoGit.Agent.Session.Persistence do
 
   It also anchors a commit this boundary ADVANCED (see "Git anchoring") and,
   when the boundary CLEARS the in-flight tool batch, deletes the `done` children
-  that batch produced (`EvoGit.AgentState.delete_done_children/3`, one cast).
+  that batch produced (`EvoGit.AgentState.delete_done_children/4`, one cast).
 
   Fully INERT (no cast, no encoding, no database touch, no process-dictionary
   write, no git write) unless `new_state.persistent_state == true`, so the

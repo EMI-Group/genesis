@@ -105,11 +105,9 @@ defmodule EvoGit.AgentState.SupervisionTest do
 
         assert {:error, :store_unavailable} = AgentState.load("task-broken", 1, store: supervisor)
         assert AgentState.pause_commit("task-broken", 1, store: supervisor) == nil
-        assert AgentState.resumable?("task-broken", store: supervisor) == false
-        assert AgentState.root_agent_ids("task-broken", store: supervisor) == []
         assert {:ok, 0} = AgentState.prune(store: supervisor)
         assert {:error, :timeout} = AgentState.flush(store: supervisor)
-        assert :ok = AgentState.mark_completed("task-broken", 1, store: supervisor)
+        assert :ok = AgentState.mark_done("task-broken", 1, nil, nil, store: supervisor)
         assert :ok = AgentState.delete("task-broken", 1, store: supervisor)
         assert :ok = AgentState.delete_task("task-broken", store: supervisor)
         assert :ok = AgentState.delete_tasks(["task-broken"], store: supervisor)
@@ -194,8 +192,6 @@ defmodule EvoGit.AgentState.SupervisionTest do
       assert {:error, :store_unavailable} =
                AgentState.load("task-dead-repo", 1, store: supervisor)
 
-      assert AgentState.resumable?("task-dead-repo", store: supervisor) == false
-      assert AgentState.root_agent_ids("task-dead-repo", store: supervisor) == []
       assert {:error, :timeout} = AgentState.flush(store: supervisor)
 
       # The same server boots a FRESH repo through the backoff path.
@@ -240,7 +236,7 @@ defmodule EvoGit.AgentState.SupervisionTest do
     assert {:ok, record} = AgentState.load("task-both", 2, store: server)
     assert record.messages == [message("via supervisor")]
 
-    assert :ok = AgentState.mark_completed("task-both", 2, store: supervisor)
+    assert :ok = AgentState.mark_done("task-both", 2, nil, nil, store: supervisor)
     assert :ok = AgentState.flush(server)
     assert {:ok, %{fields: fields}} = AgentState.load("task-both", 2, store: supervisor)
     assert fields[:status] == "done"

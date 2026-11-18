@@ -456,7 +456,7 @@ defmodule EvoGit.TaskControlTest do
   end
 
   # ONE durable root run through the app-booted agent-state server (the server
-  # the registry resolves), so `EvoGit.AgentState.root_agent_ids/1` is non-empty.
+  # the registry resolves), so `EvoGit.AgentState.roster/1` holds a ROOT row.
   defp seed_durable_run!(task_id, agent_id \\ 1) do
     on_exit(fn -> EvoGit.AgentState.delete_task(task_id) end)
 
