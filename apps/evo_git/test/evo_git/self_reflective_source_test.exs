@@ -277,6 +277,17 @@ defmodule EvoGit.SelfReflectiveSourceTest do
     test "does not infer a source checkout from the launch directory" do
       set_app_env(:self_reflective_source_root, nil)
       System.delete_env("GENESIS_SOURCE_ROOT")
+      # Step 3 of the chain (the reserved `vct:///genesis-source` mount) is
+      # BOOT-time host state, not launch-directory state: `EvoGit.Application`
+      # declares it while the BEAM still resolves the machine's REAL data dir
+      # (`test_helper.exs`'s XDG_DATA_HOME redirect runs only after app boot), so
+      # on a host whose managed `<data_dir>/genesis-source` is a valid clone the
+      # app-global mount holds a checkout no test here created — and whether this
+      # assertion still sees it depends on which earlier test in this module last
+      # re-pointed that shared mount (test order is seed-randomized). Pin an
+      # EMPTY per-test VCT (`:evogit_vct_server`) instead, so the step is
+      # test-owned and is really walked: no mount at the point, no checkout.
+      start_vct_stack!("avail-no-infer")
       refute SelfReflectiveSource.available?()
     end
   end
