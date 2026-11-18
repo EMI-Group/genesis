@@ -35,6 +35,32 @@ defmodule EvoGit.TaskRegistry.Pause do
   `agent_state.sqlite`; without it the task is not resumable and pause is
   REFUSED rather than pretending.
 
+  ## The ROOT row is the gate
+
+  Resumability is decided by the task's durable ROOT run — the record whose
+  `parent_id` is absent or `nil` — never by "any durable row": a resume that
+  cannot restore a root would silently start the objective from scratch, and a
+  roster holding only CHILD rows has nothing to resume. ONE bounded, offloaded
+  `EvoGit.TaskRegistry.AgentStateRead.roster/2` read yields that row
+  (`read_root_run/2`; the lowest `agent_id` among the root rows, which is what
+  the roster's `depth ASC, agent_id ASC` order puts first).
+
+  A resume carries five facts from that row to the scheduler, each key ALWAYS
+  present on the spawn opts (`nil` included, so "resolved to nothing" and
+  "never resolved" stay distinguishable):
+
+  | Key | Value |
+  |---|---|
+  | `:pause_commit` | the root row's `fields[:pause_commit]` (the worktree checkpoint) |
+  | `:resume_agent_id` | the row's persisted `agent_id` — the id the resumed run registers under |
+  | `:resume_current_commit` | the root row's `current_commit` |
+  | `:resume_branch` | the root row's `branch` |
+  | `:resume_anchor_ref` | the root row's `anchor_ref`, else `EvoGit.AgentState.Anchor.ref/2` |
+
+  The SAME root-row probe classifies a wrapper-less task for the restart paths,
+  so a child-only roster keeps the `:lease_expired` → `:failed` behaviour
+  instead of parking a task that could never be resumed.
+
   ## Who writes what
 
   | Step | Writer |
@@ -49,6 +75,8 @@ defmodule EvoGit.TaskRegistry.Pause do
 
   require Logger
 
+  alias EvoGit.AgentState.Anchor
+  alias EvoGit.AgentState.Record
   alias EvoGit.TaskRegistry.AgentStateRead
   alias EvoGit.TaskRegistry.StoreGuard
 
@@ -164,10 +192,11 @@ defmodule EvoGit.TaskRegistry.Pause do
   On a paused row it re-runs the SAME admission `start_task/2` runs
   (`RuntimeOpts.admit_model_selection/2` against the CURRENT config,
   `admit_session_mode/1`, `admit_persistent_state/1`); a failed admission answers
-  that `{:error, reason}` and leaves the row `:paused`. It then requires durable
-  run state (`EvoGit.AgentState.root_agent_ids/1 != []`, read BOUNDED through
-  `EvoGit.TaskRegistry.AgentStateRead`), because a resume with nothing to
-  restore would silently start the objective from scratch — that is
+  that `{:error, reason}` and leaves the row `:paused`. It then requires the
+  task's durable ROOT row (`read_root_run/2`: ONE bounded, offloaded
+  `EvoGit.TaskRegistry.AgentStateRead.roster/2` read), because a resume with
+  nothing to restore — no durable row at all, or a roster holding only child
+  rows — would silently start the objective from scratch: that is
   `{:error, :not_resumable}`.
 
   The write is TARGETED (`update_task_columns/3`, which always bumps
@@ -184,13 +213,17 @@ defmodule EvoGit.TaskRegistry.Pause do
   `EvoGit.TaskRegistry.RuntimeOpts.build_common_runtime_opts/3` forwards the key
   to the runtime, which turns it into the dispatch ctx `resume_kind` and the
   matching narration (`EvoGit.Agent.Resume`).
-  The ROOT run's pause checkpoint is resolved HERE, before the wrapper is
-  spawned, and carried as `pause_commit: sha | nil` (see `put_pause_commit/3`):
-  `EvoGit.AgentScheduler.Dispatch` bases the resumed worktree on it, and the
-  scheduler itself must never make a synchronous durable read. The key is
-  always present, so `nil` means "resolved, nothing stored" and an ABSENT key
-  means "not a pause resume" (the direct-dispatch path, which falls back to a
-  bounded read of its own).
+  The ROOT run's five resume facts are resolved HERE, before the wrapper is
+  spawned, and carried on the spawn opts (see `put_resume_facts/3`):
+  `:pause_commit` (the worktree checkpoint the resumed worktree is based on),
+  `:resume_agent_id` (the persisted root `agent_id` the resumed run registers
+  under, so every durable read keyed `(task_id, agent_id)` still resolves), and
+  `:resume_current_commit` / `:resume_branch` / `:resume_anchor_ref` (the root's
+  own newest commit, work branch and anchoring ref). Every key is always
+  present, `nil` included, so `nil` means "resolved, nothing stored" while an
+  ABSENT key means "not a pause resume" (the direct-dispatch path, which falls
+  back to a bounded read of its own). The scheduler itself must never make a
+  synchronous durable read.
 
   Sequencing: the scheduler pause marker is cleared FIRST (a re-spawned agent must
   never inherit a stale pause flag through `ControlPlane.ensure_row/1`), the
@@ -211,8 +244,8 @@ defmodule EvoGit.TaskRegistry.Pause do
       %{} = task ->
         with :ok <- ensure_paused(task),
              {:ok, spawn_opts} <- admit(task),
-             {:ok, root_ids} <- ensure_durable_runs(task_id) do
-          requeue(store, task, put_pause_commit(spawn_opts, task_id, root_ids), server, spawn_fun)
+             {:ok, root} <- ensure_root_run(task_id) do
+          requeue(store, task, put_resume_facts(spawn_opts, task_id, root), server, spawn_fun)
         end
     end
   end
@@ -233,27 +266,54 @@ defmodule EvoGit.TaskRegistry.Pause do
     end
   end
 
-  # The durable-run gate: a resume with nothing stored would silently start the
-  # objective from scratch. The ROOT ids come back so the resume can also carry
-  # the root's PAUSE CHECKPOINT — see `put_pause_commit/3`.
-  defp ensure_durable_runs(task_id) do
-    case AgentStateRead.root_agent_ids(task_id, op: "root_agent_ids") do
-      [] -> {:error, :not_resumable}
-      ids -> {:ok, ids}
+  # The durable-run gate: the ROOT row, not "any durable row". A resume with no
+  # root row (including a roster holding only children) would silently start the
+  # objective from scratch, so it refuses. ONE bounded, offloaded roster read
+  # serves this gate and the resume facts below.
+  defp ensure_root_run(task_id) do
+    case read_root_run(task_id, "resume_roster") do
+      %Record{} = root -> {:ok, root}
+      _none -> {:error, :not_resumable}
     end
   end
 
-  # The resumed ROOT run's pause checkpoint, resolved HERE — in the caller of
+  # The task's durable ROOT run — the record whose `fields[:parent_id]` is
+  # absent or `nil` (a missing key counts as root) — or `nil`. The roster is
+  # ordered `depth ASC, agent_id ASC`, so `Enum.find/2` yields the LOWEST
+  # `agent_id` when several root rows exist. Total: an unanswerable read
+  # degrades to `[]` and therefore to `nil`.
+  defp read_root_run(task_id, op) do
+    task_id
+    |> AgentStateRead.roster(op: op)
+    |> Enum.find(&root_run?/1)
+  end
+
+  defp root_run?(%Record{fields: fields}) when is_map(fields),
+    do: is_nil(Map.get(fields, :parent_id))
+
+  defp root_run?(_record), do: false
+
+  # The resumed ROOT run's five resume facts, resolved HERE — in the caller of
   # `EvoGit.AgentScheduler.Dispatch`, never inside the scheduler. The dispatch
-  # bases the resumed worktree on it (`spec.opts[:pause_commit]`) and must not
-  # make a synchronous durable read to find it. The read is bounded and
-  # offloaded (`EvoGit.TaskRegistry.AgentStateRead`), and the key is ALWAYS put
-  # (as `sha | nil`) so the dispatch can tell "resolved to nothing" from "never
+  # bases the resumed worktree and the agent identity on them
+  # (`spec.opts[:pause_commit]`, `[:resume_agent_id]`, …) and must not make a
+  # synchronous durable read to find them. EVERY key is put (as `sha |
+  # binary | nil`) so the dispatch can tell "resolved to nothing" from "never
   # resolved" — the latter is the direct-dispatch fallback, which reads the
   # store itself, bounded.
-  defp put_pause_commit(spawn_opts, task_id, [root_id | _rest]) do
-    sha = AgentStateRead.pause_commit(task_id, root_id, op: "pause_commit")
-    Keyword.put(spawn_opts, :pause_commit, sha)
+  defp put_resume_facts(spawn_opts, task_id, %Record{} = root) do
+    agent_id = root.agent_id
+    fields = if is_map(root.fields), do: root.fields, else: %{}
+
+    facts = [
+      pause_commit: Map.get(fields, :pause_commit),
+      resume_agent_id: agent_id,
+      resume_current_commit: Map.get(fields, :current_commit),
+      resume_branch: Map.get(fields, :branch),
+      resume_anchor_ref: Map.get(fields, :anchor_ref) || Anchor.ref(task_id, agent_id)
+    ]
+
+    Enum.reduce(facts, spawn_opts, fn {key, value}, acc -> Keyword.put(acc, key, value) end)
   end
 
   defp requeue(store, task, spawn_opts, server, spawn_fun) do
@@ -325,10 +385,15 @@ defmodule EvoGit.TaskRegistry.Pause do
   @doc """
   `true` when a task that lost its wrapper is RESUMABLE from durable state:
   `:persistent_state` is on for it (`true`/absent/`nil`; `false` or any
-  non-boolean refuses) AND `EvoGit.AgentState` holds at least one run row for the
-  task (`EvoGit.AgentState.resumable?/1`, read BOUNDED through
-  `EvoGit.TaskRegistry.AgentStateRead` so this classification can never block
-  the registry; an unprovable answer degrades to `false`).
+  non-boolean refuses) AND `EvoGit.AgentState` holds a durable ROOT run row for
+  the task (`read_root_run/2`: ONE bounded, offloaded
+  `EvoGit.TaskRegistry.AgentStateRead.roster/2` read, so this classification can
+  never block the registry).
+
+  The ROOT row is the fact that matters: a roster holding only CHILD runs cannot
+  restore the task (a resume starts from the root), so such a task answers
+  `false` and keeps the `:lease_expired` → `:failed` restart behaviour. An
+  unanswerable durable read also degrades to `false`.
 
   Accepts a `%EvoGit.TaskInfo{}` (or any atom-keyed map with `:id` + `:opts`),
   which is what both restart paths decode anyway. Total.
@@ -336,14 +401,14 @@ defmodule EvoGit.TaskRegistry.Pause do
   @spec dirty_pausable?(map()) :: boolean()
   def dirty_pausable?(%{id: task_id} = task) do
     persistent_state_on?(Map.get(task, :opts)) and
-      AgentStateRead.resumable?(task_id, op: "resumable?")
+      not is_nil(read_root_run(task_id, "dirty_pause_roster"))
   end
 
   def dirty_pausable?(_task), do: false
 
   @doc """
   The `:dirty` pause kind a restarted task lands in, or `nil` when it is not
-  resumable (and therefore keeps today's `:failed` restart behaviour).
+  resumable (and therefore keeps the `:failed` restart behaviour).
 
   Two arities:
     * `pause_kind_for_restart(task)` — the task row is already decoded;

@@ -9,6 +9,31 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
   per-agent-state opt-out).
   """
 
+  # The task-opt keys that carry a resumed ROOT run's durable facts from the
+  # persisted roster row to the scheduler (see `put_resume_facts/2`). ONE list,
+  # shared with `EvoGit.Runtime.Helpers` through `resume_fact_keys/0`, so the
+  # runtime-opts builder and the agent-spec forwarder can never diverge.
+  @resume_fact_keys [
+    :pause_commit,
+    :resume_agent_id,
+    :resume_current_commit,
+    :resume_branch,
+    :resume_anchor_ref
+  ]
+
+  @doc """
+  The task-opt keys a pause resume carries: `:pause_commit` (the ROOT run's
+  worktree checkpoint), `:resume_agent_id` (the persisted root `agent_id` the
+  resumed run registers under) and `:resume_current_commit` / `:resume_branch` /
+  `:resume_anchor_ref` (the root's own newest commit, branch and anchoring ref).
+
+  PRESENCE-based at every hop: a key is forwarded (value may be `nil`) only when
+  the caller supplied it, and all five are ABSENT for a non-resume run, whose
+  opts stay byte-identical.
+  """
+  @spec resume_fact_keys() :: [atom()]
+  def resume_fact_keys, do: @resume_fact_keys
+
   @doc """
   Admits a task's explicit model selection against a configuration snapshot.
 
@@ -240,15 +265,14 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
     # `resume_kind` (`:restore_agent_state` + the resume narration/repair).
     resume_kind = Keyword.get(opts, :resume_kind)
 
-    # The resumed ROOT run's pause checkpoint (`sha | nil`), pre-resolved by
-    # `EvoGit.TaskRegistry.Pause.resume/4`. A pause resume ALWAYS carries the
-    # key (nil included: "resolved, nothing stored"), so presence — not a
-    # non-nil value — is what tells `EvoGit.AgentScheduler.Dispatch` that the
-    # scheduler must not read the durable store itself. Absent for every other
-    # run, whose runtime opts stay byte-identical.
-    pause_commit = Keyword.get(opts, :pause_commit)
-    has_pause_commit? = Keyword.has_key?(opts, :pause_commit)
-
+    # The resumed ROOT run's durable facts, pre-resolved by
+    # `EvoGit.TaskRegistry.Pause.resume/4`: `:pause_commit`, `:resume_agent_id`,
+    # `:resume_current_commit`, `:resume_branch` and `:resume_anchor_ref`. A
+    # pause resume ALWAYS carries every key (nil included: "resolved, nothing
+    # stored"), so presence — not a non-nil value — is what tells
+    # `EvoGit.AgentScheduler.Dispatch` that the scheduler must not read the
+    # durable store itself. Absent for every other run, whose runtime opts stay
+    # byte-identical.
     runtime_opts =
       runtime_opts
       |> put_if(:node_path, node_path)
@@ -264,9 +288,20 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
       |> put_if(:resume_kind, resume_kind, fn value ->
         value in [:clean_pause, :dirty_pause]
       end)
-      |> put_if(:pause_commit, pause_commit, fn _value -> has_pause_commit? end)
+      |> put_resume_facts(opts)
 
     {nil, runtime_opts}
+  end
+
+  # Forwards the resume facts (see `resume_fact_keys/0`) PRESENCE-based: a key
+  # present on the task opts is put with its value (`nil` included), an absent
+  # key stays absent so a non-resume run's runtime opts are byte-identical.
+  defp put_resume_facts(runtime_opts, opts) do
+    Enum.reduce(@resume_fact_keys, runtime_opts, fn key, acc ->
+      if Keyword.has_key?(opts, key),
+        do: Keyword.put(acc, key, Keyword.get(opts, key)),
+        else: acc
+    end)
   end
 
   # resolved.model_spec is a ReqLLM identifier, not the task's selection map.

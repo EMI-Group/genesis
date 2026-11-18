@@ -9,8 +9,10 @@ defmodule EvoGit.TaskRegistry.AgentStateRead do
 
     * `EvoGit.TaskRegistry` — pause/restart classification
       (`EvoGit.TaskRegistry.Pause.dirty_pausable?/1`,
-      `pause_kind_for_restart/1,2`), resume admission and the ROOT run's
-      `pause_commit` a resume hands to the scheduler;
+      `pause_kind_for_restart/1,2`) and resume admission, which resolves the
+      ROOT row through `roster/2` and hands the whole resume record — its
+      persisted `agent_id`, `current_commit`, `branch`, `anchor_ref` and
+      `pause_commit` — to the scheduler;
     * `EvoGit.AgentScheduler.Dispatch` — the pause-resume worktree base, only
       on the direct-dispatch fallback (`spec.opts[:pause_commit]` absent);
     * `EvoGit.AgentScheduler.init/1` — the boot seed of `next_agent_id`
@@ -37,6 +39,7 @@ defmodule EvoGit.TaskRegistry.AgentStateRead do
   |---|---|---|
   | `root_agent_ids/2` | `[]` | resume/pause refuses with `:not_resumable` |
   | `resumable?/2` | `false` | a restart classifies as NON-resumable (`:failed`) |
+  | `roster/2` | `[]` | resume/pause refuses with `:not_resumable` |
   | `pause_commit/3` | `nil` | the worktree falls back to the task base |
   | `max_agent_id/1` | `0` | the scheduler seeds `next_agent_id` with `1` |
 
@@ -81,6 +84,16 @@ defmodule EvoGit.TaskRegistry.AgentStateRead do
   @spec resumable?(EvoGit.AgentState.task_id(), keyword()) :: boolean()
   def resumable?(task_id, opts \\ []) do
     read(&EvoGit.AgentState.resumable?(task_id, store: &1), false, opts)
+  end
+
+  @doc """
+  The task's whole durable run roster (`depth ASC, agent_id ASC`, each record
+  with `messages: nil` and its full atom-keyed scalar `fields`), or `[]` —
+  including when the read cannot be answered within its budget.
+  """
+  @spec roster(EvoGit.AgentState.task_id(), keyword()) :: [EvoGit.AgentState.Record.t()]
+  def roster(task_id, opts \\ []) do
+    read(&EvoGit.AgentState.roster(task_id, store: &1), [], opts)
   end
 
   @doc """
