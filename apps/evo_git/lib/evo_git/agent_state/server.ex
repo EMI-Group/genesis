@@ -150,10 +150,32 @@ defmodule EvoGit.AgentState.Server do
 
   ## Bookkeeping writes (casts: never a synchronous barrier for the caller)
 
+  # The v2 completion: the run is `done` and carries its result and the commit
+  # it produced. The legacy `{:mark_completed, …}` shape is the SAME write with
+  # nothing new to record.
   @impl true
   def handle_cast({:mark_completed, task_id, agent_id}, state) do
+    mark_done(state, task_id, agent_id, nil, nil)
+    {:noreply, state}
+  end
+
+  def handle_cast({:mark_done, task_id, agent_id, result, current_commit}, state) do
+    mark_done(state, task_id, agent_id, result, current_commit)
+    {:noreply, state}
+  end
+
+  # A parent consumed the children of ONE tool batch: their `done` rows (and
+  # chunks) stop being needed.
+  def handle_cast({:delete_done_children, task_id, parent_id, spawn_turn}, state) do
     with repo when is_pid(repo) <- state.repo do
-      report("mark_completed", task_id, Store.mark_completed(repo, task_id, agent_id))
+      report(
+        "delete_done_children",
+        task_id,
+        Store.delete_done_children(repo, task_id, parent_id, spawn_turn)
+      )
+    else
+      _degraded ->
+        Logger.debug("[AgentState] skipping done-children delete: writer is degraded")
     end
 
     {:noreply, state}
@@ -526,6 +548,21 @@ defmodule EvoGit.AgentState.Server do
     do: "payload of #{bytes} bytes above the #{state.max_payload_bytes}-byte cap"
 
   ## Helpers
+
+  defp mark_done(state, task_id, agent_id, result, current_commit) do
+    with repo when is_pid(repo) <- state.repo do
+      report(
+        "mark_done",
+        task_id,
+        Store.mark_done(repo, task_id, agent_id, result, current_commit)
+      )
+    else
+      _degraded ->
+        Logger.debug("[AgentState] skipping mark_done: writer is degraded")
+    end
+
+    :ok
+  end
 
   defp report(_action, _task_id, :ok), do: :ok
 
