@@ -26,9 +26,11 @@ defmodule EvoGit.AgentScheduler.PauseResumeDispatchTest do
 
     * a `:clean_pause` / `:dirty_pause` resume sets `restore_agent_state: true`
       and carries `resume_kind` — with NO retries involved;
-    * the base is `meta.crash_commit` when a restart salvaged the paused
-      worktree, else the per-agent `AgentState.pause_commit/2` checkpoint, and
-      both are VERIFIED against the repo (`git cat-file -e`);
+    * the base precedence is `spec.opts[:pause_commit]` (then
+      `spec.opts[:resume_current_commit]`, then `meta.crash_commit`, then the
+      task base), and every candidate is VERIFIED against the repo
+      (`git cat-file -e`) — an unusable sha degrades to the NEXT candidate
+      instead of guessing;
     * a missing / unknown sha degrades to the task base (`worktree_resume_from`
       `nil`, spec untouched, dispatch still usable);
     * a `nil` `resume_kind` keeps today's crash-retry semantics byte-identical;
@@ -107,7 +109,7 @@ defmodule EvoGit.AgentScheduler.PauseResumeDispatchTest do
       assert plan.meta.spec.phylo_node.current_commit == pause
     end
 
-    test "a dirty pause prefers the restart's salvage commit over the pause checkpoint", %{
+    test "a pause checkpoint wins over a restart salvage commit", %{
       repo: repo,
       base: base,
       pause: pause
@@ -119,7 +121,33 @@ defmodule EvoGit.AgentScheduler.PauseResumeDispatchTest do
       salvage = commit!(repo, "salvaged.txt", "salvaged\n", "salvage after restart")
 
       {spec, meta} = build(agent_id, task_id, repo, base, resume_kind: :dirty_pause)
-      # A restart may have salvaged the paused worktree: `crash_commit` wins.
+      # A restart may ALSO have salvaged the paused worktree (`crash_commit`).
+      # Both are usable, and the PAUSE CHECKPOINT is the one the pause finalizer
+      # recorded for this agent, so it wins.
+      meta = %{meta | retries: 1, crash_commit: salvage, crash_reason: {:error, :restart}}
+
+      plan = Dispatch.resume_plan(agent_id, spec, meta, repo, 1)
+
+      assert plan.resume_kind == :dirty_pause
+      assert plan.restore_agent_state == true
+      assert plan.worktree_resume_from == pause
+      assert plan.spec.phylo_node.current_commit == pause
+    end
+
+    test "degrades to the restart salvage commit when the pause checkpoint is unusable", %{
+      repo: repo,
+      base: base
+    } do
+      agent_id = unique_agent_id()
+      task_id = unique_task_id()
+
+      # The stored checkpoint sha resolves to nothing in this repo (a pruned
+      # commit, a different repo): the salvage commit of the crashed attempt is
+      # then the best base available.
+      seed_pause_checkpoint!(task_id, agent_id, "0123456789abcdef0123456789abcdef01234567")
+      salvage = commit!(repo, "salvaged.txt", "salvaged\n", "salvage after restart")
+
+      {spec, meta} = build(agent_id, task_id, repo, base, resume_kind: :dirty_pause)
       meta = %{meta | retries: 1, crash_commit: salvage, crash_reason: {:error, :restart}}
 
       plan = Dispatch.resume_plan(agent_id, spec, meta, repo, 1)

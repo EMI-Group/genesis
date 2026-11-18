@@ -1072,7 +1072,7 @@ defmodule EvoGit.AgentScheduler do
       repo_root = Dispatch.resolve_agent_repo_root(spec, state)
       task_number = Dispatch.next_task_number(repo_root)
 
-      case Dispatch.register_agent(state, spec, from, nil, 0, task_id, task_number) do
+      case register_root_agent(state, spec, from, task_id, task_number) do
         {:error, reason} ->
           {:reply, {:error, reason}, state}
 
@@ -1656,7 +1656,7 @@ defmodule EvoGit.AgentScheduler do
 
       # `from = nil`: nothing blocks on this session's terminal outcome — it is
       # collected through `await_close/2`'s registered close waiter instead.
-      case Dispatch.register_agent(state, spec, nil, nil, 0, task_id, task_number) do
+      case register_root_agent(state, spec, nil, task_id, task_number) do
         {:error, reason} ->
           {:reply, {:error, reason}, state}
 
@@ -1677,6 +1677,40 @@ defmodule EvoGit.AgentScheduler do
 
           {:reply, {:ok, agent_id}, state}
       end
+    end
+  end
+
+  # ROOT registration — the ONE place a resumed run re-uses the `agent_id` a
+  # previous run of the SAME logical agent PERSISTED (`spec.opts[:resume_agent_id]`,
+  # threaded by `EvoGit.TaskRegistry.ResumeContext`), because every durable read
+  # (`EvoGit.AgentState` rows, the transcript, the git anchor) is keyed
+  # `(task_id, agent_id)`.
+  #
+  # `Dispatch.register_agent/8` adopts an explicit id only while it is FREE and
+  # otherwise fails closed with `{:error, {:agent_id_taken, id}}` — before any
+  # ETS/counter mutation, so nothing is half-applied. That failure DEGRADES here
+  # instead of failing the task: ONE warning, then a registration WITHOUT the
+  # explicit id (a fresh allocation). A resumed run under a fresh id still runs
+  # correctly, it simply cannot restore the predecessor's transcript — which is
+  # strictly better than hijacking a live agent or refusing to resume.
+  #
+  # Every other registration error (an invalid model selection) is returned
+  # unchanged, exactly as before this id adoption existed.
+  defp register_root_agent(state, %AgentSpec{} = spec, from, task_id, task_number) do
+    opts = Dispatch.resume_registration_opts(spec)
+
+    case Dispatch.register_agent(state, spec, from, nil, 0, task_id, task_number, opts) do
+      {:error, {:agent_id_taken, id}} ->
+        Logger.warning(
+          "AgentScheduler: persisted agent id #{inspect(id)} for task #{inspect(task_id)} is " <>
+            "still in use; registering this run under a fresh id (its durable state cannot be " <>
+            "restored)"
+        )
+
+        Dispatch.register_agent(state, spec, from, nil, 0, task_id, task_number)
+
+      other ->
+        other
     end
   end
 

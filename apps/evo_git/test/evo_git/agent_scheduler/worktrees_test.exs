@@ -325,7 +325,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
     task_number = Keyword.get(opts, :task_number, 1)
     task_local_id = Keyword.get(opts, :task_local_id, 1)
     repo_id = Keyword.get(opts, :repo_id, "primary")
-    spec = %{build_spec(tmp_dir, base_sha) | repo_id: repo_id}
+    spec_opts = Keyword.get(opts, :spec_opts, [])
+    spec = %{build_spec(tmp_dir, base_sha) | repo_id: repo_id, opts: spec_opts}
     meta = build_meta(agent_id, spec, task_number)
     Store.put_agent_state(agent_id, build_agent_state(tmp_dir, task_local_id))
     Store.put_sched_meta(agent_id, meta)
@@ -1241,6 +1242,35 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         end)
 
       assert log =~ "Could not remove leftover branch"
+    end
+
+    test "a RESUMED spec recreates its PERSISTED branch name", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      agent_id = unique_agent_id()
+      branch = "evogit-agent-T1-A9"
+
+      # The branch a paused run persisted. The fresh derivation for this row's
+      # task-local id (3) would be `evogit-agent-T1-A3`, so a resolver that
+      # ignored `:worktree_branch` would create the WRONG branch.
+      {spec, meta} =
+        register_agent(agent_id, tmp_dir, base_sha,
+          task_local_id: 3,
+          spec_opts: [worktree_branch: branch]
+        )
+
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A3")
+      File.mkdir_p!(Path.dirname(wt_path))
+
+      assert {:ok, ^wt_path} =
+               Worktrees.prepare_new_worktree(agent_id, tmp_dir, wt_path, spec, meta)
+
+      # The spec's own base is a real commit, so nothing is re-established: the
+      # create is the ordinary one, on the PERSISTED name.
+      assert Git.branch_exists?(tmp_dir, branch)
+      refute Git.branch_exists?(tmp_dir, "evogit-agent-T1-A3")
+      assert {:ok, ^base_sha} = Git.rev_parse(tmp_dir, branch)
     end
 
     test "escalates when a leftover dir cannot be removed (rm_rf failure)", %{

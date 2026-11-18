@@ -42,6 +42,7 @@ defmodule EvoGit.AgentScheduler.AgentIdentityTest do
   # gets small scheduler-allocated ids, and these must never collide with one.
   @adoptable_id 70_000_007
   @held_id 70_000_008
+  @resumed_id 70_000_009
   @counter_base 70_000_100
 
   # --- Boot seeding of next_agent_id ---------------------------------------
@@ -145,6 +146,53 @@ defmodule EvoGit.AgentScheduler.AgentIdentityTest do
 
         cleanup_agent(@counter_base)
       end
+    end
+
+    test "a RESUME adopts the persisted id carried by its resume facts" do
+      refute match?({:ok, _pid}, EvoGit.Agent.Session.whereis(@resumed_id))
+      task_id = unique_task_id("resume-adopt")
+
+      # The persisted facts `EvoGit.TaskRegistry.Pause.resume/4` resolved: the
+      # previous run's agent id, its branch and the resume kind.
+      resumed_spec =
+        spec(
+          resume_agent_id: @resumed_id,
+          resume_branch: "evogit-agent-T2-A1",
+          resume_kind: :clean_pause
+        )
+
+      registration_opts = Dispatch.resume_registration_opts(resumed_spec)
+      assert registration_opts == [agent_id: @resumed_id]
+
+      # A base counter BELOW the persisted id, so the adoption has to jump it.
+      assert {@resumed_id, state} =
+               Dispatch.register_agent(
+                 state(1),
+                 resumed_spec,
+                 nil,
+                 nil,
+                 0,
+                 task_id,
+                 2,
+                 registration_opts
+               )
+
+      cleanup_agent(@resumed_id)
+
+      assert state.next_agent_id == @resumed_id + 1
+
+      assert {:ok, %SchedMeta{id: @resumed_id, task_id: ^task_id, spec: stored_spec}} =
+               Store.get_sched_meta(@resumed_id)
+
+      # The resume facts survived registration, so the dispatch can still
+      # resolve the branch and the durable row by the SAME identity.
+      assert %AgentSpec{opts: stored_opts} = stored_spec
+      assert Keyword.get(stored_opts, :resume_agent_id) == @resumed_id
+      assert Keyword.get(stored_opts, :resume_branch) == "evogit-agent-T2-A1"
+      assert Keyword.get(stored_opts, :resume_kind) == :clean_pause
+
+      assert {:ok, %AgentState{parent_id: nil, task_local_id: 1}} =
+               Store.get_agent_state(@resumed_id)
     end
 
     test "allocation without an explicit id is unchanged" do
