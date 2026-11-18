@@ -82,7 +82,7 @@ defmodule EvoGit.Agent.Session.FinalizeOrderTest do
       # Ordering must not cost durability: the marking still lands.
       :ok = AgentState.flush(store: writer)
       assert {:ok, record} = AgentState.load(task_id, ctx.agent_id, store: writer)
-      assert record.fields[:status] == "completed"
+      assert record.fields[:status] == "done"
       assert %DateTime{} = record.completed_at
     end
 
@@ -157,6 +157,17 @@ defmodule EvoGit.Agent.Session.FinalizeOrderTest do
     do: to == test_pid
 
   defp result_send?(_send, _test_pid), do: false
+
+  # The terminal marking is ONE cast: the v2 `:mark_done` shape (which the
+  # legacy `mark_completed/3` alias now sends) or the legacy
+  # `:mark_completed` message itself.
+  defp completed_cast?(
+         {{:"$gen_cast", {:mark_done, task_id, agent_id, _result, _commit}}, to},
+         writer,
+         task_id,
+         agent_id
+       ),
+       do: to == writer
 
   defp completed_cast?(
          {{:"$gen_cast", {:mark_completed, task_id, agent_id}}, to},

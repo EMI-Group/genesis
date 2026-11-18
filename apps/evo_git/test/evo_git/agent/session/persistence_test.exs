@@ -776,7 +776,7 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
 
       record = load!(task_id, agent_id)
 
-      assert record.fields[:status] == "completed"
+      assert record.fields[:status] == "done"
       assert %DateTime{} = record.completed_at
       assert record.messages == msgs(2)
       assert record.message_count == 2

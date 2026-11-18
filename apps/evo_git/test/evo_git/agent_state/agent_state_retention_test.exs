@@ -152,7 +152,9 @@ defmodule EvoGit.AgentStateRetentionTest do
     flush!(pid)
 
     assert {:ok, %Record{} = completed} = AgentState.load("task-a", 1, store: pid)
-    assert completed.fields[:status] == "completed"
+    # The v2 status vocabulary has exactly `running` and `done` (`completed` is
+    # the legacy spelling the run-facts migration normalizes away).
+    assert completed.fields[:status] == "done"
     assert %DateTime{} = completed.completed_at
     assert DateTime.compare(completed.completed_at, DateTime.utc_now()) == :lt
 
@@ -218,7 +220,7 @@ defmodule EvoGit.AgentStateRetentionTest do
 
     assert {:ok, 0} = AgentState.prune(store: pid)
     assert {:ok, %Record{} = record} = AgentState.load("task-a", 1, store: pid)
-    assert record.fields[:status] == "completed"
+    assert record.fields[:status] == "done"
     assert record.messages == [message("recent")]
     assert count_chunks!(pid, "task-a", 1) == 1
   end
