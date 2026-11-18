@@ -49,6 +49,14 @@ defmodule EvoGit.AgentState.PauseTest do
     :ok = AgentState.flush(store: pid)
   end
 
+  # The isolated instance pid is a SUPERVISOR pid; its writer is the one child.
+  defp server_pid(supervisor) do
+    case Supervisor.which_children(supervisor) do
+      [{EvoGit.AgentState.Server, pid, :worker, _modules}] when is_pid(pid) -> pid
+      other -> flunk("unexpected agent-state children: #{inspect(other)}")
+    end
+  end
+
   defp rewrite(messages, fields), do: %{kind: :rewrite, messages: messages, fields: fields}
 
   defp sql!(pid, sql, params) do
@@ -191,7 +199,9 @@ defmodule EvoGit.AgentState.PauseTest do
       assert AgentState.pause_commit("task-inert", 1, store: absent) == nil
       assert AgentState.resumable?("task-inert", store: absent) == false
       assert AgentState.root_agent_ids("task-inert", store: absent) == []
-      assert :ok = AgentState.flush(store: absent)
+      # An absent writer is NOT a durability barrier: it honestly answers the
+      # non-durable shape instead of a false `:ok`.
+      assert {:error, :timeout} = AgentState.flush(store: absent)
       assert :ok = AgentState.flush(1)
 
       # Sanity: the same calls work through a live store, so the assertions
@@ -269,9 +279,10 @@ defmodule EvoGit.AgentState.PauseTest do
       task_id = "task_flush"
       agent_id = 3
 
-      # The server answers the barrier synchronously (it is a GenServer.call,
-      # never a cast): this is the structural pin on "returns means durable".
-      assert GenServer.call(pid, :sync, 1_000) == :ok
+      # The WRITER answers the barrier synchronously (it is a GenServer.call,
+      # never a cast): this is the structural pin on "`:ok` means durable".
+      server = server_pid(pid)
+      assert GenServer.call(server, :sync, 1_000) == :ok
 
       # A cast checkpoint followed immediately by the barrier: after it returns
       # a FRESH load must see the message, with no sleeping and no retry.
@@ -285,7 +296,7 @@ defmodule EvoGit.AgentState.PauseTest do
 
       # An AGENT ID is accepted (the pause path holds one): the single
       # serialized writer makes it the same barrier.
-      Process.put(:evogit_agent_state_server, pid)
+      Process.put(:evogit_agent_state_server, server)
       on_exit(fn -> Process.delete(:evogit_agent_state_server) end)
 
       assert :ok = AgentState.flush(agent_id)
@@ -325,7 +336,7 @@ defmodule EvoGit.AgentState.PauseTest do
 
       # The pause path knows only the agent id, so the store it is talking to
       # comes from the process-dictionary seam (production: the named default).
-      Process.put(:evogit_agent_state_server, pid)
+      Process.put(:evogit_agent_state_server, server_pid(pid))
       on_exit(fn -> Process.delete(:evogit_agent_state_server) end)
 
       assert :ok = AgentState.flush(agent_id)

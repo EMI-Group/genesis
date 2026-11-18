@@ -8,9 +8,9 @@ defmodule EvoGit.AgentStateRetentionTest do
   Every case uses its OWN isolated `EvoGit.AgentState` instance started with an
   EXPLICIT `retention_days: 7` start option (never an app-env mutation, so the
   module stays `async: true`) on a per-test SQLite file, addressed through
-  `store: pid`. Checkpoints are CASTS: every read/SQL assertion is preceded by
-  `EvoGit.AgentState.flush/1`, while `mark_completed`/`delete`/`delete_task`/
-  `prune` are synchronous calls.
+  `store: pid`. Checkpoints AND the `mark_completed`/`delete`/`delete_task`/
+  `delete_tasks` bookkeeping writes are CASTS, so every read/SQL assertion is
+  preceded by `EvoGit.AgentState.flush/1`; `prune` is a synchronous call.
 
   Expiry is produced by BACKDATING the stored ISO8601 timestamps through the
   store's own dynamic repo — no clock seam, no sleeping.
@@ -45,6 +45,12 @@ defmodule EvoGit.AgentStateRetentionTest do
   defp checkpoint!(pid, task_id, agent_id, entry) do
     :ok = EvoGit.AgentState.checkpoint(task_id, agent_id, entry, store: pid)
     :ok = EvoGit.AgentState.flush(store: pid)
+  end
+
+  # Bookkeeping writes are casts: flush before observing them.
+  defp flush!(pid) do
+    assert :ok = EvoGit.AgentState.flush(store: pid)
+    :ok
   end
 
   defp sql!(pid, sql, params) do
@@ -143,6 +149,7 @@ defmodule EvoGit.AgentStateRetentionTest do
     assert before.chunk_count == 1
 
     assert :ok = AgentState.mark_completed("task-a", 1, store: pid)
+    flush!(pid)
 
     assert {:ok, %Record{} = completed} = AgentState.load("task-a", 1, store: pid)
     assert completed.fields[:status] == "completed"
@@ -170,6 +177,7 @@ defmodule EvoGit.AgentStateRetentionTest do
     # `task-a`'s two runs COMPLETE; `task-b`'s two never do (crash/abandon).
     assert :ok = AgentState.mark_completed("task-a", 1, store: pid)
     assert :ok = AgentState.mark_completed("task-a", 2, store: pid)
+    flush!(pid)
 
     # Expired: completed 10 days ago, untouched since.
     backdate_completed!(pid, "task-a", 1, 10)
@@ -202,6 +210,7 @@ defmodule EvoGit.AgentStateRetentionTest do
     pid = start_store!(tmp_dir, retention_days: @retention_days)
     checkpoint!(pid, "task-a", 1, rewrite([message("recent")]))
     assert :ok = AgentState.mark_completed("task-a", 1, store: pid)
+    flush!(pid)
 
     # Old completion, but `updated_at` is NOW: the prune SQL additionally
     # requires `updated_at < completed_before`.
@@ -220,6 +229,7 @@ defmodule EvoGit.AgentStateRetentionTest do
     pid = start_store!(tmp_dir, retention_days: @retention_days)
     checkpoint!(pid, "task-a", 1, rewrite([message("expired")]))
     assert :ok = AgentState.mark_completed("task-a", 1, store: pid)
+    flush!(pid)
     backdate_completed!(pid, "task-a", 1, 10)
 
     assert {:ok, 1} = AgentState.prune(store: pid)
@@ -237,6 +247,7 @@ defmodule EvoGit.AgentStateRetentionTest do
     checkpoint!(pid, "task-b", 1, rewrite([message("b1")]))
 
     assert :ok = AgentState.delete("task-a", 1, store: pid)
+    flush!(pid)
 
     assert {:error, :not_found} = AgentState.load("task-a", 1, store: pid)
     assert count_chunks!(pid, "task-a", 1) == 0
@@ -251,6 +262,7 @@ defmodule EvoGit.AgentStateRetentionTest do
     # Total: deleting an absent run is still `:ok`.
     assert :ok = AgentState.delete("task-a", 1, store: pid)
     assert :ok = AgentState.delete("never-seen", 9, store: pid)
+    flush!(pid)
   end
 
   ## 6. delete_task/2
@@ -263,6 +275,7 @@ defmodule EvoGit.AgentStateRetentionTest do
     checkpoint!(pid, "task-b", 1, rewrite([message("b1")]))
 
     assert :ok = AgentState.delete_task("task-a", store: pid)
+    flush!(pid)
 
     assert {:error, :not_found} = AgentState.load("task-a", 1, store: pid)
     assert {:error, :not_found} = AgentState.load("task-a", 2, store: pid)
@@ -276,5 +289,36 @@ defmodule EvoGit.AgentStateRetentionTest do
 
     # Total: deleting an absent task is still `:ok`.
     assert :ok = AgentState.delete_task("never-seen", store: pid)
+    flush!(pid)
+  end
+
+  ## 7. delete_tasks/2 — ONE cast for a bulk cleanup
+
+  test "delete_tasks/2 removes every run of every listed task in one write",
+       %{tmp_dir: tmp_dir} do
+    pid = start_store!(tmp_dir, retention_days: @retention_days)
+    checkpoint!(pid, "task-a", 1, rewrite([message("a1")]))
+    checkpoint!(pid, "task-a", 2, rewrite([message("a2")]))
+    checkpoint!(pid, "task-b", 1, rewrite([message("b1")]))
+    checkpoint!(pid, "task-c", 1, rewrite([message("c1")]))
+
+    assert :ok = AgentState.delete_tasks(["task-a", "task-b"], store: pid)
+    flush!(pid)
+
+    assert count_rows!(pid, "task-a") == 0
+    assert count_rows!(pid, "task-b") == 0
+    assert count_chunks!(pid, "task-a", 1) == 0
+    assert count_chunks!(pid, "task-a", 2) == 0
+    assert count_chunks!(pid, "task-b", 1) == 0
+
+    # Untouched: a task outside the list keeps its row and chunks.
+    assert count_rows!(pid, "task-c") == 1
+    assert {:ok, %Record{}} = AgentState.load("task-c", 1, store: pid)
+
+    # Total: an empty list and a re-delete are both `:ok`.
+    assert :ok = AgentState.delete_tasks([], store: pid)
+    assert :ok = AgentState.delete_tasks(["task-a"], store: pid)
+    assert :ok = AgentState.delete_tasks(:not_a_list, store: pid)
+    flush!(pid)
   end
 end

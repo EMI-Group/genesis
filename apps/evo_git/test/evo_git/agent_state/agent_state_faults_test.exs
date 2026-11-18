@@ -204,9 +204,11 @@ defmodule EvoGit.AgentStateFaultsTest do
 
     # A cast to a dead pid is total...
     assert :ok = AgentState.checkpoint("task-a", 1, rewrite([message("two")]), store: pid)
-    assert :ok = AgentState.flush(store: pid)
 
-    # ...and so is every call: the guarded `GenServer.call/3` contains the exit.
+    # ...but the barrier is HONEST: a dead writer cannot be claimed durable.
+    assert {:error, :timeout} = AgentState.flush(store: pid)
+
+    # ...and every call is total: the guarded `GenServer.call/3` contains the exit.
     assert :ok = AgentState.mark_completed("task-a", 1, store: pid)
     assert :ok = AgentState.delete("task-a", 1, store: pid)
     assert :ok = AgentState.delete_task("task-a", store: pid)
@@ -265,7 +267,8 @@ defmodule EvoGit.AgentStateFaultsTest do
     assert AgentState.repo(absent) == nil
 
     assert :ok = AgentState.checkpoint("task-z", 1, rewrite([message("one")]), store: absent)
-    assert :ok = AgentState.flush(store: absent)
+    # An unregistered NAME is a dead writer, not "nothing to flush".
+    assert {:error, :timeout} = AgentState.flush(store: absent)
     assert {:error, :store_unavailable} = AgentState.load("task-z", 1, store: absent)
     assert :ok = AgentState.mark_completed("task-z", 1, store: absent)
     assert :ok = AgentState.delete("task-z", 1, store: absent)
