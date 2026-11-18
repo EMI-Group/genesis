@@ -138,6 +138,19 @@ Scripts still override the fallback (nil/error results use it; invalid canonical
 **Per-agent-run prompt-cache identity**: `do_register_agent/8` passes `selection.llm_generation_params` through `Config.Schema.LLM.with_cache_identity/3` with the scope `"genesis-#{task_id}-#{agent_id}"` (or `"genesis-agent-#{agent_id}"`), so every turn, retry and compression call of ONE agent shares one routing key while distinct agents get distinct keys; the helper is provider-gated (`:openai`/`:openai_codex`), so other providers persist byte-identically.
 `register_agent/8` returns `{integer_agent_id, state}` or `{:error, reason}` (including `{:error, {:agent_id_taken, id}}`) and resolves both the id and the model selection before any counter or ETS mutation; subagent registration handles errors per child and inherits a locked parent's whole `model_spec` + lock first.
 
+## Blocking Surface (ONE GenServer serves every agent)
+
+Every turn-path scheduler interaction is a plain `GenServer.call` into the single `EvoGit.AgentScheduler` mailbox, so any inline work in one handler delays every other agent's slot grant, release, config read and pause/cancel probe.
+`request_llm_slot/2` and `request_tool_slot/2` default to `timeout \\ :infinity`, so a queued caller waits silently with no timeout and no progress report; the wait is only visible as the `:llm_waiting` stream activity, which the agent sets via `Sink.start_call/1` BEFORE `with_llm_slot/2`, so slot queueing renders as "Waiting for model capacity", never as `:idle`/"Idle".
+Inline work that runs inside the scheduler process and stalls all slot traffic while it runs:
+- `Lifecycle.retry_agent/4` → `salvaged_commit/1` → `WorktreeManager.salvage_for_retry/2` on EVERY abnormal session `:DOWN`, budget `Salvage.timeout_ms() + @salvage_call_grace_ms` (15 000 + 5 000 = 20 s), where the manager itself runs the salvage commit + `rm_rf_retry` + `git prune` + branch delete inline in its own `handle_call({:salvage_for_retry, …})`.
+- `handle_call({:run_agent, …})` → `maybe_reset_task_archives/2` (synchronous `Store.delete_task_archives/1`) + `Dispatch.next_task_number/1` (a `File.ls` scan of `.genesis/workers`).
+- `handle_call({:update_config, …})` → `reconcile_pool_after_update/1` (`EvoGit.ReqLLMPool.reconcile/1` → `Finch.set_pool_count`).
+- `handle_info({:DOWN, …})` → `Slots.release_agent_slots/2` + `grant_pending_llm_slots/1`, each a full pass over `State.all_model_ids/1`.
+- `handle_call({:force_kill_task_agents_for_task | :begin_graceful_cancel | :begin_task_pause, …})` → `Store.list_sched_meta/0` full-table scan + per-agent ETS writes + queue purges.
+The scheduler owns NO periodic scan or heartbeat: its only timers are the per-model backoff sweep (`:retry_llm_waiting`) and the subagent re-attach timeout, and `SystemSampler` is the only periodic external caller (3 s, `get_llm_slot_status/0`, cheap map reads).
+A crash RETRY is followed by `Process.sleep(30_000 * retries)` in the session's start task (`agent/session/setup.ex`, after the fresh worktree exists), i.e. 30 s / 60 s / 90 s in which the agent is registered `:running` with no `:llm_waiting` activity — the dashboard then shows "Idle" for exactly that long and the LLM starts streaming afterwards.
+
 ## Slot Management (Slots module)
 
 Two independent pools use agent-ID `MapSet`s rather than per-call permits; availability is derived from `MapSet.size/1`, and session `:DOWN` removes the agent from both pools and purges its queued requests.

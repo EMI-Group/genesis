@@ -77,7 +77,21 @@ Terminal delivery, current-worker down, force cancellation and termination reset
 At most one flush timer exists; a bounded pending yield/reset batch may briefly keep it in `:awaiting_input` or `:finalizing`, and `:flush_deltas` is handled in every phase.
 Once the pending batch settles, no flush timer remains; there is no idle TTL or polling timer.
 
+## Activity Timeline — the `:idle` windows (a busy agent can render "Idle")
+
+`Activity.t()` carries NO timestamp — only `%{phase: …, current_call: %{id, turn, attempt, text, thinking} | nil}` — so a consumer cannot distinguish a fresh `:idle` from a 60-second-old one and must not invent a staleness rule.
+The session's initial `data.activity` is `Activity.new/0` (`session.ex:512`) and nothing is published during `:starting` (watch is refused there), so the first phase a consumer can ever admit is `:idle`.
+Per-turn publication sequence: `:idle` at `Sink.start_turn/1` (`tool_dispatch.ex:207`) → `:llm_waiting` at `Sink.start_call/1` (`llm_prompting.ex:312`) → `:llm` INSIDE `with_llm_slot/2` and before `ReqLLM.stream_text/3` (`llm_prompting.ex:315`) → `:llm_complete` (`llm_prompting.ex:335`) → the batch-start checkpoint keeps it (`pending_tool_batch != nil`) → `:tools` (`tool_dispatch.ex:915`) → `:llm_complete` (`tool_dispatch.ex:926`) → the boundary checkpoint RESETS it to `:idle`.
+That reset is `keep_activity?/2` (`session.ex:1313-1317`) comparing `current_call.turn` with the adopted `state.turn`: `advance_turn_context/2` (`tool_dispatch.ex:641`) makes the state turn `current_call.turn + 1`, so every post-BATCH and post-FINISH checkpoint resets.
+Windows where the worker is busy but the published phase is `:idle` (all precede `start_call/1`, so nothing is instrumented): stage-2 compression (`exchange.ex:222-241` → `Compression.LlmRetry.summarise/4`, a real LLM call plus slot queueing with NO sink activity), the pending-input drain / background-job notices / cancel-grace / pause probes (`exchange.ex:246-293`), and `effective_tools_fn`, `request_parameters/2` and `log_request_parameters/2` (`tool_dispatch.ex:209-227`, `llm_prompting.ex:307-312`).
+Compression is the widest of them: it runs at the TOP of every loop iteration, i.e. exactly inside the gap the previous turn's boundary reset created.
+Slot queueing is NOT idle by construction: `start_call/1` precedes `AgentScheduler.with_llm_slot/2` (`llm_prompting.ex:311-315`), so congestion renders `:llm_waiting`, not `:idle`.
+Phases that outlive the work they name: `:llm_complete` also covers the post-batch `ConflictState.refresh/1` git call and the commit reads (`tool_dispatch.ex:707`, before the boundary checkpoint), and `:tools` also covers tool-slot and subagent queueing.
+Remaining `:idle` sites: `Sink.call_phase(id, :idle)` on a stream interrupt (`llm_prompting.ex:345`), `Session.resume/3` before the next worker (`session.ex:1413`), and the exit paths that reset before flushing (`session.ex:657,668,1004,1444,1533,1592,1600,1649,1681`).
+Consumer mapping (owned outside this node): `EvoDashWeb.AgentsLive.StreamPresentation.activity/1` + `StreamPanel.activity_label/1` render `:idle` as "Idle", `:llm_waiting` as "Waiting for model capacity", `:llm` as "Generating response", `:tools` as "Executing tools", `:llm_complete` as "Response generated", `:retry_wait` as "Waiting to retry" and anything else as "Activity unavailable", with no timer and no staleness heuristic.
+
 ## Constraints
+A phase must describe work that is actually running: new pre-turn work (compression, drains, setup) must publish a named phase rather than leaving `:idle`, or a busy agent is reported as idle for its whole duration.
 No replay or periodic snapshot polling may be added.
 Capture must remain independent of the watcher gate so mid-attempt attachment and interruption do not depend on prior watchers.
 Publication is gated by the session's watcher map, never inferred from Registry or PubSub subscriber counts.
