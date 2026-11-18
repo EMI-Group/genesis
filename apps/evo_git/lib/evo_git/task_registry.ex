@@ -453,12 +453,20 @@ defmodule EvoGit.TaskRegistry do
   `nil`) paused row and `:dirty_pause` for a `:dirty` one, which
   `EvoGit.TaskRegistry.RuntimeOpts.build_common_runtime_opts/3` forwards to the
   runtime so the agent restores its conversation and narrates/repairs
-  accordingly.
+  accordingly. They also carry the durable ROOT run's five resume facts —
+  `:pause_commit`, `:resume_agent_id`, `:resume_current_commit`,
+  `:resume_branch` and `:resume_anchor_ref` — resolved up front so the resumed
+  run restores the persisted identity, branch and worktree base without the
+  scheduler reading the durable store itself.
 
   Admission re-runs the SAME gates as `start_task/2` (model selection against the
   current config, `:session_mode`, `:persistent_state`); a failure answers that
-  `{:error, reason}` and leaves the row `:paused`. A row with no durable run
-  (`EvoGit.AgentState.root_agent_ids/1 == []`) is `{:error, :not_resumable}`.
+  `{:error, reason}` and leaves the row `:paused`. The resumability gate is the
+  task's durable ROOT run (`EvoGit.TaskRegistry.AgentStateRead.roster/2`, the
+  record whose `parent_id` is absent): a roster with no root row — no durable
+  state at all, or only CHILD runs — is `{:error, :not_resumable}`, because a
+  resume that cannot restore a root would silently start the objective from
+  scratch.
 
   Returns `:ok` on success or `{:error, reason}`.
   """

@@ -64,6 +64,11 @@ Pinned by `root_agent_helpers_test.exs` (the root path) and `self_reflective_tes
 `SelfReflective.build_spec/2` forwards the key VERBATIM instead: an absent key stays OMITTED (`refute Keyword.has_key?/2`), `nil` stays present-as-`nil`, `true` stays `true`, and only an explicit `false` opts out.
 Both are asserted through the dispatch-effective `Keyword.get(spec.opts, :persistent_state, true) != false`.
 
+### Pause-Resume Facts (`root_agent_helpers_test.exs`)
+
+`root_agent_helpers_test.exs` pins that `Runtime.Helpers.build_root_agent_spec/7` forwards the five durable ROOT-run facts — `:pause_commit`, `:resume_agent_id`, `:resume_current_commit`, `:resume_branch`, `:resume_anchor_ref` — for the default (simple-evolve) root AND the custom root (`agent: <id>` → `EvoGit.Agents.Custom`).
+Forwarding is PRESENCE-based: a fact resolved to `nil` is still PRESENT (`Keyword.fetch/2` answers `{:ok, nil}`), while a spec built WITHOUT the keys has NONE of them (`Keyword.has_key?/2` false for every `RuntimeOpts.resume_fact_keys/0` entry), so a normal run's `spec.opts` stay byte-identical.
+
 ## Foreign-Repo Test Coverage (`helpers_test.exs`)
 
 All writable-foreign-repo coverage in this node lives in `helpers_test.exs` (`async: true`).
