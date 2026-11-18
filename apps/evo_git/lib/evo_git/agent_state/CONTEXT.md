@@ -92,6 +92,15 @@ The primary key is `(task_id, agent_id)` with NO retry/attempt column, so a retr
 - Column names come ONLY from `Record`'s constant lists; SQL uses positional `?` placeholders.
 - The task flag is `:persistent_state` (admitted by `RuntimeOpts.admit_persistent_state/1`, threaded through task opts → `AgentSpec.opts`).
 
+## Known Issues — Global Serialization & Crash Containment
+- The server runs EVERY write INLINE in its own process (`server.ex:71-84` → `Store.checkpoint` → `EvoGit.Repo.transaction`), the exact pattern `EvoGit.Store.Writer` was introduced to remove for the task store, so one slow or lock-blocked write blocks the mailbox for every agent.
+- All runs share that ONE writer, and the synchronous callers `flush/1`, `put_pause_commit/3`, `mark_completed/3` and `delete_task/2` use a 15 s `GenServer.call` (`agent_state.ex:62`) SHORTER than the DB's own budgets (`busy_timeout: 30_000`, statement `timeout: 60_000`, `pool_size: 2`), so under lock contention or slow storage they time out and are swallowed as success (`flush/1` → `:ok`, `mark_completed/3` → `:ok`, a `put_pause_commit` timeout mislabeled `{:error, :not_persistent_state_disabled}`) — the documented "flush returned ⇒ durable" guarantee is unattainable in exactly the situations it exists for.
+- A timed-out call stays queued and is executed later, so caller belief and stored state diverge; the queue itself is unbounded, and a `:rewrite` entry carries the whole transcript compressed inside the writer (`Record.encode_messages/1`), with no back-pressure or size cap.
+- `Server.init/1` is FATAL (`{:ok, repo} = Boot.start_dynamic(...)`; `File.mkdir_p!`, repo start and migrations all raise) while the child is `restart: :permanent` under `EvoGit.Supervisor`, whose default intensity is 3 restarts / 5 s: a repeated boot failure (disk full, locked or corrupt file, which also re-runs migrations on every retry) shuts the WHOLE `:evo_git` application down.
+- `Server.handle_info/2`'s catch-all swallows `{:EXIT, repo_pid, reason}`, leaving a live server on a dead repo: every later checkpoint logs `:store_unavailable`, and reads answer `nil`/`false`/`[]`, which silently loses crash restoration and misclassifies a dirty pause as `:failed`.
+- `with_migration_lock/1` returns `:aborted` when the `:global` lock is not granted and `migrate_synchronized!/0` ignores it, so a contended boot can silently skip migrations.
+- The 2-connection pool is shared by the writer and every caller-side read (`load/3` in the session, `pause_commit/2` in the scheduler's dispatch path, `resumable?/1`/`root_agent_ids/1` in `TaskRegistry`), and those run INSIDE those GenServers: `finalize/1` blocks the session on `mark_completed` BEFORE delivering its result (`agent/session.ex:1616-1617`), and `TaskRegistry` blocks on `delete_agent_state/1` — once per task inside the `clear_finished_tasks/0` loop (`task_registry.ex:1162`).
+
 ## Notes for Agents
 
 - Never add a second writer: the server's single process is what guarantees strict checkpoint ordering (a later `:append` must see the earlier `message_count`).
