@@ -30,6 +30,13 @@ Its work only starts for a conversation shaped `[_system, _first_user | _rest]`;
 Every compression event — adopted prune, nothing-to-replace, blank summary, real checkpoint — increments the agent's compression count and resets `state.total_tokens` to 0, so the stale count cannot retrigger compression before the next LLM call reports a fresh one.
 Usage is charged wherever the request was billed: the adopted-prune path leaves `state.usage` untouched, the blank-summary path adds the spent usage while keeping the ORIGINAL context (a blank summary must never fabricate a checkpoint that drops the transcript).
 
+## Live Activity (`:compressing` phase)
+The WHOLE compression step — gate open → Stage-1 pruning → Stage-2 slot wait and retries — is published as the `:compressing` live-activity phase by `EvoGit.Agent.ContextCompression.compress_if_needed/2` from the exchange worker, through `EvoGit.Agent.Stream.Sink.phase/1`.
+It is emitted only INSIDE the compressible branch (after `Threshold.exceeded?/2` returned true and the message shape is `[_system, _first_user | _rest]`), immediately before `compress/6`, so a below-threshold turn publishes nothing and the gate decision is never duplicated.
+One emit covers both stages: the model-free Stage-1 pruning and the entire Stage-2 path (`LlmRetry.summarise/4`'s slot wait and its up-to-3 attempts) ride that single phase.
+The phase is inert without an installed sink (the Sink resolves its session from the process dictionary), so an unwatched run publishes no events at all.
+`EvoGit.Agent.Exchange.continue_loop/3` re-labels it to `:preparing` once compression returned, so the phase ends exactly when the next request starts being assembled.
+
 ## API Surface
 
 | Module | File | Public API |
@@ -98,7 +105,7 @@ The parent orchestrator separately supplies a numeric configured context window 
 - **Recency math must never be re-implemented** in a caller — call `Recency.boundary/3` (the two-arity form remains for callers outside the compression pipeline).
 - The sub-modules are TOTAL about unexpected MESSAGE shapes (binary legacy `content`, atom- or string-keyed maps/parts, non-integer opts falling back to defaults) because they run in the per-turn path; passing a non-list message list is out of contract and raises a `FunctionClauseError`.
 - The stage-2 attempt budget is the call-time app-env seam `:compression_llm_max_attempts` (default 3) — an operational knob, not a `config.toml` key.
-- The stage-2 call is OUTSIDE the live stream: `LlmRetry.run_attempt/4` never touches `EvoGit.Agent.Stream.Sink`, so the summarising request (a full non-streamed `ReqLLM.stream_text/3` over the whole transcript), its slot queueing and its in-loop backoff are invisible to the dashboard — they render as whatever phase preceded them, which after a tool batch is `:idle`.
+- The stage-2 call itself is OUTSIDE the live stream: `LlmRetry.run_attempt/4` never touches `EvoGit.Agent.Stream.Sink`, so the summarising request (a full non-streamed `ReqLLM.stream_text/3` over the whole transcript) emits no text/thinking deltas — it is represented by the single `:compressing` phase the orchestrator publishes before the whole step starts.
 - Cost shape per turn: the gate is `Config.resolve/1` (persistent-term) plus one catalog metadata lookup and an integer compare, so an under-threshold turn pays microseconds; only an over-threshold turn pays the whole compression (stage 1 is a full message walk, stage 2 an LLM request).
 - Gating config keys belong to the config layer, not this directory: `[:llm, :compression_threshold_tokens]` (nil = derive), `[:llm, :tool_result_pruning]` (default `true`) and `[:llm, :tool_result_pruning_target_fraction]` (default `0.5`); the window itself is the model profile's `context_window`.
 - The orchestrator's log lines state the decision: threshold + `source` + window, then `stage 1 adopted` / `stage 1 rejected` with projected vs target tokens, or `stage 1 (tool-result pruning) disabled by config`.

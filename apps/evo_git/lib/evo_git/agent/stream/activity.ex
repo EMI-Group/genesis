@@ -7,9 +7,26 @@ defmodule EvoGit.Agent.Stream.Activity do
   the projection and publish the existing text/thinking delta vocabulary instead.
   """
 
-  @phases [:idle, :llm_waiting, :llm, :llm_complete, :retry_wait, :tools]
+  @phases [
+    :idle,
+    :llm_waiting,
+    :llm,
+    :llm_complete,
+    :retry_wait,
+    :tools,
+    :compressing,
+    :preparing
+  ]
 
-  @type phase :: :idle | :llm_waiting | :llm | :llm_complete | :retry_wait | :tools
+  @type phase ::
+          :idle
+          | :llm_waiting
+          | :llm
+          | :llm_complete
+          | :retry_wait
+          | :tools
+          | :compressing
+          | :preparing
   @type call :: %{
           id: String.t(),
           turn: non_neg_integer(),
@@ -37,12 +54,20 @@ defmodule EvoGit.Agent.Stream.Activity do
 
   def apply(%{current_call: %{id: id}} = activity, {:call_phase, id, phase})
       when phase in @phases do
-    current_call = if phase in [:retry_wait, :idle], do: nil, else: activity.current_call
+    current_call =
+      if phase in [:retry_wait, :idle, :compressing, :preparing],
+        do: nil,
+        else: activity.current_call
+
     replace(%{activity | phase: phase, current_call: current_call})
   end
 
   def apply(activity, {:phase, phase}) when phase in @phases do
-    current_call = if phase == :idle, do: nil, else: activity.current_call
+    current_call =
+      if phase in [:idle, :compressing, :preparing],
+        do: nil,
+        else: activity.current_call
+
     replace(%{activity | phase: phase, current_call: current_call})
   end
 
