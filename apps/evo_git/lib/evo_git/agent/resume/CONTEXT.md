@@ -28,13 +28,14 @@ Either notice is delivered the SAME way: ONE non-user-authored `:user` harness m
 | Module | Function | Role |
 |---|---|---|
 | `EvoGit.Agent.Resume` | `apply(%State{})`, `apply(%State{}, opts)` | Repairs + annotates a restored state → `%State{}`; TOTAL, so a malformed state/context/option returns the input unchanged. |
+| `EvoGit.Agent.Resume` | `clean_pause?(%State{})` | `true` for a `:clean_pause` resume kind; ONE half of the clean-pause decision, which additionally requires an intact transcript. |
 | `EvoGit.Agent.Resume` | `resume_kind(%State{})` | `:clean_pause \| :dirty_pause` for a task-level pause resume, `nil` on the crash-retry path and for any malformed value; TOTAL. |
 | `EvoGit.Agent.Resume` | `crash_retry?(%State{})` | `true` when `persistent_state` is on AND `resume_info[:restore_agent_state] == true` (BOTH a crash retry and a pause resume); an absent/malformed `resume_info` or an opt-out answers `false`. |
 | `EvoGit.Agent.Resume` | `clear_marker(%State{})` | The total field write that clears the in-flight marker; used by every path that stops executing a batch. |
 | `EvoGit.Agent.Resume` | `dangling(%State{})` | `{:ok, turn, calls}` for the unanswered calls of the FINAL assistant message, in the assistant's call order, else `:none` (only a dangling TAIL is repairable). |
 | `EvoGit.Agent.Resume` | `notice_present?(context)` | The exactly-once guard: `true` when the transcript already carries a resume notice (`metadata[:resume_notice]`), either kind. |
 | `EvoGit.Agent.Resume.Notice` | `text(%State{}, batch)`, `facts(%State{}, batch)` | The `[RESUME]` notice text (crash retry + `:dirty_pause`) and the facts it is built from; every absent fact (retries, retry reason, salvaged commit, restore outcome) DROPS its sentence instead of asserting a guess. |
-| `EvoGit.Agent.Resume.Notice` | `pause_text(%State{})` | The NEUTRAL clean-pause notice text (pause/resume, untouched worktree, non-resumable subagents, restore degradation when applicable). |
+| `EvoGit.Agent.Resume.Notice` | `pause_text(%State{})` | The NEUTRAL clean-pause notice text (pause/resume, the pause-checkpoint-or-task-base worktree fact, non-resumable subagents, restore degradation when applicable). |
 | `EvoGit.Agent.Resume.ToolBatch` | `impact(class, call)` | The honest synthetic tool-result TEXT for one interrupted call (`:subagent` answers the re-attach FALLBACK text); never fabricates success and never invents output. |
 | `EvoGit.Agent.Resume.Reattach` | `resolve(%State{}, slots, opts \\ [])` | ONE batch-level subagent re-attach → `%{texts: %{model_call_index => text}, merge_note: String.t() \| nil}`. |
 | `EvoGit.Agent.Resume.Reattach` | `empty/0`, `default_reattach_fun/0` | The empty answer (every call falls back) and the DEFAULT injection, `&EvoGit.AgentScheduler.reattach_sub_agents/2` (the `agent_id, expected_count` subset of `/3`). |
@@ -43,7 +44,7 @@ Either notice is delivered the SAME way: ONE non-user-authored `:user` harness m
 
 ## Constraints
 
-- **Repair appends, never rewrites**: ONE synthetic `:tool` result per unanswered call, in the assistant's call order, built with the SAME `EvoGit.Agent.ToolDispatch.assemble_tool_result/3` and turn-tagged with `ContextBuilder.tag_message_turn/2` exactly like a real result (the assistant message's own `metadata[:turn]`, else `state.turn`). A `:clean_pause` resume never reaches this step.
+- **Repair appends, never rewrites**: ONE synthetic `:tool` result per unanswered call, in the assistant's call order, built with the SAME `EvoGit.Agent.ToolDispatch.assemble_tool_result/3` and turn-tagged with `ContextBuilder.tag_message_turn/2` exactly like a real result (the assistant message's own `metadata[:turn]`, else `state.turn`). An INTACT `:clean_pause` resume never reaches this step; a clean pause whose durable state proves an interruption does.
 - **The prompt-cache prefix is untouchable**: neither repair nor notice ever modifies the system message or the first user message, so `[system, first_user]` stays byte-identical across a resume; the notice is a NEW trailing harness message and `:attachments` are never re-sent.
 - **The notice is harness text**: exactly ONE notice `:user` message from `ContextBuilder.build_injected_message/2`, never `EvoGit.Agent.MessageMarker`-flagged as user-authored, and `metadata[:resume_notice]` makes a second resumed exchange append nothing.
 - **Totality**: no raises, no LLM call; every re-attach, formatting, node-path and merge failure degrades to the honest fallback text with a `Logger.warning` — a repair can never crash the exchange.
