@@ -43,14 +43,15 @@ An agent blocked on a subagent answers the batch after its children pause, merge
 
 Boot reconciliation and the lease sweep map a `:running`/`:pausing` row to `:paused` with `pause_kind: :dirty` when the task is RESUMABLE — `persistent_state` is on AND a durable agent-state row exists for the task — instead of today's `:failed`.
 Non-resumable rows keep today's `:lease_expired` → `:failed` behaviour.
-Only the root agent is resumable after a restart: subagent processes are gone, their retained batch is scheduler memory, and a child's partial work survives only if it was already merged. This is stated in the UI and in the resume notice.
+A restart resumes the WHOLE running tree: `TaskRegistry.resume_task/1` reads the task's durable run roster (`EvoGit.AgentState.roster/2`, one row per running agent) and rebuilds it — the root plus every child that was running, each with its own persisted `agent_id`, restored conversation, worktree and `refs/genesis/agent-state/<task>/<agent>` commit anchor (see `agent-run-durability.md`).
 
 ## 6. Resume protocol
 
 `EvoGit.TaskRegistry.resume_task/1` accepts `:paused` only, re-enqueues the SAME task id (never mints a new one), and reuses the persisted opts.
-The dispatch context carries `restore_agent_state: true`, a `resume_kind` (`:clean_pause` | `:dirty_pause` | `:crash`) and the per-agent checkpoint sha as the worktree base (verified with `git cat-file -e`, degrading to the task base).
+The dispatch context carries `restore_agent_state: true`, a `resume_kind` (`:clean_pause` | `:dirty_pause` | `:crash`), the persisted `agent_id`, and the per-agent worktree base (`pause_commit` → `current_commit` → `crash_commit` → the task base, each verified with `git cat-file -e`), with the branch recreated from its anchor when a restart had reclaimed it.
 Clean pause → restore the conversation, no repair, one neutral resume notice.
 Dirty pause → restore the conversation, run the existing `EvoGit.Agent.Resume` repair and `[RESUME]` notice.
+A resumed parent's dangling subagent calls are resolved against the durable roster: an already-`done` child contributes its stored result, a `running` child is re-spawned with its restored state/worktree and continues, and a call with no durable row is reported as lost; each re-spawned child recurses into its own batch, and results merge into the parent worktree the ordinary way.
 The prompt-cache prefix invariant holds: system message and first user message stay byte-identical; the resume notice is appended as a new trailing harness message.
 
 ## 7. Invariants
@@ -65,5 +66,4 @@ The prompt-cache prefix invariant holds: system message and first user message s
 ## 8. Limits
 
 Interactive sessions are out of scope (no pause, no resume) — their lifecycle is user-driven and their durability is still deferred (P5).
-A dirty resume cannot restore subagents.
 A pause is only possible when durable agent state is enabled; with `persistent_state: false` the task is not resumable and pause is refused rather than pretending.
