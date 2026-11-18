@@ -30,21 +30,31 @@ defmodule EvoGit.AgentScheduler.WholeTreeResumeTest do
        objects: both child files land, HEAD advances onto a merge commit, and
        the child branches are deleted as merged.
 
-  ## Why `async: true`
-  Everything is per-test isolated: `EvoGit.TaskRegistryCase` gives this test its
-  OWN `EvoGit.Store` + `EvoGit.VCT` + registry (unique names, own SQLite file),
-  the durable agent state is a private unnamed `EvoGit.AgentState` server
-  injected through the registry's `:agent_state_server` init option (and pointed
-  at from the test process through the `:evogit_agent_state_server` seam), the
-  wrapper and rebuild spawns are explicit function seams, and the scheduler is
-  an UNNAMED PAUSED instance of this test's own. The only app-global tables
-  touched are `:evogit_sched_meta` / `:evogit_agent_summary`, written under this
-  test's own high id range and deleted BY ID in `on_exit`.
-  No LLM is ever called: the paused scheduler registers and QUEUES, the rebuild
-  spawn is a seam that performs the real `Dispatch.register_agent/8` but never
-  `try_dispatch/2`, and no `EvoGit.Agent.Session` is started.
+  ## Why `async: false` — the ONE forcing BEAM global
+
+  Everything about this module's OWN state is per-test isolated: `EvoGit.TaskRegistryCase`
+  gives this test its own `EvoGit.Store` + `EvoGit.VCT` + registry (unique names, own SQLite
+  file), the durable agent state is a private unnamed `EvoGit.AgentState` server injected
+  through the registry's `:agent_state_server` init option (and pointed at from the test
+  process through the `:evogit_agent_state_server` seam), the wrapper and rebuild spawns are
+  explicit function seams, and the scheduler is an UNNAMED PAUSED instance of this test's own.
+  The app-global tables touched are `:evogit_sched_meta` / `:evogit_agent_summary`, written
+  under this test's own high id range and deleted BY ID in `on_exit`.
+  No LLM is ever called: the paused scheduler registers and QUEUES, the rebuild spawn is a
+  seam that performs the real `Dispatch.register_agent/8` but never `try_dispatch/2`, and no
+  `EvoGit.Agent.Session` is started.
+
+  The FORCING global is the app-global **`EvoGit.PubSub` `"tasks"` topic**, which the real
+  `EvoGit.TaskRegistry.resume_task/1` (called here to resume the SAME task id) publishes a
+  `{:task_updated, task_id, :running, node}` message onto via
+  `Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", …)`. `EvoGit.TaskRegistry` and
+  `EvoGit.AgentScheduler` take NO `:pubsub` option, so an isolated registry instance still
+  broadcasts on the shared topic: a concurrently running `async: true` module asserting on
+  that topic could observe this module's broadcast. The module is therefore `async: false`
+  (it costs ~1 s of serial tail), and every sibling's task-topic assertion is scoped to its
+  own id.
   """
-  use EvoGit.TaskRegistryCase, async: true
+  use EvoGit.TaskRegistryCase, async: false
 
   @moduletag :tmp_dir
 

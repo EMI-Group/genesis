@@ -202,9 +202,21 @@ defmodule EvoGit.Agent.ResumeTest do
           )
         end)
 
-      assert log =~ "no durable subagent batch to rebuild"
-      assert log =~ ":no_pending_batch"
-      assert log |> String.split("[warning]") |> length() == 2
+      rebuild_warnings =
+        log
+        |> String.split("\n")
+        |> Enum.filter(&(&1 =~ "no durable subagent batch to rebuild"))
+
+      # EXACTLY ONE durable-rebuild fallback warning for THIS call, counted by
+      # its own distinctive text inside a capture SCOPED to this process's own
+      # log events (`captured/1`). The scope is load-bearing: the sibling
+      # `agent/resume/reattach_test.exs` and `agent/resume/roster_batch_test.exs`
+      # modules emit the very same wording from their own processes, so an
+      # unscoped (`ExUnit.CaptureLog` is node-global) count would be
+      # load-dependent while an id-scoped one never can be.
+      assert [warning] = rebuild_warnings
+      assert warning =~ ":no_pending_batch"
+      assert warning =~ "answering 1 interrupted subagent call(s)"
       text = tool_texts(repaired, ["t"])["t"]
 
       assert text =~ "crashed and restarted"
@@ -852,8 +864,21 @@ defmodule EvoGit.Agent.ResumeTest do
 
   # Runs `fun` with its log captured (the deliberately degrading resume paths log
   # at `:warning`) and returns `{result, log}`.
+  #
+  # The window is SCOPED to the events THIS process emits. `ExUnit.CaptureLog`
+  # installs ONE node-global handler, so an unfiltered window also collects every
+  # concurrently running module's output — `agent/resume/reattach_test.exs` and
+  # `agent/resume/roster_batch_test.exs` log the SAME distinctive
+  # "no durable subagent batch to rebuild" wording (with their own agent ids), so
+  # a whole-blob count would be inflated by a sibling under load. Every degrading
+  # resume path logs from the process that runs the repair, which IS this process,
+  # so a pid filter keeps each assertion strictly about this call without
+  # weakening it.
   defp captured(fun) do
-    log = capture_log(fn -> send(self(), {:logged_result, fun.()}) end)
+    log =
+      capture_log([formatter: {__MODULE__, self()}], fn ->
+        send(self(), {:logged_result, fun.()})
+      end)
 
     result =
       receive do
@@ -864,6 +889,28 @@ defmodule EvoGit.Agent.ResumeTest do
 
     {result, log}
   end
+
+  @doc false
+  # The `:formatter` of `captured/1`'s scoped `capture_log/2` — the capture
+  # server calls `formatter.format(event, config)` with the `{module, term}`
+  # tuple's second element as `config`. It renders ONLY the events the
+  # capturing process emitted itself, one line each.
+  # Public because `ExUnit.CaptureServer` runs the formatter in its OWN process,
+  # and TOTAL because a non-matching event must render as nothing, never raise.
+  def format(event, caller_pid) do
+    if Map.get(event.meta, :pid) == caller_pid do
+      "[#{event.level}] #{log_message(event.msg)}\n"
+    else
+      ""
+    end
+  end
+
+  # Mirrors the parts of the default formatter the assertions rely on: the
+  # message itself, with `$metadata` and timestamps elided.
+  defp log_message({:string, chardata}), do: IO.chardata_to_string(chardata)
+  defp log_message({:report, report}), do: inspect(report)
+  defp log_message({format, args}), do: IO.chardata_to_string(:io_lib.format(format, args))
+  defp log_message(other), do: inspect(other)
 
   defp ok_results(results), do: Enum.map(results, &{:ok, &1})
 

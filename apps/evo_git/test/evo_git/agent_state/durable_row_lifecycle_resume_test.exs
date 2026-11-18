@@ -39,7 +39,7 @@ defmodule EvoGit.AgentState.DurableRowLifecycleResumeTest do
       `:paused` row only), so a later resume can never treat the killed run as a
       finished/completed run.
 
-  ## Why `async: true` — the one app-global this test needs
+  ## Why `async: false` — the ONE forcing BEAM global
 
   Each test gets its OWN isolated `EvoGit.Store` + `EvoGit.TaskRegistry` from
   `EvoGit.TaskRegistryCase`, all with unique registered names. The durable row
@@ -51,8 +51,17 @@ defmodule EvoGit.AgentState.DurableRowLifecycleResumeTest do
   `task_registry/pause_test.exs` documents). Each test owns a per-test-unique
   task id and agent id, never lists the table wholesale, and deletes exactly its
   own rows in `on_exit`.
+
+  The FORCING global is the app-global **`EvoGit.PubSub` `"tasks"` topic**: the
+  real `EvoGit.TaskRegistry.force_kill_task/1` driven here persists `:failed`
+  and then broadcasts `{:task_updated, task_id, :failed, node}` through
+  `Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", …)`. Neither
+  `EvoGit.TaskRegistry` nor `EvoGit.AgentScheduler` takes a `:pubsub` option, so
+  an isolated registry instance still publishes on the shared topic and a
+  concurrently running `async: true` module asserting on it could observe the
+  message. This module therefore runs `async: false` (~0.1 s of serial tail).
   """
-  use EvoGit.TaskRegistryCase, async: true
+  use EvoGit.TaskRegistryCase, async: false
 
   alias EvoGit.Agent.Session.Persistence
   alias EvoGit.Agent.State

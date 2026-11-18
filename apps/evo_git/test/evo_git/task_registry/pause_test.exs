@@ -20,8 +20,10 @@ defmodule EvoGit.TaskRegistry.PauseTest do
       in `on_exit`;
     * the process-global `"tasks"` PubSub topic — every broadcast assertion is
       pinned to this test's task id, and every "no broadcast" assertion is a
-      zero-wait `refute_receive ... , 0` issued AFTER a synchronous
-      `GenServer.call` to the same registry (see `apps/evo_git/test/CONTEXT.md`).
+      zero-wait `refute_receive ..., 0` scoped to the row under test and issued
+      after (or spanning) the synchronous `GenServer.call`s to the same
+      registry; a wildcard id would observe a concurrent module's broadcast and
+      is never used (see `apps/evo_git/test/CONTEXT.md`).
 
   No `Process.sleep/1` is used: broadcasts are awaited with `assert_receive`
   and "nothing happened" is proven by the FIFO/zero-wait idiom.
@@ -341,29 +343,37 @@ defmodule EvoGit.TaskRegistry.PauseTest do
 
       statuses = [:pending, :finalizing, :cancelling, :completed, :failed, :cancelled]
 
-      for status <- statuses do
-        task_id = "pause_refuse_#{status}_#{unique}"
-        seed_task!(task_id, status)
-        before = updated_at(task_id, sqlite_path)
-
-        assert {:error, :not_running} = TaskRegistry.pause_task(task_id),
-               "expected :not_running for #{inspect(status)}"
-
-        assert reload(task_id).status == status
-        assert selected_updated_at(task_id) == before
-      end
-
+      # Subscribe FIRST: the property is "THIS row's refusal broadcast nothing",
+      # so the window must be open across the calls. Scoped per id — another
+      # concurrent module's `{:task_updated, other_id, …}` can never be evidence
+      # for or against this row's refusal.
       subscribe_tasks!()
-      refute_receive {:task_updated, _, _, _}, 0
+
+      ids =
+        for status <- statuses do
+          task_id = "pause_refuse_#{status}_#{unique}"
+          seed_task!(task_id, status)
+          before = updated_at(task_id, sqlite_path)
+
+          assert {:error, :not_running} = TaskRegistry.pause_task(task_id),
+                 "expected :not_running for #{inspect(status)}"
+
+          assert reload(task_id).status == status
+          assert selected_updated_at(task_id) == before
+          task_id
+        end
+
+      for id <- ids, do: refute_receive({:task_updated, ^id, _, _}, 0)
     end
 
     test "an unknown task answers {:error, :not_found}" do
       subscribe_tasks!()
 
-      assert {:error, :not_found} =
-               TaskRegistry.pause_task("pause_missing_#{System.unique_integer([:positive])}")
+      missing = "pause_missing_#{System.unique_integer([:positive])}"
 
-      refute_receive {:task_updated, _, _, _}, 0
+      assert {:error, :not_found} = TaskRegistry.pause_task(missing)
+
+      refute_receive {:task_updated, ^missing, _, _}, 0
     end
   end
 
@@ -1053,7 +1063,11 @@ defmodule EvoGit.TaskRegistry.PauseTest do
       assert {:error, :not_resumable} = TaskRegistry.resume_task(paused_id)
       assert reload(paused_id).status == :paused
 
-      refute_receive {:task_updated, _, _, _}, 0
+      # Scoped to the two rows under test: the app-global `"tasks"` topic also
+      # carries other concurrently running modules' broadcasts, which say
+      # nothing about whether THESE rows were flipped.
+      refute_receive {:task_updated, ^running_id, _, _}, 0
+      refute_receive {:task_updated, ^paused_id, _, _}, 0
       refute_receive {:wrapper_spawned, _, _, _, _}, 0
     end
   end

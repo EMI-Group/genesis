@@ -118,12 +118,31 @@ defmodule EvoGit.Agent.Session.FinalizeOrderTest do
       send(worker, :release)
 
       assert_receive {:agent_session_result, ^agent_id, ^session, {:ok, %Result{}}}, 1_000
-      assert_receive {:agent_delta, id, n, events}, @timeout
-      assert id == agent_id
-      assert n > seq
-      assert {:finished, :completed} in events
 
       assert_receive {:DOWN, ^ref, :process, ^session, :normal}, @timeout
+
+      # Publication is COALESCED into ~75 ms buckets, so the final turn
+      # checkpoint and the terminal cut land in whichever bucket they land in —
+      # the cut is NOT required to ride the FIRST delta (the session may flush
+      # the checkpoint in one window and the cut in the next). The published
+      # contract is: the cut reaches watchers, it is never published BEFORE the
+      # content it terminates, and it is the LAST delta of the stream. Collect
+      # bounded deltas and assert exactly that, keeping the sequence contract
+      # (every delta newer than the watch cut and than the one before it).
+      {terminal_events, terminal_seq} = await_terminal_delta(agent_id, seq)
+      assert {:finished, :completed} in terminal_events
+      refute_receive {:agent_delta, ^agent_id, _, _}, 100
+
+      # The direct terminal handoff is the authoritative post-cut read model: it
+      # is terminal and its `seq` covers every delta the watcher received.
+      assert_receive {:agent_stream_closed, ^agent_id, %Snapshot{} = snapshot, closed_seq},
+                     @timeout
+
+      assert snapshot.phase == :done
+      assert snapshot.status == :done
+      assert snapshot.seq == closed_seq
+      assert closed_seq >= terminal_seq
+
       # The inspector's terminal read model is published (and stays readable)
       # independently of the durable marking.
       assert {:error, _} = Stream.snapshot(agent_id)
@@ -131,6 +150,30 @@ defmodule EvoGit.Agent.Session.FinalizeOrderTest do
   end
 
   ## Fixtures
+
+  # Receives deltas until the terminal cut is published, bounded by `@timeout`
+  # and holding the sequence contract: every delta is newer than the watch cut
+  # it started from and strictly newer than the delta before it. Messages that
+  # are not this agent's deltas (e.g. the direct terminal handoff) stay queued
+  # for their own assertion.
+  defp await_terminal_delta(agent_id, last_seq, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + @timeout
+
+    receive do
+      {:agent_delta, ^agent_id, n, events} ->
+        assert is_integer(n) and n > last_seq,
+               "delta #{inspect(n)} is not newer than the previous cut #{inspect(last_seq)}"
+
+        if {:finished, :completed} in events do
+          {events, n}
+        else
+          await_terminal_delta(agent_id, n, deadline)
+        end
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) ->
+        flunk("no {:finished, :completed} delta was published within #{@timeout}ms")
+    end
+  end
 
   # Blocks the FIRST exchange until the test releases THIS worker, so the test
   # can install a tracer before the run can reach its terminal sends.
