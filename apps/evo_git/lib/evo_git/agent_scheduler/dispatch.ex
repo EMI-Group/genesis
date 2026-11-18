@@ -16,6 +16,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   alias EvoGit.AgentScheduler.ModelSelection
   alias EvoGit.AgentScheduler.Salvage
   alias EvoGit.AgentScheduler.SchedMeta
+  alias EvoGit.AgentScheduler.SpawnFacts
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.Worktrees
@@ -30,6 +31,21 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
   Assigns agent IDs, computes task-local IDs,
   and writes both the agent state and scheduler metadata ETS tables.
+
+  `opts[:agent_id]` requests an EXPLICIT id — the id a previous run of the SAME
+  logical agent persisted (a resume). It is adopted only when it is FREE: no
+  live `EvoGit.Agent.Session` is registered under it and no non-terminal
+  `:evogit_agent_summary` row claims it. A taken id fails CLOSED
+  (`{:error, {:agent_id_taken, id}}`) with NOTHING written to ETS or the store
+  and no counter movement. Any non-positive/non-integer value is ignored and
+  the id is allocated normally.
+
+  `opts[:spawn_turn]` / `opts[:spawn_index]` are the spawn FACTS of a child run
+  (where in the parent's tool batch it was started); integer values are merged
+  onto the stored spec's opts, so they survive on the `%SchedMeta{}` row.
+
+  With no `:agent_id` the allocation is byte-identical to the 7-arity form
+  (which every existing call site keeps using).
   """
   @spec register_agent(
           State.t(),
@@ -38,9 +54,12 @@ defmodule EvoGit.AgentScheduler.Dispatch do
           pos_integer() | nil,
           non_neg_integer(),
           String.t() | nil,
-          pos_integer() | nil
+          pos_integer() | nil,
+          keyword()
         ) ::
           {pos_integer(), State.t()} | {:error, term()}
+  def register_agent(state, spec, from, parent_id, depth, task_id, task_number, opts \\ [])
+
   def register_agent(
         %State{} = state,
         %AgentSpec{} = spec,
@@ -48,17 +67,44 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         parent_id,
         depth,
         task_id,
-        task_number
-      ) do
+        task_number,
+        opts
+      )
+      when is_list(opts) do
     spec = inherit_model_selection(spec, parent_id)
 
-    with {:ok, selection} <- resolve_selection(state, spec, parent_id, depth, task_id) do
-      do_register_agent(state, spec, selection, from, parent_id, depth, task_id, task_number)
+    with {:ok, id} <- SpawnFacts.resolve_agent_id(state, opts),
+         {:ok, selection} <- resolve_selection(state, spec, parent_id, depth, task_id) do
+      do_register_agent(
+        state,
+        spec,
+        selection,
+        from,
+        parent_id,
+        depth,
+        task_id,
+        task_number,
+        id,
+        opts
+      )
     end
   end
 
-  defp do_register_agent(state, spec, selection, from, parent_id, depth, task_id, task_number) do
-    id = state.next_agent_id
+  defp do_register_agent(
+         state,
+         spec,
+         selection,
+         from,
+         parent_id,
+         depth,
+         task_id,
+         task_number,
+         id,
+         opts
+       ) do
+    # The spawn facts become part of the STORED spec, so the `%SchedMeta{}` row
+    # carries where in the parent's batch this child started.
+    spec = %{spec | opts: Keyword.merge(spec.opts, SpawnFacts.spawn_facts(opts))}
 
     # Compute per-task local agent ID (display/branch naming only)
     task_local_id = Map.get(state.task_local_counters, task_id, 1)
@@ -144,7 +190,10 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       Store.set_cancel_requested(id)
     end
 
-    state = %{state | next_agent_id: id + 1}
+    # An ADOPTED (explicit) id may be higher or lower than the counter; the
+    # counter only ever moves past every id this scheduler has handed out, so a
+    # later allocation can never collide with an adopted one.
+    state = %{state | next_agent_id: max(state.next_agent_id, id + 1)}
     {id, state}
   end
 
@@ -247,9 +296,9 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     # `WorktreeManager.salvage_for_retry/2`); a PAUSE RESUME carries the
     # per-agent pause checkpoint instead (see `apply_resume_base/6`).
     plan = resume_plan(agent_id, spec, meta, agent_repo_root, retries)
-    spec = plan.spec
+    # `plan.spec` / `plan.meta` are the possibly base-rewritten inputs; the
+    # dispatch ctx (and the stored meta row) MUST use them, never the originals.
     meta = plan.meta
-    worktree_resume_from = plan.worktree_resume_from
 
     Store.put_sched_meta(agent_id, %{meta | worktree: worktree_path})
 
@@ -263,39 +312,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     # name: the session sends its ONE terminal `{:agent_session_result, ...}`
     # to this pid, so a named/test scheduler instance is served too.
     dispatch_ctx =
-      [
-        agent_id: agent_id,
-        depth: meta.depth,
-        repo_root: agent_repo_root,
-        repo_id: spec.repo_id,
-        worktree_path: worktree_path,
-        retries: retries,
-        spec: spec,
-        meta: meta,
-        # The session's mode (`:oneshot | :interactive`), resolved at
-        # registration and mirrored on SchedMeta. An interactive session yields
-        # to `:awaiting_input` on a tool-free reply instead of finishing.
-        session_mode: meta.mode,
-        # `:persistent_state` is the TASK-WIDE durability flag (default `true`,
-        # `false` opts the whole task — root plus descendants — out of durable
-        # per-agent checkpoints). `:restore_agent_state` is set on a crash
-        # RETRY of the SAME `agent_id` AND on a task-level PAUSE RESUME, so the
-        # rebuilt session merges the persisted conversation onto its fresh
-        # dispatch (fresh worktree/repo path, same identity); a first attempt
-        # always starts clean.
-        persistent_state: plan.persistent_state,
-        restore_agent_state: plan.restore_agent_state,
-        # Crash-resume-after-a-tool-call metadata (consumed by the agent-side
-        # workstream; harmless when unused): the sha the retry worktree was
-        # actually based on when it is NOT the task base (`nil` otherwise), and
-        # the previous attempt's crash reason (`nil` on a first attempt).
-        worktree_resume_from: worktree_resume_from,
-        retry_reason: meta.crash_reason,
-        scheduler: self()
-      ]
-      |> put_resume_kind(plan.resume_kind)
-      |> append_repo_less_ctx(spec, agent_repo_root)
-      |> append_notify_ctx(spec)
+      build_dispatch_ctx(agent_id, meta, agent_state, plan, agent_repo_root, worktree_path)
 
     case start_session(dispatch_ctx) do
       {:ok, pid} ->
@@ -327,6 +344,12 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         state
     end
   end
+
+  @doc false
+  # The dispatch context — identity, spawn facts and every git fact a session
+  # starts from — is assembled by `EvoGit.AgentScheduler.SpawnFacts`.
+  defdelegate build_dispatch_ctx(agent_id, meta, agent_state, plan, repo_root, worktree_path),
+    to: EvoGit.AgentScheduler.SpawnFacts
 
   # The resume/retry decisions a dispatch makes from `spec.opts` + the meta row.
   #
@@ -390,11 +413,6 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       _other -> nil
     end
   end
-
-  # Only a pause resume contributes a `:resume_kind` ctx key; every other run's
-  # dispatch ctx stays exactly as it was.
-  defp put_resume_kind(ctx, nil), do: ctx
-  defp put_resume_kind(ctx, kind), do: Keyword.put(ctx, :resume_kind, kind)
 
   # A pause resume resolves its worktree base WITHOUT the retry gate: the task
   # was resumed from a durable checkpoint, not crashed and retried. For any
@@ -524,30 +542,6 @@ defmodule EvoGit.AgentScheduler.Dispatch do
           EvoGit.Agent.Session.Supervisor,
           {EvoGit.Agent.Session, dispatch_ctx}
         )
-    end
-  end
-
-  # For repo-less agents, carry the marker plus the resolved repo path in the
-  # dispatch context: the session skips `create_worktree_for_agent` and uses
-  # `repo_less_repo_path` as its `Process.get(:repo_path)`. No worktree is ever
-  # created for a repo-less agent — `worktree_path` above is synthetic (stored
-  # in sched_meta for cancel lookup) and never materialized on disk.
-  defp append_repo_less_ctx(ctx, spec, agent_repo_root) do
-    if Keyword.get(spec.opts, :repo_less) do
-      ctx ++ [repo_less: true, repo_less_repo_path: agent_repo_root]
-    else
-      ctx
-    end
-  end
-
-  # An optional `:notify` sink for the session's non-terminal control messages
-  # (`{:agent_session_closed, tag, result}`): carried ONLY when the spec opt is
-  # a `{pid, tag}` tuple with a live pid shape, because the session
-  # pattern-matches the key. The key is never present with a `nil` value.
-  defp append_notify_ctx(ctx, spec) do
-    case Keyword.get(spec.opts, :notify) do
-      {pid, _tag} when is_pid(pid) -> ctx ++ [notify: Keyword.get(spec.opts, :notify)]
-      _other -> ctx
     end
   end
 

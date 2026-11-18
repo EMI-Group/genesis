@@ -873,6 +873,41 @@ defmodule EvoGit.AgentScheduler do
     GenServer.call(__MODULE__, {:clear_task_pause, task_id})
   end
 
+  # --- Boot counter seeding (stable agent identity) ---
+  #
+  # `agent_id` is the key of every durable read (`EvoGit.AgentState` rows are
+  # keyed `(task_id, agent_id)`), so it must stay STABLE across a BEAM restart:
+  # the in-memory counter is seeded just above the largest id the durable store
+  # already holds, and a resume then registers with its PERSISTED id. The read
+  # is BOUNDED and offloaded (`EvoGit.TaskRegistry.AgentStateRead.max_agent_id/1`,
+  # 2 s budget) and every failure — a locked/busy/dead database, a missing
+  # `EvoGit.TaskSupervisor` (a scheduler started outside the app tree), a
+  # degraded store — degrades to `0`, i.e. exactly the pre-existing
+  # `next_agent_id: 1`. `init/1` is never delayed beyond that budget and never
+  # crashed by durable state.
+  #
+  # Boot order: `EvoGit.TaskSupervisor` is the first child of
+  # `EvoGit.AgentGroupSupervisor` and `EvoGit.AgentScheduler` is its last, so in
+  # the real supervision tree the offload target exists before this read runs.
+  #
+  # `:agent_state_store` is the default-inert seam FOR THAT READ: the
+  # scheduler's own process cannot be handed a process-dictionary store (init
+  # runs there, not in the caller), so an isolated test passes its instance
+  # here. Production passes nothing and the read resolves the app-global
+  # `EvoGit.AgentState`.
+  defp seed_next_agent_id(opts) do
+    read_opts =
+      case Keyword.fetch(opts, :agent_state_store) do
+        {:ok, store} -> [op: "scheduler boot seed", store: store]
+        :error -> [op: "scheduler boot seed"]
+      end
+
+    case EvoGit.TaskRegistry.AgentStateRead.max_agent_id(read_opts) do
+      max_id when is_integer(max_id) and max_id > 0 -> max_id + 1
+      _none -> 1
+    end
+  end
+
   # --- Server Callbacks ---
 
   @impl true
@@ -962,7 +997,7 @@ defmodule EvoGit.AgentScheduler do
         max_retries: max_retries,
         max_turns: max_turns,
         max_turns_root: max_turns_root,
-        next_agent_id: 1,
+        next_agent_id: seed_next_agent_id(opts),
         ref_to_agent: %{},
         queue: :queue.new(),
         tool_waiting: :queue.new(),
