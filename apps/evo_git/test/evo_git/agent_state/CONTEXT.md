@@ -1,7 +1,7 @@
 # agent_state — Test Tree
 
 ## Intent
-ExUnit coverage for the durable per-run agent-state storage subsystem (`EvoGit.AgentState` + `AgentState.{Server,Store,Record,Retention,Boot}`), which persists each agent run's conversation + scalar fields in its OWN SQLite DB so a crashed run is recoverable.
+ExUnit coverage for the durable per-run agent-state storage subsystem (`EvoGit.AgentState` + `AgentState.{Supervisor,Server,Entry,Store,Record,Retention,Boot}`), which persists each agent run's conversation + scalar fields in its OWN SQLite DB so a crashed run is recoverable.
 Production contract (API, storage model, field list, corruption/retention rules): `../../../lib/evo_git/agent_state/CONTEXT.md`.
 
 ## Routing Table
@@ -10,14 +10,17 @@ Production contract (API, storage model, field list, corruption/retention rules)
 |---|---|---|---|
 | `agent_state_test.exs` | `EvoGit.AgentStateTest` | 8 | core data plane: append/rewrite round-trip exactness, write amplification, compression rewrite, resync gaps, empty tails, field mapping |
 | `agent_state_faults_test.exs` | `EvoGit.AgentStateFaultsTest` | 10 | fault paths: `:not_found`, four corruption shapes, stopped server, `server/0` seam, absent target, malformed entries |
-| `agent_state_retention_test.exs` | `EvoGit.AgentStateRetentionTest` | 6 | `mark_completed/3`, `prune/1` expiry rules, prune idempotence, `delete/3`, `delete_task/2` |
+| `agent_state_retention_test.exs` | `EvoGit.AgentStateRetentionTest` | 7 | `mark_completed/3`, `prune/1` expiry rules, prune idempotence, `delete/3`, `delete_task/2`, the bulk `delete_tasks/2` |
 | `retention_test.exs` | `EvoGit.AgentState.RetentionTest` | 13 | pure `EvoGit.AgentState.Retention` math — no DB, no clock read, no app-env mutation |
 | `agent_state_migration_test.exs` | `EvoGit.AgentState.MigrationTest` | 5 | the REAL migration chain on a fresh temp dir: applied versions `[1, 2, 3]`, exactly one nullable `TEXT` `pending_tool_batch` column plus exactly one nullable `TEXT` `pause_commit` column, a checkpointed `EvoGit.Agent.ToolBatch` marker as non-null JSON (direct `SELECT`) that `load/3` + `normalize/1` round-trips, `nil` clearing it, and a second boot / forced version-2-and-3 re-run staying idempotent with the data intact |
 | `entry_test.exs` | `EvoGit.AgentState.EntryTest` | 13 | pure `EvoGit.AgentState.Entry`: `normalize/1` acceptance/rejection and every `fold/1` rule (rewrite supersede, append chaining, gaps, last-wins fields, owner, empty queue) — no store, no `:tmp_dir` |
 | `agent_state_coalescing_test.exs` | `EvoGit.AgentState.CoalescingTest` | 9 | the bounded, coalescing writer: suspend/enqueue/resume folding to ONE chunk, selective draining per run, `:max_backlog` drops with ONE owner resync and ONE warning, the 20-checkpoint flood staying at one warning line, the fold-level `:max_payload_bytes` skip with NO resync, and `Store.checkpoint_batch/4` committing a fold in one transaction (whole-fold rollback on a resync) |
 | `agent_state_pause_test.exs` | `EvoGit.AgentState.PauseTest` | 8 | task-level pause/resume facts: `put_pause_commit/3,4` round-trip/replace/clear (direct `SELECT`), `{:error, :not_found}` with no row created, the write touching ONLY `pause_commit` (counts, chunks and append continuity untouched), `pause_commit/2,3`, `resumable?/1,2`, `root_agent_ids/1,2`, the inert no-store shapes, and `flush/1` as a synchronous durability barrier (explicit `:sync` call plus read-back with no sleeping) |
 
-All eight modules are `use ExUnit.Case, async: true`; every one but the pure `entry_test.exs` carries `@moduletag :tmp_dir`.
+| `agent_state_barrier_test.exs` | `EvoGit.AgentState.BarrierTest` | 8 | the HONEST barrier and the cast bookkeeping around it: `flush/1` answers `:ok` on a healthy writer and for a `nil` target, `{:error, :timeout}` for an over-cap backlog and for a target that dies while the call is parked, and `mark_completed/3` / `delete/3` / `delete_task/2` / the ONE batched `delete_tasks/2` are total casts for live and dead targets, durable after `flush/1` |
+| `agent_state_supervision_test.exs` | `EvoGit.AgentState.SupervisionTest` | 4 | containment: a database under a path whose parent is a regular FILE boots DEGRADED (supervisor and writer alive, `repo/1` nil, every API total, `flush/1` `{:error, :timeout}`), survives retry ticks and RECOVERS once the dir is writable; the subsystem's own supervisor absorbs repeated writer kills inside its 10/60 s budget; a killed repo is absorbed and the backoff path boots a fresh repo; the facade resolves a supervisor pid to its writer |
+| `pause_durability_test.exs` | `EvoGit.AgentState.PauseDurabilityTest` | 2 | the pause verdict without a database or any global: `Pause.info/3` defaults `durable: false` (the paths that never flush), `info/4` reports `true` only for a literal `true` — the value derived from `flush/1`'s `:ok` |
+All eleven modules are `use ExUnit.Case, async: true`; the pure `entry_test.exs` and `retention_test.exs` and the database-free `pause_durability_test.exs` are the only ones without `@moduletag :tmp_dir`.
 
 ## Per-File Coverage
 
@@ -102,6 +105,6 @@ The `start_store!`/`checkpoint!`/`sql!`/`chunks!`/`counts!` helpers are duplicat
 - `Store.checkpoint_batch/4` commits every operation of a fold in ONE transaction and rolls the WHOLE fold back on a `:resync`; `[]` is a no-op `:ok` and a non-list is `{:error, :invalid_operations}`.
 
 ## Constraints
-No module here is `async: false`, and no test calls `Process.sleep` — every wait is a `flush/1` reply, a synchronous call, a mailbox assertion made deterministic by that barrier, or the ONE bounded `wait_until` poll for an empty writer mailbox (which is itself a condition poll with a 1 ms tick, never a fixed sleep).
+No module here is `async: false`, and no test waits on a fixed sleep: every wait is a `flush/1` reply, a synchronous call, a mailbox assertion made deterministic by that barrier, or a BOUNDED condition poll whose own tick is the `Process.sleep` (`agent_state_coalescing_test.exs` 1 ms, `agent_state_supervision_test.exs` `@poll_interval`, plus its one bounded 120 ms wait for retry ticks).
 No shared support module: the isolation helpers are intentionally duplicated in each file.
 No test uses the app-global `tasks.sqlite` or the app-booted agent-state server.

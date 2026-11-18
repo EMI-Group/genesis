@@ -39,6 +39,9 @@ defmodule EvoGit.TaskRegistryCase do
   Nothing global is mutated: the temporary data directory is removed on exit and
   the per-test processes are stopped by `start_supervised!/1`.
 
+  44 modules use this fixture today (25 `async: true`, 19 `async: false`); a
+  serialized module must name the BEAM-global that forces it in its `@moduledoc`.
+
   Usage (both async settings are supported — the case does not force one):
 
       defmodule EvoGit.TaskRegistry.XxxTest do
