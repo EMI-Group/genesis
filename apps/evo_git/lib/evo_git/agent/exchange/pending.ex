@@ -12,8 +12,9 @@ defmodule EvoGit.Agent.Exchange.Pending do
   bare process drains exactly like a live agent.
 
   Neither helper owns the tool plane: `EvoGit.BackgroundJobs` claims finished
-  notices itself (a tool-plane call, not a scheduler effect), so that call stays
-  direct.
+  notices itself (a tool-plane concern, not a scheduler effect), and that claim
+  is a pure ETS read of the registry's notice mirror, so it stays direct — no
+  scheduler seam and no registry call on the turn path.
   """
 
   alias EvoGit.Agent.Exchange
@@ -89,11 +90,12 @@ defmodule EvoGit.Agent.Exchange.Pending do
   @doc """
   Claims this agent's finished-but-unannounced background shell jobs and, when
   there are any, appends ONE combined `[NOTICE]` user message so the LLM learns
-  a detached command finished. The claim is exactly-once (the registry marks the
-  jobs `announced`), so a poll via `job_output`/`job_list` can never produce a
-  duplicate notice. Skipped entirely during a grace period: the grace budget is
-  for wrapping up, and claiming there would consume the notice without the
-  agent ever acting on it. A missing registry already yields `{:ok, []}`.
+  a detached command finished. The claim is exactly-once (the ETS mirror takes
+  each job atomically and the registry records the `announced` mark), so a poll
+  via `job_output`/`job_list` can never produce a duplicate notice. Skipped
+  entirely during a grace period: the grace budget is for wrapping up, and
+  claiming there would consume the notice without the agent ever acting on it. A
+  missing registry already yields `{:ok, []}`.
   """
   @spec inject_background_job_notices(State.t(), keyword()) :: State.t()
   def inject_background_job_notices(state, opts \\ [])
