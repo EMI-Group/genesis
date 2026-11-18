@@ -17,7 +17,8 @@ A consumer resyncs with a fresh snapshot and drops `seq <= snapshot.seq`; nothin
 `unwatch/1` unregisters and unsubscribes the caller; `snapshot/1` is the only resync path.
 Facade errors are `{:error, {:not_found, reason}}` or `{:error, {:bad_state, phase}}`, with a 5-second session-call budget and no escaping raises or exits.
 `stale?/2` drops `seq <= snapshot_seq` and non-integer pairs; `normalize_batch/1` maps nil to [], a list to itself, and a single event to a singleton list.
-Watch and snapshot commands are served in `:running`, `:cancelling` and `:awaiting_input`, not `:starting`, `:finalizing` or `:done`.
+Watch and snapshot commands are served in `:starting`, `:running`, `:cancelling` and `:awaiting_input`; only `:finalizing`/`:done` and a non-pid consumer refuse.
+A `:starting` session is served through `EvoGit.Agent.Stream.Snapshot.starting/2`, a pre-state snapshot carrying the agent id, `phase: :starting`, empty messages, turn 0 and the session's live activity, and a watcher registered there keeps receiving events once the run starts.
 RemoteAPI's `register_watcher/2`, `unregister_watcher/2` and `watch_snapshot/1` delegate to the same implementation on the owning node, while RemoteNode subscribes the consumer on its own node before RPC registration.
 Invalid consumer pids are refused as `{:error, {:not_found, :invalid_consumer}}` for registration and ignored for unregistration.
 `Snapshot.from(state, phase, opts \\ [])` copies checkpointed transcript and summary fields, with `opts[:activity]` defaulting to `Activity.new/0`.
@@ -81,7 +82,7 @@ Once the pending batch settles, no flush timer remains; there is no idle TTL or 
 ## Activity Timeline — every busy window has a name
 
 `Activity.t()` carries NO timestamp — only `%{phase: …, current_call: %{id, turn, attempt, text, thinking} | nil}` — so a consumer cannot distinguish a fresh `:idle` from a 60-second-old one and must not invent a staleness rule.
-The session's initial `data.activity` is `Activity.new/0` and nothing is published during `:starting` (watch is refused there), so the first phase a consumer can ever admit is `:idle`.
+The session's initial `data.activity` is `Activity.new/0`, and a crash-retry wait publishes `:retry_wait` from the start task through the session (accepted only from the current start task), so a consumer attached during `:starting` can observe `:retry_wait` rather than a stale `:idle`.
 Per-turn publication sequence: `:idle` at `Sink.start_turn/1` → `:preparing` published in `EvoGit.Agent.ToolDispatch.do_turn/6` immediately after that reset and BEFORE the synchronous `EvoGit.Agent.Session.Worker.boundary(state, :llm)` gate → `:llm_waiting` at `Sink.start_call/1` → `:llm` INSIDE `with_llm_slot/2` and before `ReqLLM.stream_text/3` → `:llm_complete` → the batch-start checkpoint keeps it (`pending_tool_batch != nil`) → `:tools` → `:llm_complete` → the boundary checkpoint RESETS it to `:idle`.
 That reset is `keep_activity?/2` comparing `current_call.turn` with the adopted `state.turn`: `advance_turn_context/2` makes the state turn `current_call.turn + 1`, so every post-BATCH and post-FINISH checkpoint resets.
 At the TOP of the NEXT loop iteration `EvoGit.Agent.ContextCompression.compress_if_needed/2` publishes `:compressing`, but ONLY when the window-relative `Threshold.exceeded?/2` gate opens; it covers stage-1 model-free pruning and the whole stage-2 summarising call, including that call's slot wait and its retries.
