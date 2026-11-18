@@ -169,6 +169,33 @@ defmodule EvoDashWeb.AgentsStreamIntegrationTest do
     assert history_calls(view) == 0
   end
 
+  test "compression and turn preparation are labelled live instead of reading as idle", %{
+    conn: conn,
+    id: id
+  } do
+    view = mount_inspector(conn)
+    select(view, id)
+    watch = watch_request(view, id)
+    reply(watch, snapshot(id, 4))
+    await_snapshot(view, 4)
+
+    assert text(view, "#inspector-activity") == "Idle"
+
+    delta(view, id, 5, [{:activity, activity(:compressing, nil)}])
+    assert text(view, "#inspector-activity") == "Compressing context"
+    refute has_element?(view, "#inspector-stream-cursor")
+    refute has_element?(view, "#inspector-thinking")
+
+    delta(view, id, 6, [{:activity, activity(:preparing, nil)}])
+    assert text(view, "#inspector-activity") == "Preparing next turn"
+    refute has_element?(view, "#inspector-stream-cursor")
+
+    delta(view, id, 7, [{:activity, activity(:llm, call())}, {:text, "Answer"}])
+    assert text(view, "#inspector-activity") == "Generating response"
+    assert has_element?(view, "#inspector-thinking[role='status']")
+    assert history_calls(view) == 0
+  end
+
   test "buffered deltas replay strictly above the snapshot watermark and watched counts never refetch",
        %{
          conn: conn,

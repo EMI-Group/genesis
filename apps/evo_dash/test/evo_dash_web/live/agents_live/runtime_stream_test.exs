@@ -301,10 +301,46 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStreamTest do
       assert batch(retired, 6, [{:text, "late"}, {:tool_result, "one", :ok}]).projections == []
     end
 
+    test "compressing and preparing are admitted non-call phases, never completed generation" do
+      state = batch(started(), 2, [{:text, "answer"}, {:thinking, "reason"}])
+      assert [%{response: "answer", generation_complete: false}] = state.projections
+
+      for phase <- [:compressing, :preparing] do
+        paused = batch(state, 3, {:activity, activity(phase, nil)})
+        assert paused.activity == phase
+        assert paused.projections == []
+        assert paused.response == ""
+        assert paused.thinking == ""
+        assert batch(paused, 4, [{:text, "late"}, {:thinking, "late"}]).projections == []
+      end
+
+      # A call shape is admitted too, but only :llm_complete/:tools ever prove completion.
+      for phase <- [:compressing, :preparing] do
+        with_call =
+          RuntimeStream.seed(fresh(), %Snapshot{activity: activity(phase, call("live"))}, 1)
+
+        assert with_call.activity == phase
+        assert [%{generation_complete: false, complete: false}] = with_call.projections
+        assert batch(with_call, 2, {:text, " tail"}).response == " tail"
+      end
+    end
+
     test "lifecycle and activity phases remain independent across all core phases" do
-      for phase <- [:idle, :llm_waiting, :llm, :llm_complete, :retry_wait, :tools],
+      for phase <-
+            [
+              :idle,
+              :llm_waiting,
+              :llm,
+              :llm_complete,
+              :retry_wait,
+              :tools,
+              :compressing,
+              :preparing
+            ],
           lifecycle <- [:running, :cancelling, :awaiting_input] do
-        current = if phase in [:idle, :retry_wait], do: nil, else: call("live")
+        current =
+          if phase in [:idle, :retry_wait, :compressing, :preparing], do: nil, else: call("live")
+
         snapshot = %Snapshot{phase: lifecycle, activity: activity(phase, current)}
         state = RuntimeStream.seed(fresh(), snapshot, 1)
         assert state.phase == lifecycle
@@ -377,7 +413,7 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStreamTest do
 
   describe "source capture and generation completion" do
     test "explicit binary text and thinking prove capture, including empty pre-chunk fields" do
-      for phase <- [:llm_waiting, :llm, :llm_complete, :tools] do
+      for phase <- [:llm_waiting, :llm, :llm_complete, :tools, :compressing, :preparing] do
         state =
           RuntimeStream.seed(fresh(), %Snapshot{activity: activity(phase, call("empty"))}, 1)
 

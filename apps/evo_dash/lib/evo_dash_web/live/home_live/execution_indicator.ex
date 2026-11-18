@@ -113,6 +113,12 @@ defmodule EvoDashWeb.HomeLive.ExecutionIndicator do
 
   defp phase_state(:tools), do: presentation(:tools, gettext("Running tools…"), true)
 
+  defp phase_state(:compressing),
+    do: presentation(:compressing, gettext("Compressing context…"), true)
+
+  defp phase_state(:preparing),
+    do: presentation(:preparing, gettext("Preparing next turn…"), true)
+
   defp phase_state(:idle),
     do: presentation(:idle, gettext("Preparing next step…"), false)
 

@@ -15,6 +15,8 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
   A local monotonic message_index supplies stable DOM keys, not checkpoint ids.
   Complete capture follows from explicit binary text AND thinking in the core
   projection; successful generation follows only from :llm_complete or :tools.
+  The non-call phases :compressing and :preparing are admitted and labelled, but
+  never read as generation completion or as an active call phase.
   Failure, retry, turn accounting and lifecycle finish do not prove completion.
 
   Text retains independent UTF-8-safe byte prefixes. Replacement omission counts
@@ -32,7 +34,20 @@ defmodule EvoDashWeb.AgentsLive.RuntimeStream do
   defdelegate max_tools(), to: StreamLimits
   defdelegate max_tool_name_bytes(), to: StreamLimits
 
-  @phases [:idle, :llm_waiting, :llm, :llm_complete, :retry_wait, :tools]
+  # `:compressing` (a context-compression LLM call) and `:preparing` (assembling the
+  # next turn between a tool batch and the next request) are NON-call phases: they are
+  # admitted so their event is retained and labelled, but only `:llm_complete`/`:tools`
+  # prove generation completion and only `:llm` is an active call phase.
+  @phases [
+    :idle,
+    :llm_waiting,
+    :llm,
+    :llm_complete,
+    :retry_wait,
+    :tools,
+    :compressing,
+    :preparing
+  ]
 
   defstruct agent_id: nil,
             node: nil,

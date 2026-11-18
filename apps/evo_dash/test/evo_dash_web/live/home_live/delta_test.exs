@@ -210,8 +210,9 @@ defmodule EvoDashWeb.HomeLive.DeltaTest do
     end
 
     test "thinking-only activity never creates a bubble and no-call phases ignore chunks" do
-      for phase <- [:idle, :llm_waiting, :retry_wait, :tools] do
+      for phase <- [:idle, :llm_waiting, :retry_wait, :tools, :compressing, :preparing] do
         state = run([activity(phase, nil)])
+        assert state.delta.activity == %{phase: phase, current_call: nil}
         assert run([{:text, "stray"}, {:thinking, "stray"}], state) == state
         refute Delta.streamed_text?(state.delta)
       end

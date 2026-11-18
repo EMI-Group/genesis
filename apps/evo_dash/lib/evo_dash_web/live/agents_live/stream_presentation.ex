@@ -67,6 +67,8 @@ defmodule EvoDashWeb.AgentsLive.StreamPresentation do
   def activity(:llm_waiting), do: :waiting
   def activity(:llm_complete), do: :llm_complete
   def activity(:retry_wait), do: :retry_wait
+  def activity(:compressing), do: :compressing
+  def activity(:preparing), do: :preparing
   def activity(_value), do: :unknown
 
   @doc """

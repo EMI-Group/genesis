@@ -250,7 +250,16 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
   end
 
   test "authoritative activity phases are independent of the running snapshot lifecycle" do
-    for phase <- [:idle, :llm_waiting, :llm, :llm_complete, :retry_wait, :tools] do
+    for phase <- [
+          :idle,
+          :llm_waiting,
+          :llm,
+          :llm_complete,
+          :retry_wait,
+          :tools,
+          :compressing,
+          :preparing
+        ] do
       stream = watch(call(), phase)
       dom = page(stream)
       assert stream.state.phase == :running
@@ -264,6 +273,24 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
 
     dom = watch() |> batch([{:activity, activity(:tools, call())}]) |> page()
     assert text(dom, "#inspector-activity") == "Executing tools"
+  end
+
+  test "every admitted activity phase renders one truthful user-facing label" do
+    for {phase, label} <- [
+          {:idle, "Idle"},
+          {:llm_waiting, "Waiting for model capacity"},
+          {:llm, "Generating response"},
+          {:llm_complete, "Response generated"},
+          {:retry_wait, "Waiting to retry"},
+          {:tools, "Executing tools"},
+          {:compressing, "Compressing context"},
+          {:preparing, "Preparing next turn"}
+        ] do
+      dom = watch(nil, phase) |> page()
+
+      assert text(dom, "#inspector-activity") == label
+      refute label == "Activity unavailable"
+    end
   end
 
   test "missing activity never infers a call from chunks, tool announcements or running lifecycle" do
@@ -367,7 +394,8 @@ defmodule EvoDashWeb.AgentsStreamRenderTest do
   end
 
   test "no-thinking notice requires successful generation and explicitly captured empty thinking" do
-    for phase <- [:llm, :llm_complete, :retry_wait, :tools], complete? <- [false, true] do
+    for phase <- [:llm, :llm_complete, :retry_wait, :tools, :compressing, :preparing],
+        complete? <- [false, true] do
       current = call(%{thinking: ""})
       current = if complete?, do: current, else: Map.delete(current, :thinking)
       dom = watch(current, phase) |> page()

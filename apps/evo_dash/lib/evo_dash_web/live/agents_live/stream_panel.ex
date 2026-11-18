@@ -145,6 +145,8 @@ defmodule EvoDashWeb.AgentsLive.StreamPanel do
   defp activity_label(:waiting), do: gettext("Waiting for model capacity")
   defp activity_label(:llm_complete), do: gettext("Response generated")
   defp activity_label(:retry_wait), do: gettext("Waiting to retry")
+  defp activity_label(:compressing), do: gettext("Compressing context")
+  defp activity_label(:preparing), do: gettext("Preparing next turn")
   defp activity_label(_), do: gettext("Activity unavailable")
 
   defp tool_label(:announced), do: gettext("Announced")

@@ -9,7 +9,18 @@ defmodule EvoDashWeb.HomeLive.LiveCall do
 
   alias EvoDashWeb.HomeLive.Transcript
 
-  @phases [:idle, :llm_waiting, :llm, :llm_complete, :retry_wait, :tools]
+  # `:compressing` and `:preparing` are non-call phases as well: admitting them keeps
+  # the Assistant's shown activity current instead of freezing on the previous phase.
+  @phases [
+    :idle,
+    :llm_waiting,
+    :llm,
+    :llm_complete,
+    :retry_wait,
+    :tools,
+    :compressing,
+    :preparing
+  ]
 
   def replace(acc, %{phase: phase, current_call: call} = activity) when phase in @phases do
     if valid_call?(call) do

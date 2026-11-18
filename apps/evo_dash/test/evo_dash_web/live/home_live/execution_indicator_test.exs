@@ -23,6 +23,8 @@ defmodule EvoDashWeb.HomeLive.ExecutionIndicatorTest do
           {:llm_complete, "Preparing next step…", true, :neutral},
           {:retry_wait, "Waiting to retry", false, :warning},
           {:tools, "Running tools…", true, :neutral},
+          {:compressing, "Compressing context…", true, :neutral},
+          {:preparing, "Preparing next turn…", true, :neutral},
           {:idle, "Preparing next step…", false, :neutral}
         ],
         call <- [nil, %{thinking: "private reasoning"}, %{text: "partial answer"}] do
