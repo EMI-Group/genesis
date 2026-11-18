@@ -6,6 +6,7 @@ A restored run's transcript is made provider-valid and the agent is told what ha
 The entry point is `EvoGit.Agent.Resume.apply/1,2`, called ONCE at the very top of `EvoGit.Agent.Exchange.run/2` before the loop, so the FIRST provider call of a resumed run already sees the repaired transcript plus the ONE notice.
 It runs ONLY for a RESTORED RUN: `state.resume_info` says the dispatch ctx carried `restore_agent_state: true` AND `persistent_state` is enabled — a fresh agent, an interactive session's `start_input/3` resume, a merge/resume follow-up and `persistent_state: false` pass through untouched.
 The in-flight marker (`state.pending_tool_batch`) supplies PROVENANCE (which turn, which calls, which class); the transcript supplies the TRUTH (is the final assistant message's `tool_calls` actually unanswered).
+A subagent call is answered from the batch that survived in the scheduler, and failing that from the children's DURABLE rows — a post-restart batch is rebuilt, not assumed lost.
 
 ## Resume kinds & the narration matrix
 
@@ -13,7 +14,7 @@ The in-flight marker (`state.pending_tool_batch`) supplies PROVENANCE (which tur
 
 | `resume_kind` | Meaning | Repair | Notice |
 |---|---|---|---|
-| absent (`nil`) | CRASH RETRY (today's semantics, byte-identical) | synthetic tool results + one batch re-attach | ONE `[RESUME]` notice |
+| absent (`nil`) | CRASH RETRY (today's semantics, byte-identical) | synthetic tool results + one batch re-attach (or a durable-roster rebuild when no in-memory batch survived) | ONE `[RESUME]` notice |
 | `:dirty_pause` | task-level pause brought back by a host RESTART, so the last batch may be partially executed | the SAME crash repair | ONE `[RESUME]` notice, plus the pause/restart sentence and the subagent sentence |
 | `:clean_pause` | the user paused the task at a TURN BOUNDARY and resumed it | NONE — nothing was interrupted, so no `tool_calls` tail is dangling and no marker is set | ONE neutral pause/resume notice (`Notice.pause_text/1`), never `[RESUME]`, never repair/inconsistency wording |
 
@@ -37,10 +38,11 @@ Either notice is delivered the SAME way: ONE non-user-authored `:user` harness m
 | `EvoGit.Agent.Resume.Notice` | `text(%State{}, batch)`, `facts(%State{}, batch)` | The `[RESUME]` notice text (crash retry + `:dirty_pause`) and the facts it is built from; every absent fact (retries, retry reason, salvaged commit, restore outcome) DROPS its sentence instead of asserting a guess. |
 | `EvoGit.Agent.Resume.Notice` | `pause_text(%State{})` | The NEUTRAL clean-pause notice text (pause/resume, the pause-checkpoint-or-task-base worktree fact stated only when the resume can back it, non-resumable subagents, restore degradation when applicable). |
 | `EvoGit.Agent.Resume.ToolBatch` | `impact(class, call)` | The honest synthetic tool-result TEXT for one interrupted call (`:subagent` answers the re-attach FALLBACK text); never fabricates success and never invents output. |
-| `EvoGit.Agent.Resume.Reattach` | `resolve(%State{}, slots, opts \\ [])` | ONE batch-level subagent re-attach → `%{texts: %{model_call_index => text}, merge_note: String.t() \| nil}`. |
-| `EvoGit.Agent.Resume.Reattach` | `empty/0`, `default_reattach_fun/0` | The empty answer (every call falls back) and the DEFAULT injection, `&EvoGit.AgentScheduler.reattach_sub_agents/2` (the `agent_id, expected_count` subset of `/3`). |
+| `EvoGit.Agent.Resume.Reattach` | `resolve(%State{}, slots, opts \\ [])` | ONE batch-level subagent answer → `%{texts: %{model_call_index => text}, merge_note: String.t() \| nil}`: the surviving in-memory batch when there is one, else a batch rebuilt from the durable roster. |
+| `EvoGit.Agent.Resume.Reattach` | `empty/0`, `default_reattach_fun/0`, `default_rebuild_fun/0` | The empty answer (every call falls back) and the two DEFAULT injections, `&EvoGit.AgentScheduler.reattach_sub_agents/2` and `&EvoGit.AgentScheduler.rebuild_subagent_batch/3`. |
+| `EvoGit.Agent.Resume.RosterBatch` | `plan(%State{}, turn, expected, opts \\ [])` | Worker-side rebuild plan from the durable roster: one slot per expected subagent call, in model call order (`{:ok, plan}` \| `{:error, reason}`, TOTAL). |
 
-`apply/2`'s ONLY option is `:reattach_fun` (`fn agent_id, expected_count -> reply`) — an explicit option, never an app-env seam.
+`apply/2`'s options are all explicit injection points, never app env: `:reattach_fun` (`fn agent_id, expected_count -> reply`), `:rebuild_fun` (`fn agent_id, plan, opts -> reply`, defaulting to `&EvoGit.AgentScheduler.rebuild_subagent_batch/3`), `:roster_fun` (the durable roster read, defaulting to `&EvoGit.AgentState.roster/1`) and the scheduler-side `:spawn_fun` the rebuild passes through; `apply/2` supplies `:turn` itself from `dangling/1` so the plan can identify the children that turn spawned.
 
 ## Constraints
 
@@ -49,21 +51,22 @@ Either notice is delivered the SAME way: ONE non-user-authored `:user` harness m
 - **The notice is harness text**: exactly ONE notice `:user` message from `ContextBuilder.build_injected_message/2`, never `EvoGit.Agent.MessageMarker`-flagged as user-authored, and `metadata[:resume_notice]` makes a second resumed exchange append nothing.
 - **Totality**: no raises, no LLM call; every re-attach, formatting, node-path and merge failure degrades to the honest fallback text with a `Logger.warning` — a repair can never crash the exchange.
 - **The class is provenance-first**: the marker entry for the same provider `id` wins, then the entry at the same `index`, and only an absent marker re-derives it from the call name via `EvoGit.Agent.ToolBatch.class/2`.
-- **ONE re-attach call per interrupted batch**: `expected_count` is the number of `:subagent` calls of the interrupted turn, the answered batch maps onto those calls BY POSITION (sub-agent index ↔ subagent-call order), and a malformed/`{:error, _}` reply answers the WHOLE batch with fallback text — never a partial guess.
+- **ONE re-attach call per interrupted batch**: `expected_count` is the number of `:subagent` calls of the interrupted turn, the answered batch maps onto those calls BY POSITION (sub-agent index ↔ subagent-call order), and a malformed/`{:error, _}` reply answers the WHOLE batch with fallback text — never a partial guess. `{:error, :no_pending_batch}` is not the end of the road: the worker builds a rebuild plan from the durable roster and ONE `rebuild_subagent_batch/3` call installs it, so a batch that merely left ETS is answered with real results.
 - **A real result's text is UNCHANGED**: `SubagentProcessing.format_subagent_result/1` output is passed through verbatim; only an unavailable slot, a raising/blank formatting, or an un-runnable merge replaces it with the fallback.
 - **A same-repo child MUST be merged**: the resumed worktree is based on the SALVAGED/pause-checkpoint commit while the child's commits live on its own branch, so every real same-repo child is merged through `SubagentProcessing.perform_merge/3` + `delete_merged_branches/2` and reported with the ordinary `build_merge_message/4` note appended as ONE turn-tagged `:user` message; a merge that cannot RUN degrades those calls to fallback text (reporting work that is not in the tree would be a lie), while a merge that runs keeps the real text and the ordinary report.
 - **Cross-repo children are never merged**: a `result.repo_id` that is non-nil and differs from the parent's is a foreign-repo child, exactly as on the spawn path; `nil` or the parent's own id is same-repo.
 - **The merge-child map is shaped in ONE place**: `SubagentProcessing.merge_child/5`, shared with the spawn path; an absent `node_path` is re-derived best-effort from the interrupted call and degrades to root ownership (the most permissive), never a lost commit.
 - **The marker is always cleared** by the time `apply/2` returns — repair exists to close it — and `persistent_state: false` writes no marker, no repair and no notice.
-- **Bounded, deliberate blocking**: the re-attach wait inside `EvoGit.AgentScheduler.reattach_sub_agents/3` (`opts[:timeout]` → `:agent_resume_reattach_timeout_ms` → 1_800_000 ms) is the ONLY non-total step, and it is fully guarded here.
-- **The batch is in-memory**: the scheduler keeps it on the parent's `%SchedMeta{}` row, so a scheduler/BEAM restart reports every unresolved slot as `{:error, :subagent_result_lost}` and those calls take the fallback text.
+- **Bounded, deliberate blocking**: the re-attach wait inside `EvoGit.AgentScheduler.reattach_sub_agents/3` (`opts[:timeout]` → `:agent_resume_reattach_timeout_ms` → 1_800_000 ms) and the equivalent bounded wait of a rebuilt batch are the ONLY non-total steps, and both are fully guarded here.
+- **A lost in-memory batch is REBUILT from durable state, not assumed lost**: the scheduler keeps a live batch on the parent's `%SchedMeta{}` row (ETS, wiped by a scheduler/BEAM restart), so when `reattach_sub_agents/3` refuses with `{:error, :no_pending_batch}` the worker builds a plan from the children's durable rows (`RosterBatch.plan/4`, ALL durable I/O in the agent process) and hands it to `EvoGit.AgentScheduler.rebuild_subagent_batch/3` (`SubagentRebuild`): a `done` row CONTRIBUTES its stored result with no re-spawn, a `running` row is re-spawned under its persisted `agent_id` with `restore_agent_state: true` and repeats the same steps for ITS OWN children (resume is recursive), and a slot with no usable row answers `{:error, :subagent_result_lost}` — the fallback text is for genuinely unrebuildable slots only.
 
 ## Routing Table
 
 - `../CONTEXT.md` → the exchange engine, `%EvoGit.Agent.State{}`, the pre-batch checkpoint and the marker invariant (§ Durable Per-Agent State).
 - `../session/CONTEXT.md` → the session's checkpoint adoption rule, `resume_info` provenance (including `:resume_kind`) and the crashed-worker retry path.
 - `../tool_batch.ex` → `EvoGit.Agent.ToolBatch`, the marker model, its classes and `normalize/1`.
+- `roster_batch.ex` → `EvoGit.Agent.Resume.RosterBatch`, the worker-side plan that turns the children's durable rows into one slot per expected subagent call (done result / rebuilt spec / `:missing`).
 - `../../agent_state/CONTEXT.md` → the durable store, `Record`'s column mapping, the `agent_states.pending_tool_batch` JSON column and the `pause_commit` marker.
-- `../../../agent_scheduler/CONTEXT.md` → `reattach_sub_agents/3`, `SubagentReattach`, `Salvage`/`WorktreeManager.salvage_for_retry/2`, `Lifecycle.retry_agent/4`, `Dispatch.resume_plan/5` and `Dispatch.apply_crash_base/5`.
+- `../../../agent_scheduler/CONTEXT.md` → `reattach_sub_agents/3`, `SubagentReattach`, `rebuild_subagent_batch/3`, `SubagentRebuild`, `Salvage`/`WorktreeManager.salvage_for_retry/2`, `Lifecycle.retry_agent/4`, `Dispatch.resume_plan/5` and `Dispatch.apply_crash_base/5`.
 - `../../../../docs/task-pause.md` → the task-level pause/resume design record (clean vs dirty, resume protocol).
 - `../subagent_processing.ex` → `format_subagent_result/1`, `perform_merge/3`, `delete_merged_branches/2`, `build_merge_message/4`, `merge_child/5`, `resolve_subagent_path/4`.

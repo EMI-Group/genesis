@@ -274,7 +274,7 @@ An unwatched worker still captures live activity and supports chunk-level interr
 - `./registry.ex` → `EvoGit.Agent.Session.Registry`; `./supervisor.ex` → `EvoGit.Agent.Session.Supervisor`.
 - `../state.ex` → `%EvoGit.Agent.State{}`, the authoritative struct these functions build and project from (`mode`, `phase`, `prompt_cache_key`, `exchange_turn_base`), whose `watchers`/`event_seq` fields are only the session's re-stamped projection (`adopt_state/2`).
 - `../exchange.ex` → the engine the worker runs (`{:yield, state, text} | {:finish, state, result} | {:error, reason}`); `../completion/builder.ex` → `Completion.Builder.finalize/2`, the ONE completion writer the finalizer calls; `../runner.ex` → the thin HELPER module (`refresh_commit_sha/1` + `@doc false` engine delegates), whose `try/after` + `refresh_commit_sha/1` shape the worker follows.
-- `../resume/CONTEXT.md` → `EvoGit.Agent.Resume`: the crash-resume repair of a dangling `tool_calls` tail, the ONE `[RESUME]` notice and the batch-level subagent re-attach, run after the retry (never in the session).
+- `../resume/CONTEXT.md` → `EvoGit.Agent.Resume`: the crash-resume repair of a dangling `tool_calls` tail, the ONE `[RESUME]` notice and the batch-level subagent answer (the surviving batch, else a rebuild from the durable roster), run after the retry (never in the session).
 
 ## Process-dictionary keys installed by `setup.ex` (agent-side contract)
 
