@@ -734,7 +734,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   defp accept_request(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from) do
     case Store.get_agent_state(agent_id) do
       {:ok, agent_state} ->
-        branch_name = Worktrees.branch_name(meta.task_number, agent_state.task_local_id)
+        branch_name = Worktrees.branch_for(meta, agent_state.task_local_id, spec)
         ref = Process.monitor(agent_pid)
 
         state = %{
@@ -1050,7 +1050,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
             Map.put(state.agents, agent_id, %{
               worktree_path: worktree,
               repo_root: repo_root || Worktrees.repo_root_from_worktree(worktree),
-              branch_name: Worktrees.branch_name(task_number, task_local_id),
+              branch_name: Worktrees.branch_for(meta, task_local_id, meta.spec),
               base_sha: meta_base_sha(meta),
               status: :live,
               monitor_ref: ref
