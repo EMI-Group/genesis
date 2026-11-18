@@ -93,9 +93,9 @@ defmodule EvoGit.Agent.Resume.Notice do
   def pause_text(%State{} = state) do
     info = resume_info(state)
 
-    [
-      "The user paused this task and has now resumed it. No tool call was interrupted#{worktree_clause(info)}."
-    ]
+    opening = "The user paused this task and has now resumed it. No tool call was interrupted"
+
+    [opening <> worktree_clause(info) <> "."]
     |> append(pause_base_sentence(info))
     |> append(restore_sentence(info))
     |> append(subagent_sentence(pause_kind(state)))
