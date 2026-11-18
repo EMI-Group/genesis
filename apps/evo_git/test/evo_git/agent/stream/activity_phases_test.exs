@@ -31,7 +31,6 @@ defmodule EvoGit.Agent.Stream.ActivityPhasesTest do
 
     expected = %{phase: :compressing, current_call: nil}
     assert Activity.apply(initial, {:phase, :compressing}) == {expected, [{:activity, expected}]}
-    assert expected == %{phase: :compressing, current_call: nil}
   end
 
   test "an unkeyed preparing phase retires the populated call and emits one replacement" do
@@ -39,7 +38,6 @@ defmodule EvoGit.Agent.Stream.ActivityPhasesTest do
 
     expected = %{phase: :preparing, current_call: nil}
     assert Activity.apply(initial, {:phase, :preparing}) == {expected, [{:activity, expected}]}
-    assert expected == %{phase: :preparing, current_call: nil}
   end
 
   test "keyed compressing and preparing phases retire the matching call exactly" do
@@ -50,8 +48,6 @@ defmodule EvoGit.Agent.Stream.ActivityPhasesTest do
 
       assert Activity.apply(initial, {:call_phase, "call", phase}) ==
                {expected, [{:activity, expected}]}
-
-      assert expected.current_call == nil
     end
   end
 
@@ -88,7 +84,6 @@ defmodule EvoGit.Agent.Stream.ActivityPhasesTest do
     initial = populated()
 
     assert Activity.apply(initial, :reset) == {Activity.new(), [{:activity, Activity.new()}]}
-    assert Activity.apply(initial, :reset) == replacement(Activity.new())
   end
 
   test "a retired call cannot be resurrected by a late chunk after compressing or preparing" do
