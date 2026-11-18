@@ -330,6 +330,30 @@ defmodule EvoGit.AgentState.Store do
     "DELETE FROM #{@chunks} WHERE task_id = ? AND agent_id = ?"
   end
 
+  @doc """
+  Deletes every run (and its chunks) of MANY tasks in ONE transaction.
+
+  The bulk shape behind `EvoGit.AgentState.delete_tasks/2`: a registry clearing
+  finished tasks sends ONE writer message instead of one per task. Total
+  (`:ok` on an empty list, a missing store or a store fault).
+  """
+  @spec delete_tasks(pid(), [String.t()]) :: :ok | {:error, term()}
+  def delete_tasks(repo, task_ids) when is_list(task_ids) do
+    total(repo, fn ->
+      case EvoGit.Repo.transaction(fn ->
+             Enum.each(task_ids, fn task_id ->
+               run!("DELETE FROM #{@chunks} WHERE task_id = ?", [task_id])
+               run!("DELETE FROM #{@states} WHERE task_id = ?", [task_id])
+             end)
+           end) do
+        {:ok, _result} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    end)
+  end
+
+  def delete_tasks(_repo, _task_ids), do: :ok
+
   defp delete_in_transaction(chunks_sql, chunks_params, states_sql, states_params) do
     case EvoGit.Repo.transaction(fn ->
            run!(chunks_sql, chunks_params)

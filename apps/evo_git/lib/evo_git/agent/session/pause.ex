@@ -17,7 +17,7 @@ defmodule EvoGit.Agent.Session.Pause do
 
       %{agent_id: pos_integer(), task_id: String.t(),
         checkpoint: String.t() | nil, branch: String.t() | nil,
-        reason: :task_pause}
+        durable: boolean(), reason: :task_pause}
 
   ## The ordered steps (each one total)
 
@@ -36,17 +36,19 @@ defmodule EvoGit.Agent.Session.Pause do
        :not_persistent_state_disabled}` are tolerated: a non-durable run still
        pauses, it simply cannot resume (the caller-side validation refuses such a
        pause before it starts);
-    5. `EvoGit.AgentState.flush/1` — the explicit durability barrier, a
-       synchronous writer round-trip, so when it returns the paused run's whole
-       conversation AND its `pause_commit` marker are committed. It MUST return
-       before the outcome is delivered;
+    5. `EvoGit.AgentState.flush/1` — the explicit, HONEST durability barrier: a
+       synchronous writer round-trip. It MUST return before the outcome is
+       delivered, and only an `:ok` reply proves the paused run's whole
+       conversation AND its `pause_commit` marker were committed. `{:error,
+       :timeout}` still pauses (a pause is never worth a session crash) but the
+       outcome reports `durable: false`, so nothing downstream can overstate it;
     6. report `{:session_paused, self(), info}` to the session, which owns the
        single terminal delivery.
 
   Any raise/exit/throw anywhere in that sequence degrades to
-  `{:session_paused, pid, %{… checkpoint: nil, branch: nil}}` — a pause is never
-  worth a session crash, and a nil checkpoint only means the resume falls back to
-  the task base.
+  `{:session_paused, pid, %{… checkpoint: nil, branch: nil, durable: false}}` —
+  a pause is never worth a session crash, and a nil checkpoint only means the
+  resume falls back to the task base.
 
   ## Delivery is still exactly ONCE
 
@@ -72,6 +74,7 @@ defmodule EvoGit.Agent.Session.Pause do
           task_id: String.t() | nil,
           checkpoint: String.t() | nil,
           branch: String.t() | nil,
+          durable: boolean(),
           reason: :task_pause
         }
 
@@ -124,18 +127,27 @@ defmodule EvoGit.Agent.Session.Pause do
 
   @doc """
   Builds the paused outcome payload from a state (and the checkpoint it produced,
-  if any).
+  if any), reporting `durable: false`.
 
   Public so the session can build the same shape for the belt-and-braces paths
-  (a killed finalizer, an exchange worker aborted by the pause purge).
+  (a killed finalizer, an exchange worker aborted by the pause purge): those
+  paths never flush, so they honestly cannot claim a durable checkpoint.
   """
   @spec info(State.t(), String.t() | nil, String.t() | nil) :: info()
-  def info(%State{} = state, checkpoint, branch) do
+  def info(%State{} = state, checkpoint, branch), do: info(state, checkpoint, branch, false)
+
+  @doc """
+  The same payload with an explicit durability verdict — `true` ONLY when the
+  writer's `flush/1` answered `:ok`.
+  """
+  @spec info(State.t(), String.t() | nil, String.t() | nil, boolean()) :: info()
+  def info(%State{} = state, checkpoint, branch, durable) do
     %{
       agent_id: state.agent_id,
       task_id: state.task_id,
       checkpoint: checkpoint,
       branch: branch,
+      durable: durable == true,
       reason: :task_pause
     }
   end
@@ -150,8 +162,8 @@ defmodule EvoGit.Agent.Session.Pause do
     reap_background_jobs(session_pid)
     {checkpoint, branch} = checkpoint(state)
     persist(state, checkpoint)
-    flush(state)
-    info(state, checkpoint, branch)
+    durable = flush(state) == :ok
+    info(state, checkpoint, branch, durable)
   rescue
     error ->
       Logger.warning(
@@ -234,7 +246,8 @@ defmodule EvoGit.Agent.Session.Pause do
   defp persist(_state, _checkpoint), do: :ok
 
   # The explicit durability barrier: a synchronous writer round-trip. It MUST
-  # complete before the paused outcome is delivered.
+  # complete before the paused outcome is delivered, and its verdict decides
+  # whether the outcome may claim `durable: true`.
   defp flush(%State{agent_id: agent_id}) when is_integer(agent_id),
     do: AgentState.flush(agent_id)
 

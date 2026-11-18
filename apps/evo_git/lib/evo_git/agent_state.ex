@@ -52,14 +52,33 @@ defmodule EvoGit.AgentState do
 
   `flush/1` is the durability barrier the pause path calls immediately before it
   delivers a paused outcome: it is a synchronous `GenServer.call` round-trip
-  through the single serialized writer, so when it returns every earlier
-  checkpoint cast (for every agent) is committed. It is NOT a cast.
+  through the single serialized writer, so when it returns `:ok` every earlier
+  checkpoint cast (for every agent) is committed. It is NOT a cast, and it is
+  HONEST: `{:error, :timeout}` means this caller may not claim durability (a
+  dead/stopped server, a degraded writer, or a writer whose queue is already
+  past the backlog cap).
+
+  ## Supervision & total APIs
+
+  The subsystem lives under `EvoGit.AgentState.Supervisor` (generous restart
+  intensity), so a failing disk can never take the application down: the writer
+  boots DEGRADED and retries with bounded backoff. Every public function stays
+  total in every state, and every function accepts EITHER the supervisor pid
+  (what `child_spec/1` starts and `start_supervised!/2` returns) OR the writer
+  pid — a supervisor pid is resolved through `:persistent_term`.
   """
 
-  alias EvoGit.AgentState.{Server, Store}
+  alias EvoGit.AgentState.{Server, Store, Supervisor}
 
   @default_server Server
-  @call_timeout 15_000
+
+  # The drain budget for a synchronous call. NEVER smaller than the database's
+  # own wait budget plus a statement budget: `EvoGit.Repo.start_opts/0` sets
+  # `busy_timeout: 30_000` (a lock waits in the calling process for up to 30 s)
+  # and a statement gets a further 10 s of headroom here. A shorter call timeout
+  # would answer "timed out" for exactly the lock contention the barrier exists
+  # for — and worse, the abandoned call would still be executed later.
+  @call_timeout 40_000
 
   @typedoc """
   A task id: the task store's 16-hex-character STRING id, or an integer id for
@@ -68,22 +87,23 @@ defmodule EvoGit.AgentState do
   @type task_id :: String.t() | pos_integer()
 
   @doc """
-  Starts the agent-state server.
+  Starts the agent-state SUPERVISOR (the writer is its child).
 
   See `EvoGit.AgentState.Server.start_link/1` for the options (`:database`,
-  `:data_dir`, `:name`, `:retention_days`, `:prune_interval`).
+  `:data_dir`, `:name`, `:retention_days`, `:prune_interval`,
+  `:boot_retry_base`, `:boot_retry_max`).
   """
-  @spec start_link(keyword()) :: GenServer.on_start()
-  def start_link(opts \\ []), do: Server.start_link(opts)
+  @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
+  def start_link(opts \\ []), do: Supervisor.start_link(opts)
 
   @doc false
   def child_spec(opts) do
     %{
       id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker,
+      start: {Supervisor, :start_link, [opts]},
+      type: :supervisor,
       restart: :permanent,
-      shutdown: 15_000
+      shutdown: :infinity
     }
   end
 
@@ -110,17 +130,21 @@ defmodule EvoGit.AgentState do
   checkpoints. `nil` when the server or its repo is absent/dead.
   """
   @spec repo(pid() | nil) :: pid() | nil
-  def repo(server) when is_pid(server) do
-    case :persistent_term.get({__MODULE__, :repo, server}, nil) do
-      repo when is_pid(repo) ->
-        if Process.alive?(server) and Process.alive?(repo), do: repo, else: nil
+  def repo(server) do
+    case resolve(server) do
+      pid when is_pid(pid) ->
+        case :persistent_term.get({__MODULE__, :repo, pid}, nil) do
+          repo when is_pid(repo) ->
+            if Process.alive?(pid) and Process.alive?(repo), do: repo, else: nil
+
+          _other ->
+            nil
+        end
 
       _other ->
         nil
     end
   end
-
-  def repo(_server), do: nil
 
   @doc """
   Enqueues a checkpoint. ALWAYS `:ok`, total — this is a CAST, so the hot path
@@ -128,17 +152,7 @@ defmodule EvoGit.AgentState do
   """
   @spec checkpoint(String.t(), integer(), map(), keyword()) :: :ok
   def checkpoint(task_id, agent_id, entry, opts \\ []) do
-    case target(opts) do
-      # `GenServer.cast/2` is total for a name as well as a pid (it returns
-      # `:ok` even when the name is unregistered), so a named store is safe too.
-      server when is_pid(server) or (is_atom(server) and not is_nil(server)) ->
-        GenServer.cast(server, {:checkpoint, task_id, agent_id, entry})
-
-      _none ->
-        :ok
-    end
-
-    :ok
+    cast(opts, {:checkpoint, task_id, agent_id, entry})
   end
 
   @doc """
@@ -154,10 +168,16 @@ defmodule EvoGit.AgentState do
 
   Also the read-your-writes barrier for callers that checkpoint and then
   `load/3`/`prune/1` in the same process — a plain read deliberately does NOT
-  queue behind the writer (see `load/3`). Total: `:ok` even when the server is
-  absent/dead. Accepts `store:` opts, a server pid, or an agent id.
+  queue behind the writer (see `load/3`). Accepts `store:` opts, a
+  server/supervisor pid, a registered name, or an agent id.
+
+  HONEST: `:ok` means the writer committed everything queued before this call;
+  `{:error, :timeout}` means the caller must NOT claim durability (the server
+  is absent/dead, the writer is degraded, or its backlog is over
+  `:agent_state_max_backlog`). `nil` (no target at all) is `:ok` — there is
+  nothing to flush.
   """
-  @spec flush(keyword() | pid() | integer() | nil) :: :ok
+  @spec flush(keyword() | pid() | atom() | integer() | nil) :: :ok | {:error, :timeout}
   def flush(opts \\ [])
 
   def flush(opts) when is_list(opts), do: flush(target(opts))
@@ -167,9 +187,15 @@ defmodule EvoGit.AgentState do
   # flushing the server (the agent's checkpoint casts are ordered before it).
   def flush(agent_id) when is_integer(agent_id), do: flush(target([]))
 
-  def flush(server) when is_pid(server) do
-    _ = safe_call(server, :sync)
-    :ok
+  def flush(nil), do: :ok
+
+  # A call to a dying/absent writer exits the caller; the barrier converts that
+  # into its documented non-durable answer instead of crashing a pause.
+  def flush(server) when is_pid(server) or is_atom(server) do
+    case safe_call(resolve(server), :sync) do
+      :ok -> :ok
+      _other -> {:error, :timeout}
+    end
   end
 
   def flush(_none), do: :ok
@@ -259,26 +285,50 @@ defmodule EvoGit.AgentState do
     end
   end
 
-  @doc "Marks the run completed (the row is KEPT for later recovery). Total."
+  @doc """
+  Marks the run completed (the row is KEPT for later recovery).
+
+  A CAST: total, `:ok`, and never a synchronous barrier for the finalizing
+  session. Call `flush/1` when the write must be observed.
+  """
   @spec mark_completed(String.t(), integer(), keyword()) :: :ok
   def mark_completed(task_id, agent_id, opts \\ []) do
-    _ = call(opts, {:mark_completed, task_id, agent_id})
-    :ok
+    cast(opts, {:mark_completed, task_id, agent_id})
   end
 
-  @doc "Deletes one agent run's row and chunks. Total."
+  @doc """
+  Deletes one agent run's row and chunks.
+
+  A CAST: total, `:ok`. Call `flush/1` when the deletion must be observed.
+  """
   @spec delete(String.t(), integer(), keyword()) :: :ok
   def delete(task_id, agent_id, opts \\ []) do
-    _ = call(opts, {:delete, task_id, agent_id})
-    :ok
+    cast(opts, {:delete, task_id, agent_id})
   end
 
-  @doc "Deletes every agent run of one task. Total."
+  @doc """
+  Deletes every agent run of one task.
+
+  A CAST: total, `:ok`. Call `flush/1` when the deletion must be observed.
+  """
   @spec delete_task(String.t(), keyword()) :: :ok
   def delete_task(task_id, opts \\ []) do
-    _ = call(opts, {:delete_task, task_id})
-    :ok
+    cast(opts, {:delete_task, task_id})
   end
+
+  @doc """
+  Deletes every run of MANY tasks in ONE cast (one writer message, one
+  transaction) — the bulk shape a registry clearing finished tasks needs.
+
+  Total and `:ok`; non-list input is ignored.
+  """
+  @spec delete_tasks([String.t()], keyword()) :: :ok
+  def delete_tasks(task_ids, opts \\ [])
+
+  def delete_tasks(task_ids, opts) when is_list(task_ids),
+    do: cast(opts, {:delete_tasks, task_ids})
+
+  def delete_tasks(_task_ids, _opts), do: :ok
 
   @doc """
   Deletes runs outside the retention window (see
@@ -304,13 +354,40 @@ defmodule EvoGit.AgentState do
     end
   end
 
+  # `GenServer.cast/2` is total for a name as well as a pid (it returns `:ok`
+  # even when the name is unregistered), and a supervisor pid is resolved to the
+  # writer first — a cast/call sent to a supervisor would be an unknown message.
+  defp cast(opts, message) do
+    case resolve(target(opts)) do
+      server when is_pid(server) or (is_atom(server) and not is_nil(server)) ->
+        GenServer.cast(server, message)
+
+      _none ->
+        :ok
+    end
+
+    :ok
+  end
+
   defp call(opts, message) do
-    case target(opts) do
+    case resolve(target(opts)) do
       server when is_pid(server) -> safe_call(server, message)
       server when is_atom(server) and not is_nil(server) -> safe_call(server, message)
       _none -> :error
     end
   end
+
+  # A supervisor pid (what `child_spec/1` starts) maps to its writer through a
+  # `:persistent_term` entry the writer publishes at init. Anything else is
+  # already a usable target.
+  defp resolve(pid) when is_pid(pid) do
+    case :persistent_term.get({__MODULE__, :server_for, pid}, nil) do
+      server when is_pid(server) -> server
+      _other -> pid
+    end
+  end
+
+  defp resolve(target), do: target
 
   # Justified catch: these are documented TOTAL public functions, and a call to
   # a dead/restarting server exits the caller — there is no non-exiting

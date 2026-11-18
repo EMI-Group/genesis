@@ -19,9 +19,12 @@ defmodule EvoGit.AgentState.Boot do
   pool's connections must be created AFTER the schema exists (same rationale as
   `EvoGit.Store.Boot.reopen_pool/3`).
 
-  Boot is FATAL on a broken/unwritable database: `File.mkdir_p!/1` and the
-  `{:ok, repo} = ...` matches are allowed to raise out of the caller's `init/1`
-  instead of degrading into a silently non-persisting server.
+  Boot is NEVER fatal: `start_dynamic/2` contains the directory creation, the
+  repo start and the migration run, stops any partially started repo instance
+  and answers `{:error, reason}` instead of raising. The caller
+  (`EvoGit.AgentState.Server`) degrades to a store-less server and retries with
+  bounded backoff, so a broken or unwritable database can never take down the
+  application.
   """
 
   @repo EvoGit.Repo
@@ -34,24 +37,86 @@ defmodule EvoGit.AgentState.Boot do
   Starts an UNNAMED dynamic `EvoGit.Repo` on `database`, runs every pending
   agent-state migration, and returns `{:ok, pid}`.
 
+  TOTAL: a directory that cannot be created, a repo that will not start and a
+  failing migration all answer `{:error, reason}` (the partially started repo
+  instance is stopped first) — this function never raises and never exits.
+
   ## Options
 
     * `:pool_size` — connections the returned pool opens (default `2`).
   """
-  @spec start_dynamic(Path.t(), keyword()) :: {:ok, pid()}
+  @spec start_dynamic(Path.t(), keyword()) :: {:ok, pid()} | {:error, term()}
   def start_dynamic(database, opts \\ []) do
+    do_start_dynamic(database, opts)
+  rescue
+    error -> {:error, {:boot_failed, Exception.message(error)}}
+  catch
+    kind, reason -> {:error, {:boot_failed, {kind, reason}}}
+  end
+
+  defp do_start_dynamic(database, opts) do
     database = Path.expand(database)
-    :ok = File.mkdir_p(Path.dirname(database))
     pool_size = resolve_pool_size(opts)
 
-    {:ok, boot} = @repo.start_link(start_opts(database, 1))
-    run_migrations(boot)
-
-    if pool_size == 1 do
-      {:ok, boot}
-    else
-      reopen_pool(database, boot, pool_size)
+    with :ok <- ensure_dir(database),
+         {:ok, boot} <- start_boot_repo(database) do
+      complete_boot(boot, database, pool_size)
     end
+  end
+
+  defp ensure_dir(database) do
+    case File.mkdir_p(Path.dirname(database)) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:mkdir_failed, reason}}
+    end
+  end
+
+  defp start_boot_repo(database) do
+    case @repo.start_link(start_opts(database, 1)) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, reason} -> {:error, {:repo_start_failed, reason}}
+    end
+  rescue
+    error -> {:error, {:repo_start_failed, Exception.message(error)}}
+  end
+
+  # The migration run is the one step that must stop its own boot repo before
+  # answering: leaving a migrated-then-failed instance linked would keep a
+  # connection on the broken file alive for the whole backoff window.
+  defp complete_boot(boot, database, pool_size) do
+    run_migrations(boot)
+    reopen(boot, database, pool_size)
+  rescue
+    error ->
+      stop_quietly(boot)
+      {:error, {:migration_failed, Exception.message(error)}}
+  catch
+    kind, reason ->
+      stop_quietly(boot)
+      {:error, {:migration_failed, {kind, reason}}}
+  end
+
+  defp reopen(boot, _database, 1), do: {:ok, boot}
+
+  defp reopen(boot, database, pool_size) do
+    stop_quietly(boot)
+
+    case @repo.start_link(start_opts(database, pool_size)) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, reason} -> {:error, {:repo_start_failed, reason}}
+    end
+  rescue
+    error -> {:error, {:repo_start_failed, Exception.message(error)}}
+  end
+
+  # A stopped/failed boot repo must never turn a boot error into a raise.
+  defp stop_quietly(boot) do
+    _ = stop(boot)
+    :ok
+  rescue
+    _error -> :ok
+  catch
+    _kind, _reason -> :ok
   end
 
   @doc """
@@ -103,11 +168,6 @@ defmodule EvoGit.AgentState.Boot do
       journal_mode: :wal,
       synchronous: :normal
     )
-  end
-
-  defp reopen_pool(database, boot, pool_size) do
-    :ok = stop(boot)
-    @repo.start_link(start_opts(database, pool_size))
   end
 
   defp resolve_pool_size(opts) do

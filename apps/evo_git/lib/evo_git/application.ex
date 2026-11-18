@@ -163,11 +163,13 @@ defmodule EvoGit.Application do
              )},
           # Durable per-run agent state in its OWN SQLite database beside the
           # task store (`agent_state.sqlite`), so a crashed agent run's
-          # conversation + scalar fields stay recoverable. Owns its own unnamed
-          # dynamic `EvoGit.Repo` instance and runs its own migrations; boot is
-          # fatal on a broken/unwritable file. Started AFTER the task store and
-          # BEFORE TaskRegistry so every later reader finds it up. The data dir
-          # resolves exactly like `tasks.sqlite` above.
+          # conversation + scalar fields stay recoverable. Starts the
+          # `EvoGit.AgentState.Supervisor`, whose writer owns an unnamed dynamic
+          # `EvoGit.Repo` instance and runs its own migrations under generous
+          # restart intensity; a broken/unwritable file boots DEGRADED and
+          # retries, so it can never take this application down. Started AFTER
+          # the task store and BEFORE TaskRegistry so every later reader finds
+          # it up. The data dir resolves exactly like `tasks.sqlite` above.
           {EvoGit.AgentState,
            database:
              Path.join(
