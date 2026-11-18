@@ -227,9 +227,10 @@ defmodule EvoGit.Agent.Session.DurableResumeNarrationTest do
       assert text =~ "Interrupted tool calls: 2"
       assert text =~ "restored from commit abc1234, the last checkpointed commit"
       assert text =~ "uncommitted worktree changes from the interrupted run are NOT preserved"
-      # The subagent caveat belongs to a PAUSE resume only: a crash retry never
+      # The subagent sentence belongs to a PAUSE resume only: a crash retry never
       # claims subagents were resumable.
-      refute text =~ "Subagents are NOT resumable after a restart"
+      refute text =~ "is re-spawned and resumes from its own durable checkpoint"
+      refute text =~ "Subagents:"
       refute text =~ "PAUSED when the host restarted"
     end
 

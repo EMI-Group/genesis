@@ -319,12 +319,13 @@ defmodule EvoGit.Agent.ResumeTest do
       refute text =~ "inconsistent"
       refute text =~ "Interrupted tool calls"
 
-      # It states the pause/resume, the untouched worktree and the subagent
-      # limit, and claims no interruption.
+      # It states the pause/resume, the untouched worktree and what the
+      # whole-tree resume does with the subagents, and claims no interruption.
       assert text =~ "paused this task and has now resumed it"
       assert text =~ "worktree is exactly as it was left"
       assert text =~ "No tool call was interrupted"
-      assert text =~ "Subagents are NOT resumable after a restart"
+      assert text =~ "contributes its stored result"
+      assert text =~ "is re-spawned and resumes from its own durable checkpoint"
 
       # Exactly ONE such notice in the whole transcript.
       assert Enum.count(resumed.context.messages, &(&1.role == :user and text_of(&1) =~ "paused")) ==
@@ -380,9 +381,10 @@ defmodule EvoGit.Agent.ResumeTest do
 
       assert text =~ "[RESUME]"
       assert text =~ "Interrupted tool calls: 2"
-      # A post-restart pause says so and still states the subagent limit.
+      # A post-restart pause says so and still states the subagent fate.
       assert text =~ "PAUSED when the host restarted"
-      assert text =~ "Subagents are NOT resumable after a restart"
+      assert text =~ "contributes its stored result"
+      assert text =~ "is re-spawned and resumes from its own durable checkpoint"
       assert Enum.count(messages, &(&1.role == :user and text_of(&1) =~ "[RESUME]")) == 1
     end
   end

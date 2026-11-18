@@ -16,7 +16,7 @@ defmodule EvoGit.Agent.Resume do
       `[RESUME]` notice.
     * `:dirty_pause` — a task-level pause resumed after a host restart: the
       SAME repair and ONE `[RESUME]` notice (it additionally states the pause
-      happened and that subagents are not resumable).
+      happened and what the whole-tree resume does with the subagents).
     * `:clean_pause` — the user paused the task at a turn boundary and resumed
       it: the conversation is restored with **NO repair** (nothing was
       interrupted, so no `tool_calls` tail is dangling — see `dangling/1` and

@@ -458,6 +458,10 @@ defmodule EvoGit.TaskRegistry do
   `:resume_branch` and `:resume_anchor_ref` — resolved up front so the resumed
   run restores the persisted identity, branch and worktree base without the
   scheduler reading the durable store itself.
+  Only the ROOT run is re-enqueued, and the resume is WHOLE-TREE because the
+  resumed root rebuilds its dangling subagent batch from the children's own
+  durable rows (a finished child by its stored result, a still-running one by a
+  re-spawn from its own checkpoint), recursively down the tree.
 
   Admission re-runs the SAME gates as `start_task/2` (model selection against the
   current config, `:session_mode`, `:persistent_state`); a failure answers that

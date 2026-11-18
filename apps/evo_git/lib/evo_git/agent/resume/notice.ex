@@ -38,9 +38,10 @@ defmodule EvoGit.Agent.Resume.Notice do
     * the durable restore outcome — `false` adds one sentence saying the earlier
       turns are not in this transcript.
 
-  A PAUSE resume (`:clean_pause` / `:dirty_pause`) additionally says subagents
-  are NOT resumable after a restart: their processes are gone and a child's
-  partial work survives only if it was already merged.
+  A PAUSE resume (`:clean_pause` / `:dirty_pause`) additionally says what
+  happens to subagents on a whole-tree resume: a child that already finished
+  contributes its stored result, a child that was still running comes back from
+  its own durable checkpoint, and only a child with no durable record is lost.
 
   Either text is stamped `metadata[:resume_notice] => true`, which is ALSO the
   exactly-once guard: a second resumed exchange never appends a second notice to
@@ -56,7 +57,7 @@ defmodule EvoGit.Agent.Resume.Notice do
   The full `[RESUME]` notice TEXT for a resumed run of `state`, with `batch` the
   (already normalized) in-flight marker — `nil` when no tool batch was executing
   when the run stopped. A `:dirty_pause` resume adds the pause/restart context
-  and the subagent sentence; a crash retry (`:resume_kind` absent) does not.
+  and the subagent sentence; a crash retry (`:resume_kind` absent) adds neither.
   """
   @spec text(State.t(), ToolBatch.t() | nil) :: String.t()
   def text(%State{} = state, batch) do
@@ -77,7 +78,8 @@ defmodule EvoGit.Agent.Resume.Notice do
 
   @doc """
   The NEUTRAL notice TEXT of a `:clean_pause` resume: the user paused the task
-  and resumed it, nothing was interrupted, and subagents are not resumable.
+  and resumed it, nothing was interrupted, and the subagent sentence states what
+  the resume does with the children (stored result / re-spawn / lost).
 
   The worktree clause states only what the resume can BACK: with a pause
   checkpoint commit on `resume_info` the tree is that commit's tree (the pause
@@ -211,10 +213,14 @@ defmodule EvoGit.Agent.Resume.Notice do
 
   defp pause_sentence(_kind), do: nil
 
-  # A pause resume cannot restore subagent processes. Stated for BOTH pause kinds.
+  # Durable rows outlive the processes, so a pause resume is WHOLE-TREE: a
+  # finished child contributes its stored result and a still-running one is
+  # re-spawned on its own checkpoint. Stated for BOTH pause kinds.
   defp subagent_sentence(kind) when kind in [:clean_pause, :dirty_pause] do
-    "Subagents are NOT resumable after a restart: their processes are gone, and a child's " <>
-      "partial work survives only if it was already merged into this worktree."
+    "Subagents: a child that already finished contributes its stored result, and a child that " <>
+      "was still running is re-spawned and resumes from its own durable checkpoint and worktree " <>
+      "base. Only a child with no durable record at all is lost, and that slot says so plainly — " <>
+      "no subagent result is invented."
   end
 
   defp subagent_sentence(_kind), do: nil

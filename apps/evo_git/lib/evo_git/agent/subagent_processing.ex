@@ -450,8 +450,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   # A TASK PAUSE stopped the child at a turn boundary: this is NOT a failure and
   # NOT a completion. Its committed work (the pause checkpoint commit) has been
-  # merged into the parent worktree like a normal completion; the child itself is
-  # NOT resumable after a restart (only the task's root agent is).
+  # merged into the parent worktree like a normal completion; the child itself
+  # comes back from its OWN durable row (conversation, branch, worktree base) on
+  # a task resume, because a resume is whole-tree.
   def format_subagent_result({:paused, info}) when is_map(info) do
     checkpoint = Map.get(info, :checkpoint) || "unknown"
     branch = Map.get(info, :branch) || "unknown"
@@ -459,8 +460,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
     "The subagent PAUSED: the task was paused, so it stopped cleanly at a turn boundary " <>
       "after its last tool call completed (nothing was interrupted). Its committed work " <>
       "(checkpoint #{checkpoint}, branch #{branch}) was merged into your worktree. " <>
-      "It is not resumable after a restart and will produce no further results, so do not " <>
-      "wait for it — finish your own current step and stop at your next turn boundary."
+      "A task resume re-spawns it from its own durable state and worktree base, and it will " <>
+      "produce further results then — so do not wait for it now: finish your own current step " <>
+      "and stop at your next turn boundary."
   end
 
   def format_subagent_result({:ok, %Result{result: result, commit_sha: commit_sha}}) do
