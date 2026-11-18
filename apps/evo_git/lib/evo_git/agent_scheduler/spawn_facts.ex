@@ -100,16 +100,21 @@ defmodule EvoGit.AgentScheduler.SpawnFacts do
   the spec/meta the worktree is ACTUALLY created from, and every git fact is
   derived from it:
 
-    * `:branch` — the branch `Worktrees.create_worktree/6` creates for this agent
-      (`Worktrees.branch_name(task_number, task_local_id)`, the same formula
-      `WorktreeManager` uses for its tracked rows);
+    * `:branch` — the branch this dispatch KEEPS: the plan's resolved branch
+      (`Worktrees.branch_for/3`, which reuses the PERSISTED branch a resumed run
+      carries), falling back to the freshly derived
+      `Worktrees.branch_name(task_number, task_local_id)` when the plan has no
+      branch (a unit-level plan built outside a live scheduler). The ctx value
+      and the branch `Worktrees.create_worktree/6` creates come from the SAME
+      resolution function;
     * `:base_commit` — the commit the created worktree really stands on.
       AUTHORITATIVE SOURCE: `plan.worktree_resume_from || spec.phylo_node.current_commit`.
-      `apply_crash_base/3` REWRITES `phylo_node.current_commit` to the crash
-      salvage / pause checkpoint sha (and reports it as `:worktree_resume_from`)
-      and `Worktrees.create_worktree/6` reads exactly that field, so the two
-      agree; the resume sha is preferred only because it states the intent
-      explicitly. `nil` means "the spec carries no commit" (repo-less).
+      `EvoGit.AgentScheduler.ResumePlan` REWRITES `phylo_node.current_commit` to
+      the crash salvage / pause checkpoint sha (and reports it as
+      `:worktree_resume_from`) and `Worktrees.create_worktree/6` reads exactly
+      that field, so the two agree; the resume sha is preferred only because it
+      states the intent explicitly. `nil` means "the spec carries no commit"
+      (repo-less).
 
   `:spawn_turn` / `:spawn_index` are the child's spawn FACTS (`nil` for a ROOT),
   read from the stored spec opts — never guessed from ETS.
@@ -162,13 +167,31 @@ defmodule EvoGit.AgentScheduler.SpawnFacts do
       retry_reason: meta.crash_reason,
       spawn_turn: Keyword.get(spec.opts, :spawn_turn),
       spawn_index: Keyword.get(spec.opts, :spawn_index),
-      branch: Worktrees.branch_name(meta.task_number, agent_state.task_local_id),
+      branch: plan_branch(plan, meta, agent_state),
       base_commit: dispatch_base_commit(plan),
       scheduler: self()
     ]
     |> put_resume_kind(plan.resume_kind)
     |> append_repo_less_ctx(spec, repo_root)
     |> append_notify_ctx(spec)
+  end
+
+  # The ONE resolved branch of this dispatch: the plan's value when it resolved
+  # one (a resumed run keeps its PERSISTED branch), else the fresh formula via
+  # the shared `Worktrees.branch_for/3`. Total: `agent_state` may be a struct or
+  # a plain map, and the plan may be built outside a live scheduler.
+  defp plan_branch(plan, meta, agent_state) do
+    case Map.get(plan, :branch) do
+      b when is_binary(b) and b != "" ->
+        b
+
+      _absent ->
+        Worktrees.branch_for(
+          meta,
+          Map.get(agent_state, :task_local_id),
+          Map.get(plan, :spec) || meta.spec
+        )
+    end
   end
 
   # See `build_dispatch_ctx/6`: the resume base wins when it was applied,

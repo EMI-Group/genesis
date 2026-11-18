@@ -11,6 +11,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   require Logger
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.Salvage
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.WorktreeRetry
   alias EvoGit.Platform
@@ -44,6 +45,40 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   def branch_name(task_number, task_local_id),
     do: "evogit-agent-T#{task_number}-A#{task_local_id}"
 
+  @doc """
+  The PERSISTED branch this dispatch must reuse, from
+  `spec.opts[:worktree_branch]`.
+
+  A resumed run keeps the branch it was paused/crashed on, so its commits stay
+  reachable through the same name after the workers directory was wiped. Total:
+  an absent, blank or non-binary value (and a non-spec input) answers `nil`, and
+  the caller falls back to the freshly derived `branch_name/2`.
+  """
+  @spec resume_branch(EvoGit.AgentSpec.t() | map()) :: String.t() | nil
+  def resume_branch(%{opts: opts}) when is_list(opts) do
+    case Keyword.get(opts, :worktree_branch) do
+      branch when is_binary(branch) and branch != "" -> branch
+      _absent -> nil
+    end
+  end
+
+  def resume_branch(_spec), do: nil
+
+  @doc """
+  The ONE branch resolution of a dispatch: the resumed/persisted branch when the
+  spec carries one, else the freshly derived `branch_name/2`.
+
+  `WorktreeManager`'s tracked row, `create_worktree/6`, `assign_and_prepare_worktree/3`
+  and the session's dispatch ctx all resolve their branch HERE, so the reclaim
+  delete can never target a different branch than the one that was created.
+  """
+  @spec branch_for(map(), term(), EvoGit.AgentSpec.t() | map()) :: String.t()
+  def branch_for(meta, task_local_id, spec),
+    do: resume_branch(spec) || branch_name(task_number(meta), task_local_id)
+
+  defp task_number(meta) when is_map(meta), do: Map.get(meta, :task_number)
+  defp task_number(_meta), do: nil
+
   # --- Worktree Creation Pipeline ---
 
   @doc """
@@ -66,7 +101,11 @@ defmodule EvoGit.AgentScheduler.Worktrees do
         ) :: {:ok, String.t()} | {:error, term()}
   def prepare_new_worktree(agent_id, repo_root, worktree_path, spec, meta) do
     with {:ok, agent_state} <- Store.get_agent_state(agent_id),
-         branch_name = branch_name(meta.task_number, agent_state.task_local_id),
+         branch_name = branch_for(meta, agent_state.task_local_id, spec),
+         # A RESUMED run re-establishes its base from the durable anchor when the
+         # branch/commits were wiped by the workers-directory cleanup. A
+         # non-resume run makes no extra git call at all (no `:worktree_branch`).
+         spec = maybe_resume_base(repo_root, branch_name, spec, meta),
          # Destroy leftovers from a previous run (crash-retry race — the old
          # worktree dir/branch may still exist). Failure to remove a leftover
          # dir ESCALATES: creating on top of a partially-removed dir is what
@@ -102,6 +141,124 @@ defmodule EvoGit.AgentScheduler.Worktrees do
         {:error, {:agent_state_missing, agent_id}}
     end
   end
+
+  # A RESUMED run (the spec carries `:worktree_branch`) may have lost its
+  # commits to a workers-directory wipe and a `git gc`: re-establish the base
+  # from the durable anchor BEFORE the leftovers are destroyed and the worktree
+  # is created, so `create_worktree/6` (which reads
+  # `spec.phylo_node.current_commit`) starts where the run actually stopped.
+  #
+  # A NON-resume run makes ZERO extra git calls — the guards short-circuit on the
+  # absent `:worktree_branch` opt.
+  defp maybe_resume_base(repo_root, branch_name, spec, meta) do
+    if resume_branch(spec) == nil do
+      spec
+    else
+      case ensure_resume_base(repo_root, branch_name, spec, meta) do
+        nil ->
+          spec
+
+        sha ->
+          if match?(%EvoGit.Core.PhyloGraphNode{}, spec.phylo_node) and
+               spec.phylo_node.current_commit != sha do
+            %{spec | phylo_node: %{spec.phylo_node | current_commit: sha}}
+          else
+            spec
+          end
+      end
+    end
+  end
+
+  @doc false
+  # The sha a RESUMED worktree must be created at, or `nil` when the spec's own
+  # base stands.
+  #
+  # Chain (first USABLE answer wins, every step total):
+  #
+  #   1. the spec's own `phylo_node.current_commit` when the repo verifies it —
+  #      the dispatch already resolved it, so nothing is changed;
+  #   2. the sha the durable ANCHOR ref points at
+  #      (`spec.opts[:resume_anchor_ref]`, else
+  #      `EvoGit.AgentState.Anchor.ref/2` for `(task_id, agent_id)`);
+  #   3. the EXISTING branch's own sha (`git show-ref` then `git rev-parse`) —
+  #      a branch that survived the cleanup;
+  #   4. nothing usable: ONE warning, and `nil` leaves the spec's base alone.
+  #
+  # Only `EvoGit.Adapters.Git` is used (no shell), and a `nil`/non-binary
+  # `repo_root` degrades immediately.
+  @spec ensure_resume_base(String.t() | nil, String.t() | nil, map(), map()) :: String.t() | nil
+  def ensure_resume_base(repo_root, branch_name, spec, meta)
+      when is_binary(repo_root) and repo_root != "" do
+    cond do
+      spec_base_usable?(repo_root, spec) -> nil
+      sha = anchored_sha(repo_root, spec, meta) -> sha
+      sha = existing_branch_sha(repo_root, branch_name) -> sha
+      true -> warn_unresolved_resume_base(repo_root, spec, meta)
+    end
+  end
+
+  def ensure_resume_base(_repo_root, _branch_name, _spec, _meta), do: nil
+
+  # The spec's own base, when this repository can still resolve it.
+  defp spec_base_usable?(repo_root, spec) do
+    case commit_sha(spec) do
+      sha when is_binary(sha) -> Salvage.commit_exists?(repo_root, sha)
+      _absent -> false
+    end
+  end
+
+  defp commit_sha(%{phylo_node: %EvoGit.Core.PhyloGraphNode{current_commit: sha}}) do
+    if is_binary(sha) and sha != "" do
+      sha
+    end
+  end
+
+  defp commit_sha(_spec), do: nil
+
+  defp anchored_sha(repo_root, spec, meta) do
+    ref =
+      case Keyword.get(spec_opts(spec), :resume_anchor_ref) do
+        custom when is_binary(custom) and custom != "" -> custom
+        _absent -> EvoGit.AgentState.Anchor.ref(Map.get(meta, :task_id), Map.get(meta, :id))
+      end
+
+    rev_parse_sha(repo_root, ref <> "^{commit}")
+  end
+
+  defp existing_branch_sha(repo_root, branch_name)
+       when is_binary(branch_name) and branch_name != "" do
+    if Git.branch_exists?(repo_root, branch_name) do
+      rev_parse_sha(repo_root, branch_name)
+    end
+  end
+
+  defp existing_branch_sha(_repo_root, _branch_name), do: nil
+
+  defp rev_parse_sha(repo_root, rev) do
+    case Git.rev_parse(repo_root, rev) do
+      {:ok, output} when is_binary(output) ->
+        case String.trim(output) do
+          "" -> nil
+          sha -> sha
+        end
+
+      _error ->
+        nil
+    end
+  end
+
+  defp warn_unresolved_resume_base(repo_root, spec, meta) do
+    Logger.warning(
+      "AgentScheduler: could not re-establish the resume base for agent " <>
+        "#{inspect(Map.get(meta, :id))} in #{repo_root} " <>
+        "(branch #{inspect(resume_branch(spec))}); keeping the spec's base"
+    )
+
+    nil
+  end
+
+  defp spec_opts(%{opts: opts}) when is_list(opts), do: opts
+  defp spec_opts(_spec), do: []
 
   defp create_worktree(agent_id, repo_root, worktree_path, spec, branch_name, source_path) do
     commit_sha = spec.phylo_node.current_commit
@@ -310,7 +467,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     spec = meta.spec
 
     commit_sha = spec.phylo_node.current_commit
-    branch_name = branch_name(meta.task_number, agent_state.task_local_id)
+    branch_name = branch_for(meta, agent_state.task_local_id, spec)
 
     with :ok <- ensure_linked_worktree(wt, repo_root),
          {:ok, _} <- Git.clean(wt),
