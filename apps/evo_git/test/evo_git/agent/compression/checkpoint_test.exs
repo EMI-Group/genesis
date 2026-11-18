@@ -3,6 +3,16 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
   `async: true` — pure structural assertions on
   `EvoGit.Agent.Compression.Checkpoint` over in-memory `ReqLLM.Message` fixtures.
   No I/O, no global state, no scheduler, no network.
+
+  ONE rule for the "the head is still byte-identical" assertions: compare
+  `build/3`'s output against the SAME fixture instance that was fed in (bind it
+  to a variable), NEVER against a freshly re-built `conversation/1`. `tag/2` is
+  `ContextBuilder.tag_message_turn/2`, which stamps `metadata[:timestamp]` from
+  `EvoGit.Agent.Clock.now_seconds/0`, so two separately built fixtures differ by
+  their timestamp alone whenever the test straddles a wall-clock SECOND — an
+  intermittent failure that has nothing to do with compression. Comparing with
+  the original term is both deterministic and strictly more precise: it pins the
+  head to the exact messages the caller handed over.
   """
 
   use ExUnit.Case, async: true
@@ -479,7 +489,8 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
 
   describe "build/3 — repeated compactions (regression)" do
     test "two consecutive compactions keep exactly ONE checkpoint after the head and accumulate" do
-      first = Checkpoint.build(conversation(8), "FIRST SUMMARY")
+      original = conversation(8)
+      first = Checkpoint.build(original, "FIRST SUMMARY")
       assert first.replaced == 8
 
       # Keep working, then compact again with a NEW summary.
@@ -500,14 +511,17 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
       assert checkpoint_index(second.messages) == 2
       assert Checkpoint.prior_summary(second.messages) == "FIRST + SECOND SUMMARY"
 
-      # The head is still byte-identical and the tail is a contiguous suffix.
-      assert Enum.take(second.messages, 2) == Enum.take(conversation(8), 2)
+      # The head is still byte-identical (to the SAME fixture we fed in — see
+      # the moduledoc on why a re-built `conversation/1` must never be used
+      # here) and the tail is a contiguous suffix.
+      assert Enum.take(second.messages, 2) == Enum.take(original, 2)
       assert second.messages |> Enum.drop(3) |> List.last() == List.last(continued)
       assert_tool_pairings_intact(second.messages)
     end
 
     test "a prior checkpoint inside the protected tail is REPLACED, not retained" do
-      first = Checkpoint.build(conversation(8), "FIRST SUMMARY")
+      original = conversation(8)
+      first = Checkpoint.build(original, "FIRST SUMMARY")
 
       # Only one exchange later, and that exchange is enormous: without the
       # forced split the whole list would be inside the protected tail and the
@@ -530,7 +544,7 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
       assert checkpoint_index(third.messages) == 2
       assert Checkpoint.prior_summary(third.messages) == "THIRD SUMMARY"
       assert Checkpoint.prior_summary(third.messages) != "FIRST SUMMARY"
-      assert Enum.take(third.messages, 2) == Enum.take(conversation(8), 2)
+      assert Enum.take(third.messages, 2) == Enum.take(original, 2)
     end
 
     test "an oversized tail is budget-bounded and keeps tool pairing" do
@@ -737,7 +751,8 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
     end
 
     test "repeated compactions replace the previous checkpoint and accumulate" do
-      first = Checkpoint.build(conversation(8), "FIRST SUMMARY")
+      original = conversation(8)
+      first = Checkpoint.build(original, "FIRST SUMMARY")
 
       # Feeding an ALREADY compacted list back in replaces the previous
       # checkpoint (rather than stacking a second one).
@@ -750,7 +765,7 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
       assert length(checkpoints) == 1
 
       # …and the head is still byte-identical after any number of rounds.
-      assert Enum.take(second.messages, 2) == Enum.take(conversation(8), 2)
+      assert Enum.take(second.messages, 2) == Enum.take(original, 2)
     end
   end
 end
