@@ -33,7 +33,7 @@ defmodule EvoGit.Agent.Stream.ActivitySnapshotTest do
       {:ok, pid, _ref} = start_session(dispatch_ctx(agent_id, tmp_dir, llm_call: llm_call))
       assert_receive {:callback_worker, worker, {:ok, %Snapshot{seq: 0}, 0}}, 5_000
 
-      assert {:ok, %Snapshot{activity: %{phase: :idle, current_call: nil}}, 0} =
+      assert {:ok, %Snapshot{activity: %{phase: :preparing, current_call: nil}}, 0} =
                Stream.watch(pid)
 
       assert {:ok, first, 1} =
