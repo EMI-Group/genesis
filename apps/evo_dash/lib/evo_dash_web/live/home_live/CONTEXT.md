@@ -152,6 +152,7 @@ The live `Delta` tool-result projection receives only call id and coarse status,
 
 `ExecutionIndicator.execution_indicator/1` takes `chat_status`, `chat_task_status`, `chat_stream` and optional `pending_approval_count` from actual pending requests, and belongs beside the interrupt button inside the existing fixed-height status row.
 It reads only `chat_stream.delta.activity.phase` and `chat_stream.error`, never streamed answer/thinking text, tool arguments/results or approval acknowledgements.
+Every core activity phase has its own busy/waiting projection, including the long non-call phases `:compressing` ("Compressing context…", busy) and `:preparing` ("Preparing next turn…", busy), which must never fall through to the generic "Working…" state.
 Lifecycle and watch errors outrank cached activity; absent activity means Working, stream failure means Live updates unavailable rather than execution failed, and unknown tool outcomes say Status unavailable rather than Done.
 Its stable `#assistant-execution-status` is a polite atomic phase-only live region, while shared tool rows explicitly disable live announcements.
 Both surfaces expose `.assistant-execution-indicator` / `.assistant-execution-dot` plus `data-state` / `data-busy` for asset-owned styling, without adding layout rows or changing push-only scrolling.
