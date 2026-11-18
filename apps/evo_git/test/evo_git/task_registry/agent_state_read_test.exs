@@ -6,7 +6,8 @@ defmodule EvoGit.TaskRegistry.AgentStateReadTest do
   database would block the registry GenServer — and every dashboard call it
   serves. These tests use a budget that cannot be met (`timeout: 0`, the bound
   itself) and a store that is GONE (stopped instance) and pin that:
-    * every read answers its DOCUMENTED degraded value within the budget
+    * every read — `root_agent_ids/2`, `resumable?/2`, `roster/2`,
+      `pause_commit/3` — answers its DOCUMENTED degraded value within the budget
       (`[]`, `false`, `nil`) instead of blocking;
     * the restart classifier degrades to "not resumable" (`nil`, i.e. today's
       `:failed` restart behaviour) rather than pretending;
@@ -48,6 +49,50 @@ defmodule EvoGit.TaskRegistry.AgentStateReadTest do
       assert AgentStateRead.root_agent_ids(unique_task_id()) == []
       assert AgentStateRead.resumable?(unique_task_id()) == false
       assert AgentStateRead.pause_commit(task_id, 999) == nil
+    end
+  end
+
+  describe "roster/2 — the whole durable tree" do
+    test "returns every row ordered depth ASC, agent_id ASC with messages: nil",
+         %{agent_state: agent_state} do
+      task_id = unique_task_id()
+      # Two roots (no `depth`, so they sort first by agent_id) plus one child.
+      seed_durable_run!(agent_state, task_id, 4)
+      seed_run!(agent_state, task_id, 2, %{parent_id: 4, depth: 1, branch: "child-branch"})
+      seed_durable_run!(agent_state, task_id, 1)
+
+      assert [
+               %EvoGit.AgentState.Record{} = first,
+               %EvoGit.AgentState.Record{} = second,
+               %EvoGit.AgentState.Record{} = child
+             ] = AgentStateRead.roster(task_id)
+
+      assert first.agent_id == 1
+      assert second.agent_id == 4
+      assert child.agent_id == 2
+      assert child.fields[:depth] == 1
+      assert child.fields[:parent_id] == 4
+      assert child.fields[:branch] == "child-branch"
+      # The scalar fields arrive; the transcript deliberately does not.
+      assert Enum.all?([first, second, child], &is_nil(&1.messages))
+
+      assert AgentStateRead.roster(unique_task_id()) == []
+    end
+
+    test "degrades to [] within its budget and when the store is gone",
+         %{agent_state: agent_state} do
+      task_id = unique_task_id()
+      seed_durable_run!(agent_state, task_id, 7)
+
+      assert timed(fn ->
+               assert AgentStateRead.roster(task_id, timeout: 0, op: "roster") == []
+             end) < 1_000
+
+      # Nothing was lost: the real read still answers the stored row.
+      assert [%EvoGit.AgentState.Record{agent_id: 7}] = AgentStateRead.roster(task_id)
+
+      stop_store!(agent_state)
+      assert timed(fn -> assert AgentStateRead.roster(task_id) == [] end) < 1_000
     end
   end
 
@@ -176,6 +221,12 @@ defmodule EvoGit.TaskRegistry.AgentStateReadTest do
 
   # One ROOT durable run (no `parent_id`), written through the real writer path.
   defp seed_durable_run!(agent_state, task_id, agent_id) do
+    seed_run!(agent_state, task_id, agent_id, %{phase: "paused"})
+  end
+
+  # One durable run with caller-chosen scalar fields (a CHILD row needs
+  # `parent_id`/`depth`), flushed so the following read is stable.
+  defp seed_run!(agent_state, task_id, agent_id, fields) do
     :ok =
       AgentState.checkpoint(
         task_id,
@@ -188,7 +239,7 @@ defmodule EvoGit.TaskRegistry.AgentStateReadTest do
               content: [ReqLLM.Message.ContentPart.text("durable run #{agent_id}")]
             }
           ],
-          fields: %{phase: "paused"}
+          fields: fields
         },
         store: agent_state
       )

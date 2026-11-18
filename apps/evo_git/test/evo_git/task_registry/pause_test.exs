@@ -84,9 +84,11 @@ defmodule EvoGit.TaskRegistry.PauseTest do
 
   # Writes one durable run for the task through the app-booted default
   # agent-state server (the one the REGISTRY resolves), flushes, and schedules
-  # its removal. `parent_id` is left absent, so the row IS a root run — what
-  # `EvoGit.AgentState.root_agent_ids/1` (and therefore `resume_task/1`) needs.
-  defp seed_durable_run!(task_id, agent_id \\ 1) do
+  # its removal. `parent_id` is left absent, so the row IS a ROOT run — the
+  # durable ROOT row `EvoGit.TaskRegistry.Pause` gates resume admission and
+  # restart classification on. `fields` adds the run facts a resume carries
+  # (`:current_commit`, `:branch`, `:anchor_ref`, `:pause_commit`, …).
+  defp seed_durable_run!(task_id, agent_id \\ 1, fields \\ %{}) do
     on_exit(fn -> AgentState.delete_task(task_id) end)
 
     :ok =
@@ -98,7 +100,29 @@ defmodule EvoGit.TaskRegistry.PauseTest do
             content: [ReqLLM.Message.ContentPart.text("paused run #{task_id}")]
           }
         ],
-        fields: %{phase: "paused"}
+        fields: Map.put(fields, :phase, "paused")
+      })
+
+    :ok = AgentState.flush()
+    assert {:ok, _record} = AgentState.load(task_id, agent_id)
+    :ok
+  end
+
+  # Writes one CHILD durable run (a `parent_id` no row holds, `depth: 1`), so
+  # the task's roster is child-only and holds nothing a resume could restore.
+  defp seed_child_run!(task_id, agent_id \\ 2, parent_id \\ 99) do
+    on_exit(fn -> AgentState.delete_task(task_id) end)
+
+    :ok =
+      AgentState.checkpoint(task_id, agent_id, %{
+        kind: :rewrite,
+        messages: [
+          %ReqLLM.Message{
+            role: :user,
+            content: [ReqLLM.Message.ContentPart.text("child run #{task_id}")]
+          }
+        ],
+        fields: %{parent_id: parent_id, depth: 1, phase: "paused"}
       })
 
     :ok = AgentState.flush()
@@ -697,6 +721,78 @@ defmodule EvoGit.TaskRegistry.PauseTest do
       assert fetched.lease_expires_at == nil
       refute_receive {:wrapper_spawned, _, _, _, _}, 0
     end
+
+    test "a CHILD-only durable roster is {:error, :not_resumable} — nothing restores a ROOT" do
+      # The ROOT row is the gate: "any durable row" is not enough, because a
+      # resume that cannot restore a root would silently restart the objective
+      # from scratch.
+      unique = System.unique_integer([:positive])
+      task_id = "resume_child_only_#{unique}"
+      seed_task!(task_id, :paused, pause_kind: :clean, lease_expires_at: nil)
+      seed_child_run!(task_id)
+      _registry = start_registry_with_spawn_seam!(self())
+
+      assert {:error, :not_resumable} = TaskRegistry.resume_task(task_id)
+
+      fetched = reload(task_id)
+      assert fetched.status == :paused
+      assert fetched.pause_kind == :clean
+      assert fetched.lease_expires_at == nil
+      refute_receive {:wrapper_spawned, _, _, _, _}, 0
+    end
+
+    test "carries the ROOT run's five resume facts on the spawn opts" do
+      unique = System.unique_integer([:positive])
+      task_id = "resume_facts_#{unique}"
+      agent_id = 7
+      anchor_ref = "refs/genesis/agent-state/#{task_id}/#{agent_id}"
+
+      seed_task!(task_id, :paused, pause_kind: :clean, lease_expires_at: nil)
+
+      seed_durable_run!(task_id, agent_id, %{
+        pause_commit: "pause123",
+        current_commit: "cur123",
+        branch: "evogit-agent_facts",
+        anchor_ref: anchor_ref
+      })
+
+      _registry = start_registry_with_spawn_seam!(self())
+
+      assert :ok = TaskRegistry.resume_task(task_id)
+      assert_receive {:wrapper_spawned, :genesis, spawn_opts, ^task_id, _server}, 1_000
+
+      assert Keyword.get(spawn_opts, :resume_kind) == :clean_pause
+      assert Keyword.get(spawn_opts, :pause_commit) == "pause123"
+      assert Keyword.get(spawn_opts, :resume_agent_id) == agent_id
+      assert Keyword.get(spawn_opts, :resume_current_commit) == "cur123"
+      assert Keyword.get(spawn_opts, :resume_branch) == "evogit-agent_facts"
+      assert Keyword.get(spawn_opts, :resume_anchor_ref) == anchor_ref
+    end
+
+    test "a root row WITHOUT an anchor_ref still carries the derived anchor fact" do
+      unique = System.unique_integer([:positive])
+      task_id = "resume_anchor_derived_#{unique}"
+      agent_id = 3
+
+      seed_task!(task_id, :paused, pause_kind: :clean, lease_expires_at: nil)
+      # `pause_commit` is DELIBERATELY absent too: a resolved-but-empty fact must
+      # still be present on the opts, so "nothing stored" and "never resolved"
+      # stay distinguishable (the latter is the direct-dispatch fallback).
+      seed_durable_run!(task_id, agent_id, %{current_commit: "cur456", branch: "b"})
+      _registry = start_registry_with_spawn_seam!(self())
+
+      assert :ok = TaskRegistry.resume_task(task_id)
+      assert_receive {:wrapper_spawned, :genesis, spawn_opts, ^task_id, _server}, 1_000
+
+      assert Keyword.has_key?(spawn_opts, :resume_anchor_ref)
+
+      assert Keyword.get(spawn_opts, :resume_anchor_ref) ==
+               EvoGit.AgentState.Anchor.ref(task_id, agent_id)
+
+      assert Keyword.has_key?(spawn_opts, :pause_commit)
+      assert Keyword.get(spawn_opts, :pause_commit) == nil
+      assert Keyword.get(spawn_opts, :resume_current_commit) == "cur456"
+    end
   end
 
   ## Restart mapping (dirty pause)
@@ -825,6 +921,56 @@ defmodule EvoGit.TaskRegistry.PauseTest do
       assert fetched.result == "report"
       assert fetched.lease_expires_at == nil
       refute_receive {:task_updated, ^task_id, _, _}, 0
+    end
+  end
+
+  ## The restart classifier's ROOT gate
+
+  describe "pause_kind_for_restart/1,2 — the ROOT row gate" do
+    test "a CHILD-only durable roster is nil; a ROOT row makes the same task :dirty" do
+      unique = System.unique_integer([:positive])
+      child_only_id = "restart_child_only_#{unique}"
+      root_id = "restart_has_root_#{unique}"
+      seed_task!(child_only_id, :running)
+      seed_task!(root_id, :running)
+      seed_child_run!(child_only_id)
+      seed_durable_run!(root_id)
+
+      # Map arity (the row is already decoded, as both restart paths hand it over).
+      assert Pause.pause_kind_for_restart(reload(child_only_id)) == nil
+      assert Pause.pause_kind_for_restart(reload(root_id)) == :dirty
+
+      # (store, task_id) arity: the narrow row the boot reconciliation and the
+      # lease sweep actually hold is re-read once through `get_task_lite/2`.
+      assert Pause.pause_kind_for_restart(store(), child_only_id) == nil
+      assert Pause.pause_kind_for_restart(store(), root_id) == :dirty
+    end
+  end
+
+  ## Persistent-state opt-out
+
+  describe "persistent_state: false — neither pausable nor resumable" do
+    test "a :running row and its :paused counterpart are both refused" do
+      unique = System.unique_integer([:positive])
+      running_id = "no_persist_pause_#{unique}"
+      paused_id = "no_persist_resume_#{unique}"
+      opts = [path: "/tmp/test", persistent_state: false]
+
+      seed_task!(running_id, :running, opts: opts)
+      seed_task!(paused_id, :paused, opts: opts, pause_kind: :clean, lease_expires_at: nil)
+      _registry = start_registry_with_spawn_seam!(self())
+      subscribe_tasks!()
+
+      # Nothing durable would be written, so a pause would be a lie…
+      assert {:error, :not_resumable} = TaskRegistry.pause_task(running_id)
+      assert reload(running_id).status == :running
+
+      # …and the matching resting row has no ROOT run to restore.
+      assert {:error, :not_resumable} = TaskRegistry.resume_task(paused_id)
+      assert reload(paused_id).status == :paused
+
+      refute_receive {:task_updated, _, _, _}, 0
+      refute_receive {:wrapper_spawned, _, _, _, _}, 0
     end
   end
 

@@ -35,6 +35,22 @@ defmodule EvoGit.Runtime.RootAgentHelpersTest do
     )
   end
 
+  # The five durable facts a pause resume carries (`RuntimeOpts.resume_fact_keys/0`).
+  @resume_facts [
+    pause_commit: "pause_sha",
+    resume_agent_id: 4,
+    resume_current_commit: "cur_sha",
+    resume_branch: "evogit-agent_resume",
+    resume_anchor_ref: "refs/genesis/agent-state/task-resume/4"
+  ]
+
+  defp assert_resume_facts(opts) do
+    for {key, value} <- @resume_facts do
+      assert Keyword.has_key?(opts, key), "expected #{inspect(key)} in spec.opts"
+      assert Keyword.get(opts, key) == value
+    end
+  end
+
   describe "resolve_root_agent/2" do
     test "returns the default module with [] opts when :agent is absent" do
       assert Helpers.resolve_root_agent([], DefaultRoot) == {DefaultRoot, []}
@@ -149,6 +165,42 @@ defmodule EvoGit.Runtime.RootAgentHelpersTest do
 
       assert spec.agent_module == DefaultRoot
       assert spec.opts[:persistent_state] == false
+    end
+  end
+
+  describe "build_root_agent_spec/7 — pause-resume facts" do
+    test "the default (simple-evolve) root carries all five facts" do
+      spec = root_agent_spec(@resume_facts)
+
+      assert spec.agent_module == DefaultRoot
+      assert_resume_facts(spec.opts)
+    end
+
+    test "the custom root path carries all five facts too" do
+      {:ok, saved} = EvoGit.CustomAgents.save(%{name: "Resume Reviewer", prompt: "You review."})
+
+      spec = root_agent_spec([agent: saved.id] ++ @resume_facts)
+
+      assert spec.agent_module == EvoGit.Agents.Custom
+      assert Keyword.get(spec.opts, :custom_agent_id) == saved.id
+      assert_resume_facts(spec.opts)
+    end
+
+    test "a fact resolved to nil is still PRESENT (nothing stored ≠ never resolved)" do
+      spec = root_agent_spec(pause_commit: nil, resume_agent_id: 2)
+
+      assert Keyword.fetch(spec.opts, :pause_commit) == {:ok, nil}
+      assert Keyword.get(spec.opts, :resume_agent_id) == 2
+      refute Keyword.has_key?(spec.opts, :resume_branch)
+    end
+
+    test "a spec built WITHOUT the facts has NONE of them (a normal run is unchanged)" do
+      spec = root_agent_spec([])
+
+      for key <- EvoGit.TaskRegistry.RuntimeOpts.resume_fact_keys() do
+        refute Keyword.has_key?(spec.opts, key),
+               "expected #{inspect(key)} to be ABSENT from a normal run's spec.opts"
+      end
     end
   end
 end

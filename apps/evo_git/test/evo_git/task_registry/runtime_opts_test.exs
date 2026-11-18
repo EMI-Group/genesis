@@ -441,6 +441,59 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
     end
   end
 
+  describe "build_common_runtime_opts/3 — pause-resume facts" do
+    test "forwards all five resume facts when the caller supplies them" do
+      facts = [
+        pause_commit: "pause_sha",
+        resume_agent_id: 4,
+        resume_current_commit: "cur_sha",
+        resume_branch: "evogit-agent_resume",
+        resume_anchor_ref: "refs/genesis/agent-state/task-resume/4"
+      ]
+
+      {nil, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts([path: "/tmp/repo"] ++ facts, "task-r1", :evolve)
+
+      for {key, value} <- facts do
+        assert Keyword.has_key?(runtime_opts, key), "expected #{inspect(key)} to be present"
+        assert Keyword.get(runtime_opts, key) == value
+      end
+    end
+
+    test "forwards a NIL fact as present (resolved-to-nothing is not 'never resolved')" do
+      {nil, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", pause_commit: nil, resume_agent_id: 2],
+          "task-r2",
+          :evolve
+        )
+
+      assert Keyword.has_key?(runtime_opts, :pause_commit)
+      assert Keyword.get(runtime_opts, :pause_commit) == nil
+      assert Keyword.get(runtime_opts, :resume_agent_id) == 2
+      # Absent facts stay absent, so a partial resume payload forwards only itself.
+      refute Keyword.has_key?(runtime_opts, :resume_branch)
+    end
+
+    test "a NON-resume run carries NONE of the resume facts" do
+      {nil, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts([path: "/tmp/repo"], "task-r3", :evolve)
+
+      assert RuntimeOpts.resume_fact_keys() == [
+               :pause_commit,
+               :resume_agent_id,
+               :resume_current_commit,
+               :resume_branch,
+               :resume_anchor_ref
+             ]
+
+      for key <- RuntimeOpts.resume_fact_keys() do
+        refute Keyword.has_key?(runtime_opts, key),
+               "expected #{inspect(key)} to be ABSENT for a normal run"
+      end
+    end
+  end
+
   describe "evolution_mode_atom/1" do
     test "converts \"simple\" to :simple" do
       assert RuntimeOpts.evolution_mode_atom("simple") == :simple
