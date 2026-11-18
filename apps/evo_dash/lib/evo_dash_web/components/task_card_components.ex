@@ -107,8 +107,11 @@ defmodule EvoDashWeb.TaskCardComponents do
       stuck pause must always be killable), and Review never is (only
       `:completed`/`:cancelled` are reviewable);
     * a `:paused` card renders its explainer strip — amber warning for
-      `pause_kind: :dirty` (the last tool batch may be half-executed and
-      subagents are NOT restored), neutral info for `:clean`/nil.
+      `pause_kind: :dirty` (the last tool batch may be half-executed; a resume
+      restores the root agent AND the subagents that were still running, while
+      a subagent whose result was already collected is not revived and one
+      with no durable record is reported as lost), neutral info for
+      `:clean`/nil.
 
   `:pausing` is still work draining, so it pulses (amber, like `:running`);
   `:paused` is at rest and never pulses.
@@ -363,8 +366,8 @@ defmodule EvoDashWeb.TaskCardComponents do
              width, rendered ONLY for a `:paused` task. `pause_kind` is read
              defensively: `:dirty` = brought back by a runtime restart (the last
              tool batch may be half-executed) → amber warning + the honest
-             subagents caveat; `:clean` or nil (a legacy row) → the neutral info
-             strip. --%>
+             subagent-resume caveat; `:clean` or nil (a legacy row) → the neutral
+             info strip. --%>
         <%= if Map.get(@task, :status) == :paused do %>
           <%= if Map.get(@task, :pause_kind) == :dirty do %>
             <%!-- zh_CN: dirty = 脏暂停（重启恢复，最后一次工具调用可能未完成）；
@@ -378,7 +381,11 @@ defmodule EvoDashWeb.TaskCardComponents do
                   )}
                 </p>
                 <p class="text-xs text-warning/80 mt-0.5">
-                  {gettext("Subagents from before the restart are not restored.")}
+                  <%!-- zh_CN: 脏暂停恢复会重建根智能体与当时仍在运行的子智能体（各自恢复上下文）；
+                       结果已被父智能体取回的子智能体不再复活，没有持久化记录的子智能体如实报告为丢失 --%>
+                  {gettext(
+                    "Resuming restores the root agent and the subagents that were still running, each with its saved context. A subagent whose result was already collected is not revived; one with no saved record is reported as lost."
+                  )}
                 </p>
               </div>
             </div>

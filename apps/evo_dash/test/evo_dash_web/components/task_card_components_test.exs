@@ -1079,7 +1079,7 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       assert html =~ "bg-info/5 border border-info/20"
       assert html =~ "Paused by you — resume continues where it stopped."
       refute html =~ "Resumed after a restart"
-      refute html =~ "Subagents from before the restart are not restored."
+      refute html =~ "subagents that were still running"
 
       assert [resume] = html |> parse() |> Floki.find("button[phx-click='resume_task']")
       assert Floki.attribute(resume, "phx-confirm") == []
@@ -1093,7 +1093,9 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       assert html =~
                "Resumed after a restart: the last tool call may not have completed, so files and background jobs may be inconsistent. Resuming tells the agents so."
 
-      assert html =~ "Subagents from before the restart are not restored."
+      assert html =~ "subagents that were still running"
+      assert html =~ "A subagent whose result was already collected is not revived"
+      assert html =~ "one with no saved record is reported as lost"
       refute html =~ "Paused by you"
 
       assert [resume] = html |> parse() |> Floki.find("button[phx-click='resume_task']")
@@ -1134,7 +1136,7 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
 
         refute html =~ "Paused by you"
         refute html =~ "Resumed after a restart"
-        refute html =~ "Subagents from before the restart are not restored."
+        refute html =~ "subagents that were still running"
       end
     end
 

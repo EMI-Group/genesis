@@ -835,8 +835,11 @@ defmodule EvoDash.NodeContext do
   Resumes a paused task on the given node.
 
   Delegates to `EvoGit.RemoteNode.resume_task/2`. The SAME task id is
-  re-enqueued with its persisted opts and a fresh lease, each agent restoring
-  its durable conversation, so the task's `started_at`, `opts`, `commit_sha`,
+  re-enqueued with its persisted opts and a fresh lease and the task's whole
+  durable run tree restores its own conversation, worktree and branch — the
+  root plus every subagent that was still running (an already-consumed child is
+  not revived and a child with no durable record is reported as lost) — so the
+  task's `started_at`, `opts`, `commit_sha`,
   `result` and accumulated `usage` are preserved. Returns `:ok` on success or
   `{:error, reason}`; the documented reasons are `:not_found` (unknown task),
   `:not_paused` (the task is not in `:paused`), `:not_resumable` (no durable run

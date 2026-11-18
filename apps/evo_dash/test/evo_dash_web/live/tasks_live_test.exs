@@ -3468,9 +3468,10 @@ defmodule EvoDashWeb.TasksLiveTest do
 
   # Seeds ONE durable ROOT run for `task_id` in the app-booted
   # `EvoGit.AgentState` — the precondition
-  # `EvoGit.TaskRegistry.resume_task/1` checks (`root_agent_ids/1 != []`).
-  # AgentState is an app-global resource, so this `async: false` module uses
-  # unique task ids and deletes the run in `on_exit`.
+  # `EvoGit.TaskRegistry.resume_task/1` checks (`EvoGit.AgentState.roster/2`
+  # yields a nonempty run roster). AgentState is an app-global resource, so
+  # this `async: false` module uses unique task ids and deletes the run in
+  # `on_exit`.
   defp seed_durable_run!(task_id, agent_id) do
     on_exit(fn -> EvoGit.AgentState.delete_task(task_id) end)
 
