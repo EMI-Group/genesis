@@ -12,6 +12,39 @@ defmodule EvoGit.AgentState.Server do
   answer without a `GenServer.call` (a call would queue behind pending
   checkpoint casts) and erased whenever the repo stops being usable.
 
+  ## Coalescing
+
+  A queued checkpoint cast for the SAME run is SUPERSEDED work: when a
+  checkpoint is handled, every checkpoint cast already queued for that
+  `(task_id, agent_id)` is drained with a selective `receive … after 0` (other
+  runs' messages, `:sync` calls and everything else stay in the mailbox
+  untouched), folded by `EvoGit.AgentState.Entry.fold/1` and persisted as ONE
+  `EvoGit.AgentState.Store.checkpoint_batch/4` transaction. A stalled disk
+  therefore costs one commit per drained batch instead of one per message, and
+  the fold keeps the semantics of the whole queue (a later `:rewrite`
+  supersedes, chained appends concatenate, a continuity gap stays its own
+  operation).
+
+  ## Bounded writer
+
+  The writer's own mailbox is bounded, so a stalled disk can never OOM the VM:
+
+    * OVER the backlog cap (`:max_backlog` start option, else app env
+      `:agent_state_max_backlog`, default 200) the arriving checkpoint is
+      DROPPED and NOT drained, and its `owner` is notified with
+      `{:agent_state_resync, task_id, agent_id}` — the session answers that by
+      rewriting its full transcript, so the loss self-heals;
+    * a checkpoint whose measured payload exceeds `:max_payload_bytes`
+      (`:agent_state_max_payload_bytes`, default 8 MiB) is skipped WITHOUT a
+      resync (the owner would only re-send the same oversized payload);
+    * both cases log ONE warning per run per failure streak — never one line
+      per checkpoint — and the streak entry is dropped when a checkpoint for
+      that run is accepted (so the bookkeeping is bounded by the runs
+      currently skipping writes).
+
+  Every one of those rules is a per-instance start option (with the app env as
+  its default), so tests never mutate a BEAM-global.
+
   ## Degraded operation
 
   `init/1` NEVER fails. A broken/unwritable database, a repo that will not start
@@ -32,11 +65,12 @@ defmodule EvoGit.AgentState.Server do
 
   require Logger
 
-  alias EvoGit.AgentState.{Boot, Retention, Store}
+  alias EvoGit.AgentState.{Boot, Entry, Retention, Store}
 
   @default_retry_base 1_000
   @default_retry_max 60_000
   @default_max_backlog 200
+  @default_max_payload_bytes 8 * 1024 * 1024
 
   @doc """
   Starts the server.
@@ -54,6 +88,12 @@ defmodule EvoGit.AgentState.Server do
       published so `EvoGit.AgentState` can resolve that pid to this server
     * `:boot_retry_base` / `:boot_retry_max` — degraded-boot retry backoff
       bounds in ms (default `1_000` / `60_000`)
+    * `:max_backlog` — the writer's mailbox cap: over it a checkpoint is
+      dropped, its owner resynced and ONE warning logged (default: app env
+      `:agent_state_max_backlog`, else 200; `0` is a real cap)
+    * `:max_payload_bytes` — the cap on one folded checkpoint's measured
+      payload: above it the checkpoint is skipped with ONE warning and NO
+      resync (default: app env `:agent_state_max_payload_bytes`, else 8 MiB)
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -80,6 +120,15 @@ defmodule EvoGit.AgentState.Server do
       database: database_path(opts),
       retention_days: Retention.configured_days(opts),
       prune_interval: Retention.prune_interval(opts),
+      max_backlog: configured(opts, :max_backlog, :agent_state_max_backlog, @default_max_backlog),
+      max_payload_bytes:
+        configured(
+          opts,
+          :max_payload_bytes,
+          :agent_state_max_payload_bytes,
+          @default_max_payload_bytes
+        ),
+      warnings: %{},
       backoff: base,
       backoff_base: base,
       backoff_max: max,
@@ -96,24 +145,7 @@ defmodule EvoGit.AgentState.Server do
 
   @impl true
   def handle_cast({:checkpoint, task_id, agent_id, entry}, state) do
-    case state.repo do
-      nil ->
-        :ok
-
-      repo ->
-        case normalize_entry(entry) do
-          {:ok, entry, owner} ->
-            persist(repo, task_id, agent_id, entry, owner)
-
-          :error ->
-            Logger.warning(
-              "[AgentState] ignoring malformed checkpoint for task #{inspect(task_id)} " <>
-                "agent #{inspect(agent_id)}"
-            )
-        end
-    end
-
-    {:noreply, state}
+    {:noreply, checkpoint(state, task_id, agent_id, entry)}
   end
 
   ## Bookkeeping writes (casts: never a synchronous barrier for the caller)
@@ -179,7 +211,7 @@ defmodule EvoGit.AgentState.Server do
     reply =
       cond do
         is_nil(state.repo) -> {:error, :timeout}
-        backlog_exceeded?() -> {:error, :timeout}
+        over_backlog?(state) -> {:error, :timeout}
         true -> :ok
       end
 
@@ -310,54 +342,158 @@ defmodule EvoGit.AgentState.Server do
     schedule_retry(%{state | backoff: state.backoff_base})
   end
 
-  ## Checkpoint handling
+  ## Checkpoint handling: coalesce, bound, cap
 
-  defp persist(repo, task_id, agent_id, entry, owner) do
-    case Store.checkpoint(repo, task_id, agent_id, entry) do
+  # A DEGRADED writer drops checkpoints SILENTLY: there is no store to write
+  # them to, the boot warning already told the operator, and one log line per
+  # checkpoint would be worse than the outage.
+  defp checkpoint(%{repo: nil} = state, _task_id, _agent_id, _entry), do: state
+
+  defp checkpoint(state, task_id, agent_id, entry) do
+    case Entry.normalize(entry) do
+      :error ->
+        Logger.warning(
+          "[AgentState] ignoring malformed checkpoint for task #{inspect(task_id)} " <>
+            "agent #{inspect(agent_id)}"
+        )
+
+        state
+
+      {:ok, entry} ->
+        if over_backlog?(state) do
+          # THE WRITER MUST NOT GROW ITS OWN QUEUE: drop the arriving
+          # checkpoint (do NOT drain), let the owner resync the whole
+          # transcript, and keep the queue where it is.
+          drop(state, task_id, agent_id, entry.owner, backlog_detail(state))
+        else
+          write(state, task_id, agent_id, [entry | drain_checkpoints(task_id, agent_id)])
+        end
+    end
+  end
+
+  # Drain EVERY checkpoint cast already queued for this SAME run with a
+  # selective receive: another agent's checkpoint, a `:sync` call and every
+  # other message stay in the mailbox, untouched and in order.
+  defp drain_checkpoints(task_id, agent_id, acc \\ []) do
+    receive do
+      {:"$gen_cast", {:checkpoint, ^task_id, ^agent_id, entry}} ->
+        drain_checkpoints(task_id, agent_id, [entry | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  defp write(state, task_id, agent_id, entries) do
+    ops = Entry.fold(entries)
+    key = {task_id, agent_id}
+
+    cond do
+      ops == [] ->
+        clear_warning(state, key)
+
+      true ->
+        case payload_bytes(ops) do
+          bytes when bytes > state.max_payload_bytes ->
+            # NO resync here: a resync rebuilds the SAME oversized transcript,
+            # so it could never succeed — the owner is not asked to retry it.
+            drop(state, task_id, agent_id, owner_of(ops), payload_detail(state, bytes))
+
+          _bytes ->
+            persist(state, task_id, agent_id, ops, key)
+        end
+    end
+  end
+
+  defp persist(state, task_id, agent_id, ops, key) do
+    case Store.checkpoint_batch(state.repo, task_id, agent_id, ops) do
       :ok ->
-        :ok
+        clear_warning(state, key)
 
       :resync ->
-        notify_resync(owner, task_id, agent_id)
+        notify_resync(owner_of(ops), task_id, agent_id)
+        state
 
       {:error, reason} ->
         Logger.warning(
           "[AgentState] checkpoint failed for task #{inspect(task_id)} " <>
             "agent #{inspect(agent_id)}: #{inspect(reason)}"
         )
+
+        state
     end
   end
 
-  defp normalize_entry(%{kind: kind, messages: messages} = entry)
-       when kind in [:append, :rewrite] and is_list(messages) do
-    fields = Map.get(entry, :fields, %{})
-    base_seq = Map.get(entry, :base_seq)
+  # One DROPPED checkpoint: notify its owner (the session answers by rewriting
+  # its full transcript, so the loss self-heals) and log at most one line per
+  # run per failure streak.
+  defp drop(state, task_id, agent_id, owner, detail) do
+    notify_resync(owner, task_id, agent_id)
+    warn_once(state, {task_id, agent_id}, detail)
+  end
 
-    cond do
-      not valid_base_seq?(kind, base_seq) ->
-        :error
+  defp owner_of(ops) do
+    ops
+    |> Enum.reverse()
+    |> Enum.find_value(fn op -> Map.get(op, :owner) end)
+  end
 
-      not is_map(fields) ->
-        :error
+  # The payload cap is measured on `:erlang.external_size/1` of each operation's
+  # messages — the UNCOMPRESSED external term size of exactly the term
+  # `EvoGit.AgentState.Record.encode_messages/1` will hand to
+  # `:erlang.term_to_binary/2` in the store. It is a cheap upper bound (no
+  # compression pass, no binary allocated) and it is deterministic, unlike the
+  # compressed blob size.
+  defp payload_bytes(ops) do
+    Enum.reduce(ops, 0, fn op, acc -> acc + :erlang.external_size(Map.get(op, :messages, [])) end)
+  rescue
+    # Justified rescue: `:erlang.external_size/1` raises on a term it cannot
+    # externalize (the same one `term_to_binary` would reject) and a checkpoint
+    # must never crash the writer. An unmeasurable payload is treated as
+    # "within the cap" and then fails, totally, inside the store.
+    _error -> 0
+  end
 
-      not valid_messages?(messages) ->
-        :error
+  # ONE warning per run per failure streak: the first skipped checkpoint of a
+  # run logs, every further one only counts. The entry is removed when a
+  # checkpoint for that run is accepted, so the map is bounded by the runs
+  # currently skipping writes — it never grows with traffic.
+  defp warn_once(state, key, detail) do
+    case Map.fetch(state.warnings, key) do
+      {:ok, {^detail, count}} ->
+        %{state | warnings: Map.put(state.warnings, key, {detail, count + 1})}
 
-      true ->
-        {:ok, %{kind: kind, messages: messages, fields: fields, base_seq: base_seq},
-         Map.get(entry, :owner)}
+      {:ok, {_changed, count}} ->
+        log_skip(key, detail)
+        %{state | warnings: Map.put(state.warnings, key, {detail, count + 1})}
+
+      :error ->
+        log_skip(key, detail)
+        %{state | warnings: Map.put(state.warnings, key, {detail, 1})}
     end
   end
 
-  defp normalize_entry(_entry), do: :error
+  defp clear_warning(%{warnings: warnings} = state, key) do
+    case Map.pop(warnings, key) do
+      {nil, _remaining} ->
+        state
 
-  defp valid_base_seq?(:append, nil), do: true
-  defp valid_base_seq?(:append, base_seq), do: is_integer(base_seq) and base_seq >= 0
-  defp valid_base_seq?(:rewrite, _base_seq), do: true
+      {{detail, count}, remaining} ->
+        # The run recovered: ONE informational line closes the streak.
+        Logger.info(
+          "[AgentState] durable checkpoints resumed for #{describe_key(key)} " <>
+            "after #{count} skipped checkpoint(s) (#{detail})"
+        )
 
-  defp valid_messages?(messages) do
-    Enum.all?(messages, fn message -> is_struct(message, ReqLLM.Message) end)
+        %{state | warnings: remaining}
+    end
   end
+
+  defp log_skip(key, detail) do
+    Logger.warning("[AgentState] skipping durable checkpoint for #{describe_key(key)}: #{detail}")
+  end
+
+  defp describe_key({task_id, agent_id}),
+    do: "task #{inspect(task_id)} agent #{inspect(agent_id)}"
 
   # A continuity gap means the session's in-memory tail diverged from what is
   # stored (an earlier checkpoint failed or a restart lost it): the session
@@ -370,21 +506,24 @@ defmodule EvoGit.AgentState.Server do
 
   defp notify_resync(_owner, _task_id, _agent_id), do: :ok
 
-  ## The honest-barrier backlog cap
+  ## The bounded mailbox
 
-  defp backlog_exceeded? do
+  defp over_backlog?(state) do
+    queue_length() > state.max_backlog
+  end
+
+  defp queue_length do
     case Process.info(self(), :message_queue_len) do
-      {:message_queue_len, length} -> length > max_backlog()
-      _other -> false
+      {:message_queue_len, length} -> length
+      _other -> 0
     end
   end
 
-  defp max_backlog do
-    case Application.get_env(:evo_git, :agent_state_max_backlog, @default_max_backlog) do
-      cap when is_integer(cap) and cap >= 0 -> cap
-      _other -> @default_max_backlog
-    end
-  end
+  defp backlog_detail(state),
+    do: "writer backlog over its #{state.max_backlog}-message cap"
+
+  defp payload_detail(state, bytes),
+    do: "payload of #{bytes} bytes above the #{state.max_payload_bytes}-byte cap"
 
   ## Helpers
 
@@ -429,6 +568,18 @@ defmodule EvoGit.AgentState.Server do
 
   defp positive_integer(value, _default) when is_integer(value) and value > 0, do: value
   defp positive_integer(_value, default), do: default
+
+  # A per-instance start option wins; the app env is only the DEFAULT (read at
+  # init, so tests never mutate a BEAM-global to exercise a cap).
+  defp configured(opts, option, env_key, default) do
+    first_valid([Keyword.get(opts, option), Application.get_env(:evo_git, env_key)], default)
+  end
+
+  defp first_valid([value | rest], default) do
+    if is_integer(value) and value >= 0, do: value, else: first_valid(rest, default)
+  end
+
+  defp first_valid([], default), do: default
 
   defp describe(reason) when is_binary(reason), do: reason
   defp describe(reason), do: inspect(reason)

@@ -13,9 +13,11 @@ Production contract (API, storage model, field list, corruption/retention rules)
 | `agent_state_retention_test.exs` | `EvoGit.AgentStateRetentionTest` | 6 | `mark_completed/3`, `prune/1` expiry rules, prune idempotence, `delete/3`, `delete_task/2` |
 | `retention_test.exs` | `EvoGit.AgentState.RetentionTest` | 13 | pure `EvoGit.AgentState.Retention` math — no DB, no clock read, no app-env mutation |
 | `agent_state_migration_test.exs` | `EvoGit.AgentState.MigrationTest` | 5 | the REAL migration chain on a fresh temp dir: applied versions `[1, 2, 3]`, exactly one nullable `TEXT` `pending_tool_batch` column plus exactly one nullable `TEXT` `pause_commit` column, a checkpointed `EvoGit.Agent.ToolBatch` marker as non-null JSON (direct `SELECT`) that `load/3` + `normalize/1` round-trips, `nil` clearing it, and a second boot / forced version-2-and-3 re-run staying idempotent with the data intact |
+| `entry_test.exs` | `EvoGit.AgentState.EntryTest` | 13 | pure `EvoGit.AgentState.Entry`: `normalize/1` acceptance/rejection and every `fold/1` rule (rewrite supersede, append chaining, gaps, last-wins fields, owner, empty queue) — no store, no `:tmp_dir` |
+| `agent_state_coalescing_test.exs` | `EvoGit.AgentState.CoalescingTest` | 9 | the bounded, coalescing writer: suspend/enqueue/resume folding to ONE chunk, selective draining per run, `:max_backlog` drops with ONE owner resync and ONE warning, the 20-checkpoint flood staying at one warning line, the fold-level `:max_payload_bytes` skip with NO resync, and `Store.checkpoint_batch/4` committing a fold in one transaction (whole-fold rollback on a resync) |
 | `agent_state_pause_test.exs` | `EvoGit.AgentState.PauseTest` | 8 | task-level pause/resume facts: `put_pause_commit/3,4` round-trip/replace/clear (direct `SELECT`), `{:error, :not_found}` with no row created, the write touching ONLY `pause_commit` (counts, chunks and append continuity untouched), `pause_commit/2,3`, `resumable?/1,2`, `root_agent_ids/1,2`, the inert no-store shapes, and `flush/1` as a synchronous durability barrier (explicit `:sync` call plus read-back with no sleeping) |
 
-All six modules are `use ExUnit.Case, async: true` with `@moduletag :tmp_dir`.
+All eight modules are `use ExUnit.Case, async: true`; every one but the pure `entry_test.exs` carries `@moduletag :tmp_dir`.
 
 ## Per-File Coverage
 
@@ -54,6 +56,7 @@ All six modules are `use ExUnit.Case, async: true` with `@moduletag :tmp_dir`.
 - `resumable?/1,2` is `true` once any durable run exists for the task (a scalar-only, message-less row included), `false` for an unknown task and `false` again after `delete_task`.
 - `root_agent_ids/1,2` returns only `parent_id IS NULL` rows, ascending (created out of order so the ordering is a real assertion), never leaks another task's roots, includes a row whose `parent_id` was never supplied, and answers `[]` for an unknown task.
 - `flush/1` is proven a SYNCHRONOUS barrier: the server answers `:sync` to an explicit `GenServer.call`, and a cast checkpoint plus a queued `put_pause_commit` are readable from a fresh `load/3` immediately after `flush/1` (or `flush(agent_id)` through the process-dictionary seam) returns — no `Process.sleep`, no retry.
+- The barrier test ALSO pins coalescing: five appends still queued when the barrier arrives are durable as ONE folded chunk (`chunk_count == 2`, every message present), so the guarantee is "every message is durable", not "one row per checkpoint".
 - With no store (an unregistered name) every new function stays inert: `{:error, :not_persistent_state_disabled}`, `nil`, `false`, `[]`, `:ok` — and the same calls succeed against a live store, so the inert shape is pinned rather than an unusable API.
 
 ### retention_test.exs — pure retention math
@@ -80,9 +83,25 @@ The `start_store!`/`checkpoint!`/`sql!`/`chunks!`/`counts!` helpers are duplicat
 - `load/3` reads in the CALLING process (repo pid from `:persistent_term` + `RepoScope`), so it does not queue behind pending checkpoint casts.
 - The migrations give NOT NULL DEFAULTs (`status "running"`, `depth`/`turn`/`total_tokens`/`compression_count` `0`, `repo_less`/`archive`/`model_id_locked` `false`, `format_version` `1`) while nullable columns read back `nil`.
 - An `:append` (and a `:rewrite`) is a CAST, so a malformed-entry test must capture the server's per-entry warning inside `capture_log/2` to keep the suite quiet (`capture_log` is process-scoped, so this is async-safe).
+- The writer's caps are PER-INSTANCE start options (`max_backlog:`, `max_payload_bytes:`); never mutate the `:agent_state_max_backlog` / `:agent_state_max_payload_bytes` app env in a test, or the module stops being async-safe.
+- `config :logger, level: :warning` in `:test` means the writer's `:info` "checkpoints resumed" line is invisible to tests; assert the streak RESET through behaviour (a second skip logs a second warning) instead of that line.
 - Retention ordering is string comparison on second-precision ISO8601 UTC, which is why backdating through SQL is a valid expiry fixture.
 
+### entry_test.exs — pure fold rules
+- `normalize/1` accepts the documented atom-keyed entry (defaulting `fields` to `%{}` and `owner` to `nil`, keeping a `nil` base_seq) and answers `:error` for a non-map entry, an unknown kind, a missing/non-list `messages`, a non-message element, a negative or float `base_seq` and a non-map `fields`.
+- `fold/1` collapses N rewrites to the LAST content; folds chained appends into ONE append with the FIRST `base_seq` and the concatenated tail (a `nil` base_seq counts as `0`); keeps rewrite-plus-chained-appends as ONE rewrite; keeps a continuity GAP as separate ordered operations; merges `fields` last-wins ACROSS a superseding rewrite (a superseded scalar is never lost); carries the last non-nil `owner`; folds an empty queue and a non-list to `[]`; and IGNORES entries it cannot interpret.
+
+### agent_state_coalescing_test.exs — bounded, coalescing writer
+- Determinism: the writer is `:sys.suspend`ed, the test casts a known number of checkpoints, `:sys.resume`d, and then WAITS (bounded `wait_until` poll on the writer's `message_queue_len`) before sending anything else — a barrier call sent into a still-queued mailbox would itself count against the cap and change the drop count. There is no fixed sleep.
+- Five queued appends for ONE run become ONE new chunk row (`2` chunks, `[[6, 2]]` counts, the full concatenated transcript) and four queued rewrites collapse to the LAST one.
+- Draining is SELECTIVE: a checkpoint queued for ANOTHER run between one run's two checkpoints keeps its own row and chunk.
+- `:max_backlog` (a per-instance start option) with three queued checkpoints and a cap of `1`: the first is dropped — exactly ONE `{:agent_state_resync, task_id, agent_id}`, exactly ONE warning line, the later two folded and stored, the writer alive, its mailbox empty.
+- A 20-checkpoint flood over the same cap still logs exactly ONE warning (the per-run streak entry), stays alive and drains.
+- A DROPPED checkpoint is not drained: the folded survivor then reports the real continuity gap (`:resync`, no row) instead of appending on top of it.
+- The payload cap skips with ONE warning, NO resync and no row; a later small checkpoint persists and RESETS the streak, so a following oversized one logs a SECOND warning (proving the bookkeeping is cleared on acceptance). The cap measures the whole FOLD — two chained tails that each fit but together do not are skipped.
+- `Store.checkpoint_batch/4` commits every operation of a fold in ONE transaction and rolls the WHOLE fold back on a `:resync`; `[]` is a no-op `:ok` and a non-list is `{:error, :invalid_operations}`.
+
 ## Constraints
-No module here is `async: false`, and no test calls `Process.sleep` — every wait is a `flush/1` reply, a synchronous call, or a mailbox assertion made deterministic by that barrier.
+No module here is `async: false`, and no test calls `Process.sleep` — every wait is a `flush/1` reply, a synchronous call, a mailbox assertion made deterministic by that barrier, or the ONE bounded `wait_until` poll for an empty writer mailbox (which is itself a condition poll with a 1 ms tick, never a fixed sleep).
 No shared support module: the isolation helpers are intentionally duplicated in each file.
 No test uses the app-global `tasks.sqlite` or the app-booted agent-state server.

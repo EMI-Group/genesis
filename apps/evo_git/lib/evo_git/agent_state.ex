@@ -26,6 +26,13 @@ defmodule EvoGit.AgentState do
   written and the owner receives `{:agent_state_resync, task_id, agent_id}`.
   `:rewrite` replaces the whole list in one chunk (used after compression).
 
+  The writer COALESCES: checkpoints still queued for the same run are folded
+  into ONE transaction (`EvoGit.AgentState.Entry`), its mailbox is bounded
+  (over the backlog cap the arriving checkpoint is dropped and its owner
+  resynced) and a payload above the size cap is skipped. Both caps are start
+  options (`:max_backlog`, `:max_payload_bytes`) whose defaults come from the
+  app env; see `EvoGit.AgentState.Server`.
+
   `fields` keys: `:agent_module`, `:depth`, `:parent_id`, `:node_path`,
   `:repo_id`, `:repo_less`, `:repo_root`, `:custom_agent_id`, `:mode`,
   `:archive`, `:objective`, `:model_spec`, `:provider_profile_id`, `:model_id`,
@@ -91,7 +98,7 @@ defmodule EvoGit.AgentState do
 
   See `EvoGit.AgentState.Server.start_link/1` for the options (`:database`,
   `:data_dir`, `:name`, `:retention_days`, `:prune_interval`,
-  `:boot_retry_base`, `:boot_retry_max`).
+  `:boot_retry_base`, `:boot_retry_max`, `:max_backlog`, `:max_payload_bytes`).
   """
   @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
   def start_link(opts \\ []), do: Supervisor.start_link(opts)
@@ -173,9 +180,10 @@ defmodule EvoGit.AgentState do
 
   HONEST: `:ok` means the writer committed everything queued before this call;
   `{:error, :timeout}` means the caller must NOT claim durability (the server
-  is absent/dead, the writer is degraded, or its backlog is over
-  `:agent_state_max_backlog`). `nil` (no target at all) is `:ok` — there is
-  nothing to flush.
+  is absent/dead, the writer is degraded, or its backlog is over the writer's
+  cap — the `:max_backlog` start option, else app env
+  `:agent_state_max_backlog`, default 200). `nil` (no target at all) is `:ok` —
+  there is nothing to flush.
   """
   @spec flush(keyword() | pid() | atom() | integer() | nil) :: :ok | {:error, :timeout}
   def flush(opts \\ [])
