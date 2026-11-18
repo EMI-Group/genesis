@@ -149,11 +149,20 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
         do: Process.exit(socket.assigns.chat_stream_worker, :kill)
     end)
 
-    assert_receive :watch_observed_starting, 3000
-    refute_receive {:chat_stream_ready, _, _, ^id, _}, 100
-    send(setup_worker, :release_setup)
-    assert_receive {:model_entered, model_worker}, 3000
+    # The session answers a `:starting` watch with its pre-state snapshot and keeps
+    # the registration, so a slow setup no longer defers the dashboard's first cut.
     assert_receive {:chat_stream_ready, target, token, ^id, result}, 3000
+    refute_receive :watch_observed_starting, 100
+
+    assert {:ok,
+            {:ok,
+             %EvoGit.Agent.Stream.Snapshot{
+               phase: :starting,
+               status: nil,
+               seq: 0,
+               messages: [],
+               activity: %{phase: :idle, current_call: nil}
+             }, 0}} = result
 
     assert {:noreply, ready} =
              EvoDashWeb.HomeLive.handle_info(
@@ -161,11 +170,22 @@ defmodule EvoDashWeb.HomeLive.WatchReadinessTest do
                socket
              )
 
+    # The admitted pre-state cut owns the stream: still setup-held, nothing else arrives.
+    assert ready.assigns.chat_stream.delta.seq == 0
+    assert ready.assigns.chat_status == :running
+    refute_receive {:chat_stream_ready, _, _, ^id, _}, 100
+
+    send(setup_worker, :release_setup)
+    assert_receive {:model_entered, model_worker}, 3000
+    # One registration, one readiness reply: the run continues on the SAME stream.
+    refute_receive {:chat_stream_ready, _, _, ^id, _}, 200
+
     assert ready.assigns.chat_status == :running
     assert Watch.failure(ready.assigns) == nil
     assert Session.watching?(session)
     send(model_worker, :finish_fixture)
     settled = consume_until_idle(ready, id)
+    assert settled.assigns.chat_stream.delta.seq > 0
     assert settled.assigns.chat_status == :idle
     assert settled.assigns.chat_task_status == :awaiting_input
 

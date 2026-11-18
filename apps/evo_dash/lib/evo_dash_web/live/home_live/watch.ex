@@ -24,9 +24,13 @@ defmodule EvoDashWeb.HomeLive.Watch do
   One consumer-monitored worker serializes registration and cleanup, passing the
   LiveView pid to the core. Detach never races a later register; worker startup,
   RPC failures and buffer overflow remain explicit errors, not history fallback.
-  A first registration that finds the session still `:starting` waits at most ten
-  seconds for readiness in this worker; detach, scope changes and consumer death
-  cancel that wait. No other failure is automatically retried.
+  A `:starting` session ACCEPTS the watch and answers with its pre-state snapshot
+  (`phase: :starting`, empty message list, turn 0), keeping the registration and
+  sequence across the transition to `:running`, so a slow setup needs no retry.
+  A first registration that an OLDER or foreign node still refuses with
+  `{:error, {:bad_state, :starting}}` waits at most ten seconds for readiness in
+  this worker; detach, scope changes and consumer death cancel that wait, and no
+  other failure is automatically retried.
   Runner seams are `:home_agent_watch_runner` and `:home_agent_unwatch_runner`,
   both `(node, agent_id, consumer_pid)`, resolved when attach is requested.
   """
@@ -507,9 +511,10 @@ defmodule EvoDashWeb.HomeLive.Watch do
     end
   end
 
-  # The scheduler returns the id before the monitored setup task has built a State.
-  # `:starting` is therefore readiness, not a broken stream. Only that precise response
-  # is retried; provider, transport, missing-session and terminal errors remain failures.
+  # A current core accepts a `:starting` watch and answers with the session's PRE-STATE
+  # snapshot, so setup time is no reason to retry. Only a node that still REFUSES with
+  # `{:bad_state, :starting}` (an older or foreign build) is retried until the deadline;
+  # provider, transport, missing-session and other terminal errors remain failures.
   defp register_when_ready(consumer, monitor, registration, desired, deadline) do
     result = SafeCall.run(fn -> desired.watch.(desired.node, desired.id, consumer) end)
 
@@ -569,6 +574,8 @@ defmodule EvoDashWeb.HomeLive.Watch do
     System.monotonic_time(:millisecond) + timeout
   end
 
+  # LEGACY-NODE TOLERANCE: a current core answers a `:starting` watch with its pre-state
+  # snapshot. This stays for older/foreign nodes that still refuse during setup.
   defp starting_result?({:ok, inner}), do: starting_result?(inner)
   defp starting_result?({:error, {:bad_state, :starting}}), do: true
   defp starting_result?(_), do: false

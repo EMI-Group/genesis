@@ -329,6 +329,8 @@ The parent installs returned `transcript`, `thought_process` and `meta` with the
 Registration-time buffers cap at 128 batches or 1 MiB and overflow is an explicit failure requiring reattachment, not silent event loss.
 The worker serializes every register/unregister command, including detach during a blocked registration, and monitors the consumer to clean up after its death.
 Healthy same-scope attaches are no-ops; scope identity includes both node and agent, detach advances the generation, and worker-start failures settle as `{:watch_start_failed, reason}`.
+A `:starting` session ACCEPTS the watch: the core answers with its pre-state snapshot (`phase: :starting`, `status` nil, `seq` 0, empty messages, its live activity), keeps the registration and continues the same sequence once the run starts — so slow setup never defers the dashboard's first cut, and the admitted `:starting` snapshot already maps to `chat_status: :running` with `chat_task_status: :running`.
+The bounded ten-second readiness retry (`:home_agent_watch_start_timeout_ms`) is therefore LEGACY-NODE tolerance only: it fires solely when a node still refuses with `{:error, {:bad_state, :starting}}`, and that refusal is logged as `reason=starting_timeout` and delivered as one failed readiness reply.
 Cleanup RPC failures are logged without automatic retries, and unexpected worker death fails the watch explicitly while the core's own consumer monitor remains its final reaper.
 
 ## Presentation and test notes
