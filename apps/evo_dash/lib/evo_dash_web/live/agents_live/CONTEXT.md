@@ -90,7 +90,8 @@ Node fills, edge strokes, status palettes (`EvoDashWeb.Helpers.agent_status_svg_
 ## Inspector RuntimeStream Reducer
 
 `RuntimeStream` is a pure inspector reducer with `new/2`, `seed/3`, `apply_batch/4` and `active?/1`, independent of the Assistant transcript reducer.
-Core snapshots and ordered activity events carry `%{phase: :idle | :llm_waiting | :llm | :llm_complete | :retry_wait | :tools, current_call: nil | %{id: binary, turn: integer, attempt: integer, text: binary, thinking: binary}}`.
+Core snapshots and ordered activity events carry `%{phase: :idle | :llm_waiting | :llm | :llm_complete | :retry_wait | :tools | :compressing | :preparing, current_call: nil | %{id: binary, turn: integer, attempt: integer, text: binary, thinking: binary}}`.
+`:compressing` (a context-compression LLM call, 10-60 s) and `:preparing` (assembling the next turn between a tool batch and the next request) are admitted NON-call phases: they are stored and labelled, but only `:llm_complete`/`:tools` prove generation completion and only `:llm` is an active call phase.
 Each activity event replaces the WHOLE current-call projection, including full accumulated text/thinking; ordinary text/thinking chunks append only to an existing call.
 Core captures current-call content even without watchers, so a mid-call snapshot proves complete source capture when both text and thinking are explicit binaries, without invented coverage flags or message-start events.
 The reducer stores the authoritative phase in `state.activity` and bounded content in `state.projections`, avoiding an unbounded duplicate of the producer's activity map.
@@ -149,12 +150,12 @@ No handoff can recover a watch already explicitly detached, and retained termina
 `StreamPresentation.build/1` applies a second render cap of 12_000 graphemes per response/thinking part and at most 20 tools without mutating the reducer or checkpoint history.
 The public max-message budget remains 12, but production state contains only the current call and retirement removes its article.
 Grapheme omission fields describe render-stage loss, while byte omission fields sum reducer and render loss without counting full replacements twice.
-Activity labels cover every core phase: generating, waiting for model capacity, response generated, waiting to retry, executing tools and idle; absent/unknown activity is unavailable.
-The label text exists in exactly ONE place, `StreamPanel`'s `#inspector-activity` (`stream_panel.ex:142-148`): `:llm` → "Generating response", `:tool` → "Executing tools", `:idle` → "Idle", `:waiting` → "Waiting for model capacity", `:llm_complete` → "Response generated", `:retry_wait` → "Waiting to retry", any other value → "Activity unavailable".
+Activity labels cover every core phase: generating, waiting for model capacity, response generated, waiting to retry, executing tools, compressing context, preparing the next turn and idle; absent/unknown activity is unavailable.
+The label text exists in exactly ONE place, `StreamPanel`'s `#inspector-activity` (`stream_panel.ex:142-150`): `:llm` → "Generating response", `:tool` → "Executing tools", `:idle` → "Idle", `:waiting` → "Waiting for model capacity", `:llm_complete` → "Response generated", `:retry_wait` → "Waiting to retry", `:compressing` → "Compressing context", `:preparing` → "Preparing next turn", any other value → "Activity unavailable".
 "Idle" therefore renders ONLY from an ADMITTED server phase — a `%Snapshot{activity: %{phase: :idle, current_call: nil}}` or an `{:activity, %{phase: :idle, ...}}` delta — never from a client-side timeout, placeholder or missing state; a snapshot without activity renders "Activity unavailable" and a pre-snapshot watch additionally shows "Connecting to live updates…" (`stream_panel.ex:125-127`).
 No inspector timer re-renders or ages the label: it shows the last admitted phase until the next `{:agent_delta, ...}`/snapshot arrives, so a stale `:idle` is a SERVER fact, not a dashboard guess.
-`RuntimeStream.replace_activity/2` (`runtime_stream.ex:195-211`) updates the phase ONLY when the activity map carries a `:current_call` key (nil or a call map) and the phase is one of the six; a map missing that key OR naming a phase outside the six leaves the previous phase rendered.
-An unrecognized phase never degrades to "Idle": a live delta keeps the last admitted label, and only a snapshot whose activity is absent/unknown renders "Activity unavailable" (a seeded snapshot phase outside the six is dropped by the same guard, leaving `activity: nil`).
+`RuntimeStream.replace_activity/2` (`runtime_stream.ex:210-226`) updates the phase ONLY when the activity map carries a `:current_call` key (nil or a call map) and the phase is one of the eight; a map missing that key OR naming a phase outside the eight leaves the previous phase rendered.
+An unrecognized phase never degrades to "Idle": a live delta keeps the last admitted label, and only a snapshot whose activity is absent/unknown renders "Activity unavailable" (a seeded snapshot phase outside the eight is dropped by the same guard, leaving `activity: nil`).
 `thinking_status/1` returns `:none` only for generation-complete, completely captured, empty, unomitted thinking, and StreamPanel renders exactly `gettext("No thinking content available")` for that case.
 Missing thinking in malformed call data remains partial capture, and no lifecycle, accounting or caller-supplied flag upgrades it.
 Checkpoint messages have no core call id or coverage watermark, and no checkpoint-part suppression predicate is exposed.
@@ -186,7 +187,7 @@ Only newly keyed rows animate, reduced motion is respected and history scrolling
 Core transport and snapshot contracts live in `apps/evo_git/lib/evo_git/agent/stream/CONTEXT.md` and lifecycle/activity limitations in `apps/evo_git/lib/evo_git/agent/session/CONTEXT.md`.
 The core snapshot includes session-owned `activity: %{phase:, current_call: nil | %{id:, turn:, attempt:, text:, thinking:}}`, and ordered `{:activity, projection}` events replace that projection while ordinary text/thinking events append to its current call.
 The core snapshot atomically captures checkpoint `messages`, complete accumulated `activity` and its authoritative `seq`, and a completed current call remains available until atomic checkpoint retirement.
-Core phases are `:idle`, `:llm_waiting`, `:llm`, `:llm_complete`, `:retry_wait` and `:tools`, and activity capture continues without watchers; watch and snapshot flush pending events before returning the authoritative sequence.
+Core phases are `:idle`, `:llm_waiting`, `:llm`, `:llm_complete`, `:retry_wait`, `:tools`, `:compressing` and `:preparing`, and activity capture continues without watchers; watch and snapshot flush pending events before returning the authoritative sequence.
 The inspector adopts `activity.current_call` from snapshots and replacements and appends only strictly newer chunks through the existing StreamWatch buffering/sequence admission.
 Fresh core call ids separate retry attempts, and nil current-call retirement clears obsolete live excerpts without modifying raw checkpoint history.
 
@@ -195,7 +196,7 @@ Fresh core call ids separate retry attempts, and nil current-call retirement cle
 Tool-result/yield/finish events alone cannot replace the automatic retirement/replacement snapshot trigger.
 Hand-built StreamWatch fixtures must include `snapshot_request: 0`, `reconciling: false` and `required_seq: 0`, preserve real snapshot agent ids, and account for duplicate/stale batches not consuming buffer capacity.
 Activity fixtures use real nested `current_call` projections; synthetic `in_flight`, flattened activity identities, `message_start`, bare chunks without a current call and the removed `message_identity/1` API are not supported protocols.
-All six core phases have truthful presentation labels, and successful empty-thinking notices require complete binary capture plus `:llm_complete` or `:tools`.
+All eight core phases have truthful presentation labels, and successful empty-thinking notices require complete binary capture plus `:llm_complete` or `:tools` (never `:compressing`/`:preparing`).
 Current deltas expose text/thinking chunks and tool id/name/status but not tool arguments, result bodies or full history-message changes.
 There is no checkpoint-message call identity or checkpoint-coverage watermark, so checkpoint suppression and historical excerpt reconciliation by guessed turn/content are unsupported.
 The inspector uses its own bounded `RuntimeStream` reducer rather than the Assistant's bubble-oriented `Delta` reducer (`../home_live/CONTEXT.md`), and neither is a lossless history model.
