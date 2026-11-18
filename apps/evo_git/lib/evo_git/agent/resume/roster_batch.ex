@@ -267,7 +267,9 @@ defmodule EvoGit.Agent.Resume.RosterBatch do
       foreign_repos = Keyword.get(redispatch_opts, :foreign_repos) || state.foreign_repos || []
       node_path = Keyword.get(redispatch_opts, :node_path) || Map.get(fields, :node_path) || "./"
 
-      context_node = ContextNode.load(node_path, repo_root(repo_id, state, foreign_repos), repo_id)
+      context_node =
+        ContextNode.load(node_path, repo_root(repo_id, state, foreign_repos), repo_id)
+
       phylo_node = phylo_node(record, repo_root(repo_id, state, foreign_repos))
 
       opts =

@@ -167,7 +167,8 @@ defmodule EvoGit.AgentScheduler.SubagentRebuild do
   # --- Spawn ---
 
   defp spawn_pending(pending, results, meta, turn, spawn_fun, state) do
-    Enum.reduce(pending, {results, %{}, [], state}, fn entry, {results, indices, ids, state_acc} ->
+    Enum.reduce(pending, {results, %{}, [], state}, fn entry,
+                                                       {results, indices, ids, state_acc} ->
       case safe_spawn(spawn_fun, state_acc, meta, entry, turn) do
         {:ok, child_id, state_acc} when is_integer(child_id) ->
           Logger.info(

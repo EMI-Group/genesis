@@ -113,10 +113,11 @@ defmodule EvoGit.Agent.Resume.ReattachTest do
     stored = %Result{result: "durable child work", commit_sha: nil}
     running = %Result{result: "re-spawned child finished", commit_sha: nil}
 
-    roster = roster_fun([
-      done_row(@child_a, 0, stored),
-      running_row(@child_b, 1)
-    ])
+    roster =
+      roster_fun([
+        done_row(@child_a, 0, stored),
+        running_row(@child_b, 1)
+      ])
 
     rebuild = fn agent_id, plan, opts ->
       send(self(), {:rebuilt, agent_id, plan, opts[:turn]})
@@ -126,7 +127,9 @@ defmodule EvoGit.Agent.Resume.ReattachTest do
     slots = [{0, call()}, {1, call()}]
 
     assert %{texts: texts, merge_note: nil} =
-             Reattach.resolve(state(context: conversation([subagent_call("c0"), subagent_call("c1")])), slots,
+             Reattach.resolve(
+               state(context: conversation([subagent_call("c0"), subagent_call("c1")])),
+               slots,
                reattach_fun: deny_reattach(),
                rebuild_fun: rebuild,
                roster_fun: roster,
@@ -171,7 +174,9 @@ defmodule EvoGit.Agent.Resume.ReattachTest do
     slots = [{0, call()}, {1, call()}]
 
     assert %{texts: texts} =
-             Reattach.resolve(state(context: conversation([subagent_call("c0"), subagent_call("c1")])), slots,
+             Reattach.resolve(
+               state(context: conversation([subagent_call("c0"), subagent_call("c1")])),
+               slots,
                reattach_fun: deny_reattach(),
                rebuild_fun: rebuild,
                roster_fun: roster,

@@ -1425,6 +1425,7 @@ defmodule EvoGit.AgentScheduler do
       ) do
     SubagentReattach.handle_reattach(agent_id, expected_count, timeout, from, state)
   end
+
   # Rebuild half of whole-tree resume: install a batch from the children's
   # DURABLE rows when no in-memory batch survived (see `SubagentRebuild`).
   @impl true
