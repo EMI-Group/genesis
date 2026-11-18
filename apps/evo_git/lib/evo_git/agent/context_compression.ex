@@ -111,6 +111,7 @@ defmodule EvoGit.Agent.ContextCompression do
   alias EvoGit.Agent.ContextBuilder
   alias EvoGit.Agent.Cost
   alias EvoGit.Agent.State
+  alias EvoGit.Agent.Stream.Sink
   alias EvoGit.Agent.Usage
 
   @doc """
@@ -174,6 +175,13 @@ defmodule EvoGit.Agent.ContextCompression do
         # A compressible conversation always starts with [system, first_user];
         # any other shape (empty, a lone system message) is left alone.
         [_system, _first_user | _rest] = messages ->
+          # Publish the compression step as a live-activity phase only HERE,
+          # inside the compressible branch: `Threshold.exceeded?/2` above is the
+          # single gate authority, and ~every turn is below the threshold, so a
+          # below-threshold turn must publish nothing at all. The phase then
+          # covers the WHOLE step — stage-1 pruning and the entire stage-2 path
+          # (slot wait plus retries). Inert without an installed sink.
+          Sink.phase(:compressing)
           compress(agent_id, llm_model, llm_gen_opts, info, state, messages)
 
         _other ->

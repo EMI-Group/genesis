@@ -203,8 +203,17 @@ defmodule EvoGit.Agent.ToolDispatch do
         trigger_recovery_fn,
         opts
       ) do
-    EvoGit.Agent.Session.Worker.boundary(state, :llm)
+    # Turn start: `start_turn/1` keeps its reset semantics (a turn start is not
+    # silently turned into `:preparing` for non-LLM turn paths), and the
+    # `:preparing` phase is published IMMEDIATELY after that reset so no idle
+    # window opens while the request is assembled. It is sent BEFORE the
+    # synchronous `Session.Worker.boundary/2` call, so the session applies the
+    # activity event ahead of the boundary (same sender, ordering preserved).
+    # `Sink.phase/1` is inert without an installed sink, so this ordering is
+    # behaviourally identical for unwatched runs.
     Sink.start_turn(state.turn)
+    Sink.phase(:preparing)
+    EvoGit.Agent.Session.Worker.boundary(state, :llm)
     context = state.context
     tools = effective_tools_fn.(state)
 
