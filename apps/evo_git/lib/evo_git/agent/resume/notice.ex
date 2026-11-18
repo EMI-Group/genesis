@@ -10,7 +10,7 @@ defmodule EvoGit.Agent.Resume.Notice do
       accompanies the tool-result repair.
     * `pause_text/1` — the NEUTRAL notice of a `:clean_pause` resume: the user
       paused the task at a turn boundary and resumed it, nothing was
-      interrupted, the worktree is exactly as it was left and NO repair runs.
+      interrupted, the worktree holds the pause checkpoint and NO repair runs.
       It is deliberately not framed `[RESUME]` and never says a file may be
       inconsistent.
 
@@ -29,8 +29,10 @@ defmodule EvoGit.Agent.Resume.Notice do
     * `:retries` — the count of retries already attempted for this run, so the
       notice states `attempt = retries + 1`; non-integer → no attempt sentence.
     * `:retry_reason` — free text (or an atom); `nil`/blank → no reason sentence.
-    * `:worktree_resume_from` — the commit the worktree was restored from; when
-      present the notice says partial work may remain, when absent it says the
+    * `:worktree_resume_from` — the commit the worktree was actually recreated
+      from (a pause checkpoint or a salvage commit); when present the notice
+      states that only THAT commit is guaranteed and that uncommitted worktree
+      changes from the killed run are not preserved, when absent it says the
       worktree was recreated from the task base and the interrupted run's
       changes are NOT present.
     * the durable restore outcome — `false` adds one sentence saying the earlier
@@ -75,20 +77,23 @@ defmodule EvoGit.Agent.Resume.Notice do
 
   @doc """
   The NEUTRAL notice TEXT of a `:clean_pause` resume: the user paused the task
-  and resumed it, nothing was interrupted, the worktree is exactly as it was
-  left, and subagents are not resumable after a restart.
+  and resumed it, nothing was interrupted, and subagents are not resumable.
 
-  Total for any state; it never claims a fact the resume cannot back (a restore
-  that did not happen adds the restore-degradation sentence).
+  The worktree clause states only what the resume can BACK: the pause checkpoint
+  commit when `resume_info` carries one, else that the worktree was recreated
+  from the task base and only the restored conversation survives of the paused
+  run's file changes. It never claims a currently-uncommitted change survived a
+  resume and never uses inconsistency wording.
+
+  Total for any state; a restore that did not happen adds the
+  restore-degradation sentence.
   """
   @spec pause_text(State.t()) :: String.t()
   def pause_text(%State{} = state) do
     info = resume_info(state)
 
-    [
-      "The user paused this task and has now resumed it. No tool call was interrupted and the " <>
-        "worktree is exactly as it was left."
-    ]
+    ["The user paused this task and has now resumed it. No tool call was interrupted."]
+    |> append(pause_worktree_sentence(info))
     |> append(restore_sentence(info))
     |> append(subagent_sentence(pause_kind(state)))
     |> Enum.join("\n\n")
@@ -149,15 +154,36 @@ defmodule EvoGit.Agent.Resume.Notice do
     end
   end
 
+  # A killed run's uncommitted worktree changes are NOT preserved: the resume
+  # only has the commits the durable checkpoints anchored, so the sentence names
+  # that commit as the ONE guaranteed state and tells the agent to verify the
+  # files instead of assuming a half-written edit survived.
   defp worktree_sentence(info) do
     case Map.get(info, :worktree_resume_from) do
       sha when is_binary(sha) and sha != "" ->
-        "Worktree: restored from commit #{sha} and it may still hold partial or uncommitted " <>
-          "work from the interrupted run."
+        "Worktree: recreated from the last checkpointed commit #{sha}. Only that commit is " <>
+          "guaranteed — uncommitted worktree changes from the interrupted run are NOT preserved, " <>
+          "so inspect `git status` and the files themselves before assuming anything about them."
 
       _none ->
         "Worktree: recreated from the task's base commit, so the interrupted run's changes are " <>
-          "NOT present — anything not committed before the interruption is lost."
+          "NOT present — only what the durable checkpoints recorded survives."
+    end
+  end
+
+  # The pause counterpart: the pause finalizer's checkpoint commit captures the
+  # tree as it stood, and that commit IS the resume base. When no checkpoint was
+  # recorded the resume fell back to the task base, which the sentence states
+  # instead of pretending the files are untouched.
+  defp pause_worktree_sentence(info) do
+    case Map.get(info, :worktree_resume_from) do
+      sha when is_binary(sha) and sha != "" ->
+        "The worktree was recreated from the pause checkpoint commit #{sha}, which captured the " <>
+          "work as it stood when the task was paused; that commit is the only guaranteed state."
+
+      _none ->
+        "No pause checkpoint commit was recorded, so the worktree was recreated from the task's " <>
+          "base commit: only the restored conversation remains of the paused run's file changes."
     end
   end
 

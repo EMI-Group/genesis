@@ -19,8 +19,12 @@ defmodule EvoGit.Agent.Resume do
       happened and that subagents are not resumable).
     * `:clean_pause` — the user paused the task at a turn boundary and resumed
       it: the conversation is restored with **NO repair** (nothing was
-      interrupted, so no `tool_calls` tail is dangling — see `dangling/1`) and
-      ONE neutral pause/resume notice instead of `[RESUME]` (`Resume.Notice`).
+      interrupted, so no `tool_calls` tail is dangling — see `dangling/1` and
+      `clean_pause_intact?/1`) and ONE neutral pause/resume notice instead of
+      `[RESUME]` (`Resume.Notice`). A clean pause whose durable state DOES prove
+      an interruption (a non-empty `pending_tool_batch` or a dangling tail) is
+      repaired and narrated as an interruption instead — the transcript, never
+      the pause label, is the truth.
 
   ## Two steps, both driven by transcript SHAPE (the repairing kinds)
 
@@ -112,7 +116,7 @@ defmodule EvoGit.Agent.Resume do
       not crash_retry?(state) ->
         state
 
-      resume_kind(state) == :clean_pause ->
+      clean_pause?(state) and clean_pause_intact?(state) ->
         state |> annotate_pause() |> clear_marker()
 
       true ->
@@ -123,6 +127,21 @@ defmodule EvoGit.Agent.Resume do
   end
 
   def apply(state, _opts), do: state
+
+  @doc """
+  True when this state is a `:clean_pause` resume: the user paused the task at a
+  turn boundary, so nothing was interrupted. Total.
+
+  It is only ONE half of the clean-pause decision — `Resume.apply/2` additionally
+  requires the transcript to be intact (`EvoGit.Agent.ToolBatch.calls/1` of the
+  marker empty AND no dangling `tool_calls` tail): a durable state that proves
+  something WAS interrupted is repaired and narrated as an interruption, never
+  silently declared clean.
+  """
+  @spec clean_pause?(State.t()) :: boolean()
+  def clean_pause?(%State{} = state), do: resume_kind(state) == :clean_pause
+
+  def clean_pause?(_state), do: false
 
   @doc """
   The task-level PAUSE resume kind of this state: `:clean_pause` (paused by the
@@ -299,17 +318,32 @@ defmodule EvoGit.Agent.Resume do
 
   defp agent_subagent_modules(_state), do: []
 
+  # A clean pause stops at a TURN BOUNDARY, so an intact transcript is the whole
+  # contract: no in-flight marker and no unanswered `tool_calls` tail. Anything
+  # else means the durable state proves an interruption the pause kind denies, so
+  # the caller takes the repair path instead (repairing a dangling tail is also
+  # what keeps the next provider call valid).
+  defp clean_pause_intact?(%State{} = state) do
+    calls_empty? = ToolBatch.calls(state.pending_tool_batch) == []
+
+    if calls_empty? and dangling(state) == :none do
+      true
+    else
+      Logger.warning(
+        "Agent #{inspect(state.agent_id)}: clean-pause resume found an interrupted tool batch " <>
+          "in the durable state; repairing it as an interruption"
+      )
+
+      false
+    end
+  end
+
   ## Notice
 
   # A CLEAN pause resume: the conversation is restored verbatim (no repair) and
   # ONE neutral notice explains the pause. Nothing is asserted about files being
-  # inconsistent — nothing was interrupted. A durable-state anomaly (a dangling
-  # tail or an in-flight marker on a supposedly clean pause) is logged rather
-  # than silently repaired, because repairing would contradict the clean-pause
-  # contract; it points at the pause path, not at this node.
+  # inconsistent — nothing was interrupted.
   defp annotate_pause(%State{} = state) do
-    warn_on_clean_pause_anomaly(state)
-
     if notice_present?(state.context) or not repair_target?(state) do
       state
     else
@@ -320,15 +354,6 @@ defmodule EvoGit.Agent.Resume do
         |> mark_notice()
 
       %{state | context: ReqLLM.Context.append(state.context, message)}
-    end
-  end
-
-  defp warn_on_clean_pause_anomaly(%State{} = state) do
-    if dangling(state) != :none or ToolBatch.calls(state.pending_tool_batch) != [] do
-      Logger.warning(
-        "Agent #{inspect(state.agent_id)}: clean-pause resume found an in-flight tool batch " <>
-          "in the durable state; no repair is performed for a clean pause"
-      )
     end
   end
 

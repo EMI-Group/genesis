@@ -142,7 +142,17 @@ defmodule EvoGit.Agent.Session.Persistence do
   ]
 
   # The conversation fields `restore/3` may take from the stored record, with the
-  # shape each one must have. Anything else keeps the freshly built value.
+  # shape each one must have. These rows are ALWAYS overwritten: they are the
+  # progress of the stored run, and the fresh build either has no answer at all
+  # (`turn`/`usage`/`total_tokens`/`compression_count`/`pending_inputs`/
+  # `pending_tool_batch`) or a rebuilt-from-disk one that must NOT win
+  # (`objective`, `prompt_cache_key`).
+  #
+  # `current_commit` belongs HERE, not in `@run_fact_fields`: the dispatch ctx
+  # carries no `current_commit` for a resume (the worktree base travels as
+  # `worktree_resume_from`/`base_commit` instead), so the stored value is the ONLY
+  # record of the newest commit this run produced — the commit the restored
+  # transcript continues from and the one `Result.commit_sha` must reflect.
   @restore_fields [
     {:turn, :integer},
     {:usage, :usage},
@@ -158,6 +168,10 @@ defmodule EvoGit.Agent.Session.Persistence do
   # The DURABLE RUN FACTS `restore/3` recovers from the row (only when the
   # freshly built value is `nil` and the stored one has the right shape — a
   # resume cannot re-derive them, but a fresh value is always authoritative).
+  # `branch` and `base_commit` therefore keep a NON-NIL fresh value: this run's
+  # worktree was re-created from the resume plan, so its branch/base describe the
+  # checkout the run actually has, while the stored pair describes the dead
+  # predecessor's checkout.
   @run_fact_fields [
     {:spawn_turn, :integer},
     {:spawn_index, :integer},

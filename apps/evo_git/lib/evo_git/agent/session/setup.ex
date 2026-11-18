@@ -476,8 +476,10 @@ defmodule EvoGit.Agent.Session.Setup do
   # persisted transcript is AUTHORITATIVE (it replaces the `[system, user]` pair
   # rebuilt from disk) while identity, worktree, paths, model selection and
   # phase stay FRESH — they belong to THIS run and to its re-created worktree. A
-  # missing/corrupt/unavailable row simply leaves the fresh state untouched:
-  # durable state is an optimisation, never a prerequisite for running.
+  # missing/corrupt/unavailable row leaves the fresh state untouched and emits
+  # ONE warning naming the agent id and the reason (`restored: false` then makes
+  # the resume notice state that earlier turns are missing): durable state is an
+  # optimisation, never a prerequisite for running.
   @spec maybe_restore_state(%State{}, keyword()) :: {%State{}, boolean() | nil}
   defp maybe_restore_state(%State{} = state, ctx) do
     task_id = get_field(ctx, :task_id)
@@ -489,7 +491,7 @@ defmodule EvoGit.Agent.Session.Setup do
           {restored, true}
 
         {:error, reason} ->
-          Logger.info(
+          Logger.warning(
             "Agent #{state.agent_id}: durable state not restored (#{inspect(reason)}); " <>
               "starting fresh"
           )
