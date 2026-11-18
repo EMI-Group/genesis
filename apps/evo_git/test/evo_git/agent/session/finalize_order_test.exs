@@ -100,7 +100,7 @@ defmodule EvoGit.Agent.Session.FinalizeOrderTest do
         )
 
       assert_receive {:llm_blocked, worker}, @timeout
-      assert {:ok, snapshot, seq} = Stream.watch(agent_id)
+      assert {:ok, _snapshot, seq} = Stream.watch(agent_id)
       assert is_integer(seq)
       send(worker, :release)
 
