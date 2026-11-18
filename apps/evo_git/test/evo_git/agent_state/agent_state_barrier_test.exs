@@ -5,7 +5,7 @@ defmodule EvoGit.AgentState.BarrierTest do
     * `flush/1` is `:ok` only when the writer actually committed everything
       queued before it — a degraded writer, a dead/absent target and a queue
       already past `:agent_state_max_backlog` all answer `{:error, :timeout}`;
-    * `mark_completed/3`, `delete/3`, `delete_task/2` and `delete_tasks/2` are
+    * `mark_done/5`, `delete/3`, `delete_task/2` and `delete_tasks/2` are
       CASTS: total `:ok` for any target, observable right after a `flush/1`.
 
   Every case uses its OWN isolated `EvoGit.AgentState` instance (unnamed, on a
@@ -102,12 +102,12 @@ defmodule EvoGit.AgentState.BarrierTest do
   ## Bookkeeping writes
 
   describe "bookkeeping writes" do
-    test "mark_completed/3 is a total cast, observable after flush/1", %{tmp_dir: tmp_dir} do
+    test "mark_done/5 is a total cast, observable after flush/1", %{tmp_dir: tmp_dir} do
       pid = start_store!(tmp_dir)
       :ok = AgentState.checkpoint("task-mc", 1, rewrite([message("m")]), store: pid)
       assert :ok = AgentState.flush(store: pid)
 
-      assert :ok = AgentState.mark_completed("task-mc", 1, store: pid)
+      assert :ok = AgentState.mark_done("task-mc", 1, nil, nil, store: pid)
       assert :ok = AgentState.flush(store: pid)
 
       assert {:ok, record} = AgentState.load("task-mc", 1, store: pid)
@@ -159,7 +159,7 @@ defmodule EvoGit.AgentState.BarrierTest do
       dead = spawn(fn -> :ok end)
 
       for target <- [absent_name, dead] do
-        assert :ok = AgentState.mark_completed("task-a", 1, store: target)
+        assert :ok = AgentState.mark_done("task-a", 1, nil, nil, store: target)
         assert :ok = AgentState.delete("task-a", 1, store: target)
         assert :ok = AgentState.delete_task("task-a", store: target)
         assert :ok = AgentState.delete_tasks(["task-a", "task-b"], store: target)

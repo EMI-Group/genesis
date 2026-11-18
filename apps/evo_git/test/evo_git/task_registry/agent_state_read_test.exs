@@ -6,16 +6,15 @@ defmodule EvoGit.TaskRegistry.AgentStateReadTest do
   database would block the registry GenServer — and every dashboard call it
   serves. These tests use a budget that cannot be met (`timeout: 0`, the bound
   itself) and a store that is GONE (stopped instance) and pin that:
-    * every read — `root_agent_ids/2`, `resumable?/2`, `roster/2`,
-      `pause_commit/3` — answers its DOCUMENTED degraded value within the budget
-      (`[]`, `false`, `nil`) instead of blocking;
+    * every read — `roster/2`, `pause_commit/3` — answers its DOCUMENTED
+      degraded value within the budget (`[]`, `nil`) instead of blocking;
     * the restart classifier degrades to "not resumable" (`nil`, i.e. today's
       `:failed` restart behaviour) rather than pretending;
     * a resume with an unprovable durable store answers `{:error, :not_resumable}`
       promptly and spawns NO wrapper;
-    * the happy path is unchanged (`[id]`, `true`, the stored sha), and the
-      resume hands the ROOT run's pause checkpoint to the scheduler instead of
-      letting the scheduler read the store itself.
+    * the happy path is unchanged (the stored roster row, the stored sha), and
+      the resume hands the ROOT run's pause checkpoint to the scheduler instead
+      of letting the scheduler read the store itself.
   Runs `async: true`: each test owns an isolated `EvoGit.Store` (from
   `EvoGit.TaskRegistryCase`) and an isolated `EvoGit.AgentState` instance pinned
   on THIS process's `:evogit_agent_state_server` seam, so nothing app-global is
@@ -34,20 +33,18 @@ defmodule EvoGit.TaskRegistry.AgentStateReadTest do
   end
 
   describe "the happy path (unchanged)" do
-    test "answers the stored root id, resumability and pause checkpoint",
+    test "answers the stored roster row and pause checkpoint",
          %{agent_state: agent_state} do
       task_id = unique_task_id()
       seed_durable_run!(agent_state, task_id, 7)
 
-      assert AgentStateRead.root_agent_ids(task_id) == [7]
-      assert AgentStateRead.resumable?(task_id) == true
+      assert [%EvoGit.AgentState.Record{agent_id: 7}] = AgentStateRead.roster(task_id)
       assert AgentStateRead.pause_commit(task_id, 7) == nil
 
       :ok = AgentState.put_pause_commit(task_id, 7, "abc123", store: agent_state)
       assert AgentStateRead.pause_commit(task_id, 7) == "abc123"
 
-      assert AgentStateRead.root_agent_ids(unique_task_id()) == []
-      assert AgentStateRead.resumable?(unique_task_id()) == false
+      assert AgentStateRead.roster(unique_task_id()) == []
       assert AgentStateRead.pause_commit(task_id, 999) == nil
     end
   end
@@ -105,12 +102,7 @@ defmodule EvoGit.TaskRegistry.AgentStateReadTest do
       # caller answers its documented degraded value instead of waiting, and the
       # worker is shut down rather than left running.
       assert timed(fn ->
-               assert AgentStateRead.root_agent_ids(task_id, timeout: 0, op: "root_agent_ids") ==
-                        []
-             end) < 1_000
-
-      assert timed(fn ->
-               assert AgentStateRead.resumable?(task_id, timeout: 0, op: "resumable?") == false
+               assert AgentStateRead.roster(task_id, timeout: 0, op: "roster") == []
              end) < 1_000
 
       assert timed(fn ->
@@ -119,7 +111,7 @@ defmodule EvoGit.TaskRegistry.AgentStateReadTest do
              end) < 1_000
 
       # Nothing was lost: the real read still answers the stored facts.
-      assert AgentStateRead.root_agent_ids(task_id) == [7]
+      assert [%EvoGit.AgentState.Record{agent_id: 7}] = AgentStateRead.roster(task_id)
     end
 
     test "an UNAVAILABLE store degrades immediately (no worker at all)",
@@ -128,8 +120,7 @@ defmodule EvoGit.TaskRegistry.AgentStateReadTest do
       seed_durable_run!(agent_state, task_id, 1)
       stop_store!(agent_state)
 
-      assert timed(fn -> assert AgentStateRead.root_agent_ids(task_id) == [] end) < 1_000
-      assert timed(fn -> assert AgentStateRead.resumable?(task_id) == false end) < 1_000
+      assert timed(fn -> assert AgentStateRead.roster(task_id) == [] end) < 1_000
       assert timed(fn -> assert AgentStateRead.pause_commit(task_id, 1) == nil end) < 1_000
     end
   end

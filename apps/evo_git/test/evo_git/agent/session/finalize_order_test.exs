@@ -9,8 +9,9 @@ defmodule EvoGit.Agent.Session.FinalizeOrderTest do
   the run's outcome for its scheduler or its finalizing watchdog.
 
   These tests assert the ORDER DIRECTLY instead of racing a stalled writer.
-  `EvoGit.AgentState.mark_completed/3` is a CAST, so a `:sys.suspend`ed writer
-  lets the run finish either way and could not discriminate the two orders:
+  The terminal `EvoGit.AgentState.mark_done/5` is a CAST, so a `:sys.suspend`ed
+  writer lets the run finish either way and could not discriminate the two
+  orders:
   the observable difference is the ORDER OF SENDS out of the session process
   (result → durable marking → close), which `:erlang.trace/3` records exactly.
   The suite therefore never suspends the app-global writer — a shared singleton
@@ -170,19 +171,10 @@ defmodule EvoGit.Agent.Session.FinalizeOrderTest do
 
   defp result_send?(_send, _test_pid), do: false
 
-  # The terminal marking is ONE cast: the v2 `:mark_done` shape (which the
-  # legacy `mark_completed/3` alias now sends) or the legacy
-  # `:mark_completed` message itself.
+  # The terminal marking is ONE `:mark_done` cast, the shape
+  # `EvoGit.Agent.Session.Persistence.complete/1` sends.
   defp completed_cast?(
          {{:"$gen_cast", {:mark_done, task_id, agent_id, _result, _commit}}, to},
-         writer,
-         task_id,
-         agent_id
-       ),
-       do: to == writer
-
-  defp completed_cast?(
-         {{:"$gen_cast", {:mark_completed, task_id, agent_id}}, to},
          writer,
          task_id,
          agent_id

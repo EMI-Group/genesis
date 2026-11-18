@@ -223,7 +223,9 @@ defmodule EvoGit.Agent.Session.PauseTest do
       # (`maybe_mark_completed/1` skips a `{:paused, _}` result).
       assert record.completed_at == nil
       assert record.fields[:status] == "running"
-      assert AgentState.resumable?(task_id)
+
+      assert [%EvoGit.AgentState.Record{agent_id: ^agent_id, fields: %{status: "running"}}] =
+               AgentState.roster(task_id)
 
       # (f) The agent summary row lands `:done` with the checkpoint sha surfaced
       # and no `%Result{}` anywhere in the terminal delivery.

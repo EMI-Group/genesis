@@ -318,8 +318,8 @@ defmodule EvoGit.AgentState.RunFactsTest do
       assert :ok = AgentState.mark_done("task-keep", 1, result, "sha-keep", store: pid)
       flush!(pid)
 
-      # The legacy `mark_completed/3` alias carries neither fact.
-      assert :ok = AgentState.mark_completed("task-keep", 1, store: pid)
+      # A second `mark_done/5` with `nil` for both facts carries neither.
+      assert :ok = AgentState.mark_done("task-keep", 1, nil, nil, store: pid)
       flush!(pid)
 
       assert {:ok, record} = AgentState.load("task-keep", 1, store: pid)

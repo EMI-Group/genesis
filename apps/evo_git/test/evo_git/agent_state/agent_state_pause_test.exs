@@ -2,8 +2,8 @@ defmodule EvoGit.AgentState.PauseTest do
   @moduledoc """
   Coverage for the durable facts a TASK-LEVEL PAUSE writes into the agent-state
   store: `agent_states.pause_commit` (the paused worktree checkpoint sha) plus
-  the three roster reads a resume uses (`pause_commit/2,3`, `resumable?/1,2`,
-  `root_agent_ids/1,2`) and `flush/1`'s synchronous durability barrier.
+  the roster read a resume uses (`pause_commit/2,3`) and `flush/1`'s synchronous
+  durability barrier.
 
   Every test starts its OWN unnamed `EvoGit.AgentState` server on its own temp
   SQLite file and addresses it explicitly through the `store:` option, so the
@@ -197,8 +197,6 @@ defmodule EvoGit.AgentState.PauseTest do
                AgentState.put_pause_commit("task-inert", 1, @sha, store: absent)
 
       assert AgentState.pause_commit("task-inert", 1, store: absent) == nil
-      assert AgentState.resumable?("task-inert", store: absent) == false
-      assert AgentState.root_agent_ids("task-inert", store: absent) == []
       # An absent writer is NOT a durability barrier: it honestly answers the
       # non-durable shape instead of a false `:ok`.
       assert {:error, :timeout} = AgentState.flush(store: absent)
@@ -209,64 +207,6 @@ defmodule EvoGit.AgentState.PauseTest do
       pid = start_store!(tmp_dir)
       checkpoint!(pid, "task-inert", 1, rewrite([message("hi")], %{}))
       assert :ok = AgentState.put_pause_commit("task-inert", 1, @sha, store: pid)
-    end
-  end
-
-  ## resumable?/1,2
-
-  describe "resumable?" do
-    test "is true for a task with any durable run and false for an unknown task",
-         %{tmp_dir: tmp_dir} do
-      pid = start_store!(tmp_dir)
-
-      assert AgentState.resumable?("task_never_seen", store: pid) == false
-
-      checkpoint!(pid, "task_resumable", 1, rewrite([message("hi")], %{}))
-
-      assert AgentState.resumable?("task_resumable", store: pid) == true
-      assert AgentState.resumable?("task_never_seen", store: pid) == false
-
-      # A row that never stored a message still counts: the gate is "does a
-      # durable run exist", not "does it hold a conversation".
-      checkpoint!(pid, "task_scalar_only", 2, rewrite([], %{phase: "starting"}))
-      assert AgentState.resumable?("task_scalar_only", store: pid) == true
-
-      assert :ok = AgentState.delete_task("task_resumable", store: pid)
-      assert :ok = AgentState.flush(store: pid)
-      assert AgentState.resumable?("task_resumable", store: pid) == false
-    end
-  end
-
-  ## root_agent_ids/1,2
-
-  describe "root_agent_ids" do
-    test "returns only parent_id IS NULL rows, ascending, and [] for an unknown task",
-         %{tmp_dir: tmp_dir} do
-      pid = start_store!(tmp_dir)
-      task_id = "task_roster"
-
-      # One root (agent 5), two children of it, and a second root (agent 1) —
-      # created out of order so "ascending" is a real assertion.
-      checkpoint!(pid, task_id, 5, rewrite([message("root five")], %{parent_id: nil}))
-      checkpoint!(pid, task_id, 6, rewrite([message("child of five")], %{parent_id: 5}))
-      checkpoint!(pid, task_id, 7, rewrite([message("child of five too")], %{parent_id: 5}))
-      checkpoint!(pid, task_id, 1, rewrite([message("root one")], %{parent_id: nil}))
-
-      # A root of a DIFFERENT task must never leak in.
-      checkpoint!(
-        pid,
-        "task_roster_other",
-        2,
-        rewrite([message("other root")], %{parent_id: nil})
-      )
-
-      assert AgentState.root_agent_ids(task_id, store: pid) == [1, 5]
-      assert AgentState.root_agent_ids("task_roster_other", store: pid) == [2]
-      assert AgentState.root_agent_ids("task_unknown", store: pid) == []
-
-      # A row whose parent_id was never supplied is also a root (NULL).
-      checkpoint!(pid, task_id, 8, rewrite([message("implicit root")], %{}))
-      assert AgentState.root_agent_ids(task_id, store: pid) == [1, 5, 8]
     end
   end
 

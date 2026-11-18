@@ -332,19 +332,7 @@ defmodule EvoGit.AgentState.Store do
     end
   end
 
-  ## Mark completed / delete
-
-  @doc """
-  Legacy completion shape: marks the run `done` with no result and no commit.
-
-  A thin alias of `mark_done/5` (the v2 completion records both), kept so the
-  call sites that only know they finished keep working.
-  """
-  @spec mark_completed(pid(), String.t(), integer()) :: :ok | {:error, term()}
-  def mark_completed(repo, task_id, agent_id) do
-    mark_done(repo, task_id, agent_id, nil, nil)
-  end
-
+  ## Delete
   @spec delete(pid(), String.t(), integer()) :: :ok | {:error, term()}
   def delete(repo, task_id, agent_id) do
     total(repo, fn ->
@@ -457,42 +445,6 @@ defmodule EvoGit.AgentState.Store do
     end
   end
 
-  @doc """
-  Whether ANY durable run row exists for `task_id` — a cheap
-  `SELECT 1 … LIMIT 1` with no decode and no chunk read. Total (`false` on a
-  missing store, an error or no rows).
-  """
-  @spec resumable?(pid(), String.t()) :: boolean()
-  def resumable?(repo, task_id) do
-    total(repo, fn ->
-      case query("SELECT 1 FROM #{@states} WHERE task_id = ? LIMIT 1", [task_id]) do
-        {:ok, %{rows: [_first | _rest]}} -> true
-        _other -> false
-      end
-    end) == true
-  end
-
-  @doc """
-  The `agent_id`s of `task_id` whose row has `parent_id IS NULL` (its root
-  agents), ascending. Total (`[]` on a missing store, an error or no rows).
-  """
-  @spec root_agent_ids(pid(), String.t()) :: [integer()]
-  def root_agent_ids(repo, task_id) do
-    case total(repo, fn ->
-           case query(
-                  "SELECT agent_id FROM #{@states} " <>
-                    "WHERE task_id = ? AND parent_id IS NULL ORDER BY agent_id ASC",
-                  [task_id]
-                ) do
-             {:ok, %{rows: rows}} -> Enum.map(rows, fn [agent_id] -> agent_id end)
-             _other -> []
-           end
-         end) do
-      ids when is_list(ids) -> ids
-      _other -> []
-    end
-  end
-
   ## Run facts: roster, identity, completion, done children
 
   @doc """
@@ -550,9 +502,7 @@ defmodule EvoGit.AgentState.Store do
   the JSON `result` (only when supplied).
 
   A `nil` `result`/`current_commit` means "nothing new to record" and leaves
-  the stored value alone rather than clobbering it — that is what keeps the
-  legacy `mark_completed/3` (which carries neither) from erasing facts a
-  richer completion call already wrote.
+  the stored value alone rather than clobbering it.
 
   Answers `{:error, :not_found}` when no row matched: a completion never
   fabricates a row out of nothing.

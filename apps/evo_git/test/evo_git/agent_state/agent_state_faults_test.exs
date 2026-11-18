@@ -209,7 +209,7 @@ defmodule EvoGit.AgentStateFaultsTest do
     assert {:error, :timeout} = AgentState.flush(store: pid)
 
     # ...and every call is total: the guarded `GenServer.call/3` contains the exit.
-    assert :ok = AgentState.mark_completed("task-a", 1, store: pid)
+    assert :ok = AgentState.mark_done("task-a", 1, nil, nil, store: pid)
     assert :ok = AgentState.delete("task-a", 1, store: pid)
     assert :ok = AgentState.delete_task("task-a", store: pid)
     assert {:ok, 0} = AgentState.prune(store: pid)
@@ -270,7 +270,7 @@ defmodule EvoGit.AgentStateFaultsTest do
     # An unregistered NAME is a dead writer, not "nothing to flush".
     assert {:error, :timeout} = AgentState.flush(store: absent)
     assert {:error, :store_unavailable} = AgentState.load("task-z", 1, store: absent)
-    assert :ok = AgentState.mark_completed("task-z", 1, store: absent)
+    assert :ok = AgentState.mark_done("task-z", 1, nil, nil, store: absent)
     assert :ok = AgentState.delete("task-z", 1, store: absent)
     assert :ok = AgentState.delete_task("task-z", store: absent)
     assert {:ok, 0} = AgentState.prune(store: absent)
