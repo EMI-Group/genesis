@@ -84,7 +84,18 @@ defmodule EvoGit.AgentState.Record do
     # Written ONLY by `EvoGit.AgentState.Store.put_pause_commit/4` (the sha of
     # the worktree checkpoint an agent made when it paused); readable through
     # `record.fields[:pause_commit]` like the other scalar fields.
-    {:pause_commit, "pause_commit", :text}
+    {:pause_commit, "pause_commit", :text},
+    # v2 run facts (migration `000004_add_run_facts`): where in the parent's
+    # tool batch this child was spawned, its own git branch/base/anchor, the
+    # re-dispatch payload a restart rebuilds an `%AgentSpec{}` from, and the
+    # finished run's JSON result.
+    {:spawn_turn, "spawn_turn", :integer},
+    {:spawn_index, "spawn_index", :integer},
+    {:branch, "branch", :text},
+    {:base_commit, "base_commit", :text},
+    {:anchor_ref, "anchor_ref", :text},
+    {:redispatch, "redispatch", :json},
+    {:result, "result", :json}
   ]
 
   @doc "The `{field_key, column, type}` specs, in deterministic column order."
@@ -137,6 +148,38 @@ defmodule EvoGit.AgentState.Record do
       {key, decode_value(type, Map.get(row, column))}
     end)
   end
+
+  @doc """
+  The persisted `status` of the run — `"running"` or `"done"` — or `nil`.
+
+  Total for ANY input: a non-record, a record without the field or a
+  non-binary stored value answers `nil` instead of raising.
+  """
+  @spec status(t() | term()) :: String.t() | nil
+  def status(%__MODULE__{fields: fields}) when is_map(fields) do
+    case Map.get(fields, :status) do
+      value when is_binary(value) -> value
+      _other -> nil
+    end
+  end
+
+  def status(_record), do: nil
+
+  @doc """
+  The persisted `result` of a FINISHED run — a STRING-keyed JSON map — or
+  `nil` for a running row (and for a value that is not a JSON object).
+
+  Total for ANY input.
+  """
+  @spec result(t() | term()) :: map() | nil
+  def result(%__MODULE__{fields: fields}) when is_map(fields) do
+    case Map.get(fields, :result) do
+      value when is_map(value) -> value
+      _other -> nil
+    end
+  end
+
+  def result(_record), do: nil
 
   @doc "Encodes a message list into the chunk payload blob."
   @spec encode_messages([ReqLLM.Message.t()]) :: binary()

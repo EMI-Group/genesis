@@ -1,8 +1,8 @@
 defmodule EvoGit.AgentState do
   @moduledoc """
   Durable per-run agent state: a SEPARATE SQLite database
-  (`<data_dir>/agent_state.sqlite`) holding each agent run's conversation and
-  scalar fields, so a crashed run is recoverable.
+  (`<data_dir>/agent_state.sqlite`) holding each RUNNING agent run's
+  conversation and scalar fields, so a crashed or paused run is recoverable.
 
   This module is the public facade and contains NO SQL: writes go through the
   single serialized writer (`EvoGit.AgentState.Server`), reads run in the
@@ -10,6 +10,19 @@ defmodule EvoGit.AgentState do
   behind pending checkpoint casts. Persistence itself lives in
   `EvoGit.AgentState.Store` and the record/codec in
   `EvoGit.AgentState.Record` (child doc: `agent_state/CONTEXT.md`).
+
+  ## Row model
+
+  ONE row per RUNNING agent run, keyed `(task_id, agent_id)` with `agent_id`
+  stable across restarts, plus its compressed message chunks. `parent_id` links
+  a child to the agent that spawned it (`NULL` for a task's root) and
+  `depth` places it in the tree, so a task's whole agent tree is reachable
+  through `roster/2`.
+
+  `status` is `running` or `done`: a `done` child row stays readable until its
+  parent's checkpoint consumes that batch (`delete_done_children/4`), a
+  completed root is `delete/3`d, and retention pruning is the backstop for rows
+  a crash left behind.
 
   ## Checkpoints
 
@@ -39,12 +52,13 @@ defmodule EvoGit.AgentState do
   `:model_id_locked`, `:prompt_cache_key`, `:llm_model`,
   `:llm_context_window`, `:turn`, `:usage`, `:total_tokens`,
   `:compression_count`, `:current_commit`, `:phase`, `:pending_inputs`,
-  `:status`, `:pause_commit`. Only the supplied keys are written; unknown keys
-  are ignored.
+  `:pending_tool_batch`, `:status`, `:pause_commit`, `:spawn_turn`,
+  `:spawn_index`, `:branch`, `:base_commit`, `:anchor_ref`, `:redispatch`,
+  `:result`. Only the supplied keys are written; unknown keys are ignored.
 
   Every function is TOTAL: a dead/absent server, a malformed entry or a store
-  fault degrades to `:ok` / `{:error, :store_unavailable}` and never crashes
-  the agent run or the reader.
+  fault degrades to `:ok` / `[]` / `0` / `{:error, :store_unavailable}` and
+  never crashes the agent run or the reader.
 
   ## Task-level pause/resume
 
@@ -277,6 +291,48 @@ defmodule EvoGit.AgentState do
   end
 
   @doc """
+  The task's WHOLE durable agent tree, ordered `depth ASC, agent_id ASC`.
+
+  ONE `SELECT` over `agent_states` with no chunk read: each record carries
+  `messages: nil` but the full scalar `fields` — identity and parentage
+  (`agent_id`, `parent_id`, `depth`), the spawn position (`spawn_turn`,
+  `spawn_index`), the git facts (`branch`, `base_commit`, `current_commit`,
+  `anchor_ref`), `status`, `result`, the re-dispatch payload and the objective,
+  module and model selection. A caller that needs one run's transcript calls
+  `load/3`.
+
+  Total: `[]` on a missing/dead/degraded store, an error and no rows.
+  """
+  @spec roster(task_id(), keyword()) :: [EvoGit.AgentState.Record.t()]
+  def roster(task_id, opts \\ []) do
+    case repo(target(opts)) do
+      nil ->
+        []
+
+      repo ->
+        case Store.roster(repo, task_id) do
+          {:ok, records} -> records
+          _other -> []
+        end
+    end
+  end
+
+  @doc """
+  The highest `agent_id` the durable store has ever held, `0` when empty.
+
+  The scheduler seeds its id counter from this at boot, so an id it hands out
+  never collides with a row a restart must restore. Total: `0` on a
+  missing/dead/degraded store.
+  """
+  @spec max_agent_id(keyword()) :: non_neg_integer()
+  def max_agent_id(opts \\ []) do
+    case repo(target(opts)) do
+      nil -> 0
+      repo -> Store.max_agent_id(repo)
+    end
+  end
+
+  @doc """
   Loads one run's persisted state.
 
   Reads in the CALLING process against the server's repo, so it never queues
@@ -294,14 +350,44 @@ defmodule EvoGit.AgentState do
   end
 
   @doc """
-  Marks the run completed (the row is KEPT for later recovery).
+  Marks the run DONE with its result and the commit it produced.
 
-  A CAST: total, `:ok`, and never a synchronous barrier for the finalizing
-  session. Call `flush/1` when the write must be observed.
+  A CAST through the single serialized writer: total, `:ok`, and never a
+  synchronous barrier for the finalizing session — the result is delivered
+  before any durable bookkeeping. Call `flush/1` when the write must be
+  observed.
+
+  `result` is the finished run's small JSON map (`text`, `commit`, repo id) and
+  `current_commit` its newest git commit; passing `nil` for either records
+  nothing new for that fact instead of clearing a stored value.
+  """
+  @spec mark_done(task_id(), integer(), map() | nil, String.t() | nil, keyword()) :: :ok
+  def mark_done(task_id, agent_id, result, current_commit, opts \\ []) do
+    cast(opts, {:mark_done, task_id, agent_id, result, current_commit})
+  end
+
+  @doc """
+  Deletes the DONE children one parent spawned in a single tool batch.
+
+  The parent's checkpoint that clears its in-flight batch consumed exactly
+  those results, so their rows are no longer needed. A CAST: total, `:ok`;
+  only rows with `status == "done"` and a matching `spawn_turn` are touched,
+  and a non-integer `spawn_turn` deletes nothing.
+  """
+  @spec delete_done_children(task_id(), integer() | nil, integer() | nil, keyword()) :: :ok
+  def delete_done_children(task_id, parent_id, spawn_turn, opts \\ []) do
+    cast(opts, {:delete_done_children, task_id, parent_id, spawn_turn})
+  end
+
+  @doc """
+  Legacy completion shape: marks the run done with no result and no commit.
+
+  A thin alias of `mark_done/5`; the call sites that only know an agent
+  finished keep working unchanged.
   """
   @spec mark_completed(String.t(), integer(), keyword()) :: :ok
   def mark_completed(task_id, agent_id, opts \\ []) do
-    cast(opts, {:mark_completed, task_id, agent_id})
+    mark_done(task_id, agent_id, nil, nil, opts)
   end
 
   @doc """

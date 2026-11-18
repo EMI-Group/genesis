@@ -111,7 +111,7 @@ defmodule EvoGit.AgentState.BarrierTest do
       assert :ok = AgentState.flush(store: pid)
 
       assert {:ok, record} = AgentState.load("task-mc", 1, store: pid)
-      assert record.fields[:status] == "completed"
+      assert record.fields[:status] == "done"
       assert %DateTime{} = record.completed_at
       assert record.messages == [message("m")]
     end

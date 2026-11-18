@@ -184,7 +184,7 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
       assert record.fields[:repo_id] == "primary"
       assert record.fields[:repo_less] == true
       assert record.agent_id == agent_id
-      assert record.fields[:status] == "completed"
+      assert record.fields[:status] == "done"
       assert %DateTime{} = record.completed_at
     end
 

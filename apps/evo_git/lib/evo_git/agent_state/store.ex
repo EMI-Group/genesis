@@ -231,20 +231,25 @@ defmodule EvoGit.AgentState.Store do
          {:ok, chunks} <- fetch_chunks(task_id, agent_id),
          {:ok, messages} <- rebuild_messages(chunks),
          :ok <- validate_counts(row, chunks, messages) do
-      {:ok,
-       %Record{
-         task_id: row["task_id"],
-         agent_id: row["agent_id"],
-         fields: Record.decode_fields(row),
-         messages: messages,
-         message_count: row["message_count"],
-         chunk_count: row["chunk_count"],
-         format_version: row["format_version"],
-         inserted_at: Record.parse_datetime(row["created_at"]),
-         updated_at: Record.parse_datetime(row["updated_at"]),
-         completed_at: Record.parse_datetime(row["completed_at"])
-       }}
+      {:ok, to_record(row, messages)}
     end
+  end
+
+  # ONE row → one `%Record{}`. The roster read passes `nil` messages: it never
+  # touches the chunk table.
+  defp to_record(row, messages) do
+    %Record{
+      task_id: row["task_id"],
+      agent_id: row["agent_id"],
+      fields: Record.decode_fields(row),
+      messages: messages,
+      message_count: row["message_count"],
+      chunk_count: row["chunk_count"],
+      format_version: row["format_version"],
+      inserted_at: Record.parse_datetime(row["created_at"]),
+      updated_at: Record.parse_datetime(row["updated_at"]),
+      completed_at: Record.parse_datetime(row["completed_at"])
+    }
   end
 
   defp fetch_state(task_id, agent_id) do
@@ -254,7 +259,7 @@ defmodule EvoGit.AgentState.Store do
 
     case query(sql, [task_id, agent_id]) do
       {:ok, %{columns: columns, rows: [values | _rest]}} ->
-        {:ok, Map.new(Enum.zip(columns, values))}
+        {:ok, row_map(values, columns)}
 
       {:ok, %{rows: []}} ->
         {:error, :not_found}
@@ -263,6 +268,8 @@ defmodule EvoGit.AgentState.Store do
         {:error, :store_unavailable}
     end
   end
+
+  defp row_map(values, columns), do: Map.new(Enum.zip(columns, values))
 
   defp fetch_chunks(task_id, agent_id) do
     sql =
@@ -327,22 +334,15 @@ defmodule EvoGit.AgentState.Store do
 
   ## Mark completed / delete
 
+  @doc """
+  Legacy completion shape: marks the run `done` with no result and no commit.
+
+  A thin alias of `mark_done/5` (the v2 completion records both), kept so the
+  call sites that only know they finished keep working.
+  """
   @spec mark_completed(pid(), String.t(), integer()) :: :ok | {:error, term()}
   def mark_completed(repo, task_id, agent_id) do
-    total(repo, fn ->
-      now = Record.now_iso8601()
-
-      case EvoGit.Repo.transaction(fn ->
-             run!(
-               "UPDATE #{@states} SET status = 'completed', completed_at = ?, updated_at = ? " <>
-                 "WHERE task_id = ? AND agent_id = ?",
-               [now, now, task_id, agent_id]
-             )
-           end) do
-        {:ok, _result} -> :ok
-        {:error, reason} -> {:error, reason}
-      end
-    end)
+    mark_done(repo, task_id, agent_id, nil, nil)
   end
 
   @spec delete(pid(), String.t(), integer()) :: :ok | {:error, term()}
@@ -491,6 +491,176 @@ defmodule EvoGit.AgentState.Store do
       ids when is_list(ids) -> ids
       _other -> []
     end
+  end
+
+  ## Run facts: roster, identity, completion, done children
+
+  @doc """
+  The WHOLE agent tree of one task: every `agent_states` row of `task_id`, in
+  ONE `SELECT` with NO chunk read.
+
+  Ordered `depth ASC, agent_id ASC` so a parent always precedes its children
+  and siblings keep their spawn order. The records carry `messages: nil` — this
+  is the tree skeleton a resume decides from (identity, parentage, spawn
+  position, git anchoring, `status`, `result`), and a caller that needs one
+  run's transcript calls `load/3`.
+
+  Total: `{:error, reason}` when the read fails (a caller maps that to `[]`).
+  """
+  @spec roster(pid(), String.t()) :: {:ok, [Record.t()]} | {:error, term()}
+  def roster(repo, task_id) do
+    total(repo, fn ->
+      sql =
+        "SELECT #{Enum.join(Record.all_columns(), ", ")} FROM #{@states} " <>
+          "WHERE task_id = ? ORDER BY depth ASC, agent_id ASC"
+
+      case query(sql, [task_id]) do
+        {:ok, %{columns: columns, rows: rows}} ->
+          {:ok, Enum.map(rows, fn values -> values |> row_map(columns) |> to_record(nil) end)}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end)
+  end
+
+  @doc """
+  The highest `agent_id` this database has ever held, or `0` when it is empty.
+
+  The scheduler seeds its in-memory counter from this at boot, so an id it
+  hands out can never collide with a durable row a restart must restore. Total
+  (`0` on a missing store, an error or a non-integer aggregate).
+  """
+  @spec max_agent_id(pid()) :: non_neg_integer()
+  def max_agent_id(repo) do
+    case total(repo, fn ->
+           case query("SELECT MAX(agent_id) FROM #{@states}", []) do
+             {:ok, %{rows: [[value]]}} -> value
+             _other -> 0
+           end
+         end) do
+      value when is_integer(value) and value >= 0 -> value
+      _other -> 0
+    end
+  end
+
+  @doc """
+  Marks one run DONE in ONE `UPDATE`: `status = 'done'`, `completed_at`,
+  `updated_at`, the git `current_commit` (only when a binary is supplied) and
+  the JSON `result` (only when supplied).
+
+  A `nil` `result`/`current_commit` means "nothing new to record" and leaves
+  the stored value alone rather than clobbering it — that is what keeps the
+  legacy `mark_completed/3` (which carries neither) from erasing facts a
+  richer completion call already wrote.
+
+  Answers `{:error, :not_found}` when no row matched: a completion never
+  fabricates a row out of nothing.
+  """
+  @spec mark_done(pid(), String.t(), integer(), map() | nil, String.t() | nil) ::
+          :ok | {:error, term()}
+  def mark_done(repo, task_id, agent_id, result, current_commit) do
+    total(repo, fn ->
+      now = Record.now_iso8601()
+      {assignments, params} = done_assignments(result, current_commit, now)
+
+      sql =
+        "UPDATE #{@states} SET #{Enum.join(assignments, ", ")} " <>
+          "WHERE task_id = ? AND agent_id = ?"
+
+      case query(sql, params ++ [task_id, agent_id]) do
+        {:ok, %{num_rows: 0}} -> {:error, :not_found}
+        {:ok, _result} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    end)
+  end
+
+  defp done_assignments(result, current_commit, now) do
+    assignments = ["status = 'done'", "completed_at = ?", "updated_at = ?"]
+    params = [now, now]
+
+    {assignments, params} =
+      if is_binary(current_commit) do
+        {assignments ++ ["current_commit = ?"], params ++ [current_commit]}
+      else
+        {assignments, params}
+      end
+
+    case encode_result(result) do
+      nil -> {assignments, params}
+      encoded -> {assignments ++ ["result = ?"], params ++ [encoded]}
+    end
+  end
+
+  # Mirrors `Record`'s `:json` encoder: a non-encodable payload is stored in its
+  # inspected form so the completion itself is never lost.
+  defp encode_result(nil), do: nil
+
+  defp encode_result(result) do
+    case Jason.encode(result) do
+      {:ok, encoded} -> encoded
+      {:error, _reason} -> inspect(result)
+    end
+  end
+
+  @doc """
+  Deletes the DONE children of ONE parent's tool batch, with their chunks.
+
+  A parent's checkpoint that clears its `pending_tool_batch` consumes exactly
+  the results of the children it spawned in that turn, so their rows stop being
+  needed. The batch is identified by `(parent_id, spawn_turn)` and only rows
+  with `status = 'done'` are matched: a still-`running` child, a child of
+  ANOTHER turn, the parent itself and every row of another task survive.
+
+  `spawn_turn` MUST be an integer — a `nil`/garbage turn is a no-op `:ok` so a
+  caller with no batch can never delete a whole generation by accident. Both
+  deletes run in ONE transaction.
+  """
+  @spec delete_done_children(pid(), String.t(), integer() | nil, integer() | nil) ::
+          :ok | {:error, term()}
+  def delete_done_children(repo, task_id, parent_id, spawn_turn) do
+    total(repo, fn ->
+      if is_integer(spawn_turn) do
+        case EvoGit.Repo.transaction(fn ->
+               ids = done_child_ids(task_id, parent_id, spawn_turn)
+               delete_children!(ids, task_id)
+             end) do
+          {:ok, _result} -> :ok
+          {:error, reason} -> {:error, reason}
+        end
+      else
+        :ok
+      end
+    end)
+  end
+
+  defp done_child_ids(task_id, parent_id, spawn_turn) do
+    sql =
+      "SELECT agent_id FROM #{@states} " <>
+        "WHERE parent_id = ? AND task_id = ? AND status = 'done' AND spawn_turn = ?"
+
+    case run!(sql, [parent_id, task_id, spawn_turn]) do
+      %{rows: rows} -> Enum.map(rows, fn [agent_id] -> agent_id end)
+    end
+  end
+
+  # Placeholders are one per id READ FROM THE DATABASE, so the statement shape
+  # never comes from caller input.
+  defp delete_children!([], _task_id), do: :ok
+
+  defp delete_children!(agent_ids, task_id) do
+    placeholders = Enum.map_join(agent_ids, ", ", fn _agent_id -> "?" end)
+    params = [task_id | agent_ids]
+
+    run!("DELETE FROM #{@chunks} WHERE task_id = ? AND agent_id IN (#{placeholders})", params)
+
+    run!(
+      "DELETE FROM #{@states} WHERE task_id = ? AND agent_id IN (#{placeholders})",
+      params
+    )
+
+    :ok
   end
 
   ## Retention

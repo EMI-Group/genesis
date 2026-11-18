@@ -243,6 +243,6 @@ defmodule EvoGit.AgentState.SupervisionTest do
     assert :ok = AgentState.mark_completed("task-both", 2, store: supervisor)
     assert :ok = AgentState.flush(server)
     assert {:ok, %{fields: fields}} = AgentState.load("task-both", 2, store: supervisor)
-    assert fields[:status] == "completed"
+    assert fields[:status] == "done"
   end
 end
