@@ -188,7 +188,10 @@ defmodule EvoGit.Agent.ResumeTest do
       end
     end
 
-    test "an unanswerable subagent call gets the honest re-attach fallback" do
+    test "an unanswerable subagent call gets the honest durable-rebuild fallback" do
+      # No in-memory batch survives, so the resume attempts the durable roster
+      # rebuild — and no roster row exists for that turn either. Both refusals
+      # end in the honest fallback text and exactly ONE warning.
       calls = [tool_call("t", "task", %{"path" => "./src", "objective" => "child work"})]
 
       {repaired, log} =
@@ -199,7 +202,9 @@ defmodule EvoGit.Agent.ResumeTest do
           )
         end)
 
-      assert log =~ "no subagent batch to re-attach"
+      assert log =~ "no durable subagent batch to rebuild"
+      assert log =~ ":no_pending_batch"
+      assert log |> String.split("[warning]") |> length() == 2
       text = tool_texts(repaired, ["t"])["t"]
 
       assert text =~ "crashed and restarted"
