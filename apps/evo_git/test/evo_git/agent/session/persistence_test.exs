@@ -40,7 +40,14 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
       authoritative) and keeps identity/worktree/paths/model/phase FRESH, with
       `:not_found` / `:corrupt_state` / `:empty_state` / `:no_identity` all
       total;
-    * `complete/1` marks the row completed and keeps it.
+    * `complete/2` is the ONE done decision: a CHILD's row is marked `done`
+      (result JSON + `current_commit`) and KEPT until its parent's
+      batch-clearing checkpoint deletes it, while a ROOT's row is marked and
+      then dropped, because nothing consumes a root's result;
+    * `restore/3` verifies the row's `parent_id`/`depth` before merging a single
+      message (`:identity_mismatch`), and recovers the durable RUN FACTS
+      (`branch`, `base_commit`, `spawn_turn`, `spawn_index`, `redispatch`) that
+      a fresh build cannot re-derive.
 
   ## Why `async: true` — no BEAM-global is touched
 
@@ -698,6 +705,88 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
       assert restored.persistent_state == true
     end
 
+    # `agent_id` is only unique when the scheduler seeded its counter from the
+    # store, so the row must PROVE it belongs to the slot being restored before a
+    # single message is merged.
+    test "rejects a row whose parent_id or depth belongs to a DIFFERENT slot" do
+      task_id = unique_task_id()
+      agent_id = unique_agent_id()
+      child = [parent_id: 424_242, depth: 1]
+
+      seed!(task_id, agent_id, msgs(3), [turn: 3] ++ child)
+
+      # Same slot: restores.
+      same_slot = run_state(task_id, agent_id, msgs(2), child)
+      assert %State{} = restored = Persistence.restore(same_slot, task_id, agent_id)
+      assert restored.context.messages == msgs(3)
+
+      # A different parent: the id was reused, so NOTHING may be spliced in.
+      other_parent = run_state(task_id, agent_id, msgs(2), parent_id: 11, depth: 1)
+
+      assert Persistence.restore(other_parent, task_id, agent_id) ==
+               {:error, :identity_mismatch}
+
+      # A different depth with the same parent is just as unrelated.
+      other_depth = run_state(task_id, agent_id, msgs(2), parent_id: 424_242, depth: 2)
+
+      assert Persistence.restore(other_depth, task_id, agent_id) ==
+               {:error, :identity_mismatch}
+
+      # A ROOT build against a CHILD's row: also a mismatch.
+      root = run_state(task_id, agent_id, msgs(2))
+      assert Persistence.restore(root, task_id, agent_id) == {:error, :identity_mismatch}
+    end
+
+    # The DURABLE RUN FACTS are the one facts-side exception: a resume cannot
+    # re-derive the parent turn it was spawned in, the branch/base its
+    # predecessor's worktree started from, or its redispatch recipe.
+    test "recovers the durable run facts from the row, never overriding a fresh value" do
+      task_id = unique_task_id()
+      agent_id = unique_agent_id()
+      child = [parent_id: 424_242, depth: 1]
+      redispatch = %{"agent_module" => "Elixir.EvoGit.Agents.Executor", "max_turns" => 40}
+
+      seed!(
+        task_id,
+        agent_id,
+        msgs(3),
+        [
+          turn: 3,
+          branch: "evogit-agent-T1-A2",
+          base_commit: "base-sha",
+          spawn_turn: 2,
+          spawn_index: 1,
+          redispatch: redispatch
+        ] ++ child
+      )
+
+      fresh = run_state(task_id, agent_id, msgs(2), child)
+      assert %State{} = restored = Persistence.restore(fresh, task_id, agent_id)
+
+      assert restored.branch == "evogit-agent-T1-A2"
+      assert restored.base_commit == "base-sha"
+      assert restored.spawn_turn == 2
+      assert restored.spawn_index == 1
+      assert restored.redispatch == redispatch
+
+      # A freshly built value is authoritative — the run facts are the ONLY
+      # facts recovered from the row.
+      rebuilt =
+        run_state(
+          task_id,
+          agent_id,
+          msgs(2),
+          [branch: "evogit-agent-fresh", spawn_turn: 9] ++ child
+        )
+
+      assert %State{} = restored = Persistence.restore(rebuilt, task_id, agent_id)
+      assert restored.branch == "evogit-agent-fresh"
+      assert restored.spawn_turn == 9
+      # An absent fresh value still falls back to the row.
+      assert restored.base_commit == "base-sha"
+      assert restored.spawn_index == 1
+    end
+
     test "every error path is total and leaves the caller's fresh state usable" do
       task_id = unique_task_id()
       agent_id = unique_agent_id()
@@ -749,37 +838,71 @@ defmodule EvoGit.Agent.Session.PersistenceTest do
     end
   end
 
-  # --- 9. complete/1 --------------------------------------------------------
+  # --- 9. complete/1,2 ------------------------------------------------------
 
-  describe "complete/1" do
+  describe "complete/1,2" do
     test "is inert for a non-persistent state" do
       task_id = unique_task_id()
       agent_id = unique_agent_id()
 
       assert :ok =
-               Persistence.complete(run_state(task_id, agent_id, [], persistent_state: false))
+               Persistence.complete(
+                 run_state(task_id, agent_id, [], persistent_state: false),
+                 "inert report"
+               )
 
       AgentState.flush()
       assert AgentState.load(task_id, agent_id) == {:error, :not_found}
     end
 
-    test "marks a persisted run completed and KEEPS the row" do
+    # A CHILD's `done` row is the parent's — and the resume path's — evidence
+    # that the subagent finished and where its work landed, so it survives the
+    # completion and is removed by the parent's next batch-clearing checkpoint.
+    test "marks a CHILD's run done and KEEPS the row with its result" do
+      task_id = unique_task_id()
+      agent_id = unique_agent_id()
+      child = [parent_id: 424_242, depth: 1]
+
+      seed!(task_id, agent_id, msgs(2), [turn: 1, current_commit: "abc123"] ++ child)
+
+      # A checkpoint always writes the LIVE value.
+      assert load!(task_id, agent_id).fields[:status] == "running"
+
+      assert :ok =
+               Persistence.complete(
+                 run_state(task_id, agent_id, [], [current_commit: "abc123"] ++ child),
+                 "child report"
+               )
+
+      record = load!(task_id, agent_id)
+
+      assert record.fields[:status] == "done"
+      assert record.fields[:parent_id] == 424_242
+      assert %DateTime{} = record.completed_at
+      assert record.fields[:current_commit] == "abc123"
+
+      assert record.fields[:result] == %{
+               "text" => "child report",
+               "commit" => "abc123",
+               "repo_id" => "primary"
+             }
+
+      assert record.messages == msgs(2)
+      assert record.message_count == 2
+    end
+
+    # Nothing consumes a ROOT's result (the task's report travels through
+    # `%EvoGit.Agent.Result{}`), so the run's row is dropped at completion.
+    test "marks a ROOT's run done and then DROPS its row" do
       task_id = unique_task_id()
       agent_id = unique_agent_id()
 
       seed!(task_id, agent_id, msgs(2), turn: 1)
 
-      # The column's own default (a checkpoint never writes `status`).
-      assert load!(task_id, agent_id).fields[:status] == "running"
+      assert :ok = Persistence.complete(run_state(task_id, agent_id, []), "root report")
 
-      assert :ok = Persistence.complete(run_state(task_id, agent_id, []))
-
-      record = load!(task_id, agent_id)
-
-      assert record.fields[:status] == "done"
-      assert %DateTime{} = record.completed_at
-      assert record.messages == msgs(2)
-      assert record.message_count == 2
+      AgentState.flush()
+      assert AgentState.load(task_id, agent_id) == {:error, :not_found}
     end
   end
 

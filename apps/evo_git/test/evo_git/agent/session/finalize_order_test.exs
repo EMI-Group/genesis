@@ -68,6 +68,7 @@ defmodule EvoGit.Agent.Session.FinalizeOrderTest do
 
       result_index = index_of(sends, &result_send?(&1, test_pid))
       completed_index = index_of(sends, &completed_cast?(&1, writer, task_id, ctx.agent_id))
+      dropped_index = index_of(sends, &dropped_cast?(&1, writer, task_id, ctx.agent_id))
       closed_index = index_of(sends, &closed_send?(&1, test_pid, ctx.agent_id))
 
       assert is_integer(completed_index),
@@ -79,11 +80,22 @@ defmodule EvoGit.Agent.Session.FinalizeOrderTest do
       assert completed_index < closed_index,
              "the close notification must stay LAST (after result and marking)"
 
-      # Ordering must not cost durability: the marking still lands.
+      # This run is a ROOT, so the done marking is immediately followed by the
+      # row's deletion (nothing consumes a root's result) — still AFTER the
+      # result and still BEFORE the close.
+      assert is_integer(dropped_index),
+             "the ROOT's done row was never dropped after its marking: #{inspect(sends)}"
+
+      assert completed_index < dropped_index,
+             "the ROOT's row must be deleted AFTER its done marking"
+
+      assert dropped_index < closed_index,
+             "the close notification must stay LAST (after result, marking and drop)"
+
+      # Ordering must not cost durability: the marking RAN, which the ordered
+      # sends above prove, and the row it left behind is gone by contract.
       :ok = AgentState.flush(store: writer)
-      assert {:ok, record} = AgentState.load(task_id, ctx.agent_id, store: writer)
-      assert record.fields[:status] == "done"
-      assert %DateTime{} = record.completed_at
+      assert AgentState.load(task_id, ctx.agent_id, store: writer) == {:error, :not_found}
     end
 
     test "a watcher sees the terminal cut flash-free while the marking is still a cast", ctx do
@@ -178,6 +190,18 @@ defmodule EvoGit.Agent.Session.FinalizeOrderTest do
        do: to == writer
 
   defp completed_cast?(_send, _writer, _task_id, _agent_id), do: false
+
+  # The ROOT's row drop, sent by the SAME completion step through
+  # `EvoGit.AgentState.delete/3` (a cast to the one serialized writer).
+  defp dropped_cast?(
+         {{:"$gen_cast", {:delete, task_id, agent_id}}, to},
+         writer,
+         task_id,
+         agent_id
+       ),
+       do: to == writer
+
+  defp dropped_cast?(_send, _writer, _task_id, _agent_id), do: false
 
   defp closed_send?({{:agent_session_closed, agent_id, _result}, to}, test_pid, agent_id),
     do: to == test_pid

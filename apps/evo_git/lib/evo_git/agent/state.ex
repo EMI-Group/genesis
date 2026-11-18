@@ -33,13 +33,33 @@ defmodule EvoGit.Agent.State do
   and the result/settings payload serializable — the archive path already proves
   that payload is JSON-clean.
 
+  ## Durable run facts
+
+  Six fields are **DURABLE RUN FACTS** rather than transient bookkeeping:
+  `branch` (the agent's own `evogit-agent-*` branch), `base_commit` (the commit
+  its worktree was created from), `spawn_turn` + `spawn_index` (where in the
+  parent's tool batch this child was started), `redispatch` (the normalized
+  `EvoGit.AgentState.Redispatch` blob a restart rebuilds the agent's spec from)
+  and `anchor_ref` (the git ref that keeps `current_commit` reachable past
+  worktree reclamation).
+
+  They are stable for the whole run and are PERSISTED with every durable
+  checkpoint (`EvoGit.Agent.Session.Persistence`), because a resumed run is
+  rebuilt from them: its worktree is based on `base_commit`, its branch is
+  recreated from `anchor_ref`, and its `%EvoGit.AgentSpec{}` comes from
+  `redispatch`. That is exactly what separates them from the TRANSIENT
+  transport bookkeeping (`watchers`, `exchange_ref`, `event_seq`), which the
+  session re-stamps onto every checkpointed copy and which never enter a durable
+  snapshot or a JSON payload.
+
   ## The four groups
 
   ### identity (immutable after start)
 
   `agent_id`, `agent_module`, `task_id`, `depth`, `parent_id`, `node_path`,
   `context_node`, `repo_id`, `repo_root`, `repo_less`, `custom_agent_id`,
-  `mode`, `archive`, `persistent_state`, `worktree`.
+  `mode`, `archive`, `persistent_state`, `worktree`, plus the durable run facts
+  `branch`, `base_commit`, `spawn_turn`, `spawn_index` and `redispatch`.
 
   Who this agent is and where it runs. The session installs the derived
   process-dictionary projection of these fields at exchange start (the struct
@@ -52,12 +72,13 @@ defmodule EvoGit.Agent.State do
   `context`, `turn`, `total_tokens`, `usage`, `compression_count`,
   `llm_context_window`, `llm_model`, `llm_generation_params`, `model_spec`,
   `provider_profile_id`, `model_id`, `model_id_locked`, `prompt_cache_key`,
-  `objective`, `attachments`, `repo_path`, `current_commit`, `repo_notes`,
-  `foreign_repos`, `skill_schemas`.
+  `objective`, `attachments`, `repo_path`, `current_commit`, `anchor_ref`,
+  `repo_notes`, `foreign_repos`, `skill_schemas`.
 
   The LLM conversation plus everything derived from the objective and the
   resolved model selection. This is the ONLY copy of the context: the ETS
-  summary row carries no context at all.
+  summary row carries no context at all. `anchor_ref` sits beside
+  `current_commit` because it is the git fact that makes that commit durable.
 
   ### control (written only via commands)
 
@@ -100,6 +121,11 @@ defmodule EvoGit.Agent.State do
   - `archive` — whether task archiving is enabled for this agent (writes git refs + a `task_agent_archives` row on completion)
   - `persistent_state` — per-agent durable-state flag: when true, every turn checkpoints this run's conversation/scalars into `EvoGit.AgentState` so a crashed run can be restored; the STRUCT default is `false` so hand-built/unit-test states never write, while the runtime always sets the task value (task opt `:persistent_state`, default `true`).
   - `worktree` — the agent's git worktree PATH, or `nil` for a repo-less agent / before the worktree is created. The worktree lease joins this field in a later phase; the worktree's lifetime is the session's lifetime.
+  - `branch` — DURABLE RUN FACT: the agent's own `evogit-agent-*` branch name, or `nil` before the scheduler assigns one / for a repo-less agent. Persisted with every checkpoint so a resume can recreate the branch.
+  - `base_commit` — DURABLE RUN FACT: the commit the agent's worktree was created from (the task's starting commit, a parent-provided base, or a paused/crashed run's salvage sha), or `nil` for a repo-less agent. Persisted so a resume knows where its work began.
+  - `spawn_turn` — DURABLE RUN FACT: the PARENT turn whose tool batch spawned this child, or `nil` for a ROOT agent (and before a spawn position is known). Persisted so a resume can re-spawn the child in its original batch.
+  - `spawn_index` — DURABLE RUN FACT: this child's position inside that batch, or `nil` for a ROOT agent.
+  - `redispatch` — DURABLE RUN FACT: the normalized, JSON-clean `EvoGit.AgentState.Redispatch` blob (`agent_type`, `delegation_level`, `tools`, `max_turns`, `custom_agent_id`, `model_spec`, `node_path`, `repo_id`, `objective`, `task_number`, `task_local_id`, `foreign_repos`, the parent linkage and the spawn position) a restart rebuilds the agent's `%EvoGit.AgentSpec{}` from, or `nil` when durable state is off. It never carries pids, funs, credentials or request/generation options.
   - `context` — the LLM conversation context (`ReqLLM.Context.t()`)
   - `turn` — current turn number in the agent loop (starts at 0)
   - `total_tokens` — cumulative token count across all LLM calls
@@ -117,6 +143,7 @@ defmodule EvoGit.Agent.State do
   - `attachments` — the `:attachments` value passed to `ContextBuilder.build_initial_messages/4` (already `nil` for repo-less agents), retained so the compression refresh can reproduce the root agent's media content parts.
   - `repo_path` — absolute path to the agent's worktree, or `nil` before assignment
   - `current_commit` — the worktree HEAD the engine last observed (recorded after tool execution and at completion), or `nil` — the source of the summary row's `current_commit`
+  - `anchor_ref` — DURABLE RUN FACT: the git ref (`refs/genesis/agent-state/<task_id>/<agent_id>`) the session anchors `current_commit` at on every commit-advancing checkpoint, or `nil` while nothing has been anchored. It is what keeps the run's commits reachable after the worktree and its `evogit-agent-*` branch are reclaimed.
   - `repo_notes` — the already-rendered git-submodules note block (markdown text) for this agent's repo tree, or `nil` when the repo has no submodules (or detection failed). Rendered into the agent's `<context>` block; subagents inherit it from the parent (no re-detection).
   - `foreign_repos` — list of foreign repos available to this agent tree (inherited from parent agent)
   - `skill_schemas` — tool schemas from enabled skills
@@ -169,9 +196,16 @@ defmodule EvoGit.Agent.State do
     archive: false,
     persistent_state: false,
     worktree: nil,
+    # durable run facts
+    branch: nil,
+    base_commit: nil,
+    spawn_turn: nil,
+    spawn_index: nil,
+    redispatch: nil,
     # conversation
     repo_path: nil,
     current_commit: nil,
+    anchor_ref: nil,
     turn: 0,
     total_tokens: 0,
     usage: %EvoGit.Agent.Usage{},
@@ -237,6 +271,12 @@ defmodule EvoGit.Agent.State do
           archive: boolean(),
           persistent_state: boolean(),
           worktree: String.t() | nil,
+          # durable run facts (see "Durable run facts")
+          branch: String.t() | nil,
+          base_commit: String.t() | nil,
+          spawn_turn: non_neg_integer() | nil,
+          spawn_index: non_neg_integer() | nil,
+          redispatch: map() | nil,
           # conversation
           context: ReqLLM.Context.t(),
           turn: non_neg_integer(),
@@ -255,6 +295,7 @@ defmodule EvoGit.Agent.State do
           attachments: term(),
           repo_path: String.t() | nil,
           current_commit: String.t() | nil,
+          anchor_ref: String.t() | nil,
           repo_notes: String.t() | nil,
           foreign_repos: [ForeignRepo.t()],
           skill_schemas: [ReqLLM.Tool.t()],

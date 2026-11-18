@@ -438,6 +438,17 @@ defmodule EvoGit.Agent.Session.Setup do
         archive: fetch_field!(ctx, :archive),
         persistent_state: get_field(ctx, :persistent_state, true) != false,
         worktree: repo_path,
+        # DURABLE RUN FACTS: stable for the whole run and persisted on every
+        # checkpoint, so a resume rebuilds the worktree base, the branch, the
+        # spawn position and the agent spec from them. `spawn_turn`/
+        # `spawn_index` are kept only when they are integers: a ROOT agent has
+        # no position in a parent's batch, so a missing/garbage value is `nil`
+        # rather than a fabricated position.
+        branch: get_field(ctx, :branch),
+        base_commit: get_field(ctx, :base_commit),
+        spawn_turn: integer_or_nil(get_field(ctx, :spawn_turn)),
+        spawn_index: integer_or_nil(get_field(ctx, :spawn_index)),
+        redispatch: get_field(ctx, :redispatch),
         # conversation fields the old ETS reads supplied (same scheduler row)
         compression_count: fetch_field!(ctx, :compression_count),
         llm_context_window: fetch_field!(ctx, :llm_context_window),
@@ -622,4 +633,9 @@ defmodule EvoGit.Agent.Session.Setup do
   defp get_field(source, key, default \\ nil)
   defp get_field(source, key, default) when is_list(source), do: Keyword.get(source, key, default)
   defp get_field(source, key, default), do: Map.get(source, key, default)
+
+  # A durable spawn position is meaningful only as an integer; anything else
+  # (absent, `nil`, a stray string) reads as "no position".
+  defp integer_or_nil(value) when is_integer(value), do: value
+  defp integer_or_nil(_value), do: nil
 end

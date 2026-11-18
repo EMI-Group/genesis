@@ -155,8 +155,16 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
   describe "the ONE terminal delivery marks the durable run" do
     test "a completed one-shot run is persisted AND marked completed",
          %{agent_id: agent_id, task_id: task_id, tmp_dir: tmp_dir} do
+      # A CHILD slot on purpose: a ROOT's `done` row is dropped at completion
+      # (nothing consumes a root's result), while a CHILD's row is the evidence
+      # the parent's next batch-clearing checkpoint deletes. The done-lifecycle
+      # case for the ROOT is covered by the durable-run suites.
+      :ok = SchedStore.put_agent_state(agent_id, scheduler_row(parent_id: 424_242))
+
       {:ok, pid, ref} =
-        start_session(dispatch_ctx(agent_id, task_id, tmp_dir, llm_call: completed_llm_call()))
+        start_session(
+          dispatch_ctx(agent_id, task_id, tmp_dir, llm_call: completed_llm_call(), depth: 1)
+        )
 
       # One-shot: a tool-free reply finishes the run, and the terminal fact is
       # delivered BEFORE the `:normal` stop (signal ordering), so awaiting the
@@ -170,10 +178,11 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
 
       assert {:ok, %Record{} = record} = AgentState.load(task_id, agent_id)
 
-      # The turn-1 checkpoint is the run's FIRST (no baseline), so it is ONE
-      # full rewrite: system + first user + the assistant reply.
+      # The row exists from the INITIAL snapshot (system + first user, ONE
+      # chunk), and the turn-1 boundary appends the assistant reply as a second
+      # chunk.
       assert record.message_count == 3
-      assert record.chunk_count == 1
+      assert record.chunk_count == 2
       assert Enum.map(record.messages, & &1.role) == [:system, :user, :assistant]
       assert text_of(List.last(record.messages)) == @report
 
@@ -183,6 +192,8 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
       assert record.fields[:objective] == @objective
       assert record.fields[:repo_id] == "primary"
       assert record.fields[:repo_less] == true
+      assert record.fields[:parent_id] == 424_242
+      assert record.fields[:depth] == 1
       assert record.agent_id == agent_id
       assert record.fields[:status] == "done"
       assert %DateTime{} = record.completed_at
@@ -280,14 +291,15 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
 
       AgentState.flush()
 
-      # This test pins the {:error, :not_found} shape: checkpoints start at a
-      # TURN boundary, and the blocked first turn never reaches one, so a
-      # force-killed session leaves no durable row at all — the strongest
-      # possible statement that it was never marked completed. If a future
-      # change starts checkpointing before the first reply, the alternative
-      # (existing row with status != "completed" and completed_at == nil) is
-      # still a pass of the same invariant; adjust this assertion then.
-      assert AgentState.load(task_id, agent_id) == {:error, :not_found}
+      # A durable row EXISTS from the run's initial snapshot — "one row per
+      # RUNNING agent" holds from the first instant — but nothing marked it
+      # completed: `status` is the live value a checkpoint writes and
+      # `completed_at` is the completed marking's companion column.
+      assert {:ok, %Record{} = record} = AgentState.load(task_id, agent_id)
+      assert record.fields[:status] == "running"
+      assert record.completed_at == nil
+      assert record.message_count == 2
+      assert Enum.map(record.messages, & &1.role) == [:system, :user]
     end
 
     test "a persistent_state: false session writes NOTHING",
@@ -306,9 +318,10 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
 
       AgentState.flush()
 
-      # The opt-out is enforced END TO END: neither the per-turn checkpoint nor
-      # the terminal completion marking may create a row.
+      # A persistent_state: false session writes NOTHING — not even the initial
+      # snapshot — and never anchors a commit.
       assert AgentState.load(task_id, agent_id) == {:error, :not_found}
+      assert AgentState.roster(task_id) == []
     end
   end
 
@@ -401,7 +414,7 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
 
     [
       agent_id: agent_id,
-      depth: 0,
+      depth: Keyword.get(opts, :depth, 0),
       repo_root: tmp_dir,
       repo_id: "primary",
       worktree_path: Path.join(tmp_dir, "worker"),
@@ -422,12 +435,13 @@ defmodule EvoGit.Agent.Session.PersistenceSessionTest do
 
   # The pre-installed scheduler SUMMARY row the session reads its identity/model
   # fields from. A missing row makes the session finalize with
-  # `{:error, :not_registered}`.
-  defp scheduler_row do
+  # `{:error, :not_registered}`. `parent_id` defaults to `nil` (a ROOT slot) and
+  # is overridden by a test that needs a CHILD slot's done-row lifecycle.
+  defp scheduler_row(opts \\ []) do
     %SchedulerRow{
       context_node: %EvoGit.Core.ContextNode{path: "./", repo: "[system]"},
       objective: "registration objective sentinel",
-      parent_id: nil,
+      parent_id: Keyword.get(opts, :parent_id),
       archive: false,
       llm_model: nil,
       model_id: "persist-session-test",

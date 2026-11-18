@@ -1060,6 +1060,12 @@ defmodule EvoGit.Agent.Session do
 
     with {:ok, row} <- scheduler_row(ctx),
          {:ok, state} <- build_state(ctx, row) do
+      # ONE durable row per RUNNING agent, written BEFORE the first exchange (never from
+      # the per-turn path): a run that dies inside its first LLM call still has its
+      # identity, its durable run facts and its re-dispatch blob on disk, and a resumed
+      # run re-opens the `done` row it is continuing. Inert for `persistent_state: false`.
+      Persistence.initial_snapshot(state)
+
       Summary.publish(agent_id(data), state, status: :running)
 
       data = %{
@@ -1142,11 +1148,47 @@ defmodule EvoGit.Agent.Session do
       quality_level: Keyword.get(spec.opts, :quality_level),
       custom_agent_id: Keyword.get(spec.opts, :custom_agent_id),
       attachments: Keyword.get(spec.opts, :attachments),
-      assistant_workspace: Keyword.get(spec.opts, :assistant_workspace)
+      assistant_workspace: Keyword.get(spec.opts, :assistant_workspace),
+      # DURABLE RUN FACTS consumed by `Setup.build_initial_state/3`: the agent's own
+      # branch, the commit its worktree was created from, its position in the parent's
+      # tool batch (`nil` for a ROOT) and the re-dispatch blob built below.
+      branch: Keyword.get(ctx, :branch),
+      base_commit: Keyword.get(ctx, :base_commit),
+      spawn_turn: Keyword.get(ctx, :spawn_turn),
+      spawn_index: Keyword.get(ctx, :spawn_index),
+      redispatch: redispatch(spec, row, meta, ctx, repo_less)
     ]
 
     Setup.build_initial_state(spec.agent_module, spec.objective, state_ctx)
   end
+
+  # The re-dispatch blob of THIS run (`EvoGit.AgentState.Redispatch`): the normalized,
+  # JSON-clean facts a later resume rebuilds the agent's `%EvoGit.AgentSpec{}` from. It
+  # exists only to rebuild the run, so a task with `persistent_state: false` never pays
+  # for it; every fact it needs is already resolved here at session start.
+  defp redispatch(spec, row, meta, ctx, repo_less) do
+    if Keyword.get(ctx, :persistent_state, true) == false do
+      nil
+    else
+      EvoGit.AgentState.Redispatch.build(spec,
+        parent_id: Map.get(row, :parent_id),
+        depth: Keyword.fetch!(ctx, :depth),
+        spawn_turn: Keyword.get(ctx, :spawn_turn),
+        spawn_index: Keyword.get(ctx, :spawn_index),
+        task_number: Map.get(meta, :task_number),
+        task_local_id: Map.get(row, :task_local_id),
+        custom_agent_id: Keyword.get(spec.opts, :custom_agent_id),
+        model_spec: Map.get(row, :model_spec),
+        node_path: context_node_path(row),
+        quality_level: Keyword.get(spec.opts, :quality_level),
+        archive: Map.get(row, :archive),
+        repo_less: repo_less
+      )
+    end
+  end
+
+  defp context_node_path(%{context_node: %{path: path}}) when is_binary(path), do: path
+  defp context_node_path(_row), do: nil
 
   # The mode this session runs in. `Dispatch.do_try_dispatch/4` resolves it ONCE at
   # registration (`Dispatch.session_mode/2`) and puts it in the dispatch context, so that value is
@@ -1664,7 +1706,14 @@ defmodule EvoGit.Agent.Session do
   # ONE terminal delivery marks it: an interactive session parked in `:awaiting_input` is still
   # resumable, a PAUSED run must stay resumable (its `pause_commit` marker is what the resume
   # reads), and a force-killed session never reaches here.
+  # The finished run's report rides along when the terminal outcome has one, so the durable row's
+  # `result` records what the agent said; `Persistence.complete/2` owns the row's fate (a ROOT's
+  # row is dropped, a CHILD's `done` row waits for the parent's batch-clearing checkpoint).
   defp maybe_mark_completed(%{result: {:paused, _info}}), do: :ok
+
+  defp maybe_mark_completed(%{result: {:ok, %Result{result: text}}, state: %State{} = state}),
+    do: Persistence.complete(state, text)
+
   defp maybe_mark_completed(%{state: %State{} = state}), do: Persistence.complete(state)
   defp maybe_mark_completed(_data), do: :ok
 
