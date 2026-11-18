@@ -26,6 +26,20 @@ defmodule EvoGit.Agent.Resume.Reattach do
       `EvoGit.Agent.SubagentProcessing.build_merge_message/4` note for a merge
       that changed HEAD, or `nil`.
 
+  ## When no in-memory batch survives
+
+  A scheduler/BEAM restart wipes the parent's `%SchedMeta{}` batch (it is ETS
+  only), so the re-attach refuses with `{:error, :no_pending_batch}`. That
+  refusal is not the end: the worker builds a REBUILD PLAN from the children's
+  durable rows (`EvoGit.Agent.Resume.RosterBatch`, read in THIS process) and
+  hands it to `EvoGit.AgentScheduler.rebuild_subagent_batch/3`, which installs
+  the finished children's stored results, re-spawns the still-running ones under
+  their persisted ids (own anchored base, persisted branch, restored
+  conversation) and waits for them exactly like a live batch. A recursive
+  child repeats the same steps for ITS dangling batch, so resume is recursive
+  down the tree. Only when that rebuild ALSO declines does a call degrade to the
+  fallback text.
+
   ## Why the merge is not optional
 
   The resumed parent's worktree is based on the SALVAGED commit while a child's
@@ -67,6 +81,7 @@ defmodule EvoGit.Agent.Resume.Reattach do
   require Logger
 
   alias EvoGit.Agent.Result
+  alias EvoGit.Agent.Resume.RosterBatch
   alias EvoGit.Agent.State
   alias EvoGit.Agent.SubagentProcessing
 
@@ -76,12 +91,19 @@ defmodule EvoGit.Agent.Resume.Reattach do
   @type t :: %{texts: %{non_neg_integer() => String.t()}, merge_note: String.t() | nil}
 
   @default_reattach_fun &EvoGit.AgentScheduler.reattach_sub_agents/2
+  @default_rebuild_fun &EvoGit.AgentScheduler.rebuild_subagent_batch/3
 
   @doc """
   The DEFAULT re-attach injection: the real scheduler API, arity 2.
   """
   @spec default_reattach_fun() :: (term(), non_neg_integer() -> term())
   def default_reattach_fun, do: @default_reattach_fun
+
+  @doc """
+  The DEFAULT durable-rebuild injection: the real scheduler API, arity 3.
+  """
+  @spec default_rebuild_fun() :: (term(), map(), keyword() -> term())
+  def default_rebuild_fun, do: @default_rebuild_fun
 
   @doc """
   Answers the interrupted subagent batch of `state`.
@@ -92,8 +114,20 @@ defmodule EvoGit.Agent.Resume.Reattach do
 
   Options:
 
+    * `:turn` — the parent TURN the interrupted `tool_calls` belong to
+      (`EvoGit.Agent.Resume.dangling/1`); the rebuild plan filters the durable
+      child rows by it. Absent → the durable rebuild declines and the call
+      degrades to the fallback text.
     * `:reattach_fun` — `fn agent_id, expected_count -> reply`, defaulting to
       `&EvoGit.AgentScheduler.reattach_sub_agents/2`.
+    * `:rebuild_fun` — `fn agent_id, plan, opts -> {:ok, results} | {:error,
+      reason}`, defaulting to `&EvoGit.AgentScheduler.rebuild_subagent_batch/3`.
+    * `:roster_fun` — the durable roster read the plan is built from (see
+      `EvoGit.Agent.Resume.RosterBatch`).
+    * `:spawn_fun` — the scheduler-side spawn seam the rebuild passes through
+      (see `EvoGit.AgentScheduler.SubagentRebuild`).
+
+  Every option is an explicit injection point, never app env.
 
   Total: an empty slot list returns no texts and no note without calling
   anything.
@@ -133,6 +167,14 @@ defmodule EvoGit.Agent.Resume.Reattach do
       {:ok, results} when is_list(results) ->
         adopt(state, slots, results)
 
+      # No in-memory batch survived (a scheduler/BEAM restart, or a batch whose
+      # children rows are all gone). The children's DURABLE rows are read in THIS
+      # worker process and handed to the scheduler in one call, which installs
+      # the done results, re-spawns the still-running children under their
+      # persisted ids and waits for them exactly like a live batch.
+      {:error, :no_pending_batch} ->
+        rebuild(state, slots, expected, opts)
+
       {:error, reason} ->
         Logger.warning(
           "Resume: no subagent batch to re-attach for agent #{inspect(state.agent_id)} " <>
@@ -158,6 +200,50 @@ defmodule EvoGit.Agent.Resume.Reattach do
       fun when is_function(fun, 2) -> fun.(agent_id, expected)
       other -> {:error, {:invalid_reattach_fun, other}}
     end
+  end
+
+  ## Durable rebuild
+
+  # Builds the plan from the children's durable rows (worker-side, never in the
+  # scheduler) and installs it. Any refusal or failure degrades to the honest
+  # fallback text — the parent's transcript must stay provider-valid either way.
+  defp rebuild(%State{} = state, slots, expected, opts) do
+    turn = Keyword.get(opts, :turn)
+
+    case RosterBatch.plan(state, turn, expected, opts) do
+      {:ok, plan} ->
+        case rebuild_batch(state, plan, opts) do
+          {:ok, results} when is_list(results) ->
+            adopt(state, slots, results)
+
+          {:error, reason} ->
+            warn_rebuild(state, expected, reason)
+            empty()
+
+          other ->
+            warn_rebuild(state, expected, {:unexpected_reply, other})
+            empty()
+        end
+
+      {:error, reason} ->
+        warn_rebuild(state, expected, reason)
+        empty()
+    end
+  end
+
+  defp rebuild_batch(%State{agent_id: agent_id}, plan, opts) do
+    case Keyword.get(opts, :rebuild_fun) || @default_rebuild_fun do
+      fun when is_function(fun, 3) -> fun.(agent_id, plan, opts)
+      other -> {:error, {:invalid_rebuild_fun, other}}
+    end
+  end
+
+  defp warn_rebuild(%State{} = state, expected, reason) do
+    Logger.warning(
+      "Resume: no durable subagent batch to rebuild for agent #{inspect(state.agent_id)} " <>
+        "(#{inspect(reason)}); answering #{expected} interrupted subagent call(s) with " <>
+        "the fallback text"
+    )
   end
 
   defp adopt(%State{} = state, slots, results) do

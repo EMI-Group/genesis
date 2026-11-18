@@ -45,7 +45,12 @@ defmodule EvoGit.Agent.Resume do
      `EvoGit.AgentScheduler.reattach_sub_agents/2` call for the WHOLE batch
      (`EvoGit.Agent.Resume.Reattach`), so a surviving child's real, formatted
      result is used instead of the fallback text and its same-repo commit is
-     merged into the parent worktree.
+     merged into the parent worktree. When NO in-memory batch survived (a
+     scheduler/BEAM restart wipes the ETS batch), the same module rebuilds it
+     from the children's DURABLE rows (`EvoGit.Agent.Resume.RosterBatch`):
+     finished children contribute their stored results and still-running ones
+     are re-spawned under their persisted ids with their own anchored base,
+     branch and restored conversation — recursively down the tree.
   2. **Notice** — append ONE `[RESUME]`-framed, NON-user-authored `:user`
      message (`EvoGit.Agent.Resume.Notice`) stating the interruption, the
      interrupted calls and their classes, the worktree situation and how to
@@ -101,12 +106,21 @@ defmodule EvoGit.Agent.Resume do
   retry, `:dirty_pause` = post-restart pause) repairs the dangling tail and
   appends ONE `[RESUME]` notice.
 
-  Options:
+  Options (each an explicit injection point, never app env):
 
     * `:reattach_fun` — `fn agent_id, expected_count -> reply` used to re-attach
       the interrupted subagent batch; defaults to
-      `&EvoGit.AgentScheduler.reattach_sub_agents/2`. This is the ONE injection
-      point (an explicit option, never app env).
+      `&EvoGit.AgentScheduler.reattach_sub_agents/2`;
+    * `:rebuild_fun` — `fn agent_id, plan, opts -> reply` used to install a batch
+      rebuilt from the durable rows when no in-memory batch survived; defaults
+      to `&EvoGit.AgentScheduler.rebuild_subagent_batch/3`;
+    * `:roster_fun` — the durable roster read the rebuild plan is built from
+      (`EvoGit.Agent.Resume.RosterBatch`); defaults to
+      `&EvoGit.AgentState.roster/1`;
+    * `:spawn_fun` — the scheduler-side spawn seam the rebuild passes through
+      (`EvoGit.AgentScheduler.SubagentRebuild`);
+    * `:turn` — set by `apply/2` itself from `dangling/1`; the parent turn whose
+      `tool_calls` are being answered.
 
   Total for any option value.
   """
@@ -227,9 +241,14 @@ defmodule EvoGit.Agent.Resume do
       {:ok, turn, calls} ->
         # ONE re-attach request for the WHOLE interrupted batch: the subagent
         # calls are collected in MODEL CALL ORDER (slot position ↔ sub-agent
-        # index) and answered together.
+        # index) and answered together. The TURN travels with it because the
+        # durable rebuild (`EvoGit.Agent.Resume.RosterBatch`, used when no
+        # in-memory batch survived) identifies the children by the parent turn
+        # that spawned them.
         classified = classify(calls, batch, state)
-        reattach = Reattach.resolve(state, subagent_slots(classified), opts)
+
+        reattach =
+          Reattach.resolve(state, subagent_slots(classified), Keyword.put(opts, :turn, turn))
 
         results =
           classified

@@ -32,13 +32,21 @@ defmodule EvoGit.AgentScheduler.SubagentReattach do
       `{:error, :subagent_result_lost}` so the parent is never left stuck
       `:waiting`.
 
-  ## The batch is ETS-only and in-memory
+  ## The batch is ETS-only — a restart needs the durable rebuild
 
   The retained batch lives ONLY in the `:evogit_sched_meta` ETS row: nothing is
   written to SQLite, the task store or the archive. A scheduler (or BEAM)
-  restart therefore LOSES it, and a later re-attach reports every unresolved
-  slot as `{:error, :subagent_result_lost}` — the safety net is "the parent
-  learns the result is gone", never a silently hung or duplicated batch.
+  restart therefore LOSES it, and this module then refuses with
+  `{:error, :no_pending_batch}`.
+
+  That refusal is no longer the end of the story: the resumed parent answers it
+  by rebuilding the same batch from its children's DURABLE rows
+  (`EvoGit.Agent.Resume.RosterBatch` → `EvoGit.AgentScheduler.rebuild_subagent_batch/3`
+  → `EvoGit.AgentScheduler.SubagentRebuild`), which installs the done results, the
+  indices and a waiter exactly like a live batch, and re-spawns the still-running
+  children under their persisted ids. The batch then resolves through THIS
+  module's timer path if a re-spawned child never lands, so the parent still
+  never hangs.
 
   ## Waiter bookkeeping (scheduler state)
 
@@ -243,11 +251,18 @@ defmodule EvoGit.AgentScheduler.SubagentReattach do
     end
   end
 
-  # Installs (or replaces) the caller as the parent's waiter and arms the ONE
-  # bounded timer. A superseded waiter is answered rather than left blocked on
-  # an `:infinity` call — from ITS point of view the batch it was waiting for is
-  # no longer pending.
-  defp put_waiter(%State{} = state, agent_id, from, timeout) do
+  @doc """
+  Installs (or replaces) `from` as the parent's waiter and arms the ONE bounded
+  timer.
+
+  Shared by BOTH batch install paths — the re-attach above and
+  `EvoGit.AgentScheduler.SubagentRebuild` (which rebuilds a batch from the
+  children's durable rows after a restart) — so a superseded waiter is answered
+  rather than left blocked on an `:infinity` call: from ITS point of view the
+  batch it was waiting for is no longer pending.
+  """
+  @spec put_waiter(State.t(), pos_integer(), GenServer.from() | nil, pos_integer()) :: State.t()
+  def put_waiter(%State{} = state, agent_id, from, timeout) do
     {state, superseded} = claim_waiter(state, agent_id)
 
     if superseded do

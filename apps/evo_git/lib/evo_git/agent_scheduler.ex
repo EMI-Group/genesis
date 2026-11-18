@@ -122,6 +122,7 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.SubagentReattach
+  alias EvoGit.AgentScheduler.SubagentRebuild
   alias EvoGit.AgentScheduler.Subagents
   alias EvoGit.AgentSpec
 
@@ -403,6 +404,57 @@ defmodule EvoGit.AgentScheduler do
       timeout when is_integer(timeout) and timeout > 0 -> timeout
       _other -> default
     end
+  end
+
+  @doc """
+  Rebuilds the RESUMED caller's subagent batch from its children's DURABLE rows.
+
+  The re-attach path above can only serve a batch that still lives in ETS. After
+  a scheduler/BEAM restart the batch is gone, so the resumed parent builds a plan
+  from `agent_state.sqlite` in ITS OWN worker process
+  (`EvoGit.Agent.Resume.RosterBatch`) and hands it here in ONE call:
+
+      {:ok, plan} = EvoGit.Agent.Resume.RosterBatch.plan(state, turn, expected)
+      {:ok, results} = EvoGit.AgentScheduler.rebuild_subagent_batch(agent_id, plan)
+
+  The handler (`EvoGit.AgentScheduler.SubagentRebuild`) installs the finished
+  children's stored results, records the batch exactly like a live spawn
+  (`total_sub_specs` / `sub_agent_results` / `sub_agent_indices` /
+  `pending_sub_agents`), re-spawns the still-running children under their
+  persisted ids with their own anchored worktree base, branch and restored
+  conversation, and makes this caller the waiter — so the batch resolves through
+  the ordinary completion path, with the bounded re-attach timer as the
+  last-resort backstop.
+
+  Returns `{:ok, results}` — one element per expected subagent call, a slot that
+  can never resolve being `{:error, :subagent_result_lost}` — or
+  `{:error, :no_pending_batch | :batch_in_flight | :invalid_plan | :unavailable}`.
+  Never raises.
+
+  ## Options
+
+    * `:timeout` — the bounded wait for the still-running children, resolved
+      exactly like `reattach_sub_agents/3`'s (option → app env → the module
+      default of 30 minutes);
+    * `:spawn_fun` — the spawn seam (`fn state, parent_meta, entry,
+      registration_opts -> {:ok, child_id, state} | {:error, reason, state}`),
+      defaulting to the ordinary `Dispatch.register_agent/8` + `try_dispatch/2`
+      path. An explicit option, never app env.
+  """
+  @spec rebuild_subagent_batch(pos_integer(), map(), keyword()) ::
+          {:ok, [term()]} | {:error, atom()}
+  def rebuild_subagent_batch(parent_id, plan, opts \\ []) do
+    timeout = reattach_timeout(opts)
+
+    GenServer.call(
+      __MODULE__,
+      {:rebuild_subagent_batch, parent_id, plan, timeout, opts},
+      :infinity
+    )
+  catch
+    # A nil/absent/dead/restarting scheduler must ANSWER, never raise into a
+    # resumed agent: `GenServer.call` exits `:noproc`/`:normal`/`:shutdown` here.
+    :exit, _reason -> {:error, :unavailable}
   end
 
   @doc """
@@ -1372,6 +1424,16 @@ defmodule EvoGit.AgentScheduler do
         %State{} = state
       ) do
     SubagentReattach.handle_reattach(agent_id, expected_count, timeout, from, state)
+  end
+  # Rebuild half of whole-tree resume: install a batch from the children's
+  # DURABLE rows when no in-memory batch survived (see `SubagentRebuild`).
+  @impl true
+  def handle_call(
+        {:rebuild_subagent_batch, parent_id, plan, timeout, opts},
+        from,
+        %State{} = state
+      ) do
+    SubagentRebuild.handle_rebuild(parent_id, plan, timeout, from, opts, state)
   end
 
   # --- LLM and Tool Slot Management (delegated to Slots module) ---
