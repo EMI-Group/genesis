@@ -7,7 +7,8 @@ defmodule EvoGit.Agent.Session.Setup do
 
     * `bind_worktree/2` + `ensure_tmpdir/1` are the DURABLE half — allocate the
       agent's worktree (skipped entirely for a repo-less agent), apply the
-      crash-retry sleep and resolve the managed per-task scratch directory. They
+      crash-retry wait (reported to the session as the `:retry_wait` activity phase)
+      and resolve the managed per-task scratch directory. They
       run once per agent run/session, and a session runs the WHOLE call inside a
       start task (with the SESSION pid as the create `owner_pid`), so a slow
       worktree create never blocks the session process.
@@ -31,6 +32,9 @@ defmodule EvoGit.Agent.Session.Setup do
 
   alias EvoGit.Agent.Session.Persistence
   alias EvoGit.Agent.State
+
+  # The default crash-retry wait per attempt (`:agent_retry_backoff_ms` overrides it).
+  @retry_backoff_default_ms 30_000
 
   @doc """
   Installs the identity prefix and provisions the agent's worktree.
@@ -71,10 +75,14 @@ defmodule EvoGit.Agent.Session.Setup do
 
   @doc """
   Provisions the agent's worktree (or, for a repo-less agent, only the repo-less
-  process context), applying the crash-retry sleep and logging the start.
+  process context), applying the crash-retry wait and logging the start.
 
   `owner_pid` is the process `EvoGit.AgentScheduler.WorktreeManager` monitors —
   the process whose death reclaims the worktree.
+
+  A `ctx[:activity_reporter]` pid (the session, on the session path) receives
+  `{:activity, start_task_pid, {:phase, :retry_wait}}` before the wait, so the
+  wait is visible to a watcher attached while the session is still `:starting`.
 
   Expects `install_identity/1` to have run in this SAME process when a caller
   later resolves the scratch dir (`ensure_tmpdir/1` reads
@@ -107,8 +115,7 @@ defmodule EvoGit.Agent.Session.Setup do
       Logger.info("AgentScheduler: Agent #{agent_id} starting in repo-less (system) mode")
 
       if retries > 0 do
-        Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
-        Process.sleep(30_000 * retries)
+        retry_wait(ctx, agent_id, retries)
       end
     else
       Process.put(:repo_path, worktree_path)
@@ -138,8 +145,7 @@ defmodule EvoGit.Agent.Session.Setup do
       end
 
       if retries > 0 do
-        Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
-        Process.sleep(30_000 * retries)
+        retry_wait(ctx, agent_id, retries)
       else
         Logger.info(
           "AgentScheduler: Agent #{agent_id} starting execution in worktree #{worktree_path}"
@@ -148,6 +154,50 @@ defmodule EvoGit.Agent.Session.Setup do
     end
 
     :ok
+  end
+
+  # The crash-retry wait: a bounded sleep BEFORE the run resumes, so a retry never
+  # immediately re-hammers the resource that failed.
+  #
+  # The sleep runs in the session's start task while the session is still in
+  # `:starting`, which used to be invisible to a watcher (nothing published, and the
+  # session refused `{:watch, _}`). The wait is therefore REPORTED to the session
+  # first: the session accepts activity from its CURRENT start task, so an attached
+  # consumer sees the `:retry_wait` phase instead of a stale `:idle` projection.
+  # `ctx[:activity_reporter]` is absent on the Runner path, where this whole function
+  # runs in the agent's own process and there is nobody to notify.
+  #
+  # `:agent_retry_backoff_ms` is a call-time seam (default `@retry_backoff_default_ms`)
+  # and the growth stays linear in the attempt number (30 s / 60 s / 90 s), because a
+  # crash retry is usually a transient lease/slot race rather than a failing service.
+  defp retry_wait(ctx, agent_id, retries) do
+    delay_ms = retry_backoff_ms() * retries
+
+    Logger.info(fn ->
+      "AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}; " <>
+        "waiting #{delay_ms}ms before the next attempt"
+    end)
+
+    report_retry_wait(get_field(ctx, :activity_reporter))
+    Process.sleep(delay_ms)
+  end
+
+  defp report_retry_wait(pid) when is_pid(pid) do
+    # `self()` here is the START TASK pid, which is what the session validates the
+    # message against — a send to ourselves would only litter our own mailbox.
+    if pid != self(), do: send(pid, {:activity, self(), {:phase, :retry_wait}})
+    :ok
+  end
+
+  defp report_retry_wait(_other), do: :ok
+
+  # Read at CALL time and validated: a non-positive/non-integer override falls back
+  # to the default instead of arming an unusable sleep.
+  defp retry_backoff_ms do
+    case Application.get_env(:evo_git, :agent_retry_backoff_ms, @retry_backoff_default_ms) do
+      ms when is_integer(ms) and ms > 0 -> ms
+      _other -> @retry_backoff_default_ms
+    end
   end
 
   @doc """

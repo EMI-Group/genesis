@@ -15,6 +15,9 @@ defmodule EvoGit.Agent.Stream.Snapshot do
   `messages` is the FULL transcript of the state the session currently owns. Only
   `EvoGit.Agent.Session` owns the authoritative conversation, so the snapshot is the one supported
   way to read it without a per-message-count copy loop.
+  A session in `:starting` owns no state yet, so its snapshot (`starting/2`) reports
+  `phase: :starting`, an empty transcript and turn 0 together with the session's CURRENT live
+  activity — the pre-state resync point of an agent whose worktree is still being provisioned.
   """
 
   alias EvoGit.Agent.State
@@ -51,9 +54,9 @@ defmodule EvoGit.Agent.Stream.Snapshot do
   @doc """
   Builds the snapshot of `state` for the session `phase` it is being reported in.
 
-  The session only ever calls this with a real `%State{}` (a snapshot of a session that has not
-  checkpointed yet is not offered), so no raising guard is added for impossible input. A state
-  whose context is not a list of messages yields `[]` rather than leaking the raw term.
+  A session that already owns a `%State{}` is snapshotted from it; the one phase
+  that owns no state yet (`:starting`) uses `starting/2` instead.
+  A state whose context is not a list of messages yields `[]` rather than leaking the raw term.
   The `:activity` option is the session's current live projection, defaulting to idle.
   The optional `:status` is `:done` or `:failed` for a terminal snapshot, defaulting to `nil`.
   The session must settle pending public events before choosing the snapshot sequence.
@@ -72,6 +75,26 @@ defmodule EvoGit.Agent.Stream.Snapshot do
       mode: state.mode,
       model_spec: state.model_spec,
       compression_count: state.compression_count,
+      activity: Keyword.get(opts, :activity, Activity.new())
+    }
+  end
+
+  @doc """
+  Builds the PRE-STATE snapshot of a session that is still `:starting`.
+
+  There is no `%EvoGit.Agent.State{}` yet, so there is no transcript, turn, usage or model
+  identity to report: the snapshot carries the agent id, `phase: :starting`, the `:seq` cut of
+  the caller and the session's CURRENT live `activity` — which is where a start task's
+  crash-retry wait shows up as `:retry_wait`. Every remaining field keeps its struct default,
+  so the shape a consumer sees is identical to a post-state snapshot.
+  """
+  @spec starting(term(), keyword()) :: t()
+  def starting(agent_id, opts \\ []) do
+    %__MODULE__{
+      agent_id: agent_id,
+      phase: :starting,
+      status: Keyword.get(opts, :status),
+      seq: Keyword.get(opts, :seq, 0),
       activity: Keyword.get(opts, :activity, Activity.new())
     }
   end
