@@ -16,7 +16,12 @@ defmodule EvoGit.AgentState.Store do
   is always restored. Checkpoint writes for one run are transactional: the
   scalar row UPSERT and the chunk INSERT commit together.
 
-  `checkpoint/4` returns:
+  `checkpoint_batch/4` takes a FOLD of those operations (see
+  `EvoGit.AgentState.Entry`) for one run and commits ALL of them in ONE
+  transaction, in order — so a coalesced queue costs one commit instead of one
+  per checkpoint; `checkpoint/4` is its one-operation form.
+
+  `checkpoint/4` and `checkpoint_batch/4` return:
 
     * `:ok` — persisted;
     * `:resync` — the caller's `:base_seq` did not match the stored message
@@ -38,10 +43,48 @@ defmodule EvoGit.AgentState.Store do
 
   @spec checkpoint(pid(), String.t(), integer(), map()) :: :ok | :resync | {:error, term()}
   def checkpoint(repo, task_id, agent_id, entry) do
+    checkpoint_batch(repo, task_id, agent_id, [entry])
+  end
+
+  @doc """
+  Persists a FOLD of checkpoint operations for ONE run in ONE transaction.
+
+  `ops` is `EvoGit.AgentState.Entry.fold/1`'s output — ordered operations, each
+  `%{kind: :append | :rewrite, base_seq:, messages:, fields:}` — executed
+  SEQUENTIALLY inside a single `EvoGit.Repo.transaction/1`, so the whole fold
+  is one commit and one fsync.
+
+  Answers exactly like `checkpoint/4`: `:ok` (every operation committed),
+  `:resync` (one operation's `:base_seq` did not match the stored message
+  count — NOTHING of the fold is written, the transaction is rolled back), or
+  `{:error, reason}`. An empty fold is a no-op `:ok` that opens no transaction.
+  """
+  @spec checkpoint_batch(pid(), String.t(), integer(), [map()]) ::
+          :ok | :resync | {:error, term()}
+  def checkpoint_batch(_repo, _task_id, _agent_id, []), do: :ok
+
+  def checkpoint_batch(repo, task_id, agent_id, ops) when is_list(ops) do
     total(repo, fn ->
-      case EvoGit.Repo.transaction(fn -> do_checkpoint(task_id, agent_id, entry) end) do
+      case EvoGit.Repo.transaction(fn -> do_checkpoint_batch(task_id, agent_id, ops) end) do
         {:ok, result} -> result
+        {:error, :resync} -> :resync
         {:error, reason} -> {:error, reason}
+      end
+    end)
+  end
+
+  def checkpoint_batch(_repo, _task_id, _agent_id, _ops), do: {:error, :invalid_operations}
+
+  defp do_checkpoint_batch(task_id, agent_id, ops) do
+    Enum.reduce_while(ops, :ok, fn op, :ok ->
+      case do_checkpoint(task_id, agent_id, op) do
+        :ok ->
+          {:cont, :ok}
+
+        # A continuity gap must leave NO half-applied fold behind: roll the
+        # whole transaction back and let the caller resync from one snapshot.
+        :resync ->
+          EvoGit.Repo.rollback(:resync)
       end
     end)
   end

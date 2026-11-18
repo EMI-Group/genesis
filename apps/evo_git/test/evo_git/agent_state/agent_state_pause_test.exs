@@ -344,7 +344,12 @@ defmodule EvoGit.AgentState.PauseTest do
       assert {:ok, record} = AgentState.load(task_id, agent_id, store: pid)
       assert record.messages == Enum.map(0..5, fn index -> message("m#{index}") end)
       assert record.message_count == 6
-      assert record.chunk_count == 6
+      # The checkpoints were still QUEUED when the barrier reached the writer, so
+      # the writer folds them: ONE chunk (the initial rewrite was not committed
+      # yet, so the whole burst became a single rewrite) or TWO (the rewrite was
+      # committed, the five appends then folded into one) — never one per
+      # checkpoint. The barrier promises every MESSAGE is durable, not one row.
+      assert record.chunk_count in [1, 2]
       assert record.fields[:turn] == 5
     end
   end
