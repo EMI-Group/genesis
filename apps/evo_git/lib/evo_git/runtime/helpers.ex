@@ -665,6 +665,7 @@ defmodule EvoGit.Runtime.Helpers do
       |> normalize_model_selection_opts()
       |> maybe_put_attachments(attachments)
       |> maybe_put_resume_kind(Keyword.get(opts, :resume_kind))
+      |> maybe_put_pause_commit(opts)
       |> Kernel.++(agent_opts)
 
     # Priority: explicit/locked task > script > default_model_spec > legacy
@@ -707,4 +708,16 @@ defmodule EvoGit.Runtime.Helpers do
     do: Keyword.put(spec_opts, :resume_kind, :dirty_pause)
 
   defp maybe_put_resume_kind(spec_opts, _kind), do: spec_opts
+  # The resumed ROOT run's pause checkpoint, pre-resolved by
+  # `EvoGit.TaskRegistry.Pause.resume/4` (see `RuntimeOpts`): forwarded ONLY
+  # when the key is present, `nil` included, because PRESENCE is what tells
+  # `EvoGit.AgentScheduler.Dispatch` that the durable store must not be read
+  # again from inside the scheduler. Absent for every other run, so a normal
+  # spec's `opts` stay byte-identical. Subagents never inherit it (their spec
+  # opts are built from explicit keys).
+  defp maybe_put_pause_commit(spec_opts, opts) do
+    if Keyword.has_key?(opts, :pause_commit),
+      do: Keyword.put(spec_opts, :pause_commit, Keyword.get(opts, :pause_commit)),
+      else: spec_opts
+  end
 end

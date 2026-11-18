@@ -49,6 +49,7 @@ defmodule EvoGit.TaskRegistry.Pause do
 
   require Logger
 
+  alias EvoGit.TaskRegistry.AgentStateRead
   alias EvoGit.TaskRegistry.StoreGuard
 
   # The `{:ok, transition}` shapes `pause/2` answers so the caller knows whether a
@@ -164,8 +165,9 @@ defmodule EvoGit.TaskRegistry.Pause do
   (`RuntimeOpts.admit_model_selection/2` against the CURRENT config,
   `admit_session_mode/1`, `admit_persistent_state/1`); a failed admission answers
   that `{:error, reason}` and leaves the row `:paused`. It then requires durable
-  run state (`EvoGit.AgentState.root_agent_ids/1 != []`), because a resume with
-  nothing to restore would silently start the objective from scratch — that is
+  run state (`EvoGit.AgentState.root_agent_ids/1 != []`, read BOUNDED through
+  `EvoGit.TaskRegistry.AgentStateRead`), because a resume with nothing to
+  restore would silently start the objective from scratch — that is
   `{:error, :not_resumable}`.
 
   The write is TARGETED (`update_task_columns/3`, which always bumps
@@ -182,6 +184,13 @@ defmodule EvoGit.TaskRegistry.Pause do
   `EvoGit.TaskRegistry.RuntimeOpts.build_common_runtime_opts/3` forwards the key
   to the runtime, which turns it into the dispatch ctx `resume_kind` and the
   matching narration (`EvoGit.Agent.Resume`).
+  The ROOT run's pause checkpoint is resolved HERE, before the wrapper is
+  spawned, and carried as `pause_commit: sha | nil` (see `put_pause_commit/3`):
+  `EvoGit.AgentScheduler.Dispatch` bases the resumed worktree on it, and the
+  scheduler itself must never make a synchronous durable read. The key is
+  always present, so `nil` means "resolved, nothing stored" and an ABSENT key
+  means "not a pause resume" (the direct-dispatch path, which falls back to a
+  bounded read of its own).
 
   Sequencing: the scheduler pause marker is cleared FIRST (a re-spawned agent must
   never inherit a stale pause flag through `ControlPlane.ensure_row/1`), the
@@ -202,8 +211,8 @@ defmodule EvoGit.TaskRegistry.Pause do
       %{} = task ->
         with :ok <- ensure_paused(task),
              {:ok, spawn_opts} <- admit(task),
-             :ok <- ensure_durable_runs(task_id) do
-          requeue(store, task, spawn_opts, server, spawn_fun)
+             {:ok, root_ids} <- ensure_durable_runs(task_id) do
+          requeue(store, task, put_pause_commit(spawn_opts, task_id, root_ids), server, spawn_fun)
         end
     end
   end
@@ -224,11 +233,27 @@ defmodule EvoGit.TaskRegistry.Pause do
     end
   end
 
+  # The durable-run gate: a resume with nothing stored would silently start the
+  # objective from scratch. The ROOT ids come back so the resume can also carry
+  # the root's PAUSE CHECKPOINT — see `put_pause_commit/3`.
   defp ensure_durable_runs(task_id) do
-    case EvoGit.AgentState.root_agent_ids(task_id) do
+    case AgentStateRead.root_agent_ids(task_id, op: "root_agent_ids") do
       [] -> {:error, :not_resumable}
-      _ids -> :ok
+      ids -> {:ok, ids}
     end
+  end
+
+  # The resumed ROOT run's pause checkpoint, resolved HERE — in the caller of
+  # `EvoGit.AgentScheduler.Dispatch`, never inside the scheduler. The dispatch
+  # bases the resumed worktree on it (`spec.opts[:pause_commit]`) and must not
+  # make a synchronous durable read to find it. The read is bounded and
+  # offloaded (`EvoGit.TaskRegistry.AgentStateRead`), and the key is ALWAYS put
+  # (as `sha | nil`) so the dispatch can tell "resolved to nothing" from "never
+  # resolved" — the latter is the direct-dispatch fallback, which reads the
+  # store itself, bounded.
+  defp put_pause_commit(spawn_opts, task_id, [root_id | _rest]) do
+    sha = AgentStateRead.pause_commit(task_id, root_id, op: "pause_commit")
+    Keyword.put(spawn_opts, :pause_commit, sha)
   end
 
   defp requeue(store, task, spawn_opts, server, spawn_fun) do
@@ -301,14 +326,17 @@ defmodule EvoGit.TaskRegistry.Pause do
   `true` when a task that lost its wrapper is RESUMABLE from durable state:
   `:persistent_state` is on for it (`true`/absent/`nil`; `false` or any
   non-boolean refuses) AND `EvoGit.AgentState` holds at least one run row for the
-  task (`EvoGit.AgentState.resumable?/1`).
+  task (`EvoGit.AgentState.resumable?/1`, read BOUNDED through
+  `EvoGit.TaskRegistry.AgentStateRead` so this classification can never block
+  the registry; an unprovable answer degrades to `false`).
 
   Accepts a `%EvoGit.TaskInfo{}` (or any atom-keyed map with `:id` + `:opts`),
   which is what both restart paths decode anyway. Total.
   """
   @spec dirty_pausable?(map()) :: boolean()
   def dirty_pausable?(%{id: task_id} = task) do
-    persistent_state_on?(Map.get(task, :opts)) and EvoGit.AgentState.resumable?(task_id)
+    persistent_state_on?(Map.get(task, :opts)) and
+      AgentStateRead.resumable?(task_id, op: "resumable?")
   end
 
   def dirty_pausable?(_task), do: false

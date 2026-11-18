@@ -404,29 +404,50 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   end
 
   defp apply_resume_base(agent_id, spec, meta, repo_root, _retries, _pause_kind) do
-    apply_crash_base(spec, meta, resume_base_sha(agent_id, meta, repo_root))
+    apply_crash_base(spec, meta, resume_base_sha(agent_id, spec, meta, repo_root))
   end
 
   # `meta.crash_commit` WINS (a restart after the pause may have salvaged the
-  # paused worktree), and the per-agent PAUSE checkpoint is the fallback. Both
-  # candidates are VERIFIED with `git cat-file -e` before use; an unusable sha
-  # degrades to the task base (`nil`).
-  defp resume_base_sha(agent_id, meta, repo_root) do
-    [meta.crash_commit, pause_commit(meta, agent_id)]
+  # paused worktree), and the pause checkpoint is the fallback. Both candidates
+  # are VERIFIED with `git cat-file -e` before use; an unusable sha degrades to
+  # the task base (`nil`).
+  defp resume_base_sha(agent_id, spec, meta, repo_root) do
+    [meta.crash_commit, pause_commit(agent_id, spec, meta)]
     |> Enum.find(fn sha ->
       is_binary(sha) and sha != "" and Salvage.commit_exists?(repo_root, sha)
     end)
   end
 
-  # The pause checkpoint is recorded per (task, agent) in the durable agent
-  # state; a task id / agent id that cannot address a row (or a missing store)
-  # answers `nil`, which is exactly the degrade-to-task-base path.
-  defp pause_commit(%SchedMeta{task_id: task_id}, agent_id)
-       when is_binary(task_id) and is_integer(agent_id) do
-    EvoGit.AgentState.pause_commit(task_id, agent_id)
+  # The pause checkpoint is the PRE-RESOLVED `spec.opts[:pause_commit]`
+  # (`EvoGit.TaskRegistry.Pause.resume/4` resolves it before the wrapper is
+  # spawned): this GenServer NEVER reads the durable agent-state store on the
+  # resume path. The presence of the KEY decides — `nil` included, meaning
+  # "resolved, nothing stored" — so only a DIRECT dispatch (no pause resume and
+  # therefore no pre-resolution) falls back to a bounded read of its own.
+  defp pause_commit(agent_id, %AgentSpec{opts: opts}, meta) do
+    case Keyword.fetch(opts, :pause_commit) do
+      {:ok, sha} when is_binary(sha) and sha != "" -> sha
+      {:ok, _nothing_stored} -> nil
+      :error -> stored_pause_commit(meta, agent_id)
+    end
   end
 
-  defp pause_commit(_meta, _agent_id), do: nil
+  defp pause_commit(_agent_id, _spec, _meta), do: nil
+
+  # The direct-dispatch fallback: a BOUNDED, offloaded read
+  # (`EvoGit.TaskRegistry.AgentStateRead`) with a 2 s budget, so a locked, busy
+  # or dead agent-state store can never block the scheduler — an expiry degrades
+  # to `nil`, which is exactly the "unusable sha" path above. A direct dispatch
+  # serves one known agent, so no agent-state call here is unbounded.
+  defp stored_pause_commit(%SchedMeta{task_id: task_id}, agent_id)
+       when is_binary(task_id) and is_integer(agent_id) do
+    EvoGit.TaskRegistry.AgentStateRead.pause_commit(task_id, agent_id,
+      op: "dispatch pause_commit",
+      timeout: 2_000
+    )
+  end
+
+  defp stored_pause_commit(_meta, _agent_id), do: nil
 
   # Rewrites the spec's worktree base when a VALID base commit is supplied
   # (either the crash-retry rule below or a pause checkpoint resolved by

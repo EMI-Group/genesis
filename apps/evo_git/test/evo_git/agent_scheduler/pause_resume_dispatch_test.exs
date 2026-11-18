@@ -192,6 +192,65 @@ defmodule EvoGit.AgentScheduler.PauseResumeDispatchTest do
     end
   end
 
+  describe "the pause checkpoint is PRE-RESOLVED outside the scheduler" do
+    test "spec.opts[:pause_commit] wins without any durable read", %{
+      repo: repo,
+      base: base,
+      pause: pause
+    } do
+      agent_id = unique_agent_id()
+      task_id = unique_task_id()
+      # NOTHING is stored for this run: a dispatch that read the store would
+      # degrade to the task base. The pre-resolved opt is the only source.
+      {spec, meta} =
+        build(agent_id, task_id, repo, base, resume_kind: :clean_pause, pause_commit: pause)
+
+      plan = Dispatch.resume_plan(agent_id, spec, meta, repo, 0)
+
+      assert plan.worktree_resume_from == pause
+      assert plan.spec.phylo_node.current_commit == pause
+    end
+
+    test "a nil pre-resolved opt means \"nothing stored\" and skips the read too",
+         %{repo: repo, base: base, pause: pause} do
+      agent_id = unique_agent_id()
+      task_id = unique_task_id()
+      # A row DOES exist, but the resume already resolved it to `nil`: the
+      # scheduler must not second-guess that decision by reading again.
+      seed_pause_checkpoint!(task_id, agent_id, pause)
+
+      {spec, meta} =
+        build(agent_id, task_id, repo, base, resume_kind: :clean_pause, pause_commit: nil)
+
+      plan = Dispatch.resume_plan(agent_id, spec, meta, repo, 0)
+
+      assert plan.worktree_resume_from == nil
+      assert plan.spec.phylo_node.current_commit == base
+    end
+
+    test "the direct-dispatch fallback still resolves the stored checkpoint", %{
+      repo: repo,
+      base: base,
+      pause: pause
+    } do
+      agent_id = unique_agent_id()
+      task_id = unique_task_id()
+      seed_pause_checkpoint!(task_id, agent_id, pause)
+      # NO `:pause_commit` key: a direct dispatch (a non-resume path). That read
+      # is BOUNDED and OFFLOADED (never inline in the scheduler) and still
+      # finds the stored checkpoint.
+      {spec, meta} = build(agent_id, task_id, repo, base, resume_kind: :clean_pause)
+
+      {micros, plan} =
+        :timer.tc(fn -> Dispatch.resume_plan(agent_id, spec, meta, repo, 0) end)
+
+      assert div(micros, 1000) < 2_000
+      assert plan.resume_kind == :clean_pause
+      assert plan.worktree_resume_from == pause
+      assert plan.spec.phylo_node.current_commit == pause
+    end
+  end
+
   describe "a run with no resume_kind (today's behaviour, byte-identical)" do
     test "a first attempt restores nothing and keeps the task base", %{repo: repo, base: base} do
       agent_id = unique_agent_id()
@@ -321,6 +380,9 @@ defmodule EvoGit.AgentScheduler.PauseResumeDispatchTest do
       [model_id_locked: true]
       |> put_if(:persistent_state, Keyword.get(opts, :persistent_state))
       |> put_if(:resume_kind, Keyword.get(opts, :resume_kind))
+      |> put_if(:pause_commit, Keyword.get(opts, :pause_commit), fn _value ->
+        Keyword.has_key?(opts, :pause_commit)
+      end)
 
     spec = %AgentSpec{
       context_node: %ContextNode{path: "./", repo: repo},
@@ -341,6 +403,12 @@ defmodule EvoGit.AgentScheduler.PauseResumeDispatchTest do
 
   defp put_if(opts, _key, nil), do: opts
   defp put_if(opts, key, value), do: Keyword.put(opts, key, value)
+
+  # `nil` is a VALUE here (a resolved "nothing stored"), so presence is decided
+  # by the caller's `has_key?`, not by the value.
+  defp put_if(opts, key, value, present?) do
+    if present?.(value), do: Keyword.put(opts, key, value), else: opts
+  end
 
   # One durable run row + its pause checkpoint sha, exactly as the pause path
   # leaves them.

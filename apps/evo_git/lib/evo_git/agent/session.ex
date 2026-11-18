@@ -1592,6 +1592,16 @@ defmodule EvoGit.Agent.Session do
 
   # Terminal delivery, EXACTLY ONCE (one private function, one caller each for the success,
   # failure, unexpected-outcome, close and finalizer paths).
+  #
+  # ORDERING RULE (non-negotiable): the terminal RESULT goes out FIRST, every durable
+  # bookkeeping step comes AFTER it. Durable state is best effort (`docs/agent-run-durability.md`
+  # § Isolation and containment: "no synchronous barriers on life-critical processes"), so a
+  # slow, locked or dead agent-state store must never delay — let alone swallow — the run's
+  # outcome for its scheduler, its watchers or its finalizing watchdog. Concretely:
+  # flush/handoff/publish (streaming, non-durable) → `deliver_result/1` → `maybe_mark_completed/1`
+  # (the durable "run done" marking) → `notify_closed/1` LAST (a caller awaiting the close must
+  # never observe it before the result). A force-killed session never reaches this function, so
+  # the marking stays the ONE completion signal of a genuinely terminal run.
   defp finalize(data) do
     # Exit flush: published BEFORE the terminal transition, so no tail of a turn is lost.
     data = %{(data |> reset_activity() |> flush_deltas()) | phase: :finalizing}
@@ -1614,8 +1624,9 @@ defmodule EvoGit.Agent.Session do
     end
 
     publish_final(data)
-    maybe_mark_completed(data)
+    # RESULT BEFORE DURABLE BOOKKEEPING (see the ordering rule above `finalize/1`).
     deliver_result(data)
+    maybe_mark_completed(data)
     notify_closed(data)
 
     {:stop, :normal, %{data | phase: :done}}
@@ -1648,9 +1659,11 @@ defmodule EvoGit.Agent.Session do
   # A start failure can happen before any state exists: there is nothing to merge onto the row.
   defp publish_final(_data), do: :ok
 
-  # The durable run is complete. ONLY this ONE terminal delivery marks it: an interactive session
-  # parked in `:awaiting_input` is still resumable, a PAUSED run must stay resumable (its
-  # `pause_commit` marker is what the resume reads), and a force-killed session never reaches here.
+  # The durable run is complete — the ONLY writer of that fact, and it runs AFTER the terminal
+  # result has been delivered (never before: see the ordering rule above `finalize/1`). ONLY this
+  # ONE terminal delivery marks it: an interactive session parked in `:awaiting_input` is still
+  # resumable, a PAUSED run must stay resumable (its `pause_commit` marker is what the resume
+  # reads), and a force-killed session never reaches here.
   defp maybe_mark_completed(%{result: {:paused, _info}}), do: :ok
   defp maybe_mark_completed(%{state: %State{} = state}), do: Persistence.complete(state)
   defp maybe_mark_completed(_data), do: :ok

@@ -240,6 +240,15 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
     # `resume_kind` (`:restore_agent_state` + the resume narration/repair).
     resume_kind = Keyword.get(opts, :resume_kind)
 
+    # The resumed ROOT run's pause checkpoint (`sha | nil`), pre-resolved by
+    # `EvoGit.TaskRegistry.Pause.resume/4`. A pause resume ALWAYS carries the
+    # key (nil included: "resolved, nothing stored"), so presence — not a
+    # non-nil value — is what tells `EvoGit.AgentScheduler.Dispatch` that the
+    # scheduler must not read the durable store itself. Absent for every other
+    # run, whose runtime opts stay byte-identical.
+    pause_commit = Keyword.get(opts, :pause_commit)
+    has_pause_commit? = Keyword.has_key?(opts, :pause_commit)
+
     runtime_opts =
       runtime_opts
       |> put_if(:node_path, node_path)
@@ -255,6 +264,7 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
       |> put_if(:resume_kind, resume_kind, fn value ->
         value in [:clean_pause, :dirty_pause]
       end)
+      |> put_if(:pause_commit, pause_commit, fn _value -> has_pause_commit? end)
 
     {nil, runtime_opts}
   end

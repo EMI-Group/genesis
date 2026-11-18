@@ -600,6 +600,20 @@ defmodule EvoGit.TaskRegistry do
     # == __MODULE__, so production resolves exactly as before.
     Process.put(:evogit_task_registry_server, server_name)
 
+    # Optional durable agent-state target (`EvoGit.AgentState`, a SEPARATE
+    # database). Production passes nothing, so the registry resolves the
+    # app-global writer exactly as before; a test that wants to observe a
+    # stalled/stopped durable store injects an ISOLATED instance here, and every
+    # `EvoGit.AgentState` call made from THIS process (the delete cascade and
+    # the bounded reads in `EvoGit.TaskRegistry.AgentStateRead`) then reaches it
+    # through the documented `:evogit_agent_state_server` process-dictionary
+    # seam. Only a pid is honoured (what `EvoGit.AgentState.start_link/1`
+    # returns), mirroring that seam's contract.
+    case Keyword.get(opts, :agent_state_server) do
+      pid when is_pid(pid) -> Process.put(:evogit_agent_state_server, pid)
+      _none -> :ok
+    end
+
     # Publish this instance's store so `put_task_archive/1` can run the archive
     # write in the CALLING process instead of here (see that function).
     publish_store(server_name, task_store)
@@ -1153,11 +1167,13 @@ defmodule EvoGit.TaskRegistry do
           # disk-full the rows remain and nothing was deleted).
           Enum.each(task_ids, fn task_id ->
             Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_deleted, task_id, node()})
-
-            # Same cascade as a single-task delete: a cleared task owns no
-            # durable run state (best-effort, see `delete_agent_state/1`).
-            delete_agent_state(task_id)
           end)
+
+          # ONE batched cascade for the whole cleared set: a cleared task owns no
+          # durable run state, and `delete_tasks/1` is a total cast (one writer
+          # message, one transaction), so a slow/stopped durable store can never
+          # delay this clear. Retention pruning is the backstop.
+          EvoGit.AgentState.delete_tasks(task_ids)
 
           :ok
 
@@ -1923,26 +1939,12 @@ defmodule EvoGit.TaskRegistry do
   defp safe_store_write(op, fun), do: StoreGuard.write(op, fun)
 
   # A task delete cascades to the task's DURABLE agent state, which lives in a
-  # SEPARATE best-effort SQLite database (`EvoGit.AgentState`). A failed
-  # cleanup must never break the delete (the task row is already gone and the
-  # dashboard has been told), and retention pruning is the backstop — so this
-  # contains every failure and only logs it.
-  defp delete_agent_state(task_id) do
-    EvoGit.AgentState.delete_task(task_id)
-  rescue
-    error ->
-      log_agent_state_delete_failure(task_id, error)
-  catch
-    :exit, reason ->
-      log_agent_state_delete_failure(task_id, {:exit, reason})
-  end
-
-  defp log_agent_state_delete_failure(task_id, detail) do
-    Logger.warning(
-      "TaskRegistry: could not delete durable agent state for task #{task_id} " <>
-        "(#{inspect(detail)}); retention pruning will reclaim it"
-    )
-  end
+  # SEPARATE best-effort SQLite database (`EvoGit.AgentState`). `delete_task/1`
+  # is a TOTAL CAST — one writer message, always `:ok` — so this cascade can
+  # neither fail nor delay the delete: the task row is already gone and the
+  # dashboard has been told, a dead/absent/stopped store is simply a no-op, and
+  # retention pruning is the backstop.
+  defp delete_agent_state(task_id), do: EvoGit.AgentState.delete_task(task_id)
 
   # ── Unreadable persisted status (`{:unknown, raw}`) ──────────────────
   #
