@@ -39,7 +39,12 @@ defmodule EvoGit.Agent.Session do
   `{:error, {:bad_state, :starting}}`), `cancel/2` (`:force` stops it at once) and
   every other total read answer immediately.
   `:starting` holds no `%State{}` yet, so `inspect/1`/`history/1` still answer
-  `:error`/`[]` and `watch` is refused with `{:error, {:bad_state, :starting}}`.
+  `:error`/`[]`, while `watch` and `snapshot` answer the PRE-STATE snapshot
+  (`EvoGit.Agent.Stream.Snapshot.starting/2`: the agent id, `phase: :starting`, an empty
+  transcript, turn 0 and the session's CURRENT live activity).
+  That activity is the point: the start task reports its crash-retry wait as `:retry_wait`
+  (the `:agent_retry_backoff_ms` sleep), so an attached consumer sees a retrying agent
+  instead of a stale `:idle` projection for the whole wait.
 
   Two call-time seams bound a create that never returns, both validated integers
   (`> 0`, else the default): `:worktree_create_slow_warn_ms` (default 120_000)
@@ -132,8 +137,11 @@ defmodule EvoGit.Agent.Session do
   `{:unwatch, consumer_pid}` → `:ok` (idempotent), `{:snapshot}` → `{:ok, %Snapshot{}, seq}`,
   `:identity` → `{:ok, agent_id}` and `:watching?` → `boolean()`.
   A watch is accepted in `:running`, `:cancelling` and `:awaiting_input` (the phases that own a
-  state); `:starting` has none to snapshot yet and `:finalizing`/`:done` are on their way out, so
-  both refuse with `{:error, {:bad_state, phase}}`.
+  state) and in `:starting` (the pre-state snapshot of `Snapshot.starting/2`); `:finalizing`/`:done`
+  are on their way out, so both refuse with `{:error, {:bad_state, phase}}`.
+  A watcher registered in `:starting` keeps its registration across the phase transition — the
+  watcher set, the monitors and the `event_seq` cut are session DATA — so it receives the setup
+  activity and then every exchange delta, unchanged.
   The snapshot's `seq` is SESSION-authoritative: watch/snapshot flush the pending batch before
   replying, so consumers discard every delta at or below that cut without duplicating content.
   The installed worker sink captures chunks independently of watchers, retaining only the
@@ -547,6 +555,18 @@ defmodule EvoGit.Agent.Session do
     end
   end
 
+  # `:starting` has no worker yet, so the durable-setup task is the ONE reporter accepted here:
+  # it publishes the crash-retry wait as `:retry_wait`, which is what a watcher attached during
+  # the start window sees. Any other sender is ignored exactly like a stale worker.
+  def handle_event(:info, {:activity, pid, event}, :starting, data) do
+    if current_start?(data, pid) do
+      {:keep_state, apply_activity(data, event)}
+    else
+      log_ignored(:starting, data, {:stale_activity, pid})
+      {:keep_state, data}
+    end
+  end
+
   def handle_event(:info, {:exchange_finished, pid, outcome}, phase, data) do
     cond do
       data.stopped_worker == pid ->
@@ -777,7 +797,17 @@ defmodule EvoGit.Agent.Session do
     {:keep_state, data, [{:reply, from, snapshot_reply(data, phase)}]}
   end
 
-  # No state yet (`:starting`), on the way out (`:finalizing`/`:done`), or not a pid: same refusal.
+  # `:starting` is WATCHABLE: there is no `%State{}` yet, but the session already has an identity
+  # and a live activity projection (the setup task's retry wait), so the pre-state snapshot is
+  # still a valid resync point — and the registration itself is what lets the wait be published.
+  def handle_event({:call, from}, {:watch, consumer_pid}, :starting, data)
+      when is_pid(consumer_pid) do
+    data = %{data | watchers: Watchers.register(data.watchers, consumer_pid)}
+    data = flush_deltas(data)
+    {:keep_state, data, [{:reply, from, starting_snapshot_reply(data)}]}
+  end
+
+  # On the way out (`:finalizing`/`:done`), or not a pid: same refusal.
   def handle_event({:call, from}, {:watch, _consumer_pid}, phase, data) do
     {:keep_state, data, [{:reply, from, {:error, {:bad_state, phase}}}]}
   end
@@ -796,6 +826,11 @@ defmodule EvoGit.Agent.Session do
       when phase in [:running, :cancelling, :awaiting_input] do
     data = flush_deltas(data)
     {:keep_state, data, [{:reply, from, snapshot_reply(data, phase)}]}
+  end
+
+  def handle_event({:call, from}, {:snapshot}, :starting, data) do
+    data = flush_deltas(data)
+    {:keep_state, data, [{:reply, from, starting_snapshot_reply(data)}]}
   end
 
   def handle_event({:call, from}, {:snapshot}, phase, data) do
@@ -1032,7 +1067,9 @@ defmodule EvoGit.Agent.Session do
   # short-lived task does. Nothing is rescued — an exception/exit must reach the `:DOWN` handler
   # as an abnormal task death, keeping the pre-change crash/retry semantics.
   defp start_binding(data) do
-    ctx = data.dispatch_ctx
+    # `:activity_reporter` is the SESSION: the start task reports its crash-retry wait there,
+    # which is what makes the `:starting` phase watchable (see `Setup.request_worktree/2`).
+    ctx = Keyword.put(data.dispatch_ctx, :activity_reporter, self())
     parent = self()
 
     task =
@@ -1067,6 +1104,10 @@ defmodule EvoGit.Agent.Session do
       Persistence.initial_snapshot(state)
 
       Summary.publish(agent_id(data), state, status: :running)
+
+      # The setup wait's projection (`:retry_wait`) describes the START, not the exchange: from
+      # here the worker's own sink takes the activity over, so the stale phase is retired.
+      data = reset_activity(data)
 
       data = %{
         data
@@ -1342,6 +1383,14 @@ defmodule EvoGit.Agent.Session do
         phase: phase
     }
 
+    {:ok, snapshot, data.event_seq}
+  end
+
+  # The PRE-STATE resync point: `:starting` owns no `%State{}`, so the snapshot is built from the
+  # session's identity, its live activity (a start task's retry wait) and the session-authoritative
+  # `seq` cut. `Stream.stale?/2` works on this snapshot exactly like on a post-state one.
+  defp starting_snapshot_reply(data) do
+    snapshot = Snapshot.starting(agent_id(data), activity: data.activity, seq: data.event_seq)
     {:ok, snapshot, data.event_seq}
   end
 

@@ -244,6 +244,14 @@ defmodule EvoGit.Agent.Exchange do
   # The remainder of the turn, after compression returned a `%State{}`
   # (compressed or unchanged — byte-identical to the pre-existing flow).
   defp continue_loop(%State{} = state, opts, seams) do
+    # "Preparing the next turn": published FIRST, before the turn warnings, the
+    # pending-input drain, the background-job notices, the cancel-grace check,
+    # the pause probe, the turn-limit check and prompt assembly, so a busy
+    # worker never renders as idle during that window — and so any
+    # `:compressing` phase from the step above is re-labelled. Inert without an
+    # installed sink, so an unwatched exchange stays byte-identical.
+    Sink.phase(:preparing)
+
     state = Warnings.check_limit_warnings(state)
 
     # No ETS write-through here anymore: the state this turn produces is the

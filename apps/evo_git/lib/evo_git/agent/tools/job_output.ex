@@ -48,9 +48,12 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   into `[0, EvoGit.BackgroundJobs.wait_max_ms/0]`.
 
   Polling backs off (~1.5× per iteration up to 3 s) so a fast job is still
-  observed promptly while a long wait does not hammer the registry — every poll
-  of a `:unit`-handled job runs a synchronous `systemctl --user show` in the
-  single GLOBAL registry.
+  observed promptly while a long wait does not hammer the registry.
+  A `:unit`-handled job's `systemctl --user show` probe runs in its own unlinked
+  task and the registry caches the last probed result, re-probing a job at most
+  once per short interval, so a poll answers from that cache instead of waiting
+  on the subprocess and neither `job_output` nor `job_list` can stall another
+  agent.
 
   One marker line is then appended AFTER the status line, so a short wait is
   diagnosable instead of looking like a fast success:

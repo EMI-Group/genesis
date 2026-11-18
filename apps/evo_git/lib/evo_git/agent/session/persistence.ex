@@ -41,10 +41,12 @@ defmodule EvoGit.Agent.Session.Persistence do
   not change; every other case (a compression, a rewritten transcript, a
   shorter/different list) is a `:rewrite` of the full list.
 
-  An UNCHANGED transcript is still an `:append`, with an EMPTY tail: the store
-  then performs the scalar UPSERT alone (unchanged `message_count` and
-  `chunk_count`, no chunk row), so a turn/usage/`current_commit` change after a
-  tool-only turn still advances the row's scalars instead of being dropped.
+  An UNCHANGED transcript with an advanced scalar (a tool-only turn's `turn`/`usage`/
+  `current_commit`) is still an `:append`, with an EMPTY tail: the store then performs
+  the scalar UPSERT alone (unchanged `message_count` and `chunk_count`, no chunk row).
+  A boundary that changed NOTHING AT ALL — same transcript, same volatile scalars, a
+  matching baseline — writes nothing and runs no anchor task, so a duplicate
+  checkpoint cannot cost a full state projection.
 
   ## The restored transcript is authoritative
 
@@ -406,19 +408,50 @@ defmodule EvoGit.Agent.Session.Persistence do
   defp persist(%State{} = old_state, %State{} = new_state, task_id, agent_id) do
     old_messages = messages(old_state)
     new_messages = messages(new_state)
-    anchor = anchor_fields(new_state, old_state.current_commit, task_id, agent_id)
+    # The counts are the classification's whole input and BOTH branches need the new
+    # one, so they are computed ONCE per boundary (the old code called `length/1`
+    # up to four times, each call a full walk of a transcript that grows every turn).
+    old_count = length(old_messages)
+    new_count = length(new_messages)
 
-    case classify(old_state, new_state, old_messages, new_messages, task_id, agent_id) do
-      {:append, base_seq, tail} ->
-        cast(task_id, agent_id, :append, base_seq, tail, new_state, anchor)
-        put_baseline(task_id, agent_id, base_seq + length(tail))
-        :ok
+    # A boundary that learned NOTHING does no store work at all: no encoding, no
+    # cast, no anchor task. Answering a no-op here keeps a duplicate checkpoint from
+    # costing a full JSON projection of the state.
+    if unchanged?(old_state, new_state, old_messages, new_messages, old_count, task_id, agent_id) do
+      :ok
+    else
+      anchor = anchor_fields(new_state, old_state.current_commit, task_id, agent_id)
 
-      {:rewrite, _nil, full} ->
-        cast(task_id, agent_id, :rewrite, nil, full, new_state, anchor)
-        put_baseline(task_id, agent_id, length(full))
-        :ok
+      case classify(
+             old_state,
+             new_state,
+             old_messages,
+             new_messages,
+             old_count,
+             task_id,
+             agent_id
+           ) do
+        {:append, base_seq, tail} ->
+          cast(task_id, agent_id, :append, base_seq, tail, new_state, anchor)
+          put_baseline(task_id, agent_id, new_count)
+          :ok
+
+        {:rewrite, _nil, full} ->
+          cast(task_id, agent_id, :rewrite, nil, full, new_state, anchor)
+          put_baseline(task_id, agent_id, new_count)
+          :ok
+      end
     end
+  end
+
+  # The no-op boundary: the SAME transcript list (`==` short-circuits on a shared
+  # term, so an unchanged turn costs one pointer compare) and no scalar this
+  # checkpoint persists has moved. The baseline must MATCH too — "nothing changed"
+  # may never hide a transcript the store does not hold.
+  defp unchanged?(old_state, new_state, old_messages, new_messages, count, task_id, agent_id) do
+    get_baseline(task_id, agent_id) == count and
+      old_messages == new_messages and
+      scalar_projection(old_state) == scalar_projection(new_state)
   end
 
   ## Git anchoring
@@ -472,12 +505,15 @@ defmodule EvoGit.Agent.Session.Persistence do
   # append when a baseline exists, compression has not fired and the previously
   # adopted list is a PREFIX of the new one (an EMPTY tail included: that is the
   # scalar-only append); rewrite in every other case.
-  defp classify(old_state, new_state, old_messages, new_messages, task_id, agent_id) do
+  #
+  # The counts arrive pre-computed from `persist/4`, and both successful branches set
+  # the baseline to the NEW count (`base_seq + length(tail)` is exactly that for an
+  # append of a shared tail), so the caller writes one baseline for both.
+  defp classify(old_state, new_state, old_messages, new_messages, old_count, task_id, agent_id) do
     cond do
-      is_nil(get_baseline(task_id, agent_id)) ->
-        {:rewrite, nil, new_messages}
-
-      get_baseline(task_id, agent_id) != length(old_messages) ->
+      # An absent baseline (`nil`) and a count disagreement are the same decision: the
+      # store does not hold this transcript, so replace it wholesale.
+      get_baseline(task_id, agent_id) != old_count ->
         {:rewrite, nil, new_messages}
 
       new_state.compression_count != old_state.compression_count ->
@@ -487,14 +523,21 @@ defmodule EvoGit.Agent.Session.Persistence do
         {:rewrite, nil, new_messages}
 
       true ->
-        {:append, length(old_messages), Enum.drop(new_messages, length(old_messages))}
+        # `Enum.drop/2` returns a SHARED tail of `new_messages`: no allocation.
+        {:append, old_count, Enum.drop(new_messages, old_count)}
     end
   end
 
-  defp prefix?(old_messages, new_messages) when is_list(old_messages) and is_list(new_messages) do
-    length(new_messages) >= length(old_messages) and
-      Enum.take(new_messages, length(old_messages)) == old_messages
-  end
+  # A NON-ALLOCATING prefix walk. The old form (`Enum.take(new, length(old)) == old`)
+  # copied the whole old prefix into a fresh list on EVERY boundary — the largest
+  # allocation of a served checkpoint, and it grew with the transcript. Walking both
+  # lists together is one comparison per message and allocates nothing.
+  defp prefix?([], new_messages) when is_list(new_messages), do: true
+  defp prefix?([_old_head | _old_tail], []), do: false
+  defp prefix?([head | old_tail], [head | new_tail]), do: prefix?(old_tail, new_tail)
+
+  defp prefix?(old_messages, new_messages) when is_list(old_messages) and is_list(new_messages),
+    do: false
 
   defp prefix?(_old_messages, _new_messages), do: false
 
@@ -525,6 +568,23 @@ defmodule EvoGit.Agent.Session.Persistence do
   defp messages(_state), do: []
 
   ## Fields
+
+  # The VOLATILE half of `@field_keys` — exactly the scalars a turn boundary can
+  # advance. The other keys are the run's stable identity/facts, so comparing this
+  # projection with `==` answers "did this boundary learn anything new?" without
+  # building the 34-key map a write needs.
+  @volatile_fields [
+    :turn,
+    :usage,
+    :total_tokens,
+    :compression_count,
+    :current_commit,
+    :pending_inputs,
+    :phase,
+    :pending_tool_batch
+  ]
+
+  defp scalar_projection(%State{} = state), do: Map.take(state, @volatile_fields)
 
   # `extra_fields` are the facts THIS checkpoint establishes beyond the state
   # projection (currently only `anchor_ref`, which the session has just written
