@@ -96,6 +96,18 @@ The ONE writer serializes SQLite, so it also owns how much work a queued backlog
 - **Degraded writer** — `repo: nil` drops checkpoints with `:ok` and NO per-checkpoint log (the boot warning already told the operator).
 - Both caps are per-instance start options with the app env as their default, so tests exercise them without mutating a BEAM-global.
 
+## Cost Profile — what one checkpoint costs, and in WHICH process
+
+- The CALLER (the session `gen_statem`, the process an exchange worker awaits) does no encoding: it compares its adopted and new message lists, then `GenServer.cast`s the entry.
+- The cast COPIES the term into the writer's heap — the tail on `:append` (a tool-output turn can carry ~100 KB–1 MB), the WHOLE transcript on `:rewrite`; that copy is the only per-checkpoint cost the turn loop pays.
+- The WRITER (`Server`) runs `Entry.normalize/1` + `:erlang.external_size/1` (the payload cap: an uncompressed traversal) + `Entry.fold/1`, then ONE `Store.checkpoint_batch/4`.
+- `Record.encode_messages/1` is `:erlang.term_to_binary(messages, compressed: 6)` (zlib level 6) of the TAIL on `:append` and of the FULL transcript on `:rewrite`.
+- `Record.encode_fields/1` Jason-encodes every JSON column supplied on EVERY checkpoint — `:redispatch` (which carries the objective text), `:usage`, `:pending_inputs`, `:pending_tool_batch` — not only on the first one.
+- One checkpoint = one `BEGIN IMMEDIATE` transaction: `SELECT message_count, chunk_count`, one chunk INSERT, one ~37-column UPSERT (the dynamic SQL is rebuilt per write).
+- WAL + `synchronous: normal` does NOT fsync per commit (SQLite syncs the WAL at an auto-checkpoint, ~1000 pages, and the database file after it), so the occasional slow commit is a checkpoint fsync on slow/network storage and it stalls the WRITER only.
+- A small append is single-digit milliseconds; a multi-MB `:rewrite` (post-compression, first snapshot, or a resync) is tens of milliseconds.
+- The writer is SHARED by every agent in the BEAM, so N concurrent agents serialize their commits there — a backlog delays durability, never a turn.
+
 ## Status, Row Lifecycle & Roster Queries
 
 `agent_states.status` is `TEXT NOT NULL DEFAULT 'running'` and has exactly two values, `running` and `done`; it surfaces as `Record.fields[:status]` / `Record.status/1`.
