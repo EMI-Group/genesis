@@ -897,6 +897,55 @@ defmodule EvoGit.TaskRegistry.PauseTest do
       refute_receive {:task_updated, ^pausing_id, _, _}, 0
     end
 
+    test "init/1 trusts the ROOT row rule: an interactive row stays NON-resumable, its one-shot twin parks",
+         %{data_dir: data_dir, registry: registry} do
+      unique = System.unique_integer([:positive])
+      interactive_id = "restart_interactive_#{unique}"
+      oneshot_id = "restart_oneshot_#{unique}"
+      future_lease = System.system_time(:second) + 300
+      stop_supervised(registry)
+
+      # The SAME row shape and the SAME durable ROOT row for both; only the
+      # persisted `:session_mode` differs. An interactive session's lifecycle is
+      # user-driven, so a resumed one would have no client and park in
+      # `:awaiting_input` forever — it must keep today's `:running` →
+      # `:lease_expired` treatment instead of becoming a dirty pause.
+      seed_task!(interactive_id, :running,
+        opts: [path: "/tmp/test", session_mode: "interactive"],
+        lease_expires_at: future_lease
+      )
+
+      seed_task!(oneshot_id, :running,
+        opts: [path: "/tmp/test", session_mode: "oneshot"],
+        lease_expires_at: future_lease
+      )
+
+      seed_durable_run!(interactive_id)
+      seed_durable_run!(oneshot_id)
+      subscribe_tasks!()
+
+      start_supervised(
+        Supervisor.child_spec(
+          {TaskRegistry, task_store: store(), data_dir: data_dir, name: registry},
+          id: registry
+        )
+      )
+
+      interactive = reload(interactive_id)
+      assert interactive.status == :running
+      assert interactive.pause_kind == nil
+      assert interactive.lease_expires_at == future_lease
+
+      oneshot = reload(oneshot_id)
+      assert oneshot.status == :paused
+      assert oneshot.pause_kind == :dirty
+      assert oneshot.finished_at == nil
+      assert oneshot.lease_expires_at == nil
+
+      assert_receive {:task_updated, ^oneshot_id, :paused, _node}, 1_000
+      refute_receive {:task_updated, ^interactive_id, _, _}, 0
+    end
+
     test "init/1 never touches a :paused row (the resting state is not an input)",
          %{data_dir: data_dir, registry: registry} do
       unique = System.unique_integer([:positive])
@@ -944,6 +993,41 @@ defmodule EvoGit.TaskRegistry.PauseTest do
       # lease sweep actually hold is re-read once through `get_task_lite/2`.
       assert Pause.pause_kind_for_restart(store(), child_only_id) == nil
       assert Pause.pause_kind_for_restart(store(), root_id) == :dirty
+    end
+  end
+
+  ## An interactive session is never dirty-pausable
+
+  describe "dirty_pausable?/1 — an interactive session is never resumable" do
+    test "a ROOT row makes the one-shot twin dirty, never the interactive task (both arities)" do
+      unique = System.unique_integer([:positive])
+      interactive_id = "restart_dirty_interactive_#{unique}"
+      oneshot_id = "restart_dirty_oneshot_#{unique}"
+
+      seed_task!(interactive_id, :running, opts: [path: "/tmp/test", session_mode: "interactive"])
+
+      seed_task!(oneshot_id, :running, opts: [path: "/tmp/test", session_mode: "oneshot"])
+      seed_durable_run!(interactive_id)
+      seed_durable_run!(oneshot_id)
+
+      # BOTH tasks hold a durable ROOT row, so the session mode alone decides —
+      # and the row really does carry the string-keyed spelling after the
+      # round-trip (`:session_mode` is a STRING-keyed persisted opt).
+      assert {:ok, _root} = AgentState.load(interactive_id, 1)
+      assert {:ok, _root} = AgentState.load(oneshot_id, 1)
+      assert {"session_mode", "interactive"} in reload(interactive_id).opts
+
+      refute Pause.dirty_pausable?(reload(interactive_id))
+      assert Pause.dirty_pausable?(reload(oneshot_id))
+
+      # Map arity (the row is already decoded, as both restart paths hand it over).
+      assert Pause.pause_kind_for_restart(reload(interactive_id)) == nil
+      assert Pause.pause_kind_for_restart(reload(oneshot_id)) == :dirty
+
+      # (store, task_id) arity: the narrow row the boot reconciliation and the
+      # lease sweep actually hold is re-read once through `get_task_lite/2`.
+      assert Pause.pause_kind_for_restart(store(), interactive_id) == nil
+      assert Pause.pause_kind_for_restart(store(), oneshot_id) == :dirty
     end
   end
 

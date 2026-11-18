@@ -385,8 +385,11 @@ defmodule EvoGit.TaskRegistry.Pause do
   @doc """
   `true` when a task that lost its wrapper is RESUMABLE from durable state:
   `:persistent_state` is on for it (`true`/absent/`nil`; `false` or any
-  non-boolean refuses) AND `EvoGit.AgentState` holds a durable ROOT run row for
-  the task (`read_root_run/2`: ONE bounded, offloaded
+  non-boolean refuses), it is NOT an interactive session (`interactive?/1`, the
+  SAME rule the clean pause refuses with `:not_pausable`, because an interactive
+  session's lifecycle is user-driven and a resumed one would have no client),
+  AND `EvoGit.AgentState` holds a durable ROOT run row for the task
+  (`read_root_run/2`: ONE bounded, offloaded
   `EvoGit.TaskRegistry.AgentStateRead.roster/2` read, so this classification can
   never block the registry).
 
@@ -400,7 +403,9 @@ defmodule EvoGit.TaskRegistry.Pause do
   """
   @spec dirty_pausable?(map()) :: boolean()
   def dirty_pausable?(%{id: task_id} = task) do
-    persistent_state_on?(Map.get(task, :opts)) and
+    opts = Map.get(task, :opts)
+
+    persistent_state_on?(opts) and not interactive?(opts) and
       not is_nil(read_root_run(task_id, "dirty_pause_roster"))
   end
 
