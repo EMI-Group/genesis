@@ -219,7 +219,14 @@ defmodule EvoGit.Agent.SubagentProcessing do
                   repo_notes: repo_notes,
                   archive: state.archive,
                   persistent_state: state.persistent_state,
-                  task_tmpdir: task_tmpdir
+                  task_tmpdir: task_tmpdir,
+                  # Spawn FACT: the parent TURN that issued this batch. It is
+                  # the same turn the pre-batch `pending_tool_batch.turn`
+                  # marker carries, so a durable child row lines up with the
+                  # parent's checkpoint that later CLEARS that batch. A
+                  # directly-built spec (a re-attach, a test) simply has no
+                  # `:spawn_turn`.
+                  spawn_turn: state.turn
                 )
               )
 

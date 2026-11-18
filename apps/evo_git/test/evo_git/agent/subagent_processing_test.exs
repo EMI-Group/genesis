@@ -736,6 +736,79 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
   end
 
+  describe "build_subagent_specs/3 — spawn facts" do
+    alias EvoGit.Agent.State
+    alias EvoGit.AgentSpec
+    alias EvoGit.AgentScheduler.AgentState
+    alias EvoGit.Core.ContextNode
+    # `DummyAgentModule` is defined once above (see the note there).
+    @dummy_agent_module EvoGit.Agent.SubagentProcessingTest.DummyAgentModule
+    setup do
+      if :ets.whereis(:evogit_agent_summary) == :undefined do
+        :ets.new(:evogit_agent_summary, [:set, :public, :named_table])
+      end
+
+      agent_id = 9_900_000 + :erlang.unique_integer([:positive])
+
+      parent_state = %AgentState{
+        context_node: %ContextNode{path: "./", repo: "/test/repo"},
+        current_commit: "abc123",
+        llm_model: "test-model",
+        max_retries: 3,
+        max_depth: 5,
+        model_id: "claude-sonnet"
+      }
+
+      :ets.insert(:evogit_agent_summary, {agent_id, parent_state})
+      previous_repo_path = Process.get(:repo_path)
+      Process.put(:repo_path, "/test/repo")
+
+      on_exit(fn ->
+        :ets.delete(:evogit_agent_summary, agent_id)
+
+        if previous_repo_path do
+          Process.put(:repo_path, previous_repo_path)
+        else
+          Process.delete(:repo_path)
+        end
+      end)
+
+      %{agent_id: agent_id}
+    end
+
+    test "each child spec carries the parent's CURRENT turn as spawn_turn",
+         %{agent_id: agent_id} do
+      state = %State{
+        agent_id: agent_id,
+        agent_module: @dummy_agent_module,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: [],
+        turn: 3
+      }
+
+      calls = [
+        {ReqLLM.ToolCall.new(
+           "call_1",
+           "subagent_investigator",
+           ~s({"path":"./src","objective":"investigate src"})
+         ), 0},
+        {ReqLLM.ToolCall.new(
+           "call_2",
+           "subagent_investigator",
+           ~s({"path":"./lib","objective":"investigate lib"})
+         ), 1}
+      ]
+
+      specs = SubagentProcessing.build_subagent_specs(calls, state, %{})
+
+      # The PARENT's turn (the same one the pre-batch tool-batch marker carries)
+      # is threaded onto EVERY child spec of the batch — never the child's own.
+      assert Enum.map(specs, &Keyword.fetch!(&1.opts, :spawn_turn)) == [3, 3]
+    end
+  end
+
   describe "build_subagent_specs/3 — foreign repo phylo nodes" do
     alias EvoGit.Agent.State
     alias EvoGit.AgentSpec

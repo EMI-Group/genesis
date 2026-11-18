@@ -105,7 +105,17 @@ defmodule EvoGit.AgentScheduler.Subagents do
                            parent_id,
                            parent.depth + 1,
                            parent.task_id,
-                           parent.task_number
+                           parent.task_number,
+                           # Spawn FACTS of this child: its position in the
+                           # parent's tool batch (`idx`, from `with_index/1`)
+                           # and the turn that issued it (threaded by
+                           # `SubagentProcessing`). `:agent_id` is a
+                           # fail-closed pass-through for a whole-tree resume —
+                           # an id a LIVE run still holds is refused — and is
+                           # `nil` today, so behaviour is unchanged.
+                           spawn_index: idx,
+                           spawn_turn: Keyword.get(spec.opts, :spawn_turn),
+                           agent_id: Keyword.get(spec.opts, :agent_id)
                          ) do
                       {:error, reason} ->
                         {sub_ids_rev, sub_agent_indices_acc,
