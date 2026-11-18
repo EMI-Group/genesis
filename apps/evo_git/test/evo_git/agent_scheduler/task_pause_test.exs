@@ -555,7 +555,7 @@ defmodule EvoGit.AgentScheduler.TaskPauseTest do
       assert text =~ "PAUSED"
       assert text =~ "abc123"
       assert text =~ "evogit-agent-x"
-      assert text =~ "not resumable after a restart"
+      assert text =~ "A task resume re-spawns it from its own durable state"
     end
 
     test "the paused checkpoint becomes a merge child like a normal completion" do
