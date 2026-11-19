@@ -190,7 +190,7 @@ defmodule EvoDash.Test.ConfigDirMountedTest do
 
     assert has_element?(
              settings_view,
-             ~s(#provider-profiles-editor [phx-click="edit_provider_profile"][phx-value-profile_id="#{probe_provider_id}"])
+             ~s(#provider-profiles-panel [phx-click="edit_provider_profile"][phx-value-profile_id="#{probe_provider_id}"])
            )
   end
 
