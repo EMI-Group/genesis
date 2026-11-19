@@ -525,6 +525,33 @@ defmodule EvoGit.PeakHourEngineTest do
       assert :ok = PeakHourEngine.check()
       assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 2}
     end
+
+    test "off_peak_holidays suppresses a statutory CN holiday through check/0" do
+      # Thu 2026-10-01 is 国庆节 — a statutory holiday that IS a weekday.
+      with_clock(fn -> NaiveDateTime.new!(~D[2026-10-01], Time.new!(10, 0, 0)) end)
+
+      AgentScheduler.update_config(
+        model_profiles: [
+          %{
+            id: "glm",
+            model: "zai:glm",
+            concurrency: 4,
+            peak_concurrency: 2,
+            peak_hours: @window,
+            off_peak_holidays: "CN"
+          }
+        ]
+      )
+
+      AgentScheduler.update_config(default_llm_max_concurrency: 1)
+      assert :ok = PeakHourEngine.check()
+      # Holiday → off-peak the whole day → normal concurrency (not the peak 2).
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 4}
+      # The same window on an ordinary working Thursday → peak 2 again.
+      with_clock(fn -> NaiveDateTime.new!(~D[2026-10-08], Time.new!(10, 0, 0)) end)
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 2}
+    end
   end
 
   describe "effective_map/3 (pure)" do
@@ -594,6 +621,61 @@ defmodule EvoGit.PeakHourEngineTest do
 
       sat = NaiveDateTime.new!(~D[2026-01-17], Time.new!(23, 0, 0))
       assert PeakHourEngine.effective_map(profiles, nil, sat) == %{"glm" => 4}
+    end
+  end
+
+  describe "effective_map/3 with off_peak_holidays (CN calendar)" do
+    # Thu 2026-10-01 = 国庆节 (a statutory weekday holiday).
+    @cn_holiday NaiveDateTime.new!(~D[2026-10-01], Time.new!(10, 0, 0))
+    # Thu 2026-10-08 = an ordinary working weekday, same window.
+    @cn_workday NaiveDateTime.new!(~D[2026-10-08], Time.new!(10, 0, 0))
+    # Sat 2026-02-14 = a 调休 make-up WORKING day; Sat 2026-03-21 = a plain weekend.
+    @cn_make_up_sat NaiveDateTime.new!(~D[2026-02-14], Time.new!(10, 0, 0))
+    @cn_plain_sat NaiveDateTime.new!(~D[2026-03-21], Time.new!(10, 0, 0))
+    @cn_profile %{
+      id: "glm",
+      concurrency: 4,
+      peak_concurrency: 2,
+      peak_hours: @window,
+      off_peak_holidays: "CN"
+    }
+    test "the engine derives the off-peak day from the calendar, not from off_peak_days" do
+      assert PeakHourEngine.effective_map([@cn_profile], nil, @cn_holiday) == %{"glm" => 4}
+      assert PeakHourEngine.effective_map([@cn_profile], nil, @cn_workday) == %{"glm" => 2}
+    end
+
+    test "an ordinary weekend is off-peak; a make-up-workday Saturday is a working day" do
+      assert PeakHourEngine.effective_map([@cn_profile], nil, @cn_plain_sat) == %{"glm" => 4}
+      # A `days = ["sat"]` window applies on the 补班 Saturday.
+      sat_profile = %{
+        @cn_profile
+        | peak_hours: [%{start: "09:00", end: "12:00", days: ["sat"]}]
+      }
+
+      assert PeakHourEngine.effective_map([sat_profile], nil, @cn_make_up_sat) == %{"glm" => 2}
+      assert PeakHourEngine.effective_map([sat_profile], nil, @cn_plain_sat) == %{"glm" => 4}
+    end
+
+    test "an unknown calendar id degrades to absent (floored normal concurrency)" do
+      unknown = %{@cn_profile | off_peak_holidays: "XX"}
+      # Holiday date with an unknown calendar → still peak (the 2 is exempt from
+      # the floor 3, so the value proves the calendar did NOT apply).
+      assert PeakHourEngine.effective_map([unknown], 3, @cn_holiday) == %{"glm" => 2}
+    end
+
+    test "a string-keyed profile key is tolerated" do
+      profiles = [
+        %{
+          "id" => "glm",
+          "concurrency" => 4,
+          "peak_concurrency" => 2,
+          "peak_hours" => @window,
+          "off_peak_holidays" => "CN"
+        }
+      ]
+
+      assert PeakHourEngine.effective_map(profiles, nil, @cn_holiday) == %{"glm" => 4}
+      assert PeakHourEngine.effective_map(profiles, nil, @cn_workday) == %{"glm" => 2}
     end
   end
 
@@ -788,6 +870,27 @@ defmodule EvoGit.PeakHourEngineTest do
                mon,
                ~U[2026-01-19 05:00:00Z]
              ) == @six_hours_ms
+    end
+  end
+
+  describe "next_wakeup_ms_for/3 with off_peak_holidays (4-tuples)" do
+    test "the 4-tuple carries the calendar through to the wakeup math" do
+      overnight = [%{start: 1320, end: 480}]
+      # Thu 2026-04-30 23:00 in peak; Fri 2026-05-01 is 劳动节 → the next flip
+      # is that holiday's midnight (1h away), which only the calendar knows.
+      now = NaiveDateTime.new!(~D[2026-04-30], Time.new!(23, 0, 0))
+      utc = ~U[2026-04-30 15:00:00Z]
+
+      assert PeakHourEngine.next_wakeup_ms_for([{overnight, [], "CN", nil}], now, utc) ==
+               3_600_000 + 100
+
+      # Without the calendar the next boundary is 06:00 (7h) → 6h safety net.
+      assert PeakHourEngine.next_wakeup_ms_for([{overnight, [], nil, nil}], now, utc) ==
+               @six_hours_ms
+
+      # The backward-compatible 3-tuple shape still works (no calendar).
+      assert PeakHourEngine.next_wakeup_ms_for([{overnight, [], nil}], now, utc) ==
+               @six_hours_ms
     end
   end
 

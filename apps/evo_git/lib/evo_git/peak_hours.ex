@@ -34,6 +34,16 @@ defmodule EvoGit.PeakHours do
     `peak_concurrency` (including the hard-pause `0`) never applies.
     `off_peak_days` **wins** over window `days` (precedence rule).
     Absent / `[]` → disabled.
+  - **Profile `off_peak_holidays`** (optional holiday-calendar id, e.g.
+    `"CN"`): selected through `validate_holidays/1` (the calendar vocabulary
+    lives in `EvoGit.PeakHours.Holidays`). On a date the calendar calls a
+    NON-WORKING day — a statutory public holiday, an ordinary weekend, or a
+    cancelled weekend `NOT` covered by a 调休 make-up workday — the profile is
+    off-peak the ENTIRE day, exactly like `off_peak_days`. A 调休 make-up
+    workday on a Saturday/Sunday is a WORKING day, so the day is NOT
+    off-peak and that Saturday's window (e.g. a `days = ["sat"]` window)
+    still applies. Absent / `""` / an unknown id → no calendar (disabled,
+    never raises).
   - **Window `days`** (optional key on each `peak_hours` window): the time
     window applies ONLY on the listed days; absent → every day (fully
     backward compatible). An overnight window's wrapped tail `[0, end)`
@@ -85,7 +95,19 @@ defmodule EvoGit.PeakHours do
   source of truth for peak-window parsing/validation: the config schema
   reuses `validate_windows/1` for TOML validation errors, and the peak-hour
   engine (owned separately) uses the runtime helpers.
+
+  ## Holidays
+
+  `off_peak_holidays` names a holiday calendar (`validate_holidays/1` accepts
+  it; the calendar data itself lives in `EvoGit.PeakHours.Holidays`). The
+  day-level rule is ONE predicate: a date is off-peak when its weekday is in
+  `off_peak_days` OR the selected calendar reports a non-working day
+  (`Holidays.non_working_day?/1`) — so statutory holidays suppress every
+  window while 调休 make-up workdays behave as ordinary working days. All
+  holiday math is date-based on the WALL-CLOCK date handed in by the caller.
   """
+
+  alias EvoGit.PeakHours.Holidays
 
   @typedoc "Minute of day: 0 (00:00) to 1439 (23:59)."
   @type minute :: 0..1439
@@ -109,6 +131,14 @@ defmodule EvoGit.PeakHours do
   @type windows :: [window()]
 
   @minutes_per_day 1440
+
+  # `next_transition/4` search horizon in days. Must comfortably exceed the
+  # longest published Chinese holiday block (9 consecutive days, e.g. 2027
+  # 春节 Feb 5–13) PLUS the gap until a scoped window re-applies (at most two
+  # days) PLUS the day before it during which `now` may sit — 21 days leaves
+  # ample margin for future longer blocks at negligible cost (this path runs
+  # at most once per peak-hour wakeup, never per request).
+  @horizon_days 21
 
   # All seven canonical day atoms, in `Date.day_of_week/1` order (Mon..Sun).
   @all_days [:mon, :tue, :wed, :thu, :fri, :sat, :sun]
@@ -260,6 +290,29 @@ defmodule EvoGit.PeakHours do
   def validate_days(other), do: {:error, {:invalid_days, other}}
 
   @doc """
+  Validates an optional holiday-calendar id (`off_peak_holidays`).
+
+  `nil` / `""` (absent/disabled) are always valid. An atom or a binary
+  naming a supported calendar — case-insensitive, surrounding whitespace
+  ignored (`:cn`, `"cn"`, `" CN "` all match `"CN"`) — is valid; the accepted
+  vocabulary is `EvoGit.PeakHours.Holidays.calendars/0`, so this function
+  never hardcodes a calendar name. Anything else (an unknown id, a list, a
+  number) returns `{:error, {:unknown_calendar, value}}` carrying the RAW
+  input, which the config schema turns into a descriptive message.
+
+  Total — never raises.
+  """
+  @spec validate_holidays(term()) :: :ok | {:error, {:unknown_calendar, term()}}
+  def validate_holidays(nil), do: :ok
+  def validate_holidays(""), do: :ok
+
+  def validate_holidays(value) when is_binary(value) or is_atom(value) do
+    if Holidays.known?(value), do: :ok, else: {:error, {:unknown_calendar, value}}
+  end
+
+  def validate_holidays(value), do: {:error, {:unknown_calendar, value}}
+
+  @doc """
   Parses a single peak-hour window map into canonical form.
 
   Accepts atom-keyed (`%{start: "09:00", end: "12:00"}`) and string-keyed
@@ -339,7 +392,7 @@ defmodule EvoGit.PeakHours do
   `validate_windows/1`; an empty list → false.
   """
   @spec in_peak?(windows(), NaiveDateTime.t()) :: boolean()
-  def in_peak?(windows, now), do: in_peak?(windows, now, [])
+  def in_peak?(windows, now), do: in_peak?(windows, now, [], nil)
 
   @doc """
   Day-aware variant of `in_peak?/2`.
@@ -359,15 +412,33 @@ defmodule EvoGit.PeakHours do
   off-peak day (the precedence rule cuts the whole window, tail included).
   """
   @spec in_peak?(windows(), NaiveDateTime.t(), [day()]) :: boolean()
-  def in_peak?(windows, %NaiveDateTime{} = now, off_peak_days)
-      when is_list(windows) and is_list(off_peak_days) do
-    dow = day_atom(now)
+  def in_peak?(windows, now, off_peak_days), do: in_peak?(windows, now, off_peak_days, nil)
 
-    if dow in off_peak_days do
-      false
-    else
-      t = minute_of_day(now)
-      Enum.any?(windows, fn w -> window_active_at?(w, dow, t, off_peak_days) end)
+  @doc """
+  Holiday-aware variant of `in_peak?/3`.
+
+  `off_peak_holidays` is an optional holiday-calendar id (`nil` / `""` /
+  an unknown id = no calendar, see `validate_holidays/1`). The day is
+  off-peak when `now`'s WALL-CLOCK date is in `off_peak_days` **or** the
+  selected calendar reports a non-working day for it
+  (`EvoGit.PeakHours.Holidays.non_working_day?/1` — statutory holiday,
+  ordinary weekend, or make-up-workday-aware). On such a day this returns
+  `false` for the ENTIRE day, so a statutory holiday or a weekend suppresses
+  every window exactly like an `off_peak_days` entry — including the wrapped
+  tail of an overnight window on the previous (or the holiday's own) day.
+
+  Because the predicate is evaluated PER DATE, a 调休 make-up workday that
+  falls on a Saturday/Sunday is a WORKING day: it is never off-peak and a
+  window whose `:days` include `:sat` still applies there.
+  """
+  @spec in_peak?(windows(), NaiveDateTime.t(), [day()], term()) :: boolean()
+  def in_peak?(windows, %NaiveDateTime{} = now, off_peak_days, off_peak_holidays)
+      when is_list(windows) and is_list(off_peak_days) do
+    rules = day_rules(off_peak_days, off_peak_holidays)
+
+    cond do
+      non_working?(NaiveDateTime.to_date(now), rules) -> false
+      true -> any_window_active?(windows, now, rules)
     end
   end
 
@@ -382,7 +453,7 @@ defmodule EvoGit.PeakHours do
   be the canonical form produced by `validate_windows/1`.
   """
   @spec next_transition(windows(), NaiveDateTime.t()) :: NaiveDateTime.t() | nil
-  def next_transition(windows, now), do: next_transition(windows, now, [])
+  def next_transition(windows, now), do: next_transition(windows, now, [], nil)
 
   @doc """
   Day-aware variant of `next_transition/2`.
@@ -407,23 +478,50 @@ defmodule EvoGit.PeakHours do
   `validate_windows/1`.
   """
   @spec next_transition(windows(), NaiveDateTime.t(), [day()]) :: NaiveDateTime.t() | nil
-  def next_transition([], _now, _off_peak_days), do: nil
+  def next_transition(windows, now, off_peak_days),
+    do: next_transition(windows, now, off_peak_days, nil)
 
-  def next_transition(windows, %NaiveDateTime{} = now, off_peak_days)
+  @doc """
+  Holiday-aware variant of `next_transition/3`.
+
+  `off_peak_holidays` is an optional holiday-calendar id (`nil` / `""` /
+  unknown = no calendar — see `validate_holidays/1`). A date the calendar
+  reports as a non-working day is off-peak for the ENTIRE day, so it
+  contributes no window boundaries — and, because the day-level predicate is
+  evaluated PER DATE, the midnight flips at both edges of a holiday block
+  (and of a 调休 make-up-workday weekend edge) are reported as real
+  transitions whenever the in-peak state actually changes across them.
+
+  Example: a weekday window at Thu 13:00 followed by a Fri–Tue holiday block
+  reports the next WORKING day's window start (Wed 09:00), never a
+  suppressed window start inside the block.
+
+  The search horizon is 21 days, comfortably beyond the longest published
+  Chinese holiday block (9 consecutive days, e.g. 2027 春节 Feb 5–13): a
+  weekday-scoped window first re-applies at most two days after such a block
+  ends, and `now` may sit one day before it. `nil` is returned only when
+  nothing can flip.
+  """
+  @spec next_transition(windows(), NaiveDateTime.t(), [day()], term()) ::
+          NaiveDateTime.t() | nil
+  def next_transition([], _now, _off_peak_days, _off_peak_holidays), do: nil
+
+  def next_transition(windows, %NaiveDateTime{} = now, off_peak_days, off_peak_holidays)
       when is_list(windows) and is_list(off_peak_days) do
     date = NaiveDateTime.to_date(now)
+    rules = day_rules(off_peak_days, off_peak_holidays)
 
     candidates =
-      Enum.flat_map(0..13, fn offset ->
+      Enum.flat_map(0..(@horizon_days - 1), fn offset ->
         date_d = Date.add(date, offset)
 
         window_candidates =
           Enum.flat_map(windows, fn w ->
-            window_day_candidates(w, date_d, now, offset, off_peak_days)
+            window_day_candidates(w, date_d, now, offset, rules)
           end)
 
         midnight_candidates =
-          if offset >= 1, do: midnight_candidates(windows, date_d, off_peak_days), else: []
+          if offset >= 1, do: midnight_candidates(windows, date_d, rules), else: []
 
         window_candidates ++ midnight_candidates
       end)
@@ -444,13 +542,15 @@ defmodule EvoGit.PeakHours do
 
   `profile` is a map with atom keys: `:concurrency` (normal/off-peak),
   optional `:peak_concurrency`, optional `:peak_hours`, optional
-  `:off_peak_days` (atom- or string-keyed). Returns `peak_concurrency`
+  `:off_peak_days` and optional `:off_peak_holidays` (all atom- or
+  string-keyed). Returns `peak_concurrency`
   when in peak and the field is present, else `concurrency`. `peak_hours`
   absent / empty / invalid → always `concurrency`. On an off-peak day
-  (`now`'s weekday in the profile's `off_peak_days`) the profile is
-  off-peak the ENTIRE day: `concurrency` applies 24/7 and every
+  (`now`'s weekday in the profile's `off_peak_days`, or its wall-clock date
+  a non-working day for the profile's `off_peak_holidays` calendar) the
+  profile is off-peak the ENTIRE day: `concurrency` applies 24/7 and every
   `peak_hours` window (and `peak_concurrency`, including the hard-pause
-  `0`) is suppressed — `off_peak_days` wins over window `days`
+  `0`) is suppressed — the day rule wins over window `days`
   (precedence rule). Also accepts already-canonical windows (integer
   `start`/`end`) in `:peak_hours` for callers that validated once.
   Returns `nil` when `:concurrency` is missing.
@@ -462,23 +562,24 @@ defmodule EvoGit.PeakHours do
         nil
 
       concurrency ->
-        if off_peak_day?(now, profile_off_peak_days(profile)) do
-          concurrency
-        else
-          case normalize_peak_hours(Map.get(profile, :peak_hours)) do
-            {:ok, windows} ->
-              if in_peak?(windows, now) do
-                case Map.get(profile, :peak_concurrency) do
-                  nil -> concurrency
-                  peak -> peak
-                end
-              else
-                concurrency
-              end
+        rules = day_rules(profile_off_peak_days(profile), profile_off_peak_holidays(profile))
 
-            {:error, _reason} ->
-              concurrency
-          end
+        cond do
+          non_working?(NaiveDateTime.to_date(now), rules) ->
+            concurrency
+
+          true ->
+            case normalize_peak_hours(Map.get(profile, :peak_hours)) do
+              {:ok, windows} ->
+                if any_window_active?(windows, now, rules) do
+                  Map.get(profile, :peak_concurrency) || concurrency
+                else
+                  concurrency
+                end
+
+              {:error, _reason} ->
+                concurrency
+            end
         end
     end
   end
@@ -578,18 +679,19 @@ defmodule EvoGit.PeakHours do
   # All strictly-future transition instants contributed by window `w` on
   # day `date_d` (`offset` = days after `now`'s date; used only to filter
   # offset-0 instants to strictly-after-`now` so a boundary that just
-  # flipped — or is exactly `now` — is not re-reported). On an off-peak day
-  # every window is suppressed (no in-day boundaries). Same-day windows
+  # flipped — or is exactly `now` — is not re-reported). On a non-working
+  # day (off-peak weekday OR a calendar non-working date) every window is
+  # suppressed (no in-day boundaries). Same-day windows
   # contribute start + end; overnight windows contribute their start on an
-  # applicable day and their wrapped tail's end on the FOLLOWING day.
-  defp window_day_candidates(w, date_d, now, offset, off_peak_days) do
+  # applicable day and their wrapped tail's end on the FOLLOWING day — the
+  # tail is cut when the previous date is itself non-working.
+  defp window_day_candidates(w, date_d, now, offset, rules) do
     %{start: s, end: e} = w
     dow = day_atom(date_d)
-    prev = prev_day_atom(dow)
 
     instants =
       cond do
-        dow in off_peak_days ->
+        non_working?(date_d, rules) ->
           []
 
         s < e ->
@@ -599,9 +701,10 @@ defmodule EvoGit.PeakHours do
           start_instant = if dow in window_days(w), do: [at(date_d, s)], else: []
 
           tail_exit =
-            if prev in window_days(w) and prev not in off_peak_days,
-              do: [at(date_d, e)],
-              else: []
+            if prev_day_atom(dow) in window_days(w) and
+                 not non_working?(Date.add(date_d, -1), rules),
+               do: [at(date_d, e)],
+               else: []
 
           start_instant ++ tail_exit
       end
@@ -617,43 +720,54 @@ defmodule EvoGit.PeakHours do
   # `date_d` (only meaningful for offsets >= 1): the midnight instant is a
   # real transition iff the in-peak state differs across it (a day where
   # any window applies ↔ a day where none applies; overnight windows are
-  # continuous across midnight; off-peak days are always out of peak).
-  defp midnight_candidates(windows, date_d, off_peak_days) do
-    if state_at_minute(windows, Date.add(date_d, -1), @minutes_per_day - 1, off_peak_days) !=
-         state_at_minute(windows, date_d, 0, off_peak_days) do
+  # continuous across midnight; non-working days are always out of peak).
+  # Because `state_at_minute/4` evaluates the day rule PER DATE, the edges
+  # of a holiday block — and of a 调休 make-up-workday weekend — flip here
+  # automatically.
+  defp midnight_candidates(windows, date_d, rules) do
+    if state_at_minute(windows, Date.add(date_d, -1), @minutes_per_day - 1, rules) !=
+         state_at_minute(windows, date_d, 0, rules) do
       [at(date_d, 0)]
     else
       []
     end
   end
 
-  # In-peak state at minute-of-day `m` on `date` (off-peak days are always
+  # In-peak state at minute-of-day `m` on `date` (non-working days are always
   # out of peak; window day scoping + overnight tails included).
-  defp state_at_minute(windows, date, m, off_peak_days) do
-    dow = day_atom(date)
-
-    if dow in off_peak_days do
+  defp state_at_minute(windows, date, m, rules) do
+    if non_working?(date, rules) do
       false
     else
-      Enum.any?(windows, fn w -> window_active_at?(w, dow, m, off_peak_days) end)
+      Enum.any?(windows, fn w -> window_active_at?(w, date, m, rules) end)
     end
   end
 
-  # True when minute-of-day `m` on weekday `dow` is inside window `w`:
-  # same-day windows need `dow` in `days(w)` and `[s, e)`; overnight
-  # windows are active on `[s, 1440)` when `dow` is applicable and on the
-  # wrapped tail `[0, e)` when the PREVIOUS day is applicable and was not
-  # off-peak.
-  defp window_active_at?(w, dow, m, off_peak_days) do
+  # True when minute-of-day `m` on `date` is inside window `w`: same-day
+  # windows need today's weekday in `days(w)` and `[s, e)`; overnight
+  # windows are active on `[s, 1440)` when today's weekday is applicable and
+  # on the wrapped tail `[0, e)` when the PREVIOUS day's weekday is
+  # applicable and that previous DATE is not non-working.
+  defp window_active_at?(w, date, m, rules) do
     %{start: s, end: e} = w
     days = window_days(w)
+    dow = day_atom(date)
 
     if s < e do
       dow in days and m >= s and m < e
     else
-      prev = prev_day_atom(dow)
-      (dow in days and m >= s) or (prev in days and prev not in off_peak_days and m < e)
+      (dow in days and m >= s) or
+        (prev_day_atom(dow) in days and not non_working?(Date.add(date, -1), rules) and m < e)
     end
+  end
+
+  # True when any window of `windows` is active at `now` on a working day.
+  # Shared by `in_peak?/4` and `effective_concurrency/2` so the two can
+  # never disagree.
+  defp any_window_active?(windows, %NaiveDateTime{} = now, rules) do
+    date = NaiveDateTime.to_date(now)
+    t = minute_of_day(now)
+    Enum.any?(windows, fn w -> window_active_at?(w, date, t, rules) end)
   end
 
   defp at(date, minute) do
@@ -752,7 +866,44 @@ defmodule EvoGit.PeakHours do
     end
   end
 
-  # True when `now`'s weekday is in the off-peak day list (precedence rule
-  # — the profile is off-peak the entire day).
-  defp off_peak_day?(now, off_peak_days), do: day_atom(now) in off_peak_days
+  # Profile's optional holiday-calendar id (atom- or string-keyed
+  # `:off_peak_holidays`); the raw value — `day_rules/2` canonicalizes it and
+  # degrades an unknown id to "no calendar".
+  defp profile_off_peak_holidays(profile) do
+    Map.get(profile, :off_peak_holidays) || Map.get(profile, "off_peak_holidays")
+  end
+
+  # The "day rules" context threaded through the runtime math: the profile's
+  # canonical off-peak weekday list plus the canonical holiday-calendar id
+  # (`nil` = none). ONE context so every day-level question goes through
+  # `non_working?/2`.
+  defp day_rules(off_peak_days, off_peak_holidays) do
+    %{days: off_peak_days, calendar: calendar_id(off_peak_holidays)}
+  end
+
+  # THE day-level predicate: a date is off-peak (non-working) when its
+  # weekday is in the profile's `off_peak_days` OR the selected holiday
+  # calendar reports a non-working day. `Holidays.non_working_day?/1` already
+  # applies the make-up-workday precedence (a 调休 Saturday is a WORKING day),
+  # so no weekday re-derivation is allowed here.
+  defp non_working?(%Date{} = date, %{days: days, calendar: calendar}) do
+    day_atom(date) in days or (calendar != nil and Holidays.non_working_day?(date))
+  end
+
+  # Canonical calendar id ("CN") for a raw value, or nil when absent / blank
+  # / unknown (degrade to no calendar — never raise; mirrors how invalid
+  # windows fall back to normal concurrency). The VOCABULARY lives in
+  # `Holidays.calendars/0`; this never hardcodes a calendar name.
+  defp calendar_id(nil), do: nil
+  defp calendar_id(""), do: nil
+
+  defp calendar_id(value) when is_atom(value) and not is_nil(value),
+    do: calendar_id(Atom.to_string(value))
+
+  defp calendar_id(value) when is_binary(value) do
+    normalized = value |> String.trim() |> String.upcase()
+    Enum.find(Holidays.calendars(), fn id -> String.upcase(id) == normalized end)
+  end
+
+  defp calendar_id(_value), do: nil
 end

@@ -45,20 +45,36 @@ defmodule EvoGit.PeakHourEngine do
   `peak_concurrency` — including the hard-pause `0` — never applies; the
   value floors to normal concurrency). Windows may also declare their own
   `days` key. The engine passes the profile's canonical off-peak day list
-  into `EvoGit.PeakHours.in_peak?/3` / `next_transition/3`, so day-of-week
+  into `EvoGit.PeakHours.in_peak?/4` / `next_transition/4`, so day-of-week
   is evaluated in each profile's own wall clock (see Timezones above).
+
+  ## Holiday calendars
+
+  Profiles may additionally declare `off_peak_holidays` (a holiday-calendar
+  id such as `"CN"`, validated by `EvoGit.PeakHours.validate_holidays/1`).
+  A date the calendar reports as a non-working day is off-peak the ENTIRE
+  day — exactly like an `off_peak_days` entry, so statutory holidays and
+  weekends suppress every window while a 调休 make-up workday stays a
+  working day. The engine does NOT re-implement any holiday logic: it reads
+  the raw profile key (`profile_off_peak_holidays/1`), carries it through
+  the wakeup-input shapes and the schedule map handed to
+  `PeakHours.effective_concurrency/2`, and `EvoGit.PeakHours` derives the
+  effective concurrency and the next transition (including the midnight
+  edges of a holiday block) itself.
 
   ## Wakeups
 
   After every check the engine schedules the next wakeup at the earliest
   in-peak state flip across all profiles' windows, computed in each profile's
-  own wall clock (`EvoGit.PeakHours.next_transition/3` — day-aware: window
+  own wall clock (`EvoGit.PeakHours.next_transition/4` — day-aware: window
   start/end minutes on applicable days, midnight day-boundary flips, and
-  off-peak-day suppression all count as transitions), plus a small epsilon
+  off-peak-day / holiday-calendar suppression all count as transitions), plus
+  a small epsilon
   so `now` is guaranteed to be past the boundary when the timer fires
   (windows are half-open). Profiles with NO windows never change effective —
   they contribute no transitions, and a profile whose only state change
-  would be a suppressed window on an off-peak day is naturally skipped by
+  would be a suppressed window on an off-peak day (or a non-working calendar
+  date) is naturally skipped by
   the day-aware transition math (no pointless mid-day wakeups). When no
   transition is computable it falls back to a 6-hour safety-net cap so
   config reloads are still picked up. A pending timer is always cancelled
@@ -150,7 +166,8 @@ defmodule EvoGit.PeakHourEngine do
   floor; every other value floors to `max(effective, default)`. The engine
   must NEVER send an unfloored map for NON-exempt values, or the scheduler
   would floor it and the engine would re-apply forever (fixed point). On a
-  profile's `off_peak_days` (canonical day-atom list) the profile is never in
+  profile's `off_peak_days` (canonical day-atom list) or on a date its
+  `off_peak_holidays` calendar calls non-working, the profile is never in
   peak — `peak_exempt?/3` returns false there, so the value is the normal
   (floored) concurrency and the explicit peak value never applies.
   """
@@ -209,11 +226,15 @@ defmodule EvoGit.PeakHourEngine do
   end
 
   @doc false
-  # Timezone-aware variant of `next_wakeup_ms/2`: takes `[{windows, tz}]`
-  # pairs or `[{windows, off_peak_days, tz}]` triples (`tz` = nil for
-  # local-clock profiles, `off_peak_days` = canonical day-atom list) plus
+  # Timezone-aware variant of `next_wakeup_ms/2`: takes
+  # `[{windows, off_peak_days, off_peak_holidays, tz}]` tuples, or the
+  # backward-compatible `[{windows, off_peak_days, tz}]` /
+  # `[{windows, tz}]` shapes (`tz` = nil for local-clock profiles,
+  # `off_peak_days` = canonical day-atom list, `off_peak_holidays` = a
+  # holiday-calendar id such as `"CN"` or nil) plus
   # both clocks, computes each profile's next transition in its OWN wall
-  # clock via the day-aware `PeakHours.next_transition/3`, and returns the
+  # clock via the day/holiday-aware `PeakHours.next_transition/4`, and
+  # returns the
   # earliest wakeup delay — epsilon and the 6h cap applied, mirroring
   # `next_wakeup_ms/2`. Empty-window pairs/triples contribute nothing (a
   # profile with no windows never changes effective).
@@ -226,7 +247,8 @@ defmodule EvoGit.PeakHourEngine do
   # profile's transition is skipped. No transitions at all → `@max_sleep_ms`.
   @spec next_wakeup_ms_for(
           [
-            {PeakHours.windows(), [PeakHours.day()], String.t() | nil}
+            {PeakHours.windows(), [PeakHours.day()], String.t() | nil, String.t() | nil}
+            | {PeakHours.windows(), [PeakHours.day()], String.t() | nil}
             | {PeakHours.windows(), String.t() | nil}
           ],
           NaiveDateTime.t(),
@@ -241,8 +263,8 @@ defmodule EvoGit.PeakHourEngine do
           nil ->
             []
 
-          {ws, off_days, tz} ->
-            transition_for(ws, off_days, tz, now, utc_now)
+          {ws, off_days, holidays, tz} ->
+            transition_for(ws, off_days, holidays, tz, now, utc_now)
         end
       end)
 
@@ -364,7 +386,10 @@ defmodule EvoGit.PeakHourEngine do
           Enum.flat_map(profiles, fn p ->
             case PeakHours.validate_windows(Map.get(p, :peak_hours) || Map.get(p, "peak_hours")) do
               {:ok, ws} when ws != [] ->
-                [{ws, profile_off_peak_days(p), profile_timezone(p)}]
+                [
+                  {ws, profile_off_peak_days(p), profile_off_peak_holidays(p),
+                   profile_timezone(p)}
+                ]
 
               _ ->
                 []
@@ -395,10 +420,16 @@ defmodule EvoGit.PeakHourEngine do
             id = Map.get(p, :id) || Map.get(p, "id", "default")
             tz = profile_timezone(p)
             off_days = profile_off_peak_days(p)
+            holidays = profile_off_peak_holidays(p)
 
             [
-              {id, tz, off_days, ws,
-               PeakHours.next_transition(ws, peak_wall_clock(p, now, utc_now), off_days)}
+              {id, tz, off_days, holidays, ws,
+               PeakHours.next_transition(
+                 ws,
+                 peak_wall_clock(p, now, utc_now),
+                 off_days,
+                 holidays
+               )}
             ]
 
           _ ->
@@ -449,6 +480,7 @@ defmodule EvoGit.PeakHourEngine do
           peak_concurrency: Map.get(p, :peak_concurrency) || Map.get(p, "peak_concurrency"),
           peak_hours: Map.get(p, :peak_hours) || Map.get(p, "peak_hours"),
           off_peak_days: Map.get(p, :off_peak_days) || Map.get(p, "off_peak_days"),
+          off_peak_holidays: profile_off_peak_holidays(p),
           timezone: profile_timezone(p)
         }
       end)
@@ -463,10 +495,13 @@ defmodule EvoGit.PeakHourEngine do
   defp effective_for_profile(p, now, utc_now) do
     # Canonical provider profiles are string-keyed; PeakHours' pure concurrency
     # helper consumes atom-keyed runtime fields. Never atomize arbitrary input.
+    # `off_peak_holidays` is read through its own tolerant reader so an unknown
+    # calendar id degrades to "no calendar" instead of reaching the math raw.
     schedule =
-      Map.new([:concurrency, :peak_concurrency, :peak_hours, :off_peak_days], fn key ->
-        {key, Map.get(p, key, Map.get(p, Atom.to_string(key)))}
-      end)
+      Map.new(
+        [:concurrency, :peak_concurrency, :peak_hours, :off_peak_days, :off_peak_holidays],
+        fn key -> {key, profile_field(p, key)} end
+      )
 
     case profile_timezone(p) do
       nil ->
@@ -498,8 +533,9 @@ defmodule EvoGit.PeakHourEngine do
   # True iff the profile declares an explicit `peak_concurrency` (a
   # non-negative integer; atom- or string-keyed like `profile_timezone/1`)
   # AND is CURRENTLY inside one of its validated `peak_hours` windows (day-
-  # aware via the profile's `off_peak_days` — on an off-peak day the profile
-  # is NEVER in peak, so the explicit peak value never applies and the value
+  # aware via the profile's `off_peak_days` AND its `off_peak_holidays`
+  # calendar — on an off-peak / non-working day the profile is NEVER in peak,
+  # so the explicit peak value never applies and the value
   # floors to normal concurrency). An explicit in-peak peak value — including
   # the hard-pause 0 — is an intentional per-model user configuration and
   # wins over the global default floor; everything else (off-peak profiles,
@@ -510,7 +546,12 @@ defmodule EvoGit.PeakHourEngine do
          {:ok, ws} <-
            PeakHours.validate_windows(Map.get(p, :peak_hours) || Map.get(p, "peak_hours")),
          ws when ws != [] <- ws do
-      PeakHours.in_peak?(ws, peak_wall_clock(p, now, utc_now), profile_off_peak_days(p))
+      PeakHours.in_peak?(
+        ws,
+        peak_wall_clock(p, now, utc_now),
+        profile_off_peak_days(p),
+        profile_off_peak_holidays(p)
+      )
     else
       _ -> false
     end
@@ -567,6 +608,26 @@ defmodule EvoGit.PeakHourEngine do
     end
   end
 
+  # Returns the profile's holiday-calendar id (atom- or string-keyed
+  # `off_peak_holidays`, mirroring `profile_timezone/1`), or nil when absent /
+  # blank / unknown. `PeakHours.validate_holidays/1` is the single
+  # validation path, so an unknown id degrades to "no calendar" and never
+  # reaches the pure math raw (which would ignore it anyway).
+  defp profile_off_peak_holidays(p) do
+    raw = Map.get(p, :off_peak_holidays) || Map.get(p, "off_peak_holidays")
+
+    case PeakHours.validate_holidays(raw) do
+      :ok when raw in [nil, ""] -> nil
+      :ok -> raw
+      {:error, _reason} -> nil
+    end
+  end
+
+  # One field off an atom- or string-keyed profile map; `off_peak_holidays`
+  # goes through its tolerant reader.
+  defp profile_field(p, :off_peak_holidays), do: profile_off_peak_holidays(p)
+  defp profile_field(p, key), do: Map.get(p, key, Map.get(p, Atom.to_string(key)))
+
   # Resolves the wall clock for a tz profile from the utc seam, falling back
   # to the local `now` on any resolution error.
   defp wall_clock_for(tz, now, utc_now) do
@@ -590,39 +651,48 @@ defmodule EvoGit.PeakHourEngine do
     end
   end
 
-  # Normalizes one wakeup-math input pair into `{windows, off_peak_days, tz}`
-  # for `transition_for/5`: 3-tuples pass through, 2-tuples (backward-compat
-  # `{windows, tz}` shape) get an empty off-peak-day list. Empty window lists
+  # Normalizes one wakeup-math input into
+  # `{windows, off_peak_days, off_peak_holidays, tz}` for `transition_for/6`:
+  # 4-tuples pass through, 3-tuples (backward-compat `{windows, off_days, tz}`)
+  # and 2-tuples (`{windows, tz}`) gain the missing off-peak / holiday
+  # defaults. Empty window lists
   # contribute nothing — a profile with no windows never changes effective —
   # and normalize to nil (skipped by `next_wakeup_ms_for/3`).
+  defp normalize_wakeup_pair({[], _off_days, _holidays, _tz}), do: nil
   defp normalize_wakeup_pair({[], _off_days, _tz}), do: nil
   defp normalize_wakeup_pair({[], _tz}), do: nil
 
-  defp normalize_wakeup_pair({ws, off_days, tz}) when is_list(ws) and is_list(off_days),
-    do: {ws, off_days, tz}
+  defp normalize_wakeup_pair({ws, off_days, holidays, tz})
+       when is_list(ws) and is_list(off_days),
+       do: {ws, off_days, holidays, tz}
 
-  defp normalize_wakeup_pair({ws, tz}) when is_list(ws), do: {ws, [], tz}
+  defp normalize_wakeup_pair({ws, off_days, tz}) when is_list(ws) and is_list(off_days),
+    do: {ws, off_days, nil, tz}
+
+  defp normalize_wakeup_pair({ws, tz}) when is_list(ws), do: {ws, [], nil, tz}
 
   # Computes the millisecond delay until a profile's next in-peak transition
   # (or `[]` when none is computable — the caller's min is skipped). Non-tz
-  # profiles compute the day-aware transition directly on the local wall clock
+  # profiles compute the day/holiday-aware transition directly on the local
+  # wall clock
   # `now`; tz profiles resolve their wall clock from `utc_now` (falling back
   # to `now` on resolution errors via `wall_clock_for/3`) and convert the
   # wall transition to a UTC delay via `tz_transition_delay_ms/3` (nil →
-  # skipped). Off-peak-day suppression and day-scoped window skipping are
-  # handled inside `PeakHours.next_transition/3`, so a suppressed window's
+  # skipped). Off-peak-day and holiday-calendar suppression plus day-scoped
+  # window skipping are handled inside `PeakHours.next_transition/4`, so a
+  # suppressed window's
   # start on an off-peak day never schedules a pointless mid-day wakeup.
-  defp transition_for(ws, off_days, nil, now, _utc_now) do
-    case PeakHours.next_transition(ws, now, off_days) do
+  defp transition_for(ws, off_days, holidays, nil, now, _utc_now) do
+    case PeakHours.next_transition(ws, now, off_days, holidays) do
       nil -> []
       transition -> [max(NaiveDateTime.diff(transition, now, :millisecond), 0)]
     end
   end
 
-  defp transition_for(ws, off_days, tz, now, utc_now) do
+  defp transition_for(ws, off_days, holidays, tz, now, utc_now) do
     {:ok, wall} = wall_clock_for(tz, now, utc_now)
 
-    case PeakHours.next_transition(ws, wall, off_days) do
+    case PeakHours.next_transition(ws, wall, off_days, holidays) do
       nil ->
         []
 

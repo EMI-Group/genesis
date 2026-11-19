@@ -919,4 +919,265 @@ defmodule EvoGit.PeakHoursTest do
       assert {:error, {:invalid_format, _}} = PeakHours.parse_window(%{start: "09:00", end: 720})
     end
   end
+
+  describe "validate_holidays/1" do
+    test "accepts absent/blank and every supported calendar (case/whitespace tolerant)" do
+      assert PeakHours.validate_holidays(nil) == :ok
+      assert PeakHours.validate_holidays("") == :ok
+      assert PeakHours.validate_holidays("CN") == :ok
+      assert PeakHours.validate_holidays("cn") == :ok
+      assert PeakHours.validate_holidays(" Cn ") == :ok
+      assert PeakHours.validate_holidays(:cn) == :ok
+      assert PeakHours.validate_holidays(:CN) == :ok
+    end
+
+    test "delegates the vocabulary to Holidays (no hardcoded calendar here)" do
+      assert [_ | _] = EvoGit.PeakHours.Holidays.calendars()
+
+      Enum.each(EvoGit.PeakHours.Holidays.calendars(), fn cal ->
+        assert PeakHours.validate_holidays(cal) == :ok
+      end)
+    end
+
+    test "rejects an unknown calendar with the RAW value (the schema message source)" do
+      assert PeakHours.validate_holidays("US") == {:error, {:unknown_calendar, "US"}}
+      assert PeakHours.validate_holidays("XX") == {:error, {:unknown_calendar, "XX"}}
+      assert PeakHours.validate_holidays(:us) == {:error, {:unknown_calendar, :us}}
+      assert PeakHours.validate_holidays(123) == {:error, {:unknown_calendar, 123}}
+      assert PeakHours.validate_holidays(["CN"]) == {:error, {:unknown_calendar, ["CN"]}}
+      assert PeakHours.validate_holidays(true) == {:error, {:unknown_calendar, true}}
+    end
+  end
+
+  describe "in_peak?/4 (holiday-aware)" do
+    # 09:00-12:00, every day.
+    @cn_morning [%{start: 540, end: 720}]
+    # 22:00-08:00 overnight.
+    @cn_overnight [%{start: 1320, end: 480}]
+    test "a statutory CN holiday on a weekday suppresses the whole day" do
+      # Thu 2026-10-01 = 国庆节 (a working weekday by the calendar otherwise).
+      assert PeakHours.in_peak?(@cn_morning, ~N[2026-10-01 10:00:00], [], "CN") == false
+      # Same weekday one week later is an ordinary working day → in peak.
+      assert PeakHours.in_peak?(@cn_morning, ~N[2026-10-08 10:00:00], [], "CN") == true
+      # Without a calendar both days are in peak (backward compat).
+      assert PeakHours.in_peak?(@cn_morning, ~N[2026-10-01 10:00:00], []) == true
+    end
+
+    test "an ordinary weekend is off-peak through the calendar alone" do
+      # Sat 2026-03-21 — a plain weekend, no off_peak_days configured.
+      assert PeakHours.in_peak?(@cn_morning, ~N[2026-03-21 10:00:00], [], "CN") == false
+      # Mon 2026-03-23 → back in peak.
+      assert PeakHours.in_peak?(@cn_morning, ~N[2026-03-23 10:00:00], [], "CN") == true
+    end
+
+    test "a 调休 make-up workday on a Saturday is a WORKING day" do
+      # Sat 2026-02-14 is a make-up workday (补班) → a `days = ["sat"]` window
+      # still applies; a plain Saturday does not.
+      windows = [%{start: 540, end: 720, days: [:sat]}]
+      assert PeakHours.in_peak?(windows, ~N[2026-02-14 10:00:00], [], "CN") == true
+      assert PeakHours.in_peak?(windows, ~N[2026-03-21 10:00:00], [], "CN") == false
+    end
+
+    test "an overnight window's wrapped tail is cut on a holiday's own day" do
+      # Thu 2026-10-01 01:00 — the tail of Wed's overnight window — is
+      # suppressed because the DAY is non-working.
+      assert PeakHours.in_peak?(@cn_overnight, ~N[2026-10-01 01:00:00], [], "CN") == false
+      assert PeakHours.in_peak?(@cn_overnight, ~N[2026-10-01 01:00:00], []) == true
+      # Wed 2026-09-30 23:00 (working day) is still in peak.
+      assert PeakHours.in_peak?(@cn_overnight, ~N[2026-09-30 23:00:00], [], "CN") == true
+    end
+
+    test "an unknown calendar degrades to absent (never raises)" do
+      assert PeakHours.in_peak?(@cn_morning, ~N[2026-10-01 10:00:00], [], "XX") == true
+      assert PeakHours.in_peak?(@cn_morning, ~N[2026-10-01 10:00:00], [], nil) == true
+      assert PeakHours.in_peak?(@cn_morning, ~N[2026-10-01 10:00:00], [], :cn) == false
+    end
+  end
+
+  describe "next_transition/4 (holiday-aware)" do
+    # 09:00-12:00 on weekdays only (the realistic provider schedule).
+    @cn_weekday_window [
+      %{start: 540, end: 720, days: [:mon, :tue, :wed, :thu, :fri]}
+    ]
+    test "a windowed weekday followed by a holiday block reports the first working window start" do
+      # Thu 2026-04-30 13:00 → Fri 2026-05-01 (劳动节) through Tue 2026-05-05
+      # are non-working, so the next boundary is Wed 2026-05-06 09:00.
+      now = ~N[2026-04-30 13:00:00]
+
+      assert PeakHours.next_transition(@cn_weekday_window, now, [], "CN") ==
+               ~N[2026-05-06 09:00:00]
+
+      # The reported instant IS a state flip.
+      assert PeakHours.in_peak?(@cn_weekday_window, ~N[2026-05-06 08:59:59], [], "CN") == false
+      assert PeakHours.in_peak?(@cn_weekday_window, ~N[2026-05-06 09:00:00], [], "CN") == true
+
+      # Without the calendar the next boundary is the (suppressed) Friday one.
+      assert PeakHours.next_transition(@cn_weekday_window, now, [], nil) ==
+               ~N[2026-05-01 09:00:00]
+    end
+
+    test "a holiday mid-window: the next boundary is the first working window start" do
+      # Thu 2026-10-01 10:00 is INSIDE the window but the day is a holiday.
+      assert PeakHours.next_transition(
+               [%{start: 540, end: 720}],
+               ~N[2026-10-01 10:00:00],
+               [],
+               "CN"
+             ) ==
+               ~N[2026-10-08 09:00:00]
+    end
+
+    test "the midnight edge INTO a holiday block is a real transition" do
+      # Thu 2026-04-30 23:00 is in peak (overnight window); Fri 2026-05-01
+      # 00:00 is a holiday → state flips exactly at midnight.
+      now = ~N[2026-04-30 23:00:00]
+      assert PeakHours.next_transition(@cn_overnight, now, [], "CN") == ~N[2026-05-01 00:00:00]
+      assert PeakHours.in_peak?(@cn_overnight, ~N[2026-04-30 23:59:59], [], "CN") == true
+      assert PeakHours.in_peak?(@cn_overnight, ~N[2026-05-01 00:00:00], [], "CN") == false
+    end
+
+    test "the midnight edge OUT of a holiday block is a real transition" do
+      # 00:00-06:00 window: Wed 2026-10-07 is a holiday, Thu 2026-10-08 is a
+      # working day → the window starts flipping in exactly at Oct 8 00:00.
+      early = [%{start: 0, end: 360}]
+      now = ~N[2026-10-06 23:00:00]
+      assert PeakHours.next_transition(early, now, [], "CN") == ~N[2026-10-08 00:00:00]
+      assert PeakHours.in_peak?(early, ~N[2026-10-07 23:59:59], [], "CN") == false
+      assert PeakHours.in_peak?(early, ~N[2026-10-08 00:00:00], [], "CN") == true
+    end
+
+    test "the weekend edge (calendar alone, no off_peak_days)" do
+      # Fri 2026-03-20 13:00 → Sat/Sun are non-working → Mon 2026-03-23 09:00.
+      windows = [%{start: 540, end: 720}]
+
+      assert PeakHours.next_transition(windows, ~N[2026-03-20 13:00:00], [], "CN") ==
+               ~N[2026-03-23 09:00:00]
+
+      assert PeakHours.in_peak?(windows, ~N[2026-03-20 18:00:00], [], "CN") == false
+      assert PeakHours.in_peak?(windows, ~N[2026-03-23 09:00:00], [], "CN") == true
+    end
+
+    test "a make-up-workday Saturday is a real boundary, an ordinary Saturday is skipped" do
+      windows = [%{start: 540, end: 720, days: [:sat]}]
+      # Fri 2026-02-13 → Sat 2026-02-14 is a 补班 make-up workday → 09:00.
+      assert PeakHours.next_transition(windows, ~N[2026-02-13 13:00:00], [], "CN") ==
+               ~N[2026-02-14 09:00:00]
+
+      # Fri 2026-02-20 → Sat 2026-02-21 is an ordinary weekend (suppressed);
+      # the next boundary is the make-up Saturday 2026-02-28 09:00.
+      assert PeakHours.next_transition(windows, ~N[2026-02-20 13:00:00], [], "CN") ==
+               ~N[2026-02-28 09:00:00]
+    end
+
+    test "the search horizon reaches past the longest published holiday block" do
+      # 2027 春节 runs Fri 2027-02-05 .. Sat 2027-02-13 (9 consecutive days);
+      # 2027-02-14 is a make-up working Sunday, so the weekday window
+      # re-applies Mon 2027-02-15 09:00 — 11 days after Thu 2027-02-04.
+      assert PeakHours.next_transition(@cn_weekday_window, ~N[2027-02-04 13:00:00], [], "CN") ==
+               ~N[2027-02-15 09:00:00]
+
+      assert PeakHours.in_peak?(@cn_weekday_window, ~N[2027-02-15 09:00:00], [], "CN") == true
+    end
+
+    test "nil when nothing can flip (every day off-peak)" do
+      all_days = [:mon, :tue, :wed, :thu, :fri, :sat, :sun]
+
+      assert PeakHours.next_transition(
+               [%{start: 540, end: 720}],
+               ~N[2026-10-01 10:00:00],
+               all_days,
+               "CN"
+             ) == nil
+    end
+  end
+
+  describe "effective_concurrency with off_peak_holidays (CN calendar)" do
+    @cn_profile %{
+      concurrency: 4,
+      peak_concurrency: 2,
+      peak_hours: [%{start: "09:00", end: "12:00"}],
+      off_peak_holidays: "CN"
+    }
+    test "a statutory CN holiday on a weekday → normal concurrency all day" do
+      # Thu 2026-10-01 (国庆节) 10:00, inside the window.
+      assert PeakHours.effective_concurrency(@cn_profile, ~N[2026-10-01 10:00:00]) == 4
+      # The hard-pause 0 is cut too.
+      profile = %{@cn_profile | peak_concurrency: 0}
+      assert PeakHours.effective_concurrency(profile, ~N[2026-10-01 10:00:00]) == 4
+    end
+
+    test "an ordinary Saturday → normal concurrency" do
+      assert PeakHours.effective_concurrency(@cn_profile, ~N[2026-03-21 10:00:00]) == 4
+    end
+
+    test "a 调休 make-up-workday Saturday is a WORKING day (peak windows apply)" do
+      profile = %{
+        @cn_profile
+        | peak_hours: [%{start: "09:00", end: "12:00", days: ["sat"]}]
+      }
+
+      # Sat 2026-02-14 is a make-up workday → in peak → peak_concurrency.
+      assert PeakHours.effective_concurrency(profile, ~N[2026-02-14 10:00:00]) == 2
+      # An ordinary Saturday is off-peak the entire day.
+      assert PeakHours.effective_concurrency(profile, ~N[2026-03-21 10:00:00]) == 4
+    end
+
+    test "a plain working weekday inside a window → peak_concurrency" do
+      # Thu 2026-10-08 is an ordinary working day.
+      assert PeakHours.effective_concurrency(@cn_profile, ~N[2026-10-08 10:00:00]) == 2
+    end
+
+    test "an unknown calendar degrades exactly like an absent one (never raises)" do
+      profile = %{@cn_profile | off_peak_holidays: "XX"}
+      assert PeakHours.effective_concurrency(profile, ~N[2026-10-01 10:00:00]) == 2
+      assert PeakHours.effective_concurrency(profile, ~N[2026-10-08 10:00:00]) == 2
+      absent = Map.delete(@cn_profile, :off_peak_holidays)
+      assert PeakHours.effective_concurrency(absent, ~N[2026-10-01 10:00:00]) == 2
+
+      assert PeakHours.effective_concurrency(
+               %{@cn_profile | off_peak_holidays: nil},
+               ~N[2026-10-01 10:00:00]
+             ) == 2
+    end
+
+    test "string-keyed off_peak_holidays is tolerated" do
+      profile = %{
+        "off_peak_holidays" => "CN",
+        concurrency: 4,
+        peak_concurrency: 2,
+        peak_hours: [%{start: "09:00", end: "12:00"}]
+      }
+
+      assert PeakHours.effective_concurrency(profile, ~N[2026-10-01 10:00:00]) == 4
+      assert PeakHours.effective_concurrency(profile, ~N[2026-10-08 10:00:00]) == 2
+    end
+
+    test "the tz-aware /3 path crosses the holiday in the profile's timezone" do
+      profile = %{
+        concurrency: 4,
+        peak_concurrency: 2,
+        peak_hours: [%{start: "22:00", end: "08:00"}],
+        off_peak_holidays: "CN",
+        timezone: "Asia/Shanghai"
+      }
+
+      # 2026-09-30 15:00Z = Wed 23:00 Shanghai (working) → in peak → 2.
+      assert PeakHours.effective_concurrency(profile, ~U[2026-09-30 15:00:00Z], "Asia/Shanghai") ==
+               2
+
+      # 2026-09-30 17:00Z = Thu 01:00 Shanghai on 2026-10-01 (国庆节) → the
+      # holiday date itself drives the result → 4 (the tail is cut).
+      assert PeakHours.effective_concurrency(profile, ~U[2026-09-30 17:00:00Z], "Asia/Shanghai") ==
+               4
+
+      # The same instant WITHOUT the calendar stays in the wrapped tail → 2.
+      no_calendar = Map.delete(profile, :off_peak_holidays)
+
+      assert PeakHours.effective_concurrency(
+               no_calendar,
+               ~U[2026-09-30 17:00:00Z],
+               "Asia/Shanghai"
+             ) == 2
+    end
+  end
 end
