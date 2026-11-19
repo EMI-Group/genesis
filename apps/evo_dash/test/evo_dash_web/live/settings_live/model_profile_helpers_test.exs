@@ -153,11 +153,19 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
                 "1" => %{"start" => "", "end" => ""}
               }
             },
-            %{"peak_concurrency" => "", "timezone" => "  ", "off_peak_days" => []}
+            %{"peak_concurrency" => "", "timezone" => "  ", "off_peak_days" => []},
+            %{"off_peak_holidays" => "   "},
+            %{"off_peak_holidays" => nil}
           ] do
         profile = profile_for(patch)
 
-        for key <- [:peak_concurrency, :peak_hours, :timezone, :off_peak_days] do
+        for key <- [
+              :peak_concurrency,
+              :peak_hours,
+              :timezone,
+              :off_peak_days,
+              :off_peak_holidays
+            ] do
           refute Map.has_key?(profile, key), "#{key} must stay absent for #{inspect(patch)}"
         end
       end
@@ -334,6 +342,26 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
 
       assert {:ok, %{off_peak_days: ["mon"]}} =
                ModelProfileHelpers.parse_peak_fields(%{"off_peak_days" => "mon"})
+    end
+
+    test "off_peak_holidays accepts a supported calendar id and rejects anything else" do
+      assert profile_for(%{"off_peak_holidays" => "CN"}).off_peak_holidays == "CN"
+      # Trimmed + matched case-insensitively against the core vocabulary, stored
+      # in the canonical `EvoGit.PeakHours.Holidays.calendars/0` spelling.
+      assert profile_for(%{"off_peak_holidays" => " cn "}).off_peak_holidays == "CN"
+      # parse_peak_fields/1 exposes the same acceptance directly.
+      assert {:ok, %{off_peak_holidays: "CN"}} =
+               ModelProfileHelpers.parse_peak_fields(%{"off_peak_holidays" => "CN"})
+
+      assert {:ok, %{}} = ModelProfileHelpers.parse_peak_fields(%{"off_peak_holidays" => ""})
+      assert {:ok, %{}} = ModelProfileHelpers.parse_peak_fields(%{"off_peak_holidays" => nil})
+
+      for bad <- ["XX", "CN-2", "china", 42, ["CN"]] do
+        assert {:error, "off_peak_holidays_invalid"} =
+                 ModelProfileHelpers.parse_peak_fields(%{"off_peak_holidays" => bad})
+
+        assert error_for(%{"off_peak_holidays" => bad}) == "off_peak_holidays_invalid"
+      end
     end
 
     test "normalize_days/1 is total across every input shape" do
