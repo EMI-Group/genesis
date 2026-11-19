@@ -51,7 +51,14 @@
         <% end %>
         <!-- Agent Tree View -->
         <div class="agents-tree-panel card bg-base-100 border border-base-300 rounded-lg">
-          <div class="card-body p-4">
+          <%!-- Mode hook for the CSS flex chain: in commits mode the card body must
+               fill the panel so the commit list is the ONE bounded scroller
+               (`#cg-scroll`, whose `position: sticky` lane header resolves against
+               it). The tree view keeps the plain body class. --%>
+          <div class={[
+            "card-body p-4",
+            @left_view == :commits && "agents-tree-body-commits"
+          ]}>
             <div class="flex flex-wrap items-center gap-2 mb-3">
               <.icon name="hero-squares-2x2" class="size-5 shrink-0" />
               <div class="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-base-200/60 border border-base-300">

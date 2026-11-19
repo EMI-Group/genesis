@@ -145,19 +145,25 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph.Interleave do
   the agent meta and takes LANE `owner_index + shift`; a nil owner is UNOWNED
   — the NEUTRAL lane 0, never shifted (the shift moves the AGENT lanes right
   to free lane 0 for exactly these nodes). Then one global sort ascending by
-  `{layer, date_unix, sha}` (a missing date counts as 0) numbers the rows
-  `0 .. n - 1`, every row unique — so `row_count == node_count`, parents sit
-  strictly above children and a fork point sits above the child's first row.
+  `{layer, date_unix, sort_sha}` (a missing date counts as 0, and `sort_sha`
+  is the entry's `:sort_sha` when present — a gap node sorts into its folded
+  run head's slot — else its `:sha`) numbers the rows `0 .. n - 1`, every row
+  unique — so `row_count == node_count`, parents sit strictly above children
+  and a fork point sits above the child's first row.
   """
   @spec layout([map()], [{term(), non_neg_integer()}], non_neg_integer()) :: [map()]
   def layout(entries, meta, shift) do
     entries
     |> List.wrap()
     |> Enum.map(&position(&1, meta, shift))
-    |> Enum.sort_by(&{&1.layer, &1.date_unix, &1.sha})
+    |> Enum.sort_by(&{&1.layer, &1.date_unix, sort_sha(&1)})
     |> Enum.with_index()
     |> Enum.map(fn {entry, row} -> node_view(entry, row) end)
   end
+
+  # A fold gap node carries `sort_sha` (its run head's sha) so it occupies the
+  # run's original slot; every other entry sorts by its own sha.
+  defp sort_sha(entry), do: Map.get(entry, :sort_sha) || Map.get(entry, :sha)
 
   defp position(entry, meta, shift) do
     case Map.get(entry, :owner_index) do
@@ -186,8 +192,12 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph.Interleave do
     end
   end
 
+  # Every node shares ONE key set except the synthesized fold gap
+  # (`kind: :gap`), which additionally carries its `fold_key`, the number of
+  # commits it hides and whether that run is currently expanded — the three
+  # keys the renderer's collapse control needs.
   defp node_view(entry, row) do
-    %{
+    base = %{
       sha: entry.sha,
       short_sha: entry.short_sha,
       message: entry.message,
@@ -201,6 +211,19 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph.Interleave do
       owner_id: entry.owner_id,
       start_ids: entry.start_ids,
       end_ids: entry.end_ids
+    }
+
+    case entry.kind do
+      :gap -> Map.merge(base, gap_keys(entry))
+      _ -> base
+    end
+  end
+
+  defp gap_keys(entry) do
+    %{
+      fold_key: Map.get(entry, :fold_key),
+      hidden_count: Map.get(entry, :hidden_count, 0),
+      expanded: Map.get(entry, :expanded) == true
     }
   end
 end

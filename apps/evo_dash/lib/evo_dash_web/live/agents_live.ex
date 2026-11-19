@@ -160,6 +160,13 @@ defmodule EvoDashWeb.AgentsLive do
         # skip BOTH the rebuild and the git-RPC refetch. Per-node like the
         # other commit-graph data.
         commit_graph_fingerprint: nil,
+        # COMMIT-HISTORY FOLD (collapse/expand) state: the set of fold keys the
+        # user has EXPANDED (a MapSet of binaries; empty = the fully collapsed
+        # default). Per-NODE view state — reset on a node switch together with
+        # the rest of the commit-graph data (fold keys name that node's commits)
+        # — but NOT a preference like @left_view, so it is threaded into EVERY
+        # CommitGraph.build/3 call and therefore survives push refreshes.
+        commit_fold_expanded: MapSet.new(),
         # In-session RETENTION of ended agents: agent_id => the agent's last
         # known map with `ended: true`. The core DELETES an agent's ETS rows (and
         # its evogit-agent-* branch) when it is recycled, so a finished agent        # would otherwise vanish from the commit-history view and take its lane
@@ -246,6 +253,9 @@ defmodule EvoDashWeb.AgentsLive do
           commit_graph_fingerprint: nil,
           commit_graph_fetched_at: nil,
           commit_graph_tick_scheduled: false,
+          # Fold (collapse/expand) state names THIS node's commit groups, so it
+          # is per-node view state and returns to the collapsed default.
+          commit_fold_expanded: MapSet.new(),
           # Retained ended agents are per-node too (agent ids are per-node).
           retained_agents: %{}
         )
@@ -540,7 +550,8 @@ defmodule EvoDashWeb.AgentsLive do
 
           {:noreply,
            assign(socket,
-             commit_graph: CommitGraph.build(raw_by_repo, agents),
+             commit_graph:
+               CommitGraph.build(raw_by_repo, agents, socket.assigns.commit_fold_expanded),
              commit_graph_raw: raw_by_repo,
              commit_graph_loaded: true,
              commit_graph_loading: false,
@@ -617,6 +628,59 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   def handle_event("switch_left_view", _params, socket), do: {:noreply, socket}
+
+  @impl true
+  # Commit-history FOLD (collapse/expand). The raw commit data is ALREADY in
+  # @commit_graph_raw, so a fold change only re-runs the pure view-model
+  # assembly in this process — no git RPC, no fetch spawn, no throttle/tick and
+  # no fingerprint consultation. The fold key is whitelisted by shape only (a
+  # binary straight from the rendered gap row — never atomized).
+  def handle_event("toggle_commit_fold", %{"fold-key" => key}, socket) when is_binary(key) do
+    if commit_folds_active?(socket) do
+      expanded = socket.assigns.commit_fold_expanded
+
+      expanded =
+        if MapSet.member?(expanded, key),
+          do: MapSet.delete(expanded, key),
+          else: MapSet.put(expanded, key)
+
+      {:noreply,
+       socket |> assign(:commit_fold_expanded, expanded) |> rebuild_commit_graph_folds()}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Odd params (non-binary / missing key) are a no-op.
+  def handle_event("toggle_commit_fold", _params, socket), do: {:noreply, socket}
+
+  @impl true
+  # Expands EVERY fold of the current raw data. `fold_keys/2` is the builder's
+  # single source of the fold inventory, so the page never guesses key shapes.
+  def handle_event("expand_all_commit_folds", _params, socket) do
+    if commit_folds_active?(socket) do
+      expanded =
+        MapSet.union(
+          socket.assigns.commit_fold_expanded,
+          CommitGraph.fold_keys(socket.assigns.commit_graph_raw, commit_graph_agents(socket))
+        )
+
+      {:noreply,
+       socket |> assign(:commit_fold_expanded, expanded) |> rebuild_commit_graph_folds()}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("collapse_all_commit_folds", _params, socket) do
+    if commit_folds_active?(socket) do
+      {:noreply,
+       socket |> assign(:commit_fold_expanded, MapSet.new()) |> rebuild_commit_graph_folds()}
+    else
+      {:noreply, socket}
+    end
+  end
 
   @impl true
   def handle_event("retry_inspector_stream", _params, socket) do
@@ -1238,12 +1302,44 @@ defmodule EvoDashWeb.AgentsLive do
   # so the overlay (progress paths, ring positions) tracks agents without a
   # git RPC. A no-op before the first successful fetch. `fingerprint` (nil on
   # the bypass paths) is stored so the NEXT fingerprint-gated call compares
-  # against what was actually built.
+  # against what was actually built. The user's fold (collapse/expand) set is
+  # threaded through, so a refresh never resets the fold state.
   defp rebuild_commit_graph(socket, agents, fingerprint) do
     if socket.assigns.commit_graph_loaded do
       assign(socket,
-        commit_graph: CommitGraph.build(socket.assigns.commit_graph_raw, agents),
+        commit_graph:
+          CommitGraph.build(
+            socket.assigns.commit_graph_raw,
+            agents,
+            socket.assigns.commit_fold_expanded
+          ),
         commit_graph_fingerprint: fingerprint || CommitGraphRefresh.fingerprint(agents)
+      )
+    else
+      socket
+    end
+  end
+
+  # Fold events are inert unless the commits view is the ACTIVE view over an
+  # already-fetched graph: there are no gap rows to click and nothing to
+  # re-fold — and critically, they must never start a fetch of their own.
+  defp commit_folds_active?(socket) do
+    socket.assigns.left_view == :commits and socket.assigns.commit_graph_loaded
+  end
+
+  # Rebuilds @commit_graph in place for a FOLD (collapse/expand) change — the
+  # raw commit data is already in memory, so this is pure view-model work: no
+  # git RPC, no fetch spawn, no throttle/fingerprint consultation. A no-op
+  # before the first successful fetch (there is nothing to re-fold).
+  defp rebuild_commit_graph_folds(socket) do
+    if socket.assigns.commit_graph_loaded do
+      assign(socket,
+        commit_graph:
+          CommitGraph.build(
+            socket.assigns.commit_graph_raw,
+            commit_graph_agents(socket),
+            socket.assigns.commit_fold_expanded
+          )
       )
     else
       socket
