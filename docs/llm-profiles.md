@@ -1,13 +1,18 @@
 # LLM provider profiles and task model selection
 
 Configure an account once, list the models you want to use, then select a model for each task.
-This guide describes the canonical provider-profile format in `config.toml` and the current dashboard behavior.
+This guide describes the canonical provider-profile format in `config.toml` and the dashboard behavior.
 
 ## 1. Accounts are not task selections
 
 A **provider profile** is a named account or endpoint configuration: credentials, provider, shared defaults, concurrency and schedule.
 One profile can serve multiple models and reasoning efforts; you do not need a separate account for each effort.
 Create separate profiles when credentials, endpoints or scheduling policies differ.
+
+Account identity follows the **provider**, never a model: an account is a `deepseek` or `zai_coding_plan` account that happens to serve several models, not a `REPLACE_WITH_MODEL_ID` account.
+The dashboard enforces this by deriving a new account's id from the provider's slug (with collision-safe `-2`/`-3` suffixes) and its display name from the provider's catalog entry, so a second account for the same vendor reads `<provider>-2` rather than a model name.
+An id or name you type explicitly is kept as written; the rule constrains what the dashboard generates.
+Naming an account after one of its models misdescribes it, because every model and effort in the account shares its slots, backoff and schedule.
 
 A **task selection** is a credential-free identity:
 
@@ -49,6 +54,8 @@ default_model = "REPLACE_WITH_MODEL_ID"
 peak_concurrency = 1
 timezone = "Asia/Hong_Kong"
 off_peak_days = ["sat", "sun"]
+# Optional: treat a calendar's non-working days as off-peak (see §7).
+# off_peak_holidays = "CN"
 peak_hours = [{start = "09:00", end = "18:00", days = ["weekdays"]}]
 
 [[llm.providers.models]]
@@ -96,6 +103,28 @@ It is neither an unset marker nor a universal way to disable reasoning.
 There is no task-level unset value that clears an inherited default.
 A blank default in the editor means **inherit/omit**, not `"none"`.
 
+### The canonical effort ladder
+
+One ladder is the single source of truth: `EvoGit.Config.Schema.LLM.reasoning_efforts/0` returns `[:none, :minimal, :low, :medium, :high, :xhigh]` in ascending intensity.
+`EvoGit.Config.Schema.LLM.reasoning_effort_options/0` returns that ladder plus `:default`, which is the ordered pick list a UI renders.
+`:default` — and an absent or unset value — means "send no `reasoning_effort` field at all", so the provider's own default applies; it is a UI choice, not a provider level.
+`EvoGit.Config.Schema.LLM.allowed?/1` is the total acceptance predicate (case-insensitive, whitespace-tolerant, `nil` accepted) and `EvoGit.Config.Schema.LLM.canonical_reasoning_effort/1` the total normalizer.
+`max` is **not** a Genesis level: it is an accepted legacy alias of `xhigh`, so `canonical_reasoning_effort/1` reads a `"max"` string or a `:max` atom as `:xhigh`, a persisted `"max"` keeps loading, and a later save writes `xhigh`.
+`allowed?("max")` is therefore `false`, and `reasoning_efforts/0` never contains it.
+The schema enum of the flat `[llm] reasoning_effort` key is derived from `reasoning_effort_options/0`, so it offers exactly that list.
+
+Use ladder names in `reasoning_efforts`, `default_reasoning_effort`, a task selection's `reasoning_effort` and the flat `[llm] reasoning_effort`.
+The inventory is an ordered advertisement of what the model supports; the rank of a level carries no meaning for resolution.
+
+### Vendor spellings are translated at the request boundary
+
+Genesis keeps **one** ladder and adapts to a vendor's own vocabulary at the last moment, inside `EvoGit.Config.Schema.LLMConstraints`.
+A table's `:reasoning_effort` allowlist is expressed in Genesis levels, and its `:reasoning_effort_wire_aliases` map renames a level that already survived that check.
+Z.AI GLM-5.3 / GLM-5.3-FLASH document exactly `low|high|max`, so their allowlist is the Genesis levels `low|high|xhigh` and `xhigh` is emitted as the vendor's `max`.
+This is a translation of an accepted level, never a silent substitution: the level you configure is the level sent, only the spelling changes.
+An effort outside a model's documented set — or a model whose metadata declares no reasoning support — is omitted from the request with a logged warning, and the key order of the surviving parameters is preserved.
+`EvoGit.Config.Schema.LLM.profile_generation_params/1` remains the single choke point where this filtering runs.
+
 ### Dashboard behavior differs from omitted core effort
 
 Projects and the [Assistant](genesis-assistant.md) use shared provider/model dropdowns and an effort slider based on the advertised inventory:
@@ -120,6 +149,7 @@ Choices use the selected node's configuration: remote-node selection does not si
 Use the provider-profile editor for account identity, authentication, endpoint, concurrency, schedule and shared defaults.
 Add nested model entries for every model you plan to select, with overrides only where needed.
 Enter reasoning efforts as an **ordered inventory** in the text field, then choose a default from the default dropdown.
+Enter ladder names (see §3); the editor writes the values you supply and the core owns authoritative validation, and a model's inventory must still contain its own default.
 Order matters for the dashboard's first-effort fallback, even though it does not define a core default.
 Leave a default blank to inherit or omit it, subject to the UI behavior above.
 Save explicitly after reviewing the configuration.
@@ -163,13 +193,58 @@ Handle resolution errors before submitting work, especially after changing an in
 
 Concurrency slots and exhaustion backoff are shared **per provider profile**, across all its concrete models and efforts.
 Adding another model or effort does not create a separate quota pool.
-Schedules also apply to the whole account.
+Schedules also apply to the whole account: an account carries `concurrency`, `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days` and `off_peak_holidays`.
+
+### Peak windows and days
 
 An explicit in-peak `peak_concurrency` is honored even below the global concurrency floor, including **0**.
 Zero queues new requests until capacity resumes; reducing capacity does not evict in-flight requests.
 `off_peak_days` wins over peak windows for the entire day.
-Windows are half-open; overnight windows are supported.
+Windows are half-open; overnight windows are supported, and a window may carry its own `days`.
 If `timezone` is absent or blank, scheduling uses the server's local wall clock, not UTC.
+
+### Holiday-aware off-peak
+
+An account may set `off_peak_holidays` to a holiday-calendar id; the only calendar shipped is `"CN"` (`EvoGit.PeakHours.Holidays.calendars/0`).
+`EvoGit.PeakHours.validate_holidays/1` validates the key: `nil`/`""` and any id the calendar table knows (case-insensitive) pass, and anything else returns `{:error, {:unknown_calendar, value}}`, which the config schema reports at the account key.
+The key is account-level only; nested model entries neither read nor validate it.
+
+A date the calendar reports as a non-working day is off-peak for the **entire** day, exactly like an `off_peak_days` entry.
+A 调休 make-up workday (补班) is a working day even on a Saturday or Sunday, so windows apply there and the day is never off-peak.
+`off_peak_holidays` is applied by `EvoGit.PeakHours.in_peak?/4`, `EvoGit.PeakHours.next_transition/4` and `EvoGit.PeakHours.effective_concurrency/2,3`, and `EvoGit.PeakHourEngine` carries the raw account key through to those calls rather than re-implementing any calendar logic.
+The midnight edges of a holiday block (and of a make-up workday) are real peak-state transitions, so the engine wakes there instead of sleeping through the block.
+
+The data lives in `EvoGit.PeakHours.Holidays`, a static module — no dependency, no clock, no network, and no automatic updates.
+It publishes `calendars/0`, `supported_years/0`, `holiday?/1`, `make_up_workday?/1`, `non_working_day?/1` and `holiday_name/1`, over statutory holidays and 调休 make-up workdays for 2025, 2026 and 2027.
+`non_working_day?/1` is "statutory holiday, or an ordinary weekend that is not a make-up workday".
+The predicates are total and take a wall-clock `%Date{}` (a `%NaiveDateTime{}` uses its date): a year outside the table answers `false` everywhere, so an unextended calendar degrades to weekend-only behaviour instead of raising.
+
+To add a year, edit the module's data after the State Council publishes the arrangement (usually in November): append one `{~D[YYYY-MM-DD], "name"}` entry per statutory holiday day, append the make-up workdays as plain date literals, and add the year to the supported-years list.
+Keep both lists ascending and unique, and mark a not-yet-official year in `provisional_years/0` instead of assuming it.
+Adding another calendar means a new id in `calendars/0` plus its own holiday and make-up-workday data; the schedule evaluator resolves the id through this table, so no config key changes.
+
+### Built-in schedule presets
+
+`EvoGit.Config.ProviderPresets` carries the machine-readable copy of the peak/off-peak policies a vendor publishes unambiguously, so an account's schedule does not have to be hand-written from prose.
+It exposes `all/0` (display order), `ids/0`, `get/1` by stable id (`nil` when unknown or not a binary) and `for_provider/1` (by provider atom or case-/separator-insensitive name, `[]` when unknown).
+Each preset is the envelope `%{id, label, provider, schedule, note}`, where `schedule` is **string-keyed** so it merges straight into a canonical (string-keyed) `[[llm.providers]]` account over `concurrency`, `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days` and `off_peak_holidays`.
+A preset carries only the keys its provider's policy actually uses, and every preset is valid input for `EvoGit.PeakHours.validate_windows/1`, `validate_days/1` and `validate_holidays/1`.
+
+Two presets ship:
+
+| Id | Provider | Schedule it describes |
+|---|---|---|
+| `deepseek-standard` | `:deepseek` | Peak 01:00–04:00 and 06:00–10:00 UTC Monday–Friday, half price off-peak, weekends and Chinese public holidays fully off-peak (`timezone "UTC"`, weekday windows, `off_peak_days ["sat", "sun"]`, `off_peak_holidays "CN"`). |
+| `zai-glm-coding-plan` | `:zai_coding_plan` | Peak Monday–Friday 14:00–18:00 Singapore time (UTC+8), off-peak charged at 50 % of the standard credit rate, no holiday exclusions (`timezone "Asia/Singapore"`, one weekday window, `off_peak_days ["sat", "sun"]`). |
+
+A provider with no published time-of-day policy deliberately gets no preset: `:anthropic`, `:openai`, `:openai_codex`, `:google`, `:xai` and `:openrouter` publish none; pay-as-you-go `:zai` lists flat per-token prices and only its Coding Plan subscription has peak terms; `:moonshotai` lists flat prices; `:minimax` thins traffic in peak hours without time-of-day pricing; and `:alibaba` scopes its night window to individual, often limited-time, model discounts rather than an account-level schedule.
+The per-provider reasons live in the module's moduledoc, next to the verified sources.
+
+No vendor publishes "Genesis LLM slots", so a published price, quota or credit multiplier is mapped conservatively: a rate that doubles in peak (halves off-peak) becomes `peak_concurrency` = half of `concurrency`.
+That ratio is a pre-fill default to be edited, never a claim about vendor capacity.
+
+The module is data only: it writes no config, touches no disk, starts no process, reads no clock and raises on nothing.
+Nothing applies a preset automatically — you (or a UI acting for you) copy one into an account's schedule fields and then adjust it.
 
 ## 8. Existing configurations
 
