@@ -52,10 +52,17 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.Helpers do
 
   def clean_string(_value), do: nil
 
-  @doc "The cleaned `value`, or `id` when it is blank."
+  @doc """
+  The cleaned `value`, or `id` when it is blank.
+
+  "Blank" is `nil`/`""`/whitespace OR any value `clean_string/1` cannot read
+  as a string (a number, a map, …), so an unlabeled row never renders an empty
+  label: it falls back to `id` (see `ProviderStep` for the provider-row
+  variant, which falls back to the provider display name).
+  """
   def label_or_id(value, id) do
     case clean_string(value) do
-      "" -> id
+      blank when blank in [nil, ""] -> id
       label -> label
     end
   end

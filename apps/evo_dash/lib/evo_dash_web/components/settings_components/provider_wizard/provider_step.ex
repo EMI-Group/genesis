@@ -8,7 +8,7 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.ProviderStep do
   alias EvoDashWeb.LLMSetup.Identity
   alias EvoDashWeb.SettingsComponents.ProviderWizard.Helpers
 
-  import Helpers, only: [card_class: 1, clean_string: 1, value_of: 2]
+  import Helpers, only: [card_class: 1, clean_string: 1, label_or_id: 2, value_of: 2]
 
   def step_provider(assigns) do
     assigns =
@@ -91,10 +91,8 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.ProviderStep do
   defp provider_rows(_providers), do: []
 
   defp provider_row(%{} = provider) do
-    id = value_of(provider, ["id", "value", "provider"])
-
-    case clean_string(id) do
-      "" ->
+    case clean_string(value_of(provider, ["id", "value", "provider"])) do
+      id when id in [nil, ""] ->
         nil
 
       id ->
@@ -112,10 +110,12 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.ProviderStep do
 
   defp provider_row(_provider), do: nil
 
+  # Provider rows fall back to the PROVIDER display name (never to a model, and
+  # never to a blank label) — the id is only the key that name is derived from.
   defp provider_label(provider, id) do
-    case clean_string(value_of(provider, ["label", "display_name", "name"])) do
-      "" -> Identity.provider_display_name(id)
-      label -> label
-    end
+    label_or_id(
+      value_of(provider, ["label", "display_name", "name"]),
+      Identity.provider_display_name(id)
+    )
   end
 end

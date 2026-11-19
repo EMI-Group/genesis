@@ -143,10 +143,8 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.ModelStep do
   defp model_rows(_models), do: []
 
   defp model_row(%{} = model) do
-    id = clean_string(value_of(model, ["id", "model", "value"]))
-
-    case id do
-      "" ->
+    case clean_string(value_of(model, ["id", "model", "value"])) do
+      id when id in [nil, ""] ->
         nil
 
       id ->

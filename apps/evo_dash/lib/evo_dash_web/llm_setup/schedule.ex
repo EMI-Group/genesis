@@ -221,17 +221,13 @@ defmodule EvoDashWeb.LLMSetup.Schedule do
   """
   @spec holiday_help() :: String.t()
   def holiday_help do
-    case holidays_supported_year_range() do
-      {first, last} ->
-        gettext(
-          "Public holidays of the selected calendar count as off-peak, on top of weekends. The calendar is published through %{last} (from %{first}).",
-          first: to_string(first),
-          last: to_string(last)
-        )
+    {first, last} = holidays_supported_year_range()
 
-      nil ->
-        gettext("Public holidays of the selected calendar count as off-peak, on top of weekends.")
-    end
+    gettext(
+      "Public holidays of the selected calendar count as off-peak, on top of weekends. The calendar is published through %{last} (from %{first}).",
+      first: to_string(first),
+      last: to_string(last)
+    )
   end
 
   # ── private ────────────────────────────────────────────────────────────────

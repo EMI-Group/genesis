@@ -56,18 +56,25 @@ defmodule EvoDashWeb.LLMSetup.Identity do
   name) — the collision-safe input for a generated account `id`.
 
   `:zai` → `"zai"`, `:openai_compatible` → `"openai-compatible"`,
-  `"My Proxy"` → `"my-proxy"`, and `nil` / blank → `""` (which makes
-  `unique_id/2` fall back to its `profile-N` scheme).
+  `"My Proxy"` → `"my-proxy"`.
+
+  A `nil` / blank provider (and anything `provider_display_name/1` cannot
+  resolve to a non-blank name) slugs to `"custom-endpoint"`, because the slug
+  resolves THROUGH `provider_display_name/1`, whose nil/blank answer is the
+  gettext "Custom endpoint". That is a meaningful account id, so
+  `default_identity(nil, existing)` yields
+  `%{"id" => "custom-endpoint", "name" => "Custom endpoint"}` (with `-2`,
+  `-3`, … suffixes on collision) — it never falls through to the `profile-N`
+  scheme, which only applies when a caller hands a blank BASE straight to
+  `unique_id/2`.
   """
   @spec provider_slug(term()) :: String.t()
   def provider_slug(provider) do
     case catalog_entry(provider) do
       %{id: id} -> slugify(Atom.to_string(id))
-      _ -> provider |> provider_display_name() |> fallback_slug()
+      _ -> provider |> provider_display_name() |> slugify()
     end
   end
-
-  defp fallback_slug(name), do: slugify(name)
 
   @doc """
   A free `id` derived from `base`: `base` itself when free, else `base-2`,
