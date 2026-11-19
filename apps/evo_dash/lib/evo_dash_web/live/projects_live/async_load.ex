@@ -389,11 +389,11 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   follow-up reload must never run in the LiveView process.
   """
   def create_workspace(node, name, members, opts \\ []) do
-    node_context_call(:create_workspace, [node, name, members, opts])
+    NodeContext.create_workspace(node, name, members, opts)
   end
 
   defp workspace_mounts(node) do
-    case EvoDash.SafeCall.run(fn -> node_context_call(:workspaces, [node]) end) do
+    case EvoDash.SafeCall.run(fn -> NodeContext.workspaces(node) end) do
       {:ok, list} when is_list(list) -> list
       _ -> []
     end
@@ -402,7 +402,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   defp workspace_view(node, workspace) do
     point = Map.get(workspace, :point)
 
-    case EvoDash.SafeCall.run(fn -> node_context_call(:workspace_members, [node, point]) end) do
+    case EvoDash.SafeCall.run(fn -> NodeContext.workspace_members(node, point) end) do
       {:ok, {:ok, resolution}} when is_map(resolution) ->
         %{
           workspace: Map.get(resolution, :workspace) || workspace,
@@ -446,13 +446,6 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
 
   defp list_or_empty(list) when is_list(list), do: list
   defp list_or_empty(_other), do: []
-
-  # The VCT workspace passthroughs live in `EvoDash.NodeContext`; resolving
-  # them at runtime keeps this module warning-free and TOTAL whether or not
-  # that passthrough set is deployed on the running node — a missing
-  # passthrough becomes the documented empty list / an `{:error, reason}`
-  # value (through `SafeCall`) instead of a crashed loader.
-  defp node_context_call(fun, args), do: apply(NodeContext, fun, args)
 
   # Remote-only extras: when a remote project is active — its genesis.toml
   # config / worktree script / commands / foreign repos and the auto-detected
