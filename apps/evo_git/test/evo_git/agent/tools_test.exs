@@ -1358,6 +1358,41 @@ defmodule EvoGit.Agent.ToolsTest do
         end
       end)
     end
+
+    test "returns true for a keyless-capable provider with no API key configured" do
+      with_isolated_config(fn ->
+        # A selected keyless-capable provider (Keenable) is enabled by its
+        # PUBLIC endpoint without any credential, so the key lookup is
+        # bypassed entirely and no key needs to be set (or cleared) here.
+        assert :ok =
+                 EvoGit.Config.save_user_config(%{
+                   tools: %{search: %{enabled: true, provider: :keenable}}
+                 })
+
+        assert EvoGit.Config.tools_search_enabled?()
+      end)
+    end
+
+    test "returns false for a key-requiring provider with no API key configured" do
+      with_isolated_config(fn ->
+        assert :ok =
+                 EvoGit.Config.save_user_config(%{
+                   tools: %{search: %{enabled: true, provider: :brave}}
+                 })
+
+        assert get_in(EvoGit.Config.resolve(), [:tools, :search, :provider]) == :brave
+
+        original_key = Application.get_env(:req_llm, :brave_search_api_key)
+        Application.delete_env(:req_llm, :brave_search_api_key)
+
+        try do
+          refute EvoGit.Config.tools_search_enabled?()
+        after
+          if original_key,
+            do: Application.put_env(:req_llm, :brave_search_api_key, original_key)
+        end
+      end)
+    end
   end
 
   describe "WebSearch.execute/3" do
