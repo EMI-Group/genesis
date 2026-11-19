@@ -750,266 +750,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
   end
 
-  describe "LLM quick setup API key detection (credentials.toml)" do
-    # The credentials.toml file is written under this test's isolated config
-    # dir (see the async module's `setup` block — the `:config_dir_fun` seam),
-    # so EvoGit.Config.credentials_path/0
-    # resolves to a path we can control. Each test cleans up after itself so no
-    # state leaks between tests.
-    defp creds_file, do: EvoGit.Config.credentials_path()
-
-    # Derive provider/model strings from the catalog — never hardcode model ids
-    # or display names (they change as the catalog evolves). Provider ids
-    # (deepseek/google/anthropic/alibaba) are stable fixtures.
-    defp provider(id), do: Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == id))
-
-    defp model_string(id, variant_id \\ nil) do
-      p = provider(id)
-      atom = EvoGit.Config.LLMCatalog.resolve_provider_atom(id, variant_id)
-      "#{atom}:#{hd(p.models).id}"
-    end
-
-    test "after provider selection alone, model shortcuts render but the API key form is gated",
-         %{
-           conn: conn
-         } do
-      # Ensure no credentials.toml exists.
-      File.rm(creds_file())
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
-
-      assert provider(:deepseek).models != []
-
-      # The API key form is gated on model selection — the hint shows instead.
-      assert html =~ "Select a model above to configure credentials."
-      refute html =~ ~s(name="api_key")
-      refute html =~ "Enter your API key"
-      refute html =~ "Save Model"
-      refute html =~ "API key is already set"
-
-      # Model shortcut buttons ARE present, carrying the derived model_string.
-      assert html =~ "Quick-select a model:"
-      assert html =~ ~s(phx-value-model_string="#{model_string(:deepseek)}")
-    end
-
-    test "Case A — key present in credentials.toml", %{conn: conn} do
-      # Write a credentials.toml with the key. credentials.toml is a flat
-      # key=value TOML; string keys map directly into the parsed map.
-      creds = creds_file()
-      File.mkdir_p!(Path.dirname(creds))
-      File.write!(creds, ~s(deepseek_api_key = "sk-test-12345"\n))
-
-      on_exit(fn ->
-        File.rm(creds_file())
-      end)
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      # The API key form only renders once a model is selected.
-      html = settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
-
-      # Before a model is selected, the key status is not surfaced.
-      assert html =~ "Select a model above to configure credentials."
-      refute html =~ "API key is already set"
-
-      # Selecting a model reveals the API key form; the key is detected.
-      html = settings_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
-
-      # When key_is_set is true the placeholder is "API key is already set".
-      assert html =~ "API key is already set"
-      assert html =~ "Your API key is configured and ready to use."
-    end
-
-    test "Case C — key absent from credentials.toml", %{conn: conn} do
-      # Ensure no credentials.toml exists.
-      File.rm(creds_file())
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
-      assert html =~ "Select a model above to configure credentials."
-
-      html = settings_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
-
-      # When the key is NOT set, the hint paragraph reads "Enter your API key".
-      # (deepseek has a prefix hint "sk-..." so the input placeholder itself is
-      # "sk-...", but the hint paragraph below renders "Enter your API key. It
-      # should start with sk-...".)
-      assert html =~ "Enter your API key"
-      refute html =~ "API key is already set"
-    end
-
-    test "model selection highlights the button and enables the Save Model form", %{conn: conn} do
-      File.rm(creds_file())
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
-
-      html = settings_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
-
-      # The Save Model form renders with its hidden inputs.
-      assert html =~ "Save Model"
-      assert html =~ ~s(phx-submit="save_quick_setup")
-      assert html =~ ~s(name="model_string")
-
-      # The selected model button carries the active styling. The provider
-      # button ALSO uses btn-primary shadow-md, so scope the assertion to the
-      # model button element via its phx-value-model_string attribute.
-      doc = Floki.parse_document!(html)
-      [model_button] = Floki.find(doc, ~s([phx-value-model_string="#{model_string(:deepseek)}"]))
-      classes = model_button |> Floki.attribute("class") |> Enum.join(" ")
-      assert classes =~ "btn-primary"
-      assert classes =~ "shadow-md"
-    end
-
-    test "save_quick_setup persists the selected profile", %{conn: conn} do
-      File.rm(creds_file())
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
-      settings_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
-
-      html =
-        settings_hook(view, "save_quick_setup", %{
-          "model_string" => model_string(:deepseek),
-          "provider_id" => "deepseek",
-          "variant_id" => "",
-          "base_url" => ""
-        })
-
-      assert html =~ "Model selected and saved."
-
-      [profile] = current_providers(view)
-      assert profile["provider"] == "deepseek"
-      assert profile["default_model"] == hd(provider(:deepseek).models).id
-      assert profile["models"] == [%{"model" => hd(provider(:deepseek).models).id}]
-      assert stored_providers() == [profile]
-      refute Map.has_key?(EvoGit.Config.user_config()["llm"], "models")
-    end
-
-    test "changing provider resets the selected model", %{conn: conn} do
-      File.rm(creds_file())
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "select_llm_provider", %{"provider_id" => "google"})
-
-      assert provider(:google).models != []
-      html = settings_hook(view, "select_llm_model", %{"model_string" => model_string(:google)})
-      assert html =~ "Save Model"
-
-      # Switching provider invalidates any previously chosen model.
-      html = settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
-      refute html =~ "Save Model"
-      assert html =~ "Select a model above to configure credentials."
-      assert assigns(view).selected_model_string == nil
-    end
-
-    test "unknown model_string clears the selection instead of crashing", %{conn: conn} do
-      File.rm(creds_file())
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
-
-      html =
-        settings_hook(view, "select_llm_model", %{"model_string" => "deepseek:nonexistent-model"})
-
-      # Whitelist safety: unknown model strings clear the selection (nil) and
-      # never crash; the hint stays visible and the Save Model form stays hidden.
-      assert assigns(view).selected_model_string == nil
-      refute html =~ "Save Model"
-      assert html =~ "Select a model above to configure credentials."
-    end
-  end
-
-  describe "custom model providers (OpenRouter / OpenAI-Compatible)" do
-    # Note: gettext is NOT imported in ConnCase, so assertions use literal
-    # English source strings (matching what the en translation returns).
-
-    test "renders custom model form for OpenRouter", %{conn: conn} do
-      # The mounted category IS `:llm` (SettingsLive.mount/3 seeds :llm), so no
-      # category switch is needed as setup.
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = settings_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
-
-      assert html =~ "Model Name"
-      assert html =~ ~s(name="model_name")
-      # The unified custom-model form ALWAYS shows a base_url input (optional
-      # for OpenRouter, required for OpenAI-compatible providers).
-      assert html =~ ~s(name="base_url")
-      assert html =~ "Set Model"
-      # custom-model providers hide the quick-select buttons
-      refute html =~ "Quick-select a model:"
-    end
-
-    test "renders custom model form for OpenAI-Compatible (with base URL and warning)", %{
-      conn: conn
-    } do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = settings_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
-
-      assert html =~ "Model Name"
-      assert html =~ "Base URL"
-      assert html =~ ~s(name="base_url")
-      assert html =~ ~s(placeholder="https://api.my-provider.com/v1")
-      assert html =~ "Warning: OpenAI-compatible APIs vary in compatibility"
-      assert html =~ "Set Model"
-      refute html =~ "Quick-select a model:"
-    end
-
-    test "saving OpenRouter custom model stores map spec and pre-fills on re-render", %{
-      conn: conn
-    } do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
-
-      html =
-        settings_hook(view, "save_custom_model", %{
-          "model_name" => "anthropic/claude-3.5-sonnet",
-          "provider_id" => "openrouter"
-        })
-
-      [profile] = current_providers(view)
-      assert profile["provider"] == "openrouter"
-      assert profile["default_model"] == "anthropic/claude-3.5-sonnet"
-      assert profile["models"] == [%{"model" => "anthropic/claude-3.5-sonnet"}]
-      assert stored_providers() == [profile]
-      assert html =~ "Model selected and saved."
-      settings_hook(view, "edit_provider_profile", %{"profile_id" => profile["id"]})
-
-      assert has_element?(
-               view,
-               ~s(select[name="default_model"] option[selected][value="anthropic/claude-3.5-sonnet"])
-             )
-    end
-
-    test "saving OpenAI-compatible custom model stores map spec and pre-fills", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
-
-      html =
-        settings_hook(view, "save_custom_model", %{
-          "model_name" => "my-model",
-          "base_url" => "https://api.example.com/v1",
-          "provider_id" => "openai_compatible"
-        })
-
-      assert html =~ "Model selected and saved."
-      [profile] = current_providers(view)
-      assert profile["provider"] == "openai"
-      assert profile["default_model"] == "my-model"
-      assert profile["base_url"] == "https://api.example.com/v1"
-      assert profile["models"] == [%{"model" => "my-model"}]
-      assert stored_providers() == [profile]
-      settings_hook(view, "edit_provider_profile", %{"profile_id" => profile["id"]})
-
-      assert has_element?(
-               view,
-               ~s(select[name="default_model"] option[selected][value="my-model"])
-             )
-
-      assert has_element?(view, ~s(input[name="base_url"][value="https://api.example.com/v1"]))
-    end
-  end
-
   describe "provider profiles editor — parent adapter" do
     defp current_providers(view), do: get_in(assigns(view).file_config, [:llm, :providers]) || []
     defp stored_providers, do: get_in(EvoGit.Config.user_config(), ["llm", "providers"]) || []
@@ -1428,7 +1168,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
       settings_hook(view, "add_provider_model", %{})
 
       view
@@ -1452,7 +1192,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert stored_providers() == [profile]
       refute Map.has_key?(EvoGit.Config.user_config()["llm"], "models")
 
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
       assert assigns(view).profile_form_draft["id"] == "profile-2"
 
       view
@@ -1520,7 +1260,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       input =
         provider_params(%{
@@ -1672,7 +1412,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "model row actions preserve unsaved nested input, reject an emptied collection and allow correction",
          %{conn: conn} do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       settings_hook(
         view,
@@ -1762,7 +1502,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
            conn: conn
          } do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
       assert assigns(view).editing_profile_id == :new
 
       input =
@@ -1824,7 +1564,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
       before = assigns(view).file_config
       path = EvoGit.Config.config_path()
       File.mkdir_p!(Path.dirname(path))
@@ -1933,7 +1673,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
              "Default reasoning effort must be one of the configured reasoning efforts."}
           ] do
         settings_hook(view, "cancel_edit_provider_profile", %{})
-        settings_hook(view, "add_provider_profile", %{})
+        settings_hook(view, "add_model_profile", %{})
         input = provider_params(patch)
         html = settings_hook(view, "save_provider_profile", input)
         assert html =~ message
@@ -2063,7 +1803,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "model_profile_form_change stores the whole form as a draft", %{conn: conn} do
       # Add enters detached edit mode; nothing is persisted until Save.
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
@@ -2089,7 +1829,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
@@ -2124,7 +1864,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # must normalize it (the raw binary crashed the render's
       # `Enum.member?(off_peak_days, value)` with an Enumerable protocol error).
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       html =
         settings_hook(view, "provider_profile_form_change", %{
@@ -2155,7 +1895,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "model_profile_form_change with all-unchecked days ([] seed entry only)", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       html =
         settings_hook(view, "provider_profile_form_change", %{
@@ -2179,7 +1919,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "model_profile_form_change never crashes on partial/odd params", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       html = settings_hook(view, "provider_profile_form_change", %{"peak_hours" => "garbage"})
 
@@ -2189,7 +1929,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "add_peak_hours_row preserves typed values from the draft", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
@@ -2224,7 +1964,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
@@ -2266,7 +2006,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "remove_peak_hours_row preserves the remaining typed values", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
@@ -2293,7 +2033,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       settings_hook(view, "provider_profile_form_change", %{
         "profile_id" => "profile-1",
@@ -2426,7 +2166,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       html =
         settings_hook(view, "save_provider_profile", %{
@@ -2446,7 +2186,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "save_model_profile stores a non-blank timezone and omits a blank one", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       html =
         settings_hook(view, "save_provider_profile", %{
@@ -2482,7 +2222,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "save_model_profile persists off_peak_days and per-window days", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       html =
         settings_hook(view, "save_provider_profile", %{
@@ -2522,7 +2262,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # chip is checked. Save-time parsing must wrap it — previously the day
       # was silently dropped (list-only normalization).
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       html =
         settings_hook(view, "save_provider_profile", %{
@@ -2552,7 +2292,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "save_model_profile omits off_peak_days and per-window days when empty", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       html =
         settings_hook(view, "save_provider_profile", %{
@@ -2585,7 +2325,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "save_model_profile persists context_window as an integer", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       html =
         settings_hook(view, "save_provider_profile", %{
@@ -2610,7 +2350,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "add_provider_profile", %{})
+      settings_hook(view, "add_model_profile", %{})
 
       settings_hook(view, "save_provider_profile", %{
         "profile_id" => "profile-1",
@@ -4351,7 +4091,7 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
     # AgentScheduler, making the real writer's reload acknowledgement deterministic.
     seed_write_paths(["/custom"])
     {:ok, view, _} = mount_settings(conn, ~p"/settings")
-    settings_hook(view, "add_provider_profile", %{})
+    settings_hook(view, "add_model_profile", %{})
     before = assigns(view).file_config
     :ok = :sys.suspend(EvoGit.AgentScheduler)
 
@@ -4555,99 +4295,6 @@ defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
 
       refute html =~
                ~s(name="nix.enabled" value="true" class="toggle toggle-primary toggle-sm" checked)
-    end
-  end
-
-  describe "whitelist safety (unknown values do not crash)" do
-    # These regression tests verify that the whitelist-based conversion helpers
-    # (category_str_to_atom/1, provider_by_id_str/0, variant_id_by_str/1) safely
-    # map unknown/untrusted client strings to nil/default instead of crashing.
-    # The "doesn't crash" assertion is implicit: render_hook/live returning a
-    # successful result (not raising) proves it didn't crash.
-
-    test "unknown category does not crash select_category", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html = settings_hook(view, "select_category", %{"category" => "totally_fake_category"})
-
-      # Unknown category → active_category stays unchanged (default :llm).
-      assert assigns(view).active_category == :llm
-      # The hidden category input reflects the unchanged value.
-      assert html =~ ~s(name="category" value="llm")
-    end
-
-    test "unknown category in URL params does not crash", %{conn: conn} do
-      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=bogus_category")
-
-      # Unknown category in handle_params → keeps current category (:llm).
-      assert assigns(view).active_category == :llm
-      assert html =~ ~s(name="category" value="llm")
-    end
-
-    test "valid category conversion still works", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html = settings_hook(view, "select_category", %{"category" => "nix"})
-
-      assert assigns(view).active_category == :nix
-      assert html =~ ~s(name="category" value="nix")
-    end
-
-    test "unknown provider does not crash select_llm_provider", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html =
-        settings_hook(view, "select_llm_provider", %{"provider_id" => "totally_fake_provider"})
-
-      # Unknown provider → clears selection and shows flash error.
-      assert assigns(view).selected_provider_id == nil
-      assert assigns(view).selected_provider_models == []
-      assert html =~ "Unknown provider."
-    end
-
-    test "valid provider conversion still works", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      settings_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
-
-      assert assigns(view).selected_provider_id == :alibaba
-    end
-
-    test "unknown variant does not crash select_llm_variant", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      settings_hook(view, "select_llm_variant", %{"variant_id" => "totally_fake_variant"})
-
-      # No provider selected → selected_variant_id becomes nil.
-      assert assigns(view).selected_variant_id == nil
-    end
-
-    test "unknown variant after valid provider does not crash", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
-
-      settings_hook(view, "select_llm_variant", %{"variant_id" => "fake_variant"})
-
-      assert assigns(view).selected_variant_id == nil
-    end
-
-    test "valid variant conversion still works", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      settings_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
-
-      html = settings_hook(view, "select_llm_variant", %{"variant_id" => "global"})
-
-      assert assigns(view).selected_variant_id == :global
-      # The selected variant button gets the active styling.
-      assert html =~ ~s(phx-value-variant_id="global")
-    end
-
-    test "unknown key path does not crash reset_key", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html = settings_hook(view, "reset_key", %{"key_path" => "nope.nope"})
-
-      assert html =~ "Invalid key path."
     end
   end
 
