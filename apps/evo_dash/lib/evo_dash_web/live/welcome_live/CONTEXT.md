@@ -81,7 +81,7 @@ Writes are only `EvoGit.Config.save_credentials/1` (`save_key/3` at `welcome_liv
 After a successful save the page re-reads `load_file_config/0` (`:505`), re-reads `credentials/0` (`:514`) and pushes scheduler options through `ConfigIO.update_runtime_from_file_config/2` (`:519`); it never calls `reload_remote_config/1` or `RemoteAPI.reload_config/0`.
 `save_key/3` runs before both the config write and the connection test, so the API key reaches the test through `save_credentials/1`'s file write plus its `ReqLLM.put_key` side effect, not from the `api_key_input` assign.
 The page subscribes to no config-change topic: `has_model?`, `credentials` (and the `key_is_set` badge / `can_save?/1`) only refresh on mount or after this page's own writes, so an external config or credentials edit stays invisible until remount.
-`file_config` is assigned in `mount/3` and after save but is never rendered or read — a dead assign holding the resolved config map in socket state.
+The page carries no `file_config` assign: the resolved config is read into a LOCAL binding in `mount/3` (for `has_model?/1`) and after a save (for the runtime push), and never stored in socket state.
 
 ## Routing Table
 This helper directory has no child directories.
