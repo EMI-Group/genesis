@@ -31,7 +31,7 @@ Every module is PURE and TOTAL: no I/O, no catalog lookup at render time beyond 
 ### `Identity`
 
 `provider_display_name/1` — the PROVIDER's catalog `display_name` (`:zai` / `"zai"` → `"Z.ai (Zhipu AI)"`), a titleized spelling for an unknown non-blank value, and gettext "Custom endpoint" for `nil`/blank. NEVER derived from a model.
-`provider_slug/1` — lowercase ASCII slug of the catalog id (`:openai_compatible` → `"openai-compatible"`), `""` for `nil`/blank.
+`provider_slug/1` — lowercase ASCII slug of the catalog id (`:openai_compatible` → `"openai-compatible"`), or of the display name when the provider is not in the catalog (`"My Proxy"` → `"my-proxy"`); `nil`/blank slugs to `"custom-endpoint"` (it resolves THROUGH `provider_display_name/1`, whose nil/blank answer is gettext "Custom endpoint"), so `default_identity(nil, existing)` is `%{"id" => "custom-endpoint", "name" => "Custom endpoint"}` with `-2`/`-3` collision suffixes — the `profile-N` scheme only applies when a blank BASE is passed to `unique_id/2` directly.
 `unique_id/2` — `base`, else `base-2`, `base-3`, … (case-insensitive collision check, comparison against strings/atoms/account maps/maps keyed by id); blank base → `profile-1`, `profile-2`, ….
 `unique_name/2` — the same rules over display names; blank base → gettext "Account".
 `default_identity/2` → `%{"id" => …, "name" => …}` for a new account, uniquified against the already-configured accounts.
