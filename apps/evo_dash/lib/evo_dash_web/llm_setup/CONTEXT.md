@@ -65,6 +65,14 @@ No persisted state and no config access: the caller owns the draft and its persi
 - All user-facing text is gettext-wrapped with a `# zh_CN:` anchor beside ambiguous labels (无/极低/低/中/高/极高/跟随提供方, 并发/高峰并发, 提供方/认证/模型/推理与时段/测试/完成).
 - Never run `mix gettext.extract` / `mix gettext.merge` / `mix translate` during feature work.
 
+## Test Strategy
+
+Coverage is module-level ExUnit in the `apps/evo_dash/test` node (`test/evo_dash_web/llm_setup/{reasoning,identity,schedule,wizard}_test.exs`), `async: true` because none of these modules touch global state — that suite does not exist yet.
+The pins it must hold: `efforts/0` contains exactly the canonical six and never `"max"`; `options/0` appends `"default"`; `canonical/1` returns strings and reads `"max"` as `"xhigh"`; `normalize_inventory/1` dedups, canonicalizes and keeps unknown values.
+`Identity` pins provider-derived naming (two accounts of one provider differ by a `-2` suffix on BOTH id and name), collision suffixes, case-insensitive comparison, the `profile-N` blank-base scheme and the unknown/`nil` fallbacks.
+`Schedule` pins the deepseek preset's applied schedule keys, `snapshot/1` returning only pre-existing keys, `undo/2` restoring them and removing preset-introduced ones, `changed?/2` clearing after undo, and the holiday calendar list/options/label/year range.
+`Wizard` pins the six-step order with and without `auth_choice?: false`, clamped `next/2`/`back/2`, `index/2`, the `progress/2` tuples (`{4, 6, 67}`, `{6, 6, 100}`, `{0, total, 0}` for an unknown step) and every `validate/2` gate and reason.
+
 ## Routing Table
 
 - `../components/settings_components/provider_wizard.ex` → `EvoDashWeb.SettingsComponents.ProviderWizard`, the step components that render these facts.

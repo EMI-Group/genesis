@@ -261,8 +261,8 @@ It is `use EvoDashWeb, :html` (pure function components), reads NO config/catalo
 - `step_done/1` — `summary` (list of `{label, value}` or `%{label:, value:}`), `dashboard_path` (default `"/projects"`), `dashboard_label`, plus the optional `:secondary` slot. Blank rows are dropped, so a caller can pass an unopinionated keyword list.
 ### Classes the page CSS supplies (do NOT restyle here)
 `wizard-progress` (the progress rail) and `wizard-step-enter` (the step body wrapper, keyed by `id={"wizard-step-" <> step}`) are styled in `assets/css/app.css` by a separate change: the enter animation runs on each step change and MUST be disabled under `prefers-reduced-motion: reduce`. This module writes no CSS and no raw colors — tokens only, corners ≤ `rounded-xl`.
-### Tests
-`test/evo_dash_web/components/provider_wizard_test.exs` pins the progress rail labels/current marker, the `next_disabled` footer, exactly six canonical reasoning chips (no `max`, one `xhigh`), the inventory-scoped default select, the holiday options, the always-present custom-model input, and that each `step_*` renders only its own content.
+### Tests (not yet present — owned by the `apps/evo_dash/test` node)
+`test/evo_dash_web/components/provider_wizard_test.exs` must pin: the progress rail labels + exactly one `aria-current="step"` on the current row, the `wizard-step-enter` body id, the `next_disabled` footer and the first-step Back disable, exactly six canonical reasoning chips (no `max`, one `xhigh`) plus the hidden blank seed (7 occurrences of `name="reasoning_efforts[]"`), the inventory-scoped default select (blank "Provider default" only when the inventory is non-empty), the holiday options ("CN" → "China (CN)" plus the blank option), the always-present `name="custom_model"` input, and that each `step_*` renders only its own content.
 ## Constraints
 - All component modules use `use EvoDashWeb, :html`.
 - Styling is Tailwind CSS + DaisyUI.
