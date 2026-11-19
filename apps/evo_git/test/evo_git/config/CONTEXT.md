@@ -18,7 +18,7 @@ The parent `../CONTEXT.md` and `../../CONTEXT.md` own the cross-cutting async-sa
 
 | File | Module suffix | async | Scope |
 |------|---------------|-------|-------|
-| `schema_test.exs` | `SchemaTest` | `true` | Existing end-to-end schema contract, exact 106 descriptors and per-category counts (14 LLM), defaults, validation and legacy LLM helpers |
+| `schema_test.exs` | `SchemaTest` | `true` | Existing end-to-end schema contract, exact 112 descriptors and per-category counts (14 LLM, 45 tools), defaults, validation and legacy LLM helpers |
 | `settings_test.exs` | `SettingsTest` | `true` | Public operator API: ordered `list_settings/0` descriptors, snapshot-backed `show/0,1` paths/errors/no atom creation, partial persisted `update/1`, recursive map merges/list replacement, canonical inventories, collision rejection, full-candidate validation and serialization/filesystem failures |
 | `provider_profiles_test.exs` | `ProviderProfilesTest` | `true` | Public `Schema.provider_profiles/1` and `model_selections/1`: canonical-over-legacy precedence, recursive string-key normalization, ordered account/model/effort inventories, same-provider account isolation, legacy string/map/tuple/flat adapters, malformed-input degradation, context inheritance and pure OAuth runtime projections |
 | `provider_profile_resolution_test.exs` | `ProviderProfileResolutionTest` | `true` | Public `Schema.resolve_model_spec/2`: account/model/effort default precedence and explicit overrides, atom/string inputs, exact errors, generation/context inheritance, shared scheduling/auth/endpoint authority, ReqLLM-ready string/map model specs, account credentials and OAuth options |
@@ -65,7 +65,7 @@ Provider defaults apply before nested model context/generation/effort overrides,
 Canonical validation checks raw input before normalization can discard malformed values or deduplicate inventories.
 Duplicate effort errors include the duplicate element's index, context-window validation uses rule `:integer`, and auth-mode validation uses rule `:string` for compatibility with the shared legacy validators.
 There is no global `[llm] oauth_file` schema key; OAuth files are per account/profile.
-`Schema.all_schemas/0` has exactly 106 entries and its LLM category has exactly 14, so adding/removing descriptors requires updating both count assertions.
+`Schema.all_schemas/0` has exactly 112 entries and its LLM category has exactly 14 while its tools category has exactly 45, so adding/removing descriptors requires updating the count assertions.
 `settings_test.exs` uses unique ConfigDir isolation and real TOML persistence without reading or mutating global scheduler configuration.
 Its show tests pin the private resolved snapshot (defaults plus persisted data), including enum normalization, section reads, present nils, malformed paths, missing suffix errors and unknown string segments that remain absent from the atom table.
 Its update tests require only explicit user values on disk, preservation of unrelated and unknown persisted data, mixed path forms without shadows, recursive map merges with literal payload dots, whole-list replacement, canonical provider normalization and legacy-mirror removal.
