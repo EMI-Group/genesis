@@ -350,8 +350,6 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       assert outside |> profile_row(@oauth_only_profile) |> row_identity() ==
                {@oauth_only_profile, "ChatGPT Codex (OAuth)"}
 
-      "openai_codex"
-
       assert count_occurrences(html, "claude setup-token") ==
                count_occurrences(outside, "claude setup-token")
     end
@@ -570,7 +568,17 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       assert assigns(view).flash == %{"info" => "Provider profile saved."}
       [saved] = persisted_models()
       assert saved["models"] == [%{"model" => "fixture-model", "reasoning_efforts" => []}]
-      assert Map.drop(saved, ["models"]) == Map.drop(hd(before), ["models"])
+
+      # The account-level inventory is untouched in CONTENT — every configured
+      # level survives. Its order is the editor's stable chip order (canonical
+      # levels first, a configured custom level such as "custom" appended last),
+      # so the untouched fields are pinned value-by-value rather than by an
+      # ordering the frozen checkbox renderer owns.
+      assert Enum.sort(saved["reasoning_efforts"]) ==
+               Enum.sort(hd(before)["reasoning_efforts"])
+
+      assert Map.drop(saved, ["models", "reasoning_efforts"]) ==
+               Map.drop(hd(before), ["models", "reasoning_efforts"])
 
       {:ok, restored, _html} = mount_settings(conn, ~p"/settings")
       assert current_models(restored) == [saved]
@@ -676,10 +684,19 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       view |> form("#provider-profile-detail-rendered-account") |> render_submit()
       html = await_profile_save(view)
 
+      # A blank helper name is refused by the EDITOR, not by the core: the draft
+      # keeps its blank value and the field error renders in the editor's own
+      # alert block.
       assert has_element?(
                view,
                "#provider-profile-errors[role=alert]",
-               "Check the profile settings before saving."
+               "Check the account settings before saving."
+             )
+
+      assert has_element?(
+               view,
+               "#provider-profile-errors[role=alert]",
+               "Enter a default model or add a model override."
              )
 
       refute html =~ "Provider profile saved."
@@ -1004,8 +1021,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = wizard_provider_step(view, "anthropic")
       assert has_element?(view, "#wizard-step-auth")
+      # A provider that supports both modes offers BOTH: the API-key choice is
+      # kept, and the subscription choice is offered beside it.
       assert html =~ ~s(phx-value-mode="api_key")
-      refute html =~ ~s(phx-value-mode="oauth")
+      assert html =~ ~s(phx-value-mode="oauth")
       refute html =~ "This provider only accepts a subscription login"
     end
 
@@ -1022,6 +1041,52 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
         assert html =~ ~s(phx-value-mode="api_key")
         refute html =~ "This provider only accepts a subscription login"
       end
+    end
+  end
+
+  # The wizard's model step owns the ONLY account-creation path, and its gate
+  # reason (`:missing_model`) is translated by `ModelProfileEvents.error_message/1`.
+  # A blank model must therefore surface a message — never a `FunctionClauseError`
+  # that takes the whole LiveView down.
+  describe "wizard model step (blank model)" do
+    test "a cleared model is refused with a translated message and creates nothing", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      before = persisted_models()
+
+      render_hook(view, "add_provider_profile", %{})
+      render_hook(view, "provider_wizard_change", %{"provider" => "anthropic"})
+      render_hook(view, "provider_wizard_next", %{})
+
+      if has_element?(view, "#wizard-step-auth") do
+        render_hook(view, "provider_wizard_change", %{"auth_mode" => "api_key"})
+        render_hook(view, "provider_wizard_next", %{})
+      end
+
+      render_hook(view, "provider_wizard_change", %{"model" => "claude-opus-5-5"})
+      advance_wizard_to_save(view)
+
+      # Blank the model ON the save step, where a real Save click posts from.
+      render_hook(view, "provider_wizard_change", %{"model" => "  "})
+      assert assigns(view).provider_wizard.draft["model"] == "  "
+
+      html = render_hook(view, "provider_wizard_save", %{})
+
+      assert assigns(view).provider_wizard.errors["model"] ==
+               "Select a model or enter a custom model name."
+
+      assert assigns(view).flash == %{
+               "error" => "Select a model or enter a custom model name."
+             }
+
+      assert html =~ "Select a model or enter a custom model name."
+      refute html =~ "Provider account saved."
+      # Nothing was written and no account editor took over the wizard.
+      assert persisted_models() == before
+      assert current_models(view) == []
+      assert assigns(view).editing_profile_id == nil
+      assert assigns(view).provider_wizard != nil
     end
   end
 
@@ -1146,24 +1211,33 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
     render_hook(view, "provider_wizard_change", %{"model" => params["default_model"]})
     advance_wizard_to_save(view)
-    html = render_hook(view, "provider_wizard_save", %{})
+    render_hook(view, "provider_wizard_save", %{})
+    # The wizard's own success flash lags its persistence (it lands with the
+    # authoritative write receipt), so the created account — not the flash — is
+    # what tells a refusal apart from a save.
+    html = await_profile_save(view)
 
-    if html =~ "Provider account saved." do
-      [saved] = current_models(view)
-      render_hook(view, "edit_provider_profile", %{"profile_id" => saved["id"]})
+    case current_models(view) do
+      [] ->
+        html
 
-      render_hook(
-        view,
-        "save_provider_profile",
-        params
-        |> Map.take(["auth_mode", "oauth_file"])
-        |> Map.merge(%{"profile_id" => saved["id"]})
-      )
+      [saved] ->
+        # A wizard save expands the new account itself, and the Edit action is a
+        # TOGGLE (editing an already-open account collapses it), so only open it
+        # when the wizard left it closed.
+        if assigns(view).editing_profile_id != saved["id"] do
+          render_hook(view, "edit_provider_profile", %{"profile_id" => saved["id"]})
+        end
 
-      await_profile_save(view)
-    else
-      await_profile_save(view)
-      html
+        render_hook(
+          view,
+          "save_provider_profile",
+          params
+          |> Map.take(["auth_mode", "oauth_file"])
+          |> Map.merge(%{"profile_id" => saved["id"]})
+        )
+
+        await_profile_save(view)
     end
   end
 

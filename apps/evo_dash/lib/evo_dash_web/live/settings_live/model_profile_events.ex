@@ -337,6 +337,11 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
     do: gettext("Each model entry must be a model configuration.")
 
   def error_message("model_id_empty"), do: gettext("Model ID cannot be empty.")
+
+  # zh_CN: 向导的模型步骤既可从目录中选一个模型，也可手填自定义模型名；两者都为空时不可保存。
+  def error_message("missing_model"),
+    do: gettext("Select a model or enter a custom model name.")
+
   def error_message("invalid_extra_json"), do: gettext("Extra Config must be valid JSON.")
 
   def error_message("extra_must_be_object"),
