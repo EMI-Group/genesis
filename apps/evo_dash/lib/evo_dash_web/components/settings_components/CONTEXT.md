@@ -241,6 +241,15 @@ The Settings page is a bounded-height two-column layout on md+ (`≥ 48rem`); be
 - **Config-path footer**: the config path lives ONLY in the sidebar footer (after `</nav>`): document icon + `gettext("Configuration file")` + truncating `<code>` + copy button with the test-pinned `id="settings-config-path-copy"` / `phx-hook="ClipboardCopy"` / `data-content={config_path}`, plus `gettext("File does not exist yet")` when missing; the sidebar declares `attr(:config_path, :string, required: true)` + `attr(:config_file_exists, :boolean, required: true)` and renders for EVERY category.
 - The md+ height chain means the built CSS must contain `md:h-full` / `md:flex-1` / `md:min-h-0` / `overflow-y-auto` / `min-h-0` (gitignored build — rebuild after utility-class edits).
 
+### Provider-identity creation and reasoning-checkbox defects (current state)
+
+- **Model-derived account identity**: `EvoDashWeb.SettingsLive.ProviderProfiles.add_model/2` (`live/settings_live/provider_profiles.ex:256-269`) sets BOTH `id` and `name` from `slug(model)` for a model spec, so a Quick-Setup-created account is named after the MODEL (`gpt-4o`, `deepseek-flash`), never the provider.
+  `add_model/2` is reached only from the catalog Quick Setup path (`ModelProfileEvents.quick_setup/5` → `save_quick_model/3`, i.e. `save_quick_setup`, `save_custom_model`, `select_llm_model_shortcut`).
+  The other creation paths are provider-correct: `ProviderProfiles.editor_identity/4` (`:94-125`) slugs the provider atom for the id and uses the provider catalog `entry.display_name` for the name; `welcome_live/setup.ex` `build_profile/6` (`:141-174`) uses `default.provider_display_name` and `"<resolved_atom>-onboarding"`.
+- **Reasoning checkboxes**: `ProviderProfileFields.reasoning_fields/1` (`provider_profile_fields.ex:82-154`) renders the effort inventory as TWO checkbox groups sharing ONE `name` (`reasoning_efforts[]`) plus a hidden blank seed (`:110`); the primary group is `selected ++ suggestions` (checked from the draft, no per-input `id`), the `<details>` "Advanced reasoning choices" group renders the complement with NO `checked` attribute and NO `id`.
+  Because the primary group's membership/order is derived from the just-submitted draft, a `phx-change` round trip MOVES the clicked effort between the two groups, so positional patching can reassign `value` on a checkbox the browser already flipped and the flat `reasoning_efforts[]` payload then carries a second effort.
+  The dashboard never renames an effort: `max` is only a CORE wire alias of `xhigh` (`EvoGit.Config.Schema.LLM.canonical_reasoning_effort/1`), and the dashboard parsers pass raw strings through.
+
 ## Constraints
 - All component modules use `use EvoDashWeb, :html`.
 - Styling is Tailwind CSS + DaisyUI.
