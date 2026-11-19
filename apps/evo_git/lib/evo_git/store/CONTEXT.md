@@ -120,7 +120,7 @@ Rebuilds `vct_mounts` into its current seven-column shape: `point` TEXT primary 
 
 The migration versions are 1..9 plus 11, CONTIGUOUS, and shipped ledger identities and frozen source files are never rewritten.
 Version 9 adds `pause_kind` and version 11 rebuilds `vct_mounts` for workspace mounts; version 10 is RETIRED and must never be reused; boot has no physical-schema reconciliation for an already-stamped ledger.
-`HistoricalSources.run/1` only rejects reserved preservation remnants and runs pending versions, so a ledger containing versions 1–9 with missing `session_mode`, `pause_kind` or `vct_mounts` remains inconsistent after a successful no-op migration run.
+`HistoricalSources.run/1` only rejects reserved preservation remnants and runs pending versions, so a ledger containing versions 1–9 and 11 with missing `session_mode`, `pause_kind` or the workspace `vct_mounts` shape remains inconsistent after a successful no-op migration run.
 For offline local repair, preserve ledger and existing payloads and repair only verified physical gaps; deleting ledger rows to replay migrations also re-enables destructive legacy archive/project transformations.
 `Boot` delegates to `HistoricalSources.run/1` under its existing migration lock, which checks for interrupted preservation objects before one ordinary `Ecto.Migrator.run/4` with `all: true`.
 No legacy sources are hidden or restored, and migrations 5/7 retain their normal archive fan-out and capped project-import behavior.
