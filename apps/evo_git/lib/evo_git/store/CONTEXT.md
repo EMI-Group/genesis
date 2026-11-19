@@ -325,7 +325,7 @@ The lease classifiers are CONSERVATIVE about it — `Lease.lease_renewable?/1` a
 - `../repo.ex` → `EvoGit.Repo` — the Ecto repo (XqliteEcto3, unnamed dynamic instances, effective tuning in `start_opts/0`, runtime `database:` resolution)
 - `./codec.ex` → `EvoGit.Store.Codec` — the pure encode/decode oracle (plain JSON TEXT, no compression)
 - `./operations/` → `Tasks`, `Lightweight`, `Summaries`, `Pages`, `Archives`, `Filters`, `VctMounts`, `Safety` — all repo access
-- `./schemas/` → `TaskRow` (typed write) + `TaskRowRaw` (raw read projection) + `TaskAgentArchiveRow` (composite `(task_id, agent_id)` PK, no `timestamps()`) + `VctMountRow` (`point` primary key, UNIQUE `path`)
+- `./schemas/` → `TaskRow` (typed write) + `TaskRowRaw` (raw read projection) + `TaskAgentArchiveRow` (composite `(task_id, agent_id)` PK, no `timestamps()`) + `VctMountRow` (`point` primary key, UNIQUE and nullable `path`, JSON `members` TEXT, optional `description`, seven columns in this order: point, path, name, kind, last_opened_at, members, description)
 - `./types/` → `task_timestamp.ex`, `atom_column.ex`, `session_mode.ex` (`Types.SessionMode`: cast/dump/load over `Codec.session_mode`), `json_columns.ex` (`OptsJson`/`ResultJson`/`LogsJson`/`UsageJson`/`ErrorJson`), `archive_columns.ex` (plain-Jason `ArchiveUsageJson`/`ArchiveLlmSettingsJson`/`ArchiveAgentSettingsJson`/`ArchiveForeignReposJson`)
 - `./boot.ex` → `EvoGit.Store.Boot` — dynamic-repo boot, migration runner, boot-time `PRAGMA optimize`, `:global` lock
 - `./repo_scope.ex` → `EvoGit.Store.RepoScope` — `with_repo/2` scoped binding
