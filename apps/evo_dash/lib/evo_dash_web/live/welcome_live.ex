@@ -16,12 +16,12 @@ defmodule EvoDashWeb.WelcomeLive do
   use EvoDashWeb, :live_view
 
   alias EvoDashWeb.LLMSetup.Reasoning
-  alias EvoDashWeb.LLMSetup.Schedule
   alias EvoDashWeb.SettingsComponents.ProviderWizard
   alias EvoDashWeb.SettingsLive.ConfigIO
   alias EvoDashWeb.WelcomeLive.Presentation
   alias EvoDashWeb.WelcomeLive.Setup
   alias EvoDashWeb.WelcomeLive.Steps
+  alias EvoDashWeb.WelcomeLive.ViewModel
   alias EvoDashWeb.WelcomeLive.Wizard
   alias EvoGit.Config.LLMCatalog, as: Catalog
 
@@ -377,7 +377,7 @@ defmodule EvoDashWeb.WelcomeLive do
 
   @impl true
   def render(assigns) do
-    assigns = prepare_view(assigns)
+    assigns = ViewModel.prepare_view(assigns)
 
     ~H"""
     <Layouts.app
@@ -407,7 +407,9 @@ defmodule EvoDashWeb.WelcomeLive do
             <.icon name="hero-arrow-left" class="size-4" />{gettext("Back")}
           </button>
           <button
-            :if={@current_node_id == nil and not all_set?(@step, @has_model?, @wizard_active)}
+            :if={
+              @current_node_id == nil and not ViewModel.all_set?(@step, @has_model?, @wizard_active)
+            }
             phx-click="skip"
             class="btn btn-ghost btn-sm"
           >
@@ -417,7 +419,7 @@ defmodule EvoDashWeb.WelcomeLive do
 
         <div>
           <h2 class="text-xl font-bold">
-            {if all_set?(@step, @has_model?, @wizard_active),
+            {if ViewModel.all_set?(@step, @has_model?, @wizard_active),
               do: gettext("You're All Set!"),
               else: gettext("Welcome to Genesis")}
           </h2>
@@ -437,7 +439,7 @@ defmodule EvoDashWeb.WelcomeLive do
               </span>
               <a href={~p"/welcome"} class="btn btn-primary btn-sm">{gettext("Switch to Local")}</a>
             </div>
-          <% all_set?(@step, @has_model?, @wizard_active) -> %>
+          <% ViewModel.all_set?(@step, @has_model?, @wizard_active) -> %>
             <div class="bg-success/10 border border-success/20 rounded-xl p-5 flex gap-3">
               <.icon name="hero-check-circle" class="size-7 text-success" />
               <div class="space-y-2">
@@ -462,7 +464,7 @@ defmodule EvoDashWeb.WelcomeLive do
               progress={Wizard.progress(@draft, @step)}
               back_event="wizard_back"
               next_event="wizard_next"
-              next_label={next_label(@step)}
+              next_label={ViewModel.next_label(@step)}
               next_disabled={not Wizard.valid?(@step, @draft, Wizard.capabilities(@draft))}
               cancel_event="skip"
               cancel_label={gettext("Skip")}
@@ -521,100 +523,6 @@ defmodule EvoDashWeb.WelcomeLive do
     """
   end
 
-  # ── View model ───────────────────────────────────────────────────────────
-
-  defp prepare_view(assigns) do
-    draft = if is_map(assigns.draft), do: assigns.draft, else: Wizard.new()
-    provider = Presentation.provider_entry(assigns.llm_providers, draft["provider"])
-    provider_id = provider && Map.get(provider, :id)
-    variant_id = Presentation.variant_id(provider, draft["variant"])
-    capabilities = Wizard.capabilities(draft)
-    scoped = Setup.provider_models(assigns.flat_models, provider_id, variant_id)
-    wire = Presentation.wire_atom(provider, variant_id)
-    primary = draft["default_model"]
-
-    extra_models =
-      draft
-      |> Map.get("models")
-      |> List.wrap()
-      |> Enum.reject(&(&1 == primary))
-      |> Enum.map(fn model ->
-        entry = Presentation.model_entry(scoped, model)
-
-        %{
-          "id" => model,
-          "label" => map_field(entry, :model_display_name) || model,
-          "efforts" => map_field(entry, :reasoning_efforts) || [],
-          "default" => model_reasoning_default(draft, model)
-        }
-      end)
-
-    assigns
-    |> assign(:draft, draft)
-    |> assign(:provider_options, Presentation.provider_options(assigns.llm_providers))
-    |> assign(:variant_options, variant_options(provider, draft))
-    |> assign(:auth_modes, Map.get(capabilities, :auth_modes, ["api_key"]))
-    |> assign(:oauth_only?, oauth_only?(wire))
-    |> assign(:login_instructions, Presentation.login_instructions(wire))
-    |> assign(
-      :model_rows,
-      scoped |> Setup.filtered_models(assigns.search_query) |> Presentation.model_rows()
-    )
-    |> assign(:all_model_rows, Presentation.model_rows(scoped))
-    |> assign(:inventory, Presentation.primary_inventory(draft, provider))
-    |> assign(:default_effort, Presentation.primary_effort(draft))
-    |> assign(:presets, Presentation.schedule_presets(provider, variant_id))
-    |> assign(:preset_applied, Presentation.preset_applied(draft, assigns.preset_dismissed))
-    |> assign(:holidays, Wizard.holiday_value(draft))
-    |> assign(:holiday_options, Schedule.holiday_options())
-    |> assign(:holiday_help, Schedule.holiday_help())
-    |> assign(:schedule_rows, Wizard.schedule_rows(draft))
-    |> assign(:inventory_name, Reasoning.inventory_input_name())
-    |> assign(:default_name, Reasoning.default_input_name())
-    |> assign(:extra_models, extra_models)
-    |> assign(:summary, Wizard.summary_rows(draft))
-    |> assign(:key_present?, key_present?(assigns.credentials, provider))
-    |> assign(:key_placeholder, key_placeholder(provider))
-  end
-
-  defp variant_options(provider, draft) do
-    current = draft["variant"]
-
-    provider
-    |> Presentation.variant_options()
-    |> Enum.map(fn row -> Map.put(row, "selected", row["id"] == to_string(current || "")) end)
-  end
-
-  defp all_set?(:provider, has_model?, wizard_active?),
-    do: has_model? and not wizard_active?
-
-  defp all_set?(_step, _has_model?, _wizard_active?), do: false
-
-  defp next_label(:test), do: gettext("Save and finish")
-  defp next_label(_step), do: nil
-
-  defp key_present?(credentials, provider) when is_map(credentials) do
-    key = map_field(provider, :credential_key)
-    not is_nil(key) and Map.get(credentials, key) not in [nil, ""]
-  end
-
-  defp key_present?(_credentials, _provider), do: false
-
-  defp key_placeholder(provider) do
-    case map_field(provider, :display_name) do
-      name when is_binary(name) and name != "" ->
-        gettext("Paste your %{provider} API key", provider: name)
-
-      _other ->
-        gettext("Paste your API key")
-    end
-  end
-
-  defp oauth_only?(wire) when is_atom(wire) and not is_nil(wire),
-    do: Catalog.oauth_only?(wire) == true
-
-  defp oauth_only?(_wire), do: false
-
   # `Setup.auth_mode/1` asks the catalog whether the WIRE provider atom is
   # OAuth-only, so the entry map is resolved to that atom first (a variant can
   # change the wire provider); an unresolvable entry degrades to `nil`, which
@@ -668,15 +576,6 @@ defmodule EvoDashWeb.WelcomeLive do
       current = ensure_map(Map.get(acc, model, %{}))
       Map.put(acc, model, Map.put(current, "default", to_string(value)))
     end)
-  end
-
-  defp model_reasoning_default(draft, model) do
-    draft
-    |> Map.get("model_reasoning")
-    |> ensure_map()
-    |> Map.get(model, %{})
-    |> ensure_map()
-    |> Map.get("default", "")
   end
 
   # ── Save / test plumbing ─────────────────────────────────────────────────
@@ -770,9 +669,6 @@ defmodule EvoDashWeb.WelcomeLive do
   end
 
   # ── Small total helpers ──────────────────────────────────────────────────
-
-  defp map_field(map, key) when is_map(map), do: Map.get(map, key)
-  defp map_field(_map, _key), do: nil
 
   defp ensure_map(map) when is_map(map), do: map
   defp ensure_map(_map), do: %{}
