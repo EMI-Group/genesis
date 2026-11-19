@@ -34,7 +34,6 @@ None — leaf directory of reusable settings presentation modules (`./provider_p
 | `SectionHeader` | Sticky top section header (`section_header/1`). |
 | `CardShell` | Editor card wrapper: header row + optional actions slot + body. |
 | `FormFooter` | Edit-form action footer: Cancel ghost + primary submit. |
-| `ModelProfilesEditor` | Legacy `[[llm.models]]` list editor + inline edit form; no render call site in the current Settings page. |
 
 ## Provider account panel — `provider_profiles/`
 
