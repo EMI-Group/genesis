@@ -226,11 +226,13 @@ defmodule EvoGit.Config.Schema.Definitions do
         key_path: [:llm, :reasoning_effort],
         type: :string,
         default: nil,
-        validation: [],
+        validation: [
+          in: Enum.map(EvoGit.Config.Schema.LLM.reasoning_effort_options(), &Atom.to_string/1)
+        ],
         category: :llm,
         sub_category: nil,
         description:
-          "Controls how much effort the model spends reasoning before answering. Valid values: none, minimal, low, medium, high, xhigh, default (mapped to atoms in Elixir). Leave unset to use the provider's default."
+          "Controls how much effort the model spends reasoning before answering. Valid values: none, minimal, low, medium, high, xhigh, default (mapped to atoms in Elixir). 'max' is NOT offered — it is an accepted legacy alias read as 'xhigh'. Leave unset to use the provider's default."
       },
       %{
         key_path: [:llm, :top_p],

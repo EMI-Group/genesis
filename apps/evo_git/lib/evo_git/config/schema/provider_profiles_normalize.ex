@@ -209,9 +209,21 @@ defmodule EvoGit.Config.Schema.ProviderProfiles.Normalize do
 
   def efforts(_), do: []
 
-  def string_effort(value) when is_binary(value) and value != "", do: value
-  def string_effort(value) when is_atom(value) and not is_nil(value), do: Atom.to_string(value)
+  def string_effort(value) when is_binary(value) and value != "", do: alias_legacy_effort(value)
+
+  def string_effort(value) when is_atom(value) and not is_nil(value),
+    do: value |> Atom.to_string() |> alias_legacy_effort()
+
   def string_effort(_), do: nil
+
+  # `max` is an ACCEPTED legacy alias, never an offered level (the canonical
+  # ladder lives in `EvoGit.Config.Schema.LLM.reasoning_efforts/0`). Every
+  # effort read — provider/model inventories, provider/model defaults and the
+  # legacy `[[llm.models]]` migration — normalizes to the canonical `xhigh`, so
+  # a persisted config keeps loading and a later save writes `xhigh`.
+  defp alias_legacy_effort(value) do
+    if String.downcase(String.trim(value)) == "max", do: "xhigh", else: value
+  end
 
   defp string_key(key) when is_atom(key), do: Atom.to_string(key)
   defp string_key(key), do: key

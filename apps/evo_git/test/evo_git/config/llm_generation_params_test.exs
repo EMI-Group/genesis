@@ -474,7 +474,7 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
   end
 
   describe "LLMConstraints.filter/3 — reasoning_effort value sets" do
-    test "GLM-5.3 / GLM-5.3-FLASH accept low | high | max only" do
+    test "GLM-5.3 / GLM-5.3-FLASH accept the Genesis levels low | high | xhigh" do
       models = [
         "zai:glm-5.3",
         "zai:glm-5.3-flash",
@@ -488,31 +488,52 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
         assert LLMConstraints.filter([reasoning_effort: :high], model, nil) ==
                  [reasoning_effort: :high]
 
+        # Genesis' top level is `xhigh`; the provider's own spelling is "max".
+        assert LLMConstraints.filter([reasoning_effort: :xhigh], model, nil) ==
+                 [reasoning_effort: "max"]
+
         assert LLMConstraints.filter([reasoning_effort: :max], model, nil) ==
-                 [reasoning_effort: :max]
+                 [reasoning_effort: "max"]
 
         assert LLMConstraints.filter([reasoning_effort: :medium], model, nil) == []
         assert LLMConstraints.filter([reasoning_effort: :none], model, nil) == []
       end
     end
 
-    test "a TOML string 'max' is accepted for GLM-5.3 (compared on the normalized form)" do
+    test "a TOML string 'max' is accepted for GLM-5.3 (aliased to xhigh, sent as 'max')" do
       assert LLMConstraints.filter([reasoning_effort: "max"], "zai:glm-5.3-flash", nil) ==
+               [reasoning_effort: "max"]
+
+      assert LLMConstraints.filter([reasoning_effort: "xhigh"], "zai:glm-5.3-flash", nil) ==
                [reasoning_effort: "max"]
     end
 
-    test "other GLM models accept the full OpenAI set" do
+    test "other GLM models accept the full canonical ladder (xhigh maps to 'max')" do
       for model <- ["zai:glm-5.2", "zai:glm-4.6"] do
-        for effort <- [:none, :minimal, :low, :medium, :high, :xhigh, :default] do
+        for effort <- [:none, :minimal, :low, :medium, :high, :default] do
           assert LLMConstraints.filter([reasoning_effort: effort], model, nil) ==
                    [reasoning_effort: effort]
         end
+
+        assert LLMConstraints.filter([reasoning_effort: :xhigh], model, nil) ==
+                 [reasoning_effort: "max"]
       end
+    end
+
+    test "an unaliased effort keeps its original representation" do
+      assert LLMConstraints.filter([reasoning_effort: "high"], "zai:glm-5.3", nil) ==
+               [reasoning_effort: "high"]
+
+      assert LLMConstraints.filter([reasoning_effort: :high], "zai:glm-5.3", nil) ==
+               [reasoning_effort: :high]
     end
 
     test "non-GLM models are unaffected" do
       assert LLMConstraints.filter([reasoning_effort: :medium], "anthropic:claude-sonnet-4", nil) ==
                [reasoning_effort: :medium]
+
+      assert LLMConstraints.filter([reasoning_effort: :xhigh], "anthropic:claude-sonnet-4", nil) ==
+               [reasoning_effort: :xhigh]
     end
   end
 

@@ -35,11 +35,16 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
   because metadata is missing.
 
   A violation is always resolved by **omitting** the offending parameter (never
-  by clamping or mapping the value — no documented value mapping exists for the
-  affected families), together with a `Logger.warning` naming the parameter, the
-  model and the reason. Rationale: config/runtime modules must degrade
-  gracefully and never raise on user config, and silently substituting a value
-  would hide the misconfiguration from the user.
+  by clamping or mapping the value), together with a `Logger.warning` naming
+  the parameter, the model and the reason. Rationale: config/runtime modules
+  must degrade gracefully and never raise on user config, and silently
+  substituting a value would hide the misconfiguration from the user.
+
+  One deliberate exception: `:reasoning_effort_wire_aliases` (per table) renames
+  a SURVIVING effort to the provider's own documented spelling of the same
+  intensity (Z.AI GLM: Genesis' top level `xhigh` → `"max"`). That is a normal
+  mapping, not a substitution — the level is accepted and sent, and Genesis
+  keeps ONE canonical level ladder (`EvoGit.Config.Schema.LLM.reasoning_efforts/0`).
 
   Keyword ORDER of the surviving parameters is preserved.
   """
@@ -60,6 +65,14 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
   #   * `:unsupported_params`— param names this provider does not document
   #   * `:max_temperature`   — documented maximum `temperature` value
   #   * `:reasoning_effort`  — `%{default: [atom], by_model: [{regex, [atom]}]}`
+  #   * `:reasoning_effort_wire_aliases` — `%{atom => wire_value}` applied to a
+  #     SURVIVING `:reasoning_effort` after the allowlist check: Genesis has ONE
+  #     canonical level ladder (see `LLM.reasoning_efforts/0`, whose top level is
+  #     `:xhigh`), while a provider may document the same intensity under another
+  #     spelling. This is a normal MAPPING (not a drop): the parameter is emitted
+  #     with the provider-documented value, key order is preserved, and an
+  #     unaliased effort keeps its original representation (string in → string
+  #     out). The allowlist itself stays in Genesis levels.
   #   * `:thinking_disable_unsupported` — model patterns whose
   #     `thinking.type = "disabled"` is rejected. INFORMATIONAL ONLY: Genesis
   #     itself never emits a `thinking` parameter (it is only reachable through
@@ -75,8 +88,19 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
           "fields are model, messages, temperature ([0.0, 1.0]), top_p, max_tokens " <>
           "(<= 131072 for GLM-5.x/4.7/4.6), stream, tools, tool_choice, tool_stream, " <>
           "thinking and reasoning_effort; top_k, frequency_penalty and " <>
-          "presence_penalty are NOT documented. GLM-5.3 / GLM-5.3-FLASH accept " <>
-          "reasoning_effort low|high|max only and reject thinking.type = \"disabled\"; " <>
+          "presence_penalty are NOT documented. " <>
+          "VERIFIED 2026-11-19 against https://docs.z.ai/guides/llm/glm-5.3, " <>
+          "https://docs.z.ai/guides/capabilities/thinking, https://z.ai/blog/glm-5.3: " <>
+          "GLM-5.3 / GLM-5.3-FLASH document exactly three reasoning_effort values " <>
+          "low|high|max (default max) and no longer accept thinking.type = \"disabled\" " <>
+          "(the documented migration is type = \"enabled\" + reasoning_effort = \"low\"). " <>
+          "The same thinking guide ALSO documents an OpenAI-style mapping for " <>
+          "GLM-5.3/GLM-5.3-FLASH (none/minimal/low -> low, medium/high -> high, " <>
+          "xhigh/max -> max) while its prose says values outside low|high|max are " <>
+          "rejected; Genesis therefore sends only levels that are natively " <>
+          "documented. Genesis' top level is `xhigh`, which maps to the " <>
+          "provider-documented `max` at this wire boundary " <>
+          "(`:reasoning_effort_wire_aliases`), so `max` is never a Genesis level. " <>
           "GLM-5.2 and earlier accept the OpenAI reasoning_effort set with mapping " <>
           "(none/minimal skip thinking, low/medium -> high, xhigh -> max). Z.AI " <>
           "error codes: 1210 = unrecognized parameter NAME, 1211 = unknown model, " <>
@@ -99,11 +123,15 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
       unsupported_params: [:top_k, :frequency_penalty, :presence_penalty],
       max_temperature: 1.0,
       reasoning_effort: %{
-        # GLM-5.2 and earlier: the full OpenAI set is accepted.
-        default: [:none, :minimal, :low, :medium, :high, :xhigh, :default],
-        # GLM-5.3 / GLM-5.3-FLASH: low|high|max only.
-        by_model: [{~r/glm-5\.3/i, [:low, :high, :max]}]
+        # GLM-5.2 and earlier: the full canonical Genesis ladder is accepted.
+        default: LLM.reasoning_effort_options(),
+        # GLM-5.3 / GLM-5.3-FLASH: low|high|max natively — in Genesis levels that
+        # is low|high|xhigh (`xhigh` is emitted as "max" by the wire alias below).
+        by_model: [{~r/glm-5\.3/i, [:low, :high, :xhigh]}]
       },
+      # Z.AI's native spelling for Genesis' top level (its docs call the level
+      # "max" and map OpenAI's `xhigh` onto it).
+      reasoning_effort_wire_aliases: %{xhigh: "max"},
       thinking_disable_unsupported: [~r/glm-5\.3/i]
     }
   ]
@@ -129,7 +157,11 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
   * `:unsupported_params` — omitted (undocumented parameter name for the
     provider).
   * `:max_temperature` — `:temperature` above it is omitted.
-  * `:reasoning_effort` — an effort outside the documented set is omitted.
+  * `:reasoning_effort` — an effort outside the documented set (compared on its
+    canonical form, so `"max"` counts as Genesis' `:xhigh`) is omitted.
+  * `:reasoning_effort_wire_aliases` — a surviving effort is emitted with the
+    provider-documented wire value (Z.AI GLM: `:xhigh` → `"max"`). A mapping,
+    not a drop; an unaliased effort keeps its original representation.
 
   Metadata-driven (applied only when the metadata is present):
 
@@ -286,10 +318,10 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
         params
 
       {:ok, raw_effort} ->
-        # Values arriving from TOML are strings; compare on the normalized atom
+        # Values arriving from TOML are strings; compare on the canonical atom
         # form so a documented level is not dropped merely because the config
-        # layer forwarded it as a string (e.g. "max", which the config schema's
-        # reasoning_effort set does not atomize).
+        # layer forwarded it as a string, and so the accepted legacy alias
+        # "max" is judged as Genesis' `:xhigh` (never as a level of its own).
         effort = normalize_effort(raw_effort)
         allowed = allowed_efforts(model)
 
@@ -312,18 +344,42 @@ defmodule EvoGit.Config.Schema.LLMConstraints do
             )
 
           true ->
-            params
+            # Surviving effort: emit the provider's own spelling when the table
+            # documents one (a mapping, not a drop), else keep the caller's
+            # original representation.
+            put_effort_wire_alias(params, model, effort)
         end
     end
   end
 
-  defp normalize_effort(value) when is_binary(value) do
-    String.to_existing_atom(value)
-  rescue
-    ArgumentError -> value
+  defp normalize_effort(value) do
+    # `canonical_reasoning_effort/1` is total and explicit (no atom interning);
+    # unknown values keep their raw form so the allowlist still rejects them
+    # and an unmapped provider leaves them untouched.
+    LLM.canonical_reasoning_effort(value) || value
   end
 
-  defp normalize_effort(value), do: value
+  defp put_effort_wire_alias(params, model, effort) do
+    case effort_wire_alias(model, effort) do
+      nil ->
+        params
+
+      wire_value ->
+        # Key order is preserved (the key is present: we just read it).
+        List.keyreplace(params, :reasoning_effort, 0, {:reasoning_effort, wire_value})
+    end
+  end
+
+  defp effort_wire_alias(model, effort) do
+    model
+    |> matching_tables()
+    |> Enum.find_value(fn table ->
+      case Map.get(table, :reasoning_effort_wire_aliases) do
+        %{} = aliases -> Map.get(aliases, effort)
+        _ -> nil
+      end
+    end)
+  end
 
   defp filter_tool_params(params, meta) do
     if capability_enabled?(meta, :tools) do
