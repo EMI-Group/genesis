@@ -26,6 +26,10 @@ defmodule EvoGit.Agent.Tools.ElixirEval.DirectAPI do
     {EvoGit.VCT, :projects, 1, :read},
     {EvoGit.VCT, :search, 1, :read},
     {EvoGit.VCT, :search, 2, :read},
+    {EvoGit.VCT, :workspaces, 0, :read},
+    {EvoGit.VCT, :workspaces, 1, :read},
+    {EvoGit.VCT, :workspace_members, 1, :read},
+    {EvoGit.VCT, :workspaces_for, 1, :read},
     {EvoGit.TaskRegistry, :start_task, 2, :write},
     {EvoGit.TaskRegistry, :cancel_task, 1, :write},
     {EvoGit.TaskRegistry, :force_kill_task, 1, :write},
@@ -136,11 +140,20 @@ defmodule EvoGit.Agent.Tools.ElixirEval.DirectAPI do
     Inspect persisted overrides and file location: {EvoGit.Config.user_config(), EvoGit.Config.config_path()}
     Discover projects: EvoGit.VCT.projects(limit: 10)
     Find projects: EvoGit.VCT.search("project name", limit: 10)
+    Include workspaces: EvoGit.VCT.projects(include_workspaces: true)
+    List workspaces: EvoGit.VCT.workspaces(limit: 10)
+    Inspect workspace members: EvoGit.VCT.workspace_members("workspace name")
+    Workspaces containing a project: EvoGit.VCT.workspaces_for("vct:///projects/name")
     Task pages return the real %{rows: rows, total: count}; get_task/get_task_lite return TaskInfo structs or nil, not redacted maps. list_agents returns the real full list of agent summaries, and get_llm_slot_status returns the real per-model map. These reads are not facade-row-bounded or secret-redacted; select only needed data before printing.
     start_task takes the real task type/options and returns {:ok, TaskInfo} or the API error; enqueue is not execution success. cancel/force_kill return their real acknowledgements/errors. delete returns :ok for a queued cast ONLY, not persisted deletion. Direct calls add no facade self-target/status/option policies.
     get_config/1 uses the scheduler's actual key semantics (including nonscalar values and nil for unknown keys). Config.resolve/1 accepts the real atom key or key-path list with no direct-key restriction.
     Config.show/0,1 and resolve/0,1 read the resolved defaults-plus-persisted snapshot, NOT live scheduler runtime overrides; show/1 selects settings using the actual API's key/path contract. list_settings/0 discovers supported settings. user_config/0 reads persisted user overrides without defaults, and config_path/0 returns the config.toml location.
-    VCT.projects/0,1 and search/1,2 return real project Mount structs, newest first, with an optional keyword :limit. Search is a case-insensitive substring match on name/path/point; a blank query matches all projects. Reserved system mounts are excluded; paths may be missing on disk. Results are node-local and an empty list can also mean the VCT is unavailable. No VCT mutation is admitted.
+    VCT.projects/0,1 and search/1,2 return real project Mount structs, newest first, with an optional keyword :limit; :include_workspaces (default false) merges workspace Mounts into either listing. Search is a case-insensitive substring match on name/path/point; a blank query matches all projects. Reserved system mounts are excluded; paths may be missing on disk.
+    VCT.workspaces/0,1 lists workspace Mounts newest first with an optional :limit. A workspace is grouping metadata only: kind "workspace", point vct:///workspaces/<name>, no OS path, an ordered members list of {"point", "path"} refs and an optional description; no directory is created for it.
+    VCT.workspace_members/1 accepts a workspace point or bare name and returns {:ok, %{workspace: mount, members: [mount], missing: [stored_ref], nested: [stored_ref]}} or {:error, :not_found | :not_a_workspace | :invalid_point}. members holds resolved mounts in stored order, missing holds unresolvable stored refs, nested holds refs naming another workspace; neither is expanded.
+    VCT.workspaces_for/1 accepts a project point, bare project name or absolute OS path and returns the workspace Mounts covering it, newest first, or [] when none does.
+    These VCT results are node-local, not a filesystem inventory, and an empty list can also mean the VCT is unavailable. A workspace point is never an executable task path.
+    No VCT mutation is admitted. create_workspace/3, forget/1, mount/2, ensure_mount/3 and put_global_context/1 all stay refused.
     Runtime-only example (write): EvoGit.AgentScheduler.update_config(max_tool_concurrency: 8). This uses the real update_config options/return contract; it does not persist. pause/0 and resume/0 use the scheduler's separate transitions. Turn caps affect future agent registrations.
     Persist a partial patch (write): EvoGit.Config.update(%{scheduler: %{max_tool_concurrency: 8}})
     update/1 merges a nested partial patch into persisted user configuration, preserving unrelated settings; schema keys are normalized without creating atoms from input. It validates and saves, returning :ok or {:error, reason}, but does NOT reload runtime state. Prefer it over saving a resolved map, which also materializes defaults.
