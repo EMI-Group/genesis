@@ -398,6 +398,17 @@ defmodule EvoDashWeb.ModelProfilesEditorTest do
       assert Floki.find(details, ~s(select[name="reasoning_effort"])) == []
     end
 
+    test "reasoning_effort options come from the canonical vocabulary (no max)" do
+      html = render_edit_form(%{id: "profile-1", model: "deepseek:deepseek-v4-pro"})
+      [select] = find(html, ~s(select[name="reasoning_effort"]))
+
+      options = select |> Floki.find("option") |> Floki.attribute("value")
+
+      assert options == [""] ++ EvoDashWeb.LLMSetup.Reasoning.options()
+      assert "xhigh" in options
+      refute "max" in options
+    end
+
     test "the advanced disclosure is collapsed for a bare/new profile" do
       html = render_edit_form(%{id: "profile-1", model: "deepseek:deepseek-v4-pro"})
       details = advanced_details(html)
