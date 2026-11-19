@@ -5,8 +5,11 @@
 //   1. ENTER ANIMATIONS (keyframes in css/app.css) — unchanged.
 //   2. ROW ↔ DOT HOVER SYNC — hovering a commit row highlights its gutter dot
 //      and vice versa (event delegation keyed by `data-cg-sha`).
-//   3. KEYBOARD ACTIVATION — an owned row is `role="button" tabindex="0"`;
-//      Enter / Space push the SAME `select_agent` event a click would.
+//   3. KEYBOARD ACTIVATION — a row is `role="button" tabindex="0"`, and Enter /
+//      Space push the SAME event a click on THAT ROW KIND would: a FOLDED RUN
+//      (gap) row toggles its fold (`toggle_commit_fold` + its fold key), while
+//      every other row — an owned commit row, a :base / :noop stub — selects
+//      its owner (`select_agent`) or is a no-op when it has none.
 //   4. SCROLL-TO-SELECTION — when the selected agent id CHANGES, the agent's
 //      topmost row is scrolled into view inside `.cg-scroll` (and its lane is
 //      revealed horizontally when the gutter is clipped).
@@ -32,6 +35,10 @@
 //     div.cg-row  (row)                  one commit ROW (owned rows also carry
 //                                        role="button" tabindex="0" +
 //                                        data-cg-agent-id — the keyboard target)
+//     div.cg-row.cg-gap-row (row)        a folded run's GAP ROW — the other
+//                                        keyboard target (role="button"
+//                                        tabindex="0", data-cg-fold-key); it
+//                                        toggles its fold, never a selection
 //     g.cg-node   (node)                 one gutter commit dot (its inner
 //                                        circle.cg-node-dot is the only
 //                                        pointer-active part of the gutter)
@@ -220,11 +227,18 @@ const CommitGraph = {
 
   // --- keyboard activation ---------------------------------------------------
   //
-  // Owned rows are `role="button" tabindex="0"` (rendered server-side); Enter
-  // and Space push the SAME `select_agent` event a phx-click would, with the
-  // row's own `data-cg-agent-id` (stringified identically to `phx-value-id`).
+  // Rows are `role="button" tabindex="0"` (rendered server-side) and come in
+  // TWO kinds, sharing the `.cg-row` shell but NOT the key contract:
+  //   * a FOLDED RUN row (`.cg-gap-row`, or any row carrying a fold key) is a
+  //     fold affordance — Enter / Space toggle its fold with the SAME
+  //     `toggle_commit_fold` event (and `fold-key` payload) a click sends;
+  //   * every other row (owned commit row, :base / :noop stub) selects its
+  //     owner from `data-cg-agent-id` with `select_agent`, stringified exactly
+  //     like `phx-value-id`, and is a no-op without one.
   // Space is prevented so it does not scroll the page. Nested interactive
   // elements (agent tag buttons) are skipped — the event target must BE the row.
+  // The handler is total: a gap row with NO fold key fires nothing and never
+  // falls through to `select_agent`.
 
   bindKeyboard() {
     if (this.keyBound) return;
@@ -236,6 +250,20 @@ const CommitGraph = {
 
       const row = event.target.closest(".cg-row");
       if (!row || event.target !== row) return; // a nested button owns its keys
+
+      // Branch on the ROW KIND before the agent-id path: a gap row toggles its
+      // fold, an owned commit row selects its agent (see above).
+      const foldKey = row.dataset.cgFoldKey;
+      if (row.classList.contains("cg-gap-row") || (foldKey != null && foldKey !== "")) {
+        // A gap row without a fold key has no contract — a no-op, never a
+        // fall-through into `select_agent` (its data-cg-agent-id is the fold's
+        // OWNER, not something the user asked to select).
+        if (foldKey == null || foldKey === "") return;
+
+        event.preventDefault();
+        this.pushEvent("toggle_commit_fold", {"fold-key": foldKey});
+        return;
+      }
 
       const id = row.dataset.cgAgentId;
       if (id == null || id === "") return; // unowned rows have no contract
