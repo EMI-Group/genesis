@@ -463,8 +463,9 @@ defmodule EvoGit.TaskRegistry do
   durable rows (a finished child by its stored result, a still-running one by a
   re-spawn from its own checkpoint), recursively down the tree.
 
-  Admission re-runs the SAME gates as `start_task/2` (model selection against the
-  current config, `:session_mode`, `:persistent_state`); a failure answers that
+  Admission re-runs the SAME gates as `start_task/2` (`:path` must be an OS path,
+  never a VCT point, model selection against the current config,
+  `:session_mode`, `:persistent_state`); a failure answers that
   `{:error, reason}` and leaves the row `:paused`. The resumability gate is the
   task's durable ROOT run (`EvoGit.TaskRegistry.AgentStateRead.roster/2`, the
   record whose `parent_id` is absent): a roster with no root row — no durable
@@ -770,7 +771,11 @@ defmodule EvoGit.TaskRegistry do
         # would kill the registry); an invalid value never enqueues a task.
         # `:persistent_state` is admitted the same way: it turns durable
         # per-run agent-state checkpoints on for this task.
-        with {:ok, opts} <- RuntimeOpts.admit_model_selection(opts, EvoGit.Config.resolve()),
+        # `:path` is admitted the same way: a task runs in an OS path, never in a
+        # VCT point (a workspace point has no OS path at all), so such a start
+        # replies `{:error, reason}` and enqueues nothing.
+        with {:ok, opts} <- RuntimeOpts.admit_task_path(opts),
+             {:ok, opts} <- RuntimeOpts.admit_model_selection(opts, EvoGit.Config.resolve()),
              {:ok, opts} <- RuntimeOpts.admit_session_mode(opts),
              {:ok, opts} <- RuntimeOpts.admit_persistent_state(opts) do
           task_ref =

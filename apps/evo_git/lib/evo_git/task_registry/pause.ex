@@ -258,7 +258,8 @@ defmodule EvoGit.TaskRegistry.Pause do
   defp admit(%{opts: stored}) do
     opts = if is_list(stored), do: stored, else: []
 
-    with {:ok, opts} <-
+    with {:ok, opts} <- EvoGit.TaskRegistry.RuntimeOpts.admit_task_path(opts),
+         {:ok, opts} <-
            EvoGit.TaskRegistry.RuntimeOpts.admit_model_selection(opts, EvoGit.Config.resolve()),
          {:ok, opts} <- EvoGit.TaskRegistry.RuntimeOpts.admit_session_mode(opts),
          {:ok, opts} <- EvoGit.TaskRegistry.RuntimeOpts.admit_persistent_state(opts) do
