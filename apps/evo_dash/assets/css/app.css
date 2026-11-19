@@ -941,10 +941,11 @@ button, a, input, textarea, select, summary,
 
    Layout surfaces styled with Tailwind utilities ON the elements where
    possible; the rules below own what a utility cannot express:
-     * `.cg-scroll` — the scroll wrapper, BOTH axes (rule below: `overflow:
-       auto` + a bounded `max-height`); gutter + rows + lane headers scroll
-       LEFT/RIGHT as ONE unit and the list scrolls vertically INSIDE the
-       panel.
+     * `.cg-scroll` — the ONE scroll wrapper, BOTH axes (rule below: `overflow:
+       auto`; a bounded `max-height`, replaced in commits mode at xl+ by the
+       fill chain, which gives the box the panel's remaining height instead);
+       gutter + rows + lane headers scroll LEFT/RIGHT as ONE unit and the list
+       scrolls vertically INSIDE the panel.
      * `.cg-lane-header` — the sticky (`position: sticky; top: 0; z-index`)
        lane-label bar above the gutter SVG; its width is set inline by the
        renderer (== the gutter width) so it scrolls in sync horizontally, and
@@ -953,14 +954,16 @@ button, a, input, textarea, select, summary,
        lane's x inline by the renderer; a clickable <button> for agent lanes,
        a plain <span> (`.cg-lane-chip-neutral`) for the neutral pre-task lane. */
 
-/* The ONE scroll container, both axes. A set `overflow-x` makes CSS compute
-   `overflow-y` to `auto` too, so this box was ALREADY the nearest scroll
-   container for the lane header's `position: sticky` — the stick was inert
-   only because an auto-height box never scrolls vertically. The bounded
-   `max-height` turns it into the REAL vertical scroller: the list scrolls
-   inside the panel and the lane header genuinely pins above the rows.
-   Mobile (<xl, the panel flows under the page scroller) gets the tighter
-   bound; xl+ (the fixed-viewport agents layout) allows the taller fill. */
+/* The ONE bounded VERTICAL scroller (both axes, in fact). A set `overflow-x`
+   makes CSS compute `overflow-y` to `auto` too, so this box is the nearest
+   scroll container for the lane header's `position: sticky` — the stick was
+   inert only because an auto-height box never scrolls vertically. Keeping
+   vertical scrolling on THIS box is load-bearing: never move it to an outer
+   box and never put a utility `overflow-*` override on it.
+   Below xl (the panel flows under the page scroller) the list keeps a bounded
+   `max-height`; xl+ in COMMITS mode (`.agents-tree-body-commits`) the box
+   instead FILLS the panel through the flex chain documented below, and its
+   `max-height` cap is dropped. */
 .cg-scroll {
   overflow: auto;
   max-height: min(26rem, 60vh);
@@ -971,6 +974,84 @@ button, a, input, textarea, select, summary,
 @media (min-width: 1280px) {
   .cg-scroll {
     max-height: min(38rem, 70vh);
+  }
+}
+
+/* === Commit Graph — commits-mode fill chain (xl +) === */
+/* The xl+ agents layout already gives `.agents-tree-panel` a fixed height
+   (`.agents-page-layout` = calc(100vh - 2rem); the panel is `flex: 1 1 0`), but
+   the panel's card body was a SECOND, nested scroller (`overflow-y: auto`), so
+   the commit list capped itself at ~70vh and left dead space below.
+   In COMMITS mode the LiveView template adds `.agents-tree-body-commits` to the
+   tree panel's `.card-body` (and only then). The chain below hands the panel's
+   whole height down to the ONE vertical scroller: card body → `#commit-graph` →
+   `#commit-graph-body-<node_key>` → `.cg-repo` → `.cg-scroll`. Every link is a
+   flex column with `min-height: 0` (so it may actually shrink) and
+   `overflow: hidden`; `.cg-scroll` is the only box that scrolls.
+   MULTI-REPO HEIGHT DECISION: the available height is shared EQUALLY between
+   the repos in view — each `.cg-repo` is `flex: 1 1 0` — so with N repos each
+   gets 1/N of the panel and scrolls internally, and a single repo fills the
+   whole panel. A repo is never bounded by its content height, and no repo may
+   starve another.
+   The TREE view is untouched: without the class none of these rules apply. */
+@media (min-width: 1280px) {
+  /* The commits card body stops scrolling and only forwards height. */
+  .agents-tree-panel .card-body.agents-tree-body-commits {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* The view switch (segmented control) above the graph must not grow/shrink. */
+  .agents-tree-body-commits > *:not(#commit-graph) {
+    flex: 0 0 auto;
+  }
+
+  .agents-tree-body-commits #commit-graph {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .agents-tree-body-commits #commit-graph > [id^="commit-graph-body-"] {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Error / stale / loading / empty strips: never shrink, never grow — they
+     sit ABOVE the repos and must stay fully visible. */
+  .agents-tree-body-commits #commit-graph > [id^="commit-graph-body-"] > *:not(.cg-repo) {
+    flex: 0 0 auto;
+  }
+
+  /* One repo section = one equal share of the panel height. */
+  .agents-tree-body-commits .cg-repo {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Repo header + selection readout are fixed; only `.cg-scroll` flexes. */
+  .agents-tree-body-commits .cg-repo > *:not(.cg-scroll) {
+    flex: 0 0 auto;
+  }
+
+  /* The ONE vertical scroller: fills its share, no `max-height` cap. The
+     truncation strip (`#cg-truncated-*`) and `.cg-empty-note` stay INSIDE it
+     and simply scroll with the list. */
+  .agents-tree-body-commits .cg-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
   }
 }
 
@@ -1006,6 +1087,43 @@ button, a, input, textarea, select, summary,
   transform-box: fill-box;
   transform-origin: center;
   transform: scale(1.3);
+}
+
+/* Collapsed FOLD (gap) rows — a run of hidden commits summarised by ONE
+   clickable affordance (`div.cg-row.cg-gap-row#commit-gap-row-<dom>-<key>` in
+   the row grid + its `g.cg-node.cg-gap-node` mate in the gutter). Deliberately
+   restrained and DISTINCT from a real commit row: a dashed lane-rail edge, a
+   dimmed dashed dot and muted text — no colour literals, semantic tokens only. */
+.cg-gap-row {
+  border-left: 1px dashed color-mix(in oklab, var(--color-base-content) 35%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+  cursor: pointer;
+}
+
+/* Same tint as an owned row's `hover:bg-base-200/60`; `.cg-hovered` covers the
+   dot → row direction of the hover sync when the renderer gives the gap row a
+   `data-cg-sha` (the gap node is its sha-mate). */
+.cg-gap-row:hover,
+.cg-gap-row.cg-hovered {
+  background-color: color-mix(in oklch, var(--color-base-200) 60%, transparent);
+}
+
+/* Keyboard-reachable, so it needs a visible focus ring. The negative offset
+   keeps the outline inside the row instead of widening the scrollable area. */
+.cg-gap-row:focus-visible,
+.cg-gap-row:focus {
+  outline: 2px solid var(--color-primary-standalone);
+  outline-offset: -2px;
+}
+
+/* Fold node in the gutter: dimmed, with a dashed stroke hint. The dot keeps the
+   pointer/hover rules above (`.cg-node-dot`, `.cg-node.cg-hovered`). */
+.cg-gap-node {
+  opacity: 0.7;
+}
+
+.cg-gap-node .cg-node-dot {
+  stroke-dasharray: 2 2;
 }
 
 /* Enter animations. Each animated element gets exactly one class, keyed on its
