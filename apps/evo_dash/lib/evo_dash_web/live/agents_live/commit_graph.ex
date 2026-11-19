@@ -31,13 +31,16 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   `CommitGraph.Edges`. They share three total shape readers exposed here as
   undocumented functions: `parents_list/1`, `sha_or_nil/1` and `stringify/1`.
 
-  ## Nodes (one row per commit)
+  ## Nodes (one row per node)
 
   One node per ADDRESSABLE fetched commit (a map with a non-empty binary
   `:sha`), de-duplicated by sha, PLUS one synthesized `kind: :base` node per
   distinct agent `:base_commit` absent from the fetched commits (see
   "Base synthesis"), PLUS one synthesized `kind: :noop` stub node per no-op
-  child agent (see "No-op stubs").
+  child agent (see "No-op stubs"), PLUS one synthesized `kind: :gap` node per
+  folded run of an agent's interior commits (see "Collapsing an agent's
+  commits"). Commit-history folding is ON BY DEFAULT: the collapsed view shows
+  the AGENT dag (fork → work → merge back), not a GitLens commit list.
 
   ## Lanes (one per agent)
 
@@ -110,13 +113,14 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
       lane, from the child's tip. When the child produced commits the source
       is the node whose sha is the child's `current_commit` (skipped when that
       is not a node); when it produced nothing the source is its no-op stub
-      (see "No-op stubs"). The target is the TOPMOST (min-row) node owned by P
-      strictly BELOW the source row; when the parent lane has nothing below
-      yet, a VIRTUAL landing is emitted — `to_sha: nil` with authoritative
-      `to_column` (the parent's lane) and `to_row` (the source's own row) for
-      the renderer's endpoint fallback. A REAL merge (a parent-lane commit
-      listing the child tip among its 2nd+ parents) is already covered by the
-      dashed `:merge` edge, so no `:merge_back` is emitted for it.
+      (see "No-op stubs"). The landing is (1) the TOPMOST (min-row) node owned
+      by P strictly BELOW the source row, else (2) the NEAREST (max-row) such
+      node ABOVE it — the parent's own tip or the fork point — else (3) the
+      edge is DROPPED (no `:merge_back` is emitted at all, only the `:spawn`).
+      A landing on the source's own row is never emitted, so no connector can
+      end in mid-air. A REAL merge (a parent-lane commit listing the child tip
+      among its 2nd+ parents) is already covered by the dashed `:merge` edge,
+      so no `:merge_back` is emitted for it.
 
   Commit → parent edges sort by `{from_sha, to_sha}`; agent-level edges sort by
   `{kind, owner_key, from_sha, to_sha}` (owner_key = the owner id stringified
@@ -145,6 +149,62 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   the child's lane, at layer `fork layer + 1` so it lands just below the fork.
   The child's agent-level edges then hang off the stub (`:spawn` fork → stub,
   `:merge_back` stub → parent lane).
+
+  ## Collapsing an agent's commits
+
+  This graph exists to show the AGENT dag (fork → work → merge back), not a
+  GitLens commit list, so each agent's interior commits FOLD into ONE synthetic
+  gap row by DEFAULT — `build/2` is `build(raw_by_repo, agents, MapSet.new())`,
+  the fully collapsed view.
+
+  A FOLDABLE RUN is a maximal run of HIDDEN nodes inside ONE agent's lane (runs
+  are never merged across lanes). A node is HIDDEN when `kind: :commit`, its
+  `owner_id` is non-nil and it is not an ANCHOR. Anchors are always visible and
+  never folded:
+
+    - the lane owner's START (its oldest progress commit) and END (tip) node;
+    - every fork point and tip of ANY agent, i.e. every node carrying a
+      non-empty `start_ids` or `end_ids`;
+    - every node with a non-empty `refs` list;
+    - every synthesized `kind: :base` / `kind: :noop` stub node;
+    - every UNOWNED node (the neutral lane 0 is never hidden).
+
+  Each foldable run emits EXACTLY ONE synthetic gap node — in BOTH states, so
+  the gap doubles as the per-run collapse control and the interleaving stays
+  stable:
+
+      %{sha: "gap-" <> fold_key, kind: :gap, owner_id: <run owner>,
+        column: <run owner's lane>, depth: <owner depth>, row: <re-indexed>,
+        short_sha: "", message: "", author_name: nil, date: nil, refs: [],
+        start_ids: [], end_ids: [],
+        fold_key: fold_key, hidden_count: <pos_integer>, expanded: <boolean>}
+
+  `fold_key`, `hidden_count` and `expanded` exist ONLY on `kind: :gap` nodes, so
+  every other node's key set is unchanged. `fold_key` is a STABLE binary
+  `"<agent_key>|<above_key>|<below_key>"`: `<agent_key>` is the run owner's
+  stringified agent id, `<above_key>`/`<below_key>` the shas of the nearest
+  VISIBLE node of that same lane above/below the run, with `"^"` / `"$"`
+  sentinels when there is none. It survives a rebuild that does not change the
+  commit set (a status/usage/token refresh never resets expansion).
+
+  A run listed in the `expanded` argument ALSO emits its hidden nodes (original
+  order and fields preserved) directly after the gap, so the user sees the
+  commits while the gap stays as the collapse control. `fold_keys/2` reports
+  every fold key present in the current data — the "expand all" driver. A stale
+  key that no longer names a run is simply ignored.
+
+  Folding happens on the ENTRIES, before `Interleave.layout/3`, so the single
+  `{layer, date_unix, sha}` sort re-indexes rows `0..n-1` afterwards and
+  `row_count == node_count` keeps holding. A gap entry takes the run head's
+  `layer`/`date_unix` (plus the run head's sha as its sort tie-break), so it
+  lands in the run's original row slot.
+
+  Edges are then derived over the FINAL node set through ONE alias map (hidden
+  sha → its run's gap sha): every edge endpoint resolves through it, so an
+  inter-lane connector LANDS ON the visible gap row instead of in mid-air. An
+  edge whose two endpoints alias to the same node is dropped, duplicates still
+  collapse on the resolved `{from_sha, to_sha}` pair, and the first present
+  parent of a commit stays `:parent`.
 
   ## Ownership (a single owner per node)
 
@@ -200,7 +260,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
         repo_key: term(), repo_dom_id: String.t(), repo_name: String.t(),
         node_count: non_neg_integer(), edge_count: non_neg_integer(),
         row_count: non_neg_integer(), column_count: non_neg_integer(),
-        truncated: boolean(),
+        truncated: boolean(), fold_count: non_neg_integer(),
         nodes: [%{sha:, short_sha:, message:, author_name:, date:, refs:,
                   row:, column:, depth:, kind:, owner_id:, start_ids:, end_ids:}],
         edges: [%{from_sha:, to_sha:, from_column:, from_row:, to_column:,
@@ -208,6 +268,11 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
         agents: [%{agent_id:, task_local_id:, status:, depth:, lane:,
                    parent_id:, color:, start_sha:, end_sha:, ended:}]
       }
+
+  A `kind: :gap` node additionally carries `fold_key`, `hidden_count` and
+  `expanded` (see "Collapsing an agent's commits"); every other kind carries
+  exactly the 13 keys shown above. `fold_count` is how many fold runs the repo
+  has, whether or not they are expanded.
 
   `nodes` is sorted top → bottom (ascending `row`), `agents` by the DFS
   subtree-contiguous agent order (see "Lanes (one per agent)"), and repos by
@@ -220,6 +285,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   use Gettext, backend: EvoDashWeb.Gettext
 
   alias __MODULE__.Edges
+  alias __MODULE__.Fold
   alias __MODULE__.Interleave
 
   alias EvoDashWeb.ThemeColor
@@ -227,11 +293,18 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
 
   @typedoc """
   One commit ROW of the vertical graph — a fetched commit (`kind: :commit`), a
-  synthesized fork point (`kind: :base`) or a synthesized no-op child stub
-  (`kind: :noop`). `row` is the unique top → bottom position, `column` the
-  owner's lane (the neutral lane 0 for unowned nodes), `depth` the OWNER
-  agent's depth, `owner_id` the owning agent's id (nil for unowned nodes) and
-  `start_ids`/`end_ids` the agent ids that fork from / tip at this sha.
+  synthesized fork point (`kind: :base`), a synthesized no-op child stub
+  (`kind: :noop`) or a synthesized fold gap (`kind: :gap`). `row` is the
+  unique top → bottom position, `column` the owner's lane (the neutral lane 0
+  for unowned nodes), `depth` the OWNER agent's depth, `owner_id` the owning
+  agent's id (nil for unowned nodes) and `start_ids`/`end_ids` the agent ids
+  that fork from / tip at this sha.
+
+  The fold keys `fold_key`, `hidden_count` and `expanded` exist ONLY on
+  `kind: :gap` nodes, which stand in for a run of folded commits of one lane:
+  `sha` is `"gap-" <> fold_key`, `message`/`short_sha` are `""`, `refs` `[]`,
+  `author_name`/`date` nil, and `hidden_count` is how many commits the fold
+  hides (they are emitted as ordinary `:commit` nodes when `expanded` is true).
   """
   @type node_view :: %{
           sha: String.t(),
@@ -243,10 +316,13 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
           row: non_neg_integer(),
           column: non_neg_integer(),
           depth: non_neg_integer(),
-          kind: :commit | :base | :noop,
+          kind: :commit | :base | :noop | :gap,
           owner_id: term() | nil,
           start_ids: [term()],
-          end_ids: [term()]
+          end_ids: [term()],
+          fold_key: String.t() | nil,
+          hidden_count: non_neg_integer(),
+          expanded: boolean()
         }
 
   @typedoc """
@@ -255,8 +331,9 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   first present parent, `:merge` for every other present parent, `:spawn` for
   an agent-level fork → child-oldest branch-out and `:merge_back` for an
   agent-level child-tip → parent-lane return. `owner_id` is the CHILD node's
-  owner (the child agent for agent-level edges). A VIRTUAL landing carries
-  `to_sha: nil` with authoritative `to_column`/`to_row`.
+  owner (the child agent for agent-level edges). Every emitted edge lands on a
+  real node of the same repo view — a landing candidate that does not exist
+  (`to_sha: nil`) means the edge is DROPPED, never drawn into empty space.
   """
   @type edge_view :: %{
           from_sha: String.t(),
@@ -304,6 +381,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
           row_count: non_neg_integer(),
           column_count: non_neg_integer(),
           truncated: boolean(),
+          fold_count: non_neg_integer(),
           nodes: [node_view()],
           edges: [edge_view()],
           agents: [agent_view()]
@@ -347,6 +425,19 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   def repo_display_name(_), do: gettext("Unknown Repo")
 
   @doc """
+  Builds the per-repo VERTICAL commit-graph view model with every agent's
+  commit history COLLAPSED — exactly `build(raw_by_repo, agents, MapSet.new())`.
+
+  Each agent's interior commits fold into ONE synthesized `kind: :gap` row per
+  maximal run of hidden commits in that agent's lane; the lane owner's START
+  and END nodes, every fork point / tip of any agent, every node carrying refs
+  and every synthesized `:base`/`:noop` stub always stay visible, as does every
+  unowned (neutral-lane) node.
+  """
+  @spec build(map(), [map()]) :: [repo_view()]
+  def build(raw_by_repo, agents), do: build(raw_by_repo, agents, MapSet.new())
+
+  @doc """
   Builds the per-repo VERTICAL commit-graph view model.
 
   `raw_by_repo` maps a repo grouping key to the fetched commit graph
@@ -355,28 +446,72 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   agents. The optional `truncated` flag is surfaced verbatim on the repo_view
   (absent/non-true → `false`).
 
+  `expanded` is the set of FOLD KEYS (see `fold_keys/2`) whose hidden commits
+  should be shown alongside their gap row — a `MapSet` of binaries, or a list
+  of binaries; any other shape (including a stale key that no longer names a
+  run) is simply ignored, which collapses that run.
+
   Agents are grouped by `grouping_key/1` — exactly like the tree — and the
   resulting `repo_view`s are sorted by `repo_name` ascending (ties broken by
   the stable `repo_dom_id`, so the DOM order never flaps between refreshes).
   """
-  @spec build(map(), [map()]) :: [repo_view()]
-  def build(raw_by_repo, agents) do
+  @spec build(map(), [map()], MapSet.t(String.t()) | [String.t()]) :: [repo_view()]
+  def build(raw_by_repo, agents, expanded) do
+    expanded = normalize_expanded(expanded)
+
     agents
     |> List.wrap()
     |> Enum.group_by(&grouping_key/1)
     |> Enum.map(fn {repo_key, repo_agents} ->
-      build_repo(repo_key, repo_agents, raw_for(raw_by_repo, repo_key))
+      build_repo(repo_key, repo_agents, raw_for(raw_by_repo, repo_key), expanded)
     end)
     |> Enum.sort_by(fn repo -> {repo.repo_name, repo.repo_dom_id} end)
   end
 
+  @doc """
+  Every fold key present in the current raw data (the "Expand all" driver).
+
+  Returns the set of fold keys the COLLAPSED build of the same inputs emits,
+  so the caller can pass it straight back to `build/3` to expand everything.
+  Structural changes (a new commit in a lane) re-derive the keys — the shape
+  only depends on the run's owning agent and its visible anchors, never on
+  agent status, usage or timings, so a status-only rebuild keeps them stable.
+  """
+  @spec fold_keys(map(), [map()]) :: MapSet.t(String.t())
+  def fold_keys(raw_by_repo, agents) do
+    agents
+    |> List.wrap()
+    |> Enum.group_by(&grouping_key/1)
+    |> Enum.reduce(MapSet.new(), fn {repo_key, repo_agents}, acc ->
+      raw = raw_for(raw_by_repo, repo_key)
+
+      case ordered_agents(repo_agents) do
+        [] -> acc
+        ordered -> MapSet.union(acc, repo_fold_keys(ordered, raw))
+      end
+    end)
+  end
+
+  # Total read of the caller's expansion set: a MapSet of binaries and a plain
+  # list are both accepted (any non-binary member is dropped); every other
+  # shape collapses everything, which is the default view.
+  defp normalize_expanded(%MapSet{} = expanded) do
+    expanded |> MapSet.to_list() |> Enum.filter(&is_binary/1) |> MapSet.new()
+  end
+
+  defp normalize_expanded(expanded) when is_list(expanded) do
+    expanded |> Enum.filter(&is_binary/1) |> MapSet.new()
+  end
+
+  defp normalize_expanded(_expanded), do: MapSet.new()
+
   # --- Repo assembly --------------------------------------------------------
 
-  defp build_repo(repo_key, repo_agents, raw) do
+  defp build_repo(repo_key, repo_agents, raw, expanded) do
     body =
       case ordered_agents(repo_agents) do
         [] -> empty_body()
-        ordered -> graph_body(ordered, raw)
+        ordered -> graph_body(ordered, raw, expanded)
       end
 
     # The fetch's truncation flag rides along verbatim (an absent/non-true
@@ -407,13 +542,14 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
       edge_count: 0,
       row_count: 0,
       column_count: 1,
+      fold_count: 0,
       nodes: [],
       edges: [],
       agents: []
     }
   end
 
-  defp graph_body(ordered, raw) do
+  defp graph_body(ordered, raw, expanded) do
     # Filtered to ADDRESSABLE commits (a map with a non-empty binary :sha) and
     # de-duplicated by sha — git log never returns duplicates, but a malformed
     # payload must not produce ambiguous lookups either.
@@ -457,6 +593,13 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
         base_entries(base_shas, base_owners, start_ids, end_ids) ++
         stub_entries(stubs, ordered)
 
+    # Genesis shows the AGENT dag (fork → work → merge back), not a GitLens
+    # commit list, so each agent's interior commits fold into ONE gap row by
+    # default. Runs are detected on the ENTRIES (they carry layer/date/sha), so
+    # `Interleave.layout/3`'s single sort re-indexes rows 0..n-1 afterwards.
+    runs = Fold.plan(entries, ordered, paths)
+    {entries, aliases} = Fold.fold(entries, runs, expanded)
+
     nodes = Interleave.layout(entries, index_meta(ordered), shift)
     agents = build_agents(ordered, shift)
 
@@ -468,7 +611,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
         paths: paths,
         parent_indices: parent_indices,
         stubs: Map.new(stubs, &{&1.agent_index, &1}),
-        lane_shift: shift
+        lane_shift: shift,
+        sha_aliases: aliases
       })
 
     %{
@@ -476,10 +620,48 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
       edge_count: length(edges),
       row_count: length(nodes),
       column_count: column_count(nodes, agents),
+      fold_count: length(runs),
       nodes: nodes,
       edges: edges,
       agents: agents
     }
+  end
+
+  # The fold keys a build of these inputs would emit (see `fold_keys/2`): the
+  # same entry set `graph_body/3` folds, folded with NOTHING expanded so every
+  # run contributes exactly one key.
+  defp repo_fold_keys(ordered, raw) do
+    commits = addressable_commits(raw)
+    lookup = commit_lookup(commits)
+    refs = refs_map(raw)
+
+    base_shas = base_shas(ordered, lookup)
+    base_owners = base_owners(ordered, lookup)
+    layers = Interleave.layers(layer_lookup(lookup, base_shas))
+
+    paths =
+      Enum.map(ordered, fn agent ->
+        walk(
+          Map.get(agent, :current_commit),
+          Map.get(agent, :base_commit),
+          lookup,
+          MapSet.new()
+        )
+      end)
+
+    owners = node_owners(commits, ordered, paths, layers)
+    parent_indices = parent_indices(ordered)
+    stubs = Interleave.noop_stubs(ordered, paths, parent_indices, layers)
+    {start_ids, end_ids} = annotations(ordered)
+
+    entries =
+      commit_entries(commits, layers, owners, refs, start_ids, end_ids) ++
+        base_entries(base_shas, base_owners, start_ids, end_ids) ++
+        stub_entries(stubs, ordered)
+
+    entries
+    |> Fold.plan(ordered, paths)
+    |> Fold.keys()
   end
 
   # max(max(node.column) + 1, max(agent.lane) + 1, 1) — a lane with no nodes
