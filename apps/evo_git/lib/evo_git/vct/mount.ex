@@ -170,12 +170,17 @@ defmodule EvoGit.VCT.Mount do
   def member(ref), do: {:error, {:invalid_member, ref}}
 
   @doc """
-  Normalizes an ORDERED list of workspace member refs.
+  Normalizes an ORDERED list of workspace member refs — the STRICT creation
+  validator.
 
   Returns `{:ok, members}` (order preserved, duplicates NOT collapsed) with
   every entry in the canonical form produced by `member/1`, or
   `{:error, :invalid_members}` for a non-list, or the error of the first
   invalid member (see `member/1`).
+
+  Use this on the CREATION path (`new/3`), where a bad ref is a caller mistake
+  worth refusing (an unparseable point, a workspace point, a relative path).
+  LOADING a persisted row must never use it: see `from_map/1`.
   """
   @spec normalize_members(term()) :: {:ok, [member()]} | {:error, term()}
   def normalize_members(members) when is_list(members) do
@@ -213,19 +218,29 @@ defmodule EvoGit.VCT.Mount do
   def git?(_mount), do: false
 
   @doc """
-  Decodes a mount from a (JSON) map.
+  Decodes a mount from a persisted (JSON) map. LENIENT by contract: loading
+  never loses a stored row.
 
   Accepts string-keyed maps (JSON) as well as atom-keyed ones. Returns
   `{:ok, mount}`, or `{:error, reason}` when the map is not a map, the point is
   missing/invalid (the reason of `EvoGit.VCT.Path.parse/1` is propagated), the
   path is present but not a non-empty binary, or `members` is present but is not
-  a list of normalizable member refs (`{:error, :invalid_members}` or the
-  member's own reason).
+  a list (`{:error, :invalid_members}`).
 
   A workspace row decodes with `path: nil` (an absent or `nil` `path` is
   accepted; `members` absent/`nil` decodes to `[]`; `description` is a string or
   `nil`). `members` must already be decoded — a JSON BINARY is not accepted at
   this boundary (the store layer decodes it).
+
+  Members are preserved AS STORED: each map element (string- OR atom-keyed)
+  decodes to `%{"point" => value-or-nil, "path" => value-or-nil}` WITHOUT being
+  parsed, canonicalized or validated, and a non-map element is dropped. That is
+  deliberately NOT `normalize_members/1` (the strict creation validator): a
+  hand-written, legacy or corrupted row may carry a workspace-point member or an
+  unusable ref, and it must still load so RESOLUTION can diagnose it — an
+  unusable ref is reported `missing` and a workspace ref `nested` by
+  `EvoGit.VCT.workspace_members/1`. Refusing it here would drop the whole
+  workspace row instead.
 
   An absent, `nil` or unparseable ISO-8601 `last_opened_at` decodes to `nil`
   without raising.
@@ -365,12 +380,34 @@ defmodule EvoGit.VCT.Mount do
     end
   end
 
+  # LENIENT, by contrast with `normalize_members/1`: a persisted row is data we
+  # must LOAD, not a creation request we may refuse. Routing this through the
+  # strict validator would reject a hand-written/legacy/corrupted row (a
+  # workspace-point member, an unusable ref) and make
+  # `EvoGit.VCT.load_mounts/1` drop the whole workspace, so
+  # `EvoGit.VCT.workspace_members/1` could never report `:nested` / `:missing`
+  # for real stored data. Resolution owns that diagnosis; decoding only
+  # normalizes the map SHAPE (STRING keys, both keys present, string-or-nil) and
+  # keeps every value verbatim.
   defp decode_members(map) do
     case fetch(map, "members") do
       nil -> {:ok, []}
-      members when is_list(members) -> normalize_members(members)
+      members when is_list(members) -> {:ok, stored_members(members)}
       _other -> {:error, :invalid_members}
     end
+  end
+
+  # Keeps the stored refs ORDER and their values verbatim (no point parsing, no
+  # path absolutizing), dropping only an element that is not a map at all.
+  defp stored_members(members) do
+    members
+    |> Enum.filter(&is_map/1)
+    |> Enum.map(fn ref ->
+      %{
+        "point" => string_or_nil(fetch_member(ref, "point")),
+        "path" => string_or_nil(fetch_member(ref, "path"))
+      }
+    end)
   end
 
   defp default_name(_point, path) when is_binary(path) and path != "", do: Path.basename(path)

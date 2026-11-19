@@ -209,9 +209,11 @@ defmodule EvoGit.VCTWorkspaceTest do
       assert {:ok, inner} = VCT.create_workspace("Inner", [])
 
       # A nested-member row cannot come from `create_workspace/3` (it refuses a
-      # workspace point) NOR from the store round trip (`Mount.to_map/1` →
-      # `Mount.from_map/1` refuses it too, so the loader drops the row with one
-      # warning — pinned here so a change in that boundary is visible).
+      # workspace point), so it is written STRAIGHT INTO THE STORE — a
+      # hand-written/legacy/corrupted row. Loading is LENIENT and keeps it
+      # (`Mount.from_map/1` preserves members as stored), so the honest
+      # end-to-end path proves resolution reports the ref instead of the loader
+      # dropping the whole workspace.
       nested = %{
         Mount.new("vct:///workspaces/Outer", nil,
           kind: "workspace",
@@ -222,21 +224,39 @@ defmodule EvoGit.VCTWorkspaceTest do
 
       :ok = EvoGit.Store.save_vct_mounts(stack.store, [Mount.to_map(inner), Mount.to_map(nested)])
 
-      {restarted, log} = ExUnit.CaptureLog.with_log(fn -> restart_vct!(stack) end)
-      assert log =~ "dropping an invalid mount row"
-      assert {:error, :not_found} = VCT.workspace_members("Outer")
-
-      # The row `Table.member_mount/2` stays lenient for — a hand-written or
-      # legacy table presented to a LIVE cache — is reported, never flattened.
-      :sys.replace_state(restarted, fn state ->
-        %{state | mounts: state.mounts ++ [nested]}
-      end)
+      restart_vct!(stack)
 
       assert {:ok, resolution} = VCT.workspace_members("Outer")
       assert resolution.workspace.point == "vct:///workspaces/Outer"
       assert resolution.nested == [%{"point" => inner.point, "path" => nil}]
       assert resolution.members == []
       assert resolution.missing == []
+    end
+
+    test "reports an unusable stored member as missing instead of dropping the workspace",
+         %{tmp_dir: tmp} do
+      stack = start_stack(tmp)
+
+      # A relative member path is refused by the creation validator, so the row
+      # is written directly — the same leniency rule as the nested case: the
+      # resolution, not the loader, decides that a ref resolves to nothing.
+      broken = %{
+        Mount.new("vct:///workspaces/Broken", nil,
+          kind: "workspace",
+          last_opened_at: ~U[2026-01-02 00:00:00Z]
+        )
+        | members: [%{"point" => nil, "path" => "relative/path"}]
+      }
+
+      :ok = EvoGit.Store.save_vct_mounts(stack.store, [Mount.to_map(broken)])
+
+      restart_vct!(stack)
+
+      assert {:ok, resolution} = VCT.workspace_members("Broken")
+      assert resolution.workspace.point == "vct:///workspaces/Broken"
+      assert resolution.nested == []
+      assert resolution.members == []
+      assert resolution.missing == [%{"point" => nil, "path" => "relative/path"}]
     end
 
     test "rejects non-workspace points, garbage and OS paths", %{tmp_dir: tmp} do

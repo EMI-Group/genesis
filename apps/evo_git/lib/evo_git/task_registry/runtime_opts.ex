@@ -225,7 +225,7 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
       {:ok, path} when is_binary(path) ->
         cond do
           not vct_point?(path) -> {:ok, opts}
-          EvoGit.VCT.Table.workspace_point?(path) -> {:error, :workspace_not_executable}
+          EvoGit.VCT.workspace_point?(path) -> {:error, :workspace_not_executable}
           true -> {:error, :vct_point_not_executable}
         end
 
@@ -246,7 +246,7 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
       not vct_point?(path) ->
         path
 
-      EvoGit.VCT.Table.workspace_point?(path) ->
+      EvoGit.VCT.workspace_point?(path) ->
         raise ArgumentError,
               "invalid task path #{inspect(path)}: a workspace VCT point is not an " <>
                 "executable path (a workspace has no OS path and no worktree)"

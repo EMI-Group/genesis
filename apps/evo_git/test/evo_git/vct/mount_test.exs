@@ -362,26 +362,86 @@ defmodule EvoGit.VCT.MountTest do
                Mount.from_map(%{"point" => @workspace_point, "path" => 42})
     end
 
-    test "rejects malformed members instead of raising" do
-      assert {:error, {:member_is_workspace, "vct:///workspaces/other"}} =
+    test "loading PRESERVES a nested or unusable member (only creation refuses it)" do
+      # Loading is LENIENT: a hand-written/legacy/corrupted row must survive the
+      # store round trip so resolution can report `nested` / `missing`; the
+      # strict validator is the CREATION path only.
+      nested = %{
+        "point" => @workspace_point,
+        "kind" => "workspace",
+        "members" => [%{"point" => "vct:///workspaces/other", "path" => nil}]
+      }
+
+      assert {:ok, %Mount{members: [nested_member]} = mount} = Mount.from_map(nested)
+      assert nested_member == %{"point" => "vct:///workspaces/other", "path" => nil}
+      assert Mount.to_map(mount)["members"] == [nested_member]
+      assert {:ok, ^mount} = Mount.from_map(Mount.to_map(mount))
+
+      unusable = %{
+        "point" => @workspace_point,
+        "kind" => "workspace",
+        "members" => [%{"path" => "relative"}, %{"point" => "not-a-vct-url"}, %{"path" => 42}]
+      }
+
+      assert {:ok, %Mount{members: members} = mount} = Mount.from_map(unusable)
+
+      # Values are kept verbatim, not parsed or absolutized; a non-string value
+      # is `nil` (a member is always re-encodable as a string-or-nil pair).
+      assert members == [
+               %{"point" => nil, "path" => "relative"},
+               %{"point" => "not-a-vct-url", "path" => nil},
+               %{"point" => nil, "path" => nil}
+             ]
+
+      assert {:ok, ^mount} = Mount.from_map(Mount.to_map(mount))
+
+      # The strict validator still refuses exactly those refs.
+      assert Mount.normalize_members([%{"point" => "vct:///workspaces/other"}]) ==
+               {:error, {:member_is_workspace, "vct:///workspaces/other"}}
+
+      assert Mount.normalize_members([%{"path" => "relative"}]) ==
+               {:error, {:invalid_member, %{"path" => "relative"}}}
+
+      assert_raise ArgumentError, ~r/workspaces never nest/, fn ->
+        Mount.new(@workspace_point, nil,
+          kind: "workspace",
+          members: [%{"point" => "vct:///workspaces/other"}]
+        )
+      end
+    end
+
+    test "keeps member order and drops only a non-map element" do
+      assert {:ok, %Mount{members: members}} =
                Mount.from_map(%{
                  "point" => @workspace_point,
                  "kind" => "workspace",
-                 "members" => [%{"point" => "vct:///workspaces/other"}]
+                 "members" => [
+                   %{"path" => "/z/last"},
+                   "nope",
+                   %{point: "vct:///projects/m"},
+                   nil
+                 ]
                })
 
-      assert {:error, {:invalid_member, %{"path" => "relative"}}} =
+      assert members == [
+               %{"point" => nil, "path" => "/z/last"},
+               %{"point" => "vct:///projects/m", "path" => nil}
+             ]
+    end
+
+    test "rejects a non-list members value instead of raising" do
+      assert {:error, :invalid_members} =
                Mount.from_map(%{
                  "point" => @workspace_point,
                  "kind" => "workspace",
-                 "members" => [%{"path" => "relative"}]
+                 "members" => Jason.encode!([])
                })
 
       assert {:error, :invalid_members} =
                Mount.from_map(%{
                  "point" => @workspace_point,
                  "kind" => "workspace",
-                 "members" => Jason.encode!([])
+                 "members" => %{"path" => "/src/foo"}
                })
     end
 
