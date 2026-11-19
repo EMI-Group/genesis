@@ -23,7 +23,7 @@ defmodule EvoGit.Config.SettingsTest do
     test "returns complete schema descriptors in schema order without persisting", %{path: path} do
       settings = Config.list_settings()
       assert settings == Schema.all_schemas()
-      assert length(settings) == 106
+      assert length(settings) == 112
 
       assert Enum.take(Enum.map(settings, & &1.key_path), 3) == [
                [:scheduler, :default_llm_max_concurrency],

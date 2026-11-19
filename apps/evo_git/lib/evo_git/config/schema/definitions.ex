@@ -3,7 +3,7 @@ defmodule EvoGit.Config.Schema.Definitions do
   Schema definitions — pure data describing every config key.
   """
 
-  @search_providers [:tavily, :perplexity, :exa, :bing, :brave]
+  @search_providers [:tavily, :perplexity, :exa, :bing, :brave, :keenable]
 
   @doc """
   Returns the list of supported web search providers.
@@ -830,8 +830,10 @@ defmodule EvoGit.Config.Schema.Definitions do
   # `[:tools, :search, <name>, ...]` schema map per key below, in the
   # order: api_key_credential_key, base_url, search_depth, max_results,
   # timeout, max_bytes. An optional `:model` string appends a final
-  # `:model` schema. The generated maps are identical to the former
-  # hand-written literals (same order, keys and values).
+  # `:model` schema; an optional `keyless: true` flag marks a provider
+  # whose public endpoint works without an API key (`search_provider_keyless?/1`).
+  # The generated maps are identical to the former hand-written literals
+  # (same order, keys and values).
   @search_provider_defs [
     %{
       name: :tavily,
@@ -863,8 +865,27 @@ defmodule EvoGit.Config.Schema.Definitions do
       label: "Brave Search",
       credential_key: "BRAVE_SEARCH_API_KEY",
       base_url: "https://api.search.brave.com/res/v1/web/search"
+    },
+    %{
+      name: :keenable,
+      label: "Keenable",
+      credential_key: "KEENABLE_API_KEY",
+      base_url: "https://api.keenable.ai/v1/search",
+      keyless: true
     }
   ]
+
+  @doc """
+  Returns whether `provider` can run WITHOUT an API key.
+
+  A keyless provider also exposes a public endpoint reachable with no
+  credentials (Keenable's `/public` path). Total for any input: an unknown,
+  nil or non-atom provider answers `false`.
+  """
+  @spec search_provider_keyless?(atom()) :: boolean()
+  def search_provider_keyless?(provider) do
+    Enum.any?(@search_provider_defs, &(&1.name == provider and &1[:keyless] == true))
+  end
 
   defp search_provider_schema_maps do
     Enum.flat_map(@search_provider_defs, &search_provider_schema_maps/1)

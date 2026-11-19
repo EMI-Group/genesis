@@ -73,11 +73,12 @@ Normalization precedes the write guards: `run_bash`/`run_powershell` are write t
 Custom tools must return a string (`{:error, "… returned a non-string value…"}` otherwise).
 
 ### Web Search Providers
-- `WebSearch` supports `:tavily` (default), `:perplexity`, `:exa`, `:bing`, `:brave` from `[:tools, :search, :provider]` (unknown/nil → `:tavily`); `EvoGit.Config.Schema.Definitions.search_providers/0` is the single source of truth (also used by schema `in:` validation and config atomization).
-- Pure, I/O-free adapters live in `EvoGit.Agent.Tools.WebSearchProviders`: `build_request/5` → `{:ok, %{method: :post | :get, url:, headers:, body:}}`; `parse_response/2` → `{:ok, %{kind: :results, entries: [%{title, url, content}]}}` (Tavily/Exa/Bing/Brave) or `{:ok, %{kind: :answer, text:, citations:}}` (Perplexity).
+- `WebSearch` supports `:tavily` (default), `:perplexity`, `:exa`, `:bing`, `:brave`, `:keenable` from `[:tools, :search, :provider]` (unknown/nil → `:tavily`); `EvoGit.Config.Schema.Definitions.search_providers/0` is the single source of truth (also used by schema `in:` validation and config atomization).
+- Pure, I/O-free adapters live in `EvoGit.Agent.Tools.WebSearchProviders`: `build_request/5` → `{:ok, %{method: :post | :get, url:, headers:, body:}}`; `parse_response/2` → `{:ok, %{kind: :results, entries: [%{title, url, content}]}}` (Tavily/Exa/Bing/Brave/Keenable) or `{:ok, %{kind: :answer, text:, citations:}}` (Perplexity).
+- Keenable is OPT-IN and the only keyless-capable provider: `KEENABLE_API_KEY` present → keyed POST to the configured `base_url` (`X-API-Key`); absent/empty → the public `POST <base_url>/public` with the required `X-Keenable-Title: Genesis` header and NO `X-API-Key`, so `do_web_search/4`'s missing-key failure is gated on `EvoGit.Config.Schema.Definitions.search_provider_keyless?/1` (every key-requiring provider keeps the exact old message).
 - `WebSearch` owns schema/validation/API keys and the `Req` call, routed through the `:web_search_http_runner` app-env seam (call-time; default private runner); `do_web_search/4` is `@doc false` public for execute-level tests.
 - `WebSearch`'s `timeout` is coerced and clamped the same way as the shell's (`Shared.fetch_duration_ms/2`, then `min(…, [:scheduler, :max_tool_timeout])` at CALL time); an absent/unusable argument falls back to the provider-config `:timeout`, then `@default_timeout` 30_000, so Req's `receive_timeout` is always an integer (the same coercion runs on the provider-config value itself, since that map may carry `timeout: nil`).
-- `search_depth` is Tavily/Exa-only (Exa maps advanced→`type: "neural"`, basic→`"keyword"`); Perplexity ignores `max_results` and `search_depth`.
+- `search_depth` is Tavily/Exa-only (Exa maps advanced→`type: "neural"`, basic→`"keyword"`); Perplexity ignores `max_results` and `search_depth`; Bing/Brave/Keenable ignore `search_depth` and honor `max_results` (Keenable's summary comes from `results[].snippet`, never the deprecated empty `description`).
 
 ### Web Fetch (`web_fetch`)
 - READ-ONLY page reader (ONE GET → Markdown) in both schema lists, never a write tool, not serial, and not schema-gated.

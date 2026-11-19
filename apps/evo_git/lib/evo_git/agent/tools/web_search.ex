@@ -4,7 +4,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
 
   ## Supported Providers
 
-  Five providers are supported, selected from configuration via
+  Six providers are supported, selected from configuration via
   `EvoGit.Config.resolve()`:
 
     * `:tavily` — POST JSON to the Tavily search API; parses `results[]`
@@ -22,6 +22,12 @@ defmodule EvoGit.Agent.Tools.WebSearch do
     * `:brave` — GET with `q`/`count` query params to the Brave Search API;
       parses `web.results[]` (`title`/`url`/`description`). Honors `max_results`;
       `search_depth` is not applicable.
+    * `:keenable` — POST JSON (`query`/`max_results`) to the Keenable search
+      API; a configured `KEENABLE_API_KEY` uses the keyed endpoint
+      (`X-API-Key`), while no key at all uses the keyless PUBLIC endpoint
+      `<base_url>/public` with the required `X-Keenable-Title` app header
+      (rate-limited per IP). Parses `results[]` (`title`/`url`/`snippet`).
+      Honors `max_results`; `search_depth` is not applicable.
 
   The provider list's single source of truth lives in the config schema
   (`EvoGit.Config.Schema.search_providers/0`); this module reads the provider
@@ -286,17 +292,18 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   # `EvoGit.Config.resolve()`. `execute/3` is the only production caller.
   def do_web_search(query, search_depth, max_results, provider_config) do
     api_key = provider_config.api_key
+    provider = provider_config.provider
 
-    if is_nil(api_key) or api_key == "" do
+    if missing_api_key?(api_key) and
+         not EvoGit.Config.Schema.Definitions.search_provider_keyless?(provider) do
       Failure.error("API key for search provider is not set")
     else
-      provider = provider_config.provider
       # `do_web_search/4` is a public test seam reached with a hand-built
       # provider map (`timeout: nil`), so the coercion also runs HERE — Req's
       # `receive_timeout` must never see a non-integer.
       receive_timeout = effective_timeout(Map.get(provider_config, :timeout), @default_timeout)
 
-      # `build_request/5` is total for every normalized provider (all five
+      # `build_request/5` is total for every normalized provider (all six
       # adapters return `{:ok, _}`), so the match cannot fail.
       {:ok, request} =
         WebSearchProviders.build_request(
@@ -319,6 +326,11 @@ defmodule EvoGit.Agent.Tools.WebSearch do
       end
     end
   end
+
+  # An absent, nil or blank key. A KEYLESS-capable provider (see
+  # `EvoGit.Config.Schema.Definitions.search_provider_keyless?/1`) is allowed to
+  # proceed without one — its request builder targets the public endpoint.
+  defp missing_api_key?(api_key), do: is_nil(api_key) or api_key == ""
 
   # Runs an HTTP request spec produced by `WebSearchProviders.build_request/5`.
   #

@@ -122,6 +122,10 @@ defmodule EvoGit.Config do
       # bing.base_url = "https://api.bing.microsoft.com/v7.0/search"
       # brave.api_key_credential_key = "BRAVE_SEARCH_API_KEY"
       # brave.base_url = "https://api.search.brave.com/res/v1/web/search"
+      # keenable.api_key_credential_key = "KEENABLE_API_KEY"
+      # keenable.base_url = "https://api.keenable.ai/v1/search"
+      # The Keenable API key is OPTIONAL: with no key configured, Keenable
+      # falls back to its keyless public endpoint (<base_url>/public).
 
   ## Credentials File Format (credentials.toml)
 
@@ -131,6 +135,8 @@ defmodule EvoGit.Config do
       DEEPSEEK_API_KEY = "sk-..."
       GROQ_API_KEY = "gsk_..."
       TAVILY_API_KEY = "tvly-..."
+      # Optional — Keenable works without a key via its public endpoint.
+      KEENABLE_API_KEY = "..."
       ANTHROPIC_API_KEY = "sk-ant-..."
       OPENAI_API_KEY = "sk-..."
   """
@@ -895,7 +901,10 @@ defmodule EvoGit.Config do
   Returns whether the web search tool is enabled and fully configured.
 
   Checks both the config flag AND that the required API key is configured
-  via ReqLLM. Both must be true for search to work.
+  via ReqLLM. Both must be true for search to work, except for a
+  keyless-capable provider (see
+  `EvoGit.Config.Schema.Definitions.search_provider_keyless?/1`), which is
+  usable with no key because it falls back to its public endpoint.
   """
   @spec tools_search_enabled?() :: boolean()
   def tools_search_enabled? do
@@ -905,20 +914,25 @@ defmodule EvoGit.Config do
       true ->
         provider = get_in(config, [:tools, :search, :provider]) || :tavily
 
-        default_credential_key =
-          get_in(config, [:tools, :search, :tavily, :api_key_credential_key]) || "TAVILY_API_KEY"
-
-        api_key_credential_key =
-          get_in(config, [:tools, :search, provider, :api_key_credential_key]) ||
-            default_credential_key
-
-        reqllm_key = credential_key_to_reqllm_key(api_key_credential_key)
-
-        if is_nil(reqllm_key) do
-          false
+        if EvoGit.Config.Schema.Definitions.search_provider_keyless?(provider) do
+          true
         else
-          key = ReqLLM.get_key(reqllm_key)
-          key != nil and key != ""
+          default_credential_key =
+            get_in(config, [:tools, :search, :tavily, :api_key_credential_key]) ||
+              "TAVILY_API_KEY"
+
+          api_key_credential_key =
+            get_in(config, [:tools, :search, provider, :api_key_credential_key]) ||
+              default_credential_key
+
+          reqllm_key = credential_key_to_reqllm_key(api_key_credential_key)
+
+          if is_nil(reqllm_key) do
+            false
+          else
+            key = ReqLLM.get_key(reqllm_key)
+            key != nil and key != ""
+          end
         end
 
       _ ->

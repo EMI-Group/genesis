@@ -27,7 +27,7 @@ Isolation rule: a tool test whose fixture is a SUBPROCESS cwd (anything passed a
 | `skill_tools_worktree_test.exs` | the 8 skill tools (`SkillAdd`/`SkillEdit`/`SkillRemove`/`SkillList`/`SkillRead`/`SkillWhere`/`SkillEnable`/`SkillDisable`) — worktree (`repo_path`) read/write routing + self-committing writes via `Shared.maybe_commit_result/6` |
 | `shell_tool_test.exs` | `EvoGit.Agent.Tools.ShellTool` |
 | `job_tools_test.exs` | the background-job tools (`JobOutput`/`JobList`/`JobKill`) + `ShellTool`'s `run_in_background` mode + the classification/guards that mode depends on (`Tools.write_call?/2`, `Tools.background_start?/1`, `Tools.serial_tool?/1`) |
-| `web_search_test.exs` | `EvoGit.Agent.Tools.WebSearch` + `WebSearchProviders` |
+| `web_search_test.exs` | `EvoGit.Agent.Tools.WebSearch` + `WebSearchProviders` — all six providers, including Keenable's keyed (`X-API-Key`) vs keyless (`/public` + `X-Keenable-Title`, no `X-API-Key` key) request shapes, `snippet`-sourced result parsing and the keyless `do_web_search/4` path |
 | `web_fetch_test.exs` | `EvoGit.Agent.Tools.WebFetch` (end-to-end against an in-test HTTP/1.1 server on `127.0.0.1`) |
 | `html_to_markdown_test.exs` | `EvoGit.Agent.Tools.HtmlToMarkdown` |
 | `lsp_test.exs` | `EvoGit.Agent.Tools.Lsp` (config-gated `lsp` tool, driven with per-call `opts` overrides against the fake language server) |
