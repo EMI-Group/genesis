@@ -16,7 +16,8 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   unit suite; this file pins RENDERING only).
 
   Pinned surfaces: `#commit-graph` (+ hook) → `#commit-graph-body-<node_key>` →
-  one section per repo whose id IS `repo_dom_id` VERBATIM → `#cg-scroll-<dom>`
+  one section per repo whose id IS `repo_dom_id` VERBATIM (carrying the
+  `cg-repo` class) → `#cg-scroll-<dom>`
   hosting the sticky `#cg-lane-header-<dom>` chips (agent buttons + the neutral
   "Pre-task" span) and the `relative` `#cg-list-<dom>` (absolute `svg.cg-gutter`
   + `.cg-rows` left-padded by the gutter width), the optional dimmed
@@ -25,6 +26,17 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   kind-dependent stroke; selection rings (`circle.cg-node-ring`), row accents and
   the `#cg-selection-readout-<dom>`; ended-agent dimming; and the loading /
   empty / error / stale states plus defensive degradation of odd model shapes.
+
+  Folded runs (the builder's synthetic `kind: :gap` node) are pinned too:
+  `#commit-gap-row-<dom>-<fold_key>` (`div.cg-row.cg-gap-row`, chevron,
+  `toggle_commit_fold` + `phx-value-fold-key`, the restored rows beside an
+  `expanded: true` marker), the `g.cg-gap-node` hollow gutter marker (no ring,
+  no agent/ref tags) and the per-repo `#cg-fold-<dom>-expand-all` /
+  `-collapse-all` controls gated on `fold_count > 0`.
+
+  A shared NO-MID-AIR-EDGE invariant sweeps every geometrically consistent
+  edge-bearing fixture: each `path.cg-edge` must end on a rendered dot (commit
+  or gap marker) or on its documented `to_sha: nil` virtual landing.
 
   Note: Floki lowercases attribute names, so the SVG's `viewBox` is queried as
   `viewbox`.
@@ -35,6 +47,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   import Phoenix.LiveViewTest
 
   alias EvoDashWeb.AgentsComponents.CommitGraphView
+  alias EvoDashWeb.AgentsComponents.CommitGraphView.Geometry
 
   # Fixture shas (8 chars so the rendered short sha IS the sha).
   @sha_p1 "p1000000"
@@ -450,11 +463,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
     end
 
     test "an edge whose owner is not one of the repo's agents stays muted" do
-      bare =
-        repo_view(
-          edges: [edge_view(from_sha: "x0000001", to_sha: "y0000001", owner_id: "ghost")],
-          nodes: [node_view(sha: "n0000001", owner_id: nil)]
-        )
+      [bare] = ghost_owner_edge_repos()
 
       [ghost] =
         Floki.find(
@@ -466,11 +475,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
     end
 
     test "an absent endpoint falls back to the edge's own column/row; a LONE pair edge keeps the canonical midpoint" do
-      repo =
-        repo_view(
-          edges: [edge_view(from_sha: "x", from_column: 1, from_row: 3, to_column: 0, to_row: 0)],
-          nodes: [node_view(sha: "unrelated", column: 0, row: 0)]
-        )
+      [repo] = absent_endpoint_repos()
 
       [el] = Floki.find(parse(render_repos([repo])), "path.cg-edge")
 
@@ -484,38 +489,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       # Two agent-level connectors over the SAME unordered lane pair {0, 1}: a
       # :spawn f → x (lane 1 → lane 0) and a :merge_back y → a virtual landing
       # back on lane 1.
-      repo =
-        repo_view(
-          nodes: [
-            node_view(sha: "f0000001", column: 1, row: 0, owner_id: "a1"),
-            node_view(sha: "x0000001", column: 0, row: 1, owner_id: nil),
-            node_view(sha: "y0000001", column: 0, row: 2, owner_id: nil),
-            node_view(sha: "t0000001", column: 1, row: 4, owner_id: "a1")
-          ],
-          edges: [
-            edge_view(
-              from_sha: "f0000001",
-              to_sha: "x0000001",
-              from_column: 1,
-              from_row: 0,
-              to_column: 0,
-              to_row: 1,
-              kind: :spawn,
-              owner_id: "a1"
-            ),
-            edge_view(
-              from_sha: "y0000001",
-              to_sha: nil,
-              from_column: 0,
-              from_row: 2,
-              to_column: 1,
-              to_row: 4,
-              kind: :merge_back,
-              owner_id: "a1"
-            )
-          ],
-          agents: [agent_map(agent_id: "a1", lane: 1)]
-        )
+      [repo] = concurrent_lane_pair_repos()
 
       tree = parse(render_repos([repo]))
       dom = repo.repo_dom_id
@@ -539,11 +513,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
     end
 
     test "an edge whose endpoints collapse is omitted" do
-      repo =
-        repo_view(
-          edges: [edge_view(from_sha: "aaaa0000", to_sha: "aaaa0000")],
-          nodes: [node_view(sha: "aaaa0000", column: 0, row: 0)]
-        )
+      [repo] = collapsed_edge_repos()
 
       assert Floki.find(parse(render_repos([repo])), "path.cg-edge") == []
     end
@@ -987,6 +957,207 @@ defmodule EvoDashWeb.CommitGraphViewTest do
     end
   end
 
+  describe "commit_graph_view/1 — folded runs (gap rows)" do
+    test "a collapsed gap node renders a gap row inside the scroll wrapper — never a commit row" do
+      [repo] = fold_repos()
+      dom = repo.repo_dom_id
+      tree = parse(render_repos([repo]))
+
+      # INSIDE the scroll wrapper (so it scrolls with the rows it stands in for).
+      [scroll] = Floki.find(tree, "#cg-scroll-#{dom}")
+      [gap_row] = Floki.find(scroll, "#commit-gap-row-#{dom}-f1-a1")
+
+      [class] = attr(gap_row, "class")
+      assert class =~ "cg-row"
+      assert class =~ "cg-gap-row"
+      assert class =~ "border-dashed"
+
+      assert_attrs(gap_row, %{
+        "id" => ["commit-gap-row-#{dom}-f1-a1"],
+        "data-commit-graph-anim" => ["row"],
+        "data-cg-sha" => ["gap-f1-a1"],
+        "data-cg-agent-id" => ["a1"],
+        "style" => ["height: 44px"],
+        "phx-click" => ["toggle_commit_fold"],
+        "phx-value-fold-key" => ["f1-a1"],
+        "role" => ["button"],
+        "tabindex" => ["0"],
+        "title" => ["12 commits"]
+      })
+
+      # A chevron (collapsed → pointing DOWN) and the muted hidden-count label.
+      assert Floki.find(gap_row, "span.hero-chevron-down") != []
+      assert Floki.find(gap_row, "span.hero-chevron-up") == []
+      assert text(Floki.find(gap_row, ".cg-gap-label")) =~ "12 commits"
+
+      # It is NOT a commit row: no commit-row id, no sha/meta/message cells.
+      assert_absent(tree, ["#commit-row-#{dom}-gap-f1-a1"])
+      assert Floki.find(gap_row, ".cg-row-sha") == []
+      assert Floki.find(gap_row, ".cg-row-message") == []
+      assert Floki.find(gap_row, ".cg-row-meta") == []
+
+      # ... and it is NEVER a :base / :noop stub.
+      assert Floki.find(gap_row, ".cg-base-label") == []
+      refute text(gap_row) =~ "base"
+      refute text(gap_row) =~ "no-op"
+
+      # The real commit row above it renders normally, and the rows keep the
+      # model's top → bottom order.
+      [rows] = Floki.find(tree, ".cg-rows")
+
+      assert Enum.map(element_children(rows), &(attr(&1, "id") |> hd())) == [
+               "commit-row-#{dom}-n0000001",
+               "commit-gap-row-#{dom}-f1-a1"
+             ]
+    end
+
+    test "an expanded gap renders the chevron-up variant and its restored rows alongside it" do
+      [repo] = fold_repos(expanded: true)
+      dom = repo.repo_dom_id
+      tree = parse(render_repos([repo]))
+
+      # The SAME gap row is now the run's COLLAPSE control.
+      [gap_row] = Floki.find(tree, "#commit-gap-row-#{dom}-f1-a1")
+      assert Floki.find(gap_row, "span.hero-chevron-up") != []
+      assert Floki.find(gap_row, "span.hero-chevron-down") == []
+      assert attr(gap_row, "phx-click") == ["toggle_commit_fold"]
+      assert attr(gap_row, "phx-value-fold-key") == ["f1-a1"]
+
+      # ... and the run's commits are restored as NORMAL rows in the same repo.
+      [rows] = Floki.find(tree, ".cg-rows")
+
+      assert Enum.map(element_children(rows), &(attr(&1, "id") |> hd())) == [
+               "commit-row-#{dom}-n0000001",
+               "commit-gap-row-#{dom}-f1-a1",
+               "commit-row-#{dom}-r0000001",
+               "commit-row-#{dom}-r0000002"
+             ]
+
+      assert Floki.find(tree, "#commit-row-#{dom}-r0000001") != []
+      assert Floki.find(tree, "#commit-row-#{dom}-r0000002") != []
+      assert text(Floki.find(tree, "##{dom}")) =~ "Restored one"
+    end
+
+    test "the gap's gutter marker is a hollow dot with no ring, no tags and a count tooltip" do
+      [repo] = fold_repos()
+      dom = repo.repo_dom_id
+      tree = parse(render_repos([repo]))
+
+      [node] = Floki.find(tree, "g.cg-gap-node#commit-node-#{dom}-gap-f1-a1")
+
+      assert_attrs(node, %{
+        "class" => ["cg-node cg-gap-node"],
+        "data-commit-graph-anim" => ["node"],
+        "data-cg-sha" => ["gap-f1-a1"],
+        "data-cg-agent-id" => ["a1"]
+      })
+
+      # A HOLLOW small circle: Geometry.base_r() (the stub radius), fill: none,
+      # dashed stroke in base ink.
+      [circle] = Floki.find(node, "circle.cg-node-dot")
+
+      assert_attrs(circle, %{
+        "r" => [Integer.to_string(Geometry.base_r())],
+        "stroke-width" => ["1.5"],
+        "stroke-dasharray" => ["2 2"],
+        "style" => ["fill: none; fill-opacity: 1; stroke: var(--color-base-content)"]
+      })
+
+      # Centred on its lane / row like any other node (lane 1 → x 48).
+      assert attr(circle, "cx") == ["48"]
+
+      # No selection ring, no agent tags, no ref tags — and the tooltip is the
+      # hidden count, never a base/no-op label.
+      assert Floki.find(node, ".cg-node-ring") == []
+      assert Floki.find(node, ".cg-agent-tag") == []
+      assert Floki.find(node, ".cg-ref-tag") == []
+      assert node_title(tree, "commit-node-#{dom}-gap-f1-a1") == "12 commits"
+    end
+  end
+
+  describe "commit_graph_view/1 — per-repo fold controls" do
+    test "fold_count > 0 renders BOTH controls; 0 / absent / odd render NEITHER" do
+      [repo] = fold_repos(fold_count: 2)
+      dom = repo.repo_dom_id
+      tree = parse(render_repos([repo]))
+
+      [expand] = Floki.find(tree, "#cg-fold-#{dom}-expand-all")
+      [collapse] = Floki.find(tree, "#cg-fold-#{dom}-collapse-all")
+
+      assert_attrs(expand, %{
+        "type" => ["button"],
+        "phx-click" => ["expand_all_commit_folds"],
+        "title" => ["Expand all"]
+      })
+
+      assert_attrs(collapse, %{
+        "type" => ["button"],
+        "phx-click" => ["collapse_all_commit_folds"],
+        "title" => ["Collapse all"]
+      })
+
+      assert text(expand) == "Expand all"
+      assert text(collapse) == "Collapse all"
+
+      # They sit in the repo HEADER row (with the icon + name), not the list.
+      [section] = Floki.find(tree, "##{dom}")
+      [header, _list] = element_children(section)
+      assert Floki.find(header, "#cg-fold-#{dom}-expand-all") != []
+      assert Floki.find(header, "#cg-fold-#{dom}-collapse-all") != []
+
+      [scroll] = Floki.find(tree, "#cg-scroll-#{dom}")
+      assert Floki.find(scroll, "button[id^='cg-fold-']") == []
+
+      # The key is OPTIONAL and read TOTALLY.
+      for opts <- [[fold_count: 0], [fold_count: :absent], [fold_count: nil], [fold_count: -3]] do
+        [plain] = fold_repos(opts)
+        pdom = plain.repo_dom_id
+        ptree = parse(render_repos([plain]))
+
+        assert_absent(ptree, [
+          "#cg-fold-#{pdom}-expand-all",
+          "#cg-fold-#{pdom}-collapse-all",
+          "button[id^='cg-fold-']"
+        ])
+
+        # The gap row itself still renders — the controls are the only gate.
+        assert Floki.find(ptree, "#commit-gap-row-#{pdom}-f1-a1") != []
+      end
+    end
+
+    test "the repo wrapper carries cg-repo and keeps its verbatim id + data-cg-repo-id" do
+      [repo] = fold_repos(fold_count: 1)
+      dom = repo.repo_dom_id
+      tree = parse(render_repos([repo]))
+
+      [section] = Floki.find(tree, "##{dom}")
+      [class] = attr(section, "class")
+
+      assert class =~ "cg-repo"
+      assert attr(section, "id") == [dom]
+      assert attr(section, "data-cg-repo-id") == [dom]
+
+      # No doubled prefix: the id IS the model's `repo_dom_id` verbatim.
+      assert Floki.find(tree, "div[id^='commit-graph-repo-commit-graph-repo-']") == []
+    end
+  end
+
+  describe "commit_graph_view/1 — no mid-air edges" do
+    test "every rendered edge ends on a rendered dot or on its documented virtual landing" do
+      rendered =
+        Enum.reduce(edge_fixtures(), 0, fn {label, repos}, acc ->
+          tree = parse(render_repos(repos))
+
+          acc +
+            Enum.reduce(repos, 0, fn repo, inner ->
+              inner + assert_edges_land_on_dots(tree, Map.fetch!(repo, :repo_dom_id), label)
+            end)
+        end)
+
+      assert rendered > 0, "no edge was rendered — the invariant would be vacuous"
+    end
+  end
+
   # --- fixtures --------------------------------------------------------------
   #
   # ALL fixtures are hand-crafted against the v2 per-agent-lane model contract
@@ -1094,6 +1265,182 @@ defmodule EvoDashWeb.CommitGraphViewTest do
         edges: edges,
         agents: agents
       )
+    ]
+  end
+
+  # --- edge / fold fixtures --------------------------------------------------
+
+  # A folded lane: agent a1's lane 1 carries ONE run of 12 hidden commits — the
+  # synthetic `kind: :gap` node the builder emits (`sha: "gap-" <> fold_key`).
+  # `expanded: true` also renders the run's commits as normal rows around it;
+  # `fold_count:` is `:absent` to omitting the key entirely (the controls' gate).
+  defp fold_repos(opts \\ []) do
+    expanded = Keyword.get(opts, :expanded, false)
+    fold_count = Keyword.get(opts, :fold_count, 1)
+
+    gap =
+      node_view(
+        sha: "gap-f1-a1",
+        column: 1,
+        row: 1,
+        kind: :gap,
+        fold_key: "f1-a1",
+        hidden_count: 12,
+        expanded: expanded,
+        owner_id: "a1",
+        message: nil,
+        author_name: nil
+      )
+
+    restored =
+      if expanded do
+        [
+          node_view(sha: "r0000001", column: 1, row: 2, owner_id: "a1", message: "Restored one"),
+          node_view(sha: "r0000002", column: 1, row: 3, owner_id: "a1", message: "Restored two")
+        ]
+      else
+        []
+      end
+
+    repo =
+      repo_view(
+        nodes: [
+          node_view(sha: "n0000001", column: 1, row: 0, owner_id: "a1", message: "Tip commit")
+          | [gap | restored]
+        ],
+        agents: [agent_map(agent_id: "a1", lane: 1)]
+      )
+
+    [if(fold_count == :absent, do: repo, else: Map.put(repo, :fold_count, fold_count))]
+  end
+
+  # An edge owned by an agent the repo does not declare.
+  defp ghost_owner_edge_repos do
+    [
+      repo_view(
+        edges: [edge_view(from_sha: "x0000001", to_sha: "y0000001", owner_id: "ghost")],
+        nodes: [node_view(sha: "n0000001", owner_id: nil)]
+      )
+    ]
+  end
+
+  # An edge whose endpoints are absent from the nodes: both take the edge's own
+  # grid pair, and its landing coincides with the one rendered dot.
+  defp absent_endpoint_repos do
+    [
+      repo_view(
+        edges: [edge_view(from_sha: "x", from_column: 1, from_row: 3, to_column: 0, to_row: 0)],
+        nodes: [node_view(sha: "unrelated", column: 0, row: 0)]
+      )
+    ]
+  end
+
+  # Two agent-level connectors over the SAME unordered lane pair {0, 1}: a
+  # :spawn f → x (lane 1 → lane 0) and a :merge_back y → a virtual landing back
+  # on lane 1.
+  defp concurrent_lane_pair_repos do
+    [
+      repo_view(
+        nodes: [
+          node_view(sha: "f0000001", column: 1, row: 0, owner_id: "a1"),
+          node_view(sha: "x0000001", column: 0, row: 1, owner_id: nil),
+          node_view(sha: "y0000001", column: 0, row: 2, owner_id: nil),
+          node_view(sha: "t0000001", column: 1, row: 4, owner_id: "a1")
+        ],
+        edges: [
+          edge_view(
+            from_sha: "f0000001",
+            to_sha: "x0000001",
+            from_column: 1,
+            from_row: 0,
+            to_column: 0,
+            to_row: 1,
+            kind: :spawn,
+            owner_id: "a1"
+          ),
+          edge_view(
+            from_sha: "y0000001",
+            to_sha: nil,
+            from_column: 0,
+            from_row: 2,
+            to_column: 1,
+            to_row: 4,
+            kind: :merge_back,
+            owner_id: "a1"
+          )
+        ],
+        agents: [agent_map(agent_id: "a1", lane: 1)]
+      )
+    ]
+  end
+
+  # A same-row cross-lane edge: the row-1 node's parent is absent from the
+  # model, so the target takes the edge's own grid pair — SAME row, other lane
+  # (the rounded-shelf route, never a bare horizontal stub).
+  defp same_row_edge_repos do
+    [
+      repo_view(
+        nodes: [
+          node_view(sha: "p0000001", column: 0, row: 0, owner_id: nil),
+          node_view(sha: "x0000001", column: 0, row: 1, owner_id: "a1")
+        ],
+        edges: [
+          edge_view(
+            from_sha: "abs00001",
+            from_column: 1,
+            from_row: 1,
+            to_sha: "x0000001",
+            to_column: 0,
+            to_row: 1,
+            owner_id: "a1"
+          )
+        ],
+        agents: [agent_map(agent_id: "a1", lane: 1)]
+      )
+    ]
+  end
+
+  # A folded lane carrying a parent edge that lands ON the gap marker's dot.
+  defp fold_edge_repos do
+    [repo] = fold_repos()
+
+    edge =
+      edge_view(
+        from_sha: "n0000001",
+        to_sha: "gap-f1-a1",
+        from_column: 1,
+        from_row: 0,
+        to_column: 1,
+        to_row: 1,
+        owner_id: "a1"
+      )
+
+    [Map.put(repo, :edges, [edge])]
+  end
+
+  # An edge whose endpoints collapse onto each other (routed `d` is nil).
+  defp collapsed_edge_repos do
+    [
+      repo_view(
+        edges: [edge_view(from_sha: "aaaa0000", to_sha: "aaaa0000")],
+        nodes: [node_view(sha: "aaaa0000", column: 0, row: 0)]
+      )
+    ]
+  end
+
+  # EVERY edge-bearing fixture in this file whose model is geometrically
+  # consistent, for the shared no-mid-air-edge invariant. (The defensive
+  # degradation fixtures deliberately dangle an endpoint at a grid cell no node
+  # occupies — they pin totality, not geometry — so they are out of scope.)
+  defp edge_fixtures do
+    [
+      {"happy", happy_repos()},
+      {"ghost owner", ghost_owner_edge_repos()},
+      {"absent endpoint", absent_endpoint_repos()},
+      {"concurrent lane pair", concurrent_lane_pair_repos()},
+      {"same-row shelf", same_row_edge_repos()},
+      {"folded lane", fold_edge_repos()},
+      {"collapsed endpoints", collapsed_edge_repos()}
     ]
   end
 
@@ -1230,6 +1577,68 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       _ -> false
     end)
   end
+
+  # The NO-MID-AIR-EDGE invariant, shared by every edge-bearing fixture: a
+  # rendered edge must END either on a rendered dot (any commit OR gap marker's
+  # `cx`/`cy`) or — for the documented `to_sha: nil` VIRTUAL landing, whose id
+  # key is `l<col>r<row>` — exactly on that grid point. Returns the number of
+  # edges checked (so the caller can prove the sweep was not vacuous).
+  defp assert_edges_land_on_dots(tree, dom, label) do
+    [gutter] = Floki.find(tree, "#cg-gutter-#{dom}")
+
+    dots =
+      gutter
+      |> Floki.find("circle.cg-node-dot")
+      |> MapSet.new(fn circle -> {numeral_attr(circle, "cx"), numeral_attr(circle, "cy")} end)
+
+    gutter
+    |> Floki.find("path.cg-edge")
+    |> Enum.reduce(0, fn path, acc ->
+      id = path |> attr("id") |> hd()
+      finish = path_end(path |> attr("d") |> hd())
+
+      case virtual_landing(id) do
+        {col, row} ->
+          assert finish == {Geometry.dot_x(col), Geometry.dot_y(row)},
+                 "#{label}: virtual landing #{id} ends at #{inspect(finish)}"
+
+        nil ->
+          assert MapSet.member?(dots, finish),
+                 "#{label}: #{id} ends MID-AIR at #{inspect(finish)} — no rendered dot there"
+      end
+
+      acc + 1
+    end)
+  end
+
+  # The `l<col>r<row>` virtual-landing key of an AGENT-level edge id (`:spawn` /
+  # `:merge_back`); nil for a commit → parent edge (whose id ends with a sha).
+  defp virtual_landing(id) do
+    agent_level? = String.contains?(id, "-spawn-") or String.contains?(id, "-merge_back-")
+
+    with true <- agent_level?,
+         [_, col, row] <- Regex.run(~r/-l(\d+)r(\d+)$/, id) do
+      {String.to_integer(col), String.to_integer(row)}
+    else
+      _ -> nil
+    end
+  end
+
+  # The numeric (x, y) a path's `d` ENDS on (its last two tokens, the final `L`
+  # endpoint) — the dot the route lands on.
+  defp path_end(d) do
+    [x, y] = d |> String.split(" ") |> Enum.take(-2)
+    {numeral(x), numeral(y)}
+  end
+
+  defp numeral(value) do
+    case Float.parse(value) do
+      {number, _rest} -> number
+      :error -> raise ArgumentError, "not a coordinate: #{inspect(value)}"
+    end
+  end
+
+  defp numeral_attr(el, name), do: el |> attr(name) |> hd() |> numeral()
 
   # The numeric (x, y) of a path's `M x y` start.
   defp path_start(d) do

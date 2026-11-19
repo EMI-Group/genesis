@@ -1,7 +1,12 @@
 defmodule EvoDashWeb.CommitGraphGeometryTest do
   @moduledoc """
-  Unit tests for the jog-staggering of concurrent cross-lane edges in
-  `EvoDashWeb.AgentsComponents.CommitGraphView.Geometry`.
+  Unit tests for the edge routing of
+  `EvoDashWeb.AgentsComponents.CommitGraphView.Geometry`:
+
+    * the jog-staggering of concurrent cross-lane edges (`edge_geo/3` vs the
+      canonical `edge_geo/2`);
+    * the ROUNDED SHELF a same-row cross-lane edge (`fy == ty`, different lanes)
+      routes — never the bare two-point horizontal it used to emit.
 
   Nodes are `%{sha, column, row, ...}` and edges `%{from_sha, to_sha,
   from_column, from_row, to_column, to_row, kind}`. `positions/1` derives each
@@ -64,12 +69,33 @@ defmodule EvoDashWeb.CommitGraphGeometryTest do
     y
   end
 
+  # The `M x y` start of a path — the dot the route leaves.
+  defp path_start(d) do
+    [_, x, y] = Regex.run(~r/^M (\S+) (\S+)/, d)
+    {String.to_integer(x), String.to_integer(y)}
+  end
+
+  # The coordinate a path ENDS on (the last two tokens of `d`, the final `L`
+  # endpoint) — the dot the route lands on.
+  defp path_end(d) do
+    [x, y] = d |> String.split(" ") |> Enum.take(-2)
+    {String.to_integer(x), String.to_integer(y)}
+  end
+
   defp assert_rounded(d) do
     assert String.contains?(d, "Q")
     refute Regex.match?(~r/L \S+ \S+ L \S+ \S+ L \S+ \S+/, d), "sharp corner in #{d}"
   end
 
   defp routes(edges, positions), do: Enum.map(edges, &Geometry.edge_geo(&1, positions, edges).d)
+
+  # `positions/1` derives each row from the node's INDEX, so a row cannot be
+  # shared by two RENDERED nodes — this hand-built map states a same-row grid
+  # pair directly (the renderer resolves endpoints node-first, and the geometry
+  # accepts any `%{sha => %{col:, row:}}` map).
+  defp same_row_positions(row) do
+    %{@sha_b1 => %{col: 1, row: row}, @sha_p1 => %{col: 0, row: row}}
+  end
 
   describe "canonical route (lone edge, group's first edge, no batch)" do
     test "every call shape keeps the exact canonical midpoint route" do
@@ -167,6 +193,73 @@ defmodule EvoDashWeb.CommitGraphGeometryTest do
     end
   end
 
+  describe "same-row cross-lane edges (rounded shelf)" do
+    test "the route leaves the source dot, crosses BELOW the row and ends on the target dot" do
+      positions = same_row_positions(2)
+      edge = edge(@sha_b1, @sha_p1, 1, 2, 0, 2, :parent)
+
+      assert %{d: d} = Geometry.edge_geo(edge, positions)
+
+      # NEVER the bare two-point horizontal this used to emit — it ran straight
+      # through every dot sitting between the two lanes on that row.
+      refute d == "M 48 110 L 24 110"
+      assert String.contains?(d, "Q")
+      assert_rounded(d)
+
+      # It STARTS on the source dot (lane 1 → x 48, row 2 → y 110) and ENDS
+      # exactly on the target dot (lane 0 → x 24, the row's own y 110).
+      assert path_start(d) == {48, 110}
+      assert path_end(d) == {24, 110}
+
+      # The shelf sits deterministically BELOW the row (never flipping above),
+      # so both Q corners share y = dot_y(row) + 2 * @bend_r = 110 + 14 = 124.
+      assert jog_y(d) == 124
+      assert d == "M 48 110 L 48 117 Q 48 124 41 124 L 31 124 Q 24 124 24 117 L 24 110"
+    end
+
+    test "the shelf is mirrored for a rightward same-row edge" do
+      positions = same_row_positions(1)
+      edge = edge(@sha_p1, @sha_b1, 0, 1, 1, 1, :parent)
+
+      assert %{d: d} = Geometry.edge_geo(edge, positions)
+
+      assert path_start(d) == {24, 66}
+      assert path_end(d) == {48, 66}
+      assert jog_y(d) == 66 + 2 * 7
+
+      assert d == "M 24 66 L 24 73 Q 24 80 31 80 L 41 80 Q 48 80 48 73 L 48 66"
+    end
+
+    test "a same-row shelf is never staggered, even as a lane pair's later member" do
+      positions = same_row_positions(2)
+
+      first = edge(@sha_b1, @sha_p1, 1, 2, 0, 2, :parent)
+      second = edge(@sha_b1, @sha_p1, 1, 2, 0, 2, :merge)
+
+      # A same-row cross-lane edge has no vertical span to stagger inside, so
+      # the batch-aware form returns exactly the canonical shelf for BOTH
+      # members (and for a lone edge).
+      canonical = Geometry.edge_geo(first, positions).d
+      assert canonical == Geometry.edge_geo(first, positions, [first, second]).d
+      assert Geometry.edge_geo(second, positions, [first, second]).d == canonical
+      assert Geometry.edge_geo(second, positions).d == canonical
+    end
+
+    test "a normal cross-lane pair still staggers exactly as before" do
+      # The shelf change is confined to `fy == ty`: a different-row lone edge
+      # stays pixel-identical to `edge_geo/2`, and a pair's second member still
+      # walks off the midpoint.
+      {nodes, [first, second]} = pair_fixture(2)
+      positions = Geometry.positions(nodes)
+
+      assert Geometry.edge_geo(first, positions, [first]).d == @canonical
+      assert Geometry.edge_geo(first, positions).d == @canonical
+
+      assert Geometry.edge_geo(second, positions, [first, second]).d !=
+               Geometry.edge_geo(second, positions).d
+    end
+  end
+
   describe "non-staggerable shapes" do
     test "same-lane edges keep straight vertical routes" do
       nodes = [node(@sha_b1, 1, 1), node(@sha_c1, 1, 2)]
@@ -180,7 +273,8 @@ defmodule EvoDashWeb.CommitGraphGeometryTest do
     end
 
     test "edges resolving onto the SAME endpoints never emit a sharp corner" do
-      # Either finds another jog or clamps back to canonical — never a sharp
+      # A SAME-ROW cross-lane pair: both members route the identical rounded
+      # SHELF (there is no vertical span to stagger inside) — never a sharp
       # L..L..L corner, and both stay well-formed rounded routes.
       nodes = [node(@sha_p1, 0, 0), node(@sha_b1, 1, 0)]
 
