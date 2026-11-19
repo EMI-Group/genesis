@@ -93,6 +93,7 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
   @vct_mounts_version 20_260_815_000_007
   @session_mode_version 20_260_815_000_008
   @pause_kind_version 20_260_815_000_009
+  @workspace_mounts_version 20_260_815_000_011
 
   # The whole shipped chain, ascending exactly as `schema_migrations` reports it.
   @migration_versions [
@@ -104,7 +105,10 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     @prune_index_version,
     @vct_mounts_version,
     @session_mode_version,
-    @pause_kind_version
+    @pause_kind_version,
+    # Stamped as applied: the `vct_mounts` rebuild is not this suite's subject,
+    # and its fixture has no `vct_mounts` table for it to rebuild.
+    @workspace_mounts_version
   ]
 
   # The pre-release 20-column `tasks` DDL — the state a database upgraded from a

@@ -12,9 +12,11 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
     * SCHEMA — `tasks` has exactly the 20 canonical columns in canonical order
       and NEVER `archive_metadata`; `task_agent_archives` has exactly its 23
       declared columns (`repo_id` TEXT) plus its roster index;
-      `vct_mounts` has exactly its five columns (and the retired `projects`
-      table never exists in `sqlite_master`); `tasks` carries exactly the SIX
-      final `idx_tasks_*` indexes and NONE of the four redundant ones.
+      `vct_mounts` has exactly its seven columns — `path` nullable and the two
+      workspace columns `members`/`description` present (and the retired
+      `projects` table never exists in `sqlite_master`); `tasks` carries
+      exactly the SIX final `idx_tasks_*` indexes and NONE of the four
+      redundant ones.
     * STATEMENTS — the SQL a fresh boot ACTUALLY executes (captured off the
       repo's `[:evo_git, :repo, :query]` telemetry) mentions `archive_metadata`
       nowhere: no `CREATE` carrying it, no fan-out `SELECT`/`INSERT`, no
@@ -53,7 +55,9 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
   alias EvoGit.Store.Schemas.TaskAgentArchiveRow
   alias EvoGit.Store.Schemas.TaskRow
 
-  # The nine shipped migrations, contiguous versions 1..9.
+  # The nine shipped migrations, contiguous versions 1..9, plus the
+  # workspace-mount `vct_mounts` rebuild at version 11 (version 10 is RETIRED
+  # and must never be reused).
   @migration_versions [
     20_260_815_000_001,
     20_260_815_000_002,
@@ -63,7 +67,8 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
     20_260_815_000_006,
     20_260_815_000_007,
     20_260_815_000_008,
-    20_260_815_000_009
+    20_260_815_000_009,
+    20_260_815_000_011
   ]
 
   # `PRAGMA table_info(tasks)` — [cid, name, type, notnull, dflt_value, pk] —
@@ -269,7 +274,7 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
   # ── Migration bookkeeping ────────────────────────────────────────────────
 
   describe "migration set" do
-    test "a fresh boot stamps exactly the nine shipped, contiguous versions" do
+    test "a fresh boot stamps exactly the ten shipped versions" do
       pid = boot_fresh!(:versions)
 
       assert pid
@@ -409,17 +414,21 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
 
   # ── vct_mounts: the VCT mount table, and NOTHING of `projects` ───────────
   describe "vct_mounts table" do
-    test "exactly point, path, name, kind and last_opened_at, with point the TEXT primary key" do
+    test "exactly the seven mount columns, with point the TEXT primary key and a nullable path" do
       pid = boot_fresh!(:vct_mounts)
 
       # [cid, name, type, notnull, dflt_value, pk]: `point` is the primary key
-      # and every column except `last_opened_at` is NOT NULL.
+      # and only the identity/display columns are NOT NULL. `path` is NULLABLE
+      # (a workspace mount has no OS path) and still UNIQUE, and the two
+      # workspace columns `members`/`description` are nullable too.
       assert query_rows(pid, "PRAGMA table_info(vct_mounts)") == [
                [0, "point", "TEXT", 1, nil, 1],
-               [1, "path", "TEXT", 1, nil, 0],
+               [1, "path", "TEXT", 0, nil, 0],
                [2, "name", "TEXT", 1, nil, 0],
                [3, "kind", "TEXT", 1, nil, 0],
-               [4, "last_opened_at", "TEXT", 0, nil, 0]
+               [4, "last_opened_at", "TEXT", 0, nil, 0],
+               [5, "members", "TEXT", 0, nil, 0],
+               [6, "description", "TEXT", 0, nil, 0]
              ]
     end
 
@@ -486,8 +495,10 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
       {statements, _emitters, _pid} =
         capture_statements(fn -> boot_fresh!(:statements_no_fanout) end)
 
-      # No column adoption and no column drop anywhere on a fresh database.
-      assert statements_matching(statements, ~r/^\s*ALTER\s+TABLE/i) == []
+      # No column adoption and no column drop anywhere `tasks` is concerned. The
+      # ONE `ALTER TABLE` a fresh boot runs belongs to the vct_mounts REBUILD
+      # (`20260815000011`, which renames its scratch table into place).
+      assert statements_matching(statements, ~r/^\s*ALTER\s+TABLE\s+tasks/i) == []
 
       # The fan-out's own statements: reading tasks that still hold an archive,
       # inserting into the new table, nulling the old column.
@@ -514,8 +525,14 @@ defmodule EvoGit.Store.CanonicalSchemaTest do
         assert statements_matching(statements, ~r/CREATE\s+INDEX[^;]*\b#{name}\b/) == []
       end
 
-      # Every statement the boot ran is a known shape — no table rebuild at all.
-      assert statements_matching(statements, ~r/CREATE\s+TABLE(?!\s+IF\s+NOT\s+EXISTS)/) == []
+      # Every statement the boot ran is a known shape: the ONLY `CREATE TABLE`
+      # without `IF NOT EXISTS` is the vct_mounts REBUILD's scratch table
+      # (`20260815000011`), which is renamed into place — no other table is
+      # ever rebuilt.
+      assert [rebuild] =
+               statements_matching(statements, ~r/CREATE\s+TABLE(?!\s+IF\s+NOT\s+EXISTS)/)
+
+      assert rebuild =~ ~r/CREATE\s+TABLE\s+vct_mounts_new\b/
     end
   end
 end

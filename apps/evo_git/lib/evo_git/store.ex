@@ -561,7 +561,11 @@ defmodule EvoGit.Store do
   @doc """
   Returns the Virtual Context Tree mount table — one STRING-KEYED map per
   mount: `%{"point" =>, "path" =>, "name" =>, "kind" =>, "last_opened_at" =>
-  %DateTime{} | nil}`.
+  %DateTime{} | nil, "members" => [map()], "description" => String.t() | nil}`.
+
+  `path` is `nil` for a workspace mount (it owns no OS path), `members` is the
+  DECODED ordered member list (`[]` for a mount that has none — including every
+  mount written before workspaces existed) and `description` is optional.
 
   Ordered newest-first with a `nil` `last_opened_at` LAST and a deterministic
   `point` ASC tie-break. Degrades to `[]` on a failed read (see the
@@ -577,9 +581,11 @@ defmodule EvoGit.Store do
 
   `mounts` is a list of maps — atom-keyed or string-keyed (the shape
   `EvoGit.VCT.Mount.to_map/1` produces) — with `point`, `path`, `name`,
-  `kind` and `last_opened_at` (a `DateTime`, an ISO-8601 binary or `nil`). The
-  write runs on the dedicated writer process (like every other write) inside
-  ONE immediate transaction, so a reader never observes a half-written table.
+  `kind`, `last_opened_at` (a `DateTime`, an ISO-8601 binary or `nil`),
+  `members` (a list of member maps, `nil`/absent = no members) and
+  `description` (`nil` when absent). The write runs on the dedicated writer
+  process (like every other write) inside ONE immediate transaction, so a
+  reader never observes a half-written table.
 
   Returns `:ok` (`{:error, :disk_full}` on a full disk, see the moduledoc).
   """

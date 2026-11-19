@@ -41,7 +41,7 @@ defmodule EvoGit.Store.MaintenanceTest do
   # two index migrations, the archive table, the redundant-index prune and the
   # VCT mount table, and the `session_mode` adoption — so `schema_migrations`
   # holds 8 rows.
-  @migration_count 9
+  @migration_count 10
 
   # One schema-complete, CHECKPOINTED database built per module
   # (`EvoGit.TestSupport.StoreTemplate`): a brand-new file plus the nine

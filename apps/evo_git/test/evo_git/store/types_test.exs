@@ -940,7 +940,15 @@ defmodule EvoGit.Store.TypesTest do
       assert VctMountRow.columns() ==
                VctMountRow.__schema__(:fields) |> Enum.map(&Atom.to_string/1)
 
-      assert VctMountRow.columns() == ["point", "path", "name", "kind", "last_opened_at"]
+      assert VctMountRow.columns() == [
+               "point",
+               "path",
+               "name",
+               "kind",
+               "last_opened_at",
+               "members",
+               "description"
+             ]
     end
 
     test "schema dump/load round-trips a mount row through its declared types" do
@@ -949,18 +957,25 @@ defmodule EvoGit.Store.TypesTest do
         path: "/tmp/repo",
         name: "My Repo",
         kind: "git",
-        last_opened_at: ~U[2024-05-05 05:05:05.555Z]
+        last_opened_at: ~U[2024-05-05 05:05:05.555Z],
+        members: "[]",
+        description: nil
       }
 
       dumped = dump_row(VctMountRow, mount)
 
       # `last_opened_at` is a `TaskTimestamp`: fixed-millisecond ISO-8601 TEXT.
+      # `members`/`description` are plain TEXT columns — no Ecto type of their
+      # own, the JSON boundary lives in `Store.Operations.VctMounts` — so both
+      # dump unchanged and a git mount carries no members and no description.
       assert dumped == %{
                point: "vct:///projects/repo",
                path: "/tmp/repo",
                name: "My Repo",
                kind: "git",
-               last_opened_at: "2024-05-05T05:05:05.555Z"
+               last_opened_at: "2024-05-05T05:05:05.555Z",
+               members: "[]",
+               description: nil
              }
 
       loaded =
@@ -971,6 +986,41 @@ defmodule EvoGit.Store.TypesTest do
         end
 
       assert loaded == mount
+    end
+
+    test "a WORKSPACE row round-trips with no path, ordered members and a description" do
+      members = [
+        %{"point" => "vct:///projects/alpha", "path" => nil},
+        %{"point" => nil, "path" => "/tmp/legacy"}
+      ]
+
+      workspace = %{
+        point: "vct:///workspaces/all",
+        path: nil,
+        name: "All",
+        kind: "workspace",
+        last_opened_at: nil,
+        members: Jason.encode!(members),
+        description: "every project I touch"
+      }
+
+      dumped = dump_row(VctMountRow, workspace)
+
+      assert dumped == %{
+               point: "vct:///workspaces/all",
+               path: nil,
+               name: "All",
+               kind: "workspace",
+               last_opened_at: nil,
+               members: Jason.encode!(members),
+               description: "every project I touch"
+             }
+
+      assert {:ok, loaded_members} = Ecto.Type.load(:string, dumped.members)
+      assert Jason.decode!(loaded_members) == members
+
+      # `path` is a nullable plain string, so a workspace's NULL survives.
+      assert Ecto.Type.load(VctMountRow.__schema__(:type, :path), nil) == {:ok, nil}
     end
 
     test "a nil last_opened_at stays NULL and the point is the primary key" do
