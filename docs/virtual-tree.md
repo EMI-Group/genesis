@@ -235,8 +235,8 @@ mix vct.workspace create foobar --member vct:///projects/genesis --member vct://
 
 ### 9.6 The worked example
 
-`vct:///workspaces/foobar` groups the `genesis`, `genesis-doc` and `evoclass` projects.
-That is the documented example workspace, and it is created through the same command (or `EvoGit.VCT.create_workspace/3`, or the RPC pair) — no special path exists behind it.
+`vct:///workspaces/foobar` is the seeded live example: the running instance holds that workspace row, grouping the `genesis`, `genesis-doc` and `evoclass` projects.
+It is created through the same command (or `EvoGit.VCT.create_workspace/3`, or the RPC pair) — no special path exists behind it and no code seeds it.
 
 ## 10. API surface — `EvoGit.VCT`
 
