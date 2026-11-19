@@ -15,8 +15,9 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Geometry do
       @col_w       24   # LANE width (one agent lane = one gutter column)
       @gutter_pad  12   # padding kept on each side of the lanes
       @node_r       6   # commit dot radius
-      @base_r       4   # synthesized :base / :noop stub radius (drawn hollow)
+      @base_r       4   # synthesized :base / :noop / :gap stub radius (drawn hollow)
       @bend_r       7   # rounded-corner radius of cross-lane routes
+                       #   (a same-row route's shelf sits @bend_r * 2 below the row)
       @exit_gap     2   # clearance an agent-level connector keeps below its source dot
       @jog_clear    8   # clearance a STAGGERED jog keeps from an interior row's dot
 
@@ -39,6 +40,11 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Geometry do
       vertical) whose TWO corners are rounded with quadratic (`Q`)
       quarter-turns of radius `@bend_r` — a sharp `L x y L x y` 90° corner is
       never emitted;
+    * a SAME-ROW cross-lane edge (`from_row == to_row`, different lanes) is a
+      rounded SHELF: it leaves the source dot downwards, runs across at
+      `@bend_r * 2` below the row center and comes back up into the target dot,
+      with the same `Q` quarter-turns — never a bare horizontal stub straight
+      through the dots between the two lanes;
     * an agent-level connector (`:spawn` / `:merge_back`) departs BELOW its
       source dot (`y + @node_r + @exit_gap`) and lands on the target's center,
       so the fork/tip dot stays readable where the connector leaves its lane;
@@ -348,7 +354,9 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Geometry do
   defp row_field(:to), do: :to_row
 
   # A ROUNDED route between two points: same-x → a straight vertical line;
-  # otherwise an orthogonal vertical → horizontal → vertical route whose two
+  # same-y across lanes → a rounded SHELF (below the row, see
+  # `same_row_route/3`); otherwise an orthogonal vertical → horizontal →
+  # vertical route whose two
   # corners are quadratic (`Q`) quarter-turns of radius `r` (clamped to half
   # the span so the corners can never overlap). `jog_y` overrides the
   # horizontal segment's y (the staggered case) and is ALWAYS clamped into
@@ -364,7 +372,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Geometry do
         "M #{n(fx)} #{n(fy)} L #{n(fx)} #{n(ty)}"
 
       fy == ty ->
-        "M #{n(fx)} #{n(fy)} L #{n(tx)} #{n(ty)}"
+        same_row_route(fx, fy, tx)
 
       true ->
         r = @bend_r |> min(abs(tx - fx) / 2) |> min(abs(ty - fy) / 2)
@@ -395,6 +403,31 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Geometry do
   defp clamp_jog(y, lo, hi) when lo <= hi, do: y |> max(lo) |> min(hi)
 
   defp clamp_jog(_y, _lo, _hi), do: nil
+
+  # A SAME-ROW cross-lane edge: running straight from dot to dot would draw a
+  # bare horizontal stub THROUGH every dot sitting between the two lanes on
+  # that row. Route a small ROUNDED SHELF instead — down out of the source dot,
+  # across at `@bend_r * 2` below the row center (deterministically BELOW, so
+  # the route never flips), and back up into the target dot. Both corners are
+  # quadratic (`Q`) quarter-turns of radius `@bend_r` clamped to half the
+  # horizontal span, so the shelf can never collapse into a sharp corner.
+  defp same_row_route(fx, fy, tx) do
+    r = @bend_r |> min(abs(tx - fx) / 2)
+
+    if r < 0.5 do
+      "M #{n(fx)} #{n(fy)} L #{n(tx)} #{n(fy)}"
+    else
+      shelf = fy + @bend_r * 2
+      sx = if tx > fx, do: 1, else: -1
+
+      "M #{n(fx)} #{n(fy)} " <>
+        "L #{n(fx)} #{n(shelf - r)} " <>
+        "Q #{n(fx)} #{n(shelf)} #{n(fx + sx * r)} #{n(shelf)} " <>
+        "L #{n(tx - sx * r)} #{n(shelf)} " <>
+        "Q #{n(tx)} #{n(shelf)} #{n(tx)} #{n(shelf - r)} " <>
+        "L #{n(tx)} #{n(fy)}"
+    end
+  end
 
   # --- lane planning ----------------------------------------------------------
 

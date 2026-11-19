@@ -10,10 +10,13 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   prepared per-repo graph model (the view-model contract documented on
   `EvoDashWeb.AgentsLive.CommitGraph`) and does NO data assembly, NO I/O and
   never touches the socket. All grid → pixel mapping, edge routing and lane
-  planning live in the pure `Geometry` submodule; this module owns the markup
-  and the selection marking. It never raises and never uses `try/rescue`;
-  every model read is TOTAL (`Map.get/2`, lists filtered to maps, grid values
-  folded to `0`, non-map/odd shapes dropped).
+  planning live in the pure `Geometry` submodule; the row-detail half — the
+  folded-run gap row / gutter marker, the per-repo fold controls, the row tag
+  chips, the tooltip text and the shared agent / DOM-key lookups — lives in
+  `Fold`. This module owns the layout, the states and the selection marking.
+  It never raises and never uses `try/rescue`; every model read is TOTAL
+  (`Map.get/2`, lists filtered to maps, grid values folded to `0`,
+  non-map/odd shapes dropped).
 
   ## Layout
 
@@ -106,6 +109,29 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   id rides `data-cg-selected-id` on the `#commit-graph` root so the hook can
   scroll it into view when (and only when) the selection CHANGES.
 
+  ## Folded runs (collapsed commits)
+
+  An agent lane's runs of hidden intermediate commits arrive as ONE synthetic
+  `kind: :gap` node per run (`sha: "gap-" <> fold_key`, `hidden_count`,
+  `fold_key`, `expanded`), rendered by `Fold`:
+
+    * a compact dashed GAP ROW (`#commit-gap-row-<dom>-<fold_key>`,
+      `div.cg-row.cg-gap-row`) with a chevron and a muted "… N commits" label;
+      it fires `toggle_commit_fold` with `phx-value-fold-key`, and is
+      keyboard-reachable (`role="button"` + `tabindex="0"` — the `CommitGraph`
+      hook's Enter / Space activation then applies);
+    * a GAP GUTTER MARKER (`g.cg-gap-node#commit-node-<dom>-<gap sha>`) — a
+      small hollow dashed dot in base ink (no selection ring), so the lane's
+      continuity reads as a dashed segment through the fold;
+    * per-repo `Expand all` / `Collapse all` buttons in the repo header row
+      (`#cg-fold-<dom>-expand-all` / `-collapse-all`), rendered only while the
+      repo model reports `fold_count > 0`.
+
+  A gap node is emitted in BOTH states: when `expanded: true` the run's commits
+  render as normal rows/nodes alongside it and the gap row becomes that run's
+  collapse control (chevron-up). Gap nodes are never `:base` / `:noop` stubs and
+  never render start/end markers or agent/ref tags.
+
   ## Frozen DOM contract
 
   Consumed by the client-side `CommitGraph` hook (enter animations) and the
@@ -117,7 +143,11 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       node switch, so LiveView replaces the subtree).
     * one repo wrapper `div` whose id IS `repo_dom_id` VERBATIM (the builder
       already emits a `commit-graph-repo-<slug>-<hash>` id — no prefix added
-      here).
+      here) and which also carries the `cg-repo` class.
+    * `#cg-fold-<repo_dom_id>-expand-all` / `#cg-fold-<repo_dom_id>-collapse-all`
+      — the per-repo fold controls in the header row (`phx-click`
+      `expand_all_commit_folds` / `collapse_all_commit_folds`), rendered only
+      while `fold_count > 0`.
     * `#cg-selection-readout-<repo_dom_id>` — the optional selected-agent
       readout above the list.
     * `#cg-scroll-<repo_dom_id>` (`cg-scroll`) — the scroll wrapper (BOTH
@@ -147,14 +177,20 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       `#commit-node-<repo_dom_id>-<sha>`, plus `data-cg-sha` / `data-cg-agent-id`
       and an inner `<title>` tooltip. The node's circle (`circle.cg-node-dot`)
       is the ONLY pointer-active part of the gutter (hover sync + its native
-      tooltip); everything else stays `pointer-events: none`.
+      tooltip); everything else stays `pointer-events: none`. A folded run's
+      marker is the SAME element shape with the additive `cg-gap-node` class,
+      `data-commit-graph-anim="node"` and a small hollow dashed dot (see
+      "Folded runs").
     * `div.cg-row[data-commit-graph-anim="row"]` with the stable id
       `#commit-row-<repo_dom_id>-<sha>`, plus `data-cg-sha` / `data-cg-agent-id`,
       the row `select_agent` contract, a native `title` (the same
       message · sha · author · date · refs tooltip the gutter node carries —
       the gutter `<title>` is unreachable under `pointer-events: none`) and,
       for owned rows, `role="button"` + `tabindex="0"` (Enter / Space fire
-      `select_agent` via the hook).
+      `select_agent` via the hook). A folded run's row is
+      `div.cg-row.cg-gap-row#commit-gap-row-<repo_dom_id>-<fold_key>` with the
+      same `data-commit-graph-anim="row"` and its own `toggle_commit_fold`
+      contract.
     * agent tags `button.cg-agent-tag` with ids
       `#commit-agent-tag-<repo_dom_id>-<sha>-<start|end>-<agent_key>`; ref tags
       `span.cg-ref-tag` with ids
@@ -172,7 +208,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       @col_w      24   # LANE width (px) — one agent lane = one gutter column
       @gutter_pad 12   # padding on each side of the lanes (px)
       @node_r      6   # commit dot radius (px)
-      @base_r      4   # synthesized :base / :noop stub radius (px, hollow)
+      @base_r      4   # synthesized :base / :noop / :gap stub radius (px, hollow)
       @bend_r      7   # rounded-corner radius of cross-lane routes (px)
       @exit_gap    2   # clearance an agent-level connector keeps below its source dot
 
@@ -185,6 +221,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   use EvoDashWeb, :html
   use Gettext, backend: EvoDashWeb.Gettext
 
+  alias EvoDashWeb.AgentsComponents.CommitGraphView.Fold
   alias EvoDashWeb.AgentsComponents.CommitGraphView.Geometry
 
   # zh_CN glossary used in this module:
@@ -303,7 +340,12 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
     <%!-- The wrapper id IS `repo_dom_id` verbatim: the builder already emits a
          `commit-graph-repo-<slug>-<hash>`-shaped id, so prefixing it here would
          double the prefix. --%>
-    <div id={repo_dom_id(@repo)} class="space-y-1" data-cg-repo-id={repo_dom_id(@repo)}>
+    <% fold_count = Fold.fold_count(@repo) %>
+    <div
+      id={repo_dom_id(@repo)}
+      class="cg-repo space-y-1"
+      data-cg-repo-id={repo_dom_id(@repo)}
+    >
       <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-300">
         <.icon
           name="hero-server-stack"
@@ -315,6 +357,11 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
         >
           {repo_name(@repo)}
         </span>
+        <Fold.fold_controls
+          :if={fold_count > 0}
+          dom={repo_dom_id(@repo)}
+          fold_count={fold_count}
+        />
       </div>
       <.commit_list repo={@repo} selected_id={@selected_id} />
     </div>
@@ -336,7 +383,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
     <% dom = repo_dom_id(@repo) %>
     <% nodes = entry_list(@repo, :nodes) %>
     <% agents = entry_list(@repo, :agents) %>
-    <% agents_index = agent_index(agents) %>
+    <% agents_index = Fold.agent_index(agents) %>
     <% positions = Geometry.positions(nodes) %>
     <% edges = entry_list(@repo, :edges) %>
     <% geom = Geometry.geom(@repo, nodes, edges, agents) %>
@@ -387,24 +434,36 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
               positions={positions}
               agents_index={agents_index}
             />
-            <.node_dot
-              :for={node <- nodes}
-              dom={dom}
-              node={node}
-              positions={positions}
-              agents_index={agents_index}
-              selected_id={@selected_id}
-            />
+            <%!-- A folded run's gutter marker rides the SAME node scheme (a
+                 small hollow dashed dot); every other node is a commit dot. --%>
+            <%= for node <- nodes do %>
+              <%= if Fold.gap?(node) do %>
+                <Fold.gap_node dom={dom} node={node} positions={positions} />
+              <% else %>
+                <.node_dot
+                  dom={dom}
+                  node={node}
+                  positions={positions}
+                  agents_index={agents_index}
+                  selected_id={@selected_id}
+                />
+              <% end %>
+            <% end %>
           </svg>
 
           <div class="cg-rows" style={"padding-left: #{geom.gutter_w}px"}>
-            <.commit_row
-              :for={node <- nodes}
-              dom={dom}
-              node={node}
-              agents_index={agents_index}
-              selected_id={@selected_id}
-            />
+            <%= for node <- nodes do %>
+              <%= if Fold.gap?(node) do %>
+                <Fold.gap_row dom={dom} node={node} />
+              <% else %>
+                <.commit_row
+                  dom={dom}
+                  node={node}
+                  agents_index={agents_index}
+                  selected_id={@selected_id}
+                />
+              <% end %>
+            <% end %>
           </div>
         </div>
 
@@ -485,19 +544,19 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       </span>
     <% else %>
       <% agent = @chip.agent %>
-      <% color = agent_color_of(agent) %>
+      <% color = Fold.agent_color_of(agent) %>
       <button
         id={"cg-lane-" <> @dom <> "-" <> Integer.to_string(@chip.lane)}
         type="button"
         class="cg-lane-chip inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-mono whitespace-nowrap"
-        style={"position: absolute; left: #{@chip.x}px; transform: translateX(-50%); border-color: #{color}; color: #{color}; opacity: #{if agent_ended?(agent), do: "0.5", else: "1"}"}
+        style={"position: absolute; left: #{@chip.x}px; transform: translateX(-50%); border-color: #{color}; color: #{color}; opacity: #{if Fold.agent_ended?(agent), do: "0.5", else: "1"}"}
         title={lane_chip_title(agent)}
         phx-click="select_agent"
         phx-value-id={Map.get(agent, :agent_id)}
       >
         <span
           class="inline-block size-1.5 rounded-full shrink-0"
-          style={"background-color: #{agent_status_svg_color(agent_status(agent))}"}
+          style={"background-color: #{agent_status_svg_color(Fold.agent_status(agent))}"}
         ></span>
         <span>{lane_chip_label(agent)}</span>
       </button>
@@ -520,9 +579,9 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
 
   defp lane_chip_title(agent) do
     label = lane_chip_label(agent)
-    status = agent_status_label(agent_status(agent))
+    status = agent_status_label(Fold.agent_status(agent))
 
-    if agent_ended?(agent) do
+    if Fold.agent_ended?(agent) do
       "#{label} · #{status} · #{gettext("terminated")}"
     else
       "#{label} · #{status}"
@@ -622,7 +681,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       data-cg-sha={Map.get(@node, :sha)}
       data-cg-agent-id={v.owner}
     >
-      <title>{node_title(@node)}</title>
+      <title>{Fold.node_title(@node)}</title>
       <circle
         class="cg-node-dot"
         cx={v.cx}
@@ -647,7 +706,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
 
   defp dot_view(node, positions, agents_index, selected_id) do
     owner = Map.get(node, :owner_id)
-    agent = agent_for(agents_index, owner)
+    agent = Fold.agent_for(agents_index, owner)
     end_ids = id_list(node, :end_ids)
     start_ids = id_list(node, :start_ids)
     stub? = Map.get(node, :kind) in [:base, :noop]
@@ -680,17 +739,17 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
         {"none", "1"}
 
       owner != nil and owner in end_ids ->
-        {agent_status_svg_color(agent_status(agent)), agent_node_opacity(agent)}
+        {agent_status_svg_color(Fold.agent_status(agent)), agent_node_opacity(agent)}
 
       agent != nil ->
-        {agent_color_of(agent), agent_node_opacity(agent)}
+        {Fold.agent_color_of(agent), agent_node_opacity(agent)}
 
       true ->
         {"var(--color-base-content)", "0.55"}
     end
   end
 
-  defp agent_node_opacity(agent), do: if(agent_ended?(agent), do: "0.5", else: "1")
+  defp agent_node_opacity(agent), do: if(Fold.agent_ended?(agent), do: "0.5", else: "1")
 
   # ---------------------------------------------------------------------------
   # commit_row/1 — one commit ROW: sha + message + meta on the first line, its
@@ -706,7 +765,6 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   defp commit_row(assigns) do
     ~H"""
     <% v = row_view(@node, @agents_index, @selected_id) %>
-    <% tags? = v.start_ids != [] or v.end_ids != [] or ref_list(Map.get(@node, :refs)) != [] %>
     <div
       id={"commit-row-" <> @dom <> "-" <> sha_key_of(@node, :sha)}
       class={[
@@ -720,7 +778,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       data-commit-graph-anim="row"
       data-cg-sha={Map.get(@node, :sha)}
       data-cg-agent-id={v.owner}
-      title={node_title(@node)}
+      title={Fold.node_title(@node)}
       role={if v.owner != nil, do: "button"}
       tabindex={if v.owner != nil, do: "0"}
       phx-click={if v.owner != nil, do: "select_agent"}
@@ -728,7 +786,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
     >
       <div class="flex items-center gap-2 min-w-0">
         <span class="cg-row-sha font-mono text-xs text-base-content/60 shrink-0">
-          {commit_short_sha(@node) || short_sha(Map.get(@node, :sha))}
+          {Fold.commit_short_sha(@node) || Fold.short_sha(Map.get(@node, :sha))}
         </span>
         <%= if stub_kind(@node) do %>
           <%!-- zh_CN：合成桩节点（智能体的分叉起点/虚拟落点，无提交信息/日期） --%>
@@ -737,7 +795,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
           </span>
         <% else %>
           <span class="cg-row-message truncate text-sm text-base-content">
-            {first_line(Map.get(@node, :message))}
+            {Fold.first_line(Map.get(@node, :message))}
           </span>
         <% end %>
         <span
@@ -755,54 +813,20 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
           {gettext("end")}
         </span>
         <span
-          :if={meta_text(@node) != ""}
+          :if={Fold.meta_text(@node) != ""}
           class="cg-row-meta ml-auto text-xs text-base-content/50 font-mono truncate shrink-0"
         >
-          {meta_text(@node)}
+          {Fold.meta_text(@node)}
         </span>
       </div>
 
-      <div :if={tags?} class="flex items-center gap-1 flex-wrap min-w-0">
-        <button
-          :for={id <- v.start_ids}
-          :key={"start-" <> agent_key(id)}
-          id={"commit-agent-tag-" <> @dom <> "-" <> sha_key_of(@node, :sha) <> "-start-" <> agent_key(id)}
-          type="button"
-          class="cg-agent-tag cg-agent-tag-start inline-flex items-center gap-1 rounded border border-solid px-1.5 py-0.5 text-[10px] font-mono"
-          style={"border-color: #{agent_color(@agents_index, id)}; color: #{agent_color(@agents_index, id)}"}
-          title={agent_tag_title(@agents_index, id, "start")}
-          phx-click="select_agent"
-          phx-value-id={id}
-        >
-          <span>{agent_label(@agents_index, id)}</span>
-          <span class="opacity-70">{gettext("start")}</span>
-        </button>
-
-        <button
-          :for={id <- v.end_ids}
-          :key={"end-" <> agent_key(id)}
-          id={"commit-agent-tag-" <> @dom <> "-" <> sha_key_of(@node, :sha) <> "-end-" <> agent_key(id)}
-          type="button"
-          class="cg-agent-tag cg-agent-tag-end inline-flex items-center gap-1 rounded border border-dashed px-1.5 py-0.5 text-[10px] font-mono"
-          style={"border-color: #{agent_color(@agents_index, id)}; color: #{agent_color(@agents_index, id)}"}
-          title={agent_tag_title(@agents_index, id, "end")}
-          phx-click="select_agent"
-          phx-value-id={id}
-        >
-          <span>{agent_label(@agents_index, id)}</span>
-          <span class="opacity-70">{gettext("end")}</span>
-        </button>
-
-        <span
-          :for={ref <- ref_list(Map.get(@node, :refs))}
-          :key={"ref-" <> ref}
-          id={"commit-ref-tag-" <> @dom <> "-" <> sha_key_of(@node, :sha) <> "-" <> ref_key(ref)}
-          class="cg-ref-tag inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono bg-base-200 text-base-content/70"
-          title={ref}
-        >
-          {ref}
-        </span>
-      </div>
+      <Fold.row_tags
+        dom={@dom}
+        node={@node}
+        agents_index={@agents_index}
+        start_ids={v.start_ids}
+        end_ids={v.end_ids}
+      />
     </div>
     """
   end
@@ -822,7 +846,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
     owner = Map.get(node, :owner_id)
     start_ids = id_list(node, :start_ids)
     end_ids = id_list(node, :end_ids)
-    agent = agent_for(agents_index, owner)
+    agent = Fold.agent_for(agents_index, owner)
 
     %{
       owner: owner,
@@ -831,51 +855,9 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       selected?: owner != nil and owner == selected_id,
       start?: selected_id != nil and selected_id in start_ids,
       end?: selected_id != nil and selected_id in end_ids,
-      ended?: agent_ended?(agent)
+      ended?: Fold.agent_ended?(agent)
     }
   end
-
-  # --- agents index / lookups -------------------------------------------------
-
-  # `%{agent_id => agent}` — the ONE lookup used to colour nodes, edges, tags
-  # and lane chips by their owning agent. Agents without an id are skipped
-  # (`owner_id` / `agent_id` are compared as the RAW model terms).
-  defp agent_index(agents) do
-    Enum.reduce(agents, %{}, fn agent, acc ->
-      case Map.get(agent, :agent_id) do
-        nil -> acc
-        id -> Map.put_new(acc, id, agent)
-      end
-    end)
-  end
-
-  defp agent_for(index, id) when is_map(index) and not is_nil(id), do: Map.get(index, id)
-  defp agent_for(_index, _id), do: nil
-
-  defp agent_color(index, id) do
-    case agent_for(index, id) do
-      nil -> "var(--color-base-content)"
-      agent -> agent_color_of(agent)
-    end
-  end
-
-  defp agent_color_of(agent) when is_map(agent) do
-    case Map.get(agent, :color) do
-      color when is_binary(color) and color != "" -> color
-      _ -> "var(--color-base-content)"
-    end
-  end
-
-  defp agent_color_of(_agent), do: "var(--color-base-content)"
-
-  defp agent_status(agent) when is_map(agent), do: Map.get(agent, :status)
-  defp agent_status(_agent), do: nil
-
-  # An agent is ENDED only when the model explicitly flags it (`ended: true`).
-  # The key is OPTIONAL and read TOTALLY — an agent without it (or with any
-  # non-`true` value) renders exactly like a live agent.
-  defp agent_ended?(agent) when is_map(agent), do: Map.get(agent, :ended) == true
-  defp agent_ended?(_agent), do: false
 
   # A repo's commit list is TRUNCATED only when the model explicitly flags it
   # (`truncated: true` — the builder cut a tip range at the 100-commit limit).
@@ -883,72 +865,39 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   # (The repo value is a map by construction — `repo_list/1` filters to maps and
   # the `:repo` attr is typed `:map`.)
   defp repo_truncated?(repo), do: Map.get(repo, :truncated) == true
-
-  defp agent_label(index, id) do
-    case agent_for(index, id) do
-      nil ->
-        "T" <> safe_string(id)
-
-      agent ->
-        "T" <> safe_string(Map.get(agent, :task_local_id) || Map.get(agent, :agent_id) || id)
-    end
-  end
-
-  defp agent_tag_title(index, id, kind) do
-    label = agent_label(index, id)
-
-    case agent_for(index, id) do
-      nil ->
-        label
-
-      agent ->
-        marker = if(kind == "end", do: gettext("end"), else: gettext("start"))
-        ended = if(agent_ended?(agent), do: [gettext("terminated")], else: [])
-
-        [label, marker, agent_status_label(agent_status(agent)) | ended]
-        |> Enum.reject(&(&1 in [nil, ""]))
-        |> Enum.join(" · ")
-    end
-  end
-
   # Edge stroke = the owner's depth hue (for agent-level kinds the CHILD agent).
   defp edge_color(edge, agents_index) do
-    case agent_for(agents_index, Map.get(edge, :owner_id)) do
+    case Fold.agent_for(agents_index, Map.get(edge, :owner_id)) do
       nil -> "var(--color-base-content)"
-      agent -> agent_color_of(agent)
+      agent -> Fold.agent_color_of(agent)
     end
   end
-
   defp edge_opacity(edge, agents_index) do
-    case agent_for(agents_index, Map.get(edge, :owner_id)) do
+    case Fold.agent_for(agents_index, Map.get(edge, :owner_id)) do
       nil -> "0.3"
-      agent -> if(agent_ended?(agent), do: "0.4", else: "0.75")
+      agent -> if(Fold.agent_ended?(agent), do: "0.4", else: "0.75")
     end
   end
-
   # --- selection --------------------------------------------------------------
-
   # The readout data for the selected agent, or nil when nothing is selected /
   # the selection is not one of THIS repo's agents.
   defp selection_readout_data(agents_index, selected_id) do
     with id when not is_nil(id) <- selected_id,
-         agent when is_map(agent) <- agent_for(agents_index, id) do
+         agent when is_map(agent) <- Fold.agent_for(agents_index, id) do
       %{
-        label: agent_label(agents_index, id),
-        start_sha: short_sha(Map.get(agent, :start_sha)),
-        end_sha: short_sha(Map.get(agent, :end_sha))
+        label: Fold.agent_label(agents_index, id),
+        start_sha: Fold.short_sha(Map.get(agent, :start_sha)),
+        end_sha: Fold.short_sha(Map.get(agent, :end_sha))
       }
     else
       _ -> nil
     end
   end
-
   defp readout_text(readout) do
     range =
       [readout.start_sha, readout.end_sha]
       |> Enum.reject(&is_nil/1)
       |> Enum.join(" → ")
-
     if range == "" do
       # zh_CN：图中选中智能体的标注读数（起止提交未知时只显示智能体名）
       gettext("Selected %{agent}", agent: readout.label)
@@ -957,57 +906,16 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       gettext("Selected %{agent} · %{range}", agent: readout.label, range: range)
     end
   end
-
-  # ---------------------------------------------------------------------------
-  # Tooltips
-  # ---------------------------------------------------------------------------
-
-  defp node_title(node) do
-    parts =
-      [
-        stub_label_title(node),
-        first_line(Map.get(node, :message)),
-        commit_short_sha(node) || short_sha(Map.get(node, :sha)),
-        author(node),
-        commit_date(node)
-      ]
-      |> Enum.reject(&(&1 in [nil, ""]))
-
-    case ref_list(Map.get(node, :refs)) do
-      [] -> Enum.join(parts, " · ")
-      refs -> Enum.join(parts ++ [Enum.join(refs, ", ")], " · ")
-    end
-  end
-
-  # zh_CN：桩节点（基线/空提交）在悬浮提示里的前缀标签
-  defp stub_label_title(node) do
-    case Map.get(node, :kind) do
-      :base -> gettext("base")
-      :noop -> gettext("no-op")
-      _ -> nil
-    end
-  end
-
-  # `author · date`, or "" when the node carries neither (a stub node).
-  defp meta_text(node) do
-    [author(node), commit_date(node)]
-    |> Enum.reject(&(&1 in [nil, ""]))
-    |> Enum.join(" · ")
-  end
-
   # The SVG's accessible name.
   defp graph_aria_label do
     # zh_CN：无障碍标签 —— 整个 git 提交历史图形的朗读名称
     gettext("Git commit history graph")
   end
-
   # ---------------------------------------------------------------------------
   # Total reads — odd shapes degrade instead of raising.
   # ---------------------------------------------------------------------------
-
   defp repo_list(repos) when is_list(repos), do: Enum.filter(repos, &is_map/1)
   defp repo_list(_repos), do: []
-
   # The repo attr is `:map`-typed, so a plain `Map.get/2` is total here; the
   # LIST payloads inside are still read defensively (non-list → [], non-map
   # entries dropped).
@@ -1017,7 +925,6 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       _ -> []
     end
   end
-
   # `start_ids` / `end_ids` are the agent ids that fork from / tip at this node;
   # any non-list shape folds to `[]`.
   defp id_list(node, key) do
@@ -1026,7 +933,6 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       _ -> []
     end
   end
-
   defp repo_dom_id(repo) do
     case Map.get(repo, :repo_dom_id) do
       id when is_binary(id) -> id
@@ -1035,92 +941,27 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       _ -> ""
     end
   end
-
   defp repo_name(repo) do
     case Map.get(repo, :repo_name) do
       name when is_binary(name) -> name
       _ -> ""
     end
   end
-
-  # A DOM-safe fragment for an element id: the term stringified, then anything
-  # outside `[A-Za-z0-9_-]` folded to `-` (a raw agent id / sha may be any term).
-  defp agent_key(id) do
-    id |> safe_string() |> String.replace(~r/[^A-Za-z0-9_-]/, "-")
-  end
-
   defp sha_key_of(container, key) do
     container |> Map.get(key) |> safe_string() |> String.replace(~r/[^A-Za-z0-9_-]/, "-")
   end
-
-  # A DOM-safe fragment for a ref chip id.
-  defp ref_key(ref), do: ref |> safe_string() |> String.replace(~r/[^A-Za-z0-9_-]/, "-")
-
   defp safe_string(value) when is_binary(value), do: value
   defp safe_string(value) when is_atom(value), do: Atom.to_string(value)
   defp safe_string(value) when is_integer(value), do: Integer.to_string(value)
   defp safe_string(value), do: inspect(value)
-
   # Compact SVG number: `210.0` → `"210"`, `33.33` → `"33.33"`. Every call site
   # feeds a value already folded through `Geometry`'s integer math.
   defp n(value) when is_number(value) do
     rounded = Float.round(value * 1.0, 2)
-
     if rounded == Float.round(rounded) do
       Integer.to_string(trunc(rounded))
     else
       Float.to_string(rounded)
     end
   end
-
-  defp short_sha(sha) do
-    case sha do
-      sha when is_binary(sha) and sha != "" -> String.slice(sha, 0, 8)
-      _ -> nil
-    end
-  end
-
-  defp commit_short_sha(commit) do
-    case Map.get(commit, :short_sha) do
-      sha when is_binary(sha) and sha != "" -> sha
-      _ -> nil
-    end
-  end
-
-  defp author(commit) do
-    case Map.get(commit, :author_name) do
-      name when is_binary(name) and name != "" -> name
-      _ -> nil
-    end
-  end
-
-  defp commit_date(commit) do
-    case Map.get(commit, :date) do
-      date when is_binary(date) -> format_datetime(date)
-      %DateTime{} = date -> format_datetime(date)
-      %NaiveDateTime{} = date -> format_datetime(date)
-      _ -> nil
-    end
-  end
-
-  defp first_line(message) when is_binary(message) do
-    message |> String.split("\n", parts: 2) |> hd()
-  end
-
-  defp first_line(_message), do: ""
-
-  defp ref_list(refs) when is_list(refs), do: refs |> Enum.flat_map(&ref_name/1) |> Enum.uniq()
-  defp ref_list(_refs), do: []
-
-  defp ref_name(ref) when is_binary(ref) and ref != "", do: [ref]
-
-  defp ref_name(%{} = ref) do
-    case Map.get(ref, :name) || Map.get(ref, "name") do
-      name when is_binary(name) and name != "" -> [name]
-      _ -> []
-    end
-  end
-
-  defp ref_name(ref) when is_atom(ref) and not is_nil(ref), do: [Atom.to_string(ref)]
-  defp ref_name(_ref), do: []
 end
