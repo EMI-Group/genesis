@@ -3415,6 +3415,225 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "commit history view — fold (collapse/expand) state" do
+    # The commit list folds runs of commits behind a gap row: the DEFAULT view is
+    # fully collapsed (@commit_fold_expanded == MapSet.new()) and the user
+    # expands a fold by its `fold_key`. The expansion set is PER-NODE view state
+    # (reset by a node switch, unlike @left_view) but it must survive every push
+    # refresh — a fold toggle is pure view-model work over the ALREADY FETCHED
+    # @commit_graph_raw, so it must never issue a git RPC.
+    #
+    # The exact fold-key format and the gap-row markup belong to the sibling
+    # builder (`CommitGraph`) and renderer (`CommitGraphView`); these tests derive
+    # the key and the hidden rows from the built view model instead of pinning
+    # either, and use `id^=` selectors for the gap rows so the renderer may shape
+    # them freely.
+
+    test "the fold set starts empty and the graph renders collapsed gap rows", %{conn: conn} do
+      view = mount_foldable_commit_graph(conn)
+
+      # Fully collapsed default — an assign, not a user preference.
+      assert assigns(view)[:commit_fold_expanded] == MapSet.new()
+
+      gaps = fold_gap_nodes(view)
+      assert gaps != []
+      assert Enum.all?(gaps, &is_binary(&1.fold_key))
+      refute Enum.any?(gaps, & &1.expanded)
+
+      # The repo view surfaces the fold inventory it built.
+      assert [repo] = assigns(view)[:commit_graph]
+      assert Map.get(repo, :fold_count) >= 1
+
+      # …and the DOM shows a gap row carrying visible (collapsed) label text.
+      html = render(view)
+      gap_rows = html |> Floki.parse_document!() |> Floki.find(~s|[id^="commit-gap-row-"]|)
+      assert gap_rows != []
+      assert Enum.any?(gap_rows, &(String.trim(Floki.text(&1)) != ""))
+
+      # A folded commit is NOT rendered as a commit row.
+      dom = repo_dom(view)
+      hidden_sha = hidden_fold_sha(view)
+      refute has_element?(view, "#commit-row-#{dom}-#{hidden_sha}")
+    end
+
+    test "toggle_commit_fold restores the hidden rows, then collapses them again",
+         %{conn: conn} do
+      view = mount_foldable_commit_graph(conn)
+      [gap | _] = fold_gap_nodes(view)
+      key = gap.fold_key
+      dom = repo_dom(view)
+
+      collapsed_rows = commit_row_ids(view)
+
+      render_click(view, "toggle_commit_fold", %{"fold-key" => key})
+
+      # The key joined the expansion set and the gap node flipped to EXPANDED.
+      assert MapSet.member?(assigns(view)[:commit_fold_expanded], key)
+      expanded_gap = Enum.find(fold_gap_nodes(view), &(&1.fold_key == key))
+      assert expanded_gap == nil or expanded_gap.expanded == true
+
+      # The folded commits are rendered again: exactly the gap's own
+      # `hidden_count` rows re-joined the list, each one a real commit row.
+      expanded_rows = commit_row_ids(view)
+      assert length(expanded_rows) == length(collapsed_rows) + gap.hidden_count
+      newly_visible = MapSet.difference(MapSet.new(expanded_rows), MapSet.new(collapsed_rows))
+      assert MapSet.size(newly_visible) == gap.hidden_count
+      for id <- newly_visible, do: assert(has_element?(view, "##{id}"))
+
+      # …and none of that touched the git layer: a fold is pure view-model work
+      # over the RAW data already in memory (no fetch spawn → :commit_graph_loading
+      # stays false; no throttled one-shot → :commit_graph_tick_scheduled stays
+      # false; the 0-timeout refute covers the "already delivered" mode — the
+      # mailbox is clean because mount_foldable_commit_graph/1 drank its single
+      # legit call).
+      assert assigns(view)[:commit_graph_loading] == false
+      assert assigns(view)[:commit_graph_tick_scheduled] == false
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 0
+
+      # Toggling the SAME key again collapses it.
+      render_click(view, "toggle_commit_fold", %{"fold-key" => key})
+
+      refute MapSet.member?(assigns(view)[:commit_fold_expanded], key)
+      assert commit_row_ids(view) == collapsed_rows
+      hidden_sha = hidden_fold_sha(view)
+      refute has_element?(view, "#commit-row-#{dom}-#{hidden_sha}")
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 0
+    end
+
+    test "expand_all_commit_folds and collapse_all_commit_folds act on every fold",
+         %{conn: conn} do
+      view = mount_foldable_commit_graph(conn)
+
+      gaps = fold_gap_nodes(view)
+      assert gaps != []
+      keys = MapSet.new(gaps, & &1.fold_key)
+      collapsed_rows = commit_row_ids(view)
+
+      render_click(view, "expand_all_commit_folds", %{})
+
+      # EVERY fold key of the current raw data is expanded…
+      assert MapSet.subset?(keys, assigns(view)[:commit_fold_expanded])
+      assert Enum.all?(fold_gap_nodes(view), & &1.expanded)
+      # …so every folded commit row is rendered again in ONE event.
+      expected_rows = length(collapsed_rows) + Enum.sum(Enum.map(gaps, & &1.hidden_count))
+      assert length(commit_row_ids(view)) == expected_rows
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 0
+
+      render_click(view, "collapse_all_commit_folds", %{})
+
+      assert assigns(view)[:commit_fold_expanded] == MapSet.new()
+      refute Enum.any?(fold_gap_nodes(view), & &1.expanded)
+      assert commit_row_ids(view) == collapsed_rows
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 0
+    end
+
+    test "fold events are inert before the commits view has loaded anything", %{conn: conn} do
+      install_agents([
+        summary_agent(
+          id: agent_id(),
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c1"
+        )
+      ])
+
+      install_commit_graph_runner(fn "/repo/a" -> {:ok, foldable_commit_graph_payload()} end)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # Still in the TREE view: there is nothing to re-fold and nothing to fetch.
+      render_click(view, "expand_all_commit_folds", %{})
+      render_click(view, "toggle_commit_fold", %{"fold-key" => "whatever"})
+      render_click(view, "collapse_all_commit_folds", %{})
+
+      assert assigns(view)[:commit_fold_expanded] == MapSet.new()
+      assert assigns(view)[:left_view] == :tree
+      assert assigns(view)[:commit_graph_loading] == false
+      assert assigns(view)[:commit_graph_tick_scheduled] == false
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 0
+    end
+
+    test "the fold set survives a push refresh and an agent-event flush", %{conn: conn} do
+      view = mount_foldable_commit_graph(conn)
+      [gap | _] = fold_gap_nodes(view)
+      key = gap.fold_key
+
+      render_click(view, "toggle_commit_fold", %{"fold-key" => key})
+      assert MapSet.member?(assigns(view)[:commit_fold_expanded], key)
+      expanded_rows = commit_row_ids(view)
+
+      # (a) A commit-IRRELEVANT flush goes through the fingerprint gate (no
+      # rebuild at all) — the set must still be there.
+      send(view.pid, {:agent_updated, agent_id(), [status: :waiting], node()})
+      flush_agent_events(view)
+      assert MapSet.member?(assigns(view)[:commit_fold_expanded], key)
+
+      # (b) A fresh fetch result REBUILDS the view model — the build call site
+      # must thread the CURRENT set, so the expanded rows survive verbatim.
+      raw = assigns(view)[:commit_graph_raw]
+      send(view.pid, {:commit_graph_loaded, node(), 999, {:ok, raw}})
+      render(view)
+
+      assert MapSet.member?(assigns(view)[:commit_fold_expanded], key)
+      assert commit_row_ids(view) == expanded_rows
+    end
+
+    test "a node switch returns the fold state to the collapsed default", %{conn: conn} do
+      view = mount_foldable_commit_graph(conn)
+      [gap | _] = fold_gap_nodes(view)
+
+      render_click(view, "toggle_commit_fold", %{"fold-key" => gap.fold_key})
+      assert MapSet.size(assigns(view)[:commit_fold_expanded]) == 1
+
+      # Mirror the retained-agents / commit-graph reset tests: invoke
+      # handle_params/3 directly with `previous_node` forced to differ, because
+      # :sys.replace_state on :current_node would not run the reset branch.
+      state = :sys.get_state(view.pid, @assigns_timeout_ms)
+
+      socket = %{
+        state.socket
+        | assigns: Map.put(state.socket.assigns, :previous_node, :some_other_node)
+      }
+
+      {:noreply, new_socket} = EvoDashWeb.AgentsLive.handle_params(%{}, "/agents", socket)
+
+      # Fold keys name THIS node's commits, so they reset with the rest of the
+      # commit-graph data…
+      assert new_socket.assigns.commit_fold_expanded == MapSet.new()
+      assert new_socket.assigns.commit_graph_raw == %{}
+      # …while the view preference itself survives (it is not per-node state).
+      assert new_socket.assigns.left_view == :commits
+    end
+
+    test "the card body fills the panel only in commits mode", %{conn: conn} do
+      install_agents([])
+      install_commit_graph_runner(graph_error_responder())
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # Tree mode keeps the plain card body — no flex-chain hook.
+      refute has_element?(view, ".agents-tree-body-commits")
+      tree_html = render(view)
+
+      view |> element("#left-view-commits") |> render_click()
+
+      assert has_element?(view, ".agents-tree-body-commits")
+      # The hook lives on the left panel's card body, inside the same card.
+      commits_html = render(view)
+
+      assert Floki.find(
+               Floki.parse_document!(commits_html),
+               ".agents-tree-panel .agents-tree-body-commits"
+             ) != []
+
+      # The panel (and therefore the tree markup) is unchanged apart from the
+      # per-mode class list.
+      assert String.contains?(tree_html, "agents-tree-panel")
+    end
+  end
+
   # ── Private helpers ─────────────────────────────────────────────
 
   # Reads the LiveView's CURRENT socket assigns directly (same pattern as
@@ -3918,6 +4137,90 @@ defmodule EvoDashWeb.AgentsLiveTest do
       ],
       refs: %{"c1" => ["main"]}
     }
+  end
+
+  # Reaches a LOADED commit graph whose commit run is LONG enough to fold: one
+  # eligible /repo/a agent (base "b1" → current "c5") over
+  # foldable_commit_graph_payload/0, then a switch to the commits view. The
+  # single legit runner call is asserted (and thereby drained) here, so callers
+  # can assert "no RPC" with a 0-timeout refute.
+  defp mount_foldable_commit_graph(conn) do
+    install_agents([
+      summary_agent(id: agent_id(), repo_root: "/repo/a", base_commit: "b1", current_commit: "c5")
+    ])
+
+    install_commit_graph_runner(fn "/repo/a" -> {:ok, foldable_commit_graph_payload()} end)
+    {:ok, view, _html} = live(conn, ~p"/agents")
+    flush_agents_load(view)
+    render_click(view, "switch_left_view", %{"view" => "commits"})
+
+    assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c5"], [limit: 100]},
+                   @async_wait_budget_ms
+
+    wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
+    view
+  end
+
+  # Five commits chained from the agent's base fork point ("b1" → "c1" → … →
+  # "c5") — a plain, long linear run, i.e. the canonical foldable history. The
+  # builder decides which of them fold; the tests derive that from the built
+  # view model rather than pinning a grouping rule here.
+  defp foldable_commit_graph_payload do
+    commits =
+      for {sha, parents} <- [
+            {"c1", ["b1"]},
+            {"c2", ["c1"]},
+            {"c3", ["c2"]},
+            {"c4", ["c3"]},
+            {"c5", ["c4"]}
+          ] do
+        %{
+          sha: sha,
+          short_sha: sha,
+          message: "commit #{sha}\nbody",
+          parents: parents,
+          author_name: "Ada",
+          date: nil
+        }
+      end
+
+    %{commits: commits, refs: %{"c5" => ["main"]}}
+  end
+
+  # Every `kind: :gap` node of the built view model (all repos flattened).
+  defp fold_gap_nodes(view) do
+    view
+    |> assigns()
+    |> Map.get(:commit_graph, [])
+    |> Enum.flat_map(fn repo -> repo.nodes |> Enum.filter(&(Map.get(&1, :kind) == :gap)) end)
+  end
+
+  # The DOM ids of the rendered commit ROWS (`commit-row-<dom>-<sha>`; exactly
+  # one per visible node, gap rows use their own `commit-gap-row-` prefix), so a
+  # fold test can prove rows vanished/appeared WITHOUT pinning the renderer's
+  # internals.
+  defp commit_row_ids(view) do
+    view
+    |> render()
+    |> Floki.parse_document!()
+    |> Floki.find(~s|[id^="commit-row-"]|)
+    |> Enum.flat_map(&Floki.attribute(&1, "id"))
+  end
+
+  # A payload commit that the collapsed default does NOT render (any folded
+  # commit), used for the "the hidden row is really gone" assertion.
+  defp hidden_fold_sha(view) do
+    visible = view |> assigns() |> Map.get(:commit_graph, []) |> Enum.flat_map(& &1.nodes)
+    visible_shas = Enum.map(visible, & &1.sha)
+    hidden = ["c1", "c2", "c3", "c4", "c5"] |> Enum.reject(&(&1 in visible_shas))
+    assert hidden != []
+    hd(hidden)
+  end
+
+  # The single repo's DOM id (the page mounts exactly one repo for these tests).
+  defp repo_dom(view) do
+    assert [repo] = assigns(view)[:commit_graph]
+    repo.repo_dom_id
   end
 
   # Seeds a single agent (sched_meta + summary row) directly into the ETS
