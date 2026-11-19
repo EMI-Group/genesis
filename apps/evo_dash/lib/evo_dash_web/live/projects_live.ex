@@ -615,6 +615,14 @@ defmodule EvoDashWeb.ProjectsLive do
           task_notifications_seq: 0,
           projects_seq: 0,
           workspaces_seq: 0,
+          # Monotonic stale-guard for the ASYNC workspace create/replace. It is
+          # deliberately SEPARATE from `workspaces_seq`: `EvoGit.VCT` broadcasts
+          # `{:vct_updated, node}` BEFORE it replies, so the broadcast's
+          # `reload_vct/1` always bumps `workspaces_seq` first and a guard on
+          # that seq would drop every `{:workspace_created, …}` continuation
+          # (losing the flash, the return to the palette menu and the expanded
+          # row). Only a newer CREATE invalidates an older create's result.
+          workspace_create_seq: 0,
           # Monotonic stale-guard for the async clear-history batch.
           clear_history_seq: 0,
           # True when this handle_params run has no `?project=` and is on the
@@ -1005,7 +1013,7 @@ defmodule EvoDashWeb.ProjectsLive do
   @impl true
   def handle_event("create_workspace", %{"name" => name} = params, socket) do
     node = socket.assigns[:current_node] || node()
-    seq = (socket.assigns[:workspaces_seq] || 0) + 1
+    seq = (socket.assigns[:workspace_create_seq] || 0) + 1
     parent = self()
 
     members = workspace_member_refs(socket)
@@ -1023,7 +1031,7 @@ defmodule EvoDashWeb.ProjectsLive do
       send(parent, {:workspace_created, seq, node, result})
     end)
 
-    {:noreply, assign(socket, :workspaces_seq, seq)}
+    {:noreply, assign(socket, :workspace_create_seq, seq)}
   end
 
   def handle_event("create_workspace", _params, socket), do: {:noreply, socket}
@@ -2330,9 +2338,12 @@ defmodule EvoDashWeb.ProjectsLive do
   # returns to the menu with the new workspace expanded, and BOTH the workspace
   # and project lists are reloaded authoritatively off-process. A validation
   # error keeps the form (and the chosen members) so the user can correct it.
+  # Guarded on `workspace_create_seq` (see the mount seed): the VCT broadcast
+  # for this write reloads and bumps `workspaces_seq` BEFORE this reply lands,
+  # so only a NEWER create may invalidate it.
   @impl true
   def handle_info({:workspace_created, seq, node, result}, socket) do
-    if seq != socket.assigns[:workspaces_seq] or
+    if seq != socket.assigns[:workspace_create_seq] or
          node != (socket.assigns[:current_node] || node()) do
       {:noreply, socket}
     else
