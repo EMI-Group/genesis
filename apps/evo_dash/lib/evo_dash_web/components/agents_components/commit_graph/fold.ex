@@ -10,7 +10,8 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
 
   The builder collapses an agent lane's runs of hidden intermediate commits
   into ONE synthetic node per run — `kind: :gap`, `sha: "gap-" <> fold_key`,
-  `hidden_count: n` (a positive integer), `fold_key`, `expanded: boolean`,
+  `hidden_count: n` (an integer ≥ 2: a hidden run of ONE entry never folds),
+  `fold_key`, `expanded: boolean`,
   empty `start_ids` / `end_ids` / `refs` — and reports `fold_count` per repo
   (read TOTALLY: absent → `0`). A gap node is emitted in BOTH states:
 
@@ -52,7 +53,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
   alias EvoDashWeb.AgentsComponents.CommitGraphView.Geometry
 
   # zh_CN glossary for the strings rendered here:
-  #   %{count} commits → "… N 个提交"（折叠的中间提交数）,
+  #   %{count} commit / %{count} commits → "… N 个提交"（折叠的中间提交数，单复数同形）,
   #   %{count} hidden commits → "N 个隐藏提交",
   #   Expand all → "全部展开", Collapse all → "全部收起",
   #   start → "起始", end → "结束", terminated → "已终止",
@@ -146,7 +147,9 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView.Fold do
   end
 
   defp hidden_label(node) do
-    gettext("%{count} commits", count: hidden_count(node))
+    count = hidden_count(node)
+
+    ngettext("%{count} commit", "%{count} commits", count, count: count)
   end
 
   # ---------------------------------------------------------------------------

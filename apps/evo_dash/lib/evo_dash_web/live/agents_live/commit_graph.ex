@@ -429,10 +429,11 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   commit history COLLAPSED — exactly `build(raw_by_repo, agents, MapSet.new())`.
 
   Each agent's interior commits fold into ONE synthesized `kind: :gap` row per
-  maximal run of hidden commits in that agent's lane; the lane owner's START
-  and END nodes, every fork point / tip of any agent, every node carrying refs
-  and every synthesized `:base`/`:noop` stub always stay visible, as does every
-  unowned (neutral-lane) node.
+  maximal run of hidden commits in that agent's lane (a run folds only from TWO
+  hidden commits on, so a lone interior commit stays a normal commit row); the
+  lane owner's START and END nodes, every fork point / tip of any agent, every
+  node carrying refs and every synthesized `:base`/`:noop` stub always stay
+  visible, as does every unowned (neutral-lane) node.
   """
   @spec build(map(), [map()]) :: [repo_view()]
   def build(raw_by_repo, agents), do: build(raw_by_repo, agents, MapSet.new())

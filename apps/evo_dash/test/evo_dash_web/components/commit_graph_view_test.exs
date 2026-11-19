@@ -1076,6 +1076,53 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert node_title(tree, "commit-node-#{dom}-gap-f1-a1") == "12 commits"
     end
 
+    test "the hidden-count label pluralizes through ngettext (singular at 1)" do
+      # The rendered label is `ngettext("%{count} commit", "%{count} commits", n)`,
+      # so a ONE-commit model (never emitted by the builder — a single hidden
+      # commit stays a row) still renders the singular form the translator needs.
+      dom = "commit-graph-repo-plural-1"
+
+      repos = [
+        repo_view(
+          repo_dom_id: dom,
+          nodes: [
+            node_view(
+              sha: "gap-one",
+              column: 0,
+              row: 0,
+              kind: :gap,
+              fold_key: "one",
+              hidden_count: 1
+            ),
+            node_view(
+              sha: "gap-many",
+              column: 0,
+              row: 1,
+              kind: :gap,
+              fold_key: "many",
+              hidden_count: 3
+            )
+          ],
+          agents: [agent_map(agent_id: "a1", lane: 0)]
+        )
+      ]
+
+      tree = parse(render_repos(repos))
+
+      [one] = Floki.find(tree, "#commit-gap-row-#{dom}-one")
+      assert attr(one, "title") == ["1 commit"]
+      assert text(Floki.find(one, ".cg-gap-label")) =~ "1 commit"
+      refute text(Floki.find(one, ".cg-gap-label")) =~ "1 commits"
+
+      [many] = Floki.find(tree, "#commit-gap-row-#{dom}-many")
+      assert attr(many, "title") == ["3 commits"]
+      assert text(Floki.find(many, ".cg-gap-label")) =~ "3 commits"
+
+      # The gutter tooltip shares the SAME label (and therefore the plural rule).
+      assert node_title(tree, "commit-node-#{dom}-gap-one") == "1 commit"
+      assert node_title(tree, "commit-node-#{dom}-gap-many") == "3 commits"
+    end
+
     test "the gap row publishes the RAW fold_key as data-cg-fold-key while its id keeps the SANITIZED form" do
       raw = "run/1 a"
       sanitized = "run-1-a"

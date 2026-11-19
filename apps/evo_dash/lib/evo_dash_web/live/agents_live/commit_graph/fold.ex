@@ -12,7 +12,10 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph.Fold do
   lane (runs never cross lanes and never merge across an anchor). An entry is
   HIDDEN when it is a fetched commit (`kind: :commit`), it has an owner
   (unowned / neutral-lane nodes are never hidden) and it is not an ANCHOR. A
-  run folds at length ≥ 1.
+  run folds only at length ≥ 2: a hidden run of ONE entry keeps the same row
+  count while hiding that commit's message, so a lone interior commit stays
+  visible as an ordinary `kind: :commit` row (never hidden, never aliased to a
+  gap).
 
   ANCHORS are always visible:
 
@@ -84,10 +87,11 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph.Fold do
 
   `entries` are the pre-layout node entries (fetched commits + synthesized base
   / no-op stub entries), `ordered` the repo's agents in agent order and `paths`
-  each agent's progress path (newest → oldest, agent order). The result is
-  sorted deterministically by `{agent_index, layer, date_unix, head_sha}`;
-  every run is returned regardless of any expansion state, so the plan is the
-  same in both states.
+  each agent's progress path (newest → oldest, agent order). Runs of ONE hidden
+  entry are not runs: they stay visible, so they are never reported here. The
+  result is sorted deterministically by `{agent_index, layer, date_unix,
+  head_sha}`; every run is returned regardless of any expansion state, so the
+  plan is the same in both states.
   """
   @spec plan([map()], [map()], [term()]) :: [run()]
   def plan(entries, ordered, paths) do
@@ -195,6 +199,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph.Fold do
 
     state.runs
     |> Enum.reverse()
+    |> Enum.filter(&foldable?/1)
     |> Enum.map(fn run ->
       head = List.first(run.entries)
 
@@ -213,6 +218,11 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph.Fold do
     Map.get(entry, :kind) == :commit and is_integer(Map.get(entry, :owner_index)) and
       not MapSet.member?(anchors, Map.get(entry, :sha))
   end
+
+  # A run folds only from TWO hidden entries on: a one-entry run would keep the
+  # same row count and only hide that commit's message, so a lone interior
+  # commit stays a real row (and an ordinary edge endpoint).
+  defp foldable?(run), do: length(run_entries(run)) >= 2
 
   defp run_entries(run) do
     case Map.get(run, :entries) do
