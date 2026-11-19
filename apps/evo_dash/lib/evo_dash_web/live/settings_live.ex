@@ -658,7 +658,7 @@ defmodule EvoDashWeb.SettingsLive do
   # links/tests); the rendered panel uses the canonical names above.
   @impl true
   def handle_event("add_model_profile", params, socket),
-    do: ModelProfileEvents.add_model_profile(socket, params)
+    do: ProviderPanelEvents.add_provider_profile(socket, params)
 
   @impl true
   def handle_event("edit_model_profile", params, socket),
