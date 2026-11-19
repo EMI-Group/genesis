@@ -43,7 +43,7 @@ def stage(name):
 
 
 VERSIONS = list(range(20260815000001, 20260815000010))
-COUNTS = {"tasks": 1037, "task_agent_archives": 10539, "projects": 10,
+COUNTS = {"tasks": 1040, "task_agent_archives": 10539, "projects": 10,
           "schema_migrations": 9}
 TASK_NAMES = ("id type status opts started_at finished_at logs result review_status usage "
               "agent_count base_sha commit_sha lease_expires_at model_id project_path "
@@ -319,7 +319,7 @@ def run(path, apply=False):
             mounts = fingerprint(source)
             before = snapshot(source)
             if not apply:
-                return "Dry-run passed: 1037 tasks, 10539 archives, 10 projects; no repair written."
+                return "Dry-run passed: 1040 tasks, 10539 archives, 10 projects; no repair written."
             # Backup stored beside DB, unique private name, never overwrite a prior backup.
             backup_dir = Path(tempfile.mkdtemp(prefix="store-repair-backup-", dir=path.parent))
             backup = backup_dir / "original.sqlite"
