@@ -249,21 +249,6 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
     end
   end
 
-  def add_model(config, model_value) do
-    {provider, model, overrides} = split_model(model_value)
-    id = Helpers.generate_profile_id(profiles(config), slug(model))
-
-    params =
-      Map.merge(overrides, %{
-        "provider" => provider,
-        "name" => id,
-        "models" => [%{"model" => model}],
-        "concurrency" => "3"
-      })
-
-    with {:ok, profile} <- parse(params, id), do: {:ok, update(config, nil, profile)}
-  end
-
   defp parse_values(params, base) do
     Enum.reduce_while(
       @integer_fields ++ @float_fields ++ @string_fields ++ @json_fields,
@@ -506,18 +491,6 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
 
   defp legacy_params(params), do: params
 
-  defp split_model(value) when is_map(value) do
-    {text(field(value, "provider")), text(field(value, "id")),
-     Map.drop(stringify(value), ~w(provider id))}
-  end
-
-  defp split_model(value) when is_binary(value) do
-    case String.split(value, ":", parts: 2) do
-      [provider, model] -> {provider, model, %{}}
-      [model] -> {"", model, %{}}
-    end
-  end
-
   defp json_draft(profile) do
     Enum.reduce(@json_fields, profile, fn key, acc ->
       case acc[key] do
@@ -585,9 +558,6 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
       value -> value
     end
   end
-
-  defp slug(value),
-    do: value |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-") |> String.trim("-")
 
   # Identity is derived from the PROVIDER, never from a model id. The catalog
   # ENTRY's own id wins over the shared runtime provider atom

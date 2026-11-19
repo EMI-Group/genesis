@@ -98,9 +98,21 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
     end
 
     test "editing the generated id explicitly stops treating it as an automatic placeholder" do
-      socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, file_config: %{}}}
-      assert {:noreply, socket} = ModelProfileEvents.add_model_profile(socket, %{})
-      assert socket.assigns.editing_profile_id == :new
+      draft = ProviderProfiles.new_draft(%{})
+
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{
+          __changed__: %{},
+          file_config: %{},
+          editing_profile_id: :new,
+          profile_form_draft: draft,
+          profile_generated_id: draft["id"],
+          profile_form_errors: %{},
+          profile_save_token: nil,
+          profile_advanced_open: nil
+        }
+      }
+
       assert socket.assigns.profile_generated_id == "profile-1"
 
       assert {:noreply, socket} =

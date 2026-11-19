@@ -25,21 +25,6 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
 
   alias EvoDashWeb.SettingsLive.{ModelProfileHelpers, ProviderProfiles}
 
-  def add_model_profile(socket, _params) do
-    draft = ProviderProfiles.new_draft(socket.assigns.file_config)
-
-    {:noreply,
-     socket
-     |> assign(
-       editing_profile_id: :new,
-       profile_form_draft: draft,
-       profile_generated_id: draft["id"],
-       profile_form_errors: %{},
-       profile_save_token: nil,
-       profile_advanced_open: nil
-     )}
-  end
-
   def edit_model_profile(socket, %{"profile_id" => id}) do
     cond do
       socket.assigns[:editing_profile_id] == id ->

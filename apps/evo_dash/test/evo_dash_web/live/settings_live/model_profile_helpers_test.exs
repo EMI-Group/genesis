@@ -39,55 +39,6 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
 
   defp peak_hours(input), do: profile_for(%{"peak_hours" => input}).peak_hours
 
-  defp models(result), do: get_in(result, [:llm, :providers])
-
-  describe "add_model_profile/2 canonical persistence" do
-    test "a complete selection migrates valid legacy rows and drops incomplete drafts" do
-      drafts = [
-        %{id: "profile-1", concurrency: 3},
-        %{id: "profile-2", concurrency: 3, model: ""}
-      ]
-
-      for model <- ["anthropic:claude-sonnet-4", %{provider: :anthropic, id: "claude-sonnet-4"}] do
-        result = ModelProfileHelpers.add_model_profile(%{llm: %{models: drafts}}, model)
-        refute Map.has_key?(result.llm, :models)
-        refute Map.has_key?(result.llm, "models")
-
-        assert [profile] = models(result)
-        assert profile["provider"] == "anthropic"
-        assert profile["default_model"] == "claude-sonnet-4"
-        assert profile["models"] == [%{"model" => "claude-sonnet-4"}]
-        refute Map.has_key?(profile, "model")
-      end
-    end
-
-    test "a complete legacy profile retains identity and settings through migration" do
-      complete = %{id: "profile-1", concurrency: 7, model: "openai:gpt-4o", top_p: 0.8}
-      config = %{llm: %{models: [complete], tool_result_pruning: false}}
-      result = ModelProfileHelpers.add_model_profile(config, "anthropic:claude-sonnet-4")
-
-      assert [kept, added] = models(result)
-      assert kept["id"] == "profile-1"
-      assert kept["provider"] == "openai"
-      assert kept["default_model"] == "gpt-4o"
-      assert kept["models"] == [%{"model" => "gpt-4o"}]
-      assert kept["concurrency"] == 7
-      assert kept["top_p"] == 0.8
-      assert added["provider"] == "anthropic"
-      assert added["default_model"] == "claude-sonnet-4"
-      assert result.llm.default_provider_profile == "profile-1"
-      assert result.llm.tool_result_pruning == false
-      assert config.llm.models == [complete]
-    end
-
-    test "a nil/empty selection leaves config unchanged instead of persisting a draft" do
-      for config <- [%{}, %{llm: %{models: [%{id: "profile-1", model: ""}]}}],
-          model <- [nil, ""] do
-        assert ModelProfileHelpers.add_model_profile(config, model) == config
-      end
-    end
-  end
-
   describe "parse_model_profile_params/2 serialization format" do
     test "stores the compact provider:model string form when no overrides exist" do
       # The edit form pre-fills by splitting :model on the FIRST colon only, so a
@@ -535,44 +486,6 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
     end
   end
 
-  describe "add_model_profile/2 OAuth stamping" do
-    test "an OAuth-only provider is stamped with auth_mode: \"oauth\"" do
-      # `openai_codex` can never authenticate with an API key, so a newly added
-      # profile is self-describing (the persisted TOML carries auth_mode).
-      assert [profile] =
-               models(ModelProfileHelpers.add_model_profile(%{}, "openai_codex:gpt-5.6-terra"))
-
-      assert profile["auth_mode"] == "oauth"
-    end
-
-    test "API-key providers explicitly store their canonical auth mode" do
-      for model <- ["anthropic:claude-opus-5-5", "deepseek:deepseek-v4-pro"] do
-        assert [profile] = models(ModelProfileHelpers.add_model_profile(%{}, model))
-        assert profile["auth_mode"] == "api_key"
-        refute Map.has_key?(profile, "oauth_file")
-      end
-    end
-
-    test "an OAuth-only profile added next to an existing one keeps the stamp and a distinct id" do
-      # Exercise read-side migration of an existing legacy account before Add.
-      existing = %{id: "gpt-5-6-terra", concurrency: 3, model: "openai_codex:gpt-5.6-terra"}
-
-      result =
-        ModelProfileHelpers.add_model_profile(
-          %{llm: %{models: [existing]}},
-          "openai_codex:gpt-5.6-terra"
-        )
-
-      assert [kept, added] = models(result)
-      assert kept["id"] == existing.id
-      assert kept["default_model"] == "gpt-5.6-terra"
-      assert kept["auth_mode"] == "oauth"
-      assert added["auth_mode"] == "oauth"
-      assert added["id"] == "gpt-5-6-terra-2"
-      assert added["id"] != kept["id"]
-    end
-  end
-
   describe "parse_model_profile_params/2 auth_mode & oauth_file" do
     # The OAuth keys are TOML-clean by construction: the API-key default and an
     # OAuth-unsupported provider write NEITHER key, so a persisted profile never
@@ -665,63 +578,6 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
 
         refute Map.has_key?(profile, :oauth_file),
                "oauth_file must stay absent for #{inspect(patch)}"
-      end
-    end
-  end
-
-  describe "profile id naming from model value" do
-    test "derives ids from qualified or map selections, preserving model punctuation" do
-      cases = [
-        {"deepseek:deepseek-flash", "deepseek-flash"},
-        {"openai:gpt-4o", "gpt-4o"},
-        {%{provider: :anthropic, id: "claude-sonnet-4"}, "claude-sonnet-4"},
-        {"deepseek:DeepSeek V3.2", "deepseek-v3-2"}
-      ]
-
-      for {model, expected} <- cases do
-        assert [%{"id" => ^expected}] =
-                 models(ModelProfileHelpers.add_model_profile(%{llm: %{providers: []}}, model)),
-               "expected #{inspect(model)} to yield id #{expected}"
-      end
-    end
-  end
-
-  describe "profile id conflict suffixes" do
-    test "appends -2 when the base id exists and skips to the next free suffix" do
-      # Exercise read-side migration of an existing legacy account before Add.
-      one = %{id: "deepseek-flash", concurrency: 3, model: "deepseek:deepseek-flash"}
-
-      result =
-        ModelProfileHelpers.add_model_profile(%{llm: %{models: [one]}}, "deepseek:deepseek-flash")
-
-      assert Enum.map(models(result), & &1["id"]) == ["deepseek-flash", "deepseek-flash-2"]
-
-      two = [
-        one,
-        %{id: "deepseek-flash-2", concurrency: 3, model: "deepseek:deepseek-flash-2"}
-      ]
-
-      result =
-        ModelProfileHelpers.add_model_profile(%{llm: %{models: two}}, "deepseek:deepseek-flash")
-
-      assert List.last(models(result))["id"] == "deepseek-flash-3"
-    end
-  end
-
-  describe "profile id fallbacks" do
-    test "detached drafts and punctuation-only selected models use the profile-N scheme" do
-      config = %{llm: %{providers: []}}
-      assert ModelProfileHelpers.new_provider_profile_draft(config)["id"] == "profile-1"
-      assert config.llm.providers == []
-
-      assert [%{"id" => "profile-1", "default_model" => "!!!"}] =
-               models(ModelProfileHelpers.add_model_profile(config, "openai:!!!"))
-    end
-
-    test "an unqualified nonblank selection is rejected, never persisted as an account" do
-      for model <- ["gpt-4o", "!!!"] do
-        assert {:error, "provider_empty"} =
-                 EvoDashWeb.SettingsLive.ProviderProfiles.add_model(%{}, model)
       end
     end
   end

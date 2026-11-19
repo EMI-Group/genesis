@@ -13,14 +13,6 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   alias EvoGit.Config.Schema.LLM, as: LLMSchema
   alias EvoGit.PeakHours.Holidays
 
-  @doc "Adds a complete canonical provider profile; blank values leave config unchanged."
-  def add_model_profile(file_config, model_value) when model_value in [nil, ""], do: file_config
-
-  def add_model_profile(file_config, model_value) do
-    {:ok, config} = EvoDashWeb.SettingsLive.ProviderProfiles.add_model(file_config, model_value)
-    config
-  end
-
   defdelegate provider_profiles(config),
     to: EvoDashWeb.SettingsLive.ProviderProfiles,
     as: :profiles
