@@ -1,7 +1,7 @@
 defmodule EvoDashWeb.SettingsLive.AuthStatus do
   @moduledoc """
   Async loader for the per-profile OAuth/subscription credential status shown by
-  the Settings page's model-profiles editor.
+  the Settings page's provider-account editor.
 
   Only OAuth-enabled profiles (an explicit `auth_mode = "oauth"` or an
   OAuth-only provider such as `openai_codex`) produce an entry; every other

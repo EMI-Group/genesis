@@ -163,9 +163,9 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                   <option value="" selected={is_nil(@value)}>
                     <%!-- zh_CN: provider → "服务商" --%>{gettext("(provider default)")}
                   </option>
-                  <%= for opt <- ~w(none minimal low medium high xhigh default) do %>
-                    <option value={opt} selected={to_string(@value) == opt}>
-                      {opt}
+                  <%= for opt <- reasoning_options(@value) do %>
+                    <option value={opt} selected={reasoning_value(@value) == opt}>
+                      {EvoDashWeb.LLMSetup.Reasoning.label(opt)}
                     </option>
                   <% end %>
                 </select>
@@ -260,7 +260,9 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                     checked={@value in [true, "true"]}
                   />
                 <% :model_spec -> %>
-                  <%!-- Editable model field: can be typed manually or set via Quick Setup above --%>
+                  <%!-- Editable legacy model field: a manual provider:model string.
+                       Accounts and models are created in the provider-account
+                       panel, so this card never opens an editor. --%>
                   <div class="w-full">
                     <input
                       type="text"
@@ -270,7 +272,10 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                       class="input input-bordered input-sm rounded-md w-full font-mono text-base"
                     />
                     <p class="text-[11px] text-base-content/70 mt-1">
-                      {gettext("Type a model string or use Quick Setup above")}
+                      <%!-- zh_CN: provider profiles → "服务商配置" --%>
+                      {gettext(
+                        "Type a model string, or configure provider profiles in the LLM settings"
+                      )}
                     </p>
                   </div>
                 <% :provider_profiles -> %>
@@ -391,6 +396,31 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
 
   defp input_value(nil), do: ""
   defp input_value(value), do: to_string(value)
+
+  # `[:llm, :reasoning_effort]` options come from the dashboard's canonical
+  # vocabulary (no level list is copied here); a configured custom level is
+  # still offered as its own option instead of being silently dropped.
+  # Public because the flat `:llm` reasoning card is also rendered outside
+  # `category_section` (search results).
+  def reasoning_options(value) do
+    options = EvoDashWeb.LLMSetup.Reasoning.options()
+    configured = reasoning_value(value)
+
+    if configured == "" or configured in options, do: options, else: options ++ [configured]
+  end
+
+  # The canonical value of a configured reasoning setting: a provider wire alias
+  # ("max") resolves to its canonical level ("xhigh"); nil becomes "".
+  def reasoning_value(value) do
+    EvoDashWeb.LLMSetup.Reasoning.canonical(value) || configured_text(value)
+  end
+
+  defp configured_text(value) when is_binary(value), do: String.trim(value)
+
+  defp configured_text(value) when is_atom(value) and value not in [nil, true, false],
+    do: value |> Atom.to_string() |> String.trim()
+
+  defp configured_text(_value), do: ""
 
   def model_display(nil), do: ""
   def model_display(value) when is_binary(value), do: value

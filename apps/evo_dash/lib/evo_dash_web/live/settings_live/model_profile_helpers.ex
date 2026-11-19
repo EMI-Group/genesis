@@ -11,14 +11,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   alias EvoDash.SettingsUtils
   alias EvoGit.Config.LLMCatalog
   alias EvoGit.Config.Schema.LLM, as: LLMSchema
-
-  @doc "Adds a complete canonical provider profile; blank values leave config unchanged."
-  def add_model_profile(file_config, model_value) when model_value in [nil, ""], do: file_config
-
-  def add_model_profile(file_config, model_value) do
-    {:ok, config} = EvoDashWeb.SettingsLive.ProviderProfiles.add_model(file_config, model_value)
-    config
-  end
+  alias EvoGit.PeakHours.Holidays
 
   defdelegate provider_profiles(config),
     to: EvoDashWeb.SettingsLive.ProviderProfiles,
@@ -77,22 +70,6 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
       end)
       |> Enum.find(fn id -> not MapSet.member?(existing_ids, id) end)
     end
-  end
-
-  @doc """
-  Updates the provider profile identified by `old_id` in the configuration,
-  replacing it with `updated_profile`.
-  """
-  def update_model_profile(file_config, old_id, updated_profile) do
-    EvoDashWeb.SettingsLive.ProviderProfiles.update(file_config, old_id, updated_profile)
-  end
-
-  @doc """
-  Replaces the entire `[:llm, :providers]` list in the file_config with the given
-  `models` list.
-  """
-  def put_in_model_profiles(file_config, profiles) do
-    put_in_provider_profiles(file_config, profiles)
   end
 
   @doc """
@@ -306,19 +283,25 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   may also carry a `"days"` key (list of day strings — same bare-string
   hazard; absent = every day). Day values are trim + downcase +
   vocabulary-whitelist normalized (`normalize_days/1`); no day validation
-  errors are raised — the evo_git core owns authoritative validation. Returns
+  errors are raised — the evo_git core owns authoritative validation.
+  `params["off_peak_holidays"]` is an optional holiday-calendar id, trimmed and
+  matched case-insensitively against `EvoGit.PeakHours.Holidays.calendars/0`
+  and stored in that canonical spelling (`"CN"`); blank/nil omits the key.
+  Returns
   `{:ok, %{}}` when all fields are disabled/absent (keys must stay ABSENT from
   the profile so TOML omits them), `{:ok, %{peak_concurrency: int, peak_hours:
   [%{start: "HH:MM", end: "HH:MM", days: [...]}], timezone: "IANA",
-  off_peak_days: [...]}}` on success (absent keys omitted — `:off_peak_days`
-  and per-window `:days` appear ONLY when non-empty), or `{:error, reason}`
-  with one of the four peak error strings: `"peak_concurrency_invalid"`,
-  `"peak_hours_invalid_time"`, `"peak_hours_start_equals_end"`,
-  `"peak_hours_overlap"`.
+  off_peak_days: [...], off_peak_holidays: "CN"}}` on success (absent keys
+  omitted — `:off_peak_days`, `:off_peak_holidays` and per-window `:days`
+  appear ONLY when non-empty), or `{:error, reason}` with one of the five peak
+  error strings: `"peak_concurrency_invalid"`, `"peak_hours_invalid_time"`,
+  `"peak_hours_start_equals_end"`, `"peak_hours_overlap"`,
+  `"off_peak_holidays_invalid"`.
   """
   def parse_peak_fields(params) do
     with {:ok, concurrency} <- parse_peak_concurrency(params["peak_concurrency"]),
-         {:ok, hours} <- parse_peak_hours(params["peak_hours"]) do
+         {:ok, hours} <- parse_peak_hours(params["peak_hours"]),
+         {:ok, holidays} <- parse_off_peak_holidays(params["off_peak_holidays"]) do
       fields =
         if is_nil(concurrency), do: %{}, else: %{peak_concurrency: concurrency}
 
@@ -335,9 +318,40 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
           days -> Map.put(fields, :off_peak_days, days)
         end
 
+      # Holiday calendar — present ONLY when a supported calendar is named.
+      fields =
+        if is_nil(holidays), do: fields, else: Map.put(fields, :off_peak_holidays, holidays)
+
       {:ok, fields}
     end
   end
+
+  # Optional holiday-calendar id (`off_peak_holidays`): trimmed, canonicalized to
+  # the catalog spelling (`"CN"`), OMITTED when blank/nil. The accepted
+  # vocabulary is the core's `EvoGit.PeakHours.Holidays.calendars/0` (never
+  # hardcoded here); any other non-blank value is `off_peak_holidays_invalid`.
+  defp parse_off_peak_holidays(nil), do: {:ok, nil}
+
+  defp parse_off_peak_holidays(raw) when is_atom(raw),
+    do: parse_off_peak_holidays(Atom.to_string(raw))
+
+  defp parse_off_peak_holidays(raw) when is_binary(raw) do
+    case String.trim(raw) do
+      "" ->
+        {:ok, nil}
+
+      trimmed ->
+        calendars = Holidays.calendars()
+        wanted = String.downcase(trimmed)
+
+        case Enum.find(calendars, &(String.downcase(&1) == wanted)) do
+          nil -> {:error, "off_peak_holidays_invalid"}
+          calendar -> {:ok, calendar}
+        end
+    end
+  end
+
+  defp parse_off_peak_holidays(_raw), do: {:error, "off_peak_holidays_invalid"}
 
   @doc """
   Normalizes the raw `peak_hours` form value (a Phoenix-nested map keyed by

@@ -23,73 +23,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
   import Phoenix.Component, only: [assign: 2, assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3]
 
-  alias EvoDashWeb.SettingsLive.{ConfigIO, ModelProfileHelpers, ProviderProfiles}
-
-  def select_llm_model_shortcut(socket, %{"model_string" => model}) do
-    save_quick_model(socket, model, gettext("Model selected and saved."))
-  end
-
-  def save_custom_model(socket, params) do
-    quick_setup(socket, params["provider_id"], params["model_name"], params["base_url"], nil)
-  end
-
-  def save_quick_setup(socket, params) do
-    quick_setup(
-      socket,
-      params["provider_id"],
-      params["model_string"],
-      params["base_url"],
-      params["variant_id"]
-    )
-  end
-
-  defp quick_setup(socket, provider_id, model, base_url, variant_id) do
-    provider = Map.get(ConfigIO.provider_by_id_str(), provider_id)
-    model = text(model)
-    base_url = text(base_url)
-
-    cond do
-      is_nil(provider) ->
-        error(socket, gettext("Unknown provider."))
-
-      model == "" ->
-        error(socket, gettext("Model name cannot be empty."))
-
-      EvoGit.Config.LLMCatalog.requires_base_url?(provider.id) and base_url == "" ->
-        error(socket, gettext("Base URL cannot be empty."))
-
-      true ->
-        provider_atom = hd(provider.provider_atoms)
-        variant = Map.get(ConfigIO.variant_id_by_str(provider_atom), variant_id)
-        resolved = EvoGit.Config.LLMCatalog.resolve_provider_atom(provider_atom, variant)
-        model = model |> String.split(":", parts: 2) |> List.last()
-        opts = if base_url == "", do: [], else: [base_url: base_url]
-        model = EvoGit.Config.LLMCatalog.resolve_model_spec(resolved, model, opts)
-        save_quick_model(socket, model, gettext("Model selected and saved."))
-    end
-  end
-
-  defp save_quick_model(socket, model, message) do
-    case ProviderProfiles.add_model(socket.assigns.file_config, model) do
-      {:ok, config} -> persist(config, socket, message)
-      {:error, reason} -> error(socket, error_message(reason))
-    end
-  end
-
-  def add_model_profile(socket, _params) do
-    draft = ProviderProfiles.new_draft(socket.assigns.file_config)
-
-    {:noreply,
-     socket
-     |> assign(
-       editing_profile_id: :new,
-       profile_form_draft: draft,
-       profile_generated_id: draft["id"],
-       profile_form_errors: %{},
-       profile_save_token: nil,
-       profile_advanced_open: nil
-     )}
-  end
+  alias EvoDashWeb.SettingsLive.{ModelProfileHelpers, ProviderProfiles}
 
   def edit_model_profile(socket, %{"profile_id" => id}) do
     cond do
@@ -377,48 +311,63 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
   defp text(value) when is_binary(value), do: String.trim(value)
   defp text(_), do: ""
 
-  defp error_message("provider_empty"), do: gettext("Provider cannot be empty.")
+  @doc """
+  Every canonical parse reason translated to its user-facing message.
 
-  defp error_message("auth_mode_invalid"),
+  Public because the provider-account wizard and the inline add-model step
+  reuse the SAME table instead of duplicating it.
+  """
+  def error_message("provider_empty"), do: gettext("Provider cannot be empty.")
+
+  def error_message("auth_mode_invalid"),
     do: gettext("Select a supported authentication mode for this provider.")
 
-  defp error_message("numeric_invalid"), do: gettext("Numeric fields must contain valid numbers.")
+  def error_message("numeric_invalid"), do: gettext("Numeric fields must contain valid numbers.")
 
-  defp error_message("duplicate_model"),
+  def error_message("duplicate_model"),
     do: gettext("Model IDs must be unique within a provider profile.")
 
-  defp error_message("default_model_invalid"),
+  def error_message("default_model_invalid"),
     do: gettext("Enter a default model or add a model override.")
 
-  defp error_message("reasoning_default_invalid"),
+  def error_message("reasoning_default_invalid"),
     do: gettext("Default reasoning effort must be one of the configured reasoning efforts.")
 
-  defp error_message("models_invalid"),
+  def error_message("models_invalid"),
     do: gettext("Each model entry must be a model configuration.")
 
-  defp error_message("model_id_empty"), do: gettext("Model ID cannot be empty.")
-  defp error_message("invalid_extra_json"), do: gettext("Extra Config must be valid JSON.")
+  def error_message("model_id_empty"), do: gettext("Model ID cannot be empty.")
 
-  defp error_message("extra_must_be_object"),
+  # zh_CN: 向导的模型步骤既可从目录中选一个模型，也可手填自定义模型名；两者都为空时不可保存。
+  def error_message("missing_model"),
+    do: gettext("Select a model or enter a custom model name.")
+
+  def error_message("invalid_extra_json"), do: gettext("Extra Config must be valid JSON.")
+
+  def error_message("extra_must_be_object"),
     do: gettext("Extra Config must be a JSON object (map).")
 
-  defp error_message("invalid_provider_options_json"),
+  def error_message("invalid_provider_options_json"),
     do: gettext("Provider Options must be valid JSON.")
 
-  defp error_message("provider_options_must_be_object"),
+  def error_message("provider_options_must_be_object"),
     do: gettext("Provider Options must be a JSON object (map).")
 
   # 高峰并发为 0 时暂停请求；时间字段是每日 24 小时制时段。
-  defp error_message("peak_concurrency_invalid"),
+  def error_message("peak_concurrency_invalid"),
     do: gettext("Peak concurrency must be a non-negative integer.")
 
-  defp error_message("peak_hours_invalid_time"),
+  def error_message("peak_hours_invalid_time"),
     do: gettext("Peak hours must use HH:MM 24-hour format.")
 
-  defp error_message("peak_hours_start_equals_end"),
+  def error_message("peak_hours_start_equals_end"),
     do: gettext("Peak hour window start and end must differ.")
 
-  defp error_message("peak_hours_overlap"), do: gettext("Peak hour windows must not overlap.")
+  def error_message("peak_hours_overlap"), do: gettext("Peak hour windows must not overlap.")
+
+  # zh_CN: 假期日历只能取下拉框中提供的日历之一；留空表示不启用法定节假日非高峰。
+  def error_message("off_peak_holidays_invalid"),
+    do: gettext("Holiday calendar must be one of the offered calendars, or blank.")
 
   def maybe_put_gen_opt(opts, key, profile) do
     value = Map.get(profile, key) || Map.get(profile, to_string(key))

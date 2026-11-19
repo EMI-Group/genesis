@@ -1,18 +1,384 @@
 defmodule EvoDashWeb.WelcomeLive do
   @moduledoc """
-  Local-only onboarding for a provider profile with multiple models, a default
-  model and per-model reasoning defaults, using API-key or subscription auth.
+  Local-only provider onboarding, as a step-by-step wizard.
+
+  One decision per step (provider → authentication → model → reasoning &
+  schedule → test → done), rendered through the shared pure step components in
+  `EvoDashWeb.SettingsComponents.ProviderWizard`, whose per-step bodies live in
+  `EvoDashWeb.WelcomeLive.Steps`, and driven by the pure draft model
+  `EvoDashWeb.WelcomeLive.Wizard`. View-model derivation lives in
+  `EvoDashWeb.WelcomeLive.Presentation`, so this module only owns the socket,
+  the event vocabulary and the one save path.
+
+  Every mutating event is refused while a remote node is being viewed: welcome
+  setup configures THIS machine only.
   """
   use EvoDashWeb, :live_view
 
+  alias EvoDashWeb.LLMSetup.Reasoning
+  alias EvoDashWeb.SettingsComponents.ProviderWizard
   alias EvoDashWeb.SettingsLive.ConfigIO
+  alias EvoDashWeb.WelcomeLive.Presentation
   alias EvoDashWeb.WelcomeLive.Setup
+  alias EvoDashWeb.WelcomeLive.Steps
+  alias EvoDashWeb.WelcomeLive.ViewModel
+  alias EvoDashWeb.WelcomeLive.Wizard
   alias EvoGit.Config.LLMCatalog, as: Catalog
+
+  # Pure navigation events stay usable on a remote-node view; every mutating
+  # event is rejected by the guard clause below.
+  @navigation_events ~w(wizard_back wizard_next skip get_started noop)
+
+  @impl true
+  def mount(_params, _session, socket) do
+    config = ConfigIO.load_file_config()
+    providers = Catalog.providers()
+
+    {:ok,
+     assign(socket,
+       has_model?: Setup.has_model?(config),
+       credentials: EvoGit.Config.credentials(),
+       llm_providers: providers,
+       flat_models: Setup.flatten_models(providers),
+       current_version: Application.spec(:evo_git, :vsn) |> to_string(),
+       draft: Wizard.new(),
+       step: :provider,
+       wizard_active: false,
+       error: nil,
+       llm_test_status: :idle,
+       llm_test_seq: 0,
+       search_query: "",
+       preset_dismissed: false
+     )}
+  end
+
+  @impl true
+  def handle_params(params, _uri, socket) do
+    previous = socket.assigns.current_node_id
+    socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
+
+    socket =
+      if socket.assigns.current_node_id == previous,
+        do: socket,
+        else: invalidate_test(socket)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event(event, _params, %{assigns: %{current_node_id: id}} = socket)
+      when not is_nil(id) and event not in @navigation_events do
+    {:noreply, put_flash(socket, :error, gettext("Use Settings to configure the remote node."))}
+  end
+
+  def handle_event("noop", _params, socket), do: {:noreply, socket}
+
+  def handle_event("skip", _params, socket),
+    do: {:noreply, redirect(socket, to: "/welcome/complete")}
+
+  def handle_event("get_started", _params, socket),
+    do: {:noreply, redirect(socket, to: "/welcome/complete")}
+
+  def handle_event("wizard_back", _params, socket) do
+    %{draft: draft, step: step} = socket.assigns
+    {:noreply, assign(socket, step: Wizard.prev_step(draft, step), error: nil)}
+  end
+
+  def handle_event("wizard_next", _params, socket) do
+    %{draft: draft, step: step} = socket.assigns
+
+    case Wizard.validate(step, draft, Wizard.capabilities(draft)) do
+      {:error, reason} ->
+        {:noreply, assign(socket, error: Presentation.gate_message(reason))}
+
+      :ok ->
+        cond do
+          step == :test -> save_and_finish(socket)
+          step == :done -> {:noreply, socket}
+          true -> {:noreply, assign(socket, step: Wizard.next_step(draft, step), error: nil)}
+        end
+    end
+  end
+
+  def handle_event("select_wizard_provider", %{"provider" => value}, socket)
+      when is_binary(value) do
+    case Presentation.provider_entry(socket.assigns.llm_providers, value) do
+      nil ->
+        {:noreply, socket}
+
+      entry ->
+        draft =
+          Wizard.new()
+          |> Wizard.put("provider", value)
+          |> Wizard.put("variant", Presentation.first_variant(entry))
+          |> Wizard.put("auth_mode", auth_mode_for(entry))
+
+        socket = socket |> assign(draft: draft, error: nil) |> invalidate_test()
+        socket = assign(socket, wizard_active: true)
+
+        if Wizard.valid?(:provider, draft, Wizard.capabilities(draft)) do
+          {:noreply, assign(socket, step: Wizard.next_step(draft, :provider))}
+        else
+          {:noreply, socket}
+        end
+    end
+  end
+
+  def handle_event("select_wizard_variant", %{"variant" => value}, socket)
+      when is_binary(value) do
+    draft = socket.assigns.draft
+    provider = Presentation.provider_entry(socket.assigns.llm_providers, draft["provider"])
+
+    case Presentation.variant_id(provider, value) do
+      nil ->
+        {:noreply, socket}
+
+      variant_id ->
+        draft =
+          draft
+          |> Wizard.put("variant", variant_id)
+          |> reset_model_choices()
+
+        {:noreply, socket |> assign(draft: draft) |> invalidate_test()}
+    end
+  end
+
+  def handle_event("select_wizard_auth", %{"mode" => mode}, socket)
+      when mode in ["api_key", "oauth"] do
+    draft = socket.assigns.draft
+    modes = Map.get(Wizard.capabilities(draft), :auth_modes, ["api_key"])
+
+    if mode in modes do
+      draft = draft |> Wizard.put("auth_mode", mode) |> Wizard.put("api_key", "")
+      {:noreply, socket |> assign(draft: draft) |> invalidate_test()}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("wizard_model_search", params, socket) do
+    query = params |> Map.get("query", "") |> to_string()
+    {:noreply, assign(socket, search_query: query)}
+  end
+
+  def handle_event("select_wizard_model", %{"model" => model}, socket) when is_binary(model) do
+    draft = socket.assigns.draft
+
+    draft =
+      if model in List.wrap(draft["models"]),
+        do: draft,
+        else: Wizard.toggle_model(draft, model)
+
+    {:noreply,
+     socket |> assign(draft: Wizard.put(draft, "default_model", model)) |> invalidate_test()}
+  end
+
+  def handle_event("toggle_wizard_model", %{"model" => model}, socket) when is_binary(model) do
+    {:noreply,
+     socket
+     |> assign(draft: Wizard.toggle_model(socket.assigns.draft, model))
+     |> invalidate_test()}
+  end
+
+  def handle_event("wizard_custom_model", params, socket) do
+    name = params |> Map.get("custom_model", "") |> to_string()
+
+    {:noreply,
+     socket
+     |> assign(draft: Wizard.set_custom_model(socket.assigns.draft, name))
+     |> invalidate_test()}
+  end
+
+  def handle_event("wizard_api_key", params, socket) do
+    key = params |> Map.get("api_key", "") |> to_string()
+    # Transient draft state only — never persisted to browser state or a push payload.
+    {:noreply,
+     socket
+     |> assign(draft: Wizard.put(socket.assigns.draft, "api_key", key))
+     |> invalidate_test()}
+  end
+
+  def handle_event("wizard_field_changed", params, socket) do
+    case Map.get(params, "base_url") do
+      url when is_binary(url) ->
+        {:noreply,
+         socket
+         |> assign(draft: Wizard.put(socket.assigns.draft, "base_url", url))
+         |> invalidate_test()}
+
+      _other ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("wizard_reasoning", params, socket) do
+    draft = socket.assigns.draft
+    inventory = inventory_from(params)
+    effort = params |> Map.get("default_reasoning_effort", "") |> to_string()
+    effort = if effort in inventory, do: effort, else: ""
+    extra = Map.get(params, "model_reasoning", %{})
+    extra = if is_map(extra), do: extra, else: %{}
+
+    draft =
+      cond do
+        Presentation.custom_primary?(draft) ->
+          draft
+          |> Wizard.put("reasoning_efforts", inventory)
+          |> Wizard.put("default_reasoning_effort", effort)
+
+        true ->
+          Wizard.put(
+            draft,
+            "model_reasoning",
+            merge_model_reasoning(draft, extra, inventory, effort)
+          )
+      end
+
+    {:noreply, socket |> assign(draft: draft) |> invalidate_test()}
+  end
+
+  def handle_event("wizard_schedule_changed", params, socket) do
+    draft = socket.assigns.draft
+    value = params |> Map.get("off_peak_holidays", "") |> to_string() |> String.trim()
+    schedule = ensure_map(draft["schedule"])
+
+    schedule =
+      case value do
+        "" -> Map.delete(schedule, "off_peak_holidays")
+        holiday -> Map.put(schedule, "off_peak_holidays", holiday)
+      end
+
+    # A manual edit: `Wizard.preset_state/1` remains the only judge of whether
+    # the applied preset still matches, so nothing is silently re-applied.
+    {:noreply, assign(socket, draft: Wizard.put(draft, "schedule", schedule))}
+  end
+
+  def handle_event("apply_schedule_preset", params, socket) do
+    preset_id = params |> Map.get("preset_id", "") |> to_string()
+    draft = socket.assigns.draft
+
+    # The preset id is client input: only a preset the DRAFT's provider
+    # publishes may touch its account schedule, so another provider's window
+    # can never be applied here.
+    if preset_allowed?(socket, draft, preset_id) do
+      {draft, _snapshot} = Wizard.apply_preset(draft, preset_id)
+      {:noreply, assign(socket, draft: draft, preset_dismissed: false)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("undo_schedule_preset", _params, socket) do
+    {:noreply, assign(socket, draft: Wizard.undo_preset(socket.assigns.draft))}
+  end
+
+  def handle_event("dismiss_schedule_preset", _params, socket) do
+    {:noreply, assign(socket, preset_dismissed: true)}
+  end
+
+  def handle_event("add_another_provider", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(
+       draft: Wizard.new(),
+       step: :provider,
+       wizard_active: true,
+       error: nil,
+       search_query: "",
+       preset_dismissed: false,
+       has_model?: true
+     )
+     |> invalidate_test()}
+  end
+
+  def handle_event("skip_test", _params, socket), do: save_and_finish(socket)
+
+  def handle_event("test_connection", _params, socket) do
+    %{draft: draft} = socket.assigns
+    provider = Presentation.provider_entry(socket.assigns.llm_providers, draft["provider"])
+
+    with {:ok, current} <- Setup.read_config(),
+         {:ok, _config, profile, entry, key} <-
+           Setup.prepare(current, setup_assigns(socket, provider), draft_params(draft)),
+         :ok <- save_key(entry, key, draft["auth_mode"]) do
+      seq = socket.assigns.llm_test_seq + 1
+      effort = tested_effort(draft, entry)
+
+      runner =
+        Application.get_env(:evo_dash, :welcome_llm_test_runner, &EvoGit.SystemCheck.llm_test/2)
+
+      case EvoDash.SafeCall.start(self(), {:welcome_llm_test_result, seq}, fn ->
+             {model, opts} = Setup.test_request(profile, entry, effort)
+             runner.(model, opts)
+           end) do
+        {:ok, _pid} ->
+          {:noreply,
+           assign(socket,
+             llm_test_seq: seq,
+             llm_test_status: :testing,
+             draft: Wizard.put(draft, "api_key", ""),
+             credentials: EvoGit.Config.credentials()
+           )}
+
+        {:error, reason} ->
+          {:noreply,
+           assign(socket,
+             llm_test_seq: seq,
+             llm_test_status: {:error, Presentation.display_error(reason)}
+           )}
+      end
+    else
+      {:error, reason} ->
+        {:noreply, assign(socket, llm_test_status: {:error, Presentation.display_error(reason)})}
+    end
+  end
+
+  @impl true
+  def handle_info({{:welcome_llm_test_result, seq}, guarded}, socket) do
+    handle_info({:welcome_llm_test_result, seq, test_answer(guarded)}, socket)
+  end
+
+  def handle_info({:welcome_llm_test_result, seq, result}, socket) do
+    if seq == socket.assigns.llm_test_seq and socket.assigns.current_node_id == nil do
+      status =
+        case result do
+          {:ok, detail} -> {:ok, detail}
+          {:error, reason} -> {:error, Presentation.display_error(reason)}
+        end
+
+      {:noreply,
+       assign(socket, llm_test_status: status, credentials: EvoGit.Config.credentials())}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Legacy unscoped test results must never touch a scoped draft.
+  def handle_info({:llm_test_result, _result}, socket), do: {:noreply, socket}
+
+  def handle_info({:task_updated, _, _, _} = msg, socket),
+    do: EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
+
+  def handle_info({:task_deleted, _, _} = msg, socket),
+    do: EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
+
+  def handle_info(:node_aware_reload_tasks, socket),
+    do: {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
+
+  def handle_info({:node_selected, id}, socket),
+    do: EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, id)
+
+  def handle_info({:remote_connection_status, _, _} = msg, socket),
+    do: EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
+
+  def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
   def render(assigns) do
+    assigns = ViewModel.prepare_view(assigns)
+
     ~H"""
-    <EvoDashWeb.Layouts.app
+    <Layouts.app
       flash={@flash}
       current_page={:welcome}
       simple_nav={false}
@@ -30,653 +396,308 @@ defmodule EvoDashWeb.WelcomeLive do
       accent_color={assigns[:accent_color] || "blue"}
     >
       <div class="min-h-screen max-w-5xl mx-auto px-4 lg:px-6 py-4 space-y-5">
-        <button
-          type="button"
-          onclick="if (window.history.length > 1) { history.back(); } else { window.location.href = '/'; }"
-          class="btn btn-ghost btn-sm gap-2"
-        >
-          <.icon name="hero-arrow-left" class="size-4" />{gettext("Back")}
-        </button>
-        <header>
+        <div class="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onclick="if (window.history.length > 1) { history.back(); } else { window.location.href = '/'; }"
+            class="btn btn-ghost btn-sm gap-2"
+          >
+            <.icon name="hero-arrow-left" class="size-4" />{gettext("Back")}
+          </button>
+          <button
+            :if={
+              @current_node_id == nil and not ViewModel.all_set?(@step, @has_model?, @wizard_active)
+            }
+            phx-click="skip"
+            class="btn btn-ghost btn-sm"
+          >
+            {gettext("Skip")}
+          </button>
+        </div>
+
+        <div>
           <h2 class="text-xl font-bold">
-            {if @has_model?, do: gettext("You're All Set!"), else: gettext("Welcome to Genesis")}
+            {if ViewModel.all_set?(@step, @has_model?, @wizard_active),
+              do: gettext("You're All Set!"),
+              else: gettext("Welcome to Genesis")}
           </h2>
           <p class="text-sm text-base-content/70 mt-1">
             {gettext("Configure a provider and its models to start building with Genesis.")}
           </p>
-        </header>
+        </div>
 
         <%= cond do %>
           <% @current_node_id != nil -> %>
             <div class="alert alert-info">
-              {gettext(
-                "Welcome setup configures this machine only. Switch to Local or use Settings for the remote node."
-              )}
+              <.icon name="hero-information-circle" class="size-5" />
+              <span>
+                {gettext(
+                  "Welcome setup configures this machine only. Switch to Local or use Settings for the remote node."
+                )}
+              </span>
+              <a href={~p"/welcome"} class="btn btn-primary btn-sm">{gettext("Switch to Local")}</a>
             </div>
-            <a href={~p"/welcome"} class="btn btn-primary btn-sm">{gettext("Switch to Local")}</a>
-          <% @has_model? -> %>
-            <div class="bg-success/10 border border-success/20 rounded-lg p-5 flex gap-3">
+          <% ViewModel.all_set?(@step, @has_model?, @wizard_active) -> %>
+            <div class="bg-success/10 border border-success/20 rounded-xl p-5 flex gap-3">
               <.icon name="hero-check-circle" class="size-7 text-success" />
-              <div>
+              <div class="space-y-2">
                 <p class="font-bold text-success">{gettext("Ready to build!")}</p>
                 <p class="text-sm text-base-content/70">
                   {gettext("Your LLM is configured. You can manage it anytime in Settings.")}
                 </p>
+                <div class="flex flex-wrap gap-2">
+                  <button type="button" phx-click="get_started" class="btn btn-primary btn-sm">
+                    {gettext("Go to Dashboard")}
+                  </button>
+                  <a href={~p"/settings"} class="btn btn-ghost btn-sm">{gettext("Open Settings")}</a>
+                </div>
               </div>
-            </div>
-            <div class="flex gap-3">
-              <button phx-click="get_started" class="btn btn-primary btn-sm">{gettext(
-                "Go to Dashboard"
-              )}</button>
-              <a href={~p"/settings"} class="btn btn-ghost btn-sm">{gettext("Open Settings")}</a>
             </div>
           <% true -> %>
-            <section class="space-y-3">
-              <h3 class="text-lg font-bold">{gettext("Add your first LLM")}</h3>
-              <p class="text-sm text-base-content/70">
-                {gettext(
-                  "Pick a provider, select one or more models, then choose API key or subscription authentication."
-                )}
-              </p>
-              <p class="text-xs font-bold uppercase text-base-content/70">
-                {gettext("Choose a provider:")}
-              </p>
-              <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-                <%= for provider <- welcome_providers(@llm_providers) do %>
-                  <button
-                    type="button"
-                    phx-click="select_welcome_provider"
-                    phx-value-provider_id={provider.id}
-                    class={[
-                      "btn btn-sm h-auto py-2 text-left",
-                      @selected_provider_id == provider.id && "btn-primary",
-                      @selected_provider_id != provider.id &&
-                        "btn-ghost bg-primary/10 text-primary-standalone"
-                    ]}
-                  >
-                    {t_provider(provider.display_name)}
-                  </button>
-                <% end %>
-              </div>
-
-              <%= if @selected_provider_id do %>
-                <% provider = Enum.find(@llm_providers, &(&1.id == @selected_provider_id)) %>
-                <%= if provider[:variants] do %>
-                  <p class="text-xs font-bold text-base-content/70">{gettext("Select a variant:")}</p>
-                  <div class="flex flex-wrap gap-2">
-                    <%= for variant <- provider.variants do %>
-                      <button
-                        type="button"
-                        phx-click="select_welcome_variant"
-                        phx-value-variant_id={variant.id}
-                        class={["btn btn-xs", @selected_variant_id == variant.id && "btn-secondary"]}
-                      >{variant.display_name}</button>
-                    <% end %>
-                  </div>
-                <% end %>
-                <form id="welcome-search" phx-submit="noop">
-                  <input
-                    type="search"
-                    name="search_query"
-                    value={@search_query}
-                    phx-change="search_models"
-                    phx-debounce="150"
-                    placeholder={gettext("Search models…")}
-                    class="input input-bordered w-full"
+            <ProviderWizard.wizard_shell
+              step={@step}
+              steps={Wizard.steps(@draft)}
+              title={Presentation.step_title(@step)}
+              subtitle={Presentation.step_subtitle(@step)}
+              progress={Wizard.progress(@draft, @step)}
+              back_event="wizard_back"
+              next_event="wizard_next"
+              next_label={ViewModel.next_label(@step)}
+              next_disabled={not Wizard.valid?(@step, @draft, Wizard.capabilities(@draft))}
+              cancel_event="skip"
+              cancel_label={gettext("Skip")}
+              error={@error}
+            >
+              <%= case @step do %>
+                <% :provider -> %>
+                  <Steps.step_provider_body
+                    provider_options={@provider_options}
+                    draft={@draft}
+                    variant_options={@variant_options}
                   />
-                </form>
-                <p class="text-xs font-bold text-base-content/70">{gettext("Choose a model:")}</p>
-                <% entries =
-                  Setup.provider_models(@flat_models, @selected_provider_id, @selected_variant_id) %>
-                <% filtered = Setup.filtered_models(entries, @search_query) %>
-                <%= if filtered == [] do %>
-                  <p class="text-sm text-base-content/70 py-4">
-                    {gettext("No models match your search.")}
-                  </p>
-                <% else %>
-                  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-                    <%= for entry <- filtered do %>
-                      <% selected = entry.model_string in @selected_models %>
-                      <button
-                        type="button"
-                        phx-click="select_welcome_model"
-                        phx-value-model_string={entry.model_string}
-                        aria-pressed={to_string(selected)}
-                        class={[
-                          "btn btn-xs h-auto py-2 flex-col items-start text-left",
-                          selected && "btn-primary",
-                          !selected && "btn-ghost bg-primary/10 text-primary-standalone"
-                        ]}
-                      >
-                        <span>{entry.model_display_name}</span>
-                        <%= if entry.variant_display_name do %>
-                          <span class="text-xs">{t_provider(entry.provider_display_name)} · {entry.variant_display_name}</span>
-                        <% end %>
-                      </button>
-                    <% end %>
-                  </div>
-                <% end %>
-                <p class="text-xs text-base-content/70">
-                  {gettext("Need a custom model or advanced settings?")}
-                  <a href={~p"/settings"} class="link link-primary">{gettext("Settings page")}</a>
-                </p>
+                <% :auth -> %>
+                  <Steps.step_auth_body
+                    draft={@draft}
+                    auth_modes={@auth_modes}
+                    oauth_only={@oauth_only?}
+                    login_instructions={@login_instructions}
+                    key_placeholder={@key_placeholder}
+                    key_present={@key_present?}
+                  />
+                <% :model -> %>
+                  <Steps.step_model_body
+                    model_rows={@model_rows}
+                    all_model_rows={@all_model_rows}
+                    draft={@draft}
+                    search_query={@search_query}
+                  />
+                <% :reasoning_schedule -> %>
+                  <Steps.step_reasoning_schedule_body
+                    inventory={@inventory}
+                    default_effort={@default_effort}
+                    presets={@presets}
+                    preset_applied={@preset_applied}
+                    holidays={@holidays}
+                    holiday_options={@holiday_options}
+                    holiday_help={@holiday_help}
+                    schedule_rows={@schedule_rows}
+                    inventory_name={@inventory_name}
+                    default_name={@default_name}
+                    extra_models={@extra_models}
+                  />
+                <% :test -> %>
+                  <Steps.step_test_body llm_test_status={@llm_test_status} />
+                <% :done -> %>
+                  <Steps.step_done_body summary={@summary} />
               <% end %>
-            </section>
-
-            <%= if @selected_entry do %>
-              <section class="bg-base-200 border border-base-300 rounded-lg p-5 space-y-4">
-                <form id="welcome-defaults" phx-change="welcome_defaults_changed" class="space-y-3">
-                  <label class="block text-sm font-semibold" for="welcome-default-model">{gettext(
-                    "Default model"
-                  )}</label>
-                  <select
-                    id="welcome-default-model"
-                    name="default_model"
-                    class="select select-bordered w-full"
-                  >
-                    <%= for entry <- selected_entries(assigns) do %>
-                      <option
-                        value={entry.model_string}
-                        selected={@default_model == entry.model_string}
-                      >
-                        {entry.model_display_name}
-                      </option>
-                    <% end %>
-                  </select>
-                  <%= for entry <- selected_entries(assigns) do %>
-                    <label class="block text-sm text-base-content/80">
-                      {gettext("Default reasoning for %{model}", model: entry.model_display_name)}
-                      <select
-                        name={"reasoning[#{entry.model_string}]"}
-                        class="select select-bordered select-sm w-full mt-1"
-                      >
-                        <option
-                          value=""
-                          selected={Map.get(@model_reasoning, entry.model_string, "") == ""}
-                        >
-                          {gettext("Provider default")}
-                        </option>
-                        <%= for effort <- reasoning_choices(entry) do %>
-                          <option
-                            value={effort}
-                            selected={Map.get(@model_reasoning, entry.model_string) == effort}
-                          >
-                            {effort}
-                          </option>
-                        <% end %>
-                      </select>
-                    </label>
-                  <% end %>
-                </form>
-
-                <%= if Catalog.supports_oauth?(@selected_entry.resolved_atom) do %>
-                  <%= if Catalog.oauth_only?(@selected_entry.resolved_atom) do %>
-                    <span class="badge badge-info">{gettext("Subscription (OAuth)")}</span>
-                  <% else %>
-                    <form id="welcome-auth" phx-change="welcome_auth_changed">
-                      <label class="block text-sm font-semibold" for="welcome-auth-mode">{gettext(
-                        "Authentication"
-                      )}</label>
-                      <select
-                        id="welcome-auth-mode"
-                        name="auth_mode"
-                        class="select select-bordered w-full"
-                      >
-                        <option value="api_key" selected={@auth_mode == "api_key"}>
-                          {gettext("API key")}
-                        </option>
-                        <option value="oauth" selected={@auth_mode == "oauth"}>
-                          {gettext("Subscription (OAuth)")}
-                        </option>
-                      </select>
-                    </form>
-                  <% end %>
-                <% end %>
-                <%= if @auth_mode == "oauth" do %>
-                  <p class="text-sm text-base-content/80">
-                    {gettext(
-                      "Log in once with the vendor CLI on this machine, then test the connection. No API key is required."
-                    )}
-                  </p>
-                  <pre class="text-xs whitespace-pre-wrap bg-base-100 p-3 rounded-md">{EvoGit.Auth.login_instructions(@selected_entry.resolved_atom)}</pre>
-                <% end %>
-
-                <% key_is_set = Map.get(@credentials, @selected_entry.credential_key) not in [nil, ""] %>
-                <% can_save = Setup.can_save?(assigns) %>
-                <form id="welcome-save" phx-submit="save_welcome_setup" class="space-y-3">
-                  <%= if @auth_mode == "api_key" do %>
-                    <label class="block text-sm font-semibold" for="welcome-api-key">
-                      {gettext("Enter your API key")} · {@selected_entry.credential_key}
-                      <%= if key_is_set do %>
-                        <span class="text-success">✓ {gettext("Set")}</span>
-                      <% end %>
-                    </label>
-                    <input
-                      id="welcome-api-key"
-                      type="password"
-                      name="api_key"
-                      phx-change="api_key_changed"
-                      value={@api_key_input}
-                      placeholder={
-                        if key_is_set,
-                          do: gettext("API key is already set"),
-                          else: gettext("Enter your API key")
-                      }
-                      class="input input-bordered w-full"
-                    />
-                    <p class="text-xs text-base-content/70">
-                      {gettext("Enter your API key for %{provider}.",
-                        provider: t_provider(@selected_entry.provider_display_name)
-                      )}
-                    </p>
-                  <% end %>
-                  <%= if Catalog.requires_base_url?(@selected_entry.provider_id) do %>
-                    <label class="block text-sm font-semibold">{gettext("Base URL")}</label>
-                    <input
-                      type="url"
-                      name="base_url"
-                      phx-change="base_url_changed"
-                      value={@base_url_input}
-                      placeholder={gettext("https://...")}
-                      class="input input-bordered w-full"
-                    />
-                    <p class="text-xs text-base-content/70">
-                      {gettext("Required for this provider.")}
-                    </p>
-                  <% else %>
-                    <input type="hidden" name="base_url" value={@base_url_input} />
-                  <% end %>
-                  <button type="submit" disabled={!can_save} class="btn btn-primary btn-sm w-full">{gettext(
-                    "Save provider and models"
-                  )}</button>
-                </form>
-                <div class="border-t border-base-300 pt-3">
-                  <%= case @llm_test_status do %>
-                    <% :testing -> %>
-                      <p class="text-sm text-base-content/80">
-                        <span class="loading loading-spinner loading-sm"></span> {gettext(
-                          "Testing LLM connection..."
-                        )}
-                      </p>
-                    <% {:ok, _} -> %>
-                      <p class="text-sm text-success">
-                        {gettext("Connected")} ({@selected_entry.model_display_name})
-                      </p>
-                    <% {:error, reason} -> %>
-                      <p class="text-sm text-error">{reason}</p>
-                    <% _ -> %>
-                  <% end %>
-                  <button
-                    type="button"
-                    phx-click="test_llm"
-                    disabled={!can_save or @llm_test_status == :testing}
-                    class="btn btn-ghost btn-sm gap-2 w-full"
-                  >
-                    <.icon name="hero-signal" class="size-4" />{gettext("Test Connection")}
-                  </button>
-                </div>
-              </section>
-            <% else %>
-              <p class="text-sm text-base-content/70">
-                {gettext("Select a provider and models above to configure authentication.")}
-              </p>
-            <% end %>
+            </ProviderWizard.wizard_shell>
         <% end %>
-        <button phx-click="skip" class="btn btn-ghost btn-sm">{gettext("Skip")}</button>
-        <footer class="text-xs text-base-content/60">
+
+        <p class="text-xs text-base-content/60">
           {gettext("Genesis %{version}", version: @current_version)}
-        </footer>
+        </p>
       </div>
-    </EvoDashWeb.Layouts.app>
+    </Layouts.app>
     """
   end
 
-  @impl true
-  def mount(_params, _session, socket) do
-    config = ConfigIO.load_file_config()
-    providers = Catalog.providers()
-
-    {:ok,
-     assign(socket,
-       file_config: config,
-       has_model?: Setup.has_model?(config),
-       credentials: EvoGit.Config.credentials(),
-       llm_providers: providers,
-       flat_models: Setup.flatten_models(providers),
-       search_query: "",
-       selected_provider_id: nil,
-       selected_variant_id: nil,
-       selected_entry: nil,
-       selected_models: [],
-       default_model: nil,
-       model_reasoning: %{},
-       auth_mode: "api_key",
-       api_key_input: "",
-       base_url_input: "",
-       llm_test_status: :idle,
-       llm_test_seq: 0,
-       current_version: Application.spec(:evo_git, :vsn) |> to_string()
-     )}
+  # `Setup.auth_mode/1` asks the catalog whether the WIRE provider atom is
+  # OAuth-only, so the entry map is resolved to that atom first (a variant can
+  # change the wire provider); an unresolvable entry degrades to `nil`, which
+  # `Setup.auth_mode/1` treats as API-key.
+  defp auth_mode_for(entry) do
+    entry
+    |> Presentation.wire_atom(Presentation.variant_id(entry, Presentation.first_variant(entry)))
+    |> Setup.auth_mode()
   end
 
-  @impl true
-  def handle_params(params, _uri, socket) do
-    previous = socket.assigns.current_node_id
-    socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
+  # ── Draft helpers ────────────────────────────────────────────────────────
 
-    socket =
-      if previous == socket.assigns.current_node_id, do: socket, else: invalidate_test(socket)
-
-    {:noreply, socket}
+  defp preset_allowed?(socket, draft, preset_id) do
+    provider = Presentation.provider_entry(socket.assigns.llm_providers, draft["provider"])
+    variant_id = Presentation.variant_id(provider, draft["variant"])
+    Presentation.preset_allowed?(provider, variant_id, preset_id)
   end
 
-  # Onboarding is deliberately local-only. In particular a disconnected remote
-  # target resolving temporarily to node() must never write the local config.
-  @impl true
-  def handle_event(event, _params, %{assigns: %{current_node_id: id}} = socket)
-      when not is_nil(id) and event not in ["skip", "get_started", "noop"] do
-    {:noreply, put_flash(socket, :error, gettext("Use Settings to configure the remote node."))}
+  defp invalidate_test(socket) do
+    assign(socket, llm_test_seq: socket.assigns.llm_test_seq + 1, llm_test_status: :idle)
   end
 
-  def handle_event("noop", _, socket), do: {:noreply, socket}
-
-  def handle_event("search_models", params, socket),
-    do: {:noreply, assign(socket, :search_query, params["search_query"] || "")}
-
-  def handle_event("api_key_changed", params, socket) do
-    {:noreply, socket |> invalidate_test() |> assign(:api_key_input, params["api_key"] || "")}
+  defp reset_model_choices(draft) do
+    draft
+    |> Wizard.put("models", [])
+    |> Wizard.put("default_model", nil)
+    |> Wizard.put("custom_model", "")
+    |> Wizard.put("model_reasoning", %{})
+    |> Wizard.put("reasoning_efforts", [])
+    |> Wizard.put("default_reasoning_effort", "")
+    |> Wizard.put("schedule", %{})
+    |> Wizard.put("schedule_snapshot", nil)
+    |> Wizard.put("preset_id", nil)
   end
 
-  def handle_event("base_url_changed", params, socket) do
-    {:noreply, socket |> invalidate_test() |> assign(:base_url_input, params["base_url"] || "")}
+  defp inventory_from(params) do
+    params
+    |> Map.get("reasoning_efforts", Map.get(params, "reasoning_efforts[]", []))
+    |> List.wrap()
+    |> Enum.map(&to_string/1)
+    |> Reasoning.normalize_inventory()
   end
 
-  def handle_event("select_welcome_provider", params, socket) do
-    provider =
-      Enum.find(
-        welcome_providers(socket.assigns.llm_providers),
-        &(Atom.to_string(&1.id) == params["provider_id"])
-      )
+  defp merge_model_reasoning(draft, extra, inventory, effort) do
+    existing = ensure_map(draft["model_reasoning"])
 
-    if provider do
-      variant =
-        case provider[:variants] do
-          [first | _] -> first.id
-          _ -> nil
-        end
+    existing =
+      case draft["default_model"] do
+        model when is_binary(model) and model != "" ->
+          Map.put(existing, model, %{"efforts" => inventory, "default" => effort})
 
-      {:noreply, reset_selection(socket, provider.id, variant)}
-    else
-      {:noreply, put_flash(socket, :error, gettext("Unknown provider."))}
+        _other ->
+          existing
+      end
+
+    Enum.reduce(extra, existing, fn {model, value}, acc ->
+      # An extra model's select submits only its default, so the recorded
+      # inventory is read back through the shared unwrap (never dropped) and the
+      # submitted value is accepted in either recorded shape.
+      entry = Map.get(acc, model)
+
+      Map.put(acc, model, %{
+        "efforts" => Wizard.model_effort_inventory(entry),
+        "default" => Wizard.model_default_effort(value)
+      })
+    end)
+  end
+
+  # ── Save / test plumbing ─────────────────────────────────────────────────
+
+  defp save_and_finish(socket) do
+    case save_draft(socket) do
+      {:ok, socket} -> {:noreply, socket}
+      {:error, message} -> {:noreply, assign(socket, error: message)}
     end
   end
 
-  def handle_event("select_welcome_variant", params, socket) do
-    provider =
-      Enum.find(socket.assigns.llm_providers, &(&1.id == socket.assigns.selected_provider_id))
+  defp save_draft(socket) do
+    draft = socket.assigns.draft
+    provider = Presentation.provider_entry(socket.assigns.llm_providers, draft["provider"])
+    setup = setup_assigns(socket, provider)
 
-    variant =
-      Enum.find(
-        (provider && provider[:variants]) || [],
-        &(Atom.to_string(&1.id) == params["variant_id"])
-      )
-
-    {:noreply, if(variant, do: reset_selection(socket, provider.id, variant.id), else: socket)}
-  end
-
-  def handle_event("select_welcome_model", params, socket) do
-    entries =
-      Setup.provider_models(
-        socket.assigns.flat_models,
-        socket.assigns.selected_provider_id,
-        socket.assigns.selected_variant_id
-      )
-
-    entry = Enum.find(entries, &(&1.model_string == params["model_string"]))
-
-    if entry do
-      selected = socket.assigns.selected_models
-
-      selected =
-        if entry.model_string in selected,
-          do: List.delete(selected, entry.model_string),
-          else: selected ++ [entry.model_string]
-
-      default =
-        if socket.assigns.default_model in selected,
-          do: socket.assigns.default_model,
-          else: List.first(selected)
-
-      default_entry = Enum.find(entries, &(&1.model_string == default))
-
-      {:noreply,
-       socket
-       |> invalidate_test()
-       |> assign(
-         selected_models: selected,
-         default_model: default,
-         selected_entry: default_entry,
-         model_reasoning: Map.take(socket.assigns.model_reasoning, selected)
-       )}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_event("welcome_defaults_changed", params, socket) do
-    default = Map.get(params, "default_model", socket.assigns.default_model)
-    reasoning = Map.get(params, "reasoning", socket.assigns.model_reasoning)
-    selected = socket.assigns.selected_models
-
-    if default in selected and is_map(reasoning) and
-         Enum.all?(reasoning, fn {model, effort} ->
-           entry = Enum.find(socket.assigns.flat_models, &(&1.model_string == model))
-
-           model in selected and not is_nil(entry) and
-             effort in ["" | reasoning_choices(entry)]
-         end) do
-      entry = Enum.find(socket.assigns.flat_models, &(&1.model_string == default))
-
-      {:noreply,
-       socket
-       |> invalidate_test()
-       |> assign(default_model: default, selected_entry: entry, model_reasoning: reasoning)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_event("welcome_auth_changed", %{"auth_mode" => mode}, socket) do
-    entry = socket.assigns.selected_entry
-
-    if entry && mode in ["api_key", "oauth"] && Catalog.supports_oauth?(entry.resolved_atom) &&
-         not Catalog.oauth_only?(entry.resolved_atom) do
-      {:noreply, socket |> invalidate_test() |> assign(auth_mode: mode, api_key_input: "")}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_event("save_welcome_setup", params, socket) do
     with {:ok, current} <- Setup.read_config(),
-         {:ok, config, _profile, entry, key} <- Setup.prepare(current, socket.assigns, params),
-         :ok <- save_key(entry, key, socket.assigns.auth_mode),
+         {:ok, config, _profile, entry, key} <- Setup.prepare(current, setup, draft_params(draft)),
+         :ok <- save_key(entry, key, setup.auth_mode),
          :ok <- Setup.write(fn -> EvoGit.Config.save_user_config(config) end) do
       config = ConfigIO.load_file_config()
 
       socket =
         socket
-        |> invalidate_test()
         |> assign(
-          file_config: config,
           has_model?: true,
-          api_key_input: "",
-          credentials: EvoGit.Config.credentials()
+          credentials: EvoGit.Config.credentials(),
+          error: nil,
+          step: :done,
+          draft: Wizard.put(draft, "api_key", "")
         )
+        |> push_runtime(config)
 
-      {:noreply,
-       config
-       |> ConfigIO.update_runtime_from_file_config(socket)
-       |> put_flash(:info, gettext("Provider and models saved. You're all set!"))}
-    else
-      {:error, reason} -> {:noreply, put_flash(socket, :error, display_error(reason))}
-    end
-  end
-
-  def handle_event("test_llm", _params, socket) do
-    with {:ok, current} <- Setup.read_config(),
-         {:ok, _config, profile, entry, key} <- Setup.prepare(current, socket.assigns, %{}),
-         :ok <- save_key(entry, key, socket.assigns.auth_mode) do
-      seq = socket.assigns.llm_test_seq + 1
-      reasoning = socket.assigns.model_reasoning
-
-      started =
-        EvoDash.SafeCall.start(self(), {:welcome_llm_test_result, seq}, fn ->
-          {model, opts} = Setup.test_request(profile, entry, reasoning)
-
-          runner =
-            Application.get_env(
-              :evo_dash,
-              :welcome_llm_test_runner,
-              &EvoGit.SystemCheck.llm_test/2
-            )
-
-          runner.(model, opts)
-        end)
-
-      status =
-        case started do
-          {:ok, _pid} -> :testing
-          {:error, reason} -> {:error, display_error(reason)}
-        end
-
-      {:noreply,
-       assign(socket,
-         llm_test_seq: seq,
-         llm_test_status: status,
-         api_key_input: "",
-         credentials: EvoGit.Config.credentials()
+      {:ok,
+       put_flash(
+         socket,
+         :info,
+         gettext("Provider and models saved. You're all set!")
        )}
     else
-      {:error, reason} -> {:noreply, put_flash(socket, :error, display_error(reason))}
+      {:error, reason} -> {:error, Presentation.display_error(reason)}
     end
   end
 
-  def handle_event(event, _, socket) when event in ["skip", "get_started"] do
-    {:noreply, redirect(socket, to: "/welcome/complete")}
-  end
-
-  @impl true
-  def handle_info({{:welcome_llm_test_result, seq}, guarded}, socket) do
-    result =
-      case guarded do
-        {:ok, value} -> value
-        {:error, reason} -> {:error, reason}
-      end
-
-    handle_info({:welcome_llm_test_result, seq, result}, socket)
-  end
-
-  def handle_info({:welcome_llm_test_result, seq, result}, socket) do
-    if seq == socket.assigns.llm_test_seq and socket.assigns.current_node_id == nil do
-      status =
-        case result do
-          {:ok, data} -> {:ok, data}
-          {:error, reason} -> {:error, display_error(reason)}
-          other -> {:error, display_error(other)}
-        end
-
-      {:noreply, assign(socket, :llm_test_status, status)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  # Old/unscoped results cannot establish connectivity for the current draft.
-  def handle_info({:llm_test_result, _}, socket), do: {:noreply, socket}
-
-  def handle_info({:task_updated, _, _, _} = msg, socket),
-    do: EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
-
-  def handle_info({:task_deleted, _, _} = msg, socket),
-    do: EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
-
-  def handle_info(:node_aware_reload_tasks, socket),
-    do: {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
-
-  def handle_info({:node_selected, id}, socket),
-    do: EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, id)
-
-  def handle_info({:remote_connection_status, _, _} = msg, socket),
-    do: EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
-
-  defp reset_selection(socket, provider, variant) do
+  defp push_runtime(socket, config) do
+    _ = ConfigIO.update_runtime_from_file_config(config, socket)
     socket
-    |> invalidate_test()
-    |> assign(
-      selected_provider_id: provider,
-      selected_variant_id: variant,
-      selected_entry: nil,
-      selected_models: [],
-      default_model: nil,
-      model_reasoning: %{},
-      auth_mode: Setup.auth_mode(provider),
-      api_key_input: "",
-      base_url_input: "",
-      search_query: ""
-    )
   end
 
-  defp invalidate_test(socket),
-    do: assign(socket, llm_test_seq: socket.assigns.llm_test_seq + 1, llm_test_status: :idle)
+  defp setup_assigns(socket, provider) do
+    draft = socket.assigns.draft
 
-  # An empty inventory is unrestricted, not unsupported. Expand it only for
-  # display and event validation; Setup keeps [] in the persisted model row.
-  defp reasoning_choices(entry) do
-    case Setup.reasoning_efforts(entry) do
-      [] -> Setup.reasoning_efforts()
-      efforts -> efforts
-    end
+    %{
+      selected_provider_id: provider && Map.get(provider, :id),
+      selected_variant_id: draft["variant"],
+      selected_models: List.wrap(draft["models"]),
+      model_reasoning: ensure_map(draft["model_reasoning"]),
+      custom_model: draft["custom_model"] || "",
+      reasoning_efforts: List.wrap(draft["reasoning_efforts"]),
+      default_reasoning_effort: draft["default_reasoning_effort"] || "",
+      base_url_input: draft["base_url"] || "",
+      api_key_input: draft["api_key"] || "",
+      auth_mode: draft["auth_mode"] || "api_key",
+      credentials: socket.assigns.credentials,
+      flat_models: socket.assigns.flat_models,
+      default_model: draft["default_model"],
+      schedule: ensure_map(draft["schedule"])
+    }
   end
 
-  defp selected_entries(assigns),
-    do: Enum.filter(assigns.flat_models, &(&1.model_string in assigns.selected_models))
+  defp draft_params(draft) do
+    %{
+      "custom_model" => draft["custom_model"] || "",
+      "reasoning_efforts" => List.wrap(draft["reasoning_efforts"]),
+      "default_reasoning_effort" => draft["default_reasoning_effort"] || "",
+      "default_model" => draft["default_model"] || "",
+      "base_url" => draft["base_url"] || "",
+      "api_key" => draft["api_key"] || "",
+      "auth_mode" => draft["auth_mode"] || "api_key",
+      "schedule" => ensure_map(draft["schedule"])
+    }
+  end
 
-  defp welcome_providers(providers),
-    do:
-      providers
-      |> Enum.reject(&(&1[:custom_model] == true))
-      |> Enum.sort_by(&String.downcase(&1.display_name))
+  defp save_key(_entry, _key, "oauth"), do: :ok
+  defp save_key(nil, _key, _mode), do: :ok
+  defp save_key(_entry, "", _mode), do: :ok
 
-  # Provider names retain the existing localized brand labels.
-  defp t_provider("Anthropic"), do: gettext("Anthropic")
-  # zh: 谷歌
-  defp t_provider("Google"), do: gettext("Google")
-  # zh: 深度求索
-  defp t_provider("DeepSeek"), do: gettext("DeepSeek")
-  # zh: 阿里云（通义千问）
-  defp t_provider("Alibaba Cloud (Qwen)"), do: gettext("Alibaba Cloud (Qwen)")
-  # zh: 智谱（Z.ai）
-  defp t_provider("Z.ai (Zhipu AI)"), do: gettext("Z.ai (Zhipu AI)")
-  # zh: 稀宇科技
-  defp t_provider("MiniMax"), do: gettext("MiniMax")
-  # zh: 月之暗面（Kimi）
-  defp t_provider("Moonshot AI (Kimi)"), do: gettext("Moonshot AI (Kimi)")
-  defp t_provider("xAI"), do: gettext("xAI")
-  defp t_provider("OpenRouter"), do: gettext("OpenRouter")
-  # zh: OpenAI 兼容 API
-  defp t_provider("OpenAI-Compatible API"), do: gettext("OpenAI-Compatible API")
-  defp t_provider("OpenAI"), do: gettext("OpenAI")
-  defp t_provider(name), do: name
+  defp save_key(entry, key, _mode) do
+    Setup.write(fn -> EvoGit.Config.save_credentials(%{entry.credential_key => key}) end)
+  end
 
-  defp save_key(_, _, "oauth"), do: :ok
-  defp save_key(_, "", _), do: :ok
+  # `SafeCall` wraps the provider's OWN `{:ok, detail} | {:error, message}`
+  # answer, so exactly one level is unwrapped: only a genuine provider success
+  # may render success, and a provider-side `{:error, message}` stays an error.
+  defp test_answer({:ok, {:ok, detail}}), do: {:ok, detail}
+  defp test_answer({:ok, {:error, reason}}), do: {:error, reason}
+  defp test_answer({:ok, other}), do: {:error, {:unexpected_result, other}}
+  defp test_answer({:error, reason}), do: {:error, reason}
+  defp test_answer(other), do: {:error, other}
 
-  defp save_key(entry, key, _),
-    do: Setup.write(fn -> EvoGit.Config.save_credentials(%{entry.credential_key => key}) end)
+  # The reasoning level the SAVE path will persist for the tested model, read
+  # through the SAME unwrap (`Wizard.model_default_effort/2`) the model row and
+  # the reasoning select use — so "Test connection" exercises the configuration
+  # that is about to be written. `""` (the user kept "Provider default") sends
+  # no `reasoning_effort` at all.
+  defp tested_effort(draft, entry) do
+    Wizard.model_default_effort(draft, Setup.value(entry, :model_string))
+  end
 
-  defp display_error(reason) when is_binary(reason), do: reason
+  # ── Small total helpers ──────────────────────────────────────────────────
 
-  defp display_error(reason),
-    do: gettext("Configuration or connection failed: %{reason}", reason: inspect(reason))
+  defp ensure_map(map) when is_map(map), do: map
+  defp ensure_map(_map), do: %{}
 end

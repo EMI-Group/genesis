@@ -2798,6 +2798,69 @@ details.capsule-sub[open] > .capsule-list {
   }
 }
 
+/* === Provider setup wizard step transitions (Settings + Welcome) === */
+/* Shared by the provider-setup wizard (`EvoDashWeb.SettingsComponents.ProviderWizard`).
+   Each step body is rendered with a per-step DOM id (`wizard-step-<step>`), so a
+   Next/Back transition inserts a FRESH element and the entrance animation simply
+   replays — no JS and no class juggling.
+   Motion is decorative only: opacity + a few px of translate + a 0.98 start
+   scale, never layout, height or scroll movement. Forward slides UP into place
+   (`data-direction` absent, or "forward"); Back slides DOWN into place, so the
+   two directions read differently. Under reduced motion the step appears
+   instantly and the progress indicator snaps. */
+.wizard-step-enter {
+  animation: wizard-step-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Back transition: the opposite vertical direction of the forward step. */
+.wizard-step-enter[data-direction="back"] {
+  animation-name: wizard-step-in-back;
+}
+
+@keyframes wizard-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(-7px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes wizard-step-in-back {
+  from {
+    opacity: 0;
+    transform: translateY(7px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Progress rail/indicator: the transition belongs on the element carrying the
+   changing state (a fill's width/transform, or the track's background tint), so
+   stepping animates the indicator instead of snapping it. Widths, shapes and
+   colors stay in the markup's Tailwind utilities / theme tokens — nothing is
+   pinned here. */
+.wizard-progress {
+  transition:
+    width 200ms ease-out,
+    transform 200ms ease-out,
+    background-color 200ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wizard-step-enter,
+  .wizard-progress {
+    animation: none;
+    transition: none;
+  }
+}
+
 /* === Modal dialogs (`<dialog class="modal">`) === */
 /* DaisyUI's `.modal` (fixed grid, `[open]` scrim, entrance transition) and
    `.modal-box` (centered card, theme tokens) already cover the look in BOTH

@@ -3,15 +3,15 @@
 # Covers the parts of the dashboard auth flow that are NOT pure data
 # transformations (those live in `settings_live/model_profile_helpers_test.exs`):
 #
-#   * the per-profile credential-status line rendered by the model-profiles
+#   * the per-profile credential-status line rendered by the provider-account
 #     editor (`EvoDashWeb.SettingsLive.AuthStatus` → `:auth_statuses`),
-#     including that the page actually FORWARDS the map to the editor (verdict
+#     including that the page actually FORWARDS the map to the panel (verdict
 #     text, login guidance and managed-file path on the rendered page);
 #   * the node + seq stale guards of `{:settings_auth_status_loaded, ...}`;
 #   * the `refresh_auth_status` event that re-requests the load;
 #   * profile persistence of `auth_mode` / `oauth_file` through the real
-#     editor events (`add_model_profile` → `save_model_profile`);
-#   * the Quick Setup card's OAuth-only branch (login guidance instead of an
+#     editor events (`edit_model_profile` → `save_model_profile`);
+#   * the provider wizard's OAuth-only auth step (login guidance instead of an
 #     API-key form).
 #
 # ASYNC by default (`test/CONTEXT.md`): every test touches only per-process
@@ -171,7 +171,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   end
 
   # The page must FORWARD `@auth_statuses` into the editor
-  # (`category_section/1` → `model_profiles_editor/1`); an assign that never
+  # (`category_section/1` → `provider_profiles_panel/1`); an assign that never
   # reaches the render is a silent regression (every line falls back to the
   # neutral "Subscription login" text).
   describe "credential status render (injected result)" do
@@ -268,9 +268,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
       # The deepseek API-key profile renders no status line of any kind.
       row = profile_row(html, @deepseek_profile)
-      identity = Floki.parse_fragment!(row)
-      assert identity |> Floki.find("h4") |> Floki.text() |> String.trim() == @deepseek_profile
-      assert identity |> Floki.find("p.font-mono") |> Floki.text() |> String.trim() == "deepseek"
+      assert row_identity(row) == {@deepseek_profile, "DeepSeek"}
       assert row =~ "deepseek-v4-pro"
       refute row =~ "Recheck"
       refute row =~ "Login detected"
@@ -347,12 +345,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       # the banner legitimately does not render. The vendor command is equally
       # host-dependent (a readable ~/.codex/auth.json with no
       # ~/.claude/.credentials.json yields no Claude guidance).
-      assert outside =~ ~s(id="provider-profile-edit-form")
-      sibling = outside |> profile_row(@oauth_only_profile) |> Floki.parse_fragment!()
-      assert sibling |> Floki.find("h4") |> Floki.text() |> String.trim() == @oauth_only_profile
+      assert outside =~ ~s(id="provider-profile-detail-profile-1")
 
-      assert sibling |> Floki.find("p.font-mono") |> Floki.text() |> String.trim() ==
-               "openai_codex"
+      assert outside |> profile_row(@oauth_only_profile) |> row_identity() ==
+               {@oauth_only_profile, "ChatGPT Codex (OAuth)"}
 
       assert count_occurrences(html, "claude setup-token") ==
                count_occurrences(outside, "claude setup-token")
@@ -553,7 +549,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       }
 
       view
-      |> form("#provider-profile-edit-form", cleared)
+      |> form("#provider-profile-detail-rendered-account", cleared)
       |> render_change(%{"_target" => ["models", "0", "reasoning_efforts"]})
 
       row = hd(assigns(view).profile_form_draft["models"])
@@ -567,12 +563,22 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
                ~s(select[name="models[0][default_reasoning_effort]"] option[selected][value="high"])
              )
 
-      view |> form("#provider-profile-edit-form", cleared) |> render_submit()
+      view |> form("#provider-profile-detail-rendered-account", cleared) |> render_submit()
       assert await_profile_save(view) =~ "Provider profile saved."
       assert assigns(view).flash == %{"info" => "Provider profile saved."}
       [saved] = persisted_models()
       assert saved["models"] == [%{"model" => "fixture-model", "reasoning_efforts" => []}]
-      assert Map.drop(saved, ["models"]) == Map.drop(hd(before), ["models"])
+
+      # The account-level inventory is untouched in CONTENT — every configured
+      # level survives. Its order is the editor's stable chip order (canonical
+      # levels first, a configured custom level such as "custom" appended last),
+      # so the untouched fields are pinned value-by-value rather than by an
+      # ordering the frozen checkbox renderer owns.
+      assert Enum.sort(saved["reasoning_efforts"]) ==
+               Enum.sort(hd(before)["reasoning_efforts"])
+
+      assert Map.drop(saved, ["models", "reasoning_efforts"]) ==
+               Map.drop(hd(before), ["models", "reasoning_efforts"])
 
       {:ok, restored, _html} = mount_settings(conn, ~p"/settings")
       assert current_models(restored) == [saved]
@@ -603,7 +609,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       before = persisted_models()
 
       view
-      |> form("#provider-profile-edit-form", %{default_model_name: "renamed-model"})
+      |> form("#provider-profile-detail-rendered-account", %{default_model_name: "renamed-model"})
       |> render_change(%{"_target" => ["default_model_name"]})
 
       assert assigns(view).profile_form_draft["default_model"] == "renamed-model"
@@ -615,7 +621,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
              )
 
       before_disk = File.read!(EvoGit.Config.config_path())
-      view |> form("#provider-profile-edit-form") |> render_submit()
+      view |> form("#provider-profile-detail-rendered-account") |> render_submit()
       refute await_profile_save(view) =~ "Provider profile saved."
 
       # Helper-only profiles are faithfully editable, but core validation still
@@ -637,10 +643,12 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       refute has_element?(view, ~s(input[name="default_model_name"]))
 
       view
-      |> form("#provider-profile-edit-form", %{models: %{"0" => %{model: "renamed-model"}}})
+      |> form("#provider-profile-detail-rendered-account", %{
+        models: %{"0" => %{model: "renamed-model"}}
+      })
       |> render_change(%{"_target" => ["models", "0", "model"]})
 
-      view |> form("#provider-profile-edit-form") |> render_submit()
+      view |> form("#provider-profile-detail-rendered-account") |> render_submit()
       assert await_profile_save(view) =~ "Provider profile saved."
       assert assigns(view).flash["info"] == "Provider profile saved."
       [saved] = persisted_models()
@@ -670,16 +678,25 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       before = persisted_models()
 
       view
-      |> form("#provider-profile-edit-form", %{default_model_name: " "})
+      |> form("#provider-profile-detail-rendered-account", %{default_model_name: " "})
       |> render_change(%{"_target" => ["default_model_name"]})
 
-      view |> form("#provider-profile-edit-form") |> render_submit()
+      view |> form("#provider-profile-detail-rendered-account") |> render_submit()
       html = await_profile_save(view)
+
+      # A blank helper name is refused by the EDITOR, not by the core: the draft
+      # keeps its blank value and the field error renders in the editor's own
+      # alert block.
+      assert has_element?(
+               view,
+               "#provider-profile-errors[role=alert]",
+               "Check the account settings before saving."
+             )
 
       assert has_element?(
                view,
                "#provider-profile-errors[role=alert]",
-               "Check the profile settings before saving."
+               "Enter a default model or add a model override."
              )
 
       refute html =~ "Provider profile saved."
@@ -689,7 +706,9 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       assert current_models(view) == before
 
       view
-      |> form("#provider-profile-edit-form", %{default_model_name: "corrected-model"})
+      |> form("#provider-profile-detail-rendered-account", %{
+        default_model_name: "corrected-model"
+      })
       |> render_change(%{"_target" => ["default_model_name"]})
 
       assert has_element?(
@@ -698,7 +717,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
              )
 
       before_disk = File.read!(EvoGit.Config.config_path())
-      view |> form("#provider-profile-edit-form") |> render_submit()
+      view |> form("#provider-profile-detail-rendered-account") |> render_submit()
       refute await_profile_save(view) =~ "Provider profile saved."
 
       assert assigns(view).flash["error"] =~
@@ -718,10 +737,12 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       refute has_element?(view, ~s(input[name="default_model_name"]))
 
       view
-      |> form("#provider-profile-edit-form", %{models: %{"0" => %{model: "corrected-model"}}})
+      |> form("#provider-profile-detail-rendered-account", %{
+        models: %{"0" => %{model: "corrected-model"}}
+      })
       |> render_change(%{"_target" => ["models", "0", "model"]})
 
-      view |> form("#provider-profile-edit-form") |> render_submit()
+      view |> form("#provider-profile-detail-rendered-account") |> render_submit()
       assert await_profile_save(view) =~ "Provider profile saved."
       assert assigns(view).flash["info"] == "Provider profile saved."
       [saved] = persisted_models()
@@ -763,7 +784,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
 
       before = persisted_models()
       # An unrelated edit must serialize even the unopened Advanced control.
-      view |> form("#provider-profile-edit-form", %{name: "Renamed account"}) |> render_submit()
+      view
+      |> form("#provider-profile-detail-rendered-account", %{name: "Renamed account"})
+      |> render_submit()
+
       assert await_profile_save(view) =~ "Provider profile saved."
       [preserved] = persisted_models()
       assert preserved == Map.put(hd(before), "name", "Renamed account")
@@ -771,11 +795,11 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       open_canonical_profile(view)
 
       view
-      |> form("#provider-profile-edit-form", %{api_key_env_var: "NEW_ACCOUNT_KEY"})
+      |> form("#provider-profile-detail-rendered-account", %{api_key_env_var: "NEW_ACCOUNT_KEY"})
       |> render_change(%{"_target" => ["api_key_env_var"]})
 
       assert persisted_models() == [preserved]
-      view |> form("#provider-profile-edit-form") |> render_submit()
+      view |> form("#provider-profile-detail-rendered-account") |> render_submit()
       assert await_profile_save(view) =~ "Provider profile saved."
       [edited] = persisted_models()
       assert edited == Map.put(preserved, "api_key_env_var", "NEW_ACCOUNT_KEY")
@@ -786,10 +810,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       assert has_element?(restored, ~s(input[name="api_key_env_var"][value="NEW_ACCOUNT_KEY"]))
 
       restored
-      |> form("#provider-profile-edit-form", %{api_key_env_var: ""})
+      |> form("#provider-profile-detail-rendered-account", %{api_key_env_var: ""})
       |> render_change(%{"_target" => ["api_key_env_var"]})
 
-      restored |> form("#provider-profile-edit-form") |> render_submit()
+      restored |> form("#provider-profile-detail-rendered-account") |> render_submit()
       assert await_profile_save(restored) =~ "Provider profile saved."
       assert persisted_models() == [Map.delete(edited, "api_key_env_var")]
 
@@ -914,8 +938,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       refute html =~ "Provider profile saved."
       assert current_models(view) == []
       assert persisted_models() == []
-      assert assigns(view).editing_profile_id == :new
-      assert assigns(view).profile_form_draft["auth_mode"] == "oauth"
+      # The wizard stays open on the rejected draft: nothing was persisted and
+      # no account editor was expanded.
+      assert assigns(view).editing_profile_id == nil
+      assert assigns(view).provider_wizard.draft["auth_mode"] == "oauth"
     end
 
     test "a blank oauth_file keeps auth_mode and omits only the path", %{conn: conn} do
@@ -972,50 +998,95 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     end
   end
 
-  describe "Quick Setup OAuth-only provider" do
-    test "openai_codex replaces the API-key form with the subscription login guidance", %{
+  # The wizard's auth step is the provider-capability surface. An OAuth-only
+  # provider DROPS that step entirely (subscription is the only choice, so no
+  # API-key option is offered anywhere), while every OAuth-capable or
+  # API-key-only provider keeps the API-key choice.
+  describe "wizard auth step (provider capability)" do
+    test "an OAuth-only provider drops the auth step and offers no API-key option", %{
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html = select_quick_setup_model(view, "openai_codex", "openai_codex:gpt-5.6-terra")
-
-      assert html =~
-               "This provider uses a subscription login. No API key needs to be pasted here."
-
-      assert html =~ "Run `codex login` once"
-      assert html =~ "Managed credential file: "
-      refute html =~ ~s(phx-submit="save_api_key")
-      refute html =~ ~s(name="api_key")
+      html = wizard_provider_step(view, "openai_codex")
+      refute has_element?(view, "#wizard-step-auth")
+      assert has_element?(view, "#wizard-step-model")
+      # The auth step is SKIPPED, not merely defaulted: 3 steps, now on the 2nd.
+      assert html =~ "Step 2 of 3"
+      refute html =~ ~s(phx-value-mode="api_key")
+      refute html =~ ~s(phx-value-mode="oauth")
+      refute html =~ "This provider only accepts a subscription login"
     end
 
-    test "an OAuth-capable provider keeps the API-key form (API key is the default)", %{
-      conn: conn
-    } do
+    test "an OAuth-capable provider keeps the API-key choice", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html = select_quick_setup_model(view, "anthropic", "anthropic:claude-opus-5-5")
-
-      assert html =~ ~s(phx-submit="save_api_key")
-      assert html =~ ~s(name="api_key")
-      refute html =~ "This provider uses a subscription login."
+      html = wizard_provider_step(view, "anthropic")
+      assert has_element?(view, "#wizard-step-auth")
+      # A provider that supports both modes offers BOTH: the API-key choice is
+      # kept, and the subscription choice is offered beside it.
+      assert html =~ ~s(phx-value-mode="api_key")
+      assert html =~ ~s(phx-value-mode="oauth")
+      refute html =~ "This provider only accepts a subscription login"
     end
 
-    test "API-key-only providers keep the API-key form", %{conn: conn} do
+    test "API-key-only providers keep the API-key choice", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-      for {provider_id, model_string} <- [
-            {"deepseek", "deepseek:deepseek-v4-pro"},
-            {"openai", "openai:gpt-5.6-terra"}
-          ] do
-        html = select_quick_setup_model(view, provider_id, model_string)
+      for provider_id <- ["deepseek", "openai"] do
+        render_hook(view, "provider_wizard_cancel", %{})
+        html = wizard_provider_step(view, provider_id)
 
-        assert html =~ ~s(phx-submit="save_api_key"),
-               "expected an API-key form for #{provider_id}"
+        assert has_element?(view, "#wizard-step-auth"),
+               "expected an auth step for #{provider_id}"
 
-        assert html =~ ~s(name="api_key")
-        refute html =~ "This provider uses a subscription login."
+        assert html =~ ~s(phx-value-mode="api_key")
+        refute html =~ "This provider only accepts a subscription login"
       end
+    end
+  end
+
+  # The wizard's model step owns the ONLY account-creation path, and its gate
+  # reason (`:missing_model`) is translated by `ModelProfileEvents.error_message/1`.
+  # A blank model must therefore surface a message — never a `FunctionClauseError`
+  # that takes the whole LiveView down.
+  describe "wizard model step (blank model)" do
+    test "a cleared model is refused with a translated message and creates nothing", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      before = persisted_models()
+
+      render_hook(view, "add_provider_profile", %{})
+      render_hook(view, "provider_wizard_change", %{"provider" => "anthropic"})
+      render_hook(view, "provider_wizard_next", %{})
+
+      if has_element?(view, "#wizard-step-auth") do
+        render_hook(view, "provider_wizard_change", %{"auth_mode" => "api_key"})
+        render_hook(view, "provider_wizard_next", %{})
+      end
+
+      render_hook(view, "provider_wizard_change", %{"model" => "claude-opus-5-5"})
+      advance_wizard_to_save(view)
+
+      # Blank the model ON the save step, where a real Save click posts from.
+      render_hook(view, "provider_wizard_change", %{"model" => "  "})
+      assert assigns(view).provider_wizard.draft["model"] == "  "
+
+      html = render_hook(view, "provider_wizard_save", %{})
+
+      assert assigns(view).provider_wizard.errors["model"] ==
+               "Select a model or enter a custom model name."
+
+      assert assigns(view).flash == %{
+               "error" => "Select a model or enter a custom model name."
+             }
+
+      assert html =~ "Select a model or enter a custom model name."
+      refute html =~ "Provider account saved."
+      # Nothing was written and no account editor took over the wizard.
+      assert persisted_models() == before
+      assert current_models(view) == []
+      assert assigns(view).editing_profile_id == nil
+      assert assigns(view).provider_wizard != nil
     end
   end
 
@@ -1119,21 +1190,71 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     llm["providers"] || []
   end
 
-  # Add creates a detached draft; only Save may put it in file_config.
+  # Add opens the account WIZARD; only its save may put an account in
+  # file_config. The create path is driven through the wizard's real rendered
+  # steps (provider -> auth -> model); the credential keys the wizard does not
+  # collect (`auth_mode` / `oauth_file`) are then persisted through the expanded
+  # account editor, the surface that owns them.
   defp save_new_profile(view, params) do
     before = assigns(view).file_config
-    render_hook(view, "add_model_profile", %{})
+    render_hook(view, "add_provider_profile", %{})
     assert assigns(view).file_config == before
-    assert assigns(view).editing_profile_id == :new
-    draft = assigns(view).profile_form_draft
+    assert assigns(view).provider_wizard != nil
 
-    render_hook(
-      view,
-      "save_model_profile",
-      Map.merge(%{"profile_id" => draft["id"], "profile_id_new" => draft["id"]}, params)
-    )
+    render_hook(view, "provider_wizard_change", %{"provider" => params["provider"]})
+    render_hook(view, "provider_wizard_next", %{})
 
-    await_profile_save(view)
+    if has_element?(view, "#wizard-step-auth") do
+      render_hook(view, "provider_wizard_change", %{"auth_mode" => params["auth_mode"]})
+      render_hook(view, "provider_wizard_next", %{})
+    end
+
+    render_hook(view, "provider_wizard_change", %{"model" => params["default_model"]})
+    advance_wizard_to_save(view)
+    render_hook(view, "provider_wizard_save", %{})
+    # The wizard's own success flash lags its persistence (it lands with the
+    # authoritative write receipt), so the created account — not the flash — is
+    # what tells a refusal apart from a save.
+    html = await_profile_save(view)
+
+    case current_models(view) do
+      [] ->
+        html
+
+      [saved] ->
+        # A wizard save expands the new account itself, and the Edit action is a
+        # TOGGLE (editing an already-open account collapses it), so only open it
+        # when the wizard left it closed.
+        if assigns(view).editing_profile_id != saved["id"] do
+          render_hook(view, "edit_provider_profile", %{"profile_id" => saved["id"]})
+        end
+
+        render_hook(
+          view,
+          "save_provider_profile",
+          params
+          |> Map.take(["auth_mode", "oauth_file"])
+          |> Map.merge(%{"profile_id" => saved["id"]})
+        )
+
+        await_profile_save(view)
+    end
+  end
+
+  # Press Continue until the wizard footer offers Save (its last rendered step).
+  # Bounded: a wizard that never reaches it is a defect, never a wait.
+  defp advance_wizard_to_save(view, tries \\ 0) do
+    cond do
+      has_element?(view, ~s(button[phx-click="provider_wizard_save"])) ->
+        :ok
+
+      tries >= 6 ->
+        flunk("the provider wizard never reached its last step")
+
+      true ->
+        render_hook(view, "provider_wizard_next", %{})
+        advance_wizard_to_save(view, tries + 1)
+    end
   end
 
   # Save dispatch is not persistence: wait for the owned writer receipt to
@@ -1160,9 +1281,11 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     end
   end
 
-  defp select_quick_setup_model(view, provider_id, model_string) do
-    render_hook(view, "select_llm_provider", %{"provider_id" => provider_id})
-    render_hook(view, "select_llm_model", %{"model_string" => model_string})
+  defp wizard_provider_step(view, provider_id) do
+    render_hook(view, "add_provider_profile", %{})
+    render_hook(view, "provider_wizard_change", %{"provider" => provider_id})
+    render_hook(view, "provider_wizard_next", %{})
+    render(view)
   end
 
   defp normalize_whitespace(text), do: text |> String.split() |> Enum.join(" ")
@@ -1214,34 +1337,46 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   defp profile_row_has_verdict?(html, profile_id, verdict) do
     html
     |> Floki.parse_fragment!()
-    |> Floki.find("article")
-    |> Enum.any?(fn article ->
-      profile_ids =
-        article
-        |> Floki.find(~s(button[phx-click="edit_provider_profile"]))
-        |> Floki.attribute("phx-value-profile_id")
-
-      profile_id in profile_ids and Floki.raw_html(article) =~ verdict
-    end)
+    |> Floki.find("#provider-profile-" <> profile_slug(profile_id))
+    |> Enum.any?(&(Floki.raw_html(&1) =~ verdict))
   end
 
-  # Select the actual canonical account article by its Edit control, never by
-  # legacy row classes or a substring spanning neighbouring accounts.
+  # Select the canonical account row by its OWN id (one row per account), never
+  # by legacy row classes or a substring spanning neighbouring accounts.
   defp profile_row(html, profile_id) do
     rows =
       html
       |> Floki.parse_fragment!()
-      |> Floki.find("article")
-      |> Enum.filter(fn article ->
-        article
-        |> Floki.find(~s(button[phx-click="edit_provider_profile"]))
-        |> Floki.attribute("phx-value-profile_id")
-        |> Enum.member?(profile_id)
-      end)
+      |> Floki.find("#provider-profile-" <> profile_slug(profile_id))
 
     assert [row] = rows, "expected one canonical provider row for #{profile_id}"
     Floki.raw_html(row)
   end
+
+  # The row's two identity surfaces: the account id (mono `<code>`) and the
+  # provider-derived display name (the header's semibold span).
+  defp row_identity(row) do
+    fragment = Floki.parse_fragment!(row)
+
+    id =
+      fragment
+      |> Floki.find("code.font-mono")
+      |> List.first()
+      |> Floki.text()
+      |> String.trim()
+
+    name =
+      fragment
+      |> Floki.find("span.text-sm.font-semibold")
+      |> List.first()
+      |> Floki.text()
+      |> String.trim()
+
+    {id, name}
+  end
+
+  defp profile_slug(profile_id),
+    do: EvoDashWeb.SettingsComponents.ProviderProfiles.Row.slug(profile_id)
 
   # The rendered credential-status block (`div[role="status"]`) that belongs to
   # ONE profile, located by that block's own Recheck trigger so the assertion
@@ -1253,7 +1388,12 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       |> Floki.find(~s([role="status"]))
       |> Enum.filter(&(profile_id in status_block_profile_ids(&1)))
 
-    assert [block] = blocks, "expected one credential status block for #{profile_id}"
+    assert blocks != [], "expected a credential status block for #{profile_id}"
+    # An OPEN account renders two blocks for the same profile: the row summary
+    # (`details={false}`) and the expanded editor's detailed one
+    # (`details={true}`). The detail is rendered last, and it is the block whose
+    # copy these assertions pin.
+    block = List.last(blocks)
     Floki.raw_html(block)
   end
 
@@ -1297,13 +1437,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     assert Enum.sort(Map.keys(baseline)) == [@oauth_profile, @oauth_only_profile]
   end
 
-  defp open_canonical_profile(view) do
-    view
-    |> element(
-      ~s(button[phx-click="edit_provider_profile"][phx-value-profile_id="rendered-account"])
-    )
-    |> render_click()
-  end
+  # The row header and its Edit action both carry the event, so a selector
+  # click is ambiguous; the event payload is the contract.
+  defp open_canonical_profile(view),
+    do: render_hook(view, "edit_provider_profile", %{"profile_id" => "rendered-account"})
 
   # Canonical fixture for real form serialization, independent of the legacy
   # migration fixtures below. No connection test or task launch is performed.

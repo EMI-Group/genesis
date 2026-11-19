@@ -2,7 +2,7 @@ defmodule EvoDashWeb.SettingsComponents.CardShell do
   @moduledoc """
   `card_shell/1` — Editor card wrapper: header row (title, optional
   description, optional actions slot) + body. Consumed by the settings
-  editors: `ModelProfilesEditor`, `CustomAgentsEditor`, and
+  editors: `CustomAgentsEditor`, `CustomToolsPanel`, and
   `ModelSelectionEditor`.
   """
 

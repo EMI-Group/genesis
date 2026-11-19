@@ -2,152 +2,182 @@
 
 ## Intent
 
-Focused helper, canonical provider-editor and credential-status page contracts live here.
-The five suites declare 130 tests and preserve `async: true`; pure helpers neither mount pages nor start shared services.
+Focused pure-helper, provider-account panel/wizard and credential-status page contracts live here.
+The nine suites declare 180 tests; every module is `async: true` except the 6 mounted tests of the sync `NavigationLiveTest`.
+Pure helpers neither mount pages nor start shared services.
+Config-directory isolation is per process (`EvoDash.Test.ConfigDir.isolate!/1` through the `:config_dir_fun` seam), never a BEAM-global `XDG_CONFIG_HOME` write.
 
 ## API Surface
 
-- `provider_profiles_contract_test.exs` holds 39 pure contracts for `ProviderProfiles`, `ConfigIO`, `AuthStatus` and detached `ModelProfileEvents` sockets.
-- Simplified-editor identity contracts distinguish blank or untouched generated ids from explicit identities, allocate provider-derived ids and display names independently across collisions, and preserve saved identity on blank edits including a saved string id `"new"`.
-- Detached form-change contracts pin generated-id tracking and explicit identity edits through `_target` without mounting a page or writing configuration.
-- Checkbox contracts preserve custom reasoning values and order, distinguish omitted inheritance from explicit empty inventories, strip override sentinels, and clear saved schedule-day selections through hidden empty seeds.
-- Explicit nested reasoning overrides with an empty inventory must remove a stale `high` default even when the submitted default remains `high`, for both boolean and string override flags; legacy unrestricted rows without that UI sentinel retain their defaults.
-- Default-only helper contracts pin `_target`-directed name/select synchronization, save without a prior change event, blank validation and correction, UI-helper stripping, absent/empty/blank model-row preservation and last-row removal followed by Add.
-- Advanced credential-source contracts round-trip `api_key_env_var` through detached submissions, preserving omitted values and clearing explicit blanks without leaking the legacy key.
-- Minimal-edit round trips retain hidden generation/JSON, OAuth path, endpoint, concurrency, context-window and schedule fields, while invalid nested generation values expose exact input-name error paths and remain intact in drafts.
-- Provider parsing pins string-keyed canonical profiles, numeric ordering of nested models, sparse generation overrides, typed numbers/JSON, blank override clearing back to inheritance and untouched draft round trips.
-- Reasoning contracts distinguish inherited inventories/defaults from explicit unrestricted model inventories and reject incompatible inherited defaults.
-- CRUD contracts pin append/update/rename/move/delete/default semantics, default identity on rename, boundary no-ops, canonical shadow removal, unrelated-setting preservation and legacy one-account-per-row editing.
-- Credential contracts pin canonical `api_key_env_var` precedence and explicit clearing, legacy draft normalization, OAuth secret stripping, OAuth-only authentication, managed-path trimming and secret-free unknown-status adapters.
-- `model_profile_helpers_test.exs` holds 41 contracts for canonical Add delegates and the deliberately retained legacy single-model parameter parser, including the comprehensive peak/day/window compatibility matrix.
-- Canonical Add writes `llm.providers` with string-keyed profiles and explicit `auth_mode`; nil/empty selections leave config unchanged and new drafts remain detached.
-- The legacy `parse_model_profile_params/2` API still returns atom-keyed single-model profiles with its older clean-TOML auth rules; these compatibility assertions must not be confused with canonical provider persistence.
-- `config_io_test.exs` holds 12 pure contracts: ten category conversions for list-of-strings, boolean and float values and two runtime model-option pushes.
-- The canonical runtime push must include `model_profiles`, `provider_profiles` and `model_selection_config`, tested with pure scheduler state update and explicit model resolution; legacy-only pushes must not invent accounts or a selection snapshot.
-- `auth_status_test.exs` holds 32 credential-status classification/page and rendered-editor persistence contracts, including verdict forwarding, exact fallback and supplied vendor guidance, node/sequence guards, refresh, canonical auth persistence and editing a legacy OAuth row into `llm.providers` without a shadow `llm.models` table.
-- The rendered-editor reasoning regression seeds a model's `high` default, changes only its checkbox inventory to the hidden `[""]` sentinel with explicit `override_reasoning = "true"`, then submits the real form without blanking its still-selected `high` default.
-- Both change and submit serialize the rendered form, the change leaves disk untouched, and the owned writer receipt plus remount must preserve exactly an empty model reasoning inventory with no model default or UI sentinel.
-- Default-only mounted regressions seed `models = []`, require rendered `default_model_name`/select synchronization and local blank rejection, then pin core inventory rejection without changing live config or on-disk bytes while retaining the no-row editing UI.
-- Both mounted regressions correct the core-invalid inventory through the rendered Add model row button and real form changes, save successfully, remount the matching nested model/default and prove `default_model_name` never persists.
-- The rendered API-key-source state machine preserves a closed Advanced field through an unrelated save, changes its value with the real form, remounts, explicitly clears it and remounts again; omitted-field preservation remains covered by the detached-submission helper contract.
-- Auth page fixtures deliberately seed legacy `[[llm.models]]` rows to exercise migration, while row assertions select the actual mounted canonical provider article by its Edit control and profile id.
-- Successful new-profile auth submissions use canonical `default_model` plus a matching nested `models` row and the atom `:new` detached-editor sentinel, assert the nested shape in live and persisted config, and require the exact Provider-profile success message plus persisted auth fields.
-- Canonical auth persistence explicitly stores `auth_mode: "api_key"`, drops stale OAuth paths and rejects unsupported OAuth modes while retaining the failed draft without writing it.
-- `model_ids_test.exs` holds six retired-id matcher, catalog and mounted-page guards.
+- `provider_profiles_contract_test.exs` — 46, `async: true` (`EvoDashWeb.SettingsLive.ProviderProfilesContractTest`): pure `ProviderProfiles` / `ConfigIO` / `AuthStatus` / detached `ModelProfileEvents` editor boundary (identity, checkbox submissions, default-only model-name helper, `off_peak_holidays` round trip).
+- `model_profile_helpers_test.exs` — 32, `async: true` (`EvoDashWeb.SettingsLive.ModelProfileHelpersTest`): the retained legacy `parse_model_profile_params/2` single-model parser and `generate_profile_id/2`.
+- `config_io_test.exs` — 12, `async: true` (`EvoDashWeb.SettingsLive.ConfigIOTest`): flat-category conversions and the canonical runtime model-options push.
+- `config_save_test.exs` — 6, `async: true` (`EvoDashWeb.SettingsLive.ConfigSaveTest`): the read-verified save receipt of `ConfigSave.save/3`.
+- `auth_status_test.exs` — 33, `async: true` (`EvoDashWeb.SettingsLive.AuthStatusTest`): credential-status classification/render, stale guards, refresh, rendered-editor persistence, the auth save round trip and the wizard auth/model steps.
+- `model_ids_test.exs` — 6, `async: true` (`EvoDashWeb.SettingsLive.ModelIdsTest`): retired model ids against the catalog and the mounted Settings page.
+- `navigation_test.exs` — 23 (`EvoDashWeb.SettingsLive.NavigationTest`, 17, `async: true`; `EvoDashWeb.SettingsLive.NavigationLiveTest`, 6, SYNC): `/settings` category resolution/URL helpers plus the mounted sidebar.
+- `provider_panel_live_test.exs` — 13, `async: true` (`EvoDashWeb.SettingsLive.ProviderPanelLiveTest`): the seeded account list and its single expanded editor.
+- `provider_wizard_test.exs` — 9, `async: true` (`EvoDashWeb.SettingsLive.ProviderWizardTest`): the account-creation wizard, the per-account model and schedule editors, and the removed-Quick-Setup regression pin.
+- `NavigationLiveTest` is the only sync module in this directory: it drives platform/nix gating through the BEAM-global app-env seams `:platform_os_override` and `:nix_available_override`, which the `async: true` `EvoDashWeb.PlatformInfoTest` / `system_live_test` also read (and `SettingsLiveGlobalStateTest` mutates).
+
+## Provider account identity (pure)
+
+`EvoDashWeb.SettingsLive.ProviderProfiles` derives an account's `id` and display `name` from its PROVIDER through `EvoDashWeb.LLMSetup.Identity`, never from a model string.
+Collisions allocate the next free suffix independently per field (`zai` → `zai-2` by id, `Z.ai (Zhipu AI)` → `Z.ai (Zhipu AI)-2` by name).
+An explicitly typed `profile_id_new`/`name` always wins, including on a legacy saved string id `"new"`.
+Editing a saved account keeps its saved identity, even when the provider is changed.
+A catalog entry with its own identity slug renders its own id (`openai_compatible` → `openai-compatible`, name `OpenAI-Compatible API`) instead of borrowing the shared `:openai` provider display name.
+A blank or untouched generated id stays an automatic placeholder until the user edits it explicitly, and targeted `_target` edits keep the generated identity in sync.
+The mounted wizard asserts the same derivation end to end (its preview before any write, and the saved config), while the panel suite drives the edited `profile_id_new` through a real save.
+
+## Reasoning ladder
+
+One stable keyed chip list renders `EvoDashWeb.LLMSetup.Reasoning.efforts/0` — `none minimal low medium high xhigh`, with no `max` entry — plus a SEPARATE inventory-scoped default select.
+`xhigh` therefore appears exactly once and the core wire alias `max` never reaches the DOM, in the wizard step and in the expanded detail of the account it created.
+Chip submissions carry the rendered hidden blank seed plus the checked value (`%{reasoning_efforts: ["", "xhigh"]}`), because query encoding omits an empty list.
+Checkbox contracts preserve custom values and their order, distinguish omitted inheritance from an explicit empty inventory, strip the override sentinel, and clear saved schedule-day selections through hidden empty seeds.
+An explicit nested reasoning override with an empty inventory removes a saved `high` default even when the submitted default remains `high`, for both the boolean and the string override flag; legacy unrestricted rows without that UI sentinel retain their defaults.
+
+## Schedule presets and holidays
+
+Preset buttons come from `EvoDashWeb.LLMSetup.Schedule.presets_for_provider/1` and post `apply_provider_schedule` with `phx-value-preset_id`.
+Applying a preset sets the draft and reveals the applied strip (`#provider-schedule-applied`); Save then persists concurrency, `peak_concurrency`, `timezone`, `off_peak_days`, `off_peak_holidays` and both peak windows, and the sibling account keeps its own absent schedule (no fan-out).
+A later form edit marks the recommendation stale ("modified after applying") while `undo_provider_schedule` stays available.
+Undo restores the pre-apply draft verbatim, clears the hint and the applied strip, and a later Save persists the pre-apply values rather than the preset.
+`off_peak_holidays` round-trips through the real form (`select#provider-off-peak-holidays[name="off_peak_holidays"]`), is OMITTED while blank, and an unsupported calendar is rejected under its own field key (`off_peak_holidays_invalid`) rather than masquerading as a peak-hours error.
+Day selections arrive as the checkbox list with its hidden empty seed (values trimmed, downcased, whitelisted and de-duplicated), a single checked value may also arrive as a bare string, and empty selections are omitted from the saved account.
+
+## Rendered panel and wizard
+
+The LLM category renders ONE guided surface: `#provider-profiles-panel` with a compact account list, at most ONE expanded editor, and the inline account wizard.
+Rows are `#provider-profile-<slug>` and carry `data-expanded`; the expanded editor is `#provider-profile-detail-<slug>`, and `edit_provider_profile` toggles it.
+Opening a second account collapses the first, so exactly one detail id exists in the document — for seeded accounts and for a wizard-created one alike.
+The expanded editor saves identity, models, generation and concurrency (`provider_profile_form_change` / `save_provider_profile` inside the account detail form) with the exact `Provider profile saved.` flash.
+Rename, Make default and Delete run through the rendered row actions, and model-row actions (`add_provider_model`, `remove_provider_model` with `phx-value-index`) preserve unsaved nested input while rejecting an emptied collection.
+Opening another account replaces the draft and Cancel discards it.
+An empty account list offers `add_provider_profile`, and a cancelled wizard persists nothing.
+`context_window` is persisted as an integer and OMITTED (never nil) when blank, so the core default applies.
+Removing the last model row leaves an authoritative `models == []` draft that a save REJECTS (`default_model must be one of []`) without touching disk or live config, and re-adding a row corrects it.
+Two distinct models survive save, reload and remount, including a persisted string id `"new"`; a page reload reads DISK, not the editor's candidate.
+The wizard posts `provider_wizard_next` / `provider_wizard_back` / `provider_wizard_change` / `provider_wizard_cancel` / `provider_wizard_save` and renders `#wizard-step-provider` → `#wizard-step-auth` → `#wizard-step-model` → `#wizard-step-reasoning_schedule`.
+An OAuth-only provider SKIPS the auth step (3 steps, "Step 2 of 3"), an OAuth-capable provider offers both `phx-value-mode="api_key"` and `"oauth"`, and an API-key-only provider keeps the API-key choice.
+Back is disabled on the first step and Next is gated until a provider (and, on the model step, an actual model) is chosen; repeated Back/Next clamp at both ends, and navigation persists nothing.
+Saving shows `Provider account saved.`, the first account becomes `default_provider_profile`, and the saved account stays expanded.
+A blank model on the save step is refused with the translated `Select a model or enter a custom model name.` message, writes nothing and leaves the wizard open.
+Adding a model starts from the account row (`start_add_provider_model`), renders `#provider-model-form-<id>` scoped to THAT account, and saves through `provider_model_save` with the `Model added to the provider account.` flash; the account's default model is not re-pointed and the other account keeps byte-identical config.
+Provider and model generation disclosures are native `<details>` elements (`details#provider-profile-advanced`, `details#provider-model-details-<index>`) and stay closed until opened.
+
+## Removed Quick Setup surface
+
+`describe "the removed Quick Setup shortcut"` in `provider_wizard_test.exs` is a REGRESSION PIN, not a feature: it asserts the LLM category renders `#provider-profiles-panel` and a `button[phx-click="add_provider_profile"]`, that no `"Quick Setup"` string renders, and that none of `save_quick_setup`, `select_llm_provider`, `select_llm_variant`, `select_llm_model`, `save_custom_model` or `select_llm_model_shortcut` appears in the HTML.
+Those six events must not come back as a second account-creation path; account creation happens in the wizard only.
+No suite in this directory drives them, so nothing here persists provider config through them.
+
+## Legacy single-model parser
+
+`model_profile_helpers_test.exs` keeps the retained legacy `parse_model_profile_params/2` single-model parser with its full compatibility matrix, because legacy `[llm]` configuration still normalizes through it.
+It pins the `provider:model` string versus ReqLLM map-spec serialization, `context_window` typing, and the peak/off-peak fields (`peak_concurrency` including `0` = hard pause, window order and numeric index sorting, timezone trimming, `off_peak_days` normalization, `off_peak_holidays` whitelisting, blank-row dropping, `start == end` and overlap rejection).
+Its `auth_mode`/`oauth_file` block pins OAuth-capable versus OAuth-unsupported versus OAuth-only providers and that the API-key default writes neither key.
+`generate_profile_id/2` pins base / `base-2` / `base-3` allocation that skips existing ids, the nil base and the one-arity `profile-N` wrapper.
+These compatibility assertions are not canonical provider persistence contracts; the canonical editor path lives in `provider_profiles_contract_test.exs`.
+
+## Config IO and the runtime push
+
+`config_io_test.exs` pins `:list_of_strings`, `:boolean` and `:float` category conversions, including the absent/blank/scalar delete signal versus an explicit empty list.
+`runtime_model_opts/1` must carry `model_profiles`, `provider_profiles` and `model_selection_config` so an explicit task selection still resolves after a Settings save.
+A legacy-only `[llm]` configuration yields no invented provider accounts and no invented selection snapshot.
+
+## Save receipts
+
+`ConfigSave.save/3` decides by the AUTHORITATIVE READ: a writer error whose read-back matches the written candidate is a SAVED receipt with no warning, while a read-back still showing the previous config keeps the writer's reason as the failure.
+The suite pins both receipts, the rejected-value case, an acknowledged write whose follow-up read fails, a real legacy-fixture round trip, and a genuinely unwritten candidate that fails even when both sides canonicalize identically.
+The persistence projection canonicalizes both sides and drops legacy flat `[llm]` mirrors/`models` plus nil-valued keys.
+
+## Credential status
+
+`auth_status_test.exs` pins `AuthStatus.classify/2` and `classify_remote/2` atom-precisely (`{:error, {:managed_file_unwritable, _}}` → `:unwritable`, every other shape unchanged) and the PAGE-level verdicts: `Login detected`, `No subscription login found`, `Login found, managed credential file not writable` plus the managed-file path and the writable remedy.
+The mount-time credential load is ASYNC and spawned by the node-data apply, so each baseline verdict is awaited through `await_baseline_verdict/2` before an edit form replaces the summary row.
+Credential injection waits for the real loaders and sends the mounted node's current `auth_status_seq`; older, unrequested-future and foreign-node results must not replace the baseline.
+`profile_row/2` selects exactly one account `article` by its Edit control and `phx-value-profile_id`; the `[role="status"]` block helpers match the `refresh_auth_status` button, so status-line counts depend on that attribute.
+Auth fixtures deliberately seed legacy `[[llm.models]]` rows to exercise migration, while the rendered-editor persistence describes drive the real Edit buttons and the account detail form.
+Auth saves pin the exact `Provider profile saved.` flash, the detached `editing_profile_id == :new`, canonical `llm.providers` with no `llm.models` shadow, and authoritative async completion.
+`describe "profile save round-trip (auth_mode / oauth_file persistence)"` covers OAuth auth/path persistence, explicit API-key mode with stale-path removal, blank-path omission, OAuth-only inference, legacy migration and unsupported-auth rejection; success fixtures carry a nested model row matching their `default_model`.
+`blocked_oauth_file/1` creates a regular file named `blocker` and returns its nonexistent child `blocker/auth.json` — deterministic invalid-path fixture data, not a suspended process, FIFO or lock.
+
+## Retired model ids
+
+`model_ids_test.exs` pins the retired-id matcher (bare id and `provider:model` string, with a longer current id that merely starts with a retired prefix deliberately NOT matching), the catalog's providers/variants/credential keys, and the mounted page.
+The rendered half asserts `#provider-profiles-panel` carries no retired id and walks every catalog provider's wizard model step, closing the wizard with `provider_wizard_cancel` between providers.
+
+## Category navigation
+
+`EvoDashWeb.SettingsLive.Navigation` (`resolve/3`, `seed/3`, `category_from_param/2`, `path/2`, `visible?/2`, `available_categories/1`) never yields a category absent from the map it resolved against.
+`seed/3` opens an explicit displayable `?category=` and never a gated one, keeps the current category when the params carry none, and drops a current category that is no longer displayable.
+`path/2` carries the category, preserves `?node=` and URL-encodes both parts.
+The mounted module pins sidebar stability: the seeded and settled nav agree, the nav never advertises a gated category, and it never collapses when the previously active category becomes gated (the menu keeps rendering rather than snapping to an empty sidebar).
+Every rendered item opens its pane through `select_category`, stays active and round-trips the URL; an unknown or gated value is a no-op, a later `handle_params` with the same params cannot undo the selection, and a click preserves `?node=`.
+
+## Parent page coupling (`../settings_live_test.exs`)
+
+The parent file declares 84 tests in three modules: 3 async `EvoDashWeb.SettingsLiveParentAdapterTest`, 64 async `EvoDashWeb.SettingsLiveTest` and 17 sync `EvoDashWeb.SettingsLiveGlobalStateTest`.
+`SettingsLiveParentAdapterTest` renders the real `SettingsComponents.category_section/1` boundary and calls actual parent change/row/cancel handlers without a mounted page; its third test pins persisted-model connection resolution, inherited generation, API key and provider options through `ConfigIO.resolve_model_spec/2`.
+`SettingsLiveTest` owns the parent page's remaining surfaces: settings search, `ModelProfileHelpers.move_model_profile/3`, LLM connection-test rendering and handlers, the sandbox `write_paths` list editor, remote-node config loading, the remote-connection bootstrap progress bar, the daemon-already-running permission dialog, Install wording/banner/Name auto-fill, the async connect flow, copy-to-clipboard, the appearance/accent category and the `md+ independent scroll layout contract`.
+That scroll-layout describe pins the two-class regression gate behind the "panes scroll linked" bug: every `div#category-<cat>` root and the generic `<form id="settings-form-<cat>">` carry `flex-1 flex flex-col min-w-0` plus `min-h-0` and never `h-full`, an inner `.overflow-y-auto` body exists, and `form#settings-form-search` carries `overflow-y-auto` on the form itself.
+The `test_llm` contract proves dispatch, auth, result rendering and rejection of unscoped/stale/wrong-node envelopes without public-provider traffic; its envelope is `{{:llm_test_result, seq, {target_id, node, selection}}, {:ok, result}}`, and the missing-remote handler test covers both `remote_config` flags.
+The request-options contract captures the actual final HTTP request at an isolated loopback endpoint, including authentication and inherited generation settings, instead of expecting credentials to leak through resolver output.
+`SettingsLiveGlobalStateTest` is sync because it mutates `:nix_available_override` / `:platform_os_override`, `EvoGit.AgentScheduler.pause/resume` and the `"scheduler_config"` broadcast; it pins the in-flight-save ownership test (which suspends the scheduler, resumes before awaiting success and keeps an `on_exit` resume safety net), the node-filtered broadcast, `nix.enabled` boolean rendering, platform gating, nix category gating and shell seeding.
+Mounted Settings additions belong with the parent file's owner, pure provider transformations belong in this directory, and core atomic-write/cache-failure assertions belong to the core config test node.
+Mounted Projects, Assistant and Welcome canonical contracts live in their own page suites, so helper-only success must not be mistaken for their integration validation.
+
+## Mount funnel and seeding
+
+`mount_settings/2` in `settings_live_test.exs` funnels every mount: `live/3`, then `await_mount_async_loads/1` (monitor this mount's `$callers` children, then drain), and only then hands the view to the test, so a late node-data apply can never clobber test-driven state; the ORIGINAL mount HTML is returned unchanged.
+`provider_panel_live_test.exs` and `provider_wizard_test.exs` carry LOCAL copies of `mount_settings`, `settings_hook/3` and `await_config_save` so each file compiles and runs alone; the shared `EvoDashWeb.SettingsLiveTest.Helpers` module only exists once `settings_live_test.exs` is loaded, which the loader does not guarantee in alphabetical order.
+`settings_live_agents_test.exs` uses its OWN owner-aware variant (`mount_settings/1` → `await_view_async_loads/1`): a bounded 2 ms poll on "no live `EvoDash.TaskSupervisor` child whose `$callers` contain THIS view pid", a ~5 s best-effort cap (`@settle_timeout_ms`), then a `render/1` drain — the same helper is reused at the `reload_custom_tools` click.
+`settings_live_test.exs`, `provider_panel_live_test.exs` and `provider_wizard_test.exs` SEED canonical provider fixtures straight into this test's `config.toml` (string keys, one nested model row, optional explicit default) instead of driving the add/save UI for setup; the mounted suites drive the actual rendered controls for Add/Save/Cancel/CRUD/model-row flows.
+Mutations acknowledge dispatch before the off-process write completes, so every assertion reads the authoritative completion (`config_saving == false`, then `render/1`), never the dispatch render.
 
 ## Constraints
 
-Pure suites use the shared test bootstrap, never standalone `ExUnit.start/0` calls, and never patch missing core functions or skip failing integration contracts.
-Mounted suites retain per-process `EvoDash.Test.ConfigDir.isolate!/1`, local-only ActiveTasks invalidation and owner-aware async mount settling.
+Pure suites use the shared test bootstrap and never call `ExUnit.start/0`, patch missing core functions or skip failing integration contracts.
+Mounted suites retain per-process `EvoDash.Test.ConfigDir.isolate!/1` and local-only `EvoDash.ActiveTasks.invalidate(nil, node())`; the whole-table `reset/0` belongs to sync modules only.
+Every async-load budget here is a load-tolerant 30 s (`@async_wait_budget_ms`, `@assigns_timeout_ms`) with a 1–2 ms poll cadence; no fixed `Process.sleep` is a wait mechanism.
+`assigns/1` is a synchronous `:sys.get_state(view.pid, 30_000)` round-trip, so `send` followed by an `assigns/1` read is already ordered.
 Auth config-directory labels include the OS pid so interrupted or concurrent BEAM runs cannot reuse another run's blocker fixture.
-The auth mount funnel drains the view before enumerating owned tasks, monitors every node-data/OAuth load chain under a bounded deadline and fails rather than silently timing out.
-Credential injection waits for real loaders to finish and sends the mounted node's current `auth_status_seq`; older and unrequested future sequences and foreign nodes must not replace the baseline.
 Auth save assertions wait for `config_saving` and `config_save_request` to clear through the authoritative writer receipt, then settle the receipt's OAuth refresh before rendering or reading persistence.
-Every login verdict, managed-file path and writable-path remedy stays asserted; full supplied vendor instructions normalize only HTML whitespace, not their wording.
+Every login verdict, managed-file path and writable-path remedy stays asserted; supplied vendor instructions normalize only HTML whitespace, not their wording.
 No test may make a real LLM request or rely on shared credentials, scheduler mutation or global ChatHistory.
-The larger helper file intentionally keeps the legacy parser with its shared peak/day edge-case matrix, while the canonical contract file keeps parse/draft/CRUD round trips together without additional test modules or shared fixtures.
+Multi-model coverage here is pure parsing/draft round trips and sparse inheritance; a mounted multi-model Save → remount cycle is `provider_panel_live_test.exs`'s `two distinct models survive save, reload and remount, including the id new`.
 Production source and core modules are read-only from this node.
 
-## Coverage Boundaries
-
-Multi-model contracts here exercise pure parsing/draft round trips and sparse inheritance, not a mounted multi-model Save → remount/reload cycle.
-The original auth-mode/OAuth-file save contracts assert live canonical providers and `EvoGit.Config.user_config()` persistence with no legacy shadow, while the rendered API-key-source and model reasoning-clear contracts additionally remount to prove restored editor state.
-The stale-result tests here cover OAuth credential-status node/sequence guards only, not config reload or writer completion generations.
-No suite here injects a configuration-writer failure or exercises category reset/reset-all preservation of canonical providers and defaults.
-The `:managed_file_unwritable` classification tests concern OAuth credential files, not `config.toml` write failures.
-`auth_status_test.exs`'s `blocked_oauth_file/1` creates a regular file named `blocker` and returns its nonexistent child `blocker/auth.json`; this is deterministic invalid-path fixture data, not a suspended process, FIFO, lock or blocking runner.
-The legacy OAuth migration save preserves this path for both OAuth accounts, so its appearance in scheduler update options is expected and does not establish that the path caused a scheduler call timeout.
-No suite in this helper directory installs an app-env blocking runner or suspends the scheduler; `config_io_test.exs` exercises `State.do_update_config/2` on local state values, not the registered scheduler process.
-`await_profile_save/1` waits for save markers to clear and then drains OAuth refresh tasks, but marker clearance alone is not success: the exact success-flash assertion must remain because a failed runtime scheduler update can also finish the writer request.
-A longer test polling deadline cannot repair a runtime `GenServer.call` timeout already returned as a failed save acknowledgement.
-Mounted canonical editor save/reload/reset regressions belong with the parent `settings_live_test.exs`; pure shape and draft regressions belong in `provider_profiles_contract_test.exs`, and config writer atomicity belongs to the core-owned configuration tests.
-
-## Validation and Integration Boundary
+## Validation and integration boundary
 
 Pure canonical parser contracts accept default-only profiles with absent or empty `models` and omit the stored `models` key; helper-level configured rows are overrides rather than an allowlist restricting `default_model`.
-The production core validator still rejects default-only account fixtures with `default_model must be one of []`, independently of the editor's helper-level acceptance and synchronization.
-`provider_profiles_contract_test.exs` declares the helper contracts as "default-only profiles round-trip without manufacturing model overrides" and "models are overrides and do not restrict the default model", and its submission contract preserves explicit empty rows while allowing a nonblank default-only profile.
-Default-only helper synchronization contracts pin targeted name/select changes, save without a prior change event, blank validation/correction and last-row transitions without manufacturing model rows.
-The two mounted default-only regressions preserve these UI contracts but distinguish them from successful core persistence: a nonblank default with no model rows receives `default_model must be one of []`, leaves disk/live config unchanged and retains the draft.
-Successful Save → remount requires explicitly adding a nested inventory row matching the chosen default; this core limitation remains outside the test node's scope.
-The actual rendered reasoning-checkbox clear and closed-Advanced API-key-source state machines pass, including persistence and remount; no production changes or input weakening are needed for those cases.
-Mounted auth persistence success fixtures include nested model rows matching their default and do not establish default-only Save success.
-The `profile save round-trip (auth_mode / oauth_file persistence)` describe in `auth_status_test.exs` covers OAuth auth/path persistence, explicit API-key mode with stale-path removal, blank-path omission, OAuth-only mode inference, legacy migration and unsupported-auth rejection.
-The four new-profile success cases assert the nested model shape in live config and persistence without relaxing auth verdicts or successful-save assertions.
-The unsupported-auth case retains its invalid authentication fixture and verifies rejection without persistence.
-Focused validation uses `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/auth_status_test.exs --only 'describe:profile save round-trip (auth_mode / oauth_file persistence)' --seed 0` (also seed 1) and passes all six selected tests with 22 excluded in each run.
-This focused run does not establish full-file, directory or broader dashboard-suite success.
-The pure canonical helper slice is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/model_profile_helpers_test.exs --seed 1` and selects 92 tests.
-Pure helper-slice success alone does not establish mounted Save → remount success; the full subtree includes both the unchanged no-row fidelity contracts and the rendered core-rejection/correction flows.
-The full helper subtree contains 130 tests and runs with `mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` or `--seed 1`.
-Leaf-subtree success does not establish collective LiveView-directory success; the scheduler acknowledgement issue below can surface in the broader run.
-Mounted auth identity assertions pin the profile heading and separate provider text within the account article selected by its Edit control, including the sibling article retained after stripping credential-status blocks.
-These row-scoped identity checks preserve the credential verdict, managed-path, writable-path remedy and vendor-guidance surface-split assertions.
+The production core validator rejects a default-only account fixture (`default_model must be one of []`), independently of the editor's helper-level acceptance and synchronization.
+The two mounted default-only regressions preserve these UI contracts but distinguish them from successful core persistence: a nonblank default with no model rows receives that rejection, leaves disk and live config unchanged, and retains the draft.
+Successful Save → remount requires explicitly adding a nested inventory row matching the chosen default; that core limitation stays outside this test node's scope.
+The rendered reasoning-checkbox clear and the closed-Advanced API-key-source state machines pass including persistence and remount, with no production change or input weakening.
+The `:managed_file_unwritable` classification tests concern OAuth credential files, not `config.toml` write failures.
+The legacy OAuth migration save preserves its path for both OAuth accounts, so its appearance in scheduler update options is expected.
+No suite in this directory installs an app-env blocking runner or suspends the scheduler; `config_io_test.exs` exercises `State.do_update_config/2` on local state values, not the registered scheduler process.
+`await_profile_save/1` waits for save markers to clear and then drains OAuth refresh tasks, but marker clearance alone is not success: a failed runtime scheduler update can also finish the writer request, so the exact success-flash assertion stays.
+A longer test polling deadline cannot repair a runtime `GenServer.call` timeout already returned as a failed save acknowledgement.
 
 ## Known Issues
-Collective LiveView-directory validation at seed 1 can fail `auth_status_test.exs:853`, "the API-key default is explicit and drops a stale OAuth path", at the exact success-flash assertion on line 868 because saving returns `Failed to save configuration` with an `{:exit, {:timeout, {GenServer, :call, [EvoGit.AgentScheduler, {:update_config, full_canonical_options}, 5000]}}}` error.
-This is a core scheduler acknowledgement timeout, not a test polling failure; retain the exact success assertion and async concurrency rather than extending polling deadlines.
+
+Collective LiveView-directory validation at seed 1 can fail `the API-key default is explicit and drops a stale OAuth path` in `auth_status_test.exs` (describe `profile save round-trip (auth_mode / oauth_file persistence)`) at its exact success-flash assertion, because saving returns `Failed to save configuration` with an `{:exit, {:timeout, {GenServer, :call, [EvoGit.AgentScheduler, {:update_config, full_canonical_options}, 5000]}}}` error.
+That is a core scheduler acknowledgement timeout, not a test polling failure; the exact success assertion and async concurrency stay, rather than extending polling deadlines.
 No scheduler stack or mailbox capture establishes the underlying cause, so neither OAuth, Finch nor the request payload is implicated by this failure alone.
 The source failure belongs to the core scheduler owner, outside this leaf test node.
-## UI Simplification Survey
+`ConfigSave`'s read-verified receipt (see `config_save_test.exs`) covers the write path; a core-side log-and-succeed reload would remove the need for it.
 
-`auth_status_test.exs` declares apply/render/classification/stale/refresh/rendered-editor/save/Quick Setup groups at lines 76, 171, 370, 411, 476, 495, 715 and 887 respectively.
-Auth events use `render_hook` with compatibility names `edit_model_profile`, `add_model_profile`, `save_model_profile`, `refresh_auth_status`, `select_llm_provider` and `select_llm_model`, rather than submitting rendered forms.
-Auth row helper `profile_row/2` at line 1083 finds exactly one `article` containing `button[phx-click="edit_provider_profile"]` whose `phx-value-profile_id` matches the saved account id.
-Auth block helpers at lines 1102 and 1115 locate `[role="status"]` by its `button[phx-click="refresh_auth_status"]` and matching `phx-value-profile_id`; status-line counts also depend on that event attribute.
-The unwritable surface-split test additionally pins `id="provider-profile-edit-form"`, and Quick Setup contracts pin `phx-submit="save_api_key"` and `name="api_key"` presence for API-key-capable providers and absence for OAuth-only providers.
-The rendered-editor persistence describe drives actual Edit buttons and `form("#provider-profile-edit-form", overrides)` change/submit events rather than the compatibility hooks used by the auth fixtures.
-Closed Advanced/custom-effort ordering round trips already belong to the parent `settings_live_test.exs`, and exact catalog suggestions, unchecked suggested choices and custom-value order belong to sibling `components/provider_profile_fields_test.exs`; this leaf does not duplicate those matrices.
-The parent-file direct-hook nested-generation fixture's restoration of a nonblank model `high` default is owned outside this leaf and is not repaired here.
-Auth saves pin the exact `Provider profile saved.` flash, detached `editing_profile_id == :new`, canonical `llm.providers`, absent legacy `llm.models` and authoritative async completion.
-`model_ids_test.exs` declares rendered Quick Setup guards at lines 126 and 136 and drives `select_llm_provider` (`provider_id`) and `select_llm_variant` (`variant_id`) while requiring a real current `provider:model` string for non-custom populated catalogs.
-`provider_profiles_contract_test.exs` keeps detached form/row/cancel and advanced-auto-open contracts, including `toggle_profile_advanced`, `profile_advanced_open` and `advanced_open?/1`; these are helper API assertions, not rendered disclosure requirements.
-`model_ids_test.exs` has a one-pass owner-filtered mount wait with a silent 5-second timeout, unlike the auth suite's repeated drain and failing 30-second budget.
-Focused commands from the umbrella root are `mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` or individual filenames, with `--only 'describe:credential status render (injected result)'` and `--only 'describe:Quick Setup OAuth-only provider'` useful for auth UI work.
-The full-subtree seed-0 validation includes all mounted auth render/save and pure helper contracts; it does not establish broader dashboard-suite success.
+## Focused commands
+
+`mix test apps/evo_dash/test/evo_dash_web/live/settings_live --seed 0` (180 tests) or `--seed 1` runs this directory; naming one file runs just that suite.
+The pure helper slice is `mix test apps/evo_dash/test/evo_dash_web/live/settings_live/provider_profiles_contract_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs apps/evo_dash/test/evo_dash_web/live/settings_live/model_profile_helpers_test.exs --seed 1` (90 tests).
+Useful describe filters are `--only 'describe:credential status render (injected result)'`, `--only 'describe:profile save round-trip (auth_mode / oauth_file persistence)'`, `--only 'describe:wizard auth step (provider capability)'` and `--only 'describe:the removed Quick Setup shortcut'`.
+Leaf-subtree or pure-slice success does not establish collective LiveView-directory or broader dashboard-suite success.
 
 ## Routing Table
 
 This directory has no child directories.
-## Mounted Page Contracts (owned by `../settings_live_test.exs`)
-Settings canonical serialization, shadow removal, unrelated-setting preservation, nested models and OAuth contracts live in `provider_profiles_contract_test.exs` and use the shared test bootstrap without `ExUnit.start`.
-Mounted successful-save fixtures require nested `models` rows containing `default_model`, and the emptied-model correction test pins core rejection without changing disk or live config.
-Pure parser and state-helper tests here preserve default-only profiles without synthesizing model rows, but core persistence requires a nonempty model inventory containing the default.
-Mounted default-only editor tests assert rejection without disk/live-config writes, retain the editable draft, then explicitly click Add model row before successful save/remount; the UI-only `default_model_name` helper never persists.
-Settings parent-page wiring contracts stay cohesive in `settings_live_test.exs`, whose folded scenarios use rendered canonical events and assert both live config and persisted `llm.providers` with no `llm.models` shadow except the intentional legacy-input fixture.
-Add creates a detached `"new"` draft, Cancel never writes, failed validation retains the draft, and CRUD/default/rename/delete plus legacy edit/save/reorder aliases retain persistence assertions.
-The draft-clear lifecycle test drives rendered Add/change/model-row/Cancel/Save controls, keeps the browser's empty new-profile identity, and establishes a matching nested model/default before submission; it waits for both `config_save_request` and `config_saving` to clear, asserts the successful writer receipt, and pins nil draft/editor state after Cancel and Save plus unchanged disk on Cancel and persisted model/temperature on Save.
-Collective Settings validation retains normal async module concurrency and exact successful-write assertions; longer polling budgets cannot repair a failed scheduler write acknowledgement.
-The explicit scheduler suspension in `SettingsLiveGlobalStateTest`'s in-flight-save test is sync-only, resumes before awaiting success and has an `on_exit` resume safety net.
-Generation input names are nested under `generation` and each model's `generation`, while persisted provider/model generation fields are flat; sparse overrides inherit, explicit blank reasoning overrides produce `[]`, and the `override_reasoning` form sentinel must not persist.
-Mounted canonical regressions submit the actual `#provider-profile-edit-form` for blank-new and untouched `profile-N` identities, provider-derived collision-safe IDs/names, duplicate same-provider accounts, duplicate-ID validation/correction/retry, and blank-edit preservation of explicit identity.
-The closed-Advanced round-trip fixture pins OAuth mode/path, connection/concurrency/context, all account/model generation numbers and JSON, reasoning custom-value order, peak schedules, default-model selection, and unrelated configuration through browser form serialization.
-Checkbox clearing supplies `[""]` (the rendered hidden sentinel), not `[]` (query encoding omits an empty list), and distinguishes explicit empty model inventories from unchecking the override to restore inheritance.
-The mounted nested-generation direct-hook case submits an explicit model reasoning override with an empty inventory and a stale `high` default, asserting the exact persisted model has `reasoning_efforts: []` and no `default_reasoning_effort`.
-The rendered clearing-checkbox regression in `auth_status_test.exs` submits the hidden blank sentinel without changing the saved `high` default and asserts the empty inventory and absent default after the owned asynchronous save and remount.
-Provider defaults render as selects whose options follow model-name change events, so mounted form submissions update model rows before choosing a new default; an explicitly edited `profile-N` identity sends `_target: ["profile_id_new"]`, whereas an untouched generated identity remains automatic.
-Model and peak-window row actions must preserve unsaved nested fields and numeric index order, including invalid-index no-ops and empty model rows; provider/model generation disclosures are native closed-by-default details.
-`SettingsLiveParentAdapterTest` renders the actual `SettingsComponents.category_section/1` boundary and calls actual parent change/row/cancel handlers without a mounted page; its third test pins persisted-model connection resolution, inherited generation, API key and provider options through `ConfigIO.resolve_model_spec/2`.
-Mounted Projects, Assistant and Welcome canonical contracts live in their own page files, so helper-only success must not be mistaken for their integration validation.
-Page tests pin two-distinct-model save followed by authoritative reload/remount, configuration-writer failure and retry, reset behavior, stale save completions and in-flight save ownership.
-Settings writes are asynchronous: `settings_hook/3` and the file-local settle helpers await authoritative completion before inspecting persisted config or success markup.
-Creation uses atom `:new`, while a persisted string id `"new"` is valid and must not trigger creation semantics.
-Schedule checkbox names use bracketed form fields, and connection/load/save results use their actual node/sequence-scoped envelopes.
-The mounted `test_llm` contract proves dispatch, auth, result rendering and rejection of unscoped/stale/wrong-node result envelopes without any public-provider traffic; its result envelope is `{{:llm_test_result, seq, {target_id, node, selection}}, {:ok, result}}`, while the separate missing-remote handler test covers both `remote_config` flags.
-The request-options contract captures the actual final HTTP request at an isolated loopback endpoint, including authentication and inherited generation settings, rather than expecting credentials to leak through resolver output.
-Keep mounted Settings additions with the owner of `settings_live_test.exs`, while pure provider transformations belong in this directory and core atomic-write/cache-failure assertions belong in the core config test node.
-
-### Provider-editor UI coupling
-`settings_live_test.exs` declares the parent adapter tests at 462/515/577, the mounted provider-editor describe at 999, Quick Setup at 744, custom providers at 914, connection rendering at 2338, connection handlers at 2445 and the sync in-flight-save test at 3954.
-The rendered editor pins `#provider-profiles-editor`, `form#provider-profile-edit-form[phx-submit="save_provider_profile"][phx-change="provider_profile_form_change"]`, `profile_id`/`profile_id_new` fields and canonical action buttons carrying `phx-value-profile_id`.
-Generation defaults and model overrides use `generation[field]` and `models[index][generation][field]` names, and native `details#provider-generation-defaults` and `details#provider-model-generation-1` must be closed by default while `#model-profile-advanced` is absent.
-Rendered row buttons are `add_provider_model` and `remove_provider_model` with `phx-value-index`; schedule events use `add_provider_peak_hours_row`/`remove_provider_peak_hours_row` while chip fields use `off_peak_days[]` and `peak_hours[index][days][]` with nine off-peak choices.
-Quick Setup pins `save_quick_setup`, hidden `model_string`, qualified `phx-value-model_string` shortcuts and selected shortcut classes `btn-primary`/`shadow-md`, independently of credential form gating on model selection.
-Most schedule and compatibility scenarios invoke `settings_hook/3` directly rather than submitting rendered controls, whereas Add/Cancel/CRUD/model-row and multi-model-save scenarios retain actual element/form coverage.
-`settings_hook/3` awaits `config_saving == false` and renders authoritative completion; the owner-filtered mount funnel is a single task snapshot whose 30-second monitor timeout returns silently, not a recursive guaranteed drain.
-The parent-adapter row-action contract permits peak-window atom keys to normalize to string keys while preserving full socket equality for all other state and exact invalid-index no-ops.
-
-### Mount funnel and seeding
-`mount_settings/2` in `settings_live_test.exs` funnels every mount: `live/3`, then `await_mount_async_loads/1` (monitor this mount's `$callers` children, then drain), and only then hands the view to the test, so a late node-data apply can never clobber test-driven state; the ORIGINAL mount HTML is returned unchanged.
-`settings_live_agents_test.exs` uses its OWN owner-aware variant (`mount_settings/1` → `await_view_async_loads/1`): a bounded 2 ms poll on "no live `EvoDash.TaskSupervisor` child whose `$callers` contain THIS view pid", a ~5 s best-effort cap (`@settle_timeout_ms`), then a `render/1` drain — the same helper is reused at the `reload_custom_tools` click.
-`settings_live_test.exs` SEEDS canonical provider fixtures straight into `config.toml` (`seed_provider_profiles/1,2`, optional explicit default) instead of driving the add/save UI for setup; dedicated canonical Add/Save/Cancel/CRUD tests drive the actual rendered controls and legacy compatibility tests retain the old event aliases.
