@@ -110,10 +110,16 @@ Adds the task-level `session_mode` column to a database an earlier release alrea
 - **Post-conditions**: exactly `{"session_mode", "TEXT", 0, 0}` from `PRAGMA table_info`, and `SELECT count(*) FROM tasks WHERE session_mode IS NOT NULL` must be 0 — the migration backfills NOTHING, because `NULL` is the canonical `"oneshot"` value and the read path (`Codec.decode_session_mode/1`) normalizes it, so no task row is rewritten and no data migration is needed.
 - **Idempotent / resumable**: the probe makes a re-run a no-op, and the appended physical position (`…, updated_at, session_mode`) is one of the orders version 1's post-condition accepts.
 
+### Migration 11 — `20260815000011_vct_workspace_mounts`
+Rebuilds `vct_mounts` into its current seven-column shape: `point` TEXT primary key, `path` TEXT UNIQUE and now NULLABLE (SQLite allows many NULLs under a UNIQUE index, so a workspace mount carries no OS path), `name`/`kind` TEXT NOT NULL, nullable `last_opened_at`, nullable `members` (JSON array of member refs) and nullable `description`.
+- **Guarded rebuild**: when `PRAGMA table_info` already shows `members` AND `description` and `path` notnull = 0 the migration is a NO-OP; a missing `vct_mounts` table raises `Ecto.MigrationError` because migration 7 creates it.
+- **No row is lost**: `CREATE TABLE vct_mounts_new` → `INSERT INTO vct_mounts_new (…, members, description) SELECT point, path, name, kind, last_opened_at, NULL, NULL FROM vct_mounts` → `DROP TABLE vct_mounts` → `ALTER TABLE vct_mounts_new RENAME TO vct_mounts`, each a single statement through `repo().query!/3`, so every pre-existing row keeps byte-identical point/path/name/kind/last_opened_at and gains two NULL columns.
+- **Self-contained**: no legacy fan-out, no capping, no data rewrite, no application-code calls.
+- **Post-conditions**: `PRAGMA table_info(vct_mounts)` equals exactly the seven `{name, type, notnull, pk}` tuples in order, and some UNIQUE index covers exactly `["path"]` — asserted by inspecting `PRAGMA index_info` per unique index, never by the autoindex NAME (which changes across a rebuild).
 ### Migration versions & ordering
 
-The migration versions are 1..9, CONTIGUOUS, and shipped ledger identities and frozen source files are never rewritten.
-Version 9 adds `pause_kind`; boot has no physical-schema reconciliation for an already-stamped ledger.
+The migration versions are 1..9 plus 11, CONTIGUOUS, and shipped ledger identities and frozen source files are never rewritten.
+Version 9 adds `pause_kind` and version 11 rebuilds `vct_mounts` for workspace mounts; version 10 is RETIRED and must never be reused; boot has no physical-schema reconciliation for an already-stamped ledger.
 `HistoricalSources.run/1` only rejects reserved preservation remnants and runs pending versions, so a ledger containing versions 1–9 with missing `session_mode`, `pause_kind` or `vct_mounts` remains inconsistent after a successful no-op migration run.
 For offline local repair, preserve ledger and existing payloads and repair only verified physical gaps; deleting ledger rows to replay migrations also re-enables destructive legacy archive/project transformations.
 `Boot` delegates to `HistoricalSources.run/1` under its existing migration lock, which checks for interrupted preservation objects before one ordinary `Ecto.Migrator.run/4` with `all: true`.
