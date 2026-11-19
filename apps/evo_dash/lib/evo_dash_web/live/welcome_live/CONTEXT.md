@@ -24,6 +24,7 @@ While the draft holds a key the auth step shows a status line ("A key is set for
 It is pure and total — no I/O, process, clock or catalog lookup — and treats the typed `api_key` as transient draft state that is never persisted by this module.
 `flatten_models/1`, `provider_models/3`, and `filtered_models/2` build and filter trusted catalog entries without converting client strings into atoms.
 `reasoning_efforts/0` exposes standard choices, while `reasoning_efforts/1` reads atom- or string-keyed inventories, preserves their order and explicit empty lists, and falls back to standard choices only for absent or nil inventories.
+`Wizard.reasoning_choices/1` is the DISPLAYED inventory both reasoning surfaces use: a normalized inventory, with an unrestricted empty (or absent) inventory expanded to the canonical ladder (`none, minimal, low, medium, high, xhigh` — never `max`) for display only, so a catalog model that declares no efforts still offers the whole ladder plus the separate default select while a model that declares a subset offers exactly that subset.
 `flatten_models/1` uses the same inventory helper, so draft construction and page controls agree.
 `has_model?/1` delegates to `EvoGit.Config.Schema.model_selections/1`, respecting the core's canonical precedence and legacy migration, including flat `llm.model` input.
 `auth_mode/1` defaults OAuth-only providers to subscription authentication, and `can_save?/1` gates API-key mode on an existing or typed key while OAuth requires none.
