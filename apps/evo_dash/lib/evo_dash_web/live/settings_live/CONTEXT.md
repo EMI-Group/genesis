@@ -170,6 +170,7 @@ Ownership is per LiveView rather than a distributed file lock, so remounts, othe
 
 NodeData.start/3 captures node/category/all_schemas, loads platform/config/status/agent/tool data under TaskSupervisor + SafeCall and sends {tag, node, category, {:ok, results} | {:error, reason}}.
 Results include platform_os/filtered_schemas_by_category/file_config/config_status/remote_config_error/custom_agents/custom_tools_status.
+`filtered_schemas_by_category` is ALWAYS present (`load/2` and `error_results/3` both set it from the captured unfiltered `all_schemas_by_category` plus the viewed node's platform/nix gating), so it never arrives empty or missing; the parent assigns it as the authoritative `schemas_by_category` and re-resolves the active category against it, falling back to `:llm` — a category the shell seeded from the UNFILTERED map (e.g. `:nix`/`:sandbox`) is dropped at that point.
 Local config reads ConfigIO/Config directly and remote config reads FULL get_resolved_config; error_results/3 supplies conservative platform/schema/agent/tool values and a visible remote_config_error.
 degraded_config_status/0 is %{ok?: false, missing: [], warnings: [], validation_errors: []}.
 Agent fetch tolerates odd shapes, tool fetch normalizes lists and preserves {:error, reason}, and remote status failures stay explicit.
