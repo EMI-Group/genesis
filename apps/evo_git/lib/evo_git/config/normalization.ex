@@ -44,6 +44,17 @@ defmodule EvoGit.Config.Normalization do
             _ -> acc
           end
 
+        # The flat key is typed `:string`, while `max` is an accepted legacy
+        # ALIAS (never an offered level) of the canonical `xhigh`: it is
+        # rewritten here so a persisted config keeps loading and a later save
+        # writes `xhigh`. Any other value is left untouched, so validation still
+        # reports it.
+        acc =
+          case Map.get(llm, :reasoning_effort) do
+            value when value in ["max", :max] -> put_in(acc, [:llm, :reasoning_effort], "xhigh")
+            _ -> acc
+          end
+
         # Canonical provider profiles and every nested option map use strings.
         # Malformed entries must survive normalization for validation.
         acc =

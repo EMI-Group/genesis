@@ -57,6 +57,18 @@ defmodule EvoGit.Config.Schema.LLM do
   @cache_identity_prefix "genesis-"
   @cache_identity_max_length 64
 
+  # ── Canonical reasoning-effort ladder (single public source of truth) ────
+  #
+  # The ONE user-selectable set, ascending by intensity. `:max` is
+  # deliberately ABSENT: it is a provider wire/value ALIAS of `:xhigh` (Z.AI
+  # GLM documents `max` natively), never a Genesis level of its own.
+  @reasoning_efforts [:none, :minimal, :low, :medium, :high, :xhigh]
+  # "Send no effort at all": the provider's own default applies.
+  @reasoning_effort_default :default
+  @reasoning_effort_options @reasoning_efforts ++ [@reasoning_effort_default]
+  # Legacy/persisted spelling accepted on input and canonicalized to `:xhigh`.
+  @reasoning_effort_alias_max :max
+
   # Normalizes the metadata-source result (app-env seam or catalog lookup) to the
   # documented `%{limits:, capabilities:}` / `nil` contract.
   defp normalize_metadata(metadata), do: LLMConstraints.normalize_metadata(metadata)
@@ -929,8 +941,139 @@ defmodule EvoGit.Config.Schema.LLM do
   def maybe_param(keyword_list, key, value), do: keyword_list ++ [{key, value}]
 
   @doc """
+  Returns the canonical, user-selectable reasoning-effort LEVELS in ascending
+  intensity order:
+
+  `#{inspect(@reasoning_efforts)}`
+
+  This is the ONE source of truth for the offered set. `:max` is NOT a level:
+  it is a provider wire/value alias of `:xhigh` (`canonical_reasoning_effort/1`
+  aliases it), so it must never appear in a level picker.
+
+  Total and pure — same list on every call.
+  """
+  @spec reasoning_efforts() :: [atom()]
+  def reasoning_efforts, do: @reasoning_efforts
+
+  @doc """
+  Returns the ordered pick list a UI renders: `reasoning_efforts/0` plus
+  `:default`:
+
+  `#{inspect(@reasoning_effort_options)}`
+
+  `:default` (and an absent/unset value) means "send NO `reasoning_effort`
+  field at all, i.e. use the provider default". It is a UI choice, not a
+  provider level.
+
+  Total and pure.
+  """
+  @spec reasoning_effort_options() :: [atom()]
+  def reasoning_effort_options, do: @reasoning_effort_options
+
+  @doc """
+  Returns `true` when `value` is one of the OFFERED reasoning-effort levels,
+  `false` otherwise. Total — never raises, whatever the input.
+
+  True for the canonical levels (#{inspect(@reasoning_efforts)}) and for the
+  provider-default choice (`:default` / `nil`), given as atoms or as strings
+  (case-insensitive, surrounding whitespace ignored — `" High "` is `:high`).
+
+  `"max"` / `:max` are ACCEPTED legacy ALIASES read as `:xhigh`
+  (`canonical_reasoning_effort/1`), NOT offered levels — so `allowed?("max")`
+  is `false` and `reasoning_efforts/0` never contains it. Anything else
+  (`"garbage"`, `42`, `%{}`) is `false` too.
+
+  ## Examples
+
+      iex> Schema.LLM.allowed?(:xhigh)
+      true
+
+      iex> Schema.LLM.allowed?(" High ")
+      true
+
+      iex> Schema.LLM.allowed?(nil)
+      true
+
+      iex> Schema.LLM.allowed?("max")
+      false
+
+      iex> Schema.LLM.allowed?("garbage")
+      false
+  """
+  @spec allowed?(term()) :: boolean()
+  def allowed?(nil), do: true
+  def allowed?(value), do: effort_atom(value) in @reasoning_effort_options
+
+  @doc """
+  Returns the canonical effort atom for any accepted input, or `nil` for
+  anything unrecognized. Total — never raises, whatever the input.
+
+  The canonical levels pass through as themselves, `:max` / `"max"` alias to
+  `:xhigh` (Z.AI GLM's native spelling — see
+  `EvoGit.Config.Schema.LLMConstraints`), and `nil` stays `nil` (meaning
+  "provider default"). Strings are trimmed and case-insensitive.
+
+  ## Examples
+
+      iex> Schema.LLM.canonical_reasoning_effort("MAX")
+      :xhigh
+
+      iex> Schema.LLM.canonical_reasoning_effort(:max)
+      :xhigh
+
+      iex> Schema.LLM.canonical_reasoning_effort("high")
+      :high
+
+      iex> Schema.LLM.canonical_reasoning_effort(nil)
+      nil
+
+      iex> Schema.LLM.canonical_reasoning_effort("garbage")
+      nil
+  """
+  @spec canonical_reasoning_effort(term()) :: atom() | nil
+  def canonical_reasoning_effort(nil), do: nil
+
+  def canonical_reasoning_effort(value) do
+    case effort_atom(value) do
+      @reasoning_effort_alias_max -> :xhigh
+      effort -> effort
+    end
+  end
+
+  # The RAW input spelling -> atom, WITHOUT the legacy alias: `:max` stays
+  # `:max` so callers can tell an accepted alias from an offered level.
+  # String matching is explicit (never String.to_existing_atom on user input).
+  defp effort_atom(value) when is_binary(value) do
+    case value |> String.trim() |> String.downcase() do
+      "none" -> :none
+      "minimal" -> :minimal
+      "low" -> :low
+      "medium" -> :medium
+      "high" -> :high
+      "xhigh" -> :xhigh
+      "max" -> @reasoning_effort_alias_max
+      "default" -> @reasoning_effort_default
+      _ -> nil
+    end
+  end
+
+  defp effort_atom(value) when is_atom(value) do
+    if value in @reasoning_effort_options or value == @reasoning_effort_alias_max,
+      do: value,
+      else: nil
+  end
+
+  defp effort_atom(_value), do: nil
+
+  @doc """
   Converts reasoning_effort string from config (TOML) to atom expected by ReqLLM.
-  Uses explicit case matching rather than String.to_existing_atom for safety.
+  Explicit case matching rather than String.to_existing_atom for safety: user
+  input never interns a new atom.
+
+  Canonical level ATOMS pass through unchanged (`:high` -> `:high`). The legacy
+  alias `"max"` / `:max` becomes `:xhigh` (the Genesis level; the provider wire
+  spelling is restored by `EvoGit.Config.Schema.LLMConstraints`). Unknown values
+  are returned unchanged so the caller (validation) can report them.
   """
   @spec convert_reasoning_effort(String.t() | nil | atom()) :: atom() | String.t() | nil
   def convert_reasoning_effort(nil), do: nil
@@ -940,6 +1083,8 @@ defmodule EvoGit.Config.Schema.LLM do
   def convert_reasoning_effort("medium"), do: :medium
   def convert_reasoning_effort("high"), do: :high
   def convert_reasoning_effort("xhigh"), do: :xhigh
+  def convert_reasoning_effort("max"), do: :xhigh
   def convert_reasoning_effort("default"), do: :default
+  def convert_reasoning_effort(:max), do: :xhigh
   def convert_reasoning_effort(other), do: other
 end
