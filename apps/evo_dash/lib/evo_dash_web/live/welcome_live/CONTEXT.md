@@ -5,8 +5,14 @@
 `Wizard` (`wizard.ex`, `EvoDashWeb.WelcomeLive.Wizard`) is the pure string-keyed DRAFT model and transition set for the wizard-shaped onboarding flow; it delegates steps, reasoning, schedule presets and identity to `EvoDashWeb.LLMSetup`.
 The parent page owns provider/variant selection, multi-model toggles, authentication UI, write ordering and asynchronous connection-test state.
 `Presentation` (`presentation.ex`, `EvoDashWeb.WelcomeLive.Presentation`) owns the pure view-model helpers and the step copy: catalog resolution by string, provider/variant/model rows, the schedule presets, the connection-test status shape and the user-facing messages.
+`variant_options/2` marks the option matching the draft's current variant `selected`, so a chosen chip renders as the active `btn-primary` choice.
+`schedule_presets/2` resolves a provider/variant pair's presets and drops every entry without a nonblank id, so a nameless preset never reaches the step.
+`preset_allowed?/3` is the ONLY gate for a submitted preset id: it refuses a blank id and any id absent from that exact provider/variant's preset list.
+`test_status/1` is the ONE connection-test result projection: it unwraps exactly one `EvoDash.SafeCall` level, keeps `{:ok, detail}` as the success state with the tested model/response text, maps `{:ok, {:error, message}}` to the error state, and passes any other term through.
 `ViewModel` (`view_model.ex`, `EvoDashWeb.WelcomeLive.ViewModel`) derives every per-step render assign from the draft, calling `Presentation` for each step's values.
 `Steps` (`steps.ex`, `EvoDashWeb.WelcomeLive.Steps`) owns only the per-step HEEx BODIES the page's `render/1` inserts into `EvoDashWeb.SettingsComponents.ProviderWizard.wizard_shell/1`: `step_provider_body/1`, `step_auth_body/1`, `step_model_body/1`, `step_reasoning_schedule_body/1`, `step_test_body/1` and `step_done_body/1`, each a pure function of its declared attrs (no socket, no events, no view-model derivation).
+`step_auth_body/1` renders `#wizard-api-key` as an UNCONTROLLED password input — no `value` attribute and `autocomplete="off"` — so the typed secret reaches the server only through the `wizard_api_key` change event and never appears in rendered markup or a push payload.
+While the draft holds a key the auth step shows a status line ("A key is set for this session — type to replace it") instead of the value, and the draft drops the key once a save succeeds.
 
 ## API Surface
 `Steps` declares one `attr` per assign a body reads and renders exactly the markup (ids, event names, `phx-value-*` keys, class lists and the wrapping `phx-change` forms) the page used to inline; each body is the byte-equivalent structure it replaces, so a body change is a rendered-contract change.
@@ -44,15 +50,17 @@ Configuration, credentials, resolved profiles and generation parameters are serv
 `test_request/3` belongs inside the supervised `SafeCall` worker, never the LiveView render or event process, because canonical resolution can import OAuth credentials and consult metadata.
 The call-time two-arity `:welcome_llm_test_runner` seam defaults to `EvoGit.SystemCheck.llm_test/2`.
 Scoped test messages use the nested `{{:welcome_llm_test_result, seq}, guarded_result}` SafeCall shape, and the page invalidates tokens on draft and node changes and ignores legacy unscoped results.
+The page answers a guarded result by unwrapping exactly one level before assigning `llm_test_status`, so a provider answer of `{:error, message}` reaches the error state and only a genuine provider `{:ok, detail}` renders success.
+`apply_schedule_preset` applies a preset only when `Presentation.preset_allowed?/3` admits that id for the draft's current provider and variant, and otherwise leaves the draft untouched.
 All new UI strings are gettext-wrapped, and translation catalogs remain release-time-only work.
 
 ## Parent Wiring and Tests
-The parent already uses entry-aware `reasoning_efforts/1`, retains full inventories separately from defaults, guards remote mutation events, and runs `test_request/3` inside a supervised worker.
-Its `welcome_defaults_changed` whitelist currently treats an explicit empty inventory as allowing only blank, whereas `prepare/3` and core resolution treat that inventory as unrestricted.
+The parent uses entry-aware `reasoning_efforts/1`, retains full inventories separately from defaults, guards remote mutation events, and runs `test_request/3` inside a supervised worker.
+Its `welcome_defaults_changed` whitelist treats an explicit empty inventory as allowing only blank, while `prepare/3` and core resolution treat that inventory as unrestricted.
 If unrestricted empty inventories are exposed for selection, the page must offer standard reasoning choices for that case without changing the stored empty inventory.
 The sibling `test/evo_dash_web/live/welcome_live_test.exs` covers multi-model save, independent defaults and inventories, OAuth modes, local-only mutation, config preservation and scoped test results.
 Additional persistent helper regressions belong in that sibling suite: atom/string/nil/empty inventories, core-backed legacy-flat and canonical-precedence all-set detection, endpoint and inherited-generation test-request parity, invalid test selections, and secret-free validation errors.
-The page and sibling tests are owned outside this helper node.
+That suite still pins the OLD double-wrapped test-result shape, so its connection-test assertions must expect the one-level `{:ok, detail}` status; the page and sibling tests are owned outside this helper node.
 
 ## Core-Owned Validation Boundary
 `Schema.validate/1` is available and canonical provider preflight runs normally, but its general path accessor still walks atom keys only in this checkout.

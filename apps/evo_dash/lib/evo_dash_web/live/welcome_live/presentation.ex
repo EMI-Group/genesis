@@ -214,9 +214,16 @@ defmodule EvoDashWeb.WelcomeLive.Presentation do
   def schedule_presets(entry, variant_id) do
     case wire_atom(entry, variant_id) do
       nil -> []
-      atom -> Schedule.presets_for_provider(atom)
+      atom -> atom |> Schedule.presets_for_provider() |> Enum.filter(&named_preset?/1)
     end
   end
+
+  # An id-less preset would render a nameless button whose apply event carries
+  # no usable id, so it is dropped before the step renders the rows.
+  defp named_preset?(%{} = preset), do: clean(preset_id(preset)) != ""
+  defp named_preset?(_preset), do: false
+
+  defp preset_id(%{} = preset), do: Map.get(preset, :id) || Map.get(preset, "id")
 
   @doc """
   `true` when `preset_id` is a preset the DRAFT's current provider publishes.
