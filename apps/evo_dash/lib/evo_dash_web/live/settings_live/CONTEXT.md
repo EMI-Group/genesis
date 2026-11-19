@@ -185,6 +185,13 @@ That banner is NOT fixture-driven: it renders only while `EvoGit.Config.config_s
 start/2 sends FLAT {:settings_auth_status_loaded, node, seq, statuses}; the parent checks node AND auth_status_seq after node-data loads, saves or explicit refresh, never polls.
 Two remote calls per OAuth account are not deduplicated and unexpected errors degrade the map through the outer SafeCall.
 
+## Category navigation defect (current state)
+
+`handle_params/3` re-inflates `schemas_by_category` to the UNFILTERED `all_schemas_by_category` on EVERY params change (`settings_live.ex:926`), while the async result later replaces it with the platform/nix-FILTERED map (`apply_node_data_results/3` :2730-2789) and re-resolves the active category (`resolve_category/2` :2813-2831, `:llm` fallback).
+`handle_event("select_category", ...)` (:1509-1534) whitelists against the CURRENT `schemas_by_category` (so `category_str_to_atom/1` can never misfire) but neither `push_patch`es nor starts a node-data load.
+Consequence: the gated categories (`:sandbox` on Windows/`:unknown`, `:nix` when unavailable) are clickable only in the window where the unfiltered map is assigned, and a click on them is then overwritten back to `:llm` by the next async result, while the nav list itself loses those items — the settings sidebar visibly shrinks and the active highlight jumps.
+The URL keeps the pre-click `?category=`, so any later `handle_params` re-seeds the category from that stale param and undoes a click on ANY category.
+
 ## Custom Agents, Tools and Peak Helpers
 
 CustomAgentEvents functions return SOCKETS rather than LiveView tuples and perform SafeCall-guarded local/remote mutations with translated errors and parent-owned refreshes.
