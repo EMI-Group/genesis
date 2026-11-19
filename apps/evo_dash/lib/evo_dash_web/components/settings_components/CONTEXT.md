@@ -88,7 +88,7 @@ The list submits `reasoning_efforts[]` with a hidden blank seed, so an explicitl
 `max` never appears in the dashboard vocabulary; `LLMSetup.Reasoning.canonical/1` normalizes a configured or legacy `max` to `xhigh`.
 Catalog suggestions are advisory only: they mark a chip's provenance and never drive membership or order.
 `ProviderProfileFields.reasoning_default/1` is a SEPARATE inventory-scoped single select for the default effort: the blank "Provider default" option renders only when the inventory is non-empty, and an unsupported saved default stays selectable for correction with `aria-invalid="true"` rather than being silently changed.
-`SettingCard.reasoning_options/1` and `SettingCard.reasoning_value/1` expose the same ladder for the flat `llm.reasoning_effort` card, and the legacy `ModelProfilesEditor` select delegates to `LLMSetup.Reasoning` as well.
+`SettingCard.reasoning_options/1` and `SettingCard.reasoning_value/1` expose the same ladder for the flat `llm.reasoning_effort` card, which search results render outside `category_section`.
 `ProviderProfileFields` also supplies the shared generation grid (temperature, max tokens, top_p, top_k, frequency/presence penalty as optional numeric strings, plus the JSON `extra`/`provider_options` textareas with key-safety help), the peak/day controls (`off_peak_days[]` and `peak_hours[index][days][]` with hidden blank sentinels) and the node-correct OAuth guidance.
 
 ## Visual rules
