@@ -158,8 +158,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
 
         {:noreply,
          assign(socket,
-           provider_wizard:
-             Map.merge(wizard, %{draft: draft, errors: %{}, schedule: schedule})
+           provider_wizard: Map.merge(wizard, %{draft: draft, errors: %{}, schedule: schedule})
          )}
 
       _wizard ->
@@ -235,9 +234,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
           {:ok, profile} ->
             config = ProviderProfiles.update(socket.assigns[:file_config], nil, profile)
 
-            socket
-            |> expand_saved(profile)
-            |> persist(config, gettext("Provider account saved."))
+            persist(config, expand_saved(socket, profile), gettext("Provider account saved."))
 
           {:error, errors} ->
             wizard_errors(socket, errors)
@@ -318,11 +315,14 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
 
           case ProviderProfiles.parse_editor(full_draft, profile["id"], profile) do
             {:ok, updated} ->
-              config = ProviderProfiles.update(socket.assigns[:file_config], profile["id"], updated)
+              config =
+                ProviderProfiles.update(socket.assigns[:file_config], profile["id"], updated)
 
-              socket
-              |> expand_saved(updated)
-              |> persist(config, gettext("Model added to the provider account."))
+              persist(
+                config,
+                expand_saved(socket, updated),
+                gettext("Model added to the provider account.")
+              )
 
             {:error, errors} ->
               wizard_errors(socket, errors)
@@ -628,7 +628,11 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
     schedule =
       case {Map.get(schedule, :applied), Map.get(schedule, :snapshot)} do
         {true, snapshot} when is_map(snapshot) ->
-          Map.put(schedule, :modified, Schedule.changed?(socket.assigns[:profile_form_draft], snapshot))
+          Map.put(
+            schedule,
+            :modified,
+            Schedule.changed?(socket.assigns[:profile_form_draft], snapshot)
+          )
 
         _other ->
           schedule
@@ -647,7 +651,8 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
     socket = assign(socket, :provider_wizard, Map.put(wizard, :errors, translated))
 
     message =
-      translated |> Map.values() |> List.first() || gettext("Could not save the provider account.")
+      translated |> Map.values() |> List.first() ||
+        gettext("Could not save the provider account.")
 
     {:noreply, put_flash(socket, :error, message)}
   end
@@ -667,11 +672,20 @@ defmodule EvoDashWeb.SettingsLive.ProviderPanelEvents do
       Enum.reduce(["reasoning_efforts", "default_reasoning_effort", "context_window"], %{}, fn
         key, acc ->
           case Map.get(draft, key) do
-            nil -> acc
-            "" -> acc
-            [] -> acc
-            value when key == "reasoning_efforts" -> Map.put(acc, key, ProviderProfiles.string_list(value))
-            value -> Map.put(acc, key, value)
+            nil ->
+              acc
+
+            "" ->
+              acc
+
+            [] ->
+              acc
+
+            value when key == "reasoning_efforts" ->
+              Map.put(acc, key, ProviderProfiles.string_list(value))
+
+            value ->
+              Map.put(acc, key, value)
           end
       end)
 
