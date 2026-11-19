@@ -40,6 +40,7 @@ defmodule EvoGit.Agent.Tools.WebSearchTest do
   @exa %{api_key: "exa-key", base_url: "https://api.exa.ai/search"}
   @bing %{api_key: "bing-key", base_url: "https://api.bing.microsoft.com/v7.0/search"}
   @brave %{api_key: "brave-key", base_url: "https://api.search.brave.com/res/v1/web/search"}
+  @keenable %{api_key: "keenable-key", base_url: "https://api.keenable.ai/v1/search"}
 
   setup do
     on_exit(fn -> Application.delete_env(:evo_git, :web_search_http_runner) end)
@@ -47,8 +48,8 @@ defmodule EvoGit.Agent.Tools.WebSearchTest do
   end
 
   describe "providers/0" do
-    test "lists all five supported providers" do
-      assert Providers.providers() == [:tavily, :perplexity, :exa, :bing, :brave]
+    test "lists all six supported providers" do
+      assert Providers.providers() == [:tavily, :perplexity, :exa, :bing, :brave, :keenable]
     end
   end
 
@@ -139,6 +140,45 @@ defmodule EvoGit.Agent.Tools.WebSearchTest do
       assert request.url =~ "count=4"
     end
 
+    test "keenable: keyed POST uses the configured base_url with X-API-Key" do
+      assert {:ok, request} =
+               Providers.build_request(:keenable, @keenable, "hello world", "basic", 7)
+
+      assert request.method == :post
+      assert request.url == "https://api.keenable.ai/v1/search"
+
+      assert request.headers == %{
+               "Content-Type" => "application/json",
+               "X-API-Key" => "keenable-key"
+             }
+
+      # `search_depth` has no Keenable equivalent and is ignored.
+      assert request.body == %{query: "hello world", max_results: 7}
+    end
+
+    test "keenable: keyless POST targets the public endpoint with X-Keenable-Title and no X-API-Key" do
+      for api_key <- [nil, ""] do
+        config = %{
+          api_key: api_key,
+          base_url: "https://api.keenable.ai/v1/search"
+        }
+
+        assert {:ok, request} =
+                 Providers.build_request(:keenable, config, "hello world", "basic", 7)
+
+        assert request.method == :post
+        assert request.url == "https://api.keenable.ai/v1/search/public"
+
+        assert request.headers == %{
+                 "Content-Type" => "application/json",
+                 "X-Keenable-Title" => "Genesis"
+               }
+
+        refute Map.has_key?(request.headers, "X-API-Key")
+        assert request.body == %{query: "hello world", max_results: 7}
+      end
+    end
+
     test "unknown provider normalizes to tavily" do
       assert {:ok, %{method: :post, url: "https://api.tavily.com/search"}} =
                Providers.build_request(:bogus, @tavily, "q", "basic", 5)
@@ -215,6 +255,24 @@ defmodule EvoGit.Agent.Tools.WebSearchTest do
                "choices" => [%{"message" => %{"content" => "a"}}],
                "citations" => "not-a-list"
              }) == {:ok, %{kind: :answer, text: "a", citations: []}}
+    end
+
+    test "keenable: parses results[] with title/url/snippet (content from snippet, never description)" do
+      body =
+        Jason.decode!(
+          ~s({"results":[{"title":"K1","url":"http://k1","snippet":"snip","description":""}]})
+        )
+
+      assert Providers.parse_response(:keenable, body) ==
+               {:ok,
+                %{kind: :results, entries: [%{title: "K1", url: "http://k1", content: "snip"}]}}
+    end
+
+    test "keenable: unexpected formats return {:error, :unexpected_format}" do
+      assert Providers.parse_response(:keenable, %{}) == {:error, :unexpected_format}
+
+      assert Providers.parse_response(:keenable, %{"results" => "not-a-list"}) ==
+               {:error, :unexpected_format}
     end
 
     test "unexpected formats return {:error, :unexpected_format}" do
@@ -344,6 +402,33 @@ defmodule EvoGit.Agent.Tools.WebSearchTest do
       assert request.method == :get
       assert request.headers["X-Subscription-Token"] == "test-key"
       assert request.body == nil
+    end
+
+    test "keenable: keyless call reaches the public endpoint and formats snippet results end-to-end" do
+      body = %{"results" => [%{"title" => "K", "url" => "http://k", "snippet" => "snip"}]}
+      Application.put_env(:evo_git, :web_search_http_runner, stub_runner(body))
+
+      result =
+        WebSearch.do_web_search(
+          "q",
+          "basic",
+          5,
+          provider_map(:keenable, %{
+            api_key: nil,
+            base_url: "https://api.keenable.ai/v1/search"
+          })
+        )
+
+      # Keyless-capable providers proceed to HTTP instead of the
+      # "API key for search provider is not set" error.
+      assert result == "Found 1 results:\n\n## K\nhttp://k\n\nsnip\n"
+
+      assert_receive {:web_search_request, request}
+      assert request.method == :post
+      assert request.url == "https://api.keenable.ai/v1/search/public"
+      assert request.headers["X-Keenable-Title"] == "Genesis"
+      refute Map.has_key?(request.headers, "X-API-Key")
+      assert request.body == %{query: "q", max_results: 5}
     end
 
     test "missing or empty API key returns the exact error string before any HTTP" do
