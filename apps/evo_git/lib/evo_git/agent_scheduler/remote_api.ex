@@ -907,6 +907,73 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     EvoGit.VCT.forget(key)
   end
 
+  # ── VCT workspaces (delegated to EvoGit.VCT) ───────────────────────
+  #
+  # A WORKSPACE is a pure grouping point (`vct:///workspaces/<slug>`) over
+  # project mounts: no OS path, no directory. The table lives per-node, so these
+  # functions run ON the node being asked and return native structs.
+
+  @doc """
+  Lists the node's Virtual Context Tree WORKSPACE mounts, newest first.
+  Delegates to `EvoGit.VCT.workspaces/1`.
+  This runs on the REMOTE node when called via `:erpc.call/5`, returning native
+  `%EvoGit.VCT.Mount{}` structs (`kind: "workspace"`, `path: nil`).
+  Returns `[%EvoGit.VCT.Mount{}]` (empty list when no workspace exists or the
+  VCT is unavailable).
+  """
+  @spec workspaces() :: [EvoGit.VCT.Mount.t()]
+  def workspaces do
+    EvoGit.VCT.workspaces()
+  end
+
+  @doc """
+  Creates or REPLACES a Virtual Context Tree workspace on the node.
+  Delegates to `EvoGit.VCT.create_workspace/3`; `members` is an ordered list of
+  member refs (`%{"point" => point | nil, "path" => path | nil}`) and `opts`
+  carries the optional `:description`.
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+  Returns `{:ok, %EvoGit.VCT.Mount{}}` or `{:error, reason}` (`:invalid_name`,
+  `{:invalid_member, ref}`, `:invalid_members`,
+  `{:member_is_workspace, point}`, a store error, or `:vct_unavailable` when
+  the VCT is not running).
+  """
+  @spec create_workspace(term(), term(), keyword()) ::
+          {:ok, EvoGit.VCT.Mount.t()} | {:error, term()}
+  def create_workspace(name, members, opts) when is_list(opts) do
+    EvoGit.VCT.create_workspace(name, members, opts)
+  end
+
+  @doc """
+  Resolves one workspace and its members on the node, against the CURRENT mount
+  table.
+  Delegates to `EvoGit.VCT.workspace_members/1`, which accepts a workspace
+  point (`vct:///workspaces/<name>`) or a bare workspace name.
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+  Returns `{:ok, %{workspace: mount, members: [mount], missing: [member_ref],
+  nested: [member_ref]}}`, `{:error, :not_found}` (no such workspace, or the
+  VCT is unavailable), `{:error, :not_a_workspace}` for an existing
+  non-workspace mount or `{:error, :invalid_point}` for an unusable argument.
+  """
+  @spec workspace_members(term()) ::
+          {:ok, EvoGit.VCT.workspace_resolution()}
+          | {:error, :not_found | :not_a_workspace | :invalid_point}
+  def workspace_members(point_or_name) do
+    EvoGit.VCT.workspace_members(point_or_name)
+  end
+
+  @doc """
+  Lists the WORKSPACE mounts of the node that cover `project`, newest first.
+  Delegates to `EvoGit.VCT.workspaces_for/1`, which accepts a project point, a
+  bare project name or an absolute OS path.
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+  Returns `[%EvoGit.VCT.Mount{}]` (`[]` when no workspace covers the project, or
+  when the VCT is unavailable).
+  """
+  @spec workspaces_for(term()) :: [EvoGit.VCT.Mount.t()]
+  def workspaces_for(project) do
+    EvoGit.VCT.workspaces_for(project)
+  end
+
   # ── Custom agents (delegated to EvoGit.CustomAgents) ───────────────
   #
   # The custom-agent config lives in `agents.toml` — a per-node file sitting

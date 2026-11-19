@@ -1455,6 +1455,103 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
+  Lists the Virtual Context Tree WORKSPACE mounts of the given node, newest
+  first.
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.workspaces/0`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`.
+  Returns `[%EvoGit.VCT.Mount{}]`, degrading to `[]` when the remote call fails
+  or returns something else.
+  """
+  @spec workspaces(node()) :: [EvoGit.VCT.Mount.t()]
+  def workspaces(node) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.workspaces()
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :workspaces, []) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
+  Creates or replaces a Virtual Context Tree workspace on the given node.
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.create_workspace/3`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`.
+  Returns `{:ok, %EvoGit.VCT.Mount{}}` or `{:error, reason}`; a failed RPC
+  returns `{:error, {kind, reason}}` so the caller can report it.
+  """
+  @spec create_workspace(node(), term(), term(), keyword()) ::
+          {:ok, EvoGit.VCT.Mount.t()} | {:error, term()}
+  def create_workspace(node, name, members, opts) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.create_workspace(name, members, opts)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :create_workspace, [
+             name,
+             members,
+             opts
+           ]) do
+        {:ok, {:ok, mount}} -> {:ok, mount}
+        {:ok, {:error, reason}} -> {:error, reason}
+        {:error, _reason} = error -> error
+      end
+    end
+  end
+
+  @doc """
+  Resolves one workspace and its members on the given node.
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.workspace_members/1` directly. On a remote
+  node, routes the call through `:erpc` via `call_remote/4`.
+  Returns `{:ok, %{workspace: mount, members: [...], missing: [...], nested:
+  [...]}}`, `{:error, :not_found | :not_a_workspace | :invalid_point}`, or a
+  failed RPC's `{:error, {kind, reason}}`.
+  """
+  @spec workspace_members(node(), term()) ::
+          {:ok, EvoGit.VCT.workspace_resolution()}
+          | {:error, :not_found | :not_a_workspace | :invalid_point}
+          | {:error, term()}
+  def workspace_members(node, point_or_name) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.workspace_members(point_or_name)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :workspace_members, [
+             point_or_name
+           ]) do
+        {:ok, {:ok, resolution}} -> {:ok, resolution}
+        {:ok, {:error, reason}} -> {:error, reason}
+        {:error, _reason} = error -> error
+      end
+    end
+  end
+
+  @doc """
+  Lists the WORKSPACE mounts of the given node that cover `project`, newest
+  first.
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.workspaces_for/1`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`.
+  Returns `[%EvoGit.VCT.Mount{}]`, degrading to `[]` when the remote call fails
+  or returns something else.
+  """
+  @spec workspaces_for(node(), term()) :: [EvoGit.VCT.Mount.t()]
+  def workspaces_for(node, project) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.workspaces_for(project)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :workspaces_for, [project]) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
   Lists custom agents on the given node.
 
   On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_custom_agents/0`
