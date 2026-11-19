@@ -26,7 +26,12 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
 
   def step_provider_body(assigns) do
     ~H"""
-    <form phx-change="wizard_field_changed" phx-submit="noop" class="space-y-4">
+    <form
+      id="wizard-provider-form"
+      phx-change="wizard_field_changed"
+      phx-submit="noop"
+      class="space-y-4"
+    >
       <ProviderWizard.step_provider
         providers={@provider_options}
         selected={@draft["provider"]}
@@ -72,7 +77,12 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
           </p>
           <pre class="mt-2 whitespace-pre-wrap rounded-lg border border-base-300 bg-base-200/50 p-3 text-xs text-base-content/80">{@login_instructions}</pre>
         <% else %>
-          <form phx-change="wizard_api_key" phx-submit="noop" class="space-y-2">
+          <form
+            id="wizard-auth-key-form"
+            phx-change="wizard_api_key"
+            phx-submit="noop"
+            class="space-y-2"
+          >
             <label class="text-xs font-medium" for="wizard-api-key">
               {gettext("API key")}
             </label>
@@ -152,7 +162,12 @@ defmodule EvoDashWeb.WelcomeLive.Steps do
 
   def step_reasoning_schedule_body(assigns) do
     ~H"""
-    <form phx-change="wizard_reasoning" phx-submit="noop" class="space-y-4">
+    <form
+      id="wizard-reasoning-form"
+      phx-change="wizard_reasoning"
+      phx-submit="noop"
+      class="space-y-4"
+    >
       <ProviderWizard.step_reasoning_schedule
         inventory={@inventory}
         default_effort={@default_effort}
