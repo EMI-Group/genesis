@@ -20,6 +20,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   @assigns_timeout_ms 30_000
   @anthropic_key "sk-ant-welcome-test-123"
   @custom_base_url "https://api.example.test/v1"
+  @custom_key "sk-openai-compatible-test-123"
 
   setup do
     EvoDash.Test.ConfigDir.isolate!("evogit_welcome_test_config")
@@ -124,8 +125,12 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     next(view)
   end
 
+  # The OpenAI-compatible endpoint offers no authentication CHOICE, so its run
+  # has no auth step; the key still has to reach the page through the same
+  # transient `wizard_api_key` event that step's password form raises.
   defp custom_to_model(view) do
     pick(view, Presentation.custom_value())
+    render_change(view, "wizard_api_key", %{"api_key" => @custom_key})
     render_change(view, "wizard_field_changed", %{"base_url" => @custom_base_url})
     next(view)
   end
@@ -160,10 +165,13 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     end)
   end
 
+  # The page keeps the provider's OWN answer (`{:ok, detail}` / `{:error, reason}`)
+  # and the test step projects it through `Presentation.test_status/1`, so the
+  # awaited value is the RENDERED status — `{:ok, "<model> · <response>"}`.
   defp await_status(view, expected, deadline \\ nil) do
     deadline = deadline || System.monotonic_time(:millisecond) + @async_wait_budget_ms
 
-    if assigns(view).llm_test_status != expected do
+    if Presentation.test_status(assigns(view).llm_test_status) != expected do
       assert System.monotonic_time(:millisecond) < deadline,
              "connection result did not reach the LiveView"
 
@@ -309,7 +317,11 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       html = render(view)
       assert html =~ "Step 3 of 6"
-      assert has_element?(view, ~s([phx-value-model="#{model_string(:anthropic)}"][aria-current="true"]))
+
+      assert has_element?(
+               view,
+               ~s([phx-value-model="#{model_string(:anthropic)}"][aria-current="true"])
+             )
 
       back(view)
 
@@ -455,6 +467,11 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       {:ok, view, _html} = start(conn)
 
       view = pick(view, "zai")
+      # Z.ai publishes two variants, so the model has to be picked INSIDE the
+      # variant that owns it (the model step scopes its rows to the draft's
+      # variant); "Normal API" is the variant of `zai_api_key` and of the model
+      # string the catalog exposes for it.
+      view = click(view, "select_wizard_variant", %{"variant" => "normal"})
       view = choose_model(view, :zai, 0)
       view = next(next(view))
       assert render_click(view, "skip_test") =~ "Provider and models saved."
@@ -485,6 +502,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       entry = account("deepseek")
       assert length(entry["models"]) == 2
+
       assert Enum.map(entry["models"], & &1["model"]) |> Enum.sort() ==
                Enum.sort([model_id(:deepseek, 0), model_id(:deepseek, 1)])
 
@@ -499,27 +517,69 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   # ── reasoning vocabulary ───────────────────────────────────────────────────
   describe "reasoning vocabulary" do
     test "exposes only the canonical ladder plus a separate default select", %{conn: conn} do
-      seed_credential("deepseek_api_key", "sk-deepseek-test")
       {:ok, view, _html} = start(conn)
-      _view = deepseek_to_reasoning(view)
+
+      # The reasoning inventory the step OFFERS comes from the draft for a
+      # free-text custom model name: an unset inventory is displayed as the
+      # full canonical ladder, which is the widest inventory a provider account
+      # can be given.
+      view = custom_to_model(view)
+      change(view, "wizard_custom_model", %{"custom_model" => "my-model-x"})
+      view = next(view)
+
+      assert Reasoning.efforts() == ["none", "minimal", "low", "medium", "high", "xhigh"]
 
       for effort <- Reasoning.efforts() do
         assert has_element?(view, ~s(input[name="reasoning_efforts[]"][value="#{effort}"]))
       end
 
-      assert Reasoning.efforts() == ["none", "minimal", "low", "medium", "high", "xhigh"]
+      refute has_element?(view, ~s(input[name="reasoning_efforts[]"][value="max"]))
       refute has_element?(view, ~s([value="max"]))
 
-      # The default select renders over the model's chosen inventory.
+      # The unrestricted empty inventory is DISPLAYED as the full ladder (all six
+      # checked); the persisted draft stays empty until the user picks a level.
+      assert assigns(view).draft["reasoning_efforts"] == []
+
+      for effort <- Reasoning.efforts() do
+        assert has_element?(
+                 view,
+                 ~s(input[name="reasoning_efforts[]"][value="#{effort}"][checked])
+               )
+      end
+
+      # One click selects exactly one level …
       change(view, "wizard_reasoning", %{
-        "reasoning_efforts" => ["low", "medium", "high"],
+        "reasoning_efforts" => ["medium"],
         "default_reasoning_effort" => "medium"
       })
 
+      assert assigns(view).draft["reasoning_efforts"] == ["medium"]
+
+      for effort <- Reasoning.efforts() do
+        assert has_element?(
+                 view,
+                 ~s(input[name="reasoning_efforts[]"][value="#{effort}"][checked])
+               ) == (effort == "medium")
+      end
+
+      # … and the SEPARATE default select round-trips over that inventory.
       assert has_element?(view, "select#default-reasoning-effort")
       assert has_element?(view, ~s(select#default-reasoning-effort option[value=""]))
-      assert has_element?(view, ~s(select#default-reasoning-effort option[value="medium"][selected]))
+
+      assert has_element?(
+               view,
+               ~s(select#default-reasoning-effort option[value="medium"][selected])
+             )
+
       refute has_element?(view, ~s(select#default-reasoning-effort option[value="max"]))
+
+      change(view, "wizard_reasoning", %{
+        "reasoning_efforts" => [],
+        "default_reasoning_effort" => ""
+      })
+
+      assert assigns(view).draft["default_reasoning_effort"] == ""
+      assert has_element?(view, ~s(select#default-reasoning-effort option[value=""][selected]))
     end
   end
 
@@ -630,12 +690,13 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert render(view) =~ "Testing the connection…"
       seq = assigns(view).llm_test_seq
 
-      # The worker envelope wraps the provider's own answer, so the page's
-      # status is `{:ok, {:ok, detail}}` (the detail itself is never unwrapped
-      # into the rendered copy — see the defect report).
+      # `SafeCall` wraps the provider's own answer, and the page unwraps exactly
+      # that ONE wrapper, so the status carries the provider's detail map and
+      # the step renders it as "<model> · <response>".
       result = {:ok, %{model: model, response: "pong"}}
       send(pid, {:finish, result})
-      await_status(view, {:ok, {:ok, %{model: model, response: "pong"}}})
+      await_status(view, {:ok, "#{model} · pong"})
+      assert assigns(view).llm_test_status == {:ok, %{model: model, response: "pong"}}
       assert assigns(view).llm_test_seq == seq
       assert render(view) =~ "Connection succeeded."
 
@@ -674,8 +735,27 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       refute render(view) =~ "Connection succeeded."
 
       send(pid, {:finish, {:ok, %{model: model_string(:anthropic), response: "pong"}}})
-      await_status(view, {:ok, {:ok, %{model: model_string(:anthropic), response: "pong"}}})
-      assert render(view) =~ "Connection succeeded." 
+      await_status(view, {:ok, "#{model_string(:anthropic)} · pong"})
+      assert render(view) =~ "Connection succeeded."
+    end
+
+    test "a provider-side error never renders as success", %{conn: conn} do
+      {:ok, view, _html} = start(conn)
+      view = next(anthropic_to_reasoning(view))
+
+      render_click(view, "test_connection")
+      assert_receive {:welcome_test_started, pid, _model, _opts}, @runner_start_timeout
+
+      # The provider answered with its OWN `{:error, message}` (the `SafeCall`
+      # envelope around it is an `{:ok, …}`), so the page must render a failure
+      # instead of an empty success line.
+      send(pid, {:finish, {:error, "boom"}})
+      await_status(view, {:error, "boom"})
+
+      html = render(view)
+      assert html =~ "Connection failed."
+      assert html =~ "boom"
+      refute html =~ "Connection succeeded."
     end
   end
 
@@ -778,9 +858,11 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
     test "rejects every mutation on a remote node", %{conn: conn} do
       {:ok, view, _html} = start(conn)
-      socket =
-        :sys.get_state(view.pid, @assigns_timeout_ms)
-        |> Phoenix.Component.assign(:current_node_id, "remote-target")
+
+      # Reuse the LIVE socket and only override the node binding: the events are
+      # answered by the real handlers, and change tracking stays intact.
+      socket = :sys.get_state(view.pid, @assigns_timeout_ms).socket
+      socket = %{socket | assigns: Map.put(socket.assigns, :current_node_id, "remote-target")}
 
       for event <- [
             "select_wizard_provider",
@@ -801,6 +883,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       # Navigation stays available on a remote view.
       for event <- ["wizard_back", "wizard_next", "skip", "get_started", "noop"] do
         assert {:noreply, passed} = EvoDashWeb.WelcomeLive.handle_event(event, %{}, socket)
+
         refute Phoenix.Flash.get(passed.assigns.flash, :error) ==
                  "Use Settings to configure the remote node."
       end
