@@ -39,6 +39,7 @@ defmodule EvoDashWeb.WelcomeLive.ViewModel do
     scoped = Setup.provider_models(assigns.flat_models, provider_id, variant_id)
     wire = Presentation.wire_atom(provider, variant_id)
     primary = draft["default_model"]
+    primary_entry = Presentation.model_entry(scoped, primary)
 
     extra_models =
       draft
@@ -51,7 +52,7 @@ defmodule EvoDashWeb.WelcomeLive.ViewModel do
         %{
           "id" => model,
           "label" => map_field(entry, :model_display_name) || model,
-          "efforts" => map_field(entry, :reasoning_efforts) || [],
+          "efforts" => Wizard.reasoning_choices(map_field(entry, :reasoning_efforts)),
           "default" => model_reasoning_default(draft, model)
         }
       end)
@@ -68,7 +69,7 @@ defmodule EvoDashWeb.WelcomeLive.ViewModel do
       scoped |> Setup.filtered_models(assigns.search_query) |> Presentation.model_rows()
     )
     |> assign(:all_model_rows, Presentation.model_rows(scoped))
-    |> assign(:inventory, Presentation.primary_inventory(draft, provider))
+    |> assign(:inventory, Presentation.primary_inventory(draft, primary_entry))
     |> assign(:default_effort, Presentation.primary_effort(draft))
     |> assign(:presets, Presentation.schedule_presets(provider, variant_id))
     |> assign(:preset_applied, Presentation.preset_applied(draft, assigns.preset_dismissed))

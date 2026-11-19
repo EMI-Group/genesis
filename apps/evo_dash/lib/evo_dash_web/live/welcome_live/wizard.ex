@@ -102,12 +102,22 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
     end
   end
 
-  @doc "The auth/endpoint capabilities of a DRAFT, a catalog entry or an already-shaped capabilities map: `%{auth_choice?, auth_modes, oauth_only?, requires_base_url?}`. A `\"custom\"`/nil/non-map entry answers API-key + a required base URL; pure over the GIVEN data (no catalog lookup, no atom interning)."
+  @doc """
+  The auth/endpoint capabilities of a DRAFT, a catalog entry or an
+  already-shaped capabilities map: `%{auth_choice?, auth_modes, oauth_only?,
+  requires_base_url?}` — always EXACTLY those four keys.
+
+  A DRAFT (a map carrying the string `"provider"` key) always derives its
+  shape from that provider, even when it also carries capability keys; a
+  ready-made capabilities map keeps its own values; anything else is read as a
+  catalog entry. A `\"custom\"`/nil/non-map entry answers API-key + a required
+  base URL; pure over the GIVEN data (no atom interning).
+  """
   def capabilities(input) when is_map(input) do
     # A DRAFT carries a string `"provider"` key; a catalog row does not.
-    if Map.has_key?(input, "provider"),
-      do: capabilities_for(input),
-      else: entry_capabilities(input)
+    if draft?(input),
+      do: draft_capabilities(input),
+      else: ready_capabilities(input)
   end
 
   def capabilities(input), do: entry_capabilities(input)
@@ -128,7 +138,14 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
   @doc "The ordered step list, from a capabilities map OR a draft (a draft follows its provider's capabilities)."
   def steps(input), do: input |> capabilities_for() |> Steps.steps_for()
 
-  @doc "The gate for leaving `step`, delegating `:auth`/`:model`/`:reasoning_schedule` to `EvoDashWeb.LLMSetup.Wizard`; `:test`/`:done`/unknown → `:ok`."
+  @doc """
+  The gate for leaving `step`, delegating `:auth`/`:model`/`:reasoning_schedule`
+  to `EvoDashWeb.LLMSetup.Wizard`; `:test`/`:done`/unknown → `:ok`.
+
+  Total: a `nil`/non-map draft is read as the empty draft and answers a
+  validation ERROR (`:auth` → `{:error, :invalid_auth_mode}`, `:model` →
+  `{:error, :missing_model}`, `:reasoning_schedule` → `:ok`) instead of raising.
+  """
   def validate(step, draft, capabilities \\ nil)
 
   def validate(:provider, draft, capabilities) do
@@ -273,36 +290,81 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
     |> prune_reasoning()
   end
 
-  @doc "`{label, value}` rows for the DONE step — provider (with its variant), model, default reasoning, then the schedule rows; blank values are never emitted."
+  @doc """
+  `{label, value}` rows for the DONE step — provider (with its variant), model,
+  default reasoning, then the schedule rows.
+
+  A row is emitted only when the draft actually CARRIES that value: a blank
+  provider (nothing picked yet) yields no provider row at all, so an empty
+  draft never invents a "Custom endpoint" the user never chose.
+  """
   def summary_rows(draft) do
     draft = ensure_map(draft)
 
-    [
-      # zh_CN: Provider → "提供方"; Model → "模型"; Reasoning → "推理"
-      {gettext("Provider"), provider_label(draft)},
-      {gettext("Model"), model_value(draft)},
-      {gettext("Reasoning"), draft |> default_reasoning() |> Reasoning.label()}
-    ]
-    |> Enum.reject(fn {_label, value} -> blank?(value) end)
-    |> Kernel.++(schedule_rows(draft))
+    provider_row =
+      case clean(Map.get(draft, "provider")) do
+        "" -> []
+        _provider -> [{gettext("Provider"), provider_label(draft)}]
+      end
+
+    identity_rows =
+      [
+        # zh_CN: Model → "模型"; Reasoning → "推理"
+        {gettext("Model"), model_value(draft)},
+        {gettext("Reasoning"), draft |> default_reasoning() |> Reasoning.label()}
+      ]
+      |> Enum.reject(fn {_label, value} -> blank?(value) end)
+
+    provider_row ++ identity_rows ++ schedule_rows(draft)
   end
 
   # ── private ───────────────────────────────────────────────────────────────
 
   defp capabilities_for(input) when is_map(input) do
-    keys = [:auth_choice?, :auth_modes, "auth_choice?", "auth_modes"]
-
-    if Enum.any?(keys, &Map.has_key?(input, &1)) do
-      input
-    else
-      case clean(Map.get(input, "provider")) do
-        "" -> @open_capabilities
-        provider -> entry_capabilities(provider_entry(provider))
-      end
-    end
+    if draft?(input), do: draft_capabilities(input), else: ready_capabilities(input)
   end
 
   defp capabilities_for(_input), do: @open_capabilities
+
+  # A DRAFT is the page's string-keyed state map, so it always carries the
+  # provider key — even when it also carries capability keys.
+  defp draft?(input) when is_map(input), do: Map.has_key?(input, "provider")
+
+  defp draft_capabilities(draft) do
+    case clean(Map.get(draft, "provider")) do
+      "" -> @open_capabilities
+      provider -> entry_capabilities(provider_entry(provider))
+    end
+  end
+
+  # A READY-MADE capabilities map (atom- or string-keyed). It keeps its own
+  # values, and the answer is always the four keys — never the caller's map.
+  @capability_keys [:auth_choice?, :auth_modes, :oauth_only?, :requires_base_url?]
+  defp ready_capabilities(input) do
+    if Enum.any?(@capability_keys, &has_capability_key?(input, &1)) do
+      modes = auth_modes(input)
+
+      %{
+        auth_choice?: entry_value(input, :auth_choice?, "auth_choice?") != false,
+        auth_modes: modes,
+        oauth_only?: ready_oauth_only?(input, modes),
+        requires_base_url?: entry_value(input, :requires_base_url?, "requires_base_url?") == true
+      }
+    else
+      entry_capabilities(input)
+    end
+  end
+
+  defp ready_oauth_only?(input, modes) do
+    case entry_value(input, :oauth_only?, "oauth_only?") do
+      nil -> modes == ["oauth"]
+      value -> value == true
+    end
+  end
+
+  # Static key table: the lookup never interns an atom from caller input.
+  defp has_capability_key?(input, atom_key),
+    do: Map.has_key?(input, atom_key) or Map.has_key?(input, Atom.to_string(atom_key))
 
   defp auth_modes(entry) do
     entry
@@ -324,8 +386,12 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
     end
   end
 
-  # The draft mapped onto `EvoDashWeb.LLMSetup.Wizard`'s vocabulary.
+  # The draft mapped onto `EvoDashWeb.LLMSetup.Wizard`'s vocabulary. Normalized
+  # first, so a `nil`/non-map draft answers a validation ERROR (via the empty
+  # step draft: no provider, no model) instead of raising `BadMapError`.
   defp step_draft(draft) do
+    draft = ensure_map(draft)
+
     %{
       "provider" => Map.get(draft, "provider"),
       "auth_mode" => Map.get(draft, "auth_mode"),

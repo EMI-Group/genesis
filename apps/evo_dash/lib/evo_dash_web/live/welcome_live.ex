@@ -36,7 +36,6 @@ defmodule EvoDashWeb.WelcomeLive do
 
     {:ok,
      assign(socket,
-       file_config: config,
        has_model?: Setup.has_model?(config),
        credentials: EvoGit.Config.credentials(),
        llm_providers: providers,
@@ -606,7 +605,6 @@ defmodule EvoDashWeb.WelcomeLive do
       socket =
         socket
         |> assign(
-          file_config: config,
           has_model?: true,
           credentials: EvoGit.Config.credentials(),
           error: nil,

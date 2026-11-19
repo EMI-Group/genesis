@@ -125,6 +125,7 @@ A row without a usable id is dropped, and "no usable id" means `nil`, a blank/wh
 A label or value that cleans to `nil` or `""` is treated the same way: `step_done/1` drops such a summary row rather than rendering an empty cell.
 `step_reasoning_schedule/1` renders the canonical reasoning chips, the inventory-scoped default select, the applied strip, one button per schedule preset, the holiday-calendar select and the read-only summary rows.
 `step_test/1` renders `:idle`/`:testing`/success/error states with an always-available skip; `step_done/1` drops blank-or-nil summary rows and offers the dashboard link.
+A success answer with no usable detail (`{:ok, nil}`, `{:ok, ""}`, a `%{status: :ok}` result without a detail) still renders the "Connection succeeded" box and only omits its detail line, so a detail-less success never reads like an idle step.
 `wizard-progress` and `wizard-step-enter` are styled by `assets/css/app.css`, which disables the enter animation under `prefers-reduced-motion: reduce`.
 
 ## Settings pane layout

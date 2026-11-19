@@ -170,16 +170,20 @@ defmodule EvoDashWeb.WelcomeLive.Presentation do
 
   @doc """
   The reasoning inventory the reasoning step displays for the draft's primary
-  model: the draft's own (expanded for an unrestricted empty inventory) for the
-  custom name, else the catalog entry's display inventory.
+  model — always the DISPLAYED inventory, so a model that declares none still
+  offers the canonical ladder chips: the draft's own for the custom name, else
+  the catalog model entry's, both through `Wizard.reasoning_choices/1`.
   """
   @spec primary_inventory(term(), term()) :: [String.t()]
   def primary_inventory(draft, entry) do
-    if custom_primary?(draft) do
-      Wizard.reasoning_choices(Map.get(draft, "reasoning_efforts"))
-    else
-      List.wrap(Map.get(entry || %{}, :reasoning_efforts))
-    end
+    inventory =
+      if custom_primary?(draft) do
+        Map.get(draft, "reasoning_efforts")
+      else
+        Map.get(entry || %{}, :reasoning_efforts)
+      end
+
+    Wizard.reasoning_choices(inventory)
   end
 
   @doc "The primary model's default reasoning effort (`\"\"` = provider default)."

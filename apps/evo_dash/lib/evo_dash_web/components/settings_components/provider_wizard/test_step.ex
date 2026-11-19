@@ -72,11 +72,14 @@ defmodule EvoDashWeb.SettingsComponents.ProviderWizard.TestStep do
     """
   end
 
-  defp test_ok_detail({:ok, detail}), do: clean_string(detail)
+  # A success with no usable detail still renders the success box — a blank
+  # detail only drops the detail SPAN, so `{:ok, nil}` / `{:ok, ""}` read like a
+  # plain `:ok` instead of hiding the whole box.
+  defp test_ok_detail({:ok, detail}), do: clean_string(detail) || ""
   defp test_ok_detail(:ok), do: ""
 
   defp test_ok_detail(%{status: status} = result) when status in [:ok, "ok"],
-    do: clean_string(Map.get(result, :detail) || Map.get(result, "detail"))
+    do: clean_string(Map.get(result, :detail) || Map.get(result, "detail")) || ""
 
   defp test_ok_detail(_state), do: nil
 
