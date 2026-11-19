@@ -72,7 +72,7 @@ Every provider account is created through the add-account wizard or the "Add mod
 `field/2`, `rows/1`, `string_list/1` and `provider_atom/1` provide shared key/row/inventory/catalog handling.
 ## ModelProfileHelpers and Detached Events
 `ModelProfileHelpers` exposes canonical delegates for `provider_profiles`, `provider_profile_draft`, `new_provider_profile_draft`, `parse_provider_profile_params`, `put_in_provider_profiles` and `set_default_provider_profile`.
-Compatibility `add_model_profile`/`update_model_profile`/`put_in_model_profiles`/`move_model_profile` write canonical providers; nil/empty Add is a no-op and Move delegates to the same no-op-preserving `ProviderProfiles.move/3`.
+Compatibility `update_model_profile`/`put_in_model_profiles`/`move_model_profile` write canonical providers, and Move delegates to the same no-op-preserving `ProviderProfiles.move/3`.
 `generate_profile_id/1,2`, `profile_id/1` and `id_collision?/3` support atom/string ids and collision-safe slugs/`profile-N` names.
 `parse_model_profile_params/2` remains the LEGACY atom-keyed flat parser, not canonical Save.
 `ModelProfileEvents` functions take socket then params and return LiveView tuples, never sockets to double-wrap.
