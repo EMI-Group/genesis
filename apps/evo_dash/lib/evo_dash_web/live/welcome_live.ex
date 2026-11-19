@@ -4,8 +4,9 @@ defmodule EvoDashWeb.WelcomeLive do
 
   One decision per step (provider → authentication → model → reasoning &
   schedule → test → done), rendered through the shared pure step components in
-  `EvoDashWeb.SettingsComponents.ProviderWizard` and driven by the pure draft
-  model `EvoDashWeb.WelcomeLive.Wizard`. View-model derivation lives in
+  `EvoDashWeb.SettingsComponents.ProviderWizard`, whose per-step bodies live in
+  `EvoDashWeb.WelcomeLive.Steps`, and driven by the pure draft model
+  `EvoDashWeb.WelcomeLive.Wizard`. View-model derivation lives in
   `EvoDashWeb.WelcomeLive.Presentation`, so this module only owns the socket,
   the event vocabulary and the one save path.
 
@@ -20,6 +21,7 @@ defmodule EvoDashWeb.WelcomeLive do
   alias EvoDashWeb.SettingsLive.ConfigIO
   alias EvoDashWeb.WelcomeLive.Presentation
   alias EvoDashWeb.WelcomeLive.Setup
+  alias EvoDashWeb.WelcomeLive.Steps
   alias EvoDashWeb.WelcomeLive.Wizard
   alias EvoGit.Config.LLMCatalog, as: Catalog
 
@@ -123,7 +125,8 @@ defmodule EvoDashWeb.WelcomeLive do
     end
   end
 
-  def handle_event("select_wizard_variant", %{"variant" => value}, socket) when is_binary(value) do
+  def handle_event("select_wizard_variant", %{"variant" => value}, socket)
+      when is_binary(value) do
     draft = socket.assigns.draft
     provider = Presentation.provider_entry(socket.assigns.llm_providers, draft["provider"])
 
@@ -167,12 +170,15 @@ defmodule EvoDashWeb.WelcomeLive do
         do: draft,
         else: Wizard.toggle_model(draft, model)
 
-    {:noreply, socket |> assign(draft: Wizard.put(draft, "default_model", model)) |> invalidate_test()}
+    {:noreply,
+     socket |> assign(draft: Wizard.put(draft, "default_model", model)) |> invalidate_test()}
   end
 
   def handle_event("toggle_wizard_model", %{"model" => model}, socket) when is_binary(model) do
     {:noreply,
-     socket |> assign(draft: Wizard.toggle_model(socket.assigns.draft, model)) |> invalidate_test()}
+     socket
+     |> assign(draft: Wizard.toggle_model(socket.assigns.draft, model))
+     |> invalidate_test()}
   end
 
   def handle_event("wizard_custom_model", params, socket) do
@@ -187,14 +193,19 @@ defmodule EvoDashWeb.WelcomeLive do
   def handle_event("wizard_api_key", params, socket) do
     key = params |> Map.get("api_key", "") |> to_string()
     # Transient draft state only — never persisted to browser state or a push payload.
-    {:noreply, socket |> assign(draft: Wizard.put(socket.assigns.draft, "api_key", key)) |> invalidate_test()}
+    {:noreply,
+     socket
+     |> assign(draft: Wizard.put(socket.assigns.draft, "api_key", key))
+     |> invalidate_test()}
   end
 
   def handle_event("wizard_field_changed", params, socket) do
     case Map.get(params, "base_url") do
       url when is_binary(url) ->
         {:noreply,
-         socket |> assign(draft: Wizard.put(socket.assigns.draft, "base_url", url)) |> invalidate_test()}
+         socket
+         |> assign(draft: Wizard.put(socket.assigns.draft, "base_url", url))
+         |> invalidate_test()}
 
       _other ->
         {:noreply, socket}
@@ -217,7 +228,11 @@ defmodule EvoDashWeb.WelcomeLive do
           |> Wizard.put("default_reasoning_effort", effort)
 
         true ->
-          Wizard.put(draft, "model_reasoning", merge_model_reasoning(draft, extra, inventory, effort))
+          Wizard.put(
+            draft,
+            "model_reasoning",
+            merge_model_reasoning(draft, extra, inventory, effort)
+          )
       end
 
     {:noreply, socket |> assign(draft: draft) |> invalidate_test()}
@@ -242,10 +257,10 @@ defmodule EvoDashWeb.WelcomeLive do
   def handle_event("apply_schedule_preset", params, socket) do
     preset_id = params |> Map.get("preset_id", "") |> to_string()
 
-    case Wizard.apply_preset(socket.assigns.draft, preset_id) do
-      {draft, _snapshot} -> {:noreply, assign(socket, draft: draft, preset_dismissed: false)}
-      draft -> {:noreply, assign(socket, draft: draft, preset_dismissed: false)}
-    end
+    # `Wizard.apply_preset/2` always answers `{draft, snapshot}` and leaves the
+    # draft untouched for an unknown/blank preset id, so one clause suffices.
+    {draft, _snapshot} = Wizard.apply_preset(socket.assigns.draft, preset_id)
+    {:noreply, assign(socket, draft: draft, preset_dismissed: false)}
   end
 
   def handle_event("undo_schedule_preset", _params, socket) do
@@ -283,7 +298,9 @@ defmodule EvoDashWeb.WelcomeLive do
          :ok <- save_key(entry, key, draft["auth_mode"]) do
       seq = socket.assigns.llm_test_seq + 1
       reasoning = draft["default_reasoning_effort"]
-      runner = Application.get_env(:evo_dash, :welcome_llm_test_runner, &EvoGit.SystemCheck.llm_test/2)
+
+      runner =
+        Application.get_env(:evo_dash, :welcome_llm_test_runner, &EvoGit.SystemCheck.llm_test/2)
 
       case EvoDash.SafeCall.start(self(), {:welcome_llm_test_result, seq}, fn ->
              {model, opts} = Setup.test_request(profile, entry, reasoning)
@@ -300,7 +317,10 @@ defmodule EvoDashWeb.WelcomeLive do
 
         {:error, reason} ->
           {:noreply,
-           assign(socket, llm_test_seq: seq, llm_test_status: {:error, Presentation.display_error(reason)})}
+           assign(socket,
+             llm_test_seq: seq,
+             llm_test_status: {:error, Presentation.display_error(reason)}
+           )}
       end
     else
       {:error, reason} ->
@@ -328,7 +348,8 @@ defmodule EvoDashWeb.WelcomeLive do
           {:error, reason} -> {:error, Presentation.display_error(reason)}
         end
 
-      {:noreply, assign(socket, llm_test_status: status, credentials: EvoGit.Config.credentials())}
+      {:noreply,
+       assign(socket, llm_test_status: status, credentials: EvoGit.Config.credentials())}
     else
       {:noreply, socket}
     end
@@ -449,162 +470,45 @@ defmodule EvoDashWeb.WelcomeLive do
             >
               <%= case @step do %>
                 <% :provider -> %>
-                  <form phx-change="wizard_field_changed" phx-submit="noop" class="space-y-4">
-                    <ProviderWizard.step_provider
-                      providers={@provider_options}
-                      selected={@draft["provider"]}
-                      provider_event="select_wizard_provider"
-                      custom_value={Presentation.custom_value()}
-                      base_url={@draft["base_url"]}
-                      base_url_name="base_url"
-                    />
-                    <div :if={@variant_options != []} class="flex flex-wrap gap-2">
-                      <button
-                        :for={variant <- @variant_options}
-                        type="button"
-                        phx-click="select_wizard_variant"
-                        phx-value-variant={variant["id"]}
-                        class={"btn btn-sm " <> if(variant["selected"], do: "btn-primary", else: "btn-outline")}
-                      >
-                        {variant["label"]}
-                      </button>
-                    </div>
-                  </form>
-                <% :auth -> %>
-                  <ProviderWizard.step_auth
-                    selected={@draft["auth_mode"]}
-                    auth_event="select_wizard_auth"
-                    modes={@auth_modes}
-                    oauth_only={@oauth_only?}
-                  >
-                    <:auth_detail>
-                      <%= if @draft["auth_mode"] == "oauth" do %>
-                        <p class="text-xs text-base-content/70">
-                          {gettext(
-                            "Log in once with the vendor CLI; Genesis imports the credentials lazily."
-                          )}
-                        </p>
-                        <pre class="mt-2 whitespace-pre-wrap rounded-lg border border-base-300 bg-base-200/50 p-3 text-xs text-base-content/80">{@login_instructions}</pre>
-                      <% else %>
-                        <form phx-change="wizard_api_key" phx-submit="noop" class="space-y-2">
-                          <label class="text-xs font-medium" for="wizard-api-key">
-                            {gettext("API key")}
-                          </label>
-                          <input
-                            id="wizard-api-key"
-                            type="password"
-                            name="api_key"
-                            value={@draft["api_key"]}
-                            autocomplete="off"
-                            class="input input-sm w-full"
-                            placeholder={@key_placeholder}
-                          />
-                          <p :if={@key_present?} class="text-xs text-base-content/60">
-                            {gettext("A key is already stored for this provider.")}
-                          </p>
-                        </form>
-                      <% end %>
-                    </:auth_detail>
-                  </ProviderWizard.step_auth>
-                <% :model -> %>
-                  <div class="space-y-4">
-                    <ProviderWizard.step_model
-                      models={@model_rows}
-                      selected={@draft["default_model"]}
-                      query={@search_query}
-                      model_event="select_wizard_model"
-                      model_search_event="wizard_model_search"
-                      search_name="query"
-                      custom_model_event="wizard_custom_model"
-                      custom_model_name="custom_model"
-                      custom_model={@draft["custom_model"]}
-                      custom_model_value={@draft["custom_model"]}
-                    />
-                    <details :if={@all_model_rows != []} class="rounded-lg border border-base-300 p-3">
-                      <summary class="cursor-pointer text-sm font-medium">
-                        {gettext("Add another model")}
-                      </summary>
-                      <div class="mt-3 flex flex-wrap gap-2">
-                        <label
-                          :for={row <- @all_model_rows}
-                          class="flex items-center gap-2 rounded-lg border border-base-300 px-2 py-1 text-xs"
-                        >
-                          <input
-                            type="checkbox"
-                            phx-click="toggle_wizard_model"
-                            phx-value-model={row["id"]}
-                            checked={row["id"] in List.wrap(@draft["models"])}
-                          />
-                          <span>{row["label"]}</span>
-                        </label>
-                      </div>
-                    </details>
-                  </div>
-                <% :reasoning_schedule -> %>
-                  <form phx-change="wizard_reasoning" phx-submit="noop" class="space-y-4">
-                    <ProviderWizard.step_reasoning_schedule
-                      inventory={@inventory}
-                      default_effort={@default_effort}
-                      presets={@presets}
-                      preset_applied={@preset_applied}
-                      preset_apply_event="apply_schedule_preset"
-                      preset_undo_event="undo_schedule_preset"
-                      preset_dismiss_event="dismiss_schedule_preset"
-                      off_peak_holidays={@holidays}
-                      holiday_options={@holiday_options}
-                      holiday_help={@holiday_help}
-                      schedule_rows={@schedule_rows}
-                      inventory_name={@inventory_name}
-                      default_name={@default_name}
-                    />
-                    <div :if={@extra_models != []} class="space-y-2 border-t border-base-300 pt-3">
-                      <p class="text-xs font-medium">{gettext("Other selected models")}</p>
-                      <div
-                        :for={row <- @extra_models}
-                        class="flex items-center justify-between gap-3 text-sm"
-                      >
-                        <span class="truncate">{row["label"]}</span>
-                        <select
-                          name={"model_reasoning[#{row["id"]}]"}
-                          class="select select-sm w-40"
-                          aria-label={gettext("Default reasoning effort")}
-                        >
-                          <option value="">{gettext("Provider default")}</option>
-                          <option
-                            :for={effort <- row["efforts"]}
-                            value={effort}
-                            selected={effort == row["default"]}
-                          >
-                            {Reasoning.label(effort)}
-                          </option>
-                        </select>
-                      </div>
-                    </div>
-                  </form>
-                <% :test -> %>
-                  <ProviderWizard.step_test
-                    test_state={@llm_test_status}
-                    test_event="test_connection"
-                    skip_event="skip_test"
+                  <Steps.step_provider_body
+                    provider_options={@provider_options}
+                    draft={@draft}
+                    variant_options={@variant_options}
                   />
+                <% :auth -> %>
+                  <Steps.step_auth_body
+                    draft={@draft}
+                    auth_modes={@auth_modes}
+                    oauth_only={@oauth_only?}
+                    login_instructions={@login_instructions}
+                    key_placeholder={@key_placeholder}
+                    key_present={@key_present?}
+                  />
+                <% :model -> %>
+                  <Steps.step_model_body
+                    model_rows={@model_rows}
+                    all_model_rows={@all_model_rows}
+                    draft={@draft}
+                    search_query={@search_query}
+                  />
+                <% :reasoning_schedule -> %>
+                  <Steps.step_reasoning_schedule_body
+                    inventory={@inventory}
+                    default_effort={@default_effort}
+                    presets={@presets}
+                    preset_applied={@preset_applied}
+                    holidays={@holidays}
+                    holiday_options={@holiday_options}
+                    holiday_help={@holiday_help}
+                    schedule_rows={@schedule_rows}
+                    inventory_name={@inventory_name}
+                    default_name={@default_name}
+                    extra_models={@extra_models}
+                  />
+                <% :test -> %>
+                  <Steps.step_test_body llm_test_status={@llm_test_status} />
                 <% :done -> %>
-                  <ProviderWizard.step_done
-                    summary={@summary}
-                    dashboard_path={~p"/welcome/complete"}
-                  >
-                    <:secondary>
-                      <button
-                        type="button"
-                        phx-click="add_another_provider"
-                        class="btn btn-outline btn-sm"
-                      >
-                        {gettext("Add another provider")}
-                      </button>
-                      <a href={~p"/settings"} class="btn btn-ghost btn-sm">
-                        {gettext("Open Settings")}
-                      </a>
-                    </:secondary>
-                  </ProviderWizard.step_done>
+                  <Steps.step_done_body summary={@summary} />
               <% end %>
             </ProviderWizard.wizard_shell>
         <% end %>
@@ -652,7 +556,10 @@ defmodule EvoDashWeb.WelcomeLive do
     |> assign(:auth_modes, Map.get(capabilities, :auth_modes, ["api_key"]))
     |> assign(:oauth_only?, oauth_only?(wire))
     |> assign(:login_instructions, Presentation.login_instructions(wire))
-    |> assign(:model_rows, scoped |> Setup.filtered_models(assigns.search_query) |> Presentation.model_rows())
+    |> assign(
+      :model_rows,
+      scoped |> Setup.filtered_models(assigns.search_query) |> Presentation.model_rows()
+    )
     |> assign(:all_model_rows, Presentation.model_rows(scoped))
     |> assign(:inventory, Presentation.primary_inventory(draft, provider))
     |> assign(:default_effort, Presentation.primary_effort(draft))
