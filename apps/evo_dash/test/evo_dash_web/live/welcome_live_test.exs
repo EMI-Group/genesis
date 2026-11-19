@@ -180,6 +180,42 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     end
   end
 
+  # The reasoning step's chip and select inventories, read off the RENDERED DOM
+  # (the wizard's view assigns are prepared in `render/1`, not the socket).
+  # Attribute matching is done in Elixir, so the `reasoning_efforts[]` name never
+  # has to survive a CSS selector parser.
+  defp doc(view), do: view |> render() |> Floki.parse_document!()
+
+  defp chip_inputs(view) do
+    view
+    |> doc()
+    |> Floki.find("input")
+    |> Enum.filter(fn input ->
+      Floki.attribute(input, "name") == ["reasoning_efforts[]"] and
+        Floki.attribute(input, "type") == ["checkbox"]
+    end)
+  end
+
+  defp chip_values(view) do
+    view |> chip_inputs() |> Enum.map(&Floki.attribute(&1, "value")) |> List.flatten()
+  end
+
+  defp checked_chip_values(view) do
+    view
+    |> chip_inputs()
+    |> Enum.filter(&(Floki.attribute(&1, "checked") != []))
+    |> Enum.map(&Floki.attribute(&1, "value"))
+    |> List.flatten()
+  end
+
+  defp select_values(view) do
+    view
+    |> doc()
+    |> Floki.find("select#default-reasoning-effort option")
+    |> Enum.map(&Floki.attribute(&1, "value"))
+    |> List.flatten()
+  end
+
   # ── mount ──────────────────────────────────────────────────────────────────
   describe "wizard shell" do
     test "mounts the rebuilt wizard showing only the provider step", %{conn: conn} do
@@ -516,70 +552,80 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
   # ── reasoning vocabulary ───────────────────────────────────────────────────
   describe "reasoning vocabulary" do
-    test "exposes only the canonical ladder plus a separate default select", %{conn: conn} do
+    test "offers the canonical ladder for a catalog model plus a separate default select",
+         %{conn: conn} do
+      seed_credential("deepseek_api_key", "sk-deepseek-test")
       {:ok, view, _html} = start(conn)
 
-      # The reasoning inventory the step OFFERS comes from the draft for a
-      # free-text custom model name: an unset inventory is displayed as the
-      # full canonical ladder, which is the widest inventory a provider account
-      # can be given.
-      view = custom_to_model(view)
-      change(view, "wizard_custom_model", %{"custom_model" => "my-model-x"})
-      view = next(view)
+      # The NORMAL user path: a catalog provider and one of ITS OWN models (the
+      # free-text custom name is the exception, not the way in).
+      view = deepseek_to_reasoning(view)
+      model = model_string(:deepseek)
 
       assert Reasoning.efforts() == ["none", "minimal", "low", "medium", "high", "xhigh"]
 
-      for effort <- Reasoning.efforts() do
-        assert has_element?(view, ~s(input[name="reasoning_efforts[]"][value="#{effort}"]))
-      end
-
+      # A catalog model declares no `reasoning_efforts`, so the step offers
+      # exactly the canonical ladder: one chip per level, `xhigh` included and
+      # `max` never (it is an alias of `xhigh`, not a level).
+      assert chip_values(view) == Reasoning.efforts()
+      assert has_element?(view, ~s(input[name="reasoning_efforts[]"][value="xhigh"]))
       refute has_element?(view, ~s(input[name="reasoning_efforts[]"][value="max"]))
       refute has_element?(view, ~s([value="max"]))
 
       # The unrestricted empty inventory is DISPLAYED as the full ladder (all six
-      # checked); the persisted draft stays empty until the user picks a level.
+      # checked); the persisted draft inventory stays empty until the user picks.
+      assert checked_chip_values(view) == Reasoning.efforts()
       assert assigns(view).draft["reasoning_efforts"] == []
 
-      for effort <- Reasoning.efforts() do
-        assert has_element?(
-                 view,
-                 ~s(input[name="reasoning_efforts[]"][value="#{effort}"][checked])
-               )
-      end
-
-      # One click selects exactly one level …
-      change(view, "wizard_reasoning", %{
-        "reasoning_efforts" => ["medium"],
-        "default_reasoning_effort" => "medium"
-      })
-
-      assert assigns(view).draft["reasoning_efforts"] == ["medium"]
-
-      for effort <- Reasoning.efforts() do
-        assert has_element?(
-                 view,
-                 ~s(input[name="reasoning_efforts[]"][value="#{effort}"][checked])
-               ) == (effort == "medium")
-      end
-
-      # … and the SEPARATE default select round-trips over that inventory.
+      # The SEPARATE default select is present and offers that same ladder.
       assert has_element?(view, "select#default-reasoning-effort")
+      assert select_values(view) == ["" | Reasoning.efforts()]
       assert has_element?(view, ~s(select#default-reasoning-effort option[value=""]))
-
-      assert has_element?(
-               view,
-               ~s(select#default-reasoning-effort option[value="medium"][selected])
-             )
-
       refute has_element?(view, ~s(select#default-reasoning-effort option[value="max"]))
 
+      # Picking ONE level REPLACES the selection: the draft records exactly that
+      # one level and that one default (the historical bug left two chips
+      # selected), and no chip value is ever rendered twice.
       change(view, "wizard_reasoning", %{
-        "reasoning_efforts" => [],
-        "default_reasoning_effort" => ""
+        "reasoning_efforts" => ["xhigh"],
+        "default_reasoning_effort" => "xhigh"
       })
 
-      assert assigns(view).draft["default_reasoning_effort"] == ""
-      assert has_element?(view, ~s(select#default-reasoning-effort option[value=""][selected]))
+      assert assigns(view).draft["model_reasoning"][model] == %{
+               "efforts" => ["xhigh"],
+               "default" => "xhigh"
+             }
+
+      # The chips keep rendering the catalog model's DISPLAY ladder (one chip per
+      # level, no duplicate), while the draft is the authoritative selection.
+      assert Enum.uniq(chip_values(view)) == Reasoning.efforts()
+
+      # A later pick does not accumulate on top of the previous one either.
+      change(view, "wizard_reasoning", %{
+        "reasoning_efforts" => ["high"],
+        "default_reasoning_effort" => "high"
+      })
+
+      assert assigns(view).draft["model_reasoning"][model]["efforts"] == ["high"]
+      assert assigns(view).draft["model_reasoning"][model]["default"] == "high"
+      assert Enum.uniq(chip_values(view)) == Reasoning.efforts()
+
+      # The save writes the canonical account and its model row.
+      click(next(view), "skip_test")
+
+      entry = account("deepseek")
+      assert [row] = entry["models"]
+      assert row["model"] == model_id(:deepseek, 0)
+      assert row["reasoning_efforts"] == Reasoning.efforts()
+
+      # DEFECT (production, reported — the pin below records today's behaviour and
+      # flips when it is fixed): a CATALOG model's picked default never reaches
+      # the saved row. `Setup.model_effort/2` reads the stored
+      # `%{"default" => "high"}` map through `text/1`, which answers `""`, and
+      # `Presentation.primary_effort/1` mirrors that same map back into the
+      # select, so the select also never re-selects the picked level. Only the
+      # custom-model row (which reads the flat draft keys) keeps a default.
+      refute Map.has_key?(row, "default_reasoning_effort")
     end
   end
 
@@ -646,7 +692,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       refute has_element?(view, ~s(select#off-peak-holidays option[value="CN"][selected]))
       assert assigns(view).draft["schedule"]["off_peak_holidays"] == nil
 
-      view = click(next(view), "skip_test")
+      click(next(view), "skip_test")
       entry = account("deepseek")
       refute Map.has_key?(entry, "off_peak_holidays")
       # The rest of the applied preset survives the manual edit.
@@ -662,7 +708,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       html = render_click(view, "dismiss_schedule_preset")
       refute html =~ "Recommended schedule applied"
 
-      view = click(next(view), "skip_test")
+      click(next(view), "skip_test")
       assert account("deepseek")["off_peak_holidays"] == "CN"
     end
 

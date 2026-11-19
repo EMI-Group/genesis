@@ -141,9 +141,16 @@ defmodule EvoDashWeb.WelcomeLive.WizardTest do
       assert capabilities.oauth_only? == false
     end
 
-    test "an already-shaped capabilities map is passed through" do
-      # A map carrying the capability keys but NOT a draft's `"provider"` key is
-      # read as an entry and normalized into the full four-key shape.
+    test "a ready-made partial capabilities map is filled to the four keys" do
+      # A map carrying capability keys but NOT a draft's `"provider"` key is a
+      # READY-MADE entry: it is filled to exactly the four keys, never echoed.
+      assert Wizard.capabilities(%{auth_modes: ["oauth"]}) == %{
+               auth_choice?: true,
+               auth_modes: ["oauth"],
+               oauth_only?: true,
+               requires_base_url?: false
+             }
+
       assert Wizard.capabilities(%{auth_choice?: false, auth_modes: ["oauth"], oauth_only?: true}) ==
                %{
                  auth_choice?: false,
@@ -151,20 +158,32 @@ defmodule EvoDashWeb.WelcomeLive.WizardTest do
                  oauth_only?: true,
                  requires_base_url?: false
                }
+    end
 
-      # A DRAFT (it carries the string `"provider"` key) resolves from its
-      # provider instead, so a provider change is always reflected.
-      assert Wizard.capabilities(draft("anthropic")) == %{
+    test "a DRAFT carrying capability keys still answers exactly the four keys" do
+      # A DRAFT is identified by its string `"provider"` key, so it resolves from
+      # that provider even when it also carries capability keys of its own; the
+      # answer is the four-key shape, never a mixed draft/capability map.
+      shaped =
+        draft("anthropic")
+        |> Map.put(:auth_modes, ["oauth"])
+        |> Map.put(:oauth_only?, true)
+        |> Map.put("api_key", "sk-transient")
+
+      capabilities = Wizard.capabilities(shaped)
+
+      assert capabilities == %{
                auth_choice?: true,
                auth_modes: ["api_key", "oauth"],
                oauth_only?: false,
                requires_base_url?: false
              }
 
-      # Once the draft itself carries the capability keys they win outright: the
-      # page reads them off the draft and the provider is never re-resolved.
-      shaped = draft("anthropic") |> Map.put(:auth_modes, ["oauth"])
-      assert Wizard.capabilities(shaped) == shaped
+      assert Map.keys(capabilities) |> Enum.sort() ==
+               [:auth_choice?, :auth_modes, :oauth_only?, :requires_base_url?]
+
+      refute Map.has_key?(capabilities, "provider")
+      refute Map.has_key?(capabilities, "api_key")
     end
 
     test "is total over unusable input" do
@@ -289,17 +308,36 @@ defmodule EvoDashWeb.WelcomeLive.WizardTest do
       end
     end
 
-    test "is total over nil for the steps that do not read the draft's provider" do
-      # `:provider` normalizes its input; the remaining steps never look at it.
-      assert Wizard.validate(:provider, nil) == {:error, :missing_provider}
-      assert Wizard.validate(:test, nil) == :ok
-      assert Wizard.validate(:done, 42) == :ok
-      assert Wizard.validate(:unknown, :junk) == :ok
-      assert Wizard.valid?(:test, nil) == true
+    test "is total over every step and unusable draft" do
+      # `validate/2,3` never raises: a `nil`/non-map draft is read as the empty
+      # draft, so every step answers a validation VALUE (the empty draft has no
+      # provider, no auth mode and no model).
+      expected = %{
+        provider: {:error, :missing_provider},
+        auth: {:error, :invalid_auth_mode},
+        model: {:error, :missing_model},
+        reasoning_schedule: :ok,
+        test: :ok,
+        done: :ok
+      }
 
-      # NOTE (reported, not fixed): `:auth`/`:model`/`:reasoning_schedule` map the
-      # draft through `Wizard.step_draft/1` and therefore raise `BadMapError` for
-      # a non-map draft — `nil` included.
+      for step <- [:provider, :auth, :model, :reasoning_schedule, :test, :done],
+          draft <- [nil, :junk, "string", [], %{}] do
+        assert Wizard.validate(step, draft) == Map.fetch!(expected, step)
+        assert Wizard.valid?(step, draft) == (Map.fetch!(expected, step) == :ok)
+      end
+
+      # An unknown step never blocks, whatever the draft.
+      for draft <- [nil, :junk, "string", [], %{}] do
+        assert Wizard.validate(:unknown, draft) == :ok
+        assert Wizard.valid?(:unknown, draft) == true
+      end
+
+      # The capabilities-aware arity behaves the same way.
+      assert Wizard.validate(:auth, nil, Wizard.capabilities(nil)) ==
+               {:error, :invalid_auth_mode}
+
+      assert Wizard.validate(:done, :junk, Wizard.capabilities(:junk)) == :ok
     end
   end
 
@@ -562,9 +600,16 @@ defmodule EvoDashWeb.WelcomeLive.WizardTest do
                "Off-peak public holidays"
              ]
 
-      # Blank values are never emitted: an empty draft keeps only the provider row
-      # (which falls back to the custom-endpoint display name).
-      assert Wizard.summary_rows(Wizard.new()) == [{"Provider", "Custom endpoint"}]
+      # A row is emitted only when the draft carries that value: an empty draft
+      # invents no "Custom endpoint" the user never chose.
+      assert Wizard.summary_rows(Wizard.new()) == []
+
+      # A provider with no model picked yet keeps the Provider row and nothing
+      # else — no blank Model/Reasoning row is fabricated.
+      picked = Wizard.summary_rows(draft("deepseek"))
+      assert picked == [{"Provider", "DeepSeek"}]
+      refute "Model" in Enum.map(picked, &elem(&1, 0))
+      refute "Reasoning" in Enum.map(picked, &elem(&1, 0))
     end
 
     test "holiday_value/1 reads the applied calendar" do
