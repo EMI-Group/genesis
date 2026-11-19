@@ -38,6 +38,7 @@ It is pure and total — no I/O, process, clock or catalog lookup — and treats
 Its success tuple is `{:ok, config, profile, default_entry, trimmed_api_key}` and performs no credential or configuration writes.
 Profiles contain `id`, `name`, resolved `provider`, `auth_mode`, `default_model`, optional `base_url`, and nested model rows with bare catalog model ids.
 Each row retains its full `reasoning_efforts` inventory independently of `default_reasoning_effort`, and a blank choice adds no default override.
+A catalog model's picked default and a custom model's flat default reach that row the same way: `Setup` reads every `model_reasoning` entry through `Wizard.model_default_effort/1` (never through a string-only cast), so the persisted `default_reasoning_effort` is one the picker offered and is omitted when the user left "Provider default".
 A nonblank reasoning default must be a standard choice and belong to any nonempty advertised inventory, matching the core's unrestricted-empty-inventory convention.
 `prepare/3` appends a uniquely named provider profile, sets `llm.default_provider_profile`, and preserves unrelated raw settings, existing provider profiles and legacy `llm.models` verbatim.
 Validation failures return schema paths rather than inspected validation records, because those records can contain secret raw configuration values.
