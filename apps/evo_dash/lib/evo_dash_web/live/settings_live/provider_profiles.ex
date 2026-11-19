@@ -7,6 +7,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
   Drafts are detached from file_config until Save.
   """
   alias EvoDash.SettingsUtils
+  alias EvoDashWeb.LLMSetup.Identity
   alias EvoDashWeb.SettingsLive.ModelProfileHelpers, as: Helpers
   alias EvoGit.Config.{LLMCatalog, Schema}
 
@@ -101,20 +102,15 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
         else: nonblank(params["id"])
 
     if editing_id == :new do
-      provider = provider_atom(params["provider"])
-      entry = Enum.find(LLMCatalog.providers(), &(provider in &1.provider_atoms))
-      base = if provider, do: slug(Atom.to_string(provider)), else: ""
+      entry = identity_entry(params["provider"])
 
       id =
         if is_nil(id) or (not is_nil(generated_id) and id == generated_id),
-          do: Helpers.generate_profile_id(profiles, base),
+          do: derived_id(profiles, entry, params["provider"]),
           else: id
 
-      names = Enum.map(profiles, &%{"id" => field(&1, "name")})
-      name = nonblank(params["name"])
-
       name =
-        name || Helpers.generate_profile_id(names, if(entry, do: entry.display_name, else: id))
+        nonblank(params["name"]) || derived_name(profiles, entry, params["provider"], id)
 
       params |> Map.put("profile_id_new", id) |> Map.put("name", name)
     else
@@ -229,7 +225,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
       profile =
         profile
         |> Map.drop(
-          ~w(peak_concurrency peak_hours timezone off_peak_days model reasoning_effort default_model_name)
+          ~w(peak_concurrency peak_hours timezone off_peak_days off_peak_holidays model reasoning_effort default_model_name)
         )
         |> Map.merge(stringify(peak))
         |> Map.put("name", nonblank(params["name"]) || id)
@@ -573,6 +569,7 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
   defp parse_peak(params) do
     case Helpers.parse_peak_fields(params) do
       {:error, "peak_concurrency_invalid" = reason} -> field_error("peak_concurrency", reason)
+      {:error, "off_peak_holidays_invalid" = reason} -> field_error("off_peak_holidays", reason)
       {:error, reason} -> field_error("peak_hours", reason)
       result -> result
     end
@@ -591,6 +588,53 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfiles do
 
   defp slug(value),
     do: value |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-") |> String.trim("-")
+
+  # Identity is derived from the PROVIDER, never from a model id. The catalog
+  # ENTRY's own id wins over the shared runtime provider atom
+  # (`:openai_compatible` and `:openai` both advertise `provider_atoms: [:openai]`),
+  # so the OpenAI-compatible account is named/slugged from its own entry.
+  defp identity_entry(provider) do
+    provider = text(provider)
+
+    Enum.find(LLMCatalog.providers(), &(to_string(&1.id) == provider)) ||
+      case provider_atom(provider) do
+        nil -> nil
+        atom -> Enum.find(LLMCatalog.providers(), &(atom in &1.provider_atoms))
+      end
+  end
+
+  # The value `LLMSetup.Identity` derives from: the catalog entry id when one
+  # matched, else the raw non-blank provider string (custom endpoints), else
+  # nil (blank provider keeps the `profile-N` placeholder scheme).
+  defp identity_source(nil, provider) do
+    case text(provider) do
+      "" -> nil
+      provider -> provider
+    end
+  end
+
+  defp identity_source(entry, _provider), do: entry.id
+
+  defp derived_id(profiles, entry, provider) do
+    case identity_source(entry, provider) do
+      nil -> Helpers.generate_profile_id(profiles)
+      source -> Identity.unique_id(Identity.provider_slug(source), Identity.account_ids(profiles))
+    end
+  end
+
+  defp derived_name(profiles, entry, provider, id) do
+    case identity_source(entry, provider) do
+      nil ->
+        names = Enum.map(profiles, &%{"id" => field(&1, "name")})
+        Helpers.generate_profile_id(names, id)
+
+      source ->
+        Identity.unique_name(
+          Identity.provider_display_name(source),
+          Identity.account_names(profiles)
+        )
+    end
+  end
 
   @doc "Catalog whitelist lookup; never creates atoms from editor input."
   def provider_atom(provider) do
