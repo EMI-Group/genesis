@@ -8,6 +8,8 @@ A conversation may have no project. System questions and global task reads work 
 
 Project switching is locked while a reply is running. At an input boundary, the next message updates the session's authoritative project metadata. The selected project supplies omitted paths for project-scoped task operations. An explicit different path remains the actual target shown for approval. Selecting a project does not mean the Assistant has read its files or started development.
 
+The Assistant looks a project up before it acts on it: when the user names a project, it looks that name up in the VCT by name and then by path, and it never invents an absolute path. An ambiguous or unknown name is surfaced together with the closest mounts instead of being guessed at. Naming a workspace lists its members, and the Assistant then asks which member project to run against, because a task runs against a single repository path.
+
 ## Task tools and approvals
 
 Ordinary development uses the same eleven task-control definitions as MCP:

@@ -1,9 +1,10 @@
 # The Virtual Context Tree (VCT)
 
 Status: **implemented — deliberately minimal, internal only**.
-What shipped is a data-structure and namespace refactor, not a kernel filesystem and not a visible workspace feature.
+What shipped is a data-structure and namespace refactor, not a kernel filesystem and not a materialized workspace.
 The VCT is an **analogy and an internal namespace**: a canonical `vct:///…` point is bound to an absolute OS path so Genesis can name repositories and context levels independently of where the bytes live.
-Its scope is the project registry (`vct:///projects/<name>`) plus one **reserved system mount**, `vct:///genesis-source` (Genesis's own source checkout, §8).
+Its scope is the project registry (`vct:///projects/<name>`), one **grouping layer** over it (`vct:///workspaces/<name>`, §9) and one **reserved system mount**, `vct:///genesis-source` (Genesis's own source checkout, §8).
+A workspace is metadata only: it has no OS path and is never an execution path.
 This step does **NOT** create symlink farms, bind mounts, FUSE mounts, directory junctions, per-mount worktrees, or change any filesystem layout.
 A task still executes in exactly one concrete repo worktree, and every user-visible path is what it was before.
 The intended future extension (remote hosts, further capability mounts, nested mounts) is described at the end; none of it is built.
@@ -12,12 +13,13 @@ This record replaces the earlier heavyweight proposal (workspace rootfs as a mou
 
 ## 1. Scope of the implemented step
 
-The VCT currently provides four things and nothing more:
+The VCT currently provides five things and nothing more:
 
 1. A canonical, parseable **namespace** for repositories (`vct:///projects/<name>`) — `EvoGit.VCT.Path`.
 2. A machine-local **mount registry** (SQLite `vct_mounts` in the task store) binding those points to absolute OS paths — `EvoGit.VCT`, `EvoGit.VCT.Mount`, `EvoGit.VCT.Table`.
 3. A **spatial-dimension annotation** (`%EvoGit.Core.ContextNode{}.vct_path`) and an optional **global context level** rendered ahead of the in-repo context chain.
 4. One **reserved system mount** at `vct:///genesis-source`, giving Genesis's own source checkout a VCT identity (§8).
+5. One **grouping layer** over project mounts — workspace mounts at `vct:///workspaces/<name>` with an ordered member list and no OS path of their own (§9).
 
 Everything else that the word "virtual tree" might suggest is out of scope for this step.
 
@@ -43,6 +45,8 @@ vct:///                     # the VCT root
 vct:///projects             # the projects folder
 vct:///projects/foo         # a project mount point
 vct:///projects/foo/bar     # a nested node under a mount
+vct:///workspaces           # the workspaces folder
+vct:///workspaces/foo       # a WORKSPACE mount point (§9)
 vct:///genesis-source       # a reserved SYSTEM mount point (§8)
 ```
 
@@ -79,15 +83,17 @@ The **mount registry is relational state in the task store** (`<data_dir>/tasks.
 
 ### 4.1 The mount table — `vct_mounts`
 
-`vct_mounts` is created by migration `…000007_vct_mounts`, the only create site:
+`vct_mounts` is created by migration `…000007_vct_mounts` and widened additively by `…000011_vct_workspace_mounts` (§9.4), which drops `path`'s `NOT NULL` and adds the two workspace columns:
 
 | column | type | notes |
 |---|---|---|
-| `point` | TEXT PRIMARY KEY | canonical `vct:///projects/<name>` point, or a reserved system point such as `vct:///genesis-source`; unique within the table |
-| `path` | TEXT NOT NULL UNIQUE | absolute OS path the point binds to |
+| `point` | TEXT PRIMARY KEY | canonical `vct:///projects/<name>` point, a workspace point `vct:///workspaces/<name>`, or a reserved system point such as `vct:///genesis-source`; unique within the table |
+| `path` | TEXT UNIQUE, NULLABLE | absolute OS path the point binds to; NULL for a workspace mount, which owns no OS path |
 | `name` | TEXT NOT NULL | display name |
-| `kind` | TEXT NOT NULL | mount kind, `"git"` today |
+| `kind` | TEXT NOT NULL | mount kind, `"git"` or `"workspace"` |
 | `last_opened_at` | TEXT | ISO-8601, or NULL for a mount never opened |
+| `members` | TEXT | NULLABLE JSON ARRAY of member maps, in order; a workspace's ordered member list, empty for a git mount |
+| `description` | TEXT | NULLABLE free-text description (workspaces; optional for any kind) |
 
 - `EvoGit.Store.list_vct_mounts/1` returns STRING-KEYED entries newest first (`last_opened_at` DESC, `nil` LAST, `point` ASC tie-break); a failed read degrades to `[]` through the store's fault-isolated read path.
 - `EvoGit.Store.save_vct_mounts/2` is an **atomic replace-all** inside one transaction, so a reader sees either the old table or the new one.
@@ -141,12 +147,12 @@ The dashboard project list is a **persistent, capped registry of project mounts*
 - Opening or creating a project mounts it (`EvoGit.VCT.mount/2`), which refreshes `last_opened_at`; mounting an already-mounted normalized OS path is idempotent and keeps the existing point.
 - Registration derives a stable, deduplicated `vct:///projects/<basename>` point (a basename collision gets `-N`), updates the name only for a non-blank name, and **re-points** a same-named mount whose recorded OS path is gone instead of accumulating a second point. A new path is never required to exist.
 - The registry is **capped**: `EvoGit.VCT.max_projects/0` is 100 by default (app env seam `:vct_max_projects`); mounting beyond the cap evicts the oldest mounts (`nil` `last_opened_at` counts as oldest, deterministic tie-break), so the table stays bounded and newest-first.
-- `%EvoGit.VCT.Mount{point, path, name, kind, last_opened_at}` is the single project struct; `EvoGit.TaskRegistry` carries no project API, and the only project topic is `"vct"`.
+- `%EvoGit.VCT.Mount{point, path, name, kind, last_opened_at, members, description}` is the single mount struct (a project mount carries `members: []` and a `nil` `description`); `EvoGit.TaskRegistry` carries no project API, and the only project topic is `"vct"`.
 - PubSub: every successful mount mutation publishes exactly one node-aware `{:vct_updated, node()}` on `"vct"`; a successful `put_global_context/1` publishes the same message, and broadcasts are best-effort.
 - Cross-node access: `EvoGit.AgentScheduler.RemoteAPI.projects/0 | mount_project/2 | forget_project/1`, mirrored by `EvoGit.RemoteNode.projects/1 | mount_project/3 | forget_project/2` and `EvoDash.NodeContext.projects/1 | mount_project/3 | forget_project/2`.
 - Agent command: `ListProjects.list_projects` (`EvoGit.Agent.Tools.ListProjects`) lists this node's mounts newest-first.
 
-The registry is **project-only where it is visible**: `projects/1` and `search/2` exclude reserved system mounts (§8), so the cap, the palette and the agent command never see them. They are still resolvable by point and by OS path through `resolve/1`, `mount_for_path/1` and `vct_path_for/2`.
+The registry is **project-only where it is visible**: `projects/1` and `search/2` exclude reserved system mounts (§8) and workspace mounts (§9), so the cap, the palette and the agent command never see them; `:include_workspaces` opts a caller into the workspaces, and existing callers are unchanged. Reserved and workspace mounts are still resolvable by point and by OS path through `resolve/1`, `mount_for_path/1` and `vct_path_for/2`.
 
 **Dashboard.** The Projects palette lists the persisted VCT projects newest-first and renders the mount `point` (`vct:///projects/<name>`) as the primary identity with the OS path as the secondary line.
 Opening or creating a project mounts it, "Forget project" is offered for local AND remote nodes, and the palette reloads on `{:vct_updated, node}`.
@@ -186,7 +192,53 @@ Does **not** change:
 - **Task execution is untouched**: `reflect` tasks are repo-less and have no worktree; every other task still runs in one concrete repo worktree with unchanged `foreign_repos`.
 - **Nothing becomes user-editable in the VCT**: the mount exposes a location, not an editor; the source gate, clone/update actions and configuration stay where they are.
 
-## 9. API surface — `EvoGit.VCT`
+## 9. Workspaces — grouping projects, never an execution path
+
+A **workspace** is a mount of kind `"workspace"` at `vct:///workspaces/<slug>`, carrying a display name, an ORDERED member list and an optional description.
+It has **no OS path** — `vct_mounts.path` is NULL for it — and it owns no bytes, no directory, no symlink and no worktree.
+A workspace is grouping metadata only: it is never created on disk and never changes where anything runs.
+
+### 9.1 Members
+
+A member is a reference to a project, stored as a string-keyed map `%{"point" => "vct:///projects/x"}` and/or `%{"path" => "/abs/path"}` (both keys are always written, the unset one as `nil`; at least one must be set).
+Resolution is point-first: the `point` is looked up as a mount, and only when it does not resolve is the exact normalized OS `path` looked up.
+A member whose mount no longer exists is skipped and **reported** — `EvoGit.VCT.workspace_members/1` returns it under `:missing` — and is never silently dropped and never auto-created.
+Membership is metadata, not a filesystem probe, so naming an unmounted path is legal.
+
+### 9.2 Nesting — exactly one level
+
+A workspace may not be a member of another workspace: creation rejects it with `{:error, {:member_is_workspace, point}}`.
+Resolution additionally reports such a stored member as `:nested` and never expands it.
+Nesting is therefore exactly one level deep, and cyclic workspaces are structurally impossible rather than merely forbidden.
+
+### 9.3 A workspace is never an execution path
+
+A task still runs against exactly one concrete repo worktree, and no VCT API expands a workspace into its members.
+Task admission refuses it: `EvoGit.TaskRegistry.RuntimeOpts.admit_task_path/1`, called from `start_task`, answers `{:error, :workspace_not_executable}` for a `vct:///workspaces/…` path and `{:error, :vct_point_not_executable}` for any other `vct:` point.
+
+### 9.4 Storage — additive
+
+Migration `20260815000011_vct_workspace_mounts` rebuilds `vct_mounts` with a NULLABLE `path` plus `members` (JSON array, order significant) and `description`, and preserves every existing git-mount row byte-identically.
+`…000007_vct_mounts` remains the create site and the legacy fan-out; the rebuild runs only against the old shape and is a no-op afterwards.
+Workspaces are **uncapped**: `max_projects/0` bounds project mounts only, so no cap, eviction or count ever touches a workspace.
+A workspace is never an OS-path owner either — `mount_for_path/1` ignores it (a mount without a path can never be a path prefix), and one OS path still never belongs to two mounts.
+
+### 9.5 API, RPC and entry points
+
+`EvoGit.VCT` gains `create_workspace/3` (idempotent create-or-update keyed by the point derived from the name), `workspaces/1`, `workspace_members/1`, `workspaces_for/1` and `workspace_point?/1`, plus `:include_workspaces` on `projects/1`/`search/2` (default `false`, so existing callers are unchanged) and `forget/1` by point or by bare workspace name.
+The node-aware RPC pairs are `EvoGit.AgentScheduler.RemoteAPI.workspaces/0` + `create_workspace/3` + `workspace_members/1` + `workspaces_for/1`, mirrored by `EvoGit.RemoteNode.workspaces/1` + `create_workspace/4` + `workspace_members/2` + `workspaces_for/2`.
+Workspaces surface on the dashboard's Projects surface, and operators have a command: `mix vct.workspace list|show|create`, idempotent like the API, for example
+
+```
+mix vct.workspace create foobar --member vct:///projects/genesis --member vct:///projects/genesis-doc --member vct:///projects/evoclass --description "…"
+```
+
+### 9.6 The worked example
+
+`vct:///workspaces/foobar` groups the `genesis`, `genesis-doc` and `evoclass` projects.
+That is the documented example workspace, and it is created through the same command (or `EvoGit.VCT.create_workspace/3`, or the RPC pair) — no special path exists behind it.
+
+## 10. API surface — `EvoGit.VCT`
 
 The supervised GenServer owns I/O (the store-backed table, broadcasts, the global context file and its git history); the pure rules live in `EvoGit.VCT.Table` so they can be tested without a process, a store or a data directory.
 
@@ -194,9 +246,9 @@ The supervised GenServer owns I/O (the store-backed table, broadcasts, the globa
 |---|---|
 | `mount(path, opts \\ [])` | absolute OS path → `{:ok, %Mount{}}` (`:name` sets the display name); idempotent per normalized OS path (refreshes `last_opened_at`, keeps the point); `{:error, :relative_path \| :invalid_path}` for bad input |
 | `ensure_mount(point, path, opts \\ [])` | point-addressed registration used for reserved system mounts: same point+path → `:ok` no-op (no write, no broadcast, no recency churn); same point, different path → re-points it; same normalized OS path mounted at another point → moves it here |
-| `projects(opts \\ [])` | **project** mounts newest-first (`last_opened_at` DESC, `nil` last), reserved system mounts excluded; `:limit` is a positive-integer cap, any other value ignored |
-| `search(query, opts \\ [])` | case-insensitive substring over display name, OS path and point, reserved system mounts excluded; a blank query matches every project mount, a non-binary query none; `:limit` as in `projects/1` |
-| `forget(key)` | by VCT point (`"vct:…"` / `%Path{}`) or OS path → `:ok`; `{:error, :not_found}` when no mount matches; `{:error, :invalid_point}` for a bad key; `{:error, :reserved_point}` for a reserved system mount |
+| `projects(opts \\ [])` | **project** mounts newest-first (`last_opened_at` DESC, `nil` last), reserved system mounts excluded; `:limit` is a positive-integer cap, any other value ignored; `:include_workspaces` (default `false`) adds workspace mounts |
+| `search(query, opts \\ [])` | case-insensitive substring over display name, OS path and point, reserved system mounts excluded; a blank query matches every project mount, a non-binary query none; `:limit` and `:include_workspaces` as in `projects/1` |
+| `forget(key)` | by VCT point (`"vct:…"` / `%Path{}`), OS path, or a bare workspace name → `:ok`; `{:error, :not_found}` when no mount matches; `{:error, :invalid_point}` for a bad key; `{:error, :reserved_point}` for a reserved system mount |
 | `resolve/1` | point or exact OS path → `{:ok, mount}` \| `{:error, :not_found}` |
 | `mount_for_path/1` | mount containing an OS path (longest path-boundary prefix), or `nil` |
 | `vct_path_for/2` | canonical URL for a relative path inside the mount containing `repo_root`, or `nil` |
@@ -204,6 +256,11 @@ The supervised GenServer owns I/O (the store-backed table, broadcasts, the globa
 | `global_context_path/0` | `<data_dir>/vct/CONTEXT.md` (computed default even with no server) |
 | `global_context/0` | file contents, `""` when absent or unreadable |
 | `put_global_context/1` | write verbatim; lazily `git init` + commit only for non-blank content |
+| `create_workspace(name, members, opts \\ [])` | idempotent create-or-update at the point derived from the name, with an ordered member list and `:description`; `{:error, {:member_is_workspace, point}}` for a nested workspace, `{:error, {:invalid_member, ref}}` / `{:error, :invalid_members}` for a bad list |
+| `workspaces(opts \\ [])` | **workspace** mounts newest-first; `:limit` as in `projects/1`; uncapped |
+| `workspace_members(point_or_name)` | `{:ok, %{workspace:, members:, missing:, nested:}}` for a workspace point or bare name; `{:error, :not_found \| :not_a_workspace \| :invalid_point}` |
+| `workspaces_for(project)` | the workspaces whose members cover a project point, bare project name or absolute OS path, newest first (`[]` when none) |
+| `workspace_point?(term)` | total, process-free predicate for `vct:///workspaces/…`; the execution guard's test |
 
 **Reads are total, mutations degrade.** Every client call resolves a missing/dead server to its documented empty value (`[]`, `nil`, `""`, `{:error, :not_found}`); mutations return `{:error, :vct_unavailable}`. A VCT fault can never crash a caller (for example a boot race from `ContextNode`), and broadcasts are best-effort.
 
@@ -211,20 +268,24 @@ The supervised GenServer owns I/O (the store-backed table, broadcasts, the globa
 `start_link/1` accepts `:name`, `:data_dir` (default `EvoGit.Platform.data_dir/0`), `:store` (default `EvoGit.Store`) and `:system_mounts` (reserved mounts to seed at boot, default `[]`, fed from `EvoGit.SelfReflectiveSource.system_mounts/0`).
 Tests start isolated instances with a unique name, data dir and store (an isolated `EvoGit.Store` owning its own database), so the app-global table is never touched.
 
-## 10. Migration and test strategy
+## 11. Migration and test strategy
 
 - **One migration owns the table.** `…000007_vct_mounts` is the only create site for `vct_mounts`. On a legacy database it moves the `projects` rows into `vct_mounts` (VCT-identical point derivation from the basename with `-N` dedupe, preserved display names, newest-first, non-absolute rows skipped with a `Logger.warning`, inserts `INSERT OR IGNORE`) and then drops `projects`. A fresh database never creates `projects` at all (`…000001` deliberately omits it), so the legacy section is an O(1) no-op there.
 - The fan-out is capped to the 100 NEWEST mounts, so a migration can never produce a table the VCT itself would refuse to grow.
 - The migration is self-contained Elixir (the point rules are inlined so an applied migration stays frozen history), runs its statements in body order and asserts post-conditions: the exact `vct_mounts` shape and the absence of `projects`.
+- **The workspace columns come from a separate, guarded rebuild.** `…000011_vct_workspace_mounts` rebuilds the table (SQLite cannot drop `NOT NULL` in place) only while the old shape is present, copies every existing row's five legacy columns verbatim and leaves `members`/`description` NULL; a re-run asserts the current seven-column shape and is otherwise a no-op, and a missing table is an `Ecto.MigrationError` rather than a silently empty registry. Migration version 10 is retired and must not be reused.
 - The VCT child starts **after** `EvoGit.Store` (its table lives there) and **before** `EvoGit.TaskRegistry` (so every later reader finds a ready list).
 - Tests are `async: true` and touch only pure modules or isolated instances:
   - `vct/path_test.exs` — parsing, normalization, rejection of non-local authorities / dot / control segments, and the parse/format round-trip.
+  - `vct/mount_test.exs` and `vct/table_workspace_test.exs` — the pure member/mount rules: member normalization and validation, `{:member_is_workspace, point}`, one-level nesting, `:missing`/`:nested` resolution, `workspaces_containing/3` and the workspace namespace predicates.
+  - `task_registry/vct_path_admission_test.exs` — `admit_task_path/1`: `:workspace_not_executable` for a workspace point, `:vct_point_not_executable` for any other `vct:` point, and ordinary paths admitted unchanged.
+  - `store/vct_workspace_mounts_migration_test.exs` — the guarded rebuild: legacy rows preserved, new columns NULL, the current shape asserted, and the no-op re-run.
   - `vct_test.exs` — mount idempotency and dedup, portability re-pointing, resolution, newest-first ordering, search, the cap/oldest-eviction rule, reserved system mounts (boot seeding, point-addressed no-op / re-point / move, exclusion from `projects/1` and `search/2`, exemption from the cap, `{:error, :reserved_point}` on forget), broadcasts, global-context git initialization, degradation with an unavailable store or dead server, and durability across a server restart.
   - `store/operations/vct_mounts_test.exs` — newest-first ordering, string-keyed entries with a loaded `DateTime`, the atomic replace-all write (including a rolled-back failure) and disk-full mapping.
   - `store/vct_mounts_migration_test.exs` — the legacy→`vct_mounts` move + drop + cap, and the fresh-database path with no `projects` table.
 - **Equivalence expectation**: with an empty global context and an unmounted repo, every rendered context chain, node `path`, `repo_id`, foreign-repositories block, worktree path and prompt is byte-identical to before the VCT.
 
-## 11. Deliberately deferred / future extension
+## 12. Deliberately deferred / future extension
 
 The following are design intent, **not implemented**, and the first two are explicitly rejected for now:
 
