@@ -302,13 +302,13 @@ defmodule EvoDashWeb.WelcomeLive do
            Setup.prepare(current, setup_assigns(socket, provider), draft_params(draft)),
          :ok <- save_key(entry, key, draft["auth_mode"]) do
       seq = socket.assigns.llm_test_seq + 1
-      reasoning = draft["default_reasoning_effort"]
+      effort = tested_effort(draft, entry)
 
       runner =
         Application.get_env(:evo_dash, :welcome_llm_test_runner, &EvoGit.SystemCheck.llm_test/2)
 
       case EvoDash.SafeCall.start(self(), {:welcome_llm_test_result, seq}, fn ->
-             {model, opts} = Setup.test_request(profile, entry, reasoning)
+             {model, opts} = Setup.test_request(profile, entry, effort)
              runner.(model, opts)
            end) do
         {:ok, _pid} ->
@@ -686,6 +686,15 @@ defmodule EvoDashWeb.WelcomeLive do
   defp test_answer({:ok, other}), do: {:error, {:unexpected_result, other}}
   defp test_answer({:error, reason}), do: {:error, reason}
   defp test_answer(other), do: {:error, other}
+
+  # The reasoning level the SAVE path will persist for the tested model, read
+  # through the SAME unwrap (`Wizard.model_default_effort/2`) the model row and
+  # the reasoning select use — so "Test connection" exercises the configuration
+  # that is about to be written. `""` (the user kept "Provider default") sends
+  # no `reasoning_effort` at all.
+  defp tested_effort(draft, entry) do
+    Wizard.model_default_effort(draft, Setup.value(entry, :model_string))
+  end
 
   # ── Small total helpers ──────────────────────────────────────────────────
 

@@ -564,6 +564,42 @@ defmodule EvoDashWeb.WelcomeLive.WizardTest do
     end
   end
 
+  # ── per-model reasoning default (the ONE unwrap) ───────────────────────────
+  describe "model_default_effort/1,2" do
+    test "reads both recorded entry shapes and nothing when unrecorded" do
+      assert Wizard.model_default_effort(%{"efforts" => ["low", "high"], "default" => "high"}) ==
+               "high"
+
+      assert Wizard.model_default_effort("medium") == "medium"
+      assert Wizard.model_default_effort(nil) == ""
+      assert Wizard.model_default_effort(%{}) == ""
+    end
+
+    test "a catalog pick answers its entry, never the custom model's flat field" do
+      draft =
+        Wizard.new()
+        |> Wizard.put("default_model", "deepseek:deepseek-v4-flash")
+        |> Wizard.put("model_reasoning", %{
+          "deepseek:deepseek-v4-flash" => %{"efforts" => ["high"], "default" => "high"}
+        })
+        |> Wizard.put("custom_model", "my-model-x")
+        |> Wizard.put("default_reasoning_effort", "low")
+
+      assert Wizard.model_default_effort(draft, "deepseek:deepseek-v4-flash") == "high"
+      assert Wizard.model_default_effort(draft, "not-picked") == ""
+
+      # The FREE-TEXT name has no entry of its own: its level lives in the flat
+      # draft field, which is what the save path persists for it.
+      assert Wizard.model_default_effort(draft, "my-model-x") == "low"
+    end
+
+    test "is total over junk drafts and models" do
+      assert Wizard.model_default_effort(nil, "deepseek:deepseek-v4-flash") == ""
+      assert Wizard.model_default_effort(%{}, nil) == ""
+      assert Wizard.model_default_effort(%{"model_reasoning" => "junk"}, "a:b") == ""
+    end
+  end
+
   # ── summaries ──────────────────────────────────────────────────────────────
   describe "summary_rows/1 and holiday_value/1" do
     test "names the provider, its model and its reasoning default" do

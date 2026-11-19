@@ -610,21 +610,42 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert assigns(view).draft["model_reasoning"][model]["default"] == "high"
       assert Enum.uniq(chip_values(view)) == Reasoning.efforts()
 
-      # The save writes the canonical account and its model row.
+      # The save writes the canonical account and its model row, and the picked
+      # level ROUND-TRIPS into that row — the same value the select shows.
       click(next(view), "skip_test")
 
       entry = account("deepseek")
       assert [row] = entry["models"]
       assert row["model"] == model_id(:deepseek, 0)
       assert row["reasoning_efforts"] == Reasoning.efforts()
+      assert row["default_reasoning_effort"] == "high"
+    end
 
-      # DEFECT (production, reported — the pin below records today's behaviour and
-      # flips when it is fixed): a CATALOG model's picked default never reaches
-      # the saved row. `Setup.model_effort/2` reads the stored
-      # `%{"default" => "high"}` map through `text/1`, which answers `""`, and
-      # `Presentation.primary_effort/1` mirrors that same map back into the
-      # select, so the select also never re-selects the picked level. Only the
-      # custom-model row (which reads the flat draft keys) keeps a default.
+    test "resetting to Provider default omits the saved reasoning key", %{conn: conn} do
+      seed_credential("deepseek_api_key", "sk-deepseek-test")
+      {:ok, view, _html} = start(conn)
+      view = deepseek_to_reasoning(view)
+      model = model_string(:deepseek)
+
+      change(view, "wizard_reasoning", %{
+        "reasoning_efforts" => ["high"],
+        "default_reasoning_effort" => "high"
+      })
+
+      assert assigns(view).draft["model_reasoning"][model]["default"] == "high"
+
+      # The select's blank row IS "Provider default": it records no level, so
+      # the persisted row carries no `default_reasoning_effort` key at all.
+      change(view, "wizard_reasoning", %{
+        "reasoning_efforts" => ["high"],
+        "default_reasoning_effort" => ""
+      })
+
+      click(next(view), "skip_test")
+
+      assert [row] = account("deepseek")["models"]
+      assert row["model"] == model_id(:deepseek, 0)
+      assert row["reasoning_efforts"] == Reasoning.efforts()
       refute Map.has_key?(row, "default_reasoning_effort")
     end
   end
@@ -802,6 +823,67 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert html =~ "Connection failed."
       assert html =~ "boom"
       refute html =~ "Connection succeeded."
+    end
+
+    test "sends the picked reasoning level for the tested model, and none after a reset",
+         %{conn: conn} do
+      seed_credential("deepseek_api_key", "sk-deepseek-test")
+      {:ok, view, _html} = start(conn)
+      view = deepseek_to_reasoning(view)
+
+      change(view, "wizard_reasoning", %{
+        "reasoning_efforts" => Reasoning.efforts(),
+        "default_reasoning_effort" => "high"
+      })
+
+      view = next(view)
+      render_click(view, "test_connection")
+
+      # The request carries the SAME per-model level the save path persists, so
+      # "Test connection" exercises the configuration about to be written.
+      assert_receive {:welcome_test_started, pid, model, opts}, @runner_start_timeout
+      assert model =~ model_id(:deepseek)
+      assert opts[:reasoning_effort] == :high
+      send(pid, {:finish, {:ok, %{model: model, response: "pong"}}})
+      await_status(view, {:ok, "#{model} · pong"})
+
+      # Back on the reasoning step, "Provider default" records no level, so the
+      # next request sends no `reasoning_effort` at all.
+      back(view)
+
+      change(view, "wizard_reasoning", %{
+        "reasoning_efforts" => Reasoning.efforts(),
+        "default_reasoning_effort" => ""
+      })
+
+      view = next(view)
+      render_click(view, "test_connection")
+
+      assert_receive {:welcome_test_started, pid, _model, opts}, @runner_start_timeout
+      refute Keyword.has_key?(opts, :reasoning_effort)
+      send(pid, {:finish, {:ok, %{model: model_string(:deepseek), response: "pong"}}})
+    end
+
+    test "sends the free-text custom model's own reasoning level", %{conn: conn} do
+      {:ok, view, _html} = start(conn)
+
+      view = custom_to_model(view)
+      change(view, "wizard_custom_model", %{"custom_model" => "my-model-x"})
+      view = next(view)
+
+      change(view, "wizard_reasoning", %{
+        "reasoning_efforts" => ["low", "medium"],
+        "default_reasoning_effort" => "medium"
+      })
+
+      view = next(view)
+      render_click(view, "test_connection")
+
+      assert_receive {:welcome_test_started, _pid, model, opts}, @runner_start_timeout
+      # An OpenAI-compatible custom model resolves to its own struct, not a
+      # catalog spec string, so the id is read off its representation.
+      assert inspect(model) =~ "my-model-x"
+      assert opts[:reasoning_effort] == :medium
     end
   end
 

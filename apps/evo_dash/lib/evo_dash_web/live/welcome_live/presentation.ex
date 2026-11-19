@@ -189,12 +189,9 @@ defmodule EvoDashWeb.WelcomeLive.Presentation do
   @doc "The primary model's default reasoning effort (`\"\"` = provider default)."
   @spec primary_effort(term()) :: String.t()
   def primary_effort(draft) do
-    # Both recorded shapes go through the ONE unwrap; the custom name's flat
-    # draft field is the fallback when its entry records nothing.
-    case Wizard.model_default_effort(draft, model(draft, "default_model")) do
-      "" -> if custom_primary?(draft), do: model(draft, "default_reasoning_effort"), else: ""
-      effort -> effort
-    end
+    # The ONE unwrap already knows which field is authoritative for a catalog
+    # pick and for the free-text custom name.
+    Wizard.model_default_effort(draft, model(draft, "default_model"))
   end
 
   @doc """

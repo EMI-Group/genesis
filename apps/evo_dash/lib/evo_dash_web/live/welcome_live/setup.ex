@@ -193,16 +193,21 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
   Resolves a validated draft into `{reqllm_model, generation_params}` for the
   server-side connection-test worker, using the same canonical resolver as tasks.
 
+  `effort` is the tested model's ALREADY-UNWRAPPED reasoning level (a plain
+  string, read by the caller through
+  `EvoDashWeb.WelcomeLive.Wizard.model_default_effort/2` exactly as the save path
+  reads it), so one shape reaches this function: no entry map is re-interpreted
+  here. `""` / `"default"` means the user kept "Provider default", so the spec
+  carries NO `reasoning_effort` at all.
+
   Neither the resolved config nor generation params may be pushed to a client.
   The resolver's `model_spec` is a ReqLLM identifier, NOT a canonical task-picker
   map. Invalid drafts raise here and are reported by the worker's SafeCall boundary.
   """
-  def test_request(profile, entry, reasoning) do
+  def test_request(profile, entry, effort) do
     config = %{llm: %{providers: [profile], default_provider_profile: profile["id"]}}
     spec = %{"provider_profile_id" => profile["id"], "model" => value(entry, :model_id)}
-    effort = reasoning |> reasoning_map() |> Map.get(value(entry, :model_string), "")
-    spec = if effort == "", do: spec, else: Map.put(spec, "reasoning_effort", effort)
-    {:ok, resolved} = Schema.resolve_model_spec(config, spec)
+    {:ok, resolved} = Schema.resolve_model_spec(config, put_spec_effort(spec, effort))
     {resolved.model_spec, resolved.generation_params}
   end
 
@@ -570,6 +575,17 @@ defmodule EvoDashWeb.WelcomeLive.Setup do
     if Reasoning.level?(effort) and effort != "default",
       do: Map.put(row, "default_reasoning_effort", effort),
       else: row
+  end
+
+  # The connection-test copy of `put_effort/2`: the picked level reaches the
+  # resolver ONLY when it IS a level, so "Provider default" (`""` / `"default"`)
+  # sends no `reasoning_effort` field — exactly like the row the save writes.
+  defp put_spec_effort(spec, effort) do
+    effort = Reasoning.canonical(effort)
+
+    if effort in Reasoning.efforts(),
+      do: Map.put(spec, "reasoning_effort", effort),
+      else: spec
   end
 
   # Only `Schedule.schedule_keys/0` keys PRESENT in the draft map land in the

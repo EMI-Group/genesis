@@ -274,13 +274,30 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
   The default reasoning effort the draft records for `model` (`""` when it
   records none), read through `model_default_effort/1` so both entry shapes
   answer the same level.
+
+  A catalog pick records its entry in `"model_reasoning"`, while the FREE-TEXT
+  custom model records its level in the draft's own flat
+  `"default_reasoning_effort"` field — and THAT field is authoritative for it,
+  because it is what `EvoDashWeb.WelcomeLive.Setup` persists for that model. So
+  every reader can ask this ONE helper for either kind of model.
   """
   @spec model_default_effort(term(), term()) :: String.t()
   def model_default_effort(draft, model) do
-    draft
-    |> map_field("model_reasoning")
-    |> Map.get(clean(model))
-    |> model_default_effort()
+    model = clean(model)
+
+    cond do
+      model == "" ->
+        ""
+
+      model == custom_model(draft) ->
+        model_default_effort(Map.get(ensure_map(draft), "default_reasoning_effort"))
+
+      true ->
+        draft
+        |> map_field("model_reasoning")
+        |> Map.get(model)
+        |> model_default_effort()
+    end
   end
 
   @doc """
@@ -528,22 +545,18 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
     end
   end
 
-  # The default's reasoning: the custom model reads its own flat field, a
-  # catalog pick reads its recorded `"model_reasoning"` entry — both through the
-  # ONE unwrap, so a nested entry never renders as a blank reasoning row.
+  # The default's reasoning for the draft's PRIMARY model — the ONE unwrap
+  # already knows which field is authoritative for each kind of model, so a
+  # nested entry never renders as a blank reasoning row.
   defp default_reasoning(draft) do
-    model = clean(Map.get(draft, "default_model"))
+    model_default_effort(draft, Map.get(ensure_map(draft), "default_model"))
+  end
 
-    cond do
-      model == "" ->
-        ""
-
-      model == clean(Map.get(draft, "custom_model")) ->
-        model_default_effort(Map.get(draft, "default_reasoning_effort"))
-
-      true ->
-        model_default_effort(draft, model)
-    end
+  defp custom_model(draft) do
+    draft
+    |> ensure_map()
+    |> Map.get("custom_model")
+    |> clean()
   end
 
   defp model_list(draft) do
