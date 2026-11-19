@@ -35,6 +35,11 @@ The `<dialog class="modal">` rules only fill the gaps DaisyUI's `.modal` / `.mod
 `dialog.modal .modal-box pre` scrolls horizontally (`overflow-x: auto`, `overscroll-behavior-x: contain`) while `:not(pre) > code` wraps with `overflow-wrap: anywhere`, keeping approval code readable verbatim.
 A `@media (prefers-reduced-motion: reduce)` block disables the `dialog.modal` and `dialog.modal .modal-box` transitions.
 
+The provider-setup wizard step transitions (Settings + Welcome) are three flat classes with no hook: `.wizard-step-enter` on a step body wrapper whose DOM id changes per step (`id={"wizard-step-" <> step}`), so a fresh element replays `wizard-step-in` (200ms `cubic-bezier(0.16, 1, 0.3, 1)`, opacity 0→1, `translateY(-7px) scale(0.98)` → none).
+`.wizard-step-enter[data-direction="back"]` swaps only `animation-name` to `wizard-step-in-back`, the same motion from `translateY(7px)` so Back reads opposite to Next; an explicit `data-direction="forward"` (or no attribute) keeps the forward motion.
+`.wizard-progress` carries a 200ms ease-out `transition` on `width`, `transform` and `background-color` so the rail/fill animates between steps; it sets no width, shape or color — those stay in the markup's Tailwind utilities and theme tokens.
+A dedicated `@media (prefers-reduced-motion: reduce)` block disables both the wizard animations and the progress transition, so reduced motion shows each step instantly.
+Component authors opt in with the class only: no JS, no layout/height animation, and the step wrapper must be the re-keyed element or the entrance never replays.
 ## Constraints
 Use existing theme tokens and the standalone accent for focus outlines; keep fill/content roles unchanged.
 Keep Assistant adjustments scoped, normal-flow message actions untouched, and reduced-motion overrides after the caret animation rule.
