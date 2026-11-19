@@ -4,7 +4,7 @@ defmodule EvoGit.Config.Schema.ProviderProfiles.Normalize do
   alias EvoGit.Config.Schema.LLM
 
   @generation_keys ~w(temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty provider_options)
-  @shared_keys ~w(auth_mode api_key_env_var base_url oauth_file concurrency peak_concurrency peak_hours timezone off_peak_days context_window extra)
+  @shared_keys ~w(auth_mode api_key_env_var base_url oauth_file concurrency peak_concurrency peak_hours timezone off_peak_days off_peak_holidays context_window extra)
 
   def generation_keys, do: @generation_keys
 

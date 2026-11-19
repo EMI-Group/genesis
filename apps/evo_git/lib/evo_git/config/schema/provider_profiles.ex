@@ -27,8 +27,8 @@ defmodule EvoGit.Config.Schema.ProviderProfiles do
   alias EvoGit.Config.Schema.LLM
   alias EvoGit.Config.Schema.ProviderProfiles.Normalize
 
-  @runtime_keys ~w(id model auth_mode oauth_file api_key_env_var temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty provider_options context_window concurrency peak_concurrency peak_hours timezone off_peak_days)a
-  @schedule_keys ~w(concurrency peak_concurrency peak_hours timezone off_peak_days)a
+  @runtime_keys ~w(id model auth_mode oauth_file api_key_env_var temperature max_tokens reasoning_effort top_p top_k frequency_penalty presence_penalty provider_options context_window concurrency peak_concurrency peak_hours timezone off_peak_days off_peak_holidays)a
+  @schedule_keys ~w(concurrency peak_concurrency peak_hours timezone off_peak_days off_peak_holidays)a
 
   @spec provider_profiles(term()) :: [map()]
   def provider_profiles(%{} = config), do: config |> Normalize.stringify() |> Normalize.profiles()

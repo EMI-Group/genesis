@@ -30,14 +30,16 @@ defmodule EvoGit.Config.EctoValidation do
   - **Composite, multi-error recursion** — `:model_spec`, `:model_profiles`,
     `:provider_profiles` (via `EvoGit.Config.ProviderProfileValidation`)
     and the optional peak profile fields (`peak_concurrency`, `peak_hours`,
-    `timezone`, `off_peak_days`) produce multiple, sub-path-aware errors
+    `timezone`, `off_peak_days`, `off_peak_holidays`) produce multiple,
+    sub-path-aware errors
     (e.g. one per `llm.models` list index, `indexed_path/3` window indices)
     that a single `cast/1` cannot express. Their **scalar leaves** still
     route through `EctoTypes` where a matching custom type exists (e.g.
     `peak_concurrency` → `EctoTypes.valid?(:non_neg_integer, value)`).
-  - **All window/day/timezone math delegates to `EvoGit.PeakHours`**
-    (`validate_windows/1`, `validate_timezone/1`, `validate_days/1` — the
-    single source of truth; never re-implemented here).
+  - **All window/day/timezone/holiday math delegates to `EvoGit.PeakHours`**
+    (`validate_windows/1`, `validate_timezone/1`, `validate_days/1`,
+    `validate_holidays/1` — the single source of truth; never
+    re-implemented here).
   - **`min`/`max`/`in` rule checks** — these are range/enum rules, not type
     casts, and the Ecto changeset validators for them are banned by design;
     they are ported byte-exact as pure predicates.
@@ -372,6 +374,7 @@ defmodule EvoGit.Config.EctoValidation do
       timezone: &validate_timezone_field/2,
       context_window: &validate_context_window/2,
       off_peak_days: &validate_off_peak_days/2,
+      off_peak_holidays: &validate_off_peak_holidays/2,
       auth_mode: &validate_auth_mode/2,
       oauth_file: &validate_oauth_file/2
     ]
@@ -498,6 +501,17 @@ defmodule EvoGit.Config.EctoValidation do
         validate_off_peak_days(path, off_peak_days)
       end
 
+    # Optional holiday calendar id: dates in that calendar are entirely
+    # off-peak (normal concurrency 24/7, like off_peak_days).
+    off_peak_holidays = profile_field(profile, :off_peak_holidays)
+
+    off_peak_holidays_errors =
+      if is_nil(off_peak_holidays) do
+        []
+      else
+        validate_off_peak_holidays(path, off_peak_holidays)
+      end
+
     # Optional auth mode for the profile ("api_key" | "oauth"; absent = "api_key").
     auth_mode = profile_field(profile, :auth_mode)
 
@@ -526,6 +540,7 @@ defmodule EvoGit.Config.EctoValidation do
       timezone_errors ++
       context_window_errors ++
       off_peak_days_errors ++
+      off_peak_holidays_errors ++
       auth_mode_errors ++
       oauth_file_errors
   end
@@ -619,6 +634,29 @@ defmodule EvoGit.Config.EctoValidation do
             "off_peak_days must be a list of day names (mon|tue|wed|thu|fri|sat|sun) and/or keywords (weekdays|weekends), got #{inspect(v)}",
             v,
             :off_peak_days
+          )
+        ]
+    end
+  end
+
+  # Validates the optional off_peak_holidays profile field (a holiday calendar
+  # id such as "CN") by delegating the vocabulary to
+  # EvoGit.PeakHours.validate_holidays/1 (single source of truth — do NOT
+  # re-implement the calendar ids here). nil/"" is valid (no calendar).
+  defp validate_off_peak_holidays(path, value) do
+    case EvoGit.PeakHours.validate_holidays(value) do
+      :ok ->
+        []
+
+      {:error, {:unknown_calendar, v}} ->
+        calendars = Enum.join(EvoGit.PeakHours.Holidays.calendars(), ", ")
+
+        [
+          error(
+            path ++ [:off_peak_holidays],
+            "off_peak_holidays must be a holiday calendar id (#{calendars}), got #{inspect(v)}",
+            v,
+            :off_peak_holidays
           )
         ]
     end
