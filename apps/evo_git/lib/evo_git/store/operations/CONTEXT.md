@@ -15,6 +15,9 @@ Legacy pagination counts undecodable rows even when its per-row decoder skips th
 `Tasks.get_task/2` and `Pages.get_task_lite/2` both return full `%TaskInfo{}` or nil with `ref: nil`, including full `opts`, `logs`, `result`, `usage`, and `error`; lite selects 18 decode-relevant columns and omits only store-internal `updated_at`.
 `Tasks.get_task_status/2` distinguishes missing nil from existing unreadable `{:unknown, raw}`; `select_task_update_info/2` returns `%{status, opts, finished_at, lease_expires_at}` or nil using two SELECTs.
 
+`VctMounts.list/1` returns every mount as a STRING-KEYED entry (`"point"`, `"path"`, `"name"`, `"kind"`, `"last_opened_at"`, `"members"`, `"description"`) newest first (`last_opened_at` DESC with `nil` LAST, then `point` ASC), where `path` is NULLABLE (a workspace mount owns no OS path), `description` is `nil | String.t()`, and `members` is DECODED from JSON TEXT (`NULL` or undecodable → `[]` with one warning per row).
+`VctMounts.save/2` accepts atom- OR string-keyed entries and is the ONE ENCODING boundary for members, so a git mount round-trips to `[]` and a non-list-of-maps value raises a descriptive `ArgumentError`.
+
 ## Constraints and Audit Hazards
 Despite the introductory Pages moduledoc, `get_task_lite/2` is a full-detail read, not a blob-light or inherently bounded inspection projection.
 Summary/page row limits do not bound payload bytes because `opts` remains whole, potentially containing long objectives, foreign-repo metadata, media attachments, or caller-provided sensitive values.
