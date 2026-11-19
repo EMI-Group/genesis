@@ -3,15 +3,15 @@
 # Covers the parts of the dashboard auth flow that are NOT pure data
 # transformations (those live in `settings_live/model_profile_helpers_test.exs`):
 #
-#   * the per-profile credential-status line rendered by the model-profiles
+#   * the per-profile credential-status line rendered by the provider-account
 #     editor (`EvoDashWeb.SettingsLive.AuthStatus` → `:auth_statuses`),
-#     including that the page actually FORWARDS the map to the editor (verdict
+#     including that the page actually FORWARDS the map to the panel (verdict
 #     text, login guidance and managed-file path on the rendered page);
 #   * the node + seq stale guards of `{:settings_auth_status_loaded, ...}`;
 #   * the `refresh_auth_status` event that re-requests the load;
 #   * profile persistence of `auth_mode` / `oauth_file` through the real
-#     editor events (`add_model_profile` → `save_model_profile`);
-#   * the Quick Setup card's OAuth-only branch (login guidance instead of an
+#     editor events (`edit_model_profile` → `save_model_profile`);
+#   * the provider wizard's OAuth-only auth step (login guidance instead of an
 #     API-key form).
 #
 # ASYNC by default (`test/CONTEXT.md`): every test touches only per-process
@@ -171,7 +171,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   end
 
   # The page must FORWARD `@auth_statuses` into the editor
-  # (`category_section/1` → `model_profiles_editor/1`); an assign that never
+  # (`category_section/1` → `provider_profiles_panel/1`); an assign that never
   # reaches the render is a silent regression (every line falls back to the
   # neutral "Subscription login" text).
   describe "credential status render (injected result)" do
