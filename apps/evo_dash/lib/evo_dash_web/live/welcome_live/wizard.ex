@@ -102,8 +102,17 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
     end
   end
 
-  @doc "The auth/endpoint capabilities of a catalog entry: `%{auth_choice?, auth_modes, oauth_only?, requires_base_url?}`. A `\"custom\"`/nil/non-map entry answers API-key + a required base URL; pure over the GIVEN data (no catalog lookup, no atom interning)."
-  def capabilities(entry) when is_map(entry) do
+  @doc "The auth/endpoint capabilities of a DRAFT, a catalog entry or an already-shaped capabilities map: `%{auth_choice?, auth_modes, oauth_only?, requires_base_url?}`. A `\"custom\"`/nil/non-map entry answers API-key + a required base URL; pure over the GIVEN data (no catalog lookup, no atom interning)."
+  def capabilities(input) when is_map(input) do
+    # A DRAFT carries a string `"provider"` key; a catalog row does not.
+    if Map.has_key?(input, "provider"),
+      do: capabilities_for(input),
+      else: entry_capabilities(input)
+  end
+
+  def capabilities(input), do: entry_capabilities(input)
+
+  defp entry_capabilities(entry) when is_map(entry) do
     modes = auth_modes(entry)
 
     %{
@@ -114,7 +123,7 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
     }
   end
 
-  def capabilities(_entry), do: @custom_capabilities
+  defp entry_capabilities(_entry), do: @custom_capabilities
 
   @doc "The ordered step list, from a capabilities map OR a draft (a draft follows its provider's capabilities)."
   def steps(input), do: input |> capabilities_for() |> Steps.steps_for()
@@ -288,7 +297,7 @@ defmodule EvoDashWeb.WelcomeLive.Wizard do
     else
       case clean(Map.get(input, "provider")) do
         "" -> @open_capabilities
-        provider -> capabilities(provider_entry(provider))
+        provider -> entry_capabilities(provider_entry(provider))
       end
     end
   end

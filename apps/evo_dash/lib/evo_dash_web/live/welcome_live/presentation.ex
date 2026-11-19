@@ -87,8 +87,11 @@ defmodule EvoDashWeb.WelcomeLive.Presentation do
   @spec wire_atom(term(), term()) :: atom() | nil
   def wire_atom(entry, variant_id) do
     case entry do
-      %{id: id} when is_atom(id) and not is_nil(id) -> Catalog.resolve_provider_atom(id, variant_id)
-      _entry -> nil
+      %{id: id} when is_atom(id) and not is_nil(id) ->
+        Catalog.resolve_provider_atom(id, variant_id)
+
+      _entry ->
+        nil
     end
   end
 
