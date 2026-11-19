@@ -5,10 +5,10 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfiles.Panel do
   form, and hosts the two inline wizards.
 
   This module (with `Row`, `Detail`, `ScheduleEditor` and `WizardForm` under
-  `settings_components/provider_profiles/`) replaces the old
-  `ProviderProfilesEditor` + "Quick Setup" pair: there is no second place to
-  create an account, no catalog shortcut that writes a half-configured profile,
-  and no nested card-in-card-in-card borders.
+  `settings_components/provider_profiles/`) is the only provider-account
+  surface: there is no second place to create an account, no catalog shortcut
+  that writes a half-configured profile, and no nested
+  card-in-card-in-card borders.
 
   ## Data flow (presentation only)
 

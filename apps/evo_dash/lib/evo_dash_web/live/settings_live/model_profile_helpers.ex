@@ -73,22 +73,6 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   end
 
   @doc """
-  Updates the provider profile identified by `old_id` in the configuration,
-  replacing it with `updated_profile`.
-  """
-  def update_model_profile(file_config, old_id, updated_profile) do
-    EvoDashWeb.SettingsLive.ProviderProfiles.update(file_config, old_id, updated_profile)
-  end
-
-  @doc """
-  Replaces the entire `[:llm, :providers]` list in the file_config with the given
-  `models` list.
-  """
-  def put_in_model_profiles(file_config, profiles) do
-    put_in_provider_profiles(file_config, profiles)
-  end
-
-  @doc """
   Checks whether `new_id` is already used by a profile OTHER than the one
   being edited (`old_id`). Returns `true` on collision.
   """

@@ -260,7 +260,9 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                     checked={@value in [true, "true"]}
                   />
                 <% :model_spec -> %>
-                  <%!-- Editable model field: can be typed manually or set via Quick Setup above --%>
+                  <%!-- Editable legacy model field: a manual provider:model string.
+                       Accounts and models are created in the provider-account
+                       panel, so this card never opens an editor. --%>
                   <div class="w-full">
                     <input
                       type="text"
@@ -270,7 +272,10 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                       class="input input-bordered input-sm rounded-md w-full font-mono text-base"
                     />
                     <p class="text-[11px] text-base-content/70 mt-1">
-                      {gettext("Type a model string or use Quick Setup above")}
+                      <%!-- zh_CN: provider profiles → "服务商配置" --%>
+                      {gettext(
+                        "Type a model string, or configure provider profiles in the LLM settings"
+                      )}
                     </p>
                   </div>
                 <% :provider_profiles -> %>
@@ -395,7 +400,8 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
   # `[:llm, :reasoning_effort]` options come from the dashboard's canonical
   # vocabulary (no level list is copied here); a configured custom level is
   # still offered as its own option instead of being silently dropped.
-  # Public because the legacy model-profiles editor renders the same select.
+  # Public because the flat `:llm` reasoning card is also rendered outside
+  # `category_section` (search results).
   def reasoning_options(value) do
     options = EvoDashWeb.LLMSetup.Reasoning.options()
     configured = reasoning_value(value)

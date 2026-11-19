@@ -333,13 +333,14 @@ defmodule EvoDashWeb.SettingsLive do
                   </div>
                 <% else %>
                   <%!-- category_section renders its own <form phx-submit="save_category">
-                 internally. The LLM category's Quick Setup panel and Model
-                 Profiles editor contain their own nested forms (save_api_key,
-                 save_custom_model, save_model_profile), so they must NOT be
-                 wrapped in the outer save_category form (nested <form> elements
-                 are invalid HTML — browsers ignore the inner <form> tag, causing
-                 the profile editor's Save button to submit save_category instead
-                 of save_model_profile, which deletes the models list). --%>
+                 internally. The LLM category's provider-account panel and its
+                 inline wizards contain their own nested forms
+                 (save_provider_profile, provider_profile_form_change,
+                 provider_wizard_change), so they must NOT be wrapped in the
+                 outer save_category form (nested <form> elements are invalid
+                 HTML — browsers ignore the inner <form> tag, causing the
+                 account editor's Save button to submit save_category instead
+                 of save_provider_profile). --%>
                   <EvoDashWeb.SettingsComponents.category_section
                     category={@active_category}
                     schemas={Map.get(@schemas_by_category, @active_category, [])}
@@ -654,12 +655,9 @@ defmodule EvoDashWeb.SettingsLive do
 
   # ── Legacy provider/model-profile event names ──
   #
-  # Kept for the detached editor's historical public vocabulary (and for older
-  # links/tests); the rendered panel uses the canonical names above.
-  @impl true
-  def handle_event("add_model_profile", params, socket),
-    do: ProviderPanelEvents.add_provider_profile(socket, params)
-
+  # Kept for the historical profile-editor vocabulary still exercised by the
+  # Settings test suites; the rendered provider-account panel uses the
+  # canonical names above.
   @impl true
   def handle_event("edit_model_profile", params, socket),
     do: ModelProfileEvents.edit_model_profile(socket, params)

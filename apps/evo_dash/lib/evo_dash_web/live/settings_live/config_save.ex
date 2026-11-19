@@ -30,7 +30,7 @@ defmodule EvoDashWeb.SettingsLive.ConfigSave do
 
   Pass `editor_token: token` EXPLICITLY only from provider editor Save/Delete.
   Do not infer it from the socket in a generic persistence wrapper: category,
-  search, reset, Quick Setup, reorder and default saves must not close an editor.
+  search, reset, provider-wizard, reorder and default saves must not close an editor.
   ModelProfileEvents callbacks themselves reject tokens from newer edits.
 
   For a selected target resolving to the local BEAM, the parent must provide

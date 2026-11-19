@@ -73,8 +73,8 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:test_profile_id, :any, default: nil)
   attr(:credentials, :map, default: %{})
   # Per-profile OAuth credential status keyed by profile-id STRING; passed
-  # straight to the model-profiles editor. Read totally at the call site, so the
-  # page renders before (and without) the live side's assign.
+  # straight to the provider-account panel. Read totally at the call site, so
+  # the page renders before (and without) the live side's assign.
   attr(:auth_statuses, :map, default: %{})
 
   def category_section(assigns) do
