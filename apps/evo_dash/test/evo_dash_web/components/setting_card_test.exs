@@ -286,6 +286,50 @@ defmodule EvoDashWeb.SettingCardTest do
     end
   end
 
+  describe "setting_card/1 — [:llm, :reasoning_effort] select" do
+    test "options come from the canonical reasoning vocabulary (no max)" do
+      html =
+        render_component(&SettingCard.setting_card/1,
+          schema: reasoning_effort_schema(),
+          value: "xhigh"
+        )
+
+      options = reasoning_values(html)
+
+      assert options == [""] ++ EvoDashWeb.LLMSetup.Reasoning.options()
+      assert "xhigh" in options
+      assert "default" in options
+      # "max" is only a provider wire alias of "xhigh", never a dashboard option.
+      refute "max" in options
+
+      [xhigh] = Floki.find(parse(html), ~s(option[value="xhigh"]))
+      assert xhigh |> Floki.text() |> String.trim() == "Extra high"
+      assert selected_values(html) == ["xhigh"]
+    end
+
+    test "a configured custom level is still offered as its own option" do
+      html =
+        render_component(&SettingCard.setting_card/1,
+          schema: reasoning_effort_schema(),
+          value: "ultra"
+        )
+
+      assert List.last(reasoning_values(html)) == "ultra"
+      assert selected_values(html) == ["ultra"]
+    end
+
+    test "a provider wire alias selects the canonical level" do
+      html =
+        render_component(&SettingCard.setting_card/1,
+          schema: reasoning_effort_schema(),
+          value: "max"
+        )
+
+      refute "max" in reasoning_values(html)
+      assert selected_values(html) == ["xhigh"]
+    end
+  end
+
   # --- helpers ---
 
   defp write_paths_schema(overrides \\ []) do
@@ -339,6 +383,37 @@ defmodule EvoDashWeb.SettingCardTest do
   # Schema fixture mirroring the real EvoGit.Config.Schema definition for
   # [:appearance, :accent_color] (type :string, default "blue", validation
   # `in:` the ten GNOME/libadwaita accent names, category :appearance).
+  defp reasoning_values(html) do
+    html
+    |> parse()
+    |> Floki.find(~s(select[name="llm.reasoning_effort"] option))
+    |> Floki.attribute("value")
+  end
+
+  defp selected_values(html) do
+    html
+    |> parse()
+    |> Floki.find(~s(select[name="llm.reasoning_effort"] option[selected]))
+    |> Floki.attribute("value")
+  end
+
+  # Schema fixture mirroring the flat `[llm] reasoning_effort` key (string type,
+  # no default); the card renders a select over the canonical vocabulary.
+  defp reasoning_effort_schema(overrides \\ []) do
+    Map.merge(
+      %{
+        key_path: [:llm, :reasoning_effort],
+        type: :string,
+        default: nil,
+        validation: [],
+        category: :llm,
+        sub_category: nil,
+        description: "Legacy flat reasoning effort (migrated into provider profiles)."
+      },
+      Map.new(overrides)
+    )
+  end
+
   defp accent_schema(overrides \\ []) do
     Map.merge(
       %{

@@ -7,7 +7,8 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
 
   use EvoDashWeb, :html
 
-  import EvoDashWeb.SettingsComponents.SettingCard, only: [model_display: 1]
+  import EvoDashWeb.SettingsComponents.SettingCard,
+    only: [model_display: 1, reasoning_options: 1, reasoning_value: 1]
 
   import EvoDashWeb.SettingsComponents.CardShell, only: [card_shell: 1]
 
@@ -376,39 +377,21 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           <label class="label pb-1">
             <span class="label-text font-semibold text-xs">{gettext("Reasoning Effort")}</span>
           </label>
+          <%!-- The option list is the dashboard's canonical reasoning vocabulary
+               (EvoDashWeb.LLMSetup.Reasoning); no level ladder is copied here. --%>
+          <% reasoning_current =
+            draft_or_profile(@draft, "reasoning_effort", profile_param(@profile, :reasoning_effort)) %>
           <div class="relative">
             <select
               name="reasoning_effort"
               class="select select-bordered select-sm rounded-md w-full font-mono text-sm appearance-none pr-8"
             >
-              <option
-                value=""
-                selected={
-                  is_nil(
-                    draft_or_profile(
-                      @draft,
-                      "reasoning_effort",
-                      profile_param(@profile, :reasoning_effort)
-                    )
-                  )
-                }
-              >
+              <option value="" selected={is_nil(reasoning_current)}>
                 {gettext("(provider default)")}
               </option>
-              <%= for opt <- ~w(none minimal low medium high xhigh default) do %>
-                <option
-                  value={opt}
-                  selected={
-                    to_string(
-                      draft_or_profile(
-                        @draft,
-                        "reasoning_effort",
-                        profile_param(@profile, :reasoning_effort)
-                      )
-                    ) == opt
-                  }
-                >
-                  {opt}
+              <%= for opt <- reasoning_options(reasoning_current) do %>
+                <option value={opt} selected={reasoning_value(reasoning_current) == opt}>
+                  {EvoDashWeb.LLMSetup.Reasoning.label(opt)}
                 </option>
               <% end %>
             </select>

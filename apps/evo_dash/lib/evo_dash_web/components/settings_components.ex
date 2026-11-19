@@ -13,15 +13,14 @@ defmodule EvoDashWeb.SettingsComponents do
     only: [
       category_icon: 1,
       category_display_name: 1,
-      category_description: 1,
-      api_key_prefix_hint: 1
+      category_description: 1
     ]
 
   import EvoDashWeb.SettingsComponents.SettingCard,
     only: [setting_card: 1, flat_llm_schemas: 1]
 
-  import EvoDashWeb.SettingsComponents.ProviderProfilesEditor,
-    only: [provider_profiles_editor: 1]
+  import EvoDashWeb.SettingsComponents.ProviderProfiles.Panel,
+    only: [provider_profiles_panel: 1]
 
   import EvoDashWeb.SettingsComponents.SectionHeader, only: [section_header: 1]
 
@@ -29,8 +28,8 @@ defmodule EvoDashWeb.SettingsComponents do
 
   # ── Delegates for public APIs NOT already imported above.
   #    Functions imported above (category_display_name, category_icon,
-  #    category_description, api_key_prefix_hint, setting_card,
-  #    provider_profiles_editor, flat_llm_schemas) are already callable
+  #    category_description, setting_card,
+  #    provider_profiles_panel, flat_llm_schemas) are already callable
   #    as EvoDashWeb.SettingsComponents.func/arity via import. ──
 
   defdelegate schema_matches?(schema, search_text),
@@ -51,11 +50,6 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:disabled, :boolean, default: false)
   attr(:sandbox_backend, :atom, default: nil)
   attr(:sandbox_mode, :atom, default: nil)
-  attr(:llm_providers, :list, default: [])
-  attr(:selected_provider_id, :atom, default: nil)
-  attr(:selected_provider_models, :list, default: [])
-  attr(:selected_variant_id, :atom, default: nil)
-  attr(:selected_model_string, :string, default: nil)
   attr(:llm_test_status, :any, default: :idle)
   attr(:provider_profiles, :list, default: [])
   attr(:model_selections, :list, default: [])
@@ -66,6 +60,12 @@ defmodule EvoDashWeb.SettingsComponents do
   # User-authoritative open state of the profile edit form's "Advanced settings"
   # disclosure (nil = follow the auto rule). Threaded straight to the editor.
   attr(:profile_advanced_open, :any, default: nil)
+  # Inline add-account / add-model wizard state: nil | %{mode: :account |
+  # {:model, profile_id}, step: atom, draft: map, errors: map}.
+  attr(:provider_wizard, :any, default: nil)
+  # Recommended-schedule strip state for the expanded account:
+  # %{preset_id: string | nil, applied: boolean, modified: boolean, can_undo: boolean}.
+  attr(:provider_schedule, :map, default: %{})
   # Pending accent-color selection for the :appearance category (set by the
   # `select_appearance_accent` event in SettingsLive; nil = no pending draft).
   # Threaded into the accent card's value only — see card_value/3.
@@ -87,347 +87,32 @@ defmodule EvoDashWeb.SettingsComponents do
       />
 
       <%= if @category == :llm do %>
-        <%!-- LLM category: Quick Setup and the provider editor own separate
-             forms, so they must NOT be nested inside a save_category form
-             (invalid HTML). Only the flat global `[llm]` cards (compression
-             and tool-result pruning controls) are wrapped in the save_category
-             form inside the scroll body below. The pinned save bar sits
-             OUTSIDE that form and submits it via the HTML `form`
+        <%!-- LLM category: the provider-account panel and the Connection Test
+             own their own forms, so they must NOT be nested inside a
+             save_category form (invalid HTML). Only the flat global `[llm]`
+             cards (compression and tool-result pruning controls) are wrapped in
+             the save_category form inside the scroll body below. The pinned
+             save bar sits OUTSIDE that form and submits it via the HTML `form`
              association attribute (see the bar after the scroll body). --%>
         <div class="flex-1 overflow-y-auto px-8 py-8 relative">
           <div class="">
-            <%!-- LLM Provider Quick Setup --%>
-            <div class="mb-8 rounded-lg border border-base-200 bg-base-100 p-5">
-              <h3 class="text-lg font-bold text-base-content mb-1">{gettext("Quick Setup")}</h3>
-              <p class="text-sm text-base-content/80 mb-5">
-                <%!-- zh_CN: provider → "服务商" --%>{gettext(
-                  "Select a provider to quickly configure your model and API key."
-                )}
-              </p>
-
-              <%!-- Provider buttons --%>
-              <div class="flex flex-wrap gap-2 mb-5">
-                <%= for provider <- @llm_providers do %>
-                  <button
-                    type="button"
-                    phx-click="select_llm_provider"
-                    phx-value-provider_id={provider.id}
-                    class={[
-                      "btn btn-sm rounded-xl font-semibold transition-all duration-200",
-                      @selected_provider_id == provider.id && "btn-primary shadow-md",
-                      @selected_provider_id != provider.id &&
-                        "btn-ghost bg-base-200/50 hover:bg-base-200"
-                    ]}
-                  >
-                    {provider.display_name}
-                  </button>
-                <% end %>
-              </div>
-
-              <%!-- Variant and model shortcuts when provider is selected --%>
-              <%= if @selected_provider_id != nil do %>
-                <% provider =
-                  Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == @selected_provider_id)) %>
-                <% variants = provider[:variants] %>
-                <% credential_key =
-                  if @selected_variant_id && is_list(variants) do
-                    variant = Enum.find(variants, &(&1.id == @selected_variant_id))
-
-                    if variant && Map.get(variant, :credential_key),
-                      do: variant.credential_key,
-                      else: Map.get(provider, :credential_key)
-                  else
-                    Map.get(provider, :credential_key)
-                  end %>
-                <% has_variants = is_list(variants) and length(variants) > 0 %>
-                <% show_models = not has_variants or @selected_variant_id != nil %>
-                <% first_selection = List.first(@model_selections) %>
-                <% first_profile =
-                  Enum.find(@provider_profiles, fn profile ->
-                    first_selection && profile["id"] == first_selection.provider_profile_id
-                  end) || %{} %>
-                <% current_model =
-                  if first_selection,
-                    do: "#{first_selection.provider}:#{first_selection.model}",
-                    else: nil %>
-                <% show_custom_input = provider[:custom_model] == true %>
-                <% show_model_buttons = show_models and not show_custom_input %>
-                <%!-- Variant selection (only if provider has variants) --%>
-                <%= if has_variants do %>
-                  <div class="mb-5">
-                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">
-                      {gettext("Select a variant:")}
-                    </p>
-                    <div class="flex flex-wrap gap-2">
-                      <%= for variant <- variants do %>
-                        <button
-                          type="button"
-                          phx-click="select_llm_variant"
-                          phx-value-variant_id={variant.id}
-                          class={[
-                            "btn btn-xs rounded-xl font-medium transition-all duration-200",
-                            @selected_variant_id == variant.id && "btn-secondary shadow-md",
-                            @selected_variant_id != variant.id &&
-                              "btn-ghost bg-secondary/10 hover:bg-secondary/20 text-secondary"
-                          ]}
-                        >
-                          {variant.display_name}
-                        </button>
-                      <% end %>
-                    </div>
-                  </div>
-                <% end %>
-
-                <%!-- Model shortcuts (show only if no variants needed, or variant selected, and not a custom-model provider) --%>
-                <%= if show_model_buttons do %>
-                  <% resolved_atom =
-                    EvoGit.Config.LLMCatalog.resolve_provider_atom(
-                      @selected_provider_id,
-                      @selected_variant_id
-                    ) %>
-                  <div class="mb-5 space-y-4">
-                    <div>
-                      <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">
-                        {gettext("Quick-select a model:")}
-                      </p>
-                      <div class="flex flex-wrap gap-2">
-                        <%= for model <- @selected_provider_models do %>
-                          <% model_string = "#{resolved_atom}:#{model.id}" %>
-                          <button
-                            type="button"
-                            phx-click="select_llm_model"
-                            phx-value-model_string={model_string}
-                            class={[
-                              "btn btn-sm rounded-xl font-medium transition-all duration-200",
-                              @selected_model_string == model_string && "btn-primary shadow-md",
-                              @selected_model_string != model_string &&
-                                "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary-standalone"
-                            ]}
-                          >
-                            <%= if current_model == model_string do %>
-                              <.icon name="hero-check-circle" class="size-4 text-success" />
-                            <% end %>
-                            {model.display_name}
-                          </button>
-                        <% end %>
-                      </div>
-                    </div>
-
-                    <%!-- Credentials/save step: only after a model is selected.
-                         The base_url input renders only for providers that require
-                         it (catalog function, not the dead struct field). --%>
-                    <%= if @selected_model_string != nil do %>
-                      <% requires_base_url =
-                        EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
-                      <% shortcut_prefill_base_url = to_string(first_profile["base_url"] || "") %>
-                      <% selected_model_display =
-                        Enum.find_value(@selected_provider_models, fn model ->
-                          if "#{resolved_atom}:#{model.id}" == @selected_model_string,
-                            do: model.display_name
-                        end) %>
-                      <form phx-submit="save_quick_setup" class="space-y-4">
-                        <input type="hidden" name="provider_id" value={@selected_provider_id} />
-                        <input type="hidden" name="variant_id" value={@selected_variant_id || ""} />
-                        <input type="hidden" name="model_string" value={@selected_model_string} />
-                        <%= if requires_base_url do %>
-                          <div class="form-control">
-                            <label class="label">
-                              <span class="label-text font-bold text-sm mb-2 block">
-                                {gettext("Base URL")}
-                                <span class="text-error">*</span>
-                              </span>
-                            </label>
-                            <input
-                              type="text"
-                              name="base_url"
-                              value={shortcut_prefill_base_url}
-                              placeholder="https://..."
-                              class="input input-bordered w-full rounded-xl shadow-sm bg-base-100 font-mono text-sm"
-                            />
-                            <p class="text-xs text-base-content/70 leading-relaxed mt-1">
-                              <%!-- zh_CN: provider → "服务商" --%>{gettext(
-                                "Required for OpenAI-compatible providers."
-                              )}
-                            </p>
-                          </div>
-                        <% end %>
-                        <div class="flex items-center gap-3">
-                          <button type="submit" class="btn btn-primary btn-sm rounded-xl">
-                            {gettext("Save Model")}
-                          </button>
-                          <%= if selected_model_display do %>
-                            <span class="text-sm text-base-content/70">{selected_model_display}</span>
-                          <% end %>
-                        </div>
-                      </form>
-                    <% end %>
-                  </div>
-                <% end %>
-
-                <%!-- Custom model input (for providers with custom_model: true, e.g. OpenRouter / OpenAI-Compatible) --%>
-                <%= if show_custom_input do %>
-                  <% requires_base_url =
-                    EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
-                  <%!-- Prefill from the canonical account and model selection. --%>
-                  <% custom_prefill_id = if first_selection, do: first_selection.model, else: "" %>
-                  <% custom_prefill_base_url = to_string(first_profile["base_url"] || "") %>
-                  <form phx-submit="save_custom_model" class="mb-5 space-y-4">
-                    <input type="hidden" name="provider_id" value={@selected_provider_id} />
-                    <div class="form-control">
-                      <label class="label">
-                        <span class="label-text font-bold text-sm mb-2 block">{gettext("Model Name")}</span>
-                      </label>
-                      <input
-                        type="text"
-                        name="model_name"
-                        value={custom_prefill_id}
-                        placeholder={gettext("e.g. gpt-4o or anthropic/claude-3.5-sonnet")}
-                        class="input input-bordered w-full rounded-xl shadow-sm bg-base-100 font-mono text-sm"
-                      />
-                    </div>
-                    <div class="form-control">
-                      <label class="label">
-                        <span class="label-text font-bold text-sm mb-2 block">
-                          {gettext("Base URL")}
-                          <%= if requires_base_url do %>
-                            <span class="text-error">*</span>
-                          <% end %>
-                        </span>
-                      </label>
-                      <input
-                        type="text"
-                        name="base_url"
-                        value={custom_prefill_base_url}
-                        placeholder={gettext("https://api.my-provider.com/v1")}
-                        class="input input-bordered w-full rounded-xl shadow-sm bg-base-100 font-mono text-sm"
-                      />
-                      <p class="text-xs text-base-content/70 leading-relaxed mt-1">
-                        <%= if requires_base_url do %>
-                          <%!-- zh_CN: provider → "服务商" --%>{gettext(
-                            "For proxy/aggregator endpoints. Leave empty for standard provider endpoints."
-                          )}
-                        <% else %>
-                          <%!-- zh_CN: provider → "服务商" --%>{gettext(
-                            "Leave empty to use the default value."
-                          )}
-                        <% end %>
-                      </p>
-                    </div>
-                    <%= if requires_base_url do %>
-                      <div class="bg-warning/5 border border-warning/20 rounded-xl p-3 flex gap-2 items-start">
-                        <.icon
-                          name="hero-exclamation-triangle"
-                          class="size-5 text-warning shrink-0 mt-0.5"
-                        />
-                        <p class="text-xs font-medium text-warning/90 leading-relaxed">
-                          <%!-- zh_CN: tool calls → "工具调用", provider → "服务商" --%>{gettext(
-                            "Warning: OpenAI-compatible APIs vary in compatibility. Some features (tool calls, streaming, structured output) may not work depending on the provider."
-                          )}
-                        </p>
-                      </div>
-                    <% end %>
-                    <button type="submit" class="btn btn-primary btn-sm rounded-xl">
-                      {gettext("Set Model")}
-                    </button>
-                  </form>
-                <% end %>
-
-                <%!-- API Key input — gated on model selection for preset-model
-                     providers; always visible for custom-model providers (their
-                     save_custom_model form is the model-selection step). --%>
-                <% show_credentials = show_custom_input or @selected_model_string != nil %>
-                <%= if show_credentials do %>
-                  <%= if provider && EvoGit.Config.LLMCatalog.oauth_only?(provider.id) do %>
-                    <%!-- OAuth-only providers never show an API-key input: the
-                         vendor login is performed once in a terminal and Genesis
-                         imports the managed credential file. --%>
-                    <div class="pt-6 pb-4 space-y-2">
-                      <div class="flex items-center gap-2">
-                        <.icon name="hero-key" class="size-4 text-base-content/70" />
-                        <span class="badge badge-secondary badge-sm">
-                          <%!-- zh_CN: Subscription (OAuth) → 订阅（OAuth） --%>{gettext(
-                            "Subscription (OAuth)"
-                          )}
-                        </span>
-                      </div>
-                      <p class="text-xs text-base-content/70">
-                        {gettext(
-                          "This provider uses a subscription login. No API key needs to be pasted here."
-                        )}
-                      </p>
-                      <pre class="whitespace-pre-wrap font-sans text-xs text-base-content/70 leading-relaxed"><%= EvoGit.Auth.login_instructions(
-                        provider.id
-                      ) %></pre>
-                      <p class="text-xs text-base-content/60">
-                        {gettext("Managed credential file: %{path}",
-                          path: EvoGit.Auth.default_oauth_file()
-                        )}
-                      </p>
-                    </div>
-                  <% else %>
-                    <% key_is_set = Map.get(@credentials, credential_key) not in [nil, ""] %>
-                    <form phx-submit="save_api_key" class="pt-6 pb-4">
-                      <input type="hidden" name="credential_key" value={credential_key} />
-                      <label class="label">
-                        <span class="label-text font-semibold text-sm">{credential_key}</span>
-                        <%= if key_is_set do %>
-                          <span class="label-text-alt text-success text-xs font-bold">✓ {gettext(
-                            "Set"
-                          )}</span>
-                        <% end %>
-                      </label>
-                      <div class="flex items-stretch gap-3">
-                        <input
-                          type="password"
-                          name="api_key"
-                          placeholder={
-                            if key_is_set,
-                              do: gettext("API key is already set"),
-                              else: api_key_prefix_hint(provider.id) || gettext("Enter your API key")
-                          }
-                          class={[
-                            "input input-bordered flex-1 rounded-xl shadow-sm bg-base-100",
-                            key_is_set && "input-success"
-                          ]}
-                        />
-                        <button type="submit" class="btn btn-primary btn-sm rounded-xl">
-                          {gettext("Save Key")}
-                        </button>
-                      </div>
-                      <%= if key_is_set do %>
-                        <p class="text-[11px] text-success/90 mt-1.5 font-medium">
-                          ✓ {gettext("Your API key is configured and ready to use.")}
-                        </p>
-                      <% else %>
-                        <p class="text-[11px] text-base-content/70 mt-1.5">
-                          <%= if prefix = api_key_prefix_hint(provider.id) do %>
-                            {gettext("Enter your API key. It should start with")}
-                            <code class="font-mono bg-base-200 px-1 py-0.5 rounded text-[10px]">{prefix}</code>
-                          <% else %>
-                            {gettext("Enter your API key.")}
-                          <% end %>
-                        </p>
-                      <% end %>
-                    </form>
-                  <% end %>
-                <% else %>
-                  <p class="text-sm text-base-content/70 italic pt-6 pb-4">
-                    {gettext("Select a model above to configure credentials.")}
-                  </p>
-                <% end %>
-              <% end %>
-            </div>
-
-            <%!-- Canonical provider accounts; model choices are a separate projection. --%>
-            <.provider_profiles_editor
-              provider_profiles={Enum.map(@provider_profiles, &provider_editor_fields/1)}
-              default_provider_profile={get_in(@file_config, [:llm, :default_provider_profile])}
-              editing_profile_id={@editing_profile_id}
-              profile_form_draft={provider_editor_fields(@profile_form_draft)}
+            <%!-- Canonical provider accounts. The panel owns the single
+                 section header, the account list, the one in-place expanded
+                 editor, the schedule editor and the inline add-account /
+                 add-model wizards. The flat `[llm]` cards below stay a plain
+                 save_category form. --%>
+            <.provider_profiles_panel
+              profiles={Enum.map(@provider_profiles, &provider_editor_fields/1)}
+              default_profile_id={get_in(@file_config, [:llm, :default_provider_profile])}
+              expanded_id={@editing_profile_id}
+              draft={provider_editor_fields(@profile_form_draft)}
               errors={@provider_profile_errors}
+              advanced_open={@profile_advanced_open}
               auth_statuses={Map.get(assigns, :auth_statuses, %{})}
+              disabled={@disabled}
+              wizard={@provider_wizard}
+              schedule={@provider_schedule}
             />
-
             <%!-- LLM Connection Test --%>
             <div class="mb-6 bg-base-100 rounded-lg border border-base-200 p-4">
               <div class="flex items-center gap-3 mb-3">

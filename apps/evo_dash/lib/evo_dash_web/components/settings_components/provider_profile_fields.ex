@@ -6,6 +6,10 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
 
   use EvoDashWeb, :html
 
+  # The dashboard's SINGLE reasoning-effort vocabulary (levels, labels and the
+  # `"max"` → `"xhigh"` canonicalization). Never copy a level list here.
+  alias EvoDashWeb.LLMSetup.Reasoning
+
   attr(:name, :string, required: true)
   attr(:label, :string, required: true)
   attr(:value, :any, default: "")
@@ -77,69 +81,60 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
   attr(:fields, :map, required: true)
   attr(:model_override, :boolean, default: false)
   attr(:show_default, :boolean, default: true)
+  # Advisory only: catalog metadata never changes chip membership or order.
   attr(:suggestions, :list, default: [])
 
   def reasoning_fields(assigns) do
-    selected = efforts(value(assigns.fields, "reasoning_efforts", []))
-    options = Enum.uniq(selected ++ efforts(assigns.suggestions))
+    inventory = reasoning_inventory(assigns.fields)
+    suggested = Reasoning.normalize_inventory(assigns.suggestions)
 
-    # Catalog values are suggestions, not automatic config changes or a promise
-    # of wire support. Configured custom values stay first in submission order.
+    # The chip list is STABLE: the canonical vocabulary in canonical order,
+    # then any configured custom level appended once at the END. It never
+    # depends on the submitted draft order, so a `phx-change` repaint patches
+    # the same keyed nodes in the same positions (a positional patch used to
+    # rewrite an already-flipped checkbox to a different level).
     assigns =
       assigns
-      |> assign(:efforts, selected)
-      |> assign(:options, options)
-      |> assign(:advanced_options, ~w(none minimal low medium high xhigh max default) -- options)
+      |> assign(:inventory, inventory)
+      |> assign(:chips, reasoning_chips(inventory, suggested, assigns.prefix))
+      |> assign(:suggestion_text, suggested |> Enum.map(&Reasoning.label/1) |> Enum.join(", "))
       |> assign(:name, nested(assigns.prefix, "reasoning_efforts") <> "[]")
 
     ~H"""
-    <fieldset class="min-w-0 space-y-3 rounded-lg border border-base-300 p-3">
-      <%!-- zh_CN: 勾选的是模型支持的有序推理等级清单，不是任务速度；保留已有的自定义等级。 --%>
+    <fieldset class="min-w-0 space-y-3 rounded-xl border border-base-300 p-3">
+      <%!-- zh_CN: 推理等级 = 该模型支持的推理强度清单（固定顺序），不是任务速度。 --%>
       <legend class="px-1 text-xs font-semibold">{gettext("Reasoning levels")}</legend>
-      <p class="text-xs leading-relaxed text-base-content/70">
-        {if @suggestions == [],
-          do:
-            gettext(
-              "No verified catalog level list is available for this selection. Keep configured levels or use advanced choices after checking your provider."
-            ),
-          else:
-            gettext(
-              "Catalog suggestions are shown alongside configured levels. For shared defaults, suggestions must appear in every configured model's catalog entry. Verify support with your provider; nothing is selected automatically."
-            )}
+      <p :if={@suggestion_text == ""} class="text-xs leading-relaxed text-base-content/70">
+        {gettext(
+          "No verified catalog level list is available for this selection. Pick only the levels you have confirmed with your provider."
+        )}
+      </p>
+      <p :if={@suggestion_text != ""} class="text-xs leading-relaxed text-base-content/70">
+        {gettext(
+          "Catalog suggestions are advisory: verify support with your provider, and nothing is selected automatically."
+        )}
+        <span class="font-mono text-base-content/60">{@suggestion_text}</span>
       </p>
       <input type="hidden" name={@name} value="" />
       <div class="flex flex-wrap gap-2">
         <label
-          :for={effort <- @options}
-          class="flex cursor-pointer items-center gap-1.5 rounded-md border border-base-300 bg-base-100 px-2 py-1 text-xs"
+          :for={chip <- @chips}
+          :key={chip.id}
+          class={reasoning_chip_class(chip.checked)}
+          title={if chip.suggested, do: gettext("Suggested by the model catalog")}
         >
           <input
+            id={chip.id}
             type="checkbox"
             name={@name}
-            value={effort}
-            checked={effort in @efforts}
+            value={chip.value}
+            checked={chip.checked}
             class="checkbox checkbox-xs"
-          />{effort}
+          />
+          <span class="text-xs">{chip.label}</span>
+          <span :if={chip.suggested} class="text-[10px] text-base-content/50">*</span>
         </label>
       </div>
-      <details :if={@advanced_options != []} class="rounded-md border border-base-300 p-2">
-        <summary class="cursor-pointer text-xs font-medium focus-visible:outline-2 focus-visible:outline-primary-standalone">
-          {gettext("Advanced reasoning choices")}
-        </summary>
-        <p class="mt-2 text-xs text-base-content/70">
-          {gettext(
-            "These are request vocabulary choices, not verified support for this model or endpoint. Select only levels you have confirmed."
-          )}
-        </p>
-        <div class="mt-2 flex flex-wrap gap-2">
-          <label
-            :for={effort <- @advanced_options}
-            class="flex cursor-pointer items-center gap-1.5 rounded-md border border-base-300 bg-base-100 px-2 py-1 text-xs"
-          >
-            <input type="checkbox" name={@name} value={effort} class="checkbox checkbox-xs" />{effort}
-          </label>
-        </div>
-      </details>
       <p class="text-xs leading-relaxed text-base-content/70">
         {if @model_override,
           do: gettext("No levels selected explicitly disables reasoning for this model."),
@@ -148,7 +143,12 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
               "Select only levels supported by your models. No selection advertises no reasoning support."
             )}
       </p>
-      <.reasoning_default :if={@show_default} prefix={@prefix} fields={@fields} efforts={@efforts} />
+      <.reasoning_default
+        :if={@show_default}
+        prefix={@prefix}
+        fields={@fields}
+        efforts={@inventory}
+      />
     </fieldset>
     """
   end
@@ -159,13 +159,19 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
   attr(:inherit, :boolean, default: false)
 
   def reasoning_default(assigns) do
+    inventory = default_inventory(assigns)
+    selected = selected_default(assigns.fields)
+
     assigns =
       assigns
       |> assign(:name, nested(assigns.prefix, "default_reasoning_effort"))
-      |> assign(:selected, value(assigns.fields, "default_reasoning_effort"))
+      |> assign(:inventory, inventory)
+      |> assign(:selected, selected)
+      |> assign(:invalid?, selected != "" and selected not in inventory)
 
     ~H"""
-    <div class="min-w-0">
+    <div :if={@inventory != [] or @selected != ""} class="min-w-0">
+      <%!-- zh_CN: 默认推理等级 → 该模型默认使用的推理强度;跟随提供方 = 不发送该字段 --%>
       <label for={field_id(@name)} class="mb-1 block text-xs font-medium text-base-content/70">{gettext(
         "Default reasoning level"
       )}</label>
@@ -174,16 +180,16 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
         name={@name}
         class="select select-sm w-full min-w-0 rounded-md border-base-300 bg-base-100"
         aria-describedby={field_id(@name) <> "-help"}
-        aria-invalid={if @selected != "" and @selected not in @efforts, do: "true"}
+        aria-invalid={if @invalid?, do: "true"}
       >
-        <option value="" selected={@selected == ""}>
+        <option :if={@inventory != []} value="" selected={@selected == ""}>
           {if @inherit, do: gettext("Inherit provider default"), else: gettext("Provider default")}
         </option>
-        <option :if={@selected != "" and @selected not in @efforts} value={@selected} selected>
-          {gettext("Unsupported level: %{level}", level: @selected)}
+        <option :if={@invalid?} value={@selected} selected>
+          {gettext("Unsupported level: %{level}", level: Reasoning.label(@selected))}
         </option>
-        <option :for={effort <- @efforts} value={effort} selected={effort == @selected}>
-          {effort}
+        <option :for={effort <- @inventory} value={effort} selected={effort == @selected}>
+          {Reasoning.label(effort)}
         </option>
       </select>
       <p id={field_id(@name) <> "-help"} class="mt-1 text-xs text-base-content/70">
@@ -191,6 +197,104 @@ defmodule EvoDashWeb.SettingsComponents.ProviderProfileFields do
       </p>
     </div>
     """
+  end
+
+  # The configured draft inventory (order-preserving, canonicalized, unknown
+  # configured levels kept) — the ONLY membership source for both controls.
+  defp reasoning_inventory(fields) do
+    fields |> value("reasoning_efforts", []) |> efforts() |> Reasoning.normalize_inventory()
+  end
+
+  defp default_inventory(assigns) do
+    case Reasoning.normalize_inventory(assigns.efforts) do
+      [] -> reasoning_inventory(assigns.fields)
+      inventory -> inventory
+    end
+  end
+
+  defp selected_default(fields) do
+    raw = fields |> value("default_reasoning_effort") |> default_text()
+    Reasoning.canonical(raw) || raw
+  end
+
+  defp default_text(value) when is_binary(value), do: String.trim(value)
+
+  defp default_text(value) when is_atom(value) and value not in [nil, true, false],
+    do: value |> Atom.to_string() |> String.trim()
+
+  defp default_text(_value), do: ""
+
+  defp reasoning_chips(inventory, suggested, prefix) do
+    selected = MapSet.new(inventory)
+    suggested = MapSet.new(suggested)
+
+    canonical =
+      Enum.map(Reasoning.efforts(), fn effort ->
+        %{value: effort, checked: MapSet.member?(selected, effort)}
+      end)
+
+    extras =
+      inventory
+      |> Enum.reject(&Reasoning.level?/1)
+      |> Enum.map(fn value -> %{value: value, checked: true} end)
+
+    (canonical ++ extras)
+    |> Enum.map(fn chip ->
+      Map.merge(chip, %{
+        label: Reasoning.label(chip.value),
+        suggested: MapSet.member?(suggested, String.downcase(chip.value)),
+        id: reasoning_chip_id(prefix, chip.value)
+      })
+    end)
+    |> Enum.map_reduce(MapSet.new(), fn chip, seen ->
+      id = unique_chip_id(chip.id, seen)
+      {Map.put(chip, :id, id), MapSet.put(seen, id)}
+    end)
+    |> elem(0)
+  end
+
+  # One stable, prefix-scoped DOM id per chip so morphdom patches in place.
+  defp reasoning_chip_id(prefix, value),
+    do: "reasoning-" <> chip_scope(prefix) <> chip_slug(value)
+
+  defp chip_scope(prefix) do
+    scope =
+      prefix
+      |> to_string()
+      |> String.replace(["[", "]"], "-")
+      |> String.replace(~r/-{2,}/, "-")
+      |> String.trim("-")
+
+    if scope == "", do: "", else: scope <> "-"
+  end
+
+  defp chip_slug(value) do
+    slug =
+      value
+      |> to_string()
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9_-]+/, "-")
+      |> String.trim("-")
+
+    if slug == "", do: "level-" <> Integer.to_string(:erlang.phash2(value)), else: slug
+  end
+
+  defp unique_chip_id(id, seen), do: unique_chip_id(id, seen, 1)
+
+  defp unique_chip_id(id, seen, suffix) do
+    candidate = if suffix == 1, do: id, else: id <> "-" <> Integer.to_string(suffix)
+
+    if MapSet.member?(seen, candidate),
+      do: unique_chip_id(id, seen, suffix + 1),
+      else: candidate
+  end
+
+  defp reasoning_chip_class(true) do
+    "flex cursor-pointer items-center gap-1.5 rounded-lg border border-primary bg-primary/5 px-2 py-1"
+  end
+
+  defp reasoning_chip_class(_checked?) do
+    "flex cursor-pointer items-center gap-1.5 rounded-lg border border-base-300 bg-base-100 px-2 py-1"
   end
 
   attr(:prefix, :string, required: true)

@@ -163,9 +163,9 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                   <option value="" selected={is_nil(@value)}>
                     <%!-- zh_CN: provider → "服务商" --%>{gettext("(provider default)")}
                   </option>
-                  <%= for opt <- ~w(none minimal low medium high xhigh default) do %>
-                    <option value={opt} selected={to_string(@value) == opt}>
-                      {opt}
+                  <%= for opt <- reasoning_options(@value) do %>
+                    <option value={opt} selected={reasoning_value(@value) == opt}>
+                      {EvoDashWeb.LLMSetup.Reasoning.label(opt)}
                     </option>
                   <% end %>
                 </select>
@@ -391,6 +391,30 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
 
   defp input_value(nil), do: ""
   defp input_value(value), do: to_string(value)
+
+  # `[:llm, :reasoning_effort]` options come from the dashboard's canonical
+  # vocabulary (no level list is copied here); a configured custom level is
+  # still offered as its own option instead of being silently dropped.
+  # Public because the legacy model-profiles editor renders the same select.
+  def reasoning_options(value) do
+    options = EvoDashWeb.LLMSetup.Reasoning.options()
+    configured = reasoning_value(value)
+
+    if configured == "" or configured in options, do: options, else: options ++ [configured]
+  end
+
+  # The canonical value of a configured reasoning setting: a provider wire alias
+  # ("max") resolves to its canonical level ("xhigh"); nil becomes "".
+  def reasoning_value(value) do
+    EvoDashWeb.LLMSetup.Reasoning.canonical(value) || configured_text(value)
+  end
+
+  defp configured_text(value) when is_binary(value), do: String.trim(value)
+
+  defp configured_text(value) when is_atom(value) and value not in [nil, true, false],
+    do: value |> Atom.to_string() |> String.trim()
+
+  defp configured_text(_value), do: ""
 
   def model_display(nil), do: ""
   def model_display(value) when is_binary(value), do: value

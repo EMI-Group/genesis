@@ -9,6 +9,10 @@ defmodule EvoDashWeb.ProviderProfileFieldsTest do
 
   alias EvoDashWeb.SettingsComponents.ProviderProfileFields, as: Fields
 
+  # The dashboard's canonical reasoning LEVELS in core order. `max` is only a
+  # provider wire alias of `xhigh`, never a dashboard level.
+  @canonical ~w(none minimal low medium high xhigh)
+
   describe "exact catalog reasoning suggestions" do
     test "uses explicit effort metadata only for the exact provider and model identity" do
       assert Fields.reasoning_suggestions(%{
@@ -75,116 +79,121 @@ defmodule EvoDashWeb.ProviderProfileFieldsTest do
   end
 
   describe "reasoning checkbox serialization" do
-    test "configured custom levels precede unchecked vocabulary in their original order" do
+    test "ONE canonical chip list: canonical order, then configured extras once at the END" do
       tree =
         render_component(&Fields.reasoning_fields/1,
           prefix: "",
-          fields: %{"reasoning_efforts" => [" high ", "vendor-custom", "low", "high", "", nil]}
+          fields: %{
+            "reasoning_efforts" => [" high ", "custom-level", "low", "high", "", nil, "max"]
+          }
         )
         |> parse()
 
-      inputs = Floki.find(tree, ~s(input[name="reasoning_efforts[]"]))
+      # "max" is only a provider WIRE alias of "xhigh" and never a dashboard
+      # level, so a persisted "max" renders as the xhigh chip exactly once.
+      assert checkbox_values(tree, "reasoning_efforts[]") == @canonical ++ ["custom-level"]
+      assert length(Floki.find(tree, ~s(input[type="checkbox"][value="xhigh"]))) == 1
+      assert Floki.find(tree, ~s(input[value="max"])) == []
 
-      assert Enum.map(inputs, &attr(&1, "value")) ==
-               Enum.map(
-                 [
-                   "",
-                   "high",
-                   "vendor-custom",
-                   "low",
-                   "none",
-                   "minimal",
-                   "medium",
-                   "xhigh",
-                   "max",
-                   "default"
-                 ],
-                 &[&1]
-               )
-
-      advanced = one(tree, "details")
-      assert attr(advanced, "open") == []
-      assert text(one(advanced, "summary")) == "Advanced reasoning choices"
-
-      assert checkbox_values(advanced, "reasoning_efforts[]") ==
-               ~w(none minimal medium xhigh max default)
-
-      assert checkbox_values(Floki.filter_out(tree, "details"), "reasoning_efforts[]") ==
-               ["high", "vendor-custom", "low"]
-
-      assert text(tree) =~ "No verified catalog level list is available"
-      assert text(advanced) =~ "not verified support for this model or endpoint"
-      assert checked_values(tree, "reasoning_efforts[]") == ["high", "vendor-custom", "low"]
-      assert attr(hd(inputs), "type") == ["hidden"]
-      assert selected(one(tree, ~s(select[name="default_reasoning_effort"]))) == [""]
-
-      assert option_values(one(tree, ~s(select[name="default_reasoning_effort"]))) == [
-               "",
+      # Checked state follows the draft inventory, in chip order — a persisted
+      # "max" checks the canonical "xhigh" chip.
+      assert checked_values(tree, "reasoning_efforts[]") == [
+               "low",
                "high",
-               "vendor-custom",
-               "low"
+               "xhigh",
+               "custom-level"
              ]
+
+      # Every chip carries its own stable, prefix-scoped DOM id.
+      assert chip_ids(tree, "reasoning_efforts[]") ==
+               Enum.map(@canonical ++ ["custom-level"], &"reasoning-#{&1}")
     end
 
-    test "catalog suggestions are normalized and offered unchecked without changing saved order or defaults" do
+    test "the hidden blank seed stays the FIRST input so an explicit empty list submits" do
       tree =
         render_component(&Fields.reasoning_fields/1,
+          prefix: "",
+          fields: %{"reasoning_efforts" => ["high"]}
+        )
+        |> parse()
+
+      [first | _rest] = Floki.find(tree, ~s(input[name="reasoning_efforts[]"]))
+      assert attr(first, "type") == ["hidden"]
+      assert attr(first, "value") == [""]
+    end
+
+    test "chip ids and order are byte-identical whether or not the draft selects a level" do
+      # The morphdom stability pin: the previously clicked level keeps its node
+      # identity across a phx-change repaint, so a flipped checkbox is never
+      # rewritten to a different level by positional patching.
+      empty =
+        render_component(&Fields.reasoning_fields/1, prefix: "models[2]", fields: %{})
+        |> parse()
+
+      selected =
+        render_component(&Fields.reasoning_fields/1,
           prefix: "models[2]",
-          fields: %{
-            "reasoning_efforts" => ["custom", "high"],
-            "default_reasoning_effort" => "custom"
-          },
-          suggestions: [" low ", "medium", "high", "low", "", nil],
-          model_override: true
+          fields: %{"reasoning_efforts" => ["xhigh"]}
         )
         |> parse()
 
       name = "models[2][reasoning_efforts][]"
 
-      assert checkbox_values(Floki.filter_out(tree, "details"), name) ==
-               ["custom", "high", "low", "medium"]
-
-      assert checked_values(tree, name) == ["custom", "high"]
-      assert attr(one(tree, ~s(input[type="hidden"][name="#{name}"])), "value") == [""]
-      advanced = one(tree, "details")
-      assert attr(advanced, "open") == []
-      assert checkbox_values(advanced, name) == ~w(none minimal xhigh max default)
-      assert checked_values(advanced, name) == []
-      select = one(tree, ~s(select[name="models[2][default_reasoning_effort]"]))
-      assert option_values(select) == ["", "custom", "high"]
-      assert selected(select) == ["custom"]
-      assert text(tree) =~ "nothing is selected automatically"
+      assert chip_ids(empty, name) == chip_ids(selected, name)
+      assert chip_ids(selected, name) == Enum.map(@canonical, &"reasoning-models-2-#{&1}")
+      assert checked_values(empty, name) == []
+      assert checked_values(selected, name) == ["xhigh"]
     end
 
-    test "suggestions alone neither select reasoning levels nor populate the default inventory" do
+    test "per-model rows keep distinct, unique chip ids" do
+      htmls = [
+        render_component(&Fields.reasoning_fields/1, prefix: "", fields: %{}),
+        render_component(&Fields.reasoning_fields/1, prefix: "models[0]", fields: %{}),
+        render_component(&Fields.reasoning_fields/1, prefix: "models[1]", fields: %{})
+      ]
+
+      ids =
+        Enum.flat_map(htmls, fn html ->
+          html
+          |> parse()
+          |> Floki.find(~s(input[type="checkbox"]))
+          |> Floki.attribute("id")
+        end)
+
+      assert length(ids) == 18
+      assert ids == Enum.uniq(ids)
+      assert Enum.take(ids, 6) == Enum.map(@canonical, &"reasoning-#{&1}")
+      assert Enum.slice(ids, 6, 6) == Enum.map(@canonical, &"reasoning-models-0-#{&1}")
+      assert Enum.slice(ids, 12, 6) == Enum.map(@canonical, &"reasoning-models-1-#{&1}")
+    end
+
+    test "catalog suggestions are advisory: no membership, order or selection change" do
       tree =
         render_component(&Fields.reasoning_fields/1,
           prefix: "",
           fields: %{},
-          suggestions: ["low", "medium", "high"]
+          suggestions: [" low ", "medium", "max", "low", "", nil]
         )
         |> parse()
 
-      assert checkbox_values(Floki.filter_out(tree, "details"), "reasoning_efforts[]") ==
-               ["low", "medium", "high"]
-
+      assert checkbox_values(tree, "reasoning_efforts[]") == @canonical
       assert checked_values(tree, "reasoning_efforts[]") == []
-      assert option_values(one(tree, ~s(select[name="default_reasoning_effort"]))) == [""]
-      assert selected(one(tree, ~s(select[name="default_reasoning_effort"]))) == [""]
-      assert attr(one(tree, "details"), "open") == []
+      assert Floki.find(tree, ~s(input[value="max"])) == []
+      assert text(tree) =~ "Catalog suggestions are advisory"
+      assert text(tree) =~ "Low, Medium, Extra high"
+      assert Floki.find(tree, ~s(select[name="default_reasoning_effort"])) == []
     end
 
-    test "a fully configured vocabulary needs no empty advanced disclosure" do
-      vocabulary = ~w(none minimal low medium high xhigh max default)
-
+    test "a fully configured canonical vocabulary selects every canonical chip exactly once" do
       tree =
         render_component(&Fields.reasoning_fields/1,
           prefix: "",
-          fields: %{"reasoning_efforts" => vocabulary}
+          fields: %{"reasoning_efforts" => @canonical ++ ["max", "xhigh"]}
         )
         |> parse()
 
-      assert checked_values(tree, "reasoning_efforts[]") == vocabulary
+      assert checked_values(tree, "reasoning_efforts[]") == @canonical
+      assert length(Floki.find(tree, ~s(input[type="checkbox"]))) == 6
       assert Floki.find(tree, "details") == []
     end
 
@@ -200,9 +209,12 @@ defmodule EvoDashWeb.ProviderProfileFieldsTest do
       name = "models[12][reasoning_efforts][]"
       assert attr(one(tree, ~s(input[type="hidden"][name="#{name}"])), "value") == [""]
       assert checked_values(tree, name) == []
-      assert length(Floki.find(tree, ~s(input[type="checkbox"][name="#{name}"]))) == 8
+      assert length(Floki.find(tree, ~s(input[type="checkbox"][name="#{name}"]))) == 6
       assert text(tree) =~ "No levels selected explicitly disables reasoning for this model."
-      assert selected(one(tree, ~s(select[name="models[12][default_reasoning_effort]"]))) == [""]
+
+      # No configured inventory means no level to default to, so no select is
+      # rendered at all rather than an empty one.
+      assert Floki.find(tree, ~s(select[name="models[12][default_reasoning_effort]"])) == []
     end
 
     test "account inventory can hide its duplicate default control without hiding the sentinel" do
@@ -214,9 +226,42 @@ defmodule EvoDashWeb.ProviderProfileFieldsTest do
         )
         |> parse()
 
-      assert checked_values(tree, "reasoning_efforts[]") == ["custom", "high", "low"]
+      assert checked_values(tree, "reasoning_efforts[]") == ["low", "high", "custom"]
       assert length(Floki.find(tree, ~s(input[type="hidden"][name="reasoning_efforts[]"]))) == 1
       assert Floki.find(tree, "select") == []
+      # A custom value is appended BELOW the complete canonical ladder.
+      assert length(Floki.find(tree, ~s(input[type="checkbox"]))) == 7
+    end
+
+    test "the default select offers exactly the inventory levels plus one blank" do
+      tree =
+        render_component(&Fields.reasoning_fields/1,
+          prefix: "models[1]",
+          fields: %{
+            "reasoning_efforts" => ["high", "custom-level", "max"],
+            "default_reasoning_effort" => "high"
+          }
+        )
+        |> parse()
+
+      select = one(tree, ~s(select[name="models[1][default_reasoning_effort]"]))
+      assert option_values(select) == ["", "high", "custom-level", "xhigh"]
+      refute "max" in option_values(select)
+      assert selected(select) == ["high"]
+
+      assert Enum.map(Floki.find(select, "option"), &text/1) == [
+               "Provider default",
+               "High",
+               "custom-level",
+               "Extra high"
+             ]
+    end
+
+    test "an empty inventory renders no default control and no blank default option" do
+      tree = render_component(&Fields.reasoning_fields/1, prefix: "", fields: %{}) |> parse()
+
+      assert Floki.find(tree, "select") == []
+      assert text(tree) =~ "No verified catalog level list is available"
     end
 
     test "unsupported saved default is visible and invalid rather than silently replaced" do
@@ -455,6 +500,12 @@ defmodule EvoDashWeb.ProviderProfileFieldsTest do
   defp text(tree), do: tree |> Floki.text() |> String.replace(~r/\s+/, " ") |> String.trim()
   defp option_values(select), do: select |> Floki.find("option") |> Floki.attribute("value")
   defp selected(select), do: select |> Floki.find("option[selected]") |> Floki.attribute("value")
+
+  defp chip_ids(tree, name),
+    do:
+      tree
+      |> Floki.find(~s(input[type="checkbox"][name="#{name}"]))
+      |> Floki.attribute("id")
 
   defp checkbox_values(tree, name),
     do: tree |> Floki.find(~s(input[type="checkbox"][name="#{name}"])) |> Floki.attribute("value")

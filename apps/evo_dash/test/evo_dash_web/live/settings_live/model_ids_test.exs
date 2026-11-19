@@ -1,8 +1,8 @@
 # Regression guard for RETIRED model ids on the dashboard's model surfaces.
 #
-# The Settings page offers whatever `EvoGit.Config.LLMCatalog` ships: the Quick
-# Setup panel renders one button per catalog model, tagged
-# `phx-value-model_string="<provider_atom>:<model id>"`. A retired id that
+# The Settings page offers whatever `EvoGit.Config.LLMCatalog` ships: the
+# provider-account wizard's model step renders one button per catalog model,
+# tagged `phx-value-model="<model id>"`. A retired id that
 # survives in the catalog (or in a fixture fed back into the page) silently
 # offers users a model that no longer exists, so this file pins BOTH halves:
 #
@@ -125,27 +125,25 @@ defmodule EvoDashWeb.SettingsLive.ModelIdsTest do
   describe "Settings page" do
     test "renders no retired model id", %{conn: conn} do
       {:ok, view, html} = mount_settings(conn)
-
-      # The LLM category is the default mount, so the Quick Setup panel and its
-      # provider list are on the page.
-      assert html =~ "Quick Setup"
+      # The LLM category is the default mount, so the provider-account panel —
+      # the ONLY model surface on this page — is on the page.
+      assert html =~ ~s(id="provider-profiles-panel")
       assert retired_matches(html) == []
       assert retired_matches(render(view)) == []
     end
 
-    test "every catalog provider's model shortcuts render only current ids", %{conn: conn} do
+    test "every catalog provider's model choices render only current ids", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn)
 
-      for provider <- EvoGit.Config.LLMCatalog.providers() do
-        html =
-          render_hook(view, "select_llm_provider", %{
-            "provider_id" => Atom.to_string(provider.id)
-          })
+      for {provider_atom, provider} <- wizard_providers() do
+        html = open_wizard_model_step(view, provider_atom)
 
         assert retired_matches(html) == [],
-               "selecting provider #{inspect(provider.id)} rendered a retired model id"
+               "the wizard model step for #{inspect(provider_atom)} rendered a retired model id"
 
-        check_model_shortcuts(view, provider, html)
+        assert_current_models(html, provider_atom, provider)
+        render_click(view, "provider_wizard_cancel", %{})
+        refute has_element?(view, "#provider-wizard")
       end
     end
   end
@@ -185,43 +183,60 @@ defmodule EvoDashWeb.SettingsLive.ModelIdsTest do
   # are `nil` and simply not checked.
   defp binaries(values), do: Enum.filter(values, &is_binary/1)
 
-  # Providers with variants hide their model shortcuts until a variant is
-  # picked, so each variant gets its own render.
-  defp check_model_shortcuts(view, provider, provider_html) do
-    case provider[:variants] do
-      variants when is_list(variants) and variants != [] ->
-        for variant <- variants do
-          html =
-            render_hook(view, "select_llm_variant", %{
-              "variant_id" => Atom.to_string(variant.id)
-            })
+  # Every provider atom the account wizard offers. Variants are separate
+  # choices there (one card per `provider_atom`), and the first entry wins so a
+  # `custom_model` entry never shadows the real catalog entry of the same atom.
+  defp wizard_providers do
+    EvoGit.Config.LLMCatalog.providers()
+    |> Enum.flat_map(fn entry ->
+      for atom <- Enum.uniq(entry.provider_atoms), do: {atom, entry}
+    end)
+    |> Enum.uniq_by(&elem(&1, 0))
+  end
 
-          assert retired_matches(html) == [],
-                 "variant #{inspect(variant.id)} of #{inspect(provider.id)} rendered a retired id"
+  # Drives the REAL wizard to its model step: add account → provider card →
+  # Next until the model step renders (an OAuth-only provider drops the :auth
+  # step, so the number of hops differs per provider).
+  defp open_wizard_model_step(view, provider_atom, attempts \\ 4) do
+    render_click(view, "add_provider_profile", %{})
+    render_change(view, "provider_wizard_change", %{"provider" => Atom.to_string(provider_atom)})
+    advance_to_model_step(view, attempts)
+  end
 
-          assert_current_model(html, variant.provider_atom, provider)
-        end
+  defp advance_to_model_step(_view, 0) do
+    flunk("the provider-account wizard never reached its :model step")
+  end
 
-      _ ->
-        assert_current_model(
-          provider_html,
-          EvoGit.Config.LLMCatalog.resolve_provider_atom(provider.id, nil),
-          provider
-        )
+  defp advance_to_model_step(view, attempts) do
+    case assigns(view).provider_wizard do
+      %{step: :model} ->
+        render(view)
+
+      %{step: _step} ->
+        render_click(view, "provider_wizard_next", %{})
+        advance_to_model_step(view, attempts - 1)
+
+      other ->
+        flunk("the provider-account wizard is not open: #{inspect(other)}")
     end
   end
 
-  # Non-vacuity: when a provider HAS catalog models and shows shortcuts, at
-  # least one current `provider:model` string must be in the markup — proving the
-  # assertions above inspected real model buttons rather than an empty panel.
-  defp assert_current_model(html, provider_atom, provider) do
-    if provider[:custom_model] != true and provider.models != [] do
-      expected = Enum.map(provider.models, &"#{provider_atom}:#{&1.id}")
+  defp assigns(view), do: :sys.get_state(view.pid, 30_000).socket.assigns
+  # Non-vacuity: a provider that ships catalog models must actually render at
+  # least one CURRENT model id at the model step — proving the assertions above
+  # inspected real model buttons rather than an empty panel.
+  defp assert_current_models(html, provider_atom, provider) do
+    expected =
+      provider_atom
+      |> EvoGit.Config.LLMCatalog.provider_models()
+      |> Enum.map(&Map.get(&1, :id))
+      |> Enum.filter(&is_binary/1)
 
-      assert Enum.any?(expected, &(html =~ &1)),
-             "provider #{inspect(provider.id)} rendered no model shortcut button"
-    else
+    if provider[:custom_model] == true or expected == [] do
       :ok
+    else
+      assert Enum.any?(expected, &(html =~ ~s(phx-value-model="#{&1}"))),
+             "provider #{inspect(provider_atom)} rendered no catalog model button"
     end
   end
 

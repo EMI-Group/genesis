@@ -98,9 +98,21 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
     end
 
     test "editing the generated id explicitly stops treating it as an automatic placeholder" do
-      socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, file_config: %{}}}
-      assert {:noreply, socket} = ModelProfileEvents.add_model_profile(socket, %{})
-      assert socket.assigns.editing_profile_id == :new
+      draft = ProviderProfiles.new_draft(%{})
+
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{
+          __changed__: %{},
+          file_config: %{},
+          editing_profile_id: :new,
+          profile_form_draft: draft,
+          profile_generated_id: draft["id"],
+          profile_form_errors: %{},
+          profile_save_token: nil,
+          profile_advanced_open: nil
+        }
+      }
+
       assert socket.assigns.profile_generated_id == "profile-1"
 
       assert {:noreply, socket} =
@@ -137,6 +149,104 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
 
         assert explicit["profile_id_new"] == "profile-1"
         assert edited.assigns.file_config == %{}
+      end
+    end
+
+    test "accounts of one provider are named and slugged from the provider, never a model" do
+      {config, profiles} =
+        Enum.reduce(1..2, {%{llm: %{providers: []}}, []}, fn _, {config, profiles} ->
+          draft = ProviderProfiles.new_draft(config)
+
+          submitted =
+            ProviderProfiles.submission(
+              %{"provider" => "zai", "models" => [%{"model" => "glm-5.3"}]},
+              draft
+            )
+
+          identity = ProviderProfiles.editor_identity(submitted, config, :new, draft["id"])
+
+          assert {:ok, profile} =
+                   ProviderProfiles.parse_editor(identity, identity["profile_id_new"])
+
+          {ProviderProfiles.update(config, nil, profile), profiles ++ [profile]}
+        end)
+
+      assert Enum.map(profiles, & &1["id"]) == ["zai", "zai-2"]
+      assert Enum.map(profiles, & &1["name"]) == ["Z.ai (Zhipu AI)", "Z.ai (Zhipu AI)-2"]
+      refute Enum.any?(profiles, &(&1["name"] =~ "glm"))
+
+      # A different provider starts its own collision-free identity.
+      draft = ProviderProfiles.new_draft(config)
+
+      submitted =
+        ProviderProfiles.submission(
+          %{"provider" => "deepseek", "models" => [%{"model" => "deepseek-v4-pro"}]},
+          draft
+        )
+
+      identity = ProviderProfiles.editor_identity(submitted, config, :new, draft["id"])
+      assert identity["profile_id_new"] == "deepseek"
+      assert identity["name"] == "DeepSeek"
+    end
+
+    test "the OpenAI-compatible entry keeps its own identity, not the shared :openai atom" do
+      submitted =
+        ProviderProfiles.submission(
+          %{
+            "provider" => "openai_compatible",
+            "base_url" => "https://proxy.example.test/v1",
+            "models" => [%{"model" => "proxy-model"}]
+          },
+          ProviderProfiles.new_draft(%{})
+        )
+
+      resolved = ProviderProfiles.editor_identity(submitted, %{}, :new, "profile-1")
+      assert resolved["profile_id_new"] == "openai-compatible"
+      assert resolved["name"] == "OpenAI-Compatible API"
+      refute resolved["name"] == "OpenAI"
+
+      assert {:ok, profile} = ProviderProfiles.parse_editor(resolved, resolved["profile_id_new"])
+      assert profile["id"] == "openai-compatible"
+      assert profile["name"] == "OpenAI-Compatible API"
+      assert profile["provider"] == "openai"
+    end
+
+    test "explicit identity fields always win over the provider-derived defaults" do
+      submitted = %{
+        "provider" => "deepseek",
+        "profile_id_new" => " team-account ",
+        "name" => " Team Account ",
+        "models" => [%{"model" => "deepseek-v4-pro"}]
+      }
+
+      resolved = ProviderProfiles.editor_identity(submitted, %{}, :new, "profile-1")
+      assert resolved["profile_id_new"] == "team-account"
+      assert resolved["name"] == "Team Account"
+
+      # An explicit name alone still derives only the id (no uniquifying of the name).
+      renamed =
+        ProviderProfiles.editor_identity(
+          %{"provider" => "deepseek", "name" => "Named"},
+          %{},
+          :new
+        )
+
+      assert renamed["profile_id_new"] == "deepseek"
+      assert renamed["name"] == "Named"
+    end
+
+    test "editing a saved account under a different provider keeps its saved identity" do
+      saved = %{"id" => "zai", "name" => "Z.ai (Zhipu AI)", "provider" => "zai"}
+      config = %{llm: %{providers: [saved]}}
+
+      for blanks <- [%{}, %{"profile_id_new" => " ", "name" => " "}] do
+        resolved =
+          blanks
+          |> Map.put("provider", "deepseek")
+          |> ProviderProfiles.editor_identity(config, "zai")
+
+        assert resolved["profile_id_new"] == "zai"
+        assert resolved["name"] == "Z.ai (Zhipu AI)"
       end
     end
   end
@@ -1136,6 +1246,62 @@ defmodule EvoDashWeb.SettingsLive.ProviderProfilesContractTest do
     assert updated["models"] == [%{"model" => "first"}, %{"model" => ""}]
     assert updated["off_peak_days"] == ["weekends"]
     assert hd(profile["models"])["extra"] == %{"a" => 1}
+  end
+
+  describe "off_peak_holidays round trip" do
+    test "a supported calendar survives form -> draft -> parse -> profile" do
+      input = Map.merge(params(), %{"off_peak_holidays" => " CN "})
+      assert {:ok, original} = ProviderProfiles.parse_editor(input, "test")
+      assert original["off_peak_holidays"] == "CN"
+
+      draft = original |> ProviderProfiles.draft() |> ProviderProfiles.normalize_draft()
+      assert draft["off_peak_holidays"] == "CN"
+
+      # An unchanged draft preserves the saved value.
+      assert {:ok, ^original} =
+               ProviderProfiles.parse_editor(
+                 ProviderProfiles.submission(%{}, draft),
+                 "test",
+                 original
+               )
+
+      # An explicit blank in the form clears the saved value.
+      cleared = ProviderProfiles.submission(%{"off_peak_holidays" => ""}, draft)
+      assert {:ok, profile} = ProviderProfiles.parse_editor(cleared, "test", original)
+      refute Map.has_key?(profile, "off_peak_holidays")
+    end
+
+    test "a profile that never had the key never gains it" do
+      assert {:ok, profile} = ProviderProfiles.parse_editor(params(), "test")
+      refute Map.has_key?(profile, "off_peak_holidays")
+
+      assert {:ok, ^profile} =
+               ProviderProfiles.parse_editor(ProviderProfiles.draft(profile), "test", profile)
+
+      assert {:ok, blanked} =
+               ProviderProfiles.parse_editor(
+                 Map.merge(params(), %{"off_peak_holidays" => "   "}),
+                 "test"
+               )
+
+      refute Map.has_key?(blanked, "off_peak_holidays")
+    end
+
+    test "an unknown calendar is rejected under its own field key" do
+      input = Map.merge(params(), %{"off_peak_holidays" => "XX"})
+
+      assert {:error, %{"off_peak_holidays" => "off_peak_holidays_invalid"}} =
+               ProviderProfiles.parse_editor(input, "test")
+
+      assert {:error, "off_peak_holidays_invalid"} = ProviderProfiles.parse(input, "test")
+
+      # A holiday error never masquerades as a peak_hours error, and keeps the
+      # other parsed peak fields out of the returned profile.
+      mixed = Map.merge(input, %{"peak_concurrency" => "0", "timezone" => "Asia/Hong_Kong"})
+
+      assert {:error, %{"off_peak_holidays" => "off_peak_holidays_invalid"}} =
+               ProviderProfiles.parse_editor(mixed, "test")
+    end
   end
 
   defp editor_socket(profile) do
