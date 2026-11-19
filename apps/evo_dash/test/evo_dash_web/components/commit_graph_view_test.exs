@@ -30,7 +30,9 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   Folded runs (the builder's synthetic `kind: :gap` node) are pinned too:
   `#commit-gap-row-<dom>-<fold_key>` (`div.cg-row.cg-gap-row`, chevron,
   `toggle_commit_fold` + `phx-value-fold-key`, the restored rows beside an
-  `expanded: true` marker), the `g.cg-gap-node` hollow gutter marker (no ring,
+  `expanded: true` marker), the row's `data-cg-fold-key` (the RAW run key the
+  client hook toggles, omitted entirely when the model carries none) beside the
+  DOM-SANITIZED id slice, the `g.cg-gap-node` hollow gutter marker (no ring,
   no agent/ref tags) and the per-repo `#cg-fold-<dom>-expand-all` /
   `-collapse-all` controls gated on `fold_count > 0`.
 
@@ -1073,6 +1075,56 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert Floki.find(node, ".cg-ref-tag") == []
       assert node_title(tree, "commit-node-#{dom}-gap-f1-a1") == "12 commits"
     end
+
+    test "the gap row publishes the RAW fold_key as data-cg-fold-key while its id keeps the SANITIZED form" do
+      raw = "run/1 a"
+      sanitized = "run-1-a"
+      # The fixture's key genuinely NEEDS sanitizing for the DOM id — otherwise
+      # this test could not tell the two forms apart.
+      refute raw == sanitized
+      [repo] = fold_key_repos(fold_key: raw)
+      dom = repo.repo_dom_id
+      tree = parse(render_repos([repo]))
+      # Located by the SANITIZED id slice: every char outside [A-Za-z0-9_-]
+      # folds to a dash.
+      [gap_row] = Floki.find(tree, "#commit-gap-row-#{dom}-#{sanitized}")
+
+      assert_attrs(gap_row, %{
+        "id" => ["commit-gap-row-#{dom}-#{sanitized}"],
+        "data-cg-fold-key" => [raw],
+        "phx-value-fold-key" => [raw],
+        "phx-click" => ["toggle_commit_fold"]
+      })
+
+      [class] = attr(gap_row, "class")
+      assert class =~ "cg-row"
+      assert class =~ "cg-gap-row"
+
+      # The point of the attribute: it is the model's RAW key, NOT the DOM form
+      # the id uses (the client hook toggles the run by that exact key).
+      assert attr(gap_row, "data-cg-fold-key") != [sanitized]
+      assert Floki.raw_html(gap_row) =~ ~s(data-cg-fold-key="#{raw}")
+    end
+
+    test "a gap node with an absent / nil fold_key renders NO data-cg-fold-key at all" do
+      for opts <- [[fold_key: :absent], [fold_key: nil]] do
+        [repo] = fold_key_repos(opts)
+        dom = repo.repo_dom_id
+        tree = parse(render_repos([repo]))
+        # The gap row itself still renders — the attribute is the only gate.
+        [gap_row] = Floki.find(tree, ".cg-gap-row")
+        [class] = attr(gap_row, "class")
+        assert class =~ "cg-gap-row"
+        # The row's id slice degenerates (empty / "nil") but the row still
+        # renders — only the hook-facing attribute is gated.
+        assert gap_row |> attr("id") |> hd() |> String.starts_with?("commit-gap-row-#{dom}-")
+        # OMITTED, not empty: HEEx drops a nil-valued attribute, so the row
+        # carries no `data-cg-fold-key` key at all (an empty value would make
+        # the hook think it owns a run keyed "").
+        assert attr(gap_row, "data-cg-fold-key") == []
+        refute Floki.raw_html(gap_row) =~ "data-cg-fold-key"
+      end
+    end
   end
 
   describe "commit_graph_view/1 — per-repo fold controls" do
@@ -1312,6 +1364,40 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       )
 
     [if(fold_count == :absent, do: repo, else: Map.put(repo, :fold_count, fold_count))]
+  end
+
+  # A folded lane whose run key is NOT a DOM-safe string: the row's id uses the
+  # folded form while `data-cg-fold-key` must keep the raw value (the client
+  # hook's toggle key). `fold_key: :absent` removes the key from the model (the
+  # attribute's own gate); `fold_key: nil` sets it explicitly to nil.
+  defp fold_key_repos(opts) do
+    fold_key = Keyword.get(opts, :fold_key, "run/1 a")
+
+    gap =
+      node_view(
+        sha: "gap-run-1-a",
+        column: 1,
+        row: 1,
+        kind: :gap,
+        fold_key: fold_key,
+        hidden_count: 5,
+        expanded: false,
+        owner_id: "a1",
+        message: nil,
+        author_name: nil
+      )
+
+    gap = if opts[:fold_key] == :absent, do: Map.delete(gap, :fold_key), else: gap
+
+    [
+      repo_view(
+        nodes: [
+          node_view(sha: "n0000001", column: 1, row: 0, owner_id: "a1", message: "Tip commit"),
+          gap
+        ],
+        agents: [agent_map(agent_id: "a1", lane: 1)]
+      )
+    ]
   end
 
   # An edge owned by an agent the repo does not declare.
